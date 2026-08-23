@@ -1,0 +1,8 @@
+[package]
+name = "gen-kaslr-relocs"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "gen-kaslr-relocs"
+path = "src/main.rs"

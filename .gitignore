@@ -1,0 +1,19 @@
+# build outputs
+/target/
+*.iso
+
+# ISO tree outputs (entirely build artifacts)
+/isodir/
+
+# tools/ — generated / build artifacts
+/tools/gen-kaslr-relocs/target/
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+*.log
+*.swp
+*.swo

@@ -1,0 +1,116 @@
+# File: Cargo.toml
+# Purpose: Cargo package manifest, crate targets, and build profile configuration.
+
+[package]
+name = "protofire"
+version = "0.1.0"
+edition = "2021"
+authors = ["Raiden Lumine"]
+description = "A Rust bare-metal kernel prototype with a file-oriented user ABI."
+license = "Apache-2.0"
+
+[lib]
+name = "protofire"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "protofire"
+path = "src/main.rs"
+test = false
+bench = false
+
+[[test]]
+name = "path"
+path = "tests/fs/path.rs"
+
+[[test]]
+name = "fs_maintenance"
+path = "tests/fs/maintenance.rs"
+
+[[test]]
+name = "simplefs"
+path = "tests/simplefs/validation.rs"
+
+[[test]]
+name = "simplefs_fault_matrix"
+path = "tests/simplefs/fault_matrix.rs"
+
+[[test]]
+name = "simplefs_recovery"
+path = "tests/simplefs/recovery.rs"
+
+[[test]]
+name = "simplefs_property"
+path = "tests/simplefs/property.rs"
+
+[[test]]
+name = "memory_manager"
+path = "tests/memory/manager.rs"
+
+[[test]]
+name = "page_table"
+path = "tests/memory/page_table.rs"
+
+[[test]]
+name = "memory_pressure"
+path = "tests/memory/pressure.rs"
+
+[[test]]
+name = "condvar"
+path = "tests/sync/condvar.rs"
+
+[[test]]
+name = "scheduler"
+path = "tests/process/scheduler.rs"
+
+[[test]]
+name = "process_stress"
+path = "tests/process/stress.rs"
+
+[[test]]
+name = "console"
+path = "tests/io/console.rs"
+
+[[test]]
+name = "keyboard"
+path = "tests/io/keyboard.rs"
+
+[[test]]
+name = "io"
+path = "tests/io/io.rs"
+
+[[test]]
+name = "net_fuzz"
+path = "tests/net/fuzz.rs"
+
+[[test]]
+name = "syscall_fuzz"
+path = "tests/syscall/fuzz.rs"
+
+[features]
+default = []
+demo-disk = []
+# Enables the standalone ring3 runtime bridge (__shell_syscallN wrappers in
+# src/user/shared/runtime.rs). Off in the kernel build: the kernel provides its
+# own bridge in src/user/program/shell/syscall_bridge.rs.
+runtime = []
+fs_profiler = []
+net_profiler = []
+alloc_profiler = []
+fault_profiler = []
+educational_networking = []
+
+[dependencies]
+
+[profile.dev]
+panic = "abort"
+opt-level = 1
+debug = true
+debug-assertions = true
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = false

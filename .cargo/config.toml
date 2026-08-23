@@ -1,0 +1,28 @@
+# File: .cargo/config.toml
+# Purpose: Cargo target-specific rustflags for bare-metal x86_64 and aarch64 builds.
+
+[target.x86_64-unknown-none]
+rustflags = [
+    "-C",
+    "relocation-model=static",
+    # NOTE: the kernel is identity-mapped at 0x200000 (see linker.ld) within the
+    # 1 GiB bootstrap identity map, so the default small code model fully covers
+    # all code/data.  The previous `-C code-model=large` was unnecessary and
+    # broke release-bin builds: fat/thin LTO tries to merge the project's
+    # code-model=large bitcode with the sysroot's default code-model bitcode
+    # ("linking module flags 'Code Model': conflicting values").
+]
+
+[target.aarch64-unknown-none]
+rustflags = [
+    "-C",
+    "relocation-model=static",
+    "-C",
+    "target-feature=+pan,+rand",
+]
+
+[target.riscv64gc-unknown-none-elf]
+rustflags = [
+    "-C",
+    "relocation-model=static",
+]
