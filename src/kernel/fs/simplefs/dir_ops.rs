@@ -555,7 +555,11 @@ impl SimpleFs {
             inode.entry_count = 0;
             inode.persistent_security = None;
             state.inode_table_dirty = true;
-            state.free_inode_slots.push(inode_index);
+            // A slot still referenced by an open handle must not be recycled;
+            // it is freed by SimpleVNode's Drop once the last handle closes.
+            if state.open_handles.get(&inode_index).copied().unwrap_or(0) == 0 {
+                state.free_inode_slots.push(inode_index);
+            }
             // V4+: xattr records attached to the removed inode are released.
             self.mark_inode_xattrs_deleted(state, inode_index);
             if was_dir {

@@ -278,11 +278,16 @@ impl NatTable {
 
         // Replace source port in TCP/UDP header.
         if protocol == 6 || protocol == 17 {
+            // TCP carries its checksum at offset 16; UDP at offset 6.  The
+            // checksum field must lie within the segment before it is
+            // rewritten — a truncated transport header is dropped.
+            let csum_offset = if protocol == 6 { 16 } else { 6 };
+            if packet.len() < header_len + csum_offset + 2 {
+                return None;
+            }
             new_packet[header_len..header_len + 2].copy_from_slice(&xlate_port.to_be_bytes());
 
-            // Fix TCP/UDP checksum (pseudo-header change).  TCP carries its
-            // checksum at offset 16; UDP at offset 6.
-            let csum_offset = if protocol == 6 { 16 } else { 6 };
+            // Fix TCP/UDP checksum (pseudo-header change).
             let old_port = u16::from_be_bytes([packet[header_len], packet[header_len + 1]]);
             let old_csum = u16::from_be_bytes([
                 new_packet[header_len + csum_offset],
@@ -361,12 +366,17 @@ impl NatTable {
 
         // Restore destination port in TCP/UDP header.
         if protocol == 6 || protocol == 17 {
+            // TCP checksum at offset 16, UDP at offset 6.  The checksum
+            // field must lie within the segment before it is rewritten — a
+            // truncated transport header is dropped.
+            let csum_offset = if protocol == 6 { 16 } else { 6 };
+            if packet.len() < header_len + csum_offset + 2 {
+                return None;
+            }
             let old_port = u16::from_be_bytes([packet[header_len + 2], packet[header_len + 3]]);
             new_packet[header_len + 2..header_len + 4]
                 .copy_from_slice(&original_dst_port.to_be_bytes());
 
-            // TCP checksum at offset 16, UDP at offset 6.
-            let csum_offset = if protocol == 6 { 16 } else { 6 };
             let old_csum_bytes = [
                 new_packet[header_len + csum_offset],
                 new_packet[header_len + csum_offset + 1],

@@ -33,6 +33,11 @@ const NOTIFY_OFFSET: u64 = 0x3000;
 /// within the notification area.
 const NOTIFY_OFF_MULTIPLIER: u64 = 4;
 
+/// Maximum number of queues tracked in the per-queue notification-offset
+/// cache.  VirtIO devices typically expose a handful of queues (2 for net);
+/// the cache is indexed by queue index and consulted on every doorbell kick.
+const MAX_QUEUES: usize = 64;
+
 // ─── Common config field offsets (VirtIO 1.0 §4.1.4) ────────────
 
 const CFG_DEVICE_FEATURE_SELECT: u64 = 0x00; // le32
@@ -87,8 +92,10 @@ pub struct PciModernRegion {
     device_id: u32,
     /// Vendor ID from PCI enumeration.
     vendor_id: u32,
-    /// Cached queue-notify offset for the currently selected queue.
-    notify_off: core::cell::Cell<u16>,
+    /// Index of the queue most recently selected via REG_QUEUE_SEL.
+    selected_queue: core::cell::Cell<u16>,
+    /// Per-queue cached queue_notify_off values, indexed by queue index.
+    notify_offs: [core::cell::Cell<u16>; MAX_QUEUES],
 }
 
 unsafe impl Send for PciModernRegion {}
@@ -111,7 +118,8 @@ impl PciModernRegion {
             bar_base,
             device_id: virtio_device_id,
             vendor_id: vendor_id as u32,
-            notify_off: core::cell::Cell::new(0),
+            selected_queue: core::cell::Cell::new(0),
+            notify_offs: [const { core::cell::Cell::new(0) }; MAX_QUEUES],
         }
     }
 
@@ -168,7 +176,17 @@ impl PciModernRegion {
 
     /// Compute the notification address and kick the given queue.
     unsafe fn notify(&self, queue_index: u16) {
-        let off = self.notify_off.get();
+        let qi = queue_index as usize;
+        let off = if qi < MAX_QUEUES {
+            self.notify_offs[qi].get()
+        } else {
+            crate::println!(
+                "[virtio-pci-modern] notify: queue {} out of range (MAX_QUEUES={}), skipping kick",
+                queue_index,
+                MAX_QUEUES
+            );
+            return;
+        };
         let addr = self.bar_base as u64 + NOTIFY_OFFSET + (off as u64) * NOTIFY_OFF_MULTIPLIER;
         crate::println!(
             "[virtio-pci-modern] notify q{} at 0x{:x} (off={} mult={})",
@@ -263,6 +281,7 @@ impl MmioRegion for PciModernRegion {
             REG_QUEUE_SEL => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_QUEUE_SELECT;
                 unsafe { self.cfg_write16(cfg_off, value as u16) };
+                self.selected_queue.set(value as u16);
             }
 
             // QueueNum: set the queue size for the selected queue.
@@ -271,18 +290,22 @@ impl MmioRegion for PciModernRegion {
                 unsafe { self.cfg_write16(cfg_off, value as u16) };
             }
 
-            // QueueReady → enable the queue and write notify offset.
+            // QueueReady → enable the queue and cache its notify offset.
             REG_QUEUE_READY => {
                 // Write queue_enable (1 = enable).
                 let enable_off = COMMON_CFG_OFFSET + CFG_QUEUE_ENABLE;
                 unsafe { self.cfg_write16(enable_off, if value != 0 { 1 } else { 0 }) };
 
                 if value != 0 {
-                    // Also cache the queue_notify_off for later use in kicks.
+                    // Cache the queue_notify_off of the currently selected
+                    // queue so later kicks use that queue's doorbell offset.
                     let notify_off_off = COMMON_CFG_OFFSET + CFG_QUEUE_NOTIFY_OFF;
                     let nf = unsafe { self.cfg_read16(notify_off_off) };
-                    self.notify_off.set(nf);
-                    crate::println!("[virtio-pci-modern] queue enabled, notify_off={}", nf);
+                    let q = self.selected_queue.get() as usize;
+                    if q < MAX_QUEUES {
+                        self.notify_offs[q].set(nf);
+                    }
+                    crate::println!("[virtio-pci-modern] queue {} enabled, notify_off={}", q, nf);
                 }
             }
 

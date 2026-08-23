@@ -121,18 +121,26 @@ pub fn resolve(hostname: &str) -> Result<Ipv4Addr> {
                 .lock()
                 .recv_from(DNS_EPHEMERAL_PORT, &mut buffer)
             {
-                Ok((len, _src_ip, _src_port)) => {
-                    // Try to parse the response.  A well-behaved DNS
-                    // server sends the answer from port 53; additional
-                    // source verification could be added here.
-                    if let Ok((addr, ttl_secs)) = parse_a_record_with_ttl(&buffer[..len]) {
-                        // Cache the result with the TTL from the response.
-                        let ttl_ticks = (ttl_secs as u64).saturating_mul(100);
-                        cache_insert(hostname, addr, ttl_ticks, stack.current_tick());
-                        return Ok(addr);
+                Ok((len, src_ip, src_port)) => {
+                    // Only accept answers from the configured nameserver
+                    // whose 16-bit transaction ID matches the query we just
+                    // sent; drop anything else.
+                    let from_nameserver = len >= 2
+                        && src_ip == IpAddress::V4(dns_server)
+                        && src_port == DNS_PORT
+                        && buffer[0] == query[0]
+                        && buffer[1] == query[1];
+                    if from_nameserver {
+                        // Try to parse the response.
+                        if let Ok((addr, ttl_secs)) = parse_a_record_with_ttl(&buffer[..len]) {
+                            // Cache the result with the TTL from the response.
+                            let ttl_ticks = (ttl_secs as u64).saturating_mul(100);
+                            cache_insert(hostname, addr, ttl_ticks, stack.current_tick());
+                            return Ok(addr);
+                        }
+                        // Malformed response — keep waiting (the real
+                        // answer may still arrive).
                     }
-                    // Malformed response — keep waiting (the real
-                    // answer may still arrive).
                 }
                 Err(Error::TimedOut) => {
                     // Queue empty — keep polling.

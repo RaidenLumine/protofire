@@ -32,11 +32,14 @@ See [README.md](README.md) for the complete build/test matrix.
 
 1. [Development Setup](#development-setup)
 2. [Where to Start](#where-to-start)
-3. [Code Style & Conventions](#code-style--conventions)
-4. [Verification Gate](#verification-gate)
-5. [Adding or Modifying a Syscall](#adding-or-modifying-a-syscall)
-6. [Documentation](#documentation)
-7. [Submitting Changes](#submitting-changes)
+3. [Communication & Discussion](#communication-discussion)
+4. [Code Style & Conventions](#code-style--conventions)
+5. [Verification Gate](#verification-gate)
+6. [Adding or Modifying a Syscall](#adding-or-modifying-a-syscall)
+7. [Documentation](#documentation)
+8. [Submitting Changes](#submitting-changes)
+9. [PR Review Process](#pr-review-process)
+10. [Contributor Recognition](#contributor-recognition)
 
 ---
 
@@ -66,7 +69,7 @@ make run            # boot x86_64 under QEMU (demo shell with ~40 builtins)
 
 ## Where to Start
 
-- Read the [docs](docs/) first — especially
+- Read the [docs](docs/) first
   [`docs/en/README.md`](docs/en/README.md) (architecture overview),
   [`docs/en/syscall.md`](docs/en/syscall.md) (ABI), and
   [`docs/en/current-status.md`](docs/en/current-status.md) (subsystem status).
@@ -88,6 +91,14 @@ Layout of the kernel crate:
 | `src/util/` | Utility helpers |
 | `tests/` | Host-side integration tests (fs, io, memory, net, process, simplefs, sync, syscall) |
 | `docs/` | Bilingual architecture & subsystem docs (`en/` and `zh-CN/`) |
+
+---
+
+## Communication & Discussion
+
+- **GitHub Issues**: for bug reports, feature requests, and design discussions.
+- **Real-time chat**: for quick questions and collaboration, please reach out via email: <2557597107@qq.com>.
+- **Response time**: maintainers will respond to new Issues and PRs within **48 hours**.
 
 ---
 
@@ -188,5 +199,20 @@ rules strictly:
 6. **Language:** issues and pull requests may be written in **English or
    Simplified Chinese**.
 
-Questions, ideas, and design discussions are just as welcome as patches —
-please open an issue rather than keeping them private.
+---
+
+## PR Review Process
+
+1. **Automated checks**: CI will automatically run `make verify-p0` and `make clippy` — all must pass.
+2. **Human review**: at least **one module maintainer** approval is required (see [MAINTAINERS.md](MAINTAINERS.md)).
+3. **Review timeline**: maintainers will provide initial feedback within **1 week**; if overdue, feel free to ping a core maintainer by @mention in the PR.
+4. **Updates after review**: after addressing feedback, you may either `git commit --amend` or add fixup commits — the final merge will squash them.
+5. **Merge**: a core maintainer or module maintainer will merge the PR into the `main` branch.
+
+---
+
+## Contributor Recognition
+
+- We value every contributor's effort. All code contributors will be listed in the [AUTHORS](AUTHORS) file at the project root.
+- By contributing code to this project, you agree to be listed in the [AUTHORS](AUTHORS) file. The list is periodically generated from `git log --format='%aN <%aE>' | sort -u`.
+- Contributions are not limited to code — documentation, tests, design discussions, and bug reports are equally appreciated.

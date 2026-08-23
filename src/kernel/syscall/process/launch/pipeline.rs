@@ -353,7 +353,7 @@ pub(crate) fn fork(
     let thread = super::super::runtime::current_thread()?;
     let mut memory = crate::kernel::memory::global_mut().ok_or(Error::InternalError)?;
 
-    let child = process.fork(&mut memory)?;
+    let child = process.fork(&mut memory, scheduler.allocate_pid())?;
 
     child.set_parent_pid(process.pid());
     process.add_child(child.pid());
@@ -385,7 +385,7 @@ pub(crate) fn fork(
     let thread = super::super::runtime::current_thread()?;
     let mut memory = crate::kernel::memory::global_mut().ok_or(Error::InternalError)?;
 
-    let child = process.fork(&mut memory)?;
+    let child = process.fork(&mut memory, scheduler.allocate_pid())?;
 
     child.set_parent_pid(process.pid());
     process.add_child(child.pid());
@@ -417,7 +417,7 @@ pub(crate) fn fork(
     let thread = super::super::runtime::current_thread()?;
     let mut memory = crate::kernel::memory::global_mut().ok_or(Error::InternalError)?;
 
-    let child = process.fork(&mut memory)?;
+    let child = process.fork(&mut memory, scheduler.allocate_pid())?;
 
     child.set_parent_pid(process.pid());
     process.add_child(child.pid());

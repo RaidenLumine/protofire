@@ -194,7 +194,13 @@ pub fn parse_sctp_packet(data: &[u8]) -> Result<(SctpCommonHeader, Vec<ParsedChu
             break;
         }
         chunks.push((ctype, flags, rest[..length].to_vec()));
-        rest = &rest[(length + 3) & !3..];
+        // Chunks are padded to a 4-byte boundary; stop when the declared
+        // length is not aligned and would advance past the buffer end.
+        let padded = (length + 3) & !3;
+        if padded > rest.len() {
+            break;
+        }
+        rest = &rest[padded..];
     }
     Ok((header, chunks))
 }

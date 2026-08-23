@@ -102,20 +102,56 @@ pub fn build_icmpv6_message(
     buf
 }
 
-/// Build an ICMPv6 Destination Unreachable message (type 1, code 4 = port
-/// unreachable).  Embeds as much of the invoking packet as fits without
-/// exceeding the minimum IPv6 MTU (1280 bytes).
-pub fn build_icmpv6_dest_unreachable(original_payload: &[u8]) -> Vec<u8> {
-    // ICMPv6 header (4) + reserved (4) + as much of original as fits.
+/// Maximum number of bytes of the invoking packet that fit after the ICMPv6
+/// header, the reserved field, and the IPv6 header within the minimum IPv6
+/// MTU (1280 bytes).
+fn dest_unreachable_embed_len(original_payload: &[u8]) -> usize {
     let max_embed = 1280usize
         .saturating_sub(IPV6_HEADER_SIZE)
         .saturating_sub(ICMPV6_HEADER_SIZE)
         .saturating_sub(4);
-    let embed_len = original_payload.len().min(max_embed);
+    original_payload.len().min(max_embed)
+}
+
+/// Build an ICMPv6 Destination Unreachable message (type 1, code 4 = port
+/// unreachable).  Embeds as much of the invoking packet as fits without
+/// exceeding the minimum IPv6 MTU (1280 bytes).
+///
+/// Returns a complete ICMPv6 message (header + reserved + embedded data).
+/// This single-argument form has no access to the reply's source and
+/// destination addresses, so its checksum is computed over the ICMPv6
+/// message alone; callers that know the reply addresses should use
+/// [`build_icmpv6_dest_unreachable_for`] so the checksum covers the IPv6
+/// pseudo-header (RFC 4443 §2.3).
+pub fn build_icmpv6_dest_unreachable(original_payload: &[u8]) -> Vec<u8> {
+    let embed_len = dest_unreachable_embed_len(original_payload);
+
+    let mut msg = Vec::with_capacity(ICMPV6_HEADER_SIZE + 4 + embed_len);
+    msg.push(ICMPV6_DEST_UNREACHABLE);
+    msg.push(4);
+    msg.extend_from_slice(&[0u8; 2]); // checksum placeholder
+    msg.extend_from_slice(&[0u8; 4]); // reserved
+    msg.extend_from_slice(&original_payload[..embed_len]);
+
+    let checksum = ipv4::compute_checksum(&msg);
+    msg[2] = (checksum >> 8) as u8;
+    msg[3] = checksum as u8;
+    msg
+}
+
+/// Build a complete ICMPv6 Destination Unreachable message (type 1, code 4)
+/// with the checksum computed over the IPv6 pseudo-header of the reply sent
+/// from `src` to `dst`.
+pub fn build_icmpv6_dest_unreachable_for(
+    src: Ipv6Addr,
+    dst: Ipv6Addr,
+    original_payload: &[u8],
+) -> Vec<u8> {
+    let embed_len = dest_unreachable_embed_len(original_payload);
     let mut body = Vec::with_capacity(4 + embed_len);
     body.extend_from_slice(&[0u8; 4]); // reserved
     body.extend_from_slice(&original_payload[..embed_len]);
-    body
+    build_icmpv6_message(src, dst, ICMPV6_DEST_UNREACHABLE, 4, &body)
 }
 
 // ─── ICMPv6 error-message inspection ─────────────────────────────────────
@@ -282,11 +318,15 @@ fn process_neighbor_solicitation(
         cache.set_reachable(ip_src);
     }
 
-    // Build NA: set Solicited flag (S=1), target=our address, target LL addr option.
+    // Build NA: set Solicited flag (S=1), target=our address, target LL addr
+    // option.  The reply is sent from `target` to the soliciting host.
     let our_mac = MacAddress(stack.local_mac);
     let na = build_neighbor_advertisement(
-        target, true,  // solicited
-        false, // not a router
+        target, // reply source
+        ip_src, // reply destination
+        target, // target address
+        true,   // solicited
+        false,  // not a router
         &our_mac,
     );
 
@@ -343,14 +383,18 @@ fn process_neighbor_advertisement(
     Ok(None)
 }
 
-/// Build a Neighbor Advertisement message.
+/// Build a Neighbor Advertisement message as a complete ICMPv6 message
+/// (type 136, code 0).  `src` and `dst` are the source and destination of
+/// the NA reply and are used for the checksum's IPv6 pseudo-header.
 fn build_neighbor_advertisement(
+    src: Ipv6Addr,
+    dst: Ipv6Addr,
     target: Ipv6Addr,
     solicited: bool,
     router: bool,
     target_ll_addr: &MacAddress,
 ) -> Vec<u8> {
-    let mut body = Vec::with_capacity(32);
+    let mut body = Vec::with_capacity(28);
     // Flags: R (bit 7), S (bit 6), O (bit 5)
     let mut flags: u8 = 0;
     if router {
@@ -370,7 +414,7 @@ fn build_neighbor_advertisement(
     // Target link-layer address option
     push_ll_addr_option(&mut body, NDP_OPT_TARGET_LL_ADDR, target_ll_addr);
 
-    body
+    build_icmpv6_message(src, dst, NDP_NEIGHBOR_ADVERTISEMENT, 0, &body)
 }
 
 // ─── NDP: Router Solicitation (RFC 4861 §4.1) ──────────────────────────
@@ -1077,16 +1121,21 @@ mod tests {
 
     #[test]
     fn build_neighbor_advertisement_sets_solicited_flag() {
-        let target: Ipv6Addr = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let src: Ipv6Addr = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let target: Ipv6Addr = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
         let mac = MacAddress([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 
-        let na = build_neighbor_advertisement(target, true, false, &mac);
-        // NA body: flags(1) + reserved(3) + target(16) + option(8) = 28
-        assert!(na.len() >= 24);
-        // Solicited flag (bit 6) should be set
-        assert_eq!(na[0] & 0x40, 0x40);
-        // Router flag (bit 7) should be clear
-        assert_eq!(na[0] & 0x80, 0x00);
+        let na = build_neighbor_advertisement(src, target, target, true, false, &mac);
+        // Complete ICMPv6 NA: header(4) + flags(1) + reserved(3) + target(16)
+        // + option(8) = 32 bytes.
+        assert!(na.len() >= 28);
+        // ICMPv6 type 136 = Neighbor Advertisement.
+        assert_eq!(na[0], NDP_NEIGHBOR_ADVERTISEMENT);
+        // Flags byte is at offset 4 (after the 4-byte ICMPv6 header).
+        // Solicited flag (bit 6) should be set.
+        assert_eq!(na[4] & 0x40, 0x40);
+        // Router flag (bit 7) should be clear.
+        assert_eq!(na[4] & 0x80, 0x00);
     }
 
     #[test]

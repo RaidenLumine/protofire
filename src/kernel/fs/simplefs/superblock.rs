@@ -120,6 +120,7 @@ impl SimpleFs {
                 xattr_table_dirty: false,
                 dedup_refcounts: BTreeMap::new(),
                 dedup_hash_to_extents: BTreeMap::new(),
+                open_handles: BTreeMap::new(),
             }),
             case_sensitive,
             inode_table_blocks: parsed_superblock.record.inode_table_blocks,

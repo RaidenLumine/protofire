@@ -1143,7 +1143,17 @@ impl WgDevice {
             return Err(Error::PermissionDenied);
         }
         let private = unsafe { self.private_key.read() };
-        let mut responder = ResponderHandshake::new(private, [0u8; 32], local_idx);
+        // Resolve the responder's session index to its configured preshared
+        // key.  The responder handshake must mix in the *same* PSK the
+        // initiator used (`set_peer_psk`), or the derived transport keys can
+        // never agree — with a zero PSK the tunnel silently decrypts nothing.
+        let psk = self
+            .sessions
+            .lock()
+            .get(local_idx)
+            .ok_or(Error::NotFound)?
+            .psk;
+        let mut responder = ResponderHandshake::new(private, psk, local_idx);
         let response = responder.consume_initiation(&init)?;
         Ok(response.to_bytes())
     }

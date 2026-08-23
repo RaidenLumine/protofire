@@ -186,8 +186,9 @@ pub fn online_cpu_count() -> u32 {
 /// Return the current TLB shootdown generation counter.
 ///
 /// This is cross-arch — used by AArch64/RISC-V SMP to check whether a TLB
-/// flush is needed.
+/// flush is needed (x86_64 reads the counter internally).
 #[cfg(target_os = "none")]
+#[cfg_attr(all(target_arch = "x86_64", target_os = "none"), allow(dead_code))]
 pub fn tlb_generation() -> u64 {
     TLB_GENERATION.load(core::sync::atomic::Ordering::Acquire)
 }

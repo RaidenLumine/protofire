@@ -106,13 +106,15 @@ impl MemoryManager {
                     return false;
                 }
 
-                // Keep the software mapping as DemandPaged so that other
-                // processes sharing the same virtual address (different CR3
-                // trees) can also fault and get their own private frame.
-                // The global software page table does not track per-process
-                // ownership, so converting to Anonymous would block
-                // demand-paging for every other process.
-                //
+                // Record the installed frame in the software page table so
+                // the mapping is reclaimed on teardown instead of leaking.
+                // The page is now physically present, so it is tracked as an
+                // anonymous mapping like other present user pages.
+                let _ = self.page_table.replace_mapping_phys(page_addr, frame_phys);
+                let _ = self
+                    .page_table
+                    .replace_mapping_kind(page_addr, MappingKind::Anonymous);
+
                 // Mark the resolved page as accessed so the clock
                 // reclamation algorithm skips it on the next sweep.
                 self.page_table.mark_accessed_va(page_addr);
@@ -177,9 +179,13 @@ impl MemoryManager {
                             break;
                         }
 
-                        // Keep as DemandPaged — see note above about
-                        // global software page table and multi-process
-                        // demand-paging correctness.
+                        // Record the prefetched frame in the software page
+                        // table too, so it is reclaimed on teardown rather
+                        // than leaked (same handling as the faulting page).
+                        let _ = self.page_table.replace_mapping_phys(adj_va, adj_frame_phys);
+                        let _ = self
+                            .page_table
+                            .replace_mapping_kind(adj_va, MappingKind::Anonymous);
 
                         // Mark prefetched page as accessed.
                         self.page_table.mark_accessed_va(adj_va);

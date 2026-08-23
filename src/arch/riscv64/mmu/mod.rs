@@ -857,7 +857,8 @@ fn probe_kernel_address(
 /// for the instruction pointer (RISC-V has no architectural PC read).
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 fn current_instruction_pointer() -> usize {
-    current_instruction_pointer as usize
+    // Cast through a raw pointer to avoid the `function-casts-as-integer` lint.
+    current_instruction_pointer as *const () as usize
 }
 
 #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]

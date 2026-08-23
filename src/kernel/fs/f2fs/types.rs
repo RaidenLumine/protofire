@@ -835,13 +835,16 @@ pub(crate) fn parse_f2fs_dir_entries(data: &[u8]) -> Vec<F2fsDirEntry> {
 
         // A directory entry with ino==0 is a deleted (freed) entry; skip.
         if ino != 0 && name_len <= rec_len.saturating_sub(13) {
-            let name_bytes = &data[offset + 13..offset + 13 + name_len];
-            let name = String::from_utf8_lossy(name_bytes).to_string();
-            entries.push(F2fsDirEntry {
-                ino,
-                file_type,
-                name,
-            });
+            let name_end = offset + 13 + name_len;
+            if name_end <= data.len() {
+                let name_bytes = &data[offset + 13..name_end];
+                let name = String::from_utf8_lossy(name_bytes).to_string();
+                entries.push(F2fsDirEntry {
+                    ino,
+                    file_type,
+                    name,
+                });
+            }
         }
 
         offset += rec_len;

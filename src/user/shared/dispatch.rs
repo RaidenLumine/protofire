@@ -96,49 +96,32 @@ pub fn dispatch_tokens(
     let argv = tokens;
 
     match command {
-        // ── Batch 1: Pure logic commands ──
         "help" => cmd_help(argv),
         "echo" => cmd_echo(argv),
         "clear" => cmd_clear(),
         "true" => cmd_true(),
         "false" => cmd_false(),
-
-        // ── Batch 2: pwd, cd ──
         "pwd" => cmd_pwd(cwd),
         "cd" => cmd_cd(cwd, argv, home_dir),
-
-        // ── Batch 3: cat, hexdump ──
         "cat" => cmd_cat(cwd, argv, stdin),
         "hexdump" => cmd_hexdump(cwd, argv),
-
-        // ── Batch 4: ls ──
         "ls" => cmd_ls(cwd, argv),
-
-        // ── Batch 5: mkdir, rm, touch, cp, mv ──
         "mkdir" => cmd_mkdir(cwd, argv),
         "rm" => cmd_rm(cwd, argv),
         "touch" => cmd_touch(cwd, argv),
         "cp" => cmd_cp(cwd, argv),
         "mv" => cmd_mv(cwd, argv),
-
-        // ── Batch 6: grep, find, head, tail, wc ──
         "grep" => cmd_grep(cwd, argv, stdin),
         "find" => cmd_find(cwd, argv),
         "head" => cmd_head(cwd, argv, stdin),
         "tail" => cmd_tail(cwd, argv, stdin),
         "wc" => cmd_wc(cwd, argv, stdin),
-
-        // ── Batch 7: sort, uniq, diff, edit ──
         "sort" => cmd_sort(cwd, argv, stdin),
         "uniq" => cmd_uniq(cwd, argv, stdin),
         "diff" => cmd_diff(cwd, argv),
         "edit" => cmd_edit(cwd, argv),
-
-        // ── Batch 8: ps, kill ──
         "ps" => cmd_ps(argv),
         "kill" => cmd_kill(argv),
-
-        // ── Batch 9: sysinfo, top, dmesg, uname, uptime, sleep, perf ──
         "sysinfo" => cmd_sysinfo(),
         "top" => cmd_top(argv),
         "dmesg" => cmd_dmesg(argv),
@@ -146,8 +129,6 @@ pub fn dispatch_tokens(
         "uptime" => cmd_uptime(),
         "sleep" => cmd_sleep(argv),
         "perf" => cmd_perf(argv),
-
-        // ── Batch 10: export, alias, history, shift, read, source ──
         "export" => cmd_export(argv, env_vars),
         "alias" => cmd_alias(argv, aliases),
         "history" => cmd_history(history),
@@ -162,17 +143,10 @@ pub fn dispatch_tokens(
             SOURCE_MAX_DEPTH,
             exec_fn,
         ),
-
-        // ── Batch 11: du, df, chmod ──
         "du" => cmd_du(cwd, argv),
         "df" => cmd_df(argv),
         "chmod" => cmd_chmod(cwd, argv),
-
-        // ── Batch 12: test / [ ──
         "test" => cmd_test(cwd, argv),
-        "[" => cmd_test(cwd, argv),
-
-        // ── Unknown ──
         _ => CmdResult::error(127, format!("shell: unknown command `{command}`\n")),
     }
 }

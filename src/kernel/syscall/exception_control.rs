@@ -69,6 +69,12 @@ fn validate_return_from_exception_frame_pointer_shape(
     Ok(())
 }
 
+// Used only by the x86_64 / aarch64 frame helpers; the riscv64 fallback
+// reports `Unsupported`, so the generic helper is dead there.
+#[cfg_attr(
+    not(any(target_arch = "x86_64", target_arch = "aarch64")),
+    allow(dead_code)
+)]
 fn user_exception_frame_layout<T>() -> UserExceptionFrameLayout {
     UserExceptionFrameLayout {
         len: core::mem::size_of::<T>(),

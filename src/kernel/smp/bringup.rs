@@ -10,6 +10,9 @@ use crate::arch::x86_64::apic;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use alloc::boxed::Box;
 
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use alloc::vec::Vec;
+
 // ── Constants ───────────────────────────────────────────────────────────
 
 /// Physical base address for the AP trampoline.
@@ -138,6 +141,11 @@ pub fn for_each_percpu_scheduler(_f: impl FnMut(u32, &crate::kernel::process::Sc
 pub fn register_percpu_scheduler(cpu_id: u32, sched: *mut crate::kernel::process::Scheduler) {
     use alloc::collections::BTreeMap;
     /// Wrapper to make *mut Scheduler Send.
+    ///
+    /// The field is currently write-only: per-CPU scheduler retrieval on
+    /// aarch64/riscv64 goes through `Scheduler::global()` (per-CPU slot), not
+    /// this map.  The map is kept as scaffolding for the SMP backends.
+    #[allow(dead_code)]
     struct SchedPtr(pub *mut crate::kernel::process::Scheduler);
     /// SAFETY: Scheduler access is always single-threaded per-CPU.
     unsafe impl Send for SchedPtr {}
@@ -204,21 +212,24 @@ impl TrampolineData {
 /// indefinitely on some hardware / under QEMU emulation.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn send_ipi(apic_id: u8, icr_low: u32) {
-    // Wait for the ICR to be ready (Delivery Status clear).
-    // The LAPIC can only buffer one outgoing IPI at a time.
+    // Wait for the ICR to be ready (Delivery Status clear).  The LAPIC can
+    // only buffer one outgoing IPI at a time, but a level-triggered IPI
+    // (e.g. INIT) may keep Delivery Status set indefinitely, so bound this
+    // poll rather than spinning forever.
     const ICR_DELIVERY_STATUS: u32 = 1 << 12;
     let mut spins: u64 = 0;
     while unsafe { apic::lapic_read(apic::LAPIC_ICR_LOW as u32) } & ICR_DELIVERY_STATUS != 0 {
         core::hint::spin_loop();
         spins += 1;
-        if spins % 10_000_000 == 1 {
+        if spins >= 1_000_000 {
             let icr_val = unsafe { apic::lapic_read(apic::LAPIC_ICR_LOW as u32) };
             crate::println!(
-                "[WARN ] send_ipi(cpu{}): ICR Delivery Status stuck after {} spins, ICR_LOW={:#x}",
+                "[WARN ] send_ipi(cpu{}): ICR Delivery Status stuck after {} spins (level-triggered IPI may keep it set), proceeding anyway, ICR_LOW={:#x}",
                 crate::kernel::percpu::get().cpu_id,
                 spins,
                 icr_val,
             );
+            break;
         }
     }
     if spins > 0 {
@@ -421,6 +432,7 @@ pub fn bring_up_aps(aps: &[(u32, u8)]) {
 
     unsafe { install_trampoline() };
 
+    let mut started_aps: Vec<(u32, u8)> = Vec::new();
     for &(cpu_id, lapic_id) in aps {
         if cpu_id > MAX_APS as u32 {
             crate::println!(
@@ -431,15 +443,18 @@ pub fn bring_up_aps(aps: &[(u32, u8)]) {
             continue;
         }
 
-        bring_up_single_ap(cpu_id, lapic_id);
+        if bring_up_single_ap(cpu_id, lapic_id) {
+            started_aps.push((cpu_id, lapic_id));
+        }
     }
 
-    // Record online APs for IPI broadcasting.
-    finalise_ap_config(aps);
+    // Record online APs for IPI broadcasting.  Only APs whose start was
+    // actually confirmed are counted.
+    finalise_ap_config(&started_aps);
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
+fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) -> bool {
     crate::println!(
         "[smp   ] bring_up_single_ap: cpu={} lapic={}",
         cpu_id,
@@ -451,7 +466,7 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     let idx = cpu_id as usize;
     if idx >= MAX_APS {
         crate::println!("[smp   ] cpu_id={} exceeds MAX_APS={}", cpu_id, MAX_APS);
-        return;
+        return false;
     }
     // Use a statically-allocated AP stack from kernel BSS.  These are
     // guaranteed to be mapped by the runtime page tables.  The AP trampoline
@@ -609,7 +624,12 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
         );
         // Clean up the started flag.
         drop(unsafe { Box::from_raw(started_ptr) });
+        // Roll back the provisional online-AP count recorded before the
+        // AP's start was confirmed.
+        ONLINE_AP_COUNT.fetch_sub(1, Ordering::Release);
     }
+
+    started_ok
 }
 
 // ── Calibrated busy-wait helpers (unused with short inline delays above) ──

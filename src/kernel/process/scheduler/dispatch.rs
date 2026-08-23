@@ -51,6 +51,17 @@ impl Scheduler {
         // Host-side simulation still rotates through the same ready/current
         // states as bare metal; it just updates ownership instead of swapping
         // CPU register frames.
+        // Honor a remote termination request for the current thread before
+        // preempting it, so a SIGKILL kills the process rather than resuming
+        // a dead thread.  `finish_current_thread` is safe here (no ready-queue
+        // lock is held), and leaves the current slot empty for the dispatch
+        // below.
+        if let Some(current) = self.current.lock().as_ref().cloned() {
+            if current.take_terminate_request() {
+                let reason = current.process().termination_reason();
+                let _ = self.finish_current_thread(reason);
+            }
+        }
         // Preempt the current thread (move it back to ready queue)
         self.preempt_current_thread_simulated();
         // Dispatch the next ready thread
@@ -61,6 +72,30 @@ impl Scheduler {
         loop {
             // Process any pending softirqs before selecting the next thread.
             crate::kernel::softirq::process_softirqs();
+
+            // Honor a remote termination request (e.g. SIGKILL delivered by
+            // another CPU) on the thread that just returned to the scheduler.
+            // Its context is no longer live here, so it is safe to finish it
+            // in scheduler context instead of re-dispatching it.  The returned
+            // dying thread is parked in `dying_thread`; the top of the next
+            // loop iteration moves it to `deferred_dying`, whose drop runs with
+            // interrupts enabled in `process_deferred_dying`.
+            if self
+                .current
+                .lock()
+                .as_ref()
+                .is_some_and(|t| t.take_terminate_request())
+            {
+                let reason = {
+                    let current = self.current.lock().as_ref().cloned().unwrap();
+                    current.process().termination_reason()
+                };
+                if let Some(dying) = self.finish_current_thread(reason) {
+                    *self.dying_thread.lock() = Some(dying);
+                }
+                continue;
+            }
+
             // Move the dying thread from the previous scheduling epoch to the
             // deferred-drop slot.  The actual drop happens in
             // `process_deferred_dying()`, which is called with interrupts

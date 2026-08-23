@@ -7,8 +7,8 @@
 use alloc::sync::Arc;
 
 // `PTRACE_REGS_SIZE_X86_64` is only referenced from x86_64-gated helpers
-// below; on RISC-V the import is unused, so silence it for that target only.
-#[cfg_attr(target_arch = "riscv64", allow(unused_imports))]
+// below; on aarch64 / riscv64 the import is unused, so silence it.
+#[cfg_attr(not(target_arch = "x86_64"), allow(unused_imports))]
 use crate::abi::ptrace::{
     PtraceEventRecord, PTRACE_EVENT_ATTACH, PTRACE_EVENT_SYSCALL_EXIT, PTRACE_REGS_SIZE_X86_64,
 };
@@ -351,6 +351,8 @@ fn check_ptrace_permission(tracer: &Process, target: &Process) -> Result<()> {
 }
 
 /// Find the first thread of a process.
+/// Only used by the x86_64 register helpers below.
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 fn find_first_thread(target: &Process) -> Result<Arc<Thread>> {
     let scheduler = Scheduler::global().ok_or(Error::Unsupported)?;
     let threads = target.thread_ids();

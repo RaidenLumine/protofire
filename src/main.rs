@@ -89,6 +89,15 @@ pub extern "C" fn kernel_entry_aarch64(device_tree_blob: usize) -> ! {
     boot_kernel(boot_info)
 }
 
+// RISC-V QEMU entry: boot.S's `_start` calls `kernel_entry_riscv64` with the
+// pointer to the device-tree blob passed in a0 by QEMU (`-machine virt`).
+#[cfg(all(target_os = "none", target_arch = "riscv64"))]
+#[no_mangle]
+pub extern "C" fn kernel_entry_riscv64(device_tree_blob: usize) -> ! {
+    let boot_info = arch::boot::from_riscv64_qemu_direct(device_tree_blob);
+    boot_kernel(boot_info)
+}
+
 #[cfg(target_os = "none")]
 fn boot_kernel(boot_info: arch::boot::BootInfo) -> ! {
     util::debug::init();

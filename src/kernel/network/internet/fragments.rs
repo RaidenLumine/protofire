@@ -9,7 +9,7 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::ipv4::{Ipv4Addr, Ipv4Header, Ipv4Packet};
+use super::ipv4::{Ipv4Addr, Ipv4Header, Ipv4Packet, IPV4_MIN_HEADER_SIZE};
 
 // ─── Fragment reassembly timeout ────────────────────────────────────────
 
@@ -82,6 +82,12 @@ impl ReassemblyEntry {
     /// Check if all blocks from 0 to `total_blocks - 1` have been received.
     fn is_complete(&self) -> bool {
         if !self.have_last {
+            return false;
+        }
+        // `have_last` can be set without a reassembly buffer when the
+        // datagram exceeds MAX_DATAGRAM_SIZE — never report a complete,
+        // empty packet in that case.
+        if self.total_length == 0 || self.buffer.is_none() {
             return false;
         }
         let total_blocks = self.total_length.div_ceil(8);
@@ -234,9 +240,14 @@ pub fn process_ipv4_fragment(
 
     // Check if reassembly is complete.
     if entry.is_complete() {
+        let payload = entry.buffer.take().unwrap_or_default();
         let mut reassembled_header = entry.header.clone();
         reassembled_header.flags_fragment_offset = 0; // clear MF and offset
-        let payload = entry.buffer.take().unwrap_or_default();
+                                                      // The header is cloned from the first fragment, whose total_length
+                                                      // is only that fragment's wire length.  Report the true reassembled
+                                                      // datagram length (header + full payload).
+        reassembled_header.total_length =
+            (IPV4_MIN_HEADER_SIZE + payload.len()).min(u16::MAX as usize) as u16;
         cache.entries.remove(&key);
         return Some(Ipv4Packet {
             header: reassembled_header,

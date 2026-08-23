@@ -1,12 +1,10 @@
 # build outputs
-/target/
+target/
 *.iso
 
 # ISO tree outputs (entirely build artifacts)
 /isodir/
-
-# tools/ — generated / build artifacts
-/tools/gen-kaslr-relocs/target/
+/iso/
 
 # Editor and OS noise
 .DS_Store

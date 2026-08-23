@@ -118,21 +118,24 @@ pub(super) fn send_to_udp(context: &mut super::SyscallContext) -> Result<super::
     let (fd, dest_ip, dest_port, payload, is_v6) = send_to_udp_request(context)?;
     super::runtime::with_current_process(|process| {
         let socket = process.get_udp_socket(fd)?;
-        match dest_ip {
-            IpAddress::V4(v4) => {
-                if is_v6 {
-                    return Err(Error::InvalidArgument);
+        // SMAP guard: the network stack dereferences the user payload slice.
+        super::user_memory::with_user_access_guard(|| {
+            match dest_ip {
+                IpAddress::V4(v4) => {
+                    if is_v6 {
+                        return Err(Error::InvalidArgument);
+                    }
+                    network::send_to_udp(&socket, v4, dest_port, payload)?;
                 }
-                network::send_to_udp(&socket, v4, dest_port, payload)?;
-            }
-            IpAddress::V6(v6) => {
-                if !is_v6 {
-                    return Err(Error::InvalidArgument);
+                IpAddress::V6(v6) => {
+                    if !is_v6 {
+                        return Err(Error::InvalidArgument);
+                    }
+                    network::send_to_udp_v6(&socket, v6, dest_port, payload)?;
                 }
-                network::send_to_udp_v6(&socket, v6, dest_port, payload)?;
             }
-        }
-        Ok(super::SyscallDispatch::complete(payload.len()))
+            Ok(super::SyscallDispatch::complete(payload.len()))
+        })
     })
 }
 
@@ -140,29 +143,40 @@ pub(super) fn recv_from_udp(context: &mut super::SyscallContext) -> Result<super
     let (fd, buffer, src_addr_out_ptr, is_v6) = recv_from_udp_request(context)?;
     super::runtime::with_current_process(|process| {
         let socket = process.get_udp_socket(fd)?;
-        if is_v6 {
-            let (n, src_ip, src_port) = network::recv_from_udp_v6(&socket, buffer)?;
-            // Write 20-byte source address (16 IP + 2 port + 2 pad).
-            if src_addr_out_ptr != 0 {
-                let mut addr_bytes = [0u8; 20];
-                addr_bytes[0..16].copy_from_slice(&src_ip);
-                addr_bytes[16..18].copy_from_slice(&src_port.to_le_bytes());
-                // Bytes 18-19 remain zero (padding).
-                super::user_memory::copy_user_bytes(&addr_bytes, src_addr_out_ptr as *mut u8, 20)?;
+        // SMAP guard: the network stack writes the user receive buffer.
+        super::user_memory::with_user_access_guard(|| {
+            if is_v6 {
+                let (n, src_ip, src_port) = network::recv_from_udp_v6(&socket, buffer)?;
+                // Write 20-byte source address (16 IP + 2 port + 2 pad).
+                if src_addr_out_ptr != 0 {
+                    let mut addr_bytes = [0u8; 20];
+                    addr_bytes[0..16].copy_from_slice(&src_ip);
+                    addr_bytes[16..18].copy_from_slice(&src_port.to_le_bytes());
+                    // Bytes 18-19 remain zero (padding).
+                    super::user_memory::copy_user_bytes(
+                        &addr_bytes,
+                        src_addr_out_ptr as *mut u8,
+                        20,
+                    )?;
+                }
+                Ok(super::SyscallDispatch::complete(n))
+            } else {
+                let (n, src_ip, src_port) = network::recv_from_udp(&socket, buffer)?;
+                // Write 8-byte source address (4 IP + 2 port + 2 pad).
+                if src_addr_out_ptr != 0 {
+                    let mut addr_bytes = [0u8; 8];
+                    addr_bytes[0..4].copy_from_slice(&src_ip);
+                    addr_bytes[4..6].copy_from_slice(&src_port.to_le_bytes());
+                    // Bytes 6-7 remain zero (padding).
+                    super::user_memory::copy_user_bytes(
+                        &addr_bytes,
+                        src_addr_out_ptr as *mut u8,
+                        8,
+                    )?;
+                }
+                Ok(super::SyscallDispatch::complete(n))
             }
-            Ok(super::SyscallDispatch::complete(n))
-        } else {
-            let (n, src_ip, src_port) = network::recv_from_udp(&socket, buffer)?;
-            // Write 8-byte source address (4 IP + 2 port + 2 pad).
-            if src_addr_out_ptr != 0 {
-                let mut addr_bytes = [0u8; 8];
-                addr_bytes[0..4].copy_from_slice(&src_ip);
-                addr_bytes[4..6].copy_from_slice(&src_port.to_le_bytes());
-                // Bytes 6-7 remain zero (padding).
-                super::user_memory::copy_user_bytes(&addr_bytes, src_addr_out_ptr as *mut u8, 8)?;
-            }
-            Ok(super::SyscallDispatch::complete(n))
-        }
+        })
     })
 }
 
@@ -395,20 +409,24 @@ pub(super) fn send_raw_packet(
     let data = super::user_memory::optional_user_input_slice(data_ptr, data_len)?
         .ok_or(Error::InvalidArgument)?;
 
-    let dest_ip = if dest_ip_len == 4 {
-        let mut v4 = [0u8; 4];
-        v4.copy_from_slice(dest_slice);
-        IpAddress::V4(v4)
-    } else {
-        let mut v6 = [0u8; 16];
-        v6.copy_from_slice(dest_slice);
-        IpAddress::V6(v6)
-    };
-
     super::runtime::with_current_process(|process| {
         let handle = process.get_raw_socket(fd)?;
-        network::send_raw_packet(handle, dest_ip, data)?;
-        Ok(super::SyscallDispatch::complete(data_len))
+        // SMAP guard: reads the user dest-address + payload slices and hands
+        // them to the network stack.
+        super::user_memory::with_user_access_guard(|| {
+            let dest_ip = if dest_ip_len == 4 {
+                let mut v4 = [0u8; 4];
+                v4.copy_from_slice(dest_slice);
+                IpAddress::V4(v4)
+            } else {
+                let mut v6 = [0u8; 16];
+                v6.copy_from_slice(dest_slice);
+                IpAddress::V6(v6)
+            };
+
+            network::send_raw_packet(handle, dest_ip, data)?;
+            Ok(super::SyscallDispatch::complete(data_len))
+        })
     })
 }
 
@@ -439,21 +457,24 @@ pub(super) fn recv_raw_packet(
 
     super::runtime::with_current_process(|process| {
         let handle = process.get_raw_socket(fd)?;
-        let (n, src_ip) = network::recv_raw_packet(handle, buffer)?;
+        // SMAP guard: the network stack writes the user receive buffer.
+        super::user_memory::with_user_access_guard(|| {
+            let (n, src_ip) = network::recv_raw_packet(handle, buffer)?;
 
-        // Write source address back to user-space if requested.
-        if src_addr_out_ptr != 0 {
-            match src_ip {
-                IpAddress::V4(v4) => {
-                    super::user_memory::copy_user_bytes(&v4, src_addr_out_ptr as *mut u8, 4)?;
-                }
-                IpAddress::V6(v6) => {
-                    super::user_memory::copy_user_bytes(&v6, src_addr_out_ptr as *mut u8, 16)?;
+            // Write source address back to user-space if requested.
+            if src_addr_out_ptr != 0 {
+                match src_ip {
+                    IpAddress::V4(v4) => {
+                        super::user_memory::copy_user_bytes(&v4, src_addr_out_ptr as *mut u8, 4)?;
+                    }
+                    IpAddress::V6(v6) => {
+                        super::user_memory::copy_user_bytes(&v6, src_addr_out_ptr as *mut u8, 16)?;
+                    }
                 }
             }
-        }
 
-        Ok(super::SyscallDispatch::complete(n))
+            Ok(super::SyscallDispatch::complete(n))
+        })
     })
 }
 

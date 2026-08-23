@@ -31,13 +31,18 @@ pub(crate) fn read_inode_raw(
     ino: u32,
 ) -> Result<Ext4Inode> {
     let block_size = sb.block_size();
+    let inode_size = if sb.rev_level >= 1 {
+        sb.inode_size as usize
+    } else {
+        EXT4_GOOD_OLD_INODE_SIZE
+    };
     let bg_idx = sb.group_of_ino(ino);
     let inode_idx = sb.inode_index_in_group(ino);
     let bg = &bgs[bg_idx as usize];
     let inode_table_block = bg.bg_inode_table as u64;
-    let inodes_per_block = block_size / sb.inode_size as usize;
+    let inodes_per_block = block_size / inode_size;
     let block_offset = inode_idx as usize / inodes_per_block;
-    let offset_in_block = (inode_idx as usize % inodes_per_block) * sb.inode_size as usize;
+    let offset_in_block = (inode_idx as usize % inodes_per_block) * inode_size;
 
     let lba = inode_table_block * (block_size as u64 / BLOCK_SIZE as u64);
     let sector_count = block_size / BLOCK_SIZE;
@@ -48,8 +53,8 @@ pub(crate) fn read_inode_raw(
             &mut buf[i * BLOCK_SIZE..(i + 1) * BLOCK_SIZE],
         )?;
     }
-    let raw = &buf[offset_in_block..offset_in_block + sb.inode_size as usize];
-    Ok(read_ext4_inode(raw, sb.inode_size))
+    let raw = &buf[offset_in_block..offset_in_block + inode_size];
+    Ok(read_ext4_inode(raw, inode_size as u16))
 }
 
 // ─── Ext4Fs implementation ────────────────────────────────────────────────
@@ -169,6 +174,15 @@ impl Ext4Fs {
         let block_size = sb.block_size();
         if !(1024..=4096).contains(&block_size) || !block_size.is_power_of_two() {
             return Err(Error::DeviceError);
+        }
+
+        let inode_size = if sb.rev_level >= 1 {
+            sb.inode_size as usize
+        } else {
+            EXT4_GOOD_OLD_INODE_SIZE
+        };
+        if inode_size < EXT4_GOOD_OLD_INODE_SIZE || inode_size > block_size {
+            return Err(Error::InvalidArgument);
         }
 
         Ok(sb)
@@ -1176,7 +1190,11 @@ impl Ext4Fs {
     /// Write a raw inode using a closure that fills the raw bytes.
     /// Shared by `write_inode_raw` and `write_inode_zero`.
     fn write_inode_raw_impl(&self, ino: u32, fill: impl FnOnce(&mut [u8])) -> Result<()> {
-        let inode_size = self.sb.inode_size as usize;
+        let inode_size = if self.sb.rev_level >= 1 {
+            self.sb.inode_size as usize
+        } else {
+            EXT4_GOOD_OLD_INODE_SIZE
+        };
         let group = self.sb.group_of_ino(ino);
         let index = self.sb.inode_index_in_group(ino);
         let bg = &self.bg_descriptors.lock()[group as usize];

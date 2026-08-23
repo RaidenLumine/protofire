@@ -152,6 +152,11 @@ pub(crate) fn replay_ext4_journal(
     } else {
         jsb.block_size
     };
+    // The on-disk journal block size must match the filesystem block size,
+    // otherwise the derived sector count would index past the cache buffer.
+    if journal_block_size as usize != block_size {
+        return Err(Error::InvalidArgument);
+    }
     // Journal superblock feature flags for v3 checksum detection.
     let jsb_features_compat = read_u32_be(&buf, J_S_FEATURE_COMPAT);
     let _has_v3_checksums = (jsb_features_compat & 0x02) != 0; // bit 1 = journal checksum feature

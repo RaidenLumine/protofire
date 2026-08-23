@@ -249,6 +249,21 @@ impl VfsFileSystem for TmpFsVolume {
         let (parent_ino, name) = self.resolve_parent(path)?;
         let mut inner = self.inner.lock();
 
+        // Reject when the parent is not a directory or an entry with this
+        // name already exists; otherwise the freshly allocated inode would
+        // be orphaned by the entry overwrite below.
+        {
+            let parent = inner.inodes.get(&parent_ino).ok_or(Error::NotFound)?;
+            match &parent.data {
+                InodeData::Directory(entries) => {
+                    if entries.contains_key(&name) {
+                        return Err(Error::AlreadyExists);
+                    }
+                }
+                _ => return Err(Error::InvalidArgument),
+            }
+        }
+
         let file_mode = inner.file_mode;
         let ino = inner.insert_inode(InodeData::File(Vec::new()), file_mode);
 
@@ -272,6 +287,20 @@ impl VfsFileSystem for TmpFsVolume {
         let (parent_ino, name) = self.resolve_parent(path)?;
         let mut inner = self.inner.lock();
 
+        // Reject when the parent is not a directory or the name already
+        // exists; otherwise the fresh inode would be orphaned.
+        {
+            let parent = inner.inodes.get(&parent_ino).ok_or(Error::NotFound)?;
+            match &parent.data {
+                InodeData::Directory(entries) => {
+                    if entries.contains_key(&name) {
+                        return Err(Error::AlreadyExists);
+                    }
+                }
+                _ => return Err(Error::InvalidArgument),
+            }
+        }
+
         let dir_mode = inner.dir_mode;
         let ino = inner.insert_inode(InodeData::Directory(BTreeMap::new()), dir_mode);
 
@@ -292,6 +321,20 @@ impl VfsFileSystem for TmpFsVolume {
     fn create_symlink(&self, target: &str, path: &str) -> Result<Arc<dyn VNode>> {
         let (parent_ino, name) = self.resolve_parent(path)?;
         let mut inner = self.inner.lock();
+
+        // Reject when the parent is not a directory or the name already
+        // exists; otherwise the fresh inode would be orphaned.
+        {
+            let parent = inner.inodes.get(&parent_ino).ok_or(Error::NotFound)?;
+            match &parent.data {
+                InodeData::Directory(entries) => {
+                    if entries.contains_key(&name) {
+                        return Err(Error::AlreadyExists);
+                    }
+                }
+                _ => return Err(Error::InvalidArgument),
+            }
+        }
 
         let ino = inner.insert_inode(InodeData::Symlink(target.into()), 0o777);
 
@@ -314,6 +357,20 @@ impl VfsFileSystem for TmpFsVolume {
     fn create_device(&self, path: &str, major: u32, minor: u32) -> Result<Arc<dyn VNode>> {
         let (parent_ino, name) = self.resolve_parent(path)?;
         let mut inner = self.inner.lock();
+
+        // Reject when the parent is not a directory or the name already
+        // exists; otherwise the fresh inode would be orphaned.
+        {
+            let parent = inner.inodes.get(&parent_ino).ok_or(Error::NotFound)?;
+            match &parent.data {
+                InodeData::Directory(entries) => {
+                    if entries.contains_key(&name) {
+                        return Err(Error::AlreadyExists);
+                    }
+                }
+                _ => return Err(Error::InvalidArgument),
+            }
+        }
 
         let dev_mode = DEFAULT_DEVICE_MODE;
         let ino = inner.insert_inode(InodeData::Device { major, minor }, dev_mode);
@@ -374,6 +431,16 @@ impl VfsFileSystem for TmpFsVolume {
             }
         };
 
+        // Refuse to remove a non-empty directory; removing it here would
+        // orphan every inode it still references.
+        if let Some(child) = inner.inodes.get(&child_ino) {
+            if let InodeData::Directory(entries) = &child.data {
+                if !entries.is_empty() {
+                    return Err(Error::Busy);
+                }
+            }
+        }
+
         {
             let parent = inner.inodes.get_mut(&parent_ino).ok_or(Error::NotFound)?;
             if let InodeData::Directory(ref mut entries) = parent.data {
@@ -421,21 +488,66 @@ impl VfsFileSystem for TmpFsVolume {
             }
         };
 
-        // Remove stale target if exists.
-        {
-            let existing = {
-                let new_parent = inner.inodes.get(&new_parent_ino).ok_or(Error::NotFound)?;
-                match &new_parent.data {
-                    InodeData::Directory(ref entries) => entries.get(&new_name).copied(),
-                    _ => return Err(Error::InvalidArgument),
-                }
-            };
+        let child_is_dir = matches!(
+            inner.inodes.get(&child_ino).map(|inode| &inode.data),
+            Some(InodeData::Directory(_))
+        );
 
-            if let Some(existing_ino) = existing {
-                if let Some(target) = inner.inodes.get_mut(&existing_ino) {
-                    target.nlink -= 1;
-                    if target.nlink == 0 {
-                        inner.inodes.remove(&existing_ino);
+        // Renaming a directory into its own subtree would create a cycle
+        // that makes future path lookups loop forever.
+        if child_is_dir && subtree_contains(&inner, child_ino, new_parent_ino) {
+            return Err(Error::InvalidArgument);
+        }
+
+        let existing = {
+            let new_parent = inner.inodes.get(&new_parent_ino).ok_or(Error::NotFound)?;
+            match &new_parent.data {
+                InodeData::Directory(ref entries) => entries.get(&new_name).copied(),
+                _ => return Err(Error::InvalidArgument),
+            }
+        };
+
+        // Renaming a node onto itself (same name, or both names hard-linking
+        // the same inode) is a no-op.
+        if existing == Some(child_ino) {
+            return Ok(());
+        }
+
+        // Remove a stale target, validating kind compatibility first: a
+        // directory may only replace a directory (and only an empty one),
+        // and a non-directory may only replace a non-directory.
+        if let Some(existing_ino) = existing {
+            let target_is_dir = matches!(
+                inner.inodes.get(&existing_ino).map(|inode| &inode.data),
+                Some(InodeData::Directory(_))
+            );
+            if child_is_dir != target_is_dir {
+                return Err(Error::InvalidArgument);
+            }
+            if target_is_dir {
+                let target = inner.inodes.get(&existing_ino).ok_or(Error::NotFound)?;
+                if let InodeData::Directory(entries) = &target.data {
+                    if !entries.is_empty() {
+                        return Err(Error::Busy);
+                    }
+                }
+            }
+
+            let target_gone = {
+                let target = inner.inodes.get_mut(&existing_ino).ok_or(Error::NotFound)?;
+                target.nlink -= 1;
+                target.nlink == 0
+            };
+            if target_gone {
+                if let Some(target) = inner.inodes.remove(&existing_ino) {
+                    if let InodeData::File(ref data) = target.data {
+                        inner.used_size = inner.used_size.saturating_sub(data.len());
+                    }
+                }
+                // The replaced directory's ".." disappears from the parent.
+                if target_is_dir {
+                    if let Some(parent) = inner.inodes.get_mut(&new_parent_ino) {
+                        parent.nlink = parent.nlink.saturating_sub(1);
                     }
                 }
             }
@@ -459,6 +571,17 @@ impl VfsFileSystem for TmpFsVolume {
                 .ok_or(Error::NotFound)?;
             if let InodeData::Directory(ref mut entries) = new_parent.data {
                 entries.insert(new_name, child_ino);
+            }
+        }
+
+        // A moved directory's ".." leaves the old parent and arrives at the
+        // new one (a no-op when the parents coincide).
+        if child_is_dir && old_parent_ino != new_parent_ino {
+            if let Some(parent) = inner.inodes.get_mut(&old_parent_ino) {
+                parent.nlink = parent.nlink.saturating_sub(1);
+            }
+            if let Some(parent) = inner.inodes.get_mut(&new_parent_ino) {
+                parent.nlink = parent.nlink.saturating_add(1);
             }
         }
 
@@ -801,6 +924,32 @@ fn split_parent(path: &str) -> (&str, String) {
     };
     let name = &path[last_slash + 1..];
     (parent, name.into())
+}
+
+/// Return true if `needle` is an inode inside the directory subtree rooted
+/// at `ancestor` (excluding `ancestor` itself).  Used by `rename` to reject
+/// moves that would make a directory its own descendant.
+fn subtree_contains(inner: &TmpFsInner, ancestor: u64, needle: u64) -> bool {
+    let inode = match inner.inodes.get(&ancestor) {
+        Some(inode) => inode,
+        None => return false,
+    };
+    let entries = match &inode.data {
+        InodeData::Directory(entries) => entries,
+        _ => return false,
+    };
+    let mut stack: Vec<u64> = entries.values().copied().collect();
+    while let Some(idx) = stack.pop() {
+        if idx == needle {
+            return true;
+        }
+        if let Some(child) = inner.inodes.get(&idx) {
+            if let InodeData::Directory(entries) = &child.data {
+                stack.extend(entries.values().copied());
+            }
+        }
+    }
+    false
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────

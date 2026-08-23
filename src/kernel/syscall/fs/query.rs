@@ -5,7 +5,6 @@
 use alloc::vec::Vec;
 
 use crate::abi::fs::{self, BlockDeviceInfoRecord, MountInfoRecord};
-use crate::kernel::process::SecurityToken;
 use crate::{Error, Result};
 
 use super::user_memory::{copy_user_bytes, user_string};
@@ -27,21 +26,17 @@ pub(super) fn list_mounts(context: &mut SyscallContext) -> Result<SyscallDispatc
     let records: Vec<MountInfoRecord> = mounts
         .into_iter()
         .map(|m| {
-            let mut path = [0u8; fs::MOUNT_PATH_MAX];
-            let mut fs_name = [0u8; fs::MOUNT_FS_NAME_MAX];
-            let mut device = [0u8; fs::MOUNT_DEVICE_MAX];
+            // Zero-init the record so `#[repr(C)]` padding bytes are not
+            // leaked to user space when the record is serialized.
+            let mut record: MountInfoRecord = unsafe { core::mem::zeroed() };
 
-            fill_fixed_str(&mut path, &m.path);
-            fill_fixed_str(&mut fs_name, &m.fs_name);
-            fill_fixed_str(&mut device, &m.device);
+            fill_fixed_str(&mut record.path, &m.path);
+            fill_fixed_str(&mut record.fs_name, &m.fs_name);
+            fill_fixed_str(&mut record.device, &m.device);
+            record.flags = m.flags as u64;
+            record.reserved = 0;
 
-            MountInfoRecord {
-                path,
-                fs_name,
-                device,
-                flags: m.flags as u64,
-                reserved: 0,
-            }
+            record
         })
         .collect();
 
@@ -65,15 +60,16 @@ pub(super) fn list_block_devices(context: &mut SyscallContext) -> Result<Syscall
     let records: Vec<BlockDeviceInfoRecord> = devices
         .into_iter()
         .map(|d| {
-            let mut name = [0u8; fs::BLOCK_DEVICE_NAME_MAX];
-            fill_fixed_str(&mut name, &d.name);
+            // Zero-init the record so `#[repr(C)]` padding bytes are not
+            // leaked to user space when the record is serialized.
+            let mut record: BlockDeviceInfoRecord = unsafe { core::mem::zeroed() };
 
-            BlockDeviceInfoRecord {
-                name,
-                block_size: d.block_size as u64,
-                block_count: d.block_count,
-                read_only: d.read_only as u64,
-            }
+            fill_fixed_str(&mut record.name, &d.name);
+            record.block_size = d.block_size as u64;
+            record.block_count = d.block_count;
+            record.read_only = d.read_only as u64;
+
+            record
         })
         .collect();
 
@@ -112,18 +108,13 @@ pub(super) fn set_security_descriptor(context: &mut SyscallContext) -> Result<Sy
         update = update.owner_gid(owner_gid);
     }
 
-    let Some(fs_guard) = crate::kernel::fs::global() else {
-        return Err(Error::InternalError);
-    };
-    let fs = fs_guard.lock();
-    let normalized = fs.normalize_path(&path)?;
-    // Use the system security token (ring0) since this is a syscall from
-    // the shell proxy thread.
-    let token = SecurityToken::system();
-
-    fs.update_persistent_security_descriptor_for_normalized_path(&normalized, update, token)?;
-
-    Ok(SyscallDispatch::complete(0))
+    // Authorize the update against the caller's security token so the
+    // filesystem's permission-mutation policy gates the operation.
+    super::runtime::with_current_process_security_token_fs(|token, fs| {
+        let normalized = fs.normalize_path(&path)?;
+        fs.update_persistent_security_descriptor_for_normalized_path(&normalized, update, token)?;
+        Ok(SyscallDispatch::complete(0))
+    })
 }
 
 // ── RepairVolume (slot 94) ───────────────────────────────────────────────
@@ -224,15 +215,17 @@ fn write_record_slice_to_user<T>(
         return Err(Error::InvalidArgument);
     }
 
-    // Build contiguous byte slice from records.
-    let bytes: Vec<u8> = records[..count]
-        .iter()
-        .flat_map(|r| {
-            let ptr = (r as *const T).cast::<u8>();
-            let slice = unsafe { core::slice::from_raw_parts(ptr, record_size) };
-            slice.iter().copied()
-        })
-        .collect();
+    // Build contiguous byte slice from records into a zero-initialized
+    // buffer so `#[repr(C)]` padding bytes are not leaked to user space.
+    let mut bytes = alloc::vec![0u8; byte_count];
+    for (slot, record) in bytes
+        .chunks_exact_mut(record_size)
+        .zip(records[..count].iter())
+    {
+        let ptr = (record as *const T).cast::<u8>();
+        let slice = unsafe { core::slice::from_raw_parts(ptr, record_size) };
+        slot.copy_from_slice(slice);
+    }
 
     copy_user_bytes(&bytes, buffer_ptr, byte_count).map(|_| SyscallDispatch::complete(count))
 }

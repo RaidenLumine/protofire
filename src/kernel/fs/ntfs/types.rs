@@ -242,6 +242,9 @@ pub fn parse_attributes(buf: &[u8], mut offset: usize) -> Vec<ParsedAttr> {
                 buf[offset + 19],
             ]) as usize;
             let start = offset + content_off;
+            if start > buf.len() {
+                break;
+            }
             let end = (start + content_size).min(buf.len());
             attrs.push(ParsedAttr {
                 attr_type,

@@ -250,7 +250,13 @@ pub fn create_server_association(
 /// (INIT_ACK, COOKIE_ACK) through the state machine.
 pub fn process_incoming(assoc: &mut Association, packet: &[u8]) -> Result<ProcessResult> {
     let (header, chunks) = parse_sctp_packet(packet)?;
-    if header.verification_tag != 0 && header.verification_tag != assoc.remote_verification_tag {
+    // In CookieWait the INIT_ACK packet header carries the initiate tag we
+    // sent in our own INIT, not the peer's tag (which is only known after
+    // the INIT_ACK is processed), so skip the tag match at that stage.
+    if assoc.state != AssocState::CookieWait
+        && header.verification_tag != 0
+        && header.verification_tag != assoc.remote_verification_tag
+    {
         return Err(Error::InvalidArgument);
     }
 

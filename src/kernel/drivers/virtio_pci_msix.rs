@@ -74,10 +74,14 @@ const MSIX_VECTOR_MASKED: u32 = 1;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 const MSIX_ENTRY_BYTES: usize = 16;
 /// Offset of the Message Address field within an entry.
+/// Currently unused (the driver programmes MSI-X entries via
+/// `ENTRY_VECTOR_CONTROL` only); kept as documentation of the entry layout.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[allow(dead_code)]
 const ENTRY_ADDRESS: usize = 0;
 /// Offset of the Message Data field within an entry.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[allow(dead_code)]
 const ENTRY_DATA: usize = 8;
 /// Offset of the Vector Control field within an entry.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]

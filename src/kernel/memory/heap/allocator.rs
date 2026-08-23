@@ -248,32 +248,52 @@ impl KernelGlobalAllocator {
                     continue 'search;
                 }
 
-                let consumed = alloc_end.wrapping_sub(candidate);
-                state.available = state.available.saturating_sub(consumed);
-
                 // ── Prefix (before aligned payload) ──
                 let prefix_size = alloc_header_start.wrapping_sub(candidate);
                 let prefix_created = prefix_size >= MIN_FREE_BLOCK;
-                if prefix_created {
-                    block_set_size(candidate, prefix_size);
-                    block_clear_used(candidate);
-                    insert_free_block(state, candidate);
-                }
 
                 // ── Suffix (after the allocation) ──
                 let suffix_size = block_end.wrapping_sub(alloc_end);
                 let suffix_created = suffix_size >= MIN_FREE_BLOCK;
+
+                // ── Mark the allocated block as used ──
+                // A sub-minimum prefix (smaller than MIN_FREE_BLOCK) is too
+                // small to be inserted as a free block.  Absorb it into the
+                // allocated block by placing the block header at the free
+                // block start, so the gap is reclaimed on free instead of
+                // being orphaned forever.  A forwarding pointer to that start
+                // is stored in the padding slot at `alloc_header_start` so
+                // deallocate_locked can locate the real header.
+                let (alloc_start, allocated_size) = if prefix_created {
+                    block_set_size(candidate, prefix_size);
+                    block_clear_used(candidate);
+                    insert_free_block(state, candidate);
+
+                    let allocated_size = alloc_end.wrapping_sub(alloc_header_start);
+                    block_set_size(alloc_header_start, allocated_size);
+                    block_set_used(alloc_header_start);
+                    (alloc_header_start, allocated_size)
+                } else if prefix_size > 0 {
+                    let allocated_size = alloc_end.wrapping_sub(candidate);
+                    block_set_size(candidate, allocated_size);
+                    block_set_used(candidate);
+                    // Already inside the enclosing `unsafe` block above.
+                    core::ptr::write(alloc_header_start as *mut usize, candidate);
+                    (candidate, allocated_size)
+                } else {
+                    let allocated_size = alloc_end.wrapping_sub(alloc_header_start);
+                    block_set_size(alloc_header_start, allocated_size);
+                    block_set_used(alloc_header_start);
+                    (alloc_header_start, allocated_size)
+                };
+
+                // ── Suffix (after the allocation) ──
                 if suffix_created {
                     block_set_size(alloc_end, suffix_size);
                     block_clear_used(alloc_end);
-                    block_set_prev_phys(alloc_end, alloc_header_start);
+                    block_set_prev_phys(alloc_end, alloc_start);
                     insert_free_block(state, alloc_end);
                 }
-
-                // ── Mark the allocated block as used ──
-                let allocated_size = alloc_end.wrapping_sub(alloc_header_start);
-                block_set_size(alloc_header_start, allocated_size);
-                block_set_used(alloc_header_start);
 
                 // ── Fix up prev_phys chain ──
                 if prefix_created {
@@ -282,6 +302,13 @@ impl KernelGlobalAllocator {
                 if suffix_created {
                     block_set_prev_phys_of_next(alloc_end, alloc_end);
                 }
+
+                // ── Accounting: only the bytes that become unavailable are
+                //    removed.  The allocated block (which may include an
+                //    absorbed alignment prefix) is subtracted here and added
+                //    back on free; re-inserted prefix/suffix free blocks are
+                //    not double-counted.
+                state.available = state.available.saturating_sub(allocated_size);
 
                 profiler.add_heap_bytes_allocated(allocated_size as u64);
                 break 'search payload_start as *mut u8;
@@ -314,9 +341,42 @@ impl KernelGlobalAllocator {
         }
 
         let payload_start = ptr as usize;
-        let header_start = match payload_start.checked_sub(HEADER_SIZE) {
+        let nominal = match payload_start.checked_sub(HEADER_SIZE) {
             Some(addr) => addr,
             None => return false,
+        };
+
+        // A block whose allocation absorbed a sub-minimum (16-byte) alignment
+        // prefix keeps its true header at the free-block start, one
+        // HEAP_BLOCK_ALIGNMENT below `nominal`, and stores a forwarding
+        // pointer to that start in the padding slot at `nominal`.  A used
+        // block's size word at `nominal` is always odd (bit 0 is the used
+        // flag), so a 16-aligned value there unambiguously marks a forwarded
+        // block.
+        let header_start = if nominal >= state.start && nominal < state.end {
+            let fwd = unsafe { *(nominal as *const usize) };
+            if fwd >= state.start
+                && fwd < nominal
+                && fwd.is_multiple_of(HEAP_BLOCK_ALIGNMENT)
+                && nominal == fwd.wrapping_add(HEAP_BLOCK_ALIGNMENT)
+            {
+                let size = unsafe { block_size(fwd) };
+                let end = fwd.wrapping_add(size);
+                if unsafe { block_is_used(fwd) }
+                    && size >= HEADER_SIZE
+                    && fwd <= payload_start
+                    && payload_start < end
+                    && end <= state.end
+                {
+                    fwd
+                } else {
+                    nominal
+                }
+            } else {
+                nominal
+            }
+        } else {
+            nominal
         };
 
         if !(state.start..state.end).contains(&header_start) {

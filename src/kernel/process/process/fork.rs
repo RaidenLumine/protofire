@@ -81,10 +81,63 @@ impl Process {
 
     pub(crate) fn complete_termination(&self, reason: Option<TerminationReason>) {
         self.set_state(ProcessState::Terminated);
-        self.record_termination_reason(reason);
+        // A reason recorded up front by `request_termination` (a remote
+        // SIGKILL) must survive if the terminating thread has none of its
+        // own to report.
+        match reason {
+            Some(reason) => self.record_termination_reason(Some(reason)),
+            None if self.termination_reason.lock().is_none() => {
+                self.record_termination_reason(None)
+            }
+            None => {}
+        }
         self.termination_reaped.store(false, Ordering::Release);
         self.release_termination_resources();
         let _ = self.termination_event.signal();
+    }
+
+    /// Request termination of this process from a context that may be running
+    /// on a different CPU than the process's own threads.
+    ///
+    /// Unlike [`complete_termination`](Self::complete_termination), this does
+    /// **not** release the process's resources (fd table, address space,
+    /// shared-memory segments) from the caller's context — doing so would
+    /// race with a thread still executing on another CPU.  Threads that are
+    /// not currently running are terminated immediately; a running thread is
+    /// flagged to self-terminate at its next scheduler boundary, where the
+    /// resource teardown runs in its own context.
+    pub(crate) fn request_termination(&self, reason: Option<TerminationReason>) {
+        if self.is_terminated() {
+            return;
+        }
+        if let Some(reason) = reason {
+            self.record_termination_reason(Some(reason));
+        }
+        self.set_state(ProcessState::Terminated);
+        self.termination_reaped.store(false, Ordering::Release);
+
+        let mut running_present = false;
+        let mut scanned = false;
+        if let Some(scheduler) = crate::kernel::process::Scheduler::global() {
+            let mut running = false;
+            crate::kernel::smp::for_each_percpu_scheduler(|_cpu_id, sched| {
+                running |= sched.terminate_threads_of_process(self).running_present;
+            });
+            // Single-CPU (or before per-CPU schedulers are registered): the
+            // primary scheduler holds the process's threads.
+            if crate::kernel::smp::online_cpu_count() <= 1 {
+                running |= scheduler.terminate_threads_of_process(self).running_present;
+            }
+            running_present = running;
+            scanned = true;
+        }
+
+        if !scanned || !running_present {
+            // No global scheduler (host unit tests) or no thread is currently
+            // executing: nothing can be racing with us, so finishing the
+            // termination here is safe.
+            self.complete_termination(reason);
+        }
     }
 
     fn clear_signal_runtime_state(&self) {
@@ -126,8 +179,10 @@ impl Process {
     /// writable pages become Copy-on-Write (shared read-only).
     ///
     /// Returns the child process whose address space is already installed.
-    /// The caller must create a child user thread and register the child
-    /// process with the scheduler.
+    /// The caller must pass a freshly allocated `child_pid` (PID 0 is not a
+    /// valid process identity and would corrupt the parent's child table and
+    /// the fork return value), then create a child user thread and register
+    /// the child process with the scheduler.
     #[cfg(any(
         target_arch = "x86_64",
         target_arch = "aarch64",
@@ -136,6 +191,7 @@ impl Process {
     pub fn fork(
         self: &Arc<Process>,
         memory: &mut crate::kernel::memory::MemoryManager,
+        child_pid: u32,
     ) -> Result<Arc<Process>> {
         use crate::kernel::memory::paging::{MappingKind, PagePermissions};
 
@@ -152,7 +208,8 @@ impl Process {
             name.push_str("-fork");
             name
         };
-        let child = Process::new_with_security_token(0, &child_name, *self.security_token.lock());
+        let child =
+            Process::new_with_security_token(child_pid, &child_name, *self.security_token.lock());
 
         // ── 2. Clone FDs ─────────────────────────────────────────────
         {
@@ -228,9 +285,19 @@ impl Process {
             }
         }
 
-        // Non-CoW pages (DemandPaged code pages, read-only data).
+        // Non-CoW pages (DemandPaged code pages, read-only data).  Pages the
+        // parent already shares CoW with one of its own ancestors (inherited
+        // from a prior fork) must stay CoW in the grandchild and gain one more
+        // reference to the shared frame; re-registering them as
+        // Anonymous/DemandPaged would undercount the holders and let a later
+        // teardown skip the CoW refcount release.
         for &(va, pa, perms) in &all_child_pages {
             if shared_pages.iter().any(|(v, _, _)| *v == va) {
+                continue;
+            }
+            if let Some((_, _, MappingKind::Cow)) = memory.page_table().lookup_mapping(va) {
+                memory.inc_frame_refcount(pa); // grandchild's reference
+                child_cow_entries.push((va, pa, PagePermissions::READ, MappingKind::Cow));
                 continue;
             }
             let kind = if perms.contains(PagePermissions::EXECUTE) {

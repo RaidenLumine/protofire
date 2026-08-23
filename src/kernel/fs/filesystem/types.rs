@@ -99,9 +99,9 @@ pub(crate) enum BootDiskLayoutSource {
 pub(crate) enum StorageInitReport {
     BootDiskMbrPartitions,
     BootDiskFixedZoneFallback,
-    // Constructed only on host / demo-disk / test builds; on a bare-metal
-    // non-demo boot the variant is never built, so silence it for RISC-V.
-    #[cfg_attr(target_arch = "riscv64", allow(dead_code))]
+    // Constructed only on host / demo-disk / test builds; on any bare-metal
+    // non-demo boot (x86_64 / aarch64 / riscv64) the variant is never built.
+    #[cfg_attr(target_os = "none", allow(dead_code))]
     MemoryDemo {
         boot_disk_error: Option<crate::Error>,
     },

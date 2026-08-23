@@ -1,6 +1,7 @@
 //! src/kernel/process/scheduler/terminate.rs
 //! Thread termination.
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use crate::arch;
 use crate::kernel::sync::wait::WaiterIdentity;
@@ -13,14 +14,22 @@ impl Scheduler {
     pub(crate) fn terminate_sibling_threads(&self, process: &Process, current_tid: ThreadId) {
         let pid = process.pid();
 
-        // Remove sibling threads from all ready queues and terminate them.
+        // Remove sibling threads from all ready queues, collecting them so
+        // they can be terminated *outside* the ready_queues lock.
+        //
+        // `Thread::terminate()` signals the thread's termination event,
+        // which wakes join() waiters via `WaitQueue::wake_with` →
+        // `Scheduler::wake_thread` → `enqueue_ready_thread`.  That path
+        // re-locks ready_queues, so calling terminate() while still holding
+        // the guard would self-deadlock a spinlock mutex whenever a dying
+        // sibling has a live join() waiter.
+        let mut to_terminate: Vec<Arc<Thread>> = Vec::new();
         {
             let mut ready_queues = self.ready_queues.lock();
             for deque in ready_queues.iter_mut() {
-                // Collect first so we can terminate outside the lock.
                 deque.retain(|t| {
                     if t.pid() == pid && t.tid() != current_tid {
-                        t.terminate();
+                        to_terminate.push(t.clone());
                         false
                     } else {
                         true
@@ -29,17 +38,22 @@ impl Scheduler {
             }
         }
 
-        // Remove sibling threads from the waiting queue and terminate them.
+        // Same for the waiting queue: remove the sibling waiters, terminate
+        // them only after both queue locks are released.
         {
             let mut waiting_queue = self.waiting_queue.lock();
             waiting_queue.retain(|w| {
                 if w.thread.pid() == pid && w.thread.tid() != current_tid {
-                    w.thread.terminate();
+                    to_terminate.push(w.thread.clone());
                     false
                 } else {
                     true
                 }
             });
+        }
+
+        for thread in to_terminate {
+            thread.terminate();
         }
     }
 

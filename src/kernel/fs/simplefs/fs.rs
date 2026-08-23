@@ -15,6 +15,18 @@ use super::types::{OnDiskDirEntry, OnDiskInode};
 use super::{SimpleFs, SimpleFsState};
 
 impl SimpleFs {
+    /// Bump the live open-handle count for `inode_index`.  Every `SimpleVNode`
+    /// created for this index must be balanced by a matching drop so that an
+    /// unlinked slot is never recycled while a handle still references it.
+    pub(crate) fn track_handle(&self, inode_index: usize) {
+        self.state
+            .lock()
+            .open_handles
+            .entry(inode_index)
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
+    }
+
     /// Resolve a path to an inode index without following symlinks.
     pub(crate) fn lookup_index(&self, path: &str) -> Result<usize> {
         if path.is_empty() || path == "/" {

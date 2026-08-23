@@ -281,6 +281,9 @@ pub fn read_dir_entries(
             break;
         }
         let data_start = items[idx].data_offset as usize;
+        if data_start + 8 > buf.len() {
+            break;
+        }
         bytenr = u64::from_le_bytes([
             buf[data_start],
             buf[data_start + 1],
@@ -338,6 +341,9 @@ pub fn read_extents(
             break;
         }
         let data_start = items[idx].data_offset as usize;
+        if data_start + 8 > buf.len() {
+            break;
+        }
         bytenr = u64::from_le_bytes([
             buf[data_start],
             buf[data_start + 1],

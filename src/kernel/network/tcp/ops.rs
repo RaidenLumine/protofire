@@ -229,6 +229,37 @@ pub(crate) fn try_flush_tcp_output(
 
 // ─── Process segment (IPv4) ───────────────────────────────────────────
 
+/// Advance the send state in response to an incoming acknowledgement:
+/// move `send_unacked` forward, pop acknowledged segments from the
+/// retransmit queue, and drain the acknowledged bytes from the send buffer.
+///
+/// Shared by the Established/CloseWait path and the FinWait1/LastAck/Closing
+/// close-path arms so that closing a connection with data still in flight
+/// continues to track ACKs (otherwise the retransmit queue never advances).
+///
+/// Only acknowledgements at or below SND.NXT are honoured; a bogus ack
+/// beyond what we have sent would otherwise freeze the send side.
+fn process_data_ack(state: &mut TcpConnectionState, ack_val: u32) {
+    let diff = ack_val.wrapping_sub(state.send_unacked);
+    if diff > 0 && diff <= (u32::MAX / 2) && state.send_next.wrapping_sub(ack_val) <= (u32::MAX / 2)
+    {
+        state.send_unacked = ack_val;
+        while let Some(&(next_seq, _)) = state.retransmit.pending_segments.front() {
+            if ack_val.wrapping_sub(next_seq) <= (u32::MAX / 2) {
+                state.retransmit.pending_segments.pop_front();
+            } else {
+                break;
+            }
+        }
+        pop_sacked_segments(state);
+        if state.retransmit.pending_segments.is_empty() {
+            state.retransmit.count = 0;
+        }
+        let pop_bytes = (diff as usize).min(state.send_buffer.len());
+        state.send_buffer.drain(..pop_bytes);
+    }
+}
+
 /// Process an incoming TCP segment (IPv4) and update connection state.
 pub fn process_segment(
     table: &mut TcpConnectionTable,
@@ -343,6 +374,7 @@ pub fn process_segment(
 
     let mut state = conn.lock();
     let flags = header.flags;
+    let seq = header.sequence_number;
     let is_syn = flags & TCP_FLAG_SYN != 0;
     let is_ack = flags & TCP_FLAG_ACK != 0;
     let is_fin = flags & TCP_FLAG_FIN != 0;
@@ -477,7 +509,6 @@ pub fn process_segment(
             }
 
             if !payload.is_empty() && state.state != TcpState::Closed {
-                let seq = header.sequence_number;
                 // RFC 793 §2.8 / RFC 1122 §4.2.2.2: record a push boundary
                 // when PSH is set so readers can return data promptly.
                 if flags & TCP_FLAG_PSH != 0 {
@@ -494,7 +525,22 @@ pub fn process_segment(
                         .add_tcp_bytes_rx(deliver_ooo(&mut state) as u64);
                 } else {
                     let diff = seq.wrapping_sub(state.recv_next);
-                    if diff <= (u32::MAX / 2) && diff > 0 && state.peer_sack_ok {
+                    // A retransmission may start before recv_next yet still carry
+                    // fresh in-order bytes beyond it (seq < recv_next < seq+len).
+                    // Accept that in-order tail instead of silently dropping it.
+                    let overlap = state.recv_next.wrapping_sub(seq);
+                    if overlap > 0 && overlap < payload.len() as u32 {
+                        let start = overlap as usize;
+                        let available_space =
+                            MAX_RECV_BUFFER.saturating_sub(state.recv_buffer.len());
+                        let accepted = (payload.len() - start).min(available_space);
+                        state.recv_buffer.extend(&payload[start..start + accepted]);
+                        state.recv_next = state.recv_next.wrapping_add(accepted as u32);
+                        stack.profiler.add_tcp_bytes_rx(accepted as u64);
+                        stack
+                            .profiler
+                            .add_tcp_bytes_rx(deliver_ooo(&mut state) as u64);
+                    } else if diff <= (u32::MAX / 2) && diff > 0 && state.peer_sack_ok {
                         let ooo_data = Vec::from(payload);
                         enqueue_ooo(&mut state, seq, ooo_data);
                     }
@@ -525,58 +571,46 @@ pub fn process_segment(
                 if diff == 0 && !state.retransmit.pending_segments.is_empty() {
                     stack.profiler.inc_tcp_duplicate_acks();
                 }
-                if diff <= (u32::MAX / 2) && diff > 0 {
-                    state.send_unacked = ack_val;
-                    while let Some(&(next_seq, _)) = state.retransmit.pending_segments.front() {
-                        if ack_val.wrapping_sub(next_seq) <= (u32::MAX / 2) {
-                            state.retransmit.pending_segments.pop_front();
-                        } else {
-                            break;
-                        }
-                    }
-                    pop_sacked_segments(&mut state);
-                    if state.retransmit.pending_segments.is_empty() {
-                        state.retransmit.count = 0;
-                    }
-                    let pop_bytes = (diff as usize).min(state.send_buffer.len());
-                    state.send_buffer.drain(..pop_bytes);
-                }
+                // Advance the send state, honouring only ack <= SND.NXT (the
+                // helper rejects acks beyond what we have actually sent).
+                process_data_ack(&mut state, ack_val);
                 state.send_window = (header.window_size as u32) << state.peer_window_scale;
             }
 
             if is_fin {
-                state.recv_next = state.recv_next.wrapping_add(1);
-                deliver_ooo(&mut state);
-                if state.state == TcpState::Established {
-                    state.state = TcpState::CloseWait;
-                    state.ts_val = state.ts_val.wrapping_add(1);
-                    let fin_flags = TCP_FLAG_ACK | state.ecn.ack_flags();
-                    let fin_ack = TcpHeader {
-                        source_port: state.local_port,
-                        destination_port: state.remote_port,
-                        sequence_number: state.send_next,
-                        acknowledgment_number: state.recv_next,
-                        data_offset: 0,
-                        flags: fin_flags,
-                        window_size: state.recv_window(),
-                        checksum: 0,
-                        urgent_pointer: 0,
-                        options: timestamped_options(&state),
-                    };
-                    state.ecn.on_segment_sent(fin_flags);
-                    let ack_seg =
-                        build_tcp_segment(&fin_ack, &[], stack.local_ip(), state.remote_ip);
-                    pending.push((src_ip, ack_seg));
-                } else if state.state == TcpState::FinWait1 {
-                    if header.acknowledgment_number == state.send_next.wrapping_add(1) {
+                // The FIN occupies the sequence-number slot immediately after
+                // the segment payload. Only consume it once all preceding data
+                // is in order — a FIN riding on a partially-accepted payload
+                // must not be acknowledged, or truncated bytes are ACKed as if
+                // they had been delivered.
+                let fin_seq = seq.wrapping_add(payload.len() as u32);
+                if fin_seq == state.recv_next {
+                    state.recv_next = state.recv_next.wrapping_add(1);
+                    deliver_ooo(&mut state);
+                    if state.state == TcpState::Established {
+                        state.state = TcpState::CloseWait;
+                        state.ts_val = state.ts_val.wrapping_add(1);
+                        let fin_flags = TCP_FLAG_ACK | state.ecn.ack_flags();
+                        let fin_ack = TcpHeader {
+                            source_port: state.local_port,
+                            destination_port: state.remote_port,
+                            sequence_number: state.send_next,
+                            acknowledgment_number: state.recv_next,
+                            data_offset: 0,
+                            flags: fin_flags,
+                            window_size: state.recv_window(),
+                            checksum: 0,
+                            urgent_pointer: 0,
+                            options: timestamped_options(&state),
+                        };
+                        state.ecn.on_segment_sent(fin_flags);
+                        let ack_seg =
+                            build_tcp_segment(&fin_ack, &[], stack.local_ip(), state.remote_ip);
+                        pending.push((src_ip, ack_seg));
+                    } else if state.state == TcpState::FinWait2 {
                         state.state = TcpState::TimeWait;
                         state.time_wait_start = stack.current_tick();
-                    } else {
-                        state.state = TcpState::Closing;
                     }
-                } else if state.state == TcpState::FinWait2 {
-                    state.state = TcpState::TimeWait;
-                    state.time_wait_start = stack.current_tick();
                 }
             }
 
@@ -585,7 +619,11 @@ pub fn process_segment(
                 let window = state.send_window.max(1) as usize;
                 // Skip bytes already sent but not yet acknowledged.
                 let ahead = state.send_next.wrapping_sub(state.send_unacked) as usize;
+                // The peer's advertised window covers the whole in-flight window
+                // (SND.WND - (SND.NXT - SND.UNA)); subtract `ahead` so we never
+                // exceed the flow-control budget by up to a full MSS.
                 let can_send = window
+                    .saturating_sub(ahead)
                     .min(effective_mss)
                     .min(state.send_buffer.len().saturating_sub(ahead));
                 let nagle_allows =
@@ -632,12 +670,22 @@ pub fn process_segment(
                 table.remove(local_port, src_ip, remote_port);
                 return Ok(pending);
             }
-            if is_ack && header.acknowledgment_number == state.send_next.wrapping_add(1) {
-                if is_fin {
-                    state.state = TcpState::TimeWait;
-                    state.time_wait_start = stack.current_tick();
-                } else {
-                    state.state = TcpState::FinWait2;
+            if is_ack {
+                // Keep tracking data ACKs while closing so the retransmit
+                // queue advances and in-flight data is eventually drained.
+                process_data_ack(&mut state, header.acknowledgment_number);
+                // Our FIN is acknowledged when ack == send_next: the FIN
+                // occupies the single slot at send_next - 1, so a compliant
+                // peer ACKs it with send_next (not send_next + 1).
+                if header.acknowledgment_number == state.send_next {
+                    if is_fin {
+                        state.state = TcpState::TimeWait;
+                        state.time_wait_start = stack.current_tick();
+                    } else {
+                        state.state = TcpState::FinWait2;
+                    }
+                } else if is_fin {
+                    state.state = TcpState::Closing;
                 }
             } else if is_fin {
                 state.state = TcpState::Closing;
@@ -645,11 +693,16 @@ pub fn process_segment(
         }
 
         TcpState::LastAck => {
-            if is_ack && header.acknowledgment_number == state.send_next.wrapping_add(1) {
-                state.state = TcpState::Closed;
-                drop(state);
-                table.remove(local_port, src_ip, remote_port);
-                return Ok(pending);
+            if is_ack {
+                process_data_ack(&mut state, header.acknowledgment_number);
+                // Our FIN is acknowledged when ack == send_next (the FIN's slot
+                // is at send_next - 1).
+                if header.acknowledgment_number == state.send_next {
+                    state.state = TcpState::Closed;
+                    drop(state);
+                    table.remove(local_port, src_ip, remote_port);
+                    return Ok(pending);
+                }
             }
         }
 
@@ -689,9 +742,12 @@ pub fn process_segment(
                 table.remove(local_port, src_ip, remote_port);
                 return Ok(pending);
             }
-            if is_ack && header.acknowledgment_number == state.send_next.wrapping_add(1) {
-                state.state = TcpState::TimeWait;
-                state.time_wait_start = stack.current_tick();
+            if is_ack {
+                process_data_ack(&mut state, header.acknowledgment_number);
+                if header.acknowledgment_number == state.send_next {
+                    state.state = TcpState::TimeWait;
+                    state.time_wait_start = stack.current_tick();
+                }
             }
         }
 

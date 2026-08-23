@@ -368,13 +368,11 @@ pub fn init() {
 
     // Enable SMEP so the kernel cannot execute user-accessible pages.
     // SMAP is enabled separately after copy_from/to_user paths are audited.
+    // Both functions CPUID-gate internally (no-op on CPUs without the bits)
+    // and `enable_smap` marks SMAP active so the `stac`/`clac` wrappers on
+    // the user-memory access paths (UserAccessGuard / with_user_access) are
+    // actually emitted.
     super::super::control_regs::enable_smep();
-
-    // SMAP (CR4 bit 21) is enabled here so the hardware feature is active,
-    // but the stac/clac wrappers on user-memory access paths are not yet
-    // in place.  When the bare-metal kernel first touches a user page after
-    // this point it will fault — that is the expected SMAP trap proving the
-    // bit is live.  The full stac/clac audit is tracked as a follow-up task.
     super::super::control_regs::enable_smap();
 }
 
@@ -847,17 +845,14 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
     // Clear the Present bit and invalidate the TLB entry on all CPUs.
     core::ptr::write_volatile(pt.add(pt_index), pte & !PAGE_ENTRY_PRESENT);
 
-    // Use local invlpg instead of tlb_shootdown for now.  The cross-CPU
-    // shootdown path (IPI → ack) can deadlock when called from an AP during
-    // early boot: the BSP may be inside a SpinLock critical section with
-    // interrupts disabled and won't see the IPI until it's too late.
-    // A stale TLB entry on the remote CPU for a never-accessed guard page is
-    // harmless — the page is already unmapped in the page table, so any
-    // access still faults.  We still do the local invalidation so the
-    // calling CPU sees the new mapping immediately.
-    unsafe {
-        core::arch::asm!("invlpg [{}]", in(reg) va, options(nostack));
-    }
+    // `tlb_shootdown` invalidates the local entry immediately and bumps a
+    // global generation counter that remote CPUs observe on their next
+    // kernel entry (timer tick / syscall / exception), flushing their TLB.
+    // Unlike an IPI → ack shootdown it sends no IPIs, so it is safe to call
+    // from an AP during early boot.  A remote CPU that kept a stale valid
+    // translation could otherwise still access the unmapped page (TLB hit
+    // without a page walk), so the full-coverage flush matters.
+    crate::kernel::smp::tlb_shootdown(va);
 
     true
 }

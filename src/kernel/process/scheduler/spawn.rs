@@ -27,10 +27,18 @@ impl Scheduler {
         } else {
             0
         };
-        // Register the process in this (the BSP's / primary) scheduler's
+        // Register the process in the primary (BSP, CPU 0) scheduler's
         // process list.  Per-CPU schedulers do not maintain their own process
-        // registries.
-        self.processes.lock().push(process.clone());
+        // registries: process enumeration (`process_count`,
+        // `list_process_summaries`, `select_oom_victim_by`, `reap_process`)
+        // reads only the primary's list.  `Scheduler::global()` returns the
+        // *local* per-CPU scheduler on bare metal, so pushing to `self` would
+        // make a process spawned from a non-CPU0 syscall context invisible to
+        // every process scan and leak it at teardown.
+        self.primary_scheduler()
+            .processes
+            .lock()
+            .push(process.clone());
         if start_suspended {
             // Keep the process in New state — it will be transitioned to
             // Ready and enqueued when the parent calls wait_process.
@@ -184,6 +192,88 @@ impl Scheduler {
             }
         }
         stopped
+    }
+
+    /// Terminate every scheduler-visible thread of `process` that is not
+    /// currently executing.
+    ///
+    /// Ready and waiting threads are terminated immediately — they are not
+    /// running, so releasing their process resources from this context is
+    /// safe.  A thread currently running on this CPU is only flagged to
+    /// self-terminate at its next scheduler boundary, because terminating
+    /// it here would tear down the process's resources while the thread is
+    /// still executing on this CPU's stack.  This is the remote half of a
+    /// SIGKILL default action.
+    pub(crate) fn terminate_threads_of_process(
+        &self,
+        process: &Process,
+    ) -> super::types::ProcessTerminateScan {
+        let process_ptr = process as *const Process;
+        let mut running_present = false;
+
+        // Ready and waiting threads are collected under their queue locks and
+        // terminated only after both locks are released.  `Thread::terminate`
+        // signals the thread's termination event, which wakes join() waiters
+        // via `wake_thread` → `enqueue_ready_thread` — a re-entrant lock on
+        // ready_queues that would self-deadlock if called while the guard is
+        // held (same reasoning as `terminate_sibling_threads`).
+        let mut to_terminate: Vec<Arc<Thread>> = Vec::new();
+
+        // Ready queues.
+        {
+            let mut ready = self.ready_queues.lock();
+            for queue in ready.iter_mut() {
+                queue.retain(|t| {
+                    if core::ptr::eq(Arc::as_ptr(t.process()), process_ptr) {
+                        to_terminate.push(t.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+        }
+
+        // Waiting queue.  Collect the timed waiters under the waiting_queue
+        // lock, then deregister + terminate after it is released so the
+        // WaitQueue cleanup (which re-acquires queue inner locks) cannot AB-BA
+        // invert with the waiting_queue lock (same reason
+        // `stop_threads_of_process` defers its wake).
+        let mut terminated_waiters: Vec<super::types::TimedWaiter> = Vec::new();
+        {
+            let mut waiting = self.waiting_queue.lock();
+            let mut i = 0;
+            while i < waiting.len() {
+                if core::ptr::eq(Arc::as_ptr(waiting[i].thread.process()), process_ptr) {
+                    terminated_waiters.push(waiting.remove(i));
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        for waiter in terminated_waiters {
+            // Deregister the timed waiter so the scheduler does not keep
+            // tracking an orphaned entry, then terminate it.  `wake_by_timeout`
+            // is a harmless no-op on a terminated thread.
+            if let Some(cleanup) = &waiter.cleanup {
+                cleanup.remove_waiter(WaiterIdentity::from_thread(&waiter.thread));
+            }
+            to_terminate.push(waiter.thread);
+        }
+        for thread in to_terminate {
+            thread.terminate();
+        }
+
+        // Current (running) thread: flag it; it self-terminates when it next
+        // leaves the CPU or is rescheduled.
+        if let Some(current) = self.current_thread() {
+            if core::ptr::eq(Arc::as_ptr(current.process()), process_ptr) {
+                current.request_termination();
+                running_present = true;
+            }
+        }
+
+        super::types::ProcessTerminateScan { running_present }
     }
 
     pub(crate) fn continue_threads_of_process(&self, process: &super::Process) -> u32 {
@@ -422,6 +512,9 @@ impl Scheduler {
         })
     }
 
+    /// Only used by the host / demo-disk program-spawn paths; unused on plain
+    /// bare-metal builds (kept as a public kernel spawn primitive).
+    #[allow(dead_code)]
     pub(crate) fn spawn_kernel_named_with_security_token_and_setup<F>(
         &self,
         name: &str,

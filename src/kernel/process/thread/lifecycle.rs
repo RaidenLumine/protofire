@@ -225,6 +225,7 @@ impl Thread {
             wake_deadline: AtomicU64::new(0),
             wait_outcome: AtomicU8::new(ThreadWaitOutcome::Completed as u8),
             stop_pending: AtomicBool::new(false),
+            terminate_pending: AtomicBool::new(false),
             cpu_affinity: AtomicU32::new(0),
             boosted: AtomicBool::new(false),
             active_address_space_generation: AtomicU64::new(0),
@@ -607,6 +608,22 @@ impl Thread {
     /// Returns `true` if this thread is currently `Stopped`.
     pub fn is_stopped(&self) -> bool {
         matches!(*self.state.lock(), ThreadState::Stopped)
+    }
+
+    /// Flag the thread for termination at its next scheduler boundary.
+    ///
+    /// Used for remote (cross-CPU) process kills: the thread is not
+    /// terminated immediately because doing so would release the process's
+    /// resources while it is still executing on another CPU.  Instead the
+    /// scheduler honors the flag and self-terminates the thread.
+    pub(crate) fn request_termination(&self) {
+        self.terminate_pending.store(true, Ordering::Release);
+    }
+
+    /// Return `true` once (consuming the flag) if a remote termination was
+    /// requested.
+    pub(crate) fn take_terminate_request(&self) -> bool {
+        self.terminate_pending.swap(false, Ordering::AcqRel)
     }
 
     /// Return the absolute tick deadline when this blocked thread will

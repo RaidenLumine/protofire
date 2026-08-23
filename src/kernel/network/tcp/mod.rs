@@ -1567,6 +1567,11 @@ mod tests {
                 .expect("connection should exist");
             let mut st = conn.lock();
             st.write(&test_data);
+            // The peer only ACKs bytes that were already transmitted. With the
+            // full 10 KiB buffered and a 64 KiB window the send side would have
+            // flushed it all up front, so advance SND.NXT to match before the
+            // ACK loop; the ACKs then cover exactly the in-flight window.
+            st.send_next = st.send_next.wrapping_add(total_bytes as u32);
         }
 
         let mss = 1460;

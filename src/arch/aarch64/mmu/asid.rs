@@ -99,7 +99,8 @@ pub(crate) fn allocate_asid() -> u64 {
     // resets the counter, and duplicate ASID 1 is impossible.
     loop {
         let current = NEXT_ASID.load(Ordering::Acquire);
-        let (next, result) = if current > ASID_MAX {
+        let wrapped = current > ASID_MAX;
+        let (next, result) = if wrapped {
             // Wrapped around. Reset to 2 (ASID 1 will be allocated next).
             (2, 1)
         } else {
@@ -109,6 +110,18 @@ pub(crate) fn allocate_asid() -> u64 {
             .compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
         {
+            if wrapped {
+                // The values we are about to reuse were in use during the
+                // previous rotation, so stale TLB entries tagged with them
+                // may still exist on any CPU.  `tlbi vmalle1is` broadcasts to
+                // the inner-shareable domain and invalidates every entry;
+                // the `dsb ish; isb` makes the invalidation visible before
+                // the reused ASID is programmed into TTBR0.
+                unsafe {
+                    asm!("tlbi vmalle1is", options(nostack, preserves_flags));
+                    asm!("dsb ish", "isb", options(nostack, preserves_flags));
+                }
+            }
             return result;
         }
     }

@@ -209,7 +209,7 @@ impl MmioRegion for PciLegacyMmioRegion {
             // QueueNumMax: 16-bit at PCI offset 0x0C, bits [15:0].
             REG_QUEUE_NUM_MAX => {
                 let dword = unsafe { self.io_read32(PCI_QUEUE_SIZE) };
-                let val = (dword & 0xFFFF) as u32;
+                let val = dword & 0xFFFF;
                 crate::println!(
                     "[virtio-pci] read QueueNumMax=0x{:x} ({}) raw_dword=0x{:08x}",
                     val,

@@ -538,11 +538,15 @@ impl Process {
             | process::SIGQUIT
             | process::SIGTERM
             | process::SIGKILL => {
-                // Terminate the process immediately.
+                // Request termination rather than completing it inline: this
+                // handler may run on a different CPU than the target's own
+                // threads, and releasing the process's resources from here
+                // would race with a thread still executing there.  The running
+                // thread self-terminates at its next scheduler boundary.
                 let reason = TerminationReason::Exit {
                     status: 128 + signal,
                 };
-                self.complete_termination(Some(reason));
+                self.request_termination(Some(reason));
             }
             process::SIGSTOP | process::SIGTSTP => {
                 // Stop is handled by the scheduler-level stop_process in the
@@ -1330,7 +1334,7 @@ mod tests {
         fn fork_rejects_zero_threads() {
             let process = Process::new(1040, "fork-zero-threads");
             let mut memory = fork_ready_memory();
-            assert!(matches!(process.fork(&mut memory), Err(Error::Busy)));
+            assert!(matches!(process.fork(&mut memory, 9001), Err(Error::Busy)));
         }
 
         #[test]
@@ -1339,7 +1343,7 @@ mod tests {
             let _t1 = Thread::new_kernel(process.clone(), idle_entry);
             let _t2 = Thread::new_kernel(process.clone(), idle_entry);
             let mut memory = fork_ready_memory();
-            assert!(matches!(process.fork(&mut memory), Err(Error::Busy)));
+            assert!(matches!(process.fork(&mut memory, 9001), Err(Error::Busy)));
         }
 
         #[test]
@@ -1348,7 +1352,7 @@ mod tests {
             let _t = Thread::new_kernel(process.clone(), idle_entry);
             let mut memory = fork_ready_memory();
             assert!(matches!(
-                process.fork(&mut memory),
+                process.fork(&mut memory, 9001),
                 Err(Error::InvalidArgument)
             ));
         }
@@ -1455,11 +1459,11 @@ mod tests {
                 "load plan must include a writable page"
             );
 
-            let child = process.fork(&mut memory).expect("fork succeeds");
+            let child = process.fork(&mut memory, 9001).expect("fork succeeds");
 
-            // Fresh child identity: PID 0 is assigned by the caller, and the
-            // child copies the parent's image with its own address space.
-            assert_eq!(child.pid(), 0);
+            // Fresh child identity: the caller-provided PID is adopted, and
+            // the child copies the parent's image with its own address space.
+            assert_eq!(child.pid(), 9001);
             assert_eq!(child.name(), "fork-parent-fork");
             assert!(child.has_user_address_space());
 

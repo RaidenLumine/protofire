@@ -30,11 +30,14 @@
 
 1. [开发环境](#开发环境)
 2. [从哪开始](#从哪开始)
-3. [代码风格与约定](#代码风格与约定)
-4. [验证门禁](#验证门禁)
-5. [新增或修改系统调用](#新增或修改系统调用)
-6. [文档](#文档)
-7. [提交变更](#提交变更)
+3. [沟通与讨论](#沟通与讨论)
+4. [代码风格与约定](#代码风格与约定)
+5. [验证门禁](#验证门禁)
+6. [新增或修改系统调用](#新增或修改系统调用)
+7. [文档](#文档)
+8. [提交变更](#提交变更)
+9. [PR 评审流程](#pr-评审流程)
+10. [贡献者认可](#贡献者认可)
 
 ---
 
@@ -62,7 +65,7 @@ make run            # QEMU 启动 x86_64（含约 40 条内置命令的演示 sh
 
 ## 从哪开始
 
-- 先读 [docs](docs/) —— 尤其是
+- 先读 [docs](docs/)
   [`docs/zh-CN/README.md`](docs/zh-CN/README.md)（架构总览）、
   [`docs/zh-CN/syscall.md`](docs/zh-CN/syscall.md)（ABI）与
   [`docs/zh-CN/current-status.md`](docs/zh-CN/current-status.md)（子系统状态）。
@@ -82,6 +85,14 @@ make run            # QEMU 启动 x86_64（含约 40 条内置命令的演示 sh
 | `src/util/` | 工具辅助函数 |
 | `tests/` | 主机端集成测试（fs、io、memory、net、process、simplefs、sync、syscall） |
 | `docs/` | 中英双语文档（`en/` 与 `zh-CN/`） |
+
+---
+
+## 沟通与讨论
+
+- **GitHub Issues**：用于 bug 报告、功能请求、设计讨论。
+- **实时交流**：若需要快速问答和协作，可通过邮箱联系：<2557597107@qq.com>。
+- **响应时间**：维护者会在 **48 小时内** 回应新 Issue 和 PR。
 
 ---
 
@@ -170,4 +181,20 @@ cargo build --features demo-disk --target riscv64gc-unknown-none-elf
    （行为类改动本地跑完整 `make verify-p3`）。
 6. **语言：** Issue 与 PR 可以使用**中文或英文**。
 
-问题、想法与设计讨论同样欢迎——请开 Issue 分享，不要只留在私下。
+---
+
+### PR 评审流程
+
+1. **自动检查**：CI 会自动运行 `make verify-p0` 和 `make clippy`，必须全部通过。
+2. **人工评审**：至少需要 **一名模块维护者** 的批准（见 [MAINTAINERS.md](MAINTAINERS.md)）。
+3. **评审时间**：维护者会在 **1 周内** 给出初审意见；若超时，可在 PR 中 @ 核心维护者提醒。
+4. **修改与更新**：根据评审意见修改后，用 `git commit --amend` 或新增 fixup commit 均可，最终合并时会 squash。
+5. **合并**：由核心维护者或模块维护者合并到 `main` 分支。
+
+---
+
+## 贡献者认可
+
+- 我们珍视每一位贡献者的付出。所有代码贡献者会被列入项目根目录的 [AUTHORS](AUTHORS) 文件。
+- 向本项目贡献代码，即表示同意被列入 [AUTHORS](AUTHORS) 文件。该列表会定期从 `git log --format='%aN <%aE>' | sort -u` 生成。
+- 贡献不仅限于代码——文档、测试、设计讨论、Bug 报告同样被认可。

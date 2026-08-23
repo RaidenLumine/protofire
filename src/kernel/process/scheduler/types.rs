@@ -193,3 +193,9 @@ pub(crate) struct TimedWaiter {
     pub thread: Arc<Thread>,
     pub cleanup: Option<WaitTimeoutCleanupRef>,
 }
+
+/// Result of a [`Scheduler::terminate_threads_of_process`] scan: whether a
+/// thread of the process is currently running on the scanned scheduler's CPU.
+pub(crate) struct ProcessTerminateScan {
+    pub(crate) running_present: bool,
+}

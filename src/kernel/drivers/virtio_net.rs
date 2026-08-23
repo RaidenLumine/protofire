@@ -401,8 +401,16 @@ impl VirtIoNet {
 
         let desc0 = rx.descriptors[head as usize];
         if desc0.flags & VIRTQ_DESC_F_NEXT == 0 {
-            // Malformed chain – consume and skip.
+            // Malformed chain – consume and skip.  Re-prime the ring with a
+            // fresh buffer and restore the in-flight accounting so the device
+            // never runs out of receive slots.
             rx.consume_completion();
+            drop(rx);
+            {
+                let mut in_flight = self.rx_in_flight.lock();
+                *in_flight = in_flight.saturating_sub(1);
+            }
+            self.prime_rx_ring()?;
             return Ok(0);
         }
         let data_idx = desc0.next;

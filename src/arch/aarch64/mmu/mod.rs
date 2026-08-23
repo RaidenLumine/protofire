@@ -922,7 +922,8 @@ fn probe_kernel_address(
 /// for the instruction pointer (AArch64 has no architectural PC read).
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 fn current_instruction_pointer() -> usize {
-    current_instruction_pointer as usize
+    // Cast through a raw pointer to avoid the `function-casts-as-integer` lint.
+    current_instruction_pointer as *const () as usize
 }
 
 #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
@@ -1030,11 +1031,18 @@ fn synchronize_user_code(entry_point: usize, payload_len: usize) {
             address += 64;
         }
         asm!("dsb ish", options(nostack, preserves_flags));
-        asm!(
-            "ic ivau, {start}",
-            start = in(reg) start,
-            options(nostack, preserves_flags)
-        );
+        // Invalidate every I-cache line in the payload range, not just the
+        // first: `ic ivau` acts on a single 64-byte cache line, so a payload
+        // spanning several lines would otherwise still fetch stale code.
+        let mut address = start;
+        while address < end {
+            asm!(
+                "ic ivau, {address}",
+                address = in(reg) address,
+                options(nostack, preserves_flags)
+            );
+            address += 64;
+        }
         asm!("dsb ish", "isb", options(nostack, preserves_flags));
     }
 }

@@ -29,6 +29,7 @@ impl VfsFileSystem for SimpleFsVolume {
 
     fn lookup(&self, path: &str) -> Result<Arc<dyn VNode>> {
         let inode_index = self.inner.resolve_path(path)?;
+        self.inner.track_handle(inode_index);
         Ok(Arc::new(SimpleVNode {
             name: self.inner.name_of(inode_index),
             fs: self.inner.clone(),
@@ -38,6 +39,7 @@ impl VfsFileSystem for SimpleFsVolume {
 
     fn create_file(&self, path: &str) -> Result<Arc<dyn VNode>> {
         let inode_index = self.inner.create_file(path)?;
+        self.inner.track_handle(inode_index);
         Ok(Arc::new(SimpleVNode {
             name: self.inner.name_of(inode_index),
             fs: self.inner.clone(),
@@ -47,6 +49,7 @@ impl VfsFileSystem for SimpleFsVolume {
 
     fn create_symlink(&self, target: &str, link_path: &str) -> Result<Arc<dyn VNode>> {
         let inode_index = self.inner.create_symlink(target, link_path)?;
+        self.inner.track_handle(inode_index);
         Ok(Arc::new(SimpleVNode {
             name: self.inner.name_of(inode_index),
             fs: self.inner.clone(),

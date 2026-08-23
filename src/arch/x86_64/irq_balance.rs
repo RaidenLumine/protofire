@@ -41,9 +41,9 @@ pub(crate) fn register_cpu(cpu_id: u32, lapic_id: u8) {
 /// Called from [`super::ioapic::ioapic_route_irq`].  Pin 0 (the PIT timer)
 /// is deliberately not recorded so the timer is never migrated.
 ///
-/// Only bare-metal x86_64 calls this; on other targets it is intentionally
-/// unused (dead-code allowed).
-#[cfg_attr(not(all(target_arch = "x86_64", target_os = "none")), allow(dead_code))]
+/// Not yet wired into the IRQ delivery path on any target, so it is
+/// intentionally unused (dead-code allowed).
+#[allow(dead_code)]
 pub(crate) fn register_vector_pin(vector: u8, pin: u8) {
     if pin == 0 {
         return;

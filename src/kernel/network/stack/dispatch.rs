@@ -249,6 +249,14 @@ impl NetworkStack {
                                 return Err(e);
                             }
                         };
+                        // ── Destination validation ──────────────────────
+                        // Only process packets addressed to a local
+                        // interface, a broadcast address, or multicast.
+                        // Foreign-addressed packets are dropped before they
+                        // can trigger replies, ICMP errors, or ARP traffic.
+                        if !self.ipv4_destination_is_local(ip_packet.header.destination) {
+                            return Ok(true); // silently drop
+                        }
                         // ── Fragment reassembly ─────────────────────────
                         let ip_packet = {
                             let mut frag_cache = self.fragment_cache.lock();
@@ -498,6 +506,13 @@ impl NetworkStack {
                         let ip_packet = ipv6::parse_packet(&frame.payload)?;
                         self.profiler.inc_ipv6_packets_rx();
 
+                        // ── Destination validation ──────────────────────
+                        // Only process packets addressed to a local
+                        // interface or multicast; foreign-addressed packets
+                        // are dropped before any reply or NDP activity.
+                        if !self.ipv6_destination_is_local(ip_packet.header.destination) {
+                            return Ok(true); // silently drop
+                        }
                         // ── IPv6 fragment reassembly ────────────────────
                         // If the next header is a Fragment extension header,
                         // reassemble before dispatching.
@@ -654,8 +669,11 @@ impl NetworkStack {
                                 } else {
                                     self.profiler.inc_udp_dropped();
                                     // Send ICMPv6 Destination Unreachable (port unreachable).
-                                    let unreach_body =
-                                        icmpv6::build_icmpv6_dest_unreachable(&ipv6_payload);
+                                    let unreach_body = icmpv6::build_icmpv6_dest_unreachable_for(
+                                        self.local_ip_v6,
+                                        ip_packet.header.source,
+                                        &ipv6_payload,
+                                    );
                                     let reply_header = Ipv6Header {
                                         traffic_class: 0,
                                         flow_label: 0,
@@ -682,5 +700,50 @@ impl NetworkStack {
                 Err(error)
             }
         }
+    }
+
+    /// Return `true` if `dst` is addressed to this host: a local interface
+    /// address, a broadcast address (limited or subnet-directed), or an IPv4
+    /// multicast address.  When NAT is enabled the external (public) address
+    /// is also treated as local so inbound DNAT still runs.
+    fn ipv4_destination_is_local(&self, dst: ipv4::Ipv4Addr) -> bool {
+        if dst == self.local_ip() {
+            return true;
+        }
+        // The NAT external (public) address is this host's address too.
+        {
+            let nat = self.nat_table.lock();
+            if nat.is_enabled() && dst == nat.external_ip() {
+                return true;
+            }
+        }
+        // Limited broadcast and subnet-directed broadcast.
+        if dst == ipv4::IPV4_BROADCAST {
+            return true;
+        }
+        let mask = self.subnet_mask();
+        let local = self.local_ip();
+        let mut directed = [0u8; 4];
+        for i in 0..4 {
+            directed[i] = local[i] | !mask[i];
+        }
+        if dst == directed {
+            return true;
+        }
+        // IPv4 multicast: 224.0.0.0/4.
+        dst[0] & 0xF0 == 0xE0
+    }
+
+    /// Return `true` if `dst` is addressed to this host: a local interface
+    /// address (link-local or global) or an IPv6 multicast address.
+    fn ipv6_destination_is_local(&self, dst: ipv6::Ipv6Addr) -> bool {
+        if dst == self.local_ip_v6() {
+            return true;
+        }
+        if self.global_ip_v6().is_some_and(|global| dst == global) {
+            return true;
+        }
+        // IPv6 multicast (covers solicited-node, all-nodes, and MLD groups).
+        dst[0] == 0xff
     }
 }

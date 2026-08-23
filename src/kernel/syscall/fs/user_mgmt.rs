@@ -8,9 +8,21 @@ use crate::{Error, Result};
 use super::user_memory::user_string;
 use super::SyscallContext;
 
+/// Require a privileged (root/system) caller for account-management syscalls.
+fn require_privileged_caller() -> Result<()> {
+    super::runtime::with_current_process(|process| {
+        if !process.security_token().is_admin_mode() {
+            return Err(Error::PermissionDenied);
+        }
+        Ok(())
+    })
+}
+
 // ── AddUser (slot 89) ─────────────────────────────────────────────────────
 
 pub(super) fn add_user(context: &mut SyscallContext) -> Result<super::SyscallDispatch> {
+    require_privileged_caller()?;
+
     let username_ptr = context.arg(0) as *const u8;
     let username_len = context.arg(1);
     let uid = context.arg(2) as u32;
@@ -60,6 +72,8 @@ pub(super) fn add_user(context: &mut SyscallContext) -> Result<super::SyscallDis
 // ── RemoveUser (slot 90) ──────────────────────────────────────────────────
 
 pub(super) fn remove_user(context: &mut SyscallContext) -> Result<super::SyscallDispatch> {
+    require_privileged_caller()?;
+
     let uid = context.arg(0) as u32;
 
     // Refuse to delete root.
@@ -81,6 +95,8 @@ pub(super) fn remove_user(context: &mut SyscallContext) -> Result<super::Syscall
 // ── SetUserPassword (slot 91) ─────────────────────────────────────────────
 
 pub(super) fn set_user_password(context: &mut SyscallContext) -> Result<super::SyscallDispatch> {
+    require_privileged_caller()?;
+
     let username_ptr = context.arg(0) as *const u8;
     let username_len = context.arg(1);
     let password_ptr = context.arg(2) as *const u8;

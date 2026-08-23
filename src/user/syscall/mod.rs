@@ -192,6 +192,8 @@ impl UserSyscall {
 // ── payload-runtime macros ──────────────────────────────────────────
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+#[allow(unused_imports)]
 pub(crate) use payload::define_aarch64_payload_runtime;
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+#[allow(unused_imports)]
 pub(crate) use payload::define_x86_64_payload_runtime;

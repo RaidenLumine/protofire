@@ -305,7 +305,7 @@ fn write_ea_attr(buf: &mut [u8], off: usize) -> usize {
     ea_content[base + 8..base + 11].copy_from_slice(b"foo");
     ea_content[base + 11..base + 14].copy_from_slice(b"bar");
 
-    write_resident_attr(buf, off, ATTR_TYPE_EA, &ea_content) as usize
+    write_resident_attr(buf, off, ATTR_TYPE_EA, &ea_content)
 }
 
 fn build_ntfs_xattr_e2e_image() -> Vec<u8> {

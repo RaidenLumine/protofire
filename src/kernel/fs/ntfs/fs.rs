@@ -130,6 +130,10 @@ pub fn read_mft_record(
     let header = MftRecordHeader::parse(&buf).ok_or(Error::InvalidArgument)?;
     if header.usa_count > 1 {
         let usa_off = header.usa_offset as usize;
+        let usa_len = header.usa_count as usize * 2;
+        if usa_off + usa_len > buf.len() {
+            return Err(Error::InvalidArgument);
+        }
         // Read fixup sequence value once.
         let fixup_seq = u16::from_le_bytes([buf[usa_off], buf[usa_off + 1]]);
         for i in 1..header.usa_count as usize {

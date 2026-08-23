@@ -424,13 +424,14 @@ pub fn process_inbound_v4(stack: &NetworkStack, packet: &Ipv4Packet) -> Result<I
     } else {
         0
     };
-    if !sa.check_replay(seq as u64) {
-        return Ok(IpsecInboundV4::Consumed);
-    }
-
     match sa.proto {
         IpsecProto::Esp => {
             let (inner, next_header) = esp::parse_esp_payload(sa, &packet.payload)?;
+            // Only advance the anti-replay window after the AEAD tag is
+            // verified, so unauthenticated packets cannot consume it.
+            if !sa.check_replay(seq as u64) {
+                return Ok(IpsecInboundV4::Consumed);
+            }
             sa.packets_in += 1;
             sa.bytes_in += packet.payload.len() as u64;
             match sa.mode {
@@ -456,6 +457,10 @@ pub fn process_inbound_v4(stack: &NetworkStack, packet: &Ipv4Packet) -> Result<I
             let ah_bytes = &packet.payload[..AH_HEADER_SIZE];
             let inner = &packet.payload[AH_HEADER_SIZE..];
             ah::verify_ah(sa, &zeroed, ah_bytes, inner)?;
+            // Only advance the anti-replay window after the ICV is verified.
+            if !sa.check_replay(seq as u64) {
+                return Ok(IpsecInboundV4::Consumed);
+            }
             let next_header = packet.payload[0];
             sa.packets_in += 1;
             sa.bytes_in += packet.payload.len() as u64;
@@ -505,13 +510,15 @@ pub fn process_inbound_v6(
     let mut sad = stack.ipsec_sad().lock();
     let sa = sad.by_spi.get_mut(&spi).ok_or(Error::NotFound)?;
     let seq = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
-    if !sa.check_replay(seq as u64) {
-        return Ok(IpsecInboundV6::Consumed);
-    }
 
     match sa.proto {
         IpsecProto::Esp => {
             let (inner, inner_nh) = esp::parse_esp_payload(sa, payload)?;
+            // Only advance the anti-replay window after the AEAD tag is
+            // verified, so unauthenticated packets cannot consume it.
+            if !sa.check_replay(seq as u64) {
+                return Ok(IpsecInboundV6::Consumed);
+            }
             sa.packets_in += 1;
             sa.bytes_in += payload.len() as u64;
             match sa.mode {
@@ -550,6 +557,10 @@ pub fn process_inbound_v6(
             let ah_bytes = &payload[..AH_HEADER_SIZE];
             let inner = &payload[AH_HEADER_SIZE..];
             ah::verify_ah(sa, &zeroed, ah_bytes, inner)?;
+            // Only advance the anti-replay window after the ICV is verified.
+            if !sa.check_replay(seq as u64) {
+                return Ok(IpsecInboundV6::Consumed);
+            }
             let inner_nh = payload[0];
             sa.packets_in += 1;
             sa.bytes_in += payload.len() as u64;

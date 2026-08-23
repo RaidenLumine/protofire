@@ -135,18 +135,32 @@ pub fn enable_sse() {
 
 /// Enable SMEP (Supervisor Mode Execution Prevention).
 ///
-/// Safe to call only after `cpuid::has_smep()` confirms the CPU supports it.
+/// No-op on CPUs that do not advertise SMEP (CPUID leaf 7, EBX bit 7) —
+/// writing the reserved CR4.SMEP bit would raise #GP.  Also a no-op on
+/// non-bare-metal targets, where the host CR4 must never be touched.
 pub fn enable_smep() {
+    if !super::cpuid::has_smep() {
+        return;
+    }
     let cr4 = unsafe { read_cr4() };
     unsafe { write_cr4(cr4 | CR4_SMEP) };
 }
 
 /// Enable SMAP (Supervisor Mode Access Prevention).
 ///
-/// Safe to call only after `cpuid::has_smap()` confirms the CPU supports it.
-/// The user-access helpers conditionally emit `stac`/`clac`, so they do not
-/// need to skip the instructions on CPUs without SMAP.
+/// No-op on CPUs that do not advertise SMAP (CPUID leaf 7, EBX bit 20) and on
+/// non-bare-metal targets.  After CR4.SMAP is written, the user-access
+/// helpers are told SMAP is live so `stac`/`clac` are actually emitted — with
+/// SMAP_ACTIVE left false, every `UserAccessGuard` silently becomes a no-op
+/// and the SMAP protection the kernel advertises is not enforced.
 pub fn enable_smap() {
+    if !super::cpuid::has_smap() {
+        return;
+    }
     let cr4 = unsafe { read_cr4() };
     unsafe { write_cr4(cr4 | CR4_SMAP) };
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    unsafe {
+        super::user_access::set_smap_active();
+    }
 }

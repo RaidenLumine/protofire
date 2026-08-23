@@ -90,6 +90,11 @@ pub struct Thread {
     /// When `true`, the thread should transition to `Stopped` instead
     /// of `Ready` when woken from `Waiting`.
     stop_pending: AtomicBool,
+    /// When `true`, a remote termination request (e.g. SIGKILL delivered
+    /// from another CPU) is pending.  The thread honors it at its next
+    /// scheduler boundary so the process's resource teardown runs in the
+    /// thread's own context instead of racing with it on the sender's CPU.
+    terminate_pending: AtomicBool,
     /// Preferred CPU for this thread (0 = any CPU, 1..N = specific CPU).
     cpu_affinity: AtomicU32,
     /// Set to `true` when the scheduler promotes this thread from Normal to High

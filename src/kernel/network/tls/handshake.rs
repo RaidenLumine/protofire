@@ -686,6 +686,19 @@ pub fn verify_certificate_verify_signature(
         None => return false,
     };
 
+    // RFC 8446 §4.4.3: the CertificateVerify signature covers the
+    // *context-prefixed* transcript hash, not the raw digest:
+    //   signed_content = "TLS 1.3, server CertificateVerify" || 0x00 ||
+    //                    Transcript-Hash(Handshake Context, Certificate)
+    // where the transcript at this point spans ClientHello .. Certificate.
+    // Verifying against the bare digest would never match a real server.
+    let transcript_hash = transcript.digest();
+    let mut signed_content = Vec::with_capacity(35 + 1 + 32);
+    signed_content.extend_from_slice(b"TLS 1.3, server CertificateVerify");
+    signed_content.push(0x00);
+    signed_content.extend_from_slice(&transcript_hash);
+    let hash = sha256(&signed_content);
+
     match leaf.public_key_algorithm_type() {
         certificate::PublicKeyAlgorithm::Ecdsa => {
             if sig_scheme != SIG_SCHEME_ECDSA_P256_SHA256 {
@@ -696,8 +709,6 @@ pub fn verify_certificate_verify_signature(
                 Some(parts) => parts,
                 None => return false,
             };
-            // Compute the transcript hash.
-            let hash = transcript.digest();
             crate::kernel::crypto::ecdsa_p256_verify(&leaf.public_key, &hash, &r, &s)
         }
         certificate::PublicKeyAlgorithm::Rsa => {
@@ -709,7 +720,6 @@ pub fn verify_certificate_verify_signature(
                 Some(parts) => parts,
                 None => return false,
             };
-            let hash = transcript.digest();
             crate::kernel::crypto::rsa_pss_verify(&n, &e, &hash, sig)
         }
         _ => false,

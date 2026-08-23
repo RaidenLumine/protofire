@@ -367,7 +367,18 @@ impl TransactionContext<'_> {
             inode.entry_count = 0;
             inode.persistent_security = None;
             self.state.inode_table_dirty = true;
-            self.state.free_inode_slots.push(freed_index);
+            // A slot still referenced by an open handle must not be recycled;
+            // it is freed by SimpleVNode's Drop once the last handle closes.
+            if self
+                .state
+                .open_handles
+                .get(&freed_index)
+                .copied()
+                .unwrap_or(0)
+                == 0
+            {
+                self.state.free_inode_slots.push(freed_index);
+            }
             // V4+: xattr records attached to the removed inode are released.
             self.fs.mark_inode_xattrs_deleted(self.state, freed_index);
             if was_dir {

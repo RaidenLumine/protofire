@@ -819,20 +819,22 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[SyscallPointerSpec::output(0, Some(1), None)],
     // 40  SendSignal         — no pointers
     &[],
-    // 41  WaitSignal         — arg0=ptr (out), arg1=len
-    &[SyscallPointerSpec::output(0, Some(1), None)],
-    // 42  AccessQuery        — arg0=path_ptr (in), arg1=path_len; arg2=out_ptr (out), arg3=out_len
+    // 41  WaitSignal         — arg0=timeout, arg1=ptr (out), arg2=len
+    &[SyscallPointerSpec::output(1, Some(2), None)],
+    // 42  AccessQuery        — arg0=path_ptr (in), arg1=path_len; arg2=required_access;
+    //                           arg3=out_ptr (out), arg4=out_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
-        SyscallPointerSpec::output(2, Some(3), None),
-    ],
-    // 43  AccessQueryAt      — arg1=path_ptr (in), arg2=path_len; arg3=out_ptr (out), arg4=out_len
-    &[
-        SyscallPointerSpec::input(1, Some(2), None),
         SyscallPointerSpec::output(3, Some(4), None),
     ],
-    // 44  AccessQueryFd      — arg1=ptr (out), arg2=len
-    &[SyscallPointerSpec::output(1, Some(2), None)],
+    // 43  AccessQueryAt      — arg0=dirfd, arg1=path_ptr (in), arg2=path_len;
+    //                           arg3=required_access; arg4=out_ptr (out), arg5=out_len
+    &[
+        SyscallPointerSpec::input(1, Some(2), None),
+        SyscallPointerSpec::output(4, Some(5), None),
+    ],
+    // 44  AccessQueryFd      — arg0=fd, arg1=required_access, arg2=ptr (out), arg3=len
+    &[SyscallPointerSpec::output(2, Some(3), None)],
     // 45  PermissionMetadata  — arg0=path_ptr (in), arg1=path_len; arg2=out_ptr (out), arg3=out_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
@@ -851,12 +853,12 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[],
     // 50  ListProcesses      — arg0=ptr (out), arg1=len
     &[SyscallPointerSpec::output(0, Some(1), None)],
-    // 51  ListThreads        — arg0=ptr (out), arg1=len
-    &[SyscallPointerSpec::output(0, Some(1), None)],
-    // 52  KernelLog          — arg0=ptr (out), arg1=len
-    &[SyscallPointerSpec::output(0, Some(1), None)],
-    // 53  SystemInfo         — arg0=ptr (out), arg1=len
-    &[SyscallPointerSpec::output(0, Some(1), None)],
+    // 51  ListThreads        — arg0=pid, arg1=ptr (out), arg2=len
+    &[SyscallPointerSpec::output(1, Some(2), None)],
+    // 52  KernelLog          — arg0=offset, arg1=ptr (out), arg2=len
+    &[SyscallPointerSpec::output(1, Some(2), None)],
+    // 53  SystemInfo         — arg0=info_type, arg1=ptr (out), arg2=len
+    &[SyscallPointerSpec::output(1, Some(2), None)],
     // 54  Fsync              — no pointers
     &[],
     // 55  Fdatasync          — no pointers
@@ -953,8 +955,12 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     ],
     // 90  RemoveUser            — arg0=uid
     &[],
-    // 91  SetUserPassword       — arg0=uid, arg1=password_ptr (in), arg2=password_len
-    &[SyscallPointerSpec::input(1, Some(2), None)],
+    // 91  SetUserPassword       — arg0=username_ptr (in), arg1=username_len,
+    //                             arg2=password_ptr (in), arg3=password_len
+    &[
+        SyscallPointerSpec::input(0, Some(1), None),
+        SyscallPointerSpec::input(2, Some(3), None),
+    ],
     // 92  Brk                   — arg0=new_break (optional)
     &[],
     // 93  ResolveHostname       — arg0=host_ptr (in), arg1=host_len

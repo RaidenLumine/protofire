@@ -5,6 +5,9 @@
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 // Payload runtimes live in extracted section blobs, so these helpers must stay
 // self-contained, allocation-free, and easy for the linker to keep together.
+// Only invoked by the demo payload programs (feature-gated), so allow the
+// macro to be unused on plain builds.
+#[allow(unused_macros)]
 macro_rules! define_aarch64_payload_runtime {
     ($section:literal) => {
         #[allow(dead_code)]
@@ -268,6 +271,9 @@ pub(crate) use define_aarch64_payload_runtime;
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 // Payload runtimes live in extracted section blobs, so these helpers must stay
 // self-contained, allocation-free, and easy for the linker to keep together.
+// Only invoked by the demo payload programs (feature-gated), so allow the
+// macro to be unused on plain builds.
+#[allow(unused_macros)]
 macro_rules! define_x86_64_payload_runtime {
     ($section:literal) => {
         #[allow(dead_code)]

@@ -9,6 +9,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 // ── Constants ───────────────────────────────────────────────────────────
 
 pub(crate) const MAX_APS: usize = 16;
+#[allow(dead_code)]
 pub(crate) const MAX_CPUS: usize = MAX_APS + 1;
 pub(crate) const AP_STACK_SIZE: usize = 65536;
 
@@ -253,14 +254,20 @@ fn discover_aps() -> Vec<(u32, u64)> {
 
 // ── GIC SGI (IPI) delivery ─────────────────────────────────────────────
 
+// The SGI-send primitives below are not yet wired into AP reschedule /
+// shootdown signalling (the aarch64 SMP bring-up currently uses memory-based
+// flags), so they are intentionally unused (dead-code allowed).
+#[allow(dead_code)]
 const GICD_SGIR: usize = 0xF00;
 
+#[allow(dead_code)]
 fn gicd_base() -> usize {
     crate::arch::fdt::platform_info()
         .gicd_base
         .unwrap_or(0x0800_0000)
 }
 
+#[allow(dead_code)]
 fn send_sgi(sgi_id: u8, cpu_mask: u8) {
     if sgi_id >= 16 {
         return;
@@ -272,6 +279,7 @@ fn send_sgi(sgi_id: u8, cpu_mask: u8) {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn send_reschedule_sgi(cpu_id: u32) {
     if cpu_id == 0 || cpu_id as usize >= MAX_CPUS {
         return;
@@ -279,6 +287,7 @@ pub(crate) fn send_reschedule_sgi(cpu_id: u32) {
     send_sgi(SGI_RESCHEDULE, 1u8 << (cpu_id as u8));
 }
 
+#[allow(dead_code)]
 pub(crate) fn send_tlb_shootdown_all() {
     let reg = (gicd_base() + GICD_SGIR) as *mut u32;
     // Filter = 1 (All Except Self)

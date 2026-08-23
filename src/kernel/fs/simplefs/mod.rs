@@ -90,6 +90,10 @@ pub(crate) struct SimpleFsState {
     /// (opportunistic cross-file dedup).  Only pooled extents are eligible
     /// sharing candidates; the map is populated lazily as files are written.
     dedup_hash_to_extents: BTreeMap<u64, Vec<(u32, u32, u32)>>,
+    /// Live open-handle counts per inode slot.  A slot with `open_handles > 0`
+    /// is never pushed onto `free_inode_slots` on unlink, so a stale handle can
+    /// never read/write a file that reused its slot.
+    open_handles: BTreeMap<usize, usize>,
 }
 
 pub struct SimpleFs {
@@ -125,6 +129,31 @@ struct SimpleVNode {
     fs: Arc<SimpleFs>,
     inode_index: usize,
     name: String,
+}
+
+impl Drop for SimpleVNode {
+    fn drop(&mut self) {
+        let mut state = self.fs.state.lock();
+        if let Some(count) = state.open_handles.get_mut(&self.inode_index) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                state.open_handles.remove(&self.inode_index);
+                // If the inode was unlinked while a handle was still open, it
+                // could not be recycled then (the unlink path skipped the push
+                // to `free_inode_slots`).  Free the slot once the last handle
+                // closes, but only if the inode is still deleted — a transaction
+                // rollback may have restored it to a live inode in the meantime.
+                let deleted = state
+                    .inodes
+                    .get(self.inode_index)
+                    .map(|inode| inode.deleted)
+                    .unwrap_or(false);
+                if deleted && !state.free_inode_slots.contains(&self.inode_index) {
+                    state.free_inode_slots.push(self.inode_index);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
