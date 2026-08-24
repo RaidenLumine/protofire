@@ -1,4 +1,5 @@
 //! src/arch/aarch64/smp.rs
+//!
 //! AArch64 SMP arch support: spin-table AP wakeup, MMU-config save/restore,
 //! GIC SGI (IPI) delivery, and AP entry-point logic.
 
@@ -303,10 +304,10 @@ pub(crate) fn handle_reschedule_sgi() {
 }
 
 pub(crate) fn handle_tlb_shootdown_sgi() {
-    let gen = crate::kernel::smp::tlb::tlb_generation();
+    let generation = crate::kernel::smp::tlb::tlb_generation();
     let p = crate::kernel::percpu::get_mut();
-    if gen != p.tlb_generation_seen {
-        p.tlb_generation_seen = gen;
+    if generation != p.tlb_generation_seen {
+        p.tlb_generation_seen = generation;
         unsafe {
             core::arch::asm!(
                 "dsb ish",

@@ -1,4 +1,5 @@
 //! src/arch/aarch64/fdt.rs
+//!
 //! Minimal Flattened Device Tree parser for AArch64 platform discovery.
 //!
 //! QEMU passes a device tree blob (DTB) address in x0 on boot; this module
@@ -991,12 +992,14 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             i += 8;
                         }
                     }
-                    Some("operating-points-v2") if value_len >= 4 && cpu_node_idx >= 0 => {
+                    Some("operating-points-v2")
+                        if value_len >= 4
+                            && cpu_node_idx >= 0
+                            && cpu_opp_count < cpu_opp_phandles.len() =>
+                    {
                         // CPU node references an OPP table via phandle(s).
-                        if cpu_opp_count < cpu_opp_phandles.len() {
-                            cpu_opp_phandles[cpu_opp_count] = unsafe { read_u32_be(value_ptr, 0) };
-                            cpu_opp_count += 1;
-                        }
+                        cpu_opp_phandles[cpu_opp_count] = unsafe { read_u32_be(value_ptr, 0) };
+                        cpu_opp_count += 1;
                     }
                     _ => { /* ignore unknown properties */ }
                 }
