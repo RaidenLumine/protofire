@@ -1,4 +1,5 @@
 //! src/kernel/fs/fat32/vfs.rs
+//!
 //! VFS integration — [`FatVolume`] open/close, [`VfsFileSystem`] trait
 //! implementation, [`FatVNode`] type, and [`VNode`] trait implementation.
 
@@ -207,12 +208,8 @@ impl VfsTrait for FatVolume {
             let sectors = fs.geom.sectors_per_cluster as u64;
             let lba = fs.geom.cluster_to_lba(dir_cluster);
             // Build raw directory content: "." entry + ".." entry.
-            let dot_name = [
-                b'.', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ',
-            ];
-            let dotdot_name = [
-                b'.', b'.', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ',
-            ];
+            let dot_name = *b".          ";
+            let dotdot_name = *b"..         ";
             let parent_cluster_for_dotdot = if is_parent_root && fs.geom.fat_type != FatType::Fat32
             {
                 0 // FAT12/16 root has no cluster

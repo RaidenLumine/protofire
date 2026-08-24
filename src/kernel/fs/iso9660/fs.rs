@@ -1,4 +1,5 @@
 //! src/kernel/fs/iso9660/fs.rs
+//!
 //! Low-level ISO 9660 operations: read PVD, parse directories, read files.
 
 use alloc::sync::Arc;
@@ -204,8 +205,7 @@ pub fn read_extent(
 /// Scan the volume descriptor sequence for a Boot Record (type 0) and return
 /// the boot catalog LBA it references, if any.
 pub fn find_boot_catalog_lba(device: &Arc<dyn BlockDevice>) -> Option<u32> {
-    let mut sector = PVD_SECTOR;
-    for _ in 0..32 {
+    for sector in (PVD_SECTOR..).take(32) {
         let mut buf = [0u8; SECTOR_SIZE];
         read_exact(device, sector * SECTOR_SIZE as u64, &mut buf).ok()?;
 
@@ -222,8 +222,6 @@ pub fn find_boot_catalog_lba(device: &Arc<dyn BlockDevice>) -> Option<u32> {
                 return Some(catalog_lba);
             }
         }
-
-        sector += 1;
     }
     None
 }

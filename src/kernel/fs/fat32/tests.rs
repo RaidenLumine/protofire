@@ -1,4 +1,5 @@
 //! src/kernel/fs/fat32/tests.rs
+//!
 //! End-to-end read/write tests for the FAT32 filesystem driver.
 //!
 //! Test image is a small writable FAT32 volume (512-byte sectors,
@@ -79,13 +80,9 @@ fn build_writable_fat32_image() -> Vec<u8> {
 
     // ── Root directory (cluster 2) ────────────────────────────────────────
     let root_off = data_start_lba() as usize * BYTES_PER_SECTOR;
-    let dot = [
-        b'.', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ',
-    ];
+    let dot = *b".          ";
     write_short_entry(&mut img, root_off, &dot, ATTR_DIRECTORY, ROOT_CLUSTER, 0);
-    let dotdot = [
-        b'.', b'.', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ', b' ',
-    ];
+    let dotdot = *b"..         ";
     write_short_entry(
         &mut img,
         root_off + 32,

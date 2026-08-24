@@ -1,4 +1,5 @@
 //! src/user/shared/commands/text.rs
+//!
 //! Text processing and editing commands (grep, find, head, tail, wc, sort,
 //! uniq, diff, hexdump, edit).
 //!
@@ -70,7 +71,7 @@ fn read_file_lines(path: &str) -> Result<Vec<String>, isize> {
 /// Write lines to a file via syscalls (create or overwrite).
 fn write_file_lines(path: &str, lines: &[String]) -> Result<(), isize> {
     let fd = syscall::sys_open(path, OPEN_FLAG_WRITE_CREATE)?;
-    let nl = [b'\n'];
+    let nl = *b"\n";
     for line in lines {
         syscall::sys_write(fd, line.as_bytes())?;
         syscall::sys_write(fd, &nl)?;
