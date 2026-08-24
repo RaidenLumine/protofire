@@ -1,4 +1,5 @@
 //! src/kernel/process/process/mod.rs
+//!
 //! Process subsystem: the `Process` struct plus its submodules.
 //!
 //! The `Process` struct is defined here so the parent module can re-export a
@@ -101,6 +102,9 @@ pub struct Process {
     shm_attachments: Mutex<Vec<types::ProcessShmAttachment>>,
     /// Seccomp filter state — syscall allow/deny rules.
     pub(crate) seccomp_filter: Mutex<super::seccomp::SeccompFilterState>,
+    /// No new privileges flag (PR_SET_NO_NEW_PRIVS). When set, the process
+    /// cannot gain new privileges via execve or similar operations.
+    no_new_privs: AtomicBool,
     /// User-space signal handler addresses per signal number (index 0–31).
     /// `Some(addr)` when an async handler is registered; `None` for
     /// cooperative-only or default-action signals.

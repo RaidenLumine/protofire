@@ -1,4 +1,5 @@
 //! src/kernel/process/process/lifecycle.rs
+//!
 //! Process constructors, field accessors, thread management, signals, and termination.
 use ::core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use alloc::collections::{BTreeMap, VecDeque};
@@ -66,6 +67,7 @@ impl Process {
             ptrace_options: Mutex::new(0),
             ptrace_event_queue: Mutex::new(VecDeque::new()),
             seccomp_filter: Mutex::new(crate::kernel::process::seccomp::SeccompFilterState::new()),
+            no_new_privs: AtomicBool::new(false),
             user_signal_handlers: Mutex::new([None; 32]),
             signal_sa_flags_storage: Mutex::new([0; 32]),
             signal_trampoline_addr: Mutex::new(0),
@@ -167,6 +169,18 @@ impl Process {
     /// Set the keep-caps flag (PR_SET_KEEPCAPS).
     pub fn set_keepcaps(&self, val: bool) {
         self.keepcaps
+            .store(val, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Return the no_new_privs flag (PR_GET_NO_NEW_PRIVS).
+    pub fn no_new_privs(&self) -> bool {
+        self.no_new_privs
+            .load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Set the no_new_privs flag (PR_SET_NO_NEW_PRIVS).
+    pub fn set_no_new_privs(&self, val: bool) {
+        self.no_new_privs
             .store(val, core::sync::atomic::Ordering::Relaxed);
     }
 

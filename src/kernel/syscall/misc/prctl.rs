@@ -1,8 +1,9 @@
 //! src/kernel/syscall/misc/prctl.rs
+//!
 //! prctl — process control operations (syscall #130).
 //!
 //! Provides a minimal subset of Linux-style prctl operations:
-//! name, dumpable, keepcaps.
+//! name, dumpable, keepcaps, no_new_privs.
 
 use crate::{Error, Result};
 
@@ -16,6 +17,10 @@ const PR_SET_DUMPABLE: i32 = 4;
 const PR_GET_KEEPCAPS: i32 = 7;
 /// Set the current process's keepcaps flag.
 const PR_SET_KEEPCAPS: i32 = 8;
+/// Get the current process's no_new_privs flag.
+const PR_GET_NO_NEW_PRIVS: i32 = 38;
+/// Set the current process's no_new_privs flag.
+const PR_SET_NO_NEW_PRIVS: i32 = 39;
 /// Get the current process name.
 const PR_GET_NAME: i32 = 15;
 /// Set the current process name (max 16 bytes).
@@ -60,6 +65,21 @@ pub(super) fn prctl(context: &mut super::SyscallContext) -> Result<super::Syscal
             let val = arg2 != 0;
             if let Ok(process) = super::runtime::current_process() {
                 process.set_keepcaps(val);
+            }
+            Ok(super::SyscallDispatch::complete(0))
+        }
+        PR_GET_NO_NEW_PRIVS => {
+            super::validate_zeroed_args(context, 1)?;
+            let no_new_privs = super::runtime::current_process()
+                .map(|p| p.no_new_privs())
+                .unwrap_or(false);
+            Ok(super::SyscallDispatch::complete(no_new_privs as usize))
+        }
+        PR_SET_NO_NEW_PRIVS => {
+            super::validate_zeroed_args(context, 2)?;
+            let val = arg2 != 0;
+            if let Ok(process) = super::runtime::current_process() {
+                process.set_no_new_privs(val);
             }
             Ok(super::SyscallDispatch::complete(0))
         }
