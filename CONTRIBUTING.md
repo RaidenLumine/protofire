@@ -98,7 +98,6 @@ Layout of the kernel crate:
 
 - **GitHub Issues**: for bug reports, feature requests, and design discussions.
 - **Real-time chat**: for quick questions and collaboration, please reach out via email: <2557597107@qq.com>.
-- **Response time**: maintainers will respond to new Issues and PRs within **48 hours**.
 
 ---
 
