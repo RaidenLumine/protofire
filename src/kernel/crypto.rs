@@ -1,4 +1,5 @@
 //! src/kernel/crypto.rs
+//!
 //! Minimal cryptographic primitives for the adAstra kernel.
 //!
 //! Provides SHA-256 hashing per NIST FIPS 180-4, plus a deterministic salt
@@ -63,7 +64,7 @@ fn compress(state: &mut [u32; 8], block: &[u8; 64]) {
     let mut w = [0u32; 64];
 
     // Prepare message schedule W[0..15].
-    for (t, chunk) in block.chunks_exact(4).take(16).enumerate() {
+    for (t, chunk) in block.as_chunks::<4>().0.iter().take(16).enumerate() {
         w[t] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
     }
 
@@ -148,8 +149,7 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     padded.extend_from_slice(&bit_len.to_be_bytes());
 
     // Process the final block(s).
-    for chunk in padded.chunks_exact(64) {
-        let block: &[u8; 64] = chunk.try_into().unwrap();
+    for block in padded.as_chunks::<64>().0 {
         compress(&mut state, block);
     }
 
@@ -545,8 +545,8 @@ pub fn poly1305_mac(key: &[u8; 32], data: &[u8]) -> [u8; 16] {
     // Process 16-byte blocks.
     // For full blocks, the appended 0x01 byte is at position 16 (= bit 128
     // = 2^128), which adds 1 to the a2 limb.
-    let mut chunks = data.chunks_exact(16);
-    for chunk in &mut chunks {
+    let (chunks, remainder) = data.as_chunks::<16>();
+    for chunk in chunks {
         let mut block = [0u8; 17];
         block[..16].copy_from_slice(chunk);
         block[16] = 0x01;
@@ -571,7 +571,6 @@ pub fn poly1305_mac(key: &[u8; 32], data: &[u8]) -> [u8; 16] {
     // Final partial block.
     // The 0x01 byte is appended at `len`, so it already contributes to n0/n1
     // directly (its position is < 128 bits). No extra +1 to a2.
-    let remainder = chunks.remainder();
     if !remainder.is_empty() {
         let mut block = [0u8; 17];
         let len = remainder.len();

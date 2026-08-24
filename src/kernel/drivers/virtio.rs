@@ -1,4 +1,6 @@
 //! src/kernel/drivers/virtio.rs
+//!
+//! VirtIO device framework: queues, features, notify.
 //! VirtIO MMIO transport layer: register interface, device discovery, feature
 //! negotiation, and status state-machine transitions.
 //!
@@ -830,11 +832,12 @@ impl VirtIoBlock {
     /// synchronously against the in-memory storage.  On bare-metal the
     /// driver polls the used ring until the hardware signals completion.
     ///
-    /// `buffer` carries the data to write (`is_write=true`) or a buffer to
-    /// fill on read (`is_write=false`).  It is `&[u8]` (not `&mut [u8]`)
-    /// because the device accesses it through raw pointers which are
-    /// valid for the synchronous duration of this call.
-    fn do_io(&self, lba: u64, buffer: &[u8], is_write: bool) -> Result<()> {
+    /// `buf_ptr`/`buf_len` describe the request's data buffer.  For reads
+    /// (`is_write=false`) the device writes into it, so the caller must pass
+    /// a pointer derived from a mutable reference; for writes the device only
+    /// reads from it.  The buffer must stay valid for the synchronous
+    /// duration of this call.
+    fn do_io(&self, lba: u64, buf_ptr: *mut u8, buf_len: usize, is_write: bool) -> Result<()> {
         let mut queue = self.queue.lock();
 
         // Allocate 3 descriptors: header, data, status
@@ -857,7 +860,6 @@ impl VirtIoBlock {
             sector: lba,
         };
 
-        #[allow(unused_mut)]
         let mut status_byte: u8 = STATUS_BYTE_SENTINEL;
 
         // Configure descriptors
@@ -873,16 +875,11 @@ impl VirtIoBlock {
         } else {
             VIRTQ_DESC_F_WRITE // device writes data to buffer
         };
-        queue.set_desc(
-            data_desc,
-            buffer.as_ptr() as u64,
-            buffer.len() as u32,
-            data_flags,
-        );
+        queue.set_desc(data_desc, buf_ptr as u64, buf_len as u32, data_flags);
 
         queue.set_desc(
             status_desc,
-            &status_byte as *const u8 as u64,
+            &mut status_byte as *mut u8 as u64,
             1,
             VIRTQ_DESC_F_WRITE,
         );
@@ -939,7 +936,6 @@ impl VirtIoBlock {
             sector: 0,
         };
 
-        #[allow(unused_mut)]
         let mut status_byte: u8 = 0xFF;
 
         queue.set_desc(
@@ -951,7 +947,7 @@ impl VirtIoBlock {
 
         queue.set_desc(
             status_desc,
-            &status_byte as *const u8 as u64,
+            &mut status_byte as *mut u8 as u64,
             1,
             VIRTQ_DESC_F_WRITE,
         );
@@ -1013,7 +1009,7 @@ impl BlockDevice for VirtIoBlock {
             return Err(Error::InvalidArgument);
         }
 
-        if let Err(e) = self.do_io(lba, buffer, false) {
+        if let Err(e) = self.do_io(lba, buffer.as_mut_ptr(), buffer.len(), false) {
             self.downgrade_health_on_error();
             return Err(e);
         }
@@ -1034,7 +1030,7 @@ impl BlockDevice for VirtIoBlock {
             return Err(Error::InvalidArgument);
         }
 
-        if let Err(e) = self.do_io(lba, data, true) {
+        if let Err(e) = self.do_io(lba, data.as_ptr() as *mut u8, data.len(), true) {
             self.downgrade_health_on_error();
             return Err(e);
         }

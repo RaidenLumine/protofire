@@ -1,4 +1,5 @@
 //! src/kernel/fs/block_cache.rs
+//!
 //! A fixed-capacity block cache that wraps a BlockDevice and provides
 //! cached reads with both write-through and write-back modes.
 //!
@@ -59,13 +60,13 @@ pub const WRITE_BACK_PERIOD_TICKS: u64 = 300;
 /// the Linux `dirty_expire_centisecs` default of 3000 centiseconds.
 pub const WRITE_BACK_AGE_TICKS: u64 = 600;
 
-/// Maximum number of cached blocks.  Increased from 64 to 128 to reduce
-/// eviction pressure under the write-back model, at a cost of 64 KiB of
-/// heap (128 × 512 bytes).  This is still < 0.4% of the 16 MiB kernel heap.
-const CACHE_CAPACITY: usize = 128;
+/// Maximum number of cached blocks.  Increased from 64 to 512 to reduce
+/// eviction pressure under the write-back model, at a cost of 256 KiB of
+/// heap (512 × 512 bytes).  This is ~1.6% of the 16 MiB kernel heap.
+const CACHE_CAPACITY: usize = 512;
 
 /// When the number of dirty blocks reaches this fraction of `CACHE_CAPACITY`
-/// (50 % = 64 dirty blocks), `write_back` automatically triggers a full flush
+/// (50 % = 256 dirty blocks), `write_back` automatically triggers a full flush
 /// to avoid cascading eviction writes later.  The threshold is deliberately
 /// conservative so short bursts of writes don't hit the device on every call.
 const WRITE_BACK_PRESSURE_THRESHOLD: usize = CACHE_CAPACITY / 2;
@@ -1016,7 +1017,7 @@ mod tests {
     #[test]
     fn eviction_of_dirty_block_writes_back_to_device() {
         // Use a small cache to force all-dirty eviction.
-        // CACHE_CAPACITY is 128 which is too large for this test.
+        // CACHE_CAPACITY is 512 which is too large for this test.
         // We instead mark every entry dirty and force an eviction.
         let device_blocks = CACHE_CAPACITY as u64 + 1;
         let device = Arc::new(CountingDevice::with_blocks("evict-dirty", device_blocks));
