@@ -87,6 +87,10 @@ path = "tests/net/fuzz.rs"
 name = "syscall_fuzz"
 path = "tests/syscall/fuzz.rs"
 
+[[test]]
+name = "usb_msd"
+path = "tests/drivers/usb_msd.rs"
+
 [features]
 default = []
 demo-disk = []
