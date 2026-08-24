@@ -229,10 +229,40 @@ already shows what).
   splitting the commit.
 - Reference issues/PRs when relevant (`Fixes #123`).
 
-**Enforcement:** `scripts/hooks/commit-msg` validates the subject and body on
-every `git commit` (install once with `make install-hooks`) and again on every
-pull request in CI. If your message is rejected, read the error and
-`git commit --amend` — the check is fast and precise.
+**Attribution trailers:**
+
+Attribution has three fixed roles — the people who own the work, and the tools
+that helped — and the trailer categories never cross between them.
+
+| Trailer | For | Notes |
+|---------|-----|-------|
+| `Signed-off-by:` | the primary developer | **Required on every commit.** Certifies the Developer's Certificate of Origin: you authored or received the change and submit it under the project's license. People only — AI tools must never sign. `git commit -s` adds it. |
+| `Co-authored-by:` | collaborating people | One trailer per human co-author, `Name <email>`. GitHub renders these on the commit. |
+| `Co-developed-by:` | collaborating people | Linux-style co-development; each co-developer also adds their own `Signed-off-by:`. |
+| `Assisted-by:` | AI tools | `AGENT:MODEL [TOOLS]` — no email, tools have none. Follows the Linux kernel coding-assistants policy, e.g. `Assisted-by: Claude:claude-3-opus coccinelle sparse`. |
+
+The usage object of each trailer is fixed: `Co-developed-by:` names a person,
+`Assisted-by:` names a tool, and the two can never be swapped. Do not credit a
+person with `Assisted-by:`, and do not credit a tool with
+`Co-developed-by:` or `Co-authored-by:`.
+
+A complete example for an AI-assisted commit:
+
+    Fix ATA timeouts on cold boot
+
+    Explain why, not what.
+
+    Signed-off-by: Ada Kernelson <ada@example.com>
+    Co-authored-by: Bob Lin <bob@example.com>
+    Assisted-by: Claude:claude-sonnet-4.5 coccinelle
+
+Trailer lines are exempt from the 72-character body wrap; keep them on one line.
+
+**Enforcement:** `scripts/hooks/commit-msg` validates the subject, body, and the
+required `Signed-off-by:` trailer on every `git commit` (install once with
+`make install-hooks`) and again on every pull request in CI. If your message is
+rejected, read the error and `git commit --amend` — the check is fast and
+precise.
 
 ---
 

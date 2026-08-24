@@ -208,9 +208,36 @@ Protofire 遵循 Linus Torvalds 在 Linux 内核上贯彻的精神：提交信�
 - 一个逻辑一个提交；正文超过几行时，考虑拆分提交。
 - 相关时引用 Issue/PR（`Fixes #123`）。
 
-**强制执行：** `scripts/hooks/commit-msg` 会在每次 `git commit` 时校验主题与正文
-（`make install-hooks` 一次性安装），并在 CI 中对每个 pull request 再次校验。若提交
-被拒绝，阅读报错信息并 `git commit --amend`——检查快速且精确。
+**署名（Attribution trailers）：**
+
+署名分三层，对象各自固定，类别之间永不交叉：
+
+| Trailer | 对象 | 说明 |
+|---------|------|------|
+| `Signed-off-by:` | 第一位开发者 | **每个提交必写。** DCO 认证：本人创作或经手该改动，并依项目许可证提交。仅限人类——AI 工具绝不能签。`git commit -s` 自动添加。 |
+| `Co-authored-by:` | 协作自然人 | 每位人类合著者一条，`Name <email>`。GitHub 在提交列表渲染。 |
+| `Co-developed-by:` | 协作自然人 | Linux 式共同开发；每位合著者同时加上自己的 `Signed-off-by:`。 |
+| `Assisted-by:` | AI 工具 | `AGENT:MODEL [TOOLS]`——工具没有邮箱，不用邮箱格式。遵循 Linux 内核 coding-assistants 政策，如 `Assisted-by: Claude:claude-3-opus coccinelle sparse`。 |
+
+每个 trailer 的使用对象是固定的：`Co-developed-by:` 指向人，`Assisted-by:` 指向工具，
+**两者不能互换**。既不能用 `Assisted-by:` 给人署名，也不能用 `Co-developed-by:` /
+`Co-authored-by:` 给工具署名。
+
+一个 AI 辅助提交的完整示例：
+
+    Fix ATA timeouts on cold boot
+
+    Explain why, not what.
+
+    Signed-off-by: Ada Kernelson <ada@example.com>
+    Co-authored-by: Bob Lin <bob@example.com>
+    Assisted-by: Claude:claude-sonnet-4.5 coccinelle
+
+trailer 行豁免正文 72 字符换行限制，保持单行即可。
+
+**强制执行：** `scripts/hooks/commit-msg` 会在每次 `git commit` 时校验主题、正文与
+必填的 `Signed-off-by:` trailer（`make install-hooks` 一次性安装），并在 CI 中对每个
+pull request 再次校验。若提交被拒绝，阅读报错信息并 `git commit --amend`——检查快速且精确。
 
 ---
 

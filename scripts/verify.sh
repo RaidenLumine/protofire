@@ -37,12 +37,16 @@ run_make_step() {
     make "$target" PROFILE="$PROFILE"
 }
 
-check_kernel_headers() {
+check_source_headers() {
     total_files=0
     path_headers=0
-    summary_headers=0
+    blank_headers=0
 
-    files="$(find src/kernel -type f -name '*.rs' | sort)"
+    # Every `.rs` file in the repository must open with:
+    #   line 1: `//! <relative_path>`
+    #   line 2: `//!` (blank)
+    # with content starting on line 3.
+    files="$(find . -type f -name '*.rs' -not -path './target/*' | sort)"
     for file in $files; do
         total_files=$((total_files + 1))
         relative_path="${file#./}"
@@ -54,17 +58,27 @@ check_kernel_headers() {
             path_headers=$((path_headers + 1))
         fi
 
-        if printf '%s\n' "$second_line" | grep -Eq '^//! [^[:space:]].+'; then
-            summary_headers=$((summary_headers + 1))
+        if [ "$second_line" = "//!" ]; then
+            blank_headers=$((blank_headers + 1))
         fi
     done
 
-    printf 'header coverage: path=%s summary=%s total=%s\n' \
-        "$path_headers" "$summary_headers" "$total_files"
+    printf 'header coverage: path=%s blank=%s total=%s\n' \
+        "$path_headers" "$blank_headers" "$total_files"
 
     if [ "$path_headers" -ne "$total_files" ] \
-        || [ "$summary_headers" -ne "$total_files" ]; then
-        printf 'kernel header coverage check failed\n' >&2
+        || [ "$blank_headers" -ne "$total_files" ]; then
+        printf 'source header coverage check failed\n' >&2
+        return 1
+    fi
+}
+
+check_commit_hooks() {
+    hooks_path="$(git config --get core.hooksPath 2>/dev/null || true)"
+    if [ -n "$hooks_path" ] && [ -x "$hooks_path/commit-msg" ]; then
+        printf 'commit hook: installed (%s/commit-msg)\n' "$hooks_path"
+    else
+        printf 'commit hook: NOT installed — run `make install-hooks`\n' >&2
         return 1
     fi
 }
@@ -77,8 +91,11 @@ run_p0() {
     run_make_step "make build" build
     run_make_step "make build-aarch64" build-aarch64
 
-    printf '==> verify[%s]: kernel header coverage\n' "$VERIFY_TIER"
-    check_kernel_headers
+    printf '==> verify[%s]: source header coverage\n' "$VERIFY_TIER"
+    check_source_headers
+
+    printf '==> verify[%s]: commit message hook\n' "$VERIFY_TIER"
+    check_commit_hooks
 }
 
 run_p1() {

@@ -32,6 +32,16 @@
 - [ ] Docs updated in both `docs/en/` and `docs/zh-CN/` (where applicable)
 - [ ] `docs/<lang>/current-status.md` reflects the change
 
+## Attribution
+
+<!-- Three fixed roles, never crossed: people own the work, tools assist. The
+     `Signed-off-by:` trailer is required on every commit. See CONTRIBUTING.md
+     → Commit Message Guidelines. -->
+
+- [ ] `Signed-off-by:` present on every commit (primary developer, DCO)
+- [ ] Human co-authors credited with `Co-authored-by:` / `Co-developed-by:` trailers
+- [ ] AI-assisted changes disclosed with an `Assisted-by: AGENT:MODEL [TOOLS]` trailer
+
 ## Checklist
 
 - [ ] One logical change per PR

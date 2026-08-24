@@ -18,13 +18,13 @@ else
 $(error PROFILE must be either debug or release)
 endif
 
-.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 clippy run run-aarch64 run-riscv64 clean setup-dev
+.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-usb verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 clippy run run-aarch64 run-riscv64 clean setup-dev install-hooks
 
 help:
 	@printf '%s\n' \
 		'Available targets:' \
 		'  make doctor         - check whether the local toolchain is ready' \
-		'  make verify         - run the default P2 verification gate (override with VERIFY_TIER=p0..p3)' \
+		'  make verify         - run the default P3 verification gate (override with VERIFY_TIER=p0..p3)' \
 		'  make verify-p0      - format check + host/x86_64/aarch64 build checks + header coverage' \
 		'  make verify-p1      - P0 plus fast concurrency/path/I-O/ABI regressions' \
 		'  make verify-p2      - P1 plus storage/recovery/fault-matrix regressions' \
@@ -38,6 +38,7 @@ help:
 		'  make test-fast      - run path/I-O/syscall/user integration regressions' \
 		'  make test-concurrency - run scheduler/input/condvar concurrency regressions' \
 		'  make test-storage   - run filesystem/recovery/fault-injection regressions' \
+		'  make test-usb       - run USB Mass Storage (MSD) integration tests' \
 		'  make fmt            - format the source tree' \
 		'  make fmt-check      - verify formatting without modifying files' \
 		'  make build          - build the bare-metal kernel ELF (PROFILE=debug|release)' \
@@ -49,6 +50,7 @@ help:
 		'  make run-riscv64    - boot the riscv64 kernel directly on QEMU virt' \
 		'  make clean          - remove Cargo artifacts' \
 		'  make setup-dev      - no-op (runtime and demo crates are co-located in-repo)' \
+		'  make install-hooks  - install the commit-msg git hook (once per clone)' \
 		'  (disk image and ISO targets are not implemented yet)'
 
 doctor:
@@ -58,6 +60,13 @@ doctor:
 # (src/user/shared/, src/user/demo/).  No symlinks needed.
 setup-dev:
 	@echo "  Development setup complete."
+
+# Install the repository git hooks (commit-msg validation).  Run once per
+# clone; `git config core.hooksPath` is stored in the local .git/config and
+# is not part of the tracked tree.
+install-hooks:
+	git config core.hooksPath scripts/hooks
+	@echo "  Git hooks installed: scripts/hooks (commit-msg validation active)"
 
 fmt:
 	$(CARGO) fmt
@@ -84,6 +93,11 @@ test-concurrency:
 
 test-storage:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fs_maintenance --test memory_manager --test page_table --test simplefs --test simplefs_recovery --test simplefs_fault_matrix
+
+test-usb:
+	@echo "Running USB MSD Integration Tests..."
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test usb_msd
+	@echo "USB MSD tests completed"
 
 verify:
 	sh ./scripts/verify.sh "$${VERIFY_TIER:-p3}"
