@@ -36,8 +36,9 @@
 6. [新增或修改系统调用](#新增或修改系统调用)
 7. [文档](#文档)
 8. [提交变更](#提交变更)
-9. [PR 评审流程](#pr-评审流程)
-10. [贡献者认可](#贡献者认可)
+9. [提交信息规范](#提交信息规范)
+10. [PR 评审流程](#pr-评审流程)
+11. [贡献者认可](#贡献者认可)
 
 ---
 
@@ -46,7 +47,7 @@
 ### 先决条件
 
 - **Rust 工具链：** 仓库通过 [`rust-toolchain.toml`](rust-toolchain.toml) 固定了精确的
-  channel、组件与目标（当前为 `1.94.1`），文件会自动安装三个 `*-none` 目标：
+  channel、组件与目标，文件会自动安装三个 `*-none` 目标：
   - `x86_64-unknown-none`
   - `aarch64-unknown-none`
   - `riscv64gc-unknown-none-elf`
@@ -97,9 +98,12 @@ make run            # QEMU 启动 x86_64（含约 40 条内置命令的演示 sh
 
 ## 代码风格与约定
 
-代码库约 24 万行 Rust、530+ 个文件，一致性很重要。
+代码库约 21.5 万行 Rust、600+ 个文件，一致性很重要。
 
 - **格式化：** 运行 `cargo fmt`，门禁把格式视为必检项。
+- **文件头：** 每个 `.rs` 文件第 1 行为 `//! <相对路径>`，第 2 行为留空的 `//!`，
+  第 3 行起才是实际内容。由 `make verify` 中的 `check_source_headers` 强制
+  （见 `scripts/verify.sh`）。
 - **Lint：** 运行 `make clippy`（全部目标），关键 lint 视为错误。
 - **`no_std`：** 内核代码为 `#![no_std]` 且 `panic = "abort"`。中断/原子路径中
   除内核堆外不得使用 `std` 或动态分配。
@@ -121,10 +125,10 @@ Makefile 提供了多级验证门禁，任何 PR 合并前至少要通过完整�
 
 | 门禁 | 内容 |
 |------|------|
-| `make verify-p0` | `cargo fmt --check` + clippy |
-| `make verify-p1` | p0 + 主机端单元测试 + 目标检查 |
-| `make verify-p2` | p1 + 集成测试 |
-| `make verify-p3` | p2 + 全部三种架构的交叉构建 |
+| `make verify-p0` | fmt-check + 主机/x86_64 检查 + aarch64 检查 + x86_64/aarch64 构建 + 源文件头覆盖 |
+| `make verify-p1` | p0 + 主机单元测试（`test-lib`、并发、快速回归） |
+| `make verify-p2` | p1 + 存储/恢复/故障注入回归（`test-storage`） |
+| `make verify-p3` | p2 + clippy（全部目标）+ 可选 AArch64 运行时 smoke |
 
 CI 在每次 push 与 PR 上运行 `make check`、`make verify-p0` 与 `make clippy`
 （见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)）。
@@ -173,7 +177,8 @@ cargo build --features demo-disk --target riscv64gc-unknown-none-elf
 
 1. **Fork 并建分支。** 从 `main` 建主题分支（如 `fix/ata-timeouts`）。
 2. **一个 PR 只做一件事。** 保持 diff 小而可审。
-3. **提交信息：** 简洁的祈使句摘要行，正文说明*为什么*；相关时引用 Issue 编号。
+3. **提交信息：** 遵循下方的[提交信息规范](#提交信息规范)——本地由
+   `make install-hooks` 与 CI 强制执行。
 4. **发起 pull request**，按[PR 模板](.github/PULL_REQUEST_TEMPLATE/pull_request_template.md)
    填写并完成清单。
 5. **保持 CI 通过。** 确保 `make check`、`make verify-p0`、`make clippy` 通过
@@ -182,7 +187,34 @@ cargo build --features demo-disk --target riscv64gc-unknown-none-elf
 
 ---
 
-### PR 评审流程
+## 提交信息规范
+
+Protofire 遵循 Linus Torvalds 在 Linux 内核上贯彻的精神：提交信息是写给未来读者的
+一封信，而不是对 diff 的收据。两条准则——保持简短，讲 *为什么* 而不讲 *是什么*
+（diff 已经展示了是什么）。
+
+**主题行（第一行）：**
+
+- 祈使句，句首大写：`Fix ATA timeouts on cold boot`，而不是 `fixed`。
+- 不超过 72 个字符。
+- 结尾不加句号。
+- 鼓励 `<类型>:` 前缀（`fix:`、`feat:`、`docs:`、`refactor:`、`chore:`、`test:`）；
+  也使用 `Protofire 0.1.x:` 这类版本标记。
+- git 自动生成的 `Merge ...` 与 `Revert "..."` 行豁免。
+
+**正文（空一行，然后分段）：**
+
+- 解释**为什么**需要这个改动，以及（如相关）考虑过哪些替代方案。不要复述 diff。
+- 一个逻辑一个提交；正文超过几行时，考虑拆分提交。
+- 相关时引用 Issue/PR（`Fixes #123`）。
+
+**强制执行：** `scripts/hooks/commit-msg` 会在每次 `git commit` 时校验主题与正文
+（`make install-hooks` 一次性安装），并在 CI 中对每个 pull request 再次校验。若提交
+被拒绝，阅读报错信息并 `git commit --amend`——检查快速且精确。
+
+---
+
+## PR 评审流程
 
 1. **自动检查**：CI 会自动运行 `make verify-p0` 和 `make clippy`，必须全部通过。
 2. **人工评审**：至少需要 **一名模块维护者** 的批准（见 [MAINTAINERS.md](MAINTAINERS.md)）。

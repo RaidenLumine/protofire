@@ -64,6 +64,6 @@ Collaboration and governance documents live at the repository root:
 
 ---
 
-> **Codebase:** ~240,000 lines of Rust across 530+ files  
+> **Codebase:** ~215,000 lines of Rust across 600+ files  
 > **Targets:** x86_64 (full), AArch64 (full), RISC-V 64 (partial)  
 > **Last updated:** 2026-08-20

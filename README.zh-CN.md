@@ -27,7 +27,7 @@ make test-storage       # 文件系统、恢复、故障注入回归测试
 
 # 多级验证门禁
 make verify             # 默认 P3 门禁（fmt + clippy + test + cross-check）
-make verify-p0          # 最快：fmt + clippy
+make verify-p0          # 最快：fmt + 检查 + 头覆盖
 make verify-p1          # p0 + 主机端单元测试 + 目标检查
 make verify-p2          # p1 + 集成测试
 make verify-p3          # p2 + 全交叉目标构建

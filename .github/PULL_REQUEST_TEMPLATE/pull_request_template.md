@@ -35,6 +35,7 @@
 ## Checklist
 
 - [ ] One logical change per PR
+- [ ] Commit message follows the [guidelines](CONTRIBUTING.md#commit-message-guidelines) (subject ≤72 chars, no trailing period, imperative summary)
 - [ ] Code follows the project style (`cargo fmt`, `unsafe` blocks carry `// SAFETY:`)
 - [ ] No new `#![no_std]` violations, no `panic!` in core paths
 - [ ] No breaking syscall-number changes (append-only numbering respected)

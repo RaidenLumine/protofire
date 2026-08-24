@@ -28,7 +28,7 @@ make test-storage       # filesystem, recovery, fault-injection regressions
 
 # Multi-tier verification gate
 make verify             # default P3 gate (fmt + clippy + test + cross-check)
-make verify-p0          # fastest: fmt + clippy
+make verify-p0          # fastest: fmt + checks + header coverage
 make verify-p1          # p0 + host unit tests + target checks
 make verify-p2          # p1 + integration tests
 make verify-p3          # p2 + full cross-target build

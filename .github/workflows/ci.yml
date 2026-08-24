@@ -30,14 +30,41 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.94.1"
-          components: rustfmt, clippy
-          targets: x86_64-unknown-none
+          toolchain: "nightly-2026-08-24"
+          components: rustfmt, clippy, llvm-tools-preview
+          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
+
+      - name: Install git hooks
+        run: make install-hooks
 
       - name: Run ${{ matrix.gate.name }}
         run: ${{ matrix.gate.command }}
         env:
           CARGO: cargo
+
+  commit-message:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate PR commit messages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/hooks/commit-msg
+          count=0
+          for sha in $(git rev-list "$BASE_SHA..$HEAD_SHA"); do
+            git show -s --format=%B "$sha" > /tmp/commit-msg.txt
+            scripts/hooks/commit-msg /tmp/commit-msg.txt
+            count=$((count + 1))
+          done
+          echo "validated ${count} commit message(s)"

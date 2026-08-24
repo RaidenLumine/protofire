@@ -89,7 +89,7 @@ Maintainers are expected to:
 
 ## Contact
 
-- Email: **123@456.com**
+- Email: **2557597107@qq.com**
 - Public discussion: GitHub issues and pull requests (English or Simplified
   Chinese).
 - Security: see [SECURITY.md](SECURITY.md) — do **not** post vulnerability

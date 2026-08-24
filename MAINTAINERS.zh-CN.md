@@ -81,6 +81,6 @@
 
 ## 联系方式
 
-- 邮件：**123@456.com**
+- 邮件：**2557597107@qq.com**
 - 公开讨论：GitHub Issue 与 pull request（英文或简体中文）。
 - 安全事项：见 [SECURITY.md](SECURITY.zh-CN.md)——请**不要**公开张贴漏洞细节。
