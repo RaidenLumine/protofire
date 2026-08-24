@@ -1,4 +1,5 @@
 //! src/kernel/network/ppp.rs
+//!
 //! Point-to-Point Protocol (RFC 1661 / 1662).
 //!
 //! Implements PPP framing in HDLC-like encapsulation:
@@ -610,11 +611,9 @@ impl PppState {
                     return None;
                 }
             }
-            PppPhase::Terminate => {
-                if self.terminate_retries >= LCP_MAX_TERMINATE {
-                    self.link_down();
-                    return None;
-                }
+            PppPhase::Terminate if self.terminate_retries >= LCP_MAX_TERMINATE => {
+                self.link_down();
+                return None;
             }
             _ => {}
         }

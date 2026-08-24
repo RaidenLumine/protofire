@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/igmp.rs
+//!
 //! IGMPv2 (RFC 2236) — IPv4 multicast group management.
 //!
 //! Implements host-side IGMPv2:
@@ -206,13 +207,13 @@ pub fn process_igmp_message(
             }
         }
 
-        IGMP_TYPE_MEMBERSHIP_REPORT_V1 | IGMP_TYPE_MEMBERSHIP_REPORT_V2 => {
+        IGMP_TYPE_MEMBERSHIP_REPORT_V1 | IGMP_TYPE_MEMBERSHIP_REPORT_V2
+            if msg.group_address != [0, 0, 0, 0] =>
+        {
             // Another host has reported — if we have a pending report for the
             // same group, cancel it (report suppression, RFC 2236 §3).
-            if msg.group_address != [0, 0, 0, 0] {
-                if let Some(state) = igmp_state.groups.get_mut(&msg.group_address) {
-                    state.report_timer_deadline = 0;
-                }
+            if let Some(state) = igmp_state.groups.get_mut(&msg.group_address) {
+                state.report_timer_deadline = 0;
             }
         }
 
