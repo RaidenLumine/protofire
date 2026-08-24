@@ -1,4 +1,5 @@
 //! src/kernel/syscall/signal_fd.rs
+//!
 //! signalfd — signal notification file descriptor.
 //!
 //! Mirrors Linux `signalfd()` semantics in the kernel's cooperative signal

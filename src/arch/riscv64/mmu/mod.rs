@@ -1,4 +1,5 @@
 //! src/arch/riscv64/mmu/mod.rs
+//!
 //! Sv39 4 KiB-granule translation for the runtime kernel page tables and
 //! per-process demo user address spaces.
 //!

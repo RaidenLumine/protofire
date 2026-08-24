@@ -1,4 +1,6 @@
 //! src/kernel/drivers/usb_hid.rs
+//!
+//! USB Human Interface Device (keyboard/mouse) driver.
 //! USB HID (Human Interface Device) driver — boot protocol keyboard.
 //!
 //! Parses USB HID boot protocol keyboard reports and maps USB HID keycodes

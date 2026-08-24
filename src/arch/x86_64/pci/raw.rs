@@ -1,3 +1,5 @@
+//! src/arch/x86_64/pci/raw.rs
+//!
 //! PCI configuration space access primitives (legacy IO-port mechanism).
 //!
 //! Provides low-level read/write helpers for the PCI configuration space via

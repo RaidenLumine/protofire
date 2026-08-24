@@ -1,4 +1,5 @@
 //! src/arch/aarch64/pci.rs
+//!
 //! AArch64 PCIe ECAM (Enhanced Configuration Access Mechanism) enumeration.
 //!
 //! On AArch64 platforms (including QEMU `virt` with `-device pcie-ecam`),

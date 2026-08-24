@@ -1,4 +1,5 @@
 //! src/user/demo/demo_program_x86_64_elf.rs
+//!
 //! Convenience wrappers that build loadable x86_64 ELF artifacts from the
 //! kernel's raw demo payload sections.  The shared ELF layout logic lives in
 //! `demo_payloads::elf_builder`.

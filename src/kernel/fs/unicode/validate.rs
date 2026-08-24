@@ -1,4 +1,5 @@
 //! src/kernel/fs/unicode/validate.rs
+//!
 //! UTF-8 validation and sanitisation helpers for on-disk metadata.
 //!
 //! These functions check and sanitise byte sequences that are expected to be

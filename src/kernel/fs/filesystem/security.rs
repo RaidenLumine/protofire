@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/security.rs
+//!
 //! FileSystem authorization and access-control methods.
 use alloc::string::String;
 use alloc::sync::Arc;

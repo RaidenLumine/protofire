@@ -1,4 +1,5 @@
 //! src/kernel/network/dns/resolve.rs
+//!
 //! Hostname resolution: static hosts table → DNS cache → DNS query.
 
 #[cfg(target_os = "none")]

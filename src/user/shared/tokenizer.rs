@@ -1,3 +1,5 @@
+//! src/user/shared/tokenizer.rs
+//!
 //! ring3-common/tokenizer.rs
 //! Shell word tokenizer — splits input lines into argument tokens.
 //!

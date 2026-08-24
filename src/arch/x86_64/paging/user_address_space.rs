@@ -1,3 +1,8 @@
+//! src/arch/x86_64/paging/user_address_space.rs
+//!
+//! x86_64 user address-space page-table planning and assembly for
+//! ELF image loading and runtime translation.
+
 use super::*;
 use crate::kernel::memory::paging::PagePermissions;
 use crate::user::program::UserImageLoadPlan;

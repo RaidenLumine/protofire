@@ -1,4 +1,5 @@
 //! src/kernel/network/dns/query.rs
+//!
 //! DNS query builders: A, AAAA, EDNS0 (RFC 6891), and PTR reverse lookups.
 
 use alloc::format;

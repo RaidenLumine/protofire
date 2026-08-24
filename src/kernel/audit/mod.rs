@@ -1,4 +1,6 @@
 //! src/kernel/audit/mod.rs
+//!
+//! Kernel audit subsystem: event emission and ring buffer.
 //! Audit subsystem — event logging ring buffer and per-process enable mask.
 //!
 //! The audit subsystem provides a fixed-size lock-free ring buffer into which

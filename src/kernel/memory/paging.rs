@@ -1,4 +1,5 @@
 //! src/kernel/memory/paging.rs
+//!
 //! Page-table model and mapping primitives for virtual-to-physical translation.
 
 use alloc::vec::Vec;

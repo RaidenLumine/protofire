@@ -1,3 +1,5 @@
+//! src/user/shared/abi/shm.rs
+//!
 //! src/abi/shm.rs
 //! ABI types for SystV shared memory (shm) operations.
 //!

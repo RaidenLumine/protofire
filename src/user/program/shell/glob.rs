@@ -1,4 +1,5 @@
 //! src/user/program/shell/glob.rs
+//!
 //! Glob pattern matching (`*`, `?`, `[...]` character classes).
 
 use super::*;

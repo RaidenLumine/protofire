@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/mobile_ip.rs
+//!
 //! Mobile IPv4 agent advertisement (RFC 3344).
 //!
 //! ## Educational purpose

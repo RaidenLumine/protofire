@@ -1,4 +1,5 @@
 //! src/arch/riscv64/context.rs
+//!
 //! RISC-V 64 context switch and user-mode entry helpers.
 
 use core::arch::asm;

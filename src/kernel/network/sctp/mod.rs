@@ -1,4 +1,5 @@
 //! src/kernel/network/sctp/mod.rs
+//!
 //! SCTP protocol (RFC 4960): chunk types, association state machine, and
 //! IP protocol-132 dispatch.
 //!

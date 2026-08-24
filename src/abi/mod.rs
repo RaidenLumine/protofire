@@ -1,4 +1,5 @@
 //! src/abi/mod.rs
+//!
 //! Module entry that re-exports the public ABI surface shared by kernel and user code.
 
 pub mod diagnostic;

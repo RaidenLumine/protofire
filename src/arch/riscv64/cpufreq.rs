@@ -1,4 +1,5 @@
 //! src/arch/riscv64/cpufreq.rs
+//!
 //! RISC-V CPU frequency control from device-tree OPP tables.
 //!
 //! RISC-V has no architectural CPU-frequency register.  This driver discovers

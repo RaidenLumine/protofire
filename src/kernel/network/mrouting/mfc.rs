@@ -1,4 +1,5 @@
 //! src/kernel/network/mrouting/mfc.rs
+//!
 //! Multicast forwarding cache (MFC): `(source, group)` entries mapping an
 //! incoming VIF to a list of outgoing VIFs, with per-VIF TTL thresholds and
 //! packet/byte counters (the kernel data plane of multicast routing).

@@ -1,4 +1,5 @@
 //! src/kernel/process/context.rs
+//!
 //! Architecture-independent CPU context storage for thread switching.
 //!
 //! The [`Context`] struct has a fixed layout shared by every architecture's

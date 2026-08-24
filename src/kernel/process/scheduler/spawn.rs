@@ -1,4 +1,5 @@
 //! src/kernel/process/scheduler/spawn.rs
+//!
 //! Thread spawning, registration, and public spawn API.
 use alloc::sync::Arc;
 use alloc::vec::Vec;

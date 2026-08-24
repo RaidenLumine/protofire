@@ -1,4 +1,5 @@
 //! src/kernel/memory/manager/pfault.rs
+//!
 //! Page-fault resolution: demand-paging backfill (with swap-in and fault-around
 //! prefetching) and Copy-on-Write private copy.
 

@@ -1,4 +1,5 @@
 //! src/kernel/syscall/runtime.rs
+//!
 //! Syscall runtime accessors for current thread/process, scheduler, and filesystem.
 
 use alloc::sync::Arc;

@@ -1,4 +1,5 @@
 //! src/kernel/network/link/csma_cd.rs
+//!
 //! CSMA/CD — Carrier Sense Multiple Access with Collision Detection
 //! (IEEE 802.3 classic Ethernet).
 //!

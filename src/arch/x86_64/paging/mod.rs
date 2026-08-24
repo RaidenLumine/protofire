@@ -1,3 +1,5 @@
+//! src/arch/x86_64/paging/mod.rs
+//!
 //! x86_64 paging — bootstrap and runtime page-table planning plus per-process
 //! address-space assembly.
 

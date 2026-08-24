@@ -1,3 +1,5 @@
+//! src/user/shared/abi/exception.rs
+//!
 //! src/abi/exception.rs
 //! Shared public exception ABI constants, frame layouts, and decode helpers.
 

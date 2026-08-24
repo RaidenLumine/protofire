@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/xattr.rs
+//!
 //! FileSystem extended-attribute (xattr) and per-file data-reduction flag
 //! access, dispatched through the mounted filesystem's VNode.
 

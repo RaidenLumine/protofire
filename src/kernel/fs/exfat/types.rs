@@ -1,4 +1,5 @@
 //! src/kernel/fs/exfat/types.rs
+//!
 //! On-disk type definitions, boot region parsing, entry type classification,
 //! and byte-level I/O utilities for exFAT.
 

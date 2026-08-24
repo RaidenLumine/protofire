@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/tests.rs
+//!
 //! Unit tests for the SimpleFS driver.
 //!
 //! V4 test images are produced directly with

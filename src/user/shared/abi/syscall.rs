@@ -1,4 +1,5 @@
 //! src/user/shared/abi/syscall.rs
+//!
 //! Canonical syscall-number definitions and ABI metadata (single source of truth).
 //!
 //! Both the kernel's `SyscallNumber` enum and ring3 syscall wrappers resolve their

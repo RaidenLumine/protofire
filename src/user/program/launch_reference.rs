@@ -1,4 +1,5 @@
 //! src/user/program/launch_reference.rs
+//!
 //! Launch-reference resolution and trust-boundary validation for catalog-launched programs.
 //!
 //! This module is the kernel-side launch core: it resolves a launch reference

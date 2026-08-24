@@ -1,4 +1,5 @@
 //! src/user/program/shell/history.rs
+//!
 //! Readline callbacks, command history, and history expansion.
 
 use alloc::string::{String, ToString};

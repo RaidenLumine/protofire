@@ -1,4 +1,5 @@
 //! src/user/program/demo_runtime.rs
+//!
 //! Host-side demo runtime proxy resolution used when bare-metal payloads are not executed directly.
 
 use alloc::format;

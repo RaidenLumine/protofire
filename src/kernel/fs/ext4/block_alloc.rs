@@ -1,4 +1,5 @@
 //! src/kernel/fs/ext4/block_alloc.rs
+//!
 //! Ext4 block allocation helpers.
                 [0_u16; EXT4_TIND_BLOCK + 1],
                 0,

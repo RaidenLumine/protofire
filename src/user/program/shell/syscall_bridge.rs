@@ -1,4 +1,5 @@
 //! src/user/program/shell/syscall_bridge.rs
+//!
 //! Kernel-side implementations of the `extern "Rust"` syscall entry points
 //! declared by `crate::user::shared::syscall`.
 //!

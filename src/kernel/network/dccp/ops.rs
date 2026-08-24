@@ -1,4 +1,5 @@
 //! src/kernel/network/dccp/ops.rs
+//!
 //! DCCP state machine (RFC 4340 §8) and user-space connection operations.
 
 use alloc::vec::Vec;

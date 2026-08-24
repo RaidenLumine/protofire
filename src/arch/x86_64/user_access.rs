@@ -1,4 +1,5 @@
 //! src/arch/x86_64/user_access.rs
+//!
 //! SMAP-aware user-memory access helpers: `stac`/`clac` instructions and
 //! a RAII guard that brackets supervisor access to user pages.
 //!

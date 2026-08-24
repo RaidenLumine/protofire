@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/constants.rs
+//!
 //! Superblock and table geometry constants for the on-disk SimpleFs layout.
 
 // Superblock and table geometry constants for the on-disk SimpleFs layout.

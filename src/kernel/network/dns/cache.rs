@@ -1,4 +1,5 @@
 //! src/kernel/network/dns/cache.rs
+//!
 //! Static hosts table (analogous to `/etc/hosts`) and a TTL-aware DNS
 //! response cache for A-record resolutions.
 

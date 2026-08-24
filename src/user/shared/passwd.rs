@@ -1,4 +1,5 @@
 //! src/user/shared/passwd.rs
+//!
 //! `/etc/passwd` parsing helpers shared by the kernel shell and ring3 tools.
 //!
 //! The kernel user database (`sys_add_user`) persists user records to

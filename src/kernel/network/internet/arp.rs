@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/arp.rs
+//!
 //! ARP protocol (RFC 826): IPv4-to-MAC address resolution with an in-memory
 //! tick-based cache.
 

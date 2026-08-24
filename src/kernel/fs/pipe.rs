@@ -1,4 +1,5 @@
 //! src/kernel/fs/pipe.rs
+//!
 //! Anonymous pipe (FIFO) — a unidirectional byte stream with a shared ring buffer.
 //!
 //! ## Architecture

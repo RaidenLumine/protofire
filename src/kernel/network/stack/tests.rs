@@ -1,4 +1,5 @@
 //! src/kernel/network/stack/tests.rs
+//!
 //! Full-stack integration tests: inject a raw Ethernet frame into the mock
 //! device, poll the stack, and verify UDP datagram delivery to a bound
 //! socket as well as ICMP Echo Request → Echo Reply generation.

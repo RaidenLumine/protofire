@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/mod.rs
+//!
 //! Internet-layer modules: IP, ARP, ICMP, IGMP, MLD, ICMPv6/NDP, and
 //! educational protocol modules (IPv4 options, Mobile IP, RSVP).
 pub mod arp;

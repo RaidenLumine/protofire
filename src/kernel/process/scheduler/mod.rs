@@ -1,4 +1,5 @@
 //! src/kernel/process/scheduler/mod.rs
+//!
 //! Core scheduler with ready/wait queues, dispatch rules, and timer preemption.
 
 use alloc::collections::VecDeque;

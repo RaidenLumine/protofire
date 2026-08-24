@@ -1,4 +1,5 @@
 //! src/kernel/syscall/ipsec.rs
+//!
 //! IPsec SPD/SAD management syscalls (#164-168).
 
 use crate::abi::ipsec::{

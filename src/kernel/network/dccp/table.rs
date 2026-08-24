@@ -1,4 +1,5 @@
 //! src/kernel/network/dccp/table.rs
+//!
 //! DCCP connection table, listeners, and per-connection state.
 
 use alloc::collections::btree_map::BTreeMap;

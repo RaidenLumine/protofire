@@ -1,4 +1,5 @@
 //! src/kernel/memory/global.rs
+//!
 //! Global memory-manager singleton, exponential-backoff lock, and accessors.
 
 use core::cell::UnsafeCell;

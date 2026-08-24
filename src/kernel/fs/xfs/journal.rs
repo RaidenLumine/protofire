@@ -1,4 +1,5 @@
 //! src/kernel/fs/xfs/journal.rs
+//!
 //! XFS log (journal) replay for v4 and v5 filesystems.
 //!
 //! Reads the internal log from `sb.log_start` for `sb.log_blocks` blocks,

@@ -1,4 +1,5 @@
 //! tests/syscall/fuzz.rs
+//!
 //! Syscall argument fuzzing — feed random/edge-case arguments into each
 //! syscall handler and verify that all failures are clean `Result::Err`
 //! returns rather than panics or undefined behaviour.

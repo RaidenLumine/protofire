@@ -1,4 +1,5 @@
 //! src/user/program/shell/pipeline.rs
+//!
 //! Conditional chaining, pipeline splitting, redirect parsing — re-exported
 //! from `ring3-common`.
 

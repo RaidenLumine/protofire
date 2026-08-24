@@ -1,4 +1,5 @@
 //! src/kernel/fs/unicode/mod.rs
+//!
 //! Unicode conversion and normalisation helpers shared by the filesystem
 //! drivers (FAT32, exFAT, SimpleFs).
 //!

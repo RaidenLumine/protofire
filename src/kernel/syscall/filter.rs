@@ -1,4 +1,5 @@
 //! src/kernel/syscall/filter.rs
+//!
 //! Packet filter / firewall syscall handlers.
 //!
 //! Provides syscalls #122–#125 for managing the kernel's packet filter:

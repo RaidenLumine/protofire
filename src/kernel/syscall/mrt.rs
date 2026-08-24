@@ -1,4 +1,5 @@
 //! src/kernel/syscall/mrt.rs
+//!
 //! Multicast routing (MRT) control syscalls (#169-174) — VIF and MFC
 //! management, mirroring the Linux multicast-routing ioctls.
 

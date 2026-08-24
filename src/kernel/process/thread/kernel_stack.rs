@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/kernel_stack.rs
+//!
 //! Kernel stack allocation and lifetime management with an optional
 //! unmapped guard page below the usable region.
 

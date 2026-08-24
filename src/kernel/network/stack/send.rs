@@ -1,4 +1,5 @@
 //! src/kernel/network/stack/send.rs
+//!
 //! Packet transmission helpers for [`NetworkStack`].
 
 use alloc::vec::Vec;

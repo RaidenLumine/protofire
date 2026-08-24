@@ -1,4 +1,6 @@
 //! src/kernel/drivers/ahci.rs
+//!
+//! AHCI (SATA) host controller driver.
 //! AHCI 1.3 SATA controller driver implementing the `BlockDevice` trait.
 //!
 //! ## Architecture

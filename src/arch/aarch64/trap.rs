@@ -1,4 +1,5 @@
 //! src/arch/aarch64/trap.rs
+//!
 //! AArch64 trap decoding, IRQ routing, and exception logging helpers.
 
 use core::arch::asm;

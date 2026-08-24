@@ -1,4 +1,5 @@
 //! src/arch/x86_64/interrupt_controller.rs
+//!
 //! x86_64 interrupt controller drivers — 8259A PIC and APIC/IOAPIC.
 //!
 //! Implements the architecture-neutral `InterruptController` trait so

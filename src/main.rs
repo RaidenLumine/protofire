@@ -1,4 +1,5 @@
 //! src/main.rs
+//!
 //! Bare-metal kernel entrypoint plus the host-side `mkimage` utility command.
 
 //! Xiucoatl Kernel Main Entry Point

@@ -1,4 +1,5 @@
 //! src/kernel/fs/vfs/tests.rs
+//!
 //! Regression tests for the pure VFS type layer: security descriptors,
 //! metadata records, directory entries, and volume-check reporting.
 

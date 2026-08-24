@@ -1,4 +1,5 @@
 //! src/kernel/softirq.rs
+//!
 //! Software-interrupt ("softirq") mechanism used to defer high-frequency
 //! work (timer ticks, IRQ tail processing) out of the hard-interrupt path
 //! and into the scheduler loop, where context switching is safe.

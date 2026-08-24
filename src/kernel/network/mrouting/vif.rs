@@ -1,4 +1,5 @@
 //! src/kernel/network/mrouting/vif.rs
+//!
 //! Virtual interfaces (VIFs) for multicast routing.
 //!
 //! VIF 0 is always the local (host) interface — the single network device

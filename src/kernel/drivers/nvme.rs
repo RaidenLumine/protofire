@@ -1,4 +1,6 @@
 //! src/kernel/drivers/nvme.rs
+//!
+//! NVMe solid-state drive driver.
 //! NVMe driver.
 /// Submission Queue Entry size (64 bytes per the NVMe spec).
 pub const SQ_ENTRY_SIZE: usize = 64;

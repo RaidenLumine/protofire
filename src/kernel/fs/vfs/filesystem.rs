@@ -1,4 +1,5 @@
 //! src/kernel/fs/vfs/filesystem.rs
+//!
 //! FileSystem trait and StaticFileSystem implementation.
 use alloc::collections::BTreeMap;
 use alloc::format;

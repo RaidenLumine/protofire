@@ -1,4 +1,6 @@
 //! src/kernel/drivers/pcspkr.rs
+//!
+//! PC speaker (PC beeper) driver.
 //! PC speaker driver using PIT channel 2.
 //!
 //! Hardware interface (x86_64 only):

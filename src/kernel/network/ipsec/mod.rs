@@ -1,4 +1,5 @@
 //! src/kernel/network/ipsec/mod.rs
+//!
 //! IPsec (RFC 4301): Security Policy Database (SPD), Security Association
 //! Database (SAD), and ESP (RFC 4303) / AH (RFC 4302) transforms.
 //!

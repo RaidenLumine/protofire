@@ -1,4 +1,5 @@
 //! src/kernel/process/scheduler/terminate.rs
+//!
 //! Thread termination.
 use alloc::sync::Arc;
 use alloc::vec::Vec;

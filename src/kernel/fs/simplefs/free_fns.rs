@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/free_fns.rs
+//!
 //! Low-level helpers: byte I/O, kind encoding, test utilities.
 //!
 //! Larger format I/O functions (superblock, inode/dirent tables,

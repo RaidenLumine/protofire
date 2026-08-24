@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/pmtu.rs
+//!
 //! IPv6 per-destination Path MTU discovery cache (RFC 8201).
 //!
 //! When an ICMPv6 Packet Too Big (type 2) arrives, the advertised MTU is

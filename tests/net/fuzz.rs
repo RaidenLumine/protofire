@@ -1,4 +1,5 @@
 //! tests/net/fuzz.rs
+//!
 //! Network fuzzing — exercises the local socket infrastructure
 //! with edge-case inputs to verify graceful error handling.
 

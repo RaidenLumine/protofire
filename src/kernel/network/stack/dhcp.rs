@@ -1,4 +1,5 @@
 //! src/kernel/network/stack/dhcp.rs
+//!
 //! DHCP lease management for [`NetworkStack`] (bare-metal only).
 
 #[cfg(target_os = "none")]

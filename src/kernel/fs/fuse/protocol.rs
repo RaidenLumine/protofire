@@ -1,4 +1,5 @@
 //! src/kernel/fs/fuse/protocol.rs
+//!
 //! Wire-format serialisation and deserialisation for the minimal FUSE protocol.
 //!
 //! All multi-byte integers are little-endian on the wire.

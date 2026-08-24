@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/compression.rs
+//!
 //! Chunked per-file transparent compression for V4 volumes.
 //!
 //! A compressed file's data extent holds a self-describing stream:

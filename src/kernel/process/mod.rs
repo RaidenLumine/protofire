@@ -1,4 +1,5 @@
 //! src/kernel/process/mod.rs
+//!
 //! Process subsystem exports and shared process/thread type definitions.
 
 pub mod context;

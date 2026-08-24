@@ -1,4 +1,5 @@
 //! src/kernel/shm.rs
+//!
 //! Shared memory (SystV shm) infrastructure — segment lifecycle, registry,
 //! attach/detach tracking on the per-process side.
 

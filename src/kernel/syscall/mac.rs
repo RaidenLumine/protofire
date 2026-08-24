@@ -1,4 +1,5 @@
 //! src/kernel/syscall/mac.rs
+//!
 //! MAC (mandatory access control) type-enforcement policy syscalls (#175-178).
 
 use crate::abi::mac::{MacRule as AbiMacRule, MAC_FLAG_REPLACE, MAC_RULE_SIZE, MAC_STATUS_SIZE};

@@ -1,4 +1,5 @@
 //! src/kernel/syscall/memory/mlock.rs
+//!
 //! mlock / munlock — lock/unlock memory pages (syscalls #131-132).
 //! mlock locks a range of virtual pages into physical memory so they are
 //! never swapped out.  munlock unlocks them.

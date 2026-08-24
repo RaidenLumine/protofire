@@ -1,4 +1,5 @@
 //! src/kernel/sync/mutex.rs
+//!
 //! Mutex abstraction built on spinlock with RAII guard-based exclusive access.
 
 use core::fmt;

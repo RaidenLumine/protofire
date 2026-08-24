@@ -1,4 +1,5 @@
 //! src/kernel/syscall/memory/brk.rs
+//!
 //! Brk syscall handler — program break for userspace heap.
 
 use crate::kernel::process::Process;

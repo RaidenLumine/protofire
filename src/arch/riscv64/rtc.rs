@@ -1,4 +1,5 @@
 //! src/arch/riscv64/rtc.rs
+//!
 //! Real-Time Clock (RTC) driver.
 //!
 //! The CMOS-based driver below is shared with the x86_64 architecture but

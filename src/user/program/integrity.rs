@@ -1,4 +1,5 @@
 //! src/user/program/integrity.rs
+//!
 //! Minimal integrity helpers for launch metadata, including SHA-256 digests and bounded signature metadata fields.
 
 use alloc::string::String;

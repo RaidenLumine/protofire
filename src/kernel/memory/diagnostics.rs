@@ -1,4 +1,5 @@
 //! src/kernel/memory/diagnostics.rs
+//!
 //! Page-fault diagnostic types — layered translation snapshots and
 //! kernel-region classification for fault insight reporting.
 

@@ -1,4 +1,5 @@
 //! src/kernel/syscall/network.rs
+//!
 //! Minimal network syscalls for capability discovery and TCP connection creation.
 
 use alloc::string::ToString;

@@ -1,4 +1,5 @@
 //! src/kernel/fs/tmpfs/mod.rs
+//!
 //! Pure in-memory tmpfs filesystem.
 //!
 //! Provides a simple read-write filesystem backed entirely by RAM.

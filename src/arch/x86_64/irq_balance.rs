@@ -1,4 +1,5 @@
 //! src/arch/x86_64/irq_balance.rs
+//!
 //! x86_64 interrupt load-balancing: IOAPIC redirection re-targeting.
 //!
 //! Only interrupts that flow through an IOAPIC redirection entry are

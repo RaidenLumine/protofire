@@ -1,3 +1,5 @@
+//! src/user/program/shell/commands/env.rs
+//!
 //! Environment, variable, and shell-state commands (source).
 
 use super::super::dispatch::run_shell_command;

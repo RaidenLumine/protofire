@@ -1,4 +1,5 @@
 //! src/kernel/scheduler.rs
+//!
 //! Thin scheduler-timing facade so modules that only need the current tick
 //! count (shm, timed waits, …) do not depend on the full scheduler internals
 //! in [`crate::kernel::process::scheduler`].

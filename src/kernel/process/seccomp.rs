@@ -1,4 +1,5 @@
 //! src/kernel/process/seccomp.rs
+//!
 //! Seccomp (secure computing) core logic.
 //!
 //! Provides per-process syscall filter rules that are checked before every

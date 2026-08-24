@@ -1,4 +1,5 @@
 //! src/kernel/fs/xfs/mod.rs
+//!
 //! XFS read-only filesystem driver (phase 1).
 //!
 //! ## Supported features (phase 1)

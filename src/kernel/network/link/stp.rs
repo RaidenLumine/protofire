@@ -1,4 +1,5 @@
 //! src/kernel/network/link/stp.rs
+//!
 //! STP — Spanning Tree Protocol (IEEE 802.1D) with RSTP elements (802.1w).
 //!
 //! ## Educational purpose

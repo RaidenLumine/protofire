@@ -1,4 +1,5 @@
 //! src/abi/fs.rs
+//!
 //! Shared filesystem ABI records, file kinds, and directory entry layouts.
 
 use core::mem::{offset_of, size_of};

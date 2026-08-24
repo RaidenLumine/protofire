@@ -1,4 +1,5 @@
 //! src/kernel/fs/unicode/normalize_tables.rs
+//!
 //! Canonical decomposition and composition tables for Unicode NFD/NFC.
 //! Auto-generated. Do not edit.
 

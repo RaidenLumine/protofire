@@ -1,4 +1,5 @@
 //! src/kernel/network/stack/routing.rs
+//!
 //! IPv4 routing table with longest-prefix-match lookup.
 //!
 //! Stores a set of `(destination, netmask, gateway, metric)` entries and

@@ -1,4 +1,5 @@
 //! src/kernel/irq_balance.rs
+//!
 //! SMP interrupt load balancing.
 //!
 //! Periodically migrates the highest-volume migratable IRQ from the busiest

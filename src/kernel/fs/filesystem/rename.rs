@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/rename.rs
+//!
 //! filesystem/rename — FileSystem rename methods.
 
 use crate::kernel::process::SecurityToken;

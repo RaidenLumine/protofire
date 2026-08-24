@@ -1,4 +1,6 @@
 //! src/kernel/drivers/virtio_net.rs
+//!
+//! VirtIO network device driver.
 //! VirtIO network device driver using the existing MMIO transport and split
 //! virtqueue infrastructure.
 //!

@@ -1,4 +1,6 @@
 //! src/kernel/fs/erofs/types.rs
+//!
+//! EROFS on-disk structures and parsers.
 //! On-disk data structures for EROFS (Enhanced Read-Only File System).
 //!
 //! Reference: EROFS was developed by Huawei; the layout described here

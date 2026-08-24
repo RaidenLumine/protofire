@@ -1,4 +1,5 @@
 //! src/kernel/memory/compressed.rs
+//!
 //! Page-level memory compression (zswap-style) for reclaimed anonymous pages.
 //!
 //! When the page reclaimer cannot write a page to a swap device it keeps the

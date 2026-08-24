@@ -1,4 +1,5 @@
 //! src/kernel/syscall/diagnostic.rs
+//!
 //! Diagnostic/management syscall handlers: sleep, process listing, thread
 //! listing, kernel log, and system info.
 

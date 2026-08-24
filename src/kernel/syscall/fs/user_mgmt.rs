@@ -1,4 +1,5 @@
 //! src/kernel/syscall/fs/user_mgmt.rs
+//!
 //! User management syscall handlers: add/remove user records and set passwords.
 //! These wrap the in-memory user database with filesystem persistence.
 

@@ -1,4 +1,5 @@
 //! src/kernel/network/mrouting/mld_router.rs
+//!
 //! MLDv1 router mode (RFC 2710): track IPv6 multicast listener membership
 //! per VIF from MLD Reports, remove on Done, and emit periodic General
 //! Queries.  Mirrors [`super::igmp_router::IgmpRouterState`] for IPv6.

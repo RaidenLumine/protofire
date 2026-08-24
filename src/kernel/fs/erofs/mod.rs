@@ -1,4 +1,6 @@
 //! src/kernel/fs/erofs/mod.rs
+//!
+//! EROFS filesystem driver: superblock, inodes, directory/file I/O.
 //! EROFS (Enhanced Read-Only File System) read-only implementation.
 //!
 //! Implements the VFS [`FileSystem`] trait so EROFS-formatted volumes

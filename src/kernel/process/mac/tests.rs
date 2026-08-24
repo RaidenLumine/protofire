@@ -1,4 +1,5 @@
 //! src/kernel/process/mac/tests.rs
+//!
 //! Host tests for the MAC policy engine and object classification.
 
 use super::check::{check_file, object_type_for_path, set_path_type};

@@ -1,4 +1,5 @@
 //! src/kernel/fs/xfs/btree.rs
+//!
 //! Generic XFS B+tree reader for 32-bit and 64-bit-key btrees.
 //!
 //! XFS uses B+trees extensively: free-space btrees, inode-allocation btrees,

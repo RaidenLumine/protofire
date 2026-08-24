@@ -1,4 +1,5 @@
 //! src/kernel/sync/event.rs
+//!
 //! Manual/auto-reset event primitive for signal-and-wake synchronization.
 
 use crate::kernel::process::{Scheduler, ThreadWaitOutcome};

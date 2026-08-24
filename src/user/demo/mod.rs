@@ -1,4 +1,5 @@
 //! src/user/demo/mod.rs
+//!
 //! Module entry that registers per-architecture demo payload builders.
 
 // These modules are `pub` so the in-repo demo-disk builder and tests can

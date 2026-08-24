@@ -1,4 +1,5 @@
 //! src/kernel/network/stack/config.rs
+//!
 //! Accessors for the network device, protocol tables, ticks, and
 //! IPv4 / IPv6 addressing configuration.
 

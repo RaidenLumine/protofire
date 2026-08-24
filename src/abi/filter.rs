@@ -1,4 +1,5 @@
 //! src/abi/filter.rs
+//!
 //! Shared ABI types for the packet filter / firewall.
 //!
 //! These types are `#[repr(C)]` and must remain binary-stable across kernel

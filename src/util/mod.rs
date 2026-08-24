@@ -1,4 +1,5 @@
 //! src/util/mod.rs
+//!
 //! Utility module entry for debug and logger helpers.
 
 pub mod debug;

@@ -1,4 +1,5 @@
 //! src/kernel/oom.rs
+//!
 //! Out-of-memory killer: selects and terminates the worst-scoring process
 //! when the physical frame allocator is exhausted.
 //!

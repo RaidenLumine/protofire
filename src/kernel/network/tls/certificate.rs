@@ -1,4 +1,5 @@
 //! src/kernel/network/tls/certificate.rs
+//!
 //! Minimal X.509 v3 certificate parser (DER-encoded).
 //!
 //! Extracts the fields needed for TLS 1.3 server certificate validation:

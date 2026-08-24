@@ -1,4 +1,5 @@
 //! src/kernel/syscall/exception_control.rs
+//!
 //! Exception-handler install/return syscalls and frame-pointer safety checks.
 
 use crate::{Error, Result};

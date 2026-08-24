@@ -1,4 +1,5 @@
 //! src/kernel/irq_stats.rs
+//!
 //! Per-CPU, per-vector interrupt accounting and the IRQ profiler snapshot.
 //!
 //! Every architecture's IRQ entry path records deliveries here:

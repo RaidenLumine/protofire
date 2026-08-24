@@ -1,4 +1,5 @@
 //! tests/simplefs/fault_matrix.rs
+//!
 //! Exercise a block-level fault-injection matrix for writable SimpleFs recovery behavior.
 
 mod support;

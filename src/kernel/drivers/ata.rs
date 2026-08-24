@@ -1,4 +1,6 @@
 //! src/kernel/drivers/ata.rs
+//!
+//! ATA disk driver (block I/O).
 //! ATA PIO block-device driver with transfer mode selection and sector I/O routines.
 
 use alloc::sync::Arc;

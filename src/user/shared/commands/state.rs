@@ -1,4 +1,5 @@
 //! src/user/shared/commands/state.rs
+//!
 //! Shell state management commands (export, alias, history, shift, read, source).
 //!
 //! All commands accept shell state via explicit parameters so they work

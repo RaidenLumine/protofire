@@ -1,4 +1,5 @@
 //! src/kernel/syscall/process/signal_mask.rs
+//!
 //! SetSignalMask syscall — get/set the per-process POSIX signal mask.
 
 use crate::abi::process as process_abi;

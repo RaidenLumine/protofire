@@ -1,3 +1,5 @@
+//! src/arch/riscv64/mmu/asid.rs
+//!
 //! RISC-V 64 ASID (Address Space ID) management.
 //!
 //! ASIDs tag TLB entries so that switching between user address spaces

@@ -1,4 +1,5 @@
 //! src/kernel/syscall/power.rs
+//!
 //! CPU frequency scaling system call handlers.
 
 use crate::kernel::power;

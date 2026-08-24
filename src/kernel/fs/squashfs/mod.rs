@@ -1,4 +1,5 @@
 //! src/kernel/fs/squashfs/mod.rs
+//!
 //! SquashFS read-only filesystem driver with LZ4 and ZSTD decompression.
 //!
 //! ## Supported features

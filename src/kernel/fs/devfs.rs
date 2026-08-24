@@ -1,4 +1,5 @@
 //! src/kernel/fs/devfs.rs
+//!
 //! Device filesystem (devfs): exposes the kernel device registry as VFS nodes.
 
 use alloc::string::{String, ToString};

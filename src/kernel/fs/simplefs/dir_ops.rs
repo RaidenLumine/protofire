@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/dir_ops.rs
+//!
 //! File/directory/symlink creation, deletion, rename, swap, and recursive removal.
 
 use alloc::format;

@@ -1,4 +1,5 @@
 //! src/kernel/process/process/handle_ops.rs
+//!
 //! Process handle-table and file-descriptor operations: opening kernel
 //! objects as handles and file descriptors, fd flags, standard-handle
 //! bindings, and handle/fd duplication and redirection.

@@ -1,4 +1,5 @@
 //! src/kernel/fs/luks2.rs
+//!
 //! LUKS2 on-disk format parser and keyslot unlock.
 //!
 //! Parses the LUKS2 binary header (at sector 0), locates the JSON

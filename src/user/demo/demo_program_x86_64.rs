@@ -1,4 +1,5 @@
 //! src/user/demo/demo_program_x86_64.rs
+//!
 //! Symbol bridge for the raw x86_64 demo payload section.
 
 #[cfg(test)]

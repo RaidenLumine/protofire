@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/xattr.rs
+//!
 //! Persistent extended-attribute (xattr) table operations for V4 volumes.
 //!
 //! Xattrs are stored in a fixed-capacity xattr table (an active/shadow pair

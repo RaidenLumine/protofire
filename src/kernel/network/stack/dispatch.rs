@@ -1,4 +1,5 @@
 //! src/kernel/network/stack/dispatch.rs
+//!
 //! Tick maintenance, polling, and protocol-layer demux for [`NetworkStack`].
 
 use core::sync::atomic::Ordering;

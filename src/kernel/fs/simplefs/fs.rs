@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/fs.rs
+//!
 //! SimpleFs core implementation: path lookup, metadata accessors, and the
 //! locked directory-entry / inode-slot primitives.
 //!

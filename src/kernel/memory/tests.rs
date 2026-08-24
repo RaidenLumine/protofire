@@ -1,4 +1,5 @@
 //! src/kernel/memory/tests.rs
+//!
 //! Unit tests for the memory manager and its software page table.
 
 use super::paging::{MappingKind, PagePermissions, PAGE_SIZE};

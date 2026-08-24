@@ -1,4 +1,5 @@
 //! src/arch/x86_64/interrupts.rs
+//!
 //! x86_64 interrupt enable/disable helpers and common IRQ dispatch glue.
 
 use core::arch::asm;

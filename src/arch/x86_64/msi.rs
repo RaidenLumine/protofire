@@ -1,3 +1,5 @@
+//! src/arch/x86_64/msi.rs
+//!
 //! MSI/MSI-X interrupt composition and programming helpers for x86_64.
 //!
 //! Message Signalled Interrupts (MSI) allow PCI/PCIe devices to deliver

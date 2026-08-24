@@ -1,4 +1,5 @@
 //! src/kernel/network/tcp/ecn.rs
+//!
 //! TCP Explicit Congestion Notification (RFC 3168).
 //!
 //! ECN allows routers to signal impending congestion by marking IP packets

@@ -1,4 +1,5 @@
 //! src/user/demo/elf_builder.rs
+//!
 //! Shared ELF64 artifact construction for demo programs.
 //!
 //! This module provides the canonical `build_artifact_from_payload` helper

@@ -1,4 +1,5 @@
 //! src/kernel/network/dns/parse.rs
+//!
 //! DNS response parsers for A, AAAA, and PTR records, plus DNS name
 //! decoding with message-compression support.
 

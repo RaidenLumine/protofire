@@ -1,4 +1,5 @@
 //! src/kernel/network/ntp.rs
+//!
 //! Minimal NTP (RFC 5905) client used to discipline the system clock.
 //!
 //! The client sends a standard 48-byte SNTP request to a configured server

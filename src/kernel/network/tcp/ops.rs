@@ -1,4 +1,5 @@
 //! src/kernel/network/tcp/ops.rs
+//!
 //! High-level TCP operations: connect, process segment, retransmit, close, and reassembly.
 use alloc::vec::Vec;
 

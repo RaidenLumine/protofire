@@ -1,4 +1,5 @@
 //! src/kernel/syscall/sched_affinity.rs
+//!
 //! sched_setaffinity / sched_getaffinity — CPU affinity management.
 //!
 //! # Syscalls

@@ -1,4 +1,5 @@
 //! src/arch/riscv64/pci.rs
+//!
 //! RISC-V 64 PCIe ECAM (Enhanced Configuration Access Mechanism) enumeration.
 //!
 //! On RISC-V platforms (including QEMU `virt` with `-device pcie-ecam`),

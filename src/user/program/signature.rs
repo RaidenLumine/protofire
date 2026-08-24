@@ -1,4 +1,5 @@
 //! src/user/program/signature.rs
+//!
 //! Detached signature parsing and verification helpers for launch metadata integrity checks.
 //!
 //! Launch metadata (catalog manifests, installed program images) can carry an

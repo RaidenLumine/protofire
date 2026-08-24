@@ -1,4 +1,5 @@
 //! src/kernel/process/mac/policy.rs
+//!
 //! MAC policy storage: the global policy (allow rules + enforcement mode) and
 //! per-path type overrides.
 

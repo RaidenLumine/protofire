@@ -1,4 +1,5 @@
 //! src/kernel/syscall/mod.rs
+//!
 //! Syscall global dispatch entry and installation of active syscall table.
 
 use core::ptr;

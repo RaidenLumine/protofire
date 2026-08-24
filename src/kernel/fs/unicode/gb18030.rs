@@ -1,4 +1,5 @@
 //! src/kernel/fs/unicode/gb18030.rs
+//!
 //! GB18030 / GBK ↔ Unicode conversion.
 //!
 //! GB18030 is the mandatory encoding for simplified Chinese.  It is a

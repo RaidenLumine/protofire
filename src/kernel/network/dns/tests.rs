@@ -1,4 +1,5 @@
 //! src/kernel/network/dns/tests.rs
+//!
 //! Unit and integration tests for the DNS resolver.
 
 use alloc::vec::Vec;

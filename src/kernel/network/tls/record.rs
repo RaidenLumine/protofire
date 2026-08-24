@@ -1,4 +1,5 @@
 //! src/kernel/network/tls/record.rs
+//!
 //! TLS 1.3 record layer (RFC 8446 §5).
 //!
 //! Encrypts and decrypts TLS records using AEAD ciphers (AES-128-GCM or

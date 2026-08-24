@@ -1,4 +1,5 @@
 //! src/kernel/syscall/abi_info.rs
+//!
 //! Runtime ABI identity syscall used by user space to detect supported execution features.
 
 use crate::abi::runtime as runtime_abi;

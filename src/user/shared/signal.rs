@@ -1,4 +1,5 @@
 //! src/user/shared/signal.rs
+//!
 //! High-level signal API for ring3 user-space programs.
 //!
 //! This module provides convenience wrappers around the raw signal syscalls

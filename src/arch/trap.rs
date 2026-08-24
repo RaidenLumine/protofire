@@ -1,4 +1,5 @@
 //! src/arch/trap.rs
+//!
 //! Shared trap-frame aliases and cross-architecture trap helpers.
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]

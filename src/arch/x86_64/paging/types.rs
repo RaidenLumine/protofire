@@ -1,4 +1,7 @@
+//! src/arch/x86_64/paging/types.rs
+//!
 //! src/arch/x86_64/paging.rs
+//!
 //! x86_64 bootstrap and runtime page-table planning plus per-process address-space assembly.
 
 use alloc::boxed::Box;

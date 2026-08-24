@@ -1,4 +1,5 @@
 //! src/user/program/install.rs
+//!
 //! Install-management recovery: transaction log and download cache repair.
 //!
 //! Called once during kernel boot after the file system is mounted.  The

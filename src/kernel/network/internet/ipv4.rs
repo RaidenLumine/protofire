@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/ipv4.rs
+//!
 //! IPv4 packet parse / build, header checksum, and protocol demux.
 
 use alloc::vec::Vec;

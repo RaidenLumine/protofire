@@ -1,4 +1,5 @@
 //! src/kernel/syscall/io_uring.rs
+//!
 //! io_uring — asynchronous I/O batching syscalls.
 //!
 //! Provides two syscalls:

@@ -1,4 +1,5 @@
 //! src/user/demo/demo_program_aarch64_rust.rs
+//!
 //! Rust-authored AArch64 demo payload and its kernel-side validation helpers.
 //!
 //! The payload lives in its own linker section (`protofire_demo_program_aarch64_rust`)

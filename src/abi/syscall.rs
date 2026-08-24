@@ -1,4 +1,5 @@
 //! src/abi/syscall.rs
+//!
 //! Shared syscall status encoding helpers and low-level ABI constants.
 
 use crate::{Error, Result};

@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/format_io.rs
+//!
 //! On-disk format I/O: superblock, inode/dirent tables, image building.
 //!
 //! Low-level helpers (byte I/O, kind encoding, test utilities) are in

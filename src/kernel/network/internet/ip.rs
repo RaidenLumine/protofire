@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/ip.rs
+//!
 //! Common IP address types for dual-stack (IPv4 / IPv6) networking.
 //!
 //! `IpAddress` is the canonical address representation used across the

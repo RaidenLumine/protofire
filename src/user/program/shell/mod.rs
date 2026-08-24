@@ -1,4 +1,5 @@
 //! src/user/program/shell/mod.rs
+//!
 //! Interactive shell connected to the console TTY.
 //!
 //! Provides a single entry point:

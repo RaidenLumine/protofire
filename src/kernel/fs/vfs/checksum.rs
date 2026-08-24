@@ -1,4 +1,5 @@
 //! src/kernel/fs/vfs/checksum.rs
+//!
 //! Unified checksum verification interface for filesystem drivers.
 //!
 //! # Design

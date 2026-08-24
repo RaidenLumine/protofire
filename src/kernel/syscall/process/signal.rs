@@ -1,4 +1,5 @@
 //! src/kernel/syscall/process/signal.rs
+//!
 //! Process-signal send/wait syscalls built on the bounded process signal queue.
 
 use crate::abi::process as process_abi;

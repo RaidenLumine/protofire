@@ -1,4 +1,5 @@
 //! src/kernel/memory/manager/swap.rs
+//!
 //! Page reclamation (clock algorithm with second-chance), swap I/O,
 //! and Copy-on-Write frame reference counting.
 

@@ -1,4 +1,5 @@
 //! src/arch/mod.rs
+//!
 //! Architecture entry point that selects per-target code and exposes shared
 //! shims for boot, traps, interrupts, serial output, and context switching.
 

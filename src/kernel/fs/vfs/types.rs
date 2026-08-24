@@ -1,4 +1,5 @@
 //! src/kernel/fs/vfs/types.rs
+//!
 //! VFS type definitions: node kinds, security descriptors, metadata, and access-query types.
 use alloc::string::String;
 use alloc::vec::Vec;

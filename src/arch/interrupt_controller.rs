@@ -1,4 +1,5 @@
 //! src/arch/interrupt_controller.rs
+//!
 //! Architecture-neutral interrupt-controller trait and dispatch functions.
 //!
 //! Each architecture provides a concrete controller that implements

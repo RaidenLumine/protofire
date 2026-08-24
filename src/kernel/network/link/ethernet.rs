@@ -1,4 +1,5 @@
 //! src/kernel/network/link/ethernet.rs
+//!
 //! Ethernet II frame parse / build and MAC address helpers.
 
 use alloc::vec::Vec;

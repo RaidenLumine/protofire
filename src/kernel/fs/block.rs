@@ -1,4 +1,5 @@
 //! src/kernel/fs/block.rs
+//!
 //! Block-device abstractions and in-memory block-device helpers.
 
 use alloc::string::{String, ToString};

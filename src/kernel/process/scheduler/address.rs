@@ -1,4 +1,5 @@
 //! src/kernel/process/scheduler/address.rs
+//!
 //! Address space management for dispatch.
 
 use alloc::sync::Arc;

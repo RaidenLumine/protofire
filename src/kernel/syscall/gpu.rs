@@ -1,4 +1,5 @@
 //! src/kernel/syscall/gpu.rs
+//!
 //! VIRGL 3D userspace interface syscalls (#181-189).
 //!
 //! These expose the virtio-gpu VIRGL protocol to a userspace renderer: VIRGL

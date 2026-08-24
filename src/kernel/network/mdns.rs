@@ -1,4 +1,5 @@
 //! src/kernel/network/mdns.rs
+//!
 //! Minimal multicast DNS (mDNS, RFC 6762) responder.
 //!
 //! The responder announces the host's `<hostname>.local` A record on the

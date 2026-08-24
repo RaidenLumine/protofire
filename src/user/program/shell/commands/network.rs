@@ -1,3 +1,5 @@
+//! src/user/program/shell/commands/network.rs
+//!
 //! Network commands (ping).
 
 use super::super::entry::current_process;

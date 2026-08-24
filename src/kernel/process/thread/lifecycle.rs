@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/lifecycle.rs
+//!
 //! Thread lifecycle: constructors, accessors, scheduling, termination,
 //! suspend/resume, context save/restore, and arch-specific run_entry +
 //! exception delivery.

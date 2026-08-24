@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/rsvp.rs
+//!
 //! RSVP TSPEC — token-bucket traffic specification (RFC 2210).
 //!
 //! ## Educational purpose

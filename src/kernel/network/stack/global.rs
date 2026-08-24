@@ -1,4 +1,5 @@
 //! src/kernel/network/stack/global.rs
+//!
 //! Global singleton, initialisation, and teardown for [`NetworkStack`].
 
 use alloc::boxed::Box;

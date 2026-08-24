@@ -1,4 +1,6 @@
 //! src/kernel/fs/erofs/fs.rs
+//!
+//! EROFS low-level operations: superblock, inode, data maps.
 //! Core EROFS filesystem logic: superblock reading, inode I/O,
 //! directory entry listing, path resolution, and file data reading.
 

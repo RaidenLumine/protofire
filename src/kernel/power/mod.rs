@@ -1,4 +1,5 @@
 //! src/kernel/power/mod.rs
+//!
 //! Power management subsystem: CPU frequency scaling, thermal management.
 
 pub mod cpufreq_driver;

@@ -1,4 +1,6 @@
 //! src/kernel/drivers/hda.rs
+//!
+//! High-Definition Audio (HDA) controller driver.
 //! Intel High Definition Audio (HDA) controller driver.
 //!
 //! The HDA controller is discovered via PCI (class 0x04, subclass 0x03).

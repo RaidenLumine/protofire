@@ -1,4 +1,5 @@
 /* File: src/arch/aarch64/trap.S */
+
 /* Purpose: AArch64 exception vector assembly stubs that capture CPU state for Rust handlers. */
 
 .set TRAP_FRAME_SIZE, 304

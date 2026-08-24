@@ -1,4 +1,5 @@
 //! src/kernel/fs/handle.rs
+//!
 //! FileHandle struct and its implementation for open file descriptors.
 use alloc::sync::Arc;
 

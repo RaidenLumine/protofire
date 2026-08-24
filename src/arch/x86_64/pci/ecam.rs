@@ -1,4 +1,5 @@
 //! src/arch/x86_64/pci/ecam.rs
+//!
 //! PCI Express memory-mapped configuration access (ECAM / MMCONFIG).
 //!
 //! On QEMU's q35 machine the PCIe ECAM region is fixed at

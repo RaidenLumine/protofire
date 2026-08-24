@@ -1,4 +1,5 @@
 //! src/kernel/fs/f2fs/node.rs
+//!
 //! F2FS NAT (Node Address Table) operations: NID lookup, allocation, free,
 //! and inode read/write helpers.
 

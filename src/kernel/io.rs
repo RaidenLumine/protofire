@@ -1,4 +1,5 @@
 //! src/kernel/io.rs
+//!
 //! Unified process I/O adapter over files, directories, and device-backed descriptors.
 
 pub use crate::kernel::device::{

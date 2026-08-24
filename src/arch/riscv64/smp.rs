@@ -1,4 +1,5 @@
 //! src/arch/riscv64/smp.rs
+//!
 //! RISC-V 64 SMP bring-up via SBI Hart State Management (HSM).
 //!
 //! ## Boot flow

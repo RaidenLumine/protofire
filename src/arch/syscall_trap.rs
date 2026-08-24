@@ -1,4 +1,5 @@
 //! src/arch/syscall_trap.rs
+//!
 //! Post-syscall user-context capture policy shared by every architecture's
 //! syscall trap path.
 //!

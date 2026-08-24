@@ -1,4 +1,5 @@
 //! src/kernel/process/scheduler/global.rs
+//!
 //! Global scheduler installation and lookup.
 use alloc::sync::Arc;
 

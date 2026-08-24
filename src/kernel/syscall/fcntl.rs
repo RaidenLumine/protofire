@@ -1,4 +1,5 @@
 //! src/kernel/syscall/fcntl.rs
+//!
 //! fcntl syscall handler (#179).
 //!
 //! Supports the POSIX descriptor-control commands that map onto existing

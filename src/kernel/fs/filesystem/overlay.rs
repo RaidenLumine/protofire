@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/overlay.rs
+//!
 //! filesystem/overlay — FileSystem merge directory listing methods.
 
 use alloc::collections::BTreeMap;

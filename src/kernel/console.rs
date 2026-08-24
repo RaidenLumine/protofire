@@ -1,4 +1,5 @@
 //! src/kernel/console.rs
+//!
 //! Console subsystem for line buffering, byte reads, and waiter wakeups.
 
 use alloc::collections::VecDeque;

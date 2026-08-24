@@ -1,4 +1,5 @@
 //! src/kernel/fs/squashfs/fs.rs
+//!
 //! Low-level SquashFS operations: superblock, inode table, directory reads,
 //! file data reads with decompression.
 

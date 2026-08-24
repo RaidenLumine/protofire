@@ -1,4 +1,5 @@
 //! src/kernel/network/mrouting/mod.rs
+//!
 //! Multicast routing (MRT) state.
 //!
 //! Sub-module organisation:

@@ -1,4 +1,5 @@
 //! src/kernel/fs/f2fs/types.rs
+//!
 //! F2FS on-disk structures, in-memory caches, and serialisation helpers.
 //!
 //! All multi-byte fields are little-endian.

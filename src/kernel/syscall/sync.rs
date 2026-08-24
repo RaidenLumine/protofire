@@ -1,4 +1,5 @@
 //! src/kernel/syscall/sync.rs
+//!
 //! Global filesystem synchronization syscall handler (#180).
 //!
 //! `sync()` flushes every mounted filesystem's dirty block-cache data to the

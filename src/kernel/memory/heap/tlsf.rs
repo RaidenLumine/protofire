@@ -1,4 +1,5 @@
 //! src/kernel/memory/heap/tlsf.rs
+//!
 //! TLSF (Two-Level Segregated Fit) internals: constants, block header layout,
 //! raw block accessors, free-list management, bit-scanning search, and
 //! physical coalescing.

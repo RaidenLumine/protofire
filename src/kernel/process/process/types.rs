@@ -1,4 +1,5 @@
 //! src/kernel/process/process/types.rs
+//!
 //! Process subsystem type definitions.
 
 use alloc::collections::VecDeque;

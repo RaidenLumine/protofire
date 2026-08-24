@@ -1,4 +1,5 @@
 //! src/arch/aarch64/user_access.rs
+//!
 //! PAN-aware user-memory access helpers: PSTATE.PAN control and a RAII guard
 //! that brackets supervisor access to user pages.
 //!

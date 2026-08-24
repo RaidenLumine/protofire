@@ -1,4 +1,5 @@
 //! src/kernel/syscall/process/restart_syscall.rs
+//!
 //! RestartSyscall syscall — re-issue an interrupted blocking syscall.
 //!
 //! Registered for ABI completeness (syscall 136).  This kernel performs

@@ -1,4 +1,5 @@
 //! src/kernel/fs/squashfs/tests.rs
+//!
 //! End-to-end tests for the SquashFS filesystem driver.
 //!
 //! Test image layout:

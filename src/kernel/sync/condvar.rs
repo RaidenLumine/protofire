@@ -1,4 +1,5 @@
 //! src/kernel/sync/condvar.rs
+//!
 //! Condition variable primitive built on wait queues and mutex handoff patterns.
 
 use alloc::sync::Arc;

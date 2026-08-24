@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/arch_aarch64.rs
+//!
 //! AArch64 user-thread context and exception handling types.
 
 use core::mem::size_of;

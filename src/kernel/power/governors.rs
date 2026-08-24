@@ -1,4 +1,5 @@
 //! src/kernel/power/governors.rs
+//!
 //! CPU frequency scaling governors.
 
 // ============================================================================

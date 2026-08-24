@@ -1,4 +1,6 @@
 //! src/kernel/drivers/framebuffer.rs
+//!
+//! Framebuffer management and drawing primitives.
 //! Framebuffer driver for QEMU bochs-display (PCI vendor 0x1234, device 0x1111).
 //!
 //! The device provides:

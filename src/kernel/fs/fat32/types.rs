@@ -1,4 +1,5 @@
 //! src/kernel/fs/fat32/types.rs
+//!
 //! On-disk type definitions, BPB geometry parsing, directory entry parse/serialize
 //! helpers, and byte-level I/O utilities for FAT12/16/32.
 

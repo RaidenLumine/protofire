@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/ipv6.rs
+//!
 //! IPv6 packet parsing, building, checksums, and fragmentation (RFC 8200).
 
 use alloc::vec::Vec;

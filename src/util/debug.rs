@@ -1,4 +1,5 @@
 //! src/util/debug.rs
+//!
 //! Early debug output plumbing and low-level print helpers.
 
 use core::fmt;

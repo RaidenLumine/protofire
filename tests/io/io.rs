@@ -1,4 +1,5 @@
 //! tests/io/io.rs
+//!
 //! Host-side integration tests for descriptor-based I/O and stdio routing.
 
 use std::sync::{Mutex, OnceLock};

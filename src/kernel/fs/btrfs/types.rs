@@ -1,4 +1,6 @@
 //! src/kernel/fs/btrfs/types.rs
+//!
+//! Btrfs on-disk structures and parsers.
 //! On-disk data structures for Btrfs.
 //!
 //! Reference: <https://btrfs.readthedocs.io/en/latest/On-disk-Format.html>

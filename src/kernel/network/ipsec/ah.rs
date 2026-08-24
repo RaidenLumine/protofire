@@ -1,4 +1,5 @@
 //! src/kernel/network/ipsec/ah.rs
+//!
 //! AH (RFC 4302) with HMAC-SHA256-128 (RFC 4868).
 //!
 //! Wire layout (28 bytes):

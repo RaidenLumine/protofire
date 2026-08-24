@@ -1,4 +1,5 @@
 //! src/arch/x86_64/cpufreq.rs
+//!
 //! x86_64 CPU frequency control via Model-Specific Registers.
 //!
 //! Implements Intel-style ACPI P-state control: the bus-clock (BCLK) ratio is

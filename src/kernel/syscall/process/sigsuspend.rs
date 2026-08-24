@@ -1,4 +1,5 @@
 //! src/kernel/syscall/process/sigsuspend.rs
+//!
 //! SigSuspend syscall — atomically replace the signal mask and suspend the
 //! calling thread until a signal is delivered, then restore the old mask.
 

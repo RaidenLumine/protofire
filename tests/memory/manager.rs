@@ -1,4 +1,5 @@
 //! tests/memory/manager.rs
+//!
 //! Host-side integration tests for the software memory manager facade.
 
 use protofire::arch::mmu::bootstrap_identity_mapping;

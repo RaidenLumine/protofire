@@ -1,4 +1,5 @@
 //! src/kernel/network/sctp/chunk.rs
+//!
 //! SCTP chunk encoding / parsing, packet framing, and CRC32C (RFC 4960 §6.8).
 
 use alloc::vec::Vec;

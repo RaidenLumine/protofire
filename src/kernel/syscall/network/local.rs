@@ -1,4 +1,5 @@
 //! src/kernel/syscall/network/local.rs
+//!
 //! Syscall handlers for Unix domain (local) socket operations
 //! (BindLocal, ConnectLocal, AcceptLocal).
 

@@ -1,4 +1,5 @@
 //! src/arch/aarch64/irq_balance.rs
+//!
 //! AArch64 interrupt load-balancing: GIC SPI re-targeting.
 //!
 //! Shared peripheral interrupts (SPIs, interrupt ids 32..1020) can be

@@ -1,4 +1,5 @@
 //! src/kernel/syscall/fs/metadata.rs
+//!
 //! Filesystem metadata syscalls: stat/read_dir, access queries, and permission metadata records.
 
 use crate::abi::fs as fs_abi;

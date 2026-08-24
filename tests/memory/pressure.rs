@@ -1,4 +1,5 @@
 //! tests/memory/pressure.rs
+//!
 //! Memory pressure and exhaustion stress tests for the kernel frame allocator.
 
 use protofire::kernel::memory::paging::{PagePermissions, PAGE_SIZE};

@@ -1,4 +1,5 @@
 //! src/kernel/fs/ext4/vfs.rs
+//!
 //! VFS integration: Ext4FsVolume open, VfsFileSystem trait implementation,
 //! Ext4VNode type, and VNode trait implementation.
 

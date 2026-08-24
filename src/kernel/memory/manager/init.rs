@@ -1,4 +1,5 @@
 //! src/kernel/memory/manager/init.rs
+//!
 //! MemoryManager construction, initialisation, and frame allocation/deallocation.
 
 use crate::kernel::memory::frame::MAX_NODES;

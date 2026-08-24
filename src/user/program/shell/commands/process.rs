@@ -1,3 +1,5 @@
+//! src/user/program/shell/commands/process.rs
+//!
 //! Process and job control commands (jobs, fg, bg) — kernel-only.
 //! These stay kernel-side because they access `Scheduler`, `JOBS`, and
 //! `FOREGROUND_JOB_ID` globals directly.

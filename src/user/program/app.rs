@@ -1,4 +1,5 @@
 //! src/user/program/app.rs
+//!
 //! User-visible `appctl` / `app-center` command surfaces plus the `lumina`
 //! package-manager front end.
 //!

@@ -1,4 +1,5 @@
 //! src/kernel/process/process/security.rs
+//!
 //! Process security token: integrity levels, permission checks, MAC type.
 use super::constants::*;
 use crate::kernel::process::mac::{MacType, MAC_TYPE_SYSTEM, MAC_TYPE_UNTRUSTED, MAC_TYPE_USER};

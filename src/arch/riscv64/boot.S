@@ -1,4 +1,5 @@
 /* File: src/arch/riscv64/boot.S */
+
 /* Purpose: RISC-V 64-bit bare-metal boot entry that sets up the initial stack
    and transfers control to Rust.  The kernel arrives in S-mode via OpenSBI
    with the FDT pointer in a1.  Includes a secondary-hart entry point for SMP. */

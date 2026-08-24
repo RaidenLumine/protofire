@@ -1,4 +1,5 @@
 //! src/kernel/network/dccp/ccid2.rs
+//!
 //! CCID 2 — TCP-like congestion control (RFC 4341), simplified.
 //!
 //! The congestion control state is per-connection: a congestion window

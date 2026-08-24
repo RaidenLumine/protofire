@@ -1,4 +1,5 @@
 //! src/kernel/syscall/fs/xattr.rs
+//!
 //! Extended-attribute (xattr) and per-file data-reduction flag syscalls.
 //!
 //! # Syscalls

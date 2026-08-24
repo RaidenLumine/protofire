@@ -1,4 +1,5 @@
 //! src/kernel/fs/xfs/types.rs
+//!
 //! On-disk data structures for XFS (v4/v5).
 
 use alloc::vec::Vec;

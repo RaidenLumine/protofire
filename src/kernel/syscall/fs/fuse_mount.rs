@@ -1,4 +1,5 @@
 //! src/kernel/syscall/fs/fuse_mount.rs
+//!
 //! FuseMount syscall handler — creates a FUSE mount point.
 //!
 //! # Arguments

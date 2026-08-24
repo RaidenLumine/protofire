@@ -1,4 +1,5 @@
 //! src/kernel/process/mac/mod.rs
+//!
 //! Mandatory Access Control (MAC) — a SELinux-style Type-Enforcement engine.
 //!
 //! - `types`   — security types, object classes, permission bitmasks.

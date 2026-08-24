@@ -1,4 +1,5 @@
 //! src/kernel/mod.rs
+//!
 //! Kernel bootstrap entry that wires memory, drivers, filesystem, scheduler, and syscall table.
 
 pub mod audit;

@@ -1,4 +1,5 @@
 //! src/kernel/network/udp.rs
+//!
 //! UDP protocol (RFC 768): datagram send / receive with port-based
 //! demultiplexing and optional checksum.
 

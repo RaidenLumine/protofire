@@ -1,4 +1,5 @@
 //! src/user/syscall/payload.rs
+//!
 //! Architecture-specific payload-runtime macros that emit compact syscall
 //! stubs into extracted section blobs for user-program payloads.
 

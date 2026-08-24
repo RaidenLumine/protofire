@@ -1,3 +1,8 @@
+//! src/arch/x86_64/paging/process_address_space.rs
+//!
+//! x86_64 process address-space assembly: merge kernel and user
+//! page tables into a single hierarchy for CR3 load.
+
 use super::*;
 use crate::kernel::memory::paging::PagePermissions;
 use crate::println;

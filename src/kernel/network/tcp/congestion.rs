@@ -1,4 +1,5 @@
 //! src/kernel/network/tcp/congestion.rs
+//!
 //! Pluggable TCP congestion control framework.
 //!
 //! Implements the classic TCP congestion control algorithms:

@@ -1,4 +1,5 @@
 //! src/kernel/fs/unicode/utf16.rs
+//!
 //! UTF-8 ↔ UTF-16LE conversion for FAT32 LFN and exFAT filename entries.
 //!
 //! FAT32 LFN entries store 13 UTF-16LE code units per 32-byte directory entry.

@@ -1,4 +1,5 @@
 //! src/kernel/fs/f2fs/mod.rs
+//!
 //! F2FS (Flash-Friendly File System) read-write implementation.
 //!
 //! Implements the VFS [`FileSystem`] trait so F2FS-formatted volumes

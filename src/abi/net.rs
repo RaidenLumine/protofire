@@ -1,4 +1,5 @@
 //! src/abi/net.rs
+//!
 //! Network ABI status records and flag constants shared with user space.
 
 // ── Backend class ──

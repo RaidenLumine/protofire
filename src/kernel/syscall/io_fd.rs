@@ -1,4 +1,5 @@
 //! src/kernel/syscall/io_fd.rs
+//!
 //! File-descriptor syscall handlers for read/write/seek/close/dup/set-length operations.
 
 use crate::kernel::fs::pipe;

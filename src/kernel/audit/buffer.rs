@@ -1,4 +1,6 @@
 //! src/kernel/audit/buffer.rs
+//!
+//! Kernel audit ring-buffer primitives.
 //! Lock-free ring buffer of fixed-size `AuditRecord` entries.
 //!
 //! The buffer is backed by a heap-allocated array of 8192 records

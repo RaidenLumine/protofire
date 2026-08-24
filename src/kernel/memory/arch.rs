@@ -1,4 +1,5 @@
 //! src/kernel/memory/arch.rs
+//!
 //! Platform-dispatch functions — TLB shootdown, page alignment, user-page
 //! install/unmap, memory detection, and bootstrap/prepared/planned translation
 //! probes.  These are thin wrappers around arch-specific MMU primitives.

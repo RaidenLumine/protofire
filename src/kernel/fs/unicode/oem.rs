@@ -1,4 +1,5 @@
 //! src/kernel/fs/unicode/oem.rs
+//!
 //! OEM code-page ↔ Unicode conversion (CP437, CP850, CP852, CP866, CP874).
 //!
 //! FAT32 8.3 short filenames are encoded using OEM code pages (not Unicode).

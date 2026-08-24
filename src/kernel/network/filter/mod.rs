@@ -1,4 +1,5 @@
 //! src/kernel/network/filter/mod.rs
+//!
 //! Lightweight stateful packet filter / firewall for the native network stack.
 //!
 //! Provides rule-based filtering of IPv4 packets at the IP layer, with optional

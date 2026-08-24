@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/ip_options.rs
+//!
 //! IPv4 options (RFC 791): a minimal parser for the option area of an IPv4
 //! header.
 //!

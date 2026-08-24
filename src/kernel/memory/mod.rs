@@ -1,4 +1,5 @@
 //! src/kernel/memory/mod.rs
+//!
 //! Memory manager coordinating frame allocation, heap setup, and virtual mappings.
 
 pub mod alloc_profiler;

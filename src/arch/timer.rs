@@ -1,4 +1,5 @@
 //! src/arch/timer.rs
+//!
 //! Architecture-neutral timer facade used by the scheduler tick path.
 
 pub fn init() {

@@ -1,3 +1,5 @@
+//! src/arch/x86_64/pci/mod.rs
+//!
 //! PCI/PCIe subsystem: raw config-space access, bus enumeration,
 //! capability walking, and ECAM (MMCONFIG) support.
 //!

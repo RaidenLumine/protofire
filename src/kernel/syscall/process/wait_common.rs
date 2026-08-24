@@ -1,4 +1,5 @@
 //! src/kernel/syscall/process/wait_common.rs
+//!
 //! Shared syscall-side wait-loop helpers for timeout, deadline, and wake-outcome handling.
 
 use crate::arch;

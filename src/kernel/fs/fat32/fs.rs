@@ -1,4 +1,5 @@
 //! src/kernel/fs/fat32/fs.rs
+//!
 //! Internal FAT filesystem read/write operations — volume open, FAT table
 //! access, cluster chain walking, directory reading, path resolution, and
 //! cluster allocation.

@@ -1,4 +1,5 @@
 //! src/abi/io_uring.rs
+//!
 //! Shared ABI types for the io_uring asynchronous I/O subsystem.
 //!
 //! These types are `#[repr(C)]` and must remain binary-stable across kernel

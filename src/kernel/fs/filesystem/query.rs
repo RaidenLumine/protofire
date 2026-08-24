@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/query.rs
+//!
 //! filesystem/query — FileSystem query, stat, normalize, lookup, and security methods.
 
 use alloc::string::{String, ToString};

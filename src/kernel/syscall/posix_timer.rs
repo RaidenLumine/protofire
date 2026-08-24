@@ -1,4 +1,5 @@
 //! src/kernel/syscall/posix_timer.rs
+//!
 //! Syscall handlers for POSIX per-process timers (#137–140).
 
 use crate::kernel::process::posix_timer;

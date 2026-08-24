@@ -1,4 +1,6 @@
 //! src/kernel/drivers/usb_msd.rs
+//!
+//! USB Mass Storage class driver.
 //! USB Mass Storage class driver — Bulk-Only Transport (BOT) + SCSI + BlockDevice.
 //!
 //! Implements the USB mass storage class (class 0x08, subclass 0x06 SCSI,

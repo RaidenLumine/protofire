@@ -1,3 +1,5 @@
+//! src/arch/x86_64/ioapic.rs
+//!
 //! IOAPIC driver for x86_64.
 //!
 //! The I/O APIC routes external interrupts from device pins to the Local

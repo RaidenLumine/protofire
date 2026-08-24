@@ -1,4 +1,5 @@
 //! src/arch/boot.rs
+//!
 //! Architecture-neutral boot protocol and handoff descriptors.
 
 use alloc::string::String;

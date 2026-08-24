@@ -1,4 +1,5 @@
 //! src/kernel/network/wireguard/mod.rs
+//!
 //! WireGuard tunnel — Noise_IKpsk2 handshake + ChaCha20-Poly1305 transport.
 //!
 //! Provides a virtual network interface that encapsulates IP packets in UDP

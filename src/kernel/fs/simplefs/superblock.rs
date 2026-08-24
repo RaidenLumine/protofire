@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/superblock.rs
+//!
 //! Superblock parsing, mount, label, block I/O caching helpers.
 
 use alloc::collections::BTreeMap;

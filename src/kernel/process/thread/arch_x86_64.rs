@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/arch_x86_64.rs
+//!
 //! x86_64 user-thread context and exception handling types.
 pub use crate::abi::exception::{
     X86_64UserExceptionFrame, X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR,

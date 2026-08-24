@@ -1,4 +1,5 @@
 //! src/arch/aarch64/rand.rs
+//!
 //! Hardware random number generator wrappers for AArch64 (RNDR / RNDRRS).
 //!
 //! ARMv8.5+ defines RNDR (architecturally-conditioned random number) and

@@ -1,4 +1,6 @@
 //! src/kernel/drivers/virtio_pci_msix.rs
+//!
+//! VirtIO PCI MSI-X support.
 //! MSI-X capability driver for VirtIO PCI devices.
 //!
 //! QEMU's `virtio-net-pci` (transitional) device exposes an MSI-X

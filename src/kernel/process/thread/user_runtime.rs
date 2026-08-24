@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/user_runtime.rs
+//!
 //! User-runtime state management: snapshot, validate, restore, replace, and
 //! clear user-mode execution context.
 

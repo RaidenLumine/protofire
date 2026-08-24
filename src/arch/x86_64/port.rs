@@ -1,4 +1,5 @@
 //! src/arch/x86_64/port.rs
+//!
 //! x86_64 I/O port access helpers.
 
 use core::arch::asm;

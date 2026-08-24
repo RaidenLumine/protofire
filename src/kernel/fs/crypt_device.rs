@@ -1,4 +1,5 @@
 //! src/kernel/fs/crypt_device.rs
+//!
 //! Encrypted block device that transparently encrypts/decrypts data
 //! using AES-256-XTS as data passes through the `BlockDevice` interface.
 

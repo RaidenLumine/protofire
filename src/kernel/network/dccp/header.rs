@@ -1,4 +1,5 @@
 //! src/kernel/network/dccp/header.rs
+//!
 //! DCCP (RFC 4340) generic header, packet types, and checksum.
 //!
 //! This kernel always transmits the extended generic header (X = 1) with

@@ -1,4 +1,5 @@
 //! src/user/shared/expand.rs
+//!
 //! Environment variable expansion and shell utility functions.
 //!
 //! All functions accept state explicitly via parameters rather than accessing

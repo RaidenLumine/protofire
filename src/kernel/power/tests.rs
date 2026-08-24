@@ -1,4 +1,5 @@
 //! src/kernel/power/tests.rs
+//!
 //! Host-side unit tests for the power-management subsystem.
 
 use super::governors::{calculate_target, GovernorType};

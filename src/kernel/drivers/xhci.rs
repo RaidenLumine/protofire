@@ -1,4 +1,6 @@
 //! src/kernel/drivers/xhci.rs
+//!
+//! xHCI (USB 3.x) host controller driver.
 //! xHCI (USB 3.0) host controller driver.
 //!
 //! The xHCI controller is discovered via PCI (class 0x0C, subclass 0x03,

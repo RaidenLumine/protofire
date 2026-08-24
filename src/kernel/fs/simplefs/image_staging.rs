@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/image_staging.rs
+//!
 //! Image building (for mkfs-like creation) and staging area management.
 
 use alloc::format;

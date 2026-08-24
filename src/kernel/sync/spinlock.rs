@@ -1,4 +1,5 @@
 //! src/kernel/sync/spinlock.rs
+//!
 //! Interrupt-aware spinlock primitive and guard semantics for low-level locking.
 
 use core::cell::UnsafeCell;

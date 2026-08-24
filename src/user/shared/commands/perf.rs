@@ -1,4 +1,5 @@
 //! src/user/shared/commands/perf.rs
+//!
 //! Performance profiling commands (perf stat, perf sched).
 
 use alloc::format;

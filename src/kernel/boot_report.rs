@@ -1,4 +1,5 @@
 //! src/kernel/boot_report.rs
+//!
 //! Structured boot-phase diagnostics: timing, subsystem status, memory layout,
 //! and recovery summary captured during `Kernel::init()` and queryable via the
 //! `SystemInfo` syscall after boot completes.

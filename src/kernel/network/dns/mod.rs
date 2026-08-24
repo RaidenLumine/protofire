@@ -1,4 +1,5 @@
 //! src/kernel/network/dns/mod.rs
+//!
 //! Minimal DNS A-record resolver (RFC 1035) built on the kernel UDP stack.
 //!
 //! Sends a standard DNS query to a configurable nameserver and extracts

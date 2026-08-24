@@ -1,4 +1,5 @@
 //! src/arch/mmu.rs
+//!
 //! Architecture-neutral MMU facade that dispatches to the active backend.
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]

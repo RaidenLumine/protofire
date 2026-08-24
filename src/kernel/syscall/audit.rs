@@ -1,4 +1,5 @@
 //! src/kernel/syscall/audit.rs
+//!
 //! Syscall handlers for audit subsystem control (AuditSetEnable, AuditReadLog).
 
 use crate::kernel::audit;

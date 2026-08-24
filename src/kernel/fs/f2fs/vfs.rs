@@ -1,4 +1,5 @@
 //! src/kernel/fs/f2fs/vfs.rs
+//!
 //! VFS integration: [`F2fsVolume`] wrapper, [`VfsFileSystem`] trait impl,
 //! [`F2VNode`] implementation, and path helpers.
 

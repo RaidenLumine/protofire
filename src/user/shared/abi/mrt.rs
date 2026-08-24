@@ -1,3 +1,5 @@
+//! src/user/shared/abi/mrt.rs
+//!
 //! src/abi/mrt.rs
 //! Shared ABI definitions for multicast routing (MRT) control — VIF and
 //! multicast-forwarding-cache (MFC) management, mirroring the Linux

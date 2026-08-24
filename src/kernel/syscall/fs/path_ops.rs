@@ -1,4 +1,5 @@
 //! src/kernel/syscall/fs/path_ops.rs
+//!
 //! Filesystem path operation syscalls: open/create/remove/rename flows.
 
 use alloc::string::String;

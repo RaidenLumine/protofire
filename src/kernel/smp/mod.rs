@@ -1,4 +1,5 @@
 //! src/kernel/smp/mod.rs
+//!
 //! SMP subsystem — AP discovery, bring-up, and TLB shootdown.
 //!
 //! ## Boot flow

@@ -1,4 +1,5 @@
 //! src/abi/io.rs
+//!
 //! Shared I/O ABI constants for open, seek, and descriptor-oriented syscalls.
 
 pub const OPEN_FLAG_NONE: usize = 0;

@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/security_helpers.rs
+//!
 //! Security descriptor helpers (free functions).
 //! These determine permission scopes, default descriptors, and
 //! device-mode / zone-based security policies for normalized paths.

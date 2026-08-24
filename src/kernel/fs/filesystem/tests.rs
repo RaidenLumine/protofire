@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/tests.rs
+//!
 //! End-to-end FileSystem security-token regression tests: a guest token may
 //! create, read, rename, and remove files inside its own data tree
 //! (`/data/users/guest/...`) but must be denied mutations of the system tree

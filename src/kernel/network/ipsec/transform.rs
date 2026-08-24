@@ -1,4 +1,5 @@
 //! src/kernel/network/ipsec/transform.rs
+//!
 //! IPsec data-plane transforms: apply the SPD/SAD on outbound and inbound
 //! packets, for both IPv4 and IPv6 and both transport and tunnel modes.
 

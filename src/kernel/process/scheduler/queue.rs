@@ -1,4 +1,5 @@
 //! src/kernel/process/scheduler/queue.rs
+//!
 //! Ready-queue and waiting-queue utility functions.
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;

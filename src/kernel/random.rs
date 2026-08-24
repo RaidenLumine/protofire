@@ -1,4 +1,5 @@
 //! src/kernel/random.rs
+//!
 //! Cryptographically secure pseudo-random number generator.
 //!
 //! Seeds from hardware RNG (RDRAND/RDSEED on x86_64, RNDR on AArch64)

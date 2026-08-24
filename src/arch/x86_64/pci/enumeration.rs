@@ -1,3 +1,5 @@
+//! src/arch/x86_64/pci/enumeration.rs
+//!
 //! PCI/PCIe bus enumeration: device discovery, BAR probing, and capability walking.
 //!
 //! Builds on the raw config-space primitives from `super::raw` to provide

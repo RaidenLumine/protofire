@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/extent_repair.rs
+//!
 //! Free extent tracking, metadata flush, volume check & repair, orphan
 //! cleanup, and runtime validation.
 

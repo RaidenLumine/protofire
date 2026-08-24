@@ -1,4 +1,5 @@
 //! src/kernel/syscall/memory/user.rs
+//!
 //! User-pointer and user-buffer validation helpers for syscall argument decoding.
 //!
 //! ## SMAP (Supervisor Mode Access Prevention)

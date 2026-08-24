@@ -1,4 +1,5 @@
 //! src/abi/diagnostic.rs
+//!
 //! ABI diagnostic records shared between kernel and user-space.
 
 use core::mem::size_of;

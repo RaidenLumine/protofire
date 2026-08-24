@@ -1,4 +1,5 @@
 //! tests/sync/condvar.rs
+//!
 //! Host-side integration tests for condition-variable wait, wake, and timeout behavior.
 
 use std::sync::Arc;

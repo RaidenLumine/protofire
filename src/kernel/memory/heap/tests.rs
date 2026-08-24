@@ -1,4 +1,5 @@
 //! src/kernel/memory/heap/tests.rs
+//!
 //! TLSF allocator unit tests.
 //!
 //! All allocation tests run against the single shared `HOST_HEAP_MODEL`

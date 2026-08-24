@@ -1,3 +1,5 @@
+//! src/arch/x86_64/idt/exception.rs
+//!
 //! Exception handling, diagnostics, and page-fault recovery.
 
 use core::mem::size_of;

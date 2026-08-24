@@ -1,4 +1,5 @@
 //! src/kernel/kernel_log.rs
+//!
 //! Kernel log ring buffer with a virtual file at `/system/logs/kernel`.
 //!
 //! All `println!` / `print!` output and serial debug writes are captured

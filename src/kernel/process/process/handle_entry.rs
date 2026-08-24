@@ -1,4 +1,5 @@
 //! src/kernel/process/process/handle_entry.rs
+//!
 //! Handle entry methods: stream I/O, stat, handle/fd reopening.
 use alloc::string::String;
 

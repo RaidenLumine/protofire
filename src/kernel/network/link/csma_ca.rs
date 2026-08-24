@@ -1,4 +1,5 @@
 //! src/kernel/network/link/csma_ca.rs
+//!
 //! CSMA/CA — Carrier Sense Multiple Access with Collision Avoidance
 //! (IEEE 802.11 DCF).
 //!

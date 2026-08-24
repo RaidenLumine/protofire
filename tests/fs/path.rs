@@ -1,4 +1,5 @@
 //! tests/fs/path.rs
+//!
 //! Host-side integration tests for slash-only path normalization rules.
 
 use protofire::kernel::fs::path::normalize_path;

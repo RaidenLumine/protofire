@@ -1,4 +1,5 @@
 //! src/util/sync_unsafe_cell.rs
+//!
 //! A `Sync`-capable `UnsafeCell` wrapper for kernel statics.
 //!
 //! A bare `UnsafeCell<T>` is `!Sync`, so it cannot appear in `static`

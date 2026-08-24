@@ -1,4 +1,5 @@
 //! src/kernel/fs/fuse/vnode.rs
+//!
 //! Per-node wrapper for FUSE-backed files.
 //!
 //! [`FuseVNode`] implements [`VNode`] by storing a cached inode

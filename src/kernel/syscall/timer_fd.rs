@@ -1,4 +1,5 @@
 //! src/kernel/syscall/timer_fd.rs
+//!
 //! timerfd — timer expiration notification file descriptor.
 //!
 //! Provides a file descriptor that becomes readable when a kernel timer

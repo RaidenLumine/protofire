@@ -1,4 +1,5 @@
 //! src/kernel/fs/ext4/types.rs
+//!
 //! ext2/ext4 on-disk structures, in-memory helpers, and serialisation
 //! functions.
 //!

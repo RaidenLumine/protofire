@@ -1,4 +1,5 @@
 //! src/kernel/percpu.rs
+//!
 //! Per-CPU data infrastructure for SMP.
 //!
 //! On x86_64 bare-metal, each CPU's [`PerCpuData`] is accessed via the GS

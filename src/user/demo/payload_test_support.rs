@@ -1,4 +1,5 @@
 //! src/user/demo/payload_test_support.rs
+//!
 //! Host-side inspection helpers used by the assembly and Rust demo payload
 //! tests.
 //!

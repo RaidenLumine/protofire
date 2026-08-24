@@ -1,4 +1,5 @@
 //! src/kernel/syscall/process/launch/mod.rs
+//!
 //! Process spawn/exec syscall decode, validation, and launch installation pipeline.
 
 mod decode;

@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/types.rs
+//!
 //! Pure type definitions for the thread module: user-thread start descriptor,
 //! scheduling metadata, thread state, wait outcomes, and runtime state.
 

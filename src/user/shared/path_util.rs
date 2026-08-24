@@ -1,4 +1,5 @@
 //! src/user/shared/path_util.rs
+//!
 //! Path resolution and normalization utilities.
 
 use alloc::string::String;

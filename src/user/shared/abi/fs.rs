@@ -1,3 +1,5 @@
+//! src/user/shared/abi/fs.rs
+//!
 //! src/abi/fs.rs
 //! Shared filesystem ABI records, file kinds, and directory entry layouts.
 

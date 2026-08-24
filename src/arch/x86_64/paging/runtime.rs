@@ -1,3 +1,7 @@
+//! src/arch/x86_64/paging/runtime.rs
+//!
+//! x86_64 runtime page-table management for device MMIO and user address spaces.
+
 use super::*;
 use crate::kernel::memory::paging::PagePermissions;
 use crate::user::program::UserImageLoadPlan;

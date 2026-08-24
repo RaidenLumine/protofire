@@ -1,4 +1,5 @@
 //! src/kernel/process/mac/types.rs
+//!
 //! MAC type-enforcement data types: security types, object classes, and
 //! permission bitmasks.
 

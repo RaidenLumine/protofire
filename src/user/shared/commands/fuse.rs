@@ -1,4 +1,5 @@
 //! src/user/shared/commands/fuse.rs
+//!
 //! FUSE (Filesystem in Userspace) shell command and RAM FS daemon.
 //!
 //! Provides the `fuse` shell command:

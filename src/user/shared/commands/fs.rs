@@ -1,4 +1,5 @@
 //! src/user/shared/commands/fs.rs
+//!
 //! Filesystem commands: pwd, cd, ls, cat, mkdir, rm, touch, cp, mv.
 //!
 //! All commands use the syscall bridge (`crate::syscall`) for filesystem I/O

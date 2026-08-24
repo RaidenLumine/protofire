@@ -1,4 +1,5 @@
 //! src/abi/gpu.rs
+//!
 //! Shared ABI definitions for the VIRGL 3D userspace interface — syscalls
 //! #181-189 expose the virtio-gpu VIRGL protocol to a userspace renderer.
 

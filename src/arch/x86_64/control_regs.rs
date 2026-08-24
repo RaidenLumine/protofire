@@ -1,4 +1,5 @@
 //! src/arch/x86_64/control_regs.rs
+//!
 //! CR0 / CR4 read/write helpers and control-register bit definitions.
 //!
 //! Used during early boot to set up the FPU/SSE environment (CR0) and to

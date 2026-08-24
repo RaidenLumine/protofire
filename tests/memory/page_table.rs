@@ -1,4 +1,5 @@
 //! tests/memory/page_table.rs
+//!
 //! Host-side integration tests for the software page-table implementation.
 
 use protofire::kernel::memory::paging::{MappingKind, PagePermissions, PageTable, PAGE_SIZE};

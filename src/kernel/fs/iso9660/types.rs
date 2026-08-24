@@ -1,4 +1,5 @@
 //! src/kernel/fs/iso9660/types.rs
+//!
 //! On-disk data structures for ISO 9660 (ECMA-119) and Rock Ridge (RRIP-1.12).
 //!
 //! Reference: ECMA-119 (ISO 9660), SUSP 1.12, RRIP 1.12.

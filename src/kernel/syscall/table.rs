@@ -1,4 +1,5 @@
 //! src/kernel/syscall/table.rs
+//!
 //! Syscall number routing table and per-syscall handler dispatch glue.
 
 use crate::abi::{process as process_abi, syscall as syscall_abi};

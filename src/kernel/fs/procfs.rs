@@ -1,4 +1,5 @@
 //! src/kernel/fs/procfs.rs
+//!
 //! ProcFS — a synthetic filesystem exposing kernel and process information.
 //!
 //! ## Nodes

@@ -1,4 +1,5 @@
 //! src/kernel/fs/fat32/mod.rs
+//!
 //! FAT12/16/32 read-write filesystem implementation.
 //!
 //! ## Supported features

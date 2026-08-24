@@ -1,4 +1,5 @@
 //! src/user/shared/control_flow.rs
+//!
 //! Shell control flow: `if`/`for`/`while` parsing and execution.
 //!
 //! The executor functions accept callbacks for command execution, environment

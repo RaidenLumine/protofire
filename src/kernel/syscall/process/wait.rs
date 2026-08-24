@@ -1,4 +1,5 @@
 //! src/kernel/syscall/process/wait.rs
+//!
 //! Process-wait syscall path including timeout/reap semantics and record encoding.
 
 use crate::abi::process as process_abi;

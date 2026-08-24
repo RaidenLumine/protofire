@@ -1,4 +1,5 @@
 //! src/user/shared/jobs.rs
+//!
 //! Shared job control types and formatting for shell builtins.
 //!
 //! The `Job` and `JobState` types are defined here so both the kernel shell

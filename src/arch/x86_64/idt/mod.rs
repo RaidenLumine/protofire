@@ -1,4 +1,5 @@
 //! src/arch/x86_64/idt/mod.rs
+//!
 //! x86_64 IDT setup, exception dispatch, and page-fault recovery logic.
 
 pub(crate) mod dispatch;

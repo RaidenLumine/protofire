@@ -1,4 +1,5 @@
 //! src/user/shared/commands/process.rs
+//!
 //! Process and signal commands: ps, kill, true, false.
 //!
 //! All commands use the syscall bridge (`crate::syscall`) and return

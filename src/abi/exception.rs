@@ -1,4 +1,5 @@
 //! src/abi/exception.rs
+//!
 //! Shared public exception ABI constants, frame layouts, and decode helpers.
 
 use core::mem::{offset_of, size_of};

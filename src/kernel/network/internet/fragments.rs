@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/fragments.rs
+//!
 //! IPv4 fragment reassembly (RFC 815 / RFC 791).
 //!
 //! Maintains a per-`(id, protocol, source, destination)` reassembly buffer

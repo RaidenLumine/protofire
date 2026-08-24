@@ -1,3 +1,5 @@
+//! src/user/shared/abi/ptrace.rs
+//!
 //! src/abi/ptrace.rs
 //! Ptrace ABI: request codes, event codes, the event record, and the
 //! user-mode register file layout shared between kernel and user space.

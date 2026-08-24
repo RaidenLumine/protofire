@@ -1,4 +1,5 @@
 //! src/kernel/syscall/memory/shm_handlers.rs
+//!
 //! Syscall handlers for SystV shared memory operations.
 
 use crate::{Error, Result};

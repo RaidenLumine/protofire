@@ -1,4 +1,6 @@
 //! src/kernel/fs/btrfs/tests.rs
+//!
+//! Regression tests for the Btrfs driver.
 //! Host-side tests for the read-only Btrfs driver: compressed extents,
 //! multi-device logical→physical translation, and standard VFS operations.
 

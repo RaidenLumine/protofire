@@ -1,4 +1,5 @@
 //! src/kernel/fs/demo.rs
+//!
 //! Demo filesystem image and layout builders used for boot/runtime sample data.
 //!
 //! ═══════════════════════════════════════════════════════════════════════════

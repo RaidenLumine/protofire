@@ -1,4 +1,5 @@
 //! src/arch/aarch64/cpufreq.rs
+//!
 //! AArch64 CPU frequency control from device-tree OPP tables.
 //!
 //! ARM has no architectural CPU-frequency register like the x86 MSRs.  This

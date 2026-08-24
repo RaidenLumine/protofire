@@ -1,4 +1,5 @@
 //! src/kernel/syscall/futex.rs
+//!
 //! Futex syscall handler — fast userspace mutex.
 //!
 //! `Futex = 106`:

@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/vfs.rs
+//!
 //! VFS integration: SimpleFsVolume wrapper, VfsFileSystem trait implementation,
 //! and SimpleVNode implementation.
 

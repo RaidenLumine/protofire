@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/mld.rs
+//!
 //! MLDv1 (RFC 2710) — IPv6 multicast group management.
 //!
 //! MLDv1 uses ICMPv6 message types 130 (Query), 131 (Report), 132 (Done).

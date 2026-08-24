@@ -1,4 +1,6 @@
 //! src/kernel/drivers/virtio_pci_modern.rs
+//!
+//! VirtIO PCI modern transport layer.
 //! VirtIO modern (1.0) PCI transport via the device's MMIO BAR.
 //!
 //! QEMU 8.2's transitional `virtio-net-pci` device exposes the legacy

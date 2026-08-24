@@ -1,4 +1,5 @@
 //! src/arch/x86_64/cpuid.rs
+//!
 //! CPUID instruction wrapper and feature-detection helpers.
 //!
 //! Used by early-boot code to check whether the CPU supports SMEP, SMAP, and

@@ -1,4 +1,5 @@
 //! src/kernel/syscall/memory/map.rs
+//!
 //! mmap/munmap syscall handlers — anonymous memory mapping for user processes.
 
 use crate::kernel::memory::paging::PagePermissions;

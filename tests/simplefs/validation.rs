@@ -1,4 +1,5 @@
 //! tests/simplefs/validation.rs
+//!
 //! Host-side integration tests for SimpleFs image validation and mutation behavior.
 
 use std::collections::{BTreeMap, BTreeSet};

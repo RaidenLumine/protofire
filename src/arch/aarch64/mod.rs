@@ -1,4 +1,5 @@
 //! src/arch/aarch64/mod.rs
+//!
 //! AArch64 architecture bring-up glue, platform hooks, and backend exports.
 
 use core::arch::asm;

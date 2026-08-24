@@ -1,4 +1,5 @@
 //! src/kernel/network/tcp/table.rs
+//!
 //! TCP connection table: registry of established connections, listeners with
 //! their accept backlogs, and the native connection handle returned to the
 //! socket layer.

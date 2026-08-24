@@ -1,4 +1,5 @@
 //! src/kernel/fs/exfat/tests.rs
+//!
 //! End-to-end read/write tests for the exFAT filesystem driver.
 //!
 //! The test image is a small writable exFAT volume (512-byte sectors,

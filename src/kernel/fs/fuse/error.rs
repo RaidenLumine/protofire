@@ -1,4 +1,5 @@
 //! src/kernel/fs/fuse/error.rs
+//!
 //! FUSE protocol error codes and conversion to kernel [`Error`].
 //!
 //! This module provides the single-choke-point conversion from FUSE wire-format

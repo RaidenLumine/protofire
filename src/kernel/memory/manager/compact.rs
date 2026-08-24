@@ -1,4 +1,5 @@
 //! src/kernel/memory/manager/compact.rs
+//!
 //! Memory defragmentation (compaction): relocate movable user frames so the
 //! free ranges of the physical frame pool coalesce into one contiguous block.
 //!

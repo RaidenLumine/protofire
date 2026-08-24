@@ -1,4 +1,6 @@
 //! src/kernel/audit/types.rs
+//!
+//! Shared audit event types and configuration.
 //! Audit event type definitions, record format, and enable-mask constants.
 
 use core::fmt;

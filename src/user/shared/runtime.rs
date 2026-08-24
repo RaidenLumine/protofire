@@ -1,3 +1,5 @@
+//! src/user/shared/runtime.rs
+//!
 // ── Syscall bridge for the shared module ─────────────────────────────────────
 //
 // These #[no_mangle] extern "Rust" functions implement the symbols declared

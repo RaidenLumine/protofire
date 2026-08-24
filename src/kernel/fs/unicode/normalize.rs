@@ -1,4 +1,5 @@
 //! src/kernel/fs/unicode/normalize.rs
+//!
 //! Unicode NFD / NFC normalization for on-disk filenames.
 //!
 //! Uses the auto-generated [`super::normalize_tables`] tables.  Only the

@@ -1,4 +1,5 @@
 //! src/arch/aarch64/rtc.rs
+//!
 //! PL031 Real-Time Clock driver for AArch64 (QEMU `virt` platform).
 //!
 //! The PrimeCell PL031 RTC is a simple MMIO device that provides a 32-bit

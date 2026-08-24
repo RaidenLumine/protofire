@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/types.rs
+//!
 //! Supporting types for the filesystem layer.
 //!
 //! Includes mount-point tracking, permission-mutation policies,

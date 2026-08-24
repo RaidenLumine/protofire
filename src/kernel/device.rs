@@ -1,4 +1,5 @@
 //! src/kernel/device.rs
+//!
 //! Shared virtual-device registry that keeps names, paths, access masks, I/O dispatch, and devfs visibility in one place.
 
 use alloc::string::String;

@@ -1,4 +1,5 @@
 //! src/kernel/network/sctp/association.rs
+//!
 //! SCTP association state machine (RFC 4960) for a single stream.
 //!
 //! Minimal implementation:

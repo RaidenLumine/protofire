@@ -1,4 +1,5 @@
 //! src/kernel/process/process/constants.rs
+//!
 //! Process subsystem type aliases and constants.
 
 pub type ProcessId = u32;

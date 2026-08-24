@@ -1,4 +1,5 @@
 //! src/kernel/power/cpufreq_driver.rs
+//!
 //! CPU frequency driver trait.
 
 use crate::Result;

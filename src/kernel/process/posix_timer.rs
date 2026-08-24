@@ -1,4 +1,5 @@
 //! src/kernel/process/posix_timer.rs
+//!
 //! POSIX per-process timer (timer_create/timer_settime/timer_gettime/timer_delete).
 //!
 //! Each timer delivers a signal on expiry.  Timers are tracked in a global

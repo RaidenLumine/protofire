@@ -1,4 +1,5 @@
 //! src/arch/x86_64/mod.rs
+//!
 //! x86_64 architecture bring-up glue and backend exports.
 
 #[cfg(target_os = "none")]

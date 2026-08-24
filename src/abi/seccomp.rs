@@ -1,4 +1,5 @@
 //! src/abi/seccomp.rs
+//!
 //! Seccomp ABI types — secure computing / syscall filtering.
 //!
 //! Provides the user/kernel ABI boundary for the `Seccomp (#129)` syscall.

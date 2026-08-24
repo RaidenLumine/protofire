@@ -1,4 +1,5 @@
 //! src/arch/x86_64/apic.rs
+//!
 //! Local APIC (LAPIC) driver: MMIO identity mapping, register access,
 //! initialisation, EOI, APIC ID, and inter-processor interrupt (IPI) ICR
 //! helpers.  Bare-metal x86_64 only.

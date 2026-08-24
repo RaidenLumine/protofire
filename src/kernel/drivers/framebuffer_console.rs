@@ -1,4 +1,6 @@
 //! src/kernel/drivers/framebuffer_console.rs
+//!
+//! Text console rendered over a framebuffer.
 //! Framebuffer text console renderer.
 //!
 //! Renders a fixed-width character grid on top of the bochs-display linear

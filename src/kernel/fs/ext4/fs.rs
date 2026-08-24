@@ -1,4 +1,5 @@
 //! src/kernel/fs/ext4/fs.rs
+//!
 //! Ext4Fs internal state and core implementation (block I/O, inode ops,
 //! extent tree management, directory scanning, block/inode allocation,
 //! file data read/write, journal integration).

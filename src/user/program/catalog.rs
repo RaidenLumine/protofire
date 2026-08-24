@@ -1,3 +1,5 @@
+//! src/user/program/catalog.rs
+//!
 //! Catalog entry, launch manifest, and catalog→image resolution chain.
 //!
 //! This module resolves a catalog path (e.g. `/apps/current/shell.toml`) through

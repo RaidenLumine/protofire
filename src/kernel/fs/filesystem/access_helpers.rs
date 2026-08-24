@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/access_helpers.rs
+//!
 //! Access-check helpers (free functions).
 //! These determine required access bits and mount write-visibility rules.
 

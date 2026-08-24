@@ -1,4 +1,5 @@
 //! src/user/shared/history.rs
+//!
 //! Command history utilities.
 //!
 //! All functions accept state explicitly via parameters rather than accessing

@@ -1,4 +1,6 @@
 //! src/kernel/drivers/virtio_gpu.rs
+//!
+//! VirtIO GPU device driver.
 //! VirtIO GPU driver — provides a linear framebuffer for display output.
 //!
 //! Communicates with the device through the VirtIO control virtqueue to:

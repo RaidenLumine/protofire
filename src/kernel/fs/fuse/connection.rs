@@ -1,4 +1,5 @@
 //! src/kernel/fs/fuse/connection.rs
+//!
 //! Per-mount FUSE channel: request/response pipe pair + sequential dispatch.
 //!
 //! [`FuseConnection`] holds the kernel-end pipe ends and provides

@@ -1,4 +1,5 @@
 //! src/kernel/smp/tlb.rs
+//!
 //! TLB shootdown, cross-CPU invalidation, and boot CR3 management.
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]

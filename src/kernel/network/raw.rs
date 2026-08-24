@@ -1,4 +1,5 @@
 //! src/kernel/network/raw.rs
+//!
 //! Raw IP socket support.
 //!
 //! Raw sockets allow user-space programs to send and receive IP packets

@@ -1,4 +1,5 @@
 //! src/kernel/syscall/misc.rs
+//!
 //! Misc syscall handlers such as yield, debug write, exit, and console read.
 
 use crate::kernel::console;

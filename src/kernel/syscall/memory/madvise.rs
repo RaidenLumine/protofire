@@ -1,4 +1,5 @@
 //! src/kernel/syscall/memory/madvise.rs
+//!
 //! madvise — give advice about memory use (syscall #133).
 //! Provides hints about memory usage patterns to the kernel.
 

@@ -1,4 +1,5 @@
 //! src/kernel/network/mrouting/igmp_router.rs
+//!
 //! IGMPv2 router mode (RFC 2236): track which multicast groups have local
 //! members on each VIF (from Membership Reports), expire them on Leave, and
 //! periodically emit General Queries to discover members.

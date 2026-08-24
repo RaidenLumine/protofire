@@ -1,4 +1,5 @@
 //! src/arch/riscv64/irq_balance.rs
+//!
 //! RISC-V interrupt load-balancing: PLIC source re-targeting.
 //!
 //! PLIC external sources can be routed to any hart by programming the

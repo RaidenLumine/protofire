@@ -1,4 +1,5 @@
 //! src/arch/x86_64/gdt.rs
+//!
 //! x86_64 GDT descriptors, selectors, and install helpers.
 
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;

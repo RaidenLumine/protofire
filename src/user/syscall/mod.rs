@@ -1,4 +1,5 @@
 //! src/user/syscall/mod.rs
+//!
 //! User-side syscall builders and architecture-specific invocation helpers.
 
 #[cfg(any(

@@ -1,4 +1,6 @@
 //! src/kernel/drivers/serial.rs
+//!
+//! UART 16550-compatible serial port driver.
 //! Serial device wrapper that turns the architecture UART backend into a kernel device.
 
 use alloc::collections::VecDeque;

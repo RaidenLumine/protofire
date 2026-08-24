@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/constants.rs
+//!
 //! Thread module constants and type aliases.
 
 pub type ThreadId = u32;

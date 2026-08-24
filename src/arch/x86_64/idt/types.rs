@@ -1,3 +1,5 @@
+//! src/arch/x86_64/idt/types.rs
+//!
 //! x86_64 IDT types, constants, and assembly stubs.
 
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;

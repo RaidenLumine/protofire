@@ -1,4 +1,5 @@
 //! src/kernel/process/scheduler/lifecycle.rs
+//!
 //! Scheduler construction, PID allocation, and CPU-spread setup.
 
 use alloc::collections::VecDeque;

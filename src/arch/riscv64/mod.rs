@@ -1,4 +1,5 @@
 //! src/arch/riscv64/mod.rs
+//!
 //! RISC-V 64 architecture bring-up glue, platform hooks, and backend exports.
 
 use core::arch::asm;

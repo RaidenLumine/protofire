@@ -1,4 +1,5 @@
 //! src/user/program/shell/dispatch.rs
+//!
 //! Command dispatch: single commands, pipelines, and conditional chaining.
 
 use super::expand::is_background;

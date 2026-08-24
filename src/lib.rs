@@ -1,6 +1,5 @@
 //! src/lib.rs
-//! Library crate entry that defines shared modules, error codes, and print macros.
-
+//!
 //! Protofire Kernel Library
 //!
 //! This is the main library crate for the Protofire kernel.

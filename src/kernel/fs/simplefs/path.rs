@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/path.rs
+//!
 //! Path resolution and symlink following for SimpleFs.
 
 use alloc::format;

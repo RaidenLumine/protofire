@@ -1,4 +1,5 @@
 //! src/kernel/fs/unicode/casefold.rs
+//!
 //! Unicode case folding for case-insensitive filename comparison.
 //!
 //! FAT32 and SimpleFs support case-insensitive lookups under a configurable

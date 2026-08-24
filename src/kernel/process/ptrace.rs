@@ -1,4 +1,5 @@
 //! src/kernel/process/ptrace.rs
+//!
 //! Core ptrace (process tracing) logic.
 //!
 //! Provides functions used by the Ptrace syscall handler (#128) and the

@@ -1,4 +1,5 @@
 //! src/kernel/network/dhcp.rs
+//!
 //! DHCP (RFC 2131) client: boot-time address discovery and lease renewal.
 //!
 //! Discovery binds UDP/68, broadcasts a `DHCPDISCOVER` to `255.255.255.255:67`,

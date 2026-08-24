@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/mod.rs
+//!
 //! Thread object state machine, user-context handling, and exception-delivery metadata.
 
 use ::core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8};

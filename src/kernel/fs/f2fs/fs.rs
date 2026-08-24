@@ -1,4 +1,5 @@
 //! src/kernel/fs/f2fs/fs.rs
+//!
 //! F2FS core: mount, block I/O, path walking, directory scanning, and file
 //! data reading.
 

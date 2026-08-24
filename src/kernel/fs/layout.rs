@@ -1,4 +1,5 @@
 //! src/kernel/fs/layout.rs
+//!
 //! Disk and zone layout constants plus mount policy for system/apps/data areas.
 
 pub const MOUNT_READ_ONLY: u32 = 1 << 0;

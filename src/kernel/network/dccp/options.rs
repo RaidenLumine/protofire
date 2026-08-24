@@ -1,4 +1,5 @@
 //! src/kernel/network/dccp/options.rs
+//!
 //! DCCP options and minimal feature negotiation (RFC 4340 §6, §11).
 //!
 //! Options are byte-aligned: `[type(1)][length(1)][length-2 bytes of data]`.

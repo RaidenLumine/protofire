@@ -1,4 +1,5 @@
 //! src/user/program/spawn.rs
+//!
 //! Process-spawn entry points wired to the catalog/manifest loader.
 //!
 //! This module exposes the public spawn API that external callers

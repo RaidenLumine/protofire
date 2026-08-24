@@ -1,3 +1,5 @@
+//! src/arch/x86_64/rtc.rs
+//!
 //! CMOS Real-Time Clock (RTC) driver for x86_64.
 //!
 //! Reads wall-clock time from the CMOS RTC via I/O ports 0x70 (index) and

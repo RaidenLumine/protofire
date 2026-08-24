@@ -1,4 +1,5 @@
 //! src/kernel/fs/ext4/constants.rs
+//!
 //! ext4 on-disk constants and feature flags.
 
 // ─── ext4 on-disk constants ────────────────────────────────────────────────

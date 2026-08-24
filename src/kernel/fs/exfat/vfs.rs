@@ -1,4 +1,5 @@
 //! src/kernel/fs/exfat/vfs.rs
+//!
 //! VFS integration — [`ExfatVolume`] open/close, [`VfsFileSystem`] trait
 //! implementation, [`ExfatVNode`] type, and [`VNode`] trait implementation.
 

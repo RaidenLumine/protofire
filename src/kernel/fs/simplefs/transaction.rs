@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/transaction.rs
+//!
 //! Undo-log based transaction support for SimpleFs metadata mutations.
 
 use alloc::string::ToString;

@@ -1,4 +1,5 @@
 /* File: src/arch/x86_64/ap_trampoline.asm                                  */
+/*                                                                          */
 /* Purpose: AP startup trampoline — 16-bit → 32-bit → 64-bit transition.    */
 /*                                                                          */
 /* Trampoline data at physical 0x9000 (each field u64, 8-byte aligned):     */

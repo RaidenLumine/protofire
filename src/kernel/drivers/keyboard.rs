@@ -1,4 +1,6 @@
 //! src/kernel/drivers/keyboard.rs
+//!
+//! PS/2 keyboard input driver.
 //! Keyboard driver: PS/2 scancode buffering/decoding, USB-HID injection,
 //! and input wait semantics.
 //!

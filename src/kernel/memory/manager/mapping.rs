@@ -1,4 +1,5 @@
 //! src/kernel/memory/manager/mapping.rs
+//!
 //! Address-space mapping operations, diagnostics, user page registration,
 //! page table access, and content store.
 

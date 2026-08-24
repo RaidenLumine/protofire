@@ -1,4 +1,5 @@
 //! src/kernel/network/dccp/mod.rs
+//!
 //! DCCP — Datagram Congestion Control Protocol (RFC 4340).
 //!
 //! DCCP is a transport protocol that provides unreliable datagram delivery

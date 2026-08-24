@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/exception.rs
+//!
 //! Architecture-generic user-exception delivery: frame layout, stack-pointer
 //! selection, nested-delivery policies, and per-arch delivery builders.
 

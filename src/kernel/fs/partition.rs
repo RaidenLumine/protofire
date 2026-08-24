@@ -1,4 +1,5 @@
 //! src/kernel/fs/partition.rs
+//!
 //! Partition table parsing and writing helpers, including MBR support.
 
 use super::block::{BlockDevice, BLOCK_SIZE};

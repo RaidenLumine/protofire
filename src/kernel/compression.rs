@@ -1,4 +1,5 @@
 //! src/kernel/compression.rs
+//!
 //! Shared decompression primitives for filesystem drivers.
 //!
 //! Provides a minimal ZSTD decompressor.  Currently handles:

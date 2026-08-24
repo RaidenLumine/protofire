@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/icmpv6.rs
+//!
 //! ICMPv6 (RFC 4443) and Neighbor Discovery Protocol (RFC 4861) for IPv6.
 //!
 //! Implements:

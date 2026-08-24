@@ -1,4 +1,5 @@
 //! src/kernel/fs/fuse/mod.rs
+//!
 //! Minimal FUSE protocol support: wire types and a FUSE-backed filesystem.
 //!
 //! A `FuseHeader` struct (24 bytes, `#[repr(C)]`) is used for both requests

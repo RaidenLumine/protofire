@@ -1,3 +1,5 @@
+//! src/user/program/shell/commands/user.rs
+//!
 //! User management commands (whoami, id, users, useradd, userdel, passwd, login, su).
 
 use super::super::entry::{read_stdin_line, read_stdin_secret};

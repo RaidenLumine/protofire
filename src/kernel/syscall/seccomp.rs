@@ -1,4 +1,5 @@
 //! src/kernel/syscall/seccomp.rs
+//!
 //! Seccomp syscall handler (#129).
 //!
 //! Dispatches seccomp operations to the core logic in

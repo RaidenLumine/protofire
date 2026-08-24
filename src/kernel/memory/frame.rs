@@ -1,4 +1,5 @@
 //! src/kernel/memory/frame.rs
+//!
 //! Physical frame allocator with free-range tracking, reuse, and coalescing.
 //!
 //! Free ranges are tracked in a `BTreeMap<start_frame, count>` for O(log n)

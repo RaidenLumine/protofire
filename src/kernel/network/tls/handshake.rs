@@ -1,4 +1,5 @@
 //! src/kernel/network/tls/handshake.rs
+//!
 //! TLS 1.3 handshake state machine — server message parsing, key schedule,
 //! and client Finished generation (RFC 8446 §4, §7).
 //!

@@ -1,4 +1,5 @@
 //! src/kernel/memory/dma.rs
+//!
 //! Physically-contiguous DMA buffer and virtual-to-physical address translation.
 
 use super::frame::FRAME_SIZE;

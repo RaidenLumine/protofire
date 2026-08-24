@@ -1,4 +1,5 @@
 //! src/kernel/fs/ext4/mod.rs
+//!
 //! ext2/ext4 filesystem: on-disk types, block/group operations, journal
 //! replay, and VFS integration.
 

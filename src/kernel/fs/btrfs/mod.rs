@@ -1,4 +1,6 @@
 //! src/kernel/fs/btrfs/mod.rs
+//!
+//! Btrfs filesystem driver: superblock, trees, file/dir I/O.
 //! Btrfs read-only filesystem driver.
 //!
 //! ## Supported features

@@ -1,4 +1,5 @@
 //! src/kernel/topology.rs
+//!
 //! NUMA topology types and global topology manager.
 
 pub type NodeId = u8;

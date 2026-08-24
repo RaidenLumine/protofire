@@ -1,3 +1,5 @@
+//! src/arch/x86_64/idt/dispatch.rs
+//!
 //! Interrupt dispatch and syscall handling.
 
 use core::arch::asm;

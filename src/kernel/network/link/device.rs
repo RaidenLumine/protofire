@@ -1,4 +1,5 @@
 //! src/kernel/network/link/device.rs
+//!
 //! `NetworkDevice` trait — hardware abstraction for network interface cards.
 //!
 //! Follows the same pattern as `BlockDevice` from `src/kernel/fs/block.rs`.

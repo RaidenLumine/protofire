@@ -1,4 +1,5 @@
 //! src/util/logger.rs
+//!
 //! Structured logging and panic output helpers.
 
 use core::alloc::Layout;

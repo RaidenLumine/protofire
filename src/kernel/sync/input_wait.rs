@@ -1,4 +1,5 @@
 //! src/kernel/sync/input_wait.rs
+//!
 //! Shared helpers for input-style wait loops, timeout bookkeeping, and waiter statistics.
 
 use alloc::sync::Arc;

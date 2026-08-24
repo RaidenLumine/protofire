@@ -1,4 +1,5 @@
 //! src/user/demo/demo_program_x86_64_rust.rs
+//!
 //! Rust-authored x86_64 demo payload and its host-side validation helpers.
 
 #![cfg_attr(not(test), allow(dead_code))]

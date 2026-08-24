@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/tests.rs
+//!
 //! Thread lifecycle invariants: construction, state transitions, block/wake,
 //! suspend/resume, termination, join, and process handle behaviour after a
 //! process terminates.

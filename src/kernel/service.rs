@@ -1,4 +1,5 @@
 //! src/kernel/service.rs
+//!
 //! Service manager: loads service definitions from `/system/rc.d/*.toml` and
 //! spawns kernel worker threads and user programs at boot.
 //!

@@ -1,4 +1,5 @@
 //! tests/simplefs/recovery.rs
+//!
 //! Host-side recovery and long-sequence regression tests for writable SimpleFs behavior.
 
 mod support;

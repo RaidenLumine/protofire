@@ -1,4 +1,5 @@
 //! src/user/exception.rs
+//!
 //! User-side typed wrappers around the shared exception ABI and exception syscalls.
 
 use super::syscall::UserSyscall;

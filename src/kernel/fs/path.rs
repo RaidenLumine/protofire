@@ -1,4 +1,5 @@
 //! src/kernel/fs/path.rs
+//!
 //! Path normalization and path-manipulation helpers for syscall and VFS callers.
 
 use alloc::string::String;

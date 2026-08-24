@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/mod.rs
+//!
 //! FileSystem implementation modules — construction, mount, I/O, query,
 //! security, rename, overlay, profiler, and supporting helpers & types.
 

@@ -1,4 +1,5 @@
 //! src/abi/shm.rs
+//!
 //! ABI types for SystV shared memory (shm) operations.
 //!
 //! These types are shared between the kernel (`adastra`) and user-space

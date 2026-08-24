@@ -1,4 +1,5 @@
 //! src/kernel/smp/discovery.rs
+//!
 //! ACPI/MADT parsing, RSDP discovery, and AP list management.
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]

@@ -1,4 +1,5 @@
 //! src/user/elf.rs
+//!
 //! Minimal ELF64 parsing helpers used by the user program loader.
 
 use alloc::vec::Vec;

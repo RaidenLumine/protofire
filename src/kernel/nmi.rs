@@ -1,4 +1,5 @@
 //! src/kernel/nmi.rs
+//!
 //! Architecture-neutral non-maskable interrupt handling.
 //!
 //! A small registry of NMI handlers runs on every NMI-class entry point:

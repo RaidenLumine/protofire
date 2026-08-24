@@ -1,4 +1,5 @@
 //! src/user/shared/types.rs
+//!
 //! Shared shell types used by both kernel and ring3 environments.
 
 use alloc::string::String;

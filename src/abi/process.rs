@@ -1,4 +1,5 @@
 //! src/abi/process.rs
+//!
 //! Shared process ABI constants and records for spawn, wait, and termination flows.
 
 use core::mem::{offset_of, size_of};

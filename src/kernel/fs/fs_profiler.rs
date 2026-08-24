@@ -1,4 +1,5 @@
 //! src/kernel/fs/fs_profiler.rs
+//!
 //! Filesystem operation counters, gated behind `cfg(feature = "fs_profiler")`.
 //! When the feature is disabled, every method is a no-op and `FsProfiler` is
 //! a zero-sized type so the field in `SimpleFs` costs zero bytes.

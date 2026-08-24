@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/dedup.rs
+//!
 //! Cross-file content deduplication for V4 volumes.
 //!
 //! Identical file content is stored once and shared by multiple inodes.

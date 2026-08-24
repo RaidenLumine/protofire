@@ -1,3 +1,5 @@
+//! src/user/shared/abi/seccomp.rs
+//!
 //! src/abi/seccomp.rs
 //! Seccomp ABI types — secure computing / syscall filtering.
 //!

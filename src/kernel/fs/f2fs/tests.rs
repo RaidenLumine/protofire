@@ -1,4 +1,5 @@
 //! src/kernel/fs/f2fs/tests.rs
+//!
 //! Unit tests for the F2FS driver.
 //!
 //! The tests build a minimal in-memory F2FS image by hand using the same

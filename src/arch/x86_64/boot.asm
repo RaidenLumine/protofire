@@ -1,4 +1,5 @@
 /* File: src/arch/x86_64/boot.asm */
+
 /* Purpose: x86_64 bootstrap stub that advertises Multiboot2 support and enters long mode. */
 
 .set MULTIBOOT2_MAGIC, 0xE85250D6

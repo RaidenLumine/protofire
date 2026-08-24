@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/icmp.rs
+//!
 //! ICMP protocol (RFC 792): Echo Reply generation.
 
 use alloc::vec::Vec;

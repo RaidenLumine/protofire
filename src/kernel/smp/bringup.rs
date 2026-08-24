@@ -1,4 +1,5 @@
 //! src/kernel/smp/bringup.rs
+//!
 //! AP trampoline, bring-up, per-CPU scheduler management, and IPI delivery.
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]

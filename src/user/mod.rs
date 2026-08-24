@@ -1,4 +1,5 @@
 //! src/user/mod.rs
+//!
 //! User-side module entry that re-exports loaders, syscalls, and demo payload helpers.
 
 // Demo payload modules (assembly ELF builders) are compiled only when the demo

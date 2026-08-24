@@ -1,4 +1,5 @@
 //! src/kernel/process/scheduler/waker.rs
+//!
 //! Block/wake/timed-waiter infrastructure.
 use alloc::sync::Arc;
 use core::sync::atomic::Ordering;

@@ -1,4 +1,5 @@
 //! src/kernel/network/mrouting/pim.rs
+//!
 //! PIM-Dense-Mode (PIM-DM) data plane (RFC 3973): a simplified flood-and-
 //! prune multicast routing control plane.
 //!

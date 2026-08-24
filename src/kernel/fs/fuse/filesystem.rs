@@ -1,4 +1,5 @@
 //! src/kernel/fs/fuse/filesystem.rs
+//!
 //! FUSE filesystem implementation of the [`FileSystem`] trait.
 //!
 //! [`FuseFileSystem`] translates each VFS operation

@@ -1,3 +1,5 @@
+//! src/user/program/loader/mod.rs
+//!
 //! ELF-image planning, user-address-space preparation, initial-user-stack
 //! construction, and the [`LoadedProgram`] ↔ [`LaunchedProgram`] pipeline.
 //!

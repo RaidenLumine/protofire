@@ -1,4 +1,5 @@
 //! src/kernel/syscall/fs/query.rs
+//!
 //! Filesystem query syscall handlers: mount/block-device enumeration and
 //! security descriptor updates.
 

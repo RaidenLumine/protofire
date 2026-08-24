@@ -1,4 +1,5 @@
 //! src/kernel/process/scheduler/api.rs
+//!
 //! Top-level public scheduler API functions and thread trampoline.
 use super::Scheduler;
 

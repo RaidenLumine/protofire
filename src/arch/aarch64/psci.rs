@@ -1,4 +1,5 @@
 //! src/arch/aarch64/psci.rs
+//!
 //! ARM Power State Coordination Interface (PSCI) calls, used for reboot and
 //! power-off on AArch64.
 //!

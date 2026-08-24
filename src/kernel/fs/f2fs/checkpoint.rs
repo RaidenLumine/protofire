@@ -1,4 +1,5 @@
 //! src/kernel/fs/f2fs/checkpoint.rs
+//!
 //! F2FS checkpoint read and write, including NAT/SIT journal handling.
 
 use alloc::vec;

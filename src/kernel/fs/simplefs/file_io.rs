@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/file_io.rs
+//!
 //! File read/write, truncation, zero-range, and capacity management.
 
 use alloc::vec;

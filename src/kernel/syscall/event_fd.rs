@@ -1,4 +1,5 @@
 //! src/kernel/syscall/event_fd.rs
+//!
 //! eventfd — lightweight event notification file descriptor.
 //!
 //! Mirrors Linux `eventfd2()` semantics:

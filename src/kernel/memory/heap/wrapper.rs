@@ -1,4 +1,5 @@
 //! src/kernel/memory/heap/wrapper.rs
+//!
 //! Global allocator wiring, `HeapAllocator` public API, and `heap_model()`
 //! accessor.
 

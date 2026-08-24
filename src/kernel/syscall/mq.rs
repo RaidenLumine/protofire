@@ -1,4 +1,5 @@
 //! src/kernel/syscall/mq.rs
+//!
 //! POSIX-like message queue syscall handlers (#112–#117).
 //!
 //! Provides named message queues with blocking send/receive, capacity

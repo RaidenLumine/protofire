@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/types.rs
+//!
 //! Pure type definitions — format version, on-disk structures, builder types,
 //! and runtime health metadata.
 

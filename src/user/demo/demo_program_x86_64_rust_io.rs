@@ -1,4 +1,5 @@
 //! src/user/demo/demo_program_x86_64_rust_io.rs
+//!
 //! Rust-authored x86_64 demo I/O payload (files, directories, spawn/wait) and
 //! its host-side validation helpers.
 

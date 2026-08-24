@@ -1,4 +1,5 @@
 //! src/kernel/network/tcp/segment.rs
+//!
 //! TCP segment parsing, building, sending, and option handling.
 
 use alloc::vec::Vec;

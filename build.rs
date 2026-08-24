@@ -1,3 +1,5 @@
+//! build.rs
+//!
 //! Build script for the kernel.
 
 use std::env;

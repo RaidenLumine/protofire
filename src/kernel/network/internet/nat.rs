@@ -1,4 +1,5 @@
 //! src/kernel/network/internet/nat.rs
+//!
 //! Network Address Translation / Port Address Translation (NAPT).
 //!
 //! Implements IPv4 source-NAT masquerading (RFC 2663 / RFC 3022):

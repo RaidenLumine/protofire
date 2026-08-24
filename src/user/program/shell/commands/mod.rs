@@ -1,4 +1,5 @@
 //! src/user/program/shell/commands/mod.rs
+//!
 //! Shell builtin command implementations, organised by category.
 //!
 //! Kernel-only commands (network, user mgmt, job control, file ownership) stay

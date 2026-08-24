@@ -1,4 +1,5 @@
 //! src/kernel/fs/exfat/fs.rs
+//!
 //! Internal exFAT filesystem read/write operations — volume open, FAT table
 //! access, cluster chain walking, bitmap operations, directory reading,
 //! path resolution, and entry set building.

@@ -1,4 +1,5 @@
 //! src/kernel/fs/squashfs/types.rs
+//!
 //! On-disk data structures for SquashFS.
 //!
 //! Reference: <https://dr-emann.github.io/squashfs/squashfs.html>

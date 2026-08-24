@@ -1,4 +1,5 @@
 //! src/arch/x86_64/serial.rs
+//!
 //! x86_64 COM1 serial backend used by early logging.
 
 use core::fmt::{self, Write};

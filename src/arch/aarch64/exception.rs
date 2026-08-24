@@ -1,7 +1,9 @@
 //! src/arch/aarch64/exception.rs
-#![cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
+//!
 //! AArch64 exception classification helpers shared by traps, logs, and
 //! termination records.
+
+#![cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
 
 use crate::abi::exception::AArch64AbortSyndrome;
 use crate::arch::exception_recoverability::{

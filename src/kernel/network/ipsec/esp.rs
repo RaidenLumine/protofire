@@ -1,4 +1,5 @@
 //! src/kernel/network/ipsec/esp.rs
+//!
 //! ESP (RFC 4303) with AEAD integrity (RFC 4106 AES-GCM / RFC 7634
 //! ChaCha20-Poly1305).
 //!

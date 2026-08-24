@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/layout.rs
+//!
 //! filesystem/layout — FileSystem zone, layout, and device installation methods.
 
 use alloc::sync::Arc;

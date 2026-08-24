@@ -1,4 +1,6 @@
 //! src/kernel/fs/erofs/tests.rs
+//!
+//! Regression tests for the EROFS driver.
 //! End-to-end tests for the EROFS (read-only) filesystem driver.
 //!
 //! Test image layout (4096-byte logical blocks, superblock at byte 1024):

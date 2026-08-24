@@ -1,3 +1,5 @@
+//! tools/gen-kaslr-relocs/src/main.rs
+//!
 //! gen-kaslr-relocs — extract absolute relocations from a PIE kernel ELF
 //! and emit a Rust source file with a compact relocation table for KASLR.
 //!

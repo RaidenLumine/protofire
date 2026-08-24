@@ -1,4 +1,5 @@
 //! src/kernel/memory/swap.rs
+//!
 //! Swap area abstraction for paging anonymous pages to a block device.
 //!
 //! Each swap area is a contiguous range of blocks on a [`BlockDevice`].

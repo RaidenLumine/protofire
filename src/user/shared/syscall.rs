@@ -1,4 +1,5 @@
 //! src/user/shared/syscall.rs
+//!
 //! Syscall abstraction bridge between ring0 (kernel) and ring3 (user-space).
 //!
 //! This module declares `extern "Rust"` functions that each environment must

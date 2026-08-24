@@ -1,4 +1,5 @@
 //! src/kernel/process/scheduler/tests.rs
+//!
 //! Ready-queue dispatch ordering, timed-wait bookkeeping, and preemption
 //! predicates for the process scheduler.
 

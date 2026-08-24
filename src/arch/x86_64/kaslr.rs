@@ -1,4 +1,5 @@
 //! src/arch/x86_64/kaslr.rs
+//!
 //! Kernel Address Space Layout Randomisation for x86_64.
 //!
 //! This module provides kernel self-relocation at boot time.

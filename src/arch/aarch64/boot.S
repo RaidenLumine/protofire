@@ -1,4 +1,5 @@
 /* File: src/arch/aarch64/boot.S */
+
 /* Purpose: AArch64 bare-metal boot entry that sets up the initial stack and transfers control to Rust. */
 
 .section .text.boot, "ax"

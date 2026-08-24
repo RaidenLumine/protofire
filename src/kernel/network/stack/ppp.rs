@@ -1,4 +1,5 @@
 //! src/kernel/network/stack/ppp.rs
+//!
 //! PPP (Point-to-Point Protocol) integration for [`NetworkStack`].
 //!
 //! Provides methods for receiving raw PPP frames and sending IP packets

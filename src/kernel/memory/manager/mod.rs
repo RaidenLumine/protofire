@@ -1,4 +1,5 @@
 //! src/kernel/memory/manager/mod.rs
+//!
 //! Core memory manager — struct definition and sub-module organisation.
 //!
 //! Sub-module organisation:

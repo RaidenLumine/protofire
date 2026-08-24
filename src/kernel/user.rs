@@ -1,4 +1,5 @@
 //! src/kernel/user.rs
+//!
 //! User database: persistent user records, UID/username mapping, home
 //! directory resolution, and password authentication.
 //!

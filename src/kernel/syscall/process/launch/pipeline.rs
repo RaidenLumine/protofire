@@ -1,4 +1,5 @@
 //! src/kernel/syscall/process/launch/pipeline.rs
+//!
 //! Process-launch pipeline: request building, spawn/exec dispatch, fork, and exec transaction.
 
 use alloc::string::String;

@@ -1,4 +1,5 @@
 //! src/kernel/network/local.rs
+//!
 //! Unix domain (local) socket implementation.
 //!
 //! Local sockets provide named rendezvous points for same-machine

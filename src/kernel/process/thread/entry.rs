@@ -1,4 +1,5 @@
 //! src/kernel/process/thread/entry.rs
+//!
 //! Thread entry-point helpers: instruction pointer selection, kernel-stack
 //! frame initialization, and the unsupported-user-mode fallback.
 

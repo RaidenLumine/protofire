@@ -1,4 +1,5 @@
 //! src/user/demo/demo_program_aarch64_elf.rs
+//!
 #![cfg_attr(test, allow(dead_code))]
 //! Convenience wrappers that build loadable AArch64 ELF artifacts from the
 //! kernel's raw demo payload sections.  The shared ELF layout logic lives in

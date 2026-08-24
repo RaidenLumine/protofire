@@ -1,4 +1,5 @@
 //! src/kernel/fs/simplefs/mod.rs
+//!
 //! SimpleFs — on-disk format parser, validator, and runtime file/directory operations.
 
 use alloc::collections::BTreeMap;

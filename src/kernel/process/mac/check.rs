@@ -1,4 +1,5 @@
 //! src/kernel/process/mac/check.rs
+//!
 //! MAC enforcement entry points: classify objects by path, decide access
 //! against the policy, and emit an audit record on denial.
 

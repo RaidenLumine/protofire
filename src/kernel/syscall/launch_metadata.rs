@@ -1,4 +1,5 @@
 //! src/kernel/syscall/launch_metadata.rs
+//!
 //! Launch metadata syscalls exposing argv/env/cwd/app-id/path information.
 
 use alloc::string::String;

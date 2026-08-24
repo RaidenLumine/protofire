@@ -1,4 +1,5 @@
 //! src/kernel/config.rs
+//!
 //! Minimal TOML-subset parser for kernel configuration files.
 //!
 //! Supports the subset needed by service definitions and kernel config:

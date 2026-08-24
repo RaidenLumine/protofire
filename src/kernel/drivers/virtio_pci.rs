@@ -1,4 +1,6 @@
 //! src/kernel/drivers/virtio_pci.rs
+//!
+//! VirtIO PCI legacy transport layer.
 //! VirtIO legacy PCI transport on x86_64.
 //!
 //! On x86_64 QEMU with the Q35 machine, VirtIO network devices are

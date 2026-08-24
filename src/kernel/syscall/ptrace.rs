@@ -1,4 +1,5 @@
 //! src/kernel/syscall/ptrace.rs
+//!
 //! Ptrace syscall handler (#128).
 //!
 //! Dispatches ptrace requests to the core logic in `src/kernel/process/ptrace.rs`.

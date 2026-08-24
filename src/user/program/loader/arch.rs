@@ -1,3 +1,5 @@
+//! src/user/program/loader/arch.rs
+//!
 use super::*;
 
 use alloc::string::String;

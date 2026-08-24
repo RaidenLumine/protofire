@@ -1,4 +1,5 @@
 //! src/kernel/network/tls/mod.rs
+//!
 //! TLS 1.3 protocol implementation.
 //!
 //! Provides the TLS 1.3 record layer and handshake state machine for

@@ -1,4 +1,5 @@
 //! src/user/program/shell/entry.rs
+//!
 //! Main REPL loop (`shell_user_main`) and terminal I/O helpers.
 
 use super::control_flow::{count_keywords, execute_control_flow_block, needs_continuation};

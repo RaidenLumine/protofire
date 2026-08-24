@@ -1,4 +1,6 @@
 //! src/kernel/fs/erofs/vfs.rs
+//!
+//! EROFS VFS glue: mounting, lookup, reading directories.
 //! VFS integration: [`EroFsVolume`] wrapper, [`FileSystem`] trait impl,
 //! [`EroVNode`] implementation.
 

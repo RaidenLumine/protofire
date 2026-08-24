@@ -1,4 +1,5 @@
 //! src/arch/x86_64/rand.rs
+//!
 //! Hardware random number generator wrappers (RDRAND / RDSEED).
 //!
 //! RDRAND provides a hardware-backed random value reseeded at up to 800 MB/s.

@@ -1,4 +1,5 @@
 //! src/kernel/fs/xfs/fs.rs
+//!
 //! XFS low-level operations: superblock, inode reading, directory, extents, file I/O.
 
 use alloc::sync::Arc;

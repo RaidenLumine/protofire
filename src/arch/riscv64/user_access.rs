@@ -1,4 +1,5 @@
 //! src/arch/riscv64/user_access.rs
+//!
 //! SUM-aware user-memory access helpers: sstatus.SUM control and a RAII guard
 //! that brackets supervisor access to user pages.
 //!

@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/path_helpers.rs
+//!
 //! Path manipulation helpers (free functions) operating on normalized paths.
 use alloc::string::String;
 

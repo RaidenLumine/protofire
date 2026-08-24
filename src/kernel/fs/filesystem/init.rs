@@ -1,4 +1,5 @@
 //! src/kernel/fs/filesystem/init.rs
+//!
 //! FileSystem construction, initialization, and boot-disk layout.
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};

@@ -1,4 +1,5 @@
 //! src/kernel/network/mod.rs
+//!
 //! Kernel-owned TCP connectivity abstraction used by syscall and remote-download paths.
 //!
 //! Sub-module organisation:

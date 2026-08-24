@@ -1,4 +1,5 @@
 //! src/arch/x86_64/context.rs
+//!
 //! x86_64 context switch and user-mode entry helpers.
 
 use core::arch::asm;

@@ -1,4 +1,5 @@
 //! src/kernel/fs/exfat/mod.rs
+//!
 //! exFAT read-write filesystem implementation.
 //!
 //! ## Supported features

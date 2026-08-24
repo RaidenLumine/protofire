@@ -1,4 +1,5 @@
 //! src/abi/runtime.rs
+//!
 //! Runtime ABI identity record and feature flags exposed to user space.
 //!
 //! The canonical definitions live in `crate::user::shared::abi::runtime`

@@ -1,4 +1,5 @@
 //! src/kernel/fs/f2fs/segment.rs
+//!
 //! F2FS segment management: append-only block allocation, free segment
 //! selection, and block freeing.
 

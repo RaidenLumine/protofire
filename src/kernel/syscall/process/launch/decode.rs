@@ -1,4 +1,5 @@
 //! src/kernel/syscall/process/launch/decode.rs
+//!
 //! Launch-option decoding: limits, profiles, string-list reading, and override specs.
 
 use alloc::string::{String, ToString};

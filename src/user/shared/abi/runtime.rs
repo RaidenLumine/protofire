@@ -1,4 +1,5 @@
 //! src/user/shared/abi/runtime.rs
+//!
 //! Shared runtime ABI identity record and feature flags exposed to user space
 //! via the `abi_info` syscall (#39).
 //!
