@@ -706,8 +706,8 @@ pub(crate) fn exception_name(vector: u64) -> &'static str {
 /// to the scheduler so the tracer can inspect the tracee.
 ///
 /// Returns `true` when the stop was handled (tracee is ptrace-traced). Returns
-/// `false` when the process is not being traced — the caller should fall through
-/// to normal exception delivery.
+/// `false` when the process is not being traced — the caller should fall
+/// through to normal exception delivery.
 fn handle_ptrace_singlestop(context: &mut InterruptContext) -> bool {
     // Clear TF in the iret frame so the tracee executes normally when
     // the tracer later resumes it.

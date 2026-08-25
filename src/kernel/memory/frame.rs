@@ -13,7 +13,8 @@ use crate::kernel::memory::alloc_profiler::AllocProfiler;
 
 pub const FRAME_SIZE: usize = 4096;
 pub const MAX_NODES: usize = 8;
-// Backing pool for host/bare-metal frame simulation; allocation is frame-granular.
+// Backing pool for host/bare-metal frame simulation; allocation is
+// frame-granular.
 const PHYSICAL_POOL_SIZE: usize = 512 * 1024 * 1024;
 
 #[repr(C, align(4096))]
@@ -35,7 +36,8 @@ pub struct FrameAllocator {
     // Sorted (by BTreeMap key order), non-overlapping free segments recycled
     // after deallocation.  Key = start_frame, value = count.
     free_ranges: BTreeMap<usize, usize>,
-    /// Frame allocator profiler (zero-cost when `alloc_profiler` feature is disabled).
+    /// Frame allocator profiler (zero-cost when `alloc_profiler` feature is
+    /// disabled).
     pub profiler: AllocProfiler,
 }
 

@@ -1,6 +1,7 @@
 //! src/kernel/sync/semaphore.rs
 //!
-//! Counting semaphore with permit accounting, blocking acquire, and timed waits.
+//! Counting semaphore with permit accounting, blocking acquire, and timed
+//! waits.
 
 use crate::kernel::process::ThreadWaitOutcome;
 

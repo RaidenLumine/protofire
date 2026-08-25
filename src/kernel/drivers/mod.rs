@@ -1,7 +1,8 @@
 //! src/kernel/drivers/mod.rs
 //!
 //! Device driver framework: registration, categories, dispatch.
-//! Driver manager that initializes hardware drivers and exposes boot-time devices.
+//! Driver manager that initializes hardware drivers and exposes boot-time
+//! devices.
 
 pub mod ahci;
 pub mod ata;

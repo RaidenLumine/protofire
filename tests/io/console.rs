@@ -1,6 +1,7 @@
 //! tests/io/console.rs
 //!
-//! Host-side integration tests for console line buffering and timeout semantics.
+//! Host-side integration tests for console line buffering and timeout
+//! semantics.
 
 use std::sync::{Mutex, OnceLock};
 

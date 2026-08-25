@@ -18,28 +18,27 @@
 //! - This kernel is a host, not a bridge.  STP is a bridge protocol.
 //! - Real bridge implementations require hardware forwarding table (FDB)
 //!   management, BPDU guard, root guard, loop guard, and per-VLAN STP.
-//! - Modern data centers use TRILL, SPB (802.1aq), or layer-3 fabrics
-//!   instead of STP for redundancy.
+//! - Modern data centers use TRILL, SPB (802.1aq), or layer-3 fabrics instead
+//!   of STP for redundancy.
 //!
 //! ## Algorithm overview
 //!
-//! 1. **Root election**: bridge with lowest Bridge ID becomes root.
-//!    Bridge ID = Priority (2B, default 32768) + MAC (6B).
-//! 2. **Root port selection**: each non-root bridge picks the port with
-//!    the lowest path cost to the root.
-//! 3. **Designated port selection**: on each LAN segment, the bridge with
-//!    the lowest root path cost becomes the designated bridge; its port
-//!    on that segment is the designated port.
-//! 4. **Blocking**: all ports that are neither root nor designated are
-//!    blocked (no forwarding, no learning).
+//! 1. **Root election**: bridge with lowest Bridge ID becomes root. Bridge ID =
+//!    Priority (2B, default 32768) + MAC (6B).
+//! 2. **Root port selection**: each non-root bridge picks the port with the
+//!    lowest path cost to the root.
+//! 3. **Designated port selection**: on each LAN segment, the bridge with the
+//!    lowest root path cost becomes the designated bridge; its port on that
+//!    segment is the designated port.
+//! 4. **Blocking**: all ports that are neither root nor designated are blocked
+//!    (no forwarding, no learning).
 //! 5. **Port states**: Disabled → Blocking → Listening → Learning → Forwarding.
 //!
 //! ## RSTP improvements
 //!
-//! - Edge ports: skip Listening/Learning (immediate Forwarding for
-//!   host-facing ports).
-//! - Point-to-point links: proposal/agreement handshake for fast
-//!   convergence.
+//! - Edge ports: skip Listening/Learning (immediate Forwarding for host-facing
+//!   ports).
+//! - Point-to-point links: proposal/agreement handshake for fast convergence.
 //! - Port roles kept as in 802.1D (Root, Designated, Alternate/Backup).
 
 use alloc::vec::Vec;
@@ -333,7 +332,8 @@ impl StpBridge {
         }
     }
 
-    /// Create a bridge with a specific priority (lower = more likely to be root).
+    /// Create a bridge with a specific priority (lower = more likely to be
+    /// root).
     pub fn with_priority(priority: u16, mac: [u8; 6]) -> Self {
         let bridge_id = BridgeId::new(priority, mac);
         Self {

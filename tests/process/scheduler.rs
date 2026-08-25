@@ -1,6 +1,7 @@
 //! tests/process/scheduler.rs
 //!
-//! Host-side integration tests for scheduling, waits, and synchronization primitives.
+//! Host-side integration tests for scheduling, waits, and synchronization
+//! primitives.
 
 use std::sync::{Mutex, OnceLock};
 

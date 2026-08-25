@@ -178,7 +178,8 @@ pub fn set_online_ap_count(count: u32) {
 ///   0x20: lapic_id (local APIC ID)
 ///   0x28: percpu_base (virtual address of PerCpuData for this CPU)
 ///   0x30: ap_started_flag (pointer to AtomicBool — AP sets to true when up)
-///   0x38: runtime_cr3 (kernel runtime page-table root — used before calling ap_entry)
+///   0x38: runtime_cr3 (kernel runtime page-table root — used before calling
+/// ap_entry)
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 #[repr(C)]
 struct TrampolineData {

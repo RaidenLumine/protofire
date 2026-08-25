@@ -5,12 +5,12 @@
 //! Local sockets provide named rendezvous points for same-machine
 //! inter-process communication:
 //!
-//! - `bind_local(path)` creates a `LocalSocket` and registers it globally.
-//!   The caller wraps it in a `KernelObject::LocalSocket` and stores it
-//!   as a file descriptor.
+//! - `bind_local(path)` creates a `LocalSocket` and registers it globally. The
+//!   caller wraps it in a `KernelObject::LocalSocket` and stores it as a file
+//!   descriptor.
 //! - `connect_local(path)` looks up the socket, creates a kernel pipe pair,
-//!   pushes the read-end vnode into the socket's accept queue, and returns
-//!   the write-end vnode.  The caller wraps it as a connected fd.
+//!   pushes the read-end vnode into the socket's accept queue, and returns the
+//!   write-end vnode.  The caller wraps it as a connected fd.
 //! - `accept_local(socket)` pops the next pending vnode from the queue.
 //!
 //! After connection, the server reads on the accepted vnode while the

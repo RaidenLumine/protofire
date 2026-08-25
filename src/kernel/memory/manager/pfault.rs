@@ -147,7 +147,8 @@ impl MemoryManager {
                                 None => break, // end of mapped region
                             };
                         if adj_kind != MappingKind::DemandPaged {
-                            break; // not a DemandPaged page, stop this direction
+                            break; // not a DemandPaged page, stop this
+                                   // direction
                         }
 
                         // Must have stored content to backfill.  Get the content

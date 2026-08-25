@@ -97,7 +97,8 @@ pub enum PublicKeyAlgorithm {
 /// Validity status extracted from a certificate.
 #[derive(Debug, Clone)]
 pub struct Validity {
-    /// Not-before as a human-readable string (YYMMDDHHMMSSZ or YYYYMMDDHHMMSSZ).
+    /// Not-before as a human-readable string (YYMMDDHHMMSSZ or
+    /// YYYYMMDDHHMMSSZ).
     pub not_before: String,
     /// Not-after as a human-readable string.
     pub not_after: String,
@@ -203,7 +204,8 @@ fn oid_eq(a: &[u8], b: &[u8]) -> bool {
 
 // ── Name parsing ───────────────────────────────────────────────────────────
 
-/// Parse an X.500 Distinguished Name (SEQUENCE OF SET OF AttributeTypeAndValue).
+/// Parse an X.500 Distinguished Name (SEQUENCE OF SET OF
+/// AttributeTypeAndValue).
 ///
 /// Extracts CN (2.5.4.3), O (2.5.4.10), and C (2.5.4.6).
 fn parse_x509_name(der: &[u8]) -> X509Name {
@@ -275,7 +277,8 @@ fn parse_x509_name(der: &[u8]) -> X509Name {
 pub fn parse_x509_certificate(der: &[u8]) -> Option<X509Certificate> {
     let reader = &mut DerReader::new(der);
 
-    // Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signatureValue }
+    // Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signatureValue
+    // }
     let cert_seq = reader.read_tagged(TAG_SEQUENCE)?;
 
     let c = &mut DerReader::new(cert_seq);
@@ -444,7 +447,8 @@ impl X509Certificate {
         }
     }
 
-    /// Check if this certificate is a CA certificate (has BasicConstraints CA:TRUE).
+    /// Check if this certificate is a CA certificate (has BasicConstraints
+    /// CA:TRUE).
     pub fn is_ca(&self) -> bool {
         // BasicConstraints is OID 2.5.29.19 (0x55, 0x1D, 0x13).
         // We search the extensions for this OID and check if CA is TRUE.
@@ -461,7 +465,8 @@ impl X509Certificate {
         self.issuer_name().common_name
     }
 
-    /// Extract SAN DNS names from the Subject Alternative Name extension (2.5.29.17).
+    /// Extract SAN DNS names from the Subject Alternative Name extension
+    /// (2.5.29.17).
     pub fn subject_alt_names(&self) -> Vec<String> {
         // SAN = 2.5.29.17 = 0x55 0x1D 0x11
         search_extension_san(&self.extensions, &[0x55, 0x1D, 0x11])
@@ -471,7 +476,8 @@ impl X509Certificate {
 /// Parse an RSA public key from the SPKI BIT STRING payload.
 ///
 /// The BIT STRING value (with the unused-bits byte already stripped) contains a
-/// DER-encoded `RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }`.
+/// DER-encoded `RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent
+/// INTEGER }`.
 ///
 /// Returns `(modulus, public_exponent)` as big-endian byte vectors.  Leading
 /// zero bytes are stripped from the modulus for canonicalisation.  Keys larger
@@ -520,7 +526,8 @@ pub(crate) fn parse_rsa_public_key(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
 fn search_extension_bool(extensions: &[u8], oid: &[u8]) -> bool {
     let reader = &mut DerReader::new(extensions);
     while reader.remaining() > 0 {
-        // Extension ::= SEQUENCE { extnID OID, critical BOOLEAN DEFAULT FALSE, extnValue OCTET STRING }
+        // Extension ::= SEQUENCE { extnID OID, critical BOOLEAN DEFAULT FALSE,
+        // extnValue OCTET STRING }
         let ext_val = match reader.read_tagged(TAG_SEQUENCE) {
             Some(v) => v,
             None => break,
@@ -686,8 +693,8 @@ pub fn build_chain(certs: &[X509Certificate], hostname: &str) -> Option<Vec<X509
 /// 1. At least one certificate is present.
 /// 2. The leaf certificate's validity period is well-formed.
 /// 3. The leaf certificate matches `hostname` (via SAN or CN).
-/// 4. The chain is properly ordered and each certificate's issuer matches
-///    the next certificate's subject, ending in a self-signed root.
+/// 4. The chain is properly ordered and each certificate's issuer matches the
+///    next certificate's subject, ending in a self-signed root.
 /// 5. Chain-of-trust signature verification — **ECDSA P-256 and RSA-PSS
 ///    implemented**.  The leaf certificate's signature is verified during the
 ///    CertificateVerify handshake step using the ECDSA P-256 or RSA-PSS
@@ -748,7 +755,8 @@ pub fn verify_chain(chain: &[X509Certificate], hostname: &str) -> ChainVerifySta
     ChainVerifyStatus::Trusted
 }
 
-/// Parse an ASN.1 UTCTime or GeneralizedTime value into (year, month, day, hour, min, sec).
+/// Parse an ASN.1 UTCTime or GeneralizedTime value into (year, month, day,
+/// hour, min, sec).
 ///
 /// UTCTime: "YYMMDDHHMMSSZ" (13 ASCII bytes).  Years 00–49 → 2000–2049,
 /// years 50–99 → 1950–1999.
@@ -828,7 +836,8 @@ fn hostname_matches(cert: &X509Certificate, hostname: &str) -> bool {
 fn name_matches_wildcard(pattern: &str, hostname: &str) -> bool {
     if let Some(rest) = pattern.strip_prefix("*.") {
         // Wildcard matches only the first label.
-        // e.g., "*.example.com" matches "foo.example.com" but not "foo.bar.example.com".
+        // e.g., "*.example.com" matches "foo.example.com" but not
+        // "foo.bar.example.com".
         if let Some(dot_pos) = hostname.find('.') {
             let host_rest = &hostname[dot_pos + 1..];
             // The wildcard part must also not contain additional dots.

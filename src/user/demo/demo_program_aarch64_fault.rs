@@ -1,5 +1,4 @@
 //! src/user/demo/demo_program_aarch64_fault.rs
-//!
 #![cfg_attr(test, allow(dead_code))]
 //! Symbol bridge for the AArch64 fault-focused demo payload section.
 

@@ -23,8 +23,8 @@
 //!
 //! Type-specific headers follow the generic header:
 //! - Request / Response : 4-byte Service Code.
-//! - Ack / DataAck / CloseReq / Close / Sync / SyncAck : 8-byte
-//!   Acknowledgment Number (48-bit value in 8 bytes).
+//! - Ack / DataAck / CloseReq / Close / Sync / SyncAck : 8-byte Acknowledgment
+//!   Number (48-bit value in 8 bytes).
 //! - Reset : 8-byte Acknowledgment Number + 1-byte Reset Code + 3 reserved.
 //! - Data : no type-specific header.
 //!

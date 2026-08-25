@@ -24,7 +24,8 @@ use crate::user::demo::demo_program_aarch64_elf::{
     build_demo_program_artifact, build_fault_demo_program_artifact,
     build_rust_demo_program_artifact, build_shell_program_artifact,
 };
-// riscv64 keeps the assembly shell fallback since ring3-shell isn't yet compiled for riscv64.
+// riscv64 keeps the assembly shell fallback since ring3-shell isn't yet
+// compiled for riscv64.
 #[cfg(target_arch = "riscv64")]
 use crate::user::demo::demo_program_riscv64_elf::{
     build_demo_program_artifact, build_shell_program_artifact,

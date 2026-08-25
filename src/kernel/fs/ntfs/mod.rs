@@ -1,6 +1,7 @@
 //! src/kernel/fs/ntfs/mod.rs
 //!
-//! NTFS filesystem driver — MFT, attributes, directory operations, and file I/O.
+//! NTFS filesystem driver — MFT, attributes, directory operations, and file
+//! I/O.
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::string::{String, ToString};
@@ -119,7 +120,8 @@ impl FileSystem for NtfsFs {
 
     fn lookup(&self, _path: &str) -> Result<Arc<dyn VNode>> {
         // For now, just return the root vnode
-        // In a full implementation, you'd parse the path and traverse the directory structure
+        // In a full implementation, you'd parse the path and traverse the directory
+        // structure
         self.root_vnode()
     }
 

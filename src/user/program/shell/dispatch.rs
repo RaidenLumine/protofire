@@ -438,8 +438,8 @@ fn try_spawn_external(cwd: &str, command: &str, _argv: &[String]) -> Option<CmdR
 ///
 /// 1. If `command` looks like a path (`/…`, `./…`, `../…`), try it directly
 ///    (with and without `.elf` suffix).
-/// 2. Otherwise perform a PATH lookup, searching each colon-separated
-///    directory for `{command}` and `{command}.elf`.
+/// 2. Otherwise perform a PATH lookup, searching each colon-separated directory
+///    for `{command}` and `{command}.elf`.
 #[cfg(target_os = "none")]
 fn resolve_external_command_path(cwd: &str, command: &str) -> Option<String> {
     use crate::kernel::fs::path::normalize_path;

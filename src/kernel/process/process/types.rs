@@ -535,13 +535,15 @@ pub(crate) struct ProcessShmAttachment {
     pub(crate) virtual_address: usize,
     /// Size of the attachment in bytes.
     ///
-    /// Recorded at attach time and kept for future shm accounting (shmdt/unmap);
-    /// not currently read by the detach path, which uses `frame_count`.
+    /// Recorded at attach time and kept for future shm accounting
+    /// (shmdt/unmap); not currently read by the detach path, which uses
+    /// `frame_count`.
     #[allow(dead_code)]
     pub(crate) size: usize,
 }
 
-// ── Ptrace types ──────────────────────────────────────────────────────────────
+// ── Ptrace types
+// ──────────────────────────────────────────────────────────────
 
 /// Per-process flag constants for ptrace tracing state.
 pub(crate) mod ptrace_flags {

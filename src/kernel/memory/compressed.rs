@@ -177,10 +177,10 @@ fn flush_literals(out: &mut Vec<u8>, literals: &mut Vec<u8>) {
 ///
 /// Emits a self-delimiting token stream:
 /// - Literal run: `0x00..=0x7F` (count = byte + 1) followed by `count` bytes.
-/// - Match: two bytes `0x80 | (len-3 << 4) | (dist-1 >> 8)` and
-///   `(dist-1) & 0xFF`, copying `len` (3..=10) bytes from `dist` (1..=4096)
-///   bytes back.  Bit 7 of the first byte is the literal-vs-match marker; the
-///   length code occupies only the 3 bits below it.
+/// - Match: two bytes `0x80 | (len-3 << 4) | (dist-1 >> 8)` and `(dist-1) &
+///   0xFF`, copying `len` (3..=10) bytes from `dist` (1..=4096) bytes back. Bit
+///   7 of the first byte is the literal-vs-match marker; the length code
+///   occupies only the 3 bits below it.
 ///
 /// A single-entry hash table of the last seen position for each 3-byte
 /// sequence (LZ4-style) provides the match candidates.

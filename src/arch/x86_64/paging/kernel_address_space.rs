@@ -1,6 +1,7 @@
 //! src/arch/x86_64/paging/kernel_address_space.rs
 //!
-//! x86_64 kernel address-space layout, page-table windows, and huge-page detection.
+//! x86_64 kernel address-space layout, page-table windows, and huge-page
+//! detection.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;

@@ -6,12 +6,15 @@
 //! types used by both the
 //! kernel's built-in shell and (in the future) standalone ring3 ELF binaries:
 //!
-//! - **abi**           — ABI record types and constants (FileStat, DirectoryEntryRecord, …)
-//! - **syscall**       — Syscall bridge: extern declarations + higher-level wrappers
+//! - **abi**           — ABI record types and constants (FileStat,
+//!   DirectoryEntryRecord, …)
+//! - **syscall**       — Syscall bridge: extern declarations + higher-level
+//!   wrappers
 //! - **types**         — Shared types (CmdResult)
 //! - **path_util**     — Path resolution and normalization
 //! - **tokenizer**     — Shell word tokenizer (quotes, escapes, whitespace)
-//! - **pipeline**      — Conditional chaining (&&/||), pipeline splitting, redirect parsing
+//! - **pipeline**      — Conditional chaining (&&/||), pipeline splitting,
+//!   redirect parsing
 //! - **glob**          — Glob pattern matching (*, ?, [...] character classes)
 //! - **expand**        — Environment variable expansion, get/set env
 //! - **history**       — Command history: add, expand, common_prefix

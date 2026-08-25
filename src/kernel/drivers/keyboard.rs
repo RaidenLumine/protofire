@@ -463,9 +463,10 @@ impl KeyboardCore {
 
     /// Feed one raw PS/2 set-1 scancode from hardware (PS/2 IRQ or USB-HID).
     ///
-    /// Every scancode is buffered raw; each meaningful make/break is additionally
-    /// decoded into a [`KeyEvent`] (and a character, when printable).  All three
-    /// queues (raw, event, character) wake their waiters.
+    /// Every scancode is buffered raw; each meaningful make/break is
+    /// additionally decoded into a [`KeyEvent`] (and a character, when
+    /// printable).  All three queues (raw, event, character) wake their
+    /// waiters.
     pub fn feed_scancode(&self, scancode: u8) {
         // Always buffer the raw scancode (bounded, dropping the oldest).
         {

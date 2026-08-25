@@ -4,10 +4,10 @@
 
 //! Xiucoatl Kernel Main Entry Point
 //!
-//! This file contains the main entry points for both bare-metal kernel operation
-//! and host-side utility commands. For bare-metal targets, it provides the kernel
-//! initialization and boot sequence. For host targets, it provides the `mkimage`
-//! command for creating demo disk images.
+//! This file contains the main entry points for both bare-metal kernel
+//! operation and host-side utility commands. For bare-metal targets, it
+//! provides the kernel initialization and boot sequence. For host targets, it
+//! provides the `mkimage` command for creating demo disk images.
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]

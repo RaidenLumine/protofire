@@ -333,7 +333,8 @@ fn get_impl() -> &'static PerCpuData {
 
 /// Fast-path: return the current CPU's scheduler pointer.
 ///
-/// - x86_64 bare-metal: single `mov reg, gs:[PERCPU_OFFSET_SCHEDULER]` (1 insn).
+/// - x86_64 bare-metal: single `mov reg, gs:[PERCPU_OFFSET_SCHEDULER]` (1
+///   insn).
 /// - AArch64 bare-metal: `mrs reg, tpidr_el1` followed by load from offset 8
 ///   (the `scheduler` field in [`PerCpuData`]).
 /// - Other targets: returns null (callers fall back to the global `AtomicPtr`).

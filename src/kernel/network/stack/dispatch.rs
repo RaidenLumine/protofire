@@ -63,7 +63,8 @@ impl NetworkStack {
     /// This drives:
     /// - ARP cache entry eviction (stale entries beyond 6 s TTL).
     /// - TCP retransmission checks and TimeWait→Closed expiry.
-    /// - DHCP lease renewal state transitions (Bound→Renewing→Rebinding→Expired).
+    /// - DHCP lease renewal state transitions
+    ///   (Bound→Renewing→Rebinding→Expired).
     pub fn advance_tick(&self) {
         let tick = self.ticks.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -371,7 +372,8 @@ impl NetworkStack {
                             if let Some(_err) = icmp::parse_icmp_error_info(&ip_packet.payload) {
                                 self.profiler.inc_icmp_unreachable();
                                 // TODO: notify the affected TCP/UDP connection
-                                // using _err.original_{src,dst,protocol,src_port,dst_port}.
+                                // using _err.original_{src,dst,protocol,
+                                // src_port,dst_port}.
                             }
                         } else if ip_packet.header.protocol == ipv4::IpProtocol::Igmp {
                             let mut igmp_state = self.igmp_state.lock();
@@ -436,7 +438,8 @@ impl NetworkStack {
                                         let _ =
                                             self.send_ipv4_packet(ip_packet.header.source, raw_ip);
                                     }
-                                    // mDNS packets are handled; also deliver to any
+                                    // mDNS packets are handled; also deliver to
+                                    // any
                                     // bound socket listening on port 5353.
                                 }
                                 // ── NTP response handler (UDP port 123) ────
@@ -485,13 +488,17 @@ impl NetworkStack {
                                 }
                             }
                         } else if ip_packet.header.protocol == ipv4::IpProtocol::Sctp {
-                            // ── SCTP dispatch (IP protocol 132) ─────────────────
-                            // For v1 we look up the association by the SCTP common
-                            // header ports.  The association table is per-stack; a
-                            // full implementation would maintain a global table.
-                            // Here we simply pass the payload up to a registered
-                            // handler stub (raw delivery via raw sockets already
-                            // handles it for protocol 132 above).
+                            // ── SCTP dispatch (IP protocol 132)
+                            // ───────────────── For
+                            // v1 we look up the association by the SCTP common
+                            // header ports.  The association table is
+                            // per-stack; a
+                            // full implementation would maintain a global
+                            // table. Here we simply
+                            // pass the payload up to a registered
+                            // handler stub (raw delivery via raw sockets
+                            // already handles it
+                            // for protocol 132 above).
                             //
                             // In the future this will dispatch to the SCTP
                             // association table.
@@ -609,7 +616,8 @@ impl NetworkStack {
                             if let Some(_err) = icmpv6::parse_icmpv6_error_info(&ipv6_payload) {
                                 self.profiler.inc_icmp_unreachable();
                                 // TODO: notify the affected TCP/UDP connection
-                                // using _err.original_{src,dst,next_header,src_port,dst_port}.
+                                // using _err.original_{src,dst,next_header,
+                                // src_port,dst_port}.
                             }
                         } else if ipv6_next_header == Ipv6NextHeader::Unknown(pim::PIM_PROTOCOL) {
                             // ── PIM dispatch (IPv6 next header 103) ───────────

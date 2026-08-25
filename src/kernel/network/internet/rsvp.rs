@@ -14,12 +14,12 @@
 //!
 //! ## Why not production?
 //!
-//! - RSVP is receiver-oriented and needs a signalling path end-to-end;
-//!   most modern networks use DiffServ marking or per-flow queues instead.
+//! - RSVP is receiver-oriented and needs a signalling path end-to-end; most
+//!   modern networks use DiffServ marking or per-flow queues instead.
 //! - Token-bucket policing here is a pure rate simulation — real shapers
 //!   account for packet overhead, scheduler latency, and per-class queues.
-//! - The wire format omits the RSVP object header (class, class-type,
-//!   length) that frames the TSPEC inside a PATH message.
+//! - The wire format omits the RSVP object header (class, class-type, length)
+//!   that frames the TSPEC inside a PATH message.
 
 use alloc::vec::Vec;
 

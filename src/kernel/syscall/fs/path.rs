@@ -1,6 +1,7 @@
 //! src/kernel/syscall/fs/path.rs
 //!
-//! Path-source decoding and dirfd-based path resolution helpers for fs syscalls.
+//! Path-source decoding and dirfd-based path resolution helpers for fs
+//! syscalls.
 
 use alloc::string::{String, ToString};
 

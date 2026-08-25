@@ -1,6 +1,7 @@
 //! src/kernel/syscall/test_support.rs
 //!
-//! Shared syscall test helpers for modules that need a live current process/thread context.
+//! Shared syscall test helpers for modules that need a live current
+//! process/thread context.
 //!
 //! We use a simple `AtomicBool` spinlock instead of `std::sync::Mutex` because
 //! `Mutex::lock()` returns `PoisonError` when a prior holder panicked.  In a

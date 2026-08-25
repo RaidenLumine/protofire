@@ -252,9 +252,10 @@ impl FatFs {
             chain.push(new_cluster);
         }
 
-        // Now we have enough clusters to hold the data for the first `chain.len()` clusters.
-        // BUT we might be writing fewer clusters than the chain has. In that case,
-        // we should NOT truncate the chain; we just overwrite the first N clusters.
+        // Now we have enough clusters to hold the data for the first `chain.len()`
+        // clusters. BUT we might be writing fewer clusters than the chain has.
+        // In that case, we should NOT truncate the chain; we just overwrite the
+        // first N clusters.
 
         // Write to the chain.
         self.write_cluster_chain_data(first, data)?;

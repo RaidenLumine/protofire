@@ -105,7 +105,8 @@ pub struct FragmentEntry {
     pub fragment_offset: u32,
 }
 
-/// Parse an inode from the inode table at `offset`. Returns (inode, bytes_consumed).
+/// Parse an inode from the inode table at `offset`. Returns (inode,
+/// bytes_consumed).
 pub fn parse_inode(table: &[u8], offset: u32) -> Option<(Inode, usize)> {
     let off = offset as usize;
     if off + 2 > table.len() {
@@ -325,8 +326,8 @@ pub fn parse_extended_inode_xattr_idx(
     inode_type: u8,
 ) -> Option<(u32, usize)> {
     let off = offset as usize;
-    // Extended directory (type 8): 16 + 4 (xattr_idx) + 4 (inode_number) = 24 bytes header
-    // Extended file (type 9): same layout as basic + xattr_idx
+    // Extended directory (type 8): 16 + 4 (xattr_idx) + 4 (inode_number) = 24 bytes
+    // header Extended file (type 9): same layout as basic + xattr_idx
     // Extended symlink (type 10): same layout as basic + xattr_idx
     match inode_type {
         8 => {

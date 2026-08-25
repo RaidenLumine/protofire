@@ -1,10 +1,12 @@
 //! src/user/shared/abi/syscall.rs
 //!
-//! Canonical syscall-number definitions and ABI metadata (single source of truth).
+//! Canonical syscall-number definitions and ABI metadata (single source of
+//! truth).
 //!
-//! Both the kernel's `SyscallNumber` enum and ring3 syscall wrappers resolve their
-//! numbers through this module (`crate::user::shared::abi::syscall`), so the kernel
-//! and user space can never drift.  The table is frozen in [0, SYSCALL_COUNT).
+//! Both the kernel's `SyscallNumber` enum and ring3 syscall wrappers resolve
+//! their numbers through this module (`crate::user::shared::abi::syscall`), so
+//! the kernel and user space can never drift.  The table is frozen in [0,
+//! SYSCALL_COUNT).
 
 pub const SYSCALL_ABI_VERSION_MAJOR: u32 = 1;
 pub const SYSCALL_ABI_VERSION_MINOR: u32 = 0;
@@ -226,7 +228,8 @@ pub const fn syscall_stability(number: usize) -> SyscallStability {
 
 // ── Name lookup (audit trails + tests) ───────────────────────────────
 
-/// Human-readable name for a syscall number, or `None` outside [0, SYSCALL_COUNT).
+/// Human-readable name for a syscall number, or `None` outside [0,
+/// SYSCALL_COUNT).
 pub const fn syscall_name(number: usize) -> Option<&'static str> {
     match number {
         0 => Some("yield"),

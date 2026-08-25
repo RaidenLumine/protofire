@@ -2,12 +2,13 @@
 //!
 //! Rust-authored AArch64 demo payload and its kernel-side validation helpers.
 //!
-//! The payload lives in its own linker section (`protofire_demo_program_aarch64_rust`)
-//! so the kernel can extract it as a raw blob and relocate it into a user demo
-//! slot.  Because of that relocation every datum the payload touches must be
-//! addressed PC-relative through `adr_relative_address!` (`adrp` + `add :lo12:`);
-//! a plain `fn as usize` would bake the kernel-link absolute address into the
-//! section and break after the blob is copied to user space.
+//! The payload lives in its own linker section
+//! (`protofire_demo_program_aarch64_rust`) so the kernel can extract it as a
+//! raw blob and relocate it into a user demo slot.  Because of that relocation
+//! every datum the payload touches must be addressed PC-relative through
+//! `adr_relative_address!` (`adrp` + `add :lo12:`); a plain `fn as usize` would
+//! bake the kernel-link absolute address into the section and break after the
+//! blob is copied to user space.
 //!
 //! Faults are recovered by skipping the fixed 4-byte AArch64 instruction that
 //! raised the abort, so the trigger helpers below use exactly one faulting

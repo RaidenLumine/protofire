@@ -824,6 +824,7 @@ mod tests {
             assert_eq!(vnode.kind(), NodeKind::File);
             assert_eq!(vnode.name(), "status");
         }
-        // If the scheduler has no current thread, lookup may fail — acceptable in test
+        // If the scheduler has no current thread, lookup may fail — acceptable
+        // in test
     }
 }

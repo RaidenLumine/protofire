@@ -111,7 +111,8 @@ fn copy_user_string_value(
     buffer_ptr: *mut u8,
     buffer_len: usize,
 ) -> Result<super::SyscallDispatch> {
-    // Shared helper preserves probe/copy behavior for all string-returning syscalls.
+    // Shared helper preserves probe/copy behavior for all string-returning
+    // syscalls.
     super::user_memory::copy_user_bytes(value.as_bytes(), buffer_ptr, buffer_len)
         .map(super::SyscallDispatch::complete)
 }

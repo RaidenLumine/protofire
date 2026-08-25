@@ -1,6 +1,7 @@
 //! src/kernel/memory/manager/init.rs
 //!
-//! MemoryManager construction, initialisation, and frame allocation/deallocation.
+//! MemoryManager construction, initialisation, and frame
+//! allocation/deallocation.
 
 use crate::kernel::memory::frame::MAX_NODES;
 use crate::kernel::memory::paging::{MappingKind, PagePermissions};
@@ -81,7 +82,8 @@ impl MemoryManager {
 
     pub(crate) fn map_kernel_heap_bootstrap(&mut self) -> Result<()> {
         let heap_size = self.kernel_heap_end.saturating_sub(self.kernel_heap_start);
-        // Seed early heap range as kernel-heap mapping before runtime allocations depend on it.
+        // Seed early heap range as kernel-heap mapping before runtime allocations
+        // depend on it.
         self.page_table.map_region_with_kind(
             self.kernel_heap_start,
             heap_size,

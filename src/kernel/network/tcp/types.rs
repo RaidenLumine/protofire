@@ -21,7 +21,8 @@ pub struct SocketOptions {
     pub rcvbuf: usize,
     /// SO_SNDBUF: desired send buffer size hint.
     pub sndbuf: usize,
-    /// TCP_NODELAY: disable Nagle's algorithm (send small segments immediately).
+    /// TCP_NODELAY: disable Nagle's algorithm (send small segments
+    /// immediately).
     pub nodelay: bool,
     /// TCP_KEEPIDLE: idle time in seconds before keep-alive probes begin.
     pub keepidle: u32,
@@ -345,7 +346,8 @@ impl TcpConnectionState {
 
 // ─── Connection key type ───
 
-/// Uniquely identifies a TCP connection by (local_port, remote_ip, remote_port).
+/// Uniquely identifies a TCP connection by (local_port, remote_ip,
+/// remote_port).
 pub(super) type ConnKey = (u16, crate::kernel::network::internet::ipv4::Ipv4Addr, u16);
 
 // ─── Helpers ───

@@ -18,7 +18,8 @@ use crate::kernel::process::process::types::{PtraceEvent, ThreadId};
 use crate::kernel::process::{Process, ProcessId, Scheduler, Thread};
 use crate::{Error, Result};
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// ── Public API
+// ────────────────────────────────────────────────────────────────
 
 /// PTRACE_TRACEME: mark the calling process as traceable by its parent.
 ///
@@ -276,9 +277,11 @@ pub fn ptrace_get_event_msg(
     Ok(())
 }
 
-// ── Syscall hooks (called from dispatch_with_action) ──────────────────────────
+// ── Syscall hooks (called from dispatch_with_action)
+// ──────────────────────────
 
-/// Called AFTER a syscall handler completes, just before returning to user mode.
+/// Called AFTER a syscall handler completes, just before returning to user
+/// mode.
 ///
 /// If the process is being syscall-traced, we enqueue a stop event and
 /// suspend the current thread.  The caller should then yield the CPU so
@@ -318,7 +321,8 @@ pub fn notify_syscall_exit(
     false
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers
+// ───────────────────────────────────────────────────────────────────
 
 /// Look up a process by PID from the global scheduler.
 fn find_process(pid: ProcessId) -> Result<Arc<Process>> {
@@ -373,9 +377,11 @@ fn resume_tracee(pid: ProcessId) -> Result<()> {
     Ok(())
 }
 
-// ── Register format conversion (x86_64) ───────────────────────────────────────
+// ── Register format conversion (x86_64)
+// ───────────────────────────────────────
 
-/// Convert a kernel `X86_64UserThreadContext` to the ABI `PtraceUserRegsStruct`.
+/// Convert a kernel `X86_64UserThreadContext` to the ABI
+/// `PtraceUserRegsStruct`.
 #[cfg(target_arch = "x86_64")]
 fn abi_to_ptrace_regs(
     ctx: &crate::kernel::process::process::types::X86_64UserThreadContext,

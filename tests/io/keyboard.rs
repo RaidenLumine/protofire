@@ -1,6 +1,7 @@
 //! tests/io/keyboard.rs
 //!
-//! Host-side integration tests for keyboard decode, buffering, and wait semantics.
+//! Host-side integration tests for keyboard decode, buffering, and wait
+//! semantics.
 
 use std::sync::{Mutex, OnceLock};
 

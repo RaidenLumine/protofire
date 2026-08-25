@@ -288,7 +288,8 @@ impl Thread {
     }
 
     /// Return the registered user exception handler for the given interrupt
-    /// vector, if one has been installed via `install_x86_64_exception_handler`.
+    /// vector, if one has been installed via
+    /// `install_x86_64_exception_handler`.
     pub fn x86_64_exception_handler_registration(
         &self,
         vector: u8,
@@ -307,13 +308,15 @@ impl Thread {
         self.x86_64_exception_handler_registration(X86_64_EXCEPTION_PAGE_FAULT_VECTOR)
     }
 
-    /// Return the address of the registered user-mode page-fault handler, if any.
+    /// Return the address of the registered user-mode page-fault handler, if
+    /// any.
     pub fn x86_64_page_fault_handler(&self) -> Option<usize> {
         self.x86_64_page_fault_handler_registration()
             .map(|registration| registration.handler)
     }
 
-    /// Number of nested exception frames currently pending delivery to user mode.
+    /// Number of nested exception frames currently pending delivery to user
+    /// mode.
     pub fn x86_64_pending_exception_depth(&self) -> usize {
         self.x86_64_pending_exception_frames.lock().len()
     }

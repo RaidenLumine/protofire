@@ -49,8 +49,8 @@ fn validate_flags(flags: u32) -> Result<()> {
 /// Creates an eventfd object and returns a file descriptor.
 ///
 /// - `EFD_SEMAPHORE` — reads return 1 and decrement the counter by one.
-/// - `EFD_NONBLOCK` — reads of a zero counter report `Busy` (EAGAIN)
-///   instead of blocking.
+/// - `EFD_NONBLOCK` — reads of a zero counter report `Busy` (EAGAIN) instead of
+///   blocking.
 /// - `EFD_CLOEXEC` — the descriptor is marked close-on-exec.
 pub fn eventfd(ctx: &mut SyscallContext) -> Result<crate::kernel::syscall::SyscallDispatch> {
     let initval = ctx.arg(0) as u32;

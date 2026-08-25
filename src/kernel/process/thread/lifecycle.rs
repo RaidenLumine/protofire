@@ -160,7 +160,8 @@ impl Thread {
         user_start: Option<UserThreadStart>,
     ) -> Arc<Self> {
         let tid = process.allocate_tid();
-        // Build an isolated kernel stack and seed context to the thread trampoline entry.
+        // Build an isolated kernel stack and seed context to the thread trampoline
+        // entry.
         let kernel_stack = KernelStack::new(KERNEL_STACK_GUARD_SIZE, DEFAULT_KERNEL_STACK_SIZE);
         let stack_top = kernel_stack.stack_top();
         let initial_stack_pointer = initialize_frame_kernel_stack(
@@ -258,7 +259,8 @@ impl Thread {
 
     /// Return the address-space generation that was active when this thread
     /// last loaded the page-table root (CR3 / TTBR0_EL1), or 0 if the thread
-    /// Record that this thread has activated the given address-space generation.
+    /// Record that this thread has activated the given address-space
+    /// generation.
     #[cfg_attr(
         not(all(
             any(target_arch = "x86_64", target_arch = "aarch64"),
@@ -266,7 +268,8 @@ impl Thread {
         )),
         allow(dead_code)
     )]
-    /// Record that this thread has activated the given address-space generation.
+    /// Record that this thread has activated the given address-space
+    /// generation.
     ///
     /// Used by the page-fault handler to detect stale TLB entries.
     pub(crate) fn set_active_address_space_generation(&self, generation: u64) {

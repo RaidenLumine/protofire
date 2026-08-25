@@ -2,10 +2,11 @@
 //!
 //! Catalog entry, launch manifest, and catalog→image resolution chain.
 //!
-//! This module resolves a catalog path (e.g. `/apps/current/shell.toml`) through
-//! optional redirects, parses the launch manifest, verifies signatures and
-//! checksums, and loads the ELF image bytes.  The resulting [`ResolvedCatalogLaunch`]
-//! is consumed by the loader layer to produce a [`super::loader::LoadedProgram`].
+//! This module resolves a catalog path (e.g. `/apps/current/shell.toml`)
+//! through optional redirects, parses the launch manifest, verifies signatures
+//! and checksums, and loads the ELF image bytes.  The resulting
+//! [`ResolvedCatalogLaunch`] is consumed by the loader layer to produce a
+//! [`super::loader::LoadedProgram`].
 
 use alloc::string::String;
 use alloc::vec::Vec;

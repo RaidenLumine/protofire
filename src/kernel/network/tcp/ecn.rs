@@ -8,14 +8,14 @@
 //! ## Handshake negotiation
 //! - Client sets ECE + CWR on SYN.
 //! - Server sets ECE on SYN-ACK, clears CWR.
-//! - Client clears ECE on ACK of SYN.
-//!   After this, both endpoints know ECN is active.
+//! - Client clears ECE on ACK of SYN. After this, both endpoints know ECN is
+//!   active.
 //!
 //! ## Data phase
 //! - Receiver: on receiving CE-marked IP packet, sets ECE on all subsequent
 //!   ACKs until a data segment with CWR arrives (RFC 3168 §6.1.2).
-//! - Sender: on receiving ACK with ECE set, reduces cwnd/ssthresh by half,
-//!   sets CWR on next outgoing segment.  At most once per RTT (RFC 3168 §6.1.1).
+//! - Sender: on receiving ACK with ECE set, reduces cwnd/ssthresh by half, sets
+//!   CWR on next outgoing segment.  At most once per RTT (RFC 3168 §6.1.1).
 
 /// ECN field values from the IP header (2 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,7 +59,8 @@ pub const TCP_FLAG_CWR: u8 = 0x80;
 /// ECN negotiation and reaction state for a single TCP connection.
 #[derive(Debug, Clone, Default)]
 pub struct EcnState {
-    /// Whether ECN is enabled for this connection (negotiated during handshake).
+    /// Whether ECN is enabled for this connection (negotiated during
+    /// handshake).
     pub enabled: bool,
     /// Whether we are the active opener (client).  Used to determine the
     /// precise ECN handshake flag pattern.

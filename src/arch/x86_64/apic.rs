@@ -50,8 +50,8 @@ static mut HIGH_PTS: [PageTablePage; 2] = [PageTablePage::ZEROED; 2];
 /// * If **present**, it adds the LAPIC/IOAPIC PD entries into the **existing**
 ///   PD page so that both the prior mappings and the new identity mappings
 ///   co-exist.
-/// * If **not present**, it installs the statically-allocated `HIGH_PD` as
-///   the PDPT entry, which only contains the two entries.
+/// * If **not present**, it installs the statically-allocated `HIGH_PD` as the
+///   PDPT entry, which only contains the two entries.
 ///
 /// In both cases the raw MMIO pointers used by `lapic_read` / `lapic_write`
 /// and `ioapic_read` / `ioapic_write` become valid identity mappings.

@@ -366,8 +366,8 @@ struct VirtioGpuCmdSubmit3D {
 /// framebuffer backing memory.
 ///
 /// Constructed only by the bare-metal `init_gpu_device` probe; the host build
-/// exercises the syscall interface through the in-memory [`mock::MockGpuDevice`]
-/// instead.
+/// exercises the syscall interface through the in-memory
+/// [`mock::MockGpuDevice`] instead.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 struct VirtioGpuDevice {
     transport: VirtIoMmio,
@@ -461,7 +461,8 @@ impl VirtioGpuDevice {
         let request_size = core::mem::size_of_val(request) as u32;
         let response_size = core::mem::size_of::<R>() as u32;
 
-        // Allocate 2 descriptors: [request (device-readable), response (device-writable)].
+        // Allocate 2 descriptors: [request (device-readable), response
+        // (device-writable)].
         let mut queue = self.queue.lock();
         let head = queue.alloc_chain(2).ok_or(Error::DeviceError)?;
         let req_desc = head;
@@ -1466,7 +1467,8 @@ mod tests {
 
     #[test]
     fn attach_backing_size() {
-        // 24 (ctrl_hdr) + 4 + 4 + 12 (padding) = 44; packed repr avoids trailing alignment.
+        // 24 (ctrl_hdr) + 4 + 4 + 12 (padding) = 44; packed repr avoids trailing
+        // alignment.
         assert_eq!(
             core::mem::size_of::<VirtioGpuAttachBacking>(),
             44,

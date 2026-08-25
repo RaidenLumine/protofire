@@ -1,6 +1,7 @@
 //! src/kernel/fs/simplefs/mod.rs
 //!
-//! SimpleFs — on-disk format parser, validator, and runtime file/directory operations.
+//! SimpleFs — on-disk format parser, validator, and runtime file/directory
+//! operations.
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -85,7 +86,8 @@ pub(crate) struct SimpleFsState {
     active_xattr_table_block: usize,
     shadow_xattr_table_block: usize,
     xattr_table_dirty: bool,
-    /// V4+: live cross-file dedup refcounts keyed by `(data_block, block_count)`.
+    /// V4+: live cross-file dedup refcounts keyed by `(data_block,
+    /// block_count)`.
     dedup_refcounts: BTreeMap<(u32, u32), usize>,
     /// V4+: content hash → pooled extents `(data_block, block_count, size)`
     /// (opportunistic cross-file dedup).  Only pooled extents are eligible

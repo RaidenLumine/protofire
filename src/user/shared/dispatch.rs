@@ -30,8 +30,8 @@ const SOURCE_MAX_DEPTH: u32 = 16;
 /// Mutex statics) and ring3 (local variables).
 ///
 /// `cwd` is the current working directory (mutated by `cd`).
-/// `stdin` is optional input for commands that read from stdin (via `<` redirect).
-/// `home_dir` is the home directory for `cd ~`.
+/// `stdin` is optional input for commands that read from stdin (via `<`
+/// redirect). `home_dir` is the home directory for `cd ~`.
 /// `env_vars` — environment variables (for `export`, `read`, `source`).
 /// `aliases` — command aliases (for `alias`).
 /// `history` — command history (for `history`).

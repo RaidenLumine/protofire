@@ -124,7 +124,8 @@ impl AuditBuffer {
     /// Copy up to `max` records into `buf`.  Returns the number of records
     /// actually copied.  Data is read from the oldest unread record forward.
     ///
-    /// `buf` must be large enough to hold `max * size_of::<AuditRecord>()` bytes.
+    /// `buf` must be large enough to hold `max * size_of::<AuditRecord>()`
+    /// bytes.
     pub fn read_events(&self, buf: &mut [AuditRecord]) -> usize {
         let published = self.published.load(Ordering::Acquire);
         let tail = self.tail.load(Ordering::Relaxed);

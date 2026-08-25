@@ -1,6 +1,7 @@
 //! src/user/shared/commands/state.rs
 //!
-//! Shell state management commands (export, alias, history, shift, read, source).
+//! Shell state management commands (export, alias, history, shift, read,
+//! source).
 //!
 //! All commands accept shell state via explicit parameters so they work
 //! identically in ring0 (kernel Mutex statics) and ring3 (local variables).

@@ -63,7 +63,8 @@ pub trait FileSystem: Send + Sync {
         Err(Error::Unsupported)
     }
 
-    /// Create a hard link at `link_path` pointing to the same inode as `target`.
+    /// Create a hard link at `link_path` pointing to the same inode as
+    /// `target`.
     fn hard_link(&self, target: &str, link_path: &str) -> Result<()> {
         let _ = (target, link_path);
         Err(Error::Unsupported)
@@ -80,7 +81,8 @@ pub trait FileSystem: Send + Sync {
         Err(Error::Unsupported)
     }
 
-    /// Check filesystem integrity and repair if possible. Returns a VolumeCheckReport.
+    /// Check filesystem integrity and repair if possible. Returns a
+    /// VolumeCheckReport.
     fn check_and_repair(&self) -> Result<VolumeCheckReport> {
         Err(Error::Unsupported)
     }

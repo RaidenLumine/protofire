@@ -1,7 +1,8 @@
 //! src/user/program/constants.rs
 //!
-//! Path constants, page-size constants, and small utility functions shared across
-//! the user-program loader, catalog resolution, and ELF-image planning layers.
+//! Path constants, page-size constants, and small utility functions shared
+//! across the user-program loader, catalog resolution, and ELF-image planning
+//! layers.
 
 // ── catalog / app paths ───────────────────────────────────────────────
 

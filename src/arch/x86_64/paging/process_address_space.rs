@@ -195,8 +195,8 @@ impl PreparedProcessAddressSpace {
     /// Returns `(child_address_space, shared_cow_pages, all_child_pages)`
     /// where:
     /// - `shared_cow_pages` lists `(va, pa, perms)` for pages now shared CoW
-    /// - `all_child_pages` lists `(va, pa, perms)` for every user page in
-    ///   the child's address space (for software page-table registration)
+    /// - `all_child_pages` lists `(va, pa, perms)` for every user page in the
+    ///   child's address space (for software page-table registration)
     #[allow(clippy::type_complexity)]
     pub fn fork_clone(
         &mut self,
@@ -641,10 +641,10 @@ impl Drop for PreparedProcessAddressSpace {
 /// Returns `None` (causing address-space construction to fail) if any
 /// invariant is violated:
 ///
-/// 1. No user-accessible PTE may carry the GLOBAL bit — GLOBAL pages
-///    survive CR3 switches and would leak data between address spaces.
-/// 2. Every user-mapped virtual address must reside in the lower
-///    canonical half (`< X86_64_USER_CANONICAL_END`).
+/// 1. No user-accessible PTE may carry the GLOBAL bit — GLOBAL pages survive
+///    CR3 switches and would leak data between address spaces.
+/// 2. Every user-mapped virtual address must reside in the lower canonical half
+///    (`< X86_64_USER_CANONICAL_END`).
 pub(crate) fn validate_prepared_process_address_space(
     pts: &[PreparedUserPt],
     user_address_space: &PreparedUserAddressSpace,

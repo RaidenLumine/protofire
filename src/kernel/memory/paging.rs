@@ -79,7 +79,8 @@ impl PagePermissions {
     pub const READ_EXECUTE: Self = Self(Self::READ.0 | Self::EXECUTE.0);
     pub const READ_WRITE_EXECUTE: Self = Self(Self::READ.0 | Self::WRITE.0 | Self::EXECUTE.0);
 
-    /// Returns `true` if `self` includes all the permission bits set in `other`.
+    /// Returns `true` if `self` includes all the permission bits set in
+    /// `other`.
     ///
     /// # Example
     ///
@@ -152,7 +153,8 @@ struct Mapping {
 pub struct PageTable {
     mappings: Vec<Mapping>,
     initialized: bool,
-    /// Page table profiler (zero-cost when `alloc_profiler` feature is disabled).
+    /// Page table profiler (zero-cost when `alloc_profiler` feature is
+    /// disabled).
     pub profiler: AllocProfiler,
 }
 
@@ -205,7 +207,8 @@ impl PageTable {
     /// [`MappingKind`] and the given `permissions`.
     ///
     /// The physical address is set to the same value as `virtual_address`
-    /// (identity mapping).  For a non-identity mapping use [`map_to_with_kind`].
+    /// (identity mapping).  For a non-identity mapping use
+    /// [`map_to_with_kind`].
     ///
     /// # Errors
     ///
@@ -264,10 +267,10 @@ impl PageTable {
     /// # Parameters
     ///
     /// * `virtual_address` — start of the virtual range.
-    /// * `physical_address` — start of the physical range.  The page
-    ///   offset must match `virtual_address`'s page offset.
-    /// * `length` — size of the region in bytes (rounded up to a page
-    ///   boundary internally).
+    /// * `physical_address` — start of the physical range.  The page offset
+    ///   must match `virtual_address`'s page offset.
+    /// * `length` — size of the region in bytes (rounded up to a page boundary
+    ///   internally).
     /// * `permissions` — page-level access rights.
     /// * `kind` — semantic classification of the mapping.
     ///

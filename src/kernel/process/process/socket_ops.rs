@@ -1,6 +1,7 @@
 //! src/kernel/process/process/socket_ops.rs
 //!
-//! TCP listener, UDP socket, raw socket, and local socket handle/descriptor operations.
+//! TCP listener, UDP socket, raw socket, and local socket handle/descriptor
+//! operations.
 use alloc::sync::Arc;
 
 use crate::kernel::network::{LocalSocket, TcpListener, UdpSocket};

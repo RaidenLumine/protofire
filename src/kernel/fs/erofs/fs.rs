@@ -481,7 +481,8 @@ mod tests {
         let device = MemoryBlockDevice::new("erofs-dotdot", image, true);
         let erofs = EroFs::open(device).expect("open");
 
-        // "/./.." should resolve back to root (nid 1): root → "." (skip) → ".." (root dir entry).
+        // "/./.." should resolve back to root (nid 1): root → "." (skip) → ".." (root
+        // dir entry).
         let (nid, _inode) = erofs.walk_path("/./..").expect("walk dotdot");
         assert_eq!(nid, 1);
     }

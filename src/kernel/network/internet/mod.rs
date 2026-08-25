@@ -14,7 +14,8 @@ pub mod mld;
 pub mod nat;
 pub mod pmtu;
 
-// Educational networking modules — see individual files for pedagogical context.
+// Educational networking modules — see individual files for pedagogical
+// context.
 #[cfg(any(test, feature = "educational_networking"))]
 pub mod ip_options;
 #[cfg(any(test, feature = "educational_networking"))]

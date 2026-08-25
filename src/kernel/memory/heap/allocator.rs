@@ -125,8 +125,8 @@ impl KernelGlobalAllocator {
     ///
     /// # Parameters
     ///
-    /// * `state` — mutable reference to the allocator state containing
-    ///   the free lists and bitmaps.
+    /// * `state` — mutable reference to the allocator state containing the free
+    ///   lists and bitmaps.
     /// * `layout` — the requested size and alignment.
     /// * `profiler` — profiler for tracking allocated byte counts.
     pub(crate) fn allocate_locked(
@@ -329,8 +329,8 @@ impl KernelGlobalAllocator {
     /// # Parameters
     ///
     /// * `state` — mutable reference to the allocator state.
-    /// * `ptr` — pointer to the payload (must have been returned by
-    ///   a prior call to [`allocate_locked`]).
+    /// * `ptr` — pointer to the payload (must have been returned by a prior
+    ///   call to [`allocate_locked`]).
     /// * `profiler` — profiler for tracking freed byte counts.
     pub(crate) fn deallocate_locked(
         state: &mut AllocatorState,

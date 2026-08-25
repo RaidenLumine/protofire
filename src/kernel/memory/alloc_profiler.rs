@@ -1,8 +1,9 @@
 //! src/kernel/memory/alloc_profiler.rs
 //!
-//! Kernel allocator operation counters, gated behind `cfg(feature = "alloc_profiler")`.
-//! When the feature is disabled, every method is a no-op and `AllocProfiler` is
-//! a zero-sized type so fields in allocator structs cost zero bytes.
+//! Kernel allocator operation counters, gated behind `cfg(feature =
+//! "alloc_profiler")`. When the feature is disabled, every method is a no-op
+//! and `AllocProfiler` is a zero-sized type so fields in allocator structs cost
+//! zero bytes.
 //!
 //! Uses `AtomicU64` with `Relaxed` ordering to avoid lock contention on the
 //! allocation hot paths.

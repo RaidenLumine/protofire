@@ -8,9 +8,10 @@
 //! process ASID in bits [63:48].
 //!
 //! Memory map (QEMU `virt`, matching the AArch64 kernel linker script):
-//!   [0x0000_0000, 0x4000_0000)  L1[0]  device / MMIO window (GIC, PL011, virtio)
-//!   [0x4000_0000, 0x8000_0000)  L1[1]  RAM window (kernel text + demo user slots)
-//!   [0x8000_0000, ...)                 unused by the runtime tables
+//!   [0x0000_0000, 0x4000_0000)  L1[0]  device / MMIO window (GIC, PL011,
+//! virtio)   [0x4000_0000, 0x8000_0000)  L1[1]  RAM window (kernel text + demo
+//! user slots)   [0x8000_0000, ...)                 unused by the runtime
+//! tables
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 use core::arch::asm;
@@ -266,7 +267,8 @@ fn user_l3_page_entry(virtual_address: usize, permissions: PagePermissions) -> u
     user_page_entry(virtual_address, permissions)
 }
 
-/// Build a leaf page descriptor for an EL0-accessible page at `physical_address`.
+/// Build a leaf page descriptor for an EL0-accessible page at
+/// `physical_address`.
 fn user_page_entry(physical_address: usize, permissions: PagePermissions) -> u64 {
     let address = (physical_address as u64) & 0x0000_FFFF_FFFF_F000;
     let (ap, uxn) = if permissions.contains(PagePermissions::WRITE) {
@@ -380,7 +382,8 @@ fn align_up(value: usize, align: usize) -> Option<usize> {
         .map(|aligned| aligned & !(align - 1))
 }
 
-/// Returns true when `[start, end)` is contained within `[region_start, region_end)`.
+/// Returns true when `[start, end)` is contained within `[region_start,
+/// region_end)`.
 fn range_within(start: usize, end: usize, region_start: usize, region_end: usize) -> bool {
     start >= region_start && end <= region_end && start <= end
 }
@@ -1526,7 +1529,8 @@ impl PreparedProcessAddressSpace {
         activate_prepared_process_address_space_impl(self)
     }
 
-    /// Report every present user page as `(virtual_address, physical_address, permissions)`.
+    /// Report every present user page as `(virtual_address, physical_address,
+    /// permissions)`.
     pub fn user_page_entries(&self) -> Vec<(usize, usize, PagePermissions)> {
         let mut entries = Vec::new();
         for page_index in 0..USER_DEMO_REGION_PAGE_COUNT {

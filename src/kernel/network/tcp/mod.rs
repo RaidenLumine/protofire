@@ -1,6 +1,7 @@
 //! src/kernel/network/tcp/mod.rs
 //!
-//! TCP protocol (RFC 793): state machine, connect / listen / accept / read / write / close.
+//! TCP protocol (RFC 793): state machine, connect / listen / accept / read /
+//! write / close.
 //!
 //! This is a minimal but functional implementation:
 //! - Active open (connect): SYN → SYN-ACK → ACK

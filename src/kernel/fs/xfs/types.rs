@@ -19,9 +19,10 @@ pub const XFS_INODE_DATA_FORK_OFFSET_V4: usize = 100;
 pub const XFS_INODE_DATA_FORK_OFFSET_V5: usize = 176;
 
 /// Long-format B+tree block (xfs_btree_lblock) record offset.
-/// v4: magic(4) + level(2) + numrecs(2) + leftsib(8) + rightsib(8) + blkno(8) = 32
-/// v5: v4(32) + crc(4) + uuid(16) + owner(8) + lsn(8) = 56 (blkno moved, lsn added)
-///     Actually v5 layout: magic(4)+level(2)+numrecs(2)+crc(4)+uuid(16)+owner(8)+blkno(8)+lsn(8)=56
+/// v4: magic(4) + level(2) + numrecs(2) + leftsib(8) + rightsib(8) + blkno(8) =
+/// 32 v5: v4(32) + crc(4) + uuid(16) + owner(8) + lsn(8) = 56 (blkno moved, lsn
+/// added)     Actually v5 layout:
+/// magic(4)+level(2)+numrecs(2)+crc(4)+uuid(16)+owner(8)+blkno(8)+lsn(8)=56
 pub const XFS_BTREE_LBLOCK_REC_OFFSET_V4: usize = 32;
 pub const XFS_BTREE_LBLOCK_REC_OFFSET_V5: usize = 56;
 

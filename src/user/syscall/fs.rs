@@ -7,7 +7,8 @@ use crate::kernel::syscall::{SyscallContext, SyscallNumber};
 impl super::UserSyscall {
     // ── Filesystem syscalls ─────────────────────────────────────────
 
-    /// Open `path` (pointer + length) with `flags`, returning a file descriptor.
+    /// Open `path` (pointer + length) with `flags`, returning a file
+    /// descriptor.
     pub const fn open(path: usize, length: usize, flags: usize) -> SyscallContext {
         SyscallContext::new(SyscallNumber::Open as usize, [path, length, flags, 0, 0, 0])
     }

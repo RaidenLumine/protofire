@@ -1,6 +1,7 @@
 //! src/kernel/sync/mod.rs
 //!
-//! Synchronization primitive exports for mutexes, events, semaphores, and waits.
+//! Synchronization primitive exports for mutexes, events, semaphores, and
+//! waits.
 
 pub mod condvar;
 pub mod event;

@@ -386,8 +386,8 @@ pub fn parse_reparse_point(buf: &[u8]) -> Option<(u32, Option<String>)> {
 ///   …    repeating entries until end …
 ///
 /// Each entry:
-///   u32  next_entry_offset  (byte offset to next entry from start of this one; 0 = last)
-///   u8   flags              (0x80 = NEED_EA)
+///   u32  next_entry_offset  (byte offset to next entry from start of this one;
+/// 0 = last)   u8   flags              (0x80 = NEED_EA)
 ///   u8   name_length        (in bytes, not characters)
 ///   u16  value_length       (in bytes)
 ///   u8[] name               (name_length bytes — ASCII / ANSI)

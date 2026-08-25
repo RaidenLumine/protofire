@@ -279,7 +279,8 @@ pub(crate) fn replay_ext4_journal(
                                 "[ext4] CRC32C mismatch on journal data block {:x} (tag block_nr={}): expected={:08x} computed={:08x}",
                                 data_block_idx, tag.block_nr, stored_csum, computed
                             );
-                            // During replay, warn but continue — we're in recovery.
+                            // During replay, warn but continue — we're in
+                            // recovery.
                         }
                     }
                     // Write the data block to its on-disk location.

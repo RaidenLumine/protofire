@@ -1,6 +1,7 @@
 //! src/user/program.rs
 //!
-//! Catalog and manifest driven user program loader plus user-program regression tests.
+//! Catalog and manifest driven user program loader plus user-program regression
+//! tests.
 //!
 //! This module is the public hub: submodules own the implementation details
 //! ([`catalog`], [`constants`], [`loader`], [`metadata`], [`spawn`]) while

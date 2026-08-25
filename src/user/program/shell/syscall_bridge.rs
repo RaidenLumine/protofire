@@ -3,9 +3,9 @@
 //! Kernel-side implementations of the `extern "Rust"` syscall entry points
 //! declared by `crate::user::shared::syscall`.
 //!
-//! Each function wraps the kernel's `UserSyscall` builders + `syscall::dispatch()`
-//! so that shared shared command code can call syscalls without knowing
-//! whether it runs in ring0 or ring3.
+//! Each function wraps the kernel's `UserSyscall` builders +
+//! `syscall::dispatch()` so that shared shared command code can call syscalls
+//! without knowing whether it runs in ring0 or ring3.
 
 use crate::kernel::syscall;
 use crate::kernel::syscall::SyscallContext;

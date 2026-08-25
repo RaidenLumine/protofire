@@ -17,8 +17,8 @@ pub type TokenizeResult = Result<Vec<String>, String>;
 /// Rules:
 /// - Unquoted whitespace separates tokens.
 /// - Single quotes (`'...'`) preserve literal text (no escapes).
-/// - Double quotes (`"..."`) preserve literal text except for backslash
-///   escapes (`\n`, `\t`, `\\`, `\"`, etc.).
+/// - Double quotes (`"..."`) preserve literal text except for backslash escapes
+///   (`\n`, `\t`, `\\`, `\"`, etc.).
 /// - Backslash outside quotes escapes the next character.
 ///
 /// # Errors

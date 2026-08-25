@@ -5,8 +5,8 @@
 //! ## Supported features
 //!
 //! - Boot region parsing and checksum validation (Main + Backup boot sectors)
-//! - Directory entry set parsing: file (0x85), stream extension (0xC0),
-//!   file name extension (0xC1), volume label (0x83), allocation bitmap (0x81),
+//! - Directory entry set parsing: file (0x85), stream extension (0xC0), file
+//!   name extension (0xC1), volume label (0x83), allocation bitmap (0x81),
 //!   up-case table (0x82)
 //! - FAT table reading and cluster chain walking (32-bit FAT entries)
 //! - NoFatChain contiguous file optimisation
@@ -17,9 +17,9 @@
 //!
 //! ## Architecture
 //!
-//! [`ExfatVolume`] is the public entry point — it wraps an `Arc<Mutex<ExfatFs>>` so
-//! that [`VNode`] handles created by `lookup()` can cheaply hold a reference
-//! to the underlying filesystem state.
+//! [`ExfatVolume`] is the public entry point — it wraps an
+//! `Arc<Mutex<ExfatFs>>` so that [`VNode`] handles created by `lookup()` can
+//! cheaply hold a reference to the underlying filesystem state.
 
 pub(crate) mod fs;
 #[cfg(test)]

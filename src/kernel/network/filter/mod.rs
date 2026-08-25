@@ -11,8 +11,8 @@
 //! connection-tracking flow table.  Two entry points are called from the
 //! network stack:
 //!
-//! - `check_inbound(header, payload, local_ip, tick)` — called in
-//!   `dispatch.rs` after fragment reassembly + NAT DNAT, before protocol demux.
+//! - `check_inbound(header, payload, local_ip, tick)` — called in `dispatch.rs`
+//!   after fragment reassembly + NAT DNAT, before protocol demux.
 //! - `check_outbound(header, payload, local_ip, tick)` — called in `send.rs`
 //!   before NAT SNAT.
 //!
@@ -40,7 +40,8 @@ const MAX_FILTER_RULES: usize = 256;
 /// Maximum number of connection-tracked flows.
 const MAX_FILTER_FLOWS: usize = 4096;
 
-/// Flow timeout for established TCP connections (24 hours in ticks = 8,640,000).
+/// Flow timeout for established TCP connections (24 hours in ticks =
+/// 8,640,000).
 const TCP_FLOW_TIMEOUT: u64 = 8_640_000;
 
 /// Flow timeout for UDP flows (300 seconds in ticks = 30,000).
@@ -827,7 +828,8 @@ mod tests {
         assert!(cidr_match([10, 0, 2, 50], [10, 0, 2, 0], 24));
         assert!(!cidr_match([10, 0, 3, 50], [10, 0, 2, 0], 24));
         assert!(cidr_match([192, 168, 1, 1], [192, 168, 0, 0], 16));
-        assert!(cidr_match([10, 0, 0, 1], [0, 0, 0, 0], 0)); // prefix_len=0 → matches anything
+        assert!(cidr_match([10, 0, 0, 1], [0, 0, 0, 0], 0)); // prefix_len=0 →
+                                                             // matches anything
     }
 
     #[test]

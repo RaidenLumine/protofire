@@ -185,7 +185,8 @@ pub mod interrupt_controller {
                 return;
             }
 
-            // Reprogram the distributor and CPU interface atomically with local IRQs masked.
+            // Reprogram the distributor and CPU interface atomically with local IRQs
+            // masked.
             super::interrupts::disable();
 
             distributor_write(GICD_CTLR, 0);

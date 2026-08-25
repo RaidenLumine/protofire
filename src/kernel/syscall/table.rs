@@ -425,7 +425,8 @@ pub enum SyscallNumber {
     MrtAddMfc = 173,
     /// mrt_del_mfc — remove a multicast forwarding-cache entry (#174).
     MrtDelMfc = 174,
-    /// mac_set_mode — enable/disable MAC enforcement and set the default (#175).
+    /// mac_set_mode — enable/disable MAC enforcement and set the default
+    /// (#175).
     MacSetMode = 175,
     /// mac_add_rule — add a MAC allow rule (#176).
     MacAddRule = 176,

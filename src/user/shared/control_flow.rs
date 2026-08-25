@@ -383,9 +383,9 @@ fn execute_for(
 
     for item in &items {
         // Set the loop variable as an env-var-like side effect.
-        // The caller is responsible for propagating this via the exec_fn result context.
-        // For now, we pass the item name through via exec_fn — the kernel/ring3 wrappers
-        // handle the actual set_env call.
+        // The caller is responsible for propagating this via the exec_fn result
+        // context. For now, we pass the item name through via exec_fn — the
+        // kernel/ring3 wrappers handle the actual set_env call.
         let iter_cmd = format!("ITER_VAR={var_name}={item}");
         let mut p: usize = 0;
         let iter_result = execute_cflow(body_slice, &mut p, cwd, exec_fn);

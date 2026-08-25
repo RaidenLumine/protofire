@@ -7,13 +7,13 @@
 //! **Tahoe** (Jacobson 1988):
 //! - Slow Start: cwnd += 1 MSS per ACK (exponential growth).
 //! - Congestion Avoidance: cwnd += 1/cwnd MSS per ACK (linear growth).
-//! - On loss (3 dup ACKs or RTO): ssthresh = cwnd/2, cwnd = 1 MSS,
-//!   enter Slow Start.
+//! - On loss (3 dup ACKs or RTO): ssthresh = cwnd/2, cwnd = 1 MSS, enter Slow
+//!   Start.
 //!
 //! **Reno** (Jacobson 1990):
 //! - Tahoe + Fast Retransmit + Fast Recovery.
-//! - On 3 dup ACKs: ssthresh = cwnd/2, cwnd = ssthresh + 3*MSS,
-//!   retransmit lost segment, enter Fast Recovery.
+//! - On 3 dup ACKs: ssthresh = cwnd/2, cwnd = ssthresh + 3*MSS, retransmit lost
+//!   segment, enter Fast Recovery.
 //! - In Fast Recovery: cwnd += 1 MSS per dup ACK.
 //! - On new ACK covering recovery point: cwnd = ssthresh, exit recovery.
 

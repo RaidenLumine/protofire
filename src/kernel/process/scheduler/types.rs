@@ -97,8 +97,7 @@ impl SchedulerStats {
     ///
     /// # Parameters
     ///
-    /// * `cpu_id` — the CPU index (0..15).  Indexes >= 16 are silently
-    ///   ignored.
+    /// * `cpu_id` — the CPU index (0..15).  Indexes >= 16 are silently ignored.
     pub fn record_idle_tick(&mut self, cpu_id: u32) {
         if let Some(slot) = self.idle_ticks.get_mut(cpu_id as usize) {
             *slot = slot.saturating_add(1);

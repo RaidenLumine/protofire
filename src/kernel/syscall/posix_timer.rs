@@ -24,8 +24,9 @@ pub fn timer_settime(ctx: &mut SyscallContext) -> Result<SyscallDispatch> {
     let flags = ctx.arg(1) as u32;
     let new_value_ptr = ctx.arg(2) as *const u8;
 
-    // Parse itimerspec from user memory (3 u64s: value_sec, value_nsec, interval_sec, interval_nsec).
-    // Layout: it_interval.tv_sec, it_interval.tv_nsec, it_value.tv_sec, it_value.tv_nsec
+    // Parse itimerspec from user memory (3 u64s: value_sec, value_nsec,
+    // interval_sec, interval_nsec). Layout: it_interval.tv_sec,
+    // it_interval.tv_nsec, it_value.tv_sec, it_value.tv_nsec
     if new_value_ptr.is_null() {
         return Err(crate::Error::InvalidArgument);
     }

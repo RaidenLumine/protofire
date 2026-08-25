@@ -75,7 +75,8 @@ impl SimpleFs {
         extra_xattr_capacity: usize,
     ) -> Result<Vec<u8>> {
         let nodes = build_nodes(files)?;
-        // DFS order keeps parent directory metadata ahead of children in generated tables.
+        // DFS order keeps parent directory metadata ahead of children in generated
+        // tables.
         let order = depth_first_order(&nodes);
         let mut old_to_new = vec![0_usize; nodes.len()];
 

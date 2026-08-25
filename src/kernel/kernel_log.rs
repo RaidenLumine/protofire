@@ -20,7 +20,8 @@ const RING_CAPACITY: usize = 65536; // 64 KB
 
 struct RingInner {
     buf: [u8; RING_CAPACITY],
-    /// Next write index.  When the buffer is full this points to the oldest byte.
+    /// Next write index.  When the buffer is full this points to the oldest
+    /// byte.
     write_pos: usize,
     /// Current number of valid bytes (0 … RING_CAPACITY).
     len: usize,

@@ -1,6 +1,7 @@
 //! src/kernel/fs/ntfs/fs.rs
 //!
-//! NTFS low-level operations: cluster I/O, MFT record reading, directory traversal, file reads.
+//! NTFS low-level operations: cluster I/O, MFT record reading, directory
+//! traversal, file reads.
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::string::String;

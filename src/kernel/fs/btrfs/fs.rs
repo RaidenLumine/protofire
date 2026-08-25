@@ -1,7 +1,8 @@
 //! src/kernel/fs/btrfs/fs.rs
 //!
 //! Btrfs low-level operations: superblock, trees, extents.
-//! Btrfs low-level operations: superblock, B-tree traversal, inode/dir/file reading.
+//! Btrfs low-level operations: superblock, B-tree traversal, inode/dir/file
+//! reading.
 
 use alloc::sync::Arc;
 use alloc::vec;

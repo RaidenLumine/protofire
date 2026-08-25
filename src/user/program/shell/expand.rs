@@ -1,6 +1,7 @@
 //! src/user/program/shell/expand.rs
 //!
-//! Environment variable expansion, source/profile execution, and background launch.
+//! Environment variable expansion, source/profile execution, and background
+//! launch.
 
 use super::dispatch::{dispatch_single_command, run_shell_command};
 use super::entry::current_process;

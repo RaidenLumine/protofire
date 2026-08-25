@@ -8,7 +8,8 @@
 //! - `GetXattr = 152`   — read an extended attribute value (path, name, out).
 //! - `ListXattr = 153`  — list extended attribute names (path, out).
 //! - `RemoveXattr = 154`— remove an extended attribute (path, name).
-//! - `SetFileFlags = 155` — toggle per-file data-reduction flags (path, set, clear).
+//! - `SetFileFlags = 155` — toggle per-file data-reduction flags (path, set,
+//!   clear).
 //! - `GetFileFlags = 156` — read per-file data-reduction flags (path).
 
 use alloc::vec::Vec;

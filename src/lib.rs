@@ -3,8 +3,8 @@
 //! Protofire Kernel Library
 //!
 //! This is the main library crate for the Protofire kernel.
-//! It provides the core error types, module structure, and logging macros used throughout
-//! the kernel and shared ring-3 library.
+//! It provides the core error types, module structure, and logging macros used
+//! throughout the kernel and shared ring-3 library.
 
 #![no_std]
 

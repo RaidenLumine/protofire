@@ -365,9 +365,9 @@ pub(super) fn eventfd_read(
 ///
 /// Mirrors Linux `eventfd` write semantics:
 /// - the value `0xffff_ffff_ffff_ffff` is rejected with `EINVAL`;
-/// - adding a value that would push the counter past `u64::MAX - 1` is
-///   reported as `Busy` (EAGAIN).  The counter saturates at that bound, so
-///   writes are effectively non-blocking in this kernel.
+/// - adding a value that would push the counter past `u64::MAX - 1` is reported
+///   as `Busy` (EAGAIN). The counter saturates at that bound, so writes are
+///   effectively non-blocking in this kernel.
 pub(super) fn eventfd_write(
     state: Arc<super::types::EventFdState>,
     buffer: &[u8],

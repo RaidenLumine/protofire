@@ -25,13 +25,15 @@ use crate::{Error, Result};
 use super::user_memory;
 use super::{runtime, SyscallContext, SyscallDispatch};
 
-// ── Constants ──────────────────────────────────────────────────────────────────
+// ── Constants
+// ──────────────────────────────────────────────────────────────────
 
 /// The default timeout for the blocking wait inside io_uring_enter (in ticks).
 /// At 100 Hz this is ~1 second.
 const DEFAULT_ENTER_WAIT_TICKS: u64 = 100;
 
-// ── IoUringSetup (#126) ────────────────────────────────────────────────────────
+// ── IoUringSetup (#126)
+// ────────────────────────────────────────────────────────
 
 /// Syscall #126: IoUringSetup — create an io_uring instance.
 ///
@@ -65,7 +67,8 @@ pub(super) fn io_uring_setup(context: &mut SyscallContext) -> Result<SyscallDisp
     Ok(SyscallDispatch::complete(fd))
 }
 
-// ── IoUringEnter (#127) ────────────────────────────────────────────────────────
+// ── IoUringEnter (#127)
+// ────────────────────────────────────────────────────────
 
 /// Syscall #127: IoUringEnter — submit SQEs and/or reap CQEs.
 ///
@@ -178,7 +181,8 @@ pub(super) fn io_uring_enter(context: &mut SyscallContext) -> Result<SyscallDisp
     Ok(SyscallDispatch::complete(written))
 }
 
-// ── SQE execution ──────────────────────────────────────────────────────────────
+// ── SQE execution
+// ──────────────────────────────────────────────────────────────
 
 /// Execute a single SQE and return an optional CQE.
 ///
@@ -281,7 +285,8 @@ fn execute_sqe(
     }
 }
 
-// ── Pending op re-probe ────────────────────────────────────────────────────────
+// ── Pending op re-probe
+// ────────────────────────────────────────────────────────
 
 /// Re-probe pending operations and produce CQEs for those that are ready.
 /// Returns the number of new completions produced.
@@ -339,7 +344,8 @@ fn reprobe_pending_ops_internal(
     Ok(new_completions)
 }
 
-// ── CQE flushing ───────────────────────────────────────────────────────────────
+// ── CQE flushing
+// ───────────────────────────────────────────────────────────────
 
 /// Drain completed CQEs from the ring and write them to user memory.
 /// Returns the number of CQEs written.
@@ -384,7 +390,8 @@ fn flush_cqes(
     Ok(to_write)
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// ── Helpers
+// ────────────────────────────────────────────────────────────────────
 
 /// Create a success CQE.
 fn cqe_ok(user_data: u64, result: i32) -> IoUringCqe {

@@ -6,10 +6,10 @@
 //! - `policy`  — the global allow-rule policy + per-path type overrides.
 //! - `check`   — object-type classification and enforcement entry points.
 //!
-//! The subject label (`mac_type`) lives on [`crate::kernel::process::SecurityToken`];
-//! the object label for a file is derived from its path (with optional runtime
-//! overrides).  When no policy is loaded the engine is permissive, so existing
-//! behaviour is unchanged.
+//! The subject label (`mac_type`) lives on
+//! [`crate::kernel::process::SecurityToken`]; the object label for a file is
+//! derived from its path (with optional runtime overrides).  When no policy is
+//! loaded the engine is permissive, so existing behaviour is unchanged.
 
 pub mod check;
 pub mod policy;

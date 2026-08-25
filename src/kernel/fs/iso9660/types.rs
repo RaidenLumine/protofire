@@ -259,7 +259,8 @@ fn parse_susp_entries(
                         if comp_flags & 0x01 == 0 {
                             // No CONTINUE — remove trailing slash for last component.
                             if !matches!(link_data.last(), Some(b'/') if comp_flags & 0x08 == 0) {
-                                // keep trailing slash except for non-ROOT non-CONTINUE
+                                // keep trailing slash except for non-ROOT
+                                // non-CONTINUE
                             }
                         }
 
@@ -540,7 +541,8 @@ mod tests {
 
     #[test]
     fn susp_px_entry() {
-        // Build a SUSP PX entry: sig="PX", len=20, ver=1, mode=0o755, nlink=2, uid=1000, gid=1000
+        // Build a SUSP PX entry: sig="PX", len=20, ver=1, mode=0o755, nlink=2,
+        // uid=1000, gid=1000
         let mut data = vec![0u8; 20];
         data[0] = b'P';
         data[1] = b'X';

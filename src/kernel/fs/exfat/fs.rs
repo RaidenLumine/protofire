@@ -375,7 +375,8 @@ impl ExfatFs {
         Ok(new_cluster)
     }
 
-    /// Free an entire cluster chain: set every FAT entry to 0, clear bitmap bits.
+    /// Free an entire cluster chain: set every FAT entry to 0, clear bitmap
+    /// bits.
     pub(crate) fn free_cluster_chain(&mut self, start_cluster: u32) -> Result<()> {
         let chain = self.walk_cluster_chain(start_cluster)?;
         for &cluster in &chain {
@@ -389,9 +390,9 @@ impl ExfatFs {
 
     /// Write data to a cluster chain, extending as needed.
     ///
-    /// Writes `buffer` starting at byte `offset` within the file's cluster chain.
-    /// The file's cluster chain starts at `first_cluster`.  Returns the number of
-    /// bytes actually written.
+    /// Writes `buffer` starting at byte `offset` within the file's cluster
+    /// chain. The file's cluster chain starts at `first_cluster`.  Returns
+    /// the number of bytes actually written.
     pub(crate) fn write_cluster_data(
         &mut self,
         first_cluster: u32,

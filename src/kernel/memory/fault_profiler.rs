@@ -1,8 +1,9 @@
 //! src/kernel/memory/fault_profiler.rs
 //!
-//! Kernel fault/exception counters, gated behind `cfg(feature = "fault_profiler")`.
-//! When the feature is disabled, every method is a no-op and `FaultProfiler` is
-//! a zero-sized type so the field in `MemoryManager` costs zero bytes.
+//! Kernel fault/exception counters, gated behind `cfg(feature =
+//! "fault_profiler")`. When the feature is disabled, every method is a no-op
+//! and `FaultProfiler` is a zero-sized type so the field in `MemoryManager`
+//! costs zero bytes.
 //!
 //! Uses `AtomicU64` with `Relaxed` ordering to avoid lock contention on the
 //! exception hot paths.

@@ -1,6 +1,7 @@
 //! src/arch/x86_64/pci/enumeration.rs
 //!
-//! PCI/PCIe bus enumeration: device discovery, BAR probing, and capability walking.
+//! PCI/PCIe bus enumeration: device discovery, BAR probing, and capability
+//! walking.
 //!
 //! Builds on the raw config-space primitives from `super::raw` to provide
 //! a complete bus scan, BAR size detection, and PCI capability chain
@@ -110,7 +111,8 @@ const BAR_OFFSETS: [u8; 6] = [
 fn probe_bar(addr: PciAddress, bar_offset: u8) -> PciBarInfo {
     let bar_raw = unsafe { raw::pci_config_read_u32(addr, bar_offset) };
 
-    // Bits 0 determines whether this is a Memory (bit 0 = 0) or I/O (bit 0 = 1) BAR.
+    // Bits 0 determines whether this is a Memory (bit 0 = 0) or I/O (bit 0 = 1)
+    // BAR.
     let is_mmio = (bar_raw & 0x01) == 0;
 
     if is_mmio {
@@ -208,7 +210,8 @@ pub struct MsixCapability {
     pub message_control: u16,
     /// BAR indicator (bits 2:0) and offset (bits 31:3) for the MSI-X Table.
     pub table_bir_and_offset: u32,
-    /// BAR indicator (bits 2:0) and offset (bits 31:3) for the Pending Bit Array.
+    /// BAR indicator (bits 2:0) and offset (bits 31:3) for the Pending Bit
+    /// Array.
     pub pba_bir_and_offset: u32,
 }
 

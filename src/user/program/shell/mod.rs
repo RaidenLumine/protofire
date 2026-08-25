@@ -3,13 +3,14 @@
 //! Interactive shell connected to the console TTY.
 //!
 //! Provides a single entry point:
-//! - [`shell_user_main`] — user-mode shell using fd 0 (console TTY input)
-//!   and fd 1 (console TTY output) through the process handle I/O path.
+//! - [`shell_user_main`] — user-mode shell using fd 0 (console TTY input) and
+//!   fd 1 (console TTY output) through the process handle I/O path.
 //!
 //! Sub-module organisation:
 //! - `entry`    — Main REPL loops and terminal I/O
 //! - `history`  — Readline callbacks, command history, history expansion
-//! - `expand`   — Environment variable expansion, source/profile, background launch
+//! - `expand`   — Environment variable expansion, source/profile, background
+//!   launch
 //! - `glob`     — Glob pattern matching (`*`, `?`, `[...]`)
 //! - `dispatch` — Command dispatch (single, pipeline, conditional chaining)
 //! - `control_flow` — if/for/while/until control flow

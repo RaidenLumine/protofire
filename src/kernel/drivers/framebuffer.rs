@@ -1,17 +1,18 @@
 //! src/kernel/drivers/framebuffer.rs
 //!
 //! Framebuffer management and drawing primitives.
-//! Framebuffer driver for QEMU bochs-display (PCI vendor 0x1234, device 0x1111).
+//! Framebuffer driver for QEMU bochs-display (PCI vendor 0x1234, device
+//! 0x1111).
 //!
 //! The device provides:
 //! - BAR0: Linear framebuffer (MMIO, default 16 MiB at high address)
 //! - BAR2: VBE_DISPI MMIO registers
 //!
 //! Two register layouts exist in practice (see `VbeLayout`):
-//! - QEMU std VGA maps the bochs dispi registers *flat*: 16-bit register `i`
-//!   at BAR2 + 0x500 + 2*i, with no index/data handshake.
-//! - A discrete bochs-display uses a classic index/data port pair at
-//!   BAR2 + 0x0 / BAR2 + 0x4.
+//! - QEMU std VGA maps the bochs dispi registers *flat*: 16-bit register `i` at
+//!   BAR2 + 0x500 + 2*i, with no index/data handshake.
+//! - A discrete bochs-display uses a classic index/data port pair at BAR2 + 0x0
+//!   / BAR2 + 0x4.
 //!
 //! ## Activation
 //!

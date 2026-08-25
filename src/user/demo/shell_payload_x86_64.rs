@@ -34,8 +34,8 @@ pub fn payload_bytes() -> &'static [u8] {
     &[]
 }
 
-/// Entry is at offset 0 — the first instruction at `adastra_shell_payload_start`
-/// is `jmp shell_main`.
+/// Entry is at offset 0 — the first instruction at
+/// `adastra_shell_payload_start` is `jmp shell_main`.
 pub fn payload_entry_offset() -> usize {
     0
 }

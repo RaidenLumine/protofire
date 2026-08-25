@@ -66,7 +66,8 @@ pub struct IpcPerm {
 }
 
 impl IpcPerm {
-    /// Build a permission struct with creator and owner both set to `uid`/`gid`.
+    /// Build a permission struct with creator and owner both set to
+    /// `uid`/`gid`.
     pub const fn new(key: usize, uid: u32, gid: u32, mode: u16) -> Self {
         Self {
             key,

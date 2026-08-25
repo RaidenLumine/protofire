@@ -192,8 +192,8 @@ pub fn ioapic_route_irq(irq: u8, vector: u8) {
     }
 
     let lo = (vector as u32) | DELIVERY_FIXED | DESTINATION_PHYSICAL;
-    // Destination field in bits 56–63 of the 64-bit entry (high 32 bits, bits 24–31).
-    // LAPIC ID 0 → destination 0.
+    // Destination field in bits 56–63 of the 64-bit entry (high 32 bits, bits
+    // 24–31). LAPIC ID 0 → destination 0.
     let hi = 0u32; // LAPIC ID 0
 
     write_redirection_entry(irq, lo, hi);

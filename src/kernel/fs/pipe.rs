@@ -1,6 +1,7 @@
 //! src/kernel/fs/pipe.rs
 //!
-//! Anonymous pipe (FIFO) — a unidirectional byte stream with a shared ring buffer.
+//! Anonymous pipe (FIFO) — a unidirectional byte stream with a shared ring
+//! buffer.
 //!
 //! ## Architecture
 //!
@@ -21,10 +22,10 @@
 //!
 //! - The buffer can be resized at runtime via `fcntl(F_SETPIPE_SZ)`
 //!   ([`PipeChannel::resize`]); buffered data is preserved across a resize.
-//! - Each end carries its own non-blocking flag, toggled via
-//!   `fcntl(F_SETFL, O_NONBLOCK)`.  In non-blocking mode a read that would
-//!   block on an empty buffer (or a write that would block on a full buffer)
-//!   returns [`Error::Busy`] immediately instead of waiting.
+//! - Each end carries its own non-blocking flag, toggled via `fcntl(F_SETFL,
+//!   O_NONBLOCK)`.  In non-blocking mode a read that would block on an empty
+//!   buffer (or a write that would block on a full buffer) returns
+//!   [`Error::Busy`] immediately instead of waiting.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 

@@ -1,6 +1,7 @@
 //! src/user/program/metadata.rs
 //!
-//! Catalog and manifest parsing, rendering, and launch-budget validation helpers.
+//! Catalog and manifest parsing, rendering, and launch-budget validation
+//! helpers.
 
 // `format!` is only used by the renderers, which are gated to demo/test builds.
 #[cfg(any(test, feature = "demo-disk"))]

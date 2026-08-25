@@ -1,6 +1,7 @@
 //! src/kernel/process/process/lifecycle.rs
 //!
-//! Process constructors, field accessors, thread management, signals, and termination.
+//! Process constructors, field accessors, thread management, signals, and
+//! termination.
 use ::core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::{String, ToString};
@@ -417,9 +418,9 @@ impl Process {
 
     /// Return the process's home directory.
     ///
-    /// The home directory is derived from the process's [`SecurityToken`] uid at
-    /// creation time (see [`home_dir_for_uid`]).  It is inherited across fork and
-    /// preserved across exec.
+    /// The home directory is derived from the process's [`SecurityToken`] uid
+    /// at creation time (see [`home_dir_for_uid`]).  It is inherited across
+    /// fork and preserved across exec.
     pub fn home_dir(&self) -> String {
         self.home_dir.lock().clone()
     }
@@ -564,7 +565,8 @@ impl Process {
             }
             process::SIGSTOP | process::SIGTSTP => {
                 // Stop is handled by the scheduler-level stop_process in the
-                // syscall handler (SendSignal).  No additional work needed here.
+                // syscall handler (SendSignal).  No additional work needed
+                // here.
             }
             process::SIGCONT => {
                 // Continue is handled by the scheduler-level continue_process

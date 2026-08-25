@@ -1,6 +1,7 @@
 //! tests/fs/maintenance.rs
 //!
-//! Host-side integration tests for mounted-volume check and repair entry points.
+//! Host-side integration tests for mounted-volume check and repair entry
+//! points.
 
 use std::sync::Arc;
 

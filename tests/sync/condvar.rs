@@ -1,6 +1,7 @@
 //! tests/sync/condvar.rs
 //!
-//! Host-side integration tests for condition-variable wait, wake, and timeout behavior.
+//! Host-side integration tests for condition-variable wait, wake, and timeout
+//! behavior.
 
 use std::sync::Arc;
 use std::sync::{Mutex as StdMutex, OnceLock};

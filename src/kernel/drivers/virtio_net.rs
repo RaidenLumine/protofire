@@ -112,7 +112,8 @@ pub struct VirtIoNet {
     tx_queue: Mutex<VirtQueue>,
     mac: [u8; 6],
     mtu: usize,
-    /// Features negotiated with the device (device_features & SUPPORTED_FEATURES).
+    /// Features negotiated with the device (device_features &
+    /// SUPPORTED_FEATURES).
     features: u32,
     /// Pre-allocated RX buffers that are submitted to the available ring so
     /// the device can deliver incoming packets.  Used on both host (for

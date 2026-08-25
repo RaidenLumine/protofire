@@ -326,7 +326,9 @@ fn test_mock_block_device_edge_cases() {
     assert!(device.write_blocks(last_block + 1, &test_data).is_err());
 
     // Attempt to read beyond the device should fail
-    assert!(device.read_blocks(last_block + 1, &mut read_buffer).is_err());
+    assert!(device
+        .read_blocks(last_block + 1, &mut read_buffer)
+        .is_err());
 }
 
 /// Test sequential read/write operations.
@@ -375,7 +377,9 @@ fn test_usb_msd_integration_workflow() {
     // Ensure other blocks are unchanged: block 501 still holds the value it was
     // populated with (`501 as u8` truncates to 245).
     let unchanged_data = [245u8; BLOCK_SIZE];
-    assert!(device.verify_data(501 * BLOCK_SIZE, &unchanged_data).is_ok());
+    assert!(device
+        .verify_data(501 * BLOCK_SIZE, &unchanged_data)
+        .is_ok());
 }
 
 /// Performance smoke test for USB MSD operations.
@@ -396,7 +400,10 @@ fn test_usb_msd_performance() {
 
     // Generous bound: the mock is fully in-memory.  This is a smoke test, not
     // a benchmark — real throughput depends on the xHCI data path.
-    println!("Sequential write performance: {} blocks in {:?}", num_blocks, write_elapsed);
+    println!(
+        "Sequential write performance: {} blocks in {:?}",
+        num_blocks, write_elapsed
+    );
     assert!(write_elapsed.as_millis() < 10_000);
 
     // Sequential read performance
@@ -409,6 +416,9 @@ fn test_usb_msd_performance() {
 
     let read_elapsed = start.elapsed();
 
-    println!("Sequential read performance: {} blocks in {:?}", num_blocks, read_elapsed);
+    println!(
+        "Sequential read performance: {} blocks in {:?}",
+        num_blocks, read_elapsed
+    );
     assert!(read_elapsed.as_millis() < 10_000);
 }

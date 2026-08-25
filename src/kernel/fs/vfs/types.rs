@@ -1,6 +1,7 @@
 //! src/kernel/fs/vfs/types.rs
 //!
-//! VFS type definitions: node kinds, security descriptors, metadata, and access-query types.
+//! VFS type definitions: node kinds, security descriptors, metadata, and
+//! access-query types.
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -62,7 +63,8 @@ impl SecurityDescriptor {
         Self::new(DEFAULT_GUEST_USER_ID, DEFAULT_GUEST_GROUP_ID, mode)
     }
 
-    /// Create a root-owned security descriptor with the default mode for the given node kind.
+    /// Create a root-owned security descriptor with the default mode for the
+    /// given node kind.
     pub const fn root_for_kind(kind: NodeKind) -> Self {
         Self::root(default_mode_for_kind(kind))
     }
@@ -134,7 +136,8 @@ impl SecurityDescriptor {
         }
     }
 
-    /// Return a full access query result for the given required access and security token.
+    /// Return a full access query result for the given required access and
+    /// security token.
     pub const fn access_query_for(
         self,
         required_access: PermissionMode,
@@ -334,7 +337,8 @@ impl MetadataAccessQueryContext {
 }
 
 impl Metadata {
-    /// Create new metadata for a node of the given kind and size, with default root permissions.
+    /// Create new metadata for a node of the given kind and size, with default
+    /// root permissions.
     pub const fn new(kind: NodeKind, size: usize) -> Self {
         Self {
             kind,
@@ -346,7 +350,8 @@ impl Metadata {
         }
     }
 
-    /// Set the security descriptor for this metadata, returning the updated value.
+    /// Set the security descriptor for this metadata, returning the updated
+    /// value.
     pub const fn with_security(mut self, security: SecurityDescriptor) -> Self {
         self.security = security;
         self
@@ -384,7 +389,8 @@ impl Metadata {
             .access_query_candidate_view_for(security_token)
     }
 
-    /// Return a metadata access query context for the given required access and security token.
+    /// Return a metadata access query context for the given required access and
+    /// security token.
     pub const fn access_query_context_for(
         &self,
         required_access: PermissionMode,
@@ -399,7 +405,8 @@ impl Metadata {
         )
     }
 
-    /// Return an access query result for the given required access and security token.
+    /// Return an access query result for the given required access and security
+    /// token.
     pub const fn access_query_for(
         &self,
         required_access: PermissionMode,
@@ -436,7 +443,8 @@ impl DirectoryEntry {
     }
 }
 
-/// An extended attribute (xattr) — a name/value pair attached to a file or directory.
+/// An extended attribute (xattr) — a name/value pair attached to a file or
+/// directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct XattrEntry {
     pub name: Vec<u8>,
@@ -475,7 +483,8 @@ impl DirectoryEntry {
             .access_query_candidate_view_for(security_token)
     }
 
-    /// Return a metadata access query context for the given required access and security token.
+    /// Return a metadata access query context for the given required access and
+    /// security token.
     pub const fn access_query_context_for(
         &self,
         required_access: PermissionMode,
@@ -490,7 +499,8 @@ impl DirectoryEntry {
         )
     }
 
-    /// Return an access query result for the given required access and security token.
+    /// Return an access query result for the given required access and security
+    /// token.
     pub const fn access_query_for(
         &self,
         required_access: PermissionMode,
@@ -605,7 +615,8 @@ pub struct VolumeCheckReport {
 }
 
 impl VolumeCheckReport {
-    /// Return true if no issues, orphan blocks, or checksum failures were detected.
+    /// Return true if no issues, orphan blocks, or checksum failures were
+    /// detected.
     pub const fn is_clean(self) -> bool {
         self.issues_detected == 0 && self.orphan_data_blocks == 0 && self.checksum_failures == 0
     }

@@ -30,7 +30,8 @@
 pub const XHCI_CLASS: u8 = 0x0C;
 /// xHCI subclass.
 pub const XHCI_SUBCLASS: u8 = 0x03;
-/// xHCI programming interface (0x30 = xHCI, 0x20 = EHCI, 0x10 = OHCI, 0x00 = UHCI).
+/// xHCI programming interface (0x30 = xHCI, 0x20 = EHCI, 0x10 = OHCI, 0x00 =
+/// UHCI).
 pub const XHCI_PROGIF: u8 = 0x30;
 
 // ---------------------------------------------------------------------------
@@ -208,7 +209,8 @@ impl SetupPacket {
             bm_request_type: REQ_DEVICE_TO_HOST_STANDARD,
             b_request: REQ_GET_DESCRIPTOR,
             w_value: ((DESC_DEVICE as u16) << 8), // descriptor type << 8 | index
-            w_index: 0, // 0 for device descriptor (language for string desc)
+            w_index: 0,                           /* 0 for device descriptor (language for string
+                                                   * desc) */
             w_length: length,
         }
     }
@@ -318,7 +320,8 @@ impl Trb {
         self.control & TRB_CYCLE_BIT
     }
 
-    /// Completion code from a Command Completion Event TRB (bits 24:31 of status).
+    /// Completion code from a Command Completion Event TRB (bits 24:31 of
+    /// status).
     pub fn completion_code(&self) -> u32 {
         (self.status >> 24) & 0xFF
     }
@@ -491,7 +494,8 @@ mod controller {
         pub keyboard_slot: u8,
         /// HID keyboard endpoint info.
         pub keyboard_ep: Option<HidEndpointInfo>,
-        /// Pre-allocated DMA buffer for HID report reception (reused across polls).
+        /// Pre-allocated DMA buffer for HID report reception (reused across
+        /// polls).
         hid_report_buf: Option<DmaBuffer>,
         /// Per-slot bulk OUT transfer rings.
         bulk_out_rings: [Option<DmaBuffer>; MAX_SLOTS],
@@ -603,8 +607,9 @@ mod controller {
     // -----------------------------------------------------------------------
 
     impl XhciController {
-        /// Initialise a new xHCI controller given BAR0 physical address and size.
-        /// Returns `None` if MMIO mapping fails or the controller is not usable.
+        /// Initialise a new xHCI controller given BAR0 physical address and
+        /// size. Returns `None` if MMIO mapping fails or the controller
+        /// is not usable.
         pub unsafe fn new(bar0_phys: u64, bar0_size: usize) -> Option<Self> {
             let mmio = map_device_mmio(bar0_phys, bar0_size)?;
             let mmio_base = mmio;
@@ -714,8 +719,8 @@ mod controller {
             write_volatile(link_ptr, Trb::link(cmd_ring_phys, TRB_CYCLE_BIT));
 
             // Program CRCR (Command Ring Control Register).
-            // Bits 63:4 = physical address of cmd ring (64-byte aligned, always true for page-aligned)
-            // Bit 0 = RCS (Ring Cycle State), start with 1.
+            // Bits 63:4 = physical address of cmd ring (64-byte aligned, always true for
+            // page-aligned) Bit 0 = RCS (Ring Cycle State), start with 1.
             let crcr = cmd_ring_phys | CRCR_RCS;
             reg_write64_lo_hi(self.op_base, XHCI_OP_CRCR_LOW, XHCI_OP_CRCR_HIGH, crcr);
 
@@ -1144,17 +1149,19 @@ mod controller {
 
             // ICC: A0=1 (add slot), A1=1 (add EP0), A2=1 (drop EP0), A1+A2 cancel
             // Actually: Set A0=1 (slot context), A1=1 (EP0 unchanged), A2=1 (add EP1).
-            // Wait — the context indices in Add Context flags: bit 0 = slot, bit 1 = EP1 (control EP), bit 2 = EP2.
-            // For Configure Endpoint, we need to set the ADD flags for contexts we want to modify.
-            // All contexts not flagged are preserved.
-            // Flag A0=1 (modify slot), A1=1 (modify EP0 control — set to max packet size from descriptor),
-            // A2=1 (add EP1 = interrupt IN EP).
+            // Wait — the context indices in Add Context flags: bit 0 = slot, bit 1 = EP1
+            // (control EP), bit 2 = EP2. For Configure Endpoint, we need to set
+            // the ADD flags for contexts we want to modify. All contexts not
+            // flagged are preserved. Flag A0=1 (modify slot), A1=1 (modify EP0
+            // control — set to max packet size from descriptor), A2=1 (add EP1
+            // = interrupt IN EP).
             unsafe {
                 let icc = ict_base as *mut u32;
                 write_volatile(icc, 0x07); // A0=1, A1=1, A2=1
             }
 
-            // Copy slot context from output device context (DCBAAP entry points to output ctx).
+            // Copy slot context from output device context (DCBAAP entry points to output
+            // ctx).
             let out_ctx_base = dev_ctx.as_ptr();
             unsafe {
                 let src_slot = out_ctx_base;
@@ -1252,8 +1259,9 @@ mod controller {
             Ok(())
         }
 
-        /// Probe a mass storage device at the given slot: read config descriptor,
-        /// find bulk endpoints, configure them, and initialise the MSC driver.
+        /// Probe a mass storage device at the given slot: read config
+        /// descriptor, find bulk endpoints, configure them, and
+        /// initialise the MSC driver.
         pub unsafe fn init_msd(&mut self, slot_id: u8) -> crate::Result<()> {
             use crate::kernel::drivers::usb_msd::{
                 self, MsdBulkEndpoints, USB_CLASS_MSC, USB_PROTOCOL_BOT, USB_SUBCLASS_SCSI,
@@ -1544,8 +1552,8 @@ mod controller {
             Ok(())
         }
 
-        /// Submit a Normal TRB on the interrupt transfer ring to receive a HID report.
-        /// Returns the number of bytes received.
+        /// Submit a Normal TRB on the interrupt transfer ring to receive a HID
+        /// report. Returns the number of bytes received.
         pub unsafe fn poll_hid_report(&mut self, slot_id: u8, buf: &mut [u8; 8]) -> Result<usize> {
             let idx = slot_id as usize - 1;
             let int_ring = self.int_transfer_rings[idx]

@@ -356,10 +356,11 @@ impl Ext4Fs {
 
     /// Walk an extent tree to map a logical block to a physical block.
     ///
-    /// The extent tree root lives in `i_block[0..60]` as an [`Ext4ExtentHeader`]
-    /// followed by either [`Ext4ExtentIdx`] (internal nodes) or [`Ext4Extent`]
-    /// (leaf nodes).  Internal nodes are walked by comparing `block_idx` against
-    /// `ei_block`; leaf nodes are searched for an extent covering `block_idx`.
+    /// The extent tree root lives in `i_block[0..60]` as an
+    /// [`Ext4ExtentHeader`] followed by either [`Ext4ExtentIdx`] (internal
+    /// nodes) or [`Ext4Extent`] (leaf nodes).  Internal nodes are walked by
+    /// comparing `block_idx` against `ei_block`; leaf nodes are searched
+    /// for an extent covering `block_idx`.
     fn map_inode_block_extents(&self, inode: &Ext4Inode, block_idx: usize) -> Result<Option<u64>> {
         let block_size = self.block_size();
         let root_bytes = inode_block_bytes(inode);
@@ -558,8 +559,9 @@ impl Ext4Fs {
         (block, block_high, EXT4_EXTENTS_FL)
     }
 
-    /// Read the extent tree leaf node from `inode`, returning the raw leaf bytes
-    /// and the header.  If the tree is empty (entries==0), returns `Ok(None)`.
+    /// Read the extent tree leaf node from `inode`, returning the raw leaf
+    /// bytes and the header.  If the tree is empty (entries==0), returns
+    /// `Ok(None)`.
     fn read_extent_leaf_node(
         &self,
         inode: &Ext4Inode,
@@ -707,7 +709,8 @@ impl Ext4Fs {
         self.allocate_inode_block_ext4_indirect(inode, logical_block)
     }
 
-    /// Free all data blocks (and metadata blocks) owned by an extent-based inode.
+    /// Free all data blocks (and metadata blocks) owned by an extent-based
+    /// inode.
     fn free_extent_blocks(&self, inode: &Ext4Inode) -> Result<()> {
         let block_size = self.block_size();
         let root_bytes = inode_block_bytes(inode);

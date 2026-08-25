@@ -134,9 +134,9 @@ pub(crate) const S_VALID_DATA_LEN_HI: usize = 28; // u32 LE
 
 // ─── file name extension field offsets (type 0xC1) ──────────────────────
 
-/// GeneralPurposeFlag at offset 1 (bit 0 = alloc possible, bit 1 = no fat chain).
-/// Each file name extension holds up to 15 UTF-16LE code units (30 bytes at
-/// offset 2–31).
+/// GeneralPurposeFlag at offset 1 (bit 0 = alloc possible, bit 1 = no fat
+/// chain). Each file name extension holds up to 15 UTF-16LE code units (30
+/// bytes at offset 2–31).
 pub(crate) const FN_NAME_START: usize = 2; // 15 × u16 LE (30 bytes)
 
 /// Maximum code units per file name extension entry.
@@ -179,7 +179,8 @@ pub(crate) struct ExfatBootRegion {
     /// Volume flags (dirty, media failure, etc.).
     #[allow(dead_code)]
     pub(crate) volume_flags: u16,
-    /// Computed cluster size in bytes: `2^bytes_per_sector_shift * 2^sectors_per_cluster_shift`.
+    /// Computed cluster size in bytes: `2^bytes_per_sector_shift *
+    /// 2^sectors_per_cluster_shift`.
     pub(crate) cluster_size_bytes: u32,
 }
 

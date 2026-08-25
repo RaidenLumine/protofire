@@ -49,7 +49,8 @@ pub const PPP_PROTO_ECHO: u16 = PPP_PROTO_LCP; // LCP code 9/10
 
 /// Maximum Receive Unit (default, RFC 1661 §6.1).
 pub const PPP_DEFAULT_MRU: usize = 1500;
-/// Maximum frame overhead: Flag(1) + Addr(1) + Ctrl(1) + Proto(2) + FCS(2) + Flag(1).
+/// Maximum frame overhead: Flag(1) + Addr(1) + Ctrl(1) + Proto(2) + FCS(2) +
+/// Flag(1).
 pub const PPP_MAX_OVERHEAD: usize = 8;
 
 // LCP code values.
@@ -899,8 +900,9 @@ mod tests {
         // Actually: init=0xFFFF, complement = ~0xFFFF = 0x0000.
         // But CRC of empty data with init=0xFFFF and xorout=0xFFFF is 0x0000.
         // !0x0000 = 0xFFFF. Wait, let me recheck.
-        // Standard CRC16-IBM: init=0x0000, no xorout, but PPP uses init=0xFFFF, xorout=0xFFFF.
-        // For empty data: CRC(init=0xFFFF) = 0xFFFF (no bits to shift). !0xFFFF = 0x0000.
+        // Standard CRC16-IBM: init=0x0000, no xorout, but PPP uses init=0xFFFF,
+        // xorout=0xFFFF. For empty data: CRC(init=0xFFFF) = 0xFFFF (no bits to
+        // shift). !0xFFFF = 0x0000.
         assert_eq!(fcs, 0x0000);
     }
 

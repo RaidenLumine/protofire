@@ -537,9 +537,9 @@ pub fn luks2_open(device: Arc<dyn BlockDevice>, passphrase: &[u8]) -> Result<Enc
         return Err(Error::InvalidCredential);
     }
 
-    // 7. XOR with derived key to get the candidate master key.
-    //    For AES-256-XTS, key_size is 64 bytes (two 32-byte keys).
-    //    For AES-128-XTS, key_size is 32 bytes.
+    // 7. XOR with derived key to get the candidate master key. For AES-256-XTS,
+    //    key_size is 64 bytes (two 32-byte keys). For AES-128-XTS, key_size is 32
+    //    bytes.
     let xts_key_size = keyslot.key_size;
     let mut xts_key = alloc::vec![0u8; xts_key_size.max(64)];
 

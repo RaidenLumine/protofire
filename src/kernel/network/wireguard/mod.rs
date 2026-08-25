@@ -6,8 +6,8 @@
 //! using the WireGuard protocol (RFC-compatible, SHA-256 based primitive
 //! variant):
 //!
-//!   ← s                              (pre-message: responder's static key known)
-//!   → e, es, s, ss, {t}              [MSG_INITIATION]
+//!   ← s                              (pre-message: responder's static key
+//! known)   → e, es, s, ss, {t}              [MSG_INITIATION]
 //!   ← e, ee, se, psk                 [MSG_RESPONSE]
 //!
 //! Key derivation uses HKDF-SHA256 (replacing the standard BLAKE2s) and
@@ -48,7 +48,8 @@ pub const MSG_TYPE_COOKIE_REPLY: u32 = 3;
 pub const MSG_TYPE_TRANSPORT: u32 = 4;
 
 /// Size of an initiation message: type(4) + reserved(4) + sender_idx(4) +
-/// ephemeral(32) + encrypted_static(48) + encrypted_timestamp(28) + mac1(16) + mac2(16).
+/// ephemeral(32) + encrypted_static(48) + encrypted_timestamp(28) + mac1(16) +
+/// mac2(16).
 pub const MSG_INITIATION_SIZE: usize = 152;
 
 /// Size of a response message: type(4) + reserved(4) + sender_idx(4) +
@@ -243,7 +244,8 @@ impl HandshakeInit {
     /// Serialise to 152-byte wire format.
     ///
     /// Layout: type(4) + reserved(4) + sender_idx(4) + ephemeral(32) +
-    ///         encrypted_static(48) + encrypted_timestamp(28) + mac1(16) + mac2(16)
+    ///         encrypted_static(48) + encrypted_timestamp(28) + mac1(16) +
+    /// mac2(16)
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(MSG_INITIATION_SIZE);
         buf.extend_from_slice(&MSG_TYPE_INITIATION.to_le_bytes()); // type
@@ -650,7 +652,8 @@ impl InitiatorHandshake {
         let dh_ss = x25519(&self.s_private, &self.r_public);
         let (new_ck2, k2) = mix_key(&self.ck, &dh_ss);
         self.ck = new_ck2;
-        // encrypted_timestamp = AEAD(k2, 0, h, t) with t = 12 zero bytes (TAI64N placeholder)
+        // encrypted_timestamp = AEAD(k2, 0, h, t) with t = 12 zero bytes (TAI64N
+        // placeholder)
         let timestamp = [0u8; 12];
         let (enc_ts, enc_ts_tag) = chacha20_poly1305_encrypt(&k2, &ZERO_NONCE, &self.h, &timestamp);
         let mut encrypted_timestamp = [0u8; 28];
@@ -940,7 +943,8 @@ pub fn decrypt_transport_packet(keypair: &Keypair, data: &[u8]) -> Result<Vec<u8
 /// Parse the transport header without decrypting.
 ///
 /// Returns `(receiver_idx, counter)`.
-/// Useful for routing the message to the correct peer/session before decryption.
+/// Useful for routing the message to the correct peer/session before
+/// decryption.
 pub fn parse_transport_header(data: &[u8]) -> Result<(u32, u64)> {
     if data.len() < TRANSPORT_HEADER_SIZE + AEAD_TAG_SIZE {
         return Err(Error::InvalidArgument);

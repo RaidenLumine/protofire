@@ -5,13 +5,15 @@
 
 use core::mem::{offset_of, size_of};
 
-// These numeric tags cross the kernel/user boundary and therefore must remain stable.
+// These numeric tags cross the kernel/user boundary and therefore must remain
+// stable.
 pub const FILE_KIND_UNKNOWN: usize = 0;
 pub const FILE_KIND_DIRECTORY: usize = 1;
 pub const FILE_KIND_FILE: usize = 2;
 pub const FILE_KIND_DEVICE: usize = 3;
 pub const FILE_KIND_SYMLINK: usize = 4;
-// Match the conventional "use current working directory as dirfd base" sentinel.
+// Match the conventional "use current working directory as dirfd base"
+// sentinel.
 pub const AT_FDCWD: usize = (-100_isize) as usize;
 pub const ACCESS_READ_BIT: u16 = 0b100;
 pub const ACCESS_WRITE_BIT: u16 = 0b010;

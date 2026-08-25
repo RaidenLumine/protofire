@@ -1,6 +1,7 @@
 //! src/kernel/io.rs
 //!
-//! Unified process I/O adapter over files, directories, and device-backed descriptors.
+//! Unified process I/O adapter over files, directories, and device-backed
+//! descriptors.
 
 pub use crate::kernel::device::{
     CONSOLE_DEVICE_PATH, DEBUG_DEVICE_PATH, KEYBOARD_DEVICE_PATH, KEYBOARD_RAW_DEVICE_PATH,
@@ -18,7 +19,8 @@ fn resolve_io_entry(
     required_rights: u32,
 ) -> Result<HandleEntry> {
     let entry = process.fd_entry(fd)?;
-    // Directory handles are metadata channels; they are never byte-stream I/O targets.
+    // Directory handles are metadata channels; they are never byte-stream I/O
+    // targets.
     if entry.is_directory_like() {
         return Err(Error::InvalidArgument);
     }

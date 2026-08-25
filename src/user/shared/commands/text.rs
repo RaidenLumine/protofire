@@ -466,7 +466,8 @@ pub fn cmd_uniq(cwd: &str, argv: &[String], stdin: Option<&str>) -> CmdResult {
 
 // ── diff ────────────────────────────────────────────────────────────────
 
-/// Longest Common Subsequence — returns indices of matching lines in `a` and `b`.
+/// Longest Common Subsequence — returns indices of matching lines in `a` and
+/// `b`.
 fn compute_lcs(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
     let m = a.len();
     let n = b.len();

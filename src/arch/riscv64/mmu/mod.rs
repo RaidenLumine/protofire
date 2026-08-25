@@ -310,7 +310,8 @@ fn align_up(value: usize, align: usize) -> Option<usize> {
         .map(|aligned| aligned & !(align - 1))
 }
 
-/// Returns true when `[start, end)` is contained within `[region_start, region_end)`.
+/// Returns true when `[start, end)` is contained within `[region_start,
+/// region_end)`.
 fn range_within(start: usize, end: usize, region_start: usize, region_end: usize) -> bool {
     start >= region_start && end <= region_end && start <= end
 }
@@ -1408,7 +1409,8 @@ impl PreparedProcessAddressSpace {
         activate_prepared_process_address_space_impl(self)
     }
 
-    /// Report every present user page as `(virtual_address, physical_address, permissions)`.
+    /// Report every present user page as `(virtual_address, physical_address,
+    /// permissions)`.
     pub fn user_page_entries(&self) -> Vec<(usize, usize, PagePermissions)> {
         let mut entries = Vec::new();
         for page_index in 0..USER_DEMO_REGION_PAGE_COUNT {

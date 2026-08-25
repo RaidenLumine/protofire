@@ -10,7 +10,8 @@
 //! - `pim`          — PIM-DM control plane (`PimState`)
 //!
 //! [`MrtState`] bundles all of the above into the per-stack multicast routing
-//! state held by the [`NetworkStack`](crate::kernel::network::stack::NetworkStack).
+//! state held by the
+//! [`NetworkStack`](crate::kernel::network::stack::NetworkStack).
 
 pub(crate) mod igmp_router;
 pub(crate) mod mfc;

@@ -3,8 +3,8 @@
 //! Network Address Translation / Port Address Translation (NAPT).
 //!
 //! Implements IPv4 source-NAT masquerading (RFC 2663 / RFC 3022):
-//! - Outbound SNAT: replaces internal src_ip:src_port with external IP and
-//!   an allocated ephemeral port.
+//! - Outbound SNAT: replaces internal src_ip:src_port with external IP and an
+//!   allocated ephemeral port.
 //! - Inbound reverse DNAT: matches the translated port against the
 //!   connection-tracking table and restores the original dst_ip:dst_port.
 //! - Connection tracking with per-protocol timeout eviction.
@@ -489,8 +489,8 @@ fn extract_tcp_udp_ports(packet: &[u8], header_len: usize) -> Option<(u16, u16)>
 
 /// Incremental IP header checksum update after changing source IP.
 ///
-/// Standard incremental checksum update: `new_csum = ~(~old_csum + ~old_val + new_val)`
-/// where the ones-complement is folded with carry.
+/// Standard incremental checksum update: `new_csum = ~(~old_csum + ~old_val +
+/// new_val)` where the ones-complement is folded with carry.
 fn update_ip_checksum_after_src_change(old_csum: u16, old_src: [u8; 4], new_src: [u8; 4]) -> u16 {
     let old_high = u16::from_be_bytes([old_src[0], old_src[1]]);
     let old_low = u16::from_be_bytes([old_src[2], old_src[3]]);

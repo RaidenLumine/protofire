@@ -702,7 +702,8 @@ pub fn chacha20_poly1305_encrypt(
     let mut ciphertext = plaintext.to_vec();
     chacha20_encrypt_inner(key, nonce, 1, &mut ciphertext);
 
-    // Build Poly1305 input: aad || pad(aad) || ciphertext || pad(ciphertext) || len(aad) || len(ciphertext)
+    // Build Poly1305 input: aad || pad(aad) || ciphertext || pad(ciphertext) ||
+    // len(aad) || len(ciphertext)
     let mut mac_input = Vec::new();
     mac_input.extend_from_slice(aad);
     // Pad AAD to 16-byte boundary with zeros.
@@ -1381,7 +1382,8 @@ pub fn aes_xts_decrypt(key: &[u8; 64], sector_id: u64, data: &mut [u8]) {
 const MASK_51: u64 = (1u64 << 51) - 1; // 0x0007_FFFF_FFFF_FFFF
 
 /// 2^255 - 19 as 5 51-bit limbs.
-/// (2^255 - 1) - 18  decomposes as [MASK_51-18, MASK_51, MASK_51, MASK_51, MASK_51].
+/// (2^255 - 1) - 18  decomposes as [MASK_51-18, MASK_51, MASK_51, MASK_51,
+/// MASK_51].
 const FE25519_PRIME: [u64; 5] = [MASK_51 - 18, MASK_51, MASK_51, MASK_51, MASK_51];
 
 /// A field element in GF(2^255 - 19), stored as 5 51-bit limbs (little-endian).
@@ -1425,7 +1427,8 @@ fn fe25519_reduce(x: &mut Fe25519) {
     // Otherwise x < p already.
 }
 
-/// Internal: compute a - b with borrow propagation.  Returns (result, borrow_out).
+/// Internal: compute a - b with borrow propagation.  Returns (result,
+/// borrow_out).
 fn fe25519_sub_internal(a: &Fe25519, b: &Fe25519) -> (Fe25519, bool) {
     let mut out = [0u64; 5];
     let mut borrow: u64 = 0;
@@ -1579,7 +1582,8 @@ fn fe25519_inv(a: &Fe25519) -> Fe25519 {
     let mut result = *a;
 
     // Raise to 2^255 - 21 via square-and-multiply.
-    // 2^255 - 21 = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeb
+    // 2^255 - 21 =
+    // 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeb
     // 252 bits set to 1, except the lowest few bits.
     // Strategy: set result = a, then square 255 times, multiplying by a at
     // the positions where the exponent bit is 1.
@@ -1596,11 +1600,12 @@ fn fe25519_inv(a: &Fe25519) -> Fe25519 {
 
     // Use a shorter chain: compute a^(2^255 - 21) as:
     //   a^(2^255 - 21) = a^(2^255 - 1) * a^(-20)
-    // This is a bit complicated.  Let's just do the straightforward square-and-multiply.
+    // This is a bit complicated.  Let's just do the straightforward
+    // square-and-multiply.
 
     // Exponent p-2 = 2^255 - 21.  Bits 2 and 4 are 0; bits 0,1,3,5..254 are 1.
-    // (21 = 16+4+1, so subtracting from 2^255 clears bits 2,4; bit 0 = 1 since result is odd.)
-    // Start with result = a (MSB bit 254 already consumed).
+    // (21 = 16+4+1, so subtracting from 2^255 clears bits 2,4; bit 0 = 1 since
+    // result is odd.) Start with result = a (MSB bit 254 already consumed).
     let mut i: i32 = 253;
     while i >= 0 {
         result = sq(&result);
@@ -1809,9 +1814,10 @@ pub fn generate_salt(username: &str) -> [u8; 16] {
     salt
 }
 
-// ── RSA / Big-Integer Arithmetic ──────────────────────────────────────────────
-// Stack-allocated limb arrays for RSA verification (2048-bit and 4096-bit keys).
-// Uses Montgomery multiplication for modular arithmetic — no division needed.
+// ── RSA / Big-Integer Arithmetic
+// ────────────────────────────────────────────── Stack-allocated limb arrays
+// for RSA verification (2048-bit and 4096-bit keys). Uses Montgomery
+// multiplication for modular arithmetic — no division needed.
 
 /// Maximum RSA modulus size: 4096 bits = 64 × u64 limbs = 512 bytes.
 const RSA_MAX_LIMBS: usize = 64;
@@ -2141,8 +2147,8 @@ fn rsa_mod_pow(
 
     // R mod n in Montgomery form: MontMul(R mod n, R^2 mod n) — but actually
     // 1 in Montgomery form is just R mod n.
-    // Since Montgomery form of x is x*R mod n, the value 1 is represented as R mod n.
-    // Let's compute R mod n.
+    // Since Montgomery form of x is x*R mod n, the value 1 is represented as R mod
+    // n. Let's compute R mod n.
     let mut one_mont = [0u64; RSA_MAX_LIMBS];
     one_mont[0] = 1;
     // Shift left by 64*num_limbs mod n (same as r_mod_n in rsa_to_mont).
@@ -2320,8 +2326,8 @@ pub fn rsa_pss_verify(
         return false;
     }
 
-    // 3. Split EM: maskedDB = EM[0..k-hLen-1], H = EM[k-hLen-1..k-1]
-    //    hLen = 32 (SHA-256).
+    // 3. Split EM: maskedDB = EM[0..k-hLen-1], H = EM[k-hLen-1..k-1] hLen = 32
+    //    (SHA-256).
     let h_len: usize = 32;
     if k < h_len + 1 {
         return false;
@@ -2341,13 +2347,14 @@ pub fn rsa_pss_verify(
         db[i] = masked_db[i] ^ db_mask[i];
     }
 
-    // 6. Set leftmost 8*kLen - 2*hLen - 16 bits of DB to 0.
-    //    kLen = k (bytes).  8k - 2*256 - 16 = 8k - 528 bits.
-    //    That's (8k - 528) bits = (k - 66) bytes.  Wait, let me recalculate.
-    //    emBits = 8 * k - (8 * k - bitlen(n)) rounded down to a multiple of 8? No.
-    //    Actually, RFC 8017 §9.1.1 says:
-    //    emBits = modBits - 1 where modBits = bitlen(n).
-    //    The leftmost 8*emLen - emBits bits of the leftmost octet of DB shall be 0.
+    // 6. Set leftmost 8*kLen - 2*hLen - 16 bits of DB to 0. kLen = k (bytes).  8k -
+    //    2*256 - 16 = 8k
+    //    - 528 bits. That's (8k - 528) bits = (k - 66) bytes.  Wait, let me
+    //      recalculate. emBits = 8
+    //    * k - (8 * k - bitlen(n)) rounded down to a multiple of 8? No. Actually,
+    //      RFC 8017 §9.1.1
+    //    says: emBits = modBits - 1 where modBits = bitlen(n). The leftmost 8*emLen
+    // - emBits bits    of the leftmost octet of DB shall be 0.
     //
     //    modBits = rsa_limbs_bitlen(&n, num_limbs)
     //    emBits = modBits - 1
@@ -2374,7 +2381,7 @@ pub fn rsa_pss_verify(
     }
 
     // RFC 8017 §9.1.2, steps 9-15 (EMSA-PSS-VERIFY):
-    //   9.  Set the leftmost 8*emLen - emBits bits of the leftmost byte of DB to 0.
+    //   9. Set the leftmost 8*emLen - emBits bits of the leftmost byte of DB to 0.
     //   10. The emLen - hLen - sLen - 2 leftmost bytes of DB must be 0x00.
     //   11. The byte at position emLen - hLen - sLen - 2 of DB must be 0x01.
     //   12. Let salt be the last sLen bytes of DB.
@@ -2408,8 +2415,8 @@ pub fn rsa_pss_verify(
     for byte_idx in 0..ps_len {
         // Wait, step 10 says "emLen - hLen - sLen - 2 leftmost bytes".
         // db_len = k - h_len - 1.
-        // ps_bytes = db_len - s_len - 1 = k - h_len - 1 - s_len - 1 = k - h_len - s_len - 2.
-        // That matches step 10.
+        // ps_bytes = db_len - s_len - 1 = k - h_len - 1 - s_len - 1 = k - h_len - s_len
+        // - 2. That matches step 10.
         if db[byte_idx] != 0 {
             return false;
         }
@@ -2442,7 +2449,8 @@ pub fn rsa_pss_verify(
 //
 // Implements field arithmetic modulo the P-256 prime, point operations on
 // the curve y² = x³ + ax + b, and the ECDSA verification formula:
-//   u₁ = e·s⁻¹ mod n,  u₂ = r·s⁻¹ mod n,  R = u₁·G + u₂·Q,  check R.x ≡ r (mod n).
+//   u₁ = e·s⁻¹ mod n,  u₂ = r·s⁻¹ mod n,  R = u₁·G + u₂·Q,  check R.x ≡ r (mod
+// n).
 
 /// P-256 prime: 2^256 - 2^224 + 2^192 + 2^96 - 1.
 const P256_PRIME: [u64; 4] = [
@@ -3104,8 +3112,9 @@ mod tests {
 
     #[test]
     fn sha256_two_blocks() {
-        // "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq" (448 bits = exactly one
-        // block plus one more byte that forces a second block for padding).
+        // "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq" (448 bits =
+        // exactly one block plus one more byte that forces a second block for
+        // padding).
         let input = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
         let digest = sha256(input);
         let expected =
@@ -3434,12 +3443,12 @@ mod tests {
             // But in my u128 decomposition:
             // t0 = n0 = 0x72676f7470797243, carry0 = 0
             // t1 = n1 = 0x06f46206369687061... wait, n1 is 8 bytes LE from block[8..16].
-            // Let me check: block[8..16] = "ic Fo" (the last 8 bytes of the first 16-char chunk)
-            // That's [105, 99, 32, 70, 111, 0, 0, ...]  — no.
+            // Let me check: block[8..16] = "ic Fo" (the last 8 bytes of the first 16-char
+            // chunk) That's [105, 99, 32, 70, 111, 0, 0, ...]  — no.
             //
             // The chunk is "Cryptographic F" (bytes 0-15):
-            // bytes: [67, 114, 121, 112, 116, 111, 103, 114, 97, 112, 104, 105, 99, 32, 70, 111]
-            // block[0..16] = these 16 bytes
+            // bytes: [67, 114, 121, 112, 116, 111, 103, 114, 97, 112, 104, 105, 99, 32, 70,
+            // 111] block[0..16] = these 16 bytes
             // n0 = LE bytes 0-7: [67, 114, 121, 112, 116, 111, 103, 114] = "Cryptogr"
             // n1 = LE bytes 8-15: [97, 112, 104, 105, 99, 32, 70, 111] = "aphic Fo"
             //
@@ -3449,8 +3458,8 @@ mod tests {
             //
             // Wait, u64::from_le_bytes takes the bytes in little-endian order.
             // So n1 = u64::from_le_bytes([97, 112, 104, 105, 99, 32, 70, 111])
-            //      = 111*2^56 + 70*2^48 + 32*2^40 + 99*2^32 + 105*2^24 + 104*2^16 + 112*2^8 + 97
-            //      = 0x6f46206369687061
+            //      = 111*2^56 + 70*2^48 + 32*2^40 + 99*2^32 + 105*2^24 + 104*2^16 + 112*2^8
+            // + 97      = 0x6f46206369687061
             //
             // But the 0x01 at block[16] is the high bit of a 17-byte number.
             // The 17-byte number is: n0 + n1*2^64 + 0x01*2^128 + 0*2^136...
@@ -3508,9 +3517,10 @@ mod tests {
             block[remainder.len()] = 0x01;
             let n0 = u64::from_le_bytes(block[..8].try_into().unwrap());
             let n1 = u64::from_le_bytes(block[8..16].try_into().unwrap());
-            // remainder = "up" = [117, 112]. block = [117, 112, 0x01, 0, 0, 0, 0, 0] (9 meaningful bytes)
-            // n0 = LE of first 8 bytes = [117, 112, 1, 0, 0, 0, 0, 0]
-            // = 117 + 112*256 + 1*65536 = 117 + 28672 + 65536 = 94325 = 0x17075
+            // remainder = "up" = [117, 112]. block = [117, 112, 0x01, 0, 0, 0, 0, 0] (9
+            // meaningful bytes) n0 = LE of first 8 bytes = [117, 112, 1, 0, 0,
+            // 0, 0, 0] = 117 + 112*256 + 1*65536 = 117 + 28672 + 65536 = 94325
+            // = 0x17075
             assert_eq!(n0, 0x0000000000017075, "blk2 n0");
 
             // For partial block, the 0x01 byte is at len=2, so it's already in n0.

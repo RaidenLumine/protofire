@@ -20,17 +20,17 @@
 //! as the tested PIM-DM surface, hence the targeted `dead_code` allowances.
 //!
 //! Security posture (improved over the original recovery):
-//! - Every inbound message's PIM checksum (bytes 2-3, one's-complement over
-//!   the whole message, RFC 4601 §5.2) is validated; invalid messages are
-//!   silently dropped rather than trusted.
-//! - Forwarded multicast passes a real RPF (Reverse Path Forwarding) check:
-//!   the route back to the source must point back through the incoming VIF
-//!   (RFC 3973 §3.4.2) — we do not unconditionally flood.
-//! - Packets whose TTL has been consumed are never forwarded; the forward
-//!   path decrements the TTL and skips anything that would reach zero.
-//! - Outgoing VIF indices read from untrusted data are clamped against the
-//!   VIF table so an out-of-range index cannot cause an out-of-bounds access
-//!   or panic.
+//! - Every inbound message's PIM checksum (bytes 2-3, one's-complement over the
+//!   whole message, RFC 4601 §5.2) is validated; invalid messages are silently
+//!   dropped rather than trusted.
+//! - Forwarded multicast passes a real RPF (Reverse Path Forwarding) check: the
+//!   route back to the source must point back through the incoming VIF (RFC
+//!   3973 §3.4.2) — we do not unconditionally flood.
+//! - Packets whose TTL has been consumed are never forwarded; the forward path
+//!   decrements the TTL and skips anything that would reach zero.
+//! - Outgoing VIF indices read from untrusted data are clamped against the VIF
+//!   table so an out-of-range index cannot cause an out-of-bounds access or
+//!   panic.
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec;

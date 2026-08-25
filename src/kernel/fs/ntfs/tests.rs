@@ -39,7 +39,8 @@ fn put_u64_le(buf: &mut [u8], off: usize, value: u64) {
     }
 }
 
-/// Build a reparse-point data buffer containing `path` as the substitution name.
+/// Build a reparse-point data buffer containing `path` as the substitution
+/// name.
 ///
 /// Layout: u32 tag, u16 reparse_data_length, u16 reserved, then the reparse
 /// data: u16 sub_name_offset, u16 sub_name_length, u16 print_name_offset,

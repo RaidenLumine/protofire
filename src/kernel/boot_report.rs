@@ -130,7 +130,8 @@ impl BootReport {
         self.boot_faults += count;
     }
 
-    /// Compute boot-stage durations from the tick records captured in `STAGE_TICK`.
+    /// Compute boot-stage durations from the tick records captured in
+    /// `STAGE_TICK`.
     pub fn finalise(&mut self, current_tick: u64) {
         let ticks: [u64; 5] = [
             STAGE_TICK[0].load(Ordering::Relaxed),

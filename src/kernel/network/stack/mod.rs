@@ -1,7 +1,7 @@
 //! src/kernel/network/stack/mod.rs
 //!
-//! `NetworkStack` — global singleton that owns the network device and orchestrates
-//! protocol-layer dispatch (Ethernet → IPv4 / IPv6 → transport).
+//! `NetworkStack` — global singleton that owns the network device and
+//! orchestrates protocol-layer dispatch (Ethernet → IPv4 / IPv6 → transport).
 //!
 //! Sub-module organisation:
 //! - `global`    — Global singleton, initialisation, uninstall

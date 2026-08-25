@@ -70,7 +70,8 @@ pub struct FilterRuleDef {
     pub src_port_end: u32,
     /// Destination port range start (0 = any).
     pub dst_port_start: u32,
-    /// Destination port range end (0 = use dst_port_start as a single-port match).
+    /// Destination port range end (0 = use dst_port_start as a single-port
+    /// match).
     pub dst_port_end: u32,
     /// Enable stateful connection tracking for this rule (0 = stateless,
     /// 1 = track flow and auto-allow return traffic).

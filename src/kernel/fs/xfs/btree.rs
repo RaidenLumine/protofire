@@ -361,7 +361,8 @@ pub(crate) fn parse_leaf_dir(data: &[u8]) -> Vec<DirEntry> {
     entries
 }
 
-/// Read all extents from a file whose data fork is in B+tree (FMT_BTREE) format.
+/// Read all extents from a file whose data fork is in B+tree (FMT_BTREE)
+/// format.
 ///
 /// This is a convenience wrapper around [`BtreeReader64::collect_extents`].
 pub fn read_extent_btree(
@@ -773,11 +774,13 @@ pub(crate) fn parse_attr_leaf_entries(
         return result;
     }
     // After blkinfo (12 bytes) comes the attr leaf header:
-    //   u16 count (at 12), u16 usedbytes (at 14), u16 firstused (at 16), u8 holes (at 18), u8 pad (at 19)
-    // Then at offset 20: the leaf entries array (count × 8 bytes: hash u32 + offset u16 + flags u8 + pad u8)
-    //   Actually each entry is: u32 hash, u16 nameidx, u8 flags, u8 pad = 8 bytes
-    // After entries: the name/value region grows from `firstused` toward the
-    // end of the block (or from the end of the entries array).
+    //   u16 count (at 12), u16 usedbytes (at 14), u16 firstused (at 16), u8 holes
+    // (at 18), u8 pad (at 19) Then at offset 20: the leaf entries array (count
+    // × 8 bytes: hash u32 + offset u16
+    // + flags u8 + pad u8)   Actually each entry is: u32 hash, u16 nameidx, u8
+    //   flags, u8 pad =
+    // 8 bytes After entries: the name/value region grows from `firstused` toward
+    // the end of the block (or from the end of the entries array).
     let entries_start = 20usize; // after blkinfo(12) + header(8: count, usedbytes, firstused, holes+pad)
     if entries_start + count * 8 > sb_block_size || entries_start + count * 8 > data.len() {
         return result;
@@ -789,8 +792,8 @@ pub(crate) fn parse_attr_leaf_entries(
         }
         let _hash = be32(data, off);
         let nameidx = u16::from_be_bytes([data[off + 4], data[off + 5]]) as usize;
-        // Scan forward from nameidx to read the entry: u8 namelen, u8 valuelen, u8 flags,
-        // then name[namelen], then value[valuelen].
+        // Scan forward from nameidx to read the entry: u8 namelen, u8 valuelen, u8
+        // flags, then name[namelen], then value[valuelen].
         if nameidx + 3 > data.len() || nameidx + 3 > sb_block_size {
             continue;
         }
@@ -812,9 +815,9 @@ pub(crate) fn parse_attr_leaf_entries(
 
 /// Walk an attribute B+tree and collect all name/value pairs.
 ///
-/// Reuses `parse_node_block()` and `logical_block_to_phys()` for node traversal.
-/// Leaf blocks use `XFS_ATTR_LEAF_MAGIC` (0xfbee) and require a different parser
-/// than directory leaf blocks.
+/// Reuses `parse_node_block()` and `logical_block_to_phys()` for node
+/// traversal. Leaf blocks use `XFS_ATTR_LEAF_MAGIC` (0xfbee) and require a
+/// different parser than directory leaf blocks.
 #[allow(clippy::type_complexity)]
 pub(crate) fn walk_attr_tree(
     device: &Arc<dyn BlockDevice>,

@@ -1,6 +1,7 @@
 //! src/kernel/fs/mod.rs
 //!
-//! Filesystem facade that mounts volumes, resolves paths, and exposes VFS operations.
+//! Filesystem facade that mounts volumes, resolves paths, and exposes VFS
+//! operations.
 
 pub mod block;
 pub mod block_cache;

@@ -3,8 +3,8 @@
 //! Concurrency stress tests and memory pressure tests for the kernel.
 //!
 //! - **Concurrency stress**: spawn many threads, exercise synchronisation
-//!   primitives, rapid create/destroy cycles, timer-driven preemption.
-//!   Primary goal: verify no panics / crashes under load.
+//!   primitives, rapid create/destroy cycles, timer-driven preemption. Primary
+//!   goal: verify no panics / crashes under load.
 //! - **Memory pressure**: allocate until exhaustion, verify graceful failure,
 //!   fragmentation stress, heap integrity after churn.
 

@@ -71,8 +71,8 @@ impl SeccompFilterState {
 
     /// Evaluate a syscall number against the filter.
     ///
-    /// Returns the action to take: `SECCOMP_ACTION_ALLOW`, `SECCOMP_ACTION_KILL`,
-    /// or `SECCOMP_ACTION_TRAP`.
+    /// Returns the action to take: `SECCOMP_ACTION_ALLOW`,
+    /// `SECCOMP_ACTION_KILL`, or `SECCOMP_ACTION_TRAP`.
     pub fn evaluate(&self, syscall_number: usize) -> u32 {
         if !self.enabled {
             return SECCOMP_ACTION_ALLOW;

@@ -4,18 +4,18 @@
 //! via the `abi_info` syscall (#39).
 //!
 //! Single source of truth: the kernel re-exports this module
-//! (`src/abi/runtime.rs` is `pub use crate::user::shared::abi::runtime::*;`), so the
-//! record user space parses is byte-identical to what the kernel writes.
+//! (`src/abi/runtime.rs` is `pub use crate::user::shared::abi::runtime::*;`),
+//! so the record user space parses is byte-identical to what the kernel writes.
 //!
 //! # Versioning
 //!
-//! - `RUNTIME_ABI_MAJOR` / `RUNTIME_ABI_MINOR` describe the runtime ABI
-//!   record itself.  The layout of `RuntimeAbiInfo` changed when the syscall
-//!   ABI version fields were added (major 1 → 2); this is the last pre-freeze
+//! - `RUNTIME_ABI_MAJOR` / `RUNTIME_ABI_MINOR` describe the runtime ABI record
+//!   itself.  The layout of `RuntimeAbiInfo` changed when the syscall ABI
+//!   version fields were added (major 1 → 2); this is the last pre-freeze
 //!   breaking layout change, and `record_size` lets older user space detect it.
 //! - `syscall_abi_major` / `syscall_abi_minor` carry the syscall-table ABI
-//!   version (`crate::user::shared::abi::syscall::SYSCALL_ABI_VERSION_*`), which user space
-//!   uses for runtime negotiation alongside `syscall_count`.
+//!   version (`crate::user::shared::abi::syscall::SYSCALL_ABI_VERSION_*`),
+//!   which user space uses for runtime negotiation alongside `syscall_count`.
 
 use core::mem::{offset_of, size_of};
 
@@ -57,9 +57,11 @@ pub struct RuntimeAbiInfo {
     pub _pad: u32,
     pub feature_flags: u64,
     pub syscall_count: u32,
-    /// Syscall-table ABI major version (see `crate::user::shared::abi::syscall`).
+    /// Syscall-table ABI major version (see
+    /// `crate::user::shared::abi::syscall`).
     pub syscall_abi_major: u32,
-    /// Syscall-table ABI minor version (see `crate::user::shared::abi::syscall`).
+    /// Syscall-table ABI minor version (see
+    /// `crate::user::shared::abi::syscall`).
     pub syscall_abi_minor: u32,
     pub record_size: u32,
 }

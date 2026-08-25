@@ -71,7 +71,8 @@ pub fn parse_icmpv6_header(data: &[u8]) -> Result<Icmpv6Header> {
 /// Build an ICMPv6 message with checksum computed over the IPv6 pseudo-header
 /// and message body.
 ///
-/// The ICMPv6 checksum covers the pseudo-header + ICMPv6 message (RFC 4443 §2.3).
+/// The ICMPv6 checksum covers the pseudo-header + ICMPv6 message (RFC 4443
+/// §2.3).
 pub fn build_icmpv6_message(
     src: Ipv6Addr,
     dst: Ipv6Addr,
@@ -373,7 +374,8 @@ fn process_neighbor_advertisement(
         cache.set_reachable(target);
     }
 
-    // Also cache the sender's mapping (in case of unsolicited NA from source ≠ target).
+    // Also cache the sender's mapping (in case of unsolicited NA from source ≠
+    // target).
     let src_mac = extract_ll_addr_option(data, NDP_NA_BASE_SIZE, NDP_OPT_TARGET_LL_ADDR);
     if let Some(mac) = src_mac {
         let mut cache = stack.neighbor_cache_v6().lock();

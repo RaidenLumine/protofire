@@ -1,6 +1,7 @@
 //! src/user/exception.rs
 //!
-//! User-side typed wrappers around the shared exception ABI and exception syscalls.
+//! User-side typed wrappers around the shared exception ABI and exception
+//! syscalls.
 
 use super::syscall::UserSyscall;
 pub use crate::abi::exception::{
@@ -140,7 +141,8 @@ impl X86_64UserException {
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 impl X86_64UserException {
     #[inline(always)]
-    /// Install an x86_64 exception handler from ring 3 using the raw syscall ABI.
+    /// Install an x86_64 exception handler from ring 3 using the raw syscall
+    /// ABI.
     ///
     /// # Safety
     /// The caller must provide a valid user-space handler entry point for the
@@ -156,7 +158,8 @@ impl X86_64UserException {
     }
 
     #[inline(always)]
-    /// Install an x86_64 exception handler with an explicit user stack and flags.
+    /// Install an x86_64 exception handler with an explicit user stack and
+    /// flags.
     ///
     /// # Safety
     /// The caller must ensure `handler` and `stack_pointer` are valid

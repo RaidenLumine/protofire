@@ -6,8 +6,8 @@
 //! superset of GBK (and GB2312):
 //!
 //! - ASCII bytes `0x00–0x7F` map 1:1 to U+0000–U+007F.
-//! - Two-byte sequences `0x81–0xFE` + `0x40–0xFE` (GBK range) cover the
-//!   common CJK characters.
+//! - Two-byte sequences `0x81–0xFE` + `0x40–0xFE` (GBK range) cover the common
+//!   CJK characters.
 //! - Four-byte sequences encode the supplementary planes.
 //!
 //! This module implements the double-byte (GBK) subset used by FAT/exFAT

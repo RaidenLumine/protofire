@@ -74,10 +74,11 @@ impl RiscV64UserThreadContext {
         Ok(self)
     }
 
-    /// Build an initial RISC-V 64 user-thread context from a [`UserThreadStart`]
-    /// descriptor.  All general-purpose registers are zeroed except a0–a2
-    /// (argument registers) and x2 (stack pointer); the instruction pointer
-    /// and sstatus (SPP = User) are set for U-mode execution.
+    /// Build an initial RISC-V 64 user-thread context from a
+    /// [`UserThreadStart`] descriptor.  All general-purpose registers are
+    /// zeroed except a0–a2 (argument registers) and x2 (stack pointer); the
+    /// instruction pointer and sstatus (SPP = User) are set for U-mode
+    /// execution.
     pub fn from_start(start: UserThreadStart) -> Self {
         #[cfg(target_arch = "riscv64")]
         let [a0, a1, a2] = start.riscv64_argument_registers;

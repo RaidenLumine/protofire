@@ -833,8 +833,8 @@ fn current_el_fault_address(frame: &TrapFrame) -> Option<usize> {
 }
 
 /// Push a fault record into the current process's per-process fault ring buffer
-/// for post-mortem crash diagnosis.  Mirrors the x86_64 `record_process_fault_record`
-/// in [`idt.rs`](super::super::x86_64::idt).
+/// for post-mortem crash diagnosis.  Mirrors the x86_64
+/// `record_process_fault_record` in [`idt.rs`](super::super::x86_64::idt).
 fn push_fault_record_from_trap(frame: &TrapFrame) {
     if let Some(scheduler) = crate::kernel::process::Scheduler::global() {
         if let Some(thread) = scheduler.current_thread() {

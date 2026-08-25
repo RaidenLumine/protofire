@@ -1,15 +1,18 @@
 //! src/kernel/network/mod.rs
 //!
-//! Kernel-owned TCP connectivity abstraction used by syscall and remote-download paths.
+//! Kernel-owned TCP connectivity abstraction used by syscall and
+//! remote-download paths.
 //!
 //! Sub-module organisation:
 //! - `link/`     — Link-layer: `device` (NIC trait), `ethernet` (framing)
-//! - `internet/` — Internet-layer: `ip`, `ipv4`, `ipv6`, `arp`, `icmp`, `icmpv6`
+//! - `internet/` — Internet-layer: `ip`, `ipv4`, `ipv6`, `arp`, `icmp`,
+//!   `icmpv6`
 //! - `tcp/`      — TCP state machine, connect / read / write / close
 //! - `udp`       — UDP datagram send / receive with port binding
 //! - `dhcp`      — DHCP client
 //! - `dns`       — DNS resolver
-//! - `stack`     — `NetworkStack` singleton (global packet demux and protocol dispatch)
+//! - `stack`     — `NetworkStack` singleton (global packet demux and protocol
+//!   dispatch)
 //! - `net_profiler` — Network performance counters
 
 pub mod dccp;
@@ -1382,7 +1385,8 @@ pub fn create_raw_socket(protocol: u8) -> Result<RawSocketHandle> {
     })
 }
 
-/// Send a raw IP packet to `dest_ip` from the raw socket identified by `handle`.
+/// Send a raw IP packet to `dest_ip` from the raw socket identified by
+/// `handle`.
 ///
 /// The payload is sent as-is (the caller is responsible for constructing the
 /// IP header and transport-layer segment).
@@ -1400,10 +1404,11 @@ pub fn send_raw_packet(_handle: RawSocketHandle, dest_ip: IpAddress, data: &[u8]
     }
 }
 
-/// Receive a raw packet from the raw socket identified by `handle` (non-blocking).
+/// Receive a raw packet from the raw socket identified by `handle`
+/// (non-blocking).
 ///
-/// Returns `Ok((n, src_ip))` where `n` is the number of bytes written to `buffer`.
-/// Returns `Err(Error::TimedOut)` if the receive queue is empty.
+/// Returns `Ok((n, src_ip))` where `n` is the number of bytes written to
+/// `buffer`. Returns `Err(Error::TimedOut)` if the receive queue is empty.
 pub fn recv_raw_packet(handle: RawSocketHandle, buffer: &mut [u8]) -> Result<(usize, IpAddress)> {
     let stack = crate::kernel::network::stack::NetworkStack::global().ok_or(Error::Unsupported)?;
     let mut raw_sockets = stack.raw_sockets().lock();

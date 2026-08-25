@@ -7,8 +7,8 @@
 //! 1. BSP discovers secondary hart IDs from the FDT `/cpus` node.
 //! 2. For each secondary hart the BSP allocates a 64 KiB kernel stack.
 //! 3. [`sbi_hart_start`] is called with the target hart ID and the address of
-//!    `_secondary_start` (in `.text.boot`), passing the stack pointer as
-//!    the opaque context value.
+//!    `_secondary_start` (in `.text.boot`), passing the stack pointer as the
+//!    opaque context value.
 //! 4. The secondary hart resets, executes the trampoline in [boot.S], sets up
 //!    its exception vectors and MMU context, then calls [`ap_entry`].
 //! 5. [`ap_entry`] initialises per-CPU state and enters the idle loop.

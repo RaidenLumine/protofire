@@ -123,8 +123,8 @@ pub struct Scheduler {
     next_cpu: AtomicU32,
     dispatch_context: ContextCell,
     /// Drop-slot for the previously-running [`Arc<Thread>`] that must be freed
-    /// *after* a context-switch, so the scheduler can release its last reference
-    /// without corrupting the thread's own kernel stack.
+    /// *after* a context-switch, so the scheduler can release its last
+    /// reference without corrupting the thread's own kernel stack.
     pub(crate) dying_thread: Mutex<Option<Arc<Thread>>>,
     /// Deferred-drop slot for `dying_thread` content, processed when interrupts
     /// are enabled.  This avoids a spinlock deadlock with the TLB shootdown IPI

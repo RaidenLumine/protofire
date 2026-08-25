@@ -11,25 +11,28 @@
 //!
 //! # Syscall numbers
 //!
-//! The canonical syscall-number definitions live in `crate::user::shared::abi::syscall`
-//! (single source of truth, shared with the kernel's `SyscallNumber` enum).
-//! They are re-exported below so existing `SYS_*` references keep resolving.
+//! The canonical syscall-number definitions live in
+//! `crate::user::shared::abi::syscall` (single source of truth, shared with the
+//! kernel's `SyscallNumber` enum). They are re-exported below so existing
+//! `SYS_*` references keep resolving.
 
 // ── Syscall numbers ─────────────────────────────────────────────────────
 //
-// Canonical syscall-number definitions live in `crate::user::shared::abi::syscall`
-// (the single source of truth shared with the kernel).  Re-exported here
-// so existing bare `SYS_*` references keep resolving.
+// Canonical syscall-number definitions live in
+// `crate::user::shared::abi::syscall` (the single source of truth shared with
+// the kernel).  Re-exported here so existing bare `SYS_*` references keep
+// resolving.
 
 pub use crate::user::shared::abi::syscall::*;
 
 // ── Raw syscall entry points ─────────────────────────────────────────────
 //
 // Each environment (kernel, ring3-shell) provides these symbols.  In the
-// kernel the real definitions live in `crate::user::program::shell::syscall_bridge`,
-// which satisfies these declarations in both host tests and bare-metal builds
-// (the extern declarations are kept unconditional so host-side unit tests can
-// resolve the bare `__shell_syscallN` names against the `#[no_mangle]` bridge).
+// kernel the real definitions live in
+// `crate::user::program::shell::syscall_bridge`, which satisfies these
+// declarations in both host tests and bare-metal builds (the extern
+// declarations are kept unconditional so host-side unit tests can resolve the
+// bare `__shell_syscallN` names against the `#[no_mangle]` bridge).
 
 extern "Rust" {
     fn __shell_syscall0(number: usize) -> isize;
@@ -510,8 +513,8 @@ pub fn sys_network_status() -> Result<usize, isize> {
 
 /// Resolve a hostname to an IPv4 address via kernel-side DNS.
 ///
-/// Returns the 4-byte IPv4 address in network byte order (e.g. `[127, 0, 0, 1]`),
-/// or a negative error code on failure.
+/// Returns the 4-byte IPv4 address in network byte order (e.g. `[127, 0, 0,
+/// 1]`), or a negative error code on failure.
 pub fn sys_resolve_hostname(host: &str) -> Result<[u8; 4], isize> {
     let rc = unsafe { __shell_syscall2(SYS_RESOLVE_HOSTNAME, host.as_ptr() as usize, host.len()) };
     match decode(rc) {
@@ -1987,7 +1990,8 @@ pub fn sys_gpu_ctx_destroy(ctx_id: u32) -> Result<usize, isize> {
 }
 
 /// Create a 3D resource with kernel-managed DMA backing.  `desc` is a
-/// `crate::user::shared::abi::gpu::GpuResCreate3dDesc`.  Returns the resource id.
+/// `crate::user::shared::abi::gpu::GpuResCreate3dDesc`.  Returns the resource
+/// id.
 pub fn sys_gpu_res_create_3d(
     desc_ptr: *const crate::user::shared::abi::gpu::GpuResCreate3dDesc,
     desc_len: usize,
@@ -2014,7 +2018,8 @@ pub fn sys_gpu_res_unref(resource_id: u32) -> Result<usize, isize> {
 }
 
 /// Copy user data into a resource's backing and upload it to the host.
-/// `desc` is a `crate::user::shared::abi::gpu::GpuTransfer3dDesc`; `data` holds the bytes.
+/// `desc` is a `crate::user::shared::abi::gpu::GpuTransfer3dDesc`; `data` holds
+/// the bytes.
 pub fn sys_gpu_transfer_to_host_3d(
     desc_ptr: *const crate::user::shared::abi::gpu::GpuTransfer3dDesc,
     desc_len: usize,
@@ -2078,7 +2083,8 @@ pub fn sys_gpu_set_scanout(resource_id: u32, width: u32, height: u32) -> Result<
     decode(rc)
 }
 
-/// Report GPU presence and capabilities into a `crate::user::shared::abi::gpu::GpuDeviceInfo`.
+/// Report GPU presence and capabilities into a
+/// `crate::user::shared::abi::gpu::GpuDeviceInfo`.
 pub fn sys_gpu_device_info(
     info_ptr: *mut crate::user::shared::abi::gpu::GpuDeviceInfo,
     info_len: usize,

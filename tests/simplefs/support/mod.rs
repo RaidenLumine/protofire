@@ -1,5 +1,4 @@
 //! tests/simplefs/support/mod.rs
-//!
 use std::sync::Arc;
 
 use protofire::kernel::fs::block::MemoryBlockDevice;

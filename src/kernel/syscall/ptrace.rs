@@ -2,7 +2,8 @@
 //!
 //! Ptrace syscall handler (#128).
 //!
-//! Dispatches ptrace requests to the core logic in `src/kernel/process/ptrace.rs`.
+//! Dispatches ptrace requests to the core logic in
+//! `src/kernel/process/ptrace.rs`.
 
 use crate::abi::ptrace::{
     PtraceEventRecord, PTRACE_ATTACH, PTRACE_CONT, PTRACE_DETACH, PTRACE_EVENT_RECORD_SIZE,
@@ -20,8 +21,8 @@ use super::{runtime, SyscallContext, SyscallDispatch};
 /// Arguments:
 ///   arg0 = request (i32) — PTRACE_* request code
 ///   arg1 = pid (i32) — target process ID
-///   arg2 = addr (usize) — address in tracee's address space (PEEKDATA/POKEDATA)
-///   arg3 = data (usize) — data pointer or flags
+///   arg2 = addr (usize) — address in tracee's address space
+/// (PEEKDATA/POKEDATA)   arg3 = data (usize) — data pointer or flags
 ///   arg4 = data_len (usize) — length of data buffer
 ///
 /// Returns 0 on success, or an error code.

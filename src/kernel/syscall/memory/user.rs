@@ -1,6 +1,7 @@
 //! src/kernel/syscall/memory/user.rs
 //!
-//! User-pointer and user-buffer validation helpers for syscall argument decoding.
+//! User-pointer and user-buffer validation helpers for syscall argument
+//! decoding.
 //!
 //! ## SMAP (Supervisor Mode Access Prevention)
 //!
@@ -151,9 +152,9 @@ pub(super) fn copy_user_bytes(bytes: &[u8], buffer_ptr: *mut u8, length: usize) 
 /// - `[u8; N]` arrays (bytes have alignment 1, no padding).
 ///
 /// **Safe types** — when structurally verified:
-/// - `#[repr(C)]` structs whose fields are all the same type (e.g. all `u64`
-///   or all `usize`) — these have no inter-field padding and the compiler
-///   cannot insert trailing padding when all fields share the same alignment.
+/// - `#[repr(C)]` structs whose fields are all the same type (e.g. all `u64` or
+///   all `usize`) — these have no inter-field padding and the compiler cannot
+///   insert trailing padding when all fields share the same alignment.
 ///
 /// **Unsafe types** — never implement:
 /// - Rust default-layout structs (compiler may insert arbitrary padding).
@@ -189,9 +190,9 @@ unsafe impl PaddingFree for crate::abi::fs::FileStat {}
 // No inter-field or trailing padding.
 unsafe impl PaddingFree for crate::abi::fs::AccessQueryRecord {}
 
-// SAFETY: `PermissionMetadataRecord` is `#[repr(C)]` with `u32, u32, u16, u16` —
-// fields pack at offsets 0, 4, 8, 10 with total size 12 (multiple of alignment 4).
-// No padding.
+// SAFETY: `PermissionMetadataRecord` is `#[repr(C)]` with `u32, u32, u16, u16`
+// — fields pack at offsets 0, 4, 8, 10 with total size 12 (multiple of
+// alignment 4). No padding.
 unsafe impl PaddingFree for crate::abi::fs::PermissionMetadataRecord {}
 unsafe impl PaddingFree for crate::abi::fs::FileFlagsRecord {}
 
@@ -777,12 +778,14 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[SyscallPointerSpec::input(0, Some(1), None)],
     // 26  ExecProcess        — arg0=options_ptr (in), arg1=options_len (struct input)
     &[SyscallPointerSpec::input(0, Some(1), None)],
-    // 27  Stat               — arg0=path_ptr (in), arg1=path_len; arg2=stat_ptr (out), arg3=stat_len
+    // 27  Stat               — arg0=path_ptr (in), arg1=path_len; arg2=stat_ptr (out),
+    // arg3=stat_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
         SyscallPointerSpec::output(2, Some(3), None),
     ],
-    // 28  ReadDir            — arg0=path_ptr (in), arg1=path_len; arg2=index; arg3=out_ptr (out), arg4=out_len
+    // 28  ReadDir            — arg0=path_ptr (in), arg1=path_len; arg2=index; arg3=out_ptr (out),
+    // arg4=out_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
         SyscallPointerSpec::output(3, Some(4), None),
@@ -798,7 +801,8 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[SyscallPointerSpec::output(2, Some(3), None)],
     // 32  OpenAt             — arg1=path_ptr (in), arg2=path_len
     &[SyscallPointerSpec::input(1, Some(2), None)],
-    // 33  StatAt             — arg1=path_ptr (in), arg2=path_len; arg3=stat_ptr (out), arg4=stat_len
+    // 33  StatAt             — arg1=path_ptr (in), arg2=path_len; arg3=stat_ptr (out),
+    // arg4=stat_len
     &[
         SyscallPointerSpec::input(1, Some(2), None),
         SyscallPointerSpec::output(3, Some(4), None),
@@ -836,12 +840,14 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     ],
     // 44  AccessQueryFd      — arg0=fd, arg1=required_access, arg2=ptr (out), arg3=len
     &[SyscallPointerSpec::output(2, Some(3), None)],
-    // 45  PermissionMetadata  — arg0=path_ptr (in), arg1=path_len; arg2=out_ptr (out), arg3=out_len
+    // 45  PermissionMetadata  — arg0=path_ptr (in), arg1=path_len; arg2=out_ptr (out),
+    // arg3=out_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
         SyscallPointerSpec::output(2, Some(3), None),
     ],
-    // 46  PermissionMetadataAt — arg1=path_ptr (in), arg2=path_len; arg3=out_ptr (out), arg4=out_len
+    // 46  PermissionMetadataAt — arg1=path_ptr (in), arg2=path_len; arg3=out_ptr (out),
+    // arg4=out_len
     &[
         SyscallPointerSpec::input(1, Some(2), None),
         SyscallPointerSpec::output(3, Some(4), None),
@@ -886,7 +892,8 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[],
     // 64  Pipe               — arg0=buffer_ptr (output, 2 × usize), arg1=buffer_len
     &[SyscallPointerSpec::output(0, Some(1), None)],
-    // 65  Mount              — arg0=target_ptr (in), arg1=target_len; arg2=fstype_ptr (in), arg3=fstype_len
+    // 65  Mount              — arg0=target_ptr (in), arg1=target_len; arg2=fstype_ptr (in),
+    // arg3=fstype_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
         SyscallPointerSpec::input(2, Some(3), None),
@@ -968,7 +975,8 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[SyscallPointerSpec::input(0, Some(1), None)],
     // 94  SetSignalMask         — no pointers (arg0 is an integer mask)
     &[],
-    // 95  RepairVolume          — arg0=path_ptr (in), arg1=path_len; arg2=report_ptr (out), arg3=report_len
+    // 95  RepairVolume          — arg0=path_ptr (in), arg1=path_len; arg2=report_ptr (out),
+    // arg3=report_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
         SyscallPointerSpec::output(2, Some(3), None),
@@ -991,7 +999,8 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[],
     // 104 SetSignalHandler       — arg0=signal, arg1=action (all ints)
     &[],
-    // 105 FuseMount              — arg0=path_ptr(in), arg1=path_len, arg2=name_ptr(in), arg3=name_len, arg4=fds_ptr(out), arg5=fds_len
+    // 105 FuseMount              — arg0=path_ptr(in), arg1=path_len, arg2=name_ptr(in),
+    // arg3=name_len, arg4=fds_ptr(out), arg5=fds_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
         SyscallPointerSpec::input(2, Some(3), None),
@@ -1027,7 +1036,8 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[SyscallPointerSpec::input(3, Some(4), None)],
     // 120 EpollWait              — arg1=events_ptr(out), arg2=events_len
     &[SyscallPointerSpec::output(1, Some(2), None)],
-    // 121 TlsConnect              — arg0=host_ptr(in), arg1=host_len (same layout as ConnectTcp #38)
+    // 121 TlsConnect              — arg0=host_ptr(in), arg1=host_len (same layout as ConnectTcp
+    // #38)
     &[SyscallPointerSpec::input(0, Some(1), None)],
     // 122 FilterAddRule           — arg0=rule_def_ptr(in), arg1=rule_def_len
     &[SyscallPointerSpec::input(0, Some(1), None)],
@@ -1090,24 +1100,28 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[],
     // 150 CompactMemory             — no pointer arguments
     &[],
-    // 151 SetXattr                 — arg0=path_ptr (in), arg1=path_len; arg2=name_ptr (in), arg3=name_len; arg4=value_ptr (in), arg5=value_len
+    // 151 SetXattr                 — arg0=path_ptr (in), arg1=path_len; arg2=name_ptr (in),
+    // arg3=name_len; arg4=value_ptr (in), arg5=value_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
         SyscallPointerSpec::input(2, Some(3), None),
         SyscallPointerSpec::input(4, Some(5), None),
     ],
-    // 152 GetXattr                 — arg0=path_ptr (in), arg1=path_len; arg2=name_ptr (in), arg3=name_len; arg4=value_ptr (out), arg5=value_len
+    // 152 GetXattr                 — arg0=path_ptr (in), arg1=path_len; arg2=name_ptr (in),
+    // arg3=name_len; arg4=value_ptr (out), arg5=value_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
         SyscallPointerSpec::input(2, Some(3), None),
         SyscallPointerSpec::output(4, Some(5), None),
     ],
-    // 153 ListXattr                — arg0=path_ptr (in), arg1=path_len; arg2=buf_ptr (out), arg3=buf_len
+    // 153 ListXattr                — arg0=path_ptr (in), arg1=path_len; arg2=buf_ptr (out),
+    // arg3=buf_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
         SyscallPointerSpec::output(2, Some(3), None),
     ],
-    // 154 RemoveXattr              — arg0=path_ptr (in), arg1=path_len; arg2=name_ptr (in), arg3=name_len
+    // 154 RemoveXattr              — arg0=path_ptr (in), arg1=path_len; arg2=name_ptr (in),
+    // arg3=name_len
     &[
         SyscallPointerSpec::input(0, Some(1), None),
         SyscallPointerSpec::input(2, Some(3), None),

@@ -702,10 +702,10 @@ mod tests {
         assert!(result.is_some());
         let (proto, data) = result.unwrap();
         assert_eq!(proto, 17);
-        // Reassembly should produce: bytes 0-3="0123", padding 4-7=0, 8-11="4567", 12-15=0, 16-19="89AB"
-        // But since fragment payloads are only 4 bytes at offsets 0, 1, 2 (in 8-byte units):
-        // byte offset 0: "0123" (4 bytes) + gap 4-7
-        // byte offset 8: "4567" (4 bytes) + gap 12-15
+        // Reassembly should produce: bytes 0-3="0123", padding 4-7=0, 8-11="4567",
+        // 12-15=0, 16-19="89AB" But since fragment payloads are only 4 bytes at
+        // offsets 0, 1, 2 (in 8-byte units): byte offset 0: "0123" (4 bytes) +
+        // gap 4-7 byte offset 8: "4567" (4 bytes) + gap 12-15
         // byte offset 16: "89AB" (4 bytes)
         // Total = 20 bytes
         assert_eq!(data.len(), 20);

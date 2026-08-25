@@ -478,7 +478,8 @@ impl Scheduler {
 
     /// Spawn a named kernel thread with a security token.
     ///
-    /// Host-side only; on bare-metal use [`spawn_kernel_named_with_security_token`].
+    /// Host-side only; on bare-metal use
+    /// [`spawn_kernel_named_with_security_token`].
     #[cfg(not(target_os = "none"))]
     pub fn spawn_named_with_security_token(
         &self,

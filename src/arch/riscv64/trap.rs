@@ -1,6 +1,7 @@
 //! src/arch/riscv64/trap.rs
 //!
-//! RISC-V 64 trap decoding, IRQ routing, syscall dispatch, and exception logging.
+//! RISC-V 64 trap decoding, IRQ routing, syscall dispatch, and exception
+//! logging.
 
 use core::arch::asm;
 use core::mem::size_of;

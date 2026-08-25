@@ -42,11 +42,11 @@ pub enum OemCodePage {
 /// ```
 /// use crate::kernel::fs::unicode::oem::{oem_byte_to_char, OemCodePage};
 ///
-/// assert_eq!(oem_byte_to_char(0x41, OemCodePage::Cp437), 'A');  // ASCII
-/// assert_eq!(oem_byte_to_char(0x82, OemCodePage::Cp437), 'é');  // CP437
-/// assert_eq!(oem_byte_to_char(0x82, OemCodePage::Cp850), 'é');  // same in CP850
-/// assert_eq!(oem_byte_to_char(0x9B, OemCodePage::Cp437), '¢');  // CP437: cent
-/// assert_eq!(oem_byte_to_char(0x9B, OemCodePage::Cp850), 'ø');  // CP850: o-slash
+/// assert_eq!(oem_byte_to_char(0x41, OemCodePage::Cp437), 'A'); // ASCII
+/// assert_eq!(oem_byte_to_char(0x82, OemCodePage::Cp437), 'é'); // CP437
+/// assert_eq!(oem_byte_to_char(0x82, OemCodePage::Cp850), 'é'); // same in CP850
+/// assert_eq!(oem_byte_to_char(0x9B, OemCodePage::Cp437), '¢'); // CP437: cent
+/// assert_eq!(oem_byte_to_char(0x9B, OemCodePage::Cp850), 'ø'); // CP850: o-slash
 /// ```
 pub fn oem_byte_to_char(byte: u8, code_page: OemCodePage) -> char {
     if byte < 0x80 {
@@ -77,7 +77,7 @@ pub fn oem_byte_to_char(byte: u8, code_page: OemCodePage) -> char {
 ///
 /// assert_eq!(char_to_oem_byte('A', OemCodePage::Cp437), Some(0x41));
 /// assert_eq!(char_to_oem_byte('é', OemCodePage::Cp437), Some(0x82));
-/// assert_eq!(char_to_oem_byte('中', OemCodePage::Cp437), None);  // CJK not in CP437
+/// assert_eq!(char_to_oem_byte('中', OemCodePage::Cp437), None); // CJK not in CP437
 /// ```
 pub fn char_to_oem_byte(ch: char, code_page: OemCodePage) -> Option<u8> {
     let code = ch as u32;
@@ -118,7 +118,10 @@ pub fn char_to_oem_byte(ch: char, code_page: OemCodePage) -> Option<u8> {
 /// ```
 /// use crate::kernel::fs::unicode::oem::{utf8_to_oem, OemCodePage};
 ///
-/// assert_eq!(utf8_to_oem("Café", OemCodePage::Cp437), vec![0x43, 0x61, 0x66, 0x82]);
+/// assert_eq!(
+///     utf8_to_oem("Café", OemCodePage::Cp437),
+///     vec![0x43, 0x61, 0x66, 0x82]
+/// );
 /// assert_eq!(utf8_to_oem("中文", OemCodePage::Cp437), vec![b'?', b'?']);
 /// ```
 pub fn utf8_to_oem(input: &str, code_page: OemCodePage) -> Vec<u8> {

@@ -1,7 +1,7 @@
 //! src/kernel/fs/fat32/types.rs
 //!
-//! On-disk type definitions, BPB geometry parsing, directory entry parse/serialize
-//! helpers, and byte-level I/O utilities for FAT12/16/32.
+//! On-disk type definitions, BPB geometry parsing, directory entry
+//! parse/serialize helpers, and byte-level I/O utilities for FAT12/16/32.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -78,8 +78,9 @@ pub(crate) const ATTR_VOLUME_ID: u8 = 0x08;
 pub(crate) const ATTR_DIRECTORY: u8 = 0x10;
 #[allow(dead_code)]
 pub(crate) const ATTR_ARCHIVE: u8 = 0x20;
-/// LFN entries use a combination of attribute bits: READ_ONLY | HIDDEN | SYSTEM | VOLUME_ID = 0x0F.
-/// This is an invalid combination for a regular file, which is how OSes detect LFN entries.
+/// LFN entries use a combination of attribute bits: READ_ONLY | HIDDEN | SYSTEM
+/// | VOLUME_ID = 0x0F. This is an invalid combination for a regular file, which
+/// is how OSes detect LFN entries.
 pub(crate) const ATTR_LFN_MASK: u8 = ATTR_READ_ONLY | ATTR_HIDDEN | ATTR_SYSTEM | ATTR_VOLUME_ID; // 0x0F
 /// Convenience alias: LFN attribute mask for LFN entry recognition.
 #[allow(dead_code)]
@@ -330,7 +331,8 @@ pub(crate) struct FatDirEntry {
     pub(crate) kind: NodeKind,
     pub(crate) first_cluster: u32,
     pub(crate) file_size: u32,
-    /// Create timestamp (Unix epoch seconds) — parsed from DOS date/time fields.
+    /// Create timestamp (Unix epoch seconds) — parsed from DOS date/time
+    /// fields.
     pub(crate) created: u64,
     /// Last-modified timestamp (Unix epoch seconds).
     pub(crate) modified: u64,
@@ -560,7 +562,8 @@ pub(crate) fn generate_short_name(long_name: &str, code_page: OemCodePage) -> [u
             if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' {
                 Some(b.to_ascii_uppercase())
             } else if b >= 0x80 {
-                Some(b) // Keep OEM high bytes as-is (already in target code page).
+                Some(b) // Keep OEM high bytes as-is (already in target code
+                        // page).
             } else if b == b'?' {
                 Some(b'_') // Unmappable Unicode char → underscore.
             } else {

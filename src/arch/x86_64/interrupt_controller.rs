@@ -3,8 +3,9 @@
 //! x86_64 interrupt controller drivers — 8259A PIC and APIC/IOAPIC.
 //!
 //! Implements the architecture-neutral `InterruptController` trait so
-//! callers can use the dispatch functions in `crate::arch::interrupt_controller`
-//! instead of coupling directly to the hardware.
+//! callers can use the dispatch functions in
+//! `crate::arch::interrupt_controller` instead of coupling directly to the
+//! hardware.
 //!
 //! ## Controller selection
 //!

@@ -12,18 +12,17 @@
 //!    payloads).  Relocating the full image causes the destination range to
 //!    overlap with the source, requiring BSS to be skipped and re-zeroed.
 //!
-//! 2. The relocation table generated from `--emit-relocs` contains entries
-//!    for non-address values (instruction immediates, constants) that happen
-//!    to fall in the kernel physical address range.  Applying these corrupts
-//!    the relocated image.  A build-time filter (checking each entry's site
-//!    value against the kernel extent) removes most, but some false
-//!    positives remain.
+//! 2. The relocation table generated from `--emit-relocs` contains entries for
+//!    non-address values (instruction immediates, constants) that happen to
+//!    fall in the kernel physical address range. Applying these corrupts the
+//!    relocated image.  A build-time filter (checking each entry's site value
+//!    against the kernel extent) removes most, but some false positives remain.
 //!
 //! 3. After relocation the kernel's page-table setup must map the *new*
-//!    physical base, not the link-time base.  The current page-table code
-//!    reads the kernel base from the link-time symbol `__kernel_start`
-//!    which the compiler constant-folds to 0x200000, defeating runtime
-//!    detection of the relocation.
+//!    physical base, not the link-time base.  The current page-table code reads
+//!    the kernel base from the link-time symbol `__kernel_start` which the
+//!    compiler constant-folds to 0x200000, defeating runtime detection of the
+//!    relocation.
 //!
 //! When these issues are resolved, enable KASLR by restoring the body of
 //! `try_relocate` and the relocation loop.

@@ -17,7 +17,8 @@ use super::types::{
 
 // ─── Header parse / build ─────────────────────────────────────────────
 
-/// Parse a TCP header from a raw byte slice. Returns the header and the data payload.
+/// Parse a TCP header from a raw byte slice. Returns the header and the data
+/// payload.
 pub fn parse_tcp_header(data: &[u8]) -> Result<(TcpHeader, usize)> {
     if data.len() < TCP_MIN_HEADER_SIZE {
         return Err(Error::InvalidArgument);

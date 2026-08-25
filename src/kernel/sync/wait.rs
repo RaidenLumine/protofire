@@ -1,6 +1,7 @@
 //! src/kernel/sync/wait.rs
 //!
-//! Wait-queue core utilities for parking, waking, and timeout cleanup integration.
+//! Wait-queue core utilities for parking, waking, and timeout cleanup
+//! integration.
 
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;

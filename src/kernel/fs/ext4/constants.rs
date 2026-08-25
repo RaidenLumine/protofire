@@ -45,9 +45,11 @@ pub(crate) const EXT4_FEATURE_INCOMPAT_SUPPORTED: u32 = EXT4_FEATURE_INCOMPAT_FI
     | EXT4_FEATURE_INCOMPAT_FLEX_BG
     | EXT4_FEATURE_INCOMPAT_CASEFOLD;
 
-/// EXT4_EXTENTS_FL — set in `inode.flags` when the inode uses extent-based block mapping.
+/// EXT4_EXTENTS_FL — set in `inode.flags` when the inode uses extent-based
+/// block mapping.
 pub(crate) const EXT4_EXTENTS_FL: u32 = 0x0008_0000;
-/// EXT4_CASEFOLD_FL — set in `inode.flags` when a directory is case-insensitive.
+/// EXT4_CASEFOLD_FL — set in `inode.flags` when a directory is
+/// case-insensitive.
 pub(crate) const EXT4_CASEFOLD_FL: u32 = 0x4000_0000;
 
 /// Extent tree magic value, stored in Ext4ExtentHeader.eh_magic.

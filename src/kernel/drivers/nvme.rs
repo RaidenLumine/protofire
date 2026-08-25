@@ -285,7 +285,8 @@ impl IdentifyController {
 pub struct IdentifyNamespace {
     /// Namespace Size (total number of logical blocks).
     pub nsze: u64,
-    /// Namespace Capacity (maximum number of logical blocks that may be allocated).
+    /// Namespace Capacity (maximum number of logical blocks that may be
+    /// allocated).
     pub ncap: u64,
     /// Namespace Utilization.
     pub nuse: u64,
@@ -307,7 +308,8 @@ impl IdentifyNamespace {
         // For simplicity, we assume 512-byte blocks (format index 0 is usually 512).
         // A proper implementation would read the LBA Format table.
         // Assume 512-byte blocks (format index 0 is usually 512).
-        // A proper implementation would read the LBA Format table at offset 128 + flbas * 4.
+        // A proper implementation would read the LBA Format table at offset 128 + flbas
+        // * 4.
         let _ = flbas;
         512
     }

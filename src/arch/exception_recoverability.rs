@@ -1,6 +1,7 @@
 //! src/arch/exception_recoverability.rs
 //!
-//! Shared helpers that pair trap diagnoses with recovery decisions and log output.
+//! Shared helpers that pair trap diagnoses with recovery decisions and log
+//! output.
 
 use alloc::format;
 use alloc::string::String;

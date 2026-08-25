@@ -8,7 +8,8 @@ mod tests;
 pub mod types;
 pub mod vnode;
 
-// Re-export everything for backward compatibility with downstream filesystem drivers
+// Re-export everything for backward compatibility with downstream filesystem
+// drivers
 pub use checksum::*;
 pub use filesystem::*;
 pub use types::*;

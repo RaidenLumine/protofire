@@ -11,8 +11,8 @@ use super::frame;
 use super::paging;
 
 /// Detected total physical RAM in bytes, populated during early boot by parsing
-/// the bootloader memory map (Multiboot2 / FDT).  Zero means "not yet detected";
-/// callers fall back to the static pool size.
+/// the bootloader memory map (Multiboot2 / FDT).  Zero means "not yet
+/// detected"; callers fall back to the static pool size.
 static DETECTED_PHYSICAL_MEMORY: AtomicU64 = AtomicU64::new(0);
 
 /// Store the detected physical memory size (in bytes).
@@ -25,7 +25,8 @@ pub fn store_detected_memory(size: usize) {
     DETECTED_PHYSICAL_MEMORY.store(size as u64, Ordering::Release);
 }
 
-/// Return the detected physical memory size, or `None` if detection has not run.
+/// Return the detected physical memory size, or `None` if detection has not
+/// run.
 ///
 /// Allowed dead_code because the library-crate check cannot see binary callers.
 #[allow(dead_code)]
@@ -38,8 +39,8 @@ pub fn detected_memory() -> Option<usize> {
     }
 }
 
-/// Invalidate the TLB for every page in `[virtual_address, virtual_address + length)`
-/// on all CPUs.
+/// Invalidate the TLB for every page in `[virtual_address, virtual_address +
+/// length)` on all CPUs.
 ///
 /// On single-CPU / non-bare-metal targets this is a no-op.  On SMP-capable
 /// targets, sends an IPI to each online AP and waits for acknowledgment
@@ -137,7 +138,8 @@ pub(crate) fn detect_memory() -> usize {
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn bootstrap_translation(virtual_address: usize) -> Option<BootstrapTranslation> {
     let mapping = crate::arch::mmu::bootstrap_identity_mapping();
-    // Report early identity-map view to aid diagnosis before full runtime mappings stabilize.
+    // Report early identity-map view to aid diagnosis before full runtime mappings
+    // stabilize.
     crate::arch::mmu::bootstrap_translate(virtual_address).map(|physical_address| {
         BootstrapTranslation {
             physical_address,
@@ -155,7 +157,8 @@ pub(crate) fn bootstrap_translation(_virtual_address: usize) -> Option<Bootstrap
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn prepared_page_tables_active() -> bool {
-    // Only meaningful on bare-metal x86_64 where prepared runtime tables can be switched in.
+    // Only meaningful on bare-metal x86_64 where prepared runtime tables can be
+    // switched in.
     crate::arch::mmu::prepared_runtime_kernel_page_tables_active()
 }
 

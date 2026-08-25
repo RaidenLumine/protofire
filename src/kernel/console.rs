@@ -36,7 +36,8 @@ enum EscapeState {
 /// where negative = go back in history, positive = go forward.
 pub type HistoryCallback = fn(direction: i32, saved_line: Option<&str>) -> Option<String>;
 
-/// Callback type for tab completion: `fn(prefix: &str, cwd: &str) -> Option<String>`.
+/// Callback type for tab completion: `fn(prefix: &str, cwd: &str) ->
+/// Option<String>`.
 pub type CompletionCallback = fn(prefix: &str, cwd: &str) -> Option<String>;
 
 /// Registered history provider (set by the shell at startup).

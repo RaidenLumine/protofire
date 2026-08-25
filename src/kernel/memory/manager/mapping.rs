@@ -91,7 +91,8 @@ impl MemoryManager {
 
     pub fn page_fault_insight(&self, virtual_address: usize) -> PageFaultInsight {
         let (heap_start, heap_end) = self.heap_bounds();
-        // Build a layered diagnostic snapshot (runtime table + bootstrap + prepared plans).
+        // Build a layered diagnostic snapshot (runtime table + bootstrap + prepared
+        // plans).
         let translation = self.page_table.lookup_mapping(virtual_address).map(
             |(physical_address, permissions, kind)| AddressTranslation {
                 physical_address,

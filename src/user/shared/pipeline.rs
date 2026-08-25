@@ -1,7 +1,8 @@
 //! src/user/shared/pipeline.rs
 //!
 //! ring3-common/pipeline.rs
-//! Conditional chaining (`&&` / `||`), pipeline splitting, and redirect parsing.
+//! Conditional chaining (`&&` / `||`), pipeline splitting, and redirect
+//! parsing.
 //!
 //! These are pure string-processing functions with no platform dependencies.
 

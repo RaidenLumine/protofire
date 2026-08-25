@@ -145,7 +145,8 @@ pub struct IrqProfilerRecord {
     pub irq_balance_last_target_cpu: u64,
     /// Number of online CPUs.
     pub online_cpus: u64,
-    /// Per-vector delivery counts (indexed by interrupt vector / controller id).
+    /// Per-vector delivery counts (indexed by interrupt vector / controller
+    /// id).
     pub irq_counts: [u64; 256],
     /// Per-CPU IRQ delivery counts.
     pub per_cpu_irqs: [u64; 16],
@@ -201,7 +202,8 @@ pub struct SubsystemInitRecord {
 pub struct BootReportRecord {
     /// Total boot duration in scheduler ticks from bootloader to main loop.
     pub total_boot_ticks: u64,
-    /// Duration per boot stage (loader→console, console→kernel, kernel→init, init→scheduler).
+    /// Duration per boot stage (loader→console, console→kernel, kernel→init,
+    /// init→scheduler).
     pub stage_ticks: [u64; 4],
     /// Physical memory total in bytes.
     pub physical_memory_total: u64,

@@ -45,7 +45,8 @@ const HS_FINISHED: u8 = 20;
 
 // ── HKDF-Expand-Label (RFC 8446 §7.1) ───────────────────────────────────────
 
-/// HKDF-Expand-Label(Secret, Label, Context, Length) as defined in RFC 8446 §7.1.
+/// HKDF-Expand-Label(Secret, Label, Context, Length) as defined in RFC 8446
+/// §7.1.
 ///
 /// Internally builds the `HkdfLabel` structure:
 /// ```text
@@ -70,7 +71,8 @@ pub fn hkdf_expand_label(secret: &[u8], label: &str, context: &[u8], length: usi
     hkdf_sha256_expand(prk, &hkdf_label, length)
 }
 
-/// Derive a 32-byte secret: `HKDF-Expand-Label(Secret, Label, Transcript-Hash, 32)`.
+/// Derive a 32-byte secret: `HKDF-Expand-Label(Secret, Label, Transcript-Hash,
+/// 32)`.
 fn derive_secret(secret: &[u8], label: &str, messages_hash: &[u8]) -> [u8; 32] {
     let expanded = hkdf_expand_label(secret, label, messages_hash, 32);
     let mut result = [0u8; 32];
@@ -87,7 +89,8 @@ fn derive_key_iv(secret: &[u8; 32], suite: CipherSuite) -> (Vec<u8>, [u8; 12]) {
     (key, iv_arr)
 }
 
-/// Derive a finished key: `HKDF-Expand-Label(BaseKey, "finished", "", Hash.length)`.
+/// Derive a finished key: `HKDF-Expand-Label(BaseKey, "finished", "",
+/// Hash.length)`.
 fn derive_finished_key(base_key: &[u8; 32]) -> [u8; 32] {
     let expanded = hkdf_expand_label(base_key, "finished", &[], 32);
     let mut key = [0u8; 32];
@@ -377,9 +380,9 @@ pub struct ParsedServerFinished {
 /// Verify a server Finished message.
 ///
 /// `data` is the raw Finished handshake message.
-/// `finished_key` is `HKDF-Expand-Label(server_handshake_secret, "finished", "", 32)`.
-/// `transcript_hash` covers all handshake messages up to (but not including)
-/// the Finished message itself.
+/// `finished_key` is `HKDF-Expand-Label(server_handshake_secret, "finished",
+/// "", 32)`. `transcript_hash` covers all handshake messages up to (but not
+/// including) the Finished message itself.
 pub fn verify_server_finished(
     data: &[u8],
     finished_key: &[u8; 32],
@@ -409,8 +412,9 @@ pub fn verify_server_finished(
 
 /// Build a client Finished handshake message.
 ///
-/// `finished_key` is `HKDF-Expand-Label(client_handshake_secret, "finished", "", 32)`.
-/// `transcript_hash` covers all handshake messages including server Finished.
+/// `finished_key` is `HKDF-Expand-Label(client_handshake_secret, "finished",
+/// "", 32)`. `transcript_hash` covers all handshake messages including server
+/// Finished.
 pub fn build_client_finished(finished_key: &[u8; 32], transcript_hash: &[u8; 32]) -> Vec<u8> {
     let verify_data = hmac_sha256(finished_key, transcript_hash);
 

@@ -261,12 +261,13 @@ impl SimpleFs {
 /// Read the persisted xattr records from the active xattr table slot (V4+).
 ///
 /// Each fixed-size record is parsed from the `{inode_index:u32, name_len:u32,
-/// value_len:u32, status:u32, name:[u8;XATTR_NAME_MAX], value:[u8;XATTR_VALUE_MAX]}`
-/// layout written by `write_runtime_xattr_table`.  Records are written
-/// contiguously from slot 0 and the remaining capacity is zeroed, so scanning
-/// up to the first all-zero slot reconstructs the exact in-memory record list.
-/// A written record is never all-zero: live records carry a non-zero
-/// `name_len` and deleted records carry `status == XATTR_STATUS_DELETED`.
+/// value_len:u32, status:u32, name:[u8;XATTR_NAME_MAX],
+/// value:[u8;XATTR_VALUE_MAX]}` layout written by `write_runtime_xattr_table`.
+/// Records are written contiguously from slot 0 and the remaining capacity is
+/// zeroed, so scanning up to the first all-zero slot reconstructs the exact
+/// in-memory record list. A written record is never all-zero: live records
+/// carry a non-zero `name_len` and deleted records carry `status ==
+/// XATTR_STATUS_DELETED`.
 pub(crate) fn read_xattr_records(
     device: &dyn BlockDevice,
     format_version: SimpleFsFormatVersion,

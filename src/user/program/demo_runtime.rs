@@ -1,6 +1,7 @@
 //! src/user/program/demo_runtime.rs
 //!
-//! Host-side demo runtime proxy resolution used when bare-metal payloads are not executed directly.
+//! Host-side demo runtime proxy resolution used when bare-metal payloads are
+//! not executed directly.
 
 use alloc::format;
 use alloc::string::String;
@@ -218,7 +219,8 @@ fn run_cli_host_proxy(program_name: &str, runner: fn(&fs::FileSystem, &str, &[St
     let _ = write_stdout(output.as_bytes());
 }
 
-/// Variant of [`run_cli_host_proxy`] for runners that return `(exit_code, output)`.
+/// Variant of [`run_cli_host_proxy`] for runners that return `(exit_code,
+/// output)`.
 ///
 /// The runner receives `(cwd, argv)` and acquires the filesystem internally,
 /// matching the signature of [`dispatch_lumina_command`].

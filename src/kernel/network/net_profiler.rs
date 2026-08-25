@@ -1,8 +1,9 @@
 //! src/kernel/network/net_profiler.rs
 //!
-//! Network stack operation counters, gated behind `cfg(feature = "net_profiler")`.
-//! When the feature is disabled, every method is a no-op and `NetProfiler` is
-//! a zero-sized type so the field in `NetworkStack` costs zero bytes.
+//! Network stack operation counters, gated behind `cfg(feature =
+//! "net_profiler")`. When the feature is disabled, every method is a no-op and
+//! `NetProfiler` is a zero-sized type so the field in `NetworkStack` costs zero
+//! bytes.
 //!
 //! Uses `AtomicU64` with `Relaxed` ordering to avoid lock contention on the
 //! data path.

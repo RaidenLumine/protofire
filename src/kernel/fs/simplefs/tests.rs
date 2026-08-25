@@ -97,8 +97,9 @@ struct MetadataWriteFailureState {
 }
 
 /// Block-device wrapper that injects a single write failure on the `call`-th
-/// metadata write after [`arm_failure`](MetadataFailingBlockDevice::arm_failure).
-/// The kernel `Mutex` guard is returned directly (no `Result`), matching the
+/// metadata write after
+/// [`arm_failure`](MetadataFailingBlockDevice::arm_failure). The kernel `Mutex`
+/// guard is returned directly (no `Result`), matching the
 /// host-side FailingBlockDevice used by `tests/simplefs/validation.rs`.
 struct MetadataFailingBlockDevice {
     name: String,

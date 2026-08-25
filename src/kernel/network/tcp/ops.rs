@@ -1,6 +1,7 @@
 //! src/kernel/network/tcp/ops.rs
 //!
-//! High-level TCP operations: connect, process segment, retransmit, close, and reassembly.
+//! High-level TCP operations: connect, process segment, retransmit, close, and
+//! reassembly.
 use alloc::vec::Vec;
 
 use crate::kernel::network::internet::ipv4::Ipv4Addr;
@@ -168,8 +169,9 @@ pub fn process_segment_v6(
 /// the connection state lock held.  The caller is responsible for sending
 /// each returned segment via [`send_tcp_segment`].
 ///
-/// This is extracted from [`process_segment`] so that [`NativeTcpConnection::write_all`]
-/// can trigger transmission without waiting for an incoming ACK.
+/// This is extracted from [`process_segment`] so that
+/// [`NativeTcpConnection::write_all`] can trigger transmission without waiting
+/// for an incoming ACK.
 pub(crate) fn try_flush_tcp_output(
     stack: &NetworkStack,
     state: &mut TcpConnectionState,
@@ -1018,7 +1020,8 @@ fn enqueue_ooo(state: &mut TcpConnectionState, start_seq: u32, data: Vec<u8>) {
     }
 }
 
-/// Remove pending retransmit segments that are fully covered by peer SACK blocks.
+/// Remove pending retransmit segments that are fully covered by peer SACK
+/// blocks.
 fn pop_sacked_segments(state: &mut TcpConnectionState) {
     if state.peer_sack_blocks.is_empty() || state.retransmit.pending_segments.is_empty() {
         return;

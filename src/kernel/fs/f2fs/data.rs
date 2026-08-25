@@ -11,11 +11,10 @@ impl F2fsFs {
     /// Write data to a file at `offset`.
     ///
     /// For each affected logical block:
-    ///   - If the block already exists: read old content, modify, write to
-    ///     a *new* physical block (log-structured, never overwrites in
-    ///     place).
-    ///   - If the block is a hole or newly allocated: build the block
-    ///     content and allocate a new physical block.
+    ///   - If the block already exists: read old content, modify, write to a
+    ///     *new* physical block (log-structured, never overwrites in place).
+    ///   - If the block is a hole or newly allocated: build the block content
+    ///     and allocate a new physical block.
     ///
     /// This is append-only — old blocks are invalidated in the SIT but
     /// not erased (no GC in v1).

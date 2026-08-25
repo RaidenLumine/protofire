@@ -36,7 +36,8 @@ pub const COMMAND: u8 = 0x04;
 pub const STATUS: u8 = 0x06;
 /// Revision ID (8-bit, read-only).
 pub const REVISION_ID: u8 = 0x08;
-/// Class code / subclass / prog-if (24-bit: 0x0B class, 0x0A subclass, 0x09 prog-if).
+/// Class code / subclass / prog-if (24-bit: 0x0B class, 0x0A subclass, 0x09
+/// prog-if).
 pub const CLASS: u8 = 0x0B;
 /// Header type (8-bit, bit 7 = multi-function).
 pub const HEADER_TYPE: u8 = 0x0E;

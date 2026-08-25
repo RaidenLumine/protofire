@@ -6,12 +6,12 @@
 //!
 //! 1. BSP discovers AP LAPIC IDs via ACPI MADT parsing.
 //! 2. Trampoline code is copied to a low physical address (0x8000).
-//! 3. For each AP: allocate a kernel stack, write entry data to the
-//!    trampoline page, then send INIT-SIPI-SIPI via the LAPIC ICR.
-//! 4. The AP starts in 16-bit real mode, transitions to 64-bit long mode,
-//!    and calls [`ap_entry`].
-//! 5. [`ap_entry`] initialises per-CPU data, sets GS base, configures the
-//!    local APIC, and enters the idle loop.
+//! 3. For each AP: allocate a kernel stack, write entry data to the trampoline
+//!    page, then send INIT-SIPI-SIPI via the LAPIC ICR.
+//! 4. The AP starts in 16-bit real mode, transitions to 64-bit long mode, and
+//!    calls [`ap_entry`].
+//! 5. [`ap_entry`] initialises per-CPU data, sets GS base, configures the local
+//!    APIC, and enters the idle loop.
 //!
 //! ## Memory layout
 //!

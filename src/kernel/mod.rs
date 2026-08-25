@@ -1,6 +1,7 @@
 //! src/kernel/mod.rs
 //!
-//! Kernel bootstrap entry that wires memory, drivers, filesystem, scheduler, and syscall table.
+//! Kernel bootstrap entry that wires memory, drivers, filesystem, scheduler,
+//! and syscall table.
 
 pub mod audit;
 pub mod boot_report;
@@ -747,9 +748,9 @@ impl Kernel {
 
     /// Spawn kernel worker threads and user programs from service definitions.
     ///
-    /// Tries to load services from `/system/rc.d/*.toml` on the boot filesystem.
-    /// Falls back to an embedded configuration that matches the previous
-    /// hard-coded behaviour when no config files are present.
+    /// Tries to load services from `/system/rc.d/*.toml` on the boot
+    /// filesystem. Falls back to an embedded configuration that matches the
+    /// previous hard-coded behaviour when no config files are present.
     ///
     /// TODO(init): The embedded fallback config will move to protofire-os once
     /// the demo-disk builder also writes the rc.d config files.

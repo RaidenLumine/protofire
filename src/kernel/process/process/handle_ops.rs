@@ -274,12 +274,14 @@ impl Process {
         KernelObject::Network(connection)
     }
 
-    /// Open a file object and return a kernel handle with the requested access rights.
+    /// Open a file object and return a kernel handle with the requested access
+    /// rights.
     pub fn open_file_handle(&self, path: &str, file: FsFileHandle, rights: u32) -> Result<Handle> {
         self.open_handle(Self::file_object(path, file), rights)
     }
 
-    /// Open a file object and return a file descriptor with the requested access rights.
+    /// Open a file object and return a file descriptor with the requested
+    /// access rights.
     pub fn open_file_descriptor(
         &self,
         path: &str,
@@ -289,17 +291,20 @@ impl Process {
         self.open_descriptor(Self::file_object(path, file), rights)
     }
 
-    /// Open a directory path and return a kernel handle with the requested access rights.
+    /// Open a directory path and return a kernel handle with the requested
+    /// access rights.
     pub fn open_directory_handle(&self, path: &str, rights: u32) -> Result<Handle> {
         self.open_handle(Self::directory_object(path), rights)
     }
 
-    /// Open a directory path and return a file descriptor with the requested access rights.
+    /// Open a directory path and return a file descriptor with the requested
+    /// access rights.
     pub fn open_directory_descriptor(&self, path: &str, rights: u32) -> Result<FileDescriptor> {
         self.open_descriptor(Self::directory_object(path), rights)
     }
 
-    /// Open a device by name and return a kernel handle with the requested access rights.
+    /// Open a device by name and return a kernel handle with the requested
+    /// access rights.
     pub fn open_device_handle(&self, name: &str, rights: u32) -> Result<Handle> {
         self.open_validated_object(
             Self::device_object(name),
@@ -309,7 +314,8 @@ impl Process {
         )
     }
 
-    /// Open a device by name and return a file descriptor with the requested access rights.
+    /// Open a device by name and return a file descriptor with the requested
+    /// access rights.
     pub fn open_device_descriptor(&self, name: &str, rights: u32) -> Result<FileDescriptor> {
         self.open_validated_object(
             Self::device_object(name),
@@ -319,7 +325,8 @@ impl Process {
         )
     }
 
-    /// Open a TCP connection and return a kernel handle with the requested access rights.
+    /// Open a TCP connection and return a kernel handle with the requested
+    /// access rights.
     pub fn open_network_handle(
         &self,
         endpoint: &str,
@@ -334,7 +341,8 @@ impl Process {
         )
     }
 
-    /// Open a TCP connection and return a file descriptor with the requested access rights.
+    /// Open a TCP connection and return a file descriptor with the requested
+    /// access rights.
     pub fn open_network_descriptor(
         &self,
         endpoint: &str,
@@ -349,7 +357,8 @@ impl Process {
         )
     }
 
-    /// Open a DCCP socket and return a kernel handle with the requested access rights.
+    /// Open a DCCP socket and return a kernel handle with the requested access
+    /// rights.
     pub fn open_dccp_handle(&self, port: u16, socket: DccpSocket, rights: u32) -> Result<Handle> {
         self.open_validated_object(
             Self::dccp_socket_object(socket),
@@ -359,7 +368,8 @@ impl Process {
         )
     }
 
-    /// Open a DCCP socket and return a file descriptor with the requested access rights.
+    /// Open a DCCP socket and return a file descriptor with the requested
+    /// access rights.
     pub fn open_dccp_descriptor(
         &self,
         port: u16,
@@ -374,7 +384,8 @@ impl Process {
         )
     }
 
-    /// Open a TLS connection and return a kernel handle with the requested access rights.
+    /// Open a TLS connection and return a kernel handle with the requested
+    /// access rights.
     pub fn open_tls_handle(
         &self,
         endpoint: &str,
@@ -389,7 +400,8 @@ impl Process {
         )
     }
 
-    /// Open a TLS connection and return a file descriptor with the requested access rights.
+    /// Open a TLS connection and return a file descriptor with the requested
+    /// access rights.
     pub fn open_tls_descriptor(
         &self,
         endpoint: &str,

@@ -11,8 +11,8 @@
 //!
 //! - `init()` — one-time hardware initialisation (remapping, masking, group
 //!   assignment).  Must be idempotent.
-//! - `end_of_interrupt(vector)` — signal completion to the controller so it
-//!   can de-assert the interrupt line or priority drop.
+//! - `end_of_interrupt(vector)` — signal completion to the controller so it can
+//!   de-assert the interrupt line or priority drop.
 //! - `enable_interrupt(id)` — unmask / enable a specific interrupt source.
 //! - `set_priority(id, priority)` — assign a priority level.  Hardware that
 //!   does not support per-IRQ priority (e.g. 8259 PIC) makes this a no-op.

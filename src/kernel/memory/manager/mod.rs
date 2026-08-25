@@ -4,7 +4,8 @@
 //!
 //! Sub-module organisation:
 //! - `init`     — Construction, initialisation, frame allocation/deallocation
-//! - `mapping`  — Address-space mapping, diagnostics, user page registration, content store
+//! - `mapping`  — Address-space mapping, diagnostics, user page registration,
+//!   content store
 //! - `pfault`   — Page-fault resolution (demand-paging + CoW)
 //! - `swap`     — Page reclamation, swap I/O, CoW frame reference counting
 

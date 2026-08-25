@@ -1,6 +1,7 @@
 //! src/kernel/process/thread/mod.rs
 //!
-//! Thread object state machine, user-context handling, and exception-delivery metadata.
+//! Thread object state machine, user-context handling, and exception-delivery
+//! metadata.
 
 use ::core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8};
 use alloc::sync::Arc;
@@ -38,9 +39,11 @@ use kernel_stack::KernelStack;
 
 // The following are imported + re-exported by the pub use blocks below,
 // which also serve as private imports for the Thread struct definition:
-//   ThreadPriority, ThreadSchedPolicy, ThreadSchedStats, ThreadState (via pub use types::)
-//   AArch64UserExceptionHandlerRegistration, AArch64UserThreadContext (via pub use arch_aarch64::)
-//   X86_64UserExceptionHandlerRegistration, X86_64UserThreadContext (via pub use arch_x86_64::)
+//   ThreadPriority, ThreadSchedPolicy, ThreadSchedStats, ThreadState (via pub
+// use types::)   AArch64UserExceptionHandlerRegistration,
+// AArch64UserThreadContext (via pub use arch_aarch64::)
+//   X86_64UserExceptionHandlerRegistration, X86_64UserThreadContext (via pub
+// use arch_x86_64::)
 
 // ── Thread struct ───────────────────────────────────────────────────────
 
@@ -98,9 +101,10 @@ pub struct Thread {
     terminate_pending: AtomicBool,
     /// Preferred CPU for this thread (0 = any CPU, 1..N = specific CPU).
     cpu_affinity: AtomicU32,
-    /// Set to `true` when the scheduler promotes this thread from Normal to High
-    /// priority via the starvation-boost mechanism.  Reset to `false` on demotion
-    /// back to Normal.  Never `true` for native High or Realtime threads.
+    /// Set to `true` when the scheduler promotes this thread from Normal to
+    /// High priority via the starvation-boost mechanism.  Reset to `false`
+    /// on demotion back to Normal.  Never `true` for native High or
+    /// Realtime threads.
     boosted: AtomicBool,
     /// Snapshot of [`Process::current_address_space_generation`] taken after
     /// the most recent successful CR3 activation.

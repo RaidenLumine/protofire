@@ -1,5 +1,4 @@
 //! src/user/demo/demo_program_aarch64.rs
-//!
 #![cfg_attr(test, allow(dead_code))]
 //! Symbol bridge for the raw AArch64 demo payload section.
 

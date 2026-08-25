@@ -18,8 +18,8 @@
 //!
 //! - Real DCF is continuous-time and heavily randomised; this model is a
 //!   deterministic, tick-based simulation for pedagogy.
-//! - Frames are exchanged in the clear via `deliver()` — no signal
-//!   propagation, capture effect, or frame aggregation.
+//! - Frames are exchanged in the clear via `deliver()` — no signal propagation,
+//!   capture effect, or frame aggregation.
 //! - DIFS / SIFS are folded into single one-tick phase transitions.
 
 use alloc::vec::Vec;

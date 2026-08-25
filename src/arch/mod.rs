@@ -510,8 +510,8 @@ pub mod interrupts {
     ///
     /// # Parameters
     ///
-    /// * `enabled` — if `true`, re-enables interrupts; otherwise leaves
-    ///   them disabled.  Typically the value returned by a prior call to
+    /// * `enabled` — if `true`, re-enables interrupts; otherwise leaves them
+    ///   disabled.  Typically the value returned by a prior call to
     ///   [`save_and_disable()`].
     pub fn restore(enabled: bool) {
         if enabled {

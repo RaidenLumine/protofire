@@ -86,8 +86,8 @@ pub fn cmd_pwd(cwd: &str) -> CmdResult {
 
 /// `cd` — change the current working directory.
 ///
-/// `home_dir` provides the target for bare `cd` (no arguments) and `~` expansion.
-/// If `None`, defaults to `/`.
+/// `home_dir` provides the target for bare `cd` (no arguments) and `~`
+/// expansion. If `None`, defaults to `/`.
 pub fn cmd_cd(cwd: &mut String, argv: &[String], home_dir: Option<&str>) -> CmdResult {
     let raw_target = if argv.len() < 2 {
         home_dir.unwrap_or("/").to_string()
@@ -316,7 +316,8 @@ pub fn cmd_mkdir(cwd: &str, argv: &[String]) -> CmdResult {
     }
 }
 
-/// Create a directory and all intermediate parent directories (like `mkdir -p`).
+/// Create a directory and all intermediate parent directories (like `mkdir
+/// -p`).
 fn cmd_mkdir_parents(path_str: &str, full_path: &str) -> CmdResult {
     let segments: Vec<&str> = full_path.split('/').filter(|s| !s.is_empty()).collect();
 

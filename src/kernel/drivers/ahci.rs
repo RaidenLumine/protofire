@@ -9,11 +9,10 @@
 //!
 //! 1. Enables AHCI mode (GHC.AE) and optionally performs a HBA reset
 //! 2. Enumerates implemented ports via the PI register
-//! 3. For each port with a device attached (PxSSTS.DET == 3):
-//!    a. Allocates DMA memory for the Command List (1 K aligned) and
-//!       Received FIS (256 B aligned)
-//!    b. Starts the port command engine (PxCMD.ST + PxCMD.FRE)
-//!    c. Sends IDENTIFY DEVICE to determine block count and model
+//! 3. For each port with a device attached (PxSSTS.DET == 3): a. Allocates DMA
+//!    memory for the Command List (1 K aligned) and Received FIS (256 B
+//!    aligned) b. Starts the port command engine (PxCMD.ST + PxCMD.FRE) c.
+//!    Sends IDENTIFY DEVICE to determine block count and model
 //! 4. Exposes the first found SATA device as a `BlockDevice`
 //!
 //! ## Limitations (Phase 1)

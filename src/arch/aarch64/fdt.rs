@@ -81,7 +81,8 @@ const COMPAT_PCI_HOST_ECAM: &str = "pci-host-ecam-generic";
 pub struct PlatformInfo {
     pub gicd_base: Option<usize>,
     pub gicc_base: Option<usize>,
-    /// GICv3 redistributor base address (from FDT GICv3 node, second reg entry).
+    /// GICv3 redistributor base address (from FDT GICv3 node, second reg
+    /// entry).
     pub gicr_base: Option<usize>,
     /// GICv3 ITS (Interrupt Translation Service) base address.
     pub its_base: Option<usize>,
@@ -469,7 +470,8 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let off_dt_struct = unsafe { read_u32_be(base, OFF_OFF_DT_STRUCT) } as usize;
     let off_dt_strings = unsafe { read_u32_be(base, OFF_OFF_DT_STRINGS) } as usize;
 
-    // totalsize includes the header; strings block size is totalsize - off_dt_strings.
+    // totalsize includes the header; strings block size is totalsize -
+    // off_dt_strings.
     if off_dt_struct >= totalsize || off_dt_strings >= totalsize || off_dt_struct >= off_dt_strings
     {
         return PlatformInfo::empty();
@@ -734,7 +736,8 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         if compatible.contains(COMPAT_GIC_400)
                             || compatible.contains(COMPAT_GIC_CORTEX_A15)
                         {
-                            // GICv2 reg will be parsed from the parent node's reg property.
+                            // GICv2 reg will be parsed from the parent node's
+                            // reg property.
                         } else if compatible.contains(COMPAT_GIC_V3) {
                             current_is_gicv3 = true;
                             info.gicv3_detected = true;
@@ -743,15 +746,19 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         } else if compatible.contains(COMPAT_PL011)
                             || compatible.contains(COMPAT_NS16550A)
                         {
-                            // UART reg will be parsed from the parent node's reg property.
+                            // UART reg will be parsed from the parent node's
+                            // reg property.
                         } else if compatible.contains(COMPAT_PL031)
                             || compatible.contains(COMPAT_GOLDFISH_RTC)
                         {
-                            // RTC reg will be parsed from the parent node's reg property.
+                            // RTC reg will be parsed from the parent node's reg
+                            // property.
                         } else if compatible.contains(COMPAT_VIRTIO_MMIO) {
-                            // VirtIO MMIO reg will be parsed from the parent node's reg property.
+                            // VirtIO MMIO reg will be parsed from the parent
+                            // node's reg property.
                         } else if compatible.contains(COMPAT_RISCV_PLIC0) {
-                            // PLIC reg will be parsed from the parent node's reg property.
+                            // PLIC reg will be parsed from the parent node's
+                            // reg property.
                         } else if compatible.contains(COMPAT_PCI_HOST_ECAM) {
                             current_is_pci_host = true;
                         } else if compatible.contains("operating-points-v2") {
@@ -1447,8 +1454,8 @@ mod tests {
     ///
     /// The test blob contains:
     /// - root node with #address-cells=2, #size-cells=2
-    /// - /intc (GIC-400) with reg = <0x0 0x0800_0000 0x0 0x10000>,
-    ///   <0x0 0x0801_0000 0x0 0x10000>
+    /// - /intc (GIC-400) with reg = <0x0 0x0800_0000 0x0 0x10000>, <0x0
+    ///   0x0801_0000 0x0 0x10000>
     /// - /pl011@9000000 with reg = <0x0 0x0900_0000 0x0 0x1000>
     /// - /virtio_mmio@a000000 with reg = <0x0 0x0A00_0000 0x0 0x200>
     /// - /virtio_mmio@a000200 with reg = <0x0 0x0A00_0200 0x0 0x200>

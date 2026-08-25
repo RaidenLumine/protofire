@@ -1,7 +1,8 @@
 //! src/user/shared/abi/process.rs
 //!
 //! src/abi/process.rs
-//! Shared process ABI constants and records for spawn, wait, and termination flows.
+//! Shared process ABI constants and records for spawn, wait, and termination
+//! flows.
 
 use core::mem::{offset_of, size_of};
 
@@ -229,7 +230,8 @@ impl ProcessSpawnStringRef {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Fixed-size launch-options block shared by `spawn_process` and `exec_process`.
+/// Fixed-size launch-options block shared by `spawn_process` and
+/// `exec_process`.
 ///
 /// User space must either pass exactly `PROCESS_SPAWN_OPTIONS_SIZE` bytes, or
 /// pass `options_len == 0` with `options_ptr == 0` to select

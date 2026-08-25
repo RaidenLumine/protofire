@@ -2,7 +2,8 @@
 //!
 //! src/arch/x86_64/paging.rs
 //!
-//! x86_64 bootstrap and runtime page-table planning plus per-process address-space assembly.
+//! x86_64 bootstrap and runtime page-table planning plus per-process
+//! address-space assembly.
 
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicBool, AtomicUsize};
@@ -419,8 +420,9 @@ pub(crate) struct RawPageTable(pub(crate) [u64; PAGE_TABLE_ENTRY_COUNT]);
 
 impl RawPageTable {
     /// Zero-initialised value used for static initialisers and non‑heap
-    /// contexts.  For heap allocations prefer [`RawPageTable::new_boxed_zeroed`]
-    /// to avoid a 4096‑byte stack temporary.
+    /// contexts.  For heap allocations prefer
+    /// [`RawPageTable::new_boxed_zeroed`] to avoid a 4096‑byte stack
+    /// temporary.
     #[cfg_attr(not(all(target_arch = "x86_64", target_os = "none")), allow(dead_code))]
     pub(crate) const fn zeroed() -> Self {
         Self([0; PAGE_TABLE_ENTRY_COUNT])

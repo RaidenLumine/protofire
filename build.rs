@@ -20,10 +20,10 @@ fn main() {
         //
         // NOTE: we use --emit-relocs (not -pie) because:
         //   - The x86_64-unknown-none target doesn't support PIE natively.
-        //   - --emit-relocs preserves every relocation in the final ELF
-        //     without changing the ELF type (stays ET_EXEC).
-        //   - R_X86_64_32 relocations (e.g. AP trampoline) are harmless
-        //     because they're stored but never executed through the GOT.
+        //   - --emit-relocs preserves every relocation in the final ELF without
+        //     changing the ELF type (stays ET_EXEC).
+        //   - R_X86_64_32 relocations (e.g. AP trampoline) are harmless because they're
+        //     stored but never executed through the GOT.
         println!("cargo:rustc-link-arg=--emit-relocs");
     }
     if target == "aarch64-unknown-none" {

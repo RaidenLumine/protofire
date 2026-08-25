@@ -358,9 +358,9 @@ pub const IPV6_ALL_ROUTERS_MULTICAST: Ipv6Addr = [
     0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
 ];
 
-/// Build the solicited-node multicast address for `target` (`ff02::1:ffXX:XXXX`).
-/// Used by NDP Neighbor Solicitation to reach the target without broadcasting
-/// to all nodes.
+/// Build the solicited-node multicast address for `target`
+/// (`ff02::1:ffXX:XXXX`). Used by NDP Neighbor Solicitation to reach the target
+/// without broadcasting to all nodes.
 pub fn solicited_node_multicast(target: Ipv6Addr) -> Ipv6Addr {
     let mut addr = [
         0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xff, target[13],
@@ -376,8 +376,8 @@ pub fn solicited_node_multicast(target: Ipv6Addr) -> Ipv6Addr {
 /// EUI-64 format (RFC 4291 §2.5.1).
 ///
 /// Format: `fe80::<modified-eui64>` where the modified EUI-64 is formed by:
-///   - Inserting `0xfffe` between the OUI (bytes 0-2) and NIC-specific
-///     (bytes 3-5) halves of the MAC.
+///   - Inserting `0xfffe` between the OUI (bytes 0-2) and NIC-specific (bytes
+///     3-5) halves of the MAC.
 ///   - Flipping the universal/local bit (bit 1 of byte 0).
 pub fn link_local_from_mac(mac: [u8; 6]) -> Ipv6Addr {
     let mut addr = [0u8; 16];

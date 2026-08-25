@@ -304,7 +304,8 @@ impl SimpleFsFormatVersion {
         Err(Error::Unsupported)
     }
 
-    /// Number of bytes a fixed-capacity xattr table occupies for `count` records.
+    /// Number of bytes a fixed-capacity xattr table occupies for `count`
+    /// records.
     pub(crate) fn xattr_table_bytes(self, count: usize) -> Result<usize> {
         count
             .checked_mul(XATTR_RECORD_SIZE)

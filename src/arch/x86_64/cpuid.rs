@@ -16,7 +16,8 @@ pub const CPUID_LEAF_7_EBX_SMAP: u32 = 1 << 20;
 /// CPUID leaf 1, ECX bit 30 — RDRAND instruction available.
 pub const CPUID_LEAF_1_ECX_RDRAND: u32 = 1 << 30;
 
-/// CPUID leaf 7 (Structured Extended Features), sub-leaf 0, EBX bit 18 — RDSEED instruction available.
+/// CPUID leaf 7 (Structured Extended Features), sub-leaf 0, EBX bit 18 — RDSEED
+/// instruction available.
 pub const CPUID_LEAF_7_EBX_RDSEED: u32 = 1 << 18;
 
 /// Result of a CPUID invocation: EAX, EBX, ECX, EDX.

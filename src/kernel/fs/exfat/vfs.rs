@@ -490,7 +490,8 @@ struct ExfatVNode {
     valid_data_length: crate::kernel::sync::Mutex<u64>,
     /// Allocated data length in bytes (mutable, updated on write).
     data_length: crate::kernel::sync::Mutex<u64>,
-    /// Whether the file is stored contiguously (mutable, may be cleared on write).
+    /// Whether the file is stored contiguously (mutable, may be cleared on
+    /// write).
     no_fat_chain: crate::kernel::sync::Mutex<bool>,
 }
 

@@ -1,8 +1,18 @@
+# .rustfmt.toml
+
+# This file contains configuration options for rustfmt, the Rust code formatting tool.
+# The options specified here will be applied when formatting Rust code in this project.
+
+# Basic formatting options
 max_width = 100
 hard_tabs = false
 tab_spaces = 4
 newline_style = "Auto"
 indent_style = "Block"
+edition = "2021"
+style_edition = "2021"
+
+# Line width and wrapping
 use_small_heuristics = "Default"
 fn_call_width = 60
 attr_fn_like_width = 70
@@ -12,21 +22,29 @@ array_width = 60
 chain_width = 60
 single_line_if_else_max_width = 50
 single_line_let_else_max_width = 50
-wrap_comments = false
-format_code_in_doc_comments = false
-doc_comment_code_block_width = 100
+
+# Comment formatting
+wrap_comments = true
 comment_width = 80
+format_code_in_doc_comments = true
+doc_comment_code_block_width = 80
 normalize_comments = false
 normalize_doc_attributes = false
+
+# String and macro
 format_strings = false
 format_macro_matchers = false
 format_macro_bodies = true
 skip_macro_invocations = []
+
+# Literal and structure
 hex_literal_case = "Preserve"
 empty_item_single_line = true
 struct_lit_single_line = true
 fn_single_line = false
 where_single_line = false
+
+# Import and module
 imports_indent = "Block"
 imports_layout = "Mixed"
 imports_granularity = "Preserve"
@@ -34,6 +52,8 @@ group_imports = "Preserve"
 reorder_imports = true
 reorder_modules = true
 reorder_impl_items = false
+
+# Type and expression
 type_punctuation_density = "Wide"
 space_before_colon = false
 space_after_colon = true
@@ -43,29 +63,43 @@ remove_nested_parens = true
 combine_control_expr = true
 short_array_element_width_threshold = 10
 overflow_delimited_expr = false
+
+# Structure and enumerate alignment
 struct_field_align_threshold = 0
 enum_discrim_align_threshold = 0
+
+# Match and block
 match_arm_blocks = true
 match_arm_leading_pipes = "Never"
 force_multiline_blocks = false
 fn_params_layout = "Tall"
+
+# `{}` style
 brace_style = "SameLineWhere"
 control_brace_style = "AlwaysSameLine"
+
+# Tail punctuation
 trailing_semicolon = true
 trailing_comma = "Vertical"
 match_block_trailing_comma = false
+
+# Empty line
 blank_lines_upper_bound = 1
 blank_lines_lower_bound = 0
-edition = "2021"
-style_edition = "2021"
+
+# Attribute and generated file
 inline_attribute_width = 0
 format_generated_files = true
 generated_marker_line_search_limit = 5
 merge_derives = true
+
+# Quick syntax
 use_try_shorthand = false
 use_field_init_shorthand = false
 force_explicit_abi = true
 condense_wildcard_suffixes = false
+
+# Runtime and debugging
 color = "Auto"
 required_version = "1.10.0"
 unstable_features = true

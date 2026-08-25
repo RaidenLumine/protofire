@@ -5,7 +5,8 @@
 pub mod device;
 pub mod ethernet;
 
-// Educational networking modules — see individual files for pedagogical context.
+// Educational networking modules — see individual files for pedagogical
+// context.
 #[cfg(any(test, feature = "educational_networking"))]
 pub mod csma_ca;
 #[cfg(any(test, feature = "educational_networking"))]

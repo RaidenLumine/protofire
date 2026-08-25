@@ -1,6 +1,7 @@
 //! src/kernel/fs/path.rs
 //!
-//! Path normalization and path-manipulation helpers for syscall and VFS callers.
+//! Path normalization and path-manipulation helpers for syscall and VFS
+//! callers.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -13,9 +14,9 @@ use crate::{Error, Result};
 /// 1. Absolute (begins with `/`).
 /// 2. Free of `.`, `..`, empty components, and redundant slashes.
 /// 3. Pure UTF-8 — no Unicode normalisation is applied.  Like Linux and
-///    HarmonyOS, the kernel treats filenames as opaque byte sequences and
-///    does not second-guess the encoding form chosen by userspace.  Callers
-///    that need NFD/NFC equivalence can opt into it via the `unicode` module.
+///    HarmonyOS, the kernel treats filenames as opaque byte sequences and does
+///    not second-guess the encoding form chosen by userspace.  Callers that
+///    need NFD/NFC equivalence can opt into it via the `unicode` module.
 pub fn normalize_path(path: &str, cwd: &str) -> Result<String> {
     let raw = sanitize_normalizable_path(path)?;
     // Force callers to provide an absolute cwd up front instead of silently
