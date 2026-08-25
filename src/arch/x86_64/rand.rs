@@ -98,14 +98,11 @@ pub fn rdrand_fill(buf: &mut [u8]) -> usize {
 
     // Handle trailing bytes (fewer than 8).
     if filled < buf.len() {
-        match rdrand_u64() {
-            Some(value) => {
-                let bytes = value.to_ne_bytes();
-                let remaining = buf.len() - filled;
-                buf[filled..].copy_from_slice(&bytes[..remaining]);
-                filled += remaining;
-            }
-            None => {}
+        if let Some(value) = rdrand_u64() {
+            let bytes = value.to_ne_bytes();
+            let remaining = buf.len() - filled;
+            buf[filled..].copy_from_slice(&bytes[..remaining]);
+            filled += remaining;
         }
     }
 
