@@ -3,7 +3,7 @@
 
 [package]
 name = "protofire"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 authors = ["Raiden Lumine"]
 description = "A Rust bare-metal kernel prototype with a file-oriented user ABI."
