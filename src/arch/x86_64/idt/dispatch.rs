@@ -377,7 +377,7 @@ fn try_async_signal_delivery(context: &mut InterruptContext) {
     // signal interrupted a syscall (int 0x80), arrange for the syscall
     // to be re-issued after the handler returns by rewinding the saved
     // RIP by 2 bytes (the length of `int 0x80`).
-    let restart_pending = (process.signal_sa_flags(signal_num) & (SA_RESTART as u64)) != 0
+    let restart_pending = (process.signal_sa_flags(signal_num) & SA_RESTART) != 0
         && context.vector == SYSCALL_VECTOR as u64;
 
     // ── Build the SignalFrame on the user stack ────────────────────

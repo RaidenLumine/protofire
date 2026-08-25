@@ -141,7 +141,7 @@ impl VirtIoMsix {
         }
 
         let table_phys = bar.base_address + table_offset;
-        let entry_count = (cap.message_control & MSIX_CTRL_TABLE_SIZE_MASK) as u16 + 1;
+        let entry_count = (cap.message_control & MSIX_CTRL_TABLE_SIZE_MASK) + 1;
         let table_bytes = (entry_count as usize) * MSIX_ENTRY_BYTES;
 
         let table =
