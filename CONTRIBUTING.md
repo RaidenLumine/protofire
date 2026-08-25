@@ -209,10 +209,9 @@ rules strictly:
 
 ## Commit Message Guidelines
 
-Protofire follows the spirit of what Linus Torvalds enforces on the Linux
-kernel: a commit message is a message to future readers, not a receipt for the
-diff. Two rules of thumb — keep it short, and say *why*, not *what* (the diff
-already shows what).
+Protofire follows this spirit: a commit message is a message to future readers,
+not a receipt for the diff. Two rules of thumb — keep it short, and say *why*,
+not *what* (the diff already shows what).
 
 **Subject line (first line):**
 

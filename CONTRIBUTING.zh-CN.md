@@ -189,9 +189,8 @@ cargo build --features demo-disk --target riscv64gc-unknown-none-elf
 
 ## 提交信息规范
 
-Protofire 遵循 Linus Torvalds 在 Linux 内核上贯彻的精神：提交信息是写给未来读者的
-一封信，而不是对 diff 的收据。两条准则——保持简短，讲 *为什么* 而不讲 *是什么*
-（diff 已经展示了是什么）。
+Protofire 遵循 如下精神：提交信息是写给未来读者的一封信，而不是对 diff 的收据。
+两条准则——保持简短，讲 *为什么* 而不讲 *是什么*（diff 已经展示了是什么）。
 
 **主题行（第一行）：**
 
