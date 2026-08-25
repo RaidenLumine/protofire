@@ -1,6 +1,7 @@
 //! src/kernel/process/scheduler/process.rs
 //!
 //! Process lifecycle and query operations.
+
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;

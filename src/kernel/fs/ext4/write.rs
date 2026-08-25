@@ -1,6 +1,7 @@
 //! src/kernel/fs/ext4/write.rs
 //!
 //! Ext4 inode and superblock write helpers.
+
         }
         self.write_inode_raw(ino, &inode)?;
 

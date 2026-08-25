@@ -1,6 +1,7 @@
 //! src/user/demo/demo_program_riscv64.rs
 //!
 //! Symbol bridge for the raw RISC-V 64 demo payload section.
+
 #![cfg_attr(test, allow(dead_code))]
 
 #[cfg(test)]

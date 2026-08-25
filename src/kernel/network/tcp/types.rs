@@ -1,6 +1,7 @@
 //! src/kernel/network/tcp/types.rs
 //!
 //! TCP types: constants, flags, state machine, header, and connection state.
+
 use alloc::collections::vec_deque::VecDeque;
 use alloc::vec::Vec;
 

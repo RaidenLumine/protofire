@@ -1,6 +1,7 @@
 //! src/kernel/process/scheduler/types.rs
 //!
 //! Scheduler auxiliary types: hotspot statistics and timed-waiter entries.
+
 use alloc::sync::Arc;
 
 use crate::kernel::sync::WaitTimeoutCleanupRef;

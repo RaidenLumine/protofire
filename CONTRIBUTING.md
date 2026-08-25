@@ -108,8 +108,10 @@ The codebase is ~215,000 lines of Rust across 600+ files; consistency matters.
 
 - **Formatting:** run `cargo fmt`. The gate treats formatting as mandatory.
 - **File headers:** every `.rs` file opens with `//! <repo-relative-path>` on
-  line 1 and a bare `//!` on line 2; real content starts on line 3. Enforced by
-  `check_source_headers` inside `make verify` (see `scripts/verify.sh`).
+  line 1 and a bare `//!` on line 2, followed by the `//!` description lines.
+  A blank line must separate the whole `//!` header block from the first body
+  line, so the header is visually distinct from the code that follows. Enforced
+  by `check_source_headers` inside `make verify` (see `scripts/verify.sh`).
 - **Lints:** run `make clippy` (all targets). Critical lints are warnings-as-errors.
 - **`no_std`:** kernel code is `#![no_std]` and `panic = "abort"`. No `std`,
   no dynamic `Box::new` in IRQ/atomic paths beyond the kernel heap.

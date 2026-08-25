@@ -1,6 +1,7 @@
 //! src/kernel/process/thread/arch_riscv64.rs
 //!
 //! RISC-V 64 user-thread context types.
+
 use core::mem::size_of;
 
 use super::types::UserThreadStart;

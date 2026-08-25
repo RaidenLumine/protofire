@@ -1,6 +1,7 @@
 //! src/kernel/drivers/usb_msd_driver.rs
 //!
 //! USB mass-storage driver bridge implementing the kernel Driver interface.
+
 use crate::kernel::drivers::{Driver, DriverCategory};
 use crate::Result;
 

@@ -1,6 +1,7 @@
 //! src/kernel/process/scheduler/dispatch.rs
 //!
 //! Core scheduling loop, yield, sleep, and preemption.
+
 use core::sync::atomic::Ordering;
 
 use alloc::sync::Arc;

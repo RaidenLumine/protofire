@@ -1,6 +1,7 @@
 //! src/kernel/process/scheduler/api.rs
 //!
 //! Top-level public scheduler API functions and thread trampoline.
+
 use super::Scheduler;
 
 /// Voluntarily yield the current thread's remaining time slice.

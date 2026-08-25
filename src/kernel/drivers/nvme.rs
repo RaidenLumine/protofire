@@ -2,6 +2,7 @@
 //!
 //! NVMe solid-state drive driver.
 //! NVMe driver.
+
 /// Submission Queue Entry size (64 bytes per the NVMe spec).
 pub const SQ_ENTRY_SIZE: usize = 64;
 /// Completion Queue Entry size (16 bytes per the NVMe spec).

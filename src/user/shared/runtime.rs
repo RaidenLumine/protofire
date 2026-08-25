@@ -1,6 +1,7 @@
 //! src/user/shared/runtime.rs
 //!
 //! Ring-3 runtime syscall bridge (raw status-word to isize translation).
+
 // ── Syscall bridge for the shared module ─────────────────────────────────────
 //
 // These #[no_mangle] extern "Rust" functions implement the symbols declared

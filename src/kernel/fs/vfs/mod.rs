@@ -1,6 +1,7 @@
 //! src/kernel/fs/vfs/mod.rs
 //!
 //! Virtual File System layer: traits and implementations.
+
 pub mod checksum;
 pub mod filesystem;
 #[cfg(test)]

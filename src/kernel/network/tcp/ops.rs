@@ -2,6 +2,7 @@
 //!
 //! High-level TCP operations: connect, process segment, retransmit, close, and
 //! reassembly.
+
 use alloc::vec::Vec;
 
 use crate::kernel::network::internet::ipv4::Ipv4Addr;

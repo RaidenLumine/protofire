@@ -41,11 +41,14 @@ check_source_headers() {
     total_files=0
     path_headers=0
     blank_headers=0
+    separated_headers=0
 
     # Every `.rs` file in the repository must open with:
     #   line 1: `//! <relative_path>`
     #   line 2: `//!` (blank)
-    # with content starting on line 3.
+    #   followed by the `//!` description lines,
+    # and a blank line must separate the whole `//!` header block from the
+    # first body line (the convention requested by the maintainer).
     files="$(find . -type f -name '*.rs' -not -path './target/*' | sort)"
     for file in $files; do
         total_files=$((total_files + 1))
@@ -61,13 +64,25 @@ check_source_headers() {
         if [ "$second_line" = "//!" ]; then
             blank_headers=$((blank_headers + 1))
         fi
+
+        # The first non-`//!`, non-blank line must come at least two lines
+        # after the last `//!` header line (i.e. one blank line between).
+        if awk '
+            NR == 1 && $0 !~ /^\/\/!/ { exit 0 }
+            $0 ~ /^\/\/!/ { last = NR; next }
+            $0 == "" { next }
+            { exit (NR - last >= 2) ? 0 : 1 }
+        ' "$file"; then
+            separated_headers=$((separated_headers + 1))
+        fi
     done
 
-    printf 'header coverage: path=%s blank=%s total=%s\n' \
-        "$path_headers" "$blank_headers" "$total_files"
+    printf 'header coverage: path=%s blank=%s separated=%s total=%s\n' \
+        "$path_headers" "$blank_headers" "$separated_headers" "$total_files"
 
     if [ "$path_headers" -ne "$total_files" ] \
-        || [ "$blank_headers" -ne "$total_files" ]; then
+        || [ "$blank_headers" -ne "$total_files" ] \
+        || [ "$separated_headers" -ne "$total_files" ]; then
         printf 'source header coverage check failed\n' >&2
         return 1
     fi

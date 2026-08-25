@@ -1,6 +1,7 @@
 //! src/kernel/process/scheduler/timer.rs
 //!
 //! Timer tick handling and priority boosting.
+
 use alloc::vec::Vec;
 
 use crate::arch;

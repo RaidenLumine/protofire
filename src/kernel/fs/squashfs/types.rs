@@ -3,6 +3,7 @@
 //! On-disk data structures for SquashFS.
 //!
 //! Reference: <https://dr-emann.github.io/squashfs/squashfs.html>
+
 //
 // NOTE: The SquashFS driver is a work-in-progress.  This file defines the
 // complete on-disk format, but only a subset of fields are wired through.

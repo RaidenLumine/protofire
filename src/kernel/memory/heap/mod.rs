@@ -2,6 +2,7 @@
 //!
 //! Kernel heap allocator and global allocation wiring using TLSF for O(1)
 //! allocation.
+
 pub(crate) mod allocator;
 pub(crate) mod tlsf;
 pub(crate) mod wrapper;

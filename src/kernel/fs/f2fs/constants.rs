@@ -1,6 +1,7 @@
 //! src/kernel/fs/f2fs/constants.rs
 //!
 //! F2FS layout and inode field constants.
+
 // ─── Inode field offsets (custom simplified layout, contiguous) ────────
 
 /// Offset of `i_mode` within the inode block (u16).

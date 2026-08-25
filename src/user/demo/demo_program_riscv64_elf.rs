@@ -3,6 +3,7 @@
 //! Convenience wrappers that build loadable RISC-V 64 ELF artifacts from the
 //! kernel's raw demo payload sections.  The shared ELF layout logic lives in
 //! `super::elf_builder`.
+
 #![cfg_attr(test, allow(dead_code))]
 
 pub use super::elf_builder::DemoProgramArtifact;

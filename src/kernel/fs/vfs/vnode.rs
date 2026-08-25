@@ -1,6 +1,7 @@
 //! src/kernel/fs/vfs/vnode.rs
 //!
 //! VNode trait and StaticVNode implementation.
+
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 

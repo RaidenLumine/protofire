@@ -1,6 +1,7 @@
 //! src/kernel/fs/ntfs/types.rs
 //!
 //! On-disk data structures for NTFS.
+
 //
 // NOTE: The NTFS driver is a work-in-progress.  This file defines the
 // complete on-disk format, but only a subset of fields are wired through.
