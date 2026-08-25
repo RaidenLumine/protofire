@@ -4,28 +4,48 @@
 //! selection, nested-delivery policies, and per-arch delivery builders.
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-use crate::{Error, Result};
+use crate::Error;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+use crate::Result;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use ::core::mem::size_of;
 
 #[cfg(target_arch = "aarch64")]
-use super::arch_aarch64::{
-    AArch64UserExceptionFrame, AArch64UserThreadContext, AARCH64_EXCEPTION_DATA_ABORT_VECTOR,
-    AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR, AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED,
-    AARCH64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT,
-    AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK,
-};
+use super::arch_aarch64::AArch64UserExceptionFrame;
+#[cfg(target_arch = "aarch64")]
+use super::arch_aarch64::AArch64UserThreadContext;
+#[cfg(target_arch = "aarch64")]
+use super::arch_aarch64::AARCH64_EXCEPTION_DATA_ABORT_VECTOR;
+#[cfg(target_arch = "aarch64")]
+use super::arch_aarch64::AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR;
+#[cfg(target_arch = "aarch64")]
+use super::arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+#[cfg(target_arch = "aarch64")]
+use super::arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
+#[cfg(target_arch = "aarch64")]
+use super::arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 #[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::{
-    X86_64UserExceptionFrame, X86_64UserThreadContext, X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR,
-    X86_64_EXCEPTION_INVALID_OPCODE_VECTOR, X86_64_EXCEPTION_PAGE_FAULT_VECTOR,
-    X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED, X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT,
-    X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK,
-};
+use super::arch_x86_64::X86_64UserExceptionFrame;
+#[cfg(target_arch = "x86_64")]
+use super::arch_x86_64::X86_64UserThreadContext;
+#[cfg(target_arch = "x86_64")]
+use super::arch_x86_64::X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR;
+#[cfg(target_arch = "x86_64")]
+use super::arch_x86_64::X86_64_EXCEPTION_INVALID_OPCODE_VECTOR;
+#[cfg(target_arch = "x86_64")]
+use super::arch_x86_64::X86_64_EXCEPTION_PAGE_FAULT_VECTOR;
+#[cfg(target_arch = "x86_64")]
+use super::arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+#[cfg(target_arch = "x86_64")]
+use super::arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
+#[cfg(target_arch = "x86_64")]
+use super::arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::types::is_canonical_user_address;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-use super::types::{PendingExceptionFrameStack, UserPendingExceptionFrame};
+use super::types::PendingExceptionFrameStack;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+use super::types::UserPendingExceptionFrame;
 
 // ── Arch-specific delivery builders ─────────────────────────────────────
 

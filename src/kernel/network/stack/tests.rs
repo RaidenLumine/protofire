@@ -6,12 +6,20 @@
 
 use alloc::sync::Arc;
 
-use crate::kernel::network::internet::icmp::{self, IcmpHeader};
-use crate::kernel::network::internet::ipv4::{self, IpProtocol, Ipv4Addr, Ipv4Header};
+use crate::kernel::network::internet::icmp::IcmpHeader;
+use crate::kernel::network::internet::icmp::{self};
+use crate::kernel::network::internet::ipv4::IpProtocol;
+use crate::kernel::network::internet::ipv4::Ipv4Addr;
+use crate::kernel::network::internet::ipv4::Ipv4Header;
+use crate::kernel::network::internet::ipv4::{self};
 use crate::kernel::network::link::device::mock::MockNetworkDevice;
-use crate::kernel::network::link::ethernet::{self, EtherType, EthernetFrame, MacAddress};
+use crate::kernel::network::link::ethernet::EtherType;
+use crate::kernel::network::link::ethernet::EthernetFrame;
+use crate::kernel::network::link::ethernet::MacAddress;
+use crate::kernel::network::link::ethernet::{self};
 use crate::kernel::network::stack::NetworkStack;
-use crate::kernel::network::udp::{self, UdpHeader};
+use crate::kernel::network::udp::UdpHeader;
+use crate::kernel::network::udp::{self};
 
 /// Install a fresh global stack over a fresh mock device.
 ///

@@ -448,7 +448,8 @@ mod controller {
     use crate::kernel::memory::DmaBuffer;
     use crate::println;
     use crate::Result;
-    use core::ptr::{read_volatile, write_volatile};
+    use core::ptr::read_volatile;
+    use core::ptr::write_volatile;
 
     /// Maximum number of device slots we support.
     const MAX_SLOTS: usize = 64;
@@ -1263,9 +1264,11 @@ mod controller {
         /// descriptor, find bulk endpoints, configure them, and
         /// initialise the MSC driver.
         pub unsafe fn init_msd(&mut self, slot_id: u8) -> crate::Result<()> {
-            use crate::kernel::drivers::usb_msd::{
-                self, MsdBulkEndpoints, USB_CLASS_MSC, USB_PROTOCOL_BOT, USB_SUBCLASS_SCSI,
-            };
+            use crate::kernel::drivers::usb_msd::MsdBulkEndpoints;
+            use crate::kernel::drivers::usb_msd::USB_CLASS_MSC;
+            use crate::kernel::drivers::usb_msd::USB_PROTOCOL_BOT;
+            use crate::kernel::drivers::usb_msd::USB_SUBCLASS_SCSI;
+            use crate::kernel::drivers::usb_msd::{self};
 
             // Read the full configuration descriptor (first 9 bytes for header).
             let mut header_buf = [0u8; 9];
@@ -1726,9 +1729,11 @@ pub fn xhci_poll() -> bool {
 // Driver integration
 // ---------------------------------------------------------------------------
 
-use crate::kernel::drivers::{Driver, DriverCategory};
+use crate::kernel::drivers::Driver;
+use crate::kernel::drivers::DriverCategory;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 static XHCI_PROBED: AtomicBool = AtomicBool::new(false);
 

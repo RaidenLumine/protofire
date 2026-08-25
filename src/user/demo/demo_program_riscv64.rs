@@ -42,7 +42,9 @@ pub fn payload_bytes() -> &'static [u8] {
 
 #[cfg(test)]
 mod tests {
-    use super::{PAYLOAD_END_SYMBOL, PAYLOAD_START_SYMBOL, RISCV64_TARGET};
+    use super::PAYLOAD_END_SYMBOL;
+    use super::PAYLOAD_START_SYMBOL;
+    use super::RISCV64_TARGET;
 
     #[cfg(target_os = "linux")]
     #[test]

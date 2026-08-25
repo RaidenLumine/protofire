@@ -13,7 +13,8 @@
 //! and QEMU), the `APIC_CONTROLLER` is used.  The legacy `PIC_CONTROLLER`
 //! is kept as a fallback for environments without APIC support.
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use super::port::Port;
 use crate::arch::interrupt_controller::InterruptController;

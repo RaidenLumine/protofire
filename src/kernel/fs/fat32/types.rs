@@ -7,9 +7,11 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 pub(crate) use crate::kernel::fs::block::BLOCK_SIZE;
-use crate::kernel::fs::unicode::{self, OemCodePage};
+use crate::kernel::fs::unicode::OemCodePage;
+use crate::kernel::fs::unicode::{self};
 pub(crate) use crate::kernel::fs::vfs::NodeKind;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ─── FAT type classification ───────────────────────────────────────────────
 

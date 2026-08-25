@@ -9,13 +9,15 @@
 //! to the device on explicit `flush` / `flush_range` calls or when the
 //! entry is evicted.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::block::{BlockDevice, BLOCK_SIZE};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::BLOCK_SIZE;
 use crate::kernel::sync::Mutex;
 use crate::Result;
 
@@ -621,7 +623,8 @@ impl BlockCache {
 mod tests {
     use super::*;
     use crate::kernel::sync::Mutex as TestMutex;
-    use core::sync::atomic::{AtomicU64, Ordering};
+    use core::sync::atomic::AtomicU64;
+    use core::sync::atomic::Ordering;
 
     struct CountingDevice {
         name: &'static str,

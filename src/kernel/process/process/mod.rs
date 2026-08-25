@@ -21,29 +21,52 @@ pub mod types;
 
 // ── Re-exports (consumed by `crate::kernel::process`) ───────────────────
 
-pub use constants::{
-    FileDescriptor, GroupId, Handle, ProcessId, UserId, DEFAULT_GUEST_GROUP_ID,
-    DEFAULT_GUEST_USER_ID, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE, ROOT_GROUP_ID, ROOT_USER_ID,
-    STDERR_FD, STDIN_FD, STDOUT_FD,
-};
+pub use constants::FileDescriptor;
+pub use constants::GroupId;
+pub use constants::Handle;
+pub use constants::ProcessId;
+pub use constants::UserId;
+pub use constants::DEFAULT_GUEST_GROUP_ID;
+pub use constants::DEFAULT_GUEST_USER_ID;
+pub use constants::HANDLE_RIGHT_READ;
+pub use constants::HANDLE_RIGHT_WRITE;
+pub use constants::ROOT_GROUP_ID;
+pub use constants::ROOT_USER_ID;
+pub use constants::STDERR_FD;
+pub use constants::STDIN_FD;
+pub use constants::STDOUT_FD;
 pub use handle_entry::home_dir_for_uid;
-pub use security::{IntegrityLevel, SecurityToken};
-pub use types::{
-    ExceptionTermination, FdFlags, HandleEntry, KernelObject, LaunchContext, OpenFile,
-    ProcessAddressSpaceSummary, ProcessState, ProcessSummary, RawSocketHandle, TerminationReason,
-    UserAddressSpaceSummary,
-};
-pub(crate) use types::{ProcessExecState, ProcessUserAddressSpace};
+pub use security::IntegrityLevel;
+pub use security::SecurityToken;
+pub use types::ExceptionTermination;
+pub use types::FdFlags;
+pub use types::HandleEntry;
+pub use types::KernelObject;
+pub use types::LaunchContext;
+pub use types::OpenFile;
+pub use types::ProcessAddressSpaceSummary;
+pub(crate) use types::ProcessExecState;
+pub use types::ProcessState;
+pub use types::ProcessSummary;
+pub(crate) use types::ProcessUserAddressSpace;
+pub use types::RawSocketHandle;
+pub use types::TerminationReason;
+pub use types::UserAddressSpaceSummary;
 
 // ── Imports for the Process struct ──────────────────────────────────────
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::AtomicU8;
 
-use self::constants::{SignalHandler, STANDARD_FD_COUNT};
-use self::types::{FaultRecordRing, PendingProcessSignalState};
+use self::constants::SignalHandler;
+use self::constants::STANDARD_FD_COUNT;
+use self::types::FaultRecordRing;
+use self::types::PendingProcessSignalState;
 use crate::kernel::process::thread::ThreadId;
 use crate::kernel::sync::event::Event;
 use crate::kernel::sync::wait::WaitQueue;

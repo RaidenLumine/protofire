@@ -3,8 +3,10 @@
 //! User management syscall handlers: add/remove user records and set passwords.
 //! These wrap the in-memory user database with filesystem persistence.
 
-use crate::kernel::user::{self, UserRecord};
-use crate::{Error, Result};
+use crate::kernel::user::UserRecord;
+use crate::kernel::user::{self};
+use crate::Error;
+use crate::Result;
 
 use super::user_memory::user_string;
 use super::SyscallContext;

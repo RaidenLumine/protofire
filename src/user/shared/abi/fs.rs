@@ -3,7 +3,8 @@
 //! src/abi/fs.rs
 //! Shared filesystem ABI records, file kinds, and directory entry layouts.
 
-use core::mem::{offset_of, size_of};
+use core::mem::offset_of;
+use core::mem::size_of;
 
 // These numeric tags cross the kernel/user boundary and therefore must remain
 // stable.
@@ -270,23 +271,50 @@ impl Default for MountInfoRecord {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AccessQueryRecord, DirectoryEntryRecord, FileStat, PermissionMetadataRecord,
-        ACCESS_EXECUTE_BIT, ACCESS_QUERY_FLAG_ALLOWED,
-        ACCESS_QUERY_FLAG_BYPASSES_DISCRETIONARY_PERMISSIONS, ACCESS_QUERY_FLAG_CAN_EXECUTE,
-        ACCESS_QUERY_FLAG_CAN_READ, ACCESS_QUERY_FLAG_CAN_WRITE, ACCESS_QUERY_KNOWN_ACCESS_MASK,
-        ACCESS_QUERY_RECORD_FLAGS_OFFSET, ACCESS_QUERY_RECORD_GRANTED_MODE_BITS_OFFSET,
-        ACCESS_QUERY_RECORD_REQUIRED_ACCESS_OFFSET, ACCESS_QUERY_RECORD_SIZE, ACCESS_READ_BIT,
-        ACCESS_WRITE_BIT, AT_FDCWD, DIRECTORY_ENTRY_RECORD_KIND_OFFSET,
-        DIRECTORY_ENTRY_RECORD_NAME_LEN_OFFSET, DIRECTORY_ENTRY_RECORD_NAME_OFFSET_OFFSET,
-        DIRECTORY_ENTRY_RECORD_SIZE, DIRECTORY_ENTRY_RECORD_SIZE_OFFSET, FD_CLOEXEC,
-        FILE_KIND_DEVICE, FILE_KIND_DIRECTORY, FILE_KIND_FILE, FILE_KIND_UNKNOWN,
-        FILE_STAT_KIND_OFFSET, FILE_STAT_SIZE, FILE_STAT_SIZE_OFFSET, F_DUPFD, F_GETFD, F_GETFL,
-        F_GETPIPE_SZ, F_SETFD, F_SETFL, F_SETPIPE_SZ, O_NONBLOCK,
-        PERMISSION_METADATA_RECORD_MODE_OFFSET, PERMISSION_METADATA_RECORD_OWNER_GID_OFFSET,
-        PERMISSION_METADATA_RECORD_OWNER_UID_OFFSET, PERMISSION_METADATA_RECORD_RESERVED_OFFSET,
-        PERMISSION_METADATA_RECORD_SIZE,
-    };
+    use super::AccessQueryRecord;
+    use super::DirectoryEntryRecord;
+    use super::FileStat;
+    use super::PermissionMetadataRecord;
+    use super::ACCESS_EXECUTE_BIT;
+    use super::ACCESS_QUERY_FLAG_ALLOWED;
+    use super::ACCESS_QUERY_FLAG_BYPASSES_DISCRETIONARY_PERMISSIONS;
+    use super::ACCESS_QUERY_FLAG_CAN_EXECUTE;
+    use super::ACCESS_QUERY_FLAG_CAN_READ;
+    use super::ACCESS_QUERY_FLAG_CAN_WRITE;
+    use super::ACCESS_QUERY_KNOWN_ACCESS_MASK;
+    use super::ACCESS_QUERY_RECORD_FLAGS_OFFSET;
+    use super::ACCESS_QUERY_RECORD_GRANTED_MODE_BITS_OFFSET;
+    use super::ACCESS_QUERY_RECORD_REQUIRED_ACCESS_OFFSET;
+    use super::ACCESS_QUERY_RECORD_SIZE;
+    use super::ACCESS_READ_BIT;
+    use super::ACCESS_WRITE_BIT;
+    use super::AT_FDCWD;
+    use super::DIRECTORY_ENTRY_RECORD_KIND_OFFSET;
+    use super::DIRECTORY_ENTRY_RECORD_NAME_LEN_OFFSET;
+    use super::DIRECTORY_ENTRY_RECORD_NAME_OFFSET_OFFSET;
+    use super::DIRECTORY_ENTRY_RECORD_SIZE;
+    use super::DIRECTORY_ENTRY_RECORD_SIZE_OFFSET;
+    use super::FD_CLOEXEC;
+    use super::FILE_KIND_DEVICE;
+    use super::FILE_KIND_DIRECTORY;
+    use super::FILE_KIND_FILE;
+    use super::FILE_KIND_UNKNOWN;
+    use super::FILE_STAT_KIND_OFFSET;
+    use super::FILE_STAT_SIZE;
+    use super::FILE_STAT_SIZE_OFFSET;
+    use super::F_DUPFD;
+    use super::F_GETFD;
+    use super::F_GETFL;
+    use super::F_GETPIPE_SZ;
+    use super::F_SETFD;
+    use super::F_SETFL;
+    use super::F_SETPIPE_SZ;
+    use super::O_NONBLOCK;
+    use super::PERMISSION_METADATA_RECORD_MODE_OFFSET;
+    use super::PERMISSION_METADATA_RECORD_OWNER_GID_OFFSET;
+    use super::PERMISSION_METADATA_RECORD_OWNER_UID_OFFSET;
+    use super::PERMISSION_METADATA_RECORD_RESERVED_OFFSET;
+    use super::PERMISSION_METADATA_RECORD_SIZE;
 
     #[test]
     fn file_kind_values_are_stable() {

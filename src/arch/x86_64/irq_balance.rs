@@ -7,7 +7,8 @@
 //! timer (IOAPIC pin 0) is deliberately excluded: it is the sole x86_64
 //! scheduler-tick source and must stay on the BSP.
 
-use core::sync::atomic::{AtomicI8, Ordering};
+use core::sync::atomic::AtomicI8;
+use core::sync::atomic::Ordering;
 
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 

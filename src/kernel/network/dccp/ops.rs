@@ -5,18 +5,30 @@
 use alloc::vec::Vec;
 
 use crate::kernel::network::internet::ip::IpAddress;
-use crate::kernel::network::internet::ipv4::{self, IpProtocol, Ipv4Header};
-use crate::kernel::network::internet::ipv6::{self, Ipv6Header, Ipv6NextHeader};
+use crate::kernel::network::internet::ipv4::IpProtocol;
+use crate::kernel::network::internet::ipv4::Ipv4Header;
+use crate::kernel::network::internet::ipv4::{self};
+use crate::kernel::network::internet::ipv6::Ipv6Header;
+use crate::kernel::network::internet::ipv6::Ipv6NextHeader;
+use crate::kernel::network::internet::ipv6::{self};
 use crate::kernel::network::stack::NetworkStack;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::ccid2::decode_ack_vector_value;
-use super::header::{parse_segment, DccpHeader, DccpPacketBuilder, DccpPacketType, DccpSegment};
+use super::header::parse_segment;
+use super::header::DccpHeader;
+use super::header::DccpPacketBuilder;
+use super::header::DccpPacketType;
+use super::header::DccpSegment;
 use super::options;
-use super::table::{
-    seq_between, DccpConnKey, DccpConnectionState, DccpConnectionTable, DccpState,
-    NativeDccpConnection, SEQ_MASK,
-};
+use super::table::seq_between;
+use super::table::DccpConnKey;
+use super::table::DccpConnectionState;
+use super::table::DccpConnectionTable;
+use super::table::DccpState;
+use super::table::NativeDccpConnection;
+use super::table::SEQ_MASK;
 
 /// DCCP reset codes (RFC 4340 §5.6).
 pub const RESET_CODE_UNSPECIFIED: u8 = 0;

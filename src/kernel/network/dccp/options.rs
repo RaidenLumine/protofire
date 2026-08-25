@@ -11,7 +11,8 @@
 
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 pub const OPT_MANDATORY: u8 = 0;
 pub const OPT_INIT_COOKIE: u8 = 1;

@@ -419,7 +419,9 @@ impl DriverManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arch::fdt::{DtNode, DtNodeTable, DtRegEntry};
+    use crate::arch::fdt::DtNode;
+    use crate::arch::fdt::DtNodeTable;
+    use crate::arch::fdt::DtRegEntry;
     use crate::kernel::sync::Mutex;
 
     /// A fake driver that claims `virtio,mmio` nodes and records which MMIO

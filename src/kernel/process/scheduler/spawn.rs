@@ -8,7 +8,11 @@ use core::sync::atomic::Ordering;
 
 use crate::kernel::sync::wait::WaiterIdentity;
 
-use super::super::{Process, ProcessState, SecurityToken, Thread, UserThreadStart};
+use super::super::Process;
+use super::super::ProcessState;
+use super::super::SecurityToken;
+use super::super::Thread;
+use super::super::UserThreadStart;
 
 use super::queue::*;
 use super::Scheduler;

@@ -21,10 +21,13 @@ mod tests {
 
     use crate::arch::x86_64::paging::*;
     use crate::kernel::memory::paging::PagePermissions;
-    use crate::user::program::{
-        UserImageLoadPlan, UserImageSegmentPlan, USER_EXCEPTION_STACK_GUARD_SIZE,
-        USER_EXCEPTION_STACK_SIZE, USER_STACK_GUARD_SIZE, USER_STACK_SIZE, X86_64_USER_STACK_TOP,
-    };
+    use crate::user::program::UserImageLoadPlan;
+    use crate::user::program::UserImageSegmentPlan;
+    use crate::user::program::USER_EXCEPTION_STACK_GUARD_SIZE;
+    use crate::user::program::USER_EXCEPTION_STACK_SIZE;
+    use crate::user::program::USER_STACK_GUARD_SIZE;
+    use crate::user::program::USER_STACK_SIZE;
+    use crate::user::program::X86_64_USER_STACK_TOP;
     use alloc::vec;
     use core::sync::atomic::Ordering;
 

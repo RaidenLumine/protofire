@@ -9,10 +9,11 @@ use alloc::vec::Vec;
 
 use crate::arch;
 use crate::kernel::process::Scheduler;
-use crate::kernel::sync::{
-    input_wait::{self, WaitStatsBookkeeping},
-    Condvar, Mutex, WaitTimeoutCleanupRef,
-};
+use crate::kernel::sync::input_wait::WaitStatsBookkeeping;
+use crate::kernel::sync::input_wait::{self};
+use crate::kernel::sync::Condvar;
+use crate::kernel::sync::Mutex;
+use crate::kernel::sync::WaitTimeoutCleanupRef;
 use crate::util::debug;
 
 const MAX_COOKED_BYTES: usize = 512;

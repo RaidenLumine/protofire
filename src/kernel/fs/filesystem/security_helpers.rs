@@ -8,14 +8,24 @@ use crate::kernel::device;
 use crate::Result;
 
 use super::super::layout::StorageZone;
-use super::super::vfs::{NodeKind, SecurityDescriptor, SecurityDescriptorUpdate};
-use super::super::{
-    DATA_DIRECTORY_MODE, DATA_FILE_MODE, DATA_ROOT_PATH, DATA_USERS_ROOT_PATH, PUBLIC_DEVICE_MODE,
-    SYSTEM_DEVICE_MODE, SYSTEM_DIRECTORY_MODE, SYSTEM_FILE_MODE, TEMP_DIRECTORY_MODE,
-    TEMP_FILE_MODE, TEMP_MOUNT_PATH,
-};
-use super::path_helpers::{path_is_descendant_of, path_is_exact_or_child_of};
-use super::types::{PermissionMutationPolicy, PermissionMutationScope};
+use super::super::vfs::NodeKind;
+use super::super::vfs::SecurityDescriptor;
+use super::super::vfs::SecurityDescriptorUpdate;
+use super::super::DATA_DIRECTORY_MODE;
+use super::super::DATA_FILE_MODE;
+use super::super::DATA_ROOT_PATH;
+use super::super::DATA_USERS_ROOT_PATH;
+use super::super::PUBLIC_DEVICE_MODE;
+use super::super::SYSTEM_DEVICE_MODE;
+use super::super::SYSTEM_DIRECTORY_MODE;
+use super::super::SYSTEM_FILE_MODE;
+use super::super::TEMP_DIRECTORY_MODE;
+use super::super::TEMP_FILE_MODE;
+use super::super::TEMP_MOUNT_PATH;
+use super::path_helpers::path_is_descendant_of;
+use super::path_helpers::path_is_exact_or_child_of;
+use super::types::PermissionMutationPolicy;
+use super::types::PermissionMutationScope;
 
 pub(crate) fn permission_mutation_scope_for_path(normalized: &str) -> PermissionMutationScope {
     if normalized == "/"

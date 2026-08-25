@@ -2,14 +2,19 @@
 //!
 //! Device filesystem (devfs): exposes the kernel device registry as VFS nodes.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 
 use crate::kernel::device;
-use crate::kernel::fs::vfs::{
-    DirectoryEntry, FileSystem, Metadata, NodeKind, SecurityDescriptor, VNode,
-};
-use crate::{Error, Result};
+use crate::kernel::fs::vfs::DirectoryEntry;
+use crate::kernel::fs::vfs::FileSystem;
+use crate::kernel::fs::vfs::Metadata;
+use crate::kernel::fs::vfs::NodeKind;
+use crate::kernel::fs::vfs::SecurityDescriptor;
+use crate::kernel::fs::vfs::VNode;
+use crate::Error;
+use crate::Result;
 
 /// Device filesystem.
 pub struct DevFs;

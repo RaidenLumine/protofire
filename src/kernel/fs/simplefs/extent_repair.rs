@@ -4,19 +4,24 @@
 //! cleanup, and runtime validation.
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::super::block::{DeviceHealth, BLOCK_SIZE};
-use super::super::vfs::{NodeKind, VolumeCheckReport};
+use super::super::block::DeviceHealth;
+use super::super::block::BLOCK_SIZE;
+use super::super::vfs::NodeKind;
+use super::super::vfs::VolumeCheckReport;
 
 use super::constants::*;
 use super::free_fns::*;
 use super::types::*;
-use super::{SimpleFs, SimpleFsState};
+use super::SimpleFs;
+use super::SimpleFsState;
 
 impl SimpleFs {
     pub(crate) fn rebuild_free_data_extents(&self, state: &mut SimpleFsState) {

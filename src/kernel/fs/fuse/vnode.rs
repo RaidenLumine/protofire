@@ -9,8 +9,10 @@
 use alloc::string::String;
 use alloc::sync::Arc;
 
-use crate::kernel::fs::fuse::{FuseConnection, FuseVNode};
-use crate::kernel::fs::vfs::{Metadata, VNode};
+use crate::kernel::fs::fuse::FuseConnection;
+use crate::kernel::fs::fuse::FuseVNode;
+use crate::kernel::fs::vfs::Metadata;
+use crate::kernel::fs::vfs::VNode;
 use crate::kernel::fs::NodeKind;
 use crate::Result;
 
@@ -98,9 +100,9 @@ impl VNode for FuseVNode {
     }
 
     fn metadata(&self) -> Result<Metadata> {
-        use crate::kernel::fs::fuse::protocol::{
-            build_request, kind_from_wire, parse_node_info_payload,
-        };
+        use crate::kernel::fs::fuse::protocol::build_request;
+        use crate::kernel::fs::fuse::protocol::kind_from_wire;
+        use crate::kernel::fs::fuse::protocol::parse_node_info_payload;
         use crate::kernel::fs::fuse::FuseOpcode;
         let resp = self
             .conn

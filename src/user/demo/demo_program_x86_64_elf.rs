@@ -7,7 +7,8 @@
 use crate::user::demo::elf_builder::build_artifact_from_payload;
 pub use crate::user::demo::elf_builder::DemoProgramArtifact;
 
-use crate::user::program::{DEMO_PROGRAM_ENTRY, DEMO_PROGRAM_MACHINE};
+use crate::user::program::DEMO_PROGRAM_ENTRY;
+use crate::user::program::DEMO_PROGRAM_MACHINE;
 
 pub fn build_demo_program_artifact() -> DemoProgramArtifact {
     build_artifact_from_payload(
@@ -56,16 +57,16 @@ pub fn build_shell_program_artifact() -> DemoProgramArtifact {
 
 #[cfg(test)]
 mod tests {
-    use crate::user::{
-        demo_program_x86_64_rust, demo_program_x86_64_rust_io,
-        elf::parse_elf64,
-        program::{DEMO_PROGRAM_ENTRY, DEMO_PROGRAM_MACHINE},
-    };
+    use crate::user::demo_program_x86_64_rust;
+    use crate::user::demo_program_x86_64_rust_io;
+    use crate::user::elf::parse_elf64;
+    use crate::user::program::DEMO_PROGRAM_ENTRY;
+    use crate::user::program::DEMO_PROGRAM_MACHINE;
 
-    use super::{
-        build_demo_program_artifact, build_rust_demo_program_artifact,
-        build_rust_io_demo_program_artifact, build_shell_program_artifact,
-    };
+    use super::build_demo_program_artifact;
+    use super::build_rust_demo_program_artifact;
+    use super::build_rust_io_demo_program_artifact;
+    use super::build_shell_program_artifact;
 
     const RESUMED_MESSAGE: &[u8] = b"[user  ] resumed after yield\n";
     const APP_ID_PREFIX: &[u8] = b"[user  ] app-id: ";

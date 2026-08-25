@@ -13,7 +13,8 @@
 //! it, the architecture layer logs the condition so it is not silently lost.
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 use crate::kernel::irq_stats;
 use crate::kernel::sync::Mutex;

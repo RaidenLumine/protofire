@@ -11,8 +11,10 @@
 use std::collections::BTreeMap;
 
 use protofire::kernel::fs::block::MemoryBlockDevice;
-use protofire::kernel::fs::simplefs::{SimpleFs, SimpleFsVolume};
-use protofire::kernel::fs::vfs::{FileSystem as VfsFileSystem, NodeKind};
+use protofire::kernel::fs::simplefs::SimpleFs;
+use protofire::kernel::fs::simplefs::SimpleFsVolume;
+use protofire::kernel::fs::vfs::FileSystem as VfsFileSystem;
+use protofire::kernel::fs::vfs::NodeKind;
 
 // ── Simple LCG PRNG (Numerical Recipes parameters) ─────────────────────────
 

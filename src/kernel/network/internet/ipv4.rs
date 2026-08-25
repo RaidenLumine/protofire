@@ -4,7 +4,8 @@
 
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ─── IPv4 address ───
 

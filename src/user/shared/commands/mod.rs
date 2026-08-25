@@ -15,19 +15,49 @@ mod state;
 mod system;
 pub(crate) mod text;
 
-pub use fs::{
-    cmd_cat, cmd_cd, cmd_chmod, cmd_cp, cmd_df, cmd_du, cmd_ls, cmd_mkdir, cmd_mv, cmd_pwd, cmd_rm,
-    cmd_touch, human_size,
-};
+pub use fs::cmd_cat;
+pub use fs::cmd_cd;
+pub use fs::cmd_chmod;
+pub use fs::cmd_cp;
+pub use fs::cmd_df;
+pub use fs::cmd_du;
+pub use fs::cmd_ls;
+pub use fs::cmd_mkdir;
+pub use fs::cmd_mv;
+pub use fs::cmd_pwd;
+pub use fs::cmd_rm;
+pub use fs::cmd_touch;
+pub use fs::human_size;
 pub use fuse::cmd_fuse;
 pub use perf::cmd_perf;
-pub use process::{cmd_false, cmd_kill, cmd_ps, cmd_true};
-pub use state::{cmd_alias, cmd_export, cmd_history, cmd_read, cmd_shift, cmd_source};
-pub use system::{
-    cmd_clear, cmd_dmesg, cmd_echo, cmd_help, cmd_sleep, cmd_sysinfo, cmd_test, cmd_top, cmd_uname,
-    cmd_uptime,
-};
-pub use text::{
-    cmd_diff, cmd_edit, cmd_find, cmd_grep, cmd_head, cmd_hexdump, cmd_sort, cmd_tail, cmd_uniq,
-    cmd_wc, parse_head_tail_args,
-};
+pub use process::cmd_false;
+pub use process::cmd_kill;
+pub use process::cmd_ps;
+pub use process::cmd_true;
+pub use state::cmd_alias;
+pub use state::cmd_export;
+pub use state::cmd_history;
+pub use state::cmd_read;
+pub use state::cmd_shift;
+pub use state::cmd_source;
+pub use system::cmd_clear;
+pub use system::cmd_dmesg;
+pub use system::cmd_echo;
+pub use system::cmd_help;
+pub use system::cmd_sleep;
+pub use system::cmd_sysinfo;
+pub use system::cmd_test;
+pub use system::cmd_top;
+pub use system::cmd_uname;
+pub use system::cmd_uptime;
+pub use text::cmd_diff;
+pub use text::cmd_edit;
+pub use text::cmd_find;
+pub use text::cmd_grep;
+pub use text::cmd_head;
+pub use text::cmd_hexdump;
+pub use text::cmd_sort;
+pub use text::cmd_tail;
+pub use text::cmd_uniq;
+pub use text::cmd_wc;
+pub use text::parse_head_tail_args;

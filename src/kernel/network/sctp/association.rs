@@ -10,12 +10,18 @@
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::chunk::{
-    build_init_chunk, build_sctp_packet, parse_init_params, parse_sctp_packet, SctpChunkType,
-    SCTP_CHUNK_HEADER_LEN, SCTP_COOKIE_ACK, SCTP_COOKIE_ECHO, SCTP_INIT_ACK,
-};
+use super::chunk::build_init_chunk;
+use super::chunk::build_sctp_packet;
+use super::chunk::parse_init_params;
+use super::chunk::parse_sctp_packet;
+use super::chunk::SctpChunkType;
+use super::chunk::SCTP_CHUNK_HEADER_LEN;
+use super::chunk::SCTP_COOKIE_ACK;
+use super::chunk::SCTP_COOKIE_ECHO;
+use super::chunk::SCTP_INIT_ACK;
 
 /// SCTP association state (RFC 4960 §13.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

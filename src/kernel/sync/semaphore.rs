@@ -5,10 +5,9 @@
 
 use crate::kernel::process::ThreadWaitOutcome;
 
-use super::{
-    wait::{plan_timed_wait, TimedWaitPlan},
-    WaitQueue,
-};
+use super::wait::plan_timed_wait;
+use super::wait::TimedWaitPlan;
+use super::WaitQueue;
 
 pub struct Semaphore {
     wait_queue: WaitQueue<usize>,

@@ -5,7 +5,11 @@
 use crate::kernel::process::SecurityToken;
 use crate::Result;
 
-use super::super::{FileHandle, FileSystem, CREATE_NEW, OPEN_ALWAYS, OPEN_EXISTING};
+use super::super::FileHandle;
+use super::super::FileSystem;
+use super::super::CREATE_NEW;
+use super::super::OPEN_ALWAYS;
+use super::super::OPEN_EXISTING;
 
 impl FileSystem {
     pub fn open(&self, path: &str, flags: u32) -> Result<FileHandle> {

@@ -3,12 +3,16 @@
 //! Access-check helpers (free functions).
 //! These determine required access bits and mount write-visibility rules.
 
-use crate::kernel::process::{SecurityToken, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
+use crate::kernel::process::SecurityToken;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
 
 use super::super::layout;
 use super::super::vfs::NodeKind;
 use super::super::FileSystem;
-use super::super::{ACCESS_EXECUTE_BIT, ACCESS_READ_BIT, ACCESS_WRITE_BIT};
+use super::super::ACCESS_EXECUTE_BIT;
+use super::super::ACCESS_READ_BIT;
+use super::super::ACCESS_WRITE_BIT;
 
 pub(crate) fn required_open_access(kind: NodeKind, desired_access: u32) -> u16 {
     let mut required = 0;

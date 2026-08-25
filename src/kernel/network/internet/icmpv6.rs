@@ -13,11 +13,18 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 
 use super::ipv4;
-use super::ipv6::{self, Ipv6Addr, Ipv6Header, Ipv6NextHeader, IPV6_HEADER_SIZE};
+use super::ipv6::Ipv6Addr;
+use super::ipv6::Ipv6Header;
+use super::ipv6::Ipv6NextHeader;
+use super::ipv6::IPV6_HEADER_SIZE;
+use super::ipv6::{self};
 use super::mld;
-use crate::kernel::network::link::ethernet::{self, EtherType, MacAddress};
+use crate::kernel::network::link::ethernet::EtherType;
+use crate::kernel::network::link::ethernet::MacAddress;
+use crate::kernel::network::link::ethernet::{self};
 use crate::kernel::network::stack::NetworkStack;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ─── ICMPv6 type constants ──────────────────────────────────────────────
 

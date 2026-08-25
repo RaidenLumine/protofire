@@ -2,9 +2,16 @@
 //!
 //! MAC (mandatory access control) type-enforcement policy syscalls (#175-178).
 
-use crate::abi::mac::{MacRule as AbiMacRule, MAC_FLAG_REPLACE, MAC_RULE_SIZE, MAC_STATUS_SIZE};
-use crate::kernel::process::mac::{policy_state, set_path_type, MacRule, MacStatus};
-use crate::{Error, Result};
+use crate::abi::mac::MacRule as AbiMacRule;
+use crate::abi::mac::MAC_FLAG_REPLACE;
+use crate::abi::mac::MAC_RULE_SIZE;
+use crate::abi::mac::MAC_STATUS_SIZE;
+use crate::kernel::process::mac::policy_state;
+use crate::kernel::process::mac::set_path_type;
+use crate::kernel::process::mac::MacRule;
+use crate::kernel::process::mac::MacStatus;
+use crate::Error;
+use crate::Result;
 
 /// Syscall 175: mac_set_mode(enabled, default_deny, flags) → previous enabled.
 pub(super) fn mac_set_mode(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {

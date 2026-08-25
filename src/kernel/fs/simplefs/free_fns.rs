@@ -5,7 +5,8 @@
 //! Larger format I/O functions (superblock, inode/dirent tables,
 //! image building) are in [`super::format_io`].
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::super::vfs::NodeKind;
 

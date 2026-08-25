@@ -14,8 +14,12 @@
 //! software page table is updated — which is exactly what the unit tests
 //! exercise.
 
-use crate::kernel::memory::arch::{install_user_page_arch, unmap_user_page_arch};
-use crate::kernel::memory::paging::{self, MappingKind, PagePermissions, PageTable};
+use crate::kernel::memory::arch::install_user_page_arch;
+use crate::kernel::memory::arch::unmap_user_page_arch;
+use crate::kernel::memory::paging::MappingKind;
+use crate::kernel::memory::paging::PagePermissions;
+use crate::kernel::memory::paging::PageTable;
+use crate::kernel::memory::paging::{self};
 
 use super::MemoryManager;
 

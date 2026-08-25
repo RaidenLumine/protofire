@@ -25,13 +25,21 @@ core::arch::global_asm!(include_str!("arch/aarch64/boot.S"));
 #[cfg(target_os = "none")]
 use core::panic::PanicInfo;
 #[cfg(target_os = "none")]
+use protofire::arch;
+#[cfg(target_os = "none")]
 use protofire::kernel::Kernel;
 #[cfg(target_os = "none")]
 use protofire::println;
 #[cfg(target_os = "none")]
-use protofire::{arch, util};
+use protofire::util;
 #[cfg(not(target_os = "none"))]
-use std::{env, fs, path::Path, process};
+use std::env;
+#[cfg(not(target_os = "none"))]
+use std::fs;
+#[cfg(not(target_os = "none"))]
+use std::path::Path;
+#[cfg(not(target_os = "none"))]
+use std::process;
 
 const KERNEL_NAME: &str = env!("CARGO_PKG_NAME");
 const KERNEL_VERSION: &str = env!("CARGO_PKG_VERSION");

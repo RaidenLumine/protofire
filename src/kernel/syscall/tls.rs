@@ -11,8 +11,10 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 
 use crate::kernel::network::tls;
-use crate::kernel::process::{HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
-use crate::{Error, Result};
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::Error;
+use crate::Result;
 
 /// Maximum hostname length accepted by the TLS connect syscall.
 const MAX_TLS_HOST_BYTES: usize = 4096;

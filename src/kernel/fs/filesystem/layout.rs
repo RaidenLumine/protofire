@@ -11,21 +11,35 @@ use crate::kernel::device;
 use crate::kernel::kernel_log::KernelLogFileSystem;
 use crate::Result;
 
-use super::super::block::{BlockDevice, BlockSliceDevice, MemoryBlockDevice, BLOCK_SIZE};
-use super::super::layout::{self, StorageZone, DEFAULT_ZONES};
+use super::super::block::BlockDevice;
+use super::super::block::BlockSliceDevice;
+use super::super::block::MemoryBlockDevice;
+use super::super::block::BLOCK_SIZE;
+use super::super::layout::StorageZone;
+use super::super::layout::DEFAULT_ZONES;
+use super::super::layout::{self};
 use super::super::partition::read_mbr_partitions;
-use super::super::simplefs::{SimpleFs, SimpleFsVolume};
-use super::super::vfs::{NodeKind, StaticFileSystem};
+use super::super::simplefs::SimpleFs;
+use super::super::simplefs::SimpleFsVolume;
+use super::super::vfs::NodeKind;
+use super::super::vfs::StaticFileSystem;
 use super::super::FileSystem;
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
 use super::path_helpers::build_demo_memory_device;
-use super::types::{BootDiskLayoutSource, ZoneDeviceBindings};
+use super::types::BootDiskLayoutSource;
+use super::types::ZoneDeviceBindings;
 
-use super::super::{
-    DEVFS_MOUNT_PATH, KERNEL_LOGS_FS_NAME, KERNEL_LOGS_MOUNT_DEVICE, KERNEL_LOGS_MOUNT_PATH,
-    PROCFS_MOUNT_PATH, TEMP_FS_NAME, TEMP_MOUNT_DEVICE, TEMP_MOUNT_PATH, VIRTUAL_DEVICE_FS_NAME,
-    VIRTUAL_DEVICE_MOUNT_DEVICE, VIRTUAL_DEVICE_MOUNT_PATH,
-};
+use super::super::DEVFS_MOUNT_PATH;
+use super::super::KERNEL_LOGS_FS_NAME;
+use super::super::KERNEL_LOGS_MOUNT_DEVICE;
+use super::super::KERNEL_LOGS_MOUNT_PATH;
+use super::super::PROCFS_MOUNT_PATH;
+use super::super::TEMP_FS_NAME;
+use super::super::TEMP_MOUNT_DEVICE;
+use super::super::TEMP_MOUNT_PATH;
+use super::super::VIRTUAL_DEVICE_FS_NAME;
+use super::super::VIRTUAL_DEVICE_MOUNT_DEVICE;
+use super::super::VIRTUAL_DEVICE_MOUNT_PATH;
 
 impl FileSystem {
     pub(crate) fn install_default_layout(&mut self) {

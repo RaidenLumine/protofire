@@ -7,8 +7,12 @@ use alloc::string::String;
 use crate::abi::io as io_abi;
 use crate::kernel::device;
 use crate::kernel::fs;
-use crate::kernel::process::{Process, SecurityToken, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
-use crate::{Error, Result};
+use crate::kernel::process::Process;
+use crate::kernel::process::SecurityToken;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::Error;
+use crate::Result;
 
 type NamespaceMutation = fn(&fs::FileSystem, &str, SecurityToken) -> Result<()>;
 
@@ -226,7 +230,8 @@ mod tests {
     use super::OpenPathRequest;
     use crate::abi::io as io_abi;
     use crate::kernel::fs;
-    use crate::kernel::process::{HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
+    use crate::kernel::process::HANDLE_RIGHT_READ;
+    use crate::kernel::process::HANDLE_RIGHT_WRITE;
     use crate::Error;
 
     #[test]

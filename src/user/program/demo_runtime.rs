@@ -8,28 +8,42 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::abi::process::{
-    ProcessSpawnOptions, ProcessSpawnStringRef, ProcessTerminationRecord,
-    PROCESS_SPAWN_OPTIONS_SIZE, PROCESS_TERMINATION_KIND_EXCEPTION, PROCESS_TERMINATION_KIND_EXIT,
-    PROCESS_TERMINATION_RECORD_SIZE,
-};
+use crate::abi::process::ProcessSpawnOptions;
+use crate::abi::process::ProcessSpawnStringRef;
+use crate::abi::process::ProcessTerminationRecord;
+use crate::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
+use crate::abi::process::PROCESS_TERMINATION_KIND_EXCEPTION;
+use crate::abi::process::PROCESS_TERMINATION_KIND_EXIT;
+use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
+use crate::kernel::fs;
 use crate::kernel::process::STDOUT_FD;
-use crate::kernel::{fs, syscall};
+use crate::kernel::syscall;
 use crate::println;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::super::syscall::UserSyscall;
 use super::app::run_app_center_command;
 use super::app::run_appctl_command;
 use super::dispatch_lumina_command;
-use super::{
-    DEMO_DATA_PATH, DEMO_PROGRAM_MACHINE, DEMO_RUST_CATALOG_PATH, DEMO_RUST_IO_CHILD_ARGV0,
-    DEMO_RUST_IO_CHILD_ARGV1, DEMO_RUST_IO_CHILD_ENV0, DEMO_RUST_IO_CHILD_ENV1,
-    DEMO_RUST_IO_DATA_PATH, DEMO_RUST_IO_DATA_PAYLOAD, DEMO_RUST_IO_SESSION_PATH,
-    DEMO_RUST_IO_SESSION_PAYLOAD, DEMO_RUST_IO_SESSION_TRUNCATED, DEMO_RUST_IO_STATE_DIR,
-    DEMO_RUST_IO_TEMP_PATH, DEMO_RUST_IO_TEMP_PAYLOAD, DEMO_SESSION_DIR, DEMO_SESSION_LOG_PATH,
-    DEMO_TEMP_PATH,
-};
+use super::DEMO_DATA_PATH;
+use super::DEMO_PROGRAM_MACHINE;
+use super::DEMO_RUST_CATALOG_PATH;
+use super::DEMO_RUST_IO_CHILD_ARGV0;
+use super::DEMO_RUST_IO_CHILD_ARGV1;
+use super::DEMO_RUST_IO_CHILD_ENV0;
+use super::DEMO_RUST_IO_CHILD_ENV1;
+use super::DEMO_RUST_IO_DATA_PATH;
+use super::DEMO_RUST_IO_DATA_PAYLOAD;
+use super::DEMO_RUST_IO_SESSION_PATH;
+use super::DEMO_RUST_IO_SESSION_PAYLOAD;
+use super::DEMO_RUST_IO_SESSION_TRUNCATED;
+use super::DEMO_RUST_IO_STATE_DIR;
+use super::DEMO_RUST_IO_TEMP_PATH;
+use super::DEMO_RUST_IO_TEMP_PAYLOAD;
+use super::DEMO_SESSION_DIR;
+use super::DEMO_SESSION_LOG_PATH;
+use super::DEMO_TEMP_PATH;
 
 pub(super) fn resolve_program_proxy(host_proxy: &str, machine: u16) -> Result<fn()> {
     if machine != DEMO_PROGRAM_MACHINE {

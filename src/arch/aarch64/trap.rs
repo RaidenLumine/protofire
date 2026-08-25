@@ -5,18 +5,23 @@
 use core::arch::asm;
 use core::mem::size_of;
 use core::ptr::read_volatile;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use super::exception;
 use crate::abi::syscall as syscall_abi;
-use crate::arch::exception_recoverability::{
-    recovery_action_log_line, ExceptionRecoverability, ExceptionRecoveryAction,
-    ExceptionRecoveryActionResult, RecoveryActionLogRecord,
-};
+use crate::arch::exception_recoverability::recovery_action_log_line;
+use crate::arch::exception_recoverability::ExceptionRecoverability;
+use crate::arch::exception_recoverability::ExceptionRecoveryAction;
+use crate::arch::exception_recoverability::ExceptionRecoveryActionResult;
+use crate::arch::exception_recoverability::RecoveryActionLogRecord;
 use crate::arch::syscall_trap;
-use crate::kernel::process::{thread::AArch64UserThreadContext, TerminationReason};
+use crate::kernel::process::thread::AArch64UserThreadContext;
+use crate::kernel::process::TerminationReason;
 use crate::kernel::syscall::table::user_memory;
-use crate::kernel::syscall::{self, SyscallAction, SyscallContext};
+use crate::kernel::syscall::SyscallAction;
+use crate::kernel::syscall::SyscallContext;
+use crate::kernel::syscall::{self};
 use crate::println;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -423,7 +428,8 @@ fn handle_lower_el_sync(frame: &mut TrapFrame) -> bool {
 /// should treat the trap as fatal.
 fn handle_current_el_sync(frame: &mut TrapFrame) -> bool {
     use crate::arch::exception_recoverability::ExceptionRecoveryAction;
-    use crate::kernel::memory::{global_mut, paging::PagePermissions};
+    use crate::kernel::memory::global_mut;
+    use crate::kernel::memory::paging::PagePermissions;
 
     let class = exception_class(frame);
 
@@ -909,7 +915,8 @@ fn log_user_exception_termination(frame: &TrapFrame) {
 /// Semantics match the x86_64 `try_async_signal_delivery` — called from
 /// the trap dispatch path before returning to user mode after an IRQ.
 fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
-    use crate::abi::process::{AArch64SignalFrame, AARCH64_SIGNAL_FRAME_SIZE};
+    use crate::abi::process::AArch64SignalFrame;
+    use crate::abi::process::AARCH64_SIGNAL_FRAME_SIZE;
     use crate::kernel::process::Process;
     use crate::kernel::process::Scheduler;
     use crate::kernel::syscall::table::user_memory;

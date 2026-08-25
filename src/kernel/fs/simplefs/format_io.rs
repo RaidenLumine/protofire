@@ -6,14 +6,17 @@
 //! [`super::free_fns`].
 
 use alloc::collections::BTreeMap;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::kernel::fs::unicode;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::super::block::{BlockDevice, BLOCK_SIZE};
+use super::super::block::BlockDevice;
+use super::super::block::BLOCK_SIZE;
 use super::super::vfs::NodeKind;
 
 use super::constants::*;

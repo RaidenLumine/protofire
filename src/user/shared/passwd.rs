@@ -7,7 +7,8 @@
 //! This module parses those records without depending on the kernel's
 //! in-memory user manager, so it works identically in ring0 and ring3.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use crate::user::shared::abi::io::OPEN_FLAG_READ;

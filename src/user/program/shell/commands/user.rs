@@ -3,7 +3,8 @@
 //! User management commands (whoami, id, users, useradd, userdel, passwd,
 //! login, su).
 
-use super::super::entry::{read_stdin_line, read_stdin_secret};
+use super::super::entry::read_stdin_line;
+use super::super::entry::read_stdin_secret;
 use super::super::*;
 use alloc::format;
 use alloc::string::String;
@@ -57,7 +58,8 @@ fn authenticate_and_spawn_shell(cwd: &str, username: &str) -> String {
     };
 
     // Build an authenticated SecurityToken.
-    use crate::kernel::process::{IntegrityLevel, SecurityToken};
+    use crate::kernel::process::IntegrityLevel;
+    use crate::kernel::process::SecurityToken;
     let token = if user_record.uid == 0 {
         SecurityToken::new(user_record.uid, user_record.gid, IntegrityLevel::High)
             .with_elevation()

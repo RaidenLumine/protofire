@@ -5,7 +5,8 @@
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 use core::arch::asm;
 use core::mem::size_of;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
@@ -211,9 +212,10 @@ pub fn set_kernel_stack_top(stack_top: usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        kernel_code_selector, kernel_data_selector, user_code_selector, user_data_selector,
-    };
+    use super::kernel_code_selector;
+    use super::kernel_data_selector;
+    use super::user_code_selector;
+    use super::user_data_selector;
 
     #[test]
     fn selectors_encode_expected_privilege_levels() {

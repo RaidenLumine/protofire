@@ -3,7 +3,8 @@
 //! filesystem/query — FileSystem query, stat, normalize, lookup, and security
 //! methods.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
@@ -12,14 +13,20 @@ use crate::Result;
 
 use super::super::block::BlockDeviceInfo;
 use super::super::path;
-use super::super::vfs::{
-    Metadata, NodeKind, PermissionMetadataRecord, SecurityDescriptorMutationSupport,
-    SecurityDescriptorUpdate, VNode, VolumeCheckReport,
-};
-use super::super::{FileSystem, MountInfo};
+use super::super::vfs::Metadata;
+use super::super::vfs::NodeKind;
+use super::super::vfs::PermissionMetadataRecord;
+use super::super::vfs::SecurityDescriptorMutationSupport;
+use super::super::vfs::SecurityDescriptorUpdate;
+use super::super::vfs::VNode;
+use super::super::vfs::VolumeCheckReport;
+use super::super::FileSystem;
+use super::super::MountInfo;
 use super::profiler;
 use super::security_helpers::*;
-use super::types::{PermissionMutationPolicy, PlannedSecurityDescriptorUpdate, StorageInitReport};
+use super::types::PermissionMutationPolicy;
+use super::types::PlannedSecurityDescriptorUpdate;
+use super::types::StorageInitReport;
 
 impl FileSystem {
     pub fn check_and_repair_volume(&self, path: &str) -> Result<VolumeCheckReport> {

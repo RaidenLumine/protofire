@@ -5,7 +5,8 @@
 
 use crate::arch;
 use crate::kernel::process::ThreadWaitOutcome;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 pub(super) struct TimedOutputRequest<T: super::user_memory::PaddingFree> {
     pub(super) timeout_ticks: u64,

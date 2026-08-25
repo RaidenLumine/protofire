@@ -6,7 +6,8 @@
 //! address-space assembly.
 
 use alloc::boxed::Box;
-use core::sync::atomic::{AtomicBool, AtomicUsize};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicUsize;
 
 use super::*;
 use crate::kernel::memory::paging::PagePermissions;

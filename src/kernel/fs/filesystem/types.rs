@@ -14,10 +14,12 @@ use crate::Result;
 
 use super::super::block::BlockDevice;
 use super::super::layout::StorageZone;
-use super::super::vfs::{
-    DirectoryEntry, FileSystem as VfsTrait, Metadata, NodeKind, SecurityDescriptor,
-    SecurityDescriptorMutationSupport,
-};
+use super::super::vfs::DirectoryEntry;
+use super::super::vfs::FileSystem as VfsTrait;
+use super::super::vfs::Metadata;
+use super::super::vfs::NodeKind;
+use super::super::vfs::SecurityDescriptor;
+use super::super::vfs::SecurityDescriptorMutationSupport;
 
 pub(crate) struct MountPoint {
     pub(crate) fs: Arc<dyn VfsTrait>,

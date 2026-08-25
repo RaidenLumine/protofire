@@ -9,7 +9,8 @@
 //! types are logged, keeping overhead at zero when auditing is disabled.
 
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::Ordering;
 
 use alloc::boxed::Box;
 

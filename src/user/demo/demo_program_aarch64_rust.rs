@@ -17,20 +17,38 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
-use crate::abi::exception::{
-    AArch64AbortSyndrome, AArch64UserExceptionFrame, AARCH64_ABORT_ACCESS_KIND_EXECUTE,
-    AARCH64_ABORT_ACCESS_KIND_READ, AARCH64_ABORT_ACCESS_KIND_WRITE,
-    AARCH64_EXCEPTION_DATA_ABORT_VECTOR, AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR,
-    AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED,
-    AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK,
-};
+use crate::abi::exception::AArch64AbortSyndrome;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::exception::AArch64UserExceptionFrame;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_EXECUTE;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_READ;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_WRITE;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::exception::AARCH64_EXCEPTION_DATA_ABORT_VECTOR;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::exception::AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
-use crate::abi::process::{
-    ProcessSpawnOptions, ProcessSpawnStringRef, ProcessTerminationRecord,
-    PROCESS_SPAWN_FLAG_OVERRIDE_ARGUMENTS, PROCESS_SPAWN_FLAG_OVERRIDE_ENVIRONMENT,
-    PROCESS_SPAWN_OPTIONS_SIZE, PROCESS_TERMINATION_RECORD_SIZE,
-};
+use crate::abi::process::ProcessSpawnOptions;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::ProcessSpawnStringRef;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::ProcessTerminationRecord;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::PROCESS_SPAWN_FLAG_OVERRIDE_ARGUMENTS;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::PROCESS_SPAWN_FLAG_OVERRIDE_ENVIRONMENT;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
 
 /// Compute the runtime address of a symbol inside this payload section using
 /// PC-relative `adrp`/`add :lo12:`.  The linker bakes the page-relative

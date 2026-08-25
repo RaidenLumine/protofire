@@ -18,10 +18,12 @@
 
 use alloc::vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::super::block::BLOCK_SIZE;
-use super::{SimpleFs, SimpleFsState};
+use super::SimpleFs;
+use super::SimpleFsState;
 
 impl SimpleFs {
     /// FNV-1a 64-bit content hash used as the dedup lookup key.

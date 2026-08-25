@@ -46,8 +46,7 @@ where_single_line = false
 
 # Import and module
 imports_indent = "Block"
-imports_layout = "Mixed"
-imports_granularity = "Preserve"
+imports_granularity = "Item"
 group_imports = "Preserve"
 reorder_imports = true
 reorder_modules = true

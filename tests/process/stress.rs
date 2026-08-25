@@ -8,10 +8,13 @@
 //! - **Memory pressure**: allocate until exhaustion, verify graceful failure,
 //!   fragmentation stress, heap integrity after churn.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
-use protofire::kernel::process::{sleep_current, Scheduler};
-use protofire::kernel::sync::{Event, Semaphore};
+use protofire::kernel::process::sleep_current;
+use protofire::kernel::process::Scheduler;
+use protofire::kernel::sync::Event;
+use protofire::kernel::sync::Semaphore;
 
 // ── Test serialisation ─────────────────────────────────────────────────────
 

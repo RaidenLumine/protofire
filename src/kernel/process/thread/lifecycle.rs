@@ -5,11 +5,15 @@
 //! exception delivery.
 
 use ::core::sync::atomic::AtomicBool;
-use ::core::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
+use ::core::sync::atomic::AtomicU32;
+use ::core::sync::atomic::AtomicU64;
+use ::core::sync::atomic::AtomicU8;
+use ::core::sync::atomic::Ordering;
 use alloc::sync::Arc;
 
 use crate::kernel::process::scheduler::TIME_SLICE_TICKS;
-use crate::kernel::sync::{Event, Mutex};
+use crate::kernel::sync::Event;
+use crate::kernel::sync::Mutex;
 #[cfg(any(target_arch = "riscv64", test))]
 use crate::Error;
 #[cfg(any(
@@ -21,25 +25,38 @@ use crate::Error;
 use crate::Result;
 
 #[cfg(any(target_arch = "aarch64", test))]
-use super::arch_aarch64::{
-    AArch64PendingExceptionFrameStack, AArch64UserThreadContext, AARCH64_EXCEPTION_VECTOR_COUNT,
-};
+use super::arch_aarch64::AArch64PendingExceptionFrameStack;
+#[cfg(any(target_arch = "aarch64", test))]
+use super::arch_aarch64::AArch64UserThreadContext;
+#[cfg(any(target_arch = "aarch64", test))]
+use super::arch_aarch64::AARCH64_EXCEPTION_VECTOR_COUNT;
 
 #[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::{
-    X86_64PendingExceptionFrameStack, X86_64UserThreadContext, X86_64_EXCEPTION_VECTOR_COUNT,
-};
+use super::arch_x86_64::X86_64PendingExceptionFrameStack;
+#[cfg(target_arch = "x86_64")]
+use super::arch_x86_64::X86_64UserThreadContext;
+#[cfg(target_arch = "x86_64")]
+use super::arch_x86_64::X86_64_EXCEPTION_VECTOR_COUNT;
 
-use super::super::{Context, ContextCell, Process, ProcessId, ProcessState, TerminationReason};
+use super::super::Context;
+use super::super::ContextCell;
+use super::super::Process;
+use super::super::ProcessId;
+use super::super::ProcessState;
+use super::super::TerminationReason;
 
 #[cfg(any(target_arch = "riscv64", test))]
 use super::arch_riscv64::RiscV64UserThreadContext;
 use super::constants::*;
 use super::kernel_stack::KernelStack;
-use super::types::{
-    ThreadExecutionState, ThreadPriority, ThreadSchedPolicy, ThreadSchedStats, ThreadState,
-    ThreadSummary, ThreadWaitOutcome, UserThreadStart,
-};
+use super::types::ThreadExecutionState;
+use super::types::ThreadPriority;
+use super::types::ThreadSchedPolicy;
+use super::types::ThreadSchedStats;
+use super::types::ThreadState;
+use super::types::ThreadSummary;
+use super::types::ThreadWaitOutcome;
+use super::types::UserThreadStart;
 use super::Thread;
 
 #[cfg(target_os = "none")]
@@ -882,4 +899,5 @@ impl Thread {
     }
 }
 
-use super::entry::{initial_instruction_pointer, initialize_frame_kernel_stack};
+use super::entry::initial_instruction_pointer;
+use super::entry::initialize_frame_kernel_stack;

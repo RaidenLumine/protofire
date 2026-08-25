@@ -7,12 +7,16 @@ use alloc::string::String;
 
 use crate::kernel::network::internet::ipv4::Ipv4Addr;
 use crate::kernel::network::internet::ipv6::Ipv6Addr;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::{
-    DNS_FLAGS_QR_RESPONSE, DNS_FLAGS_RCODE_MASK, DNS_HEADER_SIZE, DNS_RCODE_NXDOMAIN, DNS_TYPE_A,
-    DNS_TYPE_AAAA, DNS_TYPE_PTR,
-};
+use super::DNS_FLAGS_QR_RESPONSE;
+use super::DNS_FLAGS_RCODE_MASK;
+use super::DNS_HEADER_SIZE;
+use super::DNS_RCODE_NXDOMAIN;
+use super::DNS_TYPE_A;
+use super::DNS_TYPE_AAAA;
+use super::DNS_TYPE_PTR;
 
 // ── A record parsing ──
 

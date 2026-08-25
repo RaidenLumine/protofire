@@ -23,14 +23,19 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::block::{BlockDevice, MemoryBlockDevice};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::MemoryBlockDevice;
 use crate::kernel::fs::vfs::FileSystem as VfsFileSystem;
 use crate::kernel::fs::NodeKind;
 
-use super::types::{
-    EROFS_FEATURE_INCOMPAT_NID_TABLE, EROFS_FT_DIR, EROFS_FT_REG_FILE, EROFS_FT_SYMLINK,
-    EROFS_MAGIC, EROFS_S_IFDIR, EROFS_S_IFLNK, EROFS_S_IFREG,
-};
+use super::types::EROFS_FEATURE_INCOMPAT_NID_TABLE;
+use super::types::EROFS_FT_DIR;
+use super::types::EROFS_FT_REG_FILE;
+use super::types::EROFS_FT_SYMLINK;
+use super::types::EROFS_MAGIC;
+use super::types::EROFS_S_IFDIR;
+use super::types::EROFS_S_IFLNK;
+use super::types::EROFS_S_IFREG;
 use super::EroFsVolume;
 
 const BLOCK_SIZE: usize = 4096;

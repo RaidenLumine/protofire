@@ -41,9 +41,15 @@ use crate::user::shared::abi::process::ProcessSignalRecord;
 use crate::user::shared::syscall;
 
 // Re-export POSIX signal constants so callers can `use signal::SIGTERM` etc.
-pub use crate::user::shared::syscall::{
-    SIGCHLD, SIGCONT, SIGHUP, SIGINT, SIGKILL, SIGQUIT, SIGSTOP, SIGTERM, SIGTSTP,
-};
+pub use crate::user::shared::syscall::SIGCHLD;
+pub use crate::user::shared::syscall::SIGCONT;
+pub use crate::user::shared::syscall::SIGHUP;
+pub use crate::user::shared::syscall::SIGINT;
+pub use crate::user::shared::syscall::SIGKILL;
+pub use crate::user::shared::syscall::SIGQUIT;
+pub use crate::user::shared::syscall::SIGSTOP;
+pub use crate::user::shared::syscall::SIGTERM;
+pub use crate::user::shared::syscall::SIGTSTP;
 
 /// Sentinel value for "block indefinitely" passed to `wait_signal`.
 pub const WAIT_FOREVER: u64 = u64::MAX;

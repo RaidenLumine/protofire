@@ -13,7 +13,8 @@
 use alloc::vec::Vec;
 
 use crate::kernel::crypto::hmac_sha256;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::IpsecSa;
 

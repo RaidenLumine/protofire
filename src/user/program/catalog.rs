@@ -11,19 +11,23 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::{self, FileSystem};
-use crate::kernel::process::{Scheduler, SecurityToken, HANDLE_RIGHT_READ};
-use crate::{Error, Result};
+use crate::kernel::fs::FileSystem;
+use crate::kernel::fs::{self};
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::SecurityToken;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::Error;
+use crate::Result;
 
 use super::constants;
 use super::integrity;
 // Resolved from launch_reference directly (the install module re-exported these
 // path helpers but is gated out of host builds, while catalog stays live via
 // the spawn path).
-use super::launch_reference::{
-    installed_expected_package_root_for_catalog_path, path_is_within_root,
-};
-use super::metadata::{parse_catalog_entry, parse_launch_manifest};
+use super::launch_reference::installed_expected_package_root_for_catalog_path;
+use super::launch_reference::path_is_within_root;
+use super::metadata::parse_catalog_entry;
+use super::metadata::parse_launch_manifest;
 use super::signature;
 
 // ── public catalog / manifest types ───────────────────────────────────

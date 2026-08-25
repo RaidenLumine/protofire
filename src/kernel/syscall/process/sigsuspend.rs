@@ -31,7 +31,8 @@ pub(super) fn sigsuspend(context: &mut super::SyscallContext) -> Result<super::S
 mod tests {
     use super::sigsuspend;
     use crate::abi::process::PROCESS_SIGNAL_KNOWN_FLAGS;
-    use crate::kernel::syscall::{SyscallContext, SyscallNumber};
+    use crate::kernel::syscall::SyscallContext;
+    use crate::kernel::syscall::SyscallNumber;
     use crate::Error;
 
     #[test]

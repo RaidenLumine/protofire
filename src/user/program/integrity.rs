@@ -5,7 +5,8 @@
 
 use alloc::string::String;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 const SHA256_WORDS: usize = 8;
 const SHA256_BLOCK_BYTES: usize = 64;

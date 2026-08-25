@@ -5,7 +5,8 @@
 use crate::kernel::process::SecurityToken;
 use crate::Result;
 
-use super::super::vfs::{DirectoryEntry, Metadata as FileMetadata};
+use super::super::vfs::DirectoryEntry;
+use super::super::vfs::Metadata as FileMetadata;
 use super::super::FileSystem;
 
 impl FileSystem {

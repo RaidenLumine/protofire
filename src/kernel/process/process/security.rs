@@ -3,7 +3,10 @@
 //! Process security token: integrity levels, permission checks, MAC type.
 
 use super::constants::*;
-use crate::kernel::process::mac::{MacType, MAC_TYPE_SYSTEM, MAC_TYPE_UNTRUSTED, MAC_TYPE_USER};
+use crate::kernel::process::mac::MacType;
+use crate::kernel::process::mac::MAC_TYPE_SYSTEM;
+use crate::kernel::process::mac::MAC_TYPE_UNTRUSTED;
+use crate::kernel::process::mac::MAC_TYPE_USER;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IntegrityLevel {

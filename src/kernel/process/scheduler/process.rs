@@ -6,14 +6,19 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use super::super::{
-    Process, ProcessId, ProcessSummary, TerminationReason, Thread, ThreadId, ThreadPriority,
-    ThreadSummary,
-};
+use super::super::Process;
+use super::super::ProcessId;
+use super::super::ProcessSummary;
+use super::super::TerminationReason;
+use super::super::Thread;
+use super::super::ThreadId;
+use super::super::ThreadPriority;
+use super::super::ThreadSummary;
 
 use super::api::idle_entry;
 use super::queue::*;
-use super::types::{SchedulerHotspotStats, SchedulerStats};
+use super::types::SchedulerHotspotStats;
+use super::types::SchedulerStats;
 use super::Scheduler;
 
 impl Scheduler {

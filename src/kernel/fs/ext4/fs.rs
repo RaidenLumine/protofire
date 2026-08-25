@@ -11,14 +11,18 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::super::block::{BlockDevice, BLOCK_SIZE};
+use super::super::block::BlockDevice;
+use super::super::block::BLOCK_SIZE;
 use super::super::block_cache::BlockCache;
 use super::super::filesystem::profiler::FsProfiler;
 use super::super::unicode;
 use super::super::vfs::checksum::ChecksumPolicy;
-use super::super::vfs::{Metadata, NodeKind, SecurityDescriptor};
+use super::super::vfs::Metadata;
+use super::super::vfs::NodeKind;
+use super::super::vfs::SecurityDescriptor;
 
 use super::constants::*;
 use super::journal::*;

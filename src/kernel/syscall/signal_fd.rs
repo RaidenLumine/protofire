@@ -17,7 +17,8 @@ use alloc::sync::Arc;
 
 use super::runtime;
 use crate::kernel::process::process::types::SignalFdState;
-use crate::kernel::process::{KernelObject, HANDLE_RIGHT_READ};
+use crate::kernel::process::KernelObject;
+use crate::kernel::process::HANDLE_RIGHT_READ;
 use crate::kernel::syscall::SyscallContext;
 use crate::Result;
 

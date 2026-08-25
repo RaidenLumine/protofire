@@ -3,21 +3,29 @@
 //! Launch-option decoding: limits, profiles, string-list reading, and override
 //! specs.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::abi::process::{self as process_abi, ProcessSpawnStringRef};
+use crate::abi::process::ProcessSpawnStringRef;
+use crate::abi::process::{self as process_abi};
 use crate::user::program::SpawnProcessOverrides;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::{
-    MAX_ARGUMENT_OVERRIDE_ENTRIES, MAX_ARGUMENT_OVERRIDE_TOTAL_BYTES,
-    MAX_ENVIRONMENT_OVERRIDE_ENTRIES, MAX_ENVIRONMENT_OVERRIDE_TOTAL_BYTES,
-    MAX_EXEC_ARGUMENT_OVERRIDE_ENTRIES, MAX_EXEC_ARGUMENT_OVERRIDE_TOTAL_BYTES,
-    MAX_EXEC_ENVIRONMENT_OVERRIDE_ENTRIES, MAX_EXEC_ENVIRONMENT_OVERRIDE_TOTAL_BYTES,
-    MAX_EXEC_OVERRIDE_BUDGET_BYTES, MAX_EXEC_WORKING_DIR_BYTES, MAX_OVERRIDE_BUDGET_BYTES,
-    MAX_OVERRIDE_STRING_BYTES, MAX_WORKING_DIR_BYTES,
-};
+use super::MAX_ARGUMENT_OVERRIDE_ENTRIES;
+use super::MAX_ARGUMENT_OVERRIDE_TOTAL_BYTES;
+use super::MAX_ENVIRONMENT_OVERRIDE_ENTRIES;
+use super::MAX_ENVIRONMENT_OVERRIDE_TOTAL_BYTES;
+use super::MAX_EXEC_ARGUMENT_OVERRIDE_ENTRIES;
+use super::MAX_EXEC_ARGUMENT_OVERRIDE_TOTAL_BYTES;
+use super::MAX_EXEC_ENVIRONMENT_OVERRIDE_ENTRIES;
+use super::MAX_EXEC_ENVIRONMENT_OVERRIDE_TOTAL_BYTES;
+use super::MAX_EXEC_OVERRIDE_BUDGET_BYTES;
+use super::MAX_EXEC_WORKING_DIR_BYTES;
+use super::MAX_OVERRIDE_BUDGET_BYTES;
+use super::MAX_OVERRIDE_STRING_BYTES;
+use super::MAX_WORKING_DIR_BYTES;
 
 // ── Limits & profile types ────────────────────────────────────────────
 

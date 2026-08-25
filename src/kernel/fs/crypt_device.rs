@@ -7,10 +7,13 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 
-use crate::kernel::crypto::{aes_xts_decrypt, aes_xts_encrypt};
-use crate::{Error, Result};
+use crate::kernel::crypto::aes_xts_decrypt;
+use crate::kernel::crypto::aes_xts_encrypt;
+use crate::Error;
+use crate::Result;
 
-use super::block::{BlockDevice, DeviceHealth};
+use super::block::BlockDevice;
+use super::block::DeviceHealth;
 
 /// An encrypted block device that wraps an inner `BlockDevice` and
 /// applies AES-256-XTS encryption on writes and decryption on reads.

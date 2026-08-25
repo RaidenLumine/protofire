@@ -16,16 +16,22 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::kernel::fs::path::has_drive_prefix;
-use crate::kernel::fs::{self, FileSystem};
+use crate::kernel::fs::FileSystem;
+use crate::kernel::fs::{self};
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
+use super::catalog::normalize_path_relative_to_file;
+use super::catalog::path_parent_dir;
+use super::catalog::read_text_file;
 use super::catalog::SpawnProcessOverrides;
-use super::catalog::{normalize_path_relative_to_file, path_parent_dir, read_text_file};
-use super::constants::{INSTALLED_CATALOG_ROOT, INSTALLED_CURRENT_ROOT, INSTALLED_PACKAGE_ROOT};
-use super::loader::{
-    finish_loading_program, resolve_and_load_catalog_image_at_depth, LoadedProgram,
-};
+use super::constants::INSTALLED_CATALOG_ROOT;
+use super::constants::INSTALLED_CURRENT_ROOT;
+use super::constants::INSTALLED_PACKAGE_ROOT;
+use super::loader::finish_loading_program;
+use super::loader::resolve_and_load_catalog_image_at_depth;
+use super::loader::LoadedProgram;
 use super::metadata::parse_launch_manifest;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -17,7 +17,8 @@ use alloc::sync::Arc;
 
 use crate::Result;
 
-use super::{Driver, DriverCategory};
+use super::Driver;
+use super::DriverCategory;
 
 // ── IO port constants (x86_64 only) ────────────────────────────────────────
 

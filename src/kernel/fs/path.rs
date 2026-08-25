@@ -6,7 +6,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Normalise a user-supplied path against the current working directory.
 ///

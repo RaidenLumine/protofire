@@ -12,9 +12,11 @@ pub mod record;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::crypto::{sha256, x25519};
+use crate::kernel::crypto::sha256;
+use crate::kernel::crypto::x25519;
 use crate::kernel::network::TcpConnection;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// TLS protocol version constants.
 pub const TLS_VERSION_1_3: u16 = 0x0304;

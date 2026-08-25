@@ -13,12 +13,18 @@ use crate::kernel::network::internet::fragments;
 use crate::kernel::network::internet::icmp;
 use crate::kernel::network::internet::icmpv6;
 use crate::kernel::network::internet::igmp;
-use crate::kernel::network::internet::ipv4::{self, IpProtocol, Ipv4Header, IPV4_DEFAULT_TTL};
-use crate::kernel::network::internet::ipv6::{self, Ipv6Header, Ipv6NextHeader};
+use crate::kernel::network::internet::ipv4::IpProtocol;
+use crate::kernel::network::internet::ipv4::Ipv4Header;
+use crate::kernel::network::internet::ipv4::IPV4_DEFAULT_TTL;
+use crate::kernel::network::internet::ipv4::{self};
+use crate::kernel::network::internet::ipv6::Ipv6Header;
+use crate::kernel::network::internet::ipv6::Ipv6NextHeader;
+use crate::kernel::network::internet::ipv6::{self};
 use crate::kernel::network::ppp;
 use crate::kernel::network::tcp;
 use crate::kernel::network::udp;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::NetworkStack;
 

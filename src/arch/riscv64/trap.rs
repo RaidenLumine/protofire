@@ -6,14 +6,17 @@
 use core::arch::asm;
 use core::mem::size_of;
 use core::ptr::read_volatile;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use crate::abi::syscall as syscall_abi;
 use crate::arch::interrupt_controller::InterruptController;
 use crate::kernel::process::thread::RiscV64UserThreadContext;
 use crate::kernel::process::TerminationReason;
 use crate::kernel::syscall::table::user_memory;
-use crate::kernel::syscall::{self, SyscallAction, SyscallContext};
+use crate::kernel::syscall::SyscallAction;
+use crate::kernel::syscall::SyscallContext;
+use crate::kernel::syscall::{self};
 use crate::println;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);

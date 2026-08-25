@@ -3,20 +3,30 @@
 //! MAC enforcement entry points: classify objects by path, decide access
 //! against the policy, and emit an audit record on denial.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 use alloc::string::String;
 
-use crate::kernel::audit::types::{AuditEventType, AuditRecord};
+use crate::kernel::audit::types::AuditEventType;
+use crate::kernel::audit::types::AuditRecord;
 use crate::kernel::process::Scheduler;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::policy::policy_state;
-use super::types::{
-    MacClass, MacPermission, MacType, MAC_CLASS_NETWORK, MAC_CLASS_PROCESS, MAC_TYPE_APPS,
-    MAC_TYPE_DEVICE, MAC_TYPE_SYSTEM, MAC_TYPE_TMP, MAC_TYPE_UNLABELED, MAC_TYPE_UNTRUSTED,
-    MAC_TYPE_USER,
-};
+use super::types::MacClass;
+use super::types::MacPermission;
+use super::types::MacType;
+use super::types::MAC_CLASS_NETWORK;
+use super::types::MAC_CLASS_PROCESS;
+use super::types::MAC_TYPE_APPS;
+use super::types::MAC_TYPE_DEVICE;
+use super::types::MAC_TYPE_SYSTEM;
+use super::types::MAC_TYPE_TMP;
+use super::types::MAC_TYPE_UNLABELED;
+use super::types::MAC_TYPE_UNTRUSTED;
+use super::types::MAC_TYPE_USER;
 
 /// Monotonic id for MAC-denial audit records.
 static MAC_AUDIT_ID: AtomicU64 = AtomicU64::new(1);

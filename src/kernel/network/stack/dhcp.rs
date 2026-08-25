@@ -3,7 +3,9 @@
 //! DHCP lease management for [`NetworkStack`] (bare-metal only).
 
 #[cfg(target_os = "none")]
-use crate::kernel::network::dhcp::{DhcpLease, LeaseState};
+use crate::kernel::network::dhcp::DhcpLease;
+#[cfg(target_os = "none")]
+use crate::kernel::network::dhcp::LeaseState;
 
 use super::NetworkStack;
 

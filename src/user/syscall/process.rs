@@ -3,7 +3,8 @@
 //! Process, signal, spawn, exec, network, and diagnostic syscall builders.
 
 use crate::abi::process as process_abi;
-use crate::kernel::syscall::{SyscallContext, SyscallNumber};
+use crate::kernel::syscall::SyscallContext;
+use crate::kernel::syscall::SyscallNumber;
 
 use super::USER_EXCEPTION_HANDLER_FLAGS_NONE;
 

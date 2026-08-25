@@ -6,7 +6,8 @@
 //!
 //! These are pure string-processing functions with no platform dependencies.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 // ─── Conditional chaining (&& / ||) ───────────────────────────────────

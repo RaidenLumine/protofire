@@ -12,11 +12,14 @@ use alloc::vec::Vec;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::kernel::memory::paging::MappingKind;
 use crate::kernel::memory::paging::PagePermissions;
-use crate::kernel::process::{ProcessUserAddressSpace, UserThreadStart};
-use crate::{Error, Result};
+use crate::kernel::process::ProcessUserAddressSpace;
+use crate::kernel::process::UserThreadStart;
+use crate::Error;
+use crate::Result;
 
 use super::super::constants;
-use crate::user::elf::{ElfLoadSegment, ElfSegmentFlags};
+use crate::user::elf::ElfLoadSegment;
+use crate::user::elf::ElfSegmentFlags;
 
 // ── arch-specific address-space preparation ───────────────────────────
 

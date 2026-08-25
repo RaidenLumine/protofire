@@ -10,7 +10,9 @@ pub(crate) mod types;
 pub(crate) use dispatch::init;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) use dispatch::init_ap;
-pub use types::{InterruptContext, IPI_RESCHEDULE_VECTOR, IPI_SHOOTDOWN_VECTOR};
+pub use types::InterruptContext;
+pub use types::IPI_RESCHEDULE_VECTOR;
+pub use types::IPI_SHOOTDOWN_VECTOR;
 
 // Crate-internal re-exports for exception functions used by tests and dispatch.
 #[cfg(test)]
@@ -18,26 +20,32 @@ pub(crate) use exception::*;
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_page_fault_recovery_action, diagnose_page_fault,
-        evaluate_page_fault_recovery_strategy, exception_log_prefix, exception_name,
-        fault_address_from_interrupt_context, sync_user_iret_stack,
-        user_exception_termination_reason, InterruptContext,
-    };
-    use crate::abi::exception::{
-        X86_64PageFaultError as PageFaultError, X86_64_EXCEPTION_PAGE_FAULT_VECTOR,
-    };
-    use crate::arch::exception_recoverability::{
-        ExceptionRecoverability, ExceptionRecoveryAction, ExceptionRecoveryActionResult,
-    };
+    use super::apply_page_fault_recovery_action;
+    use super::diagnose_page_fault;
+    use super::evaluate_page_fault_recovery_strategy;
+    use super::exception_log_prefix;
+    use super::exception_name;
+    use super::fault_address_from_interrupt_context;
+    use super::sync_user_iret_stack;
+    use super::user_exception_termination_reason;
+    use super::InterruptContext;
+    use crate::abi::exception::X86_64PageFaultError as PageFaultError;
+    use crate::abi::exception::X86_64_EXCEPTION_PAGE_FAULT_VECTOR;
+    use crate::arch::exception_recoverability::ExceptionRecoverability;
+    use crate::arch::exception_recoverability::ExceptionRecoveryAction;
+    use crate::arch::exception_recoverability::ExceptionRecoveryActionResult;
     use crate::arch::x86_64::gdt;
-    use crate::kernel::memory::paging::{MappingKind, PagePermissions};
+    use crate::kernel::memory::paging::MappingKind;
+    use crate::kernel::memory::paging::PagePermissions;
+    use crate::kernel::memory::AddressTranslation;
+    use crate::kernel::memory::BootstrapTranslation;
     use crate::kernel::memory::MemoryManager;
-    use crate::kernel::memory::{
-        AddressTranslation, BootstrapTranslation, PageFaultInsight, PlannedKernelRegion,
-        PlannedKernelRegionKind, PreparedTranslation,
-    };
-    use crate::kernel::process::{ExceptionTermination, TerminationReason};
+    use crate::kernel::memory::PageFaultInsight;
+    use crate::kernel::memory::PlannedKernelRegion;
+    use crate::kernel::memory::PlannedKernelRegionKind;
+    use crate::kernel::memory::PreparedTranslation;
+    use crate::kernel::process::ExceptionTermination;
+    use crate::kernel::process::TerminationReason;
 
     #[repr(C)]
     struct UserModeInterruptFrame {

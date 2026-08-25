@@ -12,16 +12,21 @@
 //! path.
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::{FileSystem, NodeKind};
-use crate::{Error, Result};
+use crate::kernel::fs::FileSystem;
+use crate::kernel::fs::NodeKind;
+use crate::Error;
+use crate::Result;
 
-use super::catalog::{
-    create_dir_with_current_security, read_text_file, remove_path_with_current_security,
-};
-use super::constants::{INSTALLED_CATALOG_ROOT, INSTALLED_CURRENT_ROOT, INSTALLED_PACKAGE_ROOT};
+use super::catalog::create_dir_with_current_security;
+use super::catalog::read_text_file;
+use super::catalog::remove_path_with_current_security;
+use super::constants::INSTALLED_CATALOG_ROOT;
+use super::constants::INSTALLED_CURRENT_ROOT;
+use super::constants::INSTALLED_PACKAGE_ROOT;
 
 // ── shared directory helpers ─────────────────────────────────────────
 

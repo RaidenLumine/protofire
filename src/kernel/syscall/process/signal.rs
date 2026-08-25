@@ -3,7 +3,8 @@
 //! Process-signal send/wait syscalls built on the bounded process signal queue.
 
 use crate::abi::process as process_abi;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 pub(super) fn send(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let (pid, signal, payload) = send_signal_request(context)?;
@@ -176,9 +177,14 @@ pub(super) fn wait_for_process_signal(
 
 #[cfg(test)]
 mod tests {
-    use super::{send as send_signal, send_signal_request, wait as wait_signal};
-    use crate::abi::process::{PROCESS_SIGNAL_KNOWN_FLAGS, PROCESS_SIGNAL_MAX, PROCESS_SIGNAL_MIN};
-    use crate::kernel::syscall::{SyscallContext, SyscallNumber};
+    use super::send as send_signal;
+    use super::send_signal_request;
+    use super::wait as wait_signal;
+    use crate::abi::process::PROCESS_SIGNAL_KNOWN_FLAGS;
+    use crate::abi::process::PROCESS_SIGNAL_MAX;
+    use crate::abi::process::PROCESS_SIGNAL_MIN;
+    use crate::kernel::syscall::SyscallContext;
+    use crate::kernel::syscall::SyscallNumber;
     use crate::Error;
 
     #[test]

@@ -14,11 +14,15 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::kernel::fs::FileSystem;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::catalog::{path_parent_dir, read_text_file};
-use super::integrity::{sha256_digest, sha256_hex};
-use super::metadata::{parse_optional_string_field, parse_string_field};
+use super::catalog::path_parent_dir;
+use super::catalog::read_text_file;
+use super::integrity::sha256_digest;
+use super::integrity::sha256_hex;
+use super::metadata::parse_optional_string_field;
+use super::metadata::parse_string_field;
 
 /// Root directory containing trusted public-key records (`.toml`).
 const TRUSTED_SIGNATURE_KEY_ROOT: &str = "/system/trusted-keys";

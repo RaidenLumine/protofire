@@ -7,11 +7,14 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 
 use crate::kernel::fs::block::BlockDevice;
-use crate::kernel::memory::paging::{self, MappingKind};
-use crate::kernel::memory::swap::{SwapArea, SwapSlot};
+use crate::kernel::memory::paging::MappingKind;
+use crate::kernel::memory::paging::{self};
+use crate::kernel::memory::swap::SwapArea;
+use crate::kernel::memory::swap::SwapSlot;
 use crate::Result;
 
-use super::super::arch::{align_down_page, unmap_user_page_arch};
+use super::super::arch::align_down_page;
+use super::super::arch::unmap_user_page_arch;
 use super::MemoryManager;
 
 impl MemoryManager {

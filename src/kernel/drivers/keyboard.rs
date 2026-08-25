@@ -16,13 +16,15 @@ use alloc::vec::Vec;
 
 use crate::arch;
 use crate::kernel::console;
-use crate::kernel::sync::{
-    input_wait::{self, WaitStatsBookkeeping},
-    Condvar, Mutex, WaitTimeoutCleanupRef,
-};
+use crate::kernel::sync::input_wait::WaitStatsBookkeeping;
+use crate::kernel::sync::input_wait::{self};
+use crate::kernel::sync::Condvar;
+use crate::kernel::sync::Mutex;
+use crate::kernel::sync::WaitTimeoutCleanupRef;
 use crate::Result;
 
-use super::{Driver, DriverCategory};
+use super::Driver;
+use super::DriverCategory;
 
 const MAX_BUFFERED_SCANCODES: usize = 64;
 const MAX_BUFFERED_EVENTS: usize = 256;

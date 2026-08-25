@@ -36,7 +36,8 @@ pub fn payload_bytes() -> &'static [u8] {
 
 #[cfg(test)]
 mod tests {
-    use super::{payload_bytes, PAYLOAD_SECTION_NAME};
+    use super::payload_bytes;
+    use super::PAYLOAD_SECTION_NAME;
 
     #[cfg(target_os = "linux")]
     #[test]

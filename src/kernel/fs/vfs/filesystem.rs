@@ -4,17 +4,23 @@
 
 use alloc::collections::BTreeMap;
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use super::types::{
-    DirectoryEntry, Metadata, NodeKind, SecurityDescriptor, SecurityDescriptorMutationSupport,
-    VolumeCheckReport, XattrEntry,
-};
-use super::vnode::{StaticVNode, VNode};
+use super::types::DirectoryEntry;
+use super::types::Metadata;
+use super::types::NodeKind;
+use super::types::SecurityDescriptor;
+use super::types::SecurityDescriptorMutationSupport;
+use super::types::VolumeCheckReport;
+use super::types::XattrEntry;
+use super::vnode::StaticVNode;
+use super::vnode::VNode;
 use crate::kernel::fs::filesystem::profiler::FsProfilerSnapshot;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Filesystem backend that the VFS layer can mount and traverse.
 ///

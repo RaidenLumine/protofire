@@ -15,11 +15,15 @@ pub const OPEN_KNOWN_FLAGS: usize = OPEN_FLAG_READ | OPEN_FLAG_WRITE | OPEN_FLAG
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        OPEN_FLAG_CREATE, OPEN_FLAG_NONE, OPEN_FLAG_READ, OPEN_FLAG_READ_CREATE,
-        OPEN_FLAG_READ_WRITE, OPEN_FLAG_READ_WRITE_CREATE, OPEN_FLAG_WRITE, OPEN_FLAG_WRITE_CREATE,
-        OPEN_KNOWN_FLAGS,
-    };
+    use super::OPEN_FLAG_CREATE;
+    use super::OPEN_FLAG_NONE;
+    use super::OPEN_FLAG_READ;
+    use super::OPEN_FLAG_READ_CREATE;
+    use super::OPEN_FLAG_READ_WRITE;
+    use super::OPEN_FLAG_READ_WRITE_CREATE;
+    use super::OPEN_FLAG_WRITE;
+    use super::OPEN_FLAG_WRITE_CREATE;
+    use super::OPEN_KNOWN_FLAGS;
 
     #[test]
     fn open_flag_combinations_match_expected_masks() {

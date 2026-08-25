@@ -447,7 +447,9 @@ pub fn parse_ea_entries(content: &[u8]) -> Vec<XattrEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::fs::ntfs::fs::{get_best_filename, parse_data_runs, parse_index_entries};
+    use crate::kernel::fs::ntfs::fs::get_best_filename;
+    use crate::kernel::fs::ntfs::fs::parse_data_runs;
+    use crate::kernel::fs::ntfs::fs::parse_index_entries;
     use alloc::vec;
 
     #[test]

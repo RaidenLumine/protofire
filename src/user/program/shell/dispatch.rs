@@ -4,17 +4,27 @@
 
 use super::expand::is_background;
 use super::glob::expand_globs_in_tokens;
-use super::pipeline::{
-    has_shell_operator, parse_redirects, split_pipeline, strip_trailing_newline,
-    tokenize_conditionals, CondToken,
-};
+use super::pipeline::has_shell_operator;
+use super::pipeline::parse_redirects;
+use super::pipeline::split_pipeline;
+use super::pipeline::strip_trailing_newline;
+use super::pipeline::tokenize_conditionals;
+use super::pipeline::CondToken;
 use super::tokenizer::tokenize;
 use super::*;
 // Kernel-only commands (network, user mgmt, job control, app services, source).
-use super::commands::{cmd_bg, cmd_fg, cmd_jobs, cmd_login, cmd_ping, cmd_source, cmd_su};
+use super::commands::cmd_bg;
+use super::commands::cmd_fg;
+use super::commands::cmd_jobs;
+use super::commands::cmd_login;
+use super::commands::cmd_ping;
+use super::commands::cmd_source;
+use super::commands::cmd_su;
 // ring3-common shared dispatch — kernel-only commands are checked first, then
 // the shared dispatch table handles everything else with explicit state params.
-use crate::user::shared::abi::io::{OPEN_FLAG_CREATE, OPEN_FLAG_READ, OPEN_FLAG_WRITE};
+use crate::user::shared::abi::io::OPEN_FLAG_CREATE;
+use crate::user::shared::abi::io::OPEN_FLAG_READ;
+use crate::user::shared::abi::io::OPEN_FLAG_WRITE;
 use crate::user::shared::dispatch;
 use crate::user::shared::syscall;
 

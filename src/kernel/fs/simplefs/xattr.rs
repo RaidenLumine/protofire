@@ -12,11 +12,13 @@
 use alloc::vec::Vec;
 
 use crate::kernel::fs::vfs::XattrEntry;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::constants::*;
 use super::types::*;
-use super::{SimpleFs, SimpleFsState};
+use super::SimpleFs;
+use super::SimpleFsState;
 
 impl SimpleFs {
     /// Index of the live xattr record for `(inode_index, name)`, if any.

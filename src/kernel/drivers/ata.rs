@@ -22,9 +22,12 @@ use crate::kernel::sync::Mutex;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::Result as KernelResult;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use alloc::string::{String, ToString};
+use alloc::string::String;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use alloc::string::ToString;
 
-use super::{Driver, DriverCategory};
+use super::Driver;
+use super::DriverCategory;
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::arch::x86_64::port::Port;
@@ -969,12 +972,24 @@ pub fn driver() -> Arc<dyn Driver> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        cache_flush_command_for_mode, classify_ata_status, lba_byte, transfer_mode_for_lba,
-        validate_block_io_range, AtaStatusDecision, AtaTransferMode, ATA_CMD_CACHE_FLUSH,
-        ATA_CMD_CACHE_FLUSH_EXT, ATA_LBA28_MAX, ATA_LBA48_MAX, STATUS_BSY, STATUS_DF, STATUS_DRDY,
-        STATUS_DRQ, STATUS_ERR, STATUS_FLOATING_BUS, STATUS_NONE,
-    };
+    use super::cache_flush_command_for_mode;
+    use super::classify_ata_status;
+    use super::lba_byte;
+    use super::transfer_mode_for_lba;
+    use super::validate_block_io_range;
+    use super::AtaStatusDecision;
+    use super::AtaTransferMode;
+    use super::ATA_CMD_CACHE_FLUSH;
+    use super::ATA_CMD_CACHE_FLUSH_EXT;
+    use super::ATA_LBA28_MAX;
+    use super::ATA_LBA48_MAX;
+    use super::STATUS_BSY;
+    use super::STATUS_DF;
+    use super::STATUS_DRDY;
+    use super::STATUS_DRQ;
+    use super::STATUS_ERR;
+    use super::STATUS_FLOATING_BUS;
+    use super::STATUS_NONE;
     use crate::kernel::fs::block::BLOCK_SIZE;
     use crate::Error;
 

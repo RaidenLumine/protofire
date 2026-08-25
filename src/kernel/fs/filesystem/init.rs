@@ -3,7 +3,8 @@
 //! FileSystem construction, initialization, and boot-disk layout.
 
 use alloc::collections::BTreeMap;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 
 use crate::kernel::sync::Mutex;
@@ -13,7 +14,8 @@ use super::super::block::BlockDevice;
 use super::super::layout::DEFAULT_USER_ROOT;
 use super::super::vfs::directory_node;
 use super::super::FileSystem;
-use super::types::{BootDiskLayoutSource, StorageInitReport};
+use super::types::BootDiskLayoutSource;
+use super::types::StorageInitReport;
 
 impl FileSystem {
     pub fn new() -> Self {

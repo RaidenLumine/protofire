@@ -12,8 +12,10 @@ use core::sync::atomic::Ordering;
 use crate::kernel::device;
 use crate::kernel::fs::FileHandle as FsFileHandle;
 use crate::kernel::network::tls::TlsWrappedConnection;
-use crate::kernel::network::{DccpSocket, TcpConnection};
-use crate::{Error, Result};
+use crate::kernel::network::DccpSocket;
+use crate::kernel::network::TcpConnection;
+use crate::Error;
+use crate::Result;
 
 use super::constants::*;
 use super::types::*;

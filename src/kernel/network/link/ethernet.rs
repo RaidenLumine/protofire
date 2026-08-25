@@ -4,7 +4,8 @@
 
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Size of a 48-bit MAC address in bytes.
 pub const MAC_ADDRESS_SIZE: usize = 6;

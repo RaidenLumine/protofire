@@ -6,7 +6,8 @@
 //! (`/system/runtime/...`).
 
 use super::super::FileSystem;
-use crate::kernel::process::{SecurityToken, HANDLE_RIGHT_READ};
+use crate::kernel::process::SecurityToken;
+use crate::kernel::process::HANDLE_RIGHT_READ;
 use crate::Error;
 
 /// The non-privileged guest token used by these tests.

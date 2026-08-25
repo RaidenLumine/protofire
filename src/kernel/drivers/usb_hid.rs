@@ -141,7 +141,8 @@ pub fn usb_hid_to_scancode_set1(hid_code: u8) -> u8 {
 // Keyboard report processing
 // ---------------------------------------------------------------------------
 
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::AtomicU8;
+use core::sync::atomic::Ordering;
 
 /// Previous keyboard report state for detecting key releases.
 static PREV_MODIFIERS: AtomicU8 = AtomicU8::new(0);
@@ -269,7 +270,8 @@ fn inject_modifier_break(modifiers: u8) {
 
 use alloc::sync::Arc;
 
-use super::{Driver, DriverCategory};
+use super::Driver;
+use super::DriverCategory;
 
 struct UsbHidDriver;
 

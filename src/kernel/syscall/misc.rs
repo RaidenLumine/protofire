@@ -4,7 +4,8 @@
 
 use crate::kernel::console;
 use crate::util::debug;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 pub(super) fn yield_now(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     super::validate_zeroed_args(context, 0)?;

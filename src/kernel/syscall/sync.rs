@@ -9,7 +9,8 @@
 
 use crate::Result;
 
-use super::{SyscallContext, SyscallDispatch};
+use super::SyscallContext;
+use super::SyscallDispatch;
 
 pub(super) fn sync(context: &mut SyscallContext) -> Result<SyscallDispatch> {
     super::validate_zeroed_args(context, 1)?;
@@ -20,7 +21,9 @@ pub(super) fn sync(context: &mut SyscallContext) -> Result<SyscallDispatch> {
 mod tests {
     #[cfg(not(target_os = "none"))]
     use super::super::test_support;
-    use super::super::{SyscallContext, SyscallDispatch, SyscallNumber};
+    use super::super::SyscallContext;
+    use super::super::SyscallDispatch;
+    use super::super::SyscallNumber;
     use super::sync as sync_syscall;
     use crate::Error;
 

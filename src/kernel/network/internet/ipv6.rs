@@ -4,7 +4,8 @@
 
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// An IPv6 address: 16 octets (RFC 8200 §2.5).
 pub type Ipv6Addr = [u8; 16];

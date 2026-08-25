@@ -11,11 +11,15 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::types::{
-    parse_ea_entries, parse_reparse_point, FileName, ParsedAttr, StandardInfoAttr,
-    ATTR_TYPE_FILENAME, IO_REPARSE_TAG_SYMLINK,
-};
-use crate::kernel::fs::ntfs::fs::{get_best_filename, parse_index_entries};
+use super::types::parse_ea_entries;
+use super::types::parse_reparse_point;
+use super::types::FileName;
+use super::types::ParsedAttr;
+use super::types::StandardInfoAttr;
+use super::types::ATTR_TYPE_FILENAME;
+use super::types::IO_REPARSE_TAG_SYMLINK;
+use crate::kernel::fs::ntfs::fs::get_best_filename;
+use crate::kernel::fs::ntfs::fs::parse_index_entries;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Byte-level helpers

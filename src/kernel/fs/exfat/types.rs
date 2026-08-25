@@ -7,7 +7,8 @@ use alloc::string::String;
 
 pub(crate) use crate::kernel::fs::block::BLOCK_SIZE;
 pub(crate) use crate::kernel::fs::vfs::NodeKind;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ---------------------------------------------------------------------------
 // Constants

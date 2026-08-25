@@ -3,7 +3,9 @@
 //! AP trampoline, bring-up, per-CPU scheduler management, and IPI delivery.
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use core::sync::atomic::Ordering;
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::arch::x86_64::apic;

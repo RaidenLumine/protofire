@@ -10,7 +10,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::config::{self, ConfigEntryLookup};
+use crate::kernel::config::ConfigEntryLookup;
+use crate::kernel::config::{self};
 
 /// The directory on the boot filesystem where service config TOML files live.
 pub const SERVICE_CONFIG_DIR: &str = "/system/rc.d";

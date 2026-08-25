@@ -5,7 +5,8 @@
 use alloc::vec::Vec;
 
 use crate::kernel::memory::alloc_profiler::AllocProfiler;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 pub const PAGE_SIZE: usize = 4096;
 

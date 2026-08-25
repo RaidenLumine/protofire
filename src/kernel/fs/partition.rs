@@ -2,8 +2,10 @@
 //!
 //! Partition table parsing and writing helpers, including MBR support.
 
-use super::block::{BlockDevice, BLOCK_SIZE};
-use crate::{Error, Result};
+use super::block::BlockDevice;
+use super::block::BLOCK_SIZE;
+use crate::Error;
+use crate::Result;
 
 pub const MBR_PARTITION_COUNT: usize = 4;
 
@@ -107,11 +109,13 @@ pub fn write_mbr_partitions(sector: &mut [u8], partitions: &MbrPartitionTable) -
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        read_mbr_partitions, write_mbr_partitions, MbrPartitionEntry, MbrPartitionTable,
-        MBR_SIGNATURE_OFFSET,
-    };
-    use crate::kernel::fs::block::{MemoryBlockDevice, BLOCK_SIZE};
+    use super::read_mbr_partitions;
+    use super::write_mbr_partitions;
+    use super::MbrPartitionEntry;
+    use super::MbrPartitionTable;
+    use super::MBR_SIGNATURE_OFFSET;
+    use crate::kernel::fs::block::MemoryBlockDevice;
+    use crate::kernel::fs::block::BLOCK_SIZE;
     use crate::Error;
 
     #[test]

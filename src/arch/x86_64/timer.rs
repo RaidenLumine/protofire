@@ -2,7 +2,8 @@
 //!
 //! x86_64 PIT timer initialization and tick accounting.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
 

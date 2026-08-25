@@ -7,7 +7,9 @@ use alloc::string::String;
 use crate::Result;
 
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
-use super::super::block::{BlockDevice, MemoryBlockDevice};
+use super::super::block::BlockDevice;
+#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
+use super::super::block::MemoryBlockDevice;
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
 use super::super::demo::build_zone_image;
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]

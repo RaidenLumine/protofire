@@ -10,7 +10,10 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::ipv4::{Ipv4Addr, Ipv4Header, Ipv4Packet, IPV4_MIN_HEADER_SIZE};
+use super::ipv4::Ipv4Addr;
+use super::ipv4::Ipv4Header;
+use super::ipv4::Ipv4Packet;
+use super::ipv4::IPV4_MIN_HEADER_SIZE;
 
 // ─── Fragment reassembly timeout ────────────────────────────────────────
 
@@ -502,8 +505,10 @@ pub fn evict_expired_ipv6_fragments(cache: &mut Ipv6FragmentCache, current_tick:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::network::internet::ipv4::{IpProtocol, IPV4_MIN_HEADER_SIZE};
-    use crate::kernel::network::internet::ipv6::{Ipv6FragmentHeader, Ipv6NextHeader};
+    use crate::kernel::network::internet::ipv4::IpProtocol;
+    use crate::kernel::network::internet::ipv4::IPV4_MIN_HEADER_SIZE;
+    use crate::kernel::network::internet::ipv6::Ipv6FragmentHeader;
+    use crate::kernel::network::internet::ipv6::Ipv6NextHeader;
 
     fn make_ipv4_fragment(
         id: u16,

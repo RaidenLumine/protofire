@@ -161,10 +161,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        recovery_action_log_line, ExceptionRecoverability, ExceptionRecoveryAction,
-        ExceptionRecoveryActionResult, ExceptionRecoveryDecision, RecoveryActionLogRecord,
-    };
+    use super::recovery_action_log_line;
+    use super::ExceptionRecoverability;
+    use super::ExceptionRecoveryAction;
+    use super::ExceptionRecoveryActionResult;
+    use super::ExceptionRecoveryDecision;
+    use super::RecoveryActionLogRecord;
 
     #[test]
     fn recover_now_with_action_stays_recover_now_when_action_applies() {

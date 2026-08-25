@@ -4,8 +4,10 @@
 
 use crate::kernel::power;
 use crate::kernel::power::governors::GovernorType;
-use crate::kernel::syscall::{SyscallContext, SyscallDispatch};
-use crate::{Error, Result};
+use crate::kernel::syscall::SyscallContext;
+use crate::kernel::syscall::SyscallDispatch;
+use crate::Error;
+use crate::Result;
 
 /// Get current CPU frequency (KHz) — SYS_CPUFREQ_GET = 145
 pub(super) fn cpufreq_get(ctx: &mut SyscallContext) -> Result<SyscallDispatch> {

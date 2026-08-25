@@ -8,17 +8,23 @@ use alloc::sync::Arc;
 
 use crate::abi::process::{self as process_abi};
 use crate::kernel::process::thread::ThreadUserRuntimeState;
-use crate::kernel::process::{
-    HandleEntry, Process, ProcessExecState, SecurityToken, Thread, UserThreadStart, STDERR_FD,
-    STDIN_FD, STDOUT_FD,
-};
+use crate::kernel::process::HandleEntry;
+use crate::kernel::process::Process;
+use crate::kernel::process::ProcessExecState;
+use crate::kernel::process::SecurityToken;
+use crate::kernel::process::Thread;
+use crate::kernel::process::UserThreadStart;
+use crate::kernel::process::STDERR_FD;
+use crate::kernel::process::STDIN_FD;
+use crate::kernel::process::STDOUT_FD;
 use crate::user::program::SpawnProcessOverrides;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::decode::{
-    DecodedLaunchOptions, LaunchDecodeProfile, EXEC_LAUNCH_DECODE_PROFILE,
-    SPAWN_LAUNCH_DECODE_PROFILE,
-};
+use super::decode::DecodedLaunchOptions;
+use super::decode::LaunchDecodeProfile;
+use super::decode::EXEC_LAUNCH_DECODE_PROFILE;
+use super::decode::SPAWN_LAUNCH_DECODE_PROFILE;
 use super::MAX_LAUNCH_REFERENCE_BYTES;
 
 // ── Standard handle specs ─────────────────────────────────────────────

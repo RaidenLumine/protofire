@@ -6,16 +6,27 @@
 use alloc::vec::Vec;
 
 use crate::kernel::network::internet::ip::IpAddress;
-use crate::kernel::network::internet::ipv4::{self, IpProtocol, Ipv4Addr, Ipv4Header, Ipv4Packet};
-use crate::kernel::network::internet::ipv6::{
-    self, Ipv6Addr, Ipv6Header, Ipv6NextHeader, Ipv6Packet,
-};
+use crate::kernel::network::internet::ipv4::IpProtocol;
+use crate::kernel::network::internet::ipv4::Ipv4Addr;
+use crate::kernel::network::internet::ipv4::Ipv4Header;
+use crate::kernel::network::internet::ipv4::Ipv4Packet;
+use crate::kernel::network::internet::ipv4::{self};
+use crate::kernel::network::internet::ipv6::Ipv6Addr;
+use crate::kernel::network::internet::ipv6::Ipv6Header;
+use crate::kernel::network::internet::ipv6::Ipv6NextHeader;
+use crate::kernel::network::internet::ipv6::Ipv6Packet;
+use crate::kernel::network::internet::ipv6::{self};
 use crate::kernel::network::stack::NetworkStack;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::ah::{self, AH_HEADER_SIZE};
+use super::ah::AH_HEADER_SIZE;
+use super::ah::{self};
 use super::esp;
-use super::{transport_ports, IpsecProto, IpsecSa, SpAction};
+use super::transport_ports;
+use super::IpsecProto;
+use super::IpsecSa;
+use super::SpAction;
 
 /// Maximum IPsec tunnel decapsulation depth.  Re-entering dispatch deeper
 /// than this with a nested ESP/AH tunnel drops the packet (loop prevention).

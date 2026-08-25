@@ -10,7 +10,9 @@
 
 use core::fmt;
 #[cfg(feature = "alloc_profiler")]
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+#[cfg(feature = "alloc_profiler")]
+use core::sync::atomic::Ordering;
 
 /// Point-in-time snapshot of all allocator profiler counters.
 /// Always available even when profiling is compiled out (returns all zeros).

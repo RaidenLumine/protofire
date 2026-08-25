@@ -15,10 +15,16 @@
 //! - `F_SETPIPE_SZ`— resize the pipe buffer (rounded/clamped, data preserved).
 
 use crate::abi::fs as fs_abi;
-use crate::kernel::process::{FdFlags, KernelObject, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
-use crate::{Error, Result};
+use crate::kernel::process::FdFlags;
+use crate::kernel::process::KernelObject;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::Error;
+use crate::Result;
 
-use super::{runtime, SyscallContext, SyscallDispatch};
+use super::runtime;
+use super::SyscallContext;
+use super::SyscallDispatch;
 
 /// Read-only access mode returned by `F_GETFL` (Linux `O_RDONLY`).
 const O_RDONLY: usize = 0;
@@ -133,11 +139,15 @@ fn set_pipe_sz(
 mod tests {
     #[cfg(not(target_os = "none"))]
     use super::super::test_support;
-    use super::super::{SyscallContext, SyscallDispatch, SyscallNumber};
+    use super::super::SyscallContext;
+    use super::super::SyscallDispatch;
+    use super::super::SyscallNumber;
     use super::fcntl as fcntl_syscall;
     use crate::abi::fs as fs_abi;
-    use crate::kernel::fs::pipe::{round_pipe_size, DEFAULT_PIPE_CAPACITY};
-    use crate::kernel::process::{HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
+    use crate::kernel::fs::pipe::round_pipe_size;
+    use crate::kernel::fs::pipe::DEFAULT_PIPE_CAPACITY;
+    use crate::kernel::process::HANDLE_RIGHT_READ;
+    use crate::kernel::process::HANDLE_RIGHT_WRITE;
     use crate::Error;
 
     /// Create a `pipe` context and run the handler, returning the two fds.

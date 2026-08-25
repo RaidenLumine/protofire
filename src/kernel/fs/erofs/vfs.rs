@@ -5,17 +5,25 @@
 //! [`EroVNode`] implementation.
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::super::block::BlockDevice;
-use super::super::vfs::{
-    DirectoryEntry, FileSystem as VfsFileSystem, Metadata, NodeKind, SecurityDescriptor,
-    SecurityDescriptorMutationSupport, VNode, VolumeCheckReport, ROOT_GROUP_ID, ROOT_OWNER_ID,
-};
+use super::super::vfs::DirectoryEntry;
+use super::super::vfs::FileSystem as VfsFileSystem;
+use super::super::vfs::Metadata;
+use super::super::vfs::NodeKind;
+use super::super::vfs::SecurityDescriptor;
+use super::super::vfs::SecurityDescriptorMutationSupport;
+use super::super::vfs::VNode;
+use super::super::vfs::VolumeCheckReport;
+use super::super::vfs::ROOT_GROUP_ID;
+use super::super::vfs::ROOT_OWNER_ID;
 
 use super::fs::EroFs;
 use super::types::*;

@@ -5,12 +5,16 @@
 //! helpers.  Bare-metal x86_64 only.
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use core::sync::atomic::Ordering;
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use crate::arch::x86_64::paging::{
-    PAGE_ENTRY_ADDRESS_MASK, PAGE_ENTRY_PRESENT, PAGE_ENTRY_WRITABLE,
-};
+use crate::arch::x86_64::paging::PAGE_ENTRY_ADDRESS_MASK;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::arch::x86_64::paging::PAGE_ENTRY_PRESENT;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::arch::x86_64::paging::PAGE_ENTRY_WRITABLE;
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 const PAGE_TABLE_ENTRY_COUNT: usize = 512;

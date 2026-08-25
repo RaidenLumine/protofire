@@ -3,11 +3,14 @@
 //! Host-side integration tests for console line buffering and timeout
 //! semantics.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use protofire::kernel::console;
-use protofire::kernel::drivers::{keyboard, serial};
-use protofire::kernel::process::{Scheduler, ThreadWaitOutcome};
+use protofire::kernel::drivers::keyboard;
+use protofire::kernel::drivers::serial;
+use protofire::kernel::process::Scheduler;
+use protofire::kernel::process::ThreadWaitOutcome;
 
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

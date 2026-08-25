@@ -4,9 +4,12 @@
 
 use alloc::vec::Vec;
 
-use crate::kernel::network::internet::ipv4::{self, Ipv4Addr};
-use crate::kernel::network::internet::ipv6::{self, Ipv6Addr};
-use crate::kernel::network::link::ethernet::{self, EtherType};
+use crate::kernel::network::internet::ipv4::Ipv4Addr;
+use crate::kernel::network::internet::ipv4::{self};
+use crate::kernel::network::internet::ipv6::Ipv6Addr;
+use crate::kernel::network::internet::ipv6::{self};
+use crate::kernel::network::link::ethernet::EtherType;
+use crate::kernel::network::link::ethernet::{self};
 use crate::Result;
 
 use super::NetworkStack;

@@ -12,7 +12,11 @@
 //! imbalance (busiest > idlest + a margin), only migrates IRQs the
 //! architecture reports as re-routable, and honours software pins.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::AtomicU8;
+use core::sync::atomic::Ordering;
 
 use super::irq_stats;
 use super::irq_stats::MAX_IRQ_VECTORS;

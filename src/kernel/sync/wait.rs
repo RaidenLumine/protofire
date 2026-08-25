@@ -7,7 +7,12 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::process::{ProcessId, ProcessState, Scheduler, Thread, ThreadId, ThreadState};
+use crate::kernel::process::ProcessId;
+use crate::kernel::process::ProcessState;
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::Thread;
+use crate::kernel::process::ThreadId;
+use crate::kernel::process::ThreadState;
 
 use super::SpinLock;
 

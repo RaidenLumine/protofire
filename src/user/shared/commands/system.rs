@@ -4,12 +4,16 @@
 //! dmesg, uname, uptime, sleep, test).
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::user::shared::abi::diagnostic;
-use crate::user::shared::abi::fs::{FileStat, FILE_KIND_DIRECTORY, FILE_KIND_FILE, FILE_STAT_SIZE};
+use crate::user::shared::abi::fs::FileStat;
+use crate::user::shared::abi::fs::FILE_KIND_DIRECTORY;
+use crate::user::shared::abi::fs::FILE_KIND_FILE;
+use crate::user::shared::abi::fs::FILE_STAT_SIZE;
 use crate::user::shared::path_util::resolve_path;
 use crate::user::shared::syscall;
 use crate::user::shared::types::CmdResult;

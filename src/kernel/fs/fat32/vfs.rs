@@ -10,19 +10,31 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::AtomicU32;
 
-use crate::kernel::fs::block::{BlockDevice, BLOCK_SIZE};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::BLOCK_SIZE;
 use crate::kernel::fs::filesystem::profiler::FsProfilerSnapshot;
-use crate::kernel::fs::vfs::{
-    DirectoryEntry, FileSystem as VfsTrait, Metadata, NodeKind, SecurityDescriptor,
-    SecurityDescriptorMutationSupport, VNode, VolumeCheckReport,
-};
-use crate::{Error, Result};
+use crate::kernel::fs::vfs::DirectoryEntry;
+use crate::kernel::fs::vfs::FileSystem as VfsTrait;
+use crate::kernel::fs::vfs::Metadata;
+use crate::kernel::fs::vfs::NodeKind;
+use crate::kernel::fs::vfs::SecurityDescriptor;
+use crate::kernel::fs::vfs::SecurityDescriptorMutationSupport;
+use crate::kernel::fs::vfs::VNode;
+use crate::kernel::fs::vfs::VolumeCheckReport;
+use crate::Error;
+use crate::Result;
 
-use super::types::{
-    build_dir_entry_set, insert_dir_entry_set, write_short_entry, FatDirEntry, FatType,
-    ATTR_DIRECTORY, ATTR_LFN_MASK, DIR_ENTRY_SIZE, FIRST_DATA_CLUSTER,
-};
-use super::{FatFs, FatVolume};
+use super::types::build_dir_entry_set;
+use super::types::insert_dir_entry_set;
+use super::types::write_short_entry;
+use super::types::FatDirEntry;
+use super::types::FatType;
+use super::types::ATTR_DIRECTORY;
+use super::types::ATTR_LFN_MASK;
+use super::types::DIR_ENTRY_SIZE;
+use super::types::FIRST_DATA_CLUSTER;
+use super::FatFs;
+use super::FatVolume;
 
 // ─── Public volume entry point ─────────────────────────────────────────────
 

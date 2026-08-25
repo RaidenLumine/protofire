@@ -11,7 +11,8 @@ use alloc::collections::vec_deque::VecDeque;
 use alloc::vec::Vec;
 
 use crate::kernel::network::internet::ip::IpAddress;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ─── Raw socket ─────────────────────────────────────────────────────────
 

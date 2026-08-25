@@ -57,7 +57,8 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::Ordering;
 
 use crate::kernel::sync::Mutex;
 use crate::Result;
@@ -66,7 +67,9 @@ use block::BlockDevice;
 use vfs::FileSystem as VfsTrait;
 use vfs::VNode;
 
-pub use vfs::{DirectoryEntry, Metadata as FileMetadata, NodeKind};
+pub use vfs::DirectoryEntry;
+pub use vfs::Metadata as FileMetadata;
+pub use vfs::NodeKind;
 
 // ── Re-exports from submodules ──
 pub use filesystem::types::MountInfo;

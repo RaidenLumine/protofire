@@ -12,4 +12,5 @@ mod tests;
 
 pub use allocator::KernelGlobalAllocator;
 pub(crate) use wrapper::heap_model;
-pub use wrapper::{verify_kernel_heap, HeapAllocator};
+pub use wrapper::verify_kernel_heap;
+pub use wrapper::HeapAllocator;

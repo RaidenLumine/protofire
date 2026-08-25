@@ -5,8 +5,12 @@
 
 use std::sync::Arc;
 
-use protofire::kernel::fs::block::{BlockDevice, MemoryBlockDevice, BLOCK_SIZE};
-use protofire::kernel::fs::simplefs::{ImageEntry, SimpleFs, SimpleFsVolume};
+use protofire::kernel::fs::block::BlockDevice;
+use protofire::kernel::fs::block::MemoryBlockDevice;
+use protofire::kernel::fs::block::BLOCK_SIZE;
+use protofire::kernel::fs::simplefs::ImageEntry;
+use protofire::kernel::fs::simplefs::SimpleFs;
+use protofire::kernel::fs::simplefs::SimpleFsVolume;
 use protofire::kernel::fs::vfs::StaticFileSystem;
 use protofire::kernel::fs::FileSystem;
 use protofire::kernel::fs::NodeKind;

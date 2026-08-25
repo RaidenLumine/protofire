@@ -6,9 +6,13 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ptr;
+#[cfg(not(test))]
+use core::sync::atomic::AtomicBool;
+#[cfg(not(test))]
+use core::sync::atomic::AtomicPtr;
 use core::sync::atomic::AtomicU32;
 #[cfg(not(test))]
-use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use core::sync::atomic::Ordering;
 #[cfg(test)]
 use std::cell::Cell;
 #[cfg(test)]
@@ -16,7 +20,12 @@ use std::sync::atomic::AtomicBool;
 
 use crate::kernel::sync::Mutex;
 
-use super::{ContextCell, Process, ProcessId, Thread, ThreadPriority, THREAD_PRIORITY_COUNT};
+use super::ContextCell;
+use super::Process;
+use super::ProcessId;
+use super::Thread;
+use super::ThreadPriority;
+use super::THREAD_PRIORITY_COUNT;
 
 // ── Submodule declarations ──
 pub(crate) mod address;
@@ -35,6 +44,11 @@ pub(crate) mod types;
 pub(crate) mod waker;
 
 // ── Re-exports ──
+pub use api::on_timer_tick;
+pub use api::on_timer_tick_with_preemption;
+pub use api::sleep_current;
+pub use api::terminate_current;
+pub use api::terminate_current_with_reason;
 #[cfg(all(
     any(
         target_arch = "x86_64",
@@ -44,10 +58,7 @@ pub(crate) mod waker;
     target_os = "none"
 ))]
 pub use api::thread_trampoline;
-pub use api::{
-    on_timer_tick, on_timer_tick_with_preemption, sleep_current, terminate_current,
-    terminate_current_with_reason, yield_current,
-};
+pub use api::yield_current;
 pub(crate) use types::SchedulerHotspotStats;
 pub(crate) use types::SchedulerStats;
 pub(crate) use types::TimedWaiter;

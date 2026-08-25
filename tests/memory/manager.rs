@@ -3,11 +3,14 @@
 //! Host-side integration tests for the software memory manager facade.
 
 use protofire::arch::mmu::bootstrap_identity_mapping;
-use protofire::kernel::memory::paging::{MappingKind, PagePermissions, PAGE_SIZE};
-use protofire::kernel::memory::{
-    AddressTranslation, BootstrapTranslation, MemoryManager, PlannedKernelRegion,
-    PlannedKernelRegionKind,
-};
+use protofire::kernel::memory::paging::MappingKind;
+use protofire::kernel::memory::paging::PagePermissions;
+use protofire::kernel::memory::paging::PAGE_SIZE;
+use protofire::kernel::memory::AddressTranslation;
+use protofire::kernel::memory::BootstrapTranslation;
+use protofire::kernel::memory::MemoryManager;
+use protofire::kernel::memory::PlannedKernelRegion;
+use protofire::kernel::memory::PlannedKernelRegionKind;
 
 fn align_up(value: usize) -> usize {
     (value + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)

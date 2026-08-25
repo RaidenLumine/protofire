@@ -6,8 +6,9 @@
 
 #![cfg_attr(test, allow(dead_code))]
 
+use super::elf_builder::build_artifact_from_payload;
+use super::elf_builder::build_metadata_only_artifact;
 pub use super::elf_builder::DemoProgramArtifact;
-use super::elf_builder::{build_artifact_from_payload, build_metadata_only_artifact};
 
 use crate::user::program::DEMO_PROGRAM_ENTRY;
 
@@ -33,11 +34,14 @@ pub fn build_shell_program_artifact() -> DemoProgramArtifact {
 
 #[cfg(test)]
 mod tests {
-    use crate::user::{elf::parse_elf64, program::DEMO_PROGRAM_ENTRY};
+    use crate::user::elf::parse_elf64;
+    use crate::user::program::DEMO_PROGRAM_ENTRY;
 
     use crate::user::demo::elf_builder::build_artifact_from_payload;
 
-    use super::{build_shell_program_artifact, DemoProgramArtifact, RISCV64_DEMO_PROGRAM_MACHINE};
+    use super::build_shell_program_artifact;
+    use super::DemoProgramArtifact;
+    use super::RISCV64_DEMO_PROGRAM_MACHINE;
 
     const RISCV64_TARGET: &str = "riscv64gc-unknown-none-elf";
     const DEMO_PAYLOAD_START: &str = "protofire_demo_program_riscv64_payload_start";

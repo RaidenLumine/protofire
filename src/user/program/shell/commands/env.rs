@@ -3,7 +3,8 @@
 //! Environment, variable, and shell-state commands (source).
 
 use super::super::dispatch::run_shell_command;
-use super::super::expand::{expand_env_vars, set_positional_params};
+use super::super::expand::expand_env_vars;
+use super::super::expand::set_positional_params;
 use super::super::*;
 use crate::abi::io::OPEN_FLAG_READ;
 use crate::user::shared::syscall;

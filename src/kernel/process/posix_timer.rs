@@ -11,7 +11,9 @@ use crate::Result;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 /// Timer ID type (opaque handle returned to userspace).
 pub type TimerId = u32;

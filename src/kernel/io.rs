@@ -3,15 +3,24 @@
 //! Unified process I/O adapter over files, directories, and device-backed
 //! descriptors.
 
-pub use crate::kernel::device::{
-    CONSOLE_DEVICE_PATH, DEBUG_DEVICE_PATH, KEYBOARD_DEVICE_PATH, KEYBOARD_RAW_DEVICE_PATH,
-    NULL_DEVICE_PATH, SERIAL0_DEVICE_PATH, STDERR_DEVICE_PATH, STDIN_DEVICE_PATH,
-    STDOUT_DEVICE_PATH, ZERO_DEVICE_PATH,
-};
-use crate::kernel::process::{
-    process::OpenFile, FileDescriptor, HandleEntry, Process, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE,
-};
-use crate::{Error, Result};
+pub use crate::kernel::device::CONSOLE_DEVICE_PATH;
+pub use crate::kernel::device::DEBUG_DEVICE_PATH;
+pub use crate::kernel::device::KEYBOARD_DEVICE_PATH;
+pub use crate::kernel::device::KEYBOARD_RAW_DEVICE_PATH;
+pub use crate::kernel::device::NULL_DEVICE_PATH;
+pub use crate::kernel::device::SERIAL0_DEVICE_PATH;
+pub use crate::kernel::device::STDERR_DEVICE_PATH;
+pub use crate::kernel::device::STDIN_DEVICE_PATH;
+pub use crate::kernel::device::STDOUT_DEVICE_PATH;
+pub use crate::kernel::device::ZERO_DEVICE_PATH;
+use crate::kernel::process::process::OpenFile;
+use crate::kernel::process::FileDescriptor;
+use crate::kernel::process::HandleEntry;
+use crate::kernel::process::Process;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::Error;
+use crate::Result;
 
 fn resolve_io_entry(
     process: &Process,
@@ -161,10 +170,15 @@ pub fn fd_writable(process: &Process, fd: FileDescriptor) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{read, seek, set_len, write};
-    use crate::kernel::process::{
-        Process, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE, STDIN_FD, STDOUT_FD,
-    };
+    use super::read;
+    use super::seek;
+    use super::set_len;
+    use super::write;
+    use crate::kernel::process::Process;
+    use crate::kernel::process::HANDLE_RIGHT_READ;
+    use crate::kernel::process::HANDLE_RIGHT_WRITE;
+    use crate::kernel::process::STDIN_FD;
+    use crate::kernel::process::STDOUT_FD;
     use crate::Error;
 
     #[test]

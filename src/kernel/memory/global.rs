@@ -4,7 +4,9 @@
 
 use core::cell::UnsafeCell;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::Ordering;
 
 use super::manager::MemoryManager;
 

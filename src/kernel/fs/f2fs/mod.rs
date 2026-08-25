@@ -90,10 +90,42 @@ pub(crate) struct F2fsFs {
 #[allow(unused_imports)]
 pub(crate) use constants::*;
 #[allow(unused_imports)]
-pub(crate) use types::{
-    parse_f2fs_checkpoint, parse_f2fs_dir_entries, parse_f2fs_inode, parse_f2fs_superblock,
-    parse_nat_entry, parse_sit_entry, write_f2fs_checkpoint, write_f2fs_dir_entry,
-    write_f2fs_inode, write_f2fs_superblock, write_nat_entry, F2fsCheckpoint, F2fsDirEntry,
-    F2fsInode, F2fsNatCache, F2fsNatEntry, F2fsSitCache, F2fsSitEntry, F2fsSuperblock,
-    NatJournalEntry,
-};
+pub(crate) use types::parse_f2fs_checkpoint;
+#[allow(unused_imports)]
+pub(crate) use types::parse_f2fs_dir_entries;
+#[allow(unused_imports)]
+pub(crate) use types::parse_f2fs_inode;
+#[allow(unused_imports)]
+pub(crate) use types::parse_f2fs_superblock;
+#[allow(unused_imports)]
+pub(crate) use types::parse_nat_entry;
+#[allow(unused_imports)]
+pub(crate) use types::parse_sit_entry;
+#[allow(unused_imports)]
+pub(crate) use types::write_f2fs_checkpoint;
+#[allow(unused_imports)]
+pub(crate) use types::write_f2fs_dir_entry;
+#[allow(unused_imports)]
+pub(crate) use types::write_f2fs_inode;
+#[allow(unused_imports)]
+pub(crate) use types::write_f2fs_superblock;
+#[allow(unused_imports)]
+pub(crate) use types::write_nat_entry;
+#[allow(unused_imports)]
+pub(crate) use types::F2fsCheckpoint;
+#[allow(unused_imports)]
+pub(crate) use types::F2fsDirEntry;
+#[allow(unused_imports)]
+pub(crate) use types::F2fsInode;
+#[allow(unused_imports)]
+pub(crate) use types::F2fsNatCache;
+#[allow(unused_imports)]
+pub(crate) use types::F2fsNatEntry;
+#[allow(unused_imports)]
+pub(crate) use types::F2fsSitCache;
+#[allow(unused_imports)]
+pub(crate) use types::F2fsSitEntry;
+#[allow(unused_imports)]
+pub(crate) use types::F2fsSuperblock;
+#[allow(unused_imports)]
+pub(crate) use types::NatJournalEntry;

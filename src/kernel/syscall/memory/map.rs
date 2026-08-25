@@ -3,7 +3,8 @@
 //! mmap/munmap syscall handlers — anonymous memory mapping for user processes.
 
 use crate::kernel::memory::paging::PagePermissions;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// mmap protection flags (subset of POSIX PROT_*).
 const PROT_READ: usize = 1;

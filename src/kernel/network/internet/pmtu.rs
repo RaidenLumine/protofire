@@ -10,7 +10,8 @@
 
 use alloc::collections::btree_map::BTreeMap;
 
-use super::ipv6::{Ipv6Addr, IPV6_MIN_MTU};
+use super::ipv6::Ipv6Addr;
+use super::ipv6::IPV6_MIN_MTU;
 
 /// One cached PMTU entry.
 #[derive(Debug, Clone, Copy)]

@@ -8,7 +8,8 @@ use alloc::vec::Vec;
 use crate::abi::diagnostic as diag;
 use crate::kernel::memory;
 use crate::kernel::process::sleep_current;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ── Sleep (slot 49) ──────────────────────────────────────────────────────
 

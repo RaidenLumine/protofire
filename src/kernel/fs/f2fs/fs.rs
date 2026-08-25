@@ -11,9 +11,12 @@ use alloc::vec::Vec;
 
 use crate::kernel::fs::block::BLOCK_SIZE as DEV_BLOCK_SIZE;
 use crate::kernel::fs::block_cache::BlockCache;
-use crate::kernel::fs::vfs::{Metadata, NodeKind, SecurityDescriptor};
+use crate::kernel::fs::vfs::Metadata;
+use crate::kernel::fs::vfs::NodeKind;
+use crate::kernel::fs::vfs::SecurityDescriptor;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::super::block::BlockDevice;
 use super::constants::*;

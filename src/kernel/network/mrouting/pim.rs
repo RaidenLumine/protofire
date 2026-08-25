@@ -38,7 +38,10 @@ use alloc::vec::Vec;
 
 use crate::kernel::network::internet::igmp;
 use crate::kernel::network::internet::ip::IpAddress;
-use crate::kernel::network::internet::ipv4::{self, IpProtocol, Ipv4Addr, Ipv4Header};
+use crate::kernel::network::internet::ipv4::IpProtocol;
+use crate::kernel::network::internet::ipv4::Ipv4Addr;
+use crate::kernel::network::internet::ipv4::Ipv4Header;
+use crate::kernel::network::internet::ipv4::{self};
 use crate::kernel::network::stack::NetworkStack;
 use crate::Result;
 
@@ -418,7 +421,9 @@ mod tests {
 
     use crate::abi::mrt as mrt_abi;
     use crate::kernel::network::link::device::mock::MockNetworkDevice;
-    use crate::kernel::network::link::ethernet::{self, EtherType, MacAddress};
+    use crate::kernel::network::link::ethernet::EtherType;
+    use crate::kernel::network::link::ethernet::MacAddress;
+    use crate::kernel::network::link::ethernet::{self};
     use crate::kernel::network::stack::routing::RouteEntry;
     use crate::kernel::network::stack::NetworkStack;
 

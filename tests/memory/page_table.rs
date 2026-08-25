@@ -2,7 +2,10 @@
 //!
 //! Host-side integration tests for the software page-table implementation.
 
-use protofire::kernel::memory::paging::{MappingKind, PagePermissions, PageTable, PAGE_SIZE};
+use protofire::kernel::memory::paging::MappingKind;
+use protofire::kernel::memory::paging::PagePermissions;
+use protofire::kernel::memory::paging::PageTable;
+use protofire::kernel::memory::paging::PAGE_SIZE;
 use protofire::Error;
 
 #[test]

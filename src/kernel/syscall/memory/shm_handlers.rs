@@ -2,7 +2,8 @@
 //!
 //! Syscall handlers for SystV shared memory operations.
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// shmget(key, size, flags) → shmid
 pub(super) fn shmget(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {

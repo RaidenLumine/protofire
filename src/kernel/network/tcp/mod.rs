@@ -25,11 +25,25 @@ mod types;
 
 // ─── Public re-exports ────────────────────────────────────────────────
 
-pub use ops::{close, connect, process_segment, process_segment_v6, retransmit_check};
-pub use segment::{build_tcp_segment, build_tcp_segment_v6, parse_tcp_header};
-pub(crate) use segment::{send_tcp_segment, send_tcp_segment_v6};
-pub use table::{accept_nonblocking, listen, unlisten, NativeTcpConnection, TcpConnectionTable};
-pub use types::{TcpConnectionState, TcpHeader, TcpState, TCP_MIN_HEADER_SIZE};
+pub use ops::close;
+pub use ops::connect;
+pub use ops::process_segment;
+pub use ops::process_segment_v6;
+pub use ops::retransmit_check;
+pub use segment::build_tcp_segment;
+pub use segment::build_tcp_segment_v6;
+pub use segment::parse_tcp_header;
+pub(crate) use segment::send_tcp_segment;
+pub(crate) use segment::send_tcp_segment_v6;
+pub use table::accept_nonblocking;
+pub use table::listen;
+pub use table::unlisten;
+pub use table::NativeTcpConnection;
+pub use table::TcpConnectionTable;
+pub use types::TcpConnectionState;
+pub use types::TcpHeader;
+pub use types::TcpState;
+pub use types::TCP_MIN_HEADER_SIZE;
 
 // ─── tests ───
 
@@ -37,7 +51,8 @@ pub use types::{TcpConnectionState, TcpHeader, TcpState, TCP_MIN_HEADER_SIZE};
 mod tests {
     use super::types::*;
     use super::*;
-    use crate::kernel::network::internet::ipv4::{self, Ipv4Addr};
+    use crate::kernel::network::internet::ipv4::Ipv4Addr;
+    use crate::kernel::network::internet::ipv4::{self};
     use crate::kernel::network::link::device::mock::MockNetworkDevice;
     use crate::kernel::network::link::ethernet::MacAddress;
     use crate::kernel::network::stack::NetworkStack;

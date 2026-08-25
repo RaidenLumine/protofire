@@ -3,13 +3,21 @@
 //! Host-side integration tests for SimpleFs image validation and mutation
 //! behavior.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::convert::TryInto;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
 
-use protofire::kernel::fs::block::{BlockDevice, MemoryBlockDevice, BLOCK_SIZE};
-use protofire::kernel::fs::simplefs::{ImageEntry, SimpleFs, SimpleFsVolume};
-use protofire::kernel::fs::vfs::{FileSystem as VfsFileSystem, NodeKind, VNode};
+use protofire::kernel::fs::block::BlockDevice;
+use protofire::kernel::fs::block::MemoryBlockDevice;
+use protofire::kernel::fs::block::BLOCK_SIZE;
+use protofire::kernel::fs::simplefs::ImageEntry;
+use protofire::kernel::fs::simplefs::SimpleFs;
+use protofire::kernel::fs::simplefs::SimpleFsVolume;
+use protofire::kernel::fs::vfs::FileSystem as VfsFileSystem;
+use protofire::kernel::fs::vfs::NodeKind;
+use protofire::kernel::fs::vfs::VNode;
 use protofire::Error;
 
 const INODE_SIZE: usize = 32;

@@ -9,8 +9,10 @@ use alloc::vec::Vec;
 use crate::abi::net as net_abi;
 use crate::kernel::network;
 use crate::kernel::network::internet::ip::IpAddress;
-use crate::kernel::process::{HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
-use crate::{Error, Result};
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::Error;
+use crate::Result;
 
 const MAX_CONNECT_HOST_BYTES: usize = 4096;
 
@@ -825,13 +827,18 @@ pub(super) fn dccp_close(context: &mut super::SyscallContext) -> Result<super::S
 mod tests {
     #[cfg(not(target_os = "none"))]
     use super::super::test_support;
-    use super::{connect_tcp, connect_tcp_request, status, validate_connect_tcp_shape};
+    use super::connect_tcp;
+    use super::connect_tcp_request;
+    use super::status;
+    use super::validate_connect_tcp_shape;
     use crate::abi::net as net_abi;
-    use crate::kernel::{
-        network,
-        process::{KernelObject, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE},
-        syscall::{SyscallContext, SyscallDispatch, SyscallNumber},
-    };
+    use crate::kernel::network;
+    use crate::kernel::process::KernelObject;
+    use crate::kernel::process::HANDLE_RIGHT_READ;
+    use crate::kernel::process::HANDLE_RIGHT_WRITE;
+    use crate::kernel::syscall::SyscallContext;
+    use crate::kernel::syscall::SyscallDispatch;
+    use crate::kernel::syscall::SyscallNumber;
     use crate::Error;
     #[cfg(not(target_os = "none"))]
     use alloc::format;

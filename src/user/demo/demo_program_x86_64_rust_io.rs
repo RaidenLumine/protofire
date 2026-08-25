@@ -9,11 +9,19 @@
 use core::mem::MaybeUninit;
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
-use crate::abi::process::{
-    ProcessSpawnOptions, ProcessSpawnStringRef, ProcessTerminationRecord,
-    PROCESS_SPAWN_OPTIONS_SIZE, PROCESS_TERMINATION_KIND_EXCEPTION, PROCESS_TERMINATION_KIND_EXIT,
-    PROCESS_TERMINATION_RECORD_SIZE,
-};
+use crate::abi::process::ProcessSpawnOptions;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::ProcessSpawnStringRef;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::ProcessTerminationRecord;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::PROCESS_TERMINATION_KIND_EXCEPTION;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::PROCESS_TERMINATION_KIND_EXIT;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
 
 const RUST_IO_PAYLOAD_READ_BUFFER_CAPACITY: usize = 256;
 

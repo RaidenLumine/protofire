@@ -30,15 +30,23 @@ mod tests;
 // `evict_expired` is bare-metal only (called from NetworkStack).
 #[cfg(target_os = "none")]
 pub(crate) use cache::evict_expired;
-pub use parse::{parse_a_record, parse_aaaa_record, parse_ptr_record};
-pub use query::{
-    build_query, build_query_a_edns0, build_query_aaaa, build_query_edns0, build_query_ptr_v4,
-    build_query_ptr_v6,
-};
+pub use parse::parse_a_record;
+pub use parse::parse_aaaa_record;
+pub use parse::parse_ptr_record;
+pub use query::build_query;
+pub use query::build_query_a_edns0;
+pub use query::build_query_aaaa;
+pub use query::build_query_edns0;
+pub use query::build_query_ptr_v4;
+pub use query::build_query_ptr_v6;
 // resolve_hostname is always available; the DNS resolvers are bare-metal only.
+#[cfg(target_os = "none")]
+pub use resolve::resolve;
+#[cfg(target_os = "none")]
+pub use resolve::resolve_dual_stack;
 pub use resolve::resolve_hostname;
 #[cfg(target_os = "none")]
-pub use resolve::{resolve, resolve_dual_stack, resolve_v6};
+pub use resolve::resolve_v6;
 
 // ── DNS message constants (shared across query, parse, and tests) ──
 

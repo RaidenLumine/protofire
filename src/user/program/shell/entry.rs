@@ -2,10 +2,14 @@
 //!
 //! Main REPL loop (`shell_user_main`) and terminal I/O helpers.
 
-use super::control_flow::{count_keywords, execute_control_flow_block, needs_continuation};
+use super::control_flow::count_keywords;
+use super::control_flow::execute_control_flow_block;
+use super::control_flow::needs_continuation;
 use super::dispatch::run_shell_command;
-use super::expand::{expand_env_vars, source_profile};
-use super::history::{add_history, expand_history};
+use super::expand::expand_env_vars;
+use super::expand::source_profile;
+use super::history::add_history;
+use super::history::expand_history;
 use super::*;
 
 // ─── Signal handlers ──────────────────────────────────────────────────

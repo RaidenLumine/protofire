@@ -17,13 +17,42 @@ pub mod policy;
 mod tests;
 pub mod types;
 
-pub use check::{check_file, check_network, check_process, object_type_for_path, set_path_type};
-pub use policy::{policy_state, MacPolicy};
-pub use types::{
-    is_known_class, is_known_type, MacClass, MacPermission, MacRule, MacStatus, MacType,
-    MAC_CLASS_DIR, MAC_CLASS_FILE, MAC_CLASS_NETWORK, MAC_CLASS_PROCESS, MAC_PERM_BIND,
-    MAC_PERM_CONNECT, MAC_PERM_CREATE, MAC_PERM_DELETE, MAC_PERM_EXEC, MAC_PERM_READ,
-    MAC_PERM_RECV, MAC_PERM_RENAME, MAC_PERM_SEARCH, MAC_PERM_SEND, MAC_PERM_SIGNAL,
-    MAC_PERM_TRACE, MAC_PERM_WRITE, MAC_TYPE_APPS, MAC_TYPE_DEVICE, MAC_TYPE_NETWORK,
-    MAC_TYPE_SYSTEM, MAC_TYPE_TMP, MAC_TYPE_UNLABELED, MAC_TYPE_UNTRUSTED, MAC_TYPE_USER,
-};
+pub use check::check_file;
+pub use check::check_network;
+pub use check::check_process;
+pub use check::object_type_for_path;
+pub use check::set_path_type;
+pub use policy::policy_state;
+pub use policy::MacPolicy;
+pub use types::is_known_class;
+pub use types::is_known_type;
+pub use types::MacClass;
+pub use types::MacPermission;
+pub use types::MacRule;
+pub use types::MacStatus;
+pub use types::MacType;
+pub use types::MAC_CLASS_DIR;
+pub use types::MAC_CLASS_FILE;
+pub use types::MAC_CLASS_NETWORK;
+pub use types::MAC_CLASS_PROCESS;
+pub use types::MAC_PERM_BIND;
+pub use types::MAC_PERM_CONNECT;
+pub use types::MAC_PERM_CREATE;
+pub use types::MAC_PERM_DELETE;
+pub use types::MAC_PERM_EXEC;
+pub use types::MAC_PERM_READ;
+pub use types::MAC_PERM_RECV;
+pub use types::MAC_PERM_RENAME;
+pub use types::MAC_PERM_SEARCH;
+pub use types::MAC_PERM_SEND;
+pub use types::MAC_PERM_SIGNAL;
+pub use types::MAC_PERM_TRACE;
+pub use types::MAC_PERM_WRITE;
+pub use types::MAC_TYPE_APPS;
+pub use types::MAC_TYPE_DEVICE;
+pub use types::MAC_TYPE_NETWORK;
+pub use types::MAC_TYPE_SYSTEM;
+pub use types::MAC_TYPE_TMP;
+pub use types::MAC_TYPE_UNLABELED;
+pub use types::MAC_TYPE_UNTRUSTED;
+pub use types::MAC_TYPE_USER;

@@ -6,8 +6,10 @@
 use crate::abi::fs as fs_abi;
 use crate::kernel::device;
 use crate::kernel::fs;
-use crate::kernel::process::{HandleEntry, KernelObject};
-use crate::{Error, Result};
+use crate::kernel::process::HandleEntry;
+use crate::kernel::process::KernelObject;
+use crate::Error;
+use crate::Result;
 
 pub(super) fn stat_at(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let source = super::fs_path::context_path_source_at_after_reserved(context, 0, 1, 2, 5)?;
@@ -376,16 +378,15 @@ fn access_query_required_access_arg(required_access: usize) -> Result<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        access_query_required_access_arg, encode_directory_entry_record, encode_file_stat,
-        encode_permission_metadata_record,
-    };
+    use super::access_query_required_access_arg;
+    use super::encode_directory_entry_record;
+    use super::encode_file_stat;
+    use super::encode_permission_metadata_record;
     use crate::abi::fs as fs_abi;
-    use crate::kernel::fs::{
-        self,
-        vfs::{PermissionMetadataRecord as KernelPermissionMetadataRecord, SecurityDescriptor},
-        NodeKind,
-    };
+    use crate::kernel::fs::vfs::PermissionMetadataRecord as KernelPermissionMetadataRecord;
+    use crate::kernel::fs::vfs::SecurityDescriptor;
+    use crate::kernel::fs::NodeKind;
+    use crate::kernel::fs::{self};
     use crate::kernel::process::SecurityToken;
     use crate::Error;
     use alloc::string::String;

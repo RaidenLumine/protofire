@@ -14,7 +14,8 @@ use crate::kernel::fs::block::BlockDevice;
 use crate::kernel::fs::block::DeviceHealth;
 use crate::kernel::sync::Mutex;
 use crate::println;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ── USB class constants ──────────────────────────────────────────────────
 

@@ -10,7 +10,8 @@
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use alloc::vec::Vec;
 
-use super::raw::{self, PciAddress};
+use super::raw::PciAddress;
+use super::raw::{self};
 
 // ---------------------------------------------------------------------------
 // BAR info

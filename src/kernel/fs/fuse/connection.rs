@@ -16,11 +16,17 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::kernel::fs::fuse::error::fuse_error_code_to_kernel;
-use crate::kernel::fs::fuse::protocol::{deserialize_header, serialize_header};
-use crate::kernel::fs::fuse::{FuseConnection, FuseHeader, FuseOpcode, FuseRequest, FuseResponse};
+use crate::kernel::fs::fuse::protocol::deserialize_header;
+use crate::kernel::fs::fuse::protocol::serialize_header;
+use crate::kernel::fs::fuse::FuseConnection;
+use crate::kernel::fs::fuse::FuseHeader;
+use crate::kernel::fs::fuse::FuseOpcode;
+use crate::kernel::fs::fuse::FuseRequest;
+use crate::kernel::fs::fuse::FuseResponse;
 use crate::kernel::fs::vfs::VNode;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 impl FuseConnection {
     /// Create a new FUSE connection from the kernel-end pipe VNodes.

@@ -16,7 +16,8 @@ use core::sync::atomic::Ordering;
 
 use crate::kernel::memory::compressed::CompressedPage;
 use crate::kernel::memory::fault_profiler::FaultProfiler;
-use crate::kernel::memory::frame::{FrameAllocator, MAX_NODES};
+use crate::kernel::memory::frame::FrameAllocator;
+use crate::kernel::memory::frame::MAX_NODES;
 use crate::kernel::memory::heap::HeapAllocator;
 use crate::kernel::memory::paging::PageTable;
 use crate::kernel::memory::swap::SwapArea;

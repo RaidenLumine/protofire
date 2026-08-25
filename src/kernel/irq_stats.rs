@@ -11,7 +11,8 @@
 //! The same counters feed both the userspace profiler snapshot
 //! ([`snapshot`]) and the SMP IRQ load balancer's per-CPU load estimates.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 use crate::abi::diagnostic::IrqProfilerRecord;
 

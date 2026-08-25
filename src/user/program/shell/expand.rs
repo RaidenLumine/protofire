@@ -3,7 +3,8 @@
 //! Environment variable expansion, source/profile execution, and background
 //! launch.
 
-use super::dispatch::{dispatch_single_command, run_shell_command};
+use super::dispatch::dispatch_single_command;
+use super::dispatch::run_shell_command;
 use super::entry::current_process;
 use super::*;
 use crate::user::shared::abi::fs::FILE_STAT_SIZE;

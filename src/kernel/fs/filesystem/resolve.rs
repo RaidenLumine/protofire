@@ -3,12 +3,14 @@
 //! FileSystem mount resolution methods.
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 
 use crate::Result;
 
-use super::super::vfs::{FileSystem as VfsTrait, VNode};
+use super::super::vfs::FileSystem as VfsTrait;
+use super::super::vfs::VNode;
 use super::super::FileSystem;
 use super::path_helpers::matches_mount;
 use super::types::MountPoint;

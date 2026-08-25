@@ -10,12 +10,15 @@
 
 use alloc::vec::Vec;
 
-use crate::abi::seccomp::{
-    SeccompFilterRule, SeccompRuleHeader, SECCOMP_ACTION_ALLOW, SECCOMP_ACTION_KILL,
-    SECCOMP_ACTION_TRAP, SECCOMP_MAX_RULES,
-};
+use crate::abi::seccomp::SeccompFilterRule;
+use crate::abi::seccomp::SeccompRuleHeader;
+use crate::abi::seccomp::SECCOMP_ACTION_ALLOW;
+use crate::abi::seccomp::SECCOMP_ACTION_KILL;
+use crate::abi::seccomp::SECCOMP_ACTION_TRAP;
+use crate::abi::seccomp::SECCOMP_MAX_RULES;
 use crate::kernel::process::Process;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ── Per-process filter state ──────────────────────────────────────────────
 
@@ -126,10 +129,11 @@ pub fn disable_filter(process: &Process) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::seccomp::{
-        SeccompFilterRule, SeccompRuleHeader, SECCOMP_ACTION_ALLOW, SECCOMP_ACTION_KILL,
-        SECCOMP_ACTION_TRAP,
-    };
+    use crate::abi::seccomp::SeccompFilterRule;
+    use crate::abi::seccomp::SeccompRuleHeader;
+    use crate::abi::seccomp::SECCOMP_ACTION_ALLOW;
+    use crate::abi::seccomp::SECCOMP_ACTION_KILL;
+    use crate::abi::seccomp::SECCOMP_ACTION_TRAP;
     use alloc::vec;
 
     #[test]

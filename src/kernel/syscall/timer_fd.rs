@@ -13,11 +13,13 @@
 //! - `arg(2)` = `flags: u32` — reserved (pass 0)
 
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 use super::runtime;
 use crate::kernel::process::process::types::TimerFdState;
-use crate::kernel::process::{KernelObject, HANDLE_RIGHT_READ};
+use crate::kernel::process::KernelObject;
+use crate::kernel::process::HANDLE_RIGHT_READ;
 use crate::kernel::sync::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
 use crate::kernel::syscall::SyscallContext;

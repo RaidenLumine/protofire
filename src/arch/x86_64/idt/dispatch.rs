@@ -4,24 +4,40 @@
 
 use core::arch::asm;
 use core::mem::size_of;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use crate::abi::syscall as syscall_abi;
 use crate::arch::syscall_trap;
 use crate::kernel::process::TerminationReason;
 use crate::kernel::syscall::table::user_memory;
-use crate::kernel::syscall::{self, SyscallAction, SyscallContext};
+use crate::kernel::syscall::SyscallAction;
+use crate::kernel::syscall::SyscallContext;
+use crate::kernel::syscall::{self};
 use crate::println;
 
-use super::exception::{handle_exception, page_fault_address, sync_user_iret_stack};
-use super::types::{
-    interrupt_stub_128, interrupt_stub_default, DescriptorTablePointer, InterruptContext,
-    InterruptDescriptorTable, InterruptGate, EARLY_HANDLERS, IDT, IPI_RESCHEDULE_VECTOR,
-    IPI_SHOOTDOWN_VECTOR, SYSCALL_VECTOR, USER_INTERRUPT_GATE,
-};
+use super::exception::handle_exception;
+use super::exception::page_fault_address;
+use super::exception::sync_user_iret_stack;
+use super::types::interrupt_stub_128;
+use super::types::interrupt_stub_default;
+use super::types::DescriptorTablePointer;
+use super::types::InterruptContext;
+use super::types::InterruptDescriptorTable;
+use super::types::InterruptGate;
+use super::types::EARLY_HANDLERS;
+use super::types::IDT;
+use super::types::IPI_RESCHEDULE_VECTOR;
+use super::types::IPI_SHOOTDOWN_VECTOR;
+use super::types::SYSCALL_VECTOR;
+use super::types::USER_INTERRUPT_GATE;
 
 #[cfg(target_os = "none")]
-use crate::abi::process::{SignalFrame, SA_RESTART, SIGNAL_FRAME_SIZE};
+use crate::abi::process::SignalFrame;
+#[cfg(target_os = "none")]
+use crate::abi::process::SA_RESTART;
+#[cfg(target_os = "none")]
+use crate::abi::process::SIGNAL_FRAME_SIZE;
 #[cfg(target_os = "none")]
 use crate::kernel::process::Process;
 

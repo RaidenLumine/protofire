@@ -10,7 +10,8 @@ mod tests;
 
 use crate::arch;
 use crate::kernel::sync::Mutex;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::Ordering;
 
 // ============================================================================
 // Global state

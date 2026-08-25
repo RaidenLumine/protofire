@@ -13,7 +13,8 @@
 //! once a mapping is created, any external host can send to the translated
 //! port and reach the internal host.
 
-use alloc::collections::btree_map::{BTreeMap, Entry};
+use alloc::collections::btree_map::BTreeMap;
+use alloc::collections::btree_map::Entry;
 use alloc::vec::Vec;
 use core::fmt;
 

@@ -7,11 +7,13 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use super::super::vfs::Metadata;
-use super::path_helpers::{direct_mount_child_name, join_normalized_child};
+use super::path_helpers::direct_mount_child_name;
+use super::path_helpers::join_normalized_child;
 use super::security_helpers::*;
 use crate::Result;
 
-use super::super::vfs::{DirectoryEntry, NodeKind};
+use super::super::vfs::DirectoryEntry;
+use super::super::vfs::NodeKind;
 use super::super::FileSystem;
 
 impl FileSystem {

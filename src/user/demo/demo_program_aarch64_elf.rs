@@ -6,8 +6,9 @@
 
 #![cfg_attr(test, allow(dead_code))]
 
+use crate::user::demo::elf_builder::build_artifact_from_payload;
+use crate::user::demo::elf_builder::build_metadata_only_artifact;
 pub use crate::user::demo::elf_builder::DemoProgramArtifact;
-use crate::user::demo::elf_builder::{build_artifact_from_payload, build_metadata_only_artifact};
 
 use crate::user::program::DEMO_PROGRAM_ENTRY;
 
@@ -51,15 +52,16 @@ pub fn build_shell_program_artifact() -> DemoProgramArtifact {
 
 #[cfg(test)]
 mod tests {
-    use crate::user::{
-        elf::parse_elf64,
-        payload_test_support::{target_payload_section, target_symbol_range},
-        program::DEMO_PROGRAM_ENTRY,
-    };
+    use crate::user::elf::parse_elf64;
+    use crate::user::payload_test_support::target_payload_section;
+    use crate::user::payload_test_support::target_symbol_range;
+    use crate::user::program::DEMO_PROGRAM_ENTRY;
 
     use crate::user::demo::elf_builder::build_artifact_from_payload;
 
-    use super::{build_shell_program_artifact, DemoProgramArtifact, AARCH64_DEMO_PROGRAM_MACHINE};
+    use super::build_shell_program_artifact;
+    use super::DemoProgramArtifact;
+    use super::AARCH64_DEMO_PROGRAM_MACHINE;
 
     const AARCH64_TARGET: &str = "aarch64-unknown-none";
     const RUST_SECTION_NAME: &str = "protofire_demo_program_aarch64_rust";

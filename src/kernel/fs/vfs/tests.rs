@@ -4,8 +4,10 @@
 //! metadata records, directory entries, and volume-check reporting.
 
 use super::*;
-use crate::abi::fs::{FILE_KIND_DIRECTORY, FILE_KIND_FILE};
-use crate::kernel::process::{IntegrityLevel, SecurityToken};
+use crate::abi::fs::FILE_KIND_DIRECTORY;
+use crate::abi::fs::FILE_KIND_FILE;
+use crate::kernel::process::IntegrityLevel;
+use crate::kernel::process::SecurityToken;
 use crate::Error;
 
 #[test]

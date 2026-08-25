@@ -4,9 +4,12 @@
 //! install/unmap, memory detection, and bootstrap/prepared/planned translation
 //! probes.  These are thin wrappers around arch-specific MMU primitives.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
-use super::diagnostics::{BootstrapTranslation, PlannedKernelRegion, PreparedTranslation};
+use super::diagnostics::BootstrapTranslation;
+use super::diagnostics::PlannedKernelRegion;
+use super::diagnostics::PreparedTranslation;
 use super::frame;
 use super::paging;
 

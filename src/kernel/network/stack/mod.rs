@@ -12,12 +12,14 @@
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, AtomicU64};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicU64;
 
 use crate::kernel::network::dccp::DccpConnectionTable;
 use crate::kernel::network::filter::PacketFilter;
 use crate::kernel::network::internet::arp::ArpCache;
-use crate::kernel::network::internet::fragments::{FragmentCache, Ipv6FragmentCache};
+use crate::kernel::network::internet::fragments::FragmentCache;
+use crate::kernel::network::internet::fragments::Ipv6FragmentCache;
 use crate::kernel::network::internet::icmpv6::NeighborCache;
 use crate::kernel::network::internet::igmp::IgmpState;
 use crate::kernel::network::internet::ipv4::Ipv4Addr;
@@ -25,7 +27,8 @@ use crate::kernel::network::internet::ipv6::Ipv6Addr;
 use crate::kernel::network::internet::mld::MldState;
 use crate::kernel::network::internet::nat::NatTable;
 use crate::kernel::network::internet::pmtu::PmtuCache;
-use crate::kernel::network::ipsec::{IpsecSad, IpsecSpd};
+use crate::kernel::network::ipsec::IpsecSad;
+use crate::kernel::network::ipsec::IpsecSpd;
 use crate::kernel::network::link::device::NetworkDevice;
 use crate::kernel::network::mdns::MdnsResponder;
 use crate::kernel::network::mrouting::MrtState;
@@ -40,7 +43,9 @@ use crate::kernel::sync::Mutex;
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
 #[cfg(target_os = "none")]
-use crate::kernel::network::dhcp::{DhcpLease, LeaseState};
+use crate::kernel::network::dhcp::DhcpLease;
+#[cfg(target_os = "none")]
+use crate::kernel::network::dhcp::LeaseState;
 
 pub(crate) mod config;
 pub(crate) mod dhcp;

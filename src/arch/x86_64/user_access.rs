@@ -15,7 +15,9 @@
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use core::arch::asm;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use core::sync::atomic::Ordering;
 
 /// Set to `true` once `enable_smap()` successfully sets CR4.SMAP.
 /// Guards the `stac`/`clac` instructions themselves — on CPUs without

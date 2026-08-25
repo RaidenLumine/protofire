@@ -46,12 +46,15 @@ pub use entry::shell_user_main;
 // ── shared imports ────────────────────────────────────────────────────
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::kernel::console;
-use crate::kernel::process::{Process, Scheduler, STDOUT_FD};
+use crate::kernel::process::Process;
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::STDOUT_FD;
 use crate::kernel::sync::Mutex;
 
 // ─── Shell constants ──────────────────────────────────────────────────
@@ -111,7 +114,8 @@ pub(crate) static STDIN_REMAINDER: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 // ─── Job control ──────────────────────────────────────────────────────
 // Types and formatting helpers are shared with shared.
 
-pub(crate) use crate::user::shared::jobs::{Job, JobState};
+pub(crate) use crate::user::shared::jobs::Job;
+pub(crate) use crate::user::shared::jobs::JobState;
 
 /// Job table — tracks all background and suspended jobs.
 pub(crate) static JOBS: Mutex<Vec<Job>> = Mutex::new(Vec::new());

@@ -6,9 +6,9 @@
 #![cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
 
 use crate::abi::exception::AArch64AbortSyndrome;
-use crate::arch::exception_recoverability::{
-    ExceptionRecoverability, ExceptionRecoveryAction, ExceptionRecoveryDecision,
-};
+use crate::arch::exception_recoverability::ExceptionRecoverability;
+use crate::arch::exception_recoverability::ExceptionRecoveryAction;
+use crate::arch::exception_recoverability::ExceptionRecoveryDecision;
 use crate::kernel::process::TerminationReason;
 
 pub const VECTOR_CURRENT_EL_SP0_SYNC: u8 = 0;
@@ -307,25 +307,43 @@ pub fn lower_el_sync_termination_reason(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        aarch64_user_frame_validation_action, advanced_elr_after_idle_wfi,
-        classify_irq_disposition, exception_name, is_irq_vector, is_lower_el_sync_abort_class,
-        lower_el_sync_fault_address, lower_el_sync_recoverability, lower_el_sync_recovery_decision,
-        lower_el_sync_termination_log, lower_el_sync_termination_reason,
-        should_deliver_lower_el_sync_user_exception, should_log_handler_preempt_resume,
-        vector_name, IrqDisposition, LowerElSyncTerminationLog, UserFrameValidationAction,
-        AARCH64_WFI_INSTRUCTION, EXCEPTION_CLASS_DATA_ABORT_LOWER_EL,
-        EXCEPTION_CLASS_ILLEGAL_EXECUTION_STATE, EXCEPTION_CLASS_INSTRUCTION_ABORT_LOWER_EL,
-        EXCEPTION_CLASS_PC_ALIGNMENT_FAULT, EXCEPTION_CLASS_SP_ALIGNMENT_FAULT,
-        EXCEPTION_CLASS_SVC64, EXCEPTION_CLASS_UNKNOWN, VECTOR_CURRENT_EL_SP0_IRQ,
-        VECTOR_CURRENT_EL_SP0_SYNC, VECTOR_CURRENT_EL_SPX_IRQ, VECTOR_LOWER_EL_AARCH32_IRQ,
-        VECTOR_LOWER_EL_AARCH64_IRQ, VECTOR_LOWER_EL_AARCH64_SYNC,
-    };
+    use super::aarch64_user_frame_validation_action;
+    use super::advanced_elr_after_idle_wfi;
+    use super::classify_irq_disposition;
+    use super::exception_name;
+    use super::is_irq_vector;
+    use super::is_lower_el_sync_abort_class;
+    use super::lower_el_sync_fault_address;
+    use super::lower_el_sync_recoverability;
+    use super::lower_el_sync_recovery_decision;
+    use super::lower_el_sync_termination_log;
+    use super::lower_el_sync_termination_reason;
+    use super::should_deliver_lower_el_sync_user_exception;
+    use super::should_log_handler_preempt_resume;
+    use super::vector_name;
+    use super::IrqDisposition;
+    use super::LowerElSyncTerminationLog;
+    use super::UserFrameValidationAction;
+    use super::AARCH64_WFI_INSTRUCTION;
+    use super::EXCEPTION_CLASS_DATA_ABORT_LOWER_EL;
+    use super::EXCEPTION_CLASS_ILLEGAL_EXECUTION_STATE;
+    use super::EXCEPTION_CLASS_INSTRUCTION_ABORT_LOWER_EL;
+    use super::EXCEPTION_CLASS_PC_ALIGNMENT_FAULT;
+    use super::EXCEPTION_CLASS_SP_ALIGNMENT_FAULT;
+    use super::EXCEPTION_CLASS_SVC64;
+    use super::EXCEPTION_CLASS_UNKNOWN;
+    use super::VECTOR_CURRENT_EL_SP0_IRQ;
+    use super::VECTOR_CURRENT_EL_SP0_SYNC;
+    use super::VECTOR_CURRENT_EL_SPX_IRQ;
+    use super::VECTOR_LOWER_EL_AARCH32_IRQ;
+    use super::VECTOR_LOWER_EL_AARCH64_IRQ;
+    use super::VECTOR_LOWER_EL_AARCH64_SYNC;
     use crate::abi::exception::AArch64AbortSyndrome;
-    use crate::arch::exception_recoverability::{
-        ExceptionRecoverability, ExceptionRecoveryAction, ExceptionRecoveryDecision,
-    };
-    use crate::kernel::process::{ExceptionTermination, TerminationReason};
+    use crate::arch::exception_recoverability::ExceptionRecoverability;
+    use crate::arch::exception_recoverability::ExceptionRecoveryAction;
+    use crate::arch::exception_recoverability::ExceptionRecoveryDecision;
+    use crate::kernel::process::ExceptionTermination;
+    use crate::kernel::process::TerminationReason;
 
     #[test]
     fn exception_name_labels_common_lower_el_sync_classes() {

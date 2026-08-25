@@ -5,14 +5,17 @@
 
 use alloc::string::String;
 
-use crate::kernel::{
-    console,
-    drivers::{keyboard, serial},
-    fs::{DirectoryEntry, FileMetadata, NodeKind},
-    process::{HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE},
-};
+use crate::kernel::console;
+use crate::kernel::drivers::keyboard;
+use crate::kernel::drivers::serial;
+use crate::kernel::fs::DirectoryEntry;
+use crate::kernel::fs::FileMetadata;
+use crate::kernel::fs::NodeKind;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
 use crate::util::debug;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 pub const CONSOLE_DEVICE_NAME: &str = "console";
 pub const DEBUG_DEVICE_NAME: &str = "debug";
@@ -391,12 +394,14 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    use crate::kernel::fs::{FileMetadata, NodeKind};
+    use crate::kernel::fs::FileMetadata;
+    use crate::kernel::fs::NodeKind;
 
-    use super::{
-        supported_device_rights, virtual_device_directory_entry, virtual_device_metadata,
-        virtual_device_nodes, VIRTUAL_DEVICE_DIRECTORY_PATH,
-    };
+    use super::supported_device_rights;
+    use super::virtual_device_directory_entry;
+    use super::virtual_device_metadata;
+    use super::virtual_device_nodes;
+    use super::VIRTUAL_DEVICE_DIRECTORY_PATH;
 
     #[test]
     fn virtual_device_nodes_have_unique_paths_and_supported_targets() {

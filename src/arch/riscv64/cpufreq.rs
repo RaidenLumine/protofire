@@ -15,7 +15,8 @@
 
 use crate::kernel::power::cpufreq_driver::CpuFreqDriver;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ============================================================================
 // Driver struct

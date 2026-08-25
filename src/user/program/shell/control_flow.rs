@@ -2,15 +2,19 @@
 //!
 //! Shell control flow: `if`/`for`/`while` parsing and execution.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use super::dispatch::run_shell_command;
-use super::expand::{expand_env_vars, set_env};
-use super::glob::{glob_match, has_glob_chars};
+use super::expand::expand_env_vars;
+use super::expand::set_env;
+use super::glob::glob_match;
+use super::glob::has_glob_chars;
 use super::*;
-use crate::user::shared::abi::fs::{DirectoryEntryRecord, DIRECTORY_ENTRY_RECORD_SIZE};
+use crate::user::shared::abi::fs::DirectoryEntryRecord;
+use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_SIZE;
 use crate::user::shared::syscall;
 
 // ─── Keyword counting ─────────────────────────────────────────────────

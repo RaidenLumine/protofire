@@ -8,12 +8,15 @@
 //! - `FilterSetDefaultAction` (124) — set default allow/deny
 //! - `FilterGetStats` (125)  — retrieve filter statistics
 
-use crate::abi::filter::{
-    FilterRuleDef, FilterStats, FILTER_DEFAULT_ALLOW, FILTER_DEFAULT_DENY, FILTER_RULE_DEF_SIZE,
-    FILTER_STATS_SIZE,
-};
+use crate::abi::filter::FilterRuleDef;
+use crate::abi::filter::FilterStats;
+use crate::abi::filter::FILTER_DEFAULT_ALLOW;
+use crate::abi::filter::FILTER_DEFAULT_DENY;
+use crate::abi::filter::FILTER_RULE_DEF_SIZE;
+use crate::abi::filter::FILTER_STATS_SIZE;
 use crate::kernel::network::filter::FilterAction;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Syscall #122: FilterAddRule — add a firewall rule from a user-supplied
 /// `FilterRuleDef` struct.

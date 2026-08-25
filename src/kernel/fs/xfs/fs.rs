@@ -10,16 +10,27 @@ use alloc::vec::Vec;
 use crate::kernel::fs::block::BlockDevice;
 use crate::Error;
 
+use super::btree::lookup_leaf_dir_by_hash;
+use super::btree::lookup_node_dir_by_hash;
+use super::btree::parse_leaf_dir;
 use super::btree::read_device_bytes;
-use super::btree::{
-    lookup_leaf_dir_by_hash, lookup_node_dir_by_hash, parse_leaf_dir, read_extent_btree,
-    read_node_dir_entries, xfs_dir_hash,
-};
-use super::types::{
-    parse_block_dir, parse_extents, parse_shortform_dir, DirEntry, Extent, InodeCore, JournalInfo,
-    Superblock, XFS_DA_NODE_MAGIC, XFS_DINODE_FMT_BTREE, XFS_DINODE_FMT_EXTENTS,
-    XFS_DINODE_FMT_LOCAL, XFS_DIR2_LEAF1_MAGIC, XFS_DIR2_LEAFN_MAGIC,
-};
+use super::btree::read_extent_btree;
+use super::btree::read_node_dir_entries;
+use super::btree::xfs_dir_hash;
+use super::types::parse_block_dir;
+use super::types::parse_extents;
+use super::types::parse_shortform_dir;
+use super::types::DirEntry;
+use super::types::Extent;
+use super::types::InodeCore;
+use super::types::JournalInfo;
+use super::types::Superblock;
+use super::types::XFS_DA_NODE_MAGIC;
+use super::types::XFS_DINODE_FMT_BTREE;
+use super::types::XFS_DINODE_FMT_EXTENTS;
+use super::types::XFS_DINODE_FMT_LOCAL;
+use super::types::XFS_DIR2_LEAF1_MAGIC;
+use super::types::XFS_DIR2_LEAFN_MAGIC;
 use crate::kernel::fs::vfs::XattrEntry;
 
 // ── Superblock ──────────────────────────────────────────────────────────────

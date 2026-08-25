@@ -5,12 +5,16 @@
 
 use alloc::sync::Arc;
 
-use crate::kernel::process::{Scheduler, Thread, ThreadWaitOutcome};
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::Thread;
+use crate::kernel::process::ThreadWaitOutcome;
 
-use super::{
-    wait::{plan_timed_wait, TimedWaitPlan},
-    Mutex, MutexGuard, WaitQueue, WaitTimeoutCleanupRef,
-};
+use super::wait::plan_timed_wait;
+use super::wait::TimedWaitPlan;
+use super::Mutex;
+use super::MutexGuard;
+use super::WaitQueue;
+use super::WaitTimeoutCleanupRef;
 
 pub struct Condvar {
     wait_queue: WaitQueue<()>,

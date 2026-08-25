@@ -276,7 +276,8 @@ fn dns_cache_ttl_clamping() {
 #[test]
 fn resolve_hostname_round_trip_with_stack() {
     use crate::kernel::network::internet::ipv4;
-    use crate::kernel::network::link::ethernet::{self, MacAddress};
+    use crate::kernel::network::link::ethernet::MacAddress;
+    use crate::kernel::network::link::ethernet::{self};
     use crate::kernel::network::udp;
     use alloc::sync::Arc;
 

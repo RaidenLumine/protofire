@@ -15,10 +15,14 @@ pub mod chunk;
 
 // ─── Public re-exports ──────────────────────────────────────────────────────
 
-pub use association::{
-    create_server_association, process_incoming, AssocState, Association, ProcessResult,
-};
-pub use chunk::{
-    build_sctp_packet, parse_common_header, parse_sctp_packet, verify_crc32c, SctpChunkType,
-    SctpCommonHeader,
-};
+pub use association::create_server_association;
+pub use association::process_incoming;
+pub use association::AssocState;
+pub use association::Association;
+pub use association::ProcessResult;
+pub use chunk::build_sctp_packet;
+pub use chunk::parse_common_header;
+pub use chunk::parse_sctp_packet;
+pub use chunk::verify_crc32c;
+pub use chunk::SctpChunkType;
+pub use chunk::SctpCommonHeader;

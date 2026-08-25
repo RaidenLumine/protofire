@@ -12,10 +12,13 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::crypto::{pbkdf2_hmac_sha256, sha256};
-use crate::kernel::fs::block::{BlockDevice, BLOCK_SIZE};
+use crate::kernel::crypto::pbkdf2_hmac_sha256;
+use crate::kernel::crypto::sha256;
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::BLOCK_SIZE;
 use crate::kernel::fs::crypt_device::EncryptedBlockDevice;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ── LUKS2 magic constants ──────────────────────────────────────────────
 

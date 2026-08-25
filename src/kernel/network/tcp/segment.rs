@@ -4,16 +4,29 @@
 
 use alloc::vec::Vec;
 
-use crate::kernel::network::ipv4::{self, IpProtocol, Ipv4Addr, Ipv4Header};
-use crate::kernel::network::ipv6::{self, Ipv6Addr, Ipv6Header, Ipv6NextHeader};
+use crate::kernel::network::ipv4::IpProtocol;
+use crate::kernel::network::ipv4::Ipv4Addr;
+use crate::kernel::network::ipv4::Ipv4Header;
+use crate::kernel::network::ipv4::{self};
+use crate::kernel::network::ipv6::Ipv6Addr;
+use crate::kernel::network::ipv6::Ipv6Header;
+use crate::kernel::network::ipv6::Ipv6NextHeader;
+use crate::kernel::network::ipv6::{self};
 use crate::kernel::network::stack::NetworkStack;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::types::{
-    TcpConnectionState, TcpHeader, MAX_SACK_BLOCKS, MIN_PEER_MSS, TCP_MIN_HEADER_SIZE,
-    TCP_OPT_KIND_MSS, TCP_OPT_KIND_SACK, TCP_OPT_KIND_SACK_PERMITTED, TCP_OPT_KIND_TIMESTAMP,
-    TCP_OPT_KIND_WINDOW_SCALE, TCP_OPT_LEN_TIMESTAMP,
-};
+use super::types::TcpConnectionState;
+use super::types::TcpHeader;
+use super::types::MAX_SACK_BLOCKS;
+use super::types::MIN_PEER_MSS;
+use super::types::TCP_MIN_HEADER_SIZE;
+use super::types::TCP_OPT_KIND_MSS;
+use super::types::TCP_OPT_KIND_SACK;
+use super::types::TCP_OPT_KIND_SACK_PERMITTED;
+use super::types::TCP_OPT_KIND_TIMESTAMP;
+use super::types::TCP_OPT_KIND_WINDOW_SCALE;
+use super::types::TCP_OPT_LEN_TIMESTAMP;
 
 // ─── Header parse / build ─────────────────────────────────────────────
 

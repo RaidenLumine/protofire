@@ -13,12 +13,14 @@
 //! example when the cross target has not been built), in which case the
 //! calling test silently skips.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 // ── public result types ──────────────────────────────────────────────
 

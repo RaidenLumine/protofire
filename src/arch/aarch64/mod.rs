@@ -3,8 +3,10 @@
 //! AArch64 architecture bring-up glue, platform hooks, and backend exports.
 
 use core::arch::asm;
-use core::fmt::{self, Write};
-use core::ptr::{read_volatile, write_volatile};
+use core::fmt::Write;
+use core::fmt::{self};
+use core::ptr::read_volatile;
+use core::ptr::write_volatile;
 
 use crate::arch::Arch;
 use crate::kernel::sync::SpinLock;
@@ -102,9 +104,11 @@ pub mod user_access;
 pub(crate) mod smp;
 
 pub mod interrupt_controller {
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::AtomicBool;
+    use core::sync::atomic::Ordering;
 
-    use super::{read_volatile, write_volatile};
+    use super::read_volatile;
+    use super::write_volatile;
     use crate::arch::interrupt_controller::InterruptController;
 
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -281,7 +285,11 @@ pub mod interrupt_controller {
 }
 
 pub mod serial {
-    use super::{fmt, read_volatile, write_volatile, SpinLock, Write};
+    use super::fmt;
+    use super::read_volatile;
+    use super::write_volatile;
+    use super::SpinLock;
+    use super::Write;
 
     const PL011_UART_BASE: usize = 0x0900_0000;
 
@@ -412,7 +420,9 @@ pub mod serial {
 
 pub mod timer {
     use core::arch::asm;
-    use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use core::sync::atomic::AtomicBool;
+    use core::sync::atomic::AtomicU64;
+    use core::sync::atomic::Ordering;
 
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
     static TICKS: AtomicU64 = AtomicU64::new(0);

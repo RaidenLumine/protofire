@@ -41,7 +41,8 @@ pub mod mock {
     use crate::kernel::fs::block::DeviceHealth;
     use crate::kernel::network::link::device::NetworkDevice;
     use crate::kernel::sync::Mutex;
-    use crate::{Error, Result};
+    use crate::Error;
+    use crate::Result;
 
     /// A mock network device backed by in-memory TX / RX queues.
     ///

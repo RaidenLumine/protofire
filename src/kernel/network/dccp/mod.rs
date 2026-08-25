@@ -22,11 +22,22 @@ pub mod table;
 
 // ─── Public re-exports ─────────────────────────────────────────────────────
 
-pub use header::{parse_segment, DccpHeader, DccpPacketBuilder, DccpPacketType, DccpSegment};
-pub use ops::{
-    accept_nonblocking, close, connect, process_segment, recv, send, send_packet, tick_maintenance,
-};
-pub use table::{
-    DccpConnKey, DccpConnectionState, DccpConnectionTable, DccpListener, DccpState,
-    NativeDccpConnection,
-};
+pub use header::parse_segment;
+pub use header::DccpHeader;
+pub use header::DccpPacketBuilder;
+pub use header::DccpPacketType;
+pub use header::DccpSegment;
+pub use ops::accept_nonblocking;
+pub use ops::close;
+pub use ops::connect;
+pub use ops::process_segment;
+pub use ops::recv;
+pub use ops::send;
+pub use ops::send_packet;
+pub use ops::tick_maintenance;
+pub use table::DccpConnKey;
+pub use table::DccpConnectionState;
+pub use table::DccpConnectionTable;
+pub use table::DccpListener;
+pub use table::DccpState;
+pub use table::NativeDccpConnection;

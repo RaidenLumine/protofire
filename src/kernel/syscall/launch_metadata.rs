@@ -5,7 +5,8 @@
 use alloc::string::String;
 
 use crate::kernel::process::LaunchContext;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 pub(super) fn arg_count(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     launch_context_list_len_syscall(context, |launch| &launch.arguments)
@@ -119,8 +120,15 @@ fn copy_user_string_value(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{test_support, SyscallContext, SyscallDispatch, SyscallNumber};
-    use super::{app_id, arg_count, arg_value, current_dir, env_count};
+    use super::super::test_support;
+    use super::super::SyscallContext;
+    use super::super::SyscallDispatch;
+    use super::super::SyscallNumber;
+    use super::app_id;
+    use super::arg_count;
+    use super::arg_value;
+    use super::current_dir;
+    use super::env_count;
     use crate::Error;
 
     #[test]

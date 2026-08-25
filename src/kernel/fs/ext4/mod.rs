@@ -55,10 +55,36 @@ pub(crate) struct Ext4Fs {
 pub(crate) use constants::*;
 pub(crate) use journal::*;
 #[allow(unused_imports)]
-pub(crate) use types::{
-    inode_block_bytes, parse_extent, parse_extent_header, parse_extent_idx, read_ext4_inode,
-    write_extent, write_extent_header, write_inode_block_bytes, Ext4BgDescriptor, Ext4DirEntry,
-    Ext4Extent, Ext4ExtentHeader, Ext4ExtentIdx, Ext4Inode, Ext4Superblock,
-};
+pub(crate) use types::inode_block_bytes;
 #[allow(unused_imports)]
-pub(crate) use vfs::{split_path, to_node_kind};
+pub(crate) use types::parse_extent;
+#[allow(unused_imports)]
+pub(crate) use types::parse_extent_header;
+#[allow(unused_imports)]
+pub(crate) use types::parse_extent_idx;
+#[allow(unused_imports)]
+pub(crate) use types::read_ext4_inode;
+#[allow(unused_imports)]
+pub(crate) use types::write_extent;
+#[allow(unused_imports)]
+pub(crate) use types::write_extent_header;
+#[allow(unused_imports)]
+pub(crate) use types::write_inode_block_bytes;
+#[allow(unused_imports)]
+pub(crate) use types::Ext4BgDescriptor;
+#[allow(unused_imports)]
+pub(crate) use types::Ext4DirEntry;
+#[allow(unused_imports)]
+pub(crate) use types::Ext4Extent;
+#[allow(unused_imports)]
+pub(crate) use types::Ext4ExtentHeader;
+#[allow(unused_imports)]
+pub(crate) use types::Ext4ExtentIdx;
+#[allow(unused_imports)]
+pub(crate) use types::Ext4Inode;
+#[allow(unused_imports)]
+pub(crate) use types::Ext4Superblock;
+#[allow(unused_imports)]
+pub(crate) use vfs::split_path;
+#[allow(unused_imports)]
+pub(crate) use vfs::to_node_kind;

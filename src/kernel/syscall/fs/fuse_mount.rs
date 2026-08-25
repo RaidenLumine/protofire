@@ -28,7 +28,8 @@ use crate::kernel::fs::vfs::SecurityDescriptor;
 use crate::kernel::fs::vfs::SecurityDescriptorMutationSupport;
 use crate::kernel::fs::FileHandle;
 use crate::kernel::fs::NodeKind;
-use crate::kernel::process::process::constants::{HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
+use crate::kernel::process::process::constants::HANDLE_RIGHT_READ;
+use crate::kernel::process::process::constants::HANDLE_RIGHT_WRITE;
 use crate::Result;
 
 pub(super) fn fuse_mount(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {

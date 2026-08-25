@@ -6,12 +6,15 @@
 // `format!` is only used by the renderers, which are gated to demo/test builds.
 #[cfg(any(test, feature = "demo-disk"))]
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::catalog::{CatalogEntry, LaunchManifest};
+use super::catalog::CatalogEntry;
+use super::catalog::LaunchManifest;
 use super::integrity::validate_optional_sha256_hex;
 
 // ── launch metadata budget limits ─────────────────────────────────────

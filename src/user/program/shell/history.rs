@@ -2,7 +2,8 @@
 //!
 //! Readline callbacks, command history, and history expansion.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use super::*;

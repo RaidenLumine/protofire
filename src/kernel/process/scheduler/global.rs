@@ -8,8 +8,9 @@ use super::super::Thread;
 
 #[cfg(test)]
 use super::clear_thread_local_scheduler_slot;
+use super::load_current_scheduler_ptr;
+use super::store_current_scheduler_ptr;
 use super::Scheduler;
-use super::{load_current_scheduler_ptr, store_current_scheduler_ptr};
 
 impl Scheduler {
     pub fn current_thread(&self) -> Option<Arc<Thread>> {

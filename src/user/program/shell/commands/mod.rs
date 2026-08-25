@@ -19,5 +19,8 @@ mod user;
 // shipped in this repo, so those commands are unavailable.
 pub(crate) use env::cmd_source;
 pub(crate) use network::cmd_ping;
-pub(crate) use process::{cmd_bg, cmd_fg, cmd_jobs};
-pub(crate) use user::{cmd_login, cmd_su};
+pub(crate) use process::cmd_bg;
+pub(crate) use process::cmd_fg;
+pub(crate) use process::cmd_jobs;
+pub(crate) use user::cmd_login;
+pub(crate) use user::cmd_su;

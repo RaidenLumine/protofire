@@ -4,7 +4,8 @@
 
 use alloc::vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::super::block::BLOCK_SIZE;
 use super::super::vfs::NodeKind;
@@ -12,7 +13,8 @@ use super::super::vfs::NodeKind;
 use super::free_fns::*;
 use super::transaction::TransactionContext;
 use super::types::*;
-use super::{SimpleFs, SimpleFsState};
+use super::SimpleFs;
+use super::SimpleFsState;
 
 impl SimpleFs {
     pub(crate) fn read_file(

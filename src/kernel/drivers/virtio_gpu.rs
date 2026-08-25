@@ -42,14 +42,22 @@ use crate::kernel::drivers::framebuffer::FramebufferInfo;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::kernel::drivers::framebuffer_console;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use crate::kernel::drivers::virtio::{VirtIoMmio, VirtQueue, REG_QUEUE_NOTIFY, VIRTQ_DESC_F_WRITE};
-use crate::kernel::drivers::{Driver, DriverCategory};
+use crate::kernel::drivers::virtio::VirtIoMmio;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::VirtQueue;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_NOTIFY;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::VIRTQ_DESC_F_WRITE;
+use crate::kernel::drivers::Driver;
+use crate::kernel::drivers::DriverCategory;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::kernel::memory::dma::DmaBuffer;
 use crate::kernel::sync::Mutex;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::println;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ---------------------------------------------------------------------------
 // PCI constants
@@ -1113,7 +1121,8 @@ pub mod mock {
     use alloc::vec::Vec;
 
     use super::*;
-    use crate::abi::gpu::{GpuResCreate3dDesc, GpuTransfer3dDesc};
+    use crate::abi::gpu::GpuResCreate3dDesc;
+    use crate::abi::gpu::GpuTransfer3dDesc;
 
     /// A minimal in-memory GPU: tracks contexts, resource backing bytes, and
     /// the recorded transfer descriptors.
@@ -1229,9 +1238,11 @@ pub mod mock {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn probe_and_init() -> Option<()> {
     use crate::arch::mmu::map_device_mmio;
-    use crate::arch::x86_64::pci::{
-        pci_config_read_u16, pci_config_write_u16, pci_enumerate_buses, PciAddress, COMMAND,
-    };
+    use crate::arch::x86_64::pci::pci_config_read_u16;
+    use crate::arch::x86_64::pci::pci_config_write_u16;
+    use crate::arch::x86_64::pci::pci_enumerate_buses;
+    use crate::arch::x86_64::pci::PciAddress;
+    use crate::arch::x86_64::pci::COMMAND;
     use crate::kernel::drivers::virtio_pci::PciLegacyMmioRegion;
     use crate::kernel::drivers::virtio_pci_modern::PciModernRegion;
 

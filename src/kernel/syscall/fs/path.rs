@@ -3,7 +3,8 @@
 //! Path-source decoding and dirfd-based path resolution helpers for fs
 //! syscalls.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 
 use crate::abi::fs as fs_abi;
 use crate::kernel::fs;
@@ -143,10 +144,13 @@ fn directory_path_for_fd(process: &Process, dirfd: usize) -> Result<String> {
 mod tests {
     use alloc::string::String;
 
-    use super::{normalize_process_path_source, PathSource};
+    use super::normalize_process_path_source;
+    use super::PathSource;
     use crate::abi::fs::AT_FDCWD;
-    use crate::kernel::process::{Process, STDOUT_FD};
-    use crate::{Error, Result};
+    use crate::kernel::process::Process;
+    use crate::kernel::process::STDOUT_FD;
+    use crate::Error;
+    use crate::Result;
 
     #[test]
     fn at_fdcwd_path_source_resolves_relative_path_from_process_cwd() {

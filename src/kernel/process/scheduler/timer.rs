@@ -12,7 +12,8 @@ use super::super::ThreadPriority;
 
 use super::queue::*;
 use super::Scheduler;
-use super::{BOOST_DURATION_TICKS, BOOST_THRESHOLD_TICKS};
+use super::BOOST_DURATION_TICKS;
+use super::BOOST_THRESHOLD_TICKS;
 
 impl Scheduler {
     /// Handle a timer tick, including preemption by default.

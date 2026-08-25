@@ -20,10 +20,13 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 
-use crate::kernel::process::process::types::{KernelObject, MqState};
-use crate::kernel::process::{HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
+use crate::kernel::process::process::types::KernelObject;
+use crate::kernel::process::process::types::MqState;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::runtime;
 use super::user_memory;

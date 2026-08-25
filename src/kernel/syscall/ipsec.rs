@@ -2,11 +2,15 @@
 //!
 //! IPsec SPD/SAD management syscalls (#164-168).
 
-use crate::abi::ipsec::{
-    IpsecSaDef, IpsecSpDef, IpsecStats, IPSEC_SA_DEF_SIZE, IPSEC_SP_DEF_SIZE, IPSEC_STATS_SIZE,
-};
+use crate::abi::ipsec::IpsecSaDef;
+use crate::abi::ipsec::IpsecSpDef;
+use crate::abi::ipsec::IpsecStats;
+use crate::abi::ipsec::IPSEC_SA_DEF_SIZE;
+use crate::abi::ipsec::IPSEC_SP_DEF_SIZE;
+use crate::abi::ipsec::IPSEC_STATS_SIZE;
 use crate::kernel::network::stack::NetworkStack;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Syscall 164: ipsec_add_sp(&IpsecSpDef, len, flags) → sp_id.
 pub(super) fn ipsec_add_sp(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {

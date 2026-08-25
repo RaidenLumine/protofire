@@ -13,7 +13,8 @@ use alloc::vec::Vec;
 use crate::kernel::network::internet::ipv4::Ipv4Addr;
 use crate::kernel::network::stack::NetworkStack;
 use crate::kernel::network::udp;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Ticks per second (the stack tick is 100 Hz).
 pub const TICKS_PER_SECOND: u64 = 100;

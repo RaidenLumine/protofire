@@ -25,17 +25,24 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::crypto::{hkdf_sha256_expand, hkdf_sha256_extract, hmac_sha256, sha256};
-use crate::{Error, Result};
+use crate::kernel::crypto::hkdf_sha256_expand;
+use crate::kernel::crypto::hkdf_sha256_extract;
+use crate::kernel::crypto::hmac_sha256;
+use crate::kernel::crypto::sha256;
+use crate::Error;
+use crate::Result;
 
 use super::certificate;
-use super::record::{CipherSuite, TrafficKeys, CONTENT_TYPE_HANDSHAKE};
+use super::record::CipherSuite;
+use super::record::TrafficKeys;
+use super::record::CONTENT_TYPE_HANDSHAKE;
 use super::TranscriptHash;
 
 // Re-export certificate types for convenience.
-pub use super::certificate::{
-    parse_x509_certificate, verify_chain, ChainVerifyStatus, X509Certificate,
-};
+pub use super::certificate::parse_x509_certificate;
+pub use super::certificate::verify_chain;
+pub use super::certificate::ChainVerifyStatus;
+pub use super::certificate::X509Certificate;
 
 // ── Handshake message type constants ────────────────────────────────────────
 

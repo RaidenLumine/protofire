@@ -9,12 +9,14 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::block::{BlockDevice, BLOCK_SIZE};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::BLOCK_SIZE;
 use crate::kernel::fs::block_cache::BlockCache;
 use crate::kernel::fs::filesystem::profiler::FsProfiler;
 use crate::kernel::fs::unicode;
 use crate::kernel::fs::vfs::NodeKind;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::types::*;
 use super::ExfatFs;

@@ -3,7 +3,8 @@
 //! F2FS segment management: append-only block allocation, free segment
 //! selection, and block freeing.
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::constants::*;
 use super::F2fsFs;

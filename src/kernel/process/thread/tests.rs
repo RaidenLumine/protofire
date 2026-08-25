@@ -14,14 +14,26 @@ use alloc::sync::Arc;
 use alloc::vec;
 
 use crate::kernel::fs::layout::DEFAULT_USER_ROOT;
-use crate::kernel::fs::{FileSystem, OPEN_ALWAYS};
+use crate::kernel::fs::FileSystem;
+use crate::kernel::fs::OPEN_ALWAYS;
 use crate::kernel::process::scheduler::api::idle_entry;
 use crate::kernel::process::thread::ThreadSchedPolicy;
-use crate::kernel::process::{
-    HandleEntry, KernelObject, OpenFile, Process, ProcessState, Scheduler, TerminationReason,
-    Thread, ThreadPriority, ThreadState, ThreadWaitOutcome, UserThreadStart, HANDLE_RIGHT_READ,
-    HANDLE_RIGHT_WRITE, STDIN_FD, STDOUT_FD,
-};
+use crate::kernel::process::HandleEntry;
+use crate::kernel::process::KernelObject;
+use crate::kernel::process::OpenFile;
+use crate::kernel::process::Process;
+use crate::kernel::process::ProcessState;
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::TerminationReason;
+use crate::kernel::process::Thread;
+use crate::kernel::process::ThreadPriority;
+use crate::kernel::process::ThreadState;
+use crate::kernel::process::ThreadWaitOutcome;
+use crate::kernel::process::UserThreadStart;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::kernel::process::STDIN_FD;
+use crate::kernel::process::STDOUT_FD;
 use crate::Error;
 
 /// Create a scheduler with a single runnable kernel thread installed as the

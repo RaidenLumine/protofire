@@ -13,15 +13,20 @@
 //! removed and recorded in the returned repair report.
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::{self, FileSystem};
-use crate::{Error, Result};
+use crate::kernel::fs::FileSystem;
+use crate::kernel::fs::{self};
+use crate::Error;
+use crate::Result;
 
-use super::catalog::{path_parent_dir, read_text_file};
+use super::catalog::path_parent_dir;
+use super::catalog::read_text_file;
 use super::constants::INSTALLED_CATALOG_ROOT;
-use super::metadata::{parse_optional_string_field, parse_string_field};
+use super::metadata::parse_optional_string_field;
+use super::metadata::parse_string_field;
 
 // ── paths ─────────────────────────────────────────────────────────────
 

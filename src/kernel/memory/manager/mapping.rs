@@ -9,15 +9,20 @@ use crate::kernel::memory::alloc_profiler::AllocProfilerSnapshot;
 use crate::kernel::memory::fault_profiler::FaultProfilerSnapshot;
 use crate::kernel::memory::heap;
 use crate::kernel::memory::paging;
-use crate::kernel::memory::paging::{MappingKind, PagePermissions, PageTable};
+use crate::kernel::memory::paging::MappingKind;
+use crate::kernel::memory::paging::PagePermissions;
+use crate::kernel::memory::paging::PageTable;
 use crate::kernel::memory::swap::SwapSlot;
 use crate::Result;
 
-use super::super::arch::{
-    align_down_page, bootstrap_translation, planned_kernel_region, prepared_page_tables_active,
-    prepared_translation, shootdown_range,
-};
-use super::super::diagnostics::{AddressTranslation, PageFaultInsight};
+use super::super::arch::align_down_page;
+use super::super::arch::bootstrap_translation;
+use super::super::arch::planned_kernel_region;
+use super::super::arch::prepared_page_tables_active;
+use super::super::arch::prepared_translation;
+use super::super::arch::shootdown_range;
+use super::super::diagnostics::AddressTranslation;
+use super::super::diagnostics::PageFaultInsight;
 use super::MemoryManager;
 
 impl MemoryManager {

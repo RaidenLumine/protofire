@@ -3,7 +3,8 @@
 //! Architecture-neutral boot protocol and handoff descriptors.
 
 use alloc::string::String;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::Ordering;
 
 /// Stores the Multiboot2 info address (or equivalent) for later use by SMP
 /// bring-up and other late-boot subsystems.
@@ -290,7 +291,9 @@ pub const fn from_riscv64_qemu_direct(device_tree_blob: usize) -> BootInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::{current_architecture, BootInfo, BootProtocol};
+    use super::current_architecture;
+    use super::BootInfo;
+    use super::BootProtocol;
 
     #[test]
     fn boot_protocol_labels_are_stable() {

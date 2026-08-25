@@ -12,7 +12,8 @@
 
 use alloc::string::String;
 
-use super::normalize_tables::{COMP_TABLE, DECOMP_TABLE};
+use super::normalize_tables::COMP_TABLE;
+use super::normalize_tables::DECOMP_TABLE;
 
 /// Look up the canonical decomposition of `cp`, returning `None` if `cp`
 /// is already fully decomposed.

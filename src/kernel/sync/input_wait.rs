@@ -5,14 +5,15 @@
 
 use alloc::sync::Arc;
 
-use crate::kernel::process::{Scheduler, ThreadWaitOutcome};
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::ThreadWaitOutcome;
 
-use super::{
-    wait::{
-        plan_timed_wait, TimedWaitPlan, WaitTimeoutCleanup, WaitTimeoutCleanupRef, WaiterIdentity,
-    },
-    Mutex,
-};
+use super::wait::plan_timed_wait;
+use super::wait::TimedWaitPlan;
+use super::wait::WaitTimeoutCleanup;
+use super::wait::WaitTimeoutCleanupRef;
+use super::wait::WaiterIdentity;
+use super::Mutex;
 
 pub(crate) trait WaitStatsBookkeeping<K>: Send {
     fn observe_waiter_peak(&mut self, kind: K, predicted_waiters: usize);
@@ -199,7 +200,8 @@ pub(crate) fn probe_then_timed_wait_loop<T>(
 
 #[cfg(test)]
 mod tests {
-    use super::{probe_then_timed_wait_loop, wait_until_ready_timeout};
+    use super::probe_then_timed_wait_loop;
+    use super::wait_until_ready_timeout;
     use crate::kernel::process::Scheduler;
     use std::cell::Cell;
 

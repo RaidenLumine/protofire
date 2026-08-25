@@ -9,11 +9,13 @@ use alloc::vec::Vec;
 
 use crate::kernel::memory::paging::PagePermissions;
 use crate::kernel::process::ProcessUserAddressSpace;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::super::constants;
 use super::super::metadata::validate_launch_metadata_budget;
-use crate::user::elf::{parse_elf64, ElfImage};
+use crate::user::elf::parse_elf64;
+use crate::user::elf::ElfImage;
 
 // ── ELF → UserImageLoadPlan ──────────────────────────────────────────
 

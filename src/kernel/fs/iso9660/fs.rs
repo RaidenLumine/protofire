@@ -8,9 +8,13 @@ use alloc::vec::Vec;
 use crate::kernel::fs::block::BlockDevice;
 use crate::Error;
 
-use super::types::{
-    parse_boot_catalog, BootEntry, DirRecord, Pvd, PVD_SECTOR, SECTOR_SIZE, SVD_SECTOR,
-};
+use super::types::parse_boot_catalog;
+use super::types::BootEntry;
+use super::types::DirRecord;
+use super::types::Pvd;
+use super::types::PVD_SECTOR;
+use super::types::SECTOR_SIZE;
+use super::types::SVD_SECTOR;
 
 // ---------------------------------------------------------------------------
 // PVD reading

@@ -116,7 +116,8 @@ pub fn char_to_oem_byte(ch: char, code_page: OemCodePage) -> Option<u8> {
 /// # Example
 ///
 /// ```
-/// use protofire::kernel::fs::unicode::oem::{utf8_to_oem, OemCodePage};
+/// use protofire::kernel::fs::unicode::oem::utf8_to_oem;
+/// use protofire::kernel::fs::unicode::oem::OemCodePage;
 ///
 /// assert_eq!(
 ///     utf8_to_oem("Café", OemCodePage::Cp437),

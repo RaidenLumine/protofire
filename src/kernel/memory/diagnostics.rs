@@ -3,7 +3,8 @@
 //! Page-fault diagnostic types — layered translation snapshots and
 //! kernel-region classification for fault insight reporting.
 
-use super::paging::{MappingKind, PagePermissions};
+use super::paging::MappingKind;
+use super::paging::PagePermissions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AddressTranslation {

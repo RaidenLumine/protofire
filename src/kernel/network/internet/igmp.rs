@@ -11,7 +11,10 @@
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 
-use super::ipv4::{self, IpProtocol, Ipv4Addr, Ipv4Header};
+use super::ipv4::IpProtocol;
+use super::ipv4::Ipv4Addr;
+use super::ipv4::Ipv4Header;
+use super::ipv4::{self};
 use crate::kernel::network::stack::NetworkStack;
 use crate::Result;
 

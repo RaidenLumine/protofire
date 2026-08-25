@@ -13,15 +13,18 @@
 //! lazily pruned once their last waiter leaves.
 
 use alloc::collections::BTreeMap;
-use alloc::sync::{Arc, Weak};
+use alloc::sync::Arc;
+use alloc::sync::Weak;
 
 use super::runtime;
 use super::user_memory;
 use crate::kernel::process::ThreadWaitOutcome;
 use crate::kernel::sync::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
-use crate::kernel::syscall::{SyscallContext, SyscallDispatch};
-use crate::{Error, Result};
+use crate::kernel::syscall::SyscallContext;
+use crate::kernel::syscall::SyscallDispatch;
+use crate::Error;
+use crate::Result;
 
 /// Block while `*uaddr == val`, until `timeout_ticks` elapse.
 pub const FUTEX_WAIT: usize = 0;

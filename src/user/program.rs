@@ -37,15 +37,23 @@ mod spawn;
 
 pub use self::constants::*;
 
-pub use self::catalog::{
-    normalize_path_from_root, normalize_path_pair_from_root, path_parent_dir, read_program_image,
-    read_text_file, CatalogEntry, LaunchManifest, SpawnProcessOverrides,
-};
+pub use self::catalog::normalize_path_from_root;
+pub use self::catalog::normalize_path_pair_from_root;
+pub use self::catalog::path_parent_dir;
+pub use self::catalog::read_program_image;
+pub use self::catalog::read_text_file;
+pub use self::catalog::CatalogEntry;
+pub use self::catalog::LaunchManifest;
+pub use self::catalog::SpawnProcessOverrides;
 
-pub use self::loader::{
-    load_from_catalog, load_from_catalog_with_overrides, load_from_filesystem,
-    plan_user_image_load, LaunchedProgram, LoadedProgram, UserImageLoadPlan, UserImageSegmentPlan,
-};
+pub use self::loader::load_from_catalog;
+pub use self::loader::load_from_catalog_with_overrides;
+pub use self::loader::load_from_filesystem;
+pub use self::loader::plan_user_image_load;
+pub use self::loader::LaunchedProgram;
+pub use self::loader::LoadedProgram;
+pub use self::loader::UserImageLoadPlan;
+pub use self::loader::UserImageSegmentPlan;
 
 // Install-management recovery (transaction log + download cache) reached at
 // boot from kernel/mod.rs under `test`/`target_os = "none"`; the enums are
@@ -53,34 +61,47 @@ pub use self::loader::{
 // return value without naming the type).  The demo-disk appctl surface calls
 // `super::install::` directly, so it does not need this re-export.
 #[cfg(any(test, target_os = "none"))]
-pub(crate) use self::install::{
-    recover_install_management_state, DownloadCachePruneOutcome, InstallTransactionRecoveryOutcome,
-    TransactionLogRepairReason,
-};
+pub(crate) use self::install::recover_install_management_state;
+#[cfg(any(test, target_os = "none"))]
+pub(crate) use self::install::DownloadCachePruneOutcome;
+#[cfg(any(test, target_os = "none"))]
+pub(crate) use self::install::InstallTransactionRecoveryOutcome;
+#[cfg(any(test, target_os = "none"))]
+pub(crate) use self::install::TransactionLogRepairReason;
 
 // Re-export spawn entry points
-pub(crate) use self::spawn::{
-    launch_loaded_program_with_security_token, load_installed_launch_with_overrides_from_global,
-};
+pub(crate) use self::spawn::launch_loaded_program_with_security_token;
+pub(crate) use self::spawn::load_installed_launch_with_overrides_from_global;
 // The shell's `login`/`su` commands are the only callers; gated with the shell
 // module (which is only compiled for the demo disk / tests).
 #[cfg(any(feature = "demo-disk", test))]
 pub(crate) use self::spawn::spawn_from_launch_reference_with_overrides_and_security_token;
 // Generic spawn entry points (always available).
-pub use self::spawn::{
-    spawn_from_catalog_path, spawn_from_catalog_path_with_overrides, spawn_from_catalog_reference,
-    spawn_from_catalog_reference_with_overrides, spawn_from_global, spawn_from_launch_reference,
-    spawn_from_launch_reference_with_overrides,
-};
+pub use self::spawn::spawn_from_catalog_path;
+pub use self::spawn::spawn_from_catalog_path_with_overrides;
+pub use self::spawn::spawn_from_catalog_reference;
+pub use self::spawn::spawn_from_catalog_reference_with_overrides;
+pub use self::spawn::spawn_from_global;
+pub use self::spawn::spawn_from_launch_reference;
+pub use self::spawn::spawn_from_launch_reference_with_overrides;
 
 // Demo-specific spawn wrappers (distribution-specific; gated behind demo-disk).
 #[cfg(any(feature = "demo-disk", test))]
-pub use self::spawn::{
-    spawn_demo_fault_program, spawn_demo_general_protection_program,
-    spawn_demo_invalid_opcode_program, spawn_demo_nested_page_fault_program,
-    spawn_demo_one_shot_page_fault_program, spawn_demo_program, spawn_demo_rust_io_program,
-    spawn_demo_rust_program,
-};
+pub use self::spawn::spawn_demo_fault_program;
+#[cfg(any(feature = "demo-disk", test))]
+pub use self::spawn::spawn_demo_general_protection_program;
+#[cfg(any(feature = "demo-disk", test))]
+pub use self::spawn::spawn_demo_invalid_opcode_program;
+#[cfg(any(feature = "demo-disk", test))]
+pub use self::spawn::spawn_demo_nested_page_fault_program;
+#[cfg(any(feature = "demo-disk", test))]
+pub use self::spawn::spawn_demo_one_shot_page_fault_program;
+#[cfg(any(feature = "demo-disk", test))]
+pub use self::spawn::spawn_demo_program;
+#[cfg(any(feature = "demo-disk", test))]
+pub use self::spawn::spawn_demo_rust_io_program;
+#[cfg(any(feature = "demo-disk", test))]
+pub use self::spawn::spawn_demo_rust_program;
 
 // ── host-proxy dispatch helpers ──────────────────────────────────────
 // Called by the demo host proxies (and, on bare metal, the ring3 service

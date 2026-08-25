@@ -10,7 +10,8 @@
 use alloc::collections::btree_map::BTreeMap;
 
 use crate::abi::mrt as mrt_abi;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// VIF 0 is always the local interface.
 pub const VIF_LOCAL: u32 = 0;

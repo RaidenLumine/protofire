@@ -330,12 +330,14 @@ pub struct NvmeNamespace {
 // Driver integration
 // ---------------------------------------------------------------------------
 
-use crate::kernel::drivers::{Driver, DriverCategory};
+use crate::kernel::drivers::Driver;
+use crate::kernel::drivers::DriverCategory;
 use crate::kernel::fs::block::BlockDevice;
 use crate::kernel::memory::DmaBuffer;
 use crate::kernel::sync::Mutex;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 static NVME_PROBED: AtomicBool = AtomicBool::new(false);
 
@@ -450,7 +452,8 @@ impl NvmeController {
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
     unsafe fn init(bar0_phys: u64) -> crate::Result<Self> {
         use crate::arch::mmu::map_device_mmio;
-        use core::ptr::{read_volatile, write_volatile};
+        use core::ptr::read_volatile;
+        use core::ptr::write_volatile;
 
         let bar0_size = 8192; // NVMe BAR0 is at least 8 KiB
         let bar0 = map_device_mmio(bar0_phys, bar0_size).ok_or(crate::Error::NotFound)?;
@@ -629,7 +632,8 @@ impl NvmeController {
 
     /// Submit a command on the admin SQ and poll for completion.
     unsafe fn admin_submit_and_wait(&mut self, sqe: &NvmeSqe) -> crate::Result<NvmeCqe> {
-        use core::ptr::{read_volatile, write_volatile};
+        use core::ptr::read_volatile;
+        use core::ptr::write_volatile;
 
         let tail = self.asq_tail as usize;
         let asq_entries = ((self.asq.len() / SQ_ENTRY_SIZE) as u32).min(DEFAULT_QUEUE_SIZE as u32);
@@ -696,7 +700,8 @@ impl NvmeController {
 
     /// Submit a command on the I/O SQ and poll for completion.
     fn io_submit_and_wait(&self, sqe: &NvmeSqe) -> crate::Result<NvmeCqe> {
-        use core::ptr::{read_volatile, write_volatile};
+        use core::ptr::read_volatile;
+        use core::ptr::write_volatile;
 
         let mut state = self.io_state.lock();
 

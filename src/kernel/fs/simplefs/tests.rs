@@ -28,12 +28,18 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::block::{BlockDevice, MemoryBlockDevice};
-use crate::kernel::fs::vfs::{FileSystem as VfsFileSystem, NodeKind, VNode};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::MemoryBlockDevice;
+use crate::kernel::fs::vfs::FileSystem as VfsFileSystem;
+use crate::kernel::fs::vfs::NodeKind;
+use crate::kernel::fs::vfs::VNode;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::{ImageEntry, SimpleFs, SimpleFsVolume};
+use super::ImageEntry;
+use super::SimpleFs;
+use super::SimpleFsVolume;
 
 // ── V4 image helpers ──────────────────────────────────────────────────
 

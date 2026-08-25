@@ -4,22 +4,30 @@
 //! Ext4VNode type, and VNode trait implementation.
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::kernel::fs::block::BlockDevice;
 use crate::kernel::fs::filesystem::profiler::FsProfilerSnapshot;
-use crate::kernel::fs::vfs::checksum::{ChecksumPolicy, ChecksumVerifier};
-use crate::kernel::fs::vfs::{
-    DirectoryEntry, FileSystem as VfsFileSystem, Metadata, NodeKind, SecurityDescriptor,
-    SecurityDescriptorMutationSupport, VNode, VolumeCheckReport,
-};
-use crate::{Error, Result};
+use crate::kernel::fs::vfs::checksum::ChecksumPolicy;
+use crate::kernel::fs::vfs::checksum::ChecksumVerifier;
+use crate::kernel::fs::vfs::DirectoryEntry;
+use crate::kernel::fs::vfs::FileSystem as VfsFileSystem;
+use crate::kernel::fs::vfs::Metadata;
+use crate::kernel::fs::vfs::NodeKind;
+use crate::kernel::fs::vfs::SecurityDescriptor;
+use crate::kernel::fs::vfs::SecurityDescriptorMutationSupport;
+use crate::kernel::fs::vfs::VNode;
+use crate::kernel::fs::vfs::VolumeCheckReport;
+use crate::Error;
+use crate::Result;
 
 use super::constants::*;
-use super::{Ext4Fs, Ext4FsVolume};
+use super::Ext4Fs;
+use super::Ext4FsVolume;
 
 impl Ext4FsVolume {
     /// Open an ext2 volume from the given block device.

@@ -6,10 +6,15 @@
 use alloc::sync::Arc;
 
 use crate::kernel::fs;
-use crate::kernel::process::{
-    FileDescriptor, HandleEntry, LaunchContext, Process, Scheduler, SecurityToken, Thread,
-};
-use crate::{Error, Result};
+use crate::kernel::process::FileDescriptor;
+use crate::kernel::process::HandleEntry;
+use crate::kernel::process::LaunchContext;
+use crate::kernel::process::Process;
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::SecurityToken;
+use crate::kernel::process::Thread;
+use crate::Error;
+use crate::Result;
 
 pub(super) fn current_process() -> Result<Arc<Process>> {
     current_thread().map(|thread| thread.process().clone())
@@ -91,13 +96,19 @@ where
 #[cfg(test)]
 mod tests {
     use super::super::test_support;
-    use super::{
-        current_process, current_process_fd_entry, current_process_pid, current_thread,
-        global_scheduler, require_current_launch_context, with_current_launch_context,
-        with_current_thread,
-    };
+    use super::current_process;
+    use super::current_process_fd_entry;
+    use super::current_process_pid;
+    use super::current_thread;
+    use super::global_scheduler;
+    use super::require_current_launch_context;
+    use super::with_current_launch_context;
+    use super::with_current_thread;
     use crate::kernel::device;
-    use crate::kernel::process::{KernelObject, HANDLE_RIGHT_WRITE, STDERR_FD, STDOUT_FD};
+    use crate::kernel::process::KernelObject;
+    use crate::kernel::process::HANDLE_RIGHT_WRITE;
+    use crate::kernel::process::STDERR_FD;
+    use crate::kernel::process::STDOUT_FD;
     use crate::Error;
 
     #[test]

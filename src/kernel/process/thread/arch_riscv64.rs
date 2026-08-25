@@ -5,7 +5,8 @@
 use core::mem::size_of;
 
 use super::types::UserThreadStart;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ── RISC-V 64 user-thread context ────────────────────────────────────
 

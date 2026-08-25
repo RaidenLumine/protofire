@@ -28,16 +28,25 @@ use alloc::vec::Vec;
 
 use crate::kernel::fs::block::BlockDevice;
 use crate::kernel::fs::filesystem::profiler::FsProfilerSnapshot;
-use crate::kernel::fs::vfs::{
-    DirectoryEntry, FileSystem as VfsFileSystem, Metadata, NodeKind, SecurityDescriptor,
-    SecurityDescriptorMutationSupport, VNode, VolumeCheckReport, XattrEntry,
-};
-use crate::{Error, Result};
+use crate::kernel::fs::vfs::DirectoryEntry;
+use crate::kernel::fs::vfs::FileSystem as VfsFileSystem;
+use crate::kernel::fs::vfs::Metadata;
+use crate::kernel::fs::vfs::NodeKind;
+use crate::kernel::fs::vfs::SecurityDescriptor;
+use crate::kernel::fs::vfs::SecurityDescriptorMutationSupport;
+use crate::kernel::fs::vfs::VNode;
+use crate::kernel::fs::vfs::VolumeCheckReport;
+use crate::kernel::fs::vfs::XattrEntry;
+use crate::Error;
+use crate::Result;
 
-use types::{
-    parse_extended_inode_xattr_idx, parse_inode, parse_squashfs_xattrs, Inode, Superblock,
-    SQUASHFS_MAGIC, XATTR_ID_TABLE_ENTRY_SIZE,
-};
+use types::parse_extended_inode_xattr_idx;
+use types::parse_inode;
+use types::parse_squashfs_xattrs;
+use types::Inode;
+use types::Superblock;
+use types::SQUASHFS_MAGIC;
+use types::XATTR_ID_TABLE_ENTRY_SIZE;
 
 // ── SquashfsVolume ─────────────────────────────────────────────────────────
 

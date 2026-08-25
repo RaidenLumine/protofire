@@ -2,7 +2,8 @@
 //!
 //! Shared syscall status encoding helpers and low-level ABI constants.
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 pub const ARG_COUNT: usize = 6;
 pub const X86_64_INTERRUPT_VECTOR: u8 = 0x80;
@@ -35,7 +36,11 @@ pub fn decode_result(status: usize) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_result, encode_error, encode_result, is_error_status, ERROR_STATUS_FLOOR};
+    use super::decode_result;
+    use super::encode_error;
+    use super::encode_result;
+    use super::is_error_status;
+    use super::ERROR_STATUS_FLOOR;
     use crate::Error;
 
     #[test]

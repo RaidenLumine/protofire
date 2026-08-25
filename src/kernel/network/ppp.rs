@@ -19,7 +19,8 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 

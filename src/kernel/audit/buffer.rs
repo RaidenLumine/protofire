@@ -12,7 +12,8 @@
 
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 use crate::kernel::audit::types::AuditRecord;
 use alloc::boxed::Box;

@@ -9,13 +9,20 @@ use alloc::vec::Vec;
 use crate::Result;
 
 use super::super::block::DeviceHealth;
-use super::super::vfs::{
-    DirectoryEntry, FileSystem as VfsFileSystem, Metadata, NodeKind, SecurityDescriptor,
-    SecurityDescriptorMutationSupport, VNode, VolumeCheckReport, XattrEntry,
-};
+use super::super::vfs::DirectoryEntry;
+use super::super::vfs::FileSystem as VfsFileSystem;
+use super::super::vfs::Metadata;
+use super::super::vfs::NodeKind;
+use super::super::vfs::SecurityDescriptor;
+use super::super::vfs::SecurityDescriptorMutationSupport;
+use super::super::vfs::VNode;
+use super::super::vfs::VolumeCheckReport;
+use super::super::vfs::XattrEntry;
 use crate::kernel::fs::filesystem::profiler::FsProfilerSnapshot;
 
-use super::{SimpleFs, SimpleFsVolume, SimpleVNode};
+use super::SimpleFs;
+use super::SimpleFsVolume;
+use super::SimpleVNode;
 
 impl SimpleFsVolume {
     pub fn new(inner: Arc<SimpleFs>) -> Self {

@@ -13,7 +13,8 @@
 
 use alloc::sync::Arc;
 
-use super::process::{scheduler::load_current_scheduler_ptr, Process};
+use super::process::scheduler::load_current_scheduler_ptr;
+use super::process::Process;
 
 /// Number of frames below which we consider the system OOM.
 /// When fewer than this many frames are free, page-fault allocation

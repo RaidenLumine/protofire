@@ -7,7 +7,8 @@
 //! On platforms without hardware entropy (riscv64), falls back to a
 //! combination of RTC time and monotonic tick counter.
 
-use crate::kernel::crypto::{chacha20_keystream, sha256};
+use crate::kernel::crypto::chacha20_keystream;
+use crate::kernel::crypto::sha256;
 use crate::kernel::sync::Mutex;
 use alloc::vec::Vec;
 

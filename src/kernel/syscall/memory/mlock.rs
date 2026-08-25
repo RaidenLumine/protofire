@@ -5,7 +5,8 @@
 //! never swapped out.  munlock unlocks them.
 
 use crate::kernel::memory::paging::MappingKind;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// System-wide maximum locked pages (64 MiB / 4 KiB pages).
 const MAX_LOCKED_PAGES: usize = 16384;

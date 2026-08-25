@@ -3,7 +3,8 @@
 //! Process subsystem type definitions.
 
 use alloc::collections::VecDeque;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt;
@@ -16,24 +17,28 @@ use crate::arch::mmu::ActivatedProcessAddressSpace;
     all(target_arch = "riscv64", target_os = "none")
 ))]
 use crate::arch::mmu::PreparedProcessAddressSpace;
+#[cfg(target_arch = "x86_64")]
+use crate::arch::mmu::PreparedProcessAddressSpaceSummary;
+#[cfg(all(target_arch = "x86_64", test))]
+use crate::arch::mmu::PreparedProcessTranslation;
 #[cfg(any(
     all(target_arch = "aarch64", target_os = "none"),
     all(target_arch = "riscv64", target_os = "none")
 ))]
 use crate::arch::mmu::PreparedTranslation;
+#[cfg(target_arch = "x86_64")]
+use crate::arch::mmu::PreparedUserAddressSpace;
+#[cfg(target_arch = "x86_64")]
+use crate::arch::mmu::PreparedUserAddressSpaceSummary;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::arch::mmu::PreparedUserTranslation;
-#[cfg(target_arch = "x86_64")]
-use crate::arch::mmu::{
-    PreparedProcessAddressSpace, PreparedProcessAddressSpaceSummary, PreparedUserAddressSpace,
-    PreparedUserAddressSpaceSummary,
-};
-#[cfg(all(target_arch = "x86_64", test))]
-use crate::arch::mmu::{PreparedProcessTranslation, PreparedUserTranslation};
-use crate::kernel::fs::{
-    vfs::MetadataAccessQueryContext, vfs::PermissionMetadataRecord, FileHandle as FsFileHandle,
-};
-use crate::kernel::network::{LocalSocket, TcpConnection, TcpListener, UdpSocket};
+use crate::kernel::fs::vfs::MetadataAccessQueryContext;
+use crate::kernel::fs::vfs::PermissionMetadataRecord;
+use crate::kernel::fs::FileHandle as FsFileHandle;
+use crate::kernel::network::LocalSocket;
+use crate::kernel::network::TcpConnection;
+use crate::kernel::network::TcpListener;
+use crate::kernel::network::UdpSocket;
 use crate::kernel::sync::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
 use crate::Result;
@@ -54,7 +59,9 @@ use super::constants::*;
 // Re-export types that were moved to the security submodule so existing
 // `use super::types::*` imports continue to work.
 #[allow(unused_imports)]
-pub(crate) use super::security::{IntegrityLevel, SecurityToken};
+pub(crate) use super::security::IntegrityLevel;
+#[allow(unused_imports)]
+pub(crate) use super::security::SecurityToken;
 
 /// Per-file-descriptor flags stored alongside the handle binding.
 ///

@@ -9,10 +9,15 @@ use alloc::vec::Vec;
 use crate::kernel::network::internet::ipv4::Ipv4Addr;
 use crate::kernel::network::internet::ipv6::Ipv6Addr;
 
-use super::{
-    DNS_CLASS_IN, DNS_EDNS0_UDP_PAYLOAD, DNS_FLAGS_OPCODE_QUERY, DNS_FLAGS_RD, DNS_HEADER_SIZE,
-    DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_OPT, DNS_TYPE_PTR,
-};
+use super::DNS_CLASS_IN;
+use super::DNS_EDNS0_UDP_PAYLOAD;
+use super::DNS_FLAGS_OPCODE_QUERY;
+use super::DNS_FLAGS_RD;
+use super::DNS_HEADER_SIZE;
+use super::DNS_TYPE_A;
+use super::DNS_TYPE_AAAA;
+use super::DNS_TYPE_OPT;
+use super::DNS_TYPE_PTR;
 
 /// Fixed query identifier (16 bits).  A single resolver reuses the same ID;
 /// the UDP 4-tuple disambiguates concurrent in-flight queries.

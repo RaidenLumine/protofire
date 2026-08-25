@@ -3,10 +3,15 @@
 //! Host-side integration tests for keyboard decode, buffering, and wait
 //! semantics.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
-use protofire::kernel::drivers::keyboard::{self, KeyCode, KeyEvent, KeyModifiers};
-use protofire::kernel::process::{Scheduler, ThreadWaitOutcome};
+use protofire::kernel::drivers::keyboard::KeyCode;
+use protofire::kernel::drivers::keyboard::KeyEvent;
+use protofire::kernel::drivers::keyboard::KeyModifiers;
+use protofire::kernel::drivers::keyboard::{self};
+use protofire::kernel::process::Scheduler;
+use protofire::kernel::process::ThreadWaitOutcome;
 
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

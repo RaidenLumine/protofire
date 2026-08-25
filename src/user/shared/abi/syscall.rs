@@ -428,11 +428,18 @@ pub const fn syscall_name(number: usize) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        syscall_name, syscall_stability, SyscallStability, MAX_SYSCALLS, SYSCALL_ABI_VERSION_MAJOR,
-        SYSCALL_ABI_VERSION_MINOR, SYSCALL_COUNT, SYS_ABI_INFO, SYS_DUP2, SYS_GPU_DEVICE_INFO,
-        SYS_OPEN, SYS_WRITE,
-    };
+    use super::syscall_name;
+    use super::syscall_stability;
+    use super::SyscallStability;
+    use super::MAX_SYSCALLS;
+    use super::SYSCALL_ABI_VERSION_MAJOR;
+    use super::SYSCALL_ABI_VERSION_MINOR;
+    use super::SYSCALL_COUNT;
+    use super::SYS_ABI_INFO;
+    use super::SYS_DUP2;
+    use super::SYS_GPU_DEVICE_INFO;
+    use super::SYS_OPEN;
+    use super::SYS_WRITE;
 
     #[test]
     fn syscall_numbers_are_dense_in_0_190() {

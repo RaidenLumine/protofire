@@ -12,10 +12,15 @@ use alloc::vec::Vec;
 use crate::kernel::fs::block::BlockDevice;
 use crate::Error;
 
-use super::types::{
-    BootSector, DataRun, FileName, MftRecordHeader, ParsedAttr, StandardInfoAttr,
-    ATTR_TYPE_FILENAME, ATTR_TYPE_STANDARD_INFO, BLOCK_SIZE,
-};
+use super::types::BootSector;
+use super::types::DataRun;
+use super::types::FileName;
+use super::types::MftRecordHeader;
+use super::types::ParsedAttr;
+use super::types::StandardInfoAttr;
+use super::types::ATTR_TYPE_FILENAME;
+use super::types::ATTR_TYPE_STANDARD_INFO;
+use super::types::BLOCK_SIZE;
 
 // ── Boot sector ─────────────────────────────────────────────────────────
 

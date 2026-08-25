@@ -5,7 +5,8 @@
 use core::arch::asm;
 use core::mem::offset_of;
 
-use crate::kernel::process::{thread::AArch64UserThreadContext, Context};
+use crate::kernel::process::thread::AArch64UserThreadContext;
+use crate::kernel::process::Context;
 
 core::arch::global_asm!(
     r#"

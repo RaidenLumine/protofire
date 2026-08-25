@@ -27,15 +27,19 @@
 //!   buffer (or a write that would block on a full buffer) returns
 //!   [`Error::Busy`] immediately instead of waiting.
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
 
-use crate::kernel::fs::vfs::{NodeKind, VNode};
-use crate::kernel::sync::{Condvar, Mutex};
-use crate::{Error, Result};
+use crate::kernel::fs::vfs::NodeKind;
+use crate::kernel::fs::vfs::VNode;
+use crate::kernel::sync::Condvar;
+use crate::kernel::sync::Mutex;
+use crate::Error;
+use crate::Result;
 
 // ---------------------------------------------------------------------------
 // Ring buffer

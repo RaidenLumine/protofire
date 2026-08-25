@@ -4,10 +4,12 @@
 //! behavior.
 
 use std::sync::Arc;
-use std::sync::{Mutex as StdMutex, OnceLock};
+use std::sync::Mutex as StdMutex;
+use std::sync::OnceLock;
 
 use protofire::kernel::process::Scheduler;
-use protofire::kernel::sync::{Condvar, Mutex};
+use protofire::kernel::sync::Condvar;
+use protofire::kernel::sync::Mutex;
 
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();

@@ -23,5 +23,11 @@ pub mod utf16;
 pub mod validate;
 
 pub use casefold::eq_unicode_insensitive;
-pub use oem::{char_to_oem_byte, oem_byte_to_char, utf8_to_oem, OemCodePage};
-pub use utf16::{utf16le_code_unit_to_char, utf16le_to_utf8, utf8_to_utf16le, write_utf16le_chars};
+pub use oem::char_to_oem_byte;
+pub use oem::oem_byte_to_char;
+pub use oem::utf8_to_oem;
+pub use oem::OemCodePage;
+pub use utf16::utf16le_code_unit_to_char;
+pub use utf16::utf16le_to_utf8;
+pub use utf16::utf8_to_utf16le;
+pub use utf16::write_utf16le_chars;

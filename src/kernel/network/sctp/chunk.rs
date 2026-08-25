@@ -4,7 +4,8 @@
 
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Size of the SCTP common header (source port + destination port +
 /// verification tag + checksum).

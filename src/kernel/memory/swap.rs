@@ -12,9 +12,11 @@ use core::fmt;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::block::{BlockDevice, BLOCK_SIZE};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::BLOCK_SIZE;
 use crate::kernel::memory::paging::PAGE_SIZE;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Number of 512-byte blocks per 4096-byte page slot.
 const BLOCKS_PER_PAGE: u64 = (PAGE_SIZE / BLOCK_SIZE) as u64;

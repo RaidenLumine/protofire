@@ -9,8 +9,12 @@
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 
-use super::icmpv6::{build_icmpv6_message, parse_icmpv6_header, ICMPV6_HEADER_SIZE};
-use super::ipv6::{Ipv6Addr, Ipv6Header, Ipv6NextHeader};
+use super::icmpv6::build_icmpv6_message;
+use super::icmpv6::parse_icmpv6_header;
+use super::icmpv6::ICMPV6_HEADER_SIZE;
+use super::ipv6::Ipv6Addr;
+use super::ipv6::Ipv6Header;
+use super::ipv6::Ipv6NextHeader;
 use crate::kernel::network::stack::NetworkStack;
 use crate::Result;
 

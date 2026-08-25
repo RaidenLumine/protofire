@@ -3,9 +3,11 @@
 //! Mutex abstraction built on spinlock with RAII guard-based exclusive access.
 
 use core::fmt;
-use core::ops::{Deref, DerefMut};
+use core::ops::Deref;
+use core::ops::DerefMut;
 
-use super::{SpinLock, SpinLockGuard};
+use super::SpinLock;
+use super::SpinLockGuard;
 
 pub struct Mutex<T> {
     inner: SpinLock<T>,

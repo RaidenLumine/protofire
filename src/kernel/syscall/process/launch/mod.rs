@@ -6,7 +6,9 @@
 mod decode;
 mod pipeline;
 
-pub(crate) use pipeline::{exec, fork, spawn};
+pub(crate) use pipeline::exec;
+pub(crate) use pipeline::fork;
+pub(crate) use pipeline::spawn;
 
 // Spawn keeps broader limits for compatibility with existing app payloads.
 pub(super) const MAX_ARGUMENT_OVERRIDE_ENTRIES: usize = 128;

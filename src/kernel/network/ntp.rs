@@ -12,7 +12,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::kernel::network::internet::ipv4::Ipv4Addr;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Well-known NTP UDP port.
 pub const NTP_PORT: u16 = 123;

@@ -19,16 +19,19 @@ pub(crate) mod mld_router;
 pub(crate) mod pim;
 pub(crate) mod vif;
 
-use crate::abi::mrt::{MrtMfcDef, MrtVifDef};
+use crate::abi::mrt::MrtMfcDef;
+use crate::abi::mrt::MrtVifDef;
 use crate::kernel::network::internet::ip::IpAddress;
 use crate::kernel::network::stack::NetworkStack;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use igmp_router::IgmpRouterState;
 use mfc::MfcCache;
 use mld_router::MldRouterState;
 use pim::PimState;
-use vif::{VifTable, VIF_LOCAL};
+use vif::VifTable;
+use vif::VIF_LOCAL;
 
 /// Per-stack multicast routing state.
 pub struct MrtState {

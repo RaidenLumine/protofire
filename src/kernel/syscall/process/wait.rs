@@ -4,8 +4,11 @@
 //! encoding.
 
 use crate::abi::process as process_abi;
-use crate::kernel::process::{ProcessState, Scheduler, TerminationReason};
-use crate::{Error, Result};
+use crate::kernel::process::ProcessState;
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::TerminationReason;
+use crate::Error;
+use crate::Result;
 
 pub(super) fn dispatch(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     super::validate_zeroed_args(context, 4)?;

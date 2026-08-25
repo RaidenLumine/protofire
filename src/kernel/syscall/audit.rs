@@ -3,9 +3,11 @@
 //! Syscall handlers for audit subsystem control (AuditSetEnable, AuditReadLog).
 
 use crate::kernel::audit;
-use crate::kernel::audit::types::{AuditRecord, AUDIT_ENABLE_ALL};
+use crate::kernel::audit::types::AuditRecord;
+use crate::kernel::audit::types::AUDIT_ENABLE_ALL;
 use crate::kernel::process::Process;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::runtime;
 use super::user_memory;
@@ -90,9 +92,12 @@ pub(super) fn audit_read_log(context: &mut SyscallContext) -> Result<SyscallDisp
 
 #[cfg(test)]
 mod tests {
-    use super::{audit_read_log, audit_set_enable};
+    use super::audit_read_log;
+    use super::audit_set_enable;
     use crate::kernel::audit::types::AUDIT_ENABLE_ALL;
-    use crate::kernel::syscall::{SyscallContext, SyscallDispatch, SyscallNumber};
+    use crate::kernel::syscall::SyscallContext;
+    use crate::kernel::syscall::SyscallDispatch;
+    use crate::kernel::syscall::SyscallNumber;
     use crate::Error;
 
     #[test]

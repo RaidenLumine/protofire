@@ -13,9 +13,12 @@
 
 use crate::abi::gpu as gpu_abi;
 use crate::kernel::drivers::virtio_gpu;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::{user_memory, SyscallContext, SyscallDispatch};
+use super::user_memory;
+use super::SyscallContext;
+use super::SyscallDispatch;
 
 /// `gpu_ctx_create` — create a VIRGL rendering context (#181).
 pub(super) fn gpu_ctx_create(context: &mut SyscallContext) -> Result<SyscallDispatch> {
@@ -180,10 +183,13 @@ pub(super) fn gpu_device_info(context: &mut SyscallContext) -> Result<SyscallDis
 mod tests {
     #[cfg(not(target_os = "none"))]
     use super::super::test_support;
-    use super::super::{SyscallContext, SyscallDispatch, SyscallNumber};
+    use super::super::SyscallContext;
+    use super::super::SyscallDispatch;
+    use super::super::SyscallNumber;
     use super::*;
     use crate::abi::gpu as gpu_abi;
-    use crate::kernel::drivers::virtio_gpu::{mock::MockGpuDevice, set_gpu_device_for_test};
+    use crate::kernel::drivers::virtio_gpu::mock::MockGpuDevice;
+    use crate::kernel::drivers::virtio_gpu::set_gpu_device_for_test;
     use crate::kernel::sync::Mutex as TestMutex;
     use alloc::sync::Arc;
 

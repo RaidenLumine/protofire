@@ -3,10 +3,14 @@
 //! Multicast routing (MRT) control syscalls (#169-174) — VIF and MFC
 //! management, mirroring the Linux multicast-routing ioctls.
 
-use crate::abi::mrt::{MrtMfcDef, MrtVifDef, MRT_MFC_DEF_SIZE, MRT_VIF_DEF_SIZE};
+use crate::abi::mrt::MrtMfcDef;
+use crate::abi::mrt::MrtVifDef;
+use crate::abi::mrt::MRT_MFC_DEF_SIZE;
+use crate::abi::mrt::MRT_VIF_DEF_SIZE;
 use crate::kernel::network::internet::ip::IpAddress;
 use crate::kernel::network::stack::NetworkStack;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Syscall 169: mrt_init(flags) — enable multicast routing.
 pub(super) fn mrt_init(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {

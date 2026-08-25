@@ -8,7 +8,10 @@ use alloc::vec::Vec;
 use crate::arch;
 use crate::kernel::sync::wait::WaiterIdentity;
 
-use super::super::{Process, TerminationReason, Thread, ThreadId};
+use super::super::Process;
+use super::super::TerminationReason;
+use super::super::Thread;
+use super::super::ThreadId;
 
 use super::Scheduler;
 

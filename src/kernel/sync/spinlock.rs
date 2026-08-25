@@ -6,8 +6,10 @@
 use core::cell::UnsafeCell;
 use core::hint::spin_loop;
 use core::mem::ManuallyDrop;
-use core::ops::{Deref, DerefMut};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::ops::Deref;
+use core::ops::DerefMut;
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use crate::arch;
 

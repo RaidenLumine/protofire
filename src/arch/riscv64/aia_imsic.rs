@@ -4,11 +4,14 @@
 
 #![allow(dead_code)] // experimental driver: wired for compilation, no consumer yet
 
-use alloc::{format, vec::Vec};
+use alloc::format;
+use alloc::vec::Vec;
 
-use super::{read_volatile, write_volatile};
+use super::read_volatile;
+use super::write_volatile;
 use crate::kernel::sync::SpinLock;
-use crate::util::logger::{log, LogLevel};
+use crate::util::logger::log;
+use crate::util::logger::LogLevel;
 use crate::Error;
 
 // AIA IMSIC constants

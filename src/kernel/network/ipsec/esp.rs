@@ -14,12 +14,15 @@
 
 use alloc::vec::Vec;
 
-use crate::kernel::crypto::{
-    aes128_gcm_decrypt, aes128_gcm_encrypt, chacha20_poly1305_decrypt, chacha20_poly1305_encrypt,
-};
-use crate::{Error, Result};
+use crate::kernel::crypto::aes128_gcm_decrypt;
+use crate::kernel::crypto::aes128_gcm_encrypt;
+use crate::kernel::crypto::chacha20_poly1305_decrypt;
+use crate::kernel::crypto::chacha20_poly1305_encrypt;
+use crate::Error;
+use crate::Result;
 
-use super::{AeadAlgo, IpsecSa};
+use super::AeadAlgo;
+use super::IpsecSa;
 
 /// ESP header size (SPI + Seq).
 pub const ESP_HEADER_SIZE: usize = 8;

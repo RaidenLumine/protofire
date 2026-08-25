@@ -42,7 +42,9 @@ pub fn payload_bytes() -> &'static [u8] {
 
 #[cfg(test)]
 mod tests {
-    use super::{AARCH64_TARGET, PAYLOAD_CODE_END_SYMBOL, PAYLOAD_START_SYMBOL};
+    use super::AARCH64_TARGET;
+    use super::PAYLOAD_CODE_END_SYMBOL;
+    use super::PAYLOAD_START_SYMBOL;
 
     #[cfg(target_os = "linux")]
     #[test]

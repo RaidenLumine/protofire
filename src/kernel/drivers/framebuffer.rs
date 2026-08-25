@@ -104,10 +104,12 @@ impl FramebufferInfo {
 // Driver integration
 // ---------------------------------------------------------------------------
 
-use crate::kernel::drivers::{Driver, DriverCategory};
+use crate::kernel::drivers::Driver;
+use crate::kernel::drivers::DriverCategory;
 use crate::kernel::sync::spinlock::SpinLock;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 /// How the bochs VBE_DISPI registers are exposed by the device.
 ///

@@ -24,10 +24,13 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::kernel::fs::block::MemoryBlockDevice;
-use crate::kernel::fs::vfs::{FileSystem as VfsFileSystem, NodeKind};
+use crate::kernel::fs::vfs::FileSystem as VfsFileSystem;
+use crate::kernel::fs::vfs::NodeKind;
 use crate::Error;
 
-use super::types::{parse_boot_catalog, PVD_SECTOR, SECTOR_SIZE};
+use super::types::parse_boot_catalog;
+use super::types::PVD_SECTOR;
+use super::types::SECTOR_SIZE;
 use super::Iso9660Volume;
 
 // ── Image geometry ──────────────────────────────────────────────────────

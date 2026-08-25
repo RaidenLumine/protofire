@@ -15,7 +15,8 @@
 //! 4. Use `ttbr0_with_asid(root, asid)` to construct TTBR0_EL1 values.
 
 use core::arch::asm;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 /// Number of bitmap words: 1024 × 64 bits = 65536 bits = 65536 ASIDs.
 const ASID_BITMAP_WORDS: usize = 1024;

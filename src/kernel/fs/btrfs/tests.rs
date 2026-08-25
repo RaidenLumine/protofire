@@ -9,14 +9,18 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::kernel::crypto::crc32c;
-use crate::kernel::fs::block::{BlockDevice, MemoryBlockDevice};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::MemoryBlockDevice;
 use crate::kernel::fs::btrfs::BtrfsVolume;
-use crate::kernel::fs::vfs::{FileSystem as VfsFileSystem, NodeKind};
+use crate::kernel::fs::vfs::FileSystem as VfsFileSystem;
+use crate::kernel::fs::vfs::NodeKind;
 use crate::Error;
 
-use super::types::{
-    KEY_DIR_ITEM, KEY_EXTENT_DATA, KEY_INODE_ITEM, KEY_ROOT_ITEM, SUPERBLOCK_OFFSET,
-};
+use super::types::KEY_DIR_ITEM;
+use super::types::KEY_EXTENT_DATA;
+use super::types::KEY_INODE_ITEM;
+use super::types::KEY_ROOT_ITEM;
+use super::types::SUPERBLOCK_OFFSET;
 
 // ── shared constants ──────────────────────────────────────────────────────
 

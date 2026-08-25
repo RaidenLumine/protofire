@@ -11,7 +11,8 @@ use core::sync::atomic::AtomicPtr;
 #[cfg(not(test))]
 use core::sync::atomic::Ordering;
 
-use crate::kernel::network::internet::fragments::{FragmentCache, Ipv6FragmentCache};
+use crate::kernel::network::internet::fragments::FragmentCache;
+use crate::kernel::network::internet::fragments::Ipv6FragmentCache;
 use crate::kernel::network::internet::igmp::IgmpState;
 use crate::kernel::network::internet::ipv4::Ipv4Addr;
 use crate::kernel::network::internet::ipv6;

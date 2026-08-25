@@ -2,8 +2,11 @@
 //!
 //! Host tests for the MAC policy engine and object classification.
 
-use super::check::{check_file, object_type_for_path, set_path_type};
-use super::policy::{policy_state, MacPolicy};
+use super::check::check_file;
+use super::check::object_type_for_path;
+use super::check::set_path_type;
+use super::policy::policy_state;
+use super::policy::MacPolicy;
 use super::types::*;
 use crate::Error;
 

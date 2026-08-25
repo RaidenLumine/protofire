@@ -5,16 +5,28 @@
 //! Dispatches ptrace requests to the core logic in
 //! `src/kernel/process/ptrace.rs`.
 
-use crate::abi::ptrace::{
-    PtraceEventRecord, PTRACE_ATTACH, PTRACE_CONT, PTRACE_DETACH, PTRACE_EVENT_RECORD_SIZE,
-    PTRACE_GETEVENTMSG, PTRACE_GETREGS, PTRACE_PEEKDATA, PTRACE_POKEDATA, PTRACE_REGS_SIZE_X86_64,
-    PTRACE_SETREGS, PTRACE_SINGLESTEP, PTRACE_SYSCALL, PTRACE_TRACEME,
-};
+use crate::abi::ptrace::PtraceEventRecord;
+use crate::abi::ptrace::PTRACE_ATTACH;
+use crate::abi::ptrace::PTRACE_CONT;
+use crate::abi::ptrace::PTRACE_DETACH;
+use crate::abi::ptrace::PTRACE_EVENT_RECORD_SIZE;
+use crate::abi::ptrace::PTRACE_GETEVENTMSG;
+use crate::abi::ptrace::PTRACE_GETREGS;
+use crate::abi::ptrace::PTRACE_PEEKDATA;
+use crate::abi::ptrace::PTRACE_POKEDATA;
+use crate::abi::ptrace::PTRACE_REGS_SIZE_X86_64;
+use crate::abi::ptrace::PTRACE_SETREGS;
+use crate::abi::ptrace::PTRACE_SINGLESTEP;
+use crate::abi::ptrace::PTRACE_SYSCALL;
+use crate::abi::ptrace::PTRACE_TRACEME;
 use crate::kernel::process::ptrace as ptrace_core;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
+use super::runtime;
 use super::user_memory;
-use super::{runtime, SyscallContext, SyscallDispatch};
+use super::SyscallContext;
+use super::SyscallDispatch;
 
 /// Syscall #128: Ptrace — process tracing control.
 ///

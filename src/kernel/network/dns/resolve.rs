@@ -9,17 +9,22 @@ use crate::kernel::network::internet::ipv4::Ipv4Addr;
 use crate::kernel::network::internet::ipv6::Ipv6Addr;
 #[cfg(target_os = "none")]
 use crate::kernel::network::stack::NetworkStack;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::cache::lookup_hosts;
 #[cfg(target_os = "none")]
-use super::cache::{cache_insert, cache_lookup};
+use super::cache::cache_insert;
+#[cfg(target_os = "none")]
+use super::cache::cache_lookup;
+use super::cache::lookup_hosts;
 #[cfg(target_os = "none")]
 use super::parse::parse_a_record_with_ttl;
 #[cfg(target_os = "none")]
 use super::parse::parse_aaaa_record;
 #[cfg(target_os = "none")]
-use super::query::{build_query, build_query_aaaa};
+use super::query::build_query;
+#[cfg(target_os = "none")]
+use super::query::build_query_aaaa;
 
 // ── Operational constants (bare-metal only) ──
 

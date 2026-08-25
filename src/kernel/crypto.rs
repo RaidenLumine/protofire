@@ -5,7 +5,8 @@
 //! Provides SHA-256 hashing per NIST FIPS 180-4, plus a deterministic salt
 //! generator for password hashing.
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 use alloc::string::String;
 use alloc::vec::Vec;
 

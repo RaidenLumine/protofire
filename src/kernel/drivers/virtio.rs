@@ -6,8 +6,10 @@
 //!
 //! Based on the VirtIO v1.2 specification, MMIO transport section.
 
-use crate::kernel::fs::block::{BlockDevice, DeviceHealth};
-use crate::{Error, Result};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::DeviceHealth;
+use crate::Error;
+use crate::Result;
 
 // ─── MMIO register offsets (section 4.2.2) ───
 
@@ -1052,7 +1054,8 @@ impl BlockDevice for VirtIoBlock {
 
 // ─── VirtIO driver (bare-metal device discovery) ───
 
-use crate::kernel::drivers::{Driver, DriverCategory};
+use crate::kernel::drivers::Driver;
+use crate::kernel::drivers::DriverCategory;
 
 struct VirtIoDriver;
 

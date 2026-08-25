@@ -4,16 +4,21 @@
 
 use alloc::string::ToString;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::super::vfs::{
-    NodeKind, SecurityDescriptor, DEFAULT_DIRECTORY_MODE, MAX_PERMISSION_MODE, ROOT_GROUP_ID,
-    ROOT_OWNER_ID,
-};
+use super::super::vfs::NodeKind;
+use super::super::vfs::SecurityDescriptor;
+use super::super::vfs::DEFAULT_DIRECTORY_MODE;
+use super::super::vfs::MAX_PERMISSION_MODE;
+use super::super::vfs::ROOT_GROUP_ID;
+use super::super::vfs::ROOT_OWNER_ID;
 
 use super::free_fns::*;
 use super::types::*;
-use super::{SimpleFs, SimpleFsState, UndoLog};
+use super::SimpleFs;
+use super::SimpleFsState;
+use super::UndoLog;
 
 impl SimpleFsState {
     /// Clear the undo log at the start of a commit.  Saves the current dirty

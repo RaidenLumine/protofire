@@ -3,7 +3,8 @@
 //! Early debug output plumbing and low-level print helpers.
 
 use core::fmt;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 

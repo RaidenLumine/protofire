@@ -7,9 +7,13 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 
 use super::ipv4::Ipv4Addr;
-use crate::kernel::network::link::ethernet::{self, EtherType, EthernetFrame, MacAddress};
+use crate::kernel::network::link::ethernet::EtherType;
+use crate::kernel::network::link::ethernet::EthernetFrame;
+use crate::kernel::network::link::ethernet::MacAddress;
+use crate::kernel::network::link::ethernet::{self};
 use crate::kernel::network::stack::NetworkStack;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ─── ARP constants ───
 

@@ -15,11 +15,16 @@
 use alloc::vec::Vec;
 
 use crate::abi::fs as fs_abi;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::runtime::with_current_process_security_token_fs;
-use super::user_memory::{copy_user_bytes, user_path_arg, with_optional_input_slice};
-use super::{validate_known_flags, SyscallContext, SyscallDispatch};
+use super::user_memory::copy_user_bytes;
+use super::user_memory::user_path_arg;
+use super::user_memory::with_optional_input_slice;
+use super::validate_known_flags;
+use super::SyscallContext;
+use super::SyscallDispatch;
 
 /// Validate an xattr name: non-empty and within the ABI limit.
 fn validate_xattr_name(name: &[u8]) -> Result<()> {

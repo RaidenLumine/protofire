@@ -5,8 +5,11 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use super::types::{Metadata, NodeKind, XattrEntry};
-use crate::{Error, Result};
+use super::types::Metadata;
+use super::types::NodeKind;
+use super::types::XattrEntry;
+use crate::Error;
+use crate::Result;
 
 /// Virtual Node trait - represents a file, directory, or device in the VFS
 /// All filesystem objects implement this trait to provide a unified interface

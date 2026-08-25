@@ -23,13 +23,47 @@ use crate::kernel::drivers::virtio::MmioRegion;
 // assertions below.
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use crate::kernel::drivers::virtio::{
-    REG_CONFIG_GENERATION, REG_DEVICE_FEATURES, REG_DEVICE_FEATURES_SEL, REG_DEVICE_ID,
-    REG_DRIVER_FEATURES, REG_DRIVER_FEATURES_SEL, REG_MAGIC_VALUE, REG_QUEUE_DESC_HIGH,
-    REG_QUEUE_DESC_LOW, REG_QUEUE_DEVICE_HIGH, REG_QUEUE_DEVICE_LOW, REG_QUEUE_DRIVER_HIGH,
-    REG_QUEUE_DRIVER_LOW, REG_QUEUE_NOTIFY, REG_QUEUE_NUM, REG_QUEUE_NUM_MAX, REG_QUEUE_READY,
-    REG_QUEUE_SEL, REG_STATUS, REG_VENDOR_ID, REG_VERSION,
-};
+use crate::kernel::drivers::virtio::REG_CONFIG_GENERATION;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_DEVICE_FEATURES;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_DEVICE_FEATURES_SEL;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_DEVICE_ID;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_DRIVER_FEATURES;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_DRIVER_FEATURES_SEL;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_MAGIC_VALUE;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_DESC_HIGH;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_DESC_LOW;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_DEVICE_HIGH;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_DEVICE_LOW;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_DRIVER_HIGH;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_DRIVER_LOW;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_NOTIFY;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_NUM;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_NUM_MAX;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_READY;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_QUEUE_SEL;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_STATUS;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_VENDOR_ID;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::kernel::drivers::virtio::REG_VERSION;
 
 /// VirtIO magic value (little-endian "virt").
 #[allow(dead_code)]

@@ -12,7 +12,9 @@ use alloc::vec;
 use crate::kernel::fs::block::BlockDevice;
 use crate::Error;
 
-use super::types::{be32, be64, Superblock};
+use super::types::be32;
+use super::types::be64;
+use super::types::Superblock;
 
 // ─── XFS log constants ──────────────────────────────────────────────────────
 

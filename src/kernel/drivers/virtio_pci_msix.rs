@@ -41,10 +41,17 @@
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::arch::mmu::map_device_mmio;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use crate::arch::x86_64::pci::{
-    enumeration::{pci_capability_find, pci_capability_msix, MsixCapability, PciDeviceInfo},
-    raw::{self, PciAddress},
-};
+use crate::arch::x86_64::pci::enumeration::pci_capability_find;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::arch::x86_64::pci::enumeration::pci_capability_msix;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::arch::x86_64::pci::enumeration::MsixCapability;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::arch::x86_64::pci::enumeration::PciDeviceInfo;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::arch::x86_64::pci::raw::PciAddress;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use crate::arch::x86_64::pci::raw::{self};
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::Result;
 

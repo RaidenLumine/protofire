@@ -24,7 +24,9 @@
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::AtomicUsize;
 
 use crate::kernel::fs::vfs::VNode;
 use crate::kernel::fs::NodeKind;

@@ -5,8 +5,11 @@
 
 use alloc::vec::Vec;
 
-use crate::kernel::process::{SecurityToken, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
-use crate::{Error, Result};
+use crate::kernel::process::SecurityToken;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::Error;
+use crate::Result;
 
 use super::super::vfs::XattrEntry;
 use super::super::FileSystem;

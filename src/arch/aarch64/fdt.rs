@@ -275,7 +275,9 @@ pub fn fdt_numa_info() -> FdtNumaInfo {
 /// Returns `None` when no NUMA data was found in the FDT (the caller should
 /// fall back to a single-node topology).
 pub fn build_fdt_numa_topology() -> Option<crate::kernel::topology::Topology> {
-    use crate::kernel::topology::{NodeId, NumaNode, MAX_NUMA_NODES};
+    use crate::kernel::topology::NodeId;
+    use crate::kernel::topology::NumaNode;
+    use crate::kernel::topology::MAX_NUMA_NODES;
 
     let numa = fdt_numa_info();
     if numa.cpu_count == 0 && numa.memory_count == 0 {

@@ -37,9 +37,12 @@
 use alloc::vec::Vec;
 
 use crate::kernel::network::internet::ip::IpAddress;
-use crate::kernel::network::internet::ipv4::{self, IpProtocol};
-use crate::kernel::network::internet::ipv6::{self, Ipv6NextHeader};
-use crate::{Error, Result};
+use crate::kernel::network::internet::ipv4::IpProtocol;
+use crate::kernel::network::internet::ipv4::{self};
+use crate::kernel::network::internet::ipv6::Ipv6NextHeader;
+use crate::kernel::network::internet::ipv6::{self};
+use crate::Error;
+use crate::Result;
 
 /// Extended generic header size (X = 1, 48-bit sequence numbers).  Always
 /// used on transmission.

@@ -7,7 +7,8 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::super::block::BLOCK_SIZE;
 use super::super::vfs::NodeKind;
@@ -15,7 +16,8 @@ use super::super::vfs::NodeKind;
 use super::constants::*;
 use super::format_io::names_match;
 use super::types::*;
-use super::{SimpleFs, SimpleFsState};
+use super::SimpleFs;
+use super::SimpleFsState;
 
 impl SimpleFs {
     pub(crate) fn find_child(

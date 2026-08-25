@@ -6,14 +6,22 @@
 mod support;
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
 
-use protofire::kernel::fs::block::{BlockDevice, MemoryBlockDevice, BLOCK_SIZE};
-use protofire::kernel::fs::simplefs::{SimpleFs, SimpleFsVolume};
+use protofire::kernel::fs::block::BlockDevice;
+use protofire::kernel::fs::block::MemoryBlockDevice;
+use protofire::kernel::fs::block::BLOCK_SIZE;
+use protofire::kernel::fs::simplefs::SimpleFs;
+use protofire::kernel::fs::simplefs::SimpleFsVolume;
 use protofire::kernel::fs::vfs::FileSystem as VfsFileSystem;
-use protofire::{Error, Result};
+use protofire::Error;
+use protofire::Result;
 
-use support::{build_seed_image, build_stable_anchor_device, read_all, read_u32_le};
+use support::build_seed_image;
+use support::build_stable_anchor_device;
+use support::read_all;
+use support::read_u32_le;
 
 const MAGIC: &[u8; 8] = b"ADAFS1\0\0";
 const VERSION: u32 = 2;

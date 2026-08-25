@@ -37,7 +37,10 @@ pub(crate) mod vfs;
 pub(crate) mod xattr;
 
 // Types imported via pub(crate) use types::* below.
-pub(crate) use types::{OnDiskDirEntry, OnDiskInode, SimpleFsFormatVersion, XattrRecord};
+pub(crate) use types::OnDiskDirEntry;
+pub(crate) use types::OnDiskInode;
+pub(crate) use types::SimpleFsFormatVersion;
+pub(crate) use types::XattrRecord;
 
 // ── Core struct definitions ──
 
@@ -171,5 +174,6 @@ pub struct ImageEntry<'a> {
 
 // ── Re-exports ─────────────────────────────────────────────────────────
 
-pub use image_staging::{StagingArea, VersionSwitch};
+pub use image_staging::StagingArea;
+pub use image_staging::VersionSwitch;
 pub use transaction::TransactionContext;

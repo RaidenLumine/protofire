@@ -4,8 +4,10 @@
 //! allocation/deallocation.
 
 use crate::kernel::memory::frame::MAX_NODES;
-use crate::kernel::memory::paging::{MappingKind, PagePermissions};
-use crate::{println, Result};
+use crate::kernel::memory::paging::MappingKind;
+use crate::kernel::memory::paging::PagePermissions;
+use crate::println;
+use crate::Result;
 
 use super::super::arch::detect_memory;
 use super::MemoryManager;

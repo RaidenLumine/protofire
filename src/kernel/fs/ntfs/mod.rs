@@ -4,18 +4,21 @@
 //! I/O.
 
 use alloc::collections::btree_map::BTreeMap;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::block::{BlockDevice, BLOCK_SIZE};
-use crate::kernel::fs::vfs::{
-    filesystem::FileSystem,
-    types::{DirectoryEntry, NodeKind},
-    vnode::VNode,
-};
-use crate::kernel::sync::{Mutex, SpinLock};
-use crate::{Error, Result};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::BLOCK_SIZE;
+use crate::kernel::fs::vfs::filesystem::FileSystem;
+use crate::kernel::fs::vfs::types::DirectoryEntry;
+use crate::kernel::fs::vfs::types::NodeKind;
+use crate::kernel::fs::vfs::vnode::VNode;
+use crate::kernel::sync::Mutex;
+use crate::kernel::sync::SpinLock;
+use crate::Error;
+use crate::Result;
 
 use crate::kernel::fs::ntfs::fs::parse_attributes;
 use crate::kernel::fs::ntfs::types::*;

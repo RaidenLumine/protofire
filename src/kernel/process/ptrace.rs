@@ -10,13 +10,22 @@ use alloc::sync::Arc;
 // `PTRACE_REGS_SIZE_X86_64` is only referenced from x86_64-gated helpers
 // below; on aarch64 / riscv64 the import is unused, so silence it.
 #[cfg_attr(not(target_arch = "x86_64"), allow(unused_imports))]
-use crate::abi::ptrace::{
-    PtraceEventRecord, PTRACE_EVENT_ATTACH, PTRACE_EVENT_SYSCALL_EXIT, PTRACE_REGS_SIZE_X86_64,
-};
+use crate::abi::ptrace::PtraceEventRecord;
+#[cfg_attr(not(target_arch = "x86_64"), allow(unused_imports))]
+use crate::abi::ptrace::PTRACE_EVENT_ATTACH;
+#[cfg_attr(not(target_arch = "x86_64"), allow(unused_imports))]
+use crate::abi::ptrace::PTRACE_EVENT_SYSCALL_EXIT;
+#[cfg_attr(not(target_arch = "x86_64"), allow(unused_imports))]
+use crate::abi::ptrace::PTRACE_REGS_SIZE_X86_64;
 use crate::kernel::process::process::types::ptrace_flags::*;
-use crate::kernel::process::process::types::{PtraceEvent, ThreadId};
-use crate::kernel::process::{Process, ProcessId, Scheduler, Thread};
-use crate::{Error, Result};
+use crate::kernel::process::process::types::PtraceEvent;
+use crate::kernel::process::process::types::ThreadId;
+use crate::kernel::process::Process;
+use crate::kernel::process::ProcessId;
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::Thread;
+use crate::Error;
+use crate::Result;
 
 // ── Public API
 // ────────────────────────────────────────────────────────────────

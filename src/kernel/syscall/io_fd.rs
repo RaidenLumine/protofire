@@ -5,7 +5,9 @@
 
 use crate::kernel::fs::pipe;
 use crate::kernel::io;
-use crate::kernel::process::{Process, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
+use crate::kernel::process::Process;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
 use crate::Result;
 
 trait DispatchValue {
@@ -298,20 +300,29 @@ pub(super) fn poll(context: &mut super::SyscallContext) -> Result<super::Syscall
 mod tests {
     #[cfg(not(target_os = "none"))]
     use super::super::test_support;
-    use super::{
-        close as close_fd, duplicate as duplicate_fd, fdatasync as fdatasync_fd, fsync as fsync_fd,
-        read as read_fd, seek as seek_fd, set_length as set_length_fd, write as write_fd,
-    };
-    use crate::kernel::{
-        network,
-        process::{HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE},
-        syscall::{SyscallContext, SyscallDispatch, SyscallNumber},
-    };
+    use super::close as close_fd;
+    use super::duplicate as duplicate_fd;
+    use super::fdatasync as fdatasync_fd;
+    use super::fsync as fsync_fd;
+    use super::read as read_fd;
+    use super::seek as seek_fd;
+    use super::set_length as set_length_fd;
+    use super::write as write_fd;
+    use crate::kernel::network;
+    use crate::kernel::process::HANDLE_RIGHT_READ;
+    use crate::kernel::process::HANDLE_RIGHT_WRITE;
+    use crate::kernel::syscall::SyscallContext;
+    use crate::kernel::syscall::SyscallDispatch;
+    use crate::kernel::syscall::SyscallNumber;
     use crate::Error;
     #[cfg(not(target_os = "none"))]
-    use alloc::{format, sync::Arc};
+    use alloc::format;
     #[cfg(not(target_os = "none"))]
-    use std::io::{Read as _, Write as _};
+    use alloc::sync::Arc;
+    #[cfg(not(target_os = "none"))]
+    use std::io::Read as _;
+    #[cfg(not(target_os = "none"))]
+    use std::io::Write as _;
 
     #[cfg(not(target_os = "none"))]
     fn open_network_fd(

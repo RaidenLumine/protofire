@@ -6,8 +6,10 @@ use alloc::string::String;
 
 use crate::abi::fs as fs_abi;
 use crate::kernel::device;
-use crate::kernel::fs::{FileMetadata, NodeKind};
-use crate::{Error, Result};
+use crate::kernel::fs::FileMetadata;
+use crate::kernel::fs::NodeKind;
+use crate::Error;
+use crate::Result;
 
 use super::constants::*;
 use super::types::*;
@@ -285,7 +287,8 @@ fn synthetic_public_file_stat_record(kind: NodeKind, size: usize) -> fs_abi::Fil
 use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 
-use crate::kernel::sync::wait::{plan_timed_wait, TimedWaitPlan};
+use crate::kernel::sync::wait::plan_timed_wait;
+use crate::kernel::sync::wait::TimedWaitPlan;
 
 /// Read from an eventfd: return the 8-byte counter value and reset (or
 /// decrement in semaphore mode).
@@ -672,7 +675,9 @@ pub(super) fn mqueue_write(
 mod tests {
     use super::eventfd_read;
     use super::eventfd_write;
-    use crate::kernel::process::process::types::{EventFdState, EFD_NONBLOCK, EFD_SEMAPHORE};
+    use crate::kernel::process::process::types::EventFdState;
+    use crate::kernel::process::process::types::EFD_NONBLOCK;
+    use crate::kernel::process::process::types::EFD_SEMAPHORE;
     use crate::kernel::sync::wait::WaitQueue;
     use crate::Error;
     use alloc::sync::Arc;

@@ -3,7 +3,8 @@
 //! Glob pattern matching (`*`, `?`, `[...]` character classes).
 
 use super::*;
-use crate::user::shared::abi::fs::{DirectoryEntryRecord, DIRECTORY_ENTRY_RECORD_SIZE};
+use crate::user::shared::abi::fs::DirectoryEntryRecord;
+use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_SIZE;
 use crate::user::shared::syscall;
 
 /// Check whether `name` matches the glob `pattern`.

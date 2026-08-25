@@ -6,7 +6,8 @@
 //! expansion, and glob expansion so they work in both ring0 and ring3.
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use crate::user::shared::types::CmdResult;

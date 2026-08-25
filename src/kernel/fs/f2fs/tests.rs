@@ -24,8 +24,10 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::block::{BlockDevice, MemoryBlockDevice};
-use crate::kernel::fs::vfs::{FileSystem as VfsFileSystem, NodeKind};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::MemoryBlockDevice;
+use crate::kernel::fs::vfs::FileSystem as VfsFileSystem;
+use crate::kernel::fs::vfs::NodeKind;
 use crate::Error;
 
 use super::constants::*;

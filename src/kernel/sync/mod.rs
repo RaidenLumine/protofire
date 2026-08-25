@@ -11,10 +11,14 @@ pub mod semaphore;
 pub mod spinlock;
 pub mod wait;
 
-pub use condvar::{Condvar, CondvarWait};
-pub use event::{Event, EventMode};
-pub use mutex::{Mutex, MutexGuard};
+pub use condvar::Condvar;
+pub use condvar::CondvarWait;
+pub use event::Event;
+pub use event::EventMode;
+pub use mutex::Mutex;
+pub use mutex::MutexGuard;
 pub use semaphore::Semaphore;
-pub use spinlock::{SpinLock, SpinLockGuard};
+pub use spinlock::SpinLock;
+pub use spinlock::SpinLockGuard;
 pub use wait::WaitQueue;
 pub(crate) use wait::WaitTimeoutCleanupRef;

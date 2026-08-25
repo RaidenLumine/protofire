@@ -10,20 +10,26 @@
 //! directory created by `useradd`.
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Write as FmtWrite;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use crate::kernel::crypto;
 use crate::kernel::fs::vfs::SecurityDescriptorUpdate;
-use crate::kernel::fs::{FileSystem, OPEN_ALWAYS};
-use crate::kernel::process::{
-    home_dir_for_uid, GroupId, UserId, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE,
-};
+use crate::kernel::fs::FileSystem;
+use crate::kernel::fs::OPEN_ALWAYS;
+use crate::kernel::process::home_dir_for_uid;
+use crate::kernel::process::GroupId;
+use crate::kernel::process::UserId;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Path to the persistent user database on the writable Data zone.
 const PASSWD_PATH: &str = "/data/etc/passwd";

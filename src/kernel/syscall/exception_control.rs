@@ -2,7 +2,8 @@
 //!
 //! Exception-handler install/return syscalls and frame-pointer safety checks.
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct UserExceptionFrameLayout {
@@ -104,8 +105,10 @@ fn current_arch_user_exception_frame_layout() -> Result<UserExceptionFrameLayout
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_return_from_exception_frame_pointer_shape, UserExceptionFrameLayout};
-    use crate::{Error, Result};
+    use super::validate_return_from_exception_frame_pointer_shape;
+    use super::UserExceptionFrameLayout;
+    use crate::Error;
+    use crate::Result;
 
     #[test]
     fn return_frame_pointer_shape_rejects_zero_pointer() {

@@ -3,19 +3,30 @@
 //! Process constructors, field accessors, thread management, signals, and
 //! termination.
 
-use ::core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
-use alloc::collections::{BTreeMap, VecDeque};
-use alloc::string::{String, ToString};
+use ::core::sync::atomic::AtomicBool;
+use ::core::sync::atomic::AtomicU32;
+use ::core::sync::atomic::AtomicU64;
+use ::core::sync::atomic::AtomicU8;
+use ::core::sync::atomic::Ordering;
+use alloc::collections::BTreeMap;
+use alloc::collections::VecDeque;
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::sync::{Event, Mutex, WaitQueue};
+use crate::kernel::sync::Event;
+use crate::kernel::sync::Mutex;
+use crate::kernel::sync::WaitQueue;
 use crate::kernel::user::resolve_home_dir;
 #[allow(unused_imports)]
 use crate::println;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::super::thread::{Thread, ThreadId, ThreadWaitOutcome};
+use super::super::thread::Thread;
+use super::super::thread::ThreadId;
+use super::super::thread::ThreadWaitOutcome;
 use super::constants::*;
 use super::types::ProcessShmAttachment;
 use super::types::*;
@@ -909,12 +920,15 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    use crate::abi::process::{SA_RESTART, SIGNAL_SA_FLAGS_KNOWN};
+    use crate::abi::process::SA_RESTART;
+    use crate::abi::process::SIGNAL_SA_FLAGS_KNOWN;
     use crate::kernel::memory::MemoryManager;
     use crate::kernel::process::scheduler::api::idle_entry;
-    use crate::kernel::process::{
-        ProcessState, Scheduler, TerminationReason, Thread, UserThreadStart,
-    };
+    use crate::kernel::process::ProcessState;
+    use crate::kernel::process::Scheduler;
+    use crate::kernel::process::TerminationReason;
+    use crate::kernel::process::Thread;
+    use crate::kernel::process::UserThreadStart;
     use crate::Error;
 
     use super::Process;
@@ -1377,16 +1391,19 @@ mod tests {
         #[test]
         #[cfg(target_arch = "x86_64")]
         fn fork_creates_independent_address_space_with_cow() {
-            use crate::arch::x86_64::paging::{
-                prepare_process_address_space, KernelPagePlan, KernelPageTableSpec,
-            };
-            use crate::kernel::memory::paging::{MappingKind, PagePermissions};
+            use crate::arch::x86_64::paging::prepare_process_address_space;
+            use crate::arch::x86_64::paging::KernelPagePlan;
+            use crate::arch::x86_64::paging::KernelPageTableSpec;
+            use crate::kernel::memory::paging::MappingKind;
+            use crate::kernel::memory::paging::PagePermissions;
             use crate::kernel::process::ProcessUserAddressSpace;
-            use crate::user::program::{
-                UserImageLoadPlan, UserImageSegmentPlan, USER_EXCEPTION_STACK_GUARD_SIZE,
-                USER_EXCEPTION_STACK_SIZE, USER_STACK_GUARD_SIZE, USER_STACK_SIZE,
-                X86_64_USER_STACK_TOP,
-            };
+            use crate::user::program::UserImageLoadPlan;
+            use crate::user::program::UserImageSegmentPlan;
+            use crate::user::program::USER_EXCEPTION_STACK_GUARD_SIZE;
+            use crate::user::program::USER_EXCEPTION_STACK_SIZE;
+            use crate::user::program::USER_STACK_GUARD_SIZE;
+            use crate::user::program::USER_STACK_SIZE;
+            use crate::user::program::X86_64_USER_STACK_TOP;
 
             let kernel_plan = KernelPagePlan::from_ranges(
                 (0x200_000, 0x201_000),

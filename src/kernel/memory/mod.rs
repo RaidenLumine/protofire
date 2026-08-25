@@ -18,10 +18,17 @@ pub mod swap;
 #[cfg(test)]
 mod tests;
 
-pub use arch::{detected_memory, store_detected_memory};
+pub use arch::detected_memory;
+pub use arch::store_detected_memory;
 pub use diagnostics::*;
-pub use dma::{phys_addr_of, DmaBuffer};
-pub(crate) use global::{global, global_mut, install_global_unchecked};
-pub use global::{global_mut_for_tests, install_global_for_tests};
+pub use dma::phys_addr_of;
+pub use dma::DmaBuffer;
+pub(crate) use global::global;
+pub(crate) use global::global_mut;
+pub use global::global_mut_for_tests;
+pub use global::install_global_for_tests;
+pub(crate) use global::install_global_unchecked;
 pub use manager::MemoryManager;
-pub use paging::{AdviceHint, MappingKind, PagePermissions};
+pub use paging::AdviceHint;
+pub use paging::MappingKind;
+pub use paging::PagePermissions;

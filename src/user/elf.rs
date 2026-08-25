@@ -4,7 +4,8 @@
 
 use alloc::vec::Vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 const ELF_MAGIC: &[u8; 4] = b"\x7FELF";
 const ELF_CLASS_64: u8 = 2;
@@ -229,7 +230,8 @@ fn read_array<const N: usize>(image: &[u8], offset: usize) -> Result<[u8; N]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_array, Error};
+    use super::read_array;
+    use super::Error;
 
     #[test]
     fn read_array_rejects_short_slices() {

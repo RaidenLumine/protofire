@@ -9,16 +9,24 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::block::{BlockDevice, BLOCK_SIZE};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::BLOCK_SIZE;
 use crate::kernel::fs::filesystem::profiler::FsProfiler;
 use crate::kernel::fs::unicode;
 use crate::kernel::fs::vfs::NodeKind;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::types::{
-    build_lfn_name, parse_lfn_fragment, parse_short_dir_entry, read_u16, read_u32, FatDirEntry,
-    FatGeometry, FatType, DIR_ENTRY_SIZE, FIRST_DATA_CLUSTER,
-};
+use super::types::build_lfn_name;
+use super::types::parse_lfn_fragment;
+use super::types::parse_short_dir_entry;
+use super::types::read_u16;
+use super::types::read_u32;
+use super::types::FatDirEntry;
+use super::types::FatGeometry;
+use super::types::FatType;
+use super::types::DIR_ENTRY_SIZE;
+use super::types::FIRST_DATA_CLUSTER;
 use super::FatFs;
 
 impl FatFs {

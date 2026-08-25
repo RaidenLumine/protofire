@@ -24,13 +24,19 @@
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
-use crate::abi::filter::{
-    FilterRuleDef, FILTER_ACTION_ALLOW, FILTER_ACTION_DENY, FILTER_PROTOCOL_ANY,
-    FILTER_PROTOCOL_ICMP, FILTER_PROTOCOL_TCP, FILTER_PROTOCOL_UDP,
-};
-use crate::kernel::network::internet::ipv4::{IpProtocol, Ipv4Addr, Ipv4Header};
+use crate::abi::filter::FilterRuleDef;
+use crate::abi::filter::FILTER_ACTION_ALLOW;
+use crate::abi::filter::FILTER_ACTION_DENY;
+use crate::abi::filter::FILTER_PROTOCOL_ANY;
+use crate::abi::filter::FILTER_PROTOCOL_ICMP;
+use crate::abi::filter::FILTER_PROTOCOL_TCP;
+use crate::abi::filter::FILTER_PROTOCOL_UDP;
+use crate::kernel::network::internet::ipv4::IpProtocol;
+use crate::kernel::network::internet::ipv4::Ipv4Addr;
+use crate::kernel::network::internet::ipv4::Ipv4Header;
 
 // ─── Constants ───────────────────────────────────────────────────────────
 

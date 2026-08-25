@@ -5,7 +5,8 @@
 //! Provides a minimal subset of Linux-style prctl operations:
 //! name, dumpable, keepcaps, no_new_privs.
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ── prctl operation codes ──────────────────────────────────────────────
 

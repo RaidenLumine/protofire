@@ -7,7 +7,8 @@
 //! identically in ring0 (kernel Mutex statics) and ring3 (local variables).
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use crate::user::shared::abi::io::OPEN_FLAG_READ;

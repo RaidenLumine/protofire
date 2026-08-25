@@ -2,7 +2,8 @@
 //!
 //! x86_64 COM1 serial backend used by early logging.
 
-use core::fmt::{self, Write};
+use core::fmt::Write;
+use core::fmt::{self};
 
 use crate::kernel::sync::SpinLock;
 

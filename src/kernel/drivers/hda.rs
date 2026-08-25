@@ -212,7 +212,8 @@ mod controller {
     use crate::kernel::memory::DmaBuffer;
     use crate::println;
     use crate::Result;
-    use core::ptr::{read_volatile, write_volatile};
+    use core::ptr::read_volatile;
+    use core::ptr::write_volatile;
 
     /// MMIO helpers for 32-bit, 16-bit, and 8-bit register access.
     unsafe fn reg_read32(base: *mut u8, offset: usize) -> u32 {
@@ -588,9 +589,11 @@ use controller::HdaController;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 static HDA_CONTROLLER: Mutex<Option<HdaController>> = Mutex::new(None);
 
-use crate::kernel::drivers::{Driver, DriverCategory};
+use crate::kernel::drivers::Driver;
+use crate::kernel::drivers::DriverCategory;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 static HDA_PROBED: AtomicBool = AtomicBool::new(false);
 

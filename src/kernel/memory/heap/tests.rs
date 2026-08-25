@@ -11,10 +11,14 @@
 #[allow(clippy::module_inception)]
 mod tests {
     use super::super::allocator::KernelGlobalAllocator;
-    use super::super::tlsf::{
-        mapping, AllocatorState, FL_MAX, FL_MIN, HEADER_SIZE, HEAP_BLOCK_ALIGNMENT,
-        KERNEL_HEAP_SIZE, SL_COUNT,
-    };
+    use super::super::tlsf::mapping;
+    use super::super::tlsf::AllocatorState;
+    use super::super::tlsf::FL_MAX;
+    use super::super::tlsf::FL_MIN;
+    use super::super::tlsf::HEADER_SIZE;
+    use super::super::tlsf::HEAP_BLOCK_ALIGNMENT;
+    use super::super::tlsf::KERNEL_HEAP_SIZE;
+    use super::super::tlsf::SL_COUNT;
     use super::super::wrapper::HOST_HEAP_MODEL;
     use crate::kernel::memory::alloc_profiler::AllocProfiler;
     use alloc::vec::Vec;

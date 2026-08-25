@@ -5,15 +5,20 @@
 //! Dispatches seccomp operations to the core logic in
 //! `src/kernel/process/seccomp.rs`.
 
-use crate::abi::seccomp::{
-    SeccompFilterRule, SeccompRuleHeader, SECCOMP_FILTER_RULE_SIZE, SECCOMP_MAX_RULES,
-    SECCOMP_RULE_HEADER_SIZE, SECCOMP_SET_MODE_FILTER,
-};
+use crate::abi::seccomp::SeccompFilterRule;
+use crate::abi::seccomp::SeccompRuleHeader;
+use crate::abi::seccomp::SECCOMP_FILTER_RULE_SIZE;
+use crate::abi::seccomp::SECCOMP_MAX_RULES;
+use crate::abi::seccomp::SECCOMP_RULE_HEADER_SIZE;
+use crate::abi::seccomp::SECCOMP_SET_MODE_FILTER;
 use crate::kernel::process::seccomp as seccomp_core;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
+use super::runtime;
 use super::user_memory;
-use super::{runtime, SyscallContext, SyscallDispatch};
+use super::SyscallContext;
+use super::SyscallDispatch;
 
 /// Syscall #129: Seccomp — secure computing / syscall filtering.
 ///

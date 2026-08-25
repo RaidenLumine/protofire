@@ -388,7 +388,9 @@ impl FrameAllocator {
 
 #[cfg(test)]
 mod tests {
-    use super::{physical_pool_size, FrameAllocator, FRAME_SIZE};
+    use super::physical_pool_size;
+    use super::FrameAllocator;
+    use super::FRAME_SIZE;
     use alloc::vec::Vec;
 
     #[test]

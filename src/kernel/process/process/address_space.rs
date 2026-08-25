@@ -11,8 +11,6 @@ use ::core::sync::atomic::Ordering;
 use crate::arch::mmu::PreparedTranslation;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::arch::mmu::PreparedUserTranslation;
-#[cfg(all(target_arch = "x86_64", test))]
-use crate::arch::mmu::PreparedUserTranslation;
 
 use super::types::*;
 use super::Process;

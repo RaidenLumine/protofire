@@ -19,8 +19,10 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::memory::compressed::{compress_chunk, decompress_page};
-use crate::{Error, Result};
+use crate::kernel::memory::compressed::compress_chunk;
+use crate::kernel::memory::compressed::decompress_page;
+use crate::Error;
+use crate::Result;
 
 use super::constants::*;
 

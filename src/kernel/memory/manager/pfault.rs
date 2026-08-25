@@ -3,9 +3,12 @@
 //! Page-fault resolution: demand-paging backfill (with swap-in and fault-around
 //! prefetching) and Copy-on-Write private copy.
 
-use crate::kernel::memory::paging::{self, MappingKind, PagePermissions};
+use crate::kernel::memory::paging::MappingKind;
+use crate::kernel::memory::paging::PagePermissions;
+use crate::kernel::memory::paging::{self};
 
-use super::super::arch::{align_down_page, install_user_page_arch};
+use super::super::arch::align_down_page;
+use super::super::arch::install_user_page_arch;
 use super::MemoryManager;
 
 impl MemoryManager {

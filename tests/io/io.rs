@@ -2,17 +2,29 @@
 //!
 //! Host-side integration tests for descriptor-based I/O and stdio routing.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use protofire::kernel::console;
 use protofire::kernel::device;
-use protofire::kernel::drivers::{keyboard, serial};
-use protofire::kernel::fs::{self, FileSystem, OPEN_ALWAYS, SEEK_SET};
+use protofire::kernel::drivers::keyboard;
+use protofire::kernel::drivers::serial;
+use protofire::kernel::fs::FileSystem;
+use protofire::kernel::fs::OPEN_ALWAYS;
+use protofire::kernel::fs::SEEK_SET;
+use protofire::kernel::fs::{self};
 use protofire::kernel::io;
-use protofire::kernel::process::{
-    KernelObject, Process, Scheduler, CONSOLE_DEVICE_NAME, HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE,
-    NULL_DEVICE_NAME, SERIAL0_DEVICE_NAME, STDIN_FD, STDOUT_FD, ZERO_DEVICE_NAME,
-};
+use protofire::kernel::process::KernelObject;
+use protofire::kernel::process::Process;
+use protofire::kernel::process::Scheduler;
+use protofire::kernel::process::CONSOLE_DEVICE_NAME;
+use protofire::kernel::process::HANDLE_RIGHT_READ;
+use protofire::kernel::process::HANDLE_RIGHT_WRITE;
+use protofire::kernel::process::NULL_DEVICE_NAME;
+use protofire::kernel::process::SERIAL0_DEVICE_NAME;
+use protofire::kernel::process::STDIN_FD;
+use protofire::kernel::process::STDOUT_FD;
+use protofire::kernel::process::ZERO_DEVICE_NAME;
 use protofire::kernel::sync::Mutex as KernelMutex;
 use protofire::kernel::syscall::Table;
 use protofire::user::syscall::UserSyscall;

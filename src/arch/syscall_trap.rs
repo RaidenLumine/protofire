@@ -10,7 +10,8 @@
 //! must be deferred until after the new image has been applied.
 
 use crate::kernel::syscall::SyscallAction;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Whether the user context should be captured before the post-action is
 /// applied, or only after `ExecProcess` has replaced the user image.
@@ -72,11 +73,12 @@ pub fn resolve_exec_process_apply_result(apply_result: Result<()>) -> ExecProces
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        resolve_exec_process_apply_result, resolve_return_from_exception_resume,
-        user_context_capture_point, ExecProcessApplyResolution, ReturnFromExceptionResolution,
-        UserContextCapturePoint,
-    };
+    use super::resolve_exec_process_apply_result;
+    use super::resolve_return_from_exception_resume;
+    use super::user_context_capture_point;
+    use super::ExecProcessApplyResolution;
+    use super::ReturnFromExceptionResolution;
+    use super::UserContextCapturePoint;
     use crate::kernel::syscall::SyscallAction;
     use crate::Error;
 

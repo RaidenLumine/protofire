@@ -9,7 +9,8 @@
 //! [`raise_softirq`], and the scheduler drains it with [`process_softirqs`]
 //! before resuming user code.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::Ordering;
 
 /// Number of softirq vectors.
 pub const SOFTIRQ_MAX: usize = 8;

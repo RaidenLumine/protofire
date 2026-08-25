@@ -17,7 +17,9 @@
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 use core::arch::asm;
 use core::ptr;
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::Ordering;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -28,7 +30,9 @@ use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
 mod asid;
 
-use asid::{allocate_asid, free_asid, satp_with_asid};
+use asid::allocate_asid;
+use asid::free_asid;
+use asid::satp_with_asid;
 
 // ── Constants ────────────────────────────────────────────────────────────
 

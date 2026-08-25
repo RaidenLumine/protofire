@@ -2,11 +2,14 @@
 //!
 //! FileSystem read, write, replace methods.
 
-use crate::kernel::process::{SecurityToken, HANDLE_RIGHT_WRITE};
+use crate::kernel::process::SecurityToken;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
 use crate::Result;
 
 use super::super::vfs::NodeKind;
-use super::super::{FileHandle, FileSystem, OPEN_ALWAYS};
+use super::super::FileHandle;
+use super::super::FileSystem;
+use super::super::OPEN_ALWAYS;
 use super::path_helpers::*;
 
 impl FileSystem {

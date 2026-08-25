@@ -18,7 +18,8 @@ use alloc::vec::Vec;
 
 use crate::abi::ipsec as abi;
 use crate::kernel::network::internet::ip::IpAddress;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// IPsec transform mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

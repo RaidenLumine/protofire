@@ -577,7 +577,10 @@ impl Kernel {
     fn build_numa_topology_from_srat(
         numa: &crate::kernel::smp::EarlyNumaData,
     ) -> crate::kernel::topology::Topology {
-        use crate::kernel::topology::{NodeId, NumaNode, MAX_NUMA_NODES, NUMA_NODE_NONE};
+        use crate::kernel::topology::NodeId;
+        use crate::kernel::topology::NumaNode;
+        use crate::kernel::topology::MAX_NUMA_NODES;
+        use crate::kernel::topology::NUMA_NODE_NONE;
 
         // ── Build cpu_to_node mapping ──
         let cpu_count = numa.cpu_apic_ids.len();
@@ -1460,7 +1463,8 @@ fn resolve_worker(name: &str) -> Option<fn()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::fs::{self, NodeKind};
+    use crate::kernel::fs::NodeKind;
+    use crate::kernel::fs::{self};
     use crate::Error;
 
     fn ensure_dir(fs: &FileSystem, path: &str) {

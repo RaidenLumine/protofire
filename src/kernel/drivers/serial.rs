@@ -10,13 +10,15 @@ use alloc::vec::Vec;
 
 use crate::arch;
 use crate::kernel::console;
-use crate::kernel::sync::{
-    input_wait::{self, WaitStatsBookkeeping},
-    Condvar, Mutex, WaitTimeoutCleanupRef,
-};
+use crate::kernel::sync::input_wait::WaitStatsBookkeeping;
+use crate::kernel::sync::input_wait::{self};
+use crate::kernel::sync::Condvar;
+use crate::kernel::sync::Mutex;
+use crate::kernel::sync::WaitTimeoutCleanupRef;
 use crate::Result;
 
-use super::{Driver, DriverCategory};
+use super::Driver;
+use super::DriverCategory;
 
 const MAX_BUFFERED_RX_BYTES: usize = 512;
 const MAX_CAPTURED_TX_BYTES: usize = 4096;
@@ -344,10 +346,13 @@ fn push_bounded(queue: &mut VecDeque<u8>, max_len: usize, byte: u8) {
 
 #[cfg(test)]
 mod tests {
-    use super::{SerialDevice, MAX_BUFFERED_RX_BYTES};
-    use crate::kernel::process::{Scheduler, ThreadWaitOutcome};
+    use super::SerialDevice;
+    use super::MAX_BUFFERED_RX_BYTES;
+    use crate::kernel::process::Scheduler;
+    use crate::kernel::process::ThreadWaitOutcome;
     use alloc::vec::Vec;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
 
     fn test_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

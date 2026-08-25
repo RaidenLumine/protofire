@@ -9,7 +9,10 @@ use alloc::vec::Vec;
 use crate::kernel::sync::wait::WaiterIdentity;
 
 use super::super::thread::ThreadSchedPolicy;
-use super::super::{ProcessState, Thread, ThreadState, THREAD_PRIORITY_COUNT};
+use super::super::ProcessState;
+use super::super::Thread;
+use super::super::ThreadState;
+use super::super::THREAD_PRIORITY_COUNT;
 use super::types::TimedWaiter;
 use super::TIME_SLICE_TICKS;
 

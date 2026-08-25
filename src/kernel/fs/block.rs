@@ -2,12 +2,14 @@
 //!
 //! Block-device abstractions and in-memory block-device helpers.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 pub const BLOCK_SIZE: usize = 512;
 
@@ -233,7 +235,10 @@ impl BlockDevice for BlockSliceDevice {
 mod tests {
     use alloc::vec;
 
-    use super::{BlockDevice, BlockSliceDevice, MemoryBlockDevice, BLOCK_SIZE};
+    use super::BlockDevice;
+    use super::BlockSliceDevice;
+    use super::MemoryBlockDevice;
+    use super::BLOCK_SIZE;
     use crate::Error;
 
     #[test]

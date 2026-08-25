@@ -4,7 +4,8 @@
 //! (BindLocal, ConnectLocal, AcceptLocal).
 
 use crate::kernel::network::local;
-use crate::kernel::process::{HANDLE_RIGHT_READ, HANDLE_RIGHT_WRITE};
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::process::HANDLE_RIGHT_WRITE;
 
 pub(super) fn bind_local_socket(
     context: &mut super::SyscallContext,

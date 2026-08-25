@@ -8,7 +8,10 @@ use alloc::vec::Vec;
 
 use crate::kernel::sync::Mutex;
 
-use super::types::{MacClass, MacPermission, MacRule, MacType};
+use super::types::MacClass;
+use super::types::MacPermission;
+use super::types::MacRule;
+use super::types::MacType;
 
 /// The loaded MAC policy.  When `enabled` is false (the default) every check
 /// is permissive, so loading no policy changes existing behaviour at all.

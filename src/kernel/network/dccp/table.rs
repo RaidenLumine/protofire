@@ -11,7 +11,8 @@ use alloc::vec::Vec;
 
 use crate::kernel::network::internet::ip::IpAddress;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::ccid2::Ccid2State;
 use super::options::FeatureState;

@@ -9,10 +9,14 @@
 use alloc::sync::Arc;
 
 use crate::kernel::fs;
+use crate::kernel::process::Process;
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::SecurityToken;
+use crate::kernel::process::Thread;
 #[cfg(target_os = "none")]
 use crate::kernel::process::UserThreadStart;
-use crate::kernel::process::{Process, Scheduler, SecurityToken, Thread};
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::catalog::SpawnProcessOverrides;
 #[cfg(any(feature = "demo-disk", test))]
@@ -20,9 +24,10 @@ use super::constants::*;
 #[cfg(any(feature = "demo-disk", test))]
 use super::demo_runtime::resolve_program_proxy;
 use super::launch_reference;
+use super::loader::LaunchedProgram;
+use super::loader::LoadedProgram;
 #[cfg(not(target_os = "none"))]
 use super::loader::LoadedProgramInstallState;
-use super::loader::{LaunchedProgram, LoadedProgram};
 
 pub fn spawn_from_global(scheduler: &Scheduler, launch_reference: &str) -> Result<LaunchedProgram> {
     spawn_from_launch_reference(scheduler, "/", launch_reference)

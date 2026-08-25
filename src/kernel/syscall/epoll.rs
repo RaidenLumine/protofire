@@ -16,11 +16,16 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec;
 
-use crate::kernel::process::process::types::{EpollEvent, EpollState, KernelObject};
-use crate::kernel::process::{Process, HANDLE_RIGHT_READ};
-use crate::kernel::sync::wait::{plan_timed_wait, TimedWaitPlan};
+use crate::kernel::process::process::types::EpollEvent;
+use crate::kernel::process::process::types::EpollState;
+use crate::kernel::process::process::types::KernelObject;
+use crate::kernel::process::Process;
+use crate::kernel::process::HANDLE_RIGHT_READ;
+use crate::kernel::sync::wait::plan_timed_wait;
+use crate::kernel::sync::wait::TimedWaitPlan;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::runtime;
 use super::user_memory;

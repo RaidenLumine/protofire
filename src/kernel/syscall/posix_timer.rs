@@ -3,7 +3,8 @@
 //! Syscall handlers for POSIX per-process timers (#137–140).
 
 use crate::kernel::process::posix_timer;
-use crate::kernel::syscall::table::{SyscallContext, SyscallDispatch};
+use crate::kernel::syscall::table::SyscallContext;
+use crate::kernel::syscall::table::SyscallDispatch;
 use crate::Result;
 
 /// timer_create(clock_id, sevp) → timer_id

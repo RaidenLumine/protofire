@@ -20,26 +20,37 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 #[cfg(target_arch = "aarch64")]
-use crate::user::demo::demo_program_aarch64_elf::{
-    build_demo_program_artifact, build_fault_demo_program_artifact,
-    build_rust_demo_program_artifact, build_shell_program_artifact,
-};
+use crate::user::demo::demo_program_aarch64_elf::build_demo_program_artifact;
+#[cfg(target_arch = "aarch64")]
+use crate::user::demo::demo_program_aarch64_elf::build_fault_demo_program_artifact;
+#[cfg(target_arch = "aarch64")]
+use crate::user::demo::demo_program_aarch64_elf::build_rust_demo_program_artifact;
+#[cfg(target_arch = "aarch64")]
+use crate::user::demo::demo_program_aarch64_elf::build_shell_program_artifact;
 // riscv64 keeps the assembly shell fallback since ring3-shell isn't yet
 // compiled for riscv64.
 #[cfg(target_arch = "riscv64")]
-use crate::user::demo::demo_program_riscv64_elf::{
-    build_demo_program_artifact, build_shell_program_artifact,
-};
+use crate::user::demo::demo_program_riscv64_elf::build_demo_program_artifact;
+#[cfg(target_arch = "riscv64")]
+use crate::user::demo::demo_program_riscv64_elf::build_shell_program_artifact;
 #[cfg(target_arch = "x86_64")]
-use crate::user::demo::demo_program_x86_64_elf::{
-    build_demo_program_artifact, build_rust_demo_program_artifact,
-    build_rust_io_demo_program_artifact, build_shell_program_artifact,
-};
+use crate::user::demo::demo_program_x86_64_elf::build_demo_program_artifact;
+#[cfg(target_arch = "x86_64")]
+use crate::user::demo::demo_program_x86_64_elf::build_rust_demo_program_artifact;
+#[cfg(target_arch = "x86_64")]
+use crate::user::demo::demo_program_x86_64_elf::build_rust_io_demo_program_artifact;
+#[cfg(target_arch = "x86_64")]
+use crate::user::demo::demo_program_x86_64_elf::build_shell_program_artifact;
 
 use super::block::BLOCK_SIZE;
-use super::layout::{StorageZone, DEFAULT_ZONES, DEMO_DISK_TOTAL_BLOCKS};
-use super::partition::{write_mbr_partitions, MbrPartitionEntry, MbrPartitionTable};
-use super::simplefs::{ImageEntry, SimpleFs};
+use super::layout::StorageZone;
+use super::layout::DEFAULT_ZONES;
+use super::layout::DEMO_DISK_TOTAL_BLOCKS;
+use super::partition::write_mbr_partitions;
+use super::partition::MbrPartitionEntry;
+use super::partition::MbrPartitionTable;
+use super::simplefs::ImageEntry;
+use super::simplefs::SimpleFs;
 use crate::Result;
 
 const DATA_ZONE_EXTRA_INODES: usize = 64;

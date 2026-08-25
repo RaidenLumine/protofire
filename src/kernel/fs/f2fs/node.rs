@@ -3,7 +3,8 @@
 //! F2FS NAT (Node Address Table) operations: NID lookup, allocation, free,
 //! and inode read/write helpers.
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::constants::*;
 use super::types::*;

@@ -9,21 +9,34 @@
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 
-use crate::abi::io_uring::{
-    IoUringCqe, IoUringSqe, IORING_ENTER_GETEVENTS, IORING_OP_NOP, IORING_OP_POLL_ADD,
-    IORING_OP_READ, IORING_OP_TIMEOUT, IORING_OP_WRITE, IORING_SETUP_IOPOLL, IO_URING_CQE_SIZE,
-    IO_URING_MAX_ENTRIES, IO_URING_SQE_SIZE,
-};
+use crate::abi::io_uring::IoUringCqe;
+use crate::abi::io_uring::IoUringSqe;
+use crate::abi::io_uring::IORING_ENTER_GETEVENTS;
+use crate::abi::io_uring::IORING_OP_NOP;
+use crate::abi::io_uring::IORING_OP_POLL_ADD;
+use crate::abi::io_uring::IORING_OP_READ;
+use crate::abi::io_uring::IORING_OP_TIMEOUT;
+use crate::abi::io_uring::IORING_OP_WRITE;
+use crate::abi::io_uring::IORING_SETUP_IOPOLL;
+use crate::abi::io_uring::IO_URING_CQE_SIZE;
+use crate::abi::io_uring::IO_URING_MAX_ENTRIES;
+use crate::abi::io_uring::IO_URING_SQE_SIZE;
 use crate::kernel::io;
-use crate::kernel::process::process::types::{IoUringPendingOp, IoUringState};
+use crate::kernel::process::process::types::IoUringPendingOp;
+use crate::kernel::process::process::types::IoUringState;
+use crate::kernel::process::FileDescriptor;
+use crate::kernel::process::KernelObject;
+use crate::kernel::process::Process;
 use crate::kernel::process::Scheduler;
-use crate::kernel::process::{FileDescriptor, KernelObject, Process};
 use crate::kernel::sync::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
+use super::runtime;
 use super::user_memory;
-use super::{runtime, SyscallContext, SyscallDispatch};
+use super::SyscallContext;
+use super::SyscallDispatch;
 
 // ── Constants
 // ──────────────────────────────────────────────────────────────────
@@ -425,7 +438,10 @@ fn u64_to_ptr_mut<T>(addr: [u8; 8]) -> *mut T {
 
 /// Check whether `fd` satisfies the given poll events.
 fn poll_check_fd(process: &Process, fd: FileDescriptor, events: u16) -> Result<bool> {
-    use crate::abi::io_uring::{IORING_POLL_ERR, IORING_POLL_HUP, IORING_POLL_IN, IORING_POLL_OUT};
+    use crate::abi::io_uring::IORING_POLL_ERR;
+    use crate::abi::io_uring::IORING_POLL_HUP;
+    use crate::abi::io_uring::IORING_POLL_IN;
+    use crate::abi::io_uring::IORING_POLL_OUT;
 
     let mut ready = false;
 
@@ -449,7 +465,8 @@ fn poll_check_fd(process: &Process, fd: FileDescriptor, events: u16) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::io_uring::{IO_URING_CQE_SIZE, IO_URING_SQE_SIZE};
+    use crate::abi::io_uring::IO_URING_CQE_SIZE;
+    use crate::abi::io_uring::IO_URING_SQE_SIZE;
 
     #[test]
     fn cqe_ok_and_err_values() {

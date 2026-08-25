@@ -20,10 +20,12 @@
 //! closure-based APIs (`with_optional_input_slice`,
 //! `with_optional_output_slice`) or copy the data immediately.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use core::marker::PhantomData;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Execute a closure inside a SMAP user-access window on bare-metal
 /// architectures that support it (x86_64 SMAP, aarch64 PAN-equivalent,
@@ -1268,12 +1270,19 @@ fn resolve_size(spec: &SyscallPointerSpec, args: &[usize; 6]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        copy_user_bytes, copy_user_value_with_trailing_bytes, fixed_output_buffer_arg,
-        optional_user_input_slice, optional_user_output_slice, user_bounded_str, user_str,
-        user_string, validate_user_input_buffer, validate_user_output_buffer,
-        validate_user_pointer_range, FixedOutputBuffer, USER_ADDRESS_MAX,
-    };
+    use super::copy_user_bytes;
+    use super::copy_user_value_with_trailing_bytes;
+    use super::fixed_output_buffer_arg;
+    use super::optional_user_input_slice;
+    use super::optional_user_output_slice;
+    use super::user_bounded_str;
+    use super::user_str;
+    use super::user_string;
+    use super::validate_user_input_buffer;
+    use super::validate_user_output_buffer;
+    use super::validate_user_pointer_range;
+    use super::FixedOutputBuffer;
+    use super::USER_ADDRESS_MAX;
     use crate::Error;
     use alloc::string::String;
     use alloc::vec;

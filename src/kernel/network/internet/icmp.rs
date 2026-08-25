@@ -4,8 +4,12 @@
 
 use alloc::vec::Vec;
 
-use super::ipv4::{self, IpProtocol, Ipv4Addr, Ipv4Header};
-use crate::{Error, Result};
+use super::ipv4::IpProtocol;
+use super::ipv4::Ipv4Addr;
+use super::ipv4::Ipv4Header;
+use super::ipv4::{self};
+use crate::Error;
+use crate::Result;
 
 // ─── ICMP type constants ───
 
@@ -275,7 +279,8 @@ pub fn parse_icmp_error_info(data: &[u8]) -> Option<IcmpErrorInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::network::internet::ipv4::{compute_checksum, parse_packet};
+    use crate::kernel::network::internet::ipv4::compute_checksum;
+    use crate::kernel::network::internet::ipv4::parse_packet;
 
     #[test]
     fn echo_request_generates_reply() {

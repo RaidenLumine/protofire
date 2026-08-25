@@ -15,14 +15,19 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::drivers::virtio::{
-    self, VirtIoMmio, VirtQueue, REG_QUEUE_NOTIFY, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
-};
-use crate::kernel::drivers::{Driver, DriverCategory};
+use crate::kernel::drivers::virtio::VirtIoMmio;
+use crate::kernel::drivers::virtio::VirtQueue;
+use crate::kernel::drivers::virtio::REG_QUEUE_NOTIFY;
+use crate::kernel::drivers::virtio::VIRTQ_DESC_F_NEXT;
+use crate::kernel::drivers::virtio::VIRTQ_DESC_F_WRITE;
+use crate::kernel::drivers::virtio::{self};
+use crate::kernel::drivers::Driver;
+use crate::kernel::drivers::DriverCategory;
 use crate::kernel::fs::block::DeviceHealth;
 use crate::kernel::network::link::device::NetworkDevice;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 // ─── VirtIO net feature bits (spec section 5.1.3) ───
 
@@ -802,9 +807,11 @@ pub fn probe_boot_net() -> Option<Arc<dyn NetworkDevice>> {
 /// to the legacy IO-port BAR (BAR0) if no MMIO BAR is available.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn probe_pci_net_x86_64() -> Option<Arc<dyn NetworkDevice>> {
-    use crate::arch::x86_64::pci::{
-        pci_config_read_u16, pci_config_write_u16, pci_enumerate_buses, PciAddress, COMMAND,
-    };
+    use crate::arch::x86_64::pci::pci_config_read_u16;
+    use crate::arch::x86_64::pci::pci_config_write_u16;
+    use crate::arch::x86_64::pci::pci_enumerate_buses;
+    use crate::arch::x86_64::pci::PciAddress;
+    use crate::arch::x86_64::pci::COMMAND;
     use crate::kernel::drivers::virtio_pci::PciLegacyMmioRegion;
     use crate::kernel::drivers::virtio_pci_modern::PciModernRegion;
     use alloc::boxed::Box;
@@ -1073,10 +1080,16 @@ pub fn probe_boot_net() -> Option<Arc<dyn NetworkDevice>> {
 mod tests {
     use super::*;
     use crate::kernel::drivers::virtio::mock::MockMmioRegion;
-    use crate::kernel::drivers::virtio::{
-        DEVICE_ID_NET, MAGIC_VALUE, REG_DEVICE_FEATURES, REG_DEVICE_ID, REG_MAGIC_VALUE,
-        REG_QUEUE_NUM_MAX, REG_STATUS, REG_VERSION, STATUS_DRIVER_OK, VIRTIO_VERSION,
-    };
+    use crate::kernel::drivers::virtio::DEVICE_ID_NET;
+    use crate::kernel::drivers::virtio::MAGIC_VALUE;
+    use crate::kernel::drivers::virtio::REG_DEVICE_FEATURES;
+    use crate::kernel::drivers::virtio::REG_DEVICE_ID;
+    use crate::kernel::drivers::virtio::REG_MAGIC_VALUE;
+    use crate::kernel::drivers::virtio::REG_QUEUE_NUM_MAX;
+    use crate::kernel::drivers::virtio::REG_STATUS;
+    use crate::kernel::drivers::virtio::REG_VERSION;
+    use crate::kernel::drivers::virtio::STATUS_DRIVER_OK;
+    use crate::kernel::drivers::virtio::VIRTIO_VERSION;
     use alloc::boxed::Box;
 
     /// Pre-populate a MockMmioRegion for a VirtIO net device.

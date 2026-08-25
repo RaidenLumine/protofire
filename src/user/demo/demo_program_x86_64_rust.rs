@@ -8,11 +8,15 @@
 use core::arch::asm;
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
-use crate::user::exception::{
-    X86_64UserExceptionFrame, X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR,
-    X86_64_EXCEPTION_INVALID_OPCODE_VECTOR, X86_64_EXCEPTION_PAGE_FAULT_VECTOR,
-    X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK,
-};
+use crate::user::exception::X86_64UserExceptionFrame;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+use crate::user::exception::X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+use crate::user::exception::X86_64_EXCEPTION_INVALID_OPCODE_VECTOR;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+use crate::user::exception::X86_64_EXCEPTION_PAGE_FAULT_VECTOR;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+use crate::user::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 
 const RUST_PAYLOAD_HELLO_LEN: usize = 33;
 const RUST_PAYLOAD_TRIGGER_PAGE_FAULT_LEN: usize = 36;

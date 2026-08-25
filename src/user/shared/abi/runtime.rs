@@ -17,7 +17,8 @@
 //!   version (`crate::user::shared::abi::syscall::SYSCALL_ABI_VERSION_*`),
 //!   which user space uses for runtime negotiation alongside `syscall_count`.
 
-use core::mem::{offset_of, size_of};
+use core::mem::offset_of;
+use core::mem::size_of;
 
 // "XIAB" in little-endian form so user space can sanity-check the record.
 pub const RUNTIME_ABI_MAGIC: u32 = 0x4241_4958;
@@ -101,17 +102,25 @@ pub const RUNTIME_ABI_INFO_RECORD_SIZE_OFFSET: usize = offset_of!(RuntimeAbiInfo
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        stable_runtime_abi_feature_flags, RuntimeAbiInfo, RUNTIME_ABI_FEATURE_EXCEPTION_HANDLERS,
-        RUNTIME_ABI_FEATURE_LAUNCH_METADATA, RUNTIME_ABI_FEATURE_PROCESS_SIGNALS,
-        RUNTIME_ABI_FEATURE_TCP_CONNECT, RUNTIME_ABI_FEATURE_WAIT_PROCESS,
-        RUNTIME_ABI_INFO_FEATURE_FLAGS_OFFSET, RUNTIME_ABI_INFO_MAGIC_OFFSET,
-        RUNTIME_ABI_INFO_MAJOR_OFFSET, RUNTIME_ABI_INFO_MINOR_OFFSET,
-        RUNTIME_ABI_INFO_RECORD_SIZE_OFFSET, RUNTIME_ABI_INFO_SIZE,
-        RUNTIME_ABI_INFO_SYSCALL_ABI_MAJOR_OFFSET, RUNTIME_ABI_INFO_SYSCALL_ABI_MINOR_OFFSET,
-        RUNTIME_ABI_INFO_SYSCALL_COUNT_OFFSET, RUNTIME_ABI_MAGIC, RUNTIME_ABI_MAJOR,
-        RUNTIME_ABI_MINOR,
-    };
+    use super::stable_runtime_abi_feature_flags;
+    use super::RuntimeAbiInfo;
+    use super::RUNTIME_ABI_FEATURE_EXCEPTION_HANDLERS;
+    use super::RUNTIME_ABI_FEATURE_LAUNCH_METADATA;
+    use super::RUNTIME_ABI_FEATURE_PROCESS_SIGNALS;
+    use super::RUNTIME_ABI_FEATURE_TCP_CONNECT;
+    use super::RUNTIME_ABI_FEATURE_WAIT_PROCESS;
+    use super::RUNTIME_ABI_INFO_FEATURE_FLAGS_OFFSET;
+    use super::RUNTIME_ABI_INFO_MAGIC_OFFSET;
+    use super::RUNTIME_ABI_INFO_MAJOR_OFFSET;
+    use super::RUNTIME_ABI_INFO_MINOR_OFFSET;
+    use super::RUNTIME_ABI_INFO_RECORD_SIZE_OFFSET;
+    use super::RUNTIME_ABI_INFO_SIZE;
+    use super::RUNTIME_ABI_INFO_SYSCALL_ABI_MAJOR_OFFSET;
+    use super::RUNTIME_ABI_INFO_SYSCALL_ABI_MINOR_OFFSET;
+    use super::RUNTIME_ABI_INFO_SYSCALL_COUNT_OFFSET;
+    use super::RUNTIME_ABI_MAGIC;
+    use super::RUNTIME_ABI_MAJOR;
+    use super::RUNTIME_ABI_MINOR;
 
     #[test]
     fn runtime_abi_feature_masks_are_stable() {

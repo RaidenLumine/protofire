@@ -8,21 +8,43 @@ use alloc::vec::Vec;
 use crate::kernel::network::internet::ipv4::Ipv4Addr;
 use crate::kernel::network::internet::ipv6::Ipv6Addr;
 use crate::kernel::network::stack::NetworkStack;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::ecn::{TCP_FLAG_CWR, TCP_FLAG_ECE};
-use super::segment::{
-    ack_options_with_sack, advance_timestamp, build_tcp_segment, build_timestamp_option,
-    has_sack_permitted, parse_mss_option, parse_sack_option, parse_tcp_header,
-    parse_timestamp_option, parse_window_scale_option, send_tcp_segment, timestamped_options,
-};
+use super::ecn::TCP_FLAG_CWR;
+use super::ecn::TCP_FLAG_ECE;
+use super::segment::ack_options_with_sack;
+use super::segment::advance_timestamp;
+use super::segment::build_tcp_segment;
+use super::segment::build_timestamp_option;
+use super::segment::has_sack_permitted;
+use super::segment::parse_mss_option;
+use super::segment::parse_sack_option;
+use super::segment::parse_tcp_header;
+use super::segment::parse_timestamp_option;
+use super::segment::parse_window_scale_option;
+use super::segment::send_tcp_segment;
+use super::segment::timestamped_options;
 use super::table::TcpConnectionTable;
-use super::types::{
-    advertised_mss_v4, build_mss_option, simple_initial_seq, TcpConnectionState, TcpHeader,
-    TcpState, DEFAULT_MSS, MAX_BACKOFF_MULTIPLIER, MAX_RECV_BUFFER, MAX_RETRIES, RTO_BASE_TICKS,
-    SACK_PERMITTED_OPTION_BYTES, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_PSH, TCP_FLAG_RST,
-    TCP_FLAG_SYN, TIME_WAIT_TICKS, WINDOW_SCALE_OPTION_BYTES,
-};
+use super::types::advertised_mss_v4;
+use super::types::build_mss_option;
+use super::types::simple_initial_seq;
+use super::types::TcpConnectionState;
+use super::types::TcpHeader;
+use super::types::TcpState;
+use super::types::DEFAULT_MSS;
+use super::types::MAX_BACKOFF_MULTIPLIER;
+use super::types::MAX_RECV_BUFFER;
+use super::types::MAX_RETRIES;
+use super::types::RTO_BASE_TICKS;
+use super::types::SACK_PERMITTED_OPTION_BYTES;
+use super::types::TCP_FLAG_ACK;
+use super::types::TCP_FLAG_FIN;
+use super::types::TCP_FLAG_PSH;
+use super::types::TCP_FLAG_RST;
+use super::types::TCP_FLAG_SYN;
+use super::types::TIME_WAIT_TICKS;
+use super::types::WINDOW_SCALE_OPTION_BYTES;
 
 /// Connect timeout in ticks (3 seconds at 100 Hz).
 const CONNECT_TIMEOUT_TICKS: u64 = 300;

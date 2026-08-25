@@ -8,22 +8,29 @@ use alloc::sync::Arc;
 use crate::kernel::process::SecurityToken;
 use crate::Result;
 
-use super::super::vfs::{
-    Metadata, MetadataAccessQueryContext, NodeKind, SecurityDescriptor,
-    SecurityDescriptorMutationSupport, SecurityDescriptorUpdate, VNode,
-};
+use super::super::vfs::Metadata;
+use super::super::vfs::MetadataAccessQueryContext;
+use super::super::vfs::NodeKind;
+use super::super::vfs::SecurityDescriptor;
+use super::super::vfs::SecurityDescriptorMutationSupport;
+use super::super::vfs::SecurityDescriptorUpdate;
+use super::super::vfs::VNode;
 use super::super::FileSystem;
-use super::super::{ACCESS_EXECUTE_BIT, ACCESS_READ_BIT, ACCESS_WRITE_BIT};
-use super::access_helpers::{
-    mount_allows_write_for_security_token, open_requires_mount_write_access,
-    path_write_access_visible_to_security_token, required_open_access,
-};
+use super::super::ACCESS_EXECUTE_BIT;
+use super::super::ACCESS_READ_BIT;
+use super::super::ACCESS_WRITE_BIT;
+use super::access_helpers::mount_allows_write_for_security_token;
+use super::access_helpers::open_requires_mount_write_access;
+use super::access_helpers::path_write_access_visible_to_security_token;
+use super::access_helpers::required_open_access;
 use super::path_helpers::parent_normalized_path;
-use super::security_helpers::{
-    default_security_descriptor_for_path, require_directory_kind, update_changes_ownership,
-};
+use super::security_helpers::default_security_descriptor_for_path;
+use super::security_helpers::require_directory_kind;
+use super::security_helpers::update_changes_ownership;
 use super::types::MountPoint;
-use super::types::{PermissionMutationScope, ResolvedMountEntry, SecurityAttachable};
+use super::types::PermissionMutationScope;
+use super::types::ResolvedMountEntry;
+use super::types::SecurityAttachable;
 
 impl FileSystem {
     pub(crate) fn with_default_security<T: SecurityAttachable>(

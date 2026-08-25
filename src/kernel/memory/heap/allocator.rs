@@ -3,23 +3,40 @@
 //! `KernelGlobalAllocator` — the core TLSF-based kernel heap allocator with
 //! exponential-backoff spinlock and `GlobalAlloc` trait implementation.
 
-use core::alloc::{GlobalAlloc, Layout};
+use core::alloc::GlobalAlloc;
+use core::alloc::Layout;
 use core::cell::UnsafeCell;
 use core::hint::spin_loop;
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use crate::arch;
 use crate::kernel::memory::alloc_profiler::AllocProfiler;
 
+use super::tlsf::align_up;
+use super::tlsf::block_clear_used;
+use super::tlsf::block_is_used;
+use super::tlsf::block_set_prev_phys;
+use super::tlsf::block_set_prev_phys_of_next;
+use super::tlsf::block_set_size;
+use super::tlsf::block_set_used;
+use super::tlsf::block_size;
+use super::tlsf::coalesce;
+use super::tlsf::find_suitable_block;
+use super::tlsf::insert_free_block;
+use super::tlsf::mapping;
+use super::tlsf::remove_free_block;
 #[cfg(debug_assertions)]
 use super::tlsf::scan_free_lists;
-use super::tlsf::{
-    align_up, block_clear_used, block_is_used, block_set_prev_phys, block_set_prev_phys_of_next,
-    block_set_size, block_set_used, block_size, coalesce, find_suitable_block, insert_free_block,
-    mapping, remove_free_block, AllocatorState, HEADER_SIZE, HEAP_BLOCK_ALIGNMENT, KERNEL_HEAP,
-    KERNEL_HEAP_SIZE, MIN_FREE_BLOCK, SL_COUNT, SL_INDEX_LOG2,
-};
+use super::tlsf::AllocatorState;
+use super::tlsf::HEADER_SIZE;
+use super::tlsf::HEAP_BLOCK_ALIGNMENT;
+use super::tlsf::KERNEL_HEAP;
+use super::tlsf::KERNEL_HEAP_SIZE;
+use super::tlsf::MIN_FREE_BLOCK;
+use super::tlsf::SL_COUNT;
+use super::tlsf::SL_INDEX_LOG2;
 
 pub struct KernelGlobalAllocator {
     pub(crate) state: UnsafeCell<AllocatorState>,

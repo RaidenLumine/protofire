@@ -5,7 +5,8 @@
 //! All functions accept state explicitly via parameters rather than accessing
 //! global statics, making them usable in both ring0 (kernel) and ring3.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 /// Expand `$VAR` and `${VAR}` references in the command line.

@@ -2,12 +2,12 @@
 //!
 //! Manual/auto-reset event primitive for signal-and-wake synchronization.
 
-use crate::kernel::process::{Scheduler, ThreadWaitOutcome};
+use crate::kernel::process::Scheduler;
+use crate::kernel::process::ThreadWaitOutcome;
 
-use super::{
-    wait::{plan_timed_wait, TimedWaitPlan},
-    WaitQueue,
-};
+use super::wait::plan_timed_wait;
+use super::wait::TimedWaitPlan;
+use super::WaitQueue;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventMode {

@@ -4,7 +4,8 @@
 
 use core::arch::asm;
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use super::port::Port;
 use crate::arch::interrupt_controller;

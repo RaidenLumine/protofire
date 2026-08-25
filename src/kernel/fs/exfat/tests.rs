@@ -15,18 +15,37 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::block::{BlockDevice, MemoryBlockDevice};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::MemoryBlockDevice;
 use crate::kernel::fs::vfs::FileSystem as VfsFileSystem;
 use crate::kernel::fs::NodeKind;
 
-use super::types::{
-    write_u16_le, write_u32_le, write_u64_le, BOOT_SIGNATURE_OFFSET, B_BYTES_PER_SECTOR_SHIFT,
-    B_CHECKSUM_OFFSET, B_CHECKSUM_SECTOR, B_CLUSTER_COUNT, B_CLUSTER_HEAP_OFFSET, B_FAT_LENGTH,
-    B_FAT_OFFSET, B_FS_REVISION, B_NUM_FATS, B_OEM_NAME, B_ROOT_DIR_CLUSTER,
-    B_SECTORS_PER_CLUSTER_SHIFT, B_VOLUME_FLAGS, B_VOLUME_LENGTH, B_VOLUME_SERIAL,
-    EXFAT_ENTRY_BITMAP, EXFAT_ENTRY_STREAM, EXFAT_ENTRY_UPCASE, FIRST_DATA_CLUSTER, S_DATA_LEN,
-    S_FIRST_CLUSTER, S_VALID_DATA_LEN,
-};
+use super::types::write_u16_le;
+use super::types::write_u32_le;
+use super::types::write_u64_le;
+use super::types::BOOT_SIGNATURE_OFFSET;
+use super::types::B_BYTES_PER_SECTOR_SHIFT;
+use super::types::B_CHECKSUM_OFFSET;
+use super::types::B_CHECKSUM_SECTOR;
+use super::types::B_CLUSTER_COUNT;
+use super::types::B_CLUSTER_HEAP_OFFSET;
+use super::types::B_FAT_LENGTH;
+use super::types::B_FAT_OFFSET;
+use super::types::B_FS_REVISION;
+use super::types::B_NUM_FATS;
+use super::types::B_OEM_NAME;
+use super::types::B_ROOT_DIR_CLUSTER;
+use super::types::B_SECTORS_PER_CLUSTER_SHIFT;
+use super::types::B_VOLUME_FLAGS;
+use super::types::B_VOLUME_LENGTH;
+use super::types::B_VOLUME_SERIAL;
+use super::types::EXFAT_ENTRY_BITMAP;
+use super::types::EXFAT_ENTRY_STREAM;
+use super::types::EXFAT_ENTRY_UPCASE;
+use super::types::FIRST_DATA_CLUSTER;
+use super::types::S_DATA_LEN;
+use super::types::S_FIRST_CLUSTER;
+use super::types::S_VALID_DATA_LEN;
 use super::ExfatVolume;
 
 const BYTES_PER_SECTOR: usize = 512;

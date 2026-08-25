@@ -15,11 +15,18 @@ use alloc::vec::Vec;
 use crate::kernel::fs::block::BlockDevice;
 use crate::Error;
 
+use super::types::be32;
+use super::types::be64;
+use super::types::parse_block_dir;
+use super::types::parse_btree_records;
+use super::types::parse_data_entry_at;
+use super::types::BtreeBlock;
+use super::types::BtreeRecord;
+use super::types::DirEntry;
 use super::types::Extent;
-use super::types::{
-    be32, be64, parse_block_dir, parse_btree_records, parse_data_entry_at, BtreeBlock, BtreeRecord,
-    DirEntry, XFS_DA_NODE_MAGIC, XFS_DIR2_LEAF1_MAGIC, XFS_DIR2_LEAFN_MAGIC,
-};
+use super::types::XFS_DA_NODE_MAGIC;
+use super::types::XFS_DIR2_LEAF1_MAGIC;
+use super::types::XFS_DIR2_LEAFN_MAGIC;
 
 /// Maximum B+tree depth to guard against infinite loops on corrupted metadata.
 const XFS_BTREE_MAX_DEPTH: usize = 8;

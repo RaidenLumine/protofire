@@ -4,15 +4,22 @@
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+#[cfg(not(test))]
+use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicU32;
 #[cfg(not(test))]
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::Ordering;
 #[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 
-use super::super::{Context, ContextCell, THREAD_PRIORITY_COUNT};
+use super::super::Context;
+use super::super::ContextCell;
+use super::super::THREAD_PRIORITY_COUNT;
 use super::clear_current_scheduler_ptr_if_matches;
-use super::types::{SchedulerHotspotStats, SchedulerStats};
+use super::types::SchedulerHotspotStats;
+use super::types::SchedulerStats;
 use super::Scheduler;
 use crate::kernel::sync::Mutex;
 

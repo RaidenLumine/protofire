@@ -3,12 +3,18 @@
 //! Thread object state machine, user-context handling, and exception-delivery
 //! metadata.
 
-use ::core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8};
+use ::core::sync::atomic::AtomicBool;
+use ::core::sync::atomic::AtomicU32;
+use ::core::sync::atomic::AtomicU64;
+use ::core::sync::atomic::AtomicU8;
 use alloc::sync::Arc;
 
-use crate::kernel::sync::{Event, Mutex};
+use crate::kernel::sync::Event;
+use crate::kernel::sync::Mutex;
 
-use super::{ContextCell, Process, TerminationReason};
+use super::ContextCell;
+use super::Process;
+use super::TerminationReason;
 
 pub(crate) mod constants;
 pub(crate) mod kernel_stack;
@@ -31,9 +37,13 @@ pub(crate) mod user_runtime;
 // ── Private imports for Thread struct fields (not in public re-exports) ─
 
 #[cfg(any(target_arch = "aarch64", test))]
-use arch_aarch64::{AArch64PendingExceptionFrameStack, AARCH64_EXCEPTION_VECTOR_COUNT};
+use arch_aarch64::AArch64PendingExceptionFrameStack;
+#[cfg(any(target_arch = "aarch64", test))]
+use arch_aarch64::AARCH64_EXCEPTION_VECTOR_COUNT;
 #[cfg(target_arch = "x86_64")]
-use arch_x86_64::{X86_64PendingExceptionFrameStack, X86_64_EXCEPTION_VECTOR_COUNT};
+use arch_x86_64::X86_64PendingExceptionFrameStack;
+#[cfg(target_arch = "x86_64")]
+use arch_x86_64::X86_64_EXCEPTION_VECTOR_COUNT;
 
 use kernel_stack::KernelStack;
 
@@ -130,43 +140,78 @@ pub struct Thread {
 // ── Public re-exports ───────────────────────────────────────────────────
 
 pub use constants::ThreadId;
-pub use types::{
-    ThreadPriority, ThreadSchedPolicy, ThreadSchedStats, ThreadState, ThreadSummary,
-    ThreadWaitOutcome, UserThreadStart, THREAD_PRIORITY_COUNT,
-};
+pub use types::ThreadPriority;
+pub use types::ThreadSchedPolicy;
+pub use types::ThreadSchedStats;
+pub use types::ThreadState;
+pub use types::ThreadSummary;
+pub use types::ThreadWaitOutcome;
+pub use types::UserThreadStart;
+pub use types::THREAD_PRIORITY_COUNT;
 
 #[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::{
-    AArch64UserExceptionFrame, AArch64UserExceptionHandlerRegistration, AArch64UserThreadContext,
-    AARCH64_EXCEPTION_DATA_ABORT_VECTOR, AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR,
-    AARCH64_PENDING_USER_EXCEPTION_FRAME_CAPACITY,
-    AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED, AARCH64_USER_EXCEPTION_HANDLER_FLAG_NONE,
-    AARCH64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT,
-    AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK,
-};
+pub use arch_aarch64::AArch64UserExceptionFrame;
+#[cfg(any(target_arch = "aarch64", test))]
+pub use arch_aarch64::AArch64UserExceptionHandlerRegistration;
+#[cfg(any(target_arch = "aarch64", test))]
+pub use arch_aarch64::AArch64UserThreadContext;
+#[cfg(any(target_arch = "aarch64", test))]
+pub use arch_aarch64::AARCH64_EXCEPTION_DATA_ABORT_VECTOR;
+#[cfg(any(target_arch = "aarch64", test))]
+pub use arch_aarch64::AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR;
+#[cfg(any(target_arch = "aarch64", test))]
+pub use arch_aarch64::AARCH64_PENDING_USER_EXCEPTION_FRAME_CAPACITY;
+#[cfg(any(target_arch = "aarch64", test))]
+pub use arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+#[cfg(any(target_arch = "aarch64", test))]
+pub use arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_NONE;
+#[cfg(any(target_arch = "aarch64", test))]
+pub use arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
+#[cfg(any(target_arch = "aarch64", test))]
+pub use arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 
 #[cfg(any(target_arch = "riscv64", test))]
 pub use arch_riscv64::RiscV64UserThreadContext;
 
 #[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::{
-    X86_64UserExceptionFrame, X86_64UserExceptionHandlerRegistration, X86_64UserThreadContext,
-    X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR, X86_64_EXCEPTION_INVALID_OPCODE_VECTOR,
-    X86_64_EXCEPTION_PAGE_FAULT_VECTOR, X86_64_PENDING_USER_EXCEPTION_FRAME_CAPACITY,
-    X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED, X86_64_USER_EXCEPTION_HANDLER_FLAG_NONE,
-    X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT,
-    X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK,
-};
+pub use arch_x86_64::X86_64UserExceptionFrame;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::X86_64UserExceptionHandlerRegistration;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::X86_64UserThreadContext;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::X86_64_EXCEPTION_INVALID_OPCODE_VECTOR;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::X86_64_EXCEPTION_PAGE_FAULT_VECTOR;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::X86_64_PENDING_USER_EXCEPTION_FRAME_CAPACITY;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_NONE;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 
 // ── crate-internal re-exports ───────────────────────────────────────────
 
 #[allow(unused_imports)]
 pub(crate) use lifecycle::*;
 #[allow(unused_imports)]
-pub(crate) use types::{is_canonical_user_address, ThreadExecutionState, ThreadUserRuntimeState};
+pub(crate) use types::is_canonical_user_address;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 #[allow(unused_imports)]
-pub(crate) use types::{PendingExceptionFrameStack, UserPendingExceptionFrame};
+pub(crate) use types::PendingExceptionFrameStack;
+#[allow(unused_imports)]
+pub(crate) use types::ThreadExecutionState;
+#[allow(unused_imports)]
+pub(crate) use types::ThreadUserRuntimeState;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+#[allow(unused_imports)]
+pub(crate) use types::UserPendingExceptionFrame;
 
 #[allow(unused_imports)]
 pub(crate) use constants::USER_THREAD_STACK_ALIGNMENT;

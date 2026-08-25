@@ -8,17 +8,25 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::super::block::{BlockDevice, DeviceHealth, BLOCK_SIZE};
-use super::super::block_cache::{BlockCache, CacheStats};
-use super::super::filesystem::profiler::{FsProfiler, FsProfilerSnapshot};
-use super::super::vfs::{NodeKind, SecurityDescriptorMutationSupport};
+use super::super::block::BlockDevice;
+use super::super::block::DeviceHealth;
+use super::super::block::BLOCK_SIZE;
+use super::super::block_cache::BlockCache;
+use super::super::block_cache::CacheStats;
+use super::super::filesystem::profiler::FsProfiler;
+use super::super::filesystem::profiler::FsProfilerSnapshot;
+use super::super::vfs::NodeKind;
+use super::super::vfs::SecurityDescriptorMutationSupport;
 
 use super::constants::*;
 use super::free_fns::*;
 use super::types::*;
-use super::{SimpleFs, SimpleFsState, UndoLog};
+use super::SimpleFs;
+use super::SimpleFsState;
+use super::UndoLog;
 
 impl SimpleFs {
     /// Mount a SimpleFS image from `device`, exposing the read/write API used

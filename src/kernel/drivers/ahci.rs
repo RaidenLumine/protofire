@@ -242,14 +242,16 @@ const _: () = assert!(core::mem::size_of::<H2dRegisterFis>() == 20);
 // Driver integration
 // ---------------------------------------------------------------------------
 
-use crate::kernel::drivers::{Driver, DriverCategory};
+use crate::kernel::drivers::Driver;
+use crate::kernel::drivers::DriverCategory;
 use crate::kernel::fs::block::BlockDevice;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::kernel::memory::DmaBuffer;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::kernel::sync::Mutex;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 static AHCI_PROBED: AtomicBool = AtomicBool::new(false);
 
@@ -346,7 +348,8 @@ impl AhciPort {
     /// PCI BAR5, and the port must be implemented and have a device attached.
     unsafe fn init(bar5_phys: u64, port: u8) -> crate::Result<Self> {
         use crate::arch::mmu::map_device_mmio;
-        use core::ptr::{read_volatile, write_volatile};
+        use core::ptr::read_volatile;
+        use core::ptr::write_volatile;
 
         // AHCI BAR5 is typically 8 KiB–64 KiB; we map the full BAR for the
         // HBA registers and up to 32 port register blocks (32 × 0x80 = 0x1000).
@@ -491,7 +494,8 @@ impl AhciPort {
     /// Send IDENTIFY DEVICE to the attached SATA device and parse the
     /// response into `block_count` and `model`.
     unsafe fn identify_device(&mut self) -> crate::Result<()> {
-        use core::ptr::{read_volatile, write_volatile};
+        use core::ptr::read_volatile;
+        use core::ptr::write_volatile;
 
         // Use the IO bounce buffer as the 512-byte IDENTIFY data destination.
         let identify_buf = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
@@ -642,7 +646,8 @@ impl AhciPort {
         is_write: bool,
         buf_phys: u64,
     ) -> crate::Result<()> {
-        use core::ptr::{read_volatile, write_volatile};
+        use core::ptr::read_volatile;
+        use core::ptr::write_volatile;
 
         let ct_phys = self.ct.phys_addr() as u64;
         let cmd_slot = 0; // Single slot for Phase 1.

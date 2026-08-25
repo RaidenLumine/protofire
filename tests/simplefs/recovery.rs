@@ -5,15 +5,24 @@
 
 mod support;
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::sync::Arc;
+use std::sync::Mutex;
 
-use protofire::kernel::fs::block::{BlockDevice, MemoryBlockDevice, BLOCK_SIZE};
-use protofire::kernel::fs::simplefs::{SimpleFs, SimpleFsVolume};
-use protofire::kernel::fs::vfs::{FileSystem as VfsFileSystem, VolumeCheckReport};
+use protofire::kernel::fs::block::BlockDevice;
+use protofire::kernel::fs::block::MemoryBlockDevice;
+use protofire::kernel::fs::block::BLOCK_SIZE;
+use protofire::kernel::fs::simplefs::SimpleFs;
+use protofire::kernel::fs::simplefs::SimpleFsVolume;
+use protofire::kernel::fs::vfs::FileSystem as VfsFileSystem;
+use protofire::kernel::fs::vfs::VolumeCheckReport;
 use protofire::Error;
 
-use support::{build_seed_image, build_stable_anchor_device, read_all, read_u32_le};
+use support::build_seed_image;
+use support::build_stable_anchor_device;
+use support::read_all;
+use support::read_u32_le;
 
 const SUPERBLOCK_ACTIVE_INODE_TABLE_OFFSET: usize = 24;
 const SUPERBLOCK_ACTIVE_DIRENT_TABLE_OFFSET: usize = 28;

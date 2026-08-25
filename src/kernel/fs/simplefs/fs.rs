@@ -7,13 +7,18 @@
 //! `fs.rs`; the current tree splits the original file across `path.rs`,
 //! `transaction.rs`, `dir_ops.rs`, `vfs.rs`, and this file.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::super::vfs::{Metadata, NodeKind};
-use super::types::{OnDiskDirEntry, OnDiskInode};
-use super::{SimpleFs, SimpleFsState};
+use super::super::vfs::Metadata;
+use super::super::vfs::NodeKind;
+use super::types::OnDiskDirEntry;
+use super::types::OnDiskInode;
+use super::SimpleFs;
+use super::SimpleFsState;
 
 impl SimpleFs {
     /// Bump the live open-handle count for `inode_index`.  Every `SimpleVNode`

@@ -2,8 +2,10 @@
 //!
 //! Syscall number routing table and per-syscall handler dispatch glue.
 
-use crate::abi::{process as process_abi, syscall as syscall_abi};
-use crate::{Error, Result};
+use crate::abi::process as process_abi;
+use crate::abi::syscall as syscall_abi;
+use crate::Error;
+use crate::Result;
 
 #[path = "exception_control.rs"]
 mod exception_control;
@@ -1178,20 +1180,28 @@ mod tests {
 
     use crate::arch::mmu::materialize_user_address_space;
     use crate::kernel::memory::paging::PagePermissions;
-    use crate::kernel::process::{Process, ProcessUserAddressSpace};
+    use crate::kernel::process::Process;
+    use crate::kernel::process::ProcessUserAddressSpace;
     use crate::kernel::sync::Mutex as KernelMutex;
-    use crate::user::program::{
-        UserImageLoadPlan, UserImageSegmentPlan, USER_EXCEPTION_STACK_GUARD_SIZE,
-        USER_EXCEPTION_STACK_SIZE, USER_IMAGE_STACK_GAP, USER_PAGE_SIZE, USER_STACK_GUARD_SIZE,
-        USER_STACK_SIZE, X86_64_USER_STACK_TOP,
-    };
+    use crate::user::program::UserImageLoadPlan;
+    use crate::user::program::UserImageSegmentPlan;
+    use crate::user::program::USER_EXCEPTION_STACK_GUARD_SIZE;
+    use crate::user::program::USER_EXCEPTION_STACK_SIZE;
+    use crate::user::program::USER_IMAGE_STACK_GAP;
+    use crate::user::program::USER_PAGE_SIZE;
+    use crate::user::program::USER_STACK_GUARD_SIZE;
+    use crate::user::program::USER_STACK_SIZE;
+    use crate::user::program::X86_64_USER_STACK_TOP;
     use crate::Error;
 
-    use super::user_memory::{copy_user_bytes, validate_user_mapping};
-    use super::{
-        validate_known_flags, validate_zeroed_args, SyscallContext, SyscallNumber, Table,
-        PUBLIC_SYSCALL_COUNT,
-    };
+    use super::user_memory::copy_user_bytes;
+    use super::user_memory::validate_user_mapping;
+    use super::validate_known_flags;
+    use super::validate_zeroed_args;
+    use super::SyscallContext;
+    use super::SyscallNumber;
+    use super::Table;
+    use super::PUBLIC_SYSCALL_COUNT;
 
     #[derive(Clone)]
     struct ValidationFixture {

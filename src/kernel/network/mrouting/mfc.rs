@@ -9,7 +9,8 @@ use alloc::vec::Vec;
 
 use crate::abi::mrt as mrt_abi;
 use crate::kernel::network::internet::ip::IpAddress;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// One outgoing-VIF of an MFC entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

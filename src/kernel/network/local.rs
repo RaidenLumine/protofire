@@ -20,12 +20,14 @@ use alloc::collections::BTreeMap;
 use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::Ordering;
 
 use crate::kernel::fs::pipe;
 use crate::kernel::fs::vfs::VNode;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 /// Maximum pending connections per local socket.
 const LOCAL_SOCKET_BACKLOG: usize = 16;

@@ -14,13 +14,19 @@ use alloc::vec::Vec;
 
 use crate::kernel::fs::FileSystem;
 use crate::kernel::memory::paging::PagePermissions;
-use crate::kernel::process::{
-    LaunchContext, Process, ProcessAddressSpaceSummary, ProcessUserAddressSpace, Thread,
-    UserAddressSpaceSummary, UserThreadStart,
-};
-use crate::{Error, Result};
+use crate::kernel::process::LaunchContext;
+use crate::kernel::process::Process;
+use crate::kernel::process::ProcessAddressSpaceSummary;
+use crate::kernel::process::ProcessUserAddressSpace;
+use crate::kernel::process::Thread;
+use crate::kernel::process::UserAddressSpaceSummary;
+use crate::kernel::process::UserThreadStart;
+use crate::Error;
+use crate::Result;
 
-use super::catalog::{self, read_program_image, SpawnProcessOverrides};
+use super::catalog::read_program_image;
+use super::catalog::SpawnProcessOverrides;
+use super::catalog::{self};
 use super::constants;
 #[cfg(any(feature = "demo-disk", test))]
 use super::demo_runtime::resolve_program_proxy;

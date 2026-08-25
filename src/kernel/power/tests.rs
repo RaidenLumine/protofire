@@ -2,7 +2,8 @@
 //!
 //! Host-side unit tests for the power-management subsystem.
 
-use super::governors::{calculate_target, GovernorType};
+use super::governors::calculate_target;
+use super::governors::GovernorType;
 
 /// The power subsystem is inert without an architecture driver: the default
 /// governor is still installed, but policy updates never reach the hardware.

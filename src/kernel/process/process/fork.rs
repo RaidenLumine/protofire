@@ -10,7 +10,8 @@ use crate::kernel::device;
 use crate::kernel::user::resolve_home_dir;
 #[allow(unused_imports)]
 use crate::println;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::constants::*;
 use super::types::*;
@@ -194,7 +195,8 @@ impl Process {
         memory: &mut crate::kernel::memory::MemoryManager,
         child_pid: u32,
     ) -> Result<Arc<Process>> {
-        use crate::kernel::memory::paging::{MappingKind, PagePermissions};
+        use crate::kernel::memory::paging::MappingKind;
+        use crate::kernel::memory::paging::PagePermissions;
 
         self.ensure_mutable()?;
 

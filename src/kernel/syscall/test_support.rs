@@ -11,11 +11,16 @@
 //! holder panics, the guard's `Drop` releases the lock and the next test
 //! proceeds normally.
 
-use alloc::{boxed::Box, sync::Arc, vec};
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use alloc::vec;
 
-use crate::kernel::process::{LaunchContext, Process, Scheduler};
+use crate::kernel::process::LaunchContext;
+use crate::kernel::process::Process;
+use crate::kernel::process::Scheduler;
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 static TEST_LOCK: AtomicBool = AtomicBool::new(false);
 

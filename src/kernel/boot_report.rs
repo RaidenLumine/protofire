@@ -4,11 +4,13 @@
 //! and recovery summary captured during `Kernel::init()` and queryable via the
 //! `SystemInfo` syscall after boot completes.
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
-use crate::abi::diagnostic::{
-    BootReportRecord, SubsystemInitRecord, BOOT_REPORT_SUBSYSTEM_NAME_MAX,
-};
+use crate::abi::diagnostic::BootReportRecord;
+use crate::abi::diagnostic::SubsystemInitRecord;
+use crate::abi::diagnostic::BOOT_REPORT_SUBSYSTEM_NAME_MAX;
 use crate::kernel::sync::Mutex;
 
 /// Boot-phase stage indices (matching `BootStage` in main.rs).

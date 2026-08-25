@@ -5,7 +5,8 @@
 //! All functions accept state explicitly via parameters rather than accessing
 //! global statics.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 /// Find the longest common prefix of a list of strings.

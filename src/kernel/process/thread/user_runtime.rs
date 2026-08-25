@@ -12,10 +12,20 @@ use ::core::sync::atomic::Ordering;
     target_arch = "riscv64",
     test
 ))]
-use crate::{Error, Result};
+use crate::Error;
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    test
+))]
+use crate::Result;
 
 use super::super::ProcessState;
-use super::types::{ThreadExecutionState, ThreadState, ThreadUserRuntimeState, UserThreadStart};
+use super::types::ThreadExecutionState;
+use super::types::ThreadState;
+use super::types::ThreadUserRuntimeState;
+use super::types::UserThreadStart;
 use super::Thread;
 
 impl Thread {

@@ -14,11 +14,15 @@ use alloc::vec::Vec;
 use crate::kernel::network::internet::ipv4::Ipv4Addr;
 use crate::kernel::network::stack::NetworkStack;
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
-use super::types::{
-    ConnKey, SocketOptions, TcpConnectionState, TcpState, EPHEMERAL_PORT_END, EPHEMERAL_PORT_START,
-};
+use super::types::ConnKey;
+use super::types::SocketOptions;
+use super::types::TcpConnectionState;
+use super::types::TcpState;
+use super::types::EPHEMERAL_PORT_END;
+use super::types::EPHEMERAL_PORT_START;
 
 /// Listener state: the listening port, the backlog of half-open / accepted
 /// connections waiting for `accept`, and the configured backlog limit.

@@ -8,18 +8,26 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 
-use crate::kernel::fs::block::{BlockDevice, BLOCK_SIZE};
+use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::fs::block::BLOCK_SIZE;
 use crate::kernel::fs::filesystem::profiler::FsProfilerSnapshot;
 use crate::kernel::fs::unicode;
-use crate::kernel::fs::vfs::{
-    DirectoryEntry, FileSystem as VfsTrait, Metadata, NodeKind, SecurityDescriptor,
-    SecurityDescriptorMutationSupport, VNode, VolumeCheckReport,
-};
-use crate::{Error, Result};
+use crate::kernel::fs::vfs::DirectoryEntry;
+use crate::kernel::fs::vfs::FileSystem as VfsTrait;
+use crate::kernel::fs::vfs::Metadata;
+use crate::kernel::fs::vfs::NodeKind;
+use crate::kernel::fs::vfs::SecurityDescriptor;
+use crate::kernel::fs::vfs::SecurityDescriptorMutationSupport;
+use crate::kernel::fs::vfs::VNode;
+use crate::kernel::fs::vfs::VolumeCheckReport;
+use crate::Error;
+use crate::Result;
 
-use super::fs::{find_entry_set_position, split_path};
+use super::fs::find_entry_set_position;
+use super::fs::split_path;
 use super::types::*;
-use super::{ExfatFs, ExfatVolume};
+use super::ExfatFs;
+use super::ExfatVolume;
 
 // ─── Public volume entry point ─────────────────────────────────────────────
 

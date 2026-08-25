@@ -11,8 +11,10 @@
 
 use std::sync::Mutex as StdMutex;
 
-use protofire::kernel::fs::block::{BlockDevice, BLOCK_SIZE};
-use protofire::{Error, Result};
+use protofire::kernel::fs::block::BlockDevice;
+use protofire::kernel::fs::block::BLOCK_SIZE;
+use protofire::Error;
+use protofire::Result;
 
 // ── Mock USB Controller ─────────────────────────────────────────────────
 

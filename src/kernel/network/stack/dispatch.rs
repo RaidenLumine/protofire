@@ -9,10 +9,15 @@ use crate::kernel::network::internet::icmp;
 use crate::kernel::network::internet::icmpv6;
 use crate::kernel::network::internet::igmp;
 use crate::kernel::network::internet::ip::IpAddress;
-use crate::kernel::network::internet::ipv4::{self, IpProtocol, Ipv4Header};
-use crate::kernel::network::internet::ipv6::{self, Ipv6Header, Ipv6NextHeader};
+use crate::kernel::network::internet::ipv4::IpProtocol;
+use crate::kernel::network::internet::ipv4::Ipv4Header;
+use crate::kernel::network::internet::ipv4::{self};
+use crate::kernel::network::internet::ipv6::Ipv6Header;
+use crate::kernel::network::internet::ipv6::Ipv6NextHeader;
+use crate::kernel::network::internet::ipv6::{self};
 use crate::kernel::network::internet::mld;
-use crate::kernel::network::link::ethernet::{self, EtherType};
+use crate::kernel::network::link::ethernet::EtherType;
+use crate::kernel::network::link::ethernet::{self};
 use crate::kernel::network::mdns;
 use crate::kernel::network::mrouting::pim;
 use crate::kernel::network::net_profiler::NetProfilerSnapshot;
@@ -20,7 +25,8 @@ use crate::kernel::network::ntp;
 use crate::kernel::network::udp;
 #[cfg(not(test))]
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 #[cfg(target_os = "none")]
 use crate::kernel::network::dhcp::LeaseState;
@@ -130,9 +136,9 @@ impl NetworkStack {
             let mut mdns = self.mdns_responder.lock();
             if let Some(mdns_packet) = mdns.tick(tick) {
                 // Send mDNS packet to the link-local multicast group.
-                use crate::kernel::network::internet::ipv4::{
-                    IpProtocol, Ipv4Header, IPV4_DEFAULT_TTL,
-                };
+                use crate::kernel::network::internet::ipv4::IpProtocol;
+                use crate::kernel::network::internet::ipv4::Ipv4Header;
+                use crate::kernel::network::internet::ipv4::IPV4_DEFAULT_TTL;
                 let reply_header = Ipv4Header {
                     total_length: 0,
                     identification: 0,

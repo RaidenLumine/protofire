@@ -3,14 +3,20 @@
 //! Syscall global dispatch entry and installation of active syscall table.
 
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::Ordering;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 pub mod table;
 
 pub use crate::abi::syscall as abi;
-pub use table::{SyscallAction, SyscallContext, SyscallDispatch, SyscallNumber, Table};
+pub use table::SyscallAction;
+pub use table::SyscallContext;
+pub use table::SyscallDispatch;
+pub use table::SyscallNumber;
+pub use table::Table;
 // `user_memory` is declared inside `table` (via `#[path = "memory/user.rs"]`);
 // re-export it here so sibling syscall modules can reach it as
 // `super::user_memory` / `crate::kernel::syscall::user_memory`.
@@ -20,7 +26,8 @@ pub(crate) use table::user_memory;
 // (`validate_known_flags`, launch-flag masks, ...) are reached directly via
 // `super::` from modules that live inside `table`, so they are not re-exported
 // here.
-pub(crate) use table::{runtime, validate_zeroed_args};
+pub(crate) use table::runtime;
+pub(crate) use table::validate_zeroed_args;
 
 static GLOBAL_TABLE: AtomicPtr<Table> = AtomicPtr::new(ptr::null_mut());
 

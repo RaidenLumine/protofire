@@ -9,21 +9,30 @@ use super::super::UserThreadStart;
 #[allow(clippy::module_inception)]
 mod tests {
     use super::super::api::idle_entry;
-    use super::super::queue::{
-        enqueue_ready_thread, has_dispatchable_ready_thread, has_timed_wait_elapsed,
-        process_elapsed_timed_waiter, prune_nondispatchable_ready_threads,
-        remove_timed_waiters_by_identity, requeue_preempted_thread, should_dispatch_ready_thread,
-        should_preempt_for_time_slice, should_requeue_simulated_preempted_thread,
-        take_elapsed_timed_waiters, take_next_dispatchable_thread, take_stale_timed_waiters,
-        thread_has_dispatch_address_space,
-    };
-    use super::super::types::{SchedulerHotspotStats, TimedWaiter};
+    use super::super::queue::enqueue_ready_thread;
+    use super::super::queue::has_dispatchable_ready_thread;
+    use super::super::queue::has_timed_wait_elapsed;
+    use super::super::queue::process_elapsed_timed_waiter;
+    use super::super::queue::prune_nondispatchable_ready_threads;
+    use super::super::queue::remove_timed_waiters_by_identity;
+    use super::super::queue::requeue_preempted_thread;
+    use super::super::queue::should_dispatch_ready_thread;
+    use super::super::queue::should_preempt_for_time_slice;
+    use super::super::queue::should_requeue_simulated_preempted_thread;
+    use super::super::queue::take_elapsed_timed_waiters;
+    use super::super::queue::take_next_dispatchable_thread;
+    use super::super::queue::take_stale_timed_waiters;
+    use super::super::queue::thread_has_dispatch_address_space;
+    use super::super::types::SchedulerHotspotStats;
+    use super::super::types::TimedWaiter;
     use super::super::Scheduler;
     use super::UserThreadStart;
 
-    use super::super::super::{
-        Process, Thread, ThreadPriority, ThreadState, THREAD_PRIORITY_COUNT,
-    };
+    use super::super::super::Process;
+    use super::super::super::Thread;
+    use super::super::super::ThreadPriority;
+    use super::super::super::ThreadState;
+    use super::super::super::THREAD_PRIORITY_COUNT;
     use crate::kernel::process::thread::ThreadSchedPolicy;
     use alloc::collections::VecDeque;
     use alloc::sync::Arc;

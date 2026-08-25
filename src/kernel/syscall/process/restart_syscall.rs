@@ -35,7 +35,9 @@ pub(super) fn restart_syscall(
 #[cfg(test)]
 mod tests {
     use super::restart_syscall;
-    use crate::kernel::syscall::{SyscallContext, SyscallDispatch, SyscallNumber};
+    use crate::kernel::syscall::SyscallContext;
+    use crate::kernel::syscall::SyscallDispatch;
+    use crate::kernel::syscall::SyscallNumber;
 
     #[test]
     fn restart_syscall_is_a_successful_no_op() {

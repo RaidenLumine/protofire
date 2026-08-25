@@ -7,18 +7,24 @@ use alloc::format;
 use alloc::string::ToString;
 use alloc::vec;
 
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 use super::super::block::BLOCK_SIZE;
-use super::super::vfs::{
-    DirectoryEntry, Metadata, NodeKind, SecurityDescriptor, DEFAULT_FILE_MODE, MAX_PERMISSION_MODE,
-    ROOT_GROUP_ID, ROOT_OWNER_ID,
-};
+use super::super::vfs::DirectoryEntry;
+use super::super::vfs::Metadata;
+use super::super::vfs::NodeKind;
+use super::super::vfs::SecurityDescriptor;
+use super::super::vfs::DEFAULT_FILE_MODE;
+use super::super::vfs::MAX_PERMISSION_MODE;
+use super::super::vfs::ROOT_GROUP_ID;
+use super::super::vfs::ROOT_OWNER_ID;
 
 use super::constants::*;
 use super::free_fns::*;
 use super::types::*;
-use super::{SimpleFs, SimpleFsState};
+use super::SimpleFs;
+use super::SimpleFsState;
 
 impl SimpleFs {
     pub(crate) fn create_file(&self, path: &str) -> Result<usize> {

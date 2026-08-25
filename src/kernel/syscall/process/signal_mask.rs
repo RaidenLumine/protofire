@@ -23,7 +23,8 @@ pub(super) fn set_signal_mask(
 mod tests {
     use super::set_signal_mask;
     use crate::abi::process::PROCESS_SIGNAL_KNOWN_FLAGS;
-    use crate::kernel::syscall::{SyscallContext, SyscallNumber};
+    use crate::kernel::syscall::SyscallContext;
+    use crate::kernel::syscall::SyscallNumber;
 
     #[test]
     fn set_signal_mask_rejects_unknown_flags() {

@@ -4,7 +4,9 @@
 //!
 //! All multi-byte integers are little-endian on the wire.
 
-use crate::kernel::fs::fuse::{FuseHeader, FuseOpcode, FuseRequest};
+use crate::kernel::fs::fuse::FuseHeader;
+use crate::kernel::fs::fuse::FuseOpcode;
+use crate::kernel::fs::fuse::FuseRequest;
 use crate::kernel::fs::NodeKind;
 use crate::Result;
 use alloc::string::String;

@@ -6,19 +6,26 @@
 //! (lookup, read_dir, read, write, create, remove, stat, rename, etc.)
 //! into a [`FuseRequest`] dispatched through the [`FuseConnection`].
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::fuse::protocol::{
-    build_request, kind_from_wire, parse_node_info_payload, parse_readdir_entry_payload,
-};
+use crate::kernel::fs::fuse::protocol::build_request;
+use crate::kernel::fs::fuse::protocol::kind_from_wire;
+use crate::kernel::fs::fuse::protocol::parse_node_info_payload;
+use crate::kernel::fs::fuse::protocol::parse_readdir_entry_payload;
+use crate::kernel::fs::fuse::FuseConnection;
+use crate::kernel::fs::fuse::FuseFileSystem;
+use crate::kernel::fs::fuse::FuseOpcode;
 use crate::kernel::fs::fuse::FuseVNode;
-use crate::kernel::fs::fuse::{FuseConnection, FuseFileSystem, FuseOpcode};
-use crate::kernel::fs::vfs::{
-    DirectoryEntry, FileSystem, Metadata, SecurityDescriptor, SecurityDescriptorMutationSupport,
-};
-use crate::{Error, Result};
+use crate::kernel::fs::vfs::DirectoryEntry;
+use crate::kernel::fs::vfs::FileSystem;
+use crate::kernel::fs::vfs::Metadata;
+use crate::kernel::fs::vfs::SecurityDescriptor;
+use crate::kernel::fs::vfs::SecurityDescriptorMutationSupport;
+use crate::Error;
+use crate::Result;
 
 // ── Internal helpers ─────────────────────────────────────────────────────
 

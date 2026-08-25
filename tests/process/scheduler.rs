@@ -3,13 +3,17 @@
 //! Host-side integration tests for scheduling, waits, and synchronization
 //! primitives.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use protofire::arch::x86_64::gdt;
-use protofire::kernel::process::{
-    sleep_current, ProcessState, Scheduler, ThreadWaitOutcome, UserThreadStart,
-};
-use protofire::kernel::sync::{Event, Semaphore};
+use protofire::kernel::process::sleep_current;
+use protofire::kernel::process::ProcessState;
+use protofire::kernel::process::Scheduler;
+use protofire::kernel::process::ThreadWaitOutcome;
+use protofire::kernel::process::UserThreadStart;
+use protofire::kernel::sync::Event;
+use protofire::kernel::sync::Semaphore;
 
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

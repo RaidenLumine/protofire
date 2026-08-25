@@ -18,7 +18,8 @@
 pub mod dccp;
 pub mod dhcp;
 pub mod dns;
-pub use internet::{ipv4, ipv6};
+pub use internet::ipv4;
+pub use internet::ipv6;
 pub mod filter;
 pub mod internet;
 pub mod ipsec;
@@ -49,7 +50,8 @@ use core::time::Duration;
 use crate::abi::net as net_abi;
 #[cfg(not(target_os = "none"))]
 use crate::kernel::sync::Mutex;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
 
 #[cfg(not(target_os = "none"))]
 // Keep timeout conversion aligned with the current 100 Hz scheduler/timer tick.
@@ -1423,7 +1425,9 @@ pub fn recv_raw_packet(handle: RawSocketHandle, buffer: &mut [u8]) -> Result<(us
 mod tests {
     use super::*;
     #[cfg(not(target_os = "none"))]
-    use std::io::{Read, Write};
+    use std::io::Read;
+    #[cfg(not(target_os = "none"))]
+    use std::io::Write;
 
     #[cfg(not(target_os = "none"))]
     #[test]
