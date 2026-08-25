@@ -126,7 +126,7 @@ impl PciLegacyMmioRegion {
     pub fn new(io_base: u16, pci_device_id: u16, vendor_id: u16) -> Self {
         // VirtIO PCI device IDs 0x1000..0x103F map to VirtIO device
         // types 1..64 (VirtIO 0.9.5 §4.1.2.2).
-        let virtio_device_id = if pci_device_id >= 0x1000 && pci_device_id <= 0x103F {
+        let virtio_device_id = if (0x1000..=0x103F).contains(&pci_device_id) {
             (pci_device_id - 0x0FFF) as u32
         } else {
             pci_device_id as u32
