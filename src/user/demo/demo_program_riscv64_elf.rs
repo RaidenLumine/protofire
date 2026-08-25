@@ -1,8 +1,9 @@
 //! src/user/demo/demo_program_riscv64_elf.rs
-#![cfg_attr(test, allow(dead_code))]
+//!
 //! Convenience wrappers that build loadable RISC-V 64 ELF artifacts from the
 //! kernel's raw demo payload sections.  The shared ELF layout logic lives in
 //! `super::elf_builder`.
+#![cfg_attr(test, allow(dead_code))]
 
 pub use super::elf_builder::DemoProgramArtifact;
 use super::elf_builder::{build_artifact_from_payload, build_metadata_only_artifact};

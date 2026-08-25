@@ -1,6 +1,7 @@
 //! src/user/demo/demo_program_aarch64.rs
-#![cfg_attr(test, allow(dead_code))]
+//!
 //! Symbol bridge for the raw AArch64 demo payload section.
+#![cfg_attr(test, allow(dead_code))]
 
 #[cfg(test)]
 const AARCH64_TARGET: &str = "aarch64-unknown-none";

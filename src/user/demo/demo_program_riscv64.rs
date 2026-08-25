@@ -1,6 +1,7 @@
 //! src/user/demo/demo_program_riscv64.rs
-#![cfg_attr(test, allow(dead_code))]
+//!
 //! Symbol bridge for the raw RISC-V 64 demo payload section.
+#![cfg_attr(test, allow(dead_code))]
 
 #[cfg(test)]
 const RISCV64_TARGET: &str = "riscv64gc-unknown-none-elf";

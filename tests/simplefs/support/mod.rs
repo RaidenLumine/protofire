@@ -1,4 +1,6 @@
 //! tests/simplefs/support/mod.rs
+//!
+//! Shared helpers for the SimpleFs integration-test suites.
 use std::sync::Arc;
 
 use protofire::kernel::fs::block::MemoryBlockDevice;

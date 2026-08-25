@@ -1,4 +1,7 @@
 //! src/user/program/loader/arch.rs
+//!
+//! Architecture-specific user-address-space preparation, initial-stack and
+//! thread-start construction, and ELF segment planning.
 use super::*;
 
 use alloc::string::String;
