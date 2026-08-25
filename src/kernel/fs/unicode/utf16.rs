@@ -25,6 +25,8 @@ use alloc::vec::Vec;
 /// # Example
 ///
 /// ```
+/// use protofire::kernel::fs::unicode::utf16::utf16le_code_unit_to_char;
+///
 /// assert_eq!(utf16le_code_unit_to_char(0x0041), 'A');
 /// assert_eq!(utf16le_code_unit_to_char(0x4E2D), '中');
 /// assert_eq!(utf16le_code_unit_to_char(0xD800), '\u{FFFD}'); // surrogate
@@ -45,6 +47,8 @@ pub fn utf16le_code_unit_to_char(cu: u16) -> char {
 /// # Example
 ///
 /// ```
+/// use protofire::kernel::fs::unicode::utf16::utf16le_to_utf8;
+///
 /// assert_eq!(utf16le_to_utf8(&[0x0041]), "A");
 /// assert_eq!(utf16le_to_utf8(&[0x4E2D]), "中");
 /// assert_eq!(utf16le_to_utf8(&[0xD83D, 0xDE00]), "\u{1F600}"); // 😀
@@ -64,6 +68,8 @@ pub fn utf16le_to_utf8(units: &[u16]) -> String {
 /// # Example
 ///
 /// ```
+/// use protofire::kernel::fs::unicode::utf16::utf8_to_utf16le;
+///
 /// assert_eq!(utf8_to_utf16le("A"), vec![0x0041]);
 /// assert_eq!(utf8_to_utf16le("中"), vec![0x4E2D]);
 /// assert_eq!(utf8_to_utf16le("\u{1F600}"), vec![0xD83D, 0xDE00]);

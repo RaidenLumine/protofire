@@ -40,7 +40,7 @@ pub enum OemCodePage {
 /// # Example
 ///
 /// ```
-/// use crate::kernel::fs::unicode::oem::{oem_byte_to_char, OemCodePage};
+/// use protofire::kernel::fs::unicode::oem::{oem_byte_to_char, OemCodePage};
 ///
 /// assert_eq!(oem_byte_to_char(0x41, OemCodePage::Cp437), 'A'); // ASCII
 /// assert_eq!(oem_byte_to_char(0x82, OemCodePage::Cp437), 'é'); // CP437
@@ -73,7 +73,7 @@ pub fn oem_byte_to_char(byte: u8, code_page: OemCodePage) -> char {
 /// # Example
 ///
 /// ```
-/// use crate::kernel::fs::unicode::oem::{char_to_oem_byte, OemCodePage};
+/// use protofire::kernel::fs::unicode::oem::{char_to_oem_byte, OemCodePage};
 ///
 /// assert_eq!(char_to_oem_byte('A', OemCodePage::Cp437), Some(0x41));
 /// assert_eq!(char_to_oem_byte('é', OemCodePage::Cp437), Some(0x82));
@@ -116,7 +116,7 @@ pub fn char_to_oem_byte(ch: char, code_page: OemCodePage) -> Option<u8> {
 /// # Example
 ///
 /// ```
-/// use crate::kernel::fs::unicode::oem::{utf8_to_oem, OemCodePage};
+/// use protofire::kernel::fs::unicode::oem::{utf8_to_oem, OemCodePage};
 ///
 /// assert_eq!(
 ///     utf8_to_oem("Café", OemCodePage::Cp437),

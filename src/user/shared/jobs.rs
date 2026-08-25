@@ -52,9 +52,9 @@ pub struct Job {
 /// Parse a job ID from an argument, stripping an optional `%` prefix.
 ///
 /// ```
-/// assert_eq!(crate::user::shared::jobs::parse_job_id("%5"), 5);
-/// assert_eq!(crate::user::shared::jobs::parse_job_id("5"), 5);
-/// assert_eq!(crate::user::shared::jobs::parse_job_id("abc"), 0);
+/// assert_eq!(protofire::user::shared::jobs::parse_job_id("%5"), 5);
+/// assert_eq!(protofire::user::shared::jobs::parse_job_id("5"), 5);
+/// assert_eq!(protofire::user::shared::jobs::parse_job_id("abc"), 0);
 /// ```
 pub fn parse_job_id(arg: &str) -> u32 {
     let s = arg.strip_prefix('%').unwrap_or(arg);
