@@ -3,8 +3,8 @@
 //! FUSE (Filesystem in Userspace) shell command and RAM FS daemon.
 //!
 //! Provides the `fuse` shell command:
-//! - `fuse mount <path> <name>` — mounts a FUSE filesystem at `<path>` and
-//!   runs a built-in RAM FS daemon that handles all VFS operations.
+//! - `fuse mount <path> <name>` — mounts a FUSE filesystem at `<path>` and runs
+//!   a built-in RAM FS daemon that handles all VFS operations.
 //! - `fuse umount <path>` — unmounts a FUSE filesystem.
 //!
 //! The daemon implements a simple in-memory filesystem using a `BTreeMap` of
@@ -162,10 +162,10 @@ impl FuseDaemon {
         let inode = self.inodes.get(&ino).expect("inode must exist");
         let name = ""; // Name is not stored in the inode — the caller fills it.
         let mut buf = Vec::with_capacity(24 + name.len());
-        buf.extend_from_slice(&ino.to_le_bytes());       // ino (8)
+        buf.extend_from_slice(&ino.to_le_bytes()); // ino (8)
         buf.extend_from_slice(&inode.kind.to_le_bytes()); // kind (4)
         buf.extend_from_slice(&(inode.data.len() as u64).to_le_bytes()); // size (8)
-        buf.extend_from_slice(&0u32.to_le_bytes());       // name_len (4)
+        buf.extend_from_slice(&0u32.to_le_bytes()); // name_len (4)
         buf
     }
 
@@ -188,10 +188,10 @@ impl FuseDaemon {
     /// Payload: component name (UTF-8 bytes)
     /// Response: NodeInfo of the child, or ERROR if not found.
     fn handle_lookup(&mut self, seq: u64, parent_ino: u64, payload: &[u8]) -> Result<(), isize> {
-        let name = core::str::from_utf8(payload).map_err(|_| -1)?; // InvalidArgument
-        let parent = self.inodes.get(&parent_ino).ok_or(-2)?; // NotFound
+        let name = core::str::from_utf8(payload).map_err(|_| -1isize)?; // InvalidArgument
+        let parent = self.inodes.get(&parent_ino).ok_or(-2isize)?; // NotFound
 
-        let child_ino = *parent.children.get(name).ok_or(-2)?; // NotFound
+        let child_ino = *parent.children.get(name).ok_or(-2isize)?; // NotFound
         let node_info = self.build_node_info_with_name(child_ino, name);
         self.write_response(seq, FUSE_LOOKUP, child_ino, &node_info)
     }
@@ -219,7 +219,7 @@ impl FuseDaemon {
         let offset = u64::from_le_bytes(payload[0..8].try_into().unwrap()) as usize;
         let size = u32::from_le_bytes(payload[8..12].try_into().unwrap()) as usize;
 
-        let inode = self.inodes.get(&ino).ok_or(-2)?; // NotFound
+        let inode = self.inodes.get(&ino).ok_or(-2isize)?; // NotFound
         let data = &inode.data;
         let end = (offset + size).min(data.len());
         let slice = if offset < data.len() {
@@ -242,7 +242,7 @@ impl FuseDaemon {
         let offset = u64::from_le_bytes(payload[0..8].try_into().unwrap()) as usize;
         let data = &payload[8..];
 
-        let inode = self.inodes.get_mut(&ino).ok_or(-2)?; // NotFound
+        let inode = self.inodes.get_mut(&ino).ok_or(-2isize)?; // NotFound
         if offset + data.len() > inode.data.len() {
             inode.data.resize(offset + data.len(), 0);
         }
@@ -263,7 +263,7 @@ impl FuseDaemon {
             return self.write_error(seq, 8); // EInval
         };
 
-        let inode = self.inodes.get(&ino).ok_or(-2)?; // NotFound
+        let inode = self.inodes.get(&ino).ok_or(-2isize)?; // NotFound
         let children: Vec<(&String, &u64)> = inode.children.iter().collect();
 
         if index >= children.len() {
@@ -281,9 +281,9 @@ impl FuseDaemon {
     /// Payload: filename (UTF-8 bytes)
     /// Response: NodeInfo of the new file.
     fn handle_create(&mut self, seq: u64, parent_ino: u64, payload: &[u8]) -> Result<(), isize> {
-        let name = core::str::from_utf8(payload).map_err(|_| -1)?; // InvalidArgument
+        let name = core::str::from_utf8(payload).map_err(|_| -1isize)?; // InvalidArgument
 
-        let parent = self.inodes.get(&parent_ino).ok_or(-2)?; // NotFound
+        let parent = self.inodes.get(&parent_ino).ok_or(-2isize)?; // NotFound
         if parent.kind != 1 {
             return self.write_error(seq, 8); // EInval — not a directory
         }
@@ -314,13 +314,13 @@ impl FuseDaemon {
     ///
     /// Payload: filename (UTF-8 bytes)
     fn handle_remove(&mut self, seq: u64, parent_ino: u64, payload: &[u8]) -> Result<(), isize> {
-        let name = core::str::from_utf8(payload).map_err(|_| -1)?; // InvalidArgument
+        let name = core::str::from_utf8(payload).map_err(|_| -1isize)?; // InvalidArgument
 
         let child_ino = {
-            let parent = self.inodes.get(&parent_ino).ok_or(-2)?; // NotFound
-            let child_ino = *parent.children.get(name).ok_or(-2)?;
+            let parent = self.inodes.get(&parent_ino).ok_or(-2isize)?; // NotFound
+            let child_ino = *parent.children.get(name).ok_or(-2isize)?;
             // Only allow removing empty directories or files.
-            let child = self.inodes.get(&child_ino).ok_or(-2)?;
+            let child = self.inodes.get(&child_ino).ok_or(-2isize)?;
             if child.kind == 1 && !child.children.is_empty() {
                 return self.write_error(seq, 7); // EBusy
             }
@@ -339,10 +339,15 @@ impl FuseDaemon {
     /// Handle a CREATEDIR request (mkdir).
     ///
     /// Payload: filename (UTF-8 bytes)
-    fn handle_create_dir(&mut self, seq: u64, parent_ino: u64, payload: &[u8]) -> Result<(), isize> {
-        let name = core::str::from_utf8(payload).map_err(|_| -1)?; // InvalidArgument
+    fn handle_create_dir(
+        &mut self,
+        seq: u64,
+        parent_ino: u64,
+        payload: &[u8],
+    ) -> Result<(), isize> {
+        let name = core::str::from_utf8(payload).map_err(|_| -1isize)?; // InvalidArgument
 
-        let parent = self.inodes.get(&parent_ino).ok_or(-2)?; // NotFound
+        let parent = self.inodes.get(&parent_ino).ok_or(-2isize)?; // NotFound
         if parent.kind != 1 {
             return self.write_error(seq, 8); // EInval
         }
@@ -373,15 +378,13 @@ impl FuseDaemon {
     /// Payload: old_name NUL new_name
     fn handle_rename(&mut self, seq: u64, parent_ino: u64, payload: &[u8]) -> Result<(), isize> {
         // Split payload on NUL byte.
-        let nul_pos = payload.iter().position(|&b| b == 0).ok_or(-1)?; // InvalidArgument
-        let old_name =
-            core::str::from_utf8(&payload[..nul_pos]).map_err(|_| -1)?;
-        let new_name =
-            core::str::from_utf8(&payload[nul_pos + 1..]).map_err(|_| -1)?;
+        let nul_pos = payload.iter().position(|&b| b == 0).ok_or(-1isize)?; // InvalidArgument
+        let old_name = core::str::from_utf8(&payload[..nul_pos]).map_err(|_| -1isize)?;
+        let new_name = core::str::from_utf8(&payload[nul_pos + 1..]).map_err(|_| -1isize)?;
 
         let child_ino = {
-            let parent = self.inodes.get(&parent_ino).ok_or(-2)?;
-            *parent.children.get(old_name).ok_or(-2)? // NotFound
+            let parent = self.inodes.get(&parent_ino).ok_or(-2isize)?;
+            *parent.children.get(old_name).ok_or(-2isize)? // NotFound
         };
 
         // Remove old name, insert new name.
@@ -408,7 +411,7 @@ impl FuseDaemon {
         }
         let length = u64::from_le_bytes(payload[0..8].try_into().unwrap()) as usize;
 
-        let inode = self.inodes.get_mut(&ino).ok_or(-2)?; // NotFound
+        let inode = self.inodes.get_mut(&ino).ok_or(-2isize)?; // NotFound
         inode.data.resize(length, 0);
         self.write_response(seq, FUSE_SETLEN, ino, &[])
     }
@@ -465,7 +468,7 @@ pub fn cmd_fuse(argv: &[String]) -> CmdResult {
         "umount" => cmd_fuse_umount(argv),
         _ => CmdResult::error(
             1,
-            format!("usage: fuse mount <path> <name>\n       fuse umount <path>\n"),
+            String::from("usage: fuse mount <path> <name>\n       fuse umount <path>\n"),
         ),
     }
 }
@@ -479,10 +482,7 @@ fn cmd_fuse_mount(argv: &[String]) -> CmdResult {
     let name = argv.get(3).map(|s| s.as_str()).unwrap_or("");
 
     if path.is_empty() || name.is_empty() {
-        return CmdResult::error(
-            1,
-            String::from("usage: fuse mount <path> <name>\n"),
-        );
+        return CmdResult::error(1, String::from("usage: fuse mount <path> <name>\n"));
     }
 
     // Mount via the FuseMount syscall.
@@ -504,10 +504,7 @@ fn cmd_fuse_mount(argv: &[String]) -> CmdResult {
             // Clean up FDs on error.
             let _ = syscall::sys_close(req_fd);
             let _ = syscall::sys_close(resp_fd);
-            CmdResult::error(
-                1,
-                format!("fuse: daemon exited: {}\n", errno_msg(e)),
-            )
+            CmdResult::error(1, format!("fuse: daemon exited: {}\n", errno_msg(e)))
         }
     }
 }
@@ -521,10 +518,7 @@ fn cmd_fuse_umount(argv: &[String]) -> CmdResult {
 
     match syscall::sys_umount(path) {
         Ok(_) => CmdResult::empty(),
-        Err(e) => CmdResult::error(
-            1,
-            format!("fuse: umount {path}: {}\n", errno_msg(e)),
-        ),
+        Err(e) => CmdResult::error(1, format!("fuse: umount {path}: {}\n", errno_msg(e))),
     }
 }
 

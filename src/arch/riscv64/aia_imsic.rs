@@ -2,9 +2,13 @@
 //!
 //! RISC-V AIA IMSIC implementation for MSI/MSI-X support
 
+#![allow(dead_code)] // experimental driver: wired for compilation, no consumer yet
+
+use alloc::{format, vec::Vec};
+
 use super::{read_volatile, write_volatile};
-use crate::kernel::log::{error, info};
 use crate::kernel::sync::SpinLock;
+use crate::util::logger::{log, LogLevel};
 use crate::Error;
 
 // AIA IMSIC constants
@@ -22,7 +26,8 @@ const IMSIC_VSIE: u64 = 1 << 62; // Virtual Supervisor Interrupt Enable
 
 // MSI-X table entry structure
 #[repr(C)]
-struct MsiXEntry {
+#[derive(Clone, Copy)]
+pub struct MsiXEntry {
     msg_addr: u64,
     msg_data: u32,
     vector_control: u32,
@@ -47,26 +52,26 @@ impl AiaImsicController {
         }
     }
 
-    fn read(&self, offset: usize) -> u64 {
-        unsafe { read_volatile((self.base + offset) as *mut u64) }
+    fn read(&self, offset: u32) -> u64 {
+        unsafe { read_volatile((self.base + offset as usize) as *mut u64) }
     }
 
-    fn write(&self, offset: usize, value: u64) {
-        unsafe { write_volatile((self.base + offset) as *mut u64, value) }
+    fn write(&self, offset: u32, value: u64) {
+        unsafe { write_volatile((self.base + offset as usize) as *mut u64, value) }
     }
 
     /// Enable external interrupts in the IMSIC
     fn enable_external_interrupts(&self) {
         let sei_reg = self.read(0);
         self.write(0, sei_reg | IMSIC_SEI);
-        info!("AIA IMSIC: External interrupts enabled");
+        log(LogLevel::Info, "AIA IMSIC: External interrupts enabled");
     }
 
     /// Disable external interrupts in the IMSIC
     fn disable_external_interrupts(&self) {
         let sei_reg = self.read(0);
         self.write(0, sei_reg & !IMSIC_SEI);
-        info!("AIA IMSIC: External interrupts disabled");
+        log(LogLevel::Info, "AIA IMSIC: External interrupts disabled");
     }
 
     /// Configure MSI for a device
@@ -94,9 +99,12 @@ impl AiaImsicController {
         self.write(reg_offset, current | bit);
 
         self.msi_enabled = true;
-        info!(
-            "AIA IMSIC: MSI configured for device={}, vector={}, irq={}",
-            device_id, vector, irq
+        log(
+            LogLevel::Info,
+            &format!(
+                "AIA IMSIC: MSI configured for device={}, vector={}, irq={}",
+                device_id, vector, irq
+            ),
         );
 
         Ok(irq)
@@ -135,7 +143,7 @@ impl AiaImsicController {
             for i in 0..vector_count {
                 table.push(MsiXEntry {
                     msg_addr: msi_addr,
-                    msg_data: (msi_data & 0xffff) | ((i as u32) << 16),
+                    msg_data: ((msi_data as u32) & 0xffff) | ((i as u32) << 16),
                     vector_control: 0, // Interrupt enabled
                 });
             }
@@ -145,7 +153,7 @@ impl AiaImsicController {
             let table = self.msix_table.as_mut().unwrap();
             for i in 0..vector_count.min(table.len() as u32) {
                 table[i as usize].msg_addr = msi_addr;
-                table[i as usize].msg_data = (msi_data & 0xffff) | ((i as u32) << 16);
+                table[i as usize].msg_data = ((msi_data as u32) & 0xffff) | ((i as u32) << 16);
                 table[i as usize].vector_control = 0; // Interrupt enabled
             }
         }
@@ -160,9 +168,12 @@ impl AiaImsicController {
         }
 
         self.msix_enabled = true;
-        info!(
-            "AIA IMSIC: MSI-X configured for device={}, vectors={}, base_vector={}",
-            device_id, vector_count, base_vector
+        log(
+            LogLevel::Info,
+            &format!(
+                "AIA IMSIC: MSI-X configured for device={}, vectors={}, base_vector={}",
+                device_id, vector_count, base_vector
+            ),
         );
 
         Ok((base_vector, vector_count))
@@ -197,10 +208,13 @@ impl AiaImsicController {
             self.write(reg_offset, current & !bit);
         }
 
-        info!(
-            "AIA IMSIC: Interrupt {} {}",
-            irq,
-            if masked { "masked" } else { "unmasked" }
+        log(
+            LogLevel::Info,
+            &format!(
+                "AIA IMSIC: Interrupt {} {}",
+                irq,
+                if masked { "masked" } else { "unmasked" }
+            ),
         );
         Ok(())
     }
@@ -216,7 +230,10 @@ impl AiaImsicController {
         let current = self.read(reg_offset);
         self.write(reg_offset, current | bit);
 
-        info!("AIA IMSIC: Interrupt {} cleared", irq);
+        log(
+            LogLevel::Info,
+            &format!("AIA IMSIC: Interrupt {} cleared", irq),
+        );
         Ok(())
     }
 
@@ -242,9 +259,12 @@ static AIA_IMSIC_CONTROLLER: SpinLock<Option<AiaImsicController>> = SpinLock::ne
 pub fn init_aia_imsic(base: usize, context_id: u32) {
     let mut controller = AIA_IMSIC_CONTROLLER.lock();
     *controller = Some(AiaImsicController::new(base, context_id));
-    info!(
-        "AIA IMSIC initialized at base={:#x}, context={}",
-        base, context_id
+    log(
+        LogLevel::Info,
+        &format!(
+            "AIA IMSIC initialized at base={:#x}, context={}",
+            base, context_id
+        ),
     );
 }
 
@@ -256,7 +276,7 @@ pub fn configure_msi(device_id: u32, vector: u32, data: u32) -> Result<u32, Erro
     if let Some(controller) = AIA_IMSIC_CONTROLLER.lock().as_mut() {
         controller.configure_msi(device_id, vector, data)
     } else {
-        error!("AIA IMSIC not initialized");
+        log(LogLevel::Error, "AIA IMSIC not initialized");
         Err(Error::NotImplemented)
     }
 }
@@ -270,7 +290,7 @@ pub fn configure_msix(
     if let Some(controller) = AIA_IMSIC_CONTROLLER.lock().as_mut() {
         controller.configure_msix(device_id, vector_count, msi_addr, msi_data)
     } else {
-        error!("AIA IMSIC not initialized");
+        log(LogLevel::Error, "AIA IMSIC not initialized");
         Err(Error::NotImplemented)
     }
 }
@@ -300,9 +320,9 @@ pub fn is_interrupt_pending(irq: u32) -> bool {
     }
 }
 
-pub fn get_msix_entry(vector: u32) -> Option<&'static MsiXEntry> {
+pub fn get_msix_entry(vector: u32) -> Option<MsiXEntry> {
     if let Some(controller) = AIA_IMSIC_CONTROLLER.lock().as_ref() {
-        controller.get_msix_entry(vector)
+        controller.get_msix_entry(vector).copied()
     } else {
         None
     }

@@ -13,10 +13,10 @@ use alloc::vec::Vec;
 
 use crate::user::shared::commands::{
     cmd_alias, cmd_cat, cmd_cd, cmd_chmod, cmd_clear, cmd_cp, cmd_df, cmd_diff, cmd_dmesg, cmd_du,
-    cmd_echo, cmd_edit, cmd_export, cmd_false, cmd_find, cmd_grep, cmd_head, cmd_help, cmd_hexdump,
-    cmd_history, cmd_kill, cmd_ls, cmd_mkdir, cmd_mv, cmd_perf, cmd_ps, cmd_pwd, cmd_read, cmd_rm,
-    cmd_shift, cmd_sleep, cmd_sort, cmd_source, cmd_sysinfo, cmd_tail, cmd_test, cmd_top,
-    cmd_touch, cmd_true, cmd_uname, cmd_uniq, cmd_uptime, cmd_wc,
+    cmd_echo, cmd_edit, cmd_export, cmd_false, cmd_find, cmd_fuse, cmd_grep, cmd_head, cmd_help,
+    cmd_hexdump, cmd_history, cmd_kill, cmd_ls, cmd_mkdir, cmd_mv, cmd_perf, cmd_ps, cmd_pwd,
+    cmd_read, cmd_rm, cmd_shift, cmd_sleep, cmd_sort, cmd_source, cmd_sysinfo, cmd_tail, cmd_test,
+    cmd_top, cmd_touch, cmd_true, cmd_uname, cmd_uniq, cmd_uptime, cmd_wc,
 };
 use crate::user::shared::tokenizer::tokenize;
 use crate::user::shared::types::CmdResult;
@@ -103,6 +103,7 @@ pub fn dispatch_tokens(
         "clear" => cmd_clear(),
         "true" => cmd_true(),
         "false" => cmd_false(),
+        "fuse" => cmd_fuse(argv),
         "pwd" => cmd_pwd(cwd),
         "cd" => cmd_cd(cwd, argv, home_dir),
         "cat" => cmd_cat(cwd, argv, stdin),

@@ -8,6 +8,7 @@
 //! use the syscall bridge (`crate::syscall`) for I/O.
 
 pub(crate) mod fs;
+mod fuse;
 mod perf;
 mod process;
 mod state;
@@ -18,6 +19,7 @@ pub use fs::{
     cmd_cat, cmd_cd, cmd_chmod, cmd_cp, cmd_df, cmd_du, cmd_ls, cmd_mkdir, cmd_mv, cmd_pwd, cmd_rm,
     cmd_touch, human_size,
 };
+pub use fuse::cmd_fuse;
 pub use perf::cmd_perf;
 pub use process::{cmd_false, cmd_kill, cmd_ps, cmd_true};
 pub use state::{cmd_alias, cmd_export, cmd_history, cmd_read, cmd_shift, cmd_source};

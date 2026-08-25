@@ -46,6 +46,8 @@ pub(crate) mod config;
 pub(crate) mod dhcp;
 pub(crate) mod dispatch;
 pub(crate) mod global;
+#[allow(dead_code)] // PPP integration layer; no consumer yet (network::ppp holds the state)
+pub(crate) mod ppp;
 pub(crate) mod routing;
 pub(crate) mod send;
 #[cfg(test)]

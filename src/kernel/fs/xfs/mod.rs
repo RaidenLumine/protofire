@@ -26,6 +26,7 @@
 
 mod btree;
 mod fs;
+mod journal;
 pub(crate) mod types;
 
 use alloc::string::String;
@@ -261,12 +262,16 @@ impl VfsFileSystem for XfsVolume {
     }
     fn check_and_repair(&self) -> Result<VolumeCheckReport> {
         // A dirty journal (unclean unmount) means a metadata commit was
-        // interrupted by a crash.  Detection only — no recovery is attempted
-        // on this read-only driver.
+        // interrupted by a crash.  Replay the log when dirty so the on-disk
+        // metadata is brought back up to date.
         let dirty = fs::check_journal(&self.sb).is_dirty;
+        let mut repairs_applied = 0;
+        if dirty && journal::replay_xfs_journal(&self.device, &self.sb).is_ok() {
+            repairs_applied = 1;
+        }
         Ok(VolumeCheckReport {
             issues_detected: usize::from(dirty),
-            repairs_applied: 0,
+            repairs_applied,
             orphan_data_blocks: 0,
             checksum_failures: 0,
             staging_orphans_cleaned: 0,

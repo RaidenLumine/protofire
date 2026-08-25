@@ -14,7 +14,11 @@ use super::block::BlockDevice;
 use super::block_cache::BlockCache;
 use super::filesystem::profiler::FsProfiler;
 
+#[allow(dead_code)] // wired for compilation; the read/write path consumes it later (see types.rs)
+pub(crate) mod compression;
 pub(crate) mod constants;
+#[allow(dead_code)] // wired for compilation; complements the inline dedup pool in SimpleFsState
+pub(crate) mod dedup;
 pub(crate) mod dir_ops;
 pub(crate) mod extent_repair;
 pub(crate) mod file_io;

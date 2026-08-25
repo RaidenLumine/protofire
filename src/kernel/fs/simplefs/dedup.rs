@@ -17,13 +17,10 @@
 //! extent stores an encoded stream, so it is never a dedup candidate.
 
 use alloc::vec;
-use alloc::vec::Vec;
 
 use crate::{Error, Result};
 
 use super::super::block::BLOCK_SIZE;
-use super::constants::*;
-use super::types::*;
 use super::{SimpleFs, SimpleFsState};
 
 impl SimpleFs {

@@ -64,6 +64,7 @@ pub mod interrupts {
     }
 }
 
+pub mod aia_imsic;
 pub mod context;
 pub mod cpufreq;
 pub mod irq_balance;

@@ -42,6 +42,12 @@ pub(crate) const INITIAL_FILE_BLOCKS: u32 = 1;
 pub(crate) const INODE_FLAG_COMPRESSED: u8 = 1 << 1;
 pub(crate) const INODE_FLAG_DEDUPED: u8 = 1 << 2;
 
+/// Compressed extent geometry (V4+, `compression` module).
+/// A compressed stream is one page per chunk (matches `memory::compressed`),
+/// prefixed by a magic marker, a chunk count, and per-chunk offsets.
+pub(crate) const COMPRESSED_CHUNK_SIZE: usize = 4096;
+pub(crate) const COMPRESSED_MAGIC: u32 = 0x5043_4D53; // "SMCP" when little-endian on disk
+
 /// Fixed-size on-disk xattr record geometry (V4+).
 pub(crate) const XATTR_NAME_MAX: usize = 64;
 pub(crate) const XATTR_VALUE_MAX: usize = 256;

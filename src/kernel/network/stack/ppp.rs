@@ -317,7 +317,8 @@ impl NetworkStack {
     /// Perform PPP link negotiation (LCP Configure-Request exchange).
     ///
     /// This brings the PPP link to the Network phase when successful.
-    /// After calling this, the caller can use [`send_ppp_ipv4`](Self::send_ppp_ipv4)
+    /// After calling this, the caller can use
+    /// [`send_ppp_ipv4`](Self::send_ppp_ipv4)
     /// and [`send_ppp_ipv6`](Self::send_ppp_ipv6) to transmit IP packets.
     pub fn ppp_negotiate_link(&self) -> Result<()> {
         let mut ppp = self.ppp_state.lock();

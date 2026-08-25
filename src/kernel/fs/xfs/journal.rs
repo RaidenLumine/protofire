@@ -166,10 +166,11 @@ pub(crate) fn replay_xfs_journal(
             let data_start = op_pos + XLOG_OP_HDR_SIZE;
 
             match otype {
-                XLOG_TYPE_BUFFER | XLOG_TYPE_INODE | XLOG_TYPE_DQUOT => {
-                    if olen >= XFS_BLF_HDR_SIZE && data_start + XFS_BLF_HDR_SIZE <= log_buf.len() {
-                        replay_buffer_item(device, &log_buf, data_start, olen)?;
-                    }
+                XLOG_TYPE_BUFFER | XLOG_TYPE_INODE | XLOG_TYPE_DQUOT
+                    if olen >= XFS_BLF_HDR_SIZE
+                        && data_start + XFS_BLF_HDR_SIZE <= log_buf.len() =>
+                {
+                    replay_buffer_item(device, &log_buf, data_start, olen)?;
                 }
                 _ => {}
             }
