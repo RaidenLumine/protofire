@@ -57,8 +57,15 @@ pub fn ecam_discover() -> EcamRegion {
 // ECAM config-space access
 // ---------------------------------------------------------------------------
 
+/// Read a 32-bit config-space dword from the given device/function/offset.
+///
+/// # Safety
+///
+/// The caller must ensure that `bus`/`device`/`function`/`offset` identify a
+/// valid configuration register and that the ECAM region is mapped and
+/// accessible in the current context.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-unsafe fn ecam_read_u32_raw(
+pub unsafe fn ecam_read_u32(
     region: &EcamRegion,
     bus: u8,
     device: u8,
@@ -69,17 +76,11 @@ unsafe fn ecam_read_u32_raw(
     unsafe { ptr::read_volatile(addr as *const u32) }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub unsafe fn ecam_read_u32(
-    region: &EcamRegion,
-    bus: u8,
-    device: u8,
-    function: u8,
-    offset: u16,
-) -> u32 {
-    unsafe { ecam_read_u32_raw(region, bus, device, function, offset) }
-}
-
+/// Read a 16-bit config-space word from the given device/function/offset.
+///
+/// # Safety
+///
+/// Same preconditions as [`ecam_read_u32`].
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn ecam_read_u16(
     region: &EcamRegion,
@@ -89,11 +90,16 @@ pub unsafe fn ecam_read_u16(
     offset: u16,
 ) -> u16 {
     let dword_aligned = offset & 0xFFFC;
-    let dword = unsafe { ecam_read_u32_raw(region, bus, device, function, dword_aligned) };
+    let dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     let shift = (offset & 0x02) * 8;
     ((dword >> shift) & 0xFFFF) as u16
 }
 
+/// Read an 8-bit config-space byte from the given device/function/offset.
+///
+/// # Safety
+///
+/// Same preconditions as [`ecam_read_u32`].
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn ecam_read_u8(
     region: &EcamRegion,
@@ -103,11 +109,19 @@ pub unsafe fn ecam_read_u8(
     offset: u16,
 ) -> u8 {
     let dword_aligned = offset & 0xFFFC;
-    let dword = unsafe { ecam_read_u32_raw(region, bus, device, function, dword_aligned) };
+    let dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     let shift = (offset & 0x03) * 8;
     ((dword >> shift) & 0xFF) as u8
 }
 
+/// Write a 32-bit config-space dword to the given device/function/offset.
+///
+/// # Safety
+///
+/// The caller must ensure that `bus`/`device`/`function`/`offset` identify a
+/// valid configuration register, that the ECAM region is mapped and accessible
+/// in the current context, and that writing the value does not violate the
+/// device's programming model.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn ecam_write_u32(
     region: &EcamRegion,
@@ -121,6 +135,12 @@ pub unsafe fn ecam_write_u32(
     unsafe { ptr::write_volatile(addr as *mut u32, value) };
 }
 
+/// Write a 16-bit config-space word to the given device/function/offset.
+///
+/// # Safety
+///
+/// Same preconditions as [`ecam_write_u32`]. This performs a read-modify-write
+/// on the enclosing dword.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn ecam_write_u16(
     region: &EcamRegion,
@@ -132,11 +152,17 @@ pub unsafe fn ecam_write_u16(
 ) {
     let dword_aligned = offset & 0xFFFC;
     let shift = (offset & 0x02) * 8;
-    let mut dword = unsafe { ecam_read_u32_raw(region, bus, device, function, dword_aligned) };
+    let mut dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     dword = (dword & !(0xFFFF << shift)) | ((value as u32) << shift);
     unsafe { ecam_write_u32(region, bus, device, function, dword_aligned, dword) };
 }
 
+/// Write an 8-bit config-space byte to the given device/function/offset.
+///
+/// # Safety
+///
+/// Same preconditions as [`ecam_write_u32`]. This performs a read-modify-write
+/// on the enclosing dword.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn ecam_write_u8(
     region: &EcamRegion,
@@ -148,7 +174,7 @@ pub unsafe fn ecam_write_u8(
 ) {
     let dword_aligned = offset & 0xFFFC;
     let shift = (offset & 0x03) * 8;
-    let mut dword = unsafe { ecam_read_u32_raw(region, bus, device, function, dword_aligned) };
+    let mut dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     dword = (dword & !(0xFF << shift)) | ((value as u32) << shift);
     unsafe { ecam_write_u32(region, bus, device, function, dword_aligned, dword) };
 }
