@@ -1,7 +1,8 @@
 //! src/kernel/drivers/ata.rs
 //!
 //! ATA disk driver (block I/O).
-//! ATA PIO block-device driver with transfer mode selection and sector I/O routines.
+//! ATA PIO block-device driver with transfer mode selection and sector I/O
+//! routines.
 
 use alloc::sync::Arc;
 
@@ -361,7 +362,7 @@ impl AtaDisk {
         let transfer_mode = transfer_mode_for_lba(lba)?;
         program_read_sector(ports, self.target, transfer_mode)?;
 
-        for word in sector.chunks_exact_mut(2) {
+        for word in sector.as_chunks_mut::<2>().0 {
             let value = unsafe { ports.data.read() };
             word.copy_from_slice(&value.to_le_bytes());
         }
@@ -388,7 +389,7 @@ impl AtaDisk {
         let transfer_mode = transfer_mode_for_lba(lba)?;
         program_write_sector(ports, self.target, transfer_mode)?;
 
-        for word in sector.chunks_exact(2) {
+        for word in sector.as_chunks::<2>().0 {
             let value = u16::from_le_bytes([word[0], word[1]]);
             unsafe { ports.data.write(value) };
         }
@@ -439,7 +440,12 @@ impl BlockDevice for AtaDisk {
         validate_block_io_range(self.block_count, lba, buffer.len())?;
 
         let mut ports = self.ports.lock();
-        for (index, sector) in buffer.chunks_exact_mut(BLOCK_SIZE).enumerate() {
+        for (index, sector) in buffer
+            .as_chunks_mut::<BLOCK_SIZE>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             if let Err(e) = self.read_sector_locked(&mut ports, lba + index as u64, sector) {
                 self.downgrade_health_on_error();
                 return Err(e);
@@ -457,7 +463,7 @@ impl BlockDevice for AtaDisk {
         validate_block_io_range(self.block_count, lba, data.len())?;
 
         let mut ports = self.ports.lock();
-        for (index, sector) in data.chunks_exact(BLOCK_SIZE).enumerate() {
+        for (index, sector) in data.as_chunks::<BLOCK_SIZE>().0.iter().enumerate() {
             if let Err(e) = self.write_sector_locked(&mut ports, lba + index as u64, sector) {
                 self.downgrade_health_on_error();
                 return Err(e);
