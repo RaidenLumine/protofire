@@ -12,10 +12,6 @@ use core::fmt;
 use crate::abi::process::ProcessTerminationRecord;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::arch::mmu::ActivatedProcessAddressSpace;
-#[cfg(any(
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-))]
 use crate::arch::mmu::PreparedProcessAddressSpace;
 #[cfg(target_arch = "x86_64")]
 use crate::arch::mmu::PreparedProcessAddressSpaceSummary;
@@ -30,7 +26,7 @@ use crate::arch::mmu::PreparedTranslation;
 use crate::arch::mmu::PreparedUserAddressSpace;
 #[cfg(target_arch = "x86_64")]
 use crate::arch::mmu::PreparedUserAddressSpaceSummary;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(all(target_arch = "x86_64", any(test, target_os = "none")))]
 use crate::arch::mmu::PreparedUserTranslation;
 use crate::kernel::fs::vfs::MetadataAccessQueryContext;
 use crate::kernel::fs::vfs::PermissionMetadataRecord;

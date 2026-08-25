@@ -4,12 +4,12 @@
 
 use ::core::sync::atomic::Ordering;
 
-#[cfg(any(
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
+#[cfg(all(
+    any(target_arch = "aarch64", target_arch = "riscv64"),
+    target_os = "none"
 ))]
 use crate::arch::mmu::PreparedTranslation;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(all(target_arch = "x86_64", any(target_os = "none", test)))]
 use crate::arch::mmu::PreparedUserTranslation;
 
 use super::types::*;
