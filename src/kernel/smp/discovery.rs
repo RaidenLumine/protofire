@@ -198,26 +198,24 @@ unsafe fn parse_madt(madt_addr: usize) -> Vec<LocalApicEntry> {
         }
 
         match entry_type {
-            0 => {
+            0 if entry_len >= 8 => {
                 // Processor Local APIC
-                if entry_len >= 8 {
-                    let acpi_processor_id = unsafe { read_phys_u8(offset + 2) };
-                    let apic_id = unsafe { read_phys_u8(offset + 3) };
-                    let flags = unsafe {
-                        let lo = read_phys_u8(offset + 4) as u32;
-                        let hi = read_phys_u8(offset + 5) as u32;
-                        lo | (hi << 8)
-                    };
-                    let enabled = (flags & 0x1) != 0;
-                    entries.push(LocalApicEntry {
-                        acpi_processor_id,
-                        apic_id,
-                        enabled,
-                    });
-                }
+                let acpi_processor_id = unsafe { read_phys_u8(offset + 2) };
+                let apic_id = unsafe { read_phys_u8(offset + 3) };
+                let flags = unsafe {
+                    let lo = read_phys_u8(offset + 4) as u32;
+                    let hi = read_phys_u8(offset + 5) as u32;
+                    lo | (hi << 8)
+                };
+                let enabled = (flags & 0x1) != 0;
+                entries.push(LocalApicEntry {
+                    acpi_processor_id,
+                    apic_id,
+                    enabled,
+                });
             }
             _ => {
-                // Skip other entry types.
+                // Skip other entry types or entries that are too short.
             }
         }
 
@@ -478,46 +476,40 @@ unsafe fn parse_srat(
         }
 
         match entry_type {
-            0 => {
+            0 if entry_len >= 16 => {
                 // Processor Local APIC/SAPIC Affinity (v1: 16 bytes).
-                if entry_len >= 16 {
-                    let proximity_domain = unsafe { read_phys_u32(offset + 2) };
-                    let apic_id = unsafe { read_phys_u8(offset + 6) };
-                    let flags = unsafe { read_phys_u32(offset + 7) };
-                    cpu.push(CpuAffinity {
-                        enabled: (flags & 0x1) != 0,
-                        apic_id,
-                        node_id: proximity_domain as u8,
-                    });
-                }
+                let proximity_domain = unsafe { read_phys_u32(offset + 2) };
+                let apic_id = unsafe { read_phys_u8(offset + 6) };
+                let flags = unsafe { read_phys_u32(offset + 7) };
+                cpu.push(CpuAffinity {
+                    enabled: (flags & 0x1) != 0,
+                    apic_id,
+                    node_id: proximity_domain as u8,
+                });
             }
-            1 => {
+            1 if entry_len >= 40 => {
                 // Memory Affinity (40 bytes).
-                if entry_len >= 40 {
-                    let proximity_domain = unsafe { read_phys_u32(offset + 2) };
-                    let base_addr = unsafe { read_phys_u64(offset + 8) };
-                    let length = unsafe { read_phys_u64(offset + 16) };
-                    let flags = unsafe { read_phys_u32(offset + 28) };
-                    mem.push(MemoryAffinity {
-                        enabled: (flags & 0x1) != 0,
-                        node_id: proximity_domain,
-                        base_addr,
-                        length,
-                    });
-                }
+                let proximity_domain = unsafe { read_phys_u32(offset + 2) };
+                let base_addr = unsafe { read_phys_u64(offset + 8) };
+                let length = unsafe { read_phys_u64(offset + 16) };
+                let flags = unsafe { read_phys_u32(offset + 28) };
+                mem.push(MemoryAffinity {
+                    enabled: (flags & 0x1) != 0,
+                    node_id: proximity_domain,
+                    base_addr,
+                    length,
+                });
             }
-            2 => {
+            2 if entry_len >= 24 => {
                 // x2APIC Affinity (24 bytes).
-                if entry_len >= 24 {
-                    let proximity_domain = unsafe { read_phys_u32(offset + 6) };
-                    let x2apic_id = unsafe { read_phys_u32(offset + 10) };
-                    let flags = unsafe { read_phys_u32(offset + 14) };
-                    x2apic.push(X2ApicAffinity {
-                        enabled: (flags & 0x1) != 0,
-                        x2apic_id,
-                        node_id: proximity_domain,
-                    });
-                }
+                let proximity_domain = unsafe { read_phys_u32(offset + 6) };
+                let x2apic_id = unsafe { read_phys_u32(offset + 10) };
+                let flags = unsafe { read_phys_u32(offset + 14) };
+                x2apic.push(X2ApicAffinity {
+                    enabled: (flags & 0x1) != 0,
+                    x2apic_id,
+                    node_id: proximity_domain,
+                });
             }
             _ => {}
         }
