@@ -56,6 +56,7 @@ pub enum Error {
     InternalError,     // Internal kernel error
     InvalidCredential, // Authentication failed (bad password, etc.)
     ConnectionReset,   // TCP/DCCP connection reset by peer (or network)
+    NoSpace,           // Device or filesystem has no free space left
 }
 
 impl Error {
@@ -75,6 +76,7 @@ impl Error {
             Self::InternalError => "internal error",
             Self::InvalidCredential => "invalid credential",
             Self::ConnectionReset => "connection reset",
+            Self::NoSpace => "no space left on device",
         }
     }
 
@@ -95,6 +97,7 @@ impl Error {
             10 => Some(Self::InternalError),
             11 => Some(Self::InvalidCredential),
             12 => Some(Self::ConnectionReset),
+            13 => Some(Self::NoSpace),
             _ => None,
         }
     }

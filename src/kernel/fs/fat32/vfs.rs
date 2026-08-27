@@ -118,6 +118,18 @@ impl VfsTrait for FatVolume {
         })
     }
 
+    fn sync(&self) -> Result<()> {
+        self.with_fs(|fs| fs.sync())
+    }
+
+    fn sync_data(&self) -> Result<()> {
+        self.sync()
+    }
+
+    fn flush_aged(&self, age_ticks: u64) -> Result<usize> {
+        self.with_fs(|fs| fs.flush_aged(age_ticks))
+    }
+
     fn read_dir(&self, path: &str, index: usize) -> Result<DirectoryEntry> {
         self.fs.lock().profiler.inc_lookups();
         let dir_entry = self.with_fs(|fs| fs.walk_path(path))?;
@@ -459,6 +471,14 @@ impl VNode for FatVNode {
         self.file_size.load(core::sync::atomic::Ordering::Relaxed) as usize
     }
 
+    fn sync(&self) -> Result<()> {
+        self.fs.lock().sync()
+    }
+
+    fn sync_data(&self) -> Result<()> {
+        self.sync()
+    }
+
     fn read(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
         self.fs.lock().profiler.inc_reads();
         if self.kind == NodeKind::Directory {
@@ -545,6 +565,10 @@ impl VNode for FatVNode {
         self.file_size
             .store(final_size as u32, core::sync::atomic::Ordering::Relaxed);
 
+        // Persist the write immediately (write-through, mirroring exFAT) so a
+        // crash after write() does not lose data sitting in the block cache.
+        self.fs.lock().flush()?;
+
         Ok(copy_len)
     }
 
@@ -627,6 +651,9 @@ impl VNode for FatVNode {
                     update_dir_entry(&mut fs, length, new_start)?;
                 }
             }
+            // Persist the truncation immediately (write-through, mirroring
+            // exFAT); the extend path below flushes via write().
+            fs.flush()?;
         } else {
             // Extend: write zeros beyond current EOF.  write() already
             // updates the on-disk directory entry (file_size + first_cluster).

@@ -26,6 +26,7 @@ pub(crate) mod vfs;
 use alloc::string::String;
 use alloc::sync::Arc;
 
+use crate::kernel::fs::block::BlockDevice;
 use crate::kernel::fs::block::BLOCK_SIZE;
 use crate::kernel::fs::block_cache::BlockCache;
 use crate::kernel::fs::filesystem::profiler::FsProfiler;
@@ -58,12 +59,20 @@ pub struct FatVolume {
 pub(crate) struct FatFs {
     /// Block cache for the device.
     cache: BlockCache,
+    /// The underlying block device, retained so `sync()` can flush it after
+    /// the cache writes back dirty blocks.
+    device: Arc<dyn BlockDevice>,
     /// Parsed BPB geometry.
     geom: FatGeometry,
     /// OEM code page for 8.3 short filename decoding (default: CP437).
     code_page: OemCodePage,
     /// Reusable block-sized buffer for reading.
     block_buf: [u8; BLOCK_SIZE],
+    /// Cached free-data-cluster count; `None` until the FAT has been scanned
+    /// once (the FSInfo sector may also seed it at open).
+    free_cluster_count: Option<u32>,
+    /// Next-free-cluster allocation hint, advanced on every allocation.
+    next_free_cluster: u32,
     /// Filesystem operation profiler.
     pub(crate) profiler: FsProfiler,
 }

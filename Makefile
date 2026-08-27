@@ -18,7 +18,7 @@ else
 $(error PROFILE must be either debug or release)
 endif
 
-.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-usb verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 clippy run run-aarch64 run-riscv64 clean setup-dev install-hooks
+.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 clippy run run-aarch64 run-riscv64 clean setup-dev install-hooks
 
 help:
 	@printf '%s\n' \
@@ -92,7 +92,12 @@ test-concurrency:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test scheduler --test condvar --test console --test keyboard
 
 test-storage:
-	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fs_maintenance --test memory_manager --test page_table --test simplefs --test simplefs_recovery --test simplefs_fault_matrix
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fs_maintenance --test memory_manager --test page_table --test simplefs --test simplefs_recovery --test simplefs_fault_matrix --test fat32
+
+test-fat32:
+	@echo "Running FAT32 Filesystem Integration Tests..."
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fat32
+	@echo "FAT32 tests completed"
 
 test-usb:
 	@echo "Running USB MSD Integration Tests..."

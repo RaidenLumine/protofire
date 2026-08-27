@@ -14,10 +14,18 @@ use alloc::vec::Vec;
 
 use crate::kernel::fs::block::BlockDevice;
 use crate::kernel::fs::block::MemoryBlockDevice;
+use crate::kernel::fs::block::BLOCK_SIZE;
 use crate::kernel::fs::vfs::FileSystem as VfsFileSystem;
 use crate::kernel::fs::NodeKind;
+use crate::Error;
 
+use super::types::read_u32;
 use super::types::write_short_entry;
+use super::types::FSINFO_FREE_COUNT_OFFSET;
+use super::types::FSINFO_LEAD_SIGNATURE;
+use super::types::FSINFO_NEXT_FREE_OFFSET;
+use super::types::FSINFO_STRUCT_OFFSET;
+use super::types::FSINFO_STRUCT_SIGNATURE;
 use super::FatVolume;
 
 const BYTES_PER_SECTOR: usize = 512;
@@ -142,5 +150,135 @@ mod tests {
         let n = vnode.read(0, &mut buf).expect("read");
         assert_eq!(n, data.len());
         assert_eq!(&buf[..n], data);
+    }
+
+    #[test]
+    fn append_writes_and_reads_back_in_order() {
+        let image = build_writable_fat32_image();
+        let vol = make_writable_volume(image);
+        let vnode = vol.create_file("/append.bin").expect("create_file");
+        assert_eq!(vnode.write(0, b"AAA").expect("write 1"), 3);
+        assert_eq!(vnode.write(3, b"BBB").expect("write 2"), 3);
+        assert_eq!(vnode.write(6, b"CCC").expect("write 3"), 3);
+
+        let mut buf = [0u8; 32];
+        let n = vnode.read(0, &mut buf).expect("read");
+        assert_eq!(&buf[..n], b"AAABBBCCC");
+    }
+
+    #[test]
+    fn set_len_grows_zero_fills_and_shrinks() {
+        let image = build_writable_fat32_image();
+        let vol = make_writable_volume(image);
+        let vnode = vol.create_file("/trunc.bin").expect("create_file");
+        vnode.write(0, b"hello").expect("write");
+        assert_eq!(vnode.size(), 5);
+
+        vnode.set_len(10).expect("grow");
+        assert_eq!(vnode.size(), 10);
+        let mut buf = [0u8; 16];
+        let n = vnode.read(0, &mut buf).expect("read");
+        assert_eq!(&buf[..n], b"hello\0\0\0\0\0");
+
+        vnode.set_len(3).expect("shrink");
+        assert_eq!(vnode.size(), 3);
+        let n = vnode.read(0, &mut buf).expect("read");
+        assert_eq!(&buf[..n], b"hel");
+
+        vnode.set_len(0).expect("truncate to zero");
+        assert_eq!(vnode.size(), 0);
+    }
+
+    #[test]
+    fn reopen_reads_back_written_data() {
+        let image = build_writable_fat32_image();
+        let dev: Arc<dyn BlockDevice> = MemoryBlockDevice::new("test-fat32-reopen", image, false);
+        {
+            let vol = FatVolume::open(dev.clone()).expect("open");
+            let vnode = vol.create_file("/data.txt").expect("create_file");
+            vnode.write(0, b"persisted").expect("write");
+        }
+        let vol2 = FatVolume::open(dev).expect("reopen");
+        let vnode2 = vol2.lookup("/data.txt").expect("lookup");
+        let mut buf = [0u8; 16];
+        let n = vnode2.read(0, &mut buf).expect("read");
+        assert_eq!(&buf[..n], b"persisted");
+    }
+
+    #[test]
+    fn sync_writes_fsinfo_sector_and_backup() {
+        let image = build_writable_fat32_image();
+        let dev: Arc<MemoryBlockDevice> = MemoryBlockDevice::new("test-fat32-fsinfo", image, false);
+        let vol = FatVolume::open(dev.clone()).expect("open");
+        let vnode = vol.create_file("/f.bin").expect("create_file");
+        vnode.write(0, b"payload").expect("write");
+        vol.sync().expect("sync");
+
+        // FSInfo lives at LBA 1; its backup copy at backup-boot-sector + 1
+        // (= 6 + 1 = 7 for this image).
+        for lba in [1u64, 7u64] {
+            let mut buf = [0u8; BLOCK_SIZE];
+            dev.read_blocks(lba, &mut buf).expect("read fsinfo sector");
+            assert_eq!(
+                read_u32(&buf, 0),
+                FSINFO_LEAD_SIGNATURE,
+                "lead sig LBA {lba}"
+            );
+            assert_eq!(
+                read_u32(&buf, FSINFO_STRUCT_OFFSET),
+                FSINFO_STRUCT_SIGNATURE,
+                "struct sig LBA {lba}"
+            );
+            // 199 free data clusters initially.  create_file allocates one
+            // cluster for the file itself and one more because
+            // insert_dir_entry_set extends the root-directory buffer past a
+            // single cluster (576 bytes), growing the root chain.
+            assert_eq!(
+                read_u32(&buf, FSINFO_FREE_COUNT_OFFSET),
+                199 - 2,
+                "free count LBA {lba}"
+            );
+            assert_eq!(read_u32(&buf, FSINFO_NEXT_FREE_OFFSET), 5, "hint LBA {lba}");
+        }
+    }
+
+    #[test]
+    fn truncate_frees_clusters_and_fsinfo_reflects_it() {
+        let image = build_writable_fat32_image();
+        let dev: Arc<MemoryBlockDevice> =
+            MemoryBlockDevice::new("test-fat32-truncate", image, false);
+        let vol = FatVolume::open(dev.clone()).expect("open");
+        let vnode = vol.create_file("/grow.bin").expect("create_file");
+        let big = vec![0u8; 4 * BLOCK_SIZE];
+        assert_eq!(vnode.write(0, &big).expect("grow"), big.len());
+        vnode.set_len(0).expect("truncate");
+        vol.sync().expect("sync");
+
+        let mut buf = [0u8; BLOCK_SIZE];
+        dev.read_blocks(1, &mut buf).expect("read fsinfo sector");
+        // create_file allocates the file's first cluster plus one for root-
+        // directory growth (199 - 2); growth reaches four file clusters; the
+        // truncation frees all four.  The root directory keeps its extra
+        // cluster, leaving 198 free.
+        assert_eq!(read_u32(&buf, FSINFO_FREE_COUNT_OFFSET), 198);
+        assert_eq!(read_u32(&buf, FSINFO_NEXT_FREE_OFFSET), 3);
+    }
+
+    #[test]
+    fn disk_full_returns_no_space() {
+        let image = build_writable_fat32_image();
+        let vol = make_writable_volume(image);
+        let vnode = vol.create_file("/big.bin").expect("create_file");
+        // create_file consumes two clusters (file + root-directory growth),
+        // leaving 197 free (5..=201).  The file already owns cluster 3, so it
+        // can grow to 198 clusters total = 198 * 512 bytes.
+        let capacity = 198 * BLOCK_SIZE;
+        let big = vec![0xABu8; capacity];
+        assert_eq!(vnode.write(0, &big).expect("fill volume"), capacity);
+
+        let err = vnode
+            .write(capacity as u64, b"x")
+            .expect_err("overfill must fail");
+        assert_eq!(err, Error::NoSpace);
     }
 }

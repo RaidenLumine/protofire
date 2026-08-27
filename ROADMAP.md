@@ -38,9 +38,9 @@ The authoritative picture of what exists today is
 
 ## Mid Term (6–18 months)
 
-- **Write support for more filesystems.** The read-only drivers — FAT32, NTFS,
+- **Write support for more filesystems.** The read-only drivers — NTFS,
   BtrFS, SquashFS, ISO 9660, EROFS — move toward read-write, matching ext4 /
-  F2FS / XFS / exFAT.
+  F2FS / XFS / exFAT / FAT32.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.
 - **Stabilise the syscall ABI.** Graduate Experimental syscalls (121–189) into

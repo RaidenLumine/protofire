@@ -91,7 +91,7 @@ VFS 是最大的子系统，**62,700+ 行代码，分布在 118 个文件中**�
 | XFS v5 | 3,829 | **带日志重放的读写** | B+树，CRC32C，v5 超级块，日志重放（缓冲/inode/dquot 项） |
 | exFAT | 3,089 | 读写 | VFAT 扩展 |
 | BtrFS | 2,899 | 只读 | B树遍历 |
-| FAT32 | 2,744 | 只读 | LFN，OEM 代码页 |
+| FAT32 | 2,794 | 读写 | LFN，OEM 代码页，FSInfo 记账 |
 | NTFS 3.1 | 2,684 | 只读 | MFT 解析，属性解析 |
 | SquashFS 4.0 | 1,446 | 只读 | 5 种压缩算法 |
 | ISO 9660 | 1,475 | 只读 | Joliet，Rock Ridge |
@@ -111,14 +111,14 @@ VFS 是最大的子系统，**62,700+ 行代码，分布在 118 个文件中**�
 
 **优势：** 11 个文件系统驱动（含 4 个可写）、崩溃安全的原生 FS 与静态加密。
 
-- **多文件系统**：ext4、F2FS、XFS 支持从真实磁盘进行完整日志重放；另有 exFAT（读写）与 btrfs/FAT32/NTFS/SquashFS/ISO 9660/EROFS（只读）。
+- **多文件系统**：ext4、F2FS、XFS 支持从真实磁盘进行完整日志重放；另有 exFAT 与 FAT32（读写）以及 btrfs/NTFS/SquashFS/ISO 9660/EROFS（只读）。
 - **Unicode 15.1**：完整的 NF C/D 规范化与 GB18030 编解码器。
 - **崩溃安全**：SimpleFs 使用撤销日志事务与两阶段提交。
 - **静态数据加密**：EncryptedBlockDevice 提供 AES-256 XTS 磁盘加密，兼容 LUKS2、PBKDF2 密钥派生，可透明置于任何文件系统之下。
 
 **缺点：**
 
-- **只读驱动多**：btrfs、FAT32、NTFS、SquashFS、ISO 9660、EROFS 均为只读，写支持是路线图中期目标。
+- **只读驱动多**：btrfs、NTFS、SquashFS、ISO 9660、EROFS 均为只读，写支持是路线图中期目标。
 - **日志重放仅在模拟磁盘验证**：真实损坏磁盘的边角情形覆盖面有限。
 
 **SimpleFs V4 数据缩减格式**（继承 V3 的持久安全描述符 + `pending_commit` 两阶段提交）：

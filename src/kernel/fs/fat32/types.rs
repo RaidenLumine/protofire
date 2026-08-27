@@ -101,9 +101,7 @@ pub(crate) const BPB_SECTORS_PER_FAT_16: usize = 22; // u16 (0 for FAT32)
 pub(crate) const BPB_TOTAL_SECTORS_32: usize = 32; // u32
 pub(crate) const BPB_SECTORS_PER_FAT_32: usize = 36; // u32
 pub(crate) const BPB_ROOT_CLUSTER: usize = 44; // u32
-#[allow(dead_code)]
 pub(crate) const BPB_FSINFO_SECTOR: usize = 48; // u16
-#[allow(dead_code)]
 pub(crate) const BPB_BACKUP_BOOT_SECTOR: usize = 50; // u16
 #[allow(dead_code)]
 pub(crate) const BPB_EXTENDED_BOOT_SIGNATURE: usize = 66; // u8 (0x29)
@@ -113,6 +111,25 @@ pub(crate) const BPB_FS_TYPE: usize = 82; // 8 bytes ("FAT32   ")
 
 /// Size of a directory entry in bytes.
 pub(crate) const DIR_ENTRY_SIZE: usize = 32;
+
+// ─── FAT32 FSInfo structure ─────────────────────────────────────────────────
+
+/// FAT32 FSInfo lead signature (bytes 0–3) — "RRaA".
+pub(crate) const FSINFO_LEAD_SIGNATURE: u32 = 0x4161_5252;
+/// FAT32 FSInfo lead signature offset.
+pub(crate) const FSINFO_LEAD_OFFSET: usize = 0;
+/// FAT32 FSInfo structure signature offset (bytes 484–487) — "rrAa".
+pub(crate) const FSINFO_STRUCT_OFFSET: usize = 484;
+/// FAT32 FSInfo structure signature value.
+pub(crate) const FSINFO_STRUCT_SIGNATURE: u32 = 0x6141_7272;
+/// FAT32 FSInfo free-cluster-count field offset (u32).
+pub(crate) const FSINFO_FREE_COUNT_OFFSET: usize = 488;
+/// FAT32 FSInfo next-free-cluster hint field offset (u32).
+pub(crate) const FSINFO_NEXT_FREE_OFFSET: usize = 492;
+/// FAT32 FSInfo trailing signature bytes (bytes 510–511).
+pub(crate) const FSINFO_TRAIL_SIGNATURE: [u8; 2] = [0x55, 0xAA];
+/// Value in the FSInfo free-count / next-free fields meaning "unknown".
+pub(crate) const FSINFO_UNKNOWN: u32 = 0xFFFF_FFFF;
 
 // ─── FAT geometry (parsed from BPB) ────────────────────────────────────────
 
@@ -135,6 +152,10 @@ pub(crate) struct FatGeometry {
     pub(crate) root_entries: u16,
     #[allow(dead_code)]
     pub(crate) total_sectors: u32,
+    /// FAT32 FSInfo sector number (0 for FAT12/16 or when absent).
+    pub(crate) fsinfo_sector: u16,
+    /// FAT32 backup boot sector number (0 for FAT12/16 or when absent).
+    pub(crate) backup_boot_sector: u16,
 
     // Derived fields
     pub(crate) cluster_size_bytes: u32,
@@ -160,6 +181,8 @@ impl FatGeometry {
         let total_sectors_32 = read_u32(data, BPB_TOTAL_SECTORS_32);
         let sectors_per_fat_32 = read_u32(data, BPB_SECTORS_PER_FAT_32);
         let root_cluster = read_u32(data, BPB_ROOT_CLUSTER);
+        let fsinfo_sector = read_u16(data, BPB_FSINFO_SECTOR);
+        let backup_boot_sector = read_u16(data, BPB_BACKUP_BOOT_SECTOR);
 
         // Validate basic constraints
         if bytes_per_sector != 512 {
@@ -241,6 +264,8 @@ impl FatGeometry {
             root_cluster,
             root_entries,
             total_sectors,
+            fsinfo_sector,
+            backup_boot_sector,
             cluster_size_bytes,
             fat_start_lba,
             data_start_lba,

@@ -27,6 +27,14 @@ use super::types::FatGeometry;
 use super::types::FatType;
 use super::types::DIR_ENTRY_SIZE;
 use super::types::FIRST_DATA_CLUSTER;
+use super::types::FSINFO_FREE_COUNT_OFFSET;
+use super::types::FSINFO_LEAD_OFFSET;
+use super::types::FSINFO_LEAD_SIGNATURE;
+use super::types::FSINFO_NEXT_FREE_OFFSET;
+use super::types::FSINFO_STRUCT_OFFSET;
+use super::types::FSINFO_STRUCT_SIGNATURE;
+use super::types::FSINFO_TRAIL_SIGNATURE;
+use super::types::FSINFO_UNKNOWN;
 use super::FatFs;
 
 impl FatFs {
@@ -41,13 +49,21 @@ impl FatFs {
         })?;
         let geom = FatGeometry::from_boot_sector(&block_buf)?;
 
-        Ok(Self {
+        let mut fs = Self {
             cache,
+            device,
             geom,
             code_page: crate::kernel::fs::unicode::OemCodePage::Cp437,
             block_buf,
+            free_cluster_count: None,
+            next_free_cluster: FIRST_DATA_CLUSTER,
             profiler: FsProfiler::default(),
-        })
+        };
+        // Seed the free-cluster accounting from the FSInfo sector when it is
+        // valid; an invalid/absent FSInfo leaves the counters unknown until
+        // the first allocation triggers a FAT scan.
+        fs.read_fsinfo()?;
+        Ok(fs)
     }
 
     /// Read a single-sector block through the cache.
@@ -129,21 +145,144 @@ impl FatFs {
         Ok(())
     }
 
-    /// Find a free cluster in the FAT table.  Returns the cluster number or
-    /// `Err(Error::NoSpace)` if none are available.
-    pub(crate) fn find_free_cluster(&mut self) -> Result<u32> {
-        let eoc_min = self.geom.fat_type.eoc_min();
+    // ─── FSInfo bookkeeping + durability ───────────────────────────────────
+
+    /// Read the FAT32 FSInfo sector, adopting its free-cluster count and
+    /// next-free-cluster hint when the structure validates.  FAT12/16 and
+    /// volumes without an FSInfo sector leave the counters unchanged.
+    pub(crate) fn read_fsinfo(&mut self) -> Result<()> {
+        if self.geom.fat_type != FatType::Fat32 || self.geom.fsinfo_sector == 0 {
+            return Ok(());
+        }
+        let mut buf = [0u8; BLOCK_SIZE];
+        self.cache
+            .read_cached(self.geom.fsinfo_sector as u64, &mut buf)
+            .map_err(|_| Error::DeviceError)?;
+        if read_u32(&buf, FSINFO_LEAD_OFFSET) != FSINFO_LEAD_SIGNATURE
+            || read_u32(&buf, FSINFO_STRUCT_OFFSET) != FSINFO_STRUCT_SIGNATURE
+            || buf[510] != FSINFO_TRAIL_SIGNATURE[0]
+            || buf[511] != FSINFO_TRAIL_SIGNATURE[1]
+        {
+            return Ok(());
+        }
+        let free = read_u32(&buf, FSINFO_FREE_COUNT_OFFSET);
+        if free != FSINFO_UNKNOWN {
+            self.free_cluster_count = Some(free);
+        }
+        let next = read_u32(&buf, FSINFO_NEXT_FREE_OFFSET);
+        if next != FSINFO_UNKNOWN && next >= FIRST_DATA_CLUSTER {
+            self.next_free_cluster = next;
+        }
+        Ok(())
+    }
+
+    /// Count the free data clusters by scanning the FAT.  Runs once on the
+    /// first allocation when the FSInfo sector did not seed a count.
+    fn ensure_free_cluster_count(&mut self) -> Result<()> {
+        if self.free_cluster_count.is_some() {
+            return Ok(());
+        }
+        let mut count: u32 = 0;
         for cluster in FIRST_DATA_CLUSTER..FIRST_DATA_CLUSTER + self.geom.data_cluster_count {
-            let entry = self.read_fat_entry(cluster)?;
-            if entry == 0x0000_0000 {
-                return Ok(cluster);
-            }
-            // Guard against bad clusters that would loop forever.
-            if entry >= eoc_min {
-                continue;
+            if self.read_fat_entry(cluster)? == 0x0000_0000 {
+                count += 1;
             }
         }
-        Err(Error::OutOfMemory)
+        self.free_cluster_count = Some(count);
+        Ok(())
+    }
+
+    /// Write the FAT32 FSInfo sector (and its backup copy one sector past the
+    /// backup boot sector) reflecting the current free-cluster count and
+    /// next-free hint.  The write goes through the cache like any other block.
+    pub(crate) fn write_fsinfo(&mut self) -> Result<()> {
+        if self.geom.fat_type != FatType::Fat32 || self.geom.fsinfo_sector == 0 {
+            return Ok(());
+        }
+        let mut buf = [0u8; BLOCK_SIZE];
+        buf[FSINFO_LEAD_OFFSET..FSINFO_LEAD_OFFSET + 4]
+            .copy_from_slice(&FSINFO_LEAD_SIGNATURE.to_le_bytes());
+        buf[FSINFO_STRUCT_OFFSET..FSINFO_STRUCT_OFFSET + 4]
+            .copy_from_slice(&FSINFO_STRUCT_SIGNATURE.to_le_bytes());
+        buf[FSINFO_FREE_COUNT_OFFSET..FSINFO_FREE_COUNT_OFFSET + 4].copy_from_slice(
+            &self
+                .free_cluster_count
+                .unwrap_or(FSINFO_UNKNOWN)
+                .to_le_bytes(),
+        );
+        buf[FSINFO_NEXT_FREE_OFFSET..FSINFO_NEXT_FREE_OFFSET + 4]
+            .copy_from_slice(&self.next_free_cluster.to_le_bytes());
+        buf[510] = FSINFO_TRAIL_SIGNATURE[0];
+        buf[511] = FSINFO_TRAIL_SIGNATURE[1];
+        self.cache
+            .write_back(self.geom.fsinfo_sector as u64, &buf)
+            .map_err(|_| Error::DeviceError)?;
+        if self.geom.backup_boot_sector != 0 {
+            self.cache
+                .write_back(self.geom.backup_boot_sector as u64 + 1, &buf)
+                .map_err(|_| Error::DeviceError)?;
+        }
+        Ok(())
+    }
+
+    /// Write back every dirty cache block to the device without a
+    /// device-level flush.  Backs the per-operation write-through path.
+    pub(crate) fn flush(&mut self) -> Result<()> {
+        self.cache.flush()
+    }
+
+    /// Flush all pending metadata and data to stable storage, refreshing the
+    /// FAT32 FSInfo sector first.  Backs `sync()`/`fsync`/`fdatasync`.
+    pub(crate) fn sync(&mut self) -> Result<()> {
+        self.write_fsinfo()?;
+        self.cache.flush()?;
+        self.device.flush()
+    }
+
+    /// Write back dirty cache blocks that have aged past `age_ticks`, for the
+    /// persistent-cache durability path.  Returns the number of blocks written.
+    pub(crate) fn flush_aged(&mut self, age_ticks: u64) -> Result<usize> {
+        self.cache.flush_aged(age_ticks)
+    }
+
+    /// Find a free cluster in the FAT table, starting the scan at the cached
+    /// next-free hint and wrapping around.  Returns the cluster number or
+    /// `Err(Error::NoSpace)` if none are available.
+    pub(crate) fn find_free_cluster(&mut self) -> Result<u32> {
+        let total = self.geom.data_cluster_count;
+        if total == 0 {
+            return Err(Error::NoSpace);
+        }
+        // Compute the free-cluster count lazily on the first allocation.
+        self.ensure_free_cluster_count()?;
+
+        let last_cluster = FIRST_DATA_CLUSTER + total - 1;
+        let mut cluster = self
+            .next_free_cluster
+            .clamp(FIRST_DATA_CLUSTER, last_cluster);
+
+        for _ in 0..total {
+            if cluster > last_cluster {
+                cluster = FIRST_DATA_CLUSTER;
+            }
+            let entry = self.read_fat_entry(cluster)?;
+            if entry == 0x0000_0000 {
+                // Advance the hint past this cluster (wrapping) and account
+                // for the allocation.
+                self.next_free_cluster = if cluster == last_cluster {
+                    FIRST_DATA_CLUSTER
+                } else {
+                    cluster + 1
+                };
+                if let Some(count) = self.free_cluster_count.as_mut() {
+                    *count = count.saturating_sub(1);
+                }
+                return Ok(cluster);
+            }
+            // Bad clusters (>= EOC) are simply not allocatable; keep scanning.
+            cluster += 1;
+        }
+        Err(Error::NoSpace)
     }
 
     /// Allocate a new cluster and append it to the end of an existing chain.
@@ -164,20 +303,30 @@ impl FatFs {
         Ok(new_cluster)
     }
 
-    /// Free all clusters in a chain starting at `start_cluster`.
+    /// Free all clusters in a chain starting at `start_cluster`, updating the
+    /// free-cluster bookkeeping (count + next-free hint) so a subsequent
+    /// allocation reuses the reclaimed space first.
     pub(crate) fn free_cluster_chain(&mut self, start_cluster: u32) -> Result<()> {
         let eoc_min = self.geom.fat_type.eoc_min();
         let mut cluster = start_cluster;
+        let mut freed: u32 = 0;
         for _ in 0..65536 {
             if cluster < FIRST_DATA_CLUSTER || cluster >= eoc_min {
                 break;
             }
             let next = self.read_fat_entry(cluster)?;
             self.write_fat_entry(cluster, 0x0000_0000)?;
+            freed += 1;
             if next >= eoc_min {
                 break;
             }
             cluster = next;
+        }
+        if freed > 0 {
+            if let Some(count) = self.free_cluster_count.as_mut() {
+                *count = count.saturating_add(freed);
+            }
+            self.next_free_cluster = start_cluster;
         }
         Ok(())
     }

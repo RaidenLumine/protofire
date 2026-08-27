@@ -91,7 +91,7 @@ The VFS is the most substantial subsystem at **62,700+ lines across 118 files**.
 | XFS v5 | 3,829 | **Read/write with journal replay** | B+tree, CRC32C, v5 superblock, log replay (buffer/inode/dquot items) |
 | exFAT | 3,089 | Read/write | VFAT extension |
 | BtrFS | 2,899 | Read-only | B-tree traversal |
-| FAT32 | 2,744 | Read-only | LFN, OEM code pages |
+| FAT32 | 2,794 | Read/write | LFN, OEM code pages, FSInfo accounting |
 | NTFS 3.1 | 2,684 | Read-only | MFT parsing, attribute resolution |
 | SquashFS 4.0 | 1,446 | Read-only | 5 compression algorithms |
 | ISO 9660 | 1,475 | Read-only | Joliet, Rock Ridge |
@@ -111,14 +111,14 @@ The VFS is the most substantial subsystem at **62,700+ lines across 118 files**.
 
 **Strengths:** 11 filesystem drivers (4 writable), a crash-safe native FS, and encryption at rest.
 
-- **Multiple filesystems**: ext4, F2FS, and XFS support full journal replay from real disk; exFAT is read/write; btrfs/FAT32/NTFS/SquashFS/ISO 9660/EROFS are read-only.
+- **Multiple filesystems**: ext4, F2FS, and XFS support full journal replay from real disk; exFAT and FAT32 are read/write; btrfs/NTFS/SquashFS/ISO 9660/EROFS are read-only.
 - **Unicode 15.1**: full NF C/D normalization and GB18030 codec.
 - **Crash safety**: SimpleFs uses undo-log transactions and two-phase commit.
 - **Encryption at rest**: EncryptedBlockDevice provides AES-256 XTS disk encryption, LUKS2 compatible, PBKDF2 key derivation, transparently layered under any filesystem.
 
 **Weaknesses:**
 
-- **Many read-only drivers**: btrfs, FAT32, NTFS, SquashFS, ISO 9660, and EROFS are read-only; write support is a mid-term roadmap goal.
+- **Many read-only drivers**: btrfs, NTFS, SquashFS, ISO 9660, and EROFS are read-only; write support is a mid-term roadmap goal.
 - **Journal replay verified on emulated disks**: coverage of real-corruption edge cases is limited.
 
 **SimpleFs V4 data-reduction format** (inherits V3's persistent security descriptors + `pending_commit` two-phase commit):
