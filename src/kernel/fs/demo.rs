@@ -133,6 +133,8 @@ const DEMO_GENERAL_PROTECTION_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher
 const DEMO_ONE_SHOT_PAGE_FAULT_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher-one-shot-page-fault\"\nversion = \"0.1.0\"\nformat = \"elf64-x86_64-user\"\nentry = \"/apps/packages/demo-launcher-one-shot-page-fault/bin/demo.elf\"\nworking_dir = \"/apps/packages/demo-launcher-one-shot-page-fault\"\nargv = [\"demo-launcher-one-shot-page-fault\", \"--profile=demo\", \"--transport=serial\", \"--trigger-fault=page-one-shot\"]\nenv = [\"ASTRA_APP_ID=demo-launcher-one-shot-page-fault\", \"ASTRA_RUNTIME=ring3-prototype\", \"ASTRA_ZONE=/apps\"]\nhost_proxy = \"demo-launcher\"\n";
 #[cfg(target_arch = "x86_64")]
 const DEMO_NESTED_PAGE_FAULT_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher-nested-page-fault\"\nversion = \"0.1.0\"\nformat = \"elf64-x86_64-user\"\nentry = \"/apps/packages/demo-launcher-nested-page-fault/bin/demo.elf\"\nworking_dir = \"/apps/packages/demo-launcher-nested-page-fault\"\nargv = [\"demo-launcher-nested-page-fault\", \"--profile=demo\", \"--transport=serial\", \"--trigger-fault=page-nested\"]\nenv = [\"ASTRA_APP_ID=demo-launcher-nested-page-fault\", \"ASTRA_RUNTIME=ring3-prototype\", \"ASTRA_ZONE=/apps\"]\nhost_proxy = \"demo-launcher\"\n";
+#[cfg(target_arch = "x86_64")]
+const DEMO_VIRGL_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher-virgl\"\nversion = \"0.1.0\"\nformat = \"elf64-x86_64-user\"\nentry = \"/apps/packages/demo-launcher-virgl/bin/demo.elf\"\nworking_dir = \"/apps/packages/demo-launcher-virgl\"\nargv = [\"demo-launcher-virgl\", \"--profile=demo\", \"--transport=serial\", \"--runtime=virgl\"]\nenv = [\"ASTRA_APP_ID=demo-launcher-virgl\", \"ASTRA_RUNTIME=ring3-virgl-proxy\", \"ASTRA_ZONE=/apps\"]\nhost_proxy = \"demo-launcher-virgl\"\n";
 
 /// Shell launch manifest.  The shell ELF is metadata-only (no PT_LOAD segments)
 /// so the loader always falls back to the `host_proxy = "shell"` path, which
@@ -474,7 +476,7 @@ fn apps_entries<'a>(
     rust_demo_program_elf: &'a [u8],
     rust_io_demo_program_elf: &'a [u8],
     shell_program_elf: &'a [u8],
-) -> [ImageEntry<'a>; 46] {
+) -> [ImageEntry<'a>; 51] {
     // Mirror the installed-app layout used by the launch core:
     // - /catalog holds versioned and alias records
     // - /current holds active-entry aliases
@@ -641,6 +643,26 @@ fn apps_entries<'a>(
         },
         ImageEntry {
             path: "/packages/demo-launcher-nested-page-fault/bin/demo.elf",
+            data: demo_program_elf,
+        },
+        ImageEntry {
+            path: "/catalog/demo-launcher-virgl.toml",
+            data: b"id = \"demo-launcher-virgl\"\nversion = \"0.1.0\"\ncatalog = \"./demo-launcher-virgl@0.1.0.toml\"\n",
+        },
+        ImageEntry {
+            path: "/catalog/demo-launcher-virgl@0.1.0.toml",
+            data: b"id = \"demo-launcher-virgl\"\nmanifest = \"/apps/packages/demo-launcher-virgl/manifest.toml\"\n",
+        },
+        ImageEntry {
+            path: "/current/demo-launcher-virgl.toml",
+            data: b"id = \"demo-launcher-virgl\"\nversion = \"0.1.0\"\ncatalog = \"../catalog/demo-launcher-virgl@0.1.0.toml\"\n",
+        },
+        ImageEntry {
+            path: "/packages/demo-launcher-virgl/manifest.toml",
+            data: DEMO_VIRGL_PROGRAM_MANIFEST,
+        },
+        ImageEntry {
+            path: "/packages/demo-launcher-virgl/bin/demo.elf",
             data: demo_program_elf,
         },
         ImageEntry {

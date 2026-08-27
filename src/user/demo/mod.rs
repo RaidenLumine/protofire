@@ -31,3 +31,6 @@ pub mod shell_payload_x86_64;
 
 /// Shared ELF64 artifact construction.  See [`crate::user::demo::elf_builder`].
 pub mod elf_builder;
+
+/// Demo VIRGL 3D renderer driving the GPU syscall surface.
+pub mod virgl_renderer;

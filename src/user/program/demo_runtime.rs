@@ -65,6 +65,8 @@ pub(super) fn resolve_program_proxy(host_proxy: &str, machine: u16) -> Result<fn
         Ok(demo_rust_launcher_entry as fn())
     } else if host_proxy == "demo-launcher-rust-io" {
         Ok(demo_rust_io_launcher_entry as fn())
+    } else if host_proxy == "demo-launcher-virgl" {
+        Ok(demo_virgl_launcher_entry as fn())
     } else if host_proxy == "shell" {
         Ok(super::shell::shell_user_main as fn())
     } else {
@@ -172,6 +174,18 @@ fn demo_rust_io_launcher_entry() {
 
     if let Err(error) = demo_rust_io_spawn_and_wait_for_rust_child() {
         println!("[user  ] rust io wait failed: {}", error.as_str());
+    }
+}
+
+fn demo_virgl_launcher_entry() {
+    match crate::user::demo::virgl_renderer::run_virgl_render_demo() {
+        Ok(report) => {
+            let _ = write_stdout(report.as_bytes());
+        }
+        Err(error) => {
+            let line = format!("[user  ] virgl demo failed: {}\n", error.as_str());
+            let _ = write_stdout(line.as_bytes());
+        }
     }
 }
 

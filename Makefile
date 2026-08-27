@@ -18,7 +18,7 @@ else
 $(error PROFILE must be either debug or release)
 endif
 
-.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb test-parsers verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 clippy run run-aarch64 run-riscv64 clean setup-dev install-hooks
+.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb test-gpu test-parsers verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 clippy run run-aarch64 run-riscv64 clean setup-dev install-hooks
 
 help:
 	@printf '%s\n' \
@@ -39,6 +39,7 @@ help:
 		'  make test-concurrency - run scheduler/input/condvar concurrency regressions' \
 		'  make test-storage   - run filesystem/recovery/fault-injection regressions' \
 		'  make test-usb       - run USB Mass Storage (MSD) integration tests' \
+		'  make test-gpu       - run VIRGL 3D demo renderer integration tests' \
 		'  make test-parsers   - run the deterministic in-tree parser fuzz harnesses' \
 		'  make fmt            - format the source tree' \
 		'  make fmt-check      - verify formatting without modifying files' \
@@ -104,6 +105,11 @@ test-usb:
 	@echo "Running USB MSD Integration Tests..."
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test usb_msd
 	@echo "USB MSD tests completed"
+
+test-gpu:
+	@echo "Running VIRGL 3D Demo Renderer Integration Tests..."
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test virgl_demo
+	@echo "VIRGL 3D demo tests completed"
 
 test-parsers:
 	@echo "Running Deterministic Parser Fuzz Harnesses..."

@@ -67,6 +67,7 @@ pub const USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize = 0;
 // ── submodules ────────────────────────────────────────────────────
 
 mod fs;
+mod gpu;
 mod payload;
 mod process;
 

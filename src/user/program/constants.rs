@@ -76,6 +76,12 @@ pub const DEMO_NESTED_PAGE_FAULT_CURRENT_PATH: &str =
 #[cfg(any(feature = "demo-disk", test))]
 pub const DEMO_NESTED_PAGE_FAULT_PROGRAM_PATH: &str =
     "/apps/packages/demo-launcher-nested-page-fault/bin/demo.elf";
+#[cfg(any(feature = "demo-disk", test))]
+pub const DEMO_VIRGL_CATALOG_PATH: &str = "/apps/catalog/demo-launcher-virgl.toml";
+#[cfg(any(feature = "demo-disk", test))]
+pub const DEMO_VIRGL_CURRENT_PATH: &str = "/apps/current/demo-launcher-virgl.toml";
+#[cfg(any(feature = "demo-disk", test))]
+pub const DEMO_VIRGL_PROGRAM_PATH: &str = "/apps/packages/demo-launcher-virgl/bin/demo.elf";
 
 // ── demo data paths ───────────────────────────────────────────────────
 

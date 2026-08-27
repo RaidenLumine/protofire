@@ -103,6 +103,10 @@ path = "tests/parsers/fuzz.rs"
 name = "simplefs_undo_property"
 path = "tests/simplefs/undo_property.rs"
 
+[[test]]
+name = "virgl_demo"
+path = "tests/gpu/virgl_demo.rs"
+
 [features]
 default = []
 demo-disk = []

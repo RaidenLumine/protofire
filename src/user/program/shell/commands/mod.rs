@@ -7,6 +7,7 @@
 //! dispatch table.
 
 mod env;
+mod gpu;
 mod network;
 mod process;
 mod user;
@@ -18,6 +19,7 @@ mod user;
 // passwd, and chown were ring3 utility ELFs; no such payloads are built or
 // shipped in this repo, so those commands are unavailable.
 pub(crate) use env::cmd_source;
+pub(crate) use gpu::cmd_virgl;
 pub(crate) use network::cmd_ping;
 pub(crate) use process::cmd_bg;
 pub(crate) use process::cmd_fg;

@@ -20,3 +20,4 @@ pub mod runtime;
 pub mod seccomp;
 pub mod shm;
 pub mod syscall;
+pub mod virgl;

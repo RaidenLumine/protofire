@@ -1132,6 +1132,9 @@ pub mod mock {
         pub transfers: Mutex<Vec<(u32, u32, u32, u32)>>,
         /// Recorded `(ctx_id, cmd_len)` pairs from `submit_3d` calls.
         pub submits: Mutex<Vec<(u32, u32)>>,
+        /// Raw command bytes recorded from each `submit_3d` call, so the demo
+        /// renderer's command framing can be validated round-trip.
+        pub submitted_commands: Mutex<Vec<Vec<u8>>>,
         /// Most recent `set_scanout` call as `(resource_id, width, height)`.
         pub scanout: Mutex<Option<(u32, u32, u32)>>,
     }
@@ -1149,6 +1152,7 @@ pub mod mock {
                 resources: Mutex::new(BTreeMap::new()),
                 transfers: Mutex::new(Vec::new()),
                 submits: Mutex::new(Vec::new()),
+                submitted_commands: Mutex::new(Vec::new()),
                 scanout: Mutex::new(None),
             }
         }
@@ -1211,6 +1215,7 @@ pub mod mock {
 
         fn submit_3d(&self, ctx_id: u32, cmd: &[u8]) -> Result<()> {
             self.submits.lock().push((ctx_id, cmd.len() as u32));
+            self.submitted_commands.lock().push(cmd.to_vec());
             Ok(())
         }
 

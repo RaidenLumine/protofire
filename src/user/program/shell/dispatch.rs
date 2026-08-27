@@ -20,6 +20,7 @@ use super::commands::cmd_login;
 use super::commands::cmd_ping;
 use super::commands::cmd_source;
 use super::commands::cmd_su;
+use super::commands::cmd_virgl;
 // ring3-common shared dispatch — kernel-only commands are checked first, then
 // the shared dispatch table handles everything else with explicit state params.
 use crate::user::shared::abi::io::OPEN_FLAG_CREATE;
@@ -263,6 +264,8 @@ pub(crate) fn dispatch_single_command(
         // Kernel-only: authentication (SecurityToken construction)
         "login" => return CmdResult::from_output(cmd_login(cwd, argv)),
         "su" => return CmdResult::from_output(cmd_su(cwd, argv)),
+        // Kernel-only: VIRGL 3D demo renderer (GPU syscall path)
+        "virgl" => return CmdResult::from_output(cmd_virgl(cwd, argv)),
         // Kernel-only: job control
         "jobs" => return cmd_jobs(),
         "fg" => return cmd_fg(argv),
