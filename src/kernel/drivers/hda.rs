@@ -145,9 +145,9 @@ pub const HDA_SDBDPU: usize = 0x1C; // BDL Pointer High (32-bit)
 // Stream Descriptor Control (SDCTL) bits.
 pub const SDCTL_SRUN: u32 = 1 << 0; // Stream Run
 pub const SDCTL_SRUN_RESET: u32 = 1 << 1; // Stream Run (stop / reset latch)
-pub const SDCTL_STRM_TAG_SHIFT: u32 = 4; // Stream tag lives in bits 15:4
-pub const SDCTL_STRM_TAG_MASK: u32 = 0x0FFF << SDCTL_STRM_TAG_SHIFT;
-pub const SDCTL_DIR_SHIFT: u32 = 20; // Direction bit (0 = output, 1 = input)
+pub const SDCTL_STRM_TAG_SHIFT: u32 = 4; // Stream tag lives in bits 7:4
+pub const SDCTL_STRM_TAG_MASK: u32 = 0x0F << SDCTL_STRM_TAG_SHIFT;
+pub const SDCTL_DIR_SHIFT: u32 = 19; // Direction bit (0 = output, 1 = input)
 pub const SDCTL_DIR_IN: u32 = 1 << SDCTL_DIR_SHIFT;
 
 // Stream Descriptor Status (SDSTS) bits.
@@ -918,9 +918,14 @@ mod controller {
             self.stop_playback_stream();
             // Clear stale status (W1C).
             reg_write8(self.regs, sd + HDA_SDSTS, SDSTS_BCIS | SDSTS_FIFO_READY);
-            // Format, cyclic buffer length, and BDL base address.
+            // Format, cyclic buffer length, last-valid descriptor index, and
+            // BDL base address.  SDLVI must be `BDL_ENTRIES - 1` so the DMA
+            // engine traverses the full ring; QEMU intel-hda derives the
+            // descriptor count as `lvi + 1`, and real silicon won't run DMA
+            // at all with LVI = 0.
             reg_write16(self.regs, sd + HDA_SDFMT, format);
             reg_write32(self.regs, sd + HDA_SDCBL, BDL_TOTAL_LEN);
+            reg_write16(self.regs, sd + HDA_SDLVI, (BDL_ENTRIES - 1) as u16);
             let bdl = self
                 .playback_bdl
                 .as_ref()
