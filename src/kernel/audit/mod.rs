@@ -15,6 +15,7 @@ use core::sync::atomic::Ordering;
 use alloc::boxed::Box;
 
 pub mod buffer;
+pub mod persist;
 pub mod types;
 
 use buffer::AuditBuffer;

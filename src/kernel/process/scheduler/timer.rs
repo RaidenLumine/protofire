@@ -74,6 +74,13 @@ impl Scheduler {
             );
         }
 
+        // Persist the audit ring buffer to the root filesystem when enabled.
+        // Bounded by a period so disk I/O is not issued every tick.  No-op
+        // (and zero-cost) while audit persistence is disabled.
+        if ticks.is_multiple_of(crate::kernel::audit::persist::PERSIST_PERIOD_TICKS) {
+            crate::kernel::audit::persist::persist_to_file();
+        }
+
         // DHCP lease renewal — bare-metal only; there is no DHCP server in
         // test mode.  Check once per second (every 100 ticks at 100 Hz).
         #[cfg(target_os = "none")]

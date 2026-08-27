@@ -152,6 +152,50 @@ impl AuditBuffer {
         to_copy
     }
 
+    /// Copy up to `max` records into `buf` from the oldest unread record
+    /// forward, WITHOUT advancing the consumer index.
+    ///
+    /// This is the persistence path: the disk flusher copies a batch, writes
+    /// it durably, and only then calls [`Self::commit_read`] with the count it
+    /// actually persisted, so a failed write does not drop records.
+    pub fn peek_records(&self, buf: &mut [AuditRecord]) -> usize {
+        let published = self.published.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Relaxed);
+
+        let available = (published - tail) as usize;
+        let to_copy = available.min(buf.len());
+
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..to_copy {
+            let idx = ((tail + i as u64) % self.capacity) as usize;
+            // SAFETY: the slot at `idx` has been written and published by the
+            // producer and not yet overwritten (tail + i < published).
+            unsafe {
+                let slot = &*self.entries[idx].get();
+                buf[i] = *slot.as_ptr();
+            }
+        }
+
+        to_copy
+    }
+
+    /// Advance the consumer index by up to `count` records after a batch of
+    /// [`Self::peek_records`] results has been durably processed.
+    ///
+    /// Clamps to the number of records still available so a concurrent
+    /// consumer (user-space `audit_read_log`) cannot be forced past the
+    /// published index; overlapping records already consumed elsewhere are
+    /// simply not double-advanced.
+    pub fn commit_read(&self, count: usize) {
+        let published = self.published.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Relaxed);
+        let available = (published - tail) as usize;
+        let advance = count.min(available);
+        if advance > 0 {
+            self.tail.store(tail + advance as u64, Ordering::Release);
+        }
+    }
+
     /// Return the number of records currently in the buffer.
     pub fn len(&self) -> u64 {
         let head = self.head.load(Ordering::Relaxed);
@@ -272,5 +316,43 @@ mod tests {
         }
         let n = buf.read_events(&mut out);
         assert_eq!(n, 4);
+    }
+
+    #[test]
+    fn peek_does_not_advance_until_commit() {
+        let buf = AuditBuffer::new();
+        buf.emit(sample_record(b"a"));
+        buf.emit(sample_record(b"b"));
+        buf.emit(sample_record(b"c"));
+        assert_eq!(buf.len(), 3);
+
+        let mut out = [AuditRecord::zeroed(); 10];
+        let n = buf.peek_records(&mut out);
+        assert_eq!(n, 3);
+        // Peeking must not consume anything.
+        assert_eq!(buf.len(), 3);
+
+        // Committing only two of the three leaves one available.
+        buf.commit_read(2);
+        assert_eq!(buf.len(), 1);
+
+        let n = buf.peek_records(&mut out);
+        assert_eq!(n, 1);
+        let data_slice = &out[0].data[..out[0].data_len as usize];
+        assert_eq!(data_slice, b"c");
+
+        buf.commit_read(1);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn commit_read_clamps_to_available() {
+        let buf = AuditBuffer::new();
+        buf.emit(sample_record(b"only"));
+        assert_eq!(buf.len(), 1);
+
+        // Committing more than is available must not overrun the buffer.
+        buf.commit_read(100);
+        assert!(buf.is_empty());
     }
 }
