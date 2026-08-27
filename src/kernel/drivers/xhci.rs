@@ -48,8 +48,10 @@ pub const XHCI_CAP_RTSOFF: usize = 0x18;
 
 // HCSPARAMS1 fields.
 pub const HCSPARAMS1_MAX_SLOTS_MASK: u32 = 0x0000_00FF;
-pub const HCSPARAMS1_MAX_PORTS_MASK: u32 = 0x00FF_0000;
-pub const HCSPARAMS1_MAX_PORTS_SHIFT: u32 = 8;
+pub const HCSPARAMS1_MAX_PORTS_MASK: u32 = 0xFF00_0000;
+// MaxPorts lives in bits 31:24 of HCSPARAMS1 (Linux `HCS_MAX_PORTS` and the
+// xHCI spec; QEMU's hcd-xhci also uses `numports << 24`).
+pub const HCSPARAMS1_MAX_PORTS_SHIFT: u32 = 24;
 
 // HCCPARAMS1 field.
 pub const HCCPARAMS1_CSZ: u32 = 1 << 2; // Context Size (0 = 32 bytes, 1 = 64 bytes)
@@ -84,6 +86,15 @@ pub const USBSTS_CNR: u32 = 1 << 11; // Controller Not Ready
 pub const CRCR_RCS: u64 = 1; // Ring Cycle State
 
 // ---------------------------------------------------------------------------
+// Port Status and Control registers (PORTSC), offset from the operational
+// base.  Port n's PORTSC lives at XHCI_OP_PORTSC + (n-1) * 0x10.
+// ---------------------------------------------------------------------------
+
+pub const XHCI_OP_PORTSC: usize = 0x400;
+/// PORTSC: Current Connect Status (a device is attached to this port).
+pub const PORTSC_CCS: u32 = 1 << 0;
+
+// ---------------------------------------------------------------------------
 // xHCI runtime registers (offset from BAR0 + RTSOFF)
 // ---------------------------------------------------------------------------
 
@@ -109,7 +120,6 @@ pub const IMAN_IE: u32 = 1 << 1; // Interrupt Enable
 // ---------------------------------------------------------------------------
 
 pub const DOORBELL_ARRAY_OFFSET: usize = 0x00; // relative to DBOFF
-pub const DOORBELL_STRIDE: usize = 4;
 pub const DOORBELL_TARGET_EP0: u32 = 1; // Doorbell target for Default Control EP
 
 // ---------------------------------------------------------------------------
@@ -150,6 +160,9 @@ pub const TRB_TYPE_SHIFT: u32 = 10;
 pub const TRB_CHAIN_BIT: u32 = 1 << 4;
 /// TRB control field: Interrupt On Completion (bit 5).
 pub const TRB_IOC: u32 = 1 << 5;
+/// TRB control field: Immediate Data (bit 6) — Setup Stage TRBs carry the
+/// 8-byte setup packet in their parameter field and must set this.
+pub const TRB_IDT: u32 = 1 << 6;
 /// TRB control field: Interrupt On Short Packet (bit 1).
 pub const TRB_ISP: u32 = 1 << 1;
 /// TRB status field: Direction bit for Data Stage TRB (bit 16 = IN).
@@ -286,10 +299,11 @@ impl Trb {
         }
     }
 
-    /// Create an Enable Slot command TRB.
-    pub fn enable_slot(cycle: u32) -> Self {
+    /// Create an Enable Slot command TRB for a root hub port.
+    /// The Root Hub Port Number lives in bits 15:0 of the parameter field.
+    pub fn enable_slot(cycle: u32, root_port: u8) -> Self {
         Self {
-            parameter: 0,
+            parameter: root_port as u64,
             status: 0,
             control: trb_control(trb_type::ENABLE_SLOT, cycle),
         }
@@ -297,22 +311,24 @@ impl Trb {
 
     /// Create an Address Device command TRB.
     /// `ict_phys`: physical address of the Input Context.
-    /// `bsr`: Block Set Address Request (0 = send SET_ADDRESS, 1 = block).
-    pub fn address_device(ict_phys: u64, bsr: bool, cycle: u32) -> Self {
-        let bsr_bit: u64 = if bsr { 1 << 9 } else { 0 };
+    /// `slot_id`: the slot being addressed, encoded in control bits 24:31.
+    /// `bsr`: Block Set Address Request (0 = send SET_ADDRESS, 1 = block),
+    /// held in status bit 0.
+    pub fn address_device(ict_phys: u64, slot_id: u8, bsr: bool, cycle: u32) -> Self {
         Self {
-            parameter: ict_phys | bsr_bit,
-            status: 0,
-            control: trb_control(trb_type::ADDRESS_DEVICE, cycle),
+            parameter: ict_phys,
+            status: if bsr { 1 } else { 0 },
+            control: trb_control(trb_type::ADDRESS_DEVICE, cycle) | ((slot_id as u32) << 24),
         }
     }
 
     /// Create a Configure Endpoint command TRB.
-    pub fn configure_endpoint(ict_phys: u64, cycle: u32) -> Self {
+    /// `slot_id` is encoded in control bits 24:31.
+    pub fn configure_endpoint(ict_phys: u64, slot_id: u8, cycle: u32) -> Self {
         Self {
             parameter: ict_phys,
             status: 0,
-            control: trb_control(trb_type::CONFIGURE_ENDPOINT, cycle),
+            control: trb_control(trb_type::CONFIGURE_ENDPOINT, cycle) | ((slot_id as u32) << 24),
         }
     }
 
@@ -329,6 +345,11 @@ impl Trb {
     /// Slot ID from a Command Completion Event TRB (bits 24:31 of control).
     pub fn slot_id(&self) -> u8 {
         ((self.control >> 24) & 0xFF) as u8
+    }
+
+    /// Endpoint ID (DCI) from a Transfer Event TRB (bits 16:20 of control).
+    pub fn endpoint_id(&self) -> u8 {
+        ((self.control >> 16) & 0x1F) as u8
     }
 
     /// TRB type from control word (bits 10:16).
@@ -428,13 +449,23 @@ pub struct UsbEndpointDescriptor {
     pub interval: u8,
 }
 
-/// Parsed information about a HID keyboard endpoint.
+/// Parsed information about a HID interrupt IN endpoint.
 #[derive(Debug, Clone, Copy)]
 pub struct HidEndpointInfo {
     pub endpoint_address: u8,
     pub max_packet_size: u16,
     pub interval: u8,
     pub interface_number: u8,
+    /// Bytes per boot-protocol input report.
+    pub report_len: usize,
+}
+
+impl HidEndpointInfo {
+    /// The doorbell Device Context Index for this interrupt IN endpoint.
+    /// xHCI maps an IN endpoint N to DCI 2*N+1.
+    pub const fn dci(&self) -> u32 {
+        2u32 * (self.endpoint_address & 0x0F) as u32 + 1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -454,6 +485,9 @@ mod controller {
     /// Maximum number of device slots we support.
     const MAX_SLOTS: usize = 64;
 
+    /// How many PORTSC reads to wait for a port's connection to stabilise.
+    const PORT_CONNECT_SETTLE_SPINS: usize = 100_000;
+
     /// The xHCI host controller.
     pub struct XhciController {
         /// Operational register base (mmio_base + caplength).
@@ -464,6 +498,8 @@ mod controller {
         doorbell_base: *mut u32,
         /// Maximum device slots (from HCSPARAMS1).
         max_slots: u8,
+        /// Maximum root hub ports (from HCSPARAMS1).
+        pub(crate) max_ports: u8,
         /// Device context size in bytes (32 or 64).
         context_size: u8,
         /// Page size mask (from PAGESIZE register).
@@ -489,19 +525,35 @@ mod controller {
         device_contexts: [Option<DmaBuffer>; MAX_SLOTS],
         /// Per-slot transfer ring for EP0.
         ep0_transfer_rings: [Option<DmaBuffer>; MAX_SLOTS],
+        /// Per-slot EP0 enqueue position (total TRBs produced, modulo the
+        /// ring's usable slots gives the physical slot to append at next).
+        ep0_enqueue: [u32; MAX_SLOTS],
         /// Per-slot interrupt transfer ring.
         int_transfer_rings: [Option<DmaBuffer>; MAX_SLOTS],
+        /// Per-slot interrupt-ring enqueue position (total TRBs produced).
+        int_enqueue: [u32; MAX_SLOTS],
         /// Enumerated slot for HID keyboard (0 = none).
         pub keyboard_slot: u8,
         /// HID keyboard endpoint info.
         pub keyboard_ep: Option<HidEndpointInfo>,
-        /// Pre-allocated DMA buffer for HID report reception (reused across
-        /// polls).
-        hid_report_buf: Option<DmaBuffer>,
+        /// Pre-allocated DMA buffer for HID keyboard report reception (reused
+        /// across re-armed reads).
+        keyboard_report_buf: Option<DmaBuffer>,
+        /// Enumerated slot for HID mouse (0 = none).
+        pub mouse_slot: u8,
+        /// HID mouse endpoint info.
+        pub mouse_ep: Option<HidEndpointInfo>,
+        /// Pre-allocated DMA buffer for HID mouse report reception (reused
+        /// across re-armed reads).
+        mouse_report_buf: Option<DmaBuffer>,
         /// Per-slot bulk OUT transfer rings.
         bulk_out_rings: [Option<DmaBuffer>; MAX_SLOTS],
         /// Per-slot bulk IN transfer rings.
         bulk_in_rings: [Option<DmaBuffer>; MAX_SLOTS],
+        /// Per-slot bulk OUT ring enqueue position (total TRBs produced).
+        bulk_out_enqueue: [u32; MAX_SLOTS],
+        /// Per-slot bulk IN ring enqueue position (total TRBs produced).
+        bulk_in_enqueue: [u32; MAX_SLOTS],
         /// USB mass storage slot (0 = none).
         pub msd_slot: u8,
         /// Mass storage bulk endpoint info.
@@ -536,6 +588,29 @@ mod controller {
     unsafe fn ring_trb_ptr(ring: &DmaBuffer, index: u32) -> *mut Trb {
         let base = ring.as_ptr() as *mut Trb;
         base.add(index as usize)
+    }
+
+    /// Walk a configuration descriptor and return the first interface
+    /// descriptor's (class, subclass, protocol).
+    ///
+    /// Devices that report bDeviceClass == 0 declare their class per
+    /// interface, so the effective class has to come from the interface
+    /// descriptor (e.g. HID keyboards and bulk-only mass storage).
+    fn config_interface_class(config: &[u8]) -> Option<(u8, u8, u8)> {
+        let mut i = 0usize;
+        while i + 1 < config.len() {
+            let dlen = config[i] as usize;
+            if dlen < 2 {
+                break;
+            }
+            // INTERFACE descriptor: bInterfaceClass at +5, subclass +6,
+            // protocol +7.
+            if config[i + 1] == 4 && i + 7 < config.len() {
+                return Some((config[i + 5], config[i + 6], config[i + 7]));
+            }
+            i += dlen;
+        }
+        None
     }
 
     /// Write a command TRB to the command ring at the enqueue position,
@@ -642,8 +717,8 @@ mod controller {
             let page_size = read_volatile(op_base.add(XHCI_OP_PAGESIZE / 4));
 
             println!(
-                "[xhci  ] max_slots={} max_ports={} ctx_size={} page_size={:#x}",
-                max_slots, max_ports, context_size, page_size
+                "[xhci  ] hcsparams1={:#010x} max_slots={} max_ports={} ctx_size={} page_size={:#x}",
+                hcsparams1, max_slots, max_ports, context_size, page_size
             );
 
             let mut ctrl = Self {
@@ -651,6 +726,7 @@ mod controller {
                 runtime_base,
                 doorbell_base,
                 max_slots,
+                max_ports,
                 context_size,
                 page_size,
                 cmd_ring: DmaBuffer::allocate(1)?, // 4 KiB for command ring
@@ -663,12 +739,19 @@ mod controller {
                 dcbaa: DmaBuffer::allocate(1)?, // 4 KiB for DCBAAP
                 device_contexts: [const { None }; MAX_SLOTS],
                 ep0_transfer_rings: [const { None }; MAX_SLOTS],
+                ep0_enqueue: [0; MAX_SLOTS],
                 int_transfer_rings: [const { None }; MAX_SLOTS],
+                int_enqueue: [0; MAX_SLOTS],
                 keyboard_slot: 0,
                 keyboard_ep: None,
-                hid_report_buf: None,
+                keyboard_report_buf: None,
+                mouse_slot: 0,
+                mouse_ep: None,
+                mouse_report_buf: None,
                 bulk_out_rings: [const { None }; MAX_SLOTS],
                 bulk_in_rings: [const { None }; MAX_SLOTS],
+                bulk_out_enqueue: [0; MAX_SLOTS],
+                bulk_in_enqueue: [0; MAX_SLOTS],
                 msd_slot: 0,
                 msd_endpoints: None,
             };
@@ -805,9 +888,10 @@ mod controller {
         // Device enumeration
         // -------------------------------------------------------------------
 
-        /// Enable a device slot. Returns the slot ID (1-based).
-        pub unsafe fn enable_slot(&mut self) -> Result<u8> {
-            let trb = Trb::enable_slot(if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 });
+        /// Enable a device slot on a root hub port. Returns the slot ID
+        /// (1-based).
+        pub unsafe fn enable_slot(&mut self, root_port: u8) -> Result<u8> {
+            let trb = Trb::enable_slot(if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 }, root_port);
             let evt = self.send_command(trb)?;
             let cc = evt.completion_code();
             if cc != cc::SUCCESS {
@@ -856,13 +940,28 @@ mod controller {
         }
 
         /// Build an input context for Address Device command.
+        ///
+        /// The layout follows QEMU 8.2.2's `xhci_address_slot` (which reads the
+        /// Slot Context at `ictx + 32` and the EP0 Context at `ictx + 64`, i.e.
+        /// a 32-byte Input Control Context):
+        /// - ICC DWORD 0 = Drop Context flags, must be 0.
+        /// - ICC DWORD 1 = Add Context flags, must be 0x3 (add Slot + EP0); any
+        ///   other combination is rejected with CC_TRB_ERROR.
+        /// - Slot Context: Context Entries at bits 31:27
+        ///   (`SLOT_CONTEXT_ENTRIES_SHIFT`), Root Hub Port Number at DWORD 1
+        ///   bits 23:16 (`(slot_ctx[1] >> 16) & 0xFF`).  Bits 19:0 of DWORD 0
+        ///   must stay 0 so `xhci_lookup_uport` sees no hub route path.
+        /// - EP0 Control Context: EP type at bits 5:3 (`EP_TYPE_SHIFT`), Max
+        ///   Packet Size at bits 23:16 (`ctx[1] >> 16`), TR Dequeue Pointer in
+        ///   DWORDs 2-3.
         unsafe fn build_address_device_input(
             &self,
             _slot_id: u8,
             ep0_ring: &DmaBuffer,
+            root_port: u8,
         ) -> DmaBuffer {
             let ctx_size = self.context_size as usize;
-            // Input context: ICC + Slot + EP0 Control + EP1 IN = 4 * ctx_size
+            // Input context: ICC + Slot + EP0 + EP1 IN = 4 * ctx_size.
             let total = 4 * ctx_size;
             let nframes = total.div_ceil(4096);
             let mut buf = DmaBuffer::allocate(nframes).unwrap();
@@ -870,37 +969,32 @@ mod controller {
 
             let base = buf.as_ptr();
 
-            // Input Control Context (ICC): A0 (add slot) + A1 (add EP0 control).
+            // Input Control Context (ICC) at offset 0.
             unsafe {
                 let icc = base as *mut u32;
-                write_volatile(icc, 0x03); // A0=1, A1=1
+                write_volatile(icc, 0x0); // drop flags: nothing dropped
+                write_volatile(icc.add(1), 0x3); // add flags: slot + EP0
             }
 
-            // Slot Context at offset ctx_size:
-            // - Root Hub Port = 1 (speed handled by controller)
-            // - Context Entries = 1 (one endpoint context, the control EP)
+            // Slot Context at offset ctx_size.
             unsafe {
                 let sc_base = base.add(ctx_size) as *mut u32;
-                // context_entries (bits 26:0) = 1
-                write_volatile(sc_base, 1);
-                // route_string_and_speed = 0 (root port)
-                write_volatile(sc_base.add(2), 0);
+                write_volatile(sc_base, 1 << 27); // context entries = 1
+                write_volatile(sc_base.add(1), (root_port as u32) << 16);
+                // DWORD 2 (interrupter target) and DWORD 3 left 0.
             }
 
-            // Endpoint 0 Control Context at offset 2*ctx_size (EP0 in input = offset 1)
+            // Endpoint 0 Control Context at offset 2*ctx_size.
             unsafe {
                 let ep0_ctrl = base.add(2 * ctx_size) as *mut u32;
                 // TR Dequeue Pointer: physical address of EP0 ring | DCS=1
                 let tr_dq = ep0_ring.phys_addr() as u64 | 1; // DCS=1
                 write_volatile(ep0_ctrl.add(2), tr_dq as u32);
                 write_volatile(ep0_ctrl.add(3), (tr_dq >> 32) as u32);
-                // EP type: Control (4), Max Packet Size=8, Average TRB Length=8.
-                // Bits 3:0 = endpoint type (4 = Control).
-                // Bits 15:8 = Max Packet Size.
-                // Bits 31:16 = Max Burst Size (set 0).
+                // EP type: Control (4), Max Packet Size: 8 (initial MPS).
                 let ep_type_val: u32 = 4; // Control
-                let mps_val: u32 = 8; // initial MPS for control EP
-                write_volatile(ep0_ctrl.add(1), (mps_val << 8) | ep_type_val);
+                let mps_val: u32 = 8;
+                write_volatile(ep0_ctrl.add(1), (ep_type_val << 3) | (mps_val << 16));
                 write_volatile(ep0_ctrl.add(4), 8); // Average TRB Length
             }
 
@@ -910,17 +1004,18 @@ mod controller {
         /// Send Address Device command (BSR=0, issues SET_ADDRESS).
         /// After this, the device is at the assigned address and EP0 is ready.
         /// Uses the EP0 ring stored in self.ep0_transfer_rings.
-        pub unsafe fn address_device(&mut self, slot_id: u8) -> Result<()> {
+        pub unsafe fn address_device(&mut self, slot_id: u8, root_port: u8) -> Result<()> {
             let idx = slot_id as usize - 1;
             if self.ep0_transfer_rings[idx].is_none() {
                 return Err(crate::Error::InvalidArgument);
             }
             // SAFETY: we just checked it's Some.
             let ep0_ring = self.ep0_transfer_rings[idx].as_ref().unwrap();
-            let ict = self.build_address_device_input(slot_id, ep0_ring);
+            let ict = self.build_address_device_input(slot_id, ep0_ring, root_port);
             let ict_phys = ict.phys_addr() as u64;
             let trb = Trb::address_device(
                 ict_phys,
+                slot_id,
                 false,
                 if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 },
             );
@@ -950,21 +1045,20 @@ mod controller {
                 .as_mut()
                 .ok_or(crate::Error::InvalidArgument)?;
 
-            // Allocate temporary buffer for Setup TRB + Data TRB + Status TRB.
-            // We put these on a temporary DMA buffer to avoid corrupting the ring.
-            // Actually, we should enqueue them directly on the EP0 transfer ring.
-            // But for simplicity, we reset and rebuild the ring for each transfer.
-
-            let _ring_phys = ep0_ring.phys_addr() as u64;
+            // Append the TD to the persistent EP0 transfer ring.  QEMU tracks
+            // each endpoint's ring dequeue in its own state (`xhci_ring_fetch`
+            // advances it past every consumed TRB and follows the fixed Link
+            // TRB back to slot 0), so clearing the ring between transfers
+            // strands a fresh TD behind a dequeue pointer that has already
+            // moved on.  Instead we append at the position QEMU will read
+            // next — the previous enqueue position — and let the Link TRB
+            // handle wraparound.  The Link TRB carries no TC bit, so QEMU's
+            // cycle state never toggles and every TRB keeps cycle 1.
             let ring_base = ep0_ring.as_ptr() as *mut Trb;
             let link_idx = (RING_SEGMENT_TRBS - 1) as u32;
-
-            // Clear all TRBs in the ring (except the Link TRB).
-            for i in 0u32..link_idx {
-                unsafe {
-                    write_volatile(ring_base.add(i as usize), Trb::zeroed());
-                }
-            }
+            let ring_slots = link_idx; // usable TRBs before the fixed Link TRB
+            let mut enq = self.ep0_enqueue[idx] % ring_slots;
+            let mut produced = 0u32;
 
             // Build the setup packet as bytes.
             let setup_bytes: &[u8; 8] = unsafe { core::mem::transmute(setup) };
@@ -981,35 +1075,45 @@ mod controller {
             let data_phys = data_dma.as_ref().map(|b| b.phys_addr() as u64).unwrap_or(0);
             let data_len = data_buf.len() as u32;
 
-            // Enqueue TRBs: Setup → Data → Status → Link (link already at [n-1]).
-            let mut enq: u32 = 0;
-            // Cycle bit is 1 for the first pass through the ring.
-            // The Link TRB at ring[n-1] toggles the cycle on wraparound.
-
-            // Setup Stage TRB.
+            // Setup Stage TRB.  The 8-byte setup packet is carried in the
+            // parameter field, so the IDT (Immediate Data) bit must be set —
+            // QEMU 8.2.2's xhci_fire_ctl_transfer rejects the TD without it.
+            // TRT (bits 17:16) tells the controller the data-stage direction;
+            // QEMU instead derives it from bmRequestType.
+            let trt: u32 = if data_len > 0 {
+                if direction_in {
+                    3
+                } else {
+                    2
+                } // IN / OUT
+            } else {
+                0 // no data stage
+            };
             let setup_trb = Trb {
                 parameter: u64::from_le_bytes(*setup_bytes),
                 status: 8, // 8 bytes to transfer
-                control: trb_control(trb_type::SETUP_STAGE, TRB_CYCLE_BIT)
-                    | TRB_IOC // interrupt on completion
-                    | (if direction_in { TRB_DIR_IN } else { 0 }),
+                control: trb_control(trb_type::SETUP_STAGE, TRB_CYCLE_BIT) | TRB_IDT | (trt << 16),
             };
             unsafe {
                 write_volatile(ring_base.add(enq as usize), setup_trb);
             }
-            enq += 1;
+            enq = (enq + 1) % ring_slots;
+            produced += 1;
 
-            // Data Stage TRB.
-            let data_dir_flag: u32 = if direction_in { TRB_DIR_IN } else { 0 };
-            let data_trb = Trb {
-                parameter: data_phys,
-                status: data_len & TRB_TL_MASK,
-                control: trb_control(trb_type::DATA_STAGE, TRB_CYCLE_BIT) | data_dir_flag,
-            };
-            unsafe {
-                write_volatile(ring_base.add(enq as usize), data_trb);
+            // Data Stage TRB (only when there is a data stage).
+            if data_len > 0 {
+                let data_dir_flag: u32 = if direction_in { TRB_DIR_IN } else { 0 };
+                let data_trb = Trb {
+                    parameter: data_phys,
+                    status: data_len & TRB_TL_MASK,
+                    control: trb_control(trb_type::DATA_STAGE, TRB_CYCLE_BIT) | data_dir_flag,
+                };
+                unsafe {
+                    write_volatile(ring_base.add(enq as usize), data_trb);
+                }
+                enq = (enq + 1) % ring_slots;
+                produced += 1;
             }
-            enq += 1;
 
             // Status Stage TRB (opposite direction from data).
             let status_dir: u32 = if direction_in { 0 } else { TRB_DIR_IN };
@@ -1021,17 +1125,28 @@ mod controller {
             unsafe {
                 write_volatile(ring_base.add(enq as usize), status_trb);
             }
+            produced += 1;
 
-            // Ring doorbell for EP0 of this slot.
-            let db_val = slot_id as u32 * DOORBELL_STRIDE as u32 + DOORBELL_TARGET_EP0;
+            self.ep0_enqueue[idx] = self.ep0_enqueue[idx].wrapping_add(produced);
+
+            // Ring doorbell for EP0 of this slot: doorbell array slot
+            // `slot_id` (byte offset slot_id * 4), value = target endpoint
+            // DCI (1 = EP0).  QEMU decodes reg >>= 2 as the slot and
+            // `val & 0xff` as the endpoint.
             unsafe {
-                write_volatile(self.doorbell_base.add(db_val as usize / 4), db_val);
+                write_volatile(
+                    self.doorbell_base.add(slot_id as usize),
+                    DOORBELL_TARGET_EP0,
+                );
             }
 
-            // Poll for Transfer Event on the event ring.
-            let transferred = self
-                .poll_transfer_event()
+            // Poll for Transfer Event on the event ring.  The event's length
+            // field is the residual (bytes not transferred) of the reporting
+            // TRB, so transferred = requested - residual.
+            let residual = self
+                .poll_transfer_event(slot_id)
                 .map_err(|_| crate::Error::TimedOut)?;
+            let transferred = data_len.saturating_sub(residual);
 
             // Copy data out if direction was IN.
             if let Some(ref dma) = data_dma {
@@ -1045,50 +1160,52 @@ mod controller {
             Ok(transferred as usize)
         }
 
-        /// Poll the event ring for a Transfer Event.
-        unsafe fn poll_transfer_event(&mut self) -> Result<u32> {
+        /// Poll the event ring for the Transfer Event of `expected_slot`.
+        ///
+        /// Transfer events belonging to another slot (e.g. an armed HID
+        /// interrupt-IN read) are delivered to the HID consumer and re-armed
+        /// rather than dropped, so a bulk/data transfer never steals a HID
+        /// report from the shared event ring.
+        unsafe fn poll_transfer_event(&mut self, expected_slot: u8) -> Result<u32> {
             for _ in 0..10_000_000 {
                 let evt_ptr = ring_trb_ptr(&self.event_ring, self.evt_dequeue);
                 let evt = read_volatile(evt_ptr);
                 let evt_cycle = evt.cycle_bit();
                 let expected_cycle = if self.evt_ccs { TRB_CYCLE_BIT } else { 0 };
 
-                if evt_cycle == expected_cycle {
-                    let trb_type = evt.trb_type();
-                    if trb_type == trb_type::TRANSFER_EVENT {
+                if evt_cycle != expected_cycle {
+                    continue;
+                }
+
+                let trb_type = evt.trb_type();
+                // Advance dequeue and acknowledge — shared by all event types.
+                self.evt_dequeue += 1;
+                if self.evt_dequeue >= (RING_SEGMENT_TRBS as u32) - 1 {
+                    self.evt_ccs = !self.evt_ccs;
+                    self.evt_dequeue = 0;
+                }
+                let erdp = self.event_ring.phys_addr() as u64
+                    + (self.evt_dequeue as u64 * TRB_SIZE as u64);
+                reg_write64_lo_hi(
+                    self.runtime_base,
+                    XHCI_RT_IR_BASE + XHCI_RT_ERDP_LOW,
+                    XHCI_RT_IR_BASE + XHCI_RT_ERDP_HIGH,
+                    erdp | (if self.evt_ccs { 1u64 << 3 } else { 0 }),
+                );
+
+                if trb_type == trb_type::TRANSFER_EVENT {
+                    if evt.slot_id() == expected_slot {
                         let residual = evt.status & TRB_TL_MASK;
                         let cc = evt.completion_code();
-                        // Advance dequeue.
-                        self.evt_dequeue += 1;
-                        if self.evt_dequeue >= (RING_SEGMENT_TRBS as u32) - 1 {
-                            self.evt_ccs = !self.evt_ccs;
-                            self.evt_dequeue = 0;
-                        }
-                        // Write ERDP.
-                        let erdp = self.event_ring.phys_addr() as u64
-                            + (self.evt_dequeue as u64 * TRB_SIZE as u64);
-                        reg_write64_lo_hi(
-                            self.runtime_base,
-                            XHCI_RT_IR_BASE + XHCI_RT_ERDP_LOW,
-                            XHCI_RT_IR_BASE + XHCI_RT_ERDP_HIGH,
-                            erdp | (if self.evt_ccs { 1u64 << 3 } else { 0 }),
-                        );
                         if cc != cc::SUCCESS {
                             return Err(crate::Error::InvalidArgument);
                         }
                         // Transferred = requested - residual.
-                        // Requested was in the Data Stage TRB status field…
-                        // We don't track it here, but residual is what's left.
-                        // For GET_DESCRIPTOR, the actual transferred is 18 - residual.
                         return Ok(residual);
-                    } else if trb_type == trb_type::COMMAND_COMPLETION_EVENT {
-                        // Handle stray command completion.
-                        self.evt_dequeue += 1;
-                        if self.evt_dequeue >= (RING_SEGMENT_TRBS as u32) - 1 {
-                            self.evt_ccs = !self.evt_ccs;
-                            self.evt_dequeue = 0;
-                        }
                     }
+                    // Transfer event for another slot: deliver + re-arm, then
+                    // keep waiting for our own.
+                    self.dispatch_hid_transfer_event(&evt);
                 }
             }
             Err(crate::Error::TimedOut)
@@ -1110,7 +1227,7 @@ mod controller {
             Ok(desc)
         }
 
-        /// Configure the HID keyboard interrupt endpoint for a slot.
+        /// Configure a HID interrupt IN endpoint for a slot.
         /// We need the device to be addressed first.
         /// `ep_info` describes the HID interrupt IN endpoint.
         pub unsafe fn configure_hid_endpoint(
@@ -1123,6 +1240,11 @@ mod controller {
                 .as_ref()
                 .ok_or(crate::Error::InvalidArgument)?;
             let ctx_size = self.context_size as usize;
+            let ep_num = (ep_info.endpoint_address & 0x0F) as usize;
+
+            // The doorbell Device Context Index for an IN endpoint N is 2*N+1.
+            let dci = 2u32 * ep_num as u32 + 1;
+            let ctx_index = dci as usize;
 
             // Allocate interrupt transfer ring.
             let int_ring = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
@@ -1134,99 +1256,45 @@ mod controller {
                 write_volatile(link_ptr, Trb::link(int_ring_phys, TRB_CYCLE_BIT));
             }
 
-            // Read existing output device context to preserve slot + EP0 state.
-            // The output context has: Slot Context at offset 0, EP0 at ctx_size.
-            // The input context needs: ICC + Slot + EP0 (preserved) + EP1 (new).
-            // Actually we use Evaluate Context or Configure Endpoint.
-            // For Configure Endpoint: ICC sets A0=1, A1=1 (add EP1).
-            // The slot context and EP0 context must be copied from output context.
-
-            let total_input = 4 * ctx_size; // ICC + Slot + EP0 + EP1
+            // Build an Input Context whose endpoint contexts cover the DCI of
+            // the interrupt IN endpoint, mirroring configure_bulk_endpoint:
+            // copy the slot + EP0 contexts out of the output context, flag
+            // every context index 0..=ctx_index as "add", and program the
+            // interrupt endpoint context at its DCI offset.
+            let n_contexts = (ctx_index + 1).max(2);
+            let total_input = (n_contexts + 1) * ctx_size;
             let nframes = total_input.div_ceil(4096);
             let mut ict = DmaBuffer::allocate(nframes).ok_or(crate::Error::OutOfMemory)?;
             ict.as_mut_slice().fill(0);
-
             let ict_base = ict.as_ptr();
 
-            // ICC: A0=1 (add slot), A1=1 (add EP0), A2=1 (drop EP0), A1+A2 cancel
-            // Actually: Set A0=1 (slot context), A1=1 (EP0 unchanged), A2=1 (add EP1).
-            // Wait — the context indices in Add Context flags: bit 0 = slot, bit 1 = EP1
-            // (control EP), bit 2 = EP2. For Configure Endpoint, we need to set
-            // the ADD flags for contexts we want to modify. All contexts not
-            // flagged are preserved. Flag A0=1 (modify slot), A1=1 (modify EP0
-            // control — set to max packet size from descriptor), A2=1 (add EP1
-            // = interrupt IN EP).
+            // ICC: Drop flags = 0 (nothing dropped), Add flags = the slot
+            // context (bit 0) plus this endpoint (bit ctx_index).  QEMU's
+            // xhci_configure_slot validates `ictl_ctx[0] & 0x3 == 0` and
+            // `ictl_ctx[1] & 0x3 == 0x1`, so the add word must set bit 0 and
+            // must NOT set bit 1 (EP0).
             unsafe {
                 let icc = ict_base as *mut u32;
-                write_volatile(icc, 0x07); // A0=1, A1=1, A2=1
+                write_volatile(icc, 0);
+                write_volatile(icc.add(1), 0x1 | (1 << ctx_index));
             }
 
-            // Copy slot context from output device context (DCBAAP entry points to output
-            // ctx).
+            // Copy slot + EP0 contexts from the output device context.
             let out_ctx_base = dev_ctx.as_ptr();
             unsafe {
-                let src_slot = out_ctx_base;
-                let dst_slot = ict_base.add(ctx_size);
-                core::ptr::copy_nonoverlapping(src_slot, dst_slot, ctx_size);
-
-                // Update slot context: Context Entries = 2 (EP0 + EP1 interrupt IN).
-                let sc = dst_slot as *mut u32;
-                let current_entries = read_volatile(sc) & 0x7FFF_FFFF;
-                write_volatile(sc, current_entries | 2); // now with 2 endpoint contexts
-
-                // Copy EP0 context from output (offset ctx_size in output = EP0).
-                let src_ep0 = out_ctx_base.add(ctx_size);
-                let dst_ep0 = ict_base.add(2 * ctx_size);
-                core::ptr::copy_nonoverlapping(src_ep0, dst_ep0, ctx_size);
+                core::ptr::copy_nonoverlapping(out_ctx_base, ict_base.add(ctx_size), ctx_size * 2);
             }
 
-            // Set up EP1 input context (interrupt IN endpoint).
-            // In the input context array, endpoint contexts are at:
-            //   ctx_size * (ep_num + 1). EP1 = ctx_size * 2.
-            // But we already placed slot at ctx_size and EP0 at 2*ctx_size.
-            // So EP1 goes at 3*ctx_size.
-            let _ep_num = (ep_info.endpoint_address & 0x0F) as usize;
-            let _ep_is_in = (ep_info.endpoint_address & 0x80) != 0;
-            let ep_offset = 3 * ctx_size;
+            // Interrupt IN endpoint context at the DCI offset.
+            let ep_offset = (ctx_index + 1) * ctx_size;
             unsafe {
                 let ep_ctx = ict_base.add(ep_offset) as *mut u32;
-
-                // EP type: bits 3:0 (3 = Interrupt).
-                // Max Packet Size: bits 15:8.
-                // Max Burst: bits 31:16.
-                let _ep_type: u32 = 3; // Interrupt
-                                       // Actually bit 5 = direction (1 = IN). So for IN: 3 | (1<<5) = 0x23.
-                                       // Wait, the xHCI spec says for EP Context:
-                                       // Bits 3:0 = EP Type (3 = Interrupt)
-                                       // Bit 5 = Direction (0 = OUT, 1 = IN). Wait no, direction is separate.
-                                       // Actually: EP Type 3 = Interrupt. Direction = bit 5? No.
-                                       // Looking more carefully: The EP context has "EP Type" in bits 3:0,
-                                       // and the endpoint direction is NOT part of EP type. The direction
-                                       // is implied by the DCI (Device Context Index). Odd DCI = IN, Even = OUT.
-                                       // For EP1 (DCI=2), EP1 IN would be DCI=3.
-                                       // Actually no — in xHCI:
-                                       // EP0 is bidirectional (DCI=1)
-                                       // EP1 OUT = DCI 2, EP1 IN = DCI 3
-                                       // EP2 OUT = DCI 4, EP2 IN = DCI 5
-                                       // So the EP number in the endpoint_address doesn't directly map to DCI.
-                                       // For a HID keyboard with EP 1 IN (addr=0x81),
-                                       // EP number = 1, IN → DCI = 2*1 + 1 = 3.
-                                       // But our input context layout needs to place this at the right position.
-                                       // Actually the input context indices for endpoints:
-                                       // Context 0 = Slot
-                                       // Context 1 = EP0 (DCI 1)
-                                       // Context 2 = EP1 OUT (DCI 2)
-                                       // Context 3 = EP1 IN (DCI 3)
-                                       // etc.
-                                       // For EP 1 IN (addr=0x81), DCI=3, so Context index = 3.
-                                       // Total input context = 4 * ctx_size entries.
-                                       // ICC + Slot(C0) + EP0(C1) + EP1-OUT-if-needed(C2) + EP1-IN(C3).
-                                       // Since we only need EP1 IN, we put it at offset 3*ctx_size (Context 3).
-
-                write_volatile(ep_ctx, 0); // state = 0 (disabled)
-                let ep_ctrl: u32 = 3 // Interrupt
-                    | ((ep_info.max_packet_size as u32 & 0xFFFF) << 8)
-                    | ((ep_info.interval as u32 & 0xFF) << 16);
+                // Interval at bits 23:16 (QEMU: interval = 1 << (ctx[0]>>16 &
+                // 0xff)); EP state stays 0 (disabled) until the command runs.
+                write_volatile(ep_ctx, (ep_info.interval as u32 & 0xFF) << 16);
+                // EP type at bits 5:3 (7 = interrupt IN), Max Packet Size at
+                // bits 23:16 of DWORD 1.
+                let ep_ctrl: u32 = (7 << 3) | ((ep_info.max_packet_size as u32 & 0xFFFF) << 16);
                 write_volatile(ep_ctx.add(1), ep_ctrl);
 
                 // TR Dequeue Pointer.
@@ -1234,13 +1302,16 @@ mod controller {
                 write_volatile(ep_ctx.add(2), tr_dq as u32);
                 write_volatile(ep_ctx.add(3), (tr_dq >> 32) as u32);
 
-                // Average TRB Length = 8 (for HID boot protocol report).
-                write_volatile(ep_ctx.add(4), 8);
+                // Average TRB Length = the boot-protocol report size.
+                write_volatile(ep_ctx.add(4), ep_info.report_len as u32);
             }
 
             let ict_phys = ict.phys_addr() as u64;
-            let trb =
-                Trb::configure_endpoint(ict_phys, if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 });
+            let trb = Trb::configure_endpoint(
+                ict_phys,
+                slot_id,
+                if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 },
+            );
             let evt = self.send_command(trb)?;
             let cc = evt.completion_code();
             if cc != cc::SUCCESS {
@@ -1252,12 +1323,39 @@ mod controller {
             }
 
             self.int_transfer_rings[idx] = Some(int_ring);
-            self.keyboard_ep = Some(ep_info);
             println!(
-                "[xhci  ] HID interrupt endpoint configured: slot={} ep_addr={:#04x} mps={}",
-                slot_id, ep_info.endpoint_address, ep_info.max_packet_size
+                "[xhci  ] HID interrupt endpoint configured: slot={} ep_addr={:#04x} mps={} dci={}",
+                slot_id, ep_info.endpoint_address, ep_info.max_packet_size, dci
             );
             Ok(())
+        }
+
+        /// Read the full configuration descriptor for a slot: the 9-byte
+        /// header for `wTotalLength`, then the whole blob.
+        unsafe fn read_config_descriptor(
+            &mut self,
+            slot_id: u8,
+        ) -> crate::Result<alloc::vec::Vec<u8>> {
+            let mut header_buf = [0u8; 9];
+            let setup9 = super::SetupPacket::get_descriptor_configuration(9);
+            self.control_transfer(slot_id, &setup9, &mut header_buf, true)?;
+            let total_len = u16::from_le_bytes([header_buf[2], header_buf[3]]) as usize;
+            if !(9..=4096).contains(&total_len) {
+                println!("[xhci  ] invalid config descriptor length {}", total_len);
+                return Err(crate::Error::InvalidArgument);
+            }
+
+            let mut config_buf = alloc::vec![0u8; total_len];
+            let setup_full = super::SetupPacket::get_descriptor_configuration(total_len as u16);
+            let n = self.control_transfer(slot_id, &setup_full, &mut config_buf, true)?;
+            println!(
+                "[xhci  ] slot {} config len={} got={} bytes={:02x?}",
+                slot_id,
+                total_len,
+                n,
+                &config_buf[..]
+            );
+            Ok(config_buf)
         }
 
         /// Probe a mass storage device at the given slot: read config
@@ -1270,23 +1368,7 @@ mod controller {
             use crate::kernel::drivers::usb_msd::USB_SUBCLASS_SCSI;
             use crate::kernel::drivers::usb_msd::{self};
 
-            // Read the full configuration descriptor (first 9 bytes for header).
-            let mut header_buf = [0u8; 9];
-            let setup9 = super::SetupPacket::get_descriptor_configuration(9);
-            self.control_transfer(slot_id, &setup9, &mut header_buf, true)?;
-            let total_len = u16::from_le_bytes([header_buf[2], header_buf[3]]) as usize;
-            if !(9..=4096).contains(&total_len) {
-                println!(
-                    "[xhci  ] msd: invalid config descriptor length {}",
-                    total_len
-                );
-                return Err(crate::Error::InvalidArgument);
-            }
-
-            // Read the full config descriptor.
-            let mut config_buf = alloc::vec![0u8; total_len];
-            let setup_full = super::SetupPacket::get_descriptor_configuration(total_len as u16);
-            self.control_transfer(slot_id, &setup_full, &mut config_buf, true)?;
+            let config_buf = self.read_config_descriptor(slot_id)?;
 
             // Parse configuration descriptor to find MSD interface bulk endpoints.
             // USB descriptor types: 2=CONFIGURATION, 4=INTERFACE, 5=ENDPOINT
@@ -1317,13 +1399,17 @@ mod controller {
                         && if_proto == USB_PROTOCOL_BOT)
                         || (if_class == USB_CLASS_MSC && num_eps >= 2)
                     {
-                        // Scan this interface's endpoints.
+                        // Scan this interface's endpoints.  Walk forward past
+                        // interleaved non-endpoint descriptors (QEMU's
+                        // usb-storage places a vendor 0x30 descriptor between
+                        // the bulk IN and OUT endpoints), stopping after
+                        // `num_eps` endpoints or at the next interface/config
+                        // boundary.
                         let mut pos = i + dlen;
-                        for _ in 0..num_eps {
-                            if pos + 6 >= config_buf.len() {
-                                break;
-                            }
-                            if config_buf[pos + 1] == 5 && pos + 5 < config_buf.len() {
+                        let mut eps_seen = 0usize;
+                        while eps_seen < num_eps as usize && pos + 6 < config_buf.len() {
+                            let dtype = config_buf[pos + 1];
+                            if dtype == 5 {
                                 // ENDPOINT descriptor
                                 let ea = config_buf[pos + 2];
                                 let attr = config_buf[pos + 3];
@@ -1338,6 +1424,10 @@ mod controller {
                                     }
                                     mps = psz;
                                 }
+                                eps_seen += 1;
+                            } else if dtype == 4 || dtype == 2 {
+                                // Next interface/configuration descriptor.
+                                break;
                             }
                             pos += config_buf[pos] as usize;
                         }
@@ -1373,7 +1463,11 @@ mod controller {
                 max_packet_size: mps,
             };
             self.msd_endpoints = Some(endpoints);
-            usb_msd::init_msd(endpoints)
+            // Registration only: the SCSI geometry probe is deferred until
+            // the controller is published to the global registry, because
+            // bot_transfer reaches it through `with_controller`.
+            usb_msd::register_msd(endpoints);
+            Ok(())
         }
 
         /// Configure a bulk endpoint for a USB device (second part).
@@ -1413,14 +1507,13 @@ mod controller {
             ict.as_mut_slice().fill(0);
             let ict_base = ict.as_ptr();
 
-            // ICC: add bit for all contexts up to ctx_index.
+            // ICC: Drop flags = 0 (nothing dropped), Add flags = the slot
+            // context (bit 0) plus this endpoint (bit ctx_index).  Same
+            // QEMU validation as configure_hid_endpoint.
             unsafe {
                 let icc = ict_base as *mut u32;
-                let mut add_flags: u32 = 0;
-                for i in 0..=ctx_index {
-                    add_flags |= 1 << i;
-                }
-                write_volatile(icc, add_flags);
+                write_volatile(icc, 0);
+                write_volatile(icc.add(1), 0x1 | (1 << ctx_index));
             }
 
             // Copy slot + EP0 contexts from output.
@@ -1434,7 +1527,10 @@ mod controller {
             unsafe {
                 let ep_ctx = ict_base.add(ep_offset) as *mut u32;
                 write_volatile(ep_ctx, 0);
-                let ep_ctrl: u32 = 2 | ((max_packet_size as u32 & 0xFFFF) << 8);
+                // EP type at bits 5:3 (6 = bulk IN, 2 = bulk OUT), Max Packet
+                // Size at bits 23:16 of DWORD 1.
+                let ep_type: u32 = if direction_in { 6 } else { 2 };
+                let ep_ctrl: u32 = (ep_type << 3) | ((max_packet_size as u32 & 0xFFFF) << 16);
                 write_volatile(ep_ctx.add(1), ep_ctrl);
                 let tr_dq = bulk_ring_phys | TRB_CYCLE_BIT as u64;
                 write_volatile(ep_ctx.add(2), tr_dq as u32);
@@ -1443,8 +1539,11 @@ mod controller {
             }
 
             let ict_phys = ict.phys_addr() as u64;
-            let trb =
-                Trb::configure_endpoint(ict_phys, if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 });
+            let trb = Trb::configure_endpoint(
+                ict_phys,
+                slot_id,
+                if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 },
+            );
             let evt = self.send_command(trb)?;
             let cc = evt.completion_code();
             if cc != cc::SUCCESS {
@@ -1487,37 +1586,47 @@ mod controller {
                 2u32 * ep_num as u32
             };
 
-            let ring = if direction_in {
-                self.bulk_in_rings[idx]
-                    .as_ref()
-                    .ok_or(crate::Error::InvalidArgument)?
+            // Pick the ring and its producer index for this direction.  Like
+            // EP0, each bulk ring is persistent: QEMU's dequeue advances past
+            // every consumed NORMAL TRB (a one-TRB TD, terminated at the IOC
+            // TRB), so we append at the next position rather than rebuilding
+            // at slot 0 — otherwise the second transfer on the same ring is
+            // stranded behind a dequeue pointer that has already moved on.
+            let (ring, enqueue) = if direction_in {
+                (
+                    self.bulk_in_rings[idx]
+                        .as_ref()
+                        .ok_or(crate::Error::InvalidArgument)?,
+                    &mut self.bulk_in_enqueue[idx],
+                )
             } else {
-                self.bulk_out_rings[idx]
-                    .as_ref()
-                    .ok_or(crate::Error::InvalidArgument)?
+                (
+                    self.bulk_out_rings[idx]
+                        .as_ref()
+                        .ok_or(crate::Error::InvalidArgument)?,
+                    &mut self.bulk_out_enqueue[idx],
+                )
             };
             let ring_base = ring.as_ptr() as *mut Trb;
             let link_idx = (RING_SEGMENT_TRBS - 1) as u32;
 
-            // Clear ring (except link).
-            for i in 0u32..link_idx {
-                write_volatile(ring_base.add(i as usize), Trb::zeroed());
-            }
-
+            let enq = *enqueue % link_idx;
             let trb_flags = if direction_in { TRB_DIR_IN } else { 0 };
             let normal_trb = Trb {
                 parameter: data_phys,
                 status: length & TRB_TL_MASK,
                 control: trb_control(trb_type::NORMAL, TRB_CYCLE_BIT) | TRB_IOC | trb_flags,
             };
-            write_volatile(ring_base, normal_trb);
+            write_volatile(ring_base.add(enq as usize), normal_trb);
+            *enqueue = (*enqueue).wrapping_add(1);
 
             // Ring doorbell.
-            let db_val = slot_id as u32 * DOORBELL_STRIDE as u32 + dci;
-            write_volatile(self.doorbell_base.add(db_val as usize / 4), db_val);
+            // Ring doorbell: doorbell array slot `slot_id`, value = target
+            // endpoint DCI.
+            write_volatile(self.doorbell_base.add(slot_id as usize), dci);
 
             // Poll for transfer event.
-            self.poll_transfer_event()?;
+            self.poll_transfer_event(slot_id)?;
             Ok(())
         }
 
@@ -1555,75 +1664,121 @@ mod controller {
             Ok(())
         }
 
-        /// Submit a Normal TRB on the interrupt transfer ring to receive a HID
-        /// report. Returns the number of bytes received.
-        pub unsafe fn poll_hid_report(&mut self, slot_id: u8, buf: &mut [u8; 8]) -> Result<usize> {
+        /// Arm a non-blocking interrupt-IN read on a HID endpoint.
+        ///
+        /// Posts a Normal TRB on the slot's interrupt transfer ring and rings
+        /// the doorbell, then returns immediately.  The completed report is
+        /// drained from the per-device DMA buffer by
+        /// [`dispatch_hid_transfer_event`] when its Transfer Event
+        /// shows up on the event ring.
+        unsafe fn arm_hid_read(
+            &mut self,
+            slot_id: u8,
+            dci: u32,
+            report_len: usize,
+            data_phys: u64,
+        ) -> Result<()> {
             let idx = slot_id as usize - 1;
             let int_ring = self.int_transfer_rings[idx]
                 .as_ref()
                 .ok_or(crate::Error::InvalidArgument)?;
-
-            let _ring_phys = int_ring.phys_addr() as u64;
             let ring_base = int_ring.as_ptr() as *mut Trb;
             let link_idx = (RING_SEGMENT_TRBS - 1) as u32;
 
-            // Reuse or lazily allocate the pre-allocated HID report DMA buffer.
-            if self.hid_report_buf.is_none() {
-                self.hid_report_buf =
-                    Some(DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?);
-            }
-            // Snapshot the physical address before the mutable borrow on
-            // poll_transfer_event below — the immutable borrow on
-            // hid_report_buf must not overlap with the &mut self call.
-            let data_phys = self.hid_report_buf.as_ref().unwrap().phys_addr() as u64;
-
-            // Clear the ring and set up one Normal TRB + Link.
-            for i in 0u32..link_idx {
-                unsafe {
-                    write_volatile(ring_base.add(i as usize), Trb::zeroed());
-                }
-            }
-
-            // Normal TRB for interrupt IN transfer.
+            // Append the Normal TRB at the ring's next position.  The interrupt
+            // ring is persistent and re-armed after every completed report, so
+            // rebuilding at slot 0 would strand each re-arm behind QEMU's
+            // dequeue pointer (which advances past the consumed one-TRB TD).
+            let enq = self.int_enqueue[idx] % link_idx;
             let normal_trb = Trb {
                 parameter: data_phys,
-                status: 8, // 8 bytes for boot protocol keyboard report
+                status: (report_len as u32) & TRB_TL_MASK,
                 control: trb_control(trb_type::NORMAL, TRB_CYCLE_BIT) | TRB_IOC,
             };
-            unsafe {
-                write_volatile(ring_base, normal_trb);
+            write_volatile(ring_base.add(enq as usize), normal_trb);
+            self.int_enqueue[idx] = self.int_enqueue[idx].wrapping_add(1);
+
+            // Ring the doorbell for the endpoint's DCI.
+            // Ring doorbell: doorbell array slot `slot_id`, value = target
+            // endpoint DCI.
+            write_volatile(self.doorbell_base.add(slot_id as usize), dci);
+            Ok(())
+        }
+
+        /// Deliver a completed keyboard report and re-arm the next read.
+        unsafe fn deliver_keyboard_report(&mut self, residual: u32) {
+            if let Some(ep) = self.keyboard_ep {
+                if let Some(buf) = self.keyboard_report_buf.as_ref() {
+                    let transferred = ep.report_len.saturating_sub(residual as usize);
+                    let mut report = [0u8; 8];
+                    let len = core::cmp::min(transferred, 8);
+                    core::ptr::copy_nonoverlapping(buf.as_ptr(), report.as_mut_ptr(), len);
+                    crate::kernel::drivers::usb_hid::handle_keyboard_report(&report);
+                }
+                if let Some(buf) = self.keyboard_report_buf.as_ref() {
+                    let _ = self.arm_hid_read(
+                        self.keyboard_slot,
+                        ep.dci(),
+                        ep.report_len,
+                        buf.phys_addr() as u64,
+                    );
+                }
             }
+        }
 
-            // Ring doorbell for the interrupt endpoint.
-            // DCI = 3 for EP1 IN (context index 3).
-            let dci: u32 = 3; // EP1 IN
-            let db_val = slot_id as u32 * DOORBELL_STRIDE as u32 + dci;
-            unsafe {
-                write_volatile(self.doorbell_base.add(db_val as usize / 4), db_val);
+        /// Deliver a completed mouse report and re-arm the next read.
+        unsafe fn deliver_mouse_report(&mut self, residual: u32) {
+            if let Some(ep) = self.mouse_ep {
+                if let Some(buf) = self.mouse_report_buf.as_ref() {
+                    let transferred = ep.report_len.saturating_sub(residual as usize);
+                    let mut report = [0u8; crate::kernel::drivers::mouse::MOUSE_REPORT_LEN];
+                    let len = core::cmp::min(transferred, report.len());
+                    core::ptr::copy_nonoverlapping(buf.as_ptr(), report.as_mut_ptr(), len);
+                    crate::kernel::drivers::usb_hid::handle_mouse_report(&report[..len]);
+                }
+                if let Some(buf) = self.mouse_report_buf.as_ref() {
+                    let _ = self.arm_hid_read(
+                        self.mouse_slot,
+                        ep.dci(),
+                        ep.report_len,
+                        buf.phys_addr() as u64,
+                    );
+                }
             }
+        }
 
-            // Poll for transfer event.
-            let _residual = self.poll_transfer_event()?;
-
-            // Copy data from the reusable DMA buffer (fresh immutable borrow
-            // after poll_transfer_event's mutable borrow has ended).
-            let src = self.hid_report_buf.as_ref().unwrap().as_ptr();
-            let len = 8usize;
-            unsafe {
-                core::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), len);
+        /// Dispatch a Transfer Event to the HID device it belongs to.
+        ///
+        /// Called from the event ring drain ([`poll_events`]) and from
+        /// [`poll_transfer_event`] when the event is not the one being awaited.
+        /// The event is identified by (slot ID, DCI); unknown slots are
+        /// ignored.
+        unsafe fn dispatch_hid_transfer_event(&mut self, evt: &Trb) {
+            let slot = evt.slot_id();
+            let dci = evt.endpoint_id();
+            let residual = evt.status & TRB_TL_MASK;
+            if slot == self.keyboard_slot {
+                if let Some(ep) = self.keyboard_ep {
+                    if u32::from(dci) == ep.dci() {
+                        self.deliver_keyboard_report(residual);
+                        return;
+                    }
+                }
             }
-
-            // The DMA buffer is retained in self.hid_report_buf — no allocation
-            // or free on each poll. poll_transfer_event ensures the transfer is
-            // complete before we reuse the buffer.
-            Ok(8)
+            if slot == self.mouse_slot {
+                if let Some(ep) = self.mouse_ep {
+                    if u32::from(dci) == ep.dci() {
+                        self.deliver_mouse_report(residual);
+                    }
+                }
+            }
         }
 
         /// Poll the event ring for any pending events.
         /// Called from the timer tick to check for HID reports.
-        /// Returns true if a keyboard report was processed.
+        /// Returns true if a HID transfer event was processed.
         pub unsafe fn poll_events(&mut self) -> bool {
-            if self.keyboard_slot == 0 {
+            if self.keyboard_slot == 0 && self.mouse_slot == 0 {
                 return false;
             }
             // Quick check: is there a new event?
@@ -1656,6 +1811,7 @@ mod controller {
 
                 if trb_type == trb_type::TRANSFER_EVENT {
                     processed = true;
+                    self.dispatch_hid_transfer_event(&evt2);
                 }
 
                 // Update ERDP.
@@ -1669,21 +1825,189 @@ mod controller {
                 );
             }
 
-            if processed {
-                // Re-submit the Normal TRB for the next report.
-                if let Some(ref _ep_info) = self.keyboard_ep {
-                    let mut report_buf = [0u8; 8];
-                    if self
-                        .poll_hid_report(self.keyboard_slot, &mut report_buf)
-                        .is_ok()
-                    {
-                        // Process the report via the USB HID scancode mapper.
-                        crate::kernel::drivers::usb_hid::handle_keyboard_report(&report_buf);
-                    }
+            processed
+        }
+
+        /// Enumerate a device on a root hub port: wait for connection, enable
+        /// a slot, address the device, and classify it (HID vs MSC).
+        /// Returns true if a device was configured.
+        pub(crate) unsafe fn enumerate_port(&mut self, port: u8) -> bool {
+            let portsc_offset = XHCI_OP_PORTSC + (port as usize - 1) * 0x10;
+
+            // Wait briefly for the connection to stabilise (CCS set).
+            let mut connected = false;
+            for _ in 0..PORT_CONNECT_SETTLE_SPINS {
+                if reg_read32(self.op_base, portsc_offset) & PORTSC_CCS != 0 {
+                    connected = true;
+                    break;
                 }
             }
+            if !connected {
+                return false;
+            }
 
-            processed
+            let slot_id = match self.enable_slot(port) {
+                Ok(s) => s,
+                Err(_) => {
+                    println!("[xhci  ] enable_slot failed for port {}", port);
+                    return false;
+                }
+            };
+            println!("[xhci  ] enabled slot {} (port {})", slot_id, port);
+
+            if self.alloc_slot_resources(slot_id).is_err() {
+                println!("[xhci  ] failed to allocate slot resources");
+                return false;
+            }
+            if self.address_device(slot_id, port).is_err() {
+                println!("[xhci  ] address_device failed for slot {}", slot_id);
+                return false;
+            }
+            println!("[xhci  ] device addressed at slot {}", slot_id);
+
+            match self.get_device_descriptor(slot_id) {
+                Ok(desc) => self.configure_slot_device(slot_id, desc),
+                Err(e) => {
+                    println!("[xhci  ] get_device_descriptor failed: {}", e.as_str());
+                    false
+                }
+            }
+        }
+
+        /// Classify an addressed device by its device descriptor and wire it
+        /// up: HID keyboard/mouse (real endpoint discovery + armed first read)
+        /// or USB mass storage (bulk endpoints + MSC init).
+        unsafe fn configure_slot_device(&mut self, slot_id: u8, desc: UsbDeviceDescriptor) -> bool {
+            use crate::kernel::drivers::usb_hid::HidDeviceKind;
+            use crate::kernel::drivers::usb_hid::{self};
+            use crate::kernel::drivers::usb_msd;
+
+            let dev_class = desc.device_class;
+            let dev_subclass = desc.device_subclass;
+            let dev_proto = desc.device_protocol;
+            // Copy the 16-bit fields out of the packed descriptor before
+            // formatting (taking a reference to a packed field is unaligned).
+            let vendor_id = desc.vendor_id;
+            let product_id = desc.product_id;
+            println!(
+                "[xhci  ] device descriptor: class={:#04x} sub={:#04x} proto={:#04x} vid={:04x} pid={:04x}",
+                dev_class, dev_subclass, dev_proto, vendor_id, product_id
+            );
+
+            // Devices with bDeviceClass == 0 declare their class per
+            // interface (typical of HID keyboards and bulk-only mass
+            // storage), so read the configuration descriptor and dispatch on
+            // the first interface's class.  The config is reused by the HID
+            // endpoint walk below.
+            let mut config: Option<alloc::vec::Vec<u8>> = None;
+            let if_class = if dev_class == 0 {
+                match self.read_config_descriptor(slot_id) {
+                    Ok(c) => {
+                        let cls = config_interface_class(&c).map(|x| x.0);
+                        config = Some(c);
+                        cls
+                    }
+                    Err(e) => {
+                        println!("[xhci  ] read config descriptor failed: {}", e.as_str());
+                        return false;
+                    }
+                }
+            } else {
+                None
+            };
+            let is_hid = if_class == Some(usb_hid::USB_CLASS_HID)
+                || (dev_class == usb_hid::USB_CLASS_HID && if_class.is_none());
+            let is_msc = if_class == Some(usb_msd::USB_CLASS_MSC)
+                || (dev_class == usb_msd::USB_CLASS_MSC && if_class.is_none());
+
+            if is_hid {
+                // HID device: walk the configuration descriptor for its real
+                // interrupt IN endpoint and classify it as keyboard or mouse.
+                let config = match config {
+                    Some(c) => c,
+                    None => match self.read_config_descriptor(slot_id) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            println!("[xhci  ] read config descriptor failed: {}", e.as_str());
+                            return false;
+                        }
+                    },
+                };
+                let info = match usb_hid::classify_hid_device(&config, dev_proto) {
+                    Some(i) => i,
+                    None => {
+                        println!("[xhci  ] no HID interrupt IN endpoint at slot {}", slot_id);
+                        return false;
+                    }
+                };
+                let ep_info = HidEndpointInfo {
+                    endpoint_address: info.endpoint_address,
+                    max_packet_size: info.max_packet_size,
+                    interval: info.interval,
+                    interface_number: info.interface_number,
+                    report_len: info.report_len,
+                };
+                if self.configure_hid_endpoint(slot_id, ep_info).is_err() {
+                    return false;
+                }
+                // Activate the configuration so the interrupt endpoint responds.
+                let setup_cfg = SetupPacket::set_configuration(config[5]); // bConfigurationValue
+                let mut dummy = [];
+                let _ = self.control_transfer(slot_id, &setup_cfg, &mut dummy, false);
+
+                let dci = ep_info.dci();
+                match info.kind {
+                    HidDeviceKind::Keyboard => {
+                        let buf = match DmaBuffer::allocate(1) {
+                            Some(b) => b,
+                            None => return false,
+                        };
+                        self.keyboard_report_buf = Some(buf);
+                        self.keyboard_slot = slot_id;
+                        self.keyboard_ep = Some(ep_info);
+                        if let Some(b) = self.keyboard_report_buf.as_ref() {
+                            let _ = self.arm_hid_read(
+                                slot_id,
+                                dci,
+                                ep_info.report_len,
+                                b.phys_addr() as u64,
+                            );
+                        }
+                        println!("[xhci  ] HID keyboard ready at slot {}", slot_id);
+                    }
+                    HidDeviceKind::Mouse => {
+                        let buf = match DmaBuffer::allocate(1) {
+                            Some(b) => b,
+                            None => return false,
+                        };
+                        self.mouse_report_buf = Some(buf);
+                        self.mouse_slot = slot_id;
+                        self.mouse_ep = Some(ep_info);
+                        if let Some(b) = self.mouse_report_buf.as_ref() {
+                            let _ = self.arm_hid_read(
+                                slot_id,
+                                dci,
+                                ep_info.report_len,
+                                b.phys_addr() as u64,
+                            );
+                        }
+                        println!("[xhci  ] HID mouse ready at slot {}", slot_id);
+                    }
+                }
+                true
+            } else if is_msc {
+                // USB Mass Storage device — read config descriptor and init.
+                println!("[xhci  ] mass storage device detected at slot {}", slot_id);
+                if self.init_msd(slot_id).is_ok() {
+                    println!("[xhci  ] mass storage initialised at slot {}", slot_id);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                println!("[xhci  ] unsupported device class at slot {}", slot_id);
+                false
+            }
         }
     }
 }
@@ -1760,11 +2084,11 @@ pub fn driver() -> Arc<dyn Driver> {
     Arc::new(XhciDriver)
 }
 
-/// Find xHCI USB controllers, initialise the first one found.
+/// Find xHCI USB controllers and enumerate every connected root hub port
+/// (multiple HID + storage devices may share the bus).
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn probe_xhci() -> crate::Result<()> {
     use crate::arch::x86_64::pci::pci_enumerate_buses;
-    use crate::kernel::drivers::usb_hid;
     use crate::println;
 
     let devices = pci_enumerate_buses();
@@ -1784,12 +2108,6 @@ fn probe_xhci() -> crate::Result<()> {
             continue;
         }
 
-        println!(
-            "[xhci  ] BAR0: phys={:#018x} size={} KiB",
-            bar0.base_address,
-            bar0.size / 1024
-        );
-
         // Initialise the controller.
         let mut ctrl = match unsafe { XhciController::new(bar0.base_address, bar0.size as usize) } {
             Some(c) => c,
@@ -1799,85 +2117,21 @@ fn probe_xhci() -> crate::Result<()> {
             }
         };
 
-        // Enable a slot and address the device.
-        match unsafe { ctrl.enable_slot() } {
-            Ok(slot_id) => {
-                println!("[xhci  ] enabled slot {}", slot_id);
-
-                // Allocate resources for this slot.
-                if unsafe { ctrl.alloc_slot_resources(slot_id) }.is_err() {
-                    println!("[xhci  ] failed to allocate slot resources");
-                    continue;
-                }
-
-                // Address the device.
-                if unsafe { ctrl.address_device(slot_id) }.is_err() {
-                    println!("[xhci  ] address_device failed for slot {}", slot_id);
-                    continue;
-                }
-                println!("[xhci  ] device addressed at slot {}", slot_id);
-
-                // Read the device descriptor.
-                match unsafe { ctrl.get_device_descriptor(slot_id) } {
-                    Ok(desc) => {
-                        // Copy packed fields to locals to avoid unaligned references.
-                        let dev_class = desc.device_class;
-                        let dev_subclass = desc.device_subclass;
-                        let dev_proto = desc.device_protocol;
-                        let vid = { desc.vendor_id };
-                        let pid = { desc.product_id };
-                        println!(
-                            "[xhci  ] device descriptor: class={:#04x} sub={:#04x} proto={:#04x} vid={:04x} pid={:04x}",
-                            dev_class, dev_subclass, dev_proto, vid, pid
-                        );
-
-                        // Check if this is a HID keyboard.
-                        if dev_class == usb_hid::USB_CLASS_HID
-                            || (dev_class == 0
-                                && dev_subclass == usb_hid::USB_SUBCLASS_BOOT
-                                && dev_proto == usb_hid::USB_PROTOCOL_KEYBOARD)
-                        {
-                            println!("[xhci  ] HID keyboard detected at slot {}", slot_id);
-
-                            // For a boot-protocol HID keyboard on QEMU:
-                            // The standard configuration has one interface (HID, boot,
-                            // keyboard) with one interrupt IN endpoint (EP 1 IN, 8 bytes,
-                            // interval typically 10–12). We use known working defaults.
-                            let ep_info = HidEndpointInfo {
-                                endpoint_address: 0x81, // EP 1 IN
-                                max_packet_size: 8,
-                                interval: 10,
-                                interface_number: 0,
-                            };
-
-                            if unsafe { ctrl.configure_hid_endpoint(slot_id, ep_info) }.is_ok() {
-                                ctrl.keyboard_slot = slot_id;
-                                println!("[xhci  ] HID keyboard ready at slot {}", slot_id);
-                            }
-                        } else if dev_class == crate::kernel::drivers::usb_msd::USB_CLASS_MSC
-                            || (dev_class == 0
-                                && dev_subclass
-                                    == crate::kernel::drivers::usb_msd::USB_SUBCLASS_SCSI)
-                        {
-                            // USB Mass Storage device — read config descriptor.
-                            println!("[xhci  ] mass storage device detected at slot {}", slot_id);
-                            if let Ok(()) = unsafe { ctrl.init_msd(slot_id) } {
-                                println!("[xhci  ] mass storage initialised at slot {}", slot_id);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        println!("[xhci  ] get_device_descriptor failed: {}", e.as_str());
-                    }
-                }
-            }
-            Err(e) => {
-                println!("[xhci  ] enable_slot failed: {}", e.as_str());
+        // Scan every root hub port for a connected device.
+        for port in 1..=ctrl.max_ports {
+            if unsafe { ctrl.enumerate_port(port) } {
+                println!("[xhci  ] enumerated port {}", port);
             }
         }
 
         // Store the controller.
         *XHCI_CONTROLLER.lock() = Some(ctrl);
+
+        // The MSD SCSI geometry probe was deferred out of device
+        // enumeration (bot_transfer reaches the controller through
+        // `with_controller`, which needs the global to be populated).
+        // Run it now that the controller is published.
+        crate::kernel::drivers::usb_msd::probe_geometry();
 
         // Only initialise the first xHCI controller.
         break;

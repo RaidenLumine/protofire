@@ -1,10 +1,15 @@
 //! src/kernel/drivers/usb_hid.rs
 //!
 //! USB Human Interface Device (keyboard/mouse) driver.
-//! USB HID (Human Interface Device) driver — boot protocol keyboard.
+//! USB HID (Human Interface Device) driver — boot protocol keyboard/mouse.
 //!
-//! Parses USB HID boot protocol keyboard reports and maps USB HID keycodes
-//! to the kernel's internal key event representation.
+//! Parses USB HID boot protocol keyboard reports (mapping HID keycodes to
+//! PS/2 Set 1 scancodes for the keyboard core) and mouse reports (injecting
+//! relative motion into the mouse core).  Also owns the real HID device
+//! discovery: walking a configuration descriptor for the HID interface's
+//! interrupt IN endpoint and classifying the device as keyboard or mouse —
+//! the xHCI probe calls [`classify_hid_device`] instead of hard-coding an
+//! endpoint.
 //!
 //! ## Activation
 //!
@@ -265,6 +270,157 @@ fn inject_modifier_break(modifiers: u8) {
 }
 
 // ---------------------------------------------------------------------------
+// Boot protocol mouse report processing
+// ---------------------------------------------------------------------------
+
+/// Process a USB HID Boot Protocol mouse input report (up to 4 bytes).
+///
+/// Byte 0: buttons (bitfield).  Bytes 1–2: signed X/Y deltas.  Byte 3 (when
+/// present): wheel.  Relative motion is injected into the mouse core, which
+/// the `/system/dev/mouse` device node drains.
+pub fn handle_mouse_report(report: &[u8]) {
+    if report.len() < 3 {
+        return;
+    }
+    let buttons = report[0];
+    let dx = report[1] as i8;
+    let dy = report[2] as i8;
+    let wheel = if report.len() > 3 { report[3] as i8 } else { 0 };
+    super::mouse::inject_motion(buttons, dx, dy, wheel);
+}
+
+// ---------------------------------------------------------------------------
+// Real HID device discovery (configuration descriptor walking)
+// ---------------------------------------------------------------------------
+
+/// Classification of a discovered HID device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HidDeviceKind {
+    Keyboard,
+    Mouse,
+}
+
+/// HID device discovered from a configuration descriptor: the boot-protocol
+/// kind plus its interrupt IN endpoint, so the xHCI driver can configure the
+/// endpoint and arm the right report length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HidDeviceInfo {
+    pub kind: HidDeviceKind,
+    pub endpoint_address: u8,
+    pub max_packet_size: u16,
+    pub interval: u8,
+    pub interface_number: u8,
+    /// Bytes per input report (endpoint max-packet-size, floored to the
+    /// boot-protocol minimum for the device kind).
+    pub report_len: usize,
+}
+
+impl HidDeviceInfo {
+    /// Minimum report size for a boot-protocol device kind.
+    const fn min_report_len(kind: HidDeviceKind) -> usize {
+        match kind {
+            HidDeviceKind::Keyboard => 8,
+            HidDeviceKind::Mouse => 4,
+        }
+    }
+
+    /// The doorbell Device Context Index for this interrupt IN endpoint.
+    /// xHCI maps an IN endpoint N to DCI 2*N+1.
+    pub const fn dci(&self) -> u32 {
+        2u32 * (self.endpoint_address & 0x0F) as u32 + 1
+    }
+}
+
+/// Walk a USB configuration descriptor and classify the HID interface,
+/// returning its interrupt IN endpoint.
+///
+/// `fallback_proto` is the device-descriptor `bDeviceProtocol`, used only when
+/// the interface reports protocol 0 (boot-class devices on some emulators
+/// leave the interface protocol unset).
+///
+/// Returns `None` when the configuration has no HID interface with an
+/// interrupt IN endpoint.
+pub fn classify_hid_device(config: &[u8], fallback_proto: u8) -> Option<HidDeviceInfo> {
+    let mut i = 0usize;
+    while i + 1 < config.len() {
+        let dlen = config[i] as usize;
+        if dlen < 2 {
+            break;
+        }
+        let dtype = config[i + 1];
+        if dtype == 4 && i + 7 < config.len() {
+            // INTERFACE descriptor: bInterfaceNumber=2, bNumEndpoints=4,
+            // bInterfaceClass=5, bInterfaceSubClass=6, bInterfaceProtocol=7.
+            let if_class = config[i + 5];
+            if if_class != USB_CLASS_HID {
+                i += dlen;
+                continue;
+            }
+
+            let if_number = config[i + 2];
+            let num_eps = config[i + 4];
+            let if_proto = config[i + 7];
+
+            // Walk the interface's subordinate descriptors (bLength-sized),
+            // skipping HID and other non-endpoint descriptors between them,
+            // until all `num_eps` endpoint descriptors have been examined.
+            // The endpoint may follow one or more HID descriptors, so the
+            // iteration count is endpoints found, not descriptors stepped.
+            let mut pos = i + dlen;
+            let mut endpoint = None;
+            let mut eps_found = 0;
+            while eps_found < num_eps as usize && pos + 5 < config.len() {
+                let sub_dlen = config[pos] as usize;
+                if sub_dlen < 2 {
+                    break;
+                }
+                if config[pos + 1] == 5 {
+                    // ENDPOINT descriptor: bEndpointAddress=2, bmAttributes=3,
+                    // wMaxPacketSize=4-5, bInterval=6.
+                    let ea = config[pos + 2];
+                    let attr = config[pos + 3];
+                    let mps = u16::from_le_bytes([config[pos + 4], config[pos + 5]]);
+                    let interval = if pos + 6 < config.len() {
+                        config[pos + 6]
+                    } else {
+                        0
+                    };
+                    if (attr & 3) == 3 && (ea & 0x80) != 0 {
+                        endpoint = Some((ea, mps, interval));
+                    }
+                    eps_found += 1;
+                }
+                pos += sub_dlen;
+            }
+            let (endpoint_address, max_packet_size, interval) = endpoint?;
+
+            let kind = match if_proto {
+                USB_PROTOCOL_MOUSE => HidDeviceKind::Mouse,
+                USB_PROTOCOL_KEYBOARD => HidDeviceKind::Keyboard,
+                // Protocol 0: fall back to the device-level boot protocol.
+                _ => match fallback_proto {
+                    USB_PROTOCOL_MOUSE => HidDeviceKind::Mouse,
+                    _ => HidDeviceKind::Keyboard,
+                },
+            };
+            let report_len =
+                max_packet_size.max(HidDeviceInfo::min_report_len(kind) as u16) as usize;
+
+            return Some(HidDeviceInfo {
+                kind,
+                endpoint_address,
+                max_packet_size,
+                interval,
+                interface_number: if_number,
+                report_len,
+            });
+        }
+        i += dlen;
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Driver integration
 // ---------------------------------------------------------------------------
 
@@ -285,9 +441,9 @@ impl Driver for UsbHidDriver {
     }
 
     fn init(&self) -> crate::Result<()> {
-        // The xHCI driver handles USB HID device discovery and initialisation
-        // during its probe phase.  This driver only provides the scancode
-        // mapping and report-processing logic.
+        // The xHCI probe discovers HID devices on the bus and routes each one
+        // through this module's real discovery logic ([`classify_hid_device`])
+        // before configuring the endpoint and arming the first report read.
         Ok(())
     }
 }
@@ -303,10 +459,109 @@ pub fn driver() -> Arc<dyn Driver> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::drivers::mouse::clear_global;
+    use crate::kernel::drivers::mouse::try_read_motion;
+    use alloc::vec::Vec;
+
+    /// Build a configuration descriptor for a single-interface HID device.
+    ///
+    /// `proto` is the interface boot protocol (1 = keyboard, 2 = mouse);
+    /// `mps` is the interrupt IN endpoint's max packet size; `interval` the
+    /// poll interval.
+    fn build_hid_config(proto: u8, mps: u16, interval: u8) -> Vec<u8> {
+        let mut config = Vec::new();
+        // Configuration descriptor (type 2): bLength=9, bNumInterfaces=1,
+        // bConfigurationValue=1, total length patched below.
+        config.extend_from_slice(&[9, 2, 0, 0, 1, 1, 0, 0xC0, 50]);
+        // Interface descriptor (type 4): bInterfaceNumber=0, alt=0, 1 EP,
+        // class=HID(0x03), sub=1 boot, proto=`proto`.
+        config.extend_from_slice(&[9, 4, 0, 0, 1, USB_CLASS_HID, 1, proto, 0]);
+        // HID descriptor (type 0x21) between interface and endpoint.
+        config.extend_from_slice(&[9, 0x21, 0x10, 0x01, 0, 1, 0x22, 0, 0]);
+        // Endpoint descriptor (type 5): EP 1 IN, interrupt, mps, interval.
+        config.extend_from_slice(&[7, 5, 0x81, 3, mps as u8, (mps >> 8) as u8, interval]);
+        // Patch wTotalLength (offset 2-3).
+        let total = config.len() as u16;
+        config[2] = total as u8;
+        config[3] = (total >> 8) as u8;
+        config
+    }
 
     #[test]
     fn hid_report_size() {
         assert_eq!(core::mem::size_of::<UsbKeyboardReport>(), 8);
+    }
+
+    #[test]
+    fn classify_hid_config_keyboard() {
+        let config = build_hid_config(USB_PROTOCOL_KEYBOARD, 8, 10);
+        let info = classify_hid_device(&config, 0).expect("keyboard classified");
+        assert_eq!(info.kind, HidDeviceKind::Keyboard);
+        assert_eq!(info.endpoint_address, 0x81);
+        assert_eq!(info.max_packet_size, 8);
+        assert_eq!(info.interval, 10);
+        assert_eq!(info.report_len, 8);
+        assert_eq!(info.dci(), 3); // EP 1 IN → DCI 3
+    }
+
+    #[test]
+    fn classify_hid_config_mouse() {
+        let config = build_hid_config(USB_PROTOCOL_MOUSE, 4, 10);
+        let info = classify_hid_device(&config, 0).expect("mouse classified");
+        assert_eq!(info.kind, HidDeviceKind::Mouse);
+        assert_eq!(info.report_len, 4);
+    }
+
+    #[test]
+    fn classify_hid_uses_device_protocol_fallback() {
+        // Interface protocol 0 → classify from the device-level protocol.
+        let config = build_hid_config(0, 4, 8);
+        let info = classify_hid_device(&config, USB_PROTOCOL_MOUSE).expect("mouse classified");
+        assert_eq!(info.kind, HidDeviceKind::Mouse);
+    }
+
+    #[test]
+    fn classify_hid_report_len_floors_to_kind_minimum() {
+        // Endpoint advertises 1-byte packets; the boot-protocol keyboard
+        // report is still 8 bytes.
+        let config = build_hid_config(USB_PROTOCOL_KEYBOARD, 1, 10);
+        let info = classify_hid_device(&config, 0).expect("keyboard classified");
+        assert_eq!(info.report_len, 8);
+    }
+
+    #[test]
+    fn classify_hid_rejects_missing_hid_interface() {
+        // A config with no HID interface (class 0x08 MSC) returns None.
+        let mut config = build_hid_config(USB_PROTOCOL_KEYBOARD, 8, 10);
+        config[14] = 0x08; // bInterfaceClass at interface descriptor offset 5
+        assert!(classify_hid_device(&config, 0).is_none());
+    }
+
+    #[test]
+    fn mouse_report_injects_motion() {
+        clear_global();
+        // 4-byte boot-protocol mouse report: left button + (dx, dy, wheel).
+        handle_mouse_report(&[0x01, 0x03, 0xFC, 0xFF]);
+        let motion = try_read_motion().expect("motion injected");
+        assert_eq!(motion.buttons, 0x01);
+        assert_eq!(motion.dx, 3);
+        assert_eq!(motion.dy, -4);
+        assert_eq!(motion.wheel, -1);
+    }
+
+    #[test]
+    fn mouse_report_tolerates_short_reports() {
+        clear_global();
+        // 3-byte report (no wheel byte) still injects motion with wheel = 0.
+        handle_mouse_report(&[0x00, 0x02, 0x01]);
+        let motion = try_read_motion().expect("motion injected");
+        assert_eq!(motion.dx, 2);
+        assert_eq!(motion.dy, 1);
+        assert_eq!(motion.wheel, 0);
+
+        // A 2-byte fragment is ignored entirely.
+        handle_mouse_report(&[0x00, 0x00]);
+        assert!(try_read_motion().is_none());
     }
 
     #[test]

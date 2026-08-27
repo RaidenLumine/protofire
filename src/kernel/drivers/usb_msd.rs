@@ -9,6 +9,11 @@
 
 #![cfg(all(target_arch = "x86_64", target_os = "none"))]
 
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
+
+use alloc::sync::Arc;
+
 use crate::kernel::drivers::xhci::with_controller;
 use crate::kernel::fs::block::BlockDevice;
 use crate::kernel::fs::block::DeviceHealth;
@@ -150,23 +155,18 @@ impl BlockDevice for UsbMsdBlockDevice {
     }
 
     fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
-        let nblocks = buffer.len() / BLOCK_SIZE;
-        for i in 0..nblocks {
-            let offset = i * BLOCK_SIZE;
-            let block_buf = &mut buffer[offset..offset + BLOCK_SIZE];
-            scsi_read_10(lba + i as u64, block_buf)?;
-        }
-        Ok(())
+        // Use the real READ CAPACITY block size, not the 512-byte fallback.
+        let block_size = self.block_size();
+        let nblocks = buffer.len() / block_size;
+        let usable = nblocks * block_size;
+        scsi_read_10(lba, &mut buffer[..usable])
     }
 
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
-        let nblocks = data.len() / BLOCK_SIZE;
-        for i in 0..nblocks {
-            let offset = i * BLOCK_SIZE;
-            let block_data = &data[offset..offset + BLOCK_SIZE];
-            scsi_write_10(lba + i as u64, block_data)?;
-        }
-        Ok(())
+        let block_size = self.block_size();
+        let nblocks = data.len() / block_size;
+        let usable = nblocks * block_size;
+        scsi_write_10(lba, &data[..usable])
     }
 
     fn flush(&self) -> Result<()> {
@@ -178,40 +178,82 @@ impl BlockDevice for UsbMsdBlockDevice {
     }
 }
 
+/// Fallback block size (512 bytes) used before READ CAPACITY has run.
 const BLOCK_SIZE: usize = 512;
+
+/// Maximum number of blocks per READ(10)/WRITE(10) CDB.  The transfer-length
+/// field is 16 bits, so a single command covers at most 65535 blocks.
+const MAX_SCSI_BLOCKS_PER_CDB: usize = 65535;
+
+/// Maximum bytes moved per BOT data-phase transfer.  The xHCI Normal TRB
+/// transfer-length field is 17 bits (max 0x1FFFF), so a bulk data stage is
+/// chunked below that ceiling.
+const MAX_BOT_DATA_CHUNK: usize = 0xFF00;
+
+/// The device's real block size (READ CAPACITY result), or the 512-byte
+/// fallback before geometry has been queried.
+fn device_block_size() -> usize {
+    MSD_DEVICE
+        .lock()
+        .as_ref()
+        .map(|d| d.block_size)
+        .unwrap_or(BLOCK_SIZE)
+}
 
 // ── SCSI commands ────────────────────────────────────────────────────────
 
 fn scsi_read_10(lba: u64, buffer: &mut [u8]) -> Result<()> {
-    let cdb = ScsiRw10Cdb {
-        opcode: SCSI_READ_10,
-        flags: 0,
-        lba: (lba as u32).to_be(),
-        group: 0,
-        length: 1u16.to_be(), // transfer length = 1 block
-        control: 0,
-    };
-    let cdb_bytes = unsafe { core::mem::transmute::<ScsiRw10Cdb, [u8; 10]>(cdb) };
-    bot_transfer(&cdb_bytes, Some(buffer), CBW_DIR_IN)
+    let block_size = device_block_size();
+    let total_blocks = buffer.len() / block_size;
+    let mut done = 0usize;
+    while done < total_blocks {
+        // Chunk at the CDB block-count limit (u16 transfer length).
+        let chunk = core::cmp::min(MAX_SCSI_BLOCKS_PER_CDB, total_blocks - done);
+        let offset = done * block_size;
+        let chunk_buf = &mut buffer[offset..offset + chunk * block_size];
+        let cdb = ScsiRw10Cdb {
+            opcode: SCSI_READ_10,
+            flags: 0,
+            lba: ((lba + done as u64) as u32).to_be(),
+            group: 0,
+            length: (chunk as u16).to_be(),
+            control: 0,
+        };
+        let cdb_bytes = unsafe { core::mem::transmute::<ScsiRw10Cdb, [u8; 10]>(cdb) };
+        bot_transfer(&cdb_bytes, Some(chunk_buf), CBW_DIR_IN)?;
+        done += chunk;
+    }
+    Ok(())
 }
 
 fn scsi_write_10(lba: u64, data: &[u8]) -> Result<()> {
-    let cdb = ScsiRw10Cdb {
-        opcode: SCSI_WRITE_10,
-        flags: 0,
-        lba: (lba as u32).to_be(),
-        group: 0,
-        length: 1u16.to_be(), // transfer length = 1 block
-        control: 0,
-    };
-    let cdb_bytes = unsafe { core::mem::transmute::<ScsiRw10Cdb, [u8; 10]>(cdb) };
-    // BOT write: data is immutable from BlockDevice but we need mutable for
-    // the bot_transfer interface. Since this is an OUT transfer, bulk_send
-    // only reads the data — it doesn't modify it.
-    let mut write_buf = [0u8; BLOCK_SIZE];
-    let len = data.len().min(BLOCK_SIZE);
-    write_buf[..len].copy_from_slice(&data[..len]);
-    bot_transfer(&cdb_bytes, Some(&mut write_buf[..len]), CBW_DIR_OUT)
+    let block_size = device_block_size();
+    let total_blocks = data.len() / block_size;
+    let mut done = 0usize;
+    while done < total_blocks {
+        let chunk = core::cmp::min(MAX_SCSI_BLOCKS_PER_CDB, total_blocks - done);
+        let offset = done * block_size;
+        let chunk_data = &data[offset..offset + chunk * block_size];
+        let cdb = ScsiRw10Cdb {
+            opcode: SCSI_WRITE_10,
+            flags: 0,
+            lba: ((lba + done as u64) as u32).to_be(),
+            group: 0,
+            length: (chunk as u16).to_be(),
+            control: 0,
+        };
+        let cdb_bytes = unsafe { core::mem::transmute::<ScsiRw10Cdb, [u8; 10]>(cdb) };
+        // BOT write: data is immutable from BlockDevice but bot_transfer
+        // needs a mutable slice.  For the OUT direction it only hands the
+        // data to bulk_send, which reads it into a DMA buffer — it never
+        // modifies it.
+        let chunk_mut = unsafe {
+            core::slice::from_raw_parts_mut(chunk_data.as_ptr() as *mut u8, chunk_data.len())
+        };
+        bot_transfer(&cdb_bytes, Some(chunk_mut), CBW_DIR_OUT)?;
+        done += chunk;
+    }
+    Ok(())
 }
 
 fn scsi_test_unit_ready() -> Result<()> {
@@ -252,6 +294,25 @@ fn scsi_request_sense() -> Result<u8> {
     Ok(resp[2] & 0x0F)
 }
 
+// ── Boot-disk probe ──────────────────────────────────────────────────────
+
+/// Return the USB mass storage block device as a boot disk candidate.
+///
+/// `probe_xhci` registers the device (via [`init_msd`]) before the driver
+/// manager walks the boot-disk fallback chain, so this just checks whether
+/// a USB mass storage device was initialised.
+pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
+    // Kick the deferred SCSI geometry probe now that the xHCI controller is
+    // globally reachable.  Idempotent, so this is also the fallback trigger
+    // for when probe_xhci's own trigger races ahead of it.
+    probe_geometry();
+    if MSD_DEVICE.lock().is_some() {
+        Some(Arc::new(UsbMsdBlockDevice))
+    } else {
+        None
+    }
+}
+
 // ── BOT protocol ─────────────────────────────────────────────────────────
 
 /// Perform a BOT transfer: send CBW, transfer data, receive CSW.
@@ -282,14 +343,21 @@ fn bot_transfer(cdb: &[u8], data: Option<&mut [u8]>, direction: u8) -> Result<()
     with_controller(|ctrl| unsafe { ctrl.bulk_send(ep_out, &cbw_bytes) })
         .ok_or(Error::DeviceError)??;
 
-    // Transfer data if any.
+    // Transfer data if any, chunking so no single bulk transfer exceeds the
+    // xHCI TRB transfer-length ceiling (17 bits).
     if let Some(buf) = data {
-        if direction == CBW_DIR_IN {
-            with_controller(|ctrl| unsafe { ctrl.bulk_recv(dev.endpoints.ep_in_addr, buf) })
-                .ok_or(Error::DeviceError)??;
-        } else {
-            with_controller(|ctrl| unsafe { ctrl.bulk_send(ep_out, buf) })
-                .ok_or(Error::DeviceError)??;
+        let mut offset = 0usize;
+        while offset < buf.len() {
+            let chunk_len = core::cmp::min(MAX_BOT_DATA_CHUNK, buf.len() - offset);
+            let chunk = &mut buf[offset..offset + chunk_len];
+            if direction == CBW_DIR_IN {
+                with_controller(|ctrl| unsafe { ctrl.bulk_recv(dev.endpoints.ep_in_addr, chunk) })
+                    .ok_or(Error::DeviceError)??;
+            } else {
+                with_controller(|ctrl| unsafe { ctrl.bulk_send(ep_out, chunk) })
+                    .ok_or(Error::DeviceError)??;
+            }
+            offset += chunk_len;
         }
     }
 
@@ -321,19 +389,41 @@ fn bot_transfer(cdb: &[u8], data: Option<&mut [u8]>, direction: u8) -> Result<()
 
 // ── Initialisation ───────────────────────────────────────────────────────
 
-/// Initialise the USB mass storage device at the given xHCI slot.
+/// Register a newly detected USB mass storage device at the given xHCI slot.
+///
+/// This only records the bulk endpoints and the geometry defaults (512-byte
+/// blocks, unknown count); the SCSI geometry probe is deferred to
+/// [`probe_geometry`] because it needs the xHCI controller to be published
+/// in the global registry, which `probe_xhci` does only after its port scan
+/// completes.
 ///
 /// # Safety
 ///
 /// Called from `probe_xhci` when a MSC BOT device is detected.
-pub unsafe fn init_msd(endpoints: MsdBulkEndpoints) -> Result<()> {
-    // Register the endpoints first so the BOT transfers below can run.
+pub unsafe fn register_msd(endpoints: MsdBulkEndpoints) {
     *MSD_DEVICE.lock() = Some(MsdDevice {
         endpoints,
         block_size: BLOCK_SIZE,
         block_count: 0,
         tag: 0,
     });
+}
+
+/// Whether [`probe_geometry`] has already run (idempotence guard).
+static GEOMETRY_PROBED: AtomicBool = AtomicBool::new(false);
+
+/// Run the SCSI geometry probe (INQUIRY, TEST UNIT READY, READ CAPACITY)
+/// now that the xHCI controller is reachable through `with_controller`.
+///
+/// Deferred out of [`register_msd`] for that reason; safe to call
+/// repeatedly.  No-ops when no USB mass storage device was registered.
+pub fn probe_geometry() {
+    if GEOMETRY_PROBED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    if MSD_DEVICE.lock().is_none() {
+        return;
+    }
 
     // Query the device identity (INQUIRY) for a one-line diagnostic.
     if let Ok(inq) = scsi_inquiry() {
@@ -362,7 +452,11 @@ pub unsafe fn init_msd(endpoints: MsdBulkEndpoints) -> Result<()> {
     }
 
     // Read capacity.
-    let (block_count, block_size) = scsi_read_capacity()?;
+    let Ok((block_count, block_size)) = scsi_read_capacity() else {
+        // Geometry probe failed; keep the 512-byte fallback and the zero
+        // block count so the block device stays visible but unusable.
+        return;
+    };
     println!(
         "[usbmsd] USB mass storage: {} blocks x {} bytes = {} MiB",
         block_count,
@@ -371,11 +465,13 @@ pub unsafe fn init_msd(endpoints: MsdBulkEndpoints) -> Result<()> {
     );
 
     // Fill in the real geometry now that READ CAPACITY has completed.
-    let mut device = MSD_DEVICE.lock();
-    let dev = device.as_mut().ok_or(Error::InvalidArgument)?;
-    dev.block_size = block_size;
-    dev.block_count = block_count;
-    drop(device);
+    {
+        let mut device = MSD_DEVICE.lock();
+        if let Some(dev) = device.as_mut() {
+            dev.block_size = block_size;
+            dev.block_count = block_count;
+        }
+    }
 
     // Register with the filesystem as a block device.
     if let Some(fs) = crate::kernel::fs::global() {
@@ -383,6 +479,4 @@ pub unsafe fn init_msd(endpoints: MsdBulkEndpoints) -> Result<()> {
         fs_lock.register_block_device("usb-msd", alloc::sync::Arc::new(UsbMsdBlockDevice));
         println!("[usbmsd] Registered as block device 'usb-msd'");
     }
-
-    Ok(())
 }

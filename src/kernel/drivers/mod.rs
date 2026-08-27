@@ -10,6 +10,7 @@ pub mod framebuffer;
 pub mod framebuffer_console;
 pub mod hda;
 pub mod keyboard;
+pub mod mouse;
 pub mod nvme;
 pub mod serial;
 pub mod usb_hid;
@@ -283,7 +284,8 @@ impl DriverManager {
         }
 
         // Prefer ATA for boot-disk discovery; fall back to AHCI (real hardware
-        // SATA), then VirtIO (QEMU virt machines), then NVMe (modern PCIe SSD).
+        // SATA), then VirtIO (QEMU virt machines), then NVMe (modern PCIe SSD),
+        // then USB mass storage (usb-storage devices on an xHCI bus).
         self.boot_disk = if ata_initialized {
             ata::probe_boot_disk()
         } else {
@@ -298,6 +300,10 @@ impl DriverManager {
         }
         if self.boot_disk.is_none() {
             self.boot_disk = nvme::probe_boot_disk();
+        }
+        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+        if self.boot_disk.is_none() {
+            self.boot_disk = usb_msd::probe_boot_disk();
         }
         if let Some(disk) = &self.boot_disk {
             println!(

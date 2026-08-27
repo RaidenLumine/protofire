@@ -21,6 +21,7 @@ pub const CONSOLE_DEVICE_NAME: &str = "console";
 pub const DEBUG_DEVICE_NAME: &str = "debug";
 pub const KEYBOARD_DEVICE_NAME: &str = "keyboard";
 pub const KEYBOARD_RAW_DEVICE_NAME: &str = "keyboard-raw";
+pub const MOUSE_DEVICE_NAME: &str = "mouse";
 pub const NULL_DEVICE_NAME: &str = "null";
 pub const SERIAL0_DEVICE_NAME: &str = "serial0";
 pub const ZERO_DEVICE_NAME: &str = "zero";
@@ -32,6 +33,7 @@ pub const STDOUT_DEVICE_PATH: &str = "/system/dev/stdout";
 pub const STDERR_DEVICE_PATH: &str = "/system/dev/stderr";
 pub const KEYBOARD_DEVICE_PATH: &str = "/system/dev/keyboard";
 pub const KEYBOARD_RAW_DEVICE_PATH: &str = "/system/dev/keyboard-raw";
+pub const MOUSE_DEVICE_PATH: &str = "/system/dev/mouse";
 pub const NULL_DEVICE_PATH: &str = "/system/dev/null";
 pub const SERIAL0_DEVICE_PATH: &str = "/system/dev/serial0";
 pub const ZERO_DEVICE_PATH: &str = "/system/dev/zero";
@@ -104,7 +106,7 @@ impl VirtualDeviceNode {
     }
 }
 
-const DEVICE_DESCRIPTORS: [DeviceDescriptor; 7] = [
+const DEVICE_DESCRIPTORS: [DeviceDescriptor; 8] = [
     DeviceDescriptor {
         name: CONSOLE_DEVICE_NAME,
         supported_rights: HANDLE_RIGHT_READ | HANDLE_RIGHT_WRITE,
@@ -134,6 +136,13 @@ const DEVICE_DESCRIPTORS: [DeviceDescriptor; 7] = [
         stat_size: 0,
     },
     DeviceDescriptor {
+        name: MOUSE_DEVICE_NAME,
+        supported_rights: HANDLE_RIGHT_READ,
+        read: read_mouse_motion_bytes,
+        write: unsupported_device_write,
+        stat_size: 0,
+    },
+    DeviceDescriptor {
         name: NULL_DEVICE_NAME,
         supported_rights: HANDLE_RIGHT_READ | HANDLE_RIGHT_WRITE,
         read: read_null_bytes,
@@ -156,7 +165,7 @@ const DEVICE_DESCRIPTORS: [DeviceDescriptor; 7] = [
     },
 ];
 
-const VIRTUAL_DEVICE_NODES: [VirtualDeviceNode; 10] = [
+const VIRTUAL_DEVICE_NODES: [VirtualDeviceNode; 11] = [
     VirtualDeviceNode {
         full_path: CONSOLE_DEVICE_PATH,
         mount_path: "/console",
@@ -182,6 +191,13 @@ const VIRTUAL_DEVICE_NODES: [VirtualDeviceNode; 10] = [
         full_path: KEYBOARD_RAW_DEVICE_PATH,
         mount_path: "/keyboard-raw",
         target_name: KEYBOARD_RAW_DEVICE_NAME,
+        alias_supported_rights: None,
+        visible_in_directory: true,
+    },
+    VirtualDeviceNode {
+        full_path: MOUSE_DEVICE_PATH,
+        mount_path: "/mouse",
+        target_name: MOUSE_DEVICE_NAME,
         alias_supported_rights: None,
         visible_in_directory: true,
     },
@@ -275,6 +291,33 @@ fn read_keyboard_char_bytes(buffer: &mut [u8], timeout_ticks: u64) -> Result<usi
         debug_assert!(character.is_ascii());
         buffer[count] = character as u8;
         count += 1;
+    }
+
+    Ok(count)
+}
+
+fn read_mouse_motion_bytes(buffer: &mut [u8], timeout_ticks: u64) -> Result<usize> {
+    use crate::kernel::drivers::mouse;
+
+    if buffer.is_empty() {
+        return Ok(0);
+    }
+
+    // Surface relative-motion reports as the boot-protocol byte stream
+    // (buttons, dx, dy, wheel — 4 bytes each), mirroring the keyboard node.
+    let first = mouse::read_motion_timeout(timeout_ticks).ok_or(Error::TimedOut)?;
+    let bytes = first.to_bytes();
+    let n = bytes.len().min(buffer.len());
+    buffer[..n].copy_from_slice(&bytes[..n]);
+
+    let mut count = n;
+    while count + mouse::MOUSE_REPORT_LEN <= buffer.len() {
+        let Some(motion) = mouse::try_read_motion() else {
+            break;
+        };
+        let bytes = motion.to_bytes();
+        buffer[count..count + mouse::MOUSE_REPORT_LEN].copy_from_slice(&bytes);
+        count += mouse::MOUSE_REPORT_LEN;
     }
 
     Ok(count)
@@ -451,7 +494,7 @@ mod tests {
     fn virtual_device_directory_metadata_matches_visible_nodes() {
         assert_eq!(
             virtual_device_metadata(VIRTUAL_DEVICE_DIRECTORY_PATH),
-            Some(FileMetadata::new(NodeKind::Directory, 10))
+            Some(FileMetadata::new(NodeKind::Directory, 11))
         );
     }
 
@@ -471,6 +514,7 @@ mod tests {
                 "debug",
                 "keyboard",
                 "keyboard-raw",
+                "mouse",
                 "null",
                 "serial0",
                 "stderr",

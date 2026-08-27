@@ -6,13 +6,24 @@
 //! (`#![cfg(all(target_arch = "x86_64", target_os = "none"))]`), so it is not
 //! compiled for host integration tests.  These tests exercise the
 //! [`BlockDevice`] contract the driver builds on, plus a mock USB bulk
-//! controller that mirrors the driver's OUT/IN endpoint routing.  The driver
-//! itself is covered by bare-metal boot-time tests.
+//! controller that mirrors the driver's OUT/IN endpoint routing, and the
+//! storage-loop shape the driver feeds: MBR partition scan + mount of the
+//! scanned partition.  The driver itself is covered by bare-metal boot-time
+//! tests.
 
+use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
 use protofire::kernel::fs::block::BlockDevice;
+use protofire::kernel::fs::block::BlockSliceDevice;
+use protofire::kernel::fs::block::MemoryBlockDevice;
 use protofire::kernel::fs::block::BLOCK_SIZE;
+use protofire::kernel::fs::fat32::FatVolume;
+use protofire::kernel::fs::partition::read_mbr_partitions;
+use protofire::kernel::fs::partition::write_mbr_partitions;
+use protofire::kernel::fs::partition::MbrPartitionEntry;
+use protofire::kernel::fs::partition::MbrPartitionTable;
+use protofire::kernel::fs::vfs::FileSystem;
 use protofire::Error;
 use protofire::Result;
 
@@ -423,4 +434,221 @@ fn test_usb_msd_performance() {
         num_blocks, read_elapsed
     );
     assert!(read_elapsed.as_millis() < 10_000);
+}
+
+// ── MBR partition scan + mount workflow ──────────────────────────────────
+
+/// A block device that reports a non-512-byte sector size (e.g. a 4K-native
+/// USB stick).  Used to verify the partition scanner refuses — rather than
+/// mis-parses — a device whose sector size is not the canonical 512 bytes,
+/// so the boot-disk fallback chain skips cleanly to the next candidate.
+pub struct NonStandardBlockDevice {
+    data: StdMutex<Vec<u8>>,
+    block_size: usize,
+}
+
+impl NonStandardBlockDevice {
+    pub fn new(block_size: usize, size_blocks: usize) -> Self {
+        Self {
+            data: StdMutex::new(vec![0u8; block_size * size_blocks]),
+            block_size,
+        }
+    }
+}
+
+impl BlockDevice for NonStandardBlockDevice {
+    fn name(&self) -> &str {
+        "nonstandard-msd"
+    }
+
+    fn block_size(&self) -> usize {
+        self.block_size
+    }
+
+    fn block_count(&self) -> u64 {
+        (self.data.lock().unwrap().len() / self.block_size) as u64
+    }
+
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+        let start = lba as usize * self.block_size;
+        let end = start + buffer.len();
+        let data = self.data.lock().unwrap();
+        if end > data.len() {
+            return Err(Error::InvalidArgument);
+        }
+        buffer.copy_from_slice(&data[start..end]);
+        Ok(())
+    }
+
+    fn write_blocks(&self, lba: u64, bytes: &[u8]) -> Result<()> {
+        let start = lba as usize * self.block_size;
+        let end = start + bytes.len();
+        let mut data = self.data.lock().unwrap();
+        if end > data.len() {
+            return Err(Error::InvalidArgument);
+        }
+        data[start..end].copy_from_slice(bytes);
+        Ok(())
+    }
+}
+
+/// The partition scanner must return `Ok(None)` for a non-512-byte device
+/// rather than read an MBR through a wrong-sized window.  This guards the
+/// storage loop's assumption that `usb-msd` block devices use the canonical
+/// 512-byte sectors for partition scanning.
+#[test]
+fn test_mbr_scan_refuses_non_512_block_size() {
+    let device = NonStandardBlockDevice::new(4096, 8);
+    assert_eq!(device.block_size(), 4096);
+    assert_eq!(read_mbr_partitions(&device).unwrap(), None);
+}
+
+/// MBR partition type for a FAT32 LBA partition.
+const MBR_PARTITION_TYPE_FAT32: u8 = 0x0C;
+/// Partition start LBA in the composite disk image (a typical 1 MiB-aligned
+/// offset, matching the layout real usb-storage sticks present).
+const PARTITION_START_LBA: u32 = 2048;
+
+fn put_u16(image: &mut [u8], offset: usize, value: u16) {
+    image[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn put_u32(image: &mut [u8], offset: usize, value: u32) {
+    image[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_short_entry(
+    image: &mut [u8],
+    offset: usize,
+    name11: &[u8; 11],
+    attributes: u8,
+    cluster: u32,
+    size: u32,
+) {
+    image[offset..offset + 11].copy_from_slice(name11);
+    image[offset + 11] = attributes;
+    // Creation/modification dates and times left zeroed.
+    image[offset + 20] = (cluster >> 16) as u8;
+    image[offset + 21] = (cluster >> 24) as u8;
+    image[offset + 26] = cluster as u8;
+    image[offset + 27] = (cluster >> 8) as u8;
+    image[offset + 28..offset + 32].copy_from_slice(&size.to_le_bytes());
+}
+
+/// Build a self-contained 240-sector FAT32 partition image, pre-seeded with a
+/// single file (`README.TXT`, 12 bytes) so the whole partition-scan → mount →
+/// read chain has concrete data to fetch.  Layout mirrors `tests/fat32.rs`:
+///   sectors 0-31  reserved (boot sector in 0)
+///   sectors 32-39 FATs (2 × 4 sectors)
+///   sectors 40+   data (cluster 2 = root dir, cluster 3 = file data)
+fn build_fat32_partition_image() -> Vec<u8> {
+    const SECTORS: usize = 240;
+    let mut image = vec![0u8; SECTORS * BLOCK_SIZE];
+
+    // Boot sector.
+    image[0..3].copy_from_slice(b"\xEB\x3C\x90");
+    image[3..11].copy_from_slice(b"MSDOS5.0");
+    put_u16(&mut image, 11, BLOCK_SIZE as u16);
+    image[13] = 1; // sectors per cluster
+    put_u16(&mut image, 14, 32); // reserved sectors
+    image[16] = 2; // number of FATs
+    put_u16(&mut image, 17, 0); // root entries (0 for FAT32)
+    put_u16(&mut image, 19, 0); // total sectors 16 (0 for FAT32)
+    image[21] = 0xF8; // media descriptor
+    put_u16(&mut image, 22, 0); // sectors per FAT 16 (0 for FAT32)
+    put_u32(&mut image, 32, SECTORS as u32); // total sectors 32
+    put_u32(&mut image, 36, 4); // sectors per FAT
+    put_u32(&mut image, 44, 2); // root cluster
+    put_u16(&mut image, 48, 1); // FSInfo sector
+    put_u16(&mut image, 50, 6); // backup boot sector
+    image[66] = 0x29;
+    put_u32(&mut image, 67, 0x1234_5678);
+    image[71..82].copy_from_slice(b"USBMSDVOL  ");
+    image[82..90].copy_from_slice(b"FAT32   ");
+    image[510] = 0x55;
+    image[511] = 0xAA;
+
+    // FATs: FAT[0] media, FAT[1] reserved, FAT[2] root EOC, FAT[3] file EOC.
+    let fat_base = 32 * BLOCK_SIZE;
+    for fat in 0..2 {
+        let base = fat_base + fat * 4 * BLOCK_SIZE;
+        put_u32(&mut image, base, 0x0FFF_FFF8);
+        put_u32(&mut image, base + 4, 0xFFFF_FFFF);
+        put_u32(&mut image, base + 8, 0x0FFF_FFFF);
+        put_u32(&mut image, base + 12, 0x0FFF_FFFF);
+    }
+
+    // Root directory: ".", "..", and README.TXT (cluster 3, 12 bytes).
+    let root = 40 * BLOCK_SIZE;
+    write_short_entry(&mut image, root, b".          ", 0x10, 2, 0);
+    write_short_entry(&mut image, root + 32, b"..         ", 0x10, 2, 0);
+    write_short_entry(&mut image, root + 64, b"README  TXT", 0x20, 3, 12);
+
+    // File data lives in cluster 3 = sector 41.
+    let data = 41 * BLOCK_SIZE;
+    image[data..data + 12].copy_from_slice(b"usbmsd-mount");
+    image
+}
+
+/// End-to-end storage-loop shape: an MBR in sector 0 points at a FAT32
+/// partition at LBA 2048; the boot chain scans the whole disk, slices the
+/// partition, mounts it as FAT32, and reads a file back.  This is the host
+/// mirror of the `usb-msd` boot-disk path (`probe_boot_disk` → partition
+/// scan → mount) that runs on bare metal after READ CAPACITY.
+#[test]
+fn test_usb_msd_mbr_partition_scan_and_mount() {
+    let partition_image = build_fat32_partition_image();
+    let partition_blocks = (partition_image.len() / BLOCK_SIZE) as u64;
+
+    // Composite disk: MBR at sector 0 + FAT32 partition at LBA 2048.
+    let total_blocks = PARTITION_START_LBA as u64 + partition_blocks;
+    let mut disk = vec![0u8; total_blocks as usize * BLOCK_SIZE];
+
+    let partitions: MbrPartitionTable = [
+        Some(MbrPartitionEntry::new(
+            true,
+            MBR_PARTITION_TYPE_FAT32,
+            PARTITION_START_LBA as u64,
+            partition_blocks,
+        )),
+        None,
+        None,
+        None,
+    ];
+    let mut sector = [0u8; BLOCK_SIZE];
+    write_mbr_partitions(&mut sector, &partitions).expect("write MBR");
+    disk[..BLOCK_SIZE].copy_from_slice(&sector);
+
+    let offset = PARTITION_START_LBA as usize * BLOCK_SIZE;
+    disk[offset..offset + partition_image.len()].copy_from_slice(&partition_image);
+
+    // Storage loop: scan the whole disk, slice the partition, mount it.
+    let parent: Arc<dyn BlockDevice> = MemoryBlockDevice::new("usb-msd-disk", disk, false);
+    let table = read_mbr_partitions(parent.as_ref())
+        .expect("read MBR partitions")
+        .expect("MBR signature present");
+    let part = table[0].expect("first partition present");
+    assert_eq!(part.partition_type, MBR_PARTITION_TYPE_FAT32);
+    assert_eq!(part.start_block, PARTITION_START_LBA as u64);
+    assert_eq!(part.block_count, partition_blocks);
+
+    let slice = BlockSliceDevice::new(
+        "usb-msd-part0",
+        parent.clone(),
+        part.start_block,
+        part.block_count,
+        false,
+    );
+    let volume = FatVolume::open(slice).expect("open FAT32 partition");
+
+    // Read the pre-seeded file straight off the mounted partition.
+    let node = volume.lookup("/README.TXT").expect("lookup README.TXT");
+    assert_eq!(node.size(), 12);
+    let mut buffer = [0u8; 16];
+    let n = node.read(0, &mut buffer).expect("read file");
+    assert_eq!(&buffer[..n], b"usbmsd-mount");
 }
