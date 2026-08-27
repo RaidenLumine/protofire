@@ -146,6 +146,25 @@ unsafe fn ecam_write_u16(
     unsafe { ecam_write_u32(region, bus, device, function, dword_aligned, dword) };
 }
 
+/// Write a single byte to ECAM config space (read-modify-write on the
+/// containing dword).
+#[allow(dead_code)]
+unsafe fn ecam_write_u8(
+    region: &EcamRegion,
+    bus: u8,
+    device: u8,
+    function: u8,
+    offset: u16,
+    value: u8,
+) {
+    let dword_aligned = offset & 0xFFFC;
+    let mut dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
+    let shift = (offset & 0x03) * 8;
+    dword &= !(0xFF << shift);
+    dword |= (value as u32) << shift;
+    unsafe { ecam_write_u32(region, bus, device, function, dword_aligned, dword) };
+}
+
 fn pci_device_exists(region: &EcamRegion, bus: u8, device: u8, function: u8) -> bool {
     let vendor = unsafe { ecam_read_u16(region, bus, device, function, VENDOR_ID) };
     vendor != VENDOR_ID_NONE
@@ -208,6 +227,242 @@ pub fn pci_read_bar_64(
     let lo = unsafe { ecam_read_u32(region, bus, device, function, bar_offset) } as u64;
     let hi = unsafe { ecam_read_u32(region, bus, device, function, bar_offset + 4) } as u64;
     (hi << 32) | (lo & 0xFFFF_FFF0)
+}
+
+// ---------------------------------------------------------------------------
+// Capability walking
+// ---------------------------------------------------------------------------
+
+/// PCI capability IDs.
+pub mod cap_id {
+    pub const MSI: u8 = 0x05;
+    pub const MSI_X: u8 = 0x11;
+    pub const PCI_EXPRESS: u8 = 0x10;
+    pub const VENDOR_SPECIFIC: u8 = 0x09;
+    pub const POWER_MANAGEMENT: u8 = 0x01;
+}
+
+/// A parsed MSI capability structure.
+#[derive(Debug, Clone, Copy)]
+pub struct MsiCapability {
+    /// Offset of the capability in config space.
+    pub offset: u8,
+    /// Message Control register (16-bit).
+    pub message_control: u16,
+    /// Message Address register (32-bit, low).
+    pub message_address: u32,
+    /// Message Upper Address (32-bit, only if 64-bit capable).
+    pub message_upper_address: Option<u32>,
+    /// Message Data register (16-bit).
+    pub message_data: u16,
+    /// Mask Bits register (32-bit, if per-vector masking).
+    pub mask_bits: Option<u32>,
+    /// Pending Bits register (32-bit, if per-vector masking).
+    pub pending_bits: Option<u32>,
+}
+
+/// A parsed MSI-X capability structure.
+#[derive(Debug, Clone, Copy)]
+pub struct MsixCapability {
+    /// Offset of the capability in config space.
+    pub offset: u8,
+    /// Message Control register (16-bit).
+    pub message_control: u16,
+    /// BAR indicator (bits 2:0) and offset (bits 31:3) for the MSI-X Table.
+    pub table_bir_and_offset: u32,
+    /// BAR indicator (bits 2:0) and offset (bits 31:3) for the Pending Bit
+    /// Array.
+    pub pba_bir_and_offset: u32,
+}
+
+/// A parsed PCI Express capability structure.
+#[derive(Debug, Clone, Copy)]
+pub struct PcieCapability {
+    /// Offset of the capability in config space.
+    pub offset: u8,
+    /// PCI Express Capabilities register (16-bit).
+    pub pcie_caps: u16,
+    /// Device Capabilities register (32-bit).
+    pub device_caps: u32,
+    /// Device Control register (16-bit).
+    pub device_control: u16,
+    /// Link Capabilities register (32-bit).
+    pub link_caps: u32,
+    /// Link Status register (16-bit).
+    pub link_status: u16,
+}
+
+/// Walk the PCI capability linked list starting from the capabilities-pointer
+/// register and return the offset of the first capability matching `cap_id`,
+/// or `None`.
+pub fn pci_capability_find(
+    region: &EcamRegion,
+    bus: u8,
+    device: u8,
+    function: u8,
+    cap_id: u8,
+) -> Option<u8> {
+    let status = unsafe { ecam_read_u16(region, bus, device, function, STATUS) };
+    if status & 0x0010 == 0 {
+        // Capabilities list bit not set.
+        return None;
+    }
+
+    let mut ptr: u8 = unsafe { ecam_read_u8(region, bus, device, function, CAP_PTR) };
+    // Capability pointers must be dword-aligned in the lower 256 bytes.
+    let mut safety = 0;
+    while ptr >= 0x40 && safety < 48 {
+        let this_id = unsafe { ecam_read_u8(region, bus, device, function, ptr as u16) };
+        if this_id == cap_id {
+            return Some(ptr);
+        }
+        let next = unsafe { ecam_read_u8(region, bus, device, function, ptr as u16 + 1) };
+        if next < 0x40 {
+            break;
+        }
+        ptr = next;
+        safety += 1;
+    }
+    None
+}
+
+/// Parse the MSI capability at `offset`.
+///
+/// # Safety
+///
+/// The caller must ensure `offset` points to a valid MSI capability.
+pub unsafe fn pci_capability_msi(
+    region: &EcamRegion,
+    bus: u8,
+    device: u8,
+    function: u8,
+    offset: u8,
+) -> MsiCapability {
+    let off = offset as u16;
+    let message_control = unsafe { ecam_read_u16(region, bus, device, function, off + 2) };
+    let is_64bit = (message_control & 0x0080) != 0;
+    let per_vector_mask = (message_control & 0x0100) != 0;
+
+    let message_address = unsafe { ecam_read_u32(region, bus, device, function, off + 4) };
+    let (message_upper_address, data_offset) = if is_64bit {
+        (
+            Some(unsafe { ecam_read_u32(region, bus, device, function, off + 8) }),
+            off + 12,
+        )
+    } else {
+        (None, off + 8)
+    };
+
+    let message_data = unsafe { ecam_read_u16(region, bus, device, function, data_offset) };
+
+    let (mask_bits, pending_bits) = if per_vector_mask {
+        let mask_off = data_offset + 2;
+        let pend_off = data_offset + 6;
+        (
+            Some(unsafe { ecam_read_u32(region, bus, device, function, mask_off) }),
+            Some(unsafe { ecam_read_u32(region, bus, device, function, pend_off) }),
+        )
+    } else {
+        (None, None)
+    };
+
+    MsiCapability {
+        offset,
+        message_control,
+        message_address,
+        message_upper_address,
+        message_data,
+        mask_bits,
+        pending_bits,
+    }
+}
+
+/// Parse the MSI-X capability at `offset`.
+///
+/// # Safety
+///
+/// The caller must ensure `offset` points to a valid MSI-X capability.
+pub unsafe fn pci_capability_msix(
+    region: &EcamRegion,
+    bus: u8,
+    device: u8,
+    function: u8,
+    offset: u8,
+) -> MsixCapability {
+    let off = offset as u16;
+    let message_control = unsafe { ecam_read_u16(region, bus, device, function, off + 2) };
+    let table_bir_and_offset = unsafe { ecam_read_u32(region, bus, device, function, off + 4) };
+    let pba_bir_and_offset = unsafe { ecam_read_u32(region, bus, device, function, off + 8) };
+
+    MsixCapability {
+        offset,
+        message_control,
+        table_bir_and_offset,
+        pba_bir_and_offset,
+    }
+}
+
+/// Parse the PCI Express capability at `offset`.
+///
+/// # Safety
+///
+/// The caller must ensure `offset` points to a valid PCIe capability.
+pub unsafe fn pci_capability_pcie(
+    region: &EcamRegion,
+    bus: u8,
+    device: u8,
+    function: u8,
+    offset: u8,
+) -> PcieCapability {
+    let off = offset as u16;
+    let pcie_caps = unsafe { ecam_read_u16(region, bus, device, function, off + 2) };
+    let device_caps = unsafe { ecam_read_u32(region, bus, device, function, off + 4) };
+    let device_control = unsafe { ecam_read_u16(region, bus, device, function, off + 8) };
+    let link_caps = unsafe { ecam_read_u32(region, bus, device, function, off + 12) };
+    let link_status = unsafe { ecam_read_u16(region, bus, device, function, off + 18) };
+
+    PcieCapability {
+        offset,
+        pcie_caps,
+        device_caps,
+        device_control,
+        link_caps,
+        link_status,
+    }
+}
+
+/// Probe the size of a memory or I/O BAR by writing all-ones, reading back the
+/// size bits, and restoring the original value.
+///
+/// Returns the BAR's size in bytes, or 0 if the BAR is unimplemented (all-ones
+/// read-back) or reads back zero.
+pub fn probe_bar_size(
+    region: &EcamRegion,
+    bus: u8,
+    device: u8,
+    function: u8,
+    bar_offset: u16,
+) -> u64 {
+    let bar_raw = unsafe { ecam_read_u32(region, bus, device, function, bar_offset) };
+    let is_mmio = (bar_raw & 0x01) == 0;
+
+    unsafe {
+        ecam_write_u32(region, bus, device, function, bar_offset, 0xFFFF_FFFF);
+    }
+    let size_mask = unsafe { ecam_read_u32(region, bus, device, function, bar_offset) };
+    unsafe {
+        ecam_write_u32(region, bus, device, function, bar_offset, bar_raw);
+    }
+
+    if size_mask == 0 || size_mask == 0xFFFF_FFFF {
+        return 0;
+    }
+    let raw_size = if is_mmio {
+        size_mask & 0xFFFF_FFF0
+    } else {
+        size_mask & 0xFFFF_FFFC
+    };
+    (!raw_size).wrapping_add(1) as u64
 }
 
 // ---------------------------------------------------------------------------
@@ -393,9 +648,12 @@ fn read_device_info(
             base_address |= (bar_hi as u64) << 32;
         }
 
+        // Probe the BAR size via write-all-ones / read-back / restore.
+        let size = probe_bar_size(region, bus, device, function, offset);
+
         bars[bar_index] = PciBarInfo {
             base_address,
-            size: 0, // BAR size probing deferred (write-1s-then-read-back).
+            size,
             is_64bit,
             is_prefetchable,
             is_mmio,
@@ -477,9 +735,10 @@ pub fn log_pci_devices(devices: &[PciDeviceInfo]) {
         for (i, bar) in dev.bars.iter().enumerate() {
             if bar.base_address != 0 {
                 crate::println!(
-                    "[pci   ]   BAR{}: base={:#018x} mmio={} 64bit={} prefetch={}",
+                    "[pci   ]   BAR{}: base={:#018x} size={:#x} mmio={} 64bit={} prefetch={}",
                     i,
                     bar.base_address,
+                    bar.size,
                     bar.is_mmio,
                     bar.is_64bit,
                     bar.is_prefetchable,
@@ -487,4 +746,54 @@ pub fn log_pci_devices(devices: &[PciDeviceInfo]) {
             }
         }
     }
+}
+
+/// Result of a generic ECAM probe: the mapped region and the devices found on
+/// its (bus 0) enumeration.
+pub struct EcamProbe {
+    /// ECAM region mapped through the low-VA alias.
+    pub region: EcamRegion,
+    /// Devices discovered on the enumerated buses.
+    pub devices: Vec<PciDeviceInfo>,
+}
+
+/// Discover, map, and enumerate the PCIe bus for the platform.
+///
+/// The ECAM physical address typically exceeds the 39-bit TTBR0 range on
+/// QEMU `virt` (0x4010_0000_0000), so the region is mapped through a low VA
+/// alias covering bus 0, where QEMU places all PCIe devices.  Returns `None`
+/// when no ECAM region is described or the mapping fails.
+pub fn probe_and_enumerate() -> Option<EcamProbe> {
+    use crate::arch::aarch64::mmu::map_device_mmio_at;
+
+    let discovered = discover_ecam()?;
+    let ecam_pa = discovered.base_address as u64;
+
+    const ECAM_VA: usize = 0x2_0000_0000; // 8 GiB, L1 index 8 (unused)
+    const ECAM_MAP_SIZE: usize = 2 * 1024 * 1024; // 2 MiB covers bus 0
+
+    unsafe { map_device_mmio_at(ECAM_VA, ecam_pa, ECAM_MAP_SIZE)? };
+
+    crate::println!(
+        "[pci   ] AArch64 PCIe ECAM mapped PA={:#018x} -> VA={:#018x}",
+        ecam_pa,
+        ECAM_VA
+    );
+
+    let region = EcamRegion::new(ECAM_VA, 0, 0);
+    let devices = pci_enumerate_buses(&region);
+    log_pci_devices(&devices);
+
+    Some(EcamProbe { region, devices })
+}
+
+/// Find the first device matching `vendor_id` and, when supplied, `device_id`.
+pub fn find_device(
+    devices: &[PciDeviceInfo],
+    vendor_id: u16,
+    device_id: Option<u16>,
+) -> Option<&PciDeviceInfo> {
+    devices
+        .iter()
+        .find(|dev| dev.vendor_id == vendor_id && device_id.map_or(true, |id| dev.device_id == id))
 }

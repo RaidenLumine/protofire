@@ -907,53 +907,29 @@ fn probe_pci_net_x86_64() -> Option<Arc<dyn NetworkDevice>> {
 /// Probe PCIe for a VirtIO network device on AArch64.
 ///
 /// On QEMU `virt` machines, virtio-net devices may be placed on the PCIe bus
-/// as `virtio-net-pci` transitional devices.  This function discovers the PCIe
-/// ECAM region from the FDT (or falls back to the canonical QEMU virt address),
-/// maps it through a low VA alias (the ECAM physical address typically exceeds
-/// the 39-bit TTBR0 range), enumerates bus 0, locates a VirtIO network
-/// controller, maps its MMIO BAR through a second VA alias, and initialises the
-/// device through its legacy MMIO interface.
+/// as `virtio-net-pci` transitional devices.  This function uses the generic
+/// ECAM probe ([`crate::arch::aarch64::pci::probe_and_enumerate`]) to
+/// discover and map the PCIe bus, then locates a VirtIO network controller,
+/// maps its MMIO BAR through a low VA alias, and initialises the device
+/// through its legacy MMIO interface.
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 fn probe_pci_net() -> Option<Arc<dyn NetworkDevice>> {
     use crate::arch::aarch64::mmu::map_device_mmio_at;
     use crate::arch::aarch64::pci;
     use crate::kernel::drivers::virtio::BareMmioRegion;
 
-    // Discover the ECAM region from the FDT.  QEMU `virt` describes the
-    // PCIe host controller via a `pci-host-ecam-generic` node.  If the FDT
-    // does not include an ECAM region, there is no PCIe bus to probe.
-    let ecam_region = pci::discover_ecam()?;
+    // Discover, map, and enumerate the PCIe bus.  Returns `None` when no
+    // ECAM region is described or the low-VA alias mapping fails.
+    let probe = pci::probe_and_enumerate()?;
 
-    let ecam_pa = ecam_region.base_address as u64;
+    // VirtIO devices use vendor ID 0x1AF4.  Network controllers are
+    // class 0x02, subclass 0x00 (Ethernet).
+    let net_devices = probe
+        .devices
+        .iter()
+        .filter(|dev| dev.vendor_id == 0x1AF4 && dev.class_code == 0x02 && dev.subclass == 0x00);
 
-    // The ECAM physical address is typically beyond the 39-bit TTBR0 range
-    // (e.g. 0x4010_0000_0000 ≈ 64 TiB > 512 GiB).  Map it to a low virtual
-    // address alias.
-    const ECAM_VA: usize = 0x2_0000_0000; // 8 GiB, L1 index 8 (unused)
-    const ECAM_MAP_SIZE: usize = 2 * 1024 * 1024; // 2 MiB covers bus 0
-
-    let _ecam_mapped = unsafe { map_device_mmio_at(ECAM_VA, ecam_pa, ECAM_MAP_SIZE)? };
-
-    crate::println!(
-        "[drivers] aarch64 PCIe ECAM mapped PA={:#018x} -> VA={:#018x}",
-        ecam_pa,
-        ECAM_VA
-    );
-
-    // Create an ECAM descriptor using the alias VA; scan only bus 0 where
-    // QEMU places all PCIe devices.
-    let ecam = pci::EcamRegion::new(ECAM_VA, 0, 0);
-
-    let devices = pci::pci_enumerate_buses(&ecam);
-    pci::log_pci_devices(&devices);
-
-    for dev in &devices {
-        // VirtIO devices use vendor ID 0x1AF4.  Network controllers are
-        // class 0x02, subclass 0x00 (Ethernet).
-        if dev.vendor_id != 0x1AF4 || dev.class_code != 0x02 || dev.subclass != 0x00 {
-            continue;
-        }
-
+    for dev in net_devices {
         for bar in &dev.bars {
             if !bar.is_mmio || bar.base_address == 0 {
                 continue;
@@ -971,7 +947,7 @@ fn probe_pci_net() -> Option<Arc<dyn NetworkDevice>> {
 
             // Enable bus-mastering and memory-space access on the PCI
             // device so it responds to MMIO reads/writes.
-            pci::pci_enable_memory_and_bus_master(&ecam, dev.bus, dev.device, dev.function);
+            pci::pci_enable_memory_and_bus_master(&probe.region, dev.bus, dev.device, dev.function);
 
             let region = unsafe { BareMmioRegion::new(BAR_VA) };
             let transport = VirtIoMmio::new(Box::new(region));

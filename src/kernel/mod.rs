@@ -227,9 +227,15 @@ impl Kernel {
         }
         #[cfg(all(target_arch = "aarch64", target_os = "none"))]
         {
-            // PCIe enumeration on aarch64 runs during network device probing
-            // (see virtio_net::probe_pci_net).  Skip duplicate enumeration here.
-            crate::println!("[init  ] AArch64 PCIe enumeration done during network probing");
+            // PCIe enumeration on aarch64 discovers and maps the ECAM region
+            // through a low-VA alias and logs attached devices.  Per-driver
+            // probing (virtio-net) scans the same bus during driver init;
+            // running the generic enumeration here is idempotent because
+            // re-mapping the region is a no-op and re-enumeration only
+            // re-reads config space.
+            use crate::arch::aarch64::pci;
+            crate::println!("[init  ] AArch64 PCIe enumeration...");
+            let _ = pci::probe_and_enumerate();
         }
 
         // Initialize the bare-metal network stack if a VirtIO network device
