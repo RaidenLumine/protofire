@@ -379,6 +379,13 @@ pub fn init() {
     // actually emitted.
     super::super::control_regs::enable_smep();
     super::super::control_regs::enable_smap();
+
+    // Enable PCID so process-address-space switches can skip a full TLB
+    // flush.  PCID 0 (the kernel's) is active at this point — CR3 holds a
+    // 4 KiB-aligned root — which is the required precondition for setting
+    // CR4.PCIDE.  `init_pcid` reserves PCID 0 and records the enabled state.
+    super::super::control_regs::enable_pcide();
+    super::pcid::init_pcid();
 }
 
 pub fn bootstrap_translate(address: usize) -> Option<usize> {
@@ -702,6 +709,8 @@ fn linker_symbol_range(start: *const u8, end: *const u8) -> (usize, usize) {
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn install_active_root_table_address_impl(root_table_address: usize) -> Option<()> {
+    // The kernel root is tagged with PCID 0 (its low 12 bits are zero), so
+    // the value written to CR3 is unchanged whether or not PCID is active.
     unsafe {
         asm!(
             "mov cr3, {}",
@@ -713,7 +722,10 @@ pub(crate) fn install_active_root_table_address_impl(root_table_address: usize) 
     Some(())
 }
 
+// Test build: process activation goes through the PCID-tagged loader, so the
+// plain kernel loader is only exercised by the bare-metal path (stubbed here).
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn install_active_root_table_address_impl(root_table_address: usize) -> Option<()> {
     TEST_ACTIVE_ROOT_TABLE.store(
         root_table_address & PAGE_ENTRY_ADDRESS_MASK as usize,
@@ -722,8 +734,52 @@ pub(crate) fn install_active_root_table_address_impl(root_table_address: usize) 
     Some(())
 }
 
+// Host lib build: `install_active_root_table_address_impl` is only reached
+// through the bare-metal kernel-table activation path; the host `activate_…`
+// stubs return `None` before touching it, so it is dead here.
 #[cfg(not(any(test, all(target_arch = "x86_64", target_os = "none"))))]
+#[allow(dead_code)]
 pub(crate) fn install_active_root_table_address_impl(_root_table_address: usize) -> Option<()> {
+    None
+}
+
+/// Load a process root table into CR3, tagged with the process's PCID.
+///
+/// When PCID is active the PCID is packed into CR3 bits [11:0]; otherwise the
+/// bare address is written, matching the pre-PCID behaviour.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub(crate) fn install_active_process_root_table_address_impl(
+    root_table_address: usize,
+    pcid: u64,
+) -> Option<()> {
+    let cr3 = super::pcid::cr3_with_pcid(root_table_address, pcid) as u64;
+    unsafe {
+        asm!(
+            "mov cr3, {}",
+            in(reg) cr3,
+            options(nostack, preserves_flags)
+        );
+    }
+    Some(())
+}
+
+#[cfg(test)]
+pub(crate) fn install_active_process_root_table_address_impl(
+    root_table_address: usize,
+    _pcid: u64,
+) -> Option<()> {
+    TEST_ACTIVE_ROOT_TABLE.store(
+        root_table_address & PAGE_ENTRY_ADDRESS_MASK as usize,
+        Ordering::SeqCst,
+    );
+    Some(())
+}
+
+#[cfg(not(any(test, all(target_arch = "x86_64", target_os = "none"))))]
+pub(crate) fn install_active_process_root_table_address_impl(
+    _root_table_address: usize,
+    _pcid: u64,
+) -> Option<()> {
     None
 }
 

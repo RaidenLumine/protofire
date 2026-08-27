@@ -113,13 +113,22 @@ pub fn apply_remote_tlb_invalidations() {
     let percpu = crate::kernel::percpu::get_mut();
     if current_gen != percpu.tlb_generation_seen {
         percpu.tlb_generation_seen = current_gen;
-        // Reload CR3 to flush the entire TLB.
-        let cr3: u64;
-        unsafe {
-            core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags));
-            core::arch::asm!("mov cr3, {}", in(reg) cr3, options(nostack));
-        }
+        // With CR4.PCIDE set, a same-PCID CR3 reload does NOT flush the TLB,
+        // so the flush must go through the PCID-aware path: INVPCID when
+        // active, a plain CR3 reload otherwise.
+        crate::arch::x86_64::paging::pcid::flush_all_tlb();
     }
+}
+
+/// Ask every CPU to flush its TLB on its next kernel entry.
+///
+/// Bumps the global TLB generation counter, which each CPU compares against
+/// its own `tlb_generation_seen` in [`apply_remote_tlb_invalidations`].
+/// Used by the PCID allocator when a wrap-around reuses PCIDs that may still
+/// be tagged in remote TLBs.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn request_remote_tlb_flush() {
+    TLB_GENERATION.fetch_add(1, Ordering::Release);
 }
 
 /// Handle a TLB shootdown IPI on any CPU (BSP or AP).

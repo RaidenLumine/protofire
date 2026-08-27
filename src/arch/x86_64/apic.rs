@@ -131,14 +131,10 @@ pub unsafe fn map_device_mmio_page(_phys_addr: usize) {
         }
     }
 
-    // Reload CR3 to flush all TLB entries.
-    unsafe {
-        core::arch::asm!(
-            "mov cr3, {}",
-            in(reg) pml4_addr,
-            options(nostack, preserves_flags)
-        );
-    }
+    // Flush all TLB entries so the new LAPIC/IOAPIC mappings take effect.
+    // A plain CR3 reload would not flush once CR4.PCIDE is set, so go through
+    // the PCID-aware path (INVPCID when active, CR3 reload otherwise).
+    crate::arch::x86_64::paging::pcid::flush_all_tlb();
 }
 
 // ---------------------------------------------------------------------------

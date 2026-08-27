@@ -4,6 +4,9 @@
 //! address-space assembly.
 
 pub(crate) mod kernel_address_space;
+// Not glob-reexported: every item is `pub(crate)` and consumed via the module
+// path (`super::pcid::…`) by sibling modules and the arch facade.
+pub(crate) mod pcid;
 pub(crate) mod process_address_space;
 pub(crate) mod runtime;
 pub(crate) mod types;

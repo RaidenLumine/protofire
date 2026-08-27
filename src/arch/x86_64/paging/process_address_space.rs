@@ -16,6 +16,9 @@ pub struct PreparedProcessAddressSpace {
     pub(crate) pds: Vec<PreparedUserPd>,
     pub(crate) pts: Vec<PreparedUserPt>,
     pub(crate) user_address_space: PreparedUserAddressSpace,
+    /// PCID tag used when this hierarchy is loaded into CR3.  Allocated on
+    /// prepare, freed on drop; 0 is the kernel's reserved PCID.
+    pub(crate) pcid: u64,
 }
 
 impl PreparedProcessAddressSpace {
@@ -88,6 +91,7 @@ impl PreparedProcessAddressSpace {
             pds,
             pts,
             user_address_space,
+            pcid: super::pcid::allocate_pcid(),
         })
     }
 
@@ -492,6 +496,7 @@ impl PreparedProcessAddressSpace {
             pds: child_pds,
             pts: child_pts,
             user_address_space: child_user_address_space,
+            pcid: super::pcid::allocate_pcid(),
         };
 
         Some((child, shared_pages, all_child_pages))
@@ -629,8 +634,11 @@ impl Drop for PreparedProcessAddressSpace {
         if current_root_table_address_impl() == Some(self_root) {
             let _ = activate_prepared_runtime_kernel_page_tables();
         }
+        // Return the PCID to the allocator; its TLB entries are invalidated
+        // by `free_pcid` (per-PCID INVPCID) before the id is recyclable.
+        super::pcid::free_pcid(self.pcid);
         // Fields are dropped automatically in reverse declaration order by the
-        // compiler: user_address_space, pts, pds, pdpts, pml4, summary.
+        // compiler: pcid, user_address_space, pts, pds, pdpts, pml4, summary.
         // Box<RawPageTable> and Vec<PreparedUser*> heap allocations are
         // freed by their own Drop impls.
     }
@@ -746,7 +754,12 @@ pub(crate) fn activate_prepared_process_address_space_impl(
     let already_active = previous_root_table_address == address_space.root_table_address();
 
     if !already_active {
-        install_active_root_table_address_impl(address_space.root_table_address())?;
+        // Load with the process's PCID tag so TLB entries survive the switch
+        // and only the per-PCID entries need invalidating later.
+        install_active_process_root_table_address_impl(
+            address_space.root_table_address(),
+            address_space.pcid,
+        )?;
     }
 
     Some(ActivatedProcessAddressSpace {

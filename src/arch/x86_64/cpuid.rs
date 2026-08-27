@@ -20,6 +20,13 @@ pub const CPUID_LEAF_1_ECX_RDRAND: u32 = 1 << 30;
 /// instruction available.
 pub const CPUID_LEAF_7_EBX_RDSEED: u32 = 1 << 18;
 
+/// CPUID leaf 1, ECX bit 17 — PCID (Process-Context Identifiers) available.
+pub const CPUID_LEAF_1_ECX_PCID: u32 = 1 << 17;
+
+/// CPUID leaf 7 (Structured Extended Features), sub-leaf 0, EBX bit 10 —
+/// INVPCID instruction available.
+pub const CPUID_LEAF_7_EBX_INVPCID: u32 = 1 << 10;
+
 /// Result of a CPUID invocation: EAX, EBX, ECX, EDX.
 #[derive(Debug, Clone, Copy)]
 pub struct CpuidResult {
@@ -109,6 +116,27 @@ pub fn has_rdseed() -> bool {
     result.ebx & CPUID_LEAF_7_EBX_RDSEED != 0
 }
 
+/// Check whether the CPU advertises PCID support (CPUID leaf 1, ECX bit 17).
+///
+/// Returns `true` if it is safe to set CR4.PCIDE and tag CR3 with a PCID.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn has_pcid() -> bool {
+    let result = unsafe { cpuid(1, 0) };
+    result.ecx & CPUID_LEAF_1_ECX_PCID != 0
+}
+
+/// Check whether the CPU advertises INVPCID support (CPUID leaf 7, EBX bit 10).
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn has_invpcid() -> bool {
+    let max_leaf = unsafe { cpuid(0, 0) }.eax;
+    if max_leaf < 7 {
+        return false;
+    }
+
+    let result = unsafe { cpuid(7, 0) };
+    result.ebx & CPUID_LEAF_7_EBX_INVPCID != 0
+}
+
 // On non-bare-metal targets, provide stubs so callers don't need their own cfg
 // gates.
 #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
@@ -128,5 +156,15 @@ pub fn has_rdrand() -> bool {
 
 #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
 pub fn has_rdseed() -> bool {
+    false
+}
+
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+pub fn has_pcid() -> bool {
+    false
+}
+
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+pub fn has_invpcid() -> bool {
     false
 }

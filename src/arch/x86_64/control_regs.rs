@@ -115,6 +115,10 @@ pub const CR4_SMEP: u64 = 1 << 20;
 /// CR4 bit 21: Supervisor Mode Access Prevention.
 pub const CR4_SMAP: u64 = 1 << 21;
 
+/// CR4 bit 17: Process-Context Identifiers.  When set, CR3 bits [11:0] select
+/// the PCID and same-PCID CR3 reloads no longer flush the TLB.
+pub const CR4_PCIDE: u64 = 1 << 17;
+
 /// Initialise the FPU/SSE execution environment.
 ///
 /// Clears CR0.EM and CR0.TS so that x87 / SSE instructions execute natively
@@ -164,4 +168,19 @@ pub fn enable_smap() {
     unsafe {
         super::user_access::set_smap_active();
     }
+}
+
+/// Enable PCID (Process-Context Identifiers).
+///
+/// No-op on CPUs that do not advertise PCID (CPUID leaf 1, ECX bit 17) and on
+/// non-bare-metal targets.  At this point CR3 holds a 4 KiB-aligned root
+/// (PCID 0) — the required precondition for setting CR4.PCIDE — so enabling is
+/// safe.  Callers should also run `paging::pcid::init_pcid()` to reserve
+/// PCID 0 and record the enabled state.
+pub fn enable_pcide() {
+    if !super::cpuid::has_pcid() {
+        return;
+    }
+    let cr4 = unsafe { read_cr4() };
+    unsafe { write_cr4(cr4 | CR4_PCIDE) };
 }
