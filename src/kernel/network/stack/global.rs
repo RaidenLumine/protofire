@@ -148,6 +148,10 @@ impl NetworkStack {
             last_ntp_poll: core::sync::atomic::AtomicU64::new(0),
             mdns_responder: crate::kernel::sync::Mutex::new(MdnsResponder::new("adastra")),
             ppp_state: crate::kernel::sync::Mutex::new(PppState::new()),
+            pppoe: crate::kernel::sync::Mutex::new(
+                crate::kernel::network::pppoe::PppoeSession::new(),
+            ),
+            pppoe_enabled: core::sync::atomic::AtomicBool::new(false),
             filter_table: crate::kernel::sync::Mutex::new(
                 crate::kernel::network::filter::PacketFilter::new(),
             ),

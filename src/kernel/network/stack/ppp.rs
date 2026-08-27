@@ -37,16 +37,23 @@ impl NetworkStack {
     /// bytes to this method.
     ///
     /// Returns `Ok(true)` when a complete PPP frame was processed, or
-    /// `Ok(false)` when more bytes are needed to complete the frame.
-    /// The PPP state machine handles byte-stuffing, FCS verification, and
-    /// LCP/IPCP negotiation internally.
+    /// `Ok(false)` when the frame could not be parsed.  The PPP state
+    /// machine handles byte-stuffing, FCS verification, and LCP/IPCP
+    /// negotiation internally.
     pub fn receive_ppp_bytes(&self, data: &[u8]) -> Result<bool> {
-        // Parse the PPP frame (unstuff, FCS verify, extract protocol + payload).
+        // Parse the HDLC-framed PPP frame (unstuff, FCS verify, extract
+        // protocol + payload).
         let (protocol, info) = match ppp::ppp_parse_frame(data) {
             Ok((proto, info)) => (proto, info),
             Err(_) => return Ok(false),
         };
+        self.dispatch_ppp_protocol(protocol, info)
+    }
 
+    /// Dispatch a parsed `(protocol, information)` pair through the PPP
+    /// protocol stack.  Framing-agnostic: the HDLC serial path and the PPPoE
+    /// session path both land here after unwrapping their transport.
+    pub(crate) fn dispatch_ppp_protocol(&self, protocol: u16, info: Vec<u8>) -> Result<bool> {
         match protocol {
             ppp::PPP_PROTO_IPV4 => {
                 // Parse IPv4 packet and dispatch through the protocol stack
@@ -281,11 +288,14 @@ impl NetworkStack {
             _ => {
                 // LCP, IPCP, and other control protocols — let the PPP state
                 // machine handle them.  If a reply is generated, send it back
-                // as a PPP frame.
-                let mut ppp = self.ppp_state.lock();
-                if let Some(reply) = ppp.handle_frame(protocol, &info) {
-                    drop(ppp);
-                    let _ = self.device.send(&reply);
+                // with the transport-appropriate framing (HDLC on a serial
+                // link, PPPoE encapsulation over an Ethernet session).
+                let reply = {
+                    let mut ppp = self.ppp_state.lock();
+                    ppp.handle_frame_untagged(protocol, &info)
+                };
+                if let Some((reply_proto, reply_info)) = reply {
+                    let _ = self.send_ppp_packet(reply_proto, &reply_info);
                 }
             }
         }
@@ -293,31 +303,45 @@ impl NetworkStack {
         Ok(true)
     }
 
+    /// Transmit a PPP `(protocol, information)` pair with the framing
+    /// appropriate to the current transport.
+    ///
+    /// When PPPoE is enabled and a session is established the pair is wrapped
+    /// as an RFC 2516 session payload (protocol + information only) inside a
+    /// PPPoE session packet; otherwise it is framed as a full HDLC PPP frame
+    /// for a serial / byte-stream device.
+    pub(crate) fn send_ppp_packet(&self, protocol: u16, info: &[u8]) -> Result<()> {
+        if self.pppoe_enabled() && self.pppoe.lock().in_session() {
+            let payload = ppp::ppp_pppoe_build_payload(protocol, info);
+            self.send_pppoe_session_frame(payload)
+        } else {
+            let frame = ppp::ppp_build_frame(protocol, info);
+            self.device.send(&frame)
+        }
+    }
+
     /// Send an IPv4 packet encapsulated in a PPP frame.
     ///
-    /// Builds the PPP frame (flag + address + control + protocol + info +
-    /// FCS + flag), applies byte-stuffing, and calls the device's `send`
-    /// method.  Useful when the link layer is PPP rather than Ethernet.
+    /// Frames the IP packet with the transport-appropriate PPP encapsulation
+    /// (HDLC on a serial link, PPPoE session over Ethernet) and calls the
+    /// device's `send` method.
     pub fn send_ppp_ipv4(&self, raw_ip: Vec<u8>) -> Result<()> {
         self.profiler.inc_ipv4_packets_tx();
-        let frame = ppp::ppp_build_frame(ppp::PPP_PROTO_IPV4, &raw_ip);
-        self.device.send(&frame)
+        self.send_ppp_packet(ppp::PPP_PROTO_IPV4, &raw_ip)
     }
 
     /// Send an IPv6 packet encapsulated in a PPP frame.
     pub fn send_ppp_ipv6(&self, raw_ip: Vec<u8>) -> Result<()> {
-        let frame = ppp::ppp_build_frame(ppp::PPP_PROTO_IPV6, &raw_ip);
-        self.device.send(&frame)
+        self.send_ppp_packet(ppp::PPP_PROTO_IPV6, &raw_ip)
     }
 
     /// Build and send an LCP Echo Request keepalive.
-    ///
-    /// Returns the frame bytes sent, or an error.
     pub fn send_ppp_lcp_echo_request(&self) -> Result<()> {
-        let mut ppp = self.ppp_state.lock();
-        let echo_req = ppp.build_echo_request();
-        let frame = ppp::ppp_build_frame(ppp::PPP_PROTO_LCP, &echo_req);
-        self.device.send(&frame)
+        let echo_req = {
+            let mut ppp = self.ppp_state.lock();
+            ppp.build_echo_request()
+        };
+        self.send_ppp_packet(ppp::PPP_PROTO_LCP, &echo_req)
     }
 
     /// Perform PPP link negotiation (LCP Configure-Request exchange).
@@ -327,10 +351,11 @@ impl NetworkStack {
     /// [`send_ppp_ipv4`](Self::send_ppp_ipv4)
     /// and [`send_ppp_ipv6`](Self::send_ppp_ipv6) to transmit IP packets.
     pub fn ppp_negotiate_link(&self) -> Result<()> {
-        let mut ppp = self.ppp_state.lock();
-        ppp.link_up();
-        let conf_req = ppp.build_configure_request();
-        let frame = ppp::ppp_build_frame(ppp::PPP_PROTO_LCP, &conf_req);
-        self.device.send(&frame)
+        let conf_req = {
+            let mut ppp = self.ppp_state.lock();
+            ppp.link_up();
+            ppp.build_configure_request()
+        };
+        self.send_ppp_packet(ppp::PPP_PROTO_LCP, &conf_req)
     }
 }

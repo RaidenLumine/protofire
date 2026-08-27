@@ -47,6 +47,10 @@ pub enum EtherType {
     Arp,
     /// Internet Protocol version 6 (`0x86DD`).
     Ipv6,
+    /// PPPoE discovery stage (`0x8863`).
+    PppoeDiscovery,
+    /// PPPoE session stage (`0x8864`).
+    PppoeSession,
     /// VLAN-tagged frame (`0x8100`).
     Vlan,
     /// Any other EtherType value.
@@ -60,6 +64,8 @@ impl EtherType {
             Self::Ipv4 => 0x0800,
             Self::Arp => 0x0806,
             Self::Ipv6 => 0x86DD,
+            Self::PppoeDiscovery => 0x8863,
+            Self::PppoeSession => 0x8864,
             Self::Vlan => 0x8100,
             Self::Other(value) => value,
         }
@@ -71,6 +77,8 @@ impl EtherType {
             0x0800 => Self::Ipv4,
             0x0806 => Self::Arp,
             0x86DD => Self::Ipv6,
+            0x8863 => Self::PppoeDiscovery,
+            0x8864 => Self::PppoeSession,
             0x8100 => Self::Vlan,
             other => Self::Other(other),
         }
@@ -174,7 +182,11 @@ mod tests {
         assert_eq!(EtherType::Ipv4.value(), 0x0800);
         assert_eq!(EtherType::Arp.value(), 0x0806);
         assert_eq!(EtherType::Ipv6.value(), 0x86DD);
+        assert_eq!(EtherType::PppoeDiscovery.value(), 0x8863);
+        assert_eq!(EtherType::PppoeSession.value(), 0x8864);
         assert_eq!(EtherType::from_value(0x0800), EtherType::Ipv4);
+        assert_eq!(EtherType::from_value(0x8863), EtherType::PppoeDiscovery);
+        assert_eq!(EtherType::from_value(0x8864), EtherType::PppoeSession);
         assert_eq!(EtherType::from_value(0x1234), EtherType::Other(0x1234));
     }
 }

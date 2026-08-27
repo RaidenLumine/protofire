@@ -20,6 +20,7 @@ use crate::kernel::network::mdns::MdnsResponder;
 use crate::kernel::network::mrouting::MrtState;
 use crate::kernel::network::ntp::NtpClient;
 use crate::kernel::network::ppp::PppState;
+use crate::kernel::network::pppoe::PppoeSession;
 use crate::kernel::network::raw::RawSocket;
 
 use crate::kernel::network::internet::arp::ArpCache;
@@ -294,6 +295,23 @@ impl NetworkStack {
     /// Return a reference to the PPP session state.
     pub fn ppp_state(&self) -> &Mutex<PppState> {
         &self.ppp_state
+    }
+
+    /// Return a reference to the PPPoE session state.
+    pub fn pppoe(&self) -> &Mutex<PppoeSession> {
+        &self.pppoe
+    }
+
+    /// Return whether the PPPoE consumer is enabled on the attached device.
+    pub fn pppoe_enabled(&self) -> bool {
+        self.pppoe_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Enable or disable the PPPoE consumer.  When enabled, the periodic
+    /// maintenance path automatically begins discovery (PADI) and, once PADS
+    /// is received, establishes the PPP link (LCP / IPCP) over the session.
+    pub fn set_pppoe_enabled(&self, enabled: bool) {
+        self.pppoe_enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Return a reference to the packet filter table.

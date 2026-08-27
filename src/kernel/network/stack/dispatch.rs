@@ -22,6 +22,8 @@ use crate::kernel::network::mdns;
 use crate::kernel::network::mrouting::pim;
 use crate::kernel::network::net_profiler::NetProfilerSnapshot;
 use crate::kernel::network::ntp;
+use crate::kernel::network::ppp;
+use crate::kernel::network::pppoe::PppoePhase;
 use crate::kernel::network::udp;
 #[cfg(not(test))]
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
@@ -206,6 +208,34 @@ impl NetworkStack {
             }; // all locks dropped here — safe to call try_renew_lease
             if should_renew {
                 crate::kernel::network::dhcp::try_renew_lease();
+            }
+        }
+
+        // ── PPPoE periodic maintenance ─────────────────────────────────
+        // Auto-establish the session (PADI with retransmit while in
+        // Discovery) and, once PADS assigns a session, drive the PPP LCP
+        // keepalive over the established session.  Zero-cost while the
+        // PPPoE consumer is disabled.
+        if self.pppoe_enabled() {
+            let local_mac = self.local_mac;
+            let discovery_frame = {
+                let mut session = self.pppoe.lock();
+                match session.phase {
+                    PppoePhase::Idle => session.start_discovery(local_mac, tick).ok(),
+                    PppoePhase::Discovery => session.tick(local_mac, tick),
+                    PppoePhase::Session => None,
+                }
+            };
+            if let Some(frame) = discovery_frame {
+                let _ = self.device.send(&frame);
+            }
+            if self.pppoe.lock().in_session() {
+                if let Some(echo) = {
+                    let mut ppp_state = self.ppp_state.lock();
+                    ppp_state.tick(tick)
+                } {
+                    let _ = self.send_ppp_packet(ppp::PPP_PROTO_LCP, &echo);
+                }
             }
         }
     }
@@ -703,6 +733,11 @@ impl NetworkStack {
                                 }
                             }
                         }
+                    }
+                    EtherType::PppoeDiscovery | EtherType::PppoeSession => {
+                        // PPPoE: drive the discovery handshake, then unwrap
+                        // session frames into the PPP protocol stack.
+                        self.handle_pppoe_frame(&frame)?;
                     }
                     _ => {
                         // Unknown EtherType — silently drop.

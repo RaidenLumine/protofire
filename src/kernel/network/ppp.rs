@@ -304,6 +304,44 @@ pub fn ppp_parse_frame(frame: &[u8]) -> Result<(u16, Vec<u8>)> {
     Ok((protocol, info))
 }
 
+// ── PPPoE framing (RFC 2516) ────────────────────────────────────────────────
+
+/// Build the PPPoE session payload for a `(protocol, information)` pair.
+///
+/// Unlike HDLC serial framing, a PPP frame carried inside a PPPoE packet
+/// contains only the Protocol field and the Information field — the Flag,
+/// Address, Control, and FCS octets are omitted (RFC 2516 §2.1).
+pub fn ppp_pppoe_build_payload(protocol: u16, info: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(2 + info.len());
+    if protocol <= 0xFF {
+        payload.push(protocol as u8);
+    } else {
+        payload.push((protocol >> 8) as u8);
+        payload.push(protocol as u8);
+    }
+    payload.extend_from_slice(info);
+    payload
+}
+
+/// Parse a PPPoE session payload back into `(protocol, information)`.
+///
+/// Accepts both the 1-byte (protocol field compression) and 2-byte protocol
+/// forms, mirroring [`ppp_parse_frame`]'s protocol handling.
+pub fn ppp_pppoe_parse_payload(payload: &[u8]) -> Result<(u16, Vec<u8>)> {
+    if payload.is_empty() {
+        return Err(Error::InvalidArgument);
+    }
+    let (protocol, info_start) = if payload[0] & 0x01 == 0 {
+        if payload.len() < 2 {
+            return Err(Error::InvalidArgument);
+        }
+        (u16::from_be_bytes([payload[0], payload[1]]), 2)
+    } else {
+        (payload[0] as u16, 1)
+    };
+    Ok((protocol, payload[info_start..].to_vec()))
+}
+
 // ── LCP state machine ───────────────────────────────────────────────────────
 
 /// PPP Link Control Protocol phase.
@@ -585,8 +623,11 @@ impl PppState {
     /// Periodic tick handler.  Drives LCP echo keepalive and retransmission
     /// timers.
     ///
-    /// Returns `Some(echo_request_frame)` when an echo should be sent, or
-    /// `None` if no action is needed.
+    /// Returns `Some(echo_request_packet)` — the *unframed* LCP Echo-Request
+    /// information field — when an echo should be sent, or `None` if no
+    /// action is needed.  Framing is the transport's job (HDLC on a serial
+    /// link, PPPoE payload on an Ethernet session), so the caller passes the
+    /// returned bytes to [`ppp_build_frame`] or [`ppp_pppoe_build_payload`].
     pub fn tick(&mut self, current_tick: u64) -> Option<Vec<u8>> {
         match self.phase {
             PppPhase::Open => {
@@ -603,7 +644,7 @@ impl PppState {
                         let echo = self.build_echo_request();
                         self.last_echo_sent = current_tick;
                         self.echo_pending = true;
-                        return Some(ppp_build_frame(PPP_PROTO_LCP, &echo));
+                        return Some(echo);
                     }
                 }
             }
@@ -624,9 +665,22 @@ impl PppState {
 
     /// Handle an incoming PPP frame.
     ///
-    /// Returns `Some(reply_frame)` when the state machine has a response
-    /// to send, or `None` if the frame was consumed silently.
+    /// Returns `Some(reply_frame)` — an HDLC-framed PPP packet — when the
+    /// state machine has a response to send, or `None` if the frame was
+    /// consumed silently.  Serial link consumers use this directly; PPPoE
+    /// consumers use [`Self::handle_frame_untagged`] instead.
     pub fn handle_frame(&mut self, protocol: u16, info: &[u8]) -> Option<Vec<u8>> {
+        self.handle_frame_untagged(protocol, info)
+            .map(|(reply_proto, reply_info)| ppp_build_frame(reply_proto, &reply_info))
+    }
+
+    /// Framing-agnostic variant of [`Self::handle_frame`].
+    ///
+    /// Returns the reply as a `(protocol, information)` pair so the transport
+    /// layer can apply the correct encapsulation: HDLC framing via
+    /// [`ppp_build_frame`] on a serial link, or PPPoE framing via
+    /// [`ppp_pppoe_build_payload`] on an Ethernet session.
+    pub fn handle_frame_untagged(&mut self, protocol: u16, info: &[u8]) -> Option<(u16, Vec<u8>)> {
         match protocol {
             PPP_PROTO_LCP => self.handle_lcp(info),
             PPP_PROTO_IPCP => self.handle_ipcp(info),
@@ -646,9 +700,9 @@ impl PppState {
                     let mut reject = Vec::new();
                     reject.extend_from_slice(&protocol.to_be_bytes());
                     reject.extend_from_slice(info);
-                    Some(ppp_build_frame(
+                    Some((
                         PPP_PROTO_LCP,
-                        &build_lcp_packet(LCP_CODE_PROTOCOL_REJECT, 0, &reject),
+                        build_lcp_packet(LCP_CODE_PROTOCOL_REJECT, 0, &reject),
                     ))
                 } else {
                     None
@@ -657,14 +711,14 @@ impl PppState {
         }
     }
 
-    fn handle_lcp(&mut self, info: &[u8]) -> Option<Vec<u8>> {
+    fn handle_lcp(&mut self, info: &[u8]) -> Option<(u16, Vec<u8>)> {
         let (code, id, _length, data) = match parse_lcp_packet(info) {
             Ok(p) => p,
             Err(_) => {
                 // Malformed — send Code-Reject.
-                return Some(ppp_build_frame(
+                return Some((
                     PPP_PROTO_LCP,
-                    &build_lcp_packet(LCP_CODE_CODE_REJECT, 0, info),
+                    build_lcp_packet(LCP_CODE_CODE_REJECT, 0, info),
                 ));
             }
         };
@@ -672,7 +726,7 @@ impl PppState {
         match code {
             LCP_CODE_CONFIGURE_REQUEST => {
                 let response = self.handle_configure_request(id, data);
-                Some(ppp_build_frame(PPP_PROTO_LCP, &response))
+                Some((PPP_PROTO_LCP, response))
             }
             LCP_CODE_CONFIGURE_ACK => {
                 if self.phase == PppPhase::Establish {
@@ -694,7 +748,7 @@ impl PppState {
                     self.accept_lcp_nak_rej(data);
                     self.configure_retries += 1;
                     let req = self.build_configure_request();
-                    Some(ppp_build_frame(PPP_PROTO_LCP, &req))
+                    Some((PPP_PROTO_LCP, req))
                 } else {
                     self.link_down();
                     None
@@ -703,7 +757,7 @@ impl PppState {
             LCP_CODE_TERMINATE_REQUEST => {
                 let ack = self.build_terminate_ack(id);
                 self.link_down();
-                Some(ppp_build_frame(PPP_PROTO_LCP, &ack))
+                Some((PPP_PROTO_LCP, ack))
             }
             LCP_CODE_TERMINATE_ACK => {
                 self.link_down();
@@ -711,7 +765,7 @@ impl PppState {
             }
             LCP_CODE_ECHO_REQUEST => {
                 let reply = self.build_echo_reply(id, data);
-                Some(ppp_build_frame(PPP_PROTO_LCP, &reply))
+                Some((PPP_PROTO_LCP, reply))
             }
             LCP_CODE_ECHO_REPLY => {
                 self.echo_pending = false;
@@ -723,17 +777,13 @@ impl PppState {
             }
             _ => {
                 // Unknown code — send Code-Reject.
-                let reject = [code];
                 let cr = build_lcp_packet(LCP_CODE_CODE_REJECT, 0, &[code]);
-                Some(ppp_build_frame(
-                    PPP_PROTO_LCP,
-                    &[cr[0], cr[1], cr[2], cr[3], reject[0]],
-                ))
+                Some((PPP_PROTO_LCP, cr))
             }
         }
     }
 
-    fn handle_ipcp(&mut self, info: &[u8]) -> Option<Vec<u8>> {
+    fn handle_ipcp(&mut self, info: &[u8]) -> Option<(u16, Vec<u8>)> {
         let (code, id, _length, data) = match parse_lcp_packet(info) {
             Ok(p) => p,
             Err(_) => return None,
@@ -764,7 +814,7 @@ impl PppState {
                     }
                     let ack =
                         self.build_ipcp_configure_ack(id, self.ipv4_address.unwrap_or([0; 4]));
-                    return Some(ppp_build_frame(PPP_PROTO_IPCP, &ack));
+                    return Some((PPP_PROTO_IPCP, ack));
                 }
                 None
             }
@@ -1016,6 +1066,50 @@ mod tests {
         assert_eq!(info, payload);
     }
 
+    // ── PPPoE payload framing (RFC 2516) ──────────────────────────────
+
+    #[test]
+    fn pppoe_payload_roundtrip_two_byte_protocol() {
+        // 0x8021 (IPCP) does not fit in one byte → full 2-byte protocol field.
+        let payload = ppp_pppoe_build_payload(PPP_PROTO_IPCP, b"ipcp-data");
+        assert_eq!(
+            payload,
+            &[0x80, 0x21, b'i', b'p', b'c', b'p', b'-', b'd', b'a', b't', b'a']
+        );
+        let (proto, info) = ppp_pppoe_parse_payload(&payload).expect("parse");
+        assert_eq!(proto, PPP_PROTO_IPCP);
+        assert_eq!(info, b"ipcp-data");
+    }
+
+    #[test]
+    fn pppoe_payload_roundtrip_compressed_protocol() {
+        // 0x0021 fits in one byte → protocol-field compression applies.
+        let payload = ppp_pppoe_build_payload(PPP_PROTO_IPV4, b"ip-data");
+        assert_eq!(payload, &[0x21, b'i', b'p', b'-', b'd', b'a', b't', b'a']);
+        let (proto, info) = ppp_pppoe_parse_payload(&payload).expect("parse");
+        assert_eq!(proto, PPP_PROTO_IPV4);
+        assert_eq!(info, b"ip-data");
+    }
+
+    #[test]
+    fn pppoe_payload_omits_hdlc_framing() {
+        // RFC 2516 §2.1: no Flag, Address, Control, or FCS octets inside the
+        // PPPoE payload — unlike the HDLC form used on serial links.
+        let payload = ppp_pppoe_build_payload(PPP_PROTO_LCP, &[0x01, 0x02, 0x00, 0x04]);
+        assert!(!payload.contains(&PPP_FLAG));
+        assert!(!payload.contains(&PPP_ESCAPE));
+        // The LCP packet itself still round-trips.
+        let (proto, info) = ppp_pppoe_parse_payload(&payload).expect("parse");
+        assert_eq!(proto, PPP_PROTO_LCP);
+        assert_eq!(info, &[0x01, 0x02, 0x00, 0x04]);
+    }
+
+    #[test]
+    fn pppoe_payload_rejects_truncated_two_byte_protocol() {
+        // A one-byte payload that would need a 2-byte protocol field fails.
+        assert!(ppp_pppoe_parse_payload(&[0x00]).is_err());
+    }
+
     // ── LCP state machine ───────────────────────────────────────────────
 
     #[test]
@@ -1128,11 +1222,13 @@ mod tests {
         state.phase = PppPhase::Open;
         state.last_echo_sent = 0;
 
-        let echo = state.tick(LCP_ECHO_INTERVAL + 1).expect("echo frame");
+        let echo = state.tick(LCP_ECHO_INTERVAL + 1).expect("echo request");
         assert!(state.echo_pending);
 
-        // Verify it's a valid LCP Echo-Request frame.
-        let (proto, info) = ppp_parse_frame(&echo).expect("parse");
+        // `tick` returns the *unframed* LCP Echo-Request information field;
+        // frame it as HDLC to verify the wire content.
+        let frame = ppp_build_frame(PPP_PROTO_LCP, &echo);
+        let (proto, info) = ppp_parse_frame(&frame).expect("parse");
         assert_eq!(proto, PPP_PROTO_LCP);
         let (code, _id, _len, _data) = parse_lcp_packet(&info).expect("parse lcp");
         assert_eq!(code, LCP_CODE_ECHO_REQUEST);

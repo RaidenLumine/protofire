@@ -35,6 +35,7 @@ use crate::kernel::network::mrouting::MrtState;
 use crate::kernel::network::net_profiler::NetProfiler;
 use crate::kernel::network::ntp::NtpClient;
 use crate::kernel::network::ppp::PppState;
+use crate::kernel::network::pppoe::PppoeSession;
 use crate::kernel::network::raw::RawSocket;
 use crate::kernel::network::stack::routing::RoutingTable;
 use crate::kernel::network::tcp::TcpConnectionTable;
@@ -165,6 +166,10 @@ pub struct NetworkStack {
     mdns_responder: Mutex<MdnsResponder>,
     /// PPP session state (used by stack/ppp.rs).
     ppp_state: Mutex<PppState>,
+    /// PPPoE session state (RFC 2516 consumer over Ethernet).
+    pppoe: Mutex<PppoeSession>,
+    /// Whether the PPPoE consumer is active on the attached device.
+    pppoe_enabled: AtomicBool,
     /// Packet filter table (firewall rules consulted on ingress).
     filter_table: Mutex<PacketFilter>,
 }

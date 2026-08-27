@@ -30,6 +30,7 @@ pub mod mrouting;
 pub mod net_profiler;
 pub mod ntp;
 pub mod ppp;
+pub mod pppoe;
 pub mod raw;
 pub mod sctp;
 pub mod stack;
