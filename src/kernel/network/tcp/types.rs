@@ -5,6 +5,8 @@
 use alloc::collections::vec_deque::VecDeque;
 use alloc::vec::Vec;
 
+use crate::kernel::network::internet::ip::IpAddress;
+
 // ─── Socket options ─────────────────────────────────────────────────────────
 
 /// Socket-level and protocol-level options set via `setsockopt` syscall.
@@ -129,9 +131,18 @@ pub(super) const WINDOW_SCALE_OPTION_BYTES: [u8; 3] = [
     DEFAULT_WINDOW_SCALE,
 ];
 
-/// Compute the MSS we advertise in SYN / SYN-ACK segments from the device MTU.
+/// Compute the MSS we advertise in SYN / SYN-ACK segments from the device MTU
+/// for an IPv4 peer (40 bytes of IPv4 + TCP headers).
 pub(super) fn advertised_mss_v4(mtu: usize) -> u16 {
     mtu.saturating_sub(40)
+        .max(MIN_PEER_MSS)
+        .min(u16::MAX as usize) as u16
+}
+
+/// Compute the MSS we advertise in SYN / SYN-ACK segments from the device MTU
+/// for an IPv6 peer (60 bytes of IPv6 + TCP headers).
+pub(super) fn advertised_mss_v6(mtu: usize) -> u16 {
+    mtu.saturating_sub(60)
         .max(MIN_PEER_MSS)
         .min(u16::MAX as usize) as u16
 }
@@ -191,7 +202,7 @@ pub(super) struct RetransmitState {
 pub struct TcpConnectionState {
     pub state: TcpState,
     pub local_port: u16,
-    pub remote_ip: crate::kernel::network::internet::ipv4::Ipv4Addr,
+    pub remote_ip: IpAddress,
     pub remote_port: u16,
     // Sender state
     pub(super) send_next: u32,    // SND.NXT
@@ -236,7 +247,7 @@ pub struct TcpConnectionState {
 impl TcpConnectionState {
     pub(super) fn new(
         local_port: u16,
-        remote_ip: crate::kernel::network::internet::ipv4::Ipv4Addr,
+        remote_ip: impl Into<IpAddress>,
         remote_port: u16,
         initial_seq: u32,
         current_tick: u64,
@@ -244,7 +255,7 @@ impl TcpConnectionState {
         Self {
             state: TcpState::SynSent,
             local_port,
-            remote_ip,
+            remote_ip: remote_ip.into(),
             remote_port,
             send_next: initial_seq + 1,
             send_unacked: initial_seq,
@@ -278,7 +289,7 @@ impl TcpConnectionState {
     /// Create a child connection for a listening socket.
     pub(super) fn new_child(
         local_port: u16,
-        remote_ip: crate::kernel::network::internet::ipv4::Ipv4Addr,
+        remote_ip: impl Into<IpAddress>,
         remote_port: u16,
         peer_initial_seq: u32,
         initial_seq: u32,
@@ -287,7 +298,7 @@ impl TcpConnectionState {
         Self {
             state: TcpState::SynReceived,
             local_port,
-            remote_ip,
+            remote_ip: remote_ip.into(),
             remote_port,
             send_next: initial_seq + 1,
             send_unacked: initial_seq,
@@ -348,8 +359,9 @@ impl TcpConnectionState {
 // ─── Connection key type ───
 
 /// Uniquely identifies a TCP connection by (local_port, remote_ip,
-/// remote_port).
-pub(super) type ConnKey = (u16, crate::kernel::network::internet::ipv4::Ipv4Addr, u16);
+/// remote_port).  `remote_ip` is dual-stack: an `IpAddress` so the same table
+/// holds IPv4 and IPv6 connections (RFC 793 / RFC 2460).
+pub(super) type ConnKey = (u16, IpAddress, u16);
 
 // ─── Helpers ───
 

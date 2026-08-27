@@ -1254,11 +1254,13 @@ impl TcpConnection {
     }
 
     /// Return the remote (peer) socket address `(ip, port)` for this
-    /// connection.
+    /// connection.  The socket layer is IPv4-only, so an IPv6 peer (not
+    /// reachable through this API) yields `None`.
     pub fn remote_addr(&self) -> Option<([u8; 4], u16)> {
         #[cfg(target_os = "none")]
         {
-            Some((self.native.remote_ip, self.native.remote_port))
+            let remote_ip = self.native.remote_ip.as_ipv4()?;
+            Some((remote_ip, self.native.remote_port))
         }
         #[cfg(not(target_os = "none"))]
         {

@@ -667,19 +667,20 @@ impl NetworkStack {
                                 &ipv6_payload,
                             );
                         } else if ipv6_next_header == Ipv6NextHeader::Tcp {
-                            // IPv6 TCP: reuse the existing TCP processing.
+                            // IPv6 TCP: handled by the dual-stack TCP engine,
+                            // keyed on the IPv6 pair.
                             let pending = {
                                 let mut table = self.tcp_table.lock();
-                                crate::kernel::network::tcp::process_segment_v6(
+                                crate::kernel::network::tcp::process_segment(
                                     &mut table,
                                     self,
-                                    ip_packet.header.source,
-                                    ip_packet.header.destination,
+                                    IpAddress::V6(ip_packet.header.source),
+                                    IpAddress::V6(ip_packet.header.destination),
                                     &ipv6_payload,
                                 )?
                             };
                             for (dst_ip, seg) in pending {
-                                let _ = crate::kernel::network::tcp::send_tcp_segment_v6(
+                                let _ = crate::kernel::network::tcp::send_tcp_segment(
                                     self, dst_ip, &seg,
                                 );
                             }

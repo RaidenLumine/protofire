@@ -28,13 +28,11 @@ mod types;
 pub use ops::close;
 pub use ops::connect;
 pub use ops::process_segment;
-pub use ops::process_segment_v6;
 pub use ops::retransmit_check;
 pub use segment::build_tcp_segment;
 pub use segment::build_tcp_segment_v6;
 pub use segment::parse_tcp_header;
 pub(crate) use segment::send_tcp_segment;
-pub(crate) use segment::send_tcp_segment_v6;
 pub use table::accept_nonblocking;
 pub use table::listen;
 pub use table::unlisten;
@@ -51,8 +49,10 @@ pub use types::TCP_MIN_HEADER_SIZE;
 mod tests {
     use super::types::*;
     use super::*;
+    use crate::kernel::network::internet::ip::IpAddress;
     use crate::kernel::network::internet::ipv4::Ipv4Addr;
     use crate::kernel::network::internet::ipv4::{self};
+    use crate::kernel::network::internet::ipv6::Ipv6Addr;
     use crate::kernel::network::link::device::mock::MockNetworkDevice;
     use crate::kernel::network::link::ethernet::MacAddress;
     use crate::kernel::network::stack::NetworkStack;
@@ -1480,12 +1480,117 @@ mod tests {
         // Accept should dequeue the connection
         let conn = accept_nonblocking(&mut table, 80).expect("accept should return connection");
         assert_eq!(conn.local_port, 80);
-        assert_eq!(conn.remote_ip, peer_ip);
+        assert_eq!(conn.remote_ip, IpAddress::V4(peer_ip));
         assert_eq!(conn.remote_port, peer_port);
 
         // Backlog should now be empty
         let listener = table.listeners.get(&80).unwrap();
         assert!(listener.backlog.is_empty());
+    }
+
+    #[test]
+    fn process_segment_v6_handshake_and_data_exchange() {
+        let (_mock, stack) = make_test_stack();
+        let peer_ip: Ipv6Addr = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let peer_port: u16 = 23456;
+
+        // Pre-populate the IPv6 neighbor cache so outgoing segments can be
+        // handed to the mock device without an NDP round-trip.
+        stack.neighbor_cache_v6().lock().insert(
+            peer_ip,
+            MacAddress([0x22, 0x22, 0x33, 0x44, 0x55, 0x66]),
+            stack.current_tick(),
+        );
+
+        let mut table = TcpConnectionTable::new();
+        listen(&mut table, 8080, 5).expect("listen on port 8080");
+
+        let local = IpAddress::V6(stack.local_ip_v6());
+
+        // Step 1: SYN → SYN-ACK (creates child in SynReceived)
+        let syn_header = TcpHeader {
+            source_port: peer_port,
+            destination_port: 8080,
+            sequence_number: 7000,
+            acknowledgment_number: 0,
+            data_offset: 0,
+            flags: TCP_FLAG_SYN,
+            window_size: 65535,
+            checksum: 0,
+            urgent_pointer: 0,
+            options: alloc::vec![2, 4, 0x05, 0xB4],
+        };
+        let syn_seg = build_tcp_segment(&syn_header, &[], peer_ip, stack.local_ip_v6());
+        let pending = process_segment(&mut table, stack, IpAddress::V6(peer_ip), local, &syn_seg)
+            .expect("process SYN");
+        assert!(!pending.is_empty(), "SYN-ACK generated");
+
+        // Step 2: ACK for SYN-ACK → completes handshake
+        let child = table
+            .lookup(8080, peer_ip, peer_port)
+            .expect("child exists");
+        let child_initial_seq = { child.lock().initial_seq };
+        let expected_ack = child_initial_seq.wrapping_add(1);
+
+        let ack_header = TcpHeader {
+            source_port: peer_port,
+            destination_port: 8080,
+            sequence_number: 7001,
+            acknowledgment_number: expected_ack,
+            data_offset: 0,
+            flags: TCP_FLAG_ACK,
+            window_size: 65535,
+            checksum: 0,
+            urgent_pointer: 0,
+            options: Vec::new(),
+        };
+        let ack_seg = build_tcp_segment(&ack_header, &[], peer_ip, stack.local_ip_v6());
+        let pending2 = process_segment(&mut table, stack, IpAddress::V6(peer_ip), local, &ack_seg)
+            .expect("process ACK");
+        for (dst_ip, seg) in pending2 {
+            let _ = send_tcp_segment(stack, dst_ip, &seg);
+        }
+
+        // Connection is now Established with the IPv6 peer keyed correctly.
+        let child = table
+            .lookup(8080, peer_ip, peer_port)
+            .expect("child still exists");
+        {
+            let st = child.lock();
+            assert_eq!(st.state, TcpState::Established);
+            assert_eq!(st.remote_ip, IpAddress::V6(peer_ip));
+        }
+
+        // Step 3: peer sends payload data (PSH|ACK) → delivered to the recv
+        // buffer, and an ACK is generated.
+        let payload: Vec<u8> = b"dual-stack payload".to_vec();
+        let push_header = TcpHeader {
+            source_port: peer_port,
+            destination_port: 8080,
+            sequence_number: 7001,
+            acknowledgment_number: expected_ack,
+            data_offset: 0,
+            flags: TCP_FLAG_ACK | TCP_FLAG_PSH,
+            window_size: 65535,
+            checksum: 0,
+            urgent_pointer: 0,
+            options: Vec::new(),
+        };
+        let push_seg = build_tcp_segment(&push_header, &payload, peer_ip, stack.local_ip_v6());
+        let pending3 = process_segment(&mut table, stack, IpAddress::V6(peer_ip), local, &push_seg)
+            .expect("process data segment");
+        for (dst_ip, seg) in pending3 {
+            let _ = send_tcp_segment(stack, dst_ip, &seg);
+        }
+
+        let conn = table
+            .lookup(8080, peer_ip, peer_port)
+            .expect("connection present");
+        let mut st = conn.lock();
+        let mut buf = [0u8; 64];
+        let n = st.read(&mut buf);
+        assert_eq!(n, payload.len());
+        assert_eq!(&buf[..n], &payload[..]);
     }
 
     #[test]

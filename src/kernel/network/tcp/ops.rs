@@ -5,8 +5,7 @@
 
 use alloc::vec::Vec;
 
-use crate::kernel::network::internet::ipv4::Ipv4Addr;
-use crate::kernel::network::internet::ipv6::Ipv6Addr;
+use crate::kernel::network::internet::ip::IpAddress;
 use crate::kernel::network::stack::NetworkStack;
 use crate::Error;
 use crate::Result;
@@ -27,6 +26,7 @@ use super::segment::send_tcp_segment;
 use super::segment::timestamped_options;
 use super::table::TcpConnectionTable;
 use super::types::advertised_mss_v4;
+use super::types::advertised_mss_v6;
 use super::types::build_mss_option;
 use super::types::simple_initial_seq;
 use super::types::TcpConnectionState;
@@ -49,14 +49,41 @@ use super::types::WINDOW_SCALE_OPTION_BYTES;
 /// Connect timeout in ticks (3 seconds at 100 Hz).
 const CONNECT_TIMEOUT_TICKS: u64 = 300;
 
+/// The local source address matching the address family of `remote`.
+///
+/// IPv4 peers are answered from `local_ip`, IPv6 peers from `local_ip_v6`.
+/// Both sides of a connection always share one family, so the TCP segment's
+/// pseudo-header is computed with a consistent (src, dst) pair.
+fn local_source(stack: &NetworkStack, remote: IpAddress) -> IpAddress {
+    match remote {
+        IpAddress::V4(_) => IpAddress::V4(stack.local_ip()),
+        IpAddress::V6(_) => IpAddress::V6(stack.local_ip_v6()),
+    }
+}
+
+/// The MSS we advertise for a peer of a given address family.
+///
+/// IPv6 carries a 40-byte base header in addition to the 20-byte TCP header,
+/// so the same MTU leaves 20 fewer bytes for the segment.
+fn advertised_mss(stack: &NetworkStack, remote: IpAddress) -> u16 {
+    match remote {
+        IpAddress::V4(_) => advertised_mss_v4(stack.mtu()),
+        IpAddress::V6(_) => advertised_mss_v6(stack.mtu()),
+    }
+}
+
 // ─── Active open: connect ─────────────────────────────────────────────
 
 /// Initiate an active TCP connection to a remote endpoint.
+///
+/// `remote_ip` may be an `IpAddress` (IPv4 or IPv6) or an `Ipv4Addr`
+/// (`[u8; 4]`).
 pub fn connect(
     stack: &NetworkStack,
-    remote_ip: Ipv4Addr,
+    remote_ip: impl Into<IpAddress>,
     remote_port: u16,
 ) -> Result<super::table::NativeTcpConnection> {
+    let remote_ip: IpAddress = remote_ip.into();
     let local_port;
     let syn_segment;
 
@@ -83,7 +110,7 @@ pub fn connect(
             checksum: 0,
             urgent_pointer: 0,
             options: {
-                let mss = build_mss_option(advertised_mss_v4(stack.mtu()));
+                let mss = build_mss_option(advertised_mss(stack, remote_ip));
                 let ws = WINDOW_SCALE_OPTION_BYTES;
                 let sack_p = SACK_PERMITTED_OPTION_BYTES;
                 let ts = build_timestamp_option(state.ts_val, 0);
@@ -95,7 +122,8 @@ pub fn connect(
                 opts
             },
         };
-        syn_segment = build_tcp_segment(&syn_header, &[], stack.local_ip(), remote_ip);
+        syn_segment =
+            build_tcp_segment(&syn_header, &[], local_source(stack, remote_ip), remote_ip);
 
         state
             .retransmit
@@ -153,38 +181,6 @@ pub fn connect(
     })
 }
 
-// ─── Process segment (IPv6) ───────────────────────────────────────────
-
-/// Process an incoming TCP segment (IPv6) and update connection state.
-///
-/// IPv6 TCP is not implemented: the connection table, the listener
-/// registry, and the whole TCP state machine are keyed on IPv4 addresses
-/// (`TcpConnectionTable` / `TcpConnectionState` hold an `Ipv4Addr`), so
-/// there is nowhere to keep IPv6 connection state.  The previous version of
-/// this function was a stateless stub that fabricated SYN-ACK / ACK / RST
-/// replies without recording any connection state, so IPv6 TCP appeared to
-/// work while never actually establishing a connection.
-///
-/// Rather than silently pretending to process the segment, IPv6 TCP is
-/// dropped: nothing is delivered to any connection and nothing is
-/// transmitted.  The dispatchers (`dispatch.rs` and `ppp.rs`) consume the
-/// returned pending list and have nothing to send.
-///
-/// TODO: implement IPv6 TCP by mirroring [`process_segment`] once the
-/// connection table supports IPv6 keys.
-pub fn process_segment_v6(
-    _table: &mut TcpConnectionTable,
-    stack: &NetworkStack,
-    _src_ip: Ipv6Addr,
-    _dst_ip: Ipv6Addr,
-    _tcp_data: &[u8],
-) -> Result<Vec<(Ipv6Addr, Vec<u8>)>> {
-    // IPv6 TCP is unsupported — see the note above.  Count the segment as
-    // received for profiling, then drop it.
-    stack.profiler.inc_tcp_segments_rx();
-    Ok(alloc::vec![])
-}
-
 // ─── Output (proactive TX) ────────────────────────────────────────────
 
 /// Drain queued data from `state.send_buffer`, build TCP segments, and
@@ -198,8 +194,8 @@ pub fn process_segment_v6(
 pub(crate) fn try_flush_tcp_output(
     stack: &NetworkStack,
     state: &mut TcpConnectionState,
-    dst_ip: Ipv4Addr,
-) -> Vec<(Ipv4Addr, Vec<u8>)> {
+    dst_ip: IpAddress,
+) -> Vec<(IpAddress, Vec<u8>)> {
     let mut pending = Vec::new();
     if state.state != TcpState::Established || state.send_buffer.is_empty() {
         return pending;
@@ -234,7 +230,12 @@ pub(crate) fn try_flush_tcp_output(
             urgent_pointer: 0,
             options: timestamped_options(state),
         };
-        let seg = build_tcp_segment(&push, &data, stack.local_ip(), state.remote_ip);
+        let seg = build_tcp_segment(
+            &push,
+            &data,
+            local_source(stack, state.remote_ip),
+            state.remote_ip,
+        );
         state.ecn.on_segment_sent(tx_flags);
         state.send_next = state.send_next.wrapping_add(data_len);
         let was_empty = state.retransmit.pending_segments.is_empty();
@@ -286,14 +287,20 @@ fn process_data_ack(state: &mut TcpConnectionState, ack_val: u32) {
     }
 }
 
-/// Process an incoming TCP segment (IPv4) and update connection state.
+/// Process an incoming TCP segment and update connection state.
+///
+/// Dual-stack: `src_ip` / `dst_ip` may be `IpAddress` (IPv4 or IPv6) or
+/// `[u8; 4]` IPv4 addresses.  The same connection table holds both families,
+/// so a single state machine serves IPv4 and IPv6 peers.
 pub fn process_segment(
     table: &mut TcpConnectionTable,
     stack: &NetworkStack,
-    src_ip: Ipv4Addr,
-    dst_ip: Ipv4Addr,
+    src_ip: impl Into<IpAddress>,
+    dst_ip: impl Into<IpAddress>,
     tcp_data: &[u8],
-) -> Result<Vec<(Ipv4Addr, Vec<u8>)>> {
+) -> Result<Vec<(IpAddress, Vec<u8>)>> {
+    let src_ip: IpAddress = src_ip.into();
+    let dst_ip: IpAddress = dst_ip.into();
     let (header, header_len) = parse_tcp_header(tcp_data)?;
     let payload = &tcp_data[header_len..];
 
@@ -302,7 +309,7 @@ pub fn process_segment(
     let local_port = header.destination_port;
     let remote_port = header.source_port;
 
-    let mut pending: Vec<(Ipv4Addr, Vec<u8>)> = Vec::new();
+    let mut pending: Vec<(IpAddress, Vec<u8>)> = Vec::new();
 
     let conn = match table.lookup(local_port, src_ip, remote_port) {
         Some(c) => c,
@@ -345,7 +352,7 @@ pub fn process_segment(
                             checksum: 0,
                             urgent_pointer: 0,
                             options: {
-                                let mss = build_mss_option(advertised_mss_v4(stack.mtu()));
+                                let mss = build_mss_option(advertised_mss(stack, src_ip));
                                 let ws = WINDOW_SCALE_OPTION_BYTES;
                                 let sack_p = SACK_PERMITTED_OPTION_BYTES;
                                 let ts = build_timestamp_option(child.ts_val, child.peer_ts_val);
@@ -448,7 +455,12 @@ pub fn process_segment(
                     urgent_pointer: 0,
                     options: timestamped_options(&state),
                 };
-                let ack_seg = build_tcp_segment(&ack, &[], stack.local_ip(), state.remote_ip);
+                let ack_seg = build_tcp_segment(
+                    &ack,
+                    &[],
+                    local_source(stack, state.remote_ip),
+                    state.remote_ip,
+                );
                 state.ecn.on_segment_sent(ack_flags);
                 pending.push((src_ip, ack_seg));
                 state.state = TcpState::Established;
@@ -586,7 +598,12 @@ pub fn process_segment(
                     urgent_pointer: 0,
                     options: ack_options_with_sack(&state),
                 };
-                let ack_seg = build_tcp_segment(&ack, &[], stack.local_ip(), state.remote_ip);
+                let ack_seg = build_tcp_segment(
+                    &ack,
+                    &[],
+                    local_source(stack, state.remote_ip),
+                    state.remote_ip,
+                );
                 state.ecn.on_segment_sent(ack_flags);
                 pending.push((src_ip, ack_seg));
             }
@@ -630,8 +647,12 @@ pub fn process_segment(
                             options: timestamped_options(&state),
                         };
                         state.ecn.on_segment_sent(fin_flags);
-                        let ack_seg =
-                            build_tcp_segment(&fin_ack, &[], stack.local_ip(), state.remote_ip);
+                        let ack_seg = build_tcp_segment(
+                            &fin_ack,
+                            &[],
+                            local_source(stack, state.remote_ip),
+                            state.remote_ip,
+                        );
                         pending.push((src_ip, ack_seg));
                     } else if state.state == TcpState::FinWait2 {
                         state.state = TcpState::TimeWait;
@@ -672,7 +693,12 @@ pub fn process_segment(
                         urgent_pointer: 0,
                         options: timestamped_options(&state),
                     };
-                    let seg = build_tcp_segment(&push, &data, stack.local_ip(), state.remote_ip);
+                    let seg = build_tcp_segment(
+                        &push,
+                        &data,
+                        local_source(stack, state.remote_ip),
+                        state.remote_ip,
+                    );
                     state.send_next = state.send_next.wrapping_add(data_len);
                     let was_empty = state.retransmit.pending_segments.is_empty();
                     let next_seq = state.send_next;
@@ -756,7 +782,12 @@ pub fn process_segment(
                     urgent_pointer: 0,
                     options: timestamped_options(&state),
                 };
-                let ack_seg = build_tcp_segment(&fin_ack, &[], stack.local_ip(), state.remote_ip);
+                let ack_seg = build_tcp_segment(
+                    &fin_ack,
+                    &[],
+                    local_source(stack, state.remote_ip),
+                    state.remote_ip,
+                );
                 pending.push((src_ip, ack_seg));
             }
         }
@@ -811,10 +842,11 @@ pub fn retransmit_check(
     table: &mut TcpConnectionTable,
     stack: &NetworkStack,
     local_port: u16,
-    remote_ip: Ipv4Addr,
+    remote_ip: impl Into<IpAddress>,
     remote_port: u16,
-) -> Result<Vec<(Ipv4Addr, Vec<u8>)>> {
-    let mut pending: Vec<(Ipv4Addr, Vec<u8>)> = Vec::new();
+) -> Result<Vec<(IpAddress, Vec<u8>)>> {
+    let remote_ip: IpAddress = remote_ip.into();
+    let mut pending: Vec<(IpAddress, Vec<u8>)> = Vec::new();
 
     let conn = match table.lookup(local_port, remote_ip, remote_port) {
         Some(c) => c,
@@ -877,9 +909,9 @@ pub fn close(
     table: &mut TcpConnectionTable,
     stack: &NetworkStack,
     local_port: u16,
-    remote_ip: Ipv4Addr,
+    remote_ip: impl Into<IpAddress>,
     remote_port: u16,
-) -> Result<Vec<(Ipv4Addr, Vec<u8>)>> {
+) -> Result<Vec<(IpAddress, Vec<u8>)>> {
     let conn = table
         .lookup(local_port, remote_ip, remote_port)
         .ok_or(Error::NotFound)?;
@@ -903,7 +935,12 @@ pub fn close(
                 urgent_pointer: 0,
                 options: timestamped_options(&state),
             };
-            let fin_seg = build_tcp_segment(&fin, &[], stack.local_ip(), state.remote_ip);
+            let fin_seg = build_tcp_segment(
+                &fin,
+                &[],
+                local_source(stack, state.remote_ip),
+                state.remote_ip,
+            );
             state.ecn.on_segment_sent(fin_flags);
             state.send_next = state.send_next.wrapping_add(1);
             state.state = TcpState::FinWait1;
@@ -933,7 +970,12 @@ pub fn close(
                 urgent_pointer: 0,
                 options: timestamped_options(&state),
             };
-            let fin_seg = build_tcp_segment(&fin, &[], stack.local_ip(), state.remote_ip);
+            let fin_seg = build_tcp_segment(
+                &fin,
+                &[],
+                local_source(stack, state.remote_ip),
+                state.remote_ip,
+            );
             state.ecn.on_segment_sent(fin_flags);
             state.send_next = state.send_next.wrapping_add(1);
             state.state = TcpState::LastAck;

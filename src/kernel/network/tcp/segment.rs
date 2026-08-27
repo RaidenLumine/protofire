@@ -4,6 +4,7 @@
 
 use alloc::vec::Vec;
 
+use crate::kernel::network::internet::ip::IpAddress;
 use crate::kernel::network::ipv4::IpProtocol;
 use crate::kernel::network::ipv4::Ipv4Addr;
 use crate::kernel::network::ipv4::Ipv4Header;
@@ -80,8 +81,34 @@ pub fn parse_tcp_header(data: &[u8]) -> Result<(TcpHeader, usize)> {
     ))
 }
 
-/// Build a TCP segment (IPv4) with the given header fields and payload.
+/// Build a TCP segment with the given header fields and payload.
+///
+/// The pseudo-header checksum is computed for whichever address family the
+/// `src_ip` / `dst_ip` pair selects: IPv4 (RFC 793) or IPv6 (RFC 2460).  The
+/// address arguments may be `IpAddress` values or, for convenience, `[u8; 4]`
+/// IPv4 addresses.
 pub fn build_tcp_segment(
+    header: &TcpHeader,
+    payload: &[u8],
+    src_ip: impl Into<IpAddress>,
+    dst_ip: impl Into<IpAddress>,
+) -> Vec<u8> {
+    match (src_ip.into(), dst_ip.into()) {
+        (IpAddress::V4(src), IpAddress::V4(dst)) => build_tcp_segment_v4(header, payload, src, dst),
+        (IpAddress::V6(src), IpAddress::V6(dst)) => build_tcp_segment_v6(header, payload, src, dst),
+        // Mixed-family input is a caller invariant violation; never drop the
+        // segment outright — fall back to the IPv4 pseudo-header so the bytes
+        // are still emitted (the peer will discard it on checksum failure).
+        (src, dst) => {
+            let src = src.as_ipv4().unwrap_or([0, 0, 0, 0]);
+            let dst = dst.as_ipv4().unwrap_or([0, 0, 0, 0]);
+            build_tcp_segment_v4(header, payload, src, dst)
+        }
+    }
+}
+
+/// Build a TCP segment (IPv4) with the given header fields and payload.
+fn build_tcp_segment_v4(
     header: &TcpHeader,
     payload: &[u8],
     src_ip: Ipv4Addr,
@@ -162,9 +189,17 @@ pub fn build_tcp_segment_v6(
 
 pub(crate) fn send_tcp_segment(
     stack: &NetworkStack,
-    dst_ip: Ipv4Addr,
+    dst_ip: impl Into<IpAddress>,
     segment: &[u8],
 ) -> Result<()> {
+    match dst_ip.into() {
+        IpAddress::V4(dst) => send_tcp_segment_v4(stack, dst, segment),
+        IpAddress::V6(dst) => send_tcp_segment_v6(stack, dst, segment),
+    }
+}
+
+/// Send a TCP segment via IPv4.
+fn send_tcp_segment_v4(stack: &NetworkStack, dst_ip: Ipv4Addr, segment: &[u8]) -> Result<()> {
     stack.profiler.inc_tcp_segments_tx();
     let ip_header = Ipv4Header {
         total_length: 0,

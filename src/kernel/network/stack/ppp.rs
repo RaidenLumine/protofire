@@ -13,6 +13,7 @@ use crate::kernel::network::internet::fragments;
 use crate::kernel::network::internet::icmp;
 use crate::kernel::network::internet::icmpv6;
 use crate::kernel::network::internet::igmp;
+use crate::kernel::network::internet::ip::IpAddress;
 use crate::kernel::network::internet::ipv4::IpProtocol;
 use crate::kernel::network::internet::ipv4::Ipv4Header;
 use crate::kernel::network::internet::ipv4::IPV4_DEFAULT_TTL;
@@ -246,16 +247,16 @@ impl NetworkStack {
                 } else if ipv6_next_header == Ipv6NextHeader::Tcp {
                     let pending = {
                         let mut table = self.tcp_table.lock();
-                        tcp::process_segment_v6(
+                        tcp::process_segment(
                             &mut table,
                             self,
-                            ip_packet.header.source,
-                            ip_packet.header.destination,
+                            IpAddress::V6(ip_packet.header.source),
+                            IpAddress::V6(ip_packet.header.destination),
                             &ipv6_payload,
                         )?
                     };
                     for (dst_ip, seg) in pending {
-                        let _ = tcp::send_tcp_segment_v6(self, dst_ip, &seg);
+                        let _ = tcp::send_tcp_segment(self, dst_ip, &seg);
                     }
                 } else if ipv6_next_header == Ipv6NextHeader::Udp {
                     if let Ok(udp_dgram) = udp::parse_datagram(&ipv6_payload) {

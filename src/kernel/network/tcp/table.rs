@@ -11,7 +11,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::network::internet::ipv4::Ipv4Addr;
+use crate::kernel::network::internet::ip::IpAddress;
 use crate::kernel::network::stack::NetworkStack;
 use crate::kernel::sync::Mutex;
 use crate::Error;
@@ -86,16 +86,16 @@ impl TcpConnectionTable {
         Err(Error::AlreadyExists)
     }
 
-    /// Look up a connection by its full 4-tuple.
+    /// Look up a connection by its full 4-tuple.  `remote_ip` may be an
+    /// `IpAddress` or, for convenience, an `Ipv4Addr` (`[u8; 4]`).
     pub fn lookup(
         &self,
         local_port: u16,
-        remote_ip: Ipv4Addr,
+        remote_ip: impl Into<IpAddress>,
         remote_port: u16,
     ) -> Option<Arc<Mutex<TcpConnectionState>>> {
-        self.connections
-            .get(&(local_port, remote_ip, remote_port))
-            .cloned()
+        let key = (local_port, remote_ip.into(), remote_port);
+        self.connections.get(&key).cloned()
     }
 
     /// Insert a connection state, keyed by its own 4-tuple.
@@ -113,11 +113,11 @@ impl TcpConnectionTable {
     pub fn remove(
         &mut self,
         local_port: u16,
-        remote_ip: Ipv4Addr,
+        remote_ip: impl Into<IpAddress>,
         remote_port: u16,
     ) -> Option<Arc<Mutex<TcpConnectionState>>> {
-        self.connections
-            .remove(&(local_port, remote_ip, remote_port))
+        let key = (local_port, remote_ip.into(), remote_port);
+        self.connections.remove(&key)
     }
 
     /// Run per-tick retransmission and TimeWait expiry checks for every
@@ -132,9 +132,9 @@ impl TcpConnectionTable {
     pub fn tick_maintenance(
         &mut self,
         stack: &crate::kernel::network::stack::NetworkStack,
-    ) -> Vec<(Ipv4Addr, Vec<u8>)> {
+    ) -> Vec<(IpAddress, Vec<u8>)> {
         let keys: Vec<ConnKey> = self.connections.keys().cloned().collect();
-        let mut pending: Vec<(Ipv4Addr, Vec<u8>)> = Vec::new();
+        let mut pending: Vec<(IpAddress, Vec<u8>)> = Vec::new();
         for (local_port, remote_ip, remote_port) in keys {
             let _ = super::ops::retransmit_check(self, stack, local_port, remote_ip, remote_port)
                 .map(|mut segs| pending.append(&mut segs));
@@ -144,19 +144,18 @@ impl TcpConnectionTable {
 }
 
 /// A lightweight, owned handle to an established TCP connection, returned by
-/// `connect` / `accept` to the socket layer.
+/// `connect` / `accept` to the socket layer.  `remote_ip` is dual-stack.
 #[derive(Debug, Clone)]
 pub struct NativeTcpConnection {
     pub local_port: u16,
-    pub remote_ip: Ipv4Addr,
+    pub remote_ip: IpAddress,
     pub remote_port: u16,
 }
 
 impl NativeTcpConnection {
     /// Render the remote endpoint as `"ip:port"`.
     pub fn endpoint(&self) -> String {
-        let [a, b, c, d] = self.remote_ip;
-        alloc::format!("{a}.{b}.{c}.{d}:{}", self.remote_port)
+        alloc::format!("{}:{}", self.remote_ip, self.remote_port)
     }
 
     /// Read up to `buffer.len()` bytes from the connection's receive buffer
