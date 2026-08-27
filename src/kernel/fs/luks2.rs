@@ -32,7 +32,10 @@ const LUKS2_VERSION: u16 = 2;
 const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Decode a base64 string (standard RFC 4648, padding optional).
-fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
+///
+/// Exposed as `pub` so the in-tree parser fuzz harness can feed it arbitrary
+/// bytes directly.
+pub fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     if input.is_empty() {
         return Some(Vec::new());
     }
@@ -108,7 +111,7 @@ fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
 /// Searches for `"<key>":` and then extracts the next JSON value
 /// (either a quoted string or a number).  Returns `None` if the key
 /// is not found.
-fn json_find_string<'a>(haystack: &'a [u8], key: &str) -> Option<&'a [u8]> {
+pub fn json_find_string<'a>(haystack: &'a [u8], key: &str) -> Option<&'a [u8]> {
     let key_pattern: Vec<u8> = {
         let mut p = Vec::new();
         p.push(b'"');
@@ -149,7 +152,7 @@ fn json_find_string<'a>(haystack: &'a [u8], key: &str) -> Option<&'a [u8]> {
 }
 
 /// Find a JSON object by scanning for `"<key>":{`.
-fn json_find_object<'a>(haystack: &'a [u8], key: &str) -> Option<&'a [u8]> {
+pub fn json_find_object<'a>(haystack: &'a [u8], key: &str) -> Option<&'a [u8]> {
     let obj_pattern: Vec<u8> = {
         let mut p = Vec::new();
         p.push(b'"');
@@ -180,7 +183,7 @@ fn json_find_object<'a>(haystack: &'a [u8], key: &str) -> Option<&'a [u8]> {
 }
 
 /// Parse a decimal integer from a byte slice.
-fn parse_decimal(s: &[u8]) -> Option<u64> {
+pub fn parse_decimal(s: &[u8]) -> Option<u64> {
     if s.is_empty() {
         return None;
     }

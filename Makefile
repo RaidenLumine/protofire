@@ -18,7 +18,7 @@ else
 $(error PROFILE must be either debug or release)
 endif
 
-.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 clippy run run-aarch64 run-riscv64 clean setup-dev install-hooks
+.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb test-parsers verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 clippy run run-aarch64 run-riscv64 clean setup-dev install-hooks
 
 help:
 	@printf '%s\n' \
@@ -39,6 +39,7 @@ help:
 		'  make test-concurrency - run scheduler/input/condvar concurrency regressions' \
 		'  make test-storage   - run filesystem/recovery/fault-injection regressions' \
 		'  make test-usb       - run USB Mass Storage (MSD) integration tests' \
+		'  make test-parsers   - run the deterministic in-tree parser fuzz harnesses' \
 		'  make fmt            - format the source tree' \
 		'  make fmt-check      - verify formatting without modifying files' \
 		'  make build          - build the bare-metal kernel ELF (PROFILE=debug|release)' \
@@ -103,6 +104,11 @@ test-usb:
 	@echo "Running USB MSD Integration Tests..."
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test usb_msd
 	@echo "USB MSD tests completed"
+
+test-parsers:
+	@echo "Running Deterministic Parser Fuzz Harnesses..."
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test parser_fuzz
+	@echo "Parser fuzz harnesses completed"
 
 verify:
 	sh ./scripts/verify.sh "$${VERIFY_TIER:-p3}"

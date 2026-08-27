@@ -112,8 +112,18 @@ fn for_each_option(options: &[u8], mut visitor: impl FnMut(u8, &[u8])) {
             }
             255 => break, // END
             code => {
-                let len = options[i + 1] as usize;
-                let val = &options[i + 2..(i + 2 + len).min(options.len())];
+                // The length octet must be present; a trailing code byte
+                // with no length octet is a truncated option.
+                let len = match options.get(i + 1) {
+                    Some(&l) => usize::from(l),
+                    None => break,
+                };
+                let start = i + 2;
+                let end = (start + len).min(options.len());
+                if start >= end {
+                    break;
+                }
+                let val = &options[start..end];
                 visitor(code, val);
                 i += 2 + len;
             }
@@ -211,7 +221,10 @@ fn build_bootp_message(
 /// Parse a DHCPOFFER / DHCPACK message into a [`DhcpLease`].
 ///
 /// `msg` is the raw UDP payload received from the DHCP server.
-fn parse_dhcp_reply(msg: &[u8]) -> Option<DhcpLease> {
+///
+/// Exposed as `pub` so the in-tree fuzz harness can feed it arbitrary
+/// bytes directly.
+pub fn parse_dhcp_reply(msg: &[u8]) -> Option<DhcpLease> {
     if msg.len() < BOOTP_HEADER_SIZE + 4 {
         return None;
     }
