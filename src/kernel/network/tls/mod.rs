@@ -8,6 +8,10 @@
 pub mod certificate;
 pub mod handshake;
 pub mod record;
+pub mod root_store;
+
+#[cfg(test)]
+pub(crate) mod test_fixtures;
 
 use alloc::string::String;
 use alloc::vec::Vec;

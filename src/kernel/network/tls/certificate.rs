@@ -14,13 +14,14 @@ use alloc::vec::Vec;
 
 /// OID for RSA encryption (1.2.840.113549.1.1.1).
 const OID_RSA_ENCRYPTION: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01];
+/// OID for id-ecPublicKey (1.2.840.10045.2.1) — the SPKI algorithm for EC keys.
+const OID_EC_PUBLIC_KEY: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
 /// OID for ECDSA with SHA-256 (1.2.840.10045.4.3.2).
 const OID_ECDSA_SHA256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02];
 /// OID for ECDSA with SHA-384 (1.2.840.10045.4.3.3).
 const OID_ECDSA_SHA384: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03];
 // OID for SHA-256 with RSA; constructed in test certificates.
 /// OID for SHA-256 with RSA (1.2.840.113549.1.1.11).
-#[cfg_attr(not(test), allow(dead_code))]
 const OID_SHA256_RSA: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B];
 
 // ── ASN.1 tag constants ────────────────────────────────────────────────────
@@ -50,11 +51,13 @@ const TAG_SET: u8 = 0x31;
 pub struct X509Certificate {
     /// DER-encoded certificate bytes (for chain verification).
     pub der: Vec<u8>,
+    /// DER-encoded TBSCertificate bytes, exactly as covered by `signature`.
+    pub tbs: Vec<u8>,
     /// Version (0 = v1, 1 = v2, 2 = v3).
     pub version: u8,
     /// Serial number as raw bytes.
     pub serial: Vec<u8>,
-    /// Signature algorithm OID.
+    /// Signature algorithm OID (from the TBS `signature` field).
     pub signature_algorithm: Vec<u8>,
     /// Issuer distinguished name (raw DER).
     pub issuer: Vec<u8>,
@@ -70,6 +73,11 @@ pub struct X509Certificate {
     pub public_key: Vec<u8>,
     /// Extensions (raw DER of the extensions SEQUENCE).
     pub extensions: Vec<u8>,
+    /// Outer `signatureValue` (raw bytes, unused-bits byte stripped).
+    ///
+    /// This is the signature the issuer produced over `tbs`; chain
+    /// verification checks it against the parent certificate's public key.
+    pub signature: Vec<u8>,
 }
 
 /// Parsed X.509 name (issuer or subject).
@@ -285,13 +293,29 @@ pub fn parse_x509_certificate(der: &[u8]) -> Option<X509Certificate> {
 
     // TBSCertificate ::= SEQUENCE
     let tbs_val = c.read_tagged(TAG_SEQUENCE)?;
-    // Compute the offset of tbs_val within `der` for correct slicing.
-    let tbs_base = tbs_val.as_ptr() as usize - der.as_ptr() as usize;
-    let tbs = &mut DerReader::new(tbs_val);
+    // The signature covers the *entire* TBS SEQUENCE (tag + length + content).
+    // TBS is the first element of `cert_seq`; its SEQUENCE header sits between
+    // `cert_seq_base` and `tbs_val`, so the full TBS spans both.
+    let cert_seq_base = cert_seq.as_ptr() as usize - der.as_ptr() as usize;
+    let tbs_header_len = tbs_val.as_ptr() as usize - cert_seq.as_ptr() as usize;
+    let tbs = der[cert_seq_base..cert_seq_base + tbs_header_len + tbs_val.len()].to_vec();
+    // Offset of the TBS content within `der` (used for issuer/subject slicing).
+    let tbs_base = cert_seq_base + tbs_header_len;
+    let tbs_reader = &mut DerReader::new(tbs_val);
+
+    // The outer `signatureValue` BIT STRING follows the TBS; the first byte is
+    // the count of unused bits, the remainder is the raw signature.
+    c.read_tagged(TAG_SEQUENCE)?; // outer signatureAlgorithm (already parsed in TBS)
+    let sig_bit_str = c.read_tagged(TAG_BIT_STRING)?;
+    let signature = if sig_bit_str.is_empty() {
+        Vec::new()
+    } else {
+        sig_bit_str[1..].to_vec()
+    };
 
     // Version [0] EXPLICIT (default v1 = 0).
-    let version = if tbs.peek_tag() == Some(0xA0) {
-        let (_, ver_val) = tbs.read_tlv()?;
+    let version = if tbs_reader.peek_tag() == Some(0xA0) {
+        let (_, ver_val) = tbs_reader.read_tlv()?;
         // The version is an INTEGER inside the [0] wrapper.
         let vi = &mut DerReader::new(ver_val);
         let int_bytes = vi.read_tagged(TAG_INTEGER)?;
@@ -305,10 +329,10 @@ pub fn parse_x509_certificate(der: &[u8]) -> Option<X509Certificate> {
     };
 
     // Serial number (INTEGER).
-    let serial = tbs.read_tagged(TAG_INTEGER)?.to_vec();
+    let serial = tbs_reader.read_tagged(TAG_INTEGER)?.to_vec();
 
     // Signature algorithm (SEQUENCE { OID, ... }).
-    let sig_alg_val = tbs.read_tagged(TAG_SEQUENCE)?;
+    let sig_alg_val = tbs_reader.read_tagged(TAG_SEQUENCE)?;
     let sig_alg_oid = {
         let sa = &mut DerReader::new(sig_alg_val);
         sa.read_tagged(TAG_OID)?.to_vec()
@@ -316,14 +340,14 @@ pub fn parse_x509_certificate(der: &[u8]) -> Option<X509Certificate> {
 
     // Issuer (SEQUENCE OF SET OF ...).
     let issuer = {
-        let start = tbs_base + tbs.pos;
-        tbs.read_tagged(TAG_SEQUENCE)?;
-        let end = tbs_base + tbs.pos;
+        let start = tbs_base + tbs_reader.pos;
+        tbs_reader.read_tagged(TAG_SEQUENCE)?;
+        let end = tbs_base + tbs_reader.pos;
         der[start..end].to_vec()
     };
 
     // Validity ::= SEQUENCE { notBefore Time, notAfter Time }
-    let validity_val = tbs.read_tagged(TAG_SEQUENCE)?;
+    let validity_val = tbs_reader.read_tagged(TAG_SEQUENCE)?;
     let (not_before, not_after) = {
         let v = &mut DerReader::new(validity_val);
         let nb = v.read_tlv().map(|(_, val)| val.to_vec())?;
@@ -333,14 +357,14 @@ pub fn parse_x509_certificate(der: &[u8]) -> Option<X509Certificate> {
 
     // Subject (SEQUENCE OF SET OF ...).
     let subject = {
-        let start = tbs_base + tbs.pos;
-        tbs.read_tagged(TAG_SEQUENCE)?;
-        let end = tbs_base + tbs.pos;
+        let start = tbs_base + tbs_reader.pos;
+        tbs_reader.read_tagged(TAG_SEQUENCE)?;
+        let end = tbs_base + tbs_reader.pos;
         der[start..end].to_vec()
     };
 
     // SubjectPublicKeyInfo ::= SEQUENCE { algorithm, subjectPublicKey }
-    let spki_val = tbs.read_tagged(TAG_SEQUENCE)?;
+    let spki_val = tbs_reader.read_tagged(TAG_SEQUENCE)?;
     let (pubkey_algo, pubkey) = {
         let sp = &mut DerReader::new(spki_val);
         // AlgorithmIdentifier ::= SEQUENCE { OID, ... }
@@ -361,8 +385,8 @@ pub fn parse_x509_certificate(der: &[u8]) -> Option<X509Certificate> {
     };
 
     // Extensions [3] EXPLICIT (optional).
-    let extensions = if tbs.peek_tag() == Some(0xA3) {
-        let (_, ext_wrap) = tbs.read_tlv()?;
+    let extensions = if tbs_reader.peek_tag() == Some(0xA3) {
+        let (_, ext_wrap) = tbs_reader.read_tlv()?;
         let ew = &mut DerReader::new(ext_wrap);
         let ext_seq = ew.read_tagged(TAG_SEQUENCE)?;
         ext_seq.to_vec()
@@ -372,6 +396,7 @@ pub fn parse_x509_certificate(der: &[u8]) -> Option<X509Certificate> {
 
     Some(X509Certificate {
         der: der.to_vec(),
+        tbs,
         version,
         serial,
         signature_algorithm: sig_alg_oid,
@@ -382,6 +407,7 @@ pub fn parse_x509_certificate(der: &[u8]) -> Option<X509Certificate> {
         public_key_algorithm: pubkey_algo,
         public_key: pubkey,
         extensions,
+        signature,
     })
 }
 
@@ -430,7 +456,8 @@ impl X509Certificate {
     pub fn public_key_algorithm_type(&self) -> PublicKeyAlgorithm {
         if oid_eq(&self.public_key_algorithm, OID_RSA_ENCRYPTION) {
             PublicKeyAlgorithm::Rsa
-        } else if oid_eq(&self.public_key_algorithm, OID_ECDSA_SHA256)
+        } else if oid_eq(&self.public_key_algorithm, OID_EC_PUBLIC_KEY)
+            || oid_eq(&self.public_key_algorithm, OID_ECDSA_SHA256)
             || oid_eq(&self.public_key_algorithm, OID_ECDSA_SHA384)
         {
             PublicKeyAlgorithm::Ecdsa
@@ -691,19 +718,31 @@ pub fn build_chain(certs: &[X509Certificate], hostname: &str) -> Option<Vec<X509
 ///
 /// Checks performed:
 /// 1. At least one certificate is present.
-/// 2. The leaf certificate's validity period is well-formed.
+/// 2. The leaf certificate's validity period is well-formed (and, when an RTC
+///    is available, unexpired).
 /// 3. The leaf certificate matches `hostname` (via SAN or CN).
 /// 4. The chain is properly ordered and each certificate's issuer matches the
-///    next certificate's subject, ending in a self-signed root.
-/// 5. Chain-of-trust signature verification — **ECDSA P-256 and RSA-PSS
-///    implemented**.  The leaf certificate's signature is verified during the
-///    CertificateVerify handshake step using the ECDSA P-256 or RSA-PSS
-///    primitives in the kernel crypto module.  Intermediate CA and root
-///    signatures are not yet verified (the chain structure is validated but
-///    full path validation requires a root CA store).
+///    next certificate's subject.
+/// 5. Chain-of-trust signature verification: every certificate's signature is
+///    checked against its issuer's public key (`sha256WithRSAEncryption` via
+///    RSASSA-PKCS1-v1_5, or `ecdsa-with-SHA256` via ECDSA P-256).
+/// 6. The chain terminates at a trusted root from the built-in [`root_store`]
+///    (servers normally omit the root, so the last presented certificate may be
+///    issued *by* a trust anchor).
 ///
 /// Returns `ChainVerifyStatus::Trusted` if all checks pass.
 pub fn verify_chain(chain: &[X509Certificate], hostname: &str) -> ChainVerifyStatus {
+    verify_chain_against_roots(chain, hostname, super::root_store::trusted_roots())
+}
+
+/// Verify a chain against an explicit set of trust anchors (raw DER root
+/// certificates).  The public [`verify_chain`] wrapper uses the built-in
+/// store; tests pass their own anchors.
+fn verify_chain_against_roots(
+    chain: &[X509Certificate],
+    hostname: &str,
+    roots: &[&[u8]],
+) -> ChainVerifyStatus {
     if chain.is_empty() {
         return ChainVerifyStatus::Untrusted;
     }
@@ -729,30 +768,113 @@ pub fn verify_chain(chain: &[X509Certificate], hostname: &str) -> ChainVerifySta
     }
 
     // Validate chain links: each cert's issuer CN should match the next
-    // cert's subject CN (or be self-signed for the root).
-    for i in 0..ordered.len() {
+    // cert's subject CN.  The last certificate is validated against a trust
+    // anchor below, so its issuer need not match any sent certificate.
+    for i in 0..ordered.len().saturating_sub(1) {
         let issuer_cn = ordered[i].issuer_common_name();
-        if i + 1 < ordered.len() {
-            let next_subject_cn = ordered[i + 1].common_name();
-            if issuer_cn.is_some() && issuer_cn != next_subject_cn {
-                return ChainVerifyStatus::Untrusted;
-            }
-        } else {
-            // Last certificate in chain should be self-signed (root).
-            let subject_cn = ordered[i].common_name();
-            if issuer_cn.is_some() && issuer_cn != subject_cn {
-                // Not self-signed — chain may be incomplete.
-                // Accept anyway for development.
-            }
+        let next_subject_cn = ordered[i + 1].common_name();
+        if issuer_cn.is_some() && issuer_cn != next_subject_cn {
+            return ChainVerifyStatus::Untrusted;
         }
     }
 
-    // NOTE: Full chain-of-trust signature verification (intermediate CA and
-    // root signatures) is deferred to a future root-CA-store integration.
-    // Leaf certificate signatures are verified during the CertificateVerify
-    // handshake step via ECDSA P-256 or RSA-PSS primitives in crypto.rs.
+    // Verify every link: the parent certificate's public key must have
+    // produced the child's signature over the child's TBS bytes.
+    for i in 0..ordered.len().saturating_sub(1) {
+        if !verify_certificate_signature(&ordered[i], &ordered[i + 1]) {
+            return ChainVerifyStatus::Untrusted;
+        }
+    }
 
-    ChainVerifyStatus::Trusted
+    // The chain must terminate at a trusted root.  Two cases:
+    //   1. `top` is itself a trust anchor (subject DN + public key match a store
+    //      root) — its self-signature is a consistency check.
+    //   2. `top` was issued by a trust anchor (its issuer DN matches a root's
+    //      subject DN) — the common case, since servers omit the root.
+    let top = ordered.last().unwrap();
+
+    if let Some(root) = find_trusted_root(roots, &top.subject, &top.public_key) {
+        if verify_certificate_signature(top, &root) {
+            return ChainVerifyStatus::Trusted;
+        }
+        return ChainVerifyStatus::Untrusted;
+    }
+
+    if let Some(root) = find_issuer_trusted_root(roots, &top.issuer) {
+        if verify_certificate_signature(top, &root) {
+            return ChainVerifyStatus::Trusted;
+        }
+        return ChainVerifyStatus::Untrusted;
+    }
+
+    ChainVerifyStatus::Untrusted
+}
+
+/// Verify that `child`'s signature was produced by `parent`'s public key over
+/// `child`'s TBS bytes.
+///
+/// Supports the two signature algorithms the kernel implements:
+/// `sha256WithRSAEncryption` (RSASSA-PKCS1-v1_5 with SHA-256) and
+/// `ecdsa-with-SHA256` (ECDSA P-256).  Anything else (PSS, SHA-1, SHA-384/512,
+/// Ed25519, …) is rejected as untrusted.
+fn verify_certificate_signature(child: &X509Certificate, parent: &X509Certificate) -> bool {
+    if child.tbs.is_empty() || child.signature.is_empty() {
+        return false;
+    }
+    match parent.public_key_algorithm_type() {
+        PublicKeyAlgorithm::Rsa => {
+            if !oid_eq(&child.signature_algorithm, OID_SHA256_RSA) {
+                return false;
+            }
+            let (n, e) = match parse_rsa_public_key(&parent.public_key) {
+                Some(pk) => pk,
+                None => return false,
+            };
+            crate::kernel::crypto::rsa_pkcs1v15_verify(&n, &e, &child.tbs, &child.signature)
+        }
+        PublicKeyAlgorithm::Ecdsa => {
+            if !oid_eq(&child.signature_algorithm, OID_ECDSA_SHA256) {
+                return false;
+            }
+            let (r, s) = match crate::kernel::crypto::parse_ecdsa_der_signature(&child.signature) {
+                Some(p) => p,
+                None => return false,
+            };
+            let hash = crate::kernel::crypto::sha256(&child.tbs);
+            crate::kernel::crypto::ecdsa_p256_verify(&parent.public_key, &hash, &r, &s)
+        }
+        PublicKeyAlgorithm::Unknown(_) => false,
+    }
+}
+
+/// Find the parsed trust anchor whose subject DN and public key both match
+/// `cert` (i.e. `cert` *is* the anchor).
+fn find_trusted_root(
+    roots: &[&[u8]],
+    subject: &[u8],
+    public_key: &[u8],
+) -> Option<X509Certificate> {
+    roots.iter().find_map(|der| {
+        let root = parse_x509_certificate(der)?;
+        if root.subject == subject && root.public_key == public_key {
+            Some(root)
+        } else {
+            None
+        }
+    })
+}
+
+/// Find the parsed trust anchor whose subject DN matches `issuer` (i.e. the
+/// anchor that issued `cert`).
+fn find_issuer_trusted_root(roots: &[&[u8]], issuer: &[u8]) -> Option<X509Certificate> {
+    roots.iter().find_map(|der| {
+        let root = parse_x509_certificate(der)?;
+        if root.subject == issuer {
+            Some(root)
+        } else {
+            None
+        }
+    })
 }
 
 /// Parse an ASN.1 UTCTime or GeneralizedTime value into (year, month, day,
@@ -792,25 +914,59 @@ fn parse_asn1_time(raw: &[u8]) -> Option<(i32, u8, u8, u8, u8, u8)> {
     Some((year, month, day, hour, min, sec))
 }
 
-/// Check that a certificate's validity period is well-formed and, if a
-/// current-time epoch is available, that the certificate is within its
+/// Convert a parsed ASN.1 time to a Unix timestamp (seconds since 1970-01-01
+/// 00:00:00 UTC) using the proleptic Gregorian calendar.
+///
+/// Uses Howard Hinnant's civil-from-days algorithm so no external date library
+/// is needed in the kernel (mirrors `rtc_to_unix_timestamp` in the RTC
+/// drivers).
+fn asn1_time_to_unix(t: (i32, u8, u8, u8, u8, u8)) -> u64 {
+    let (year, month, day, hour, min, sec) = t;
+    let y = i64::from(year);
+    let m = i64::from(month);
+    let d = i64::from(day);
+
+    // Days from civil.
+    let yy = if m <= 2 { y - 1 } else { y };
+    let era = (if yy >= 0 { yy } else { yy - 399 }) / 400;
+    let yoe = yy - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+
+    (days * 86_400 + i64::from(hour) * 3_600 + i64::from(min) * 60 + i64::from(sec)) as u64
+}
+
+/// Whether a Unix timestamp falls inside `[not_before, not_after]`.
+fn in_validity_window(not_before: u64, not_after: u64, now: u64) -> bool {
+    now >= not_before && now <= not_after
+}
+
+/// Check that a certificate's validity period is well-formed and, when a
+/// real-time clock is available, that the certificate is within its
 /// [not_before, not_after] window.
 ///
-/// For now the kernel has no real-time clock, so only structural validation
-/// of the time fields is performed.  When an RTC is available, a
-/// `current_unix_time` check can be added here.
+/// On hosts without an RTC (`rtc_now_unix` returns `None`) only structural
+/// validation of the time fields is performed.
 fn check_certificate_validity(cert: &X509Certificate) -> bool {
-    // At minimum, ensure both time fields can be parsed.
-    if parse_asn1_time(&cert.not_before).is_none() {
-        return false;
-    }
-    if parse_asn1_time(&cert.not_after).is_none() {
-        return false;
-    }
+    // Structural validation: both time fields must parse.
+    let not_before = match parse_asn1_time(&cert.not_before) {
+        Some(t) => t,
+        None => return false,
+    };
+    let not_after = match parse_asn1_time(&cert.not_after) {
+        Some(t) => t,
+        None => return false,
+    };
 
-    // TODO: when a real-time clock is available, compare the parsed dates
-    // against the current wall-clock time and return false if the cert is
-    // not yet valid or has expired.
+    // When a wall-clock source is available, enforce the validity window.
+    if let Some(now) = crate::arch::timer::rtc_now_unix() {
+        return in_validity_window(
+            asn1_time_to_unix(not_before),
+            asn1_time_to_unix(not_after),
+            now,
+        );
+    }
 
     true
 }
@@ -854,6 +1010,7 @@ fn name_matches_wildcard(pattern: &str, hostname: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::network::tls::test_fixtures;
 
     /// Build a minimal DER-encoded X.509 certificate for testing.
     ///
@@ -1133,21 +1290,130 @@ mod tests {
     }
 
     #[test]
-    fn verify_chain_with_correct_hostname() {
-        let der = build_test_cert_der("secure.example.com", false);
-        let cert = parse_x509_certificate(&der).unwrap();
-        assert_eq!(
-            verify_chain(&[cert], "secure.example.com"),
-            ChainVerifyStatus::Trusted
-        );
-    }
-
-    #[test]
     fn verify_chain_empty_is_untrusted() {
         assert_eq!(
             verify_chain(&[], "example.com"),
             ChainVerifyStatus::Untrusted
         );
+    }
+
+    // ── Chain verification with OpenSSL-generated signed fixtures ─────────
+
+    #[test]
+    fn verify_chain_signed_by_trusted_root() {
+        // Leaf issued directly by the trust anchor; the server omits the root.
+        let leaf = parse_x509_certificate(test_fixtures::DEMO_LEAF_DER).unwrap();
+        let roots = [test_fixtures::DEMO_ROOT_DER];
+        assert_eq!(
+            verify_chain_against_roots(&[leaf], "demo.protofire.example", &roots),
+            ChainVerifyStatus::Trusted
+        );
+    }
+
+    #[test]
+    fn verify_chain_public_uses_builtin_store() {
+        // The public wrapper resolves the trust anchor from the built-in store.
+        let leaf = parse_x509_certificate(test_fixtures::DEMO_LEAF_DER).unwrap();
+        assert_eq!(
+            verify_chain(&[leaf], "demo.protofire.example"),
+            ChainVerifyStatus::Trusted
+        );
+    }
+
+    #[test]
+    fn verify_chain_full_rsa_path() {
+        // leaf -> int -> test_root; the server sends leaf + intermediate.
+        let leaf = parse_x509_certificate(test_fixtures::LEAF_DER).unwrap();
+        let int = parse_x509_certificate(test_fixtures::INT_DER).unwrap();
+        let roots = [test_fixtures::TEST_ROOT_DER];
+        assert_eq!(
+            verify_chain_against_roots(&[leaf, int], "test.example.com", &roots),
+            ChainVerifyStatus::Trusted
+        );
+    }
+
+    #[test]
+    fn verify_chain_ec_leaf_signed_by_rsa_intermediate() {
+        // ECDSA leaf issued by an RSA intermediate (cross-algorithm link).
+        let ec = parse_x509_certificate(test_fixtures::EC_DER).unwrap();
+        let int = parse_x509_certificate(test_fixtures::INT_DER).unwrap();
+        let roots = [test_fixtures::TEST_ROOT_DER];
+        assert_eq!(
+            verify_chain_against_roots(&[ec, int], "test.example.com", &roots),
+            ChainVerifyStatus::Trusted
+        );
+    }
+
+    #[test]
+    fn verify_chain_full_ecdsa_path() {
+        // ec2 -> ec_int -> test_root: every link uses ECDSA P-256.
+        let ec2 = parse_x509_certificate(test_fixtures::EC2_DER).unwrap();
+        let ec_int = parse_x509_certificate(test_fixtures::EC_INT_DER).unwrap();
+        let roots = [test_fixtures::TEST_ROOT_DER];
+        assert_eq!(
+            verify_chain_against_roots(&[ec2, ec_int], "test.example.com", &roots),
+            ChainVerifyStatus::Trusted
+        );
+    }
+
+    #[test]
+    fn verify_chain_root_sent_explicitly() {
+        // The server sends the full path including the self-signed root.
+        let leaf = parse_x509_certificate(test_fixtures::LEAF_DER).unwrap();
+        let int = parse_x509_certificate(test_fixtures::INT_DER).unwrap();
+        let root = parse_x509_certificate(test_fixtures::TEST_ROOT_DER).unwrap();
+        let roots = [test_fixtures::TEST_ROOT_DER];
+        assert_eq!(
+            verify_chain_against_roots(&[leaf, int, root], "test.example.com", &roots),
+            ChainVerifyStatus::Trusted
+        );
+    }
+
+    #[test]
+    fn verify_chain_unknown_root_is_untrusted() {
+        // A chain issued by a CA absent from the anchor set is rejected.
+        let leaf = parse_x509_certificate(test_fixtures::LEAF_DER).unwrap();
+        let int = parse_x509_certificate(test_fixtures::INT_DER).unwrap();
+        let roots = [test_fixtures::DEMO_ROOT_DER]; // wrong anchor
+        assert_eq!(
+            verify_chain_against_roots(&[leaf, int], "test.example.com", &roots),
+            ChainVerifyStatus::Untrusted
+        );
+    }
+
+    #[test]
+    fn verify_chain_rejects_tampered_leaf_signature() {
+        // Flip a byte inside the leaf's TBS (its serial number): the stored
+        // signature no longer covers the altered TBS, so verification fails.
+        let mut der = test_fixtures::LEAF_DER.to_vec();
+        der[30] ^= 0x01;
+        let leaf = parse_x509_certificate(&der).unwrap();
+        let int = parse_x509_certificate(test_fixtures::INT_DER).unwrap();
+        let roots = [test_fixtures::TEST_ROOT_DER];
+        assert_eq!(
+            verify_chain_against_roots(&[leaf, int], "test.example.com", &roots),
+            ChainVerifyStatus::Untrusted
+        );
+    }
+
+    // ── Certificate validity dates ─────────────────────────────────────────
+
+    #[test]
+    fn asn1_time_to_unix_known_values() {
+        // 2023-06-15 12:34:56 UTC.
+        assert_eq!(asn1_time_to_unix((2023, 6, 15, 12, 34, 56)), 1_686_832_496);
+        // Epoch.
+        assert_eq!(asn1_time_to_unix((1970, 1, 1, 0, 0, 0)), 0);
+        // A date in the 20th century (UTCTime year 50-99 → 1950-1999).
+        assert_eq!(asn1_time_to_unix((1999, 12, 31, 23, 59, 59)), 946_684_799);
+    }
+
+    #[test]
+    fn validity_window_boundaries() {
+        assert!(in_validity_window(100, 200, 100));
+        assert!(in_validity_window(100, 200, 200));
+        assert!(!in_validity_window(100, 200, 99));
+        assert!(!in_validity_window(100, 200, 201));
     }
 
     #[test]
