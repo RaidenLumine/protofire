@@ -99,6 +99,10 @@ path = "tests/drivers/usb_msd.rs"
 name = "parser_fuzz"
 path = "tests/parsers/fuzz.rs"
 
+[[test]]
+name = "simplefs_undo_property"
+path = "tests/simplefs/undo_property.rs"
+
 [features]
 default = []
 demo-disk = []

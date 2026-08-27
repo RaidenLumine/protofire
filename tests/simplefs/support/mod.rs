@@ -18,6 +18,11 @@ pub fn read_all(node: &dyn VNode) -> Vec<u8> {
     buffer
 }
 
+// `read_u32_le` / `build_stable_anchor_device` are used by the recovery and
+// fault-matrix suites but not by every consumer of this module; each test
+// binary is a separate crate, so unused helpers trip dead_code in binaries
+// that only need `build_seed_image`/`read_all`.
+#[allow(dead_code)]
 pub fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("u32 in bounds"))
 }
@@ -41,6 +46,7 @@ pub fn build_seed_image(
     .expect("build writable simplefs image")
 }
 
+#[allow(dead_code)]
 pub fn build_stable_anchor_device(
     device_name: &str,
     fs_label: &str,

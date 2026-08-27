@@ -37,6 +37,35 @@ mod tests {
     use alloc::collections::VecDeque;
     use alloc::sync::Arc;
     use alloc::vec;
+    use alloc::vec::Vec;
+
+    // ── Deterministic PRNG for property tests ───────────────────────────────
+    // Same LCG family as tests/simplefs/property.rs and tests/parsers/fuzz.rs,
+    // kept local because the queue helpers behind `pub(crate)` are only
+    // reachable from in-crate unit tests.
+
+    struct Lcg {
+        state: u64,
+    }
+
+    impl Lcg {
+        fn new(seed: u64) -> Self {
+            Self { state: seed }
+        }
+
+        fn next(&mut self) -> u64 {
+            self.state = self.state.wrapping_mul(6_364_136_223_846_793_005);
+            self.state = self.state.wrapping_add(1_442_695_040_888_963_407);
+            self.state
+        }
+
+        fn next_usize(&mut self, bound: usize) -> usize {
+            if bound == 0 {
+                return 0;
+            }
+            (self.next() as usize) % bound
+        }
+    }
 
     #[test]
     fn enqueue_then_take_next_dispatches_in_priority_order() {
@@ -414,5 +443,226 @@ mod tests {
         let scheduler = Scheduler::new();
         assert_eq!(scheduler.stop_process(999), Err(crate::Error::NotFound));
         assert_eq!(scheduler.continue_process(999), Err(crate::Error::NotFound));
+    }
+
+    // ── Property tests (model oracle + fixed-seed LCG) ─────────────────────
+
+    /// Random enqueue / dispatch / suspend+prune sequences against a model of
+    /// the ready set.  Invariants checked after every operation:
+    ///   - dispatch order matches the model's expectation (highest priority
+    ///     first, FIFO within a priority);
+    ///   - the model and the real queues hold exactly the same threads;
+    ///   - no thread in a non-dispatchable state (Stopped/Waiting/Terminated)
+    ///     ever sits in a ready queue.
+    #[test]
+    fn scheduler_ready_queue_random_ops_match_model() {
+        use super::super::queue::enqueue_ready_thread;
+        use super::super::queue::prune_nondispatchable_ready_threads;
+        use super::super::queue::take_next_dispatchable_thread;
+
+        let process = Process::new(100, "property-ready");
+        let thread_count = 24;
+        let threads: Vec<Arc<Thread>> = (0..thread_count)
+            .map(|_| Thread::new_kernel(process.clone(), idle_entry))
+            .collect();
+        let mut rng = Lcg::new(0xF0F0_5020);
+        for t in &threads {
+            let prio = match rng.next_usize(THREAD_PRIORITY_COUNT) {
+                0 => ThreadPriority::Idle,
+                1 => ThreadPriority::Normal,
+                2 => ThreadPriority::High,
+                _ => ThreadPriority::Realtime,
+            };
+            t.set_priority(prio);
+        }
+
+        let mut queues: [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT] = Default::default();
+        // Model: ready threads in enqueue order as (index, tid, priority).
+        let mut model: Vec<(usize, u32, usize)> = Vec::new();
+
+        for step in 0..3000 {
+            match rng.next_usize(3) {
+                0 => {
+                    // Enqueue a thread not currently ready.  Skip threads
+                    // that are no longer dispatchable (e.g. suspended by an
+                    // earlier op), which enqueue_ready_thread would reject.
+                    let idx = rng.next_usize(thread_count);
+                    if model.iter().any(|&(i, _, _)| i == idx) {
+                        continue;
+                    }
+                    if !matches!(
+                        threads[idx].state(),
+                        ThreadState::Ready | ThreadState::Running
+                    ) {
+                        continue;
+                    }
+                    let prio = threads[idx].priority() as usize;
+                    assert!(
+                        enqueue_ready_thread(&mut queues, threads[idx].clone()),
+                        "step {step}: enqueue of dispatchable thread {idx} rejected"
+                    );
+                    model.push((idx, threads[idx].tid(), prio));
+                }
+                1 => {
+                    // Dispatch the next thread and compare with the model.
+                    let expected = model
+                        .iter()
+                        .copied()
+                        .max_by_key(|&(_, _, prio)| prio)
+                        .map(|(_, tid, _)| tid);
+                    let taken = take_next_dispatchable_thread(&mut queues);
+                    let taken_tid = taken.as_ref().map(|t| t.tid());
+                    match (taken, expected) {
+                        (Some(t), Some(tid)) => {
+                            assert_eq!(
+                                t.tid(),
+                                tid,
+                                "step {step}: dispatch order diverged from model"
+                            );
+                            let pos = model
+                                .iter()
+                                .position(|&(_, m_tid, _)| m_tid == tid)
+                                .unwrap();
+                            model.remove(pos);
+                        }
+                        (None, None) => {}
+                        _ => panic!(
+                            "step {step}: real/model ready set diverged \
+                             (taken={taken_tid:?}, expected={expected:?})"
+                        ),
+                    }
+                }
+                _ => {
+                    // Suspend a random ready thread, prune it from the queues,
+                    // and verify the ready set never retains a Stopped thread.
+                    if model.is_empty() {
+                        continue;
+                    }
+                    let pos = rng.next_usize(model.len());
+                    let (idx, tid, _) = model.remove(pos);
+                    assert!(
+                        threads[idx].suspend(),
+                        "step {step}: suspend of ready thread {idx} failed"
+                    );
+                    let pruned = prune_nondispatchable_ready_threads(&mut queues);
+                    assert_eq!(
+                        pruned, 1,
+                        "step {step}: expected to prune exactly the suspended thread {tid}"
+                    );
+                }
+            }
+
+            // Model/real cardinality must agree after every operation.
+            let real_count: usize = queues.iter().map(VecDeque::len).sum();
+            assert_eq!(
+                real_count,
+                model.len(),
+                "step {step}: ready-queue cardinality diverged from model"
+            );
+            // No non-dispatchable thread may remain in any ready queue.
+            for q in &queues {
+                for t in q {
+                    assert!(
+                        matches!(t.state(), ThreadState::Ready | ThreadState::Running),
+                        "step {step}: non-dispatchable thread {:?} in ready queue",
+                        t.state()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Random sleep deadlines against a model: advancing simulated time must
+    /// wake exactly the waiters whose deadline has elapsed — no early wakes,
+    /// no missed wakes.
+    #[test]
+    fn timed_waiter_random_deadlines_match_elapse_model() {
+        use super::super::queue::take_elapsed_timed_waiters;
+
+        let process = Process::new(200, "property-wait");
+        let count = 32;
+        let mut rng = Lcg::new(0xF0F0_5030);
+        let mut threads: Vec<Arc<Thread>> = Vec::with_capacity(count);
+        let mut deadlines: Vec<u64> = Vec::with_capacity(count);
+        for _ in 0..count {
+            let thread = Thread::new_kernel(process.clone(), idle_entry);
+            let deadline = rng.next_usize(200) as u64;
+            thread.block_until(deadline);
+            threads.push(thread);
+            deadlines.push(deadline);
+        }
+
+        let mut waiting: Vec<TimedWaiter> = threads
+            .iter()
+            .map(|thread| TimedWaiter {
+                thread: thread.clone(),
+                cleanup: None,
+            })
+            .collect();
+        let mut woke: Vec<u32> = Vec::new();
+
+        for tick in 0..=210u64 {
+            let batch = take_elapsed_timed_waiters(&mut waiting, tick);
+            woke.extend(batch.iter().map(|w| w.thread.tid()));
+
+            for (thread, &deadline) in threads.iter().zip(&deadlines) {
+                if deadline <= tick {
+                    assert!(
+                        woke.contains(&thread.tid()),
+                        "tick {tick}: thread {} (deadline {deadline}) missed",
+                        thread.tid()
+                    );
+                } else {
+                    assert!(
+                        !woke.contains(&thread.tid()),
+                        "tick {tick}: thread {} (deadline {deadline}) woke early",
+                        thread.tid()
+                    );
+                }
+            }
+        }
+        assert!(
+            waiting.is_empty(),
+            "all waiters should have been collected by the final tick"
+        );
+    }
+
+    /// Preemption predicates over a range of tick counts: a time-slice
+    /// boundary fires exactly when `tick % TIME_SLICE_TICKS == 0`, and the
+    /// simulated-requeue predicate only accepts Running threads.
+    #[test]
+    fn preemption_time_slice_property_random_ticks() {
+        use super::super::queue::should_preempt_for_time_slice;
+        use super::super::queue::should_requeue_simulated_preempted_thread;
+        use super::super::TIME_SLICE_TICKS;
+
+        let mut rng = Lcg::new(0xF0F0_5040);
+        for _ in 0..5000 {
+            let tick = rng.next() & 0xFFFF;
+            assert_eq!(
+                should_preempt_for_time_slice(tick),
+                tick.is_multiple_of(TIME_SLICE_TICKS),
+                "tick {tick}: preemption boundary diverged from time-slice rule"
+            );
+        }
+
+        // A simulated preempted thread is requeued unless it has left the
+        // ready domain entirely (Waiting / Stopped / Terminated).
+        assert!(should_requeue_simulated_preempted_thread(
+            ThreadState::Ready
+        ));
+        assert!(should_requeue_simulated_preempted_thread(
+            ThreadState::Running
+        ));
+        for state in [
+            ThreadState::Waiting,
+            ThreadState::Stopped,
+            ThreadState::Terminated,
+        ] {
+            assert!(
+                !should_requeue_simulated_preempted_thread(state),
+                "state {state:?} must not be requeued as preempted"
+            );
+        }
     }
 }

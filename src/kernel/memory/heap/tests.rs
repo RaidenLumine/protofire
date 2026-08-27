@@ -24,6 +24,34 @@ mod tests {
     use alloc::vec::Vec;
     use core::alloc::Layout;
 
+    // ── Deterministic PRNG for property tests ───────────────────────────────
+    // Same LCG family as tests/simplefs/property.rs and tests/parsers/fuzz.rs,
+    // kept local because the allocator state lives behind `pub(crate)` and is
+    // only reachable from in-crate unit tests.
+
+    struct Lcg {
+        state: u64,
+    }
+
+    impl Lcg {
+        fn new(seed: u64) -> Self {
+            Self { state: seed }
+        }
+
+        fn next(&mut self) -> u64 {
+            self.state = self.state.wrapping_mul(6_364_136_223_846_793_005);
+            self.state = self.state.wrapping_add(1_442_695_040_888_963_407);
+            self.state
+        }
+
+        fn next_usize(&mut self, bound: usize) -> usize {
+            if bound == 0 {
+                return 0;
+            }
+            (self.next() as usize) % bound
+        }
+    }
+
     #[test]
     fn fresh_allocator_state_starts_uninitialized() {
         let state = AllocatorState::new();
@@ -185,5 +213,116 @@ mod tests {
             );
         });
         assert!(!foreign_freed);
+    }
+
+    /// Random alloc/free sequences against a live-allocations model.
+    ///
+    /// Invariants checked after every operation:
+    ///   - every returned pointer is aligned to its requested alignment;
+    ///   - every returned pointer lies inside the heap bounds;
+    ///   - no two live allocations overlap;
+    ///   - freeing a live pointer always succeeds, and double-freeing is always
+    ///     rejected;
+    ///   - once everything is freed the heap returns to its initial free byte
+    ///     count (coalescing restores the whole pool).
+    #[test]
+    fn tlsf_random_alloc_free_sequence_matches_model() {
+        HOST_HEAP_MODEL.ensure_init();
+        let (start, end) = HOST_HEAP_MODEL.bounds();
+        let initial_remaining = HOST_HEAP_MODEL.remaining();
+        let profiler = AllocProfiler::new();
+        let mut rng = Lcg::new(0xF0F0_5010);
+
+        // Model of live allocations: (payload pointer, payload size, align).
+        let mut live: Vec<(*mut u8, usize, usize)> = Vec::new();
+
+        for step in 0..4000 {
+            if rng.next_usize(2) == 0 {
+                // Allocate.
+                let size = match rng.next_usize(4) {
+                    0 => 1 + rng.next_usize(64),
+                    1 => 65 + rng.next_usize(512),
+                    2 => 513 + rng.next_usize(8192),
+                    _ => 4096 + rng.next_usize(4096),
+                };
+                let align = match rng.next_usize(3) {
+                    0 => 16,
+                    1 => 64,
+                    _ => 4096,
+                };
+                let layout = Layout::from_size_align(size, align).expect("valid layout");
+                let mut ptr: *mut u8 = core::ptr::null_mut();
+                HOST_HEAP_MODEL.with_state(|state| {
+                    ptr = KernelGlobalAllocator::allocate_locked(state, layout, &profiler);
+                });
+                if ptr.is_null() {
+                    // Fragmentation / exhaustion — legal; the model just
+                    // records nothing.
+                    continue;
+                }
+                assert_eq!(
+                    ptr as usize % align,
+                    0,
+                    "step {step}: allocation of {size} bytes violates alignment {align}"
+                );
+                assert!(
+                    (start..end).contains(&(ptr as usize)),
+                    "step {step}: pointer {ptr:p} outside heap bounds"
+                );
+                for &(other, other_size, _) in &live {
+                    let a_start = other as usize;
+                    let a_end = a_start + other_size;
+                    let b_start = ptr as usize;
+                    let b_end = b_start + size;
+                    let overlaps =
+                        (a_start..a_end).contains(&b_start) || (b_start..b_end).contains(&a_start);
+                    assert!(
+                        !overlaps,
+                        "step {step}: allocations overlap: {a_start:#x}..{a_end:#x} vs \
+                         {b_start:#x}..{b_end:#x}"
+                    );
+                }
+                live.push((ptr, size, align));
+            } else {
+                // Free a random live allocation (if any), then verify the
+                // double-free is rejected.
+                if live.is_empty() {
+                    continue;
+                }
+                let idx = rng.next_usize(live.len());
+                let (ptr, _, _) = live.swap_remove(idx);
+                let mut freed = false;
+                HOST_HEAP_MODEL.with_state(|state| {
+                    freed = KernelGlobalAllocator::deallocate_locked(state, ptr, &profiler);
+                });
+                assert!(freed, "step {step}: free of live pointer failed");
+                HOST_HEAP_MODEL.with_state(|state| {
+                    assert!(
+                        !KernelGlobalAllocator::deallocate_locked(state, ptr, &profiler),
+                        "step {step}: double-free accepted"
+                    );
+                });
+            }
+
+            if step % 256 == 0 {
+                HOST_HEAP_MODEL.verify_heap_integrity();
+            }
+        }
+
+        // Free the remaining live allocations, then verify the whole pool
+        // coalesces back to its initial free count.
+        for (ptr, _, _) in live.drain(..) {
+            let mut freed = false;
+            HOST_HEAP_MODEL.with_state(|state| {
+                freed = KernelGlobalAllocator::deallocate_locked(state, ptr, &profiler);
+            });
+            assert!(freed, "final free of a live pointer failed");
+        }
+        HOST_HEAP_MODEL.verify_heap_integrity();
+        assert_eq!(
+            HOST_HEAP_MODEL.remaining(),
+            initial_remaining,
+            "heap free count did not return to its initial value"
+        );
     }
 }
