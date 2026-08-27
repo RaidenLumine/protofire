@@ -273,12 +273,12 @@ fn inject_modifier_break(modifiers: u8) {
 // Boot protocol mouse report processing
 // ---------------------------------------------------------------------------
 
-/// Process a USB HID Boot Protocol mouse input report (up to 4 bytes).
+/// Process a USB HID Boot Protocol mouse input report (up to 4 bytes) into
+/// an explicit mouse core.
 ///
 /// Byte 0: buttons (bitfield).  Bytes 1–2: signed X/Y deltas.  Byte 3 (when
-/// present): wheel.  Relative motion is injected into the mouse core, which
-/// the `/system/dev/mouse` device node drains.
-pub fn handle_mouse_report(report: &[u8]) {
+/// present): wheel.  Relative motion is injected into `core`.
+pub fn handle_mouse_report_into(core: &super::mouse::MouseCore, report: &[u8]) {
     if report.len() < 3 {
         return;
     }
@@ -286,7 +286,15 @@ pub fn handle_mouse_report(report: &[u8]) {
     let dx = report[1] as i8;
     let dy = report[2] as i8;
     let wheel = if report.len() > 3 { report[3] as i8 } else { 0 };
-    super::mouse::inject_motion(buttons, dx, dy, wheel);
+    core.inject_motion(buttons, dx, dy, wheel);
+}
+
+/// Process a USB HID Boot Protocol mouse input report, injecting relative
+/// motion into the global mouse core, which the `/system/dev/mouse` device
+/// node drains.
+pub fn handle_mouse_report(report: &[u8]) {
+    let core = super::mouse::init_global();
+    handle_mouse_report_into(&core, report);
 }
 
 // ---------------------------------------------------------------------------
@@ -459,8 +467,7 @@ pub fn driver() -> Arc<dyn Driver> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::drivers::mouse::clear_global;
-    use crate::kernel::drivers::mouse::try_read_motion;
+    use crate::kernel::drivers::mouse::MouseCore;
     use alloc::vec::Vec;
 
     /// Build a configuration descriptor for a single-interface HID device.
@@ -539,10 +546,10 @@ mod tests {
 
     #[test]
     fn mouse_report_injects_motion() {
-        clear_global();
+        let core = MouseCore::new();
         // 4-byte boot-protocol mouse report: left button + (dx, dy, wheel).
-        handle_mouse_report(&[0x01, 0x03, 0xFC, 0xFF]);
-        let motion = try_read_motion().expect("motion injected");
+        handle_mouse_report_into(&core, &[0x01, 0x03, 0xFC, 0xFF]);
+        let motion = core.try_read_motion().expect("motion injected");
         assert_eq!(motion.buttons, 0x01);
         assert_eq!(motion.dx, 3);
         assert_eq!(motion.dy, -4);
@@ -551,17 +558,17 @@ mod tests {
 
     #[test]
     fn mouse_report_tolerates_short_reports() {
-        clear_global();
+        let core = MouseCore::new();
         // 3-byte report (no wheel byte) still injects motion with wheel = 0.
-        handle_mouse_report(&[0x00, 0x02, 0x01]);
-        let motion = try_read_motion().expect("motion injected");
+        handle_mouse_report_into(&core, &[0x00, 0x02, 0x01]);
+        let motion = core.try_read_motion().expect("motion injected");
         assert_eq!(motion.dx, 2);
         assert_eq!(motion.dy, 1);
         assert_eq!(motion.wheel, 0);
 
         // A 2-byte fragment is ignored entirely.
-        handle_mouse_report(&[0x00, 0x00]);
-        assert!(try_read_motion().is_none());
+        handle_mouse_report_into(&core, &[0x00, 0x00]);
+        assert!(core.try_read_motion().is_none());
     }
 
     #[test]
