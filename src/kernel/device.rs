@@ -22,6 +22,7 @@ pub const DEBUG_DEVICE_NAME: &str = "debug";
 pub const KEYBOARD_DEVICE_NAME: &str = "keyboard";
 pub const KEYBOARD_RAW_DEVICE_NAME: &str = "keyboard-raw";
 pub const MOUSE_DEVICE_NAME: &str = "mouse";
+pub const AUDIO_DEVICE_NAME: &str = "audio";
 pub const NULL_DEVICE_NAME: &str = "null";
 pub const SERIAL0_DEVICE_NAME: &str = "serial0";
 pub const ZERO_DEVICE_NAME: &str = "zero";
@@ -34,6 +35,7 @@ pub const STDERR_DEVICE_PATH: &str = "/system/dev/stderr";
 pub const KEYBOARD_DEVICE_PATH: &str = "/system/dev/keyboard";
 pub const KEYBOARD_RAW_DEVICE_PATH: &str = "/system/dev/keyboard-raw";
 pub const MOUSE_DEVICE_PATH: &str = "/system/dev/mouse";
+pub const AUDIO_DEVICE_PATH: &str = "/system/dev/audio";
 pub const NULL_DEVICE_PATH: &str = "/system/dev/null";
 pub const SERIAL0_DEVICE_PATH: &str = "/system/dev/serial0";
 pub const ZERO_DEVICE_PATH: &str = "/system/dev/zero";
@@ -106,7 +108,7 @@ impl VirtualDeviceNode {
     }
 }
 
-const DEVICE_DESCRIPTORS: [DeviceDescriptor; 8] = [
+const DEVICE_DESCRIPTORS: [DeviceDescriptor; 9] = [
     DeviceDescriptor {
         name: CONSOLE_DEVICE_NAME,
         supported_rights: HANDLE_RIGHT_READ | HANDLE_RIGHT_WRITE,
@@ -143,6 +145,13 @@ const DEVICE_DESCRIPTORS: [DeviceDescriptor; 8] = [
         stat_size: 0,
     },
     DeviceDescriptor {
+        name: AUDIO_DEVICE_NAME,
+        supported_rights: HANDLE_RIGHT_WRITE,
+        read: unsupported_device_read,
+        write: write_audio_bytes,
+        stat_size: 0,
+    },
+    DeviceDescriptor {
         name: NULL_DEVICE_NAME,
         supported_rights: HANDLE_RIGHT_READ | HANDLE_RIGHT_WRITE,
         read: read_null_bytes,
@@ -165,7 +174,7 @@ const DEVICE_DESCRIPTORS: [DeviceDescriptor; 8] = [
     },
 ];
 
-const VIRTUAL_DEVICE_NODES: [VirtualDeviceNode; 11] = [
+const VIRTUAL_DEVICE_NODES: [VirtualDeviceNode; 12] = [
     VirtualDeviceNode {
         full_path: CONSOLE_DEVICE_PATH,
         mount_path: "/console",
@@ -198,6 +207,13 @@ const VIRTUAL_DEVICE_NODES: [VirtualDeviceNode; 11] = [
         full_path: MOUSE_DEVICE_PATH,
         mount_path: "/mouse",
         target_name: MOUSE_DEVICE_NAME,
+        alias_supported_rights: None,
+        visible_in_directory: true,
+    },
+    VirtualDeviceNode {
+        full_path: AUDIO_DEVICE_PATH,
+        mount_path: "/audio",
+        target_name: AUDIO_DEVICE_NAME,
         alias_supported_rights: None,
         visible_in_directory: true,
     },
@@ -321,6 +337,10 @@ fn read_mouse_motion_bytes(buffer: &mut [u8], timeout_ticks: u64) -> Result<usiz
     }
 
     Ok(count)
+}
+
+fn write_audio_bytes(buffer: &[u8]) -> Result<usize> {
+    crate::kernel::drivers::hda::device_write(buffer)
 }
 
 fn read_keyboard_scancode_bytes(buffer: &mut [u8], timeout_ticks: u64) -> Result<usize> {
@@ -494,7 +514,7 @@ mod tests {
     fn virtual_device_directory_metadata_matches_visible_nodes() {
         assert_eq!(
             virtual_device_metadata(VIRTUAL_DEVICE_DIRECTORY_PATH),
-            Some(FileMetadata::new(NodeKind::Directory, 11))
+            Some(FileMetadata::new(NodeKind::Directory, 12))
         );
     }
 
@@ -515,6 +535,7 @@ mod tests {
                 "keyboard",
                 "keyboard-raw",
                 "mouse",
+                "audio",
                 "null",
                 "serial0",
                 "stderr",

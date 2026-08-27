@@ -12,7 +12,9 @@
 //! - Controller reset and initialization: done
 //! - CORB/RIRB setup and verb delivery: done
 //! - Codec enumeration (VENDOR_ID): done
-//! - Audio stream data-path: not yet
+//! - Codec widget enumeration (output converter + PCM format): done
+//! - Playback stream data-path (BDL ring + DMA): done (QEMU best-effort)
+//! - Device node `/system/dev/audio`: done
 
 // ---------------------------------------------------------------------------
 // PCI identifiers
@@ -140,12 +142,33 @@ pub const HDA_SDFMT: usize = 0x12; // Format (16-bit)
 pub const HDA_SDBDPL: usize = 0x18; // BDL Pointer Low (32-bit)
 pub const HDA_SDBDPU: usize = 0x1C; // BDL Pointer High (32-bit)
 
+// Stream Descriptor Control (SDCTL) bits.
+pub const SDCTL_SRUN: u32 = 1 << 0; // Stream Run
+pub const SDCTL_SRUN_RESET: u32 = 1 << 1; // Stream Run (stop / reset latch)
+pub const SDCTL_STRM_TAG_SHIFT: u32 = 4; // Stream tag lives in bits 15:4
+pub const SDCTL_STRM_TAG_MASK: u32 = 0x0FFF << SDCTL_STRM_TAG_SHIFT;
+pub const SDCTL_DIR_SHIFT: u32 = 20; // Direction bit (0 = output, 1 = input)
+pub const SDCTL_DIR_IN: u32 = 1 << SDCTL_DIR_SHIFT;
+
+// Stream Descriptor Status (SDSTS) bits.
+pub const SDSTS_BCIS: u8 = 1 << 0; // Buffer Completion Interrupt Status
+pub const SDSTS_FIFO_READY: u8 = 1 << 3; // FIFO Ready
+
 // ---------------------------------------------------------------------------
 // HDA verb definitions
 // ---------------------------------------------------------------------------
 
 /// Get Parameter verb (12-bit verb ID).
 pub const VERB_GET_PARAMETER: u16 = 0xF00;
+
+/// Set Stream Format verb (payload: stream tag in bits 7:4, format index
+/// in bits 3:0).
+pub const VERB_SET_STREAM_FORMAT: u16 = 0x200;
+/// Set Power State verb (payload: power state; 0 = D0).
+pub const VERB_SET_POWER_STATE: u16 = 0x705;
+/// Set Converter Stream Channel verb (payload: stream tag in bits 7:4,
+/// channel count - 1 in bits 3:0).
+pub const VERB_SET_CONVERTER_STREAM_CHANNEL: u16 = 0x706;
 
 /// Parameter IDs for GET_PARAMETER.
 pub mod param_id {
@@ -167,6 +190,13 @@ pub mod param_id {
     pub const CONFIG_DEFAULT: u8 = 0x1C;
 }
 
+/// AW_CAPABILITIES widget type: bits 20:24 (`0xf << 20`), per the HDA spec
+/// and QEMU's intel-hda-defs.h.
+pub const AW_WCAP_TYPE_SHIFT: u32 = 20;
+pub const AW_WCAP_TYPE_MASK: u32 = 0x0F << AW_WCAP_TYPE_SHIFT;
+/// Widget type 0 = audio output converter.
+pub const AW_WID_AUDIO_OUTPUT: u32 = 0x00;
+
 /// Build a 32-bit HDA verb value.
 ///
 /// Format per the Intel HDA specification:
@@ -184,6 +214,183 @@ pub const fn hda_verb(cad: u8, nid: u8, verb_id: u16, payload: u8) -> u32 {
 /// Build a GET_PARAMETER verb.
 pub const fn get_param(cad: u8, nid: u8, param: u8) -> u32 {
     hda_verb(cad, nid, VERB_GET_PARAMETER, param)
+}
+
+// ---------------------------------------------------------------------------
+// Playback stream: BDL ring geometry and format encoding
+// ---------------------------------------------------------------------------
+
+/// Number of BDL descriptors in the playback ring.
+pub const BDL_ENTRIES: usize = 16;
+/// Size of a single BDL descriptor on the wire (16 bytes).
+pub const BDL_ENTRY_BYTES: usize = 16;
+/// Length of each BDL data buffer (4 KiB = one page frame).
+pub const BDL_ENTRY_LEN: u32 = 4096;
+/// Total playback ring length (BDL_ENTRIES * BDL_ENTRY_LEN).
+pub const BDL_TOTAL_LEN: u32 = (BDL_ENTRIES as u32) * BDL_ENTRY_LEN;
+/// IOC (Interrupt on Completion) flag within a BDL descriptor's dword 3.
+pub const BDL_IOC_BIT: u32 = 1 << 0;
+/// PCM stream type (bits 3:0 of the format word).
+pub const HDA_STREAM_TYPE_PCM: u16 = 0;
+/// Bytes reserved at the ring tail (one interleaved stereo 16-bit frame).
+///
+/// The reserve keeps a completely full ring distinguishable from an empty
+/// one, so `write_pos == read_pos` can only ever mean "empty" and the
+/// producer can never overwrite data the DMA has not yet played.
+pub const BDL_RESERVED_FRAME: u32 = 4;
+
+/// Encode a PCM format into the SDFMT / SET_STREAM_FORMAT format word.
+///
+/// Per the Intel HDA specification the 16-bit format word is laid out as:
+///
+/// | Bits  | Field                                   |
+/// |-------|-----------------------------------------|
+/// | 15:12 | bits per sample (0=8, 1=16, 2=20, 3=24, 4=32) |
+/// | 11:9  | channels - 1                            |
+/// | 8     | base rate multiplier (1x or 4x)          |
+/// | 7:4   | base sample rate                        |
+/// | 3:0   | stream type (0 = PCM)                   |
+///
+/// Unsupported rates and bit depths fall back to the nearest encoding; the
+/// caller is expected to have validated its codec's SUPPORTED_PCM caps.
+pub const fn hda_format(rate_hz: u32, channels: u8, bits_per_sample: u8) -> u16 {
+    let base_rate: u16 = match rate_hz {
+        48000 => 0,
+        44100 => 1,
+        32000 => 2,
+        22050 => 3,
+        16000 => 4,
+        11025 => 5,
+        8000 => 6,
+        96000 => 7,
+        192000 => 8,
+        _ => 0,
+    };
+    let bits: u16 = match bits_per_sample {
+        8 => 0,
+        16 => 1,
+        20 => 2,
+        24 => 3,
+        32 => 4,
+        _ => 1,
+    };
+    let channels = (channels.saturating_sub(1) as u16) & 0x07;
+    (bits << 12) | (channels << 9) | (base_rate << 4) | HDA_STREAM_TYPE_PCM
+}
+
+/// Serialise a BDL descriptor into its 16-byte on-wire layout.
+///
+/// dword 0-1 = little-endian 64-bit buffer address, dword 2 = length, and
+/// dword 3 bit 0 = IOC.
+pub const fn bdl_entry_bytes(address: u64, length: u32, ioc: bool) -> [u8; BDL_ENTRY_BYTES] {
+    let mut out = [0u8; BDL_ENTRY_BYTES];
+    out[0] = (address & 0xFF) as u8;
+    out[1] = ((address >> 8) & 0xFF) as u8;
+    out[2] = ((address >> 16) & 0xFF) as u8;
+    out[3] = ((address >> 24) & 0xFF) as u8;
+    out[4] = ((address >> 32) & 0xFF) as u8;
+    out[5] = ((address >> 40) & 0xFF) as u8;
+    out[6] = ((address >> 48) & 0xFF) as u8;
+    out[7] = ((address >> 56) & 0xFF) as u8;
+    out[8] = (length & 0xFF) as u8;
+    out[9] = ((length >> 8) & 0xFF) as u8;
+    out[10] = ((length >> 16) & 0xFF) as u8;
+    out[11] = ((length >> 24) & 0xFF) as u8;
+    if ioc {
+        out[12] = BDL_IOC_BIT as u8;
+    }
+    out
+}
+
+/// Populate a BDL with `BDL_ENTRIES` descriptors pointing at the data ring
+/// whose first buffer is at physical address `data_phys`.
+///
+/// The descriptors cover the ring in `BDL_ENTRY_LEN`-sized strides, with IOC
+/// raised only on the final descriptor so a fully-consumed ring is detectable
+/// if interrupt wiring is added later.
+pub fn populate_bdl(bdl: &mut [u8], data_phys: u64) -> Option<()> {
+    if bdl.len() < BDL_ENTRIES * BDL_ENTRY_BYTES {
+        return None;
+    }
+    for i in 0..BDL_ENTRIES {
+        let address = data_phys.wrapping_add((i as u64) * BDL_ENTRY_LEN as u64);
+        let ioc = i == BDL_ENTRIES - 1;
+        let entry = bdl_entry_bytes(address, BDL_ENTRY_LEN, ioc);
+        let off = i * BDL_ENTRY_BYTES;
+        bdl[off..off + BDL_ENTRY_BYTES].copy_from_slice(&entry);
+    }
+    Some(())
+}
+
+/// Producer/consumer byte positions of a cyclic playback ring.
+///
+/// The host's writes advance `write_pos`; the controller's DMA engine
+/// advances `read_pos`, which is re-synced from SDLPIB between writes.  Both
+/// positions are tracked modulo the ring length so a full wrap round the ring
+/// is a no-op.  The ring data buffer in the driver is exactly `BDL_TOTAL_LEN`
+/// bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BdlRingState {
+    /// Producer byte position (bytes written, modulo ring length).
+    pub write_pos: u32,
+    /// Consumer byte position (bytes played, modulo ring length).
+    pub read_pos: u32,
+}
+
+impl BdlRingState {
+    /// An empty ring.
+    pub const fn new() -> Self {
+        Self {
+            write_pos: 0,
+            read_pos: 0,
+        }
+    }
+
+    /// Bytes ready for the DMA engine to play.
+    pub fn available(&self) -> u32 {
+        (self.write_pos + BDL_TOTAL_LEN - self.read_pos) % BDL_TOTAL_LEN
+    }
+
+    /// Bytes of free space before the producer would catch the consumer.
+    ///
+    /// One full stereo frame is reserved (see `BDL_RESERVED_FRAME`), so this
+    /// can never report enough space for a write that wraps onto the DMA's
+    /// play position.
+    pub fn free_space(&self) -> u32 {
+        let used = self.available() + BDL_RESERVED_FRAME;
+        BDL_TOTAL_LEN - core::cmp::min(used, BDL_TOTAL_LEN)
+    }
+
+    /// Re-sync the consumer position from the link position in buffer
+    /// (SDLPIB), which counts bytes played modulo the cyclic buffer length.
+    pub fn sync_read_from_link(&mut self, link_pos: u32) {
+        self.read_pos = link_pos % BDL_TOTAL_LEN;
+    }
+
+    /// Copy up to `free_space()` bytes from `src` into the ring at the
+    /// producer position, wrapping at the ring length.
+    ///
+    /// `ring` must be exactly `BDL_TOTAL_LEN` bytes.  Returns the number of
+    /// bytes copied, which is less than `src.len()` only when the ring is
+    /// full.
+    pub fn copy_into(&mut self, ring: &mut [u8], src: &[u8]) -> usize {
+        debug_assert!(ring.len() as u32 == BDL_TOTAL_LEN);
+        let n = core::cmp::min(src.len(), self.free_space() as usize);
+        let pos = (self.write_pos as usize) % ring.len();
+        let first = core::cmp::min(n, ring.len() - pos);
+        ring[pos..pos + first].copy_from_slice(&src[..first]);
+        if first < n {
+            ring[..n - first].copy_from_slice(&src[first..n]);
+        }
+        self.write_pos = ((self.write_pos as usize + n) % ring.len()) as u32;
+        n
+    }
+}
+
+impl Default for BdlRingState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +421,12 @@ mod controller {
     use crate::Result;
     use core::ptr::read_volatile;
     use core::ptr::write_volatile;
+
+    /// Bounded spin budget for waiting on the DMA engine to drain the ring.
+    const MAX_POSITION_SPINS: u32 = 50_000_000;
+
+    /// Bounded poll for codec-present bits after controller reset.
+    const CODEC_WAIT_SPINS: u32 = 10_000_000;
 
     /// MMIO helpers for 32-bit, 16-bit, and 8-bit register access.
     unsafe fn reg_read32(base: *mut u8, offset: usize) -> u32 {
@@ -261,6 +474,20 @@ mod controller {
         rirb_rp: u16,
         /// Vendor/device ID of codec 0 (0 = not probed yet).
         pub codec0_vendor: u32,
+        /// Playback BDL descriptor list (16 entries = 256 bytes, one frame).
+        playback_bdl: Option<DmaBuffer>,
+        /// Playback PCM data ring (BDL_ENTRIES page frames).
+        playback_data: Option<DmaBuffer>,
+        /// Producer/consumer positions for the playback ring.
+        playback_ring: BdlRingState,
+        /// Sample rate the stream is currently programmed for (0 = stopped).
+        active_rate: u32,
+        /// Audio output converter widget NID (0 = no converter found).
+        converter_nid: u8,
+        /// Stream tag used for the playback stream.
+        stream_tag: u8,
+        /// Spins accumulated while waiting for the DMA to drain the ring.
+        position_spins: u32,
     }
 
     // SAFETY: HdaController owns its MMIO mapping and DMA buffers exclusively.
@@ -302,6 +529,13 @@ mod controller {
                 corb_wp: 0,
                 rirb_rp: 0xFFFF,
                 codec0_vendor: 0,
+                playback_bdl: None,
+                playback_data: None,
+                playback_ring: BdlRingState::new(),
+                active_rate: 0,
+                converter_nid: 0,
+                stream_tag: 0,
+                position_spins: 0,
             };
 
             // Reset controller.
@@ -335,6 +569,30 @@ mod controller {
                 }
             }
 
+            // Enumerate the codec widget graph for a playback output
+            // converter and allocate the playback DMA buffers when one is
+            // found.
+            match ctrl.find_output_converter(0) {
+                Ok(nid) => {
+                    ctrl.converter_nid = nid;
+                    ctrl.stream_tag = 1;
+                    if let (Some(mut bdl), Some(data)) =
+                        (DmaBuffer::allocate(1), DmaBuffer::allocate(BDL_ENTRIES))
+                    {
+                        let _ = populate_bdl(bdl.as_mut_slice(), data.phys_addr() as u64);
+                        ctrl.playback_bdl = Some(bdl);
+                        ctrl.playback_data = Some(data);
+                        println!(
+                            "[hda   ] playback: output converter nid={} stream_tag={}",
+                            nid, ctrl.stream_tag
+                        );
+                    }
+                }
+                Err(e) => {
+                    println!("[hda   ] no output converter found: {}", e.as_str());
+                }
+            }
+
             println!("[hda   ] controller initialised");
             Some(ctrl)
         }
@@ -345,6 +603,15 @@ mod controller {
 
         /// Reset the controller (GCTL.CRST toggle).
         unsafe fn reset(&mut self) -> Result<()> {
+            // Clear stale codec wake flags before running the reset (W1C),
+            // mirroring Linux's azx_reset ordering: the codec re-asserts
+            // STATESTS on the CRST de-assert edge, and clearing it afterwards
+            // would swallow that edge.
+            let statests = reg_read16(self.regs, HDA_STATESTS);
+            if statests != 0 {
+                reg_write16(self.regs, HDA_STATESTS, statests);
+            }
+
             // Assert reset (CRST = 0).
             reg_write32(self.regs, HDA_GCTL, 0);
             for _ in 0..100_000 {
@@ -370,12 +637,6 @@ mod controller {
             // Wait 50 us for link to stabilise (simple spin loop).
             for _ in 0..10_000 {
                 core::hint::spin_loop();
-            }
-
-            // Clear STATESTS by writing back the read value (W1C).
-            let statests = reg_read16(self.regs, HDA_STATESTS);
-            if statests != 0 {
-                reg_write16(self.regs, HDA_STATESTS, statests);
             }
 
             Ok(())
@@ -497,18 +758,27 @@ mod controller {
 
         /// Check STATESTS to discover which codecs are present.
         ///
+        /// Codecs assert their STATESTS bits shortly after the controller
+        /// leaves reset, so poll briefly rather than reading once (QEMU sets
+        /// the bits on a timer; real silicon is equally asynchronous).
+        ///
         /// Returns `true` if at least one codec is detected.
         unsafe fn detect_codecs(&mut self) -> bool {
-            // After reset the STATESTS bits are set for each present codec.
-            let statests = reg_read16(self.regs, HDA_STATESTS);
-            let mut present = false;
-            for i in 0..MAX_CODECS {
-                if statests & (1u16 << i) != 0 {
-                    println!("[hda   ] codec {} present", i);
-                    present = true;
+            for _ in 0..CODEC_WAIT_SPINS {
+                let statests = reg_read16(self.regs, HDA_STATESTS);
+                let mut present = false;
+                for i in 0..MAX_CODECS {
+                    if statests & (1u16 << i) != 0 {
+                        println!("[hda   ] codec {} present", i);
+                        present = true;
+                    }
                 }
+                if present {
+                    return true;
+                }
+                core::hint::spin_loop();
             }
-            present
+            false
         }
 
         // -------------------------------------------------------------------
@@ -521,17 +791,20 @@ mod controller {
         /// advanced.  The function then polls the RIRB write pointer for a
         /// response.
         unsafe fn send_verb(&mut self, verb: u32) -> Result<u32> {
-            // Write verb to CORB at the next write-pointer position.
-            let corb_idx = self.corb_wp as usize % CORB_ENTRIES;
+            // Write the verb at CORBWP + 1, then advance CORBWP to it. The
+            // controller reads from CORBRP + 1, so the first verb lands at
+            // entry 1, matching Linux's azx_corb_send_cmd semantics.
+            let corb_idx = (self.corb_wp as usize + 1) % CORB_ENTRIES;
             let corb_ptr = self.corb_buf.as_ptr() as *mut u32;
             write_volatile(corb_ptr.add(corb_idx), verb);
 
-            // Advance CORBWP.
-            let new_wp = ((self.corb_wp as usize + 1) % CORB_ENTRIES) as u16;
+            let new_wp = corb_idx as u16;
             reg_write16(self.regs, HDA_CORBWP, new_wp);
             self.corb_wp = new_wp;
 
-            // Poll for a response in the RIRB.
+            // Poll for a response in the RIRB. RIRBWP advancing is the
+            // readiness signal; the response entry is written at the new
+            // pointer position, so read it there.
             let last_rp = self.rirb_rp;
             for _ in 0..500_000 {
                 let wp = reg_read16(self.regs, HDA_RIRBWP);
@@ -542,18 +815,22 @@ mod controller {
                     continue;
                 }
 
-                // A new response is available. Read it at the WP position.
+                // The controller writes the response entry at the new write
+                // pointer before RIRBWP becomes visible, so it sits at wp.
                 let rirb_idx = wp as usize % RIRB_ENTRIES;
                 let rirb_ptr = self.rirb_buf.as_ptr() as *const u32;
                 let resp_low = read_volatile(rirb_ptr.add(rirb_idx * 2));
                 let resp_high = read_volatile(rirb_ptr.add(rirb_idx * 2 + 1));
 
-                // Check the VALID flag: bit 0 of the upper 32-bit word.
-                // Per the HDA spec, bit 32 of the 64-bit entry is VALID.
-                if resp_high & 0x01 == 0 {
-                    // Response not yet valid — spin a bit.
+                // Some controllers (QEMU's intel-hda included) leave the
+                // VALID flag clear on solicited responses — their upper word
+                // carries just the codec address — so give the DMA a short
+                // settle window, then trust the write-pointer advance.
+                for _ in 0..100 {
+                    if resp_high & 0x01 != 0 {
+                        break;
+                    }
                     core::hint::spin_loop();
-                    continue;
                 }
 
                 // Consumed — remember this position.
@@ -573,6 +850,175 @@ mod controller {
             let verb = get_param(cad, nid, param);
             self.send_verb(verb)
         }
+
+        // -------------------------------------------------------------------
+        // Codec widget enumeration
+        // -------------------------------------------------------------------
+
+        /// Read the subordinate node list of `nid`: (start node, count).
+        unsafe fn subordinate_node_count(&mut self, cad: u8, nid: u8) -> Result<(u8, u16)> {
+            let v = self.read_codec_param(cad, nid, param_id::SUBORDINATE_NODE_COUNT)?;
+            let start = (v & 0xFF) as u8;
+            let count = ((v >> 16) & 0xFF) as u8;
+            Ok((start, count as u16))
+        }
+
+        /// Find an audio output converter widget reachable from the root node.
+        ///
+        /// Walks root (0) -> audio function group -> widget list and returns
+        /// the first widget whose AW_CAPABILITIES type (bits 20:24) is 0
+        /// (audio output converter).
+        unsafe fn find_output_converter(&mut self, cad: u8) -> Result<u8> {
+            let (afg, _count) = self.subordinate_node_count(cad, 0)?;
+            // Audio function groups report type 0x1 in FUNCTION_GROUP_TYPE.
+            let fgt = self.read_codec_param(cad, afg, param_id::FUNCTION_GROUP_TYPE)?;
+            if fgt & 0xFF != 0x01 {
+                return Err(crate::Error::NotFound);
+            }
+            let (start, count) = self.subordinate_node_count(cad, afg)?;
+            for i in 0..count {
+                let nid = start.wrapping_add(i as u8);
+                let caps = self.read_codec_param(cad, nid, param_id::AW_CAPABILITIES)?;
+                if (caps & AW_WCAP_TYPE_MASK) >> AW_WCAP_TYPE_SHIFT == AW_WID_AUDIO_OUTPUT {
+                    return Ok(nid);
+                }
+            }
+            Err(crate::Error::NotFound)
+        }
+
+        // -------------------------------------------------------------------
+        // Playback stream
+        // -------------------------------------------------------------------
+
+        /// Read the stream's link position in buffer (SDLPIB).
+        unsafe fn stream_link_position(&self) -> u32 {
+            reg_read32(self.regs, HDA_SD_BASE + HDA_SDLPIB)
+        }
+
+        /// Stop the playback stream by clearing SDCTL.SRUN (two-step).
+        unsafe fn stop_playback_stream(&mut self) {
+            let sd = HDA_SD_BASE;
+            let ctl = reg_read32(self.regs, sd + HDA_SDCTL);
+            if ctl & SDCTL_SRUN == 0 {
+                return;
+            }
+            // Assert the stop latch, drop SRUN, then release the latch.
+            reg_write32(self.regs, sd + HDA_SDCTL, ctl | SDCTL_SRUN_RESET);
+            reg_write32(
+                self.regs,
+                sd + HDA_SDCTL,
+                ctl & !(SDCTL_SRUN | SDCTL_SRUN_RESET),
+            );
+        }
+
+        /// Program the stream descriptor for playback at `format` and start
+        /// the DMA engine (stream 0, output direction).
+        unsafe fn setup_playback_stream(&mut self, format: u16) -> Result<()> {
+            let sd = HDA_SD_BASE;
+            self.stop_playback_stream();
+            // Clear stale status (W1C).
+            reg_write8(self.regs, sd + HDA_SDSTS, SDSTS_BCIS | SDSTS_FIFO_READY);
+            // Format, cyclic buffer length, and BDL base address.
+            reg_write16(self.regs, sd + HDA_SDFMT, format);
+            reg_write32(self.regs, sd + HDA_SDCBL, BDL_TOTAL_LEN);
+            let bdl = self
+                .playback_bdl
+                .as_ref()
+                .ok_or(crate::Error::Unsupported)?;
+            let bdl_phys = bdl.phys_addr() as u64;
+            reg_write32(self.regs, sd + HDA_SDBDPL, bdl_phys as u32);
+            reg_write32(self.regs, sd + HDA_SDBDPU, (bdl_phys >> 32) as u32);
+            // Start: stream tag + output direction (DIR = 0) + SRUN.
+            let sctl = ((self.stream_tag as u32) & 0x0F) << SDCTL_STRM_TAG_SHIFT | SDCTL_SRUN;
+            reg_write32(self.regs, sd + HDA_SDCTL, sctl);
+            Ok(())
+        }
+
+        /// Route the playback stream into the output converter and power it
+        /// to D0.
+        unsafe fn setup_codec_playback(&mut self, cad: u8) -> Result<()> {
+            let converter = self.converter_nid;
+            if converter == 0 {
+                return Err(crate::Error::NotFound);
+            }
+            let tag = self.stream_tag & 0x0F;
+            // Power the widget to D0.
+            self.send_verb(hda_verb(cad, converter, VERB_SET_POWER_STATE, 0))?;
+            // Point the converter at the stream tag (format index 0).
+            self.send_verb(hda_verb(
+                cad,
+                converter,
+                VERB_SET_STREAM_FORMAT,
+                (tag << 4) | 0x00,
+            ))?;
+            // Two-channel (stereo) sample slot mapping.
+            self.send_verb(hda_verb(
+                cad,
+                converter,
+                VERB_SET_CONVERTER_STREAM_CHANNEL,
+                (tag << 4) | 0x01,
+            ))?;
+            Ok(())
+        }
+
+        /// Copy PCM samples into the BDL ring and wait for the DMA engine to
+        /// drain it, re-programming the stream if `rate` changed.
+        ///
+        /// `samples` must be interleaved 16-bit stereo PCM.  The write blocks
+        /// (with a bounded spin) while the ring is full so a caller can never
+        /// overrun a codec draining slower than it is fed.
+        ///
+        /// # Safety
+        ///
+        /// The caller must hold the only reference to this controller; the
+        /// method touches its MMIO mapping and DMA buffers exclusively.
+        pub unsafe fn write_pcm(&mut self, rate: u32, samples: &[u8]) -> Result<()> {
+            if self.converter_nid == 0 {
+                return Err(crate::Error::Unsupported);
+            }
+            if rate == 0 {
+                return Err(crate::Error::InvalidArgument);
+            }
+
+            // Re-program the stream when the caller switches sample rates.
+            if self.active_rate != rate {
+                self.stop_playback_stream();
+                let format = hda_format(rate, 2, 16);
+                self.setup_playback_stream(format)?;
+                self.setup_codec_playback(0)?;
+                self.playback_ring = BdlRingState::new();
+                self.active_rate = rate;
+                self.position_spins = 0;
+            }
+
+            let mut done = 0usize;
+            while done < samples.len() {
+                let link_pos = self.stream_link_position();
+                self.playback_ring.sync_read_from_link(link_pos);
+                let free = self.playback_ring.free_space();
+                if free == 0 {
+                    // Bounded wait so a stalled codec cannot wedge the caller
+                    // forever.
+                    self.position_spins += 1;
+                    if self.position_spins >= MAX_POSITION_SPINS {
+                        return Err(crate::Error::TimedOut);
+                    }
+                    core::hint::spin_loop();
+                    continue;
+                }
+                let chunk = core::cmp::min(free as usize, samples.len() - done);
+                let data = self
+                    .playback_data
+                    .as_mut()
+                    .ok_or(crate::Error::Unsupported)?;
+                let written = self
+                    .playback_ring
+                    .copy_into(data.as_mut_slice(), &samples[done..done + chunk]);
+                done += written;
+                self.position_spins = 0;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -591,6 +1037,7 @@ static HDA_CONTROLLER: Mutex<Option<HdaController>> = Mutex::new(None);
 
 use crate::kernel::drivers::Driver;
 use crate::kernel::drivers::DriverCategory;
+use crate::Result;
 use alloc::sync::Arc;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
@@ -623,8 +1070,18 @@ pub fn driver() -> Arc<dyn Driver> {
 /// Find the HDA controller on PCI and initialise it.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn probe_hda_pci() -> crate::Result<()> {
+    use crate::arch::x86_64::pci::pci_config_read_u16;
+    use crate::arch::x86_64::pci::pci_config_write_u16;
     use crate::arch::x86_64::pci::pci_enumerate_buses;
+    use crate::arch::x86_64::pci::PciAddress;
+    use crate::arch::x86_64::pci::COMMAND;
     use crate::println;
+
+    // PCI COMMAND register bits the controller needs before it can DMA
+    // (mirrors the virtio-net setup).
+    const CMD_IO_SPACE: u16 = 1 << 0;
+    const CMD_MEMORY_SPACE: u16 = 1 << 1;
+    const CMD_BUS_MASTER: u16 = 1 << 2;
 
     let devices = pci_enumerate_buses();
     let mut found = false;
@@ -638,6 +1095,19 @@ fn probe_hda_pci() -> crate::Result<()> {
             "[hda   ] found HDA controller at {:02x}:{:02x}.{:x} vendor={:#06x} device={:#06x}",
             info.bus, info.device, info.function, info.vendor_id, info.device_id
         );
+
+        // Enable IO Space, Memory Space, and Bus Master so the CORB/RIRB
+        // DMA engines can access guest RAM (QEMU keeps the device's DMA
+        // address space empty until the BUS_MASTER bit is set).
+        let pci_addr = PciAddress::new(info.bus, info.device, info.function);
+        let cmd = unsafe { pci_config_read_u16(pci_addr, COMMAND) };
+        unsafe {
+            pci_config_write_u16(
+                pci_addr,
+                COMMAND,
+                cmd | CMD_IO_SPACE | CMD_MEMORY_SPACE | CMD_BUS_MASTER,
+            );
+        }
 
         let bar0 = &info.bars[0];
         if !bar0.is_mmio || bar0.size == 0 {
@@ -681,12 +1151,57 @@ fn probe_hda_pci() -> crate::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Device node ABI (/system/dev/audio)
+// ---------------------------------------------------------------------------
+
+/// Length of the sample-rate header prefixing every write to the audio node.
+///
+/// ABI: `[u32le sample_rate][interleaved 16-bit stereo PCM samples]`.
+pub const AUDIO_STREAM_HEADER_LEN: usize = 4;
+
+/// Handle a write to the `/system/dev/audio` device node.
+///
+/// The sample-rate header selects the stream format; PCM samples follow.
+/// On targets without a bare-metal HDA controller this always fails with
+/// [`crate::Error::Unsupported`].
+pub fn device_write(buffer: &[u8]) -> Result<usize> {
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    {
+        if buffer.len() < AUDIO_STREAM_HEADER_LEN {
+            return Err(crate::Error::InvalidArgument);
+        }
+        let rate = u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
+        let samples = &buffer[AUDIO_STREAM_HEADER_LEN..];
+        if samples.is_empty() {
+            return Ok(AUDIO_STREAM_HEADER_LEN);
+        }
+        let mut guard = HDA_CONTROLLER.lock();
+        let ctrl = guard.as_mut().ok_or(crate::Error::Unsupported)?;
+        // Safety: the mutex guards the controller, so this holds the only
+        // reference to its MMIO mapping and DMA buffers.
+        unsafe { ctrl.write_pcm(rate, samples) }?;
+        Ok(buffer.len())
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+    {
+        let _ = buffer;
+        Err(crate::Error::Unsupported)
+    }
+}
+
+/// Reading the audio device node is unsupported (playback-only).
+pub fn device_read(_buffer: &mut [u8], _timeout_ticks: u64) -> Result<usize> {
+    Err(crate::Error::Unsupported)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn hda_verb_build_get_param() {
@@ -741,5 +1256,202 @@ mod tests {
     #[test]
     fn rirbctl_bits_defined() {
         assert_ne!(RIRBCTL_DMAEN, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Format encoding
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn hda_format_stereo_16bit_48k() {
+        // 48 kHz / 16-bit / 2 ch is the canonical 0x1200 format word.
+        assert_eq!(hda_format(48000, 2, 16), 0x1200);
+    }
+
+    #[test]
+    fn hda_format_base_rates() {
+        assert_eq!(hda_format(48000, 2, 16) & 0x00F0, 0x0000);
+        assert_eq!(hda_format(44100, 2, 16) & 0x00F0, 0x0010);
+        assert_eq!(hda_format(32000, 2, 16) & 0x00F0, 0x0020);
+        assert_eq!(hda_format(8000, 2, 16) & 0x00F0, 0x0060);
+        assert_eq!(hda_format(96000, 2, 16) & 0x00F0, 0x0070);
+        assert_eq!(hda_format(192000, 2, 16) & 0x00F0, 0x0080);
+    }
+
+    #[test]
+    fn hda_format_channels() {
+        // channels - 1 in bits 11:9.
+        assert_eq!(hda_format(48000, 1, 16) & 0x0E00, 0x0000);
+        assert_eq!(hda_format(48000, 2, 16) & 0x0E00, 0x0200);
+        assert_eq!(hda_format(48000, 6, 16) & 0x0E00, 0x0A00);
+    }
+
+    #[test]
+    fn hda_format_bit_depth() {
+        assert_eq!(hda_format(48000, 2, 8) & 0xF000, 0x0000);
+        assert_eq!(hda_format(48000, 2, 16) & 0xF000, 0x1000);
+        assert_eq!(hda_format(48000, 2, 24) & 0xF000, 0x3000);
+        assert_eq!(hda_format(48000, 2, 32) & 0xF000, 0x4000);
+    }
+
+    #[test]
+    fn hda_format_falls_back_to_nearest_encoding() {
+        // Unsupported rate/depth degrade to 48 kHz / 16-bit.
+        assert_eq!(hda_format(12345, 2, 7), 0x1200);
+        // A zero channel count still yields a valid PCM word.
+        assert_eq!(hda_format(48000, 0, 16) & 0x0E00, 0x0000);
+    }
+
+    // -----------------------------------------------------------------------
+    // BDL serialisation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bdl_entry_serialises_little_endian() {
+        let e = bdl_entry_bytes(0x1234_5678_9ABC_0DEF, 4096, false);
+        assert_eq!(e[0..8], [0xEF, 0x0D, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12]);
+        assert_eq!(e[8..12], [0x00, 0x10, 0x00, 0x00]);
+        assert_eq!(e[12], 0x00);
+        assert_eq!(e[13..16], [0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn bdl_entry_raises_ioc_flag() {
+        assert_eq!(bdl_entry_bytes(0, 4096, true)[12], BDL_IOC_BIT as u8);
+        assert_eq!(bdl_entry_bytes(0, 4096, false)[12], 0);
+    }
+
+    #[test]
+    fn populate_bdl_walks_the_ring() {
+        let mut bdl = vec![0u8; BDL_ENTRIES * BDL_ENTRY_BYTES];
+        let base = 0x1_0000u64;
+        assert_eq!(populate_bdl(&mut bdl, base), Some(()));
+        // First entry points at the data base with a full buffer length.
+        assert_eq!(
+            &bdl[0..BDL_ENTRY_BYTES],
+            &bdl_entry_bytes(base, BDL_ENTRY_LEN, false)[..]
+        );
+        // Each stride advances by exactly one buffer length.
+        let mid = base + 7 * BDL_ENTRY_LEN as u64;
+        assert_eq!(
+            &bdl[7 * BDL_ENTRY_BYTES..8 * BDL_ENTRY_BYTES],
+            &bdl_entry_bytes(mid, BDL_ENTRY_LEN, false)[..]
+        );
+        // The final entry points at the last buffer and raises IOC.
+        let last_base = base + (BDL_ENTRIES as u64 - 1) * BDL_ENTRY_LEN as u64;
+        let last = &bdl[BDL_ENTRY_BYTES * (BDL_ENTRIES - 1)..BDL_ENTRY_BYTES * BDL_ENTRIES];
+        assert_eq!(last, &bdl_entry_bytes(last_base, BDL_ENTRY_LEN, true)[..]);
+    }
+
+    #[test]
+    fn populate_bdl_rejects_short_buffer() {
+        let mut bdl = [0u8; 8];
+        assert_eq!(populate_bdl(&mut bdl, 0x1000), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // BDL ring state
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ring_starts_empty() {
+        let ring = BdlRingState::new();
+        assert_eq!(ring.available(), 0);
+        assert_eq!(ring.free_space(), BDL_TOTAL_LEN - BDL_RESERVED_FRAME);
+    }
+
+    #[test]
+    fn ring_copy_single_segment() {
+        let mut ring_buf = vec![0u8; BDL_TOTAL_LEN as usize];
+        let mut ring = BdlRingState::new();
+        let src = [1u8, 2, 3, 4];
+        assert_eq!(ring.copy_into(&mut ring_buf, &src), 4);
+        assert_eq!(ring.write_pos, 4);
+        assert_eq!(ring.available(), 4);
+        assert_eq!(&ring_buf[..4], &src);
+    }
+
+    #[test]
+    fn ring_available_tracks_consumer() {
+        let mut ring = BdlRingState::new();
+        ring.write_pos = 100;
+        ring.read_pos = 40;
+        assert_eq!(ring.available(), 60);
+        assert_eq!(ring.free_space(), BDL_TOTAL_LEN - BDL_RESERVED_FRAME - 60);
+    }
+
+    #[test]
+    fn ring_sync_read_from_link_wraps() {
+        let mut ring = BdlRingState::new();
+        ring.write_pos = 0x2000;
+        // A link position past a full wrap lands in the same modulo space.
+        ring.sync_read_from_link(BDL_TOTAL_LEN + 0x100);
+        assert_eq!(ring.read_pos, 0x100);
+        assert_eq!(ring.available(), 0x1F00);
+    }
+
+    #[test]
+    fn ring_copy_clamps_to_free_space() {
+        let mut ring_buf = vec![0u8; BDL_TOTAL_LEN as usize];
+        let mut ring = BdlRingState::new();
+        // Near the reserve boundary only 16 bytes fit before the ring is full.
+        ring.write_pos = BDL_TOTAL_LEN - 20;
+        assert_eq!(ring.free_space(), 16);
+        let src = [7u8; 32];
+        assert_eq!(ring.copy_into(&mut ring_buf, &src), 16);
+        assert_eq!(ring.write_pos, BDL_TOTAL_LEN - 4);
+        let start = (BDL_TOTAL_LEN - 20) as usize;
+        let end = (BDL_TOTAL_LEN - 4) as usize;
+        assert_eq!(&ring_buf[start..end], &[7u8; 16]);
+    }
+
+    #[test]
+    fn ring_reserve_prevents_catching_the_consumer() {
+        let mut ring_buf = vec![0u8; BDL_TOTAL_LEN as usize];
+        let mut ring = BdlRingState::new();
+        // Fill to the maximum the reserve allows.
+        let n = ring.free_space() as usize;
+        assert_eq!(n, (BDL_TOTAL_LEN - BDL_RESERVED_FRAME) as usize);
+        let src = vec![0xA5u8; n];
+        assert_eq!(ring.copy_into(&mut ring_buf, &src), n);
+        // The ring is full: one more copy writes nothing.
+        assert_eq!(ring.copy_into(&mut ring_buf, &[1u8, 2, 3, 4]), 0);
+        assert_eq!(ring.free_space(), 0);
+        // Draining one frame opens exactly one frame of space.
+        ring.sync_read_from_link(BDL_RESERVED_FRAME);
+        assert_eq!(ring.free_space(), BDL_RESERVED_FRAME);
+    }
+
+    #[test]
+    fn ring_write_pos_wraps_across_copies() {
+        let mut ring_buf = vec![0u8; BDL_TOTAL_LEN as usize];
+        let mut ring = BdlRingState::new();
+        // Fill to the reserve boundary, then drain one frame and top up —
+        // the producer position must cycle round without meeting the consumer.
+        let first = ring.free_space() as usize;
+        ring.copy_into(&mut ring_buf, &vec![0x11u8; first]);
+        ring.sync_read_from_link(BDL_RESERVED_FRAME);
+        let second = ring.free_space() as usize;
+        assert_eq!(second, BDL_RESERVED_FRAME as usize);
+        ring.copy_into(&mut ring_buf, &vec![0x22u8; second]);
+        assert_eq!(ring.write_pos, 0); // wrapped cleanly
+        assert_eq!(ring.read_pos, BDL_RESERVED_FRAME);
+        // The tail bytes just written landed where the DMA will play them.
+        assert_eq!(&ring_buf[first..first + second], &vec![0x22u8; second][..]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Device node ABI (host build: no bare-metal controller)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn audio_node_write_is_unsupported_on_host() {
+        assert!(device_write(&[0x80, 0xBB, 0x00, 0x00, 1, 2]).is_err());
+    }
+
+    #[test]
+    fn audio_node_read_is_unsupported() {
+        let mut buf = [0u8; 8];
+        assert!(device_read(&mut buf, 0).is_err());
     }
 }
