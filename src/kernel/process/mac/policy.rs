@@ -15,6 +15,8 @@ use super::types::MacType;
 
 /// The loaded MAC policy.  When `enabled` is false (the default) every check
 /// is permissive, so loading no policy changes existing behaviour at all.
+/// Once enforcement is enabled, requests that match no rule are denied by
+/// default (`default_deny` starts true).
 #[derive(Debug, Clone)]
 pub struct MacPolicy {
     /// Allow rules, first-match wins.
@@ -29,7 +31,8 @@ impl MacPolicy {
     pub const fn new() -> Self {
         Self {
             rules: Vec::new(),
-            default_deny: false,
+            // Unmatched requests are denied once enforcement is enabled.
+            default_deny: true,
             enabled: false,
         }
     }

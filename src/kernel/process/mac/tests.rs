@@ -103,7 +103,29 @@ fn default_deny_denies_unmatched() {
 }
 
 #[test]
-fn default_allow_allows_unmatched() {
+fn fresh_policy_defaults_to_deny() {
+    // A freshly constructed policy is permissive until enabled, but defaults
+    // to deny-by-default for unmatched requests once enforcement is on.
+    let policy = MacPolicy::new();
+    assert!(!policy.enabled);
+    assert!(policy.default_deny);
+
+    let mut policy = MacPolicy::new();
+    policy.enabled = true;
+    assert_eq!(
+        policy.decision(
+            MAC_TYPE_USER,
+            MAC_TYPE_SYSTEM,
+            MAC_CLASS_FILE,
+            MAC_PERM_READ
+        ),
+        Some(false)
+    );
+}
+
+#[test]
+fn explicit_default_allow_still_allows_unmatched() {
+    // Manually opting into an allow-default remains supported.
     let mut policy = MacPolicy::new();
     policy.enabled = true;
     policy.default_deny = false;
