@@ -316,20 +316,35 @@ fn handle_interrupt(frame: &mut TrapFrame) {
             }
         }
         INTERRUPT_SUPERVISOR_EXTERNAL => {
-            // PLIC external interrupt.
-            let claim = super::interrupt_controller::claim_interrupt();
-            if claim != 0 {
-                crate::kernel::irq_stats::record_irq(claim);
-                let tick = super::timer::prepare_interrupt(claim);
-                if let Some(ticks) = tick {
-                    let preempted = crate::kernel::process::on_timer_tick(ticks);
-                    let _ = preempted;
+            if super::aia_imsic::has_aia_imsic() {
+                // AIA IMSIC is the external-interrupt source: claim, dispatch
+                // through the per-IRQ handler table, and complete the claim.
+                let claimed = super::aia_imsic::handle_pending_external();
+                if claimed != 0 {
+                    // A timer wired through an MSI still drives the tick.
+                    let tick = super::timer::prepare_interrupt(claimed);
+                    if let Some(ticks) = tick {
+                        let preempted = crate::kernel::process::on_timer_tick(ticks);
+                        let _ = preempted;
+                    }
+                    advance_past_idle_wfi(frame);
                 }
+            } else {
+                // PLIC external interrupt.
+                let claim = super::interrupt_controller::claim_interrupt();
+                if claim != 0 {
+                    crate::kernel::irq_stats::record_irq(claim);
+                    let tick = super::timer::prepare_interrupt(claim);
+                    if let Some(ticks) = tick {
+                        let preempted = crate::kernel::process::on_timer_tick(ticks);
+                        let _ = preempted;
+                    }
 
-                // End of interrupt.
-                super::interrupt_controller::PLIC_CONTROLLER.end_of_interrupt(claim);
+                    // End of interrupt.
+                    super::interrupt_controller::PLIC_CONTROLLER.end_of_interrupt(claim);
 
-                advance_past_idle_wfi(frame);
+                    advance_past_idle_wfi(frame);
+                }
             }
         }
         INTERRUPT_SUPERVISOR_SOFTWARE => {

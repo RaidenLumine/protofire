@@ -68,7 +68,13 @@ fn controller() -> &'static dyn InterruptController {
 
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 fn controller() -> &'static dyn InterruptController {
-    &riscv64::interrupt_controller::PLIC_CONTROLLER
+    // With AIA enabled the IMSIC is the MSI receiver; without it the PLIC
+    // remains the external-interrupt source.
+    if riscv64::aia_imsic::has_aia_imsic() {
+        &riscv64::aia_imsic::IMSIC_CONTROLLER
+    } else {
+        &riscv64::interrupt_controller::PLIC_CONTROLLER
+    }
 }
 
 #[cfg(not(any(
@@ -81,6 +87,10 @@ fn controller() -> &'static dyn InterruptController {
 }
 
 pub fn init() {
+    // Give the riscv64 AIA IMSIC a chance to arm itself from the platform's
+    // device tree before the controller is selected below.
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    riscv64::aia_imsic::init_from_fdt();
     controller().init();
 }
 

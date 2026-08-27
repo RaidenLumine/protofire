@@ -96,6 +96,9 @@ pub struct PlatformInfo {
     pub rtc_base: Option<usize>,
     /// RISC-V PLIC (Platform-Level Interrupt Controller) base address.
     pub plic_base: Option<usize>,
+    /// RISC-V AIA IMSIC group base address (first hart's IMSIC file),
+    /// discovered from a `riscv,imsic` node's `reg` property.
+    pub imsic_base: Option<usize>,
     /// PCIe ECAM (MMCONFIG) base address, discovered from
     /// `compatible = "pci-host-ecam-generic"`.
     pub ecam_base: Option<usize>,
@@ -136,6 +139,7 @@ impl PlatformInfo {
             timer_frequency: None,
             rtc_base: None,
             plic_base: None,
+            imsic_base: None,
             ecam_base: None,
             ecam_start_bus: None,
             ecam_end_bus: None,
@@ -852,6 +856,13 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             // RISC-V PLIC: QEMU virt at 0x0C00_0000.
                             if (0x0C00_0000..0x0D00_0000).contains(&addr) {
                                 info.plic_base = Some(addr as usize);
+                            }
+                            // RISC-V AIA IMSIC group: QEMU virt (AIA) places
+                            // hart 0's IMSIC file at 0x2400_0000.
+                            if info.imsic_base.is_none()
+                                && (0x2400_0000..0x2500_0000).contains(&addr)
+                            {
+                                info.imsic_base = Some(addr as usize);
                             }
                             // PCIe ECAM: capture from pci-host-ecam-generic node.
                             if current_is_pci_host
@@ -1810,6 +1821,29 @@ mod tests {
         let blob = build_qemu_virt_fdt();
         let info = parse_fdt(blob.as_ptr() as usize);
         assert_eq!(info.timer_frequency, Some(62_500_000));
+    }
+
+    #[test]
+    fn parse_fdt_extracts_imsic_base() {
+        let blob = build_small_fdt(|sblock, str_off| {
+            // `reg` = (0x2400_0000, 0x4000) under the root's 2/2 cell sizing.
+            let reg = {
+                let mut v = Vec::new();
+                v.extend_from_slice(&be32(0));
+                v.extend_from_slice(&be32(0x2400_0000));
+                v.extend_from_slice(&be32(0));
+                v.extend_from_slice(&be32(0x4000));
+                v
+            };
+            emit_node(
+                sblock,
+                "imsic@24000000",
+                str_off,
+                &[("compatible", b"riscv,imsic\0"), ("reg", &reg)],
+            );
+        });
+        let info = parse_fdt(blob.as_ptr() as usize);
+        assert_eq!(info.imsic_base, Some(0x2400_0000));
     }
 
     // ── Small generic FDT builder for timer-frequency tests ──────────────
