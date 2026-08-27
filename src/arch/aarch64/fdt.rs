@@ -67,6 +67,9 @@ const COMPAT_RISCV_PLIC0: &str = "riscv,plic0";
 const COMPAT_NS16550A: &str = "ns16550a";
 const COMPAT_GOLDFISH_RTC: &str = "google,goldfish-rtc";
 const COMPAT_PCI_HOST_ECAM: &str = "pci-host-ecam-generic";
+// Clock-controller nodes (simple clocks with no firmware/mailbox interface).
+const COMPAT_FIXED_CLOCK: &str = "fixed-clock";
+const COMPAT_FIXED_FACTOR_CLOCK: &str = "fixed-factor-clock";
 
 // ---------------------------------------------------------------------------
 // PlatformInfo
@@ -121,6 +124,9 @@ pub struct PlatformInfo {
     /// Maximum CPU frequency in Hz, from the same OPP sources as
     /// `cpu_freq_min_hz`.
     pub cpu_freq_max_hz: Option<u64>,
+    /// Nominal CPU clock rate in Hz, discovered by following a CPU node's
+    /// `clocks` phandle to a `fixed-clock` / `fixed-factor-clock` controller.
+    pub cpu_clock_rate_hz: Option<u64>,
 }
 
 impl PlatformInfo {
@@ -149,6 +155,7 @@ impl PlatformInfo {
             memory_size: None,
             cpu_freq_min_hz: None,
             cpu_freq_max_hz: None,
+            cpu_clock_rate_hz: None,
         }
     }
 }
@@ -532,6 +539,26 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let mut opp_node_hz: Option<u64> = None;
     let mut opp_node_disabled: bool = false;
 
+    // ── Clock-controller tracking ───────────────────────────────────────
+    // fixed-clock controllers: (phandle, rate_hz)
+    let mut fixed_clocks: [(u32, u64); 8] = [(0, 0); 8];
+    let mut fixed_clock_count: usize = 0;
+    // fixed-factor-clock controllers: (phandle, parent_phandle, mult, div)
+    let mut factor_clocks: [(u32, u32, u32, u32); 8] = [(0, 0, 0, 0); 8];
+    let mut factor_clock_count: usize = 0;
+    // First phandle cell of each CPU node's `clocks` property.
+    let mut cpu_clock_phandles: [u32; 16] = [0; 16];
+    let mut cpu_clock_count: usize = 0;
+    // Per-node clock state while walking the tree.
+    let mut clock_node_active: bool = false;
+    let mut clock_node_depth: usize = usize::MAX;
+    let mut node_is_fixed_clock: bool = false;
+    let mut node_is_factor_clock: bool = false;
+    let mut node_clock_rate: Option<u64> = None;
+    let mut node_clock_mult: u32 = 0;
+    let mut node_clock_div: u32 = 0;
+    let mut node_clock_parent: Option<u32> = None;
+
     // We walk the structure block with a simple recursive-descent style,
     // tracking the current node path depth and the #address-cells / #size-cells
     // for the current node.  We reset cells when entering a new node and
@@ -599,7 +626,10 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 // Count CPU nodes — they are children of the "/cpus" node.
                 // At this point current_depth is the parent depth. A CPU node
                 // is at depth 2 (root → cpus → cpu@N), so its parent depth is 2.
-                if current_depth == 2 && node_name.starts_with("cpu") {
+                // Match "cpu@N" specifically so a peripheral named "cpuclk"
+                // (a CPU clock controller, often at the same depth) is not
+                // mistaken for a CPU core.
+                if current_depth == 2 && node_name.starts_with("cpu@") {
                     cpu_node_idx = info.cpu_count as isize; // before increment
                     info.cpu_count += 1;
                 }
@@ -628,7 +658,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                     // rate) apart from peripheral nodes like a 16550 UART.
                     node_kind[current_depth] = if node_name == "timer"
                         || node_name.starts_with("timer@")
-                        || node_name.starts_with("cpu")
+                        || node_name.starts_with("cpu@")
                     {
                         1
                     } else {
@@ -640,6 +670,13 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 node_phandle = None;
                 opp_node_hz = None;
                 opp_node_disabled = false;
+                // Reset per-node clock state; each node starts clean.
+                node_is_fixed_clock = false;
+                node_is_factor_clock = false;
+                node_clock_rate = None;
+                node_clock_mult = 0;
+                node_clock_div = 0;
+                node_clock_parent = None;
             }
 
             FDT_END_NODE => {
@@ -683,6 +720,40 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 }
                 opp_node_hz = None;
                 opp_node_disabled = false;
+
+                // ── Clock finalization ──
+                // Exiting a clock-controller node: record its phandle + rate
+                // (fixed-clock) or phandle + parent + mult/div
+                // (fixed-factor-clock).
+                if clock_node_active && was_depth == clock_node_depth {
+                    if let Some(ph) = node_phandle {
+                        if node_is_fixed_clock {
+                            if let Some(rate) = node_clock_rate {
+                                if fixed_clock_count < fixed_clocks.len() {
+                                    fixed_clocks[fixed_clock_count] = (ph, rate);
+                                    fixed_clock_count += 1;
+                                }
+                            }
+                        } else if node_is_factor_clock {
+                            if let Some(parent) = node_clock_parent {
+                                if node_clock_mult > 0
+                                    && node_clock_div > 0
+                                    && factor_clock_count < factor_clocks.len()
+                                {
+                                    factor_clocks[factor_clock_count] =
+                                        (ph, parent, node_clock_mult, node_clock_div);
+                                    factor_clock_count += 1;
+                                }
+                            }
+                        }
+                    }
+                    clock_node_active = false;
+                    clock_node_depth = usize::MAX;
+                }
+                node_clock_rate = None;
+                node_clock_mult = 0;
+                node_clock_div = 0;
+                node_clock_parent = None;
                 // Nothing to skip — END_NODE has no payload.
             }
 
@@ -776,6 +847,14 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             current_table_min = u64::MAX;
                             current_table_max = 0;
                             current_table_disabled = false;
+                        } else if compatible.contains(COMPAT_FIXED_CLOCK) {
+                            node_is_fixed_clock = true;
+                            clock_node_active = true;
+                            clock_node_depth = current_depth;
+                        } else if compatible.contains(COMPAT_FIXED_FACTOR_CLOCK) {
+                            node_is_factor_clock = true;
+                            clock_node_active = true;
+                            clock_node_depth = current_depth;
                         }
                     }
                     Some("reg") => {
@@ -1021,6 +1100,43 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         cpu_opp_phandles[cpu_opp_count] = unsafe { read_u32_be(value_ptr, 0) };
                         cpu_opp_count += 1;
                     }
+                    // fixed-clock output rate: u32 or u64 Hz cells.  Gated on
+                    // the fixed-clock node so the generic `clock-frequency`
+                    // timer handler (timer/CPU nodes only) is unaffected.
+                    Some("clock-frequency")
+                        if node_is_fixed_clock && value_len >= 4 && node_clock_rate.is_none() =>
+                    {
+                        let hi = unsafe { read_u32_be(value_ptr, 0) } as u64;
+                        let rate = if value_len >= 8 {
+                            let lo = unsafe { read_u32_be(value_ptr, 4) } as u64;
+                            (hi << 32) | lo
+                        } else {
+                            hi
+                        };
+                        if rate != 0 {
+                            node_clock_rate = Some(rate);
+                        }
+                    }
+                    // fixed-factor-clock ratio.
+                    Some("clock-mult") if node_is_factor_clock && value_len >= 4 => {
+                        node_clock_mult = unsafe { read_u32_be(value_ptr, 0) };
+                    }
+                    Some("clock-div") if node_is_factor_clock && value_len >= 4 => {
+                        node_clock_div = unsafe { read_u32_be(value_ptr, 0) };
+                    }
+                    Some("clocks") if value_len >= 4 => {
+                        // First cell is the referenced clock's phandle.  On a
+                        // CPU node this is the CPU clock; on a
+                        // fixed-factor-clock node it is the parent clock.
+                        let ph = unsafe { read_u32_be(value_ptr, 0) };
+                        if cpu_node_idx >= 0 && cpu_clock_count < cpu_clock_phandles.len() {
+                            cpu_clock_phandles[cpu_clock_count] = ph;
+                            cpu_clock_count += 1;
+                        }
+                        if node_is_factor_clock {
+                            node_clock_parent = Some(ph);
+                        }
+                    }
                     _ => { /* ignore unknown properties */ }
                 }
             }
@@ -1060,6 +1176,41 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     if found && min_hz <= max_hz {
         info.cpu_freq_min_hz = Some(min_hz);
         info.cpu_freq_max_hz = Some(max_hz);
+    }
+
+    // ── Resolve the CPU clock controller into a nominal rate ───────────
+    // The first CPU `clocks` phandle identifies the controller: a fixed-clock
+    // contributes its rate directly; a fixed-factor-clock scales its (fixed)
+    // parent rate by mult/div.  Clock nodes usually follow `/cpus` in the tree,
+    // so resolution happens after the walk completes.
+    if cpu_clock_count > 0 && info.cpu_clock_rate_hz.is_none() {
+        let cpu_ph = cpu_clock_phandles[0];
+        let mut resolved: Option<u64> = None;
+        for &(ph, rate) in &fixed_clocks[..fixed_clock_count] {
+            if ph == cpu_ph {
+                resolved = Some(rate);
+                break;
+            }
+        }
+        if resolved.is_none() {
+            for &(ph, parent, mult, div) in &factor_clocks[..factor_clock_count] {
+                if ph != cpu_ph {
+                    continue;
+                }
+                let mut parent_rate: u64 = 0;
+                for &(pph, rate) in &fixed_clocks[..fixed_clock_count] {
+                    if pph == parent {
+                        parent_rate = rate;
+                        break;
+                    }
+                }
+                if parent_rate != 0 && mult != 0 && div != 0 {
+                    resolved = Some(parent_rate * mult as u64 / div as u64);
+                }
+                break;
+            }
+        }
+        info.cpu_clock_rate_hz = resolved;
     }
 
     // Post-process VirtIO MMIO: compute base, stride, and count.
@@ -2354,5 +2505,126 @@ mod tests {
         let info = parse_fdt(blob.as_ptr() as usize);
         assert_eq!(info.cpu_freq_min_hz, None);
         assert_eq!(info.cpu_freq_max_hz, None);
+    }
+
+    // ── Clock-controller discovery tests ───────────────────────────────
+
+    /// Build a synthetic FDT with a CPU node whose `clocks` phandle points at
+    /// a `fixed-clock` controller carrying a 1.5 GHz `clock-frequency`.
+    fn build_cpu_fixed_clock_fdt() -> Vec<u8> {
+        let mut strings = Vec::<u8>::new();
+        let mut str_off = |s: &str| -> u32 {
+            let off = strings.len() as u32;
+            strings.extend_from_slice(s.as_bytes());
+            strings.push(0);
+            off
+        };
+        let off_addr_cells = str_off("#address-cells");
+        let off_size_cells = str_off("#size-cells");
+        let off_compatible = str_off("compatible");
+        let off_phandle = str_off("phandle");
+        let off_clock_frequency = str_off("clock-frequency");
+        let off_clocks = str_off("clocks");
+
+        let mut s = Vec::<u8>::new();
+        push_begin_node(&mut s, b"\0"); // root
+        push_prop_u32(&mut s, off_addr_cells, 2);
+        push_prop_u32(&mut s, off_size_cells, 2);
+        push_begin_node(&mut s, b"cpus\0");
+        push_prop_u32(&mut s, off_addr_cells, 1);
+        push_prop_u32(&mut s, off_size_cells, 0);
+        push_begin_node(&mut s, b"cpu@0\0");
+        push_prop_u32(&mut s, off_clocks, 0x1);
+        push_end_node(&mut s); // cpu@0
+        push_end_node(&mut s); // cpus
+
+        push_begin_node(&mut s, b"clocks\0");
+        push_begin_node(&mut s, b"cpuclk\0");
+        push_prop_u32(&mut s, off_phandle, 0x1);
+        push_prop_string(&mut s, off_compatible, "fixed-clock");
+        push_prop_u32(&mut s, off_clock_frequency, 1_500_000_000);
+        push_end_node(&mut s); // cpuclk
+        push_end_node(&mut s); // clocks
+
+        s.extend_from_slice(&be32(FDT_END));
+        while !strings.len().is_multiple_of(4) {
+            strings.push(0);
+        }
+        assemble_fdt(&s, &strings)
+    }
+
+    /// Build a synthetic FDT whose CPU clock is a `fixed-factor-clock`
+    /// (phandle 0x1) scaling a 100 MHz `fixed-clock` oscillator (phandle 0x2)
+    /// by 3/2 → 150 MHz.
+    fn build_cpu_factor_clock_fdt() -> Vec<u8> {
+        let mut strings = Vec::<u8>::new();
+        let mut str_off = |s: &str| -> u32 {
+            let off = strings.len() as u32;
+            strings.extend_from_slice(s.as_bytes());
+            strings.push(0);
+            off
+        };
+        let off_addr_cells = str_off("#address-cells");
+        let off_size_cells = str_off("#size-cells");
+        let off_compatible = str_off("compatible");
+        let off_phandle = str_off("phandle");
+        let off_clock_frequency = str_off("clock-frequency");
+        let off_clocks = str_off("clocks");
+        let off_clock_mult = str_off("clock-mult");
+        let off_clock_div = str_off("clock-div");
+
+        let mut s = Vec::<u8>::new();
+        push_begin_node(&mut s, b"\0"); // root
+        push_prop_u32(&mut s, off_addr_cells, 2);
+        push_prop_u32(&mut s, off_size_cells, 2);
+        push_begin_node(&mut s, b"cpus\0");
+        push_prop_u32(&mut s, off_addr_cells, 1);
+        push_prop_u32(&mut s, off_size_cells, 0);
+        push_begin_node(&mut s, b"cpu@0\0");
+        push_prop_u32(&mut s, off_clocks, 0x1);
+        push_end_node(&mut s); // cpu@0
+        push_end_node(&mut s); // cpus
+
+        push_begin_node(&mut s, b"clocks\0");
+        push_begin_node(&mut s, b"osc\0");
+        push_prop_u32(&mut s, off_phandle, 0x2);
+        push_prop_string(&mut s, off_compatible, "fixed-clock");
+        push_prop_u32(&mut s, off_clock_frequency, 100_000_000);
+        push_end_node(&mut s); // osc
+        push_begin_node(&mut s, b"cpuclk\0");
+        push_prop_u32(&mut s, off_phandle, 0x1);
+        push_prop_string(&mut s, off_compatible, "fixed-factor-clock");
+        push_prop_u32(&mut s, off_clocks, 0x2);
+        push_prop_u32(&mut s, off_clock_mult, 3);
+        push_prop_u32(&mut s, off_clock_div, 2);
+        push_end_node(&mut s); // cpuclk
+        push_end_node(&mut s); // clocks
+
+        s.extend_from_slice(&be32(FDT_END));
+        while !strings.len().is_multiple_of(4) {
+            strings.push(0);
+        }
+        assemble_fdt(&s, &strings)
+    }
+
+    #[test]
+    fn parse_fdt_extracts_fixed_clock_rate() {
+        let blob = build_cpu_fixed_clock_fdt();
+        let info = parse_fdt(blob.as_ptr() as usize);
+        assert_eq!(info.cpu_clock_rate_hz, Some(1_500_000_000));
+    }
+
+    #[test]
+    fn parse_fdt_resolves_fixed_factor_clock() {
+        let blob = build_cpu_factor_clock_fdt();
+        let info = parse_fdt(blob.as_ptr() as usize);
+        assert_eq!(info.cpu_clock_rate_hz, Some(150_000_000));
+    }
+
+    #[test]
+    fn parse_fdt_reports_no_cpu_clock_without_clocks() {
+        let blob = build_opp_fdt(None);
+        let info = parse_fdt(blob.as_ptr() as usize);
+        assert_eq!(info.cpu_clock_rate_hz, None);
     }
 }

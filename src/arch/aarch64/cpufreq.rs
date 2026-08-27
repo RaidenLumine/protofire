@@ -2,89 +2,23 @@
 //!
 //! AArch64 CPU frequency control from device-tree OPP tables.
 //!
-//! ARM has no architectural CPU-frequency register like the x86 MSRs.  This
+//! ARM has no architectural CPU-frequency register like the x86 MSRs.  The
 //! driver discovers the supported frequency range from the device-tree OPP
 //! tables parsed at boot (`operating-points-v2` phandles and legacy
-//! `operating-points` tuples) and tracks the requested frequency in software.
-//! Applying the request on real hardware requires a platform clock/firmware
-//! interface (SCMI, the common-clock framework, ...) which the kernel does
-//! not drive yet, so `set_freq` records the clamped target the way a userspace
-//! governor reports its request.  On QEMU `virt` the DTB ships no OPP table,
-//! so this driver stays inert (the same graceful path x86_64 takes on QEMU).
+//! `operating-points` tuples).  When the device tree also describes the CPU's
+//! clock (`clocks` → `fixed-clock`/`fixed-factor-clock`), frequency requests
+//! are routed through the common-clock framework
+//! ([`crate::kernel::power::clock`]); otherwise `set_freq` records the clamped
+//! target the way a userspace governor reports its request.  A programmable
+//! SCMI/CPPC backend is a later mailbox-transport milestone.  On QEMU `virt`
+//! the DTB ships no OPP table or CPU clock, so this driver stays inert (the
+//! same graceful path x86_64 takes on QEMU).
 
+use crate::kernel::power::clock::DtFreqDriver;
 use crate::kernel::power::cpufreq_driver::CpuFreqDriver;
 use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
-
-// ============================================================================
-// Driver struct
-// ============================================================================
-
-/// Device-tree OPP-based CPU frequency driver.
-///
-/// Frequencies are in KHz.  `current_khz` is the last-requested target,
-/// initialised to the maximum OPP — firmware typically boots near the top of
-/// the OPP range.
-pub struct DtFreqDriver {
-    /// Minimum achievable frequency in KHz.
-    min_khz: u32,
-    /// Maximum achievable frequency in KHz.
-    max_khz: u32,
-    /// Last-requested frequency in KHz.
-    current_khz: u32,
-}
-
-impl DtFreqDriver {
-    /// Detect and construct the driver from FDT OPP data.  Returns `None`
-    /// when the device tree describes no CPU frequency range (e.g. QEMU
-    /// `virt`, which ships no OPP table).
-    pub fn detect() -> Option<Self> {
-        let info = crate::arch::fdt::platform_info();
-        let min_hz = info.cpu_freq_min_hz?;
-        let max_hz = info.cpu_freq_max_hz?;
-        if min_hz == 0 || max_hz < min_hz {
-            return None;
-        }
-        let min_khz = u32::try_from(min_hz / 1000).ok()?;
-        let max_khz = u32::try_from(max_hz / 1000).ok()?;
-        if min_khz == 0 || max_khz <= min_khz {
-            return None;
-        }
-        Some(Self {
-            min_khz,
-            max_khz,
-            current_khz: max_khz,
-        })
-    }
-}
-
-impl CpuFreqDriver for DtFreqDriver {
-    fn name(&self) -> &'static str {
-        "aarch64 cpufreq-dt"
-    }
-
-    fn is_supported(&self) -> bool {
-        true
-    }
-
-    fn get_current_freq(&self) -> u32 {
-        self.current_khz
-    }
-
-    fn set_freq(&mut self, freq_khz: u32) -> Result<()> {
-        self.current_khz = freq_khz.clamp(self.min_khz, self.max_khz);
-        Ok(())
-    }
-
-    fn get_freq_range(&self) -> Option<(u32, u32)> {
-        Some((self.min_khz, self.max_khz))
-    }
-
-    fn get_temperature_mc(&self) -> Option<u32> {
-        None
-    }
-}
 
 // ============================================================================
 // Global singleton
@@ -100,7 +34,7 @@ pub fn init() {
     if guard.is_some() {
         return;
     }
-    let Some(driver) = DtFreqDriver::detect() else {
+    let Some(driver) = DtFreqDriver::detect("aarch64 cpufreq-dt") else {
         crate::println!("[cpufreq] no aarch64 frequency scaling support");
         return;
     };

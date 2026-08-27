@@ -2,6 +2,7 @@
 //!
 //! Power management subsystem: CPU frequency scaling, thermal management.
 
+pub mod clock;
 pub mod cpufreq_driver;
 pub mod governors;
 
