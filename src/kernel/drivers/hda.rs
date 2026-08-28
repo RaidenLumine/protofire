@@ -950,12 +950,7 @@ mod controller {
             // Power the widget to D0.
             self.send_verb(hda_verb(cad, converter, VERB_SET_POWER_STATE, 0))?;
             // Point the converter at the stream tag (format index 0).
-            self.send_verb(hda_verb(
-                cad,
-                converter,
-                VERB_SET_STREAM_FORMAT,
-                (tag << 4) | 0x00,
-            ))?;
+            self.send_verb(hda_verb(cad, converter, VERB_SET_STREAM_FORMAT, tag << 4))?;
             // Two-channel (stereo) sample slot mapping.
             self.send_verb(hda_verb(
                 cad,
