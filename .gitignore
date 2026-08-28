@@ -3,8 +3,10 @@ target/
 *.iso
 
 # ISO tree outputs (entirely build artifacts)
-/isodir/
-/iso/
+isodir/
+iso/boot/*.elf
+iso/boot/*.bin
+iso/boot/grub/*.mod
 
 # Editor and OS noise
 .DS_Store
