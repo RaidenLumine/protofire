@@ -221,6 +221,47 @@ fn fuzz_luks2_open() {
     }
 }
 
+/// Feed the integrated `luks2_open` path a valid magic/version header with
+/// attacker-controlled `json_offset`/`json_size` and random JSON metadata.
+///
+/// Purely random bytes almost never match the "LUKS\xBA\xBE" magic, so the
+/// plain `fuzz_luks2_open` never reaches the JSON sector-walk or keyslot
+/// scan.  This seed keeps the header gate open and lets the offset/size
+/// fields drive the multi-sector read and the metadata scanners directly.
+#[test]
+fn fuzz_luks2_open_structure_aware() {
+    use protofire::kernel::fs::block::BLOCK_SIZE;
+    use protofire::kernel::fs::luks2::luks2_open;
+
+    const IMAGE_LEN: usize = 1024 * 1024;
+
+    let mut rng = Lcg::new(0xF0F0_2022);
+    for _ in 0..2000 {
+        let mut bytes = vec![0u8; IMAGE_LEN];
+        // Valid magic + version 2 (big-endian) so the header gate opens.
+        bytes[0..6].copy_from_slice(&[0x4C, 0x55, 0x4B, 0x53, 0xBA, 0xBE]);
+        bytes[6] = 0;
+        bytes[7] = 2;
+
+        // Attacker-controlled JSON area location and size, kept inside the
+        // image so the sector walk reads real data (and exercises its
+        // boundary handling) instead of failing on the first read.
+        let json_offset = (BLOCK_SIZE + rng.next() as usize % (IMAGE_LEN - BLOCK_SIZE)) as u64;
+        let json_size = (rng.next() % (16 * BLOCK_SIZE as u64) + 1) as u64;
+        bytes[8..16].copy_from_slice(&json_size.to_be_bytes());
+        bytes[16..24].copy_from_slice(&json_offset.to_be_bytes());
+
+        // Random JSON metadata (mostly malformed) for the scanners.
+        let meta = random_bytes(&mut rng, 512);
+        let start = json_offset as usize;
+        let end = (start + meta.len()).min(IMAGE_LEN);
+        bytes[start..end].copy_from_slice(&meta[..end - start]);
+
+        let dev = MemoryBlockDevice::new("fuzz-luks2-struct", bytes, true);
+        let _ = luks2_open(dev, b"passphrase");
+    }
+}
+
 // ── Network packet parsers ─────────────────────────────────────────────────
 
 /// Exercise a plain `&[u8] -> ...` parser over a batch of random buffers.
