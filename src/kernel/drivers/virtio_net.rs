@@ -922,14 +922,20 @@ fn probe_pci_net() -> Option<Arc<dyn NetworkDevice>> {
     // ECAM region is described or the low-VA alias mapping fails.
     let probe = pci::probe_and_enumerate()?;
 
-    // VirtIO devices use vendor ID 0x1AF4.  Network controllers are
-    // class 0x02, subclass 0x00 (Ethernet).
-    let net_devices = probe
+    // VirtIO controllers share vendor ID 0x1AF4; the generic vendor/device
+    // matcher locates the first one, then we scan from it for an Ethernet
+    // controller (class 0x02, subclass 0x00).
+    let first_virtio = pci::find_device(&probe.devices, 0x1AF4, None)?;
+    let start = probe
         .devices
         .iter()
-        .filter(|dev| dev.vendor_id == 0x1AF4 && dev.class_code == 0x02 && dev.subclass == 0x00);
+        .position(|dev| core::ptr::eq(dev, first_virtio))
+        .unwrap_or(0);
 
-    for dev in net_devices {
+    for dev in &probe.devices[start..] {
+        if dev.vendor_id != 0x1AF4 || dev.class_code != 0x02 || dev.subclass != 0x00 {
+            continue;
+        }
         for bar in &dev.bars {
             if !bar.is_mmio || bar.base_address == 0 {
                 continue;

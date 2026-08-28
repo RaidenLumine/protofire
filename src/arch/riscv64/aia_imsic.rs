@@ -264,9 +264,10 @@ pub fn configure_msix(
         return Err(Error::InvalidArgument);
     }
     // The riscv64 device MMIO window (Sv39 identity map) covers
-    // 0x0000_0000..0x4000_0000; a table address outside it cannot be
-    // reached without a dedicated mapping.
-    if table_phys >= 0x4000_0000 {
+    // 0x0000_0000..DEVICE_MMIO_END; a table address outside it cannot be
+    // reached without a dedicated mapping.  QEMU `virt` places the PCIe MMIO
+    // window at 0x4000_0000..0x8000_0000, inside this range.
+    if table_phys >= crate::arch::riscv64::mmu::DEVICE_MMIO_END as u64 {
         return Err(Error::InvalidArgument);
     }
 

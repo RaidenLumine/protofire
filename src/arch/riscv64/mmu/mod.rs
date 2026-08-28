@@ -49,7 +49,10 @@ const KERNEL_RAM_LENGTH: usize = 0x800_0000;
 
 /// Low identity-mapped MMIO window (UART, PLIC, CLINT, virtio, ...).
 const DEVICE_MMIO_BASE: usize = 0x0000_0000;
-const DEVICE_MMIO_END: usize = 0x8000_0000;
+/// End (exclusive) of the identity-mapped device / MMIO window.  `pub(crate)`
+/// so the AIA IMSIC MSI-X programmer can validate table addresses against the
+/// real window extent.
+pub(crate) const DEVICE_MMIO_END: usize = 0x8000_0000;
 
 /// Number of preallocated 2 MiB demo user slots.
 const USER_DEMO_SLOT_COUNT: usize = 8;

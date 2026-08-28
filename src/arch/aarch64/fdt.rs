@@ -179,6 +179,22 @@ pub fn store_platform_info(info: PlatformInfo) {
     *PLATFORM_INFO.lock() = info;
 }
 
+/// Parse the device-tree blob handed over by the bootloader and publish the
+/// platform info for later consumers (PCIe ECAM base, IMSIC base, clock
+/// rates, ...).
+///
+/// Called once at boot on AArch64 and RISC-V while the bootstrap mapping is
+/// still active, before the runtime page tables are installed.  A null or
+/// malformed blob is tolerated: `parse_fdt` yields an empty `PlatformInfo`
+/// and the subsystems fall back to their hardcoded QEMU `virt` defaults.
+pub fn boot_parse_fdt(blob: usize) {
+    if blob == 0 {
+        return;
+    }
+    let info = parse_fdt(blob);
+    store_platform_info(info);
+}
+
 /// Return a copy of the platform information.
 ///
 /// Safe to call at any time after `store_platform_info`; returns the

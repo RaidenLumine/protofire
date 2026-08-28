@@ -179,6 +179,21 @@ impl Kernel {
             println!("[init  ] aarch64: saved boot MMU config and VBAR");
         }
 
+        // ── Device-tree handoff (AArch64 / RISC-V) ──
+        // Parse the DTB passed by the bootloader before the runtime page
+        // tables replace the bootstrap mapping, so the platform info (PCIe
+        // ECAM base, IMSIC base, clock rates, ...) is available to
+        // enumeration and driver init.  A null or malformed blob leaves the
+        // hardcoded QEMU `virt` fallbacks in place.
+        #[cfg(any(
+            all(target_arch = "aarch64", target_os = "none"),
+            all(target_arch = "riscv64", target_os = "none")
+        ))]
+        {
+            let blob = crate::arch::boot::handoff_address();
+            crate::arch::fdt::boot_parse_fdt(blob);
+        }
+
         self.prepare_arch_paging();
 
         let t1 = tick();

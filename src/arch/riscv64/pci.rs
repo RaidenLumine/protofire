@@ -240,8 +240,13 @@ pub fn pci_program_bar_64(
     }
 }
 
-/// Read the current 64-bit BAR value (lower 32 bits at `bar_offset`, upper 32
-/// bits at `bar_offset + 4`).
+/// Read the current BAR value as a u64 (lower 32 bits at `bar_offset`; the
+/// upper 32 bits at `bar_offset + 4` are read only when the BAR is 64-bit).
+///
+/// For a 32-bit memory BAR the register at `bar_offset + 4` is a different
+/// BAR (or reserved space), so reading it as the "upper dword" would corrupt
+/// the address; a 64-bit BAR is flagged by the type field (bits 2:1 == 0b10)
+/// in the low dword.
 pub fn pci_read_bar_64(
     region: &EcamRegion,
     bus: u8,
@@ -250,9 +255,14 @@ pub fn pci_read_bar_64(
     bar_offset: u16,
 ) -> u64 {
     // SAFETY: ECAM reads from a validated device's BAR registers.
-    let lo = unsafe { ecam_read_u32(region, bus, device, function, bar_offset) } as u64;
-    let hi = unsafe { ecam_read_u32(region, bus, device, function, bar_offset + 4) } as u64;
-    (hi << 32) | (lo & 0xFFFF_FFF0)
+    let lo = unsafe { ecam_read_u32(region, bus, device, function, bar_offset) };
+    let is_64bit = (lo & 0x0000_0006) == 0x0000_0004;
+    let hi = if is_64bit {
+        unsafe { ecam_read_u32(region, bus, device, function, bar_offset + 4) }
+    } else {
+        0
+    };
+    ((hi as u64) << 32) | (lo as u64 & 0xFFFF_FFF0)
 }
 
 // ---------------------------------------------------------------------------
@@ -464,6 +474,10 @@ pub unsafe fn pci_capability_pcie(
 ///
 /// Returns the BAR's size in bytes, or 0 if the BAR is unimplemented (all-ones
 /// read-back) or reads back zero.
+///
+/// Note: only the low dword is probed, so a 64-bit BAR larger than 4 GiB is
+/// under-reported (same limitation as the x86_64 mirror); not hit on QEMU
+/// `virt`, where PCIe BARs sit below 4 GiB.
 pub fn probe_bar_size(
     region: &EcamRegion,
     bus: u8,
@@ -799,8 +813,17 @@ pub fn pci_enable_msix(
     }
     let table_offset = (msix.table_bir_and_offset & 0xFFFF_FFF8) as u64;
 
-    // The table lives in the BAR indicated by `table_bir`.
+    // The device must decode MMIO and be a bus master before the MSI-X table
+    // writes (and later message delivery) can go anywhere.
+    pci_enable_memory_and_bus_master(region, bus, device, function);
+
+    // The table lives in the BAR indicated by `table_bir`.  A reset BAR (0)
+    // means no address has been assigned yet — programming entries through it
+    // would scribble over low physical memory, so refuse.
     let bar_base = pci_read_bar_64(region, bus, device, function, BAR0 + table_bir * 4);
+    if bar_base == 0 {
+        return Err(crate::Error::InvalidArgument);
+    }
     let table_phys = bar_base
         .checked_add(table_offset)
         .ok_or(crate::Error::InvalidArgument)?;
