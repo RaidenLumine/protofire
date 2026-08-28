@@ -2,15 +2,19 @@
 //!
 //! TLSF allocator unit tests.
 //!
-//! All allocation tests run against the single shared `HOST_HEAP_MODEL`
-//! (its internal spinlock serialises access so parallel test threads are
-//! safe).  Every test frees everything it allocates, leaving the heap in a
-//! consistent, deterministic state.
+//! All allocation tests run against the single shared `HOST_HEAP_MODEL`.
+//! Its internal spinlock serialises individual operations, and
+//! `TEST_MODEL_LOCK` serialises whole tests so no test observes another test's
+//! in-flight allocations.  Every test frees everything it allocates, leaving
+//! the heap in a consistent, deterministic state.
 
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
     use super::super::allocator::KernelGlobalAllocator;
+    use super::super::tlsf::block_next_free;
+    use super::super::tlsf::block_size;
+    use super::super::tlsf::list_index;
     use super::super::tlsf::mapping;
     use super::super::tlsf::AllocatorState;
     use super::super::tlsf::FL_MAX;
@@ -23,6 +27,7 @@ mod tests {
     use crate::kernel::memory::alloc_profiler::AllocProfiler;
     use alloc::vec::Vec;
     use core::alloc::Layout;
+    use std::sync::Mutex;
 
     // ── Deterministic PRNG for property tests ───────────────────────────────
     // Same LCG family as tests/simplefs/property.rs and tests/parsers/fuzz.rs,
@@ -49,6 +54,44 @@ mod tests {
                 return 0;
             }
             (self.next() as usize) % bound
+        }
+    }
+
+    /// Serialises tests that allocate from the shared `HOST_HEAP_MODEL`.
+    ///
+    /// Cargo runs the tests in this binary on parallel threads.  The property
+    /// test snapshots `remaining()` at its start and compares it at its end,
+    /// and a concurrent allocating test would hold blocks between those two
+    /// points and make the equality check flaky.  Every test that mutates the
+    /// model takes this lock for its whole body, so the heap is quiescent
+    /// whenever the property test runs and its round-trip check is exact.
+    static TEST_MODEL_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Assert the core TLSF placement invariant: every free block lives in
+    /// the free list of the size class its actual size maps to.  A block of
+    /// size S must sit in `free_lists[list_index(mapping(S))]` — never in a
+    /// smaller or larger class.
+    unsafe fn verify_size_class_placement(state: &AllocatorState) {
+        for fl in FL_MIN..=FL_MAX {
+            for sl in 0..SL_COUNT {
+                let idx = list_index(fl, sl);
+                let mut current = state.free_lists[idx];
+                while current != 0 {
+                    let size = block_size(current);
+                    // Every free-listed block is at least MIN_FREE_BLOCK
+                    // (= 1 << FL_MIN), so mapping() is always well-defined.
+                    assert!(
+                        size >= (1 << FL_MIN),
+                        "free block 0x{current:x} has size {size} below the mapping minimum"
+                    );
+                    assert_eq!(
+                        mapping(size),
+                        (fl, sl),
+                        "free block 0x{current:x} of size {size} placed in class ({fl}, {sl})"
+                    );
+                    current = block_next_free(current);
+                }
+            }
         }
     }
 
@@ -84,6 +127,9 @@ mod tests {
 
     #[test]
     fn allocate_and_deallocate_round_trip() {
+        let _model_guard = TEST_MODEL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         HOST_HEAP_MODEL.ensure_init();
 
         let (start, end) = HOST_HEAP_MODEL.bounds();
@@ -127,6 +173,9 @@ mod tests {
 
     #[test]
     fn multiple_allocations_are_aligned_and_disjoint() {
+        let _model_guard = TEST_MODEL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         HOST_HEAP_MODEL.ensure_init();
         let profiler = AllocProfiler::new();
         let layouts = [
@@ -227,6 +276,11 @@ mod tests {
     ///     count (coalescing restores the whole pool).
     #[test]
     fn tlsf_random_alloc_free_sequence_matches_model() {
+        // Hold the shared-model lock so `initial_remaining` and the final
+        // equality check observe a quiescent heap (see TEST_MODEL_LOCK).
+        let _model_guard = TEST_MODEL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         HOST_HEAP_MODEL.ensure_init();
         let (start, end) = HOST_HEAP_MODEL.bounds();
         let initial_remaining = HOST_HEAP_MODEL.remaining();
@@ -236,9 +290,18 @@ mod tests {
         // Model of live allocations: (payload pointer, payload size, align).
         let mut live: Vec<(*mut u8, usize, usize)> = Vec::new();
 
+        // A broken allocator that always returns null would otherwise make
+        // this test pass vacuously (every null is a legal "exhaustion" and
+        // the final remaining() check trivially holds).  Track how many
+        // attempts actually succeeded and require a meaningful fraction to
+        // succeed, so the allocator really is exercised.
+        let mut attempted_alloc = 0usize;
+        let mut successful_alloc = 0usize;
+
         for step in 0..4000 {
             if rng.next_usize(2) == 0 {
                 // Allocate.
+                attempted_alloc += 1;
                 let size = match rng.next_usize(4) {
                     0 => 1 + rng.next_usize(64),
                     1 => 65 + rng.next_usize(512),
@@ -260,6 +323,7 @@ mod tests {
                     // records nothing.
                     continue;
                 }
+                successful_alloc += 1;
                 assert_eq!(
                     ptr as usize % align,
                     0,
@@ -306,11 +370,24 @@ mod tests {
 
             if step % 256 == 0 {
                 HOST_HEAP_MODEL.verify_heap_integrity();
+                HOST_HEAP_MODEL.with_state(|state| unsafe {
+                    verify_size_class_placement(state);
+                });
             }
         }
 
+        // A meaningful share of allocations must have succeeded, otherwise the
+        // invariants above were never really exercised.
+        assert!(
+            successful_alloc >= attempted_alloc / 4 && successful_alloc >= 128,
+            "only {successful_alloc}/{attempted_alloc} allocations succeeded — \
+             the allocator appears to be failing outright"
+        );
+
         // Free the remaining live allocations, then verify the whole pool
-        // coalesces back to its initial free count.
+        // coalesces back to its initial free count.  (With TEST_MODEL_LOCK
+        // held, no other test can be holding blocks here, so the equality is
+        // exact rather than racy.)
         for (ptr, _, _) in live.drain(..) {
             let mut freed = false;
             HOST_HEAP_MODEL.with_state(|state| {
@@ -319,6 +396,9 @@ mod tests {
             assert!(freed, "final free of a live pointer failed");
         }
         HOST_HEAP_MODEL.verify_heap_integrity();
+        HOST_HEAP_MODEL.with_state(|state| unsafe {
+            verify_size_class_placement(state);
+        });
         assert_eq!(
             HOST_HEAP_MODEL.remaining(),
             initial_remaining,
