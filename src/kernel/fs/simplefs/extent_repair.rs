@@ -262,8 +262,21 @@ impl SimpleFs {
             .persistent_security_descriptor_layout()
             .is_some()
         {
+            // The pending superblock still references the pre-swap active
+            // tables, so its counts must describe those tables (the state at
+            // transaction start), not the mutated state.  If the mirror write
+            // is torn, this superblock may be the only readable one on next
+            // mount; a count mismatch with the active tables it points to
+            // would make the volume unopenable (inode/dirent reads would walk
+            // past the valid records into zeroed padding).
             let pending_record = SuperblockRecord {
                 pending_commit: next_generation,
+                inode_count: state.undo.old_inode_count.unwrap_or(state.inodes.len()),
+                dirent_count: state
+                    .undo
+                    .old_dirent_count
+                    .unwrap_or(state.dir_entries.len()),
+                xattr_count: state.undo.old_xattr_count.unwrap_or(state.xattrs.len()),
                 ..self.runtime_superblock_record(state)
             };
             let mut pending_sb = [0_u8; BLOCK_SIZE];

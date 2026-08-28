@@ -65,6 +65,16 @@ pub(crate) struct UndoLog {
     xattrs: Vec<(usize, XattrRecord)>,
     /// Length of `xattrs` before the first push (for rollback truncation).
     xattr_len: Option<usize>,
+    /// Pre-transaction table lengths, captured at transaction start.
+    ///
+    /// Phase 1 of the commit writes a `pending_commit` superblock that still
+    /// references the pre-swap **active** tables, so its inode/dirent/xattr
+    /// counts must describe those tables — not the mutated state.  A torn
+    /// mirror write can leave that pending superblock as the only readable
+    /// one, and a count mismatch there makes the volume unopenable.
+    old_inode_count: Option<usize>,
+    old_dirent_count: Option<usize>,
+    old_xattr_count: Option<usize>,
 }
 
 #[derive(Clone)]

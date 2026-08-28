@@ -22,11 +22,16 @@ use super::UndoLog;
 
 impl SimpleFsState {
     /// Clear the undo log at the start of a commit.  Saves the current dirty
-    /// flags so rollback can restore them regardless of what the closure sets.
+    /// flags so rollback can restore them regardless of what the closure sets,
+    /// and the pre-transaction table lengths so the pending superblock written
+    /// in Phase 1 describes the still-referenced active tables.
     pub(crate) fn begin_undo(&mut self) {
         self.undo = UndoLog::default();
         self.undo.old_inode_table_dirty = Some(self.inode_table_dirty);
         self.undo.old_dirent_table_dirty = Some(self.dirent_table_dirty);
+        self.undo.old_inode_count = Some(self.inodes.len());
+        self.undo.old_dirent_count = Some(self.dir_entries.len());
+        self.undo.old_xattr_count = Some(self.xattrs.len());
     }
 
     /// Save an inode's current value before mutation, for rollback on error.
