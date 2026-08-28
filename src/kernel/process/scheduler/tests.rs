@@ -505,11 +505,20 @@ mod tests {
                 }
                 1 => {
                     // Dispatch the next thread and compare with the model.
-                    let expected = model
-                        .iter()
-                        .copied()
-                        .max_by_key(|&(_, _, prio)| prio)
-                        .map(|(_, tid, _)| tid);
+                    // The real queue pops the front of the highest-priority
+                    // queue (FIFO within a priority), so the model must pick
+                    // the earliest-enqueued thread among the highest-priority
+                    // ones — `max_by_key` alone would pick the *last* on a
+                    // tie and diverge from the scheduler.
+                    let max_prio = model.iter().map(|&(_, _, prio)| prio).max();
+                    let expected = max_prio.and_then(|max_prio| {
+                        model
+                            .iter()
+                            .enumerate()
+                            .filter(|&(_, &(_, _, prio))| prio == max_prio)
+                            .min_by_key(|&(pos, _)| pos)
+                            .map(|(_, &(_, tid, _))| tid)
+                    });
                     let taken = take_next_dispatchable_thread(&mut queues);
                     let taken_tid = taken.as_ref().map(|t| t.tid());
                     match (taken, expected) {
@@ -572,6 +581,36 @@ mod tests {
         }
     }
 
+    /// The FIFO-within-priority rule the property-test oracle above relies on:
+    /// threads enqueued at the same priority dispatch in enqueue order.  The
+    /// LCG seed of the property test happens not to produce tied-max-priority
+    /// dispatches, so this focused test pins the rule directly.
+    #[test]
+    fn dispatch_within_priority_is_fifo() {
+        use super::super::queue::enqueue_ready_thread;
+        use super::super::queue::take_next_dispatchable_thread;
+
+        let process = Process::new(101, "property-fifo");
+        let threads: Vec<Arc<Thread>> = (0..3)
+            .map(|_| Thread::new_kernel(process.clone(), idle_entry))
+            .collect();
+        for t in &threads {
+            t.set_priority(ThreadPriority::Normal);
+        }
+
+        let mut queues: [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT] = Default::default();
+        // Enqueue A, B, C at the same priority — FIFO must dispatch A, B, C.
+        for t in &threads {
+            assert!(enqueue_ready_thread(&mut queues, t.clone()));
+        }
+        let mut order = Vec::new();
+        while let Some(t) = take_next_dispatchable_thread(&mut queues) {
+            order.push(t.tid());
+        }
+        let expected: Vec<u32> = threads.iter().map(|t| t.tid()).collect();
+        assert_eq!(order, expected, "same-priority dispatch must be FIFO");
+    }
+
     /// Random sleep deadlines against a model: advancing simulated time must
     /// wake exactly the waiters whose deadline has elapsed — no early wakes,
     /// no missed wakes.
@@ -628,22 +667,31 @@ mod tests {
     }
 
     /// Preemption predicates over a range of tick counts: a time-slice
-    /// boundary fires exactly when `tick % TIME_SLICE_TICKS == 0`, and the
+    /// boundary fires at tick 0 and then every `TIME_SLICE_TICKS`, and the
     /// simulated-requeue predicate only accepts Running threads.
+    ///
+    /// The expected boundary is derived from a small state machine (count
+    /// ticks since the last boundary) rather than mirroring the
+    /// implementation's own divisibility expression, so the oracle stays
+    /// independent of the code under test.
     #[test]
     fn preemption_time_slice_property_random_ticks() {
         use super::super::queue::should_preempt_for_time_slice;
         use super::super::queue::should_requeue_simulated_preempted_thread;
         use super::super::TIME_SLICE_TICKS;
 
-        let mut rng = Lcg::new(0xF0F0_5040);
-        for _ in 0..5000 {
-            let tick = rng.next() & 0xFFFF;
+        let mut ticks_since_boundary = 0u64;
+        for tick in 0..10_000u64 {
+            let expect_boundary = ticks_since_boundary == 0;
             assert_eq!(
                 should_preempt_for_time_slice(tick),
-                tick.is_multiple_of(TIME_SLICE_TICKS),
+                expect_boundary,
                 "tick {tick}: preemption boundary diverged from time-slice rule"
             );
+            ticks_since_boundary += 1;
+            if ticks_since_boundary >= TIME_SLICE_TICKS {
+                ticks_since_boundary = 0;
+            }
         }
 
         // A simulated preempted thread is requeued unless it has left the
