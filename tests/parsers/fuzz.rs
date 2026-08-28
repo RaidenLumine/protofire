@@ -247,7 +247,7 @@ fn fuzz_luks2_open_structure_aware() {
         // image so the sector walk reads real data (and exercises its
         // boundary handling) instead of failing on the first read.
         let json_offset = (BLOCK_SIZE + rng.next() as usize % (IMAGE_LEN - BLOCK_SIZE)) as u64;
-        let json_size = (rng.next() % (16 * BLOCK_SIZE as u64) + 1) as u64;
+        let json_size = rng.next() % (16 * BLOCK_SIZE as u64) + 1;
         bytes[8..16].copy_from_slice(&json_size.to_be_bytes());
         bytes[16..24].copy_from_slice(&json_offset.to_be_bytes());
 
