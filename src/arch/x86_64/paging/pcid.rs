@@ -214,14 +214,15 @@ pub(crate) fn allocate_pcid() -> u64 {
             let bit = word.trailing_zeros() as usize;
             let pcid = word_idx * 64 + bit;
             let mask = 1u64 << bit;
-            if pcid > 0 && (pcid as u64) <= PCID_MAX {
-                if bitmap_word(word_idx)
+            if pcid > 0
+                && (pcid as u64) <= PCID_MAX
+                && bitmap_word(word_idx)
                     .compare_exchange(word, word & !mask, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
-                {
-                    return pcid as u64;
-                }
+            {
+                return pcid as u64;
             }
+
             // CAS failed or PCID out of range — refresh and retry.
             word = bitmap_word(word_idx).load(Ordering::Acquire);
         }
