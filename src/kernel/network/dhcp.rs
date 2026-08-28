@@ -120,7 +120,10 @@ fn for_each_option(options: &[u8], mut visitor: impl FnMut(u8, &[u8])) {
                 };
                 let start = i + 2;
                 let end = (start + len).min(options.len());
-                if start >= end {
+                // `end` can only fall below `start` when the option's value
+                // region extends past the buffer (truncated).  A zero-length
+                // option (`len == 0`) is legal and must not stop the walk.
+                if start > end {
                     break;
                 }
                 let val = &options[start..end];
@@ -432,4 +435,40 @@ fn offer_server_identifier(msg: &[u8]) -> Option<Ipv4Addr> {
         }
     });
     server
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A zero-length option (RFC 2132 legal: code + length 0) must be visited
+    /// with an empty value and must not terminate the walk, so options that
+    /// follow it are still seen.
+    #[test]
+    fn for_each_option_continues_past_zero_length_option() {
+        // code 1 (subnet mask) with len 0, then code 53 (message type) with
+        // the value 5 (DHCPACK), then END.
+        let options = [1u8, 0, 53, 1, 5, 255];
+        let mut visited = alloc::vec::Vec::new();
+        for_each_option(&options, |code, val| {
+            visited.push((code, val.to_vec()));
+        });
+        assert_eq!(
+            visited,
+            vec![(1, vec![]), (53, vec![5])],
+            "zero-length option must not drop later options"
+        );
+    }
+
+    /// A trailing code byte with no length octet is truncated and must not
+    /// index out of bounds (the panic the fuzz harness originally found).
+    #[test]
+    fn for_each_option_ignores_truncated_trailing_option() {
+        let options = [53u8, 1, 5, 3];
+        let mut visited = alloc::vec::Vec::new();
+        for_each_option(&options, |code, val| {
+            visited.push((code, val.to_vec()));
+        });
+        assert_eq!(visited, vec![(53, vec![5])]);
+    }
 }
