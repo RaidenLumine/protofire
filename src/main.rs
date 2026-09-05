@@ -2,7 +2,7 @@
 //!
 //! Bare-metal kernel entrypoint plus the host-side `mkimage` utility command.
 
-//! Xiucoatl Kernel Main Entry Point
+//! Protofire Kernel Main Entry Point
 //!
 //! This file contains the main entry points for both bare-metal kernel
 //! operation and host-side utility commands. For bare-metal targets, it
@@ -137,7 +137,7 @@ fn print_banner() {
         "{} v{} [{} | {}]",
         KERNEL_NAME, KERNEL_VERSION, TARGET_ARCH, BUILD_PROFILE
     );
-    println!("Xiucoatl kernel prototype starting");
+    println!("Protofire kernel prototype starting");
 }
 
 #[cfg(target_os = "none")]
@@ -159,7 +159,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("mkimage") => {
             let output = args
                 .next()
-                .unwrap_or_else(|| "target/xiucoatl-demo-disk.img".to_string());
+                .unwrap_or_else(|| "target/protofire-demo-disk.img".to_string());
             if args.next().is_some() {
                 print_host_usage_and_exit(2);
             }
