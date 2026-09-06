@@ -7,11 +7,10 @@
 .section .text.boot, "ax"
 .align 4
 .global _start
-.global _start_secondary
+.global _secondary_start
 .type _start, %function
-.type _start_secondary, %function
+.type _secondary_start, %function
 .extern kernel_entry_riscv64
-.extern riscv64_ap_entry
 
 _start:
     /* Only hart 0 reaches here — OpenSBI already filters secondary harts.
@@ -45,22 +44,15 @@ _start:
     j .Lhang
 
 /* ── Secondary hart entry point (SMP) ────────────────────────────────────
-   Called by SBI HSM `hart_start` with:
+   Called by SBI HSM `hart_start` (see riscv64/smp.rs bring_up_aps) with:
        a0 = hart_id
        a1 = opaque (stack top, pre-allocated by the BSP)
-   The stack bottom is pre-set with the PerCpuData pointer.  We jump to
-   riscv64_ap_entry(hart_id) which never returns. */
+   We set the stack pointer from the opaque context and tail-call the Rust
+   ap_entry() function (src/arch/riscv64/smp.rs), which never returns. */
 .align 4
-_start_secondary:
+_secondary_start:
     /* Set stack pointer from opaque (passed by BSP via SBI HSM a2). */
     mv sp, a1
 
-    /* Write PerCpuData pointer to the stack bottom for the trap handler.
-       The BSP stored it at stack_base + 0 before starting this AP.
-       We read it and set tp so that early kernel entry works. */
-    li t0, -65536
-    and t0, sp, t0
-    ld tp, 0(t0)
-
     /* Jump to the Rust entry (tail call — never returns). */
-    tail riscv64_ap_entry
+    tail ap_entry

@@ -451,11 +451,23 @@ pub fn aarch64_set_tpidr_el1(_val: u64) {
     // no-op on non-AArch64
 }
 
+/// Global slot holding the current hart's PerCpuData pointer.
+///
+/// The RISC-V trap vector (src/arch/riscv64/trap.S) loads `tp` from this
+/// slot on every kernel entry, because when a trap arrives from U-mode `tp`
+/// holds the *user* thread's value and cannot be trusted.  The slot is kept
+/// in sync with the `tp` register by [`riscv64_set_tp`].  Single-hart in
+/// this prototype, so one slot suffices.
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+#[no_mangle]
+pub static mut RISCV64_PERCPU_PTR: u64 = 0;
+
 /// Set the RISC-V per-CPU data pointer via the tp (x4) register.
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub fn riscv64_set_tp(val: u64) {
     unsafe {
         core::arch::asm!("mv tp, {}", in(reg) val, options(nostack));
+        RISCV64_PERCPU_PTR = val;
     }
 }
 

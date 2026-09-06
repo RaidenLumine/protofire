@@ -21,6 +21,8 @@ core::arch::global_asm!(include_str!("arch/x86_64/boot.asm"));
 core::arch::global_asm!(include_str!("arch/x86_64/ap_trampoline.asm"));
 #[cfg(all(target_os = "none", target_arch = "aarch64"))]
 core::arch::global_asm!(include_str!("arch/aarch64/boot.S"));
+#[cfg(all(target_os = "none", target_arch = "riscv64"))]
+core::arch::global_asm!(include_str!("arch/riscv64/boot.S"));
 
 #[cfg(target_os = "none")]
 use core::panic::PanicInfo;
@@ -58,7 +60,11 @@ const TARGET_ARCH: &str = "aarch64";
 const TARGET_ARCH: &str = "x86_64";
 
 #[cfg(target_os = "none")]
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(target_arch = "riscv64")]
+const TARGET_ARCH: &str = "riscv64";
+
+#[cfg(target_os = "none")]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")))]
 const TARGET_ARCH: &str = "unknown";
 
 #[cfg(target_os = "none")]

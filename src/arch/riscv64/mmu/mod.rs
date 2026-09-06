@@ -10,9 +10,11 @@
 //! Memory map (QEMU `virt`, matching the RISC-V kernel linker script):
 //!   [0x0000_0000, 0x8000_0000)  PGD[0..1]  device / MMIO window (UART, PLIC,
 //!                                            CLINT, virtio)
-//!   [0x8000_0000, 0x8800_0000)  PGD[2]     RAM window (kernel text + demo
-//!                                            user slots carved top-down)
-//!   [0x8800_0000, ...)                     unused by the runtime tables
+//!   [0x8000_0000, 0xC000_0000)  PGD[2]     RAM window (kernel text, static
+//!                                            .bss — incl. the 512 MiB
+//!                                            physical pool and heap — plus
+//!                                            demo user slots carved top-down)
+//!                                            under a 1 GiB QEMU `virt` RAM.
 
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 use core::arch::asm;
@@ -42,10 +44,13 @@ const TRANSLATION_GRANULE_SIZE: usize = 4096;
 /// Number of entries in every Sv39 translation table.
 const TABLE_ENTRY_COUNT: usize = 512;
 
-/// RAM window covered by the runtime tables (the kernel image and the demo
-/// user slots both live here): 128 MiB at the QEMU `virt` RAM base.
+/// RAM window covered by the runtime tables (kernel image, static `.bss` and
+/// the demo user slots all live here).  The linker places the 512 MiB
+/// `PHYSICAL_POOL` and the 16 MiB `KERNEL_HEAP` statics in `.bss` just above
+/// the text/data, so the window must span a full GiB of QEMU `virt` RAM
+/// (`-m 1G`, RAM at [0x8000_0000, 0xC000_0000)).
 const KERNEL_RAM_BASE: usize = 0x8000_0000;
-const KERNEL_RAM_LENGTH: usize = 0x800_0000;
+const KERNEL_RAM_LENGTH: usize = 0x4000_0000;
 
 /// Low identity-mapped MMIO window (UART, PLIC, CLINT, virtio, ...).
 const DEVICE_MMIO_BASE: usize = 0x0000_0000;
@@ -222,8 +227,30 @@ pub struct PreparedProcessAddressSpace {
 
 // ── Kernel translation tables ────────────────────────────────────────────
 
-static KERNEL_PGD: SyncUnsafeCell<PageTable> = SyncUnsafeCell::new(PageTable::zeroed());
-static KERNEL_PMD: SyncUnsafeCell<PageTable> = SyncUnsafeCell::new(PageTable::zeroed());
+/// A 4 KiB-aligned Sv39 translation table.
+///
+/// satp (PPN = root >> 12) and every table descriptor address the next level
+/// at 4 KiB granularity, so the kernel translation tables must be page
+/// aligned.  A bare `PageTable` is only 8-byte aligned (it wraps
+/// `[u64; 512]`), which truncated the runtime PGD/PMD addresses to the start
+/// of their 4 KiB page and made the MMU walk read the wrong page.
+#[repr(C, align(4096))]
+struct AlignedKernelTranslationTable(SyncUnsafeCell<PageTable>);
+
+impl AlignedKernelTranslationTable {
+    const fn new(table: PageTable) -> Self {
+        Self(SyncUnsafeCell::new(table))
+    }
+
+    fn get(&self) -> *mut PageTable {
+        self.0.get()
+    }
+}
+
+static KERNEL_PGD: AlignedKernelTranslationTable =
+    AlignedKernelTranslationTable::new(PageTable::zeroed());
+static KERNEL_PMD: AlignedKernelTranslationTable =
+    AlignedKernelTranslationTable::new(PageTable::zeroed());
 
 static PREPARED_ROOT_TABLE: AtomicUsize = AtomicUsize::new(0);
 static PREPARED_WINDOW_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -727,7 +754,7 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     // PGD[0..1]: device / MMIO window [0, 2 GiB) as two 1 GiB blocks.
     pgd.0[0] = device_pgd_block_entry(DEVICE_MMIO_BASE);
     pgd.0[1] = device_pgd_block_entry(DEVICE_MMIO_BASE + (1 << 30));
-    // PGD[2]: RAM window [0x8000_0000, 0x8800_0000) → PMD table.
+    // PGD[2]: RAM window [0x8000_0000, 0xC000_0000) → PMD table.
     pgd.0[2] = table_entry(pmd_ptr as *mut PageTable as usize);
 
     let pmd = unsafe { &mut *pmd_ptr };
