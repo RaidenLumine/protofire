@@ -473,8 +473,12 @@ impl FramebufferConsole {
                 fb_size - src_offset,
             );
         }
-        // Clear the bottom glyph row.
-        let last_row_start = (fb_size - src_offset) as *mut u8;
+        // Clear the bottom glyph row.  The destination is an *offset into the
+        // framebuffer*; it must be added to `fb_ptr`.  Using the raw byte
+        // count as an absolute address would write the background colour over
+        // low kernel .text (0x2F0000 for a 1024×768×32 buffer), corrupting
+        // code as soon as the console scrolls.
+        let last_row_start = (self.fb_ptr as usize + fb_size - src_offset) as *mut u8;
         let last_row_pixels = (self.fb_info.pitch as usize) * glyph_h / 4;
         for i in 0..last_row_pixels {
             unsafe { ptr::write_volatile(last_row_start.add(i * 4) as *mut u32, self.bg_color) };
