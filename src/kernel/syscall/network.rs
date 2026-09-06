@@ -3,6 +3,7 @@
 //! Minimal network syscalls for capability discovery and TCP connection
 //! creation.
 
+use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
@@ -23,7 +24,7 @@ pub(super) fn status(context: &mut super::SyscallContext) -> Result<super::Sysca
 
 pub(super) fn connect_tcp(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let (host, port) = connect_tcp_request(context)?;
-    let connection = network::connect_tcp(host, port)?;
+    let connection = network::connect_tcp(&host, port)?;
     let endpoint = connection.endpoint().to_string();
     super::runtime::with_current_process(|process| {
         let fd = process.open_network_descriptor(
@@ -59,7 +60,7 @@ pub(super) fn accept_tcp(context: &mut super::SyscallContext) -> Result<super::S
     })
 }
 
-fn connect_tcp_request<'a>(context: &super::SyscallContext) -> Result<(&'a str, u16)> {
+fn connect_tcp_request(context: &super::SyscallContext) -> Result<(String, u16)> {
     let host_ptr = context.arg(0) as *const u8;
     let host_len = context.arg(1);
     let port = context.arg(2);
@@ -507,7 +508,7 @@ pub(super) fn resolve_hostname(
     let hostname =
         super::user_memory::user_bounded_str(host_ptr, host_len, MAX_RESOLVE_HOST_BYTES)?;
 
-    let ip = crate::kernel::network::dns::resolve_hostname(hostname)?;
+    let ip = crate::kernel::network::dns::resolve_hostname(&hostname)?;
 
     // Pack the 4-byte IPv4 address into a u32 (network byte order).
     let addr_u32 = u32::from_be_bytes(ip);

@@ -275,6 +275,13 @@ pub fn ioapic_setup_isa_irqs() {
 
     // IRQ 2 is the cascade from the slave PIC; we don't route it.
     // Other IRQs remain masked until a driver explicitly enables them.
+
+    // Now that IRQ1 is routed and unmasked, arm the keyboard IRQ at the
+    // 8042 controller itself.  A SeaBIOS multiboot payload does not
+    // guarantee the controller left the keyboard interrupt enabled, so
+    // without this the PS/2 IRQ1 line never asserts and keystrokes (from
+    // the GUI window or HMP `sendkey`) never reach the driver.
+    super::i8042::init();
 }
 
 // ---------------------------------------------------------------------------

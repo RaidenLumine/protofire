@@ -50,30 +50,33 @@ pub(crate) fn prepare_arch_user_address_space(
                 .write_user_bytes(initial_stack.stack_pointer, &initial_stack.bytes)
                 .ok_or(Error::InvalidArgument)?;
 
-            // Register user pages in the software page table so demand-paging
-            // and page reclamation can operate on them.
-            // Code pages (RX, no W) are registered as DemandPaged: their
-            // frames are freed, the hardware PTE is cleared to NOT PRESENT,
-            // and the ELF content is stored for later backfill on first
-            // access.  Data and stack pages remain pre-allocated Anonymous.
+            // Register user pages in the software page table so reclamation
+            // and teardown can account for them.  All pages (code, data,
+            // stack) stay resident and mapped in this process's prepared
+            // hardware page tables.
+            //
+            // Code is deliberately NOT demand-paged: every user process loads
+            // its image at the same fixed base virtual address, while the
+            // software page table and the demand-paging content store are
+            // keyed by virtual address alone.  Deferring code frames to that
+            // global store would let the next spawn overwrite an earlier
+            // process's image bytes, so later processes would fault on their
+            // first instruction fetch — or, worse, execute the wrong program.
+            // Keeping each process's own code frames resident (as the AArch64
+            // and RISC-V prepare paths already do) preserves per-process
+            // isolation.
             if let Some(mut memory_mut) = crate::kernel::memory::global_mut() {
-                let user_entries = prepared.user_page_entries();
-                let entries: Vec<(usize, usize, PagePermissions, MappingKind)> = user_entries
-                    .iter()
-                    .map(|&(va, pa, perms)| {
-                        let kind = if perms.contains(PagePermissions::EXECUTE)
-                            && !perms.contains(PagePermissions::WRITE)
-                        {
-                            MappingKind::DemandPaged
-                        } else {
-                            MappingKind::Anonymous
-                        };
-                        (va, pa, perms, kind)
-                    })
+                let entries: Vec<(usize, usize, PagePermissions, MappingKind)> = prepared
+                    .user_page_entries()
+                    .into_iter()
+                    .map(|(va, pa, perms)| (va, pa, perms, MappingKind::Anonymous))
                     .collect();
                 let code_count = entries
                     .iter()
-                    .filter(|(_, _, _, k)| *k == MappingKind::DemandPaged)
+                    .filter(|(_, _, perms, _)| {
+                        perms.contains(PagePermissions::EXECUTE)
+                            && !perms.contains(PagePermissions::WRITE)
+                    })
                     .count();
                 let registered = memory_mut.register_user_pages(&entries);
                 crate::println!(
@@ -82,18 +85,6 @@ pub(crate) fn prepare_arch_user_address_space(
                     code_count,
                     registered.saturating_sub(code_count),
                 );
-
-                // For code pages: extract and store ELF content, then mark
-                // NOT PRESENT in hardware and release the backing frame.
-                for &(va, _pa, perms) in &user_entries {
-                    if perms.contains(PagePermissions::EXECUTE)
-                        && !perms.contains(PagePermissions::WRITE)
-                    {
-                        let content = extract_page_content(va, image_layout, image);
-                        memory_mut.store_page_content(va, content);
-                        prepared.mark_user_page_not_present(va);
-                    }
-                }
             }
 
             return Ok(Some(ProcessUserAddressSpace::from_prepared_process(

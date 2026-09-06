@@ -148,7 +148,7 @@ fn rename_normalized_paths(old_path: &str, new_path: &str) -> Result<super::Sysc
 
 fn dispatch_stat_path_source(
     context: &super::SyscallContext,
-    source: super::fs_path::PathSource<'_>,
+    source: super::fs_path::PathSource,
     record_ptr_arg: usize,
     record_len_arg: usize,
 ) -> Result<super::SyscallDispatch> {
@@ -163,7 +163,7 @@ fn dispatch_stat_path_source(
 }
 
 fn dispatch_read_dir_path_source(
-    source: super::fs_path::PathSource<'_>,
+    source: super::fs_path::PathSource,
     output: DirectoryEntryOutput,
 ) -> Result<super::SyscallDispatch> {
     super::fs_path::dispatch_path_source(source, |normalized_path| {
@@ -177,7 +177,7 @@ fn dispatch_read_dir_path_source(
 
 fn dispatch_access_query_path_source(
     context: &super::SyscallContext,
-    source: super::fs_path::PathSource<'_>,
+    source: super::fs_path::PathSource,
     required_access_arg: usize,
     record_ptr_arg: usize,
     record_len_arg: usize,
@@ -197,7 +197,7 @@ fn dispatch_access_query_path_source(
 
 fn dispatch_permission_metadata_path_source(
     context: &super::SyscallContext,
-    source: super::fs_path::PathSource<'_>,
+    source: super::fs_path::PathSource,
     record_ptr_arg: usize,
     record_len_arg: usize,
 ) -> Result<super::SyscallDispatch> {

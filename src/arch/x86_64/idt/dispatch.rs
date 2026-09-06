@@ -258,39 +258,43 @@ fn handle_syscall(context: &mut InterruptContext) {
     let mut post_action = SyscallAction::None;
 
     match syscall::dispatch_with_action(&mut syscall_context) {
-        Ok(dispatch) => match dispatch.action {
-            SyscallAction::SigReturn => {
-                // The sigreturn handler (#134) already restored the thread's
-                // saved user context from the SignalFrame.  Apply it to the
-                // InterruptContext before returning to user mode via iretq.
-                if let Some(thread) = current_thread.as_ref() {
-                    let _ = thread.write_x86_64_user_context_to_interrupt(context);
+        Ok(dispatch) => {
+            match dispatch.action {
+                SyscallAction::SigReturn => {
+                    // The sigreturn handler (#134) already restored the thread's
+                    // saved user context from the SignalFrame.  Apply it to the
+                    // InterruptContext before returning to user mode via iretq.
+                    if let Some(thread) = current_thread.as_ref() {
+                        let _ = thread.write_x86_64_user_context_to_interrupt(context);
+                    }
+                    return;
                 }
-                return;
-            }
-            SyscallAction::ReturnFromException { frame_pointer } => {
-                let resume_result = current_thread
-                    .as_ref()
-                    .ok_or(crate::Error::InternalError)
-                    .and_then(|thread| thread.resume_x86_64_user_exception(context, frame_pointer));
+                SyscallAction::ReturnFromException { frame_pointer } => {
+                    let resume_result = current_thread
+                        .as_ref()
+                        .ok_or(crate::Error::InternalError)
+                        .and_then(|thread| {
+                            thread.resume_x86_64_user_exception(context, frame_pointer)
+                        });
 
-                match syscall_trap::resolve_return_from_exception_resume(resume_result) {
-                    syscall_trap::ReturnFromExceptionResolution::ReturnToUser => {
-                        if let Some(thread) = current_thread.as_ref() {
-                            thread.capture_x86_64_user_context_from_interrupt(context);
+                    match syscall_trap::resolve_return_from_exception_resume(resume_result) {
+                        syscall_trap::ReturnFromExceptionResolution::ReturnToUser => {
+                            if let Some(thread) = current_thread.as_ref() {
+                                thread.capture_x86_64_user_context_from_interrupt(context);
+                            }
+                            return;
                         }
-                        return;
-                    }
-                    syscall_trap::ReturnFromExceptionResolution::SetError(error) => {
-                        context.rax = syscall_abi::encode_error(error) as u64;
+                        syscall_trap::ReturnFromExceptionResolution::SetError(error) => {
+                            context.rax = syscall_abi::encode_error(error) as u64;
+                        }
                     }
                 }
+                action => {
+                    context.rax = syscall_abi::encode_result(Ok(dispatch.value)) as u64;
+                    post_action = action;
+                }
             }
-            action => {
-                context.rax = syscall_abi::encode_result(Ok(dispatch.value)) as u64;
-                post_action = action;
-            }
-        },
+        }
         Err(error) => {
             context.rax = syscall_abi::encode_error(error) as u64;
         }

@@ -17,7 +17,6 @@
 //!
 //! 0 on success, or a negative errno on failure.
 
-use alloc::string::ToString;
 use alloc::sync::Arc;
 
 use crate::kernel::fs::fuse::FuseConnection;
@@ -34,8 +33,8 @@ use crate::Result;
 
 pub(super) fn fuse_mount(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     // ── 1. Read arguments ──────────────────────────────────────────────
-    let mount_path = super::user_memory::user_path_arg(context, 0, 1)?.to_string();
-    let fs_name = super::user_memory::user_path_arg(context, 2, 3)?.to_string();
+    let mount_path = super::user_memory::user_path_arg(context, 0, 1)?;
+    let fs_name = super::user_memory::user_path_arg(context, 2, 3)?;
     let buffer_ptr = context.arg(4) as *mut u8;
     let buffer_len = context.arg(5);
 

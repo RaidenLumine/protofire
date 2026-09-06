@@ -18,7 +18,7 @@ else
 $(error PROFILE must be either debug or release)
 endif
 
-.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb test-gpu test-parsers verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 clippy run run-aarch64 run-riscv64 clean setup-dev install-hooks
+.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb test-gpu test-parsers verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 build-x8664-demo clippy run run-x8664-vga run-x8664-headless run-aarch64 run-riscv64 clean setup-dev install-hooks
 
 help:
 	@printf '%s\n' \
@@ -48,8 +48,10 @@ help:
 		'  make build-aarch64  - build the aarch64 bare-metal kernel ELF for QEMU virt' \
 		'  make build-riscv64  - build the riscv64 bare-metal kernel ELF for QEMU virt' \
 		'  make clippy         - run clippy for all targets' \
-		'  make run			   - boot the x86_64 kernel directly on QEMU q35' by default \
-		'  make run-x8664      - boot the x86_64 kernel directly on QEMU q35' \
+		'  make run             - boot the x86_64 kernel on QEMU q35 (GUI framebuffer shell)' \
+		'  make run-x8664       - alias of make run (x86_64 GUI interactive shell)' \
+		'  make run-x8664-vga   - like run but through the -vga std (bochs) adapter' \
+		'  make run-x8664-headless - headless x86_64 smoke (no demo-disk, no display)' \
 		'  make run-aarch64    - boot the aarch64 kernel directly on QEMU virt' \
 		'  make run-riscv64    - boot the riscv64 kernel directly on QEMU virt' \
 		'  make clean          - remove Cargo artifacts' \
@@ -160,6 +162,11 @@ check-aarch64-runtime:
 build-x8664:
 	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target $(TARGET) --bin $(CRATE)
 
+# Like build-x8664 but links the in-memory demo disk, so `make run` boots the
+# interactive ring-3 shell on the framebuffer console instead of idling.
+build-x8664-demo:
+	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target $(TARGET) --bin $(CRATE) --features demo-disk
+
 build-aarch64:
 	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target aarch64-unknown-none --bin $(CRATE)
 
@@ -171,7 +178,43 @@ build: build-x8664
 clippy:
 	$(CARGO) clippy $(CARGO_FLAGS) --all-targets -- -D warnings
 
-run-x8664: build-x8664
+# Interactive GUI knobs shared by the run-* targets (reused later by the
+# arm/riscv virtio-mmio stages).  RUN_DISPLAY picks the QEMU display backend;
+# RUN_GPU picks the adapter the kernel drives.  QEMU_GPU_ARGS is a recursive
+# variable expanded inside the recipe so a target-specific RUN_GPU (see
+# run-x8664-vga below) selects the matching adapter.
+RUN_DISPLAY ?= gtk
+RUN_GPU ?= virtio-gpu
+QEMU_GPU_ARGS = $(if $(filter virtio-gpu,$(RUN_GPU)),-device virtio-gpu-pci,$(if $(filter vga,$(RUN_GPU)),-vga std,$(error RUN_GPU must be 'virtio-gpu' or 'vga')))
+
+# Boot the kernel on QEMU q35 with a graphical framebuffer console and the
+# interactive ring-3 shell.  Needs --features demo-disk so the shell and the
+# in-memory demo volumes are built in; -serial stdio stays as a mirrored log
+# and a second input path (type in the window or in the launching terminal).
+run-x8664: build-x8664-demo
+	@if [ ! -x "$$(command -v qemu-system-x86_64)" ]; then \
+		echo "qemu-system-x86_64 is not installed; cannot run the x86_64 kernel."; \
+		exit 1; \
+	fi
+	qemu-system-x86_64 \
+		-machine q35 \
+		-cpu max \
+		-smp 1 \
+		-m 1G \
+		-kernel "$(TARGET_DIR)/x86_64-unknown-none/$(PROFILE)/$(CRATE)" \
+		-display $(RUN_DISPLAY) \
+		$(QEMU_GPU_ARGS) \
+		-serial stdio \
+		-no-reboot \
+		-no-shutdown \
+		-netdev user,id=net0 -device virtio-net-pci,netdev=net0
+
+# Same GUI shell but through the bochs/std VGA adapter (-vga std, id 1234:1111).
+run-x8664-vga: RUN_GPU = vga
+run-x8664-vga: run-x8664
+
+# Original headless smoke: no display device, no demo-disk shell (idle banner).
+run-x8664-headless: build-x8664
 	@if [ ! -x "$$(command -v qemu-system-x86_64)" ]; then \
 		echo "qemu-system-x86_64 is not installed; cannot run the x86_64 kernel."; \
 		exit 1; \

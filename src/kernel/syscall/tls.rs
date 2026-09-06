@@ -7,6 +7,7 @@
 //! descriptor that transparently encrypts outgoing data and decrypts
 //! incoming data.
 
+use alloc::string::String;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 
@@ -30,7 +31,7 @@ const MAX_TLS_HOST_BYTES: usize = 4096;
 /// Returns a file descriptor that supports read/write/close/poll.
 pub(super) fn tls_connect(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let (host, port) = tls_connect_request(context)?;
-    let connection = Arc::new(tls::tls_connect(host, port)?);
+    let connection = Arc::new(tls::tls_connect(&host, port)?);
     let endpoint = connection.endpoint().to_string();
     super::runtime::with_current_process(|process| {
         let fd = process.open_tls_descriptor(
@@ -46,7 +47,7 @@ pub(super) fn tls_connect(context: &mut super::SyscallContext) -> Result<super::
 ///
 /// Mirrors `network::connect_tcp_request` — same argument layout:
 ///   arg0 = host pointer, arg1 = host length, arg2 = port, arg3 = flags
-fn tls_connect_request<'a>(context: &super::SyscallContext) -> Result<(&'a str, u16)> {
+fn tls_connect_request(context: &super::SyscallContext) -> Result<(String, u16)> {
     let host_ptr = context.arg(0) as *const u8;
     let host_len = context.arg(1);
     let port = context.arg(2);

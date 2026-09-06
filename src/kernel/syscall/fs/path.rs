@@ -11,70 +11,70 @@ use crate::kernel::fs;
 use crate::kernel::process::Process;
 use crate::Result;
 
-#[derive(Clone, Copy)]
-pub(super) enum PathSource<'a> {
-    Current(&'a str),
-    DirFd { dirfd: usize, path: &'a str },
+#[derive(Clone)]
+pub(super) enum PathSource {
+    Current(String),
+    DirFd { dirfd: usize, path: String },
 }
 
-pub(super) fn context_path_source<'a>(
-    context: &'a super::SyscallContext,
+pub(super) fn context_path_source(
+    context: &super::SyscallContext,
     path_arg: usize,
     len_arg: usize,
-) -> Result<PathSource<'a>> {
+) -> Result<PathSource> {
     Ok(PathSource::Current(super::user_memory::user_path_arg(
         context, path_arg, len_arg,
     )?))
 }
 
-pub(super) fn context_path_source_at<'a>(
-    context: &'a super::SyscallContext,
+pub(super) fn context_path_source_at(
+    context: &super::SyscallContext,
     dirfd_arg: usize,
     path_arg: usize,
     len_arg: usize,
-) -> Result<PathSource<'a>> {
+) -> Result<PathSource> {
     Ok(PathSource::DirFd {
         dirfd: context.arg(dirfd_arg),
         path: super::user_memory::user_path_arg(context, path_arg, len_arg)?,
     })
 }
 
-pub(super) fn context_path_source_after_reserved<'a>(
-    context: &'a super::SyscallContext,
+pub(super) fn context_path_source_after_reserved(
+    context: &super::SyscallContext,
     path_arg: usize,
     len_arg: usize,
     reserved_arg: usize,
-) -> Result<PathSource<'a>> {
+) -> Result<PathSource> {
     super::validate_zeroed_args(context, reserved_arg)?;
     context_path_source(context, path_arg, len_arg)
 }
 
-pub(super) fn context_path_source_at_after_reserved<'a>(
-    context: &'a super::SyscallContext,
+pub(super) fn context_path_source_at_after_reserved(
+    context: &super::SyscallContext,
     dirfd_arg: usize,
     path_arg: usize,
     len_arg: usize,
     reserved_arg: usize,
-) -> Result<PathSource<'a>> {
+) -> Result<PathSource> {
     super::validate_zeroed_args(context, reserved_arg)?;
     context_path_source_at(context, dirfd_arg, path_arg, len_arg)
 }
 
 pub(super) fn normalize_process_path_source(
     process: &Process,
-    source: PathSource<'_>,
+    source: PathSource,
 ) -> Result<String> {
     match source {
         PathSource::Current(path) => {
             let cwd = process.current_working_dir();
-            fs::path::normalize_path(path, &cwd)
+            fs::path::normalize_path(&path, &cwd)
         }
-        PathSource::DirFd { dirfd, path } => normalize_path_from_dirfd(process, dirfd, path),
+        PathSource::DirFd { dirfd, path } => normalize_path_from_dirfd(process, dirfd, &path),
     }
 }
 
 pub(super) fn with_current_process_path_source<T>(
-    source: PathSource<'_>,
+    source: PathSource,
     f: impl FnOnce(&Process, String) -> Result<T>,
 ) -> Result<T> {
     super::runtime::with_current_process(|process| {
@@ -84,8 +84,8 @@ pub(super) fn with_current_process_path_source<T>(
 }
 
 pub(super) fn with_current_process_path_pair_sources<T>(
-    first: PathSource<'_>,
-    second: PathSource<'_>,
+    first: PathSource,
+    second: PathSource,
     f: impl FnOnce(&Process, String, String) -> Result<T>,
 ) -> Result<T> {
     super::runtime::with_current_process(|process| {
@@ -95,10 +95,7 @@ pub(super) fn with_current_process_path_pair_sources<T>(
     })
 }
 
-pub(super) fn dispatch_path_source<F>(
-    source: PathSource<'_>,
-    f: F,
-) -> Result<super::SyscallDispatch>
+pub(super) fn dispatch_path_source<F>(source: PathSource, f: F) -> Result<super::SyscallDispatch>
 where
     F: FnOnce(String) -> Result<super::SyscallDispatch>,
 {
@@ -106,8 +103,8 @@ where
 }
 
 pub(super) fn dispatch_path_pair_sources<F>(
-    first: PathSource<'_>,
-    second: PathSource<'_>,
+    first: PathSource,
+    second: PathSource,
     f: F,
 ) -> Result<super::SyscallDispatch>
 where
@@ -161,7 +158,7 @@ mod tests {
             process.as_ref(),
             PathSource::DirFd {
                 dirfd: AT_FDCWD,
-                path: "../notes/todo.txt",
+                path: "../notes/todo.txt".into(),
             },
             Ok("/data/users/guest/notes/todo.txt".into()),
         );
@@ -178,7 +175,7 @@ mod tests {
             process.as_ref(),
             PathSource::DirFd {
                 dirfd,
-                path: "../catalog/demo.toml",
+                path: "../catalog/demo.toml".into(),
             },
             Ok("/apps/current/catalog/demo.toml".into()),
         );
@@ -195,7 +192,7 @@ mod tests {
             process.as_ref(),
             PathSource::DirFd {
                 dirfd,
-                path: "/system/config/kernel.toml",
+                path: "/system/config/kernel.toml".into(),
             },
             Ok("/system/config/kernel.toml".into()),
         );
@@ -209,7 +206,7 @@ mod tests {
             process.as_ref(),
             PathSource::DirFd {
                 dirfd: STDOUT_FD,
-                path: "/system/config/kernel.toml",
+                path: "/system/config/kernel.toml".into(),
             },
             Ok("/system/config/kernel.toml".into()),
         );
@@ -223,7 +220,7 @@ mod tests {
             process.as_ref(),
             PathSource::DirFd {
                 dirfd: STDOUT_FD,
-                path: "   /system/config/kernel.toml   ",
+                path: "   /system/config/kernel.toml   ".into(),
             },
             Ok("/system/config/kernel.toml".into()),
         );
@@ -241,11 +238,11 @@ mod tests {
             super::with_current_process_path_pair_sources(
                 PathSource::DirFd {
                     dirfd: STDOUT_FD,
-                    path: "/system/config/kernel.toml",
+                    path: "/system/config/kernel.toml".into(),
                 },
                 PathSource::DirFd {
                     dirfd: AT_FDCWD,
-                    path: "../notes/todo.txt",
+                    path: "../notes/todo.txt".into(),
                 },
                 |_process, first, second| Ok((first, second)),
             ),
@@ -268,11 +265,11 @@ mod tests {
             super::with_current_process_path_pair_sources(
                 PathSource::DirFd {
                     dirfd: STDOUT_FD,
-                    path: "   /system/config/kernel.toml   ",
+                    path: "   /system/config/kernel.toml   ".into(),
                 },
                 PathSource::DirFd {
                     dirfd: AT_FDCWD,
-                    path: "../notes/todo.txt",
+                    path: "../notes/todo.txt".into(),
                 },
                 |_process, first, second| Ok((first, second)),
             ),
@@ -291,13 +288,13 @@ mod tests {
             process.as_ref(),
             PathSource::DirFd {
                 dirfd: STDOUT_FD,
-                path: "notes/todo.txt",
+                path: "notes/todo.txt".into(),
             },
             Err(Error::InvalidArgument),
         );
     }
 
-    fn assert_normalized(process: &Process, source: PathSource<'_>, expected: Result<String>) {
+    fn assert_normalized(process: &Process, source: PathSource, expected: Result<String>) {
         assert_eq!(normalize_process_path_source(process, source), expected);
     }
 }

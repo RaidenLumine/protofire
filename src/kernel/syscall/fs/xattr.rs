@@ -58,7 +58,7 @@ pub(super) fn set_xattr(context: &mut SyscallContext) -> Result<SyscallDispatch>
     validate_xattr_value(&value)?;
 
     with_current_process_security_token_fs(|token, fs| {
-        let normalized = fs.normalize_path(path)?;
+        let normalized = fs.normalize_path(&path)?;
         fs.set_xattr_for_normalized_path(&normalized, &name, &value, token)?;
         Ok(SyscallDispatch::complete(0))
     })
@@ -78,7 +78,7 @@ pub(super) fn get_xattr(context: &mut SyscallContext) -> Result<SyscallDispatch>
     let value_out_len = context.arg(5);
 
     let value = with_current_process_security_token_fs(|token, fs| {
-        let normalized = fs.normalize_path(path)?;
+        let normalized = fs.normalize_path(&path)?;
         fs.get_xattr_for_normalized_path(&normalized, &name, token)
     })?;
     let value = value.ok_or(Error::NotFound)?;
@@ -97,7 +97,7 @@ pub(super) fn list_xattr(context: &mut SyscallContext) -> Result<SyscallDispatch
     let buffer_len = context.arg(3);
 
     let entries = with_current_process_security_token_fs(|token, fs| {
-        let normalized = fs.normalize_path(path)?;
+        let normalized = fs.normalize_path(&path)?;
         fs.list_xattrs_for_normalized_path(&normalized, token)
     })?;
 
@@ -121,7 +121,7 @@ pub(super) fn remove_xattr(context: &mut SyscallContext) -> Result<SyscallDispat
     validate_xattr_name(&name)?;
 
     with_current_process_security_token_fs(|token, fs| {
-        let normalized = fs.normalize_path(path)?;
+        let normalized = fs.normalize_path(&path)?;
         fs.remove_xattr_for_normalized_path(&normalized, &name, token)?;
         Ok(SyscallDispatch::complete(0))
     })
@@ -146,7 +146,7 @@ pub(super) fn set_file_flags(context: &mut SyscallContext) -> Result<SyscallDisp
     }
 
     with_current_process_security_token_fs(|token, fs| {
-        let normalized = fs.normalize_path(path)?;
+        let normalized = fs.normalize_path(&path)?;
         fs.set_file_flags_for_normalized_path(&normalized, set, clear, token)?;
         Ok(SyscallDispatch::complete(0))
     })
@@ -159,7 +159,7 @@ pub(super) fn get_file_flags(context: &mut SyscallContext) -> Result<SyscallDisp
     let path = user_path_arg(context, 0, 1)?;
 
     let flags = with_current_process_security_token_fs(|token, fs| {
-        let normalized = fs.normalize_path(path)?;
+        let normalized = fs.normalize_path(&path)?;
         fs.get_file_flags_for_normalized_path(&normalized, token)
     })?;
     Ok(SyscallDispatch::complete(flags as usize))

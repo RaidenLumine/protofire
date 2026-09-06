@@ -58,7 +58,13 @@ pub(super) fn write(context: &mut super::SyscallContext) -> Result<super::Syscal
     let buffer_ptr = context.arg(1) as *const u8;
     let length = context.arg(2);
 
-    super::validate_zeroed_args(context, 3)?;
+    // `write` has a three-argument contract (fd, buffer, length); argument
+    // registers 3+ are unused and deliberately NOT validated as zero.  Like
+    // most syscall ABIs, this kernel ignores trailing argument registers on a
+    // fixed-arity call, so a caller that happens to leave a stale value in the
+    // 4th register (for example a hand-written ring3 shell that reuses the
+    // read-timeout it loaded into rcx/arg3 for a preceding blocking read) is
+    // not rejected with EINVAL.  Only the documented arguments are interpreted.
     super::user_memory::with_optional_input_slice(buffer_ptr, length, |buffer| {
         complete_current_process_fd(fd, |process, fd| io::write(process, fd, buffer))
     })
@@ -368,9 +374,10 @@ mod tests {
             SyscallContext::new(SyscallNumber::Read as usize, [usize::MAX, 0, 0, 0, 1, 0]);
         assert_eq!(read_fd(&mut read_context), Err(Error::InvalidArgument));
 
-        let mut write_context =
-            SyscallContext::new(SyscallNumber::Write as usize, [usize::MAX, 0, 0, 1, 0, 0]);
-        assert_eq!(write_fd(&mut write_context), Err(Error::InvalidArgument));
+        // `write` is intentionally absent here: its contract is three arguments
+        // and unused trailing argument registers are ignored, not rejected (see
+        // the `write` handler).  A stale value in the 4th register must not fail
+        // the syscall — only the documented arguments are interpreted.
 
         let mut close_context =
             SyscallContext::new(SyscallNumber::Close as usize, [usize::MAX, 1, 0, 0, 0, 0]);

@@ -5,6 +5,7 @@
 //! `demo_payloads::elf_builder`.
 
 use crate::user::demo::elf_builder::build_artifact_from_payload;
+use crate::user::demo::elf_builder::build_metadata_only_artifact;
 pub use crate::user::demo::elf_builder::DemoProgramArtifact;
 
 use crate::user::program::DEMO_PROGRAM_ENTRY;
@@ -41,18 +42,17 @@ pub fn build_rust_io_demo_program_artifact() -> DemoProgramArtifact {
     )
 }
 
-/// Build a real x86_64 ELF64 artifact for the Ring 3 shell.
+/// Build a metadata-only ELF64 artifact for the x86_64 shell.
 ///
-/// The shell payload is a self-contained assembly program that uses the
-/// `int 0x80` syscall ABI for all I/O.  It has a proper PT_LOAD segment
-/// and runs in user mode (Ring 3) on bare-metal.
+/// The shell ELF carries no PT_LOAD segments so the loader always falls back
+/// to the `host_proxy = "shell"` path, which maps to `shell_user_main()` — the
+/// same in-kernel Rust shell used on aarch64 and riscv64.  (The recovered
+/// assembly `adastra_shell_payload` previously shipped here as a real ring-3
+/// ELF, but its `read_line` routine overwrites its own saved return address
+/// with the typed line, so the first command jumped to the command bytes and
+/// faulted; the maintained host-proxy shell is used instead.)
 pub fn build_shell_program_artifact() -> DemoProgramArtifact {
-    build_artifact_from_payload(
-        super::shell_payload_x86_64::payload_bytes(),
-        super::shell_payload_x86_64::payload_entry_offset(),
-        DEMO_PROGRAM_ENTRY as u64,
-        DEMO_PROGRAM_MACHINE,
-    )
+    build_metadata_only_artifact(DEMO_PROGRAM_MACHINE)
 }
 
 #[cfg(test)]
@@ -339,23 +339,13 @@ mod tests {
     }
 
     #[test]
-    fn shell_program_artifact_has_loadable_segments() {
+    fn shell_program_artifact_has_no_loadable_segments() {
         let artifact = build_shell_program_artifact();
         let parsed = parse_elf64(&artifact.bytes).expect("parse shell elf");
         let segments = parsed.load_segments().expect("load shell segments");
 
         assert_eq!(parsed.machine, DEMO_PROGRAM_MACHINE);
-        assert!(
-            !segments.is_empty(),
-            "shell ELF must have at least one load segment"
-        );
-        assert!(
-            parsed.entry_point != 0,
-            "shell ELF must have a non-zero entry point"
-        );
-        assert!(
-            artifact.bytes.len() > 64,
-            "shell artifact must contain payload data"
-        );
+        assert!(segments.is_empty(), "shell ELF must have no load segments");
+        assert_eq!(artifact.bytes.len(), 64, "shell artifact is header-only");
     }
 }

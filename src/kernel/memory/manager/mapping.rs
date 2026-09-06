@@ -229,21 +229,41 @@ impl MemoryManager {
                 .saturating_add(paging::PAGE_SIZE - 1),
         );
         let mut count = 0;
-        let mut addr = page_start;
-        while addr < page_end {
-            if let Some((phys, _, kind)) = self.page_table.lookup_mapping(addr) {
-                match kind {
-                    MappingKind::Anonymous
-                    | MappingKind::DemandPaged
-                    | MappingKind::Cow
-                    | MappingKind::Shared => {}
-                    _ => {
-                        addr = addr.saturating_add(paging::PAGE_SIZE);
-                        continue;
-                    }
-                }
+
+        // The requested range may span an enormous gap: an x86_64 process's
+        // image is mapped near the bottom of the 128 TiB user half while its
+        // stack sits at `X86_64_USER_STACK_TOP` (~128 TiB), so the range
+        // derived from the address space's lowest and highest page covers
+        // hundreds of GiB of empty space.  Walking every 4 KiB virtual
+        // address in that span — each step doing a linear mapping scan —
+        // never finishes, which froze exec/exit mid teardown.  Snapshot the
+        // software table instead and operate only on pages that are actually
+        // present in the range, preserving the per-page CoW / swap /
+        // compressed-page bookkeeping of the previous implementation.
+        for mapping in self.page_table.mappings_snapshot() {
+            let mapping_start = mapping.virtual_address;
+            let mapping_end = mapping_start.saturating_add(mapping.length);
+            let lo = mapping_start.max(page_start);
+            let hi = mapping_end.min(page_end);
+            if lo >= hi {
+                continue;
+            }
+            match mapping.kind {
+                MappingKind::Anonymous
+                | MappingKind::DemandPaged
+                | MappingKind::Cow
+                | MappingKind::Shared => {}
+                _ => continue,
+            }
+            let mut addr = align_down_page(lo);
+            while addr < hi {
+                // Physical frame backing `addr` within this (possibly
+                // multi-page) mapping.
+                let phys = mapping
+                    .physical_address
+                    .saturating_add(addr - mapping_start);
                 // For CoW pages, release the reference to the shared frame.
-                if kind == MappingKind::Cow {
+                if mapping.kind == MappingKind::Cow {
                     self.dec_frame_refcount(phys);
                 }
                 // Free any swap slot associated with this page.
@@ -257,8 +277,8 @@ impl MemoryManager {
                 if self.page_table.unmap(addr, paging::PAGE_SIZE).is_ok() {
                     count += 1;
                 }
+                addr = addr.saturating_add(paging::PAGE_SIZE);
             }
-            addr = addr.saturating_add(paging::PAGE_SIZE);
         }
         count
     }

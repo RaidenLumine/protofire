@@ -118,20 +118,37 @@ pub(super) fn process_pid_arg(pid: usize) -> Result<u32> {
     u32::try_from(pid).map_err(|_| Error::InvalidArgument)
 }
 
-pub(super) fn user_path_arg<'a>(
+pub(super) fn user_path_arg(
     context: &super::SyscallContext,
     path_arg: usize,
     len_arg: usize,
-) -> Result<&'a str> {
-    user_str(context.arg(path_arg) as *const u8, context.arg(len_arg))
+) -> Result<String> {
+    let ptr = context.arg(path_arg) as *const u8;
+    let len = context.arg(len_arg);
+    if len == 0 {
+        // Preserve the previous `user_str` behaviour: a zero-length path is
+        // rejected up front rather than decoded to an empty string.
+        return Err(Error::InvalidArgument);
+    }
+    // Copy the path into kernel-owned memory while the SMAP guard is held.
+    // Returning a `&str` that aliases user memory would let later kernel reads
+    // (path normalization, fs lookups) fault once the guard is released.
+    user_string(ptr, len)
 }
 
-pub(super) fn user_bounded_str<'a>(ptr: *const u8, len: usize, max_len: usize) -> Result<&'a str> {
+pub(super) fn user_bounded_str(ptr: *const u8, len: usize, max_len: usize) -> Result<String> {
     if len > max_len {
         return Err(Error::InvalidArgument);
     }
+    if len == 0 {
+        // Preserve the previous `user_str` behaviour: a zero-length input is
+        // rejected rather than decoded to an empty string.
+        return Err(Error::InvalidArgument);
+    }
 
-    user_str(ptr, len)
+    // Copy into kernel-owned memory while the SMAP guard is held so the
+    // caller can read the string after `user_bounded_str` returns.
+    user_string(ptr, len)
 }
 
 pub(super) fn copy_user_bytes(bytes: &[u8], buffer_ptr: *mut u8, length: usize) -> Result<usize> {

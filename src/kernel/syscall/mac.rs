@@ -64,7 +64,7 @@ pub(super) fn mac_set_path_type(
     super::validate_zeroed_args(context, 4)?;
 
     let path = super::user_memory::user_bounded_str(ptr, len, 4096)?;
-    set_path_type(path, mac_type);
+    set_path_type(&path, mac_type);
     Ok(super::SyscallDispatch::complete(0))
 }
 

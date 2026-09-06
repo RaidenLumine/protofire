@@ -265,6 +265,39 @@ impl X86_64UserExceptionFrame {
 
 // ── Thread: x86_64 context & exception delivery ─────────────────────
 
+/// Write the user-mode exception frame into the user stack at `frame_pointer`.
+///
+/// The target is a user page, so on bare metal the store must run inside a
+/// SMAP user-access window (`stac`); without it, delivering an exception to a
+/// registered user handler takes a kernel-mode #PF as soon as CR4.SMAP is
+/// enabled.  On host test builds `frame_pointer` points at ordinary host
+/// memory and no guard is needed.
+#[cfg(target_os = "none")]
+unsafe fn write_x86_64_user_exception_frame(frame_pointer: usize, frame: X86_64UserExceptionFrame) {
+    crate::arch::x86_64::user_access::with_user_access(|| {
+        (frame_pointer as *mut X86_64UserExceptionFrame).write(frame);
+    });
+}
+
+#[cfg(not(target_os = "none"))]
+unsafe fn write_x86_64_user_exception_frame(frame_pointer: usize, frame: X86_64UserExceptionFrame) {
+    (frame_pointer as *mut X86_64UserExceptionFrame).write(frame);
+}
+
+/// Read the user-mode exception frame back from the user stack at
+/// `frame_pointer` (SMAP-guarded on bare metal, plain on host).
+#[cfg(target_os = "none")]
+unsafe fn read_x86_64_user_exception_frame(frame_pointer: usize) -> X86_64UserExceptionFrame {
+    crate::arch::x86_64::user_access::with_user_access(|| {
+        (frame_pointer as *const X86_64UserExceptionFrame).read()
+    })
+}
+
+#[cfg(not(target_os = "none"))]
+unsafe fn read_x86_64_user_exception_frame(frame_pointer: usize) -> X86_64UserExceptionFrame {
+    (frame_pointer as *const X86_64UserExceptionFrame).read()
+}
+
 #[cfg(target_arch = "x86_64")]
 impl Thread {
     /// Return a snapshot of the threadʼs last-known x86_64 user-mode register
@@ -443,7 +476,7 @@ impl Thread {
         )?;
 
         unsafe {
-            (frame_pointer as *mut X86_64UserExceptionFrame).write(frame);
+            write_x86_64_user_exception_frame(frame_pointer, frame);
         }
 
         finish_user_exception_delivery(
@@ -475,7 +508,7 @@ impl Thread {
             }
         }
 
-        let frame = unsafe { (frame_pointer as *const X86_64UserExceptionFrame).read() };
+        let frame = unsafe { read_x86_64_user_exception_frame(frame_pointer) };
         let restored = frame.into_user_context().validate_runtime_state()?;
 
         {

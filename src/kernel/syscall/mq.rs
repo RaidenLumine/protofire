@@ -98,7 +98,7 @@ pub(super) fn mq_open(context: &mut super::SyscallContext) -> Result<super::Sysc
 
     super::validate_zeroed_args(context, 5)?;
 
-    let (state, _was_new) = find_or_create_queue(name, oflags, max_msg, msg_size)?;
+    let (state, _was_new) = find_or_create_queue(&name, oflags, max_msg, msg_size)?;
 
     // Compute rights based on oflags.
     let rights = if oflags & 0x8 != 0 {
@@ -245,6 +245,6 @@ pub(super) fn mq_unlink(context: &mut super::SyscallContext) -> Result<super::Sy
 
     super::validate_zeroed_args(context, 2)?;
 
-    unlink_queue(name)?;
+    unlink_queue(&name)?;
     Ok(super::SyscallDispatch::complete(0))
 }

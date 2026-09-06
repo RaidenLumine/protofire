@@ -8,7 +8,7 @@ use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
-pub(crate) const KERNEL_HEAP_SIZE: usize = 16 * 1024 * 1024;
+pub(crate) const KERNEL_HEAP_SIZE: usize = 64 * 1024 * 1024;
 
 /// Minimum alignment of any block returned by the allocator.
 pub(crate) const HEAP_BLOCK_ALIGNMENT: usize = 16;
@@ -20,15 +20,14 @@ pub(crate) const HEAP_BLOCK_ALIGNMENT: usize = 16;
 //   sl = fractional part        second-level index (0 … SL_COUNT-1)
 //
 // With FL_MIN = 5 the smallest block class covers 2⁵ = 32 bytes
-// (header + 16‑byte payload).  FL_MAX = 24 covers up to 2²⁴ = 16 MiB,
-// which is the entire heap.
+// (header + 16‑byte payload).  FL_MAX covers the whole heap: 2²⁶ = 64 MiB.
 pub(crate) const FL_MIN: usize = 5;
-pub(crate) const FL_MAX: usize = 24;
-pub(crate) const FL_COUNT: usize = FL_MAX - FL_MIN + 1; // 20
+pub(crate) const FL_MAX: usize = 26;
+pub(crate) const FL_COUNT: usize = FL_MAX - FL_MIN + 1; // 22
 pub(crate) const SL_COUNT: usize = 32;
 pub(crate) const SL_INDEX_LOG2: usize = 5; // log₂(SL_COUNT)
 
-pub(crate) const FREE_LISTS_COUNT: usize = FL_COUNT * SL_COUNT; // 640
+pub(crate) const FREE_LISTS_COUNT: usize = FL_COUNT * SL_COUNT; // 704
 
 // ─── Block header — 16 bytes on 64‑bit ────────────────────────────────────
 

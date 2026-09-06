@@ -225,8 +225,10 @@ fn build_apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
         h() / 1024
     );
 
-    // Assembly shell is kept for the apps zone (catalog entries expect it).
-    // The placeholder ring3 ELF is used as /init.elf in the system zone instead.
+    // The shell artifact is metadata-only: the catalog entry routes it through
+    // `host_proxy = "shell"` to the in-kernel Rust shell (`shell_user_main`),
+    // matching aarch64/riscv64.  The placeholder ring3 ELF is used as /init.elf
+    // in the system zone instead.
     let shell_program = build_shell_program_artifact();
     #[cfg(target_os = "none")]
     crate::println!(

@@ -111,7 +111,7 @@ fn open_path_request_after_validation(
 }
 
 fn dispatch_mutating_path_source(
-    source: super::fs_path::PathSource<'_>,
+    source: super::fs_path::PathSource,
     mutate: NamespaceMutation,
 ) -> Result<super::SyscallDispatch> {
     super::fs_path::dispatch_path_source(source, |normalized_path| {
@@ -123,7 +123,7 @@ fn dispatch_mutating_path_source(
 }
 
 fn dispatch_open_path_source(
-    source: super::fs_path::PathSource<'_>,
+    source: super::fs_path::PathSource,
     request: OpenPathRequest,
 ) -> Result<super::SyscallDispatch> {
     super::fs_path::with_current_process_path_source(source, |process, normalized_path| {
@@ -208,7 +208,7 @@ pub(super) fn mount(context: &mut super::SyscallContext) -> Result<super::Syscal
     super::fs_path::dispatch_path_source(target_source, |normalized_target| {
         super::runtime::with_current_process_security_token_fs(|_security_token, fs| {
             let device = alloc::format!("/dev/adastra-{}", fstype);
-            fs.mount(&device, &normalized_target, fstype, flags)
+            fs.mount(&device, &normalized_target, &fstype, flags)
         })?;
         Ok(super::SyscallDispatch::complete(0))
     })

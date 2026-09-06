@@ -34,7 +34,7 @@ impl PreparedProcessAddressSpace {
         // A process address space is the runtime kernel mapping plus the
         // per-process user image/stack mappings in one merged hierarchy.
         for window in &kernel_spec.windows {
-            install_process_kernel_window(&mut pdpts, &mut pds, &mut pts, window)?;
+            install_process_kernel_window(&mut pdpts, &mut pds, &mut pts, kernel_spec, window)?;
         }
 
         for window in &user_address_space.spec.windows {
@@ -60,6 +60,19 @@ impl PreparedProcessAddressSpace {
         for pdpt in &pdpts {
             pml4.0[pdpt.pml4_index] = user_table_pointer_entry(pdpt.address());
         }
+
+        // The static kernel spec only covers the sub-1 GiB identity map, so
+        // the windows installed above leave the device-MMIO region (3 GiB–4
+        // GiB, PDPT[3]) empty.  The runtime kernel table fills that region
+        // dynamically (LAPIC/IOAPIC and PCI BARs) and, because interrupt and
+        // syscall entry plus per-interrupt device EOI run with the process
+        // CR3 active, the kernel half of a process address space must match
+        // the runtime kernel table exactly.  Share the runtime table's
+        // present upper-level entries rather than re-deriving them: later
+        // device-MMIO maps mutate the same shared PD, so every process
+        // address space observes them.
+        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+        mirror_runtime_kernel_device_entries(&mut pdpts);
 
         let summary = PreparedProcessAddressSpaceSummary {
             root_table_address: pml4.as_ref() as *const RawPageTable as usize,
@@ -678,14 +691,69 @@ pub(crate) fn validate_prepared_process_address_space(
 
     Some(())
 }
+/// Copy present PDPT entries from the runtime kernel table into a process
+/// PDPT wherever the process hierarchy does not already own the slot.
+///
+/// Kernel windows and user windows both live under PML4 index 0, so the
+/// process root's PDPT for PML4[0] is the only one that can collide with the
+/// runtime kernel table's dynamic upper-level entries.  The runtime table
+/// populates KERNEL_PDPT[3] (the 3 GiB–4 GiB device-MMIO region: LAPIC at
+/// 0xFEE0_0000, IOAPIC at 0xFEC0_0000, PCI BARs) via `map_device_mmio`
+/// during Kernel::init — before any process address space is prepared — and
+/// continues to mutate that same PD afterwards.  Sharing the entry (a
+/// pointer to the runtime-owned PD) keeps every process address space
+/// current without a per-process deep copy.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+fn mirror_runtime_kernel_device_entries(pdpts: &mut [PreparedUserPdpt]) {
+    // SAFETY: KERNEL_PDPT backs the active runtime kernel page tables and is
+    // populated before any process address space is prepared (interrupt
+    // controller init precedes process spawn).  This only reads established,
+    // never-freed upper-level entries; the shared PDs are owned by the
+    // runtime table / static HIGH_PD, not by any process root.
+    let runtime_pdpt = KERNEL_PDPT.get();
+    for pdpt in pdpts.iter_mut().filter(|p| p.pml4_index == 0) {
+        // SAFETY: dereferencing the runtime PDPT static as described above.
+        for (index, entry) in unsafe { (*runtime_pdpt).0.iter().copied() }.enumerate() {
+            if entry & PAGE_ENTRY_PRESENT == 0 {
+                continue;
+            }
+            if pdpt.table.0[index] & PAGE_ENTRY_PRESENT == 0 {
+                pdpt.table.0[index] = entry;
+            }
+        }
+    }
+}
+
 pub(crate) fn install_process_kernel_window(
     pdpts: &mut Vec<PreparedUserPdpt>,
     pds: &mut Vec<PreparedUserPd>,
     pts: &mut Vec<PreparedUserPt>,
+    kernel_spec: &KernelPageTableSpec,
     window: &PageTableWindowSpec,
 ) -> Option<()> {
     let pml4_index = pml4_index(window.base_address);
     let pdpt_index = page_directory_pointer_index(window.base_address);
+
+    // 2 MiB huge-page window: the kernel spec carries no 4 KiB PTEs for it
+    // (see KernelPageTableSpec::from_plan), so install the huge PDE (PS bit
+    // set) directly, mirroring install_runtime_kernel_page_tables.  Without
+    // this, process address spaces silently dropped whole kernel regions —
+    // including the low .text page holding the IDT/interrupt stubs — leaving
+    // an empty PT behind, and the first interrupt delivered under the
+    // process CR3 faulted fetching its stub (recursive #PF wedge).
+    if let Some(pde) = kernel_spec
+        .huge_pd_entries
+        .get(&window.page_directory_index)
+    {
+        ensure_prepared_pdpt(pdpts, pml4_index);
+        ensure_prepared_pd(pds, pml4_index, pdpt_index);
+        let pd = find_prepared_pd_mut(pds, pml4_index, pdpt_index)?;
+        if pd.table.0[window.page_directory_index] & PAGE_ENTRY_PRESENT != 0 {
+            return None;
+        }
+        pd.table.0[window.page_directory_index] = *pde;
+        return Some(());
+    }
 
     ensure_prepared_pdpt(pdpts, pml4_index);
     ensure_prepared_pd(pds, pml4_index, pdpt_index);

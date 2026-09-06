@@ -208,13 +208,6 @@ impl PciModernRegion {
             return;
         };
         let addr = self.bar_base as u64 + NOTIFY_OFFSET + (off as u64) * NOTIFY_OFF_MULTIPLIER;
-        crate::println!(
-            "[virtio-pci-modern] notify q{} at 0x{:x} (off={} mult={})",
-            queue_index,
-            addr,
-            off,
-            NOTIFY_OFF_MULTIPLIER
-        );
         unsafe {
             core::ptr::write_volatile(addr as *mut u32, queue_index as u32);
         }
@@ -289,12 +282,6 @@ impl MmioRegion for PciModernRegion {
             REG_DRIVER_FEATURES => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_DRIVER_FEATURE;
                 unsafe { self.mmio_write32(cfg_off, value) };
-                let readback = unsafe { self.mmio_read32(cfg_off) };
-                crate::println!(
-                    "[virtio-pci-modern] write DriverFeatures=0x{:08x} readback=0x{:08x}",
-                    value,
-                    readback
-                );
             }
 
             // QueueSel: select which queue to configure.
@@ -325,7 +312,6 @@ impl MmioRegion for PciModernRegion {
                     if q < MAX_QUEUES {
                         self.notify_offs[q].set(nf);
                     }
-                    crate::println!("[virtio-pci-modern] queue {} enabled, notify_off={}", q, nf);
                 }
             }
 
@@ -337,15 +323,7 @@ impl MmioRegion for PciModernRegion {
             // Status: 8-bit device_status field.
             REG_STATUS => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_DEVICE_STATUS;
-                let old = unsafe { self.cfg_read8(cfg_off) };
                 unsafe { self.cfg_write8(cfg_off, value as u8) };
-                let new = unsafe { self.cfg_read8(cfg_off) };
-                crate::println!(
-                    "[virtio-pci-modern] write Status=0x{:02x}->0x{:02x} (req=0x{:02x})",
-                    old,
-                    new,
-                    value as u8
-                );
             }
 
             // Queue descriptor address (64-bit).  The device accumulates
