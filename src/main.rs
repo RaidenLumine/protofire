@@ -64,7 +64,11 @@ const TARGET_ARCH: &str = "x86_64";
 const TARGET_ARCH: &str = "riscv64";
 
 #[cfg(target_os = "none")]
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")))]
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "riscv64"
+)))]
 const TARGET_ARCH: &str = "unknown";
 
 #[cfg(target_os = "none")]

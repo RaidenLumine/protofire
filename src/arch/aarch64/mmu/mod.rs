@@ -309,14 +309,7 @@ fn user_page_entry(physical_address: usize, permissions: PagePermissions) -> u64
     } else {
         (AP_EL1_EL0_RO, UXN_EXECUTE_NEVER)
     };
-    address
-        | DESCRIPTOR_PAGE
-        | ap
-        | SH_OUTER
-        | AF_ACCESS
-        | NG_NOT_GLOBAL
-        | uxn
-        | MAIR_ATTR_NORMAL
+    address | DESCRIPTOR_PAGE | ap | SH_OUTER | AF_ACCESS | NG_NOT_GLOBAL | uxn | MAIR_ATTR_NORMAL
 }
 
 /// Build a leaf page descriptor for a kernel-only (EL1) page.
@@ -351,13 +344,7 @@ fn normal_l2_block_entry(virtual_address: usize) -> u64 {
 /// Build a kernel RWX 2 MiB block descriptor (runtime kernel tables).
 fn kernel_l2_block_entry(physical_address: usize) -> u64 {
     let address = (physical_address as u64) & 0x0000_FFFF_FFE0_0000;
-    address
-        | DESCRIPTOR_BLOCK
-        | AP_EL1_RW
-        | SH_OUTER
-        | AF_ACCESS
-        | NG_NOT_GLOBAL
-        | MAIR_ATTR_NORMAL
+    address | DESCRIPTOR_BLOCK | AP_EL1_RW | SH_OUTER | AF_ACCESS | NG_NOT_GLOBAL | MAIR_ATTR_NORMAL
 }
 
 /// Build a device 1 GiB block descriptor for the low MMIO window.
