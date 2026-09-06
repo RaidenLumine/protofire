@@ -43,11 +43,13 @@ help:
 		'  make test-parsers   - run the deterministic in-tree parser fuzz harnesses' \
 		'  make fmt            - format the source tree' \
 		'  make fmt-check      - verify formatting without modifying files' \
-		'  make build          - build the bare-metal kernel ELF (PROFILE=debug|release)' \
+		'  make build          - build the bare-metal kernel ELF (PROFILE=debug|release)' by default \
+		'  make build-x8664    - build the bare-metal kernel ELF (PROFILE=debug|release)' \
 		'  make build-aarch64  - build the aarch64 bare-metal kernel ELF for QEMU virt' \
 		'  make build-riscv64  - build the riscv64 bare-metal kernel ELF for QEMU virt' \
 		'  make clippy         - run clippy for all targets' \
-		'  make run             - boot the x86_64 kernel directly on QEMU q35' \
+		'  make run			   - boot the x86_64 kernel directly on QEMU q35' by default \
+		'  make run-x8664      - boot the x86_64 kernel directly on QEMU q35' \
 		'  make run-aarch64    - boot the aarch64 kernel directly on QEMU virt' \
 		'  make run-riscv64    - boot the riscv64 kernel directly on QEMU virt' \
 		'  make clean          - remove Cargo artifacts' \
@@ -155,7 +157,7 @@ check-aarch64-runtime:
 # (src/user/demo/); where the demo volume still needs a ring3 binary that no
 # longer exists, a small placeholder ELF is provided inline in
 # src/kernel/fs/demo.rs so the kernel builds independently.
-build:
+build-x8664:
 	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target $(TARGET) --bin $(CRATE)
 
 build-aarch64:
@@ -164,10 +166,12 @@ build-aarch64:
 build-riscv64:
 	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target riscv64gc-unknown-none-elf --bin $(CRATE)
 
+build: build-x8664
+
 clippy:
 	$(CARGO) clippy $(CARGO_FLAGS) --all-targets -- -D warnings
 
-run: build
+run-x8664: build-x8664
 	@if [ ! -x "$$(command -v qemu-system-x86_64)" ]; then \
 		echo "qemu-system-x86_64 is not installed; cannot run the x86_64 kernel."; \
 		exit 1; \
@@ -217,6 +221,8 @@ run-riscv64: build-riscv64
 		-no-reboot \
 		-no-shutdown \
 		-netdev user,id=net0 -device virtio-net-device,netdev=net0
+
+run: run-x8664
 
 clean:
 	$(CARGO) clean
