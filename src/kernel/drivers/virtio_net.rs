@@ -712,7 +712,10 @@ pub fn probe_boot_net() -> Option<Arc<dyn NetworkDevice>> {
     #[cfg(target_arch = "aarch64")]
     const VIRTIO_MMIO_STRIDE: usize = 0x200;
     #[cfg(target_arch = "riscv64")]
-    const VIRTIO_MMIO_BASE: usize = 0x1000_8000;
+    // QEMU `virt` maps the 8 virtio-mmio transports at 0x1000_1000 +
+    // slot*0x1000 (0x1000_1000..=0x1000_8000); 0x1000_8000 is the *last*
+    // one, so scanning upward from there reads unmapped MMIO and faults.
+    const VIRTIO_MMIO_BASE: usize = 0x1000_1000;
     #[cfg(target_arch = "riscv64")]
     const VIRTIO_MMIO_STRIDE: usize = 0x1000;
     #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
@@ -840,11 +843,20 @@ fn probe_pci_net_x86_64() -> Option<Arc<dyn NetworkDevice>> {
             );
         }
 
-        // ── Try modern PCI transport via MMIO BAR first ──────────
+        // ── Try modern PCI transport via the modern MMIO BAR ─────
+        // QEMU's transitional `virtio-net-pci` exposes two MMIO BARs: a
+        // legacy 0x1000 device region (BAR1) and the modern transport
+        // BAR (BAR4, 0x4000, 64-bit prefetchable) that holds the common
+        // config, device config and notification areas at the offsets
+        // `PciModernRegion` expects.  Selecting the *first* MMIO BAR
+        // picked the legacy region, so the notify write landed outside
+        // any mapped BAR and page-faulted.  Always prefer the modern BAR:
+        // it is the larger, prefetchable MMIO region.
         if let Some(mmio_bar) = device
             .bars
             .iter()
-            .find(|bar| bar.is_mmio && bar.base_address != 0)
+            .filter(|bar| bar.is_mmio && bar.base_address != 0)
+            .max_by_key(|bar| (bar.is_prefetchable, bar.size))
         {
             crate::println!(
                 "[drivers] virtio-net PCI: trying modern transport BAR base=0x{:x} size=0x{:x}",

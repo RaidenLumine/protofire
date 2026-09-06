@@ -158,38 +158,40 @@ impl PciModernRegion {
         }
     }
 
-    /// Read a 16-bit little-endian field from a 32-bit aligned address,
-    /// performing read-modify-write for non-aligned fields.
+    /// Read a 16-bit little-endian field with an access that *starts* at the
+    /// field's own byte offset.
+    ///
+    /// The VirtIO PCI common-config structure is a byte-addressable register
+    /// block whose write semantics are dispatched on the access start
+    /// address (e.g. offset 0x14 = `device_status`, 0x16 = `queue_select`,
+    /// 0x1c = `queue_enable`).  A driver must therefore present each access
+    /// at the field's natural offset with its natural width.  Doing a
+    /// 4-byte read-modify-write against the *aligned* base (0x14 for a
+    /// `queue_select` at 0x16) silently drops the field: the device sees a
+    /// write starting at 0x14 and treats it as a `device_status` write only.
     unsafe fn cfg_read16(&self, offset: u64) -> u16 {
-        let aligned = offset & !3u64;
-        let shift = ((offset & 3) * 8) as u32;
-        let dword = unsafe { self.mmio_read32(aligned) };
-        ((dword >> shift) & 0xFFFF) as u16
+        unsafe {
+            core::ptr::read_volatile((self.bar_base as *const u8).add(offset as usize) as *const u16)
+        }
     }
 
     unsafe fn cfg_write16(&self, offset: u64, value: u16) {
-        let aligned = offset & !3u64;
-        let shift = ((offset & 3) * 8) as u32;
-        let dword = unsafe { self.mmio_read32(aligned) };
-        let mask = !(0xFFFFu32 << shift);
-        let new_dword = (dword & mask) | ((value as u32) << shift);
-        unsafe { self.mmio_write32(aligned, new_dword) };
+        unsafe {
+            core::ptr::write_volatile(
+                (self.bar_base as *mut u8).add(offset as usize) as *mut u16,
+                value,
+            );
+        }
     }
 
     unsafe fn cfg_read8(&self, offset: u64) -> u8 {
-        let aligned = offset & !3u64;
-        let shift = ((offset & 3) * 8) as u32;
-        let dword = unsafe { self.mmio_read32(aligned) };
-        ((dword >> shift) & 0xFF) as u8
+        unsafe { core::ptr::read_volatile((self.bar_base as *const u8).add(offset as usize)) }
     }
 
     unsafe fn cfg_write8(&self, offset: u64, value: u8) {
-        let aligned = offset & !3u64;
-        let shift = ((offset & 3) * 8) as u32;
-        let dword = unsafe { self.mmio_read32(aligned) };
-        let mask = !(0xFFu32 << shift);
-        let new_dword = (dword & mask) | ((value as u32) << shift);
-        unsafe { self.mmio_write32(aligned, new_dword) };
+        unsafe {
+            core::ptr::write_volatile((self.bar_base as *mut u8).add(offset as usize), value);
+        }
     }
 
     /// Compute the notification address and kick the given queue.

@@ -292,10 +292,14 @@ pub struct VirtQueue {
     queue_size: u16,
     // ── PCI page-aligned backing ──────────────────────────────
     // Non-null when the queue was created with `new_pci`.  The
-    // page owns all three rings; the Vec fields are slices into
-    // this page.  Freed on Drop; the Vecs MUST NOT be dropped.
+    // region owns all three rings; the Vec fields are slices into
+    // this region.  Freed on Drop; the Vecs MUST NOT be dropped.
     #[allow(dead_code)]
     queue_page: Option<*mut u8>,
+    // Size in bytes of the PCI backing region (a whole number of
+    // 4 KiB pages).  0 when the queue is heap-backed (`new`).
+    #[allow(dead_code)]
+    queue_region_len: usize,
     // Base pointers returned by ring_addrs() for the PCI case.
     // These point to the start of each ring structure (including
     // the spec-mandated flags/idx prefixes).
@@ -311,9 +315,9 @@ impl Drop for VirtQueue {
     fn drop(&mut self) {
         if let Some(page) = self.queue_page {
             // PCI mode: the three Vec fields are slices into a single
-            // 4 KiB page.  Swap them out with empty Vecs (which are safe
-            // to deallocate) so the automatic drop glue has nothing to
-            // free.  Then free the backing page.
+            // page-aligned region.  Swap them out with empty Vecs (which
+            // are safe to deallocate) so the automatic drop glue has
+            // nothing to free.  Then free the backing region.
             let empty_desc: alloc::vec::Vec<VirtqDesc> = alloc::vec::Vec::new();
             let empty_avail: alloc::vec::Vec<u16> = alloc::vec::Vec::new();
             let empty_used: alloc::vec::Vec<VirtqUsedElem> = alloc::vec::Vec::new();
@@ -325,8 +329,9 @@ impl Drop for VirtQueue {
             core::mem::forget(_old_d);
             core::mem::forget(_old_a);
             core::mem::forget(_old_u);
-            // Free the page.
-            let layout = core::alloc::Layout::from_size_align(4096, 4096).unwrap();
+            // Free the region (whole pages).
+            let len = self.queue_region_len.max(4096);
+            let layout = core::alloc::Layout::from_size_align(len, 4096).unwrap();
             unsafe { alloc::alloc::dealloc(page, layout) };
         }
     }
@@ -365,19 +370,27 @@ impl VirtQueue {
             used_count: 0,
             queue_size,
             queue_page: None,
+            queue_region_len: 0,
             pci_desc_base: None,
             pci_avail_base: None,
             pci_used_base: None,
         }
     }
 
-    /// Create a VirtQueue whose three rings live in a single 4 KiB page,
-    /// suitable for the PCI legacy QueuePFN mechanism.
+    /// Create a VirtQueue whose three rings live in a contiguous,
+    /// page-aligned region, suitable for the PCI legacy QueuePFN
+    /// mechanism.
+    ///
+    /// The backing region spans as many 4 KiB pages as the rings need
+    /// (up to the device's maximum queue size — e.g. 256 descriptors for
+    /// a QEMU virtio-net, which spans two pages).  Small queues that fit
+    /// one page keep the exact single-page layout.
     ///
     /// Layout (same as the PCI legacy specification):
     ///   offset 0      → descriptor table  (qsz × 16 B)
     ///   offset D      → available ring     (6 + 2×qsz B, 2‑B aligned)
-    ///   offset 4096‑U → used ring          (6 + 8×qsz B, 4‑B aligned)
+    ///   offset N‑U    → used ring          (6 + 8×qsz B, 4‑B aligned)
+    /// where N is the region length (a whole number of 4 KiB pages).
     pub fn new_pci(queue_size: u16) -> Self {
         let qsz = queue_size as usize;
 
@@ -390,18 +403,14 @@ impl VirtQueue {
         let avail_sz = (avail_hdr + avail_data + 1) & !1usize; // 2‑B aligned
         let used_sz = (used_hdr + used_data + 3) & !3usize; // 4‑B aligned
         let total = desc_sz + avail_sz + used_sz;
-        assert!(
-            total <= 4096,
-            "VirtQueue::new_pci: queue_size={} needs {} B > 4 KiB",
-            queue_size,
-            total
-        );
+        // Round up to a whole number of 4 KiB pages.
+        let region_len = (total + 4095) & !4095usize;
 
-        // Single page allocation.
-        let layout = core::alloc::Layout::from_size_align(4096, 4096).unwrap();
+        // Region allocation (one or more contiguous pages).
+        let layout = core::alloc::Layout::from_size_align(region_len, 4096).unwrap();
         let page: *mut u8 = unsafe { alloc::alloc::alloc(layout) };
-        assert!(!page.is_null(), "VirtQueue PCI page alloc failed");
-        unsafe { core::ptr::write_bytes(page, 0u8, 4096) };
+        assert!(!page.is_null(), "VirtQueue PCI region alloc failed");
+        unsafe { core::ptr::write_bytes(page, 0u8, region_len) };
 
         // Build slices that borrow from the page.
         // Safety: the page outlives the VirtQueue; the Vecs are never
@@ -421,7 +430,7 @@ impl VirtQueue {
         }
         let avail_ring = unsafe { alloc::vec::Vec::from_raw_parts(avail_ptr.add(2), qsz, qsz) };
 
-        let used_offset = 4096 - used_sz;
+        let used_offset = region_len - used_sz;
         let used_prefix = unsafe { page.add(used_offset) } as *mut u16;
         unsafe {
             core::ptr::write_volatile(used_prefix, 0u16); // flags
@@ -441,6 +450,7 @@ impl VirtQueue {
             used_count: 0,
             queue_size,
             queue_page: Some(page),
+            queue_region_len: region_len,
             // ring_addrs returns pointers to structure starts (incl.
             // prefixes) for the PCI transport.
             pci_desc_base: Some(desc_ptr as *const u8),
