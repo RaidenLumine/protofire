@@ -73,15 +73,19 @@ const USER_DEMO_CODE_OFFSET: usize = 0x1000;
 
 // ── Translation descriptor bits ──────────────────────────────────────────
 
-/// Table descriptor: bit 0 valid, bit 1 = 0 (next-level table).
-const DESCRIPTOR_TABLE: u64 = 0x1;
-/// Block / page descriptor: bit 0 valid, bit 1 = 1 (leaf).
-const DESCRIPTOR_BLOCK_PAGE: u64 = 0x3;
+/// Table descriptor (levels 0-2 at the 4 KiB granule): bits[1:0] = 0b11,
+/// the address field points to the next-level table.
+const DESCRIPTOR_TABLE: u64 = 0x3;
+/// Block descriptor (levels 1-2 at the 4 KiB granule): bits[1:0] = 0b01.
+const DESCRIPTOR_BLOCK: u64 = 0x1;
+/// Page descriptor (level 3 at the 4 KiB granule): bits[1:0] = 0b11.
+const DESCRIPTOR_PAGE: u64 = 0x3;
 
 /// AP[2:1] encodings (EL1&0 translation regime).
-const AP_EL1_RW: u64 = 0b01 << 6; // EL1 read/write, EL0 no access
-const AP_EL1_EL0_RW: u64 = 0b00 << 6; // EL1 & EL0 read/write
-const AP_EL1_EL0_RO: u64 = 0b10 << 6; // EL1 & EL0 read-only
+/// AP[2] (bit 7) = read-only; AP[1] (bit 6) = EL0 access granted.
+const AP_EL1_RW: u64 = 0b00 << 6; // EL1 read/write, EL0 no access
+const AP_EL1_EL0_RW: u64 = 0b01 << 6; // EL1 & EL0 read/write
+const AP_EL1_EL0_RO: u64 = 0b11 << 6; // EL1 & EL0 read-only
 
 /// Shareability, access flag, non-global.
 const SH_OUTER: u64 = 0b11 << 8;
@@ -235,10 +239,30 @@ pub struct PreparedProcessAddressSpace {
 
 // ── Kernel translation tables ────────────────────────────────────────────
 
-static KERNEL_L1_TABLE: SyncUnsafeCell<TranslationTable> =
-    SyncUnsafeCell::new(TranslationTable::zeroed());
-static KERNEL_L2_TABLE: SyncUnsafeCell<TranslationTable> =
-    SyncUnsafeCell::new(TranslationTable::zeroed());
+/// A `TranslationTable` pinned to its own 4 KiB page.
+///
+/// TTBR0_EL1 and every table descriptor address the next level at 4 KiB
+/// granularity, so the kernel translation tables must be page aligned.  A
+/// bare `TranslationTable` is only 8-byte aligned (it wraps `[u64; 512]`),
+/// which made the runtime L2 pointer (`0x61366088`) truncate to `0x61366000`
+/// and the MMU walk read the wrong page.
+#[repr(C, align(4096))]
+struct AlignedKernelTranslationTable(SyncUnsafeCell<TranslationTable>);
+
+impl AlignedKernelTranslationTable {
+    const fn new(table: TranslationTable) -> Self {
+        Self(SyncUnsafeCell::new(table))
+    }
+
+    fn get(&self) -> *mut TranslationTable {
+        self.0.get()
+    }
+}
+
+static KERNEL_L1_TABLE: AlignedKernelTranslationTable =
+    AlignedKernelTranslationTable::new(TranslationTable::zeroed());
+static KERNEL_L2_TABLE: AlignedKernelTranslationTable =
+    AlignedKernelTranslationTable::new(TranslationTable::zeroed());
 
 static PREPARED_ROOT_TABLE: AtomicUsize = AtomicUsize::new(0);
 static PREPARED_WINDOW_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -286,7 +310,7 @@ fn user_page_entry(physical_address: usize, permissions: PagePermissions) -> u64
         (AP_EL1_EL0_RO, UXN_EXECUTE_NEVER)
     };
     address
-        | DESCRIPTOR_BLOCK_PAGE
+        | DESCRIPTOR_PAGE
         | ap
         | SH_OUTER
         | AF_ACCESS
@@ -299,7 +323,7 @@ fn user_page_entry(physical_address: usize, permissions: PagePermissions) -> u64
 fn normal_l3_page_entry(virtual_address: usize) -> u64 {
     let address = (virtual_address as u64) & 0x0000_FFFF_FFFF_F000;
     address
-        | DESCRIPTOR_BLOCK_PAGE
+        | DESCRIPTOR_PAGE
         | AP_EL1_RW
         | SH_OUTER
         | AF_ACCESS
@@ -314,7 +338,7 @@ fn normal_l3_page_entry(virtual_address: usize) -> u64 {
 fn normal_l2_block_entry(virtual_address: usize) -> u64 {
     let address = (virtual_address as u64) & 0x0000_FFFF_FFE0_0000;
     address
-        | DESCRIPTOR_BLOCK_PAGE
+        | DESCRIPTOR_BLOCK
         | AP_EL1_RW
         | SH_OUTER
         | AF_ACCESS
@@ -328,7 +352,7 @@ fn normal_l2_block_entry(virtual_address: usize) -> u64 {
 fn kernel_l2_block_entry(physical_address: usize) -> u64 {
     let address = (physical_address as u64) & 0x0000_FFFF_FFE0_0000;
     address
-        | DESCRIPTOR_BLOCK_PAGE
+        | DESCRIPTOR_BLOCK
         | AP_EL1_RW
         | SH_OUTER
         | AF_ACCESS
@@ -340,7 +364,7 @@ fn kernel_l2_block_entry(physical_address: usize) -> u64 {
 fn device_l1_block_entry(physical_address: usize) -> u64 {
     let address = (physical_address as u64) & 0x0000_FFFF_C000_0000;
     address
-        | DESCRIPTOR_BLOCK_PAGE
+        | DESCRIPTOR_BLOCK
         | AP_EL1_RW
         | AF_ACCESS
         | NG_NOT_GLOBAL
@@ -353,7 +377,7 @@ fn device_l1_block_entry(physical_address: usize) -> u64 {
 fn device_page_entry(physical_address: usize) -> u64 {
     let address = (physical_address as u64) & 0x0000_FFFF_FFFF_F000;
     address
-        | DESCRIPTOR_BLOCK_PAGE
+        | DESCRIPTOR_PAGE
         | AP_EL1_RW
         | AF_ACCESS
         | NG_NOT_GLOBAL
@@ -367,7 +391,8 @@ fn page_permissions_from_entry(entry: u64) -> PagePermissions {
     let ap = (entry >> 6) & 0x3;
     let uxn = (entry >> 54) & 0x1;
     let mut permissions = PagePermissions::READ;
-    if ap == 0b00 {
+    // EL0 write access is granted by AP[1] = 1 (AP[2:1] = 0b01).
+    if ap == 0b01 {
         permissions |= PagePermissions::WRITE;
     }
     if uxn == 0 {
@@ -605,7 +630,7 @@ unsafe fn resolve_l3_table(root: usize, virtual_address: usize) -> Option<*mut u
             ptr::write_volatile(l1.add(l1_index), table_entry(l2_table));
         }
         l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
-    } else if l1_entry & 0x3 == 0x3 {
+    } else if l1_entry & 0x3 == DESCRIPTOR_BLOCK {
         let l2_table = allocate_runtime_pt_page()?;
         split_l1_block(l1, l1_index, l1_entry, l2_table);
         l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
@@ -619,7 +644,7 @@ unsafe fn resolve_l3_table(root: usize, virtual_address: usize) -> Option<*mut u
             ptr::write_volatile(l2.add(l2_index), table_entry(l3_table));
         }
         l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
-    } else if l2_entry & 0x3 == 0x3 {
+    } else if l2_entry & 0x3 == DESCRIPTOR_BLOCK {
         let l3_table = allocate_runtime_pt_page()?;
         split_l2_block(l2, l2_index, l2_entry, l3_table);
         l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
@@ -676,7 +701,7 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
     if l1_entry & 0x1 == 0 {
         return false;
     }
-    let l2 = if l1_entry & 0x3 == 0x3 {
+    let l2 = if l1_entry & 0x3 == DESCRIPTOR_BLOCK {
         // 1 GiB block at L1 — split it before unmapping a page inside it.
         let Some(l2_table) = allocate_runtime_pt_page() else {
             return false;
@@ -692,7 +717,7 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
     if l2_entry & 0x1 == 0 {
         return false;
     }
-    let l3 = if l2_entry & 0x3 == 0x3 {
+    let l3 = if l2_entry & 0x3 == DESCRIPTOR_BLOCK {
         // 2 MiB block at L2 — split it before unmapping a page inside it.
         let Some(l3_table) = allocate_runtime_pt_page() else {
             return false;
