@@ -18,7 +18,7 @@ else
 $(error PROFILE must be either debug or release)
 endif
 
-.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb test-gpu test-parsers verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 build-x8664-demo build-aarch64-demo build-riscv64-demo clippy run run-x8664-vga run-x8664-headless run-aarch64 run-riscv64 run-aarch64-headless run-riscv64-headless clean setup-dev install-hooks
+.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb test-gpu test-parsers verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 build-x8664-demo build-aarch64-demo build-riscv64-demo clippy run run-x8664-gui run-x8664-vga run-x8664-headless run-aarch64 run-riscv64 run-aarch64-gui run-riscv64-gui run-aarch64-headless run-riscv64-headless clean setup-dev install-hooks
 
 help:
 	@printf '%s\n' \
@@ -51,14 +51,17 @@ help:
 		'  make build-aarch64-demo - build aarch64 kernel with the in-memory demo disk (shell)' \
 		'  make build-riscv64-demo - build riscv64 kernel with the in-memory demo disk (shell)' \
 		'  make clippy         - run clippy for all targets' \
-		'  make run             - boot the x86_64 kernel on QEMU q35 (GUI framebuffer shell)' \
-		'  make run-x8664       - alias of make run (x86_64 GUI interactive shell)' \
-		'  make run-x8664-vga   - like run but through the -vga std (bochs) adapter' \
-		'  make run-x8664-headless - headless x86_64 smoke (no demo-disk, no display)' \
-		'  make run-aarch64    - boot the aarch64 kernel on QEMU virt (GUI virtio-gpu shell)' \
-		'  make run-riscv64    - boot the riscv64 kernel on QEMU virt (GUI virtio-gpu shell)' \
-		'  make run-aarch64-headless - headless aarch64 smoke (no demo-disk, no display)' \
-		'  make run-riscv64-headless - headless riscv64 smoke (no demo-disk, no display)' \
+		'  make run             - x86_64 demo shell on QEMU q35, interactive over serial (no window)' \
+		'  make run-x8664       - alias of make run (x86_64 serial interactive shell)' \
+		'  make run-x8664-gui   - windowed x86_64 showcase (bochs/std VGA framebuffer shell)' \
+		'  make run-x8664-vga   - alias of run-x8664-gui' \
+		'  make run-x8664-headless - x86_64 smoke (no demo-disk, no display)' \
+		'  make run-aarch64    - aarch64 demo shell on QEMU virt, interactive over serial (no window)' \
+		'  make run-riscv64    - riscv64 demo shell on QEMU virt, interactive over serial (no window)' \
+		'  make run-aarch64-gui - windowed aarch64 showcase (virtio-gpu + virtio-keyboard)' \
+		'  make run-riscv64-gui - windowed riscv64 showcase (virtio-gpu + virtio-keyboard)' \
+		'  make run-aarch64-headless - aarch64 smoke (no demo-disk, no display)' \
+		'  make run-riscv64-headless - riscv64 smoke (no demo-disk, no display)' \
 		'  make clean          - remove Cargo artifacts' \
 		'  make setup-dev      - no-op (runtime and demo crates are co-located in-repo)' \
 		'  make install-hooks  - install the commit-msg git hook (once per clone)' \
@@ -193,13 +196,20 @@ build: build-x8664
 clippy:
 	$(CARGO) clippy $(CARGO_FLAGS) --all-targets -- -D warnings
 
-# Interactive GUI knobs shared by the run-* targets (reused later by the
-# arm/riscv virtio-mmio stages).  RUN_DISPLAY picks the QEMU display backend;
-# RUN_GPU picks the adapter the kernel drives.  QEMU_GPU_ARGS is a recursive
-# variable expanded inside the recipe so a target-specific RUN_GPU (see
-# run-x8664-vga below) selects the matching adapter.
-RUN_DISPLAY ?= gtk
-RUN_GPU ?= virtio-gpu
+# Run targets default to a headless serial shell: RUN_DISPLAY=none opens no
+# QEMU window, and the demo ring-3 shell is fully interactive over -serial
+# stdio, so iteration and CI never need a display.  The -gui targets below
+# re-enable a backend for the windowed showcase (where virtio-keyboard input
+# also becomes reachable by typing in the window).
+#
+# RUN_GPU picks the adapter the kernel drives; QEMU_GPU_ARGS is a recursive
+# variable expanded inside the recipe so a target-specific RUN_GPU (see the
+# -gui targets below) selects the matching adapter.  The x86 virtio-gpu-pci
+# path carries a known-latent bug (PCI BAR phys-as-virtual, see virtio_gpu.rs)
+# and is *not* the default; the working bochs/std VGA adapter is.  Re-run with
+# `RUN_GPU=virtio-gpu` to exercise the broken PCI path.
+RUN_DISPLAY ?= none
+RUN_GPU ?= vga
 QEMU_GPU_ARGS = $(if $(filter virtio-gpu,$(RUN_GPU)),-device virtio-gpu-pci,$(if $(filter vga,$(RUN_GPU)),-vga std,$(error RUN_GPU must be 'virtio-gpu' or 'vga')))
 
 # MMIO virtio devices for the aarch64/riscv64 QEMU virt machines.  Device id 16
@@ -213,10 +223,11 @@ VIRT_INPUT_ARGS = -device virtio-keyboard-device
 # modern interface.
 VIRT_FORCE_LEGACY = -global virtio-mmio.force-legacy=false
 
-# Boot the kernel on QEMU q35 with a graphical framebuffer console and the
-# interactive ring-3 shell.  Needs --features demo-disk so the shell and the
-# in-memory demo volumes are built in; -serial stdio stays as a mirrored log
-# and a second input path (type in the window or in the launching terminal).
+# Boot the kernel on QEMU q35 with the interactive ring-3 shell over -serial
+# stdio.  Needs --features demo-disk so the shell and the in-memory demo
+# volumes are built in.  Headless by default (RUN_DISPLAY=none); the kernel
+# still drives the framebuffer adapter when a display backend is present —
+# `make run-x8664-gui` opens the windowed showcase.
 run-x8664: build-x8664-demo
 	@if [ ! -x "$$(command -v qemu-system-x86_64)" ]; then \
 		echo "qemu-system-x86_64 is not installed; cannot run the x86_64 kernel."; \
@@ -235,9 +246,17 @@ run-x8664: build-x8664-demo
 		-no-shutdown \
 		-netdev user,id=net0 -device virtio-net-pci,netdev=net0
 
-# Same GUI shell but through the bochs/std VGA adapter (-vga std, id 1234:1111).
-run-x8664-vga: RUN_GPU = vga
-run-x8664-vga: run-x8664
+# Windowed showcase (opt-in).  The run-* targets above default to -display
+# none; these add a display backend so the framebuffer console and (on the
+# virtio-mmio arches) the virtio-keyboard become reachable by typing in the
+# window.  x86 uses the bochs/std VGA adapter (RUN_GPU=vga, the working x86
+# display path); aarch64/riscv64 keep virtio-gpu-device + virtio-keyboard.
+run-x8664-gui: RUN_DISPLAY = gtk
+run-x8664-gui: RUN_GPU = vga
+run-x8664-gui: run-x8664
+
+# Historical alias: the windowed x86 shell through the bochs/std VGA adapter.
+run-x8664-vga: run-x8664-gui
 
 # Original headless smoke: no display device, no demo-disk shell (idle banner).
 run-x8664-headless: build-x8664
@@ -257,10 +276,10 @@ run-x8664-headless: build-x8664
 		-no-shutdown \
 		-netdev user,id=net0 -device virtio-net-pci,netdev=net0
 
-# Boot the aarch64 kernel on QEMU virt with a virtio-gpu framebuffer console
-# and a virtio-keyboard, driving the interactive ring-3 shell (demo-disk).
-# -serial stdio stays as a mirrored log and a second input path (type in the
-# window or in the launching terminal).
+# Boot the aarch64 kernel on QEMU virt driving the interactive ring-3 shell
+# (demo-disk) over -serial stdio.  The virtio-gpu/virtio-keyboard devices are
+# attached so the full driver stack boots every run; headless by default, the
+# windowed showcase is `make run-aarch64-gui`.
 run-aarch64: build-aarch64-demo
 	@if [ ! -x "$$(command -v qemu-system-aarch64)" ]; then \
 		echo "qemu-system-aarch64 is not installed; cannot run the aarch64 kernel."; \
@@ -281,8 +300,9 @@ run-aarch64: build-aarch64-demo
 		-no-shutdown \
 		-netdev user,id=net0 -device virtio-net-device,netdev=net0
 
-# Boot the riscv64 kernel on QEMU virt with a virtio-gpu framebuffer console
-# and a virtio-keyboard, driving the interactive ring-3 shell (demo-disk).
+# Boot the riscv64 kernel on QEMU virt driving the interactive ring-3 shell
+# (demo-disk) over -serial stdio, mirroring run-aarch64 (virtio devices
+# attached, headless by default; window via `make run-riscv64-gui`).
 run-riscv64: build-riscv64-demo
 	@if [ ! -x "$$(command -v qemu-system-riscv64)" ]; then \
 		echo "qemu-system-riscv64 is not installed; cannot run the riscv64 kernel."; \
@@ -302,6 +322,15 @@ run-riscv64: build-riscv64-demo
 		-no-reboot \
 		-no-shutdown \
 		-netdev user,id=net0 -device virtio-net-device,netdev=net0
+
+# Windowed showcase for the virtio-mmio arches: same demo shell as run-aarch64
+# / run-riscv64 but with a GTK display backend, so the framebuffer console is
+# visible and the virtio-keyboard accepts typing in the window.
+run-aarch64-gui: RUN_DISPLAY = gtk
+run-aarch64-gui: run-aarch64
+
+run-riscv64-gui: RUN_DISPLAY = gtk
+run-riscv64-gui: run-riscv64
 
 # Original headless aarch64 smoke: no display device, no demo-disk shell
 # (idle banner).  Mirrors the x86 run-x8664-headless target.
