@@ -14,10 +14,18 @@ use crate::user::program::DEMO_PROGRAM_ENTRY;
 
 const AARCH64_DEMO_PROGRAM_MACHINE: u16 = 0xB7;
 
+/// Build a loadable AArch64 demo-launcher ELF artifact.
+///
+/// The raw assembly "demo launcher" for AArch64 was never implemented (its
+/// `.S` file only carries `.equ` syscall constants and defines no boundary
+/// symbols), so the demo-launcher package is filled with the same Rust payload
+/// that powers `demo-launcher-rust`.  Both packages are spawned at boot on
+/// AArch64 and both must resolve to a payload that exists and links; the
+/// Rust-authored section is the only such AArch64 payload in the tree.
 pub fn build_demo_program_artifact() -> DemoProgramArtifact {
     build_artifact_from_payload(
-        super::demo_program_aarch64::payload_bytes(),
-        0,
+        super::demo_program_aarch64_rust::payload_bytes(),
+        super::demo_program_aarch64_rust::payload_entry_offset(),
         DEMO_PROGRAM_ENTRY as u64,
         AARCH64_DEMO_PROGRAM_MACHINE,
     )

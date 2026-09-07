@@ -7,11 +7,11 @@
 .equ SYS_EXIT, 3
 .equ SYS_WRITE, 6
 
-.global adastra_demo_program_aarch64_fault_payload_start
-.global adastra_demo_program_aarch64_fault_payload_code_end
-.global adastra_demo_program_aarch64_fault_payload_end
+.global protofire_demo_program_aarch64_fault_payload_start
+.global protofire_demo_program_aarch64_fault_payload_code_end
+.global protofire_demo_program_aarch64_fault_payload_end
 
-adastra_demo_program_aarch64_fault_payload_start:
+protofire_demo_program_aarch64_fault_payload_start:
     mov x19, x0
     mov x20, x1
     mov w21, #'c'
@@ -93,7 +93,7 @@ adastra_demo_program_aarch64_fault_payload_start:
     mov x1, #stack_guard_fault_message_len
     bl .Ldemo_aarch64_fault_write_stdout_message
 
-    adr x11, adastra_demo_program_aarch64_fault_payload_end
+    adr x11, protofire_demo_program_aarch64_fault_payload_end
     add x11, x11, #4095
     lsr x11, x11, #12
     lsl x11, x11, #12
@@ -127,7 +127,7 @@ adastra_demo_program_aarch64_fault_payload_start:
     svc #0
     ret
 
-adastra_demo_program_aarch64_fault_payload_code_end:
+protofire_demo_program_aarch64_fault_payload_code_end:
 
 code_write_fault_message:
     .ascii "[user  ] aarch64 child code-write fault\n"
@@ -166,4 +166,4 @@ unexpected_stack_guard_success_message:
 unexpected_stack_guard_success_message_end:
 .equ unexpected_stack_guard_success_message_len, unexpected_stack_guard_success_message_end - unexpected_stack_guard_success_message
 
-adastra_demo_program_aarch64_fault_payload_end:
+protofire_demo_program_aarch64_fault_payload_end:

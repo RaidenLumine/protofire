@@ -741,14 +741,6 @@ fn apps_entries_aarch64<'a>(
             data: b"id = \"demo-launcher-fault\"\nmanifest = \"/apps/packages/demo-launcher-fault/manifest.toml\"\n",
         },
         ImageEntry {
-            path: "/current/appctl.toml",
-            data: b"id = \"appctl\"\nversion = \"0.1.0\"\ncatalog = \"../catalog/appctl@0.1.0.toml\"\n",
-        },
-        ImageEntry {
-            path: "/current/app-center.toml",
-            data: b"id = \"app-center\"\nversion = \"0.1.0\"\ncatalog = \"../catalog/app-center@0.1.0.toml\"\n",
-        },
-        ImageEntry {
             path: "/current/demo-launcher.toml",
             data: b"id = \"demo-launcher\"\nversion = \"0.1.0\"\ncatalog = \"../catalog/demo-launcher@0.1.0.toml\"\n",
         },
@@ -765,14 +757,6 @@ fn apps_entries_aarch64<'a>(
             data: b"id = \"demo-launcher-fault\"\nversion = \"0.1.0\"\ncatalog = \"../catalog/demo-launcher-fault@0.1.0.toml\"\n",
         },
         ImageEntry {
-            path: "/packages/appctl/manifest.toml",
-            data: APPCTL_PROGRAM_MANIFEST,
-        },
-        ImageEntry {
-            path: "/packages/app-center/manifest.toml",
-            data: APP_CENTER_PROGRAM_MANIFEST,
-        },
-        ImageEntry {
             path: "/packages/demo-launcher/manifest.toml",
             data: DEMO_PROGRAM_MANIFEST,
         },
@@ -787,14 +771,6 @@ fn apps_entries_aarch64<'a>(
         ImageEntry {
             path: "/packages/demo-launcher-fault/manifest.toml",
             data: DEMO_FAULT_PROGRAM_MANIFEST,
-        },
-        ImageEntry {
-            path: "/packages/appctl/bin/demo.elf",
-            data: appctl_elf,
-        },
-        ImageEntry {
-            path: "/packages/app-center/bin/demo.elf",
-            data: demo_program_elf,
         },
         ImageEntry {
             path: "/packages/demo-launcher/bin/demo.elf",

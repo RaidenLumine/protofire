@@ -885,7 +885,7 @@ impl Kernel {
                     region.region_start + region.region_length
                 );
             }
-            for launch_reference in [program::DEMO_CURRENT_PATH, program::SHELL_CURRENT_PATH] {
+            for launch_reference in [program::DEMO_CURRENT_PATH] {
                 self.spawn_demo_user_program(launch_reference);
             }
         }

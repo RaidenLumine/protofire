@@ -360,18 +360,22 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
 
     // The child faults by executing from the stack (`--trigger-fault=stack-exec`),
     // so the termination record carries an instruction-abort permission fault.
-    let termination = termination.assume_init();
+    // Safety: wait_process_blocking reported exactly
+    // PROCESS_TERMINATION_RECORD_SIZE bytes written above, so the record is
+    // fully initialised.
+    let termination = unsafe { termination.assume_init() };
     write_prefixed_hex(
         adr_relative_address!(RUST_PAYLOAD_WAIT_VECTOR_PREFIX),
         RUST_PAYLOAD_WAIT_VECTOR_PREFIX.len(),
-        termination.vector,
+        termination.vector as usize,
     );
     write_prefixed_hex(
         adr_relative_address!(RUST_PAYLOAD_WAIT_ERROR_PREFIX),
         RUST_PAYLOAD_WAIT_ERROR_PREFIX.len(),
-        termination.error_code,
+        termination.error_code as usize,
     );
-    let syndrome = AArch64AbortSyndrome::from_exception(termination.vector, termination.error_code);
+    let syndrome =
+        AArch64AbortSyndrome::from_exception(termination.vector as u8, termination.error_code);
     write_prefixed_hex(
         adr_relative_address!(RUST_PAYLOAD_WAIT_FSC_PREFIX),
         RUST_PAYLOAD_WAIT_FSC_PREFIX.len(),
@@ -407,7 +411,7 @@ extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
     unsafe {
         let frame_ref = &mut *frame;
         if let Some(syndrome) =
-            AArch64AbortSyndrome::from_exception(frame_ref.vector, frame_ref.error_code)
+            AArch64AbortSyndrome::from_exception(frame_ref.vector as u8, frame_ref.error_code)
         {
             // These strings are the payload's own copies — kernel .rodata is
             // not position-independent and would be stale after relocation.
