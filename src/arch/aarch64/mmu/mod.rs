@@ -113,7 +113,14 @@ const MAIR_EL1_CONFIG: u64 = 0x0000_00FF;
 // ── Types ────────────────────────────────────────────────────────────────
 
 /// A single 512-entry translation table (one 4 KiB page).
+///
+/// A translation table may be installed as the TTBR0_EL1 root (or referenced
+/// from an upper-level table entry), so every instance must be 4 KiB aligned —
+/// the hardware ignores unaligned TTBR0 base bits, which would walk a garbage
+/// page and fault.  This mirrors riscv64's `#[repr(C, align(4096))]`
+/// `PageTable`, which the same kernel heap `Box` allocates for process roots.
 #[derive(Debug, Clone, Copy)]
+#[repr(C, align(4096))]
 pub struct TranslationTable(pub [u64; TABLE_ENTRY_COUNT]);
 
 impl TranslationTable {
@@ -588,14 +595,26 @@ fn split_l1_block(l1: *mut u64, l1_index: usize, l1_entry: u64, l2_table: usize)
     }
 }
 
-/// Split a 2 MiB L2 block into an L3 table of 4 KiB kernel pages.
+/// Split a 2 MiB L2 block into an L3 table of 4 KiB pages.
+///
+/// A coarse block is demoted to page granularity so one page inside it can be
+/// remapped or unmapped without disturbing its neighbours, so the fill pages
+/// must *preserve the source block's attributes* (AP, shareability,
+/// execute-never, MAIR).  In particular an executable kernel block — such as
+/// the .text tail that shares block 1 with the frame pool — carries no
+/// PXN/UXN, and every 4 KiB page carved out of it must stay executable after
+/// the split.  Filling with the execute-never [`normal_l3_page_entry`] would
+/// fault on the next instruction fetch into that block (e.g. when
+/// [`unmap_page`] splits block 1 to clear a guard page).
 fn split_l2_block(l2: *mut u64, l2_index: usize, l2_entry: u64, l3_table: usize) {
-    let block_base = (l2_entry & 0x0000_FFFF_FFE0_0000) as usize;
+    // Copy the coarse entry, swap its descriptor type to a page, and let each
+    // 4 KiB offset fill the OA bits the 2 MiB-aligned entry left zero.
+    let page_template = (l2_entry & !0x3u64) | DESCRIPTOR_PAGE;
     let l3 = l3_table as *mut u64;
     for page_index in 0..TABLE_ENTRY_COUNT {
-        let address = block_base + page_index * TRANSLATION_GRANULE_SIZE;
+        let page = page_template + page_index as u64 * TRANSLATION_GRANULE_SIZE as u64;
         unsafe {
-            ptr::write_volatile(l3.add(page_index), normal_l3_page_entry(address));
+            ptr::write_volatile(l3.add(page_index), page);
         }
     }
     unsafe {

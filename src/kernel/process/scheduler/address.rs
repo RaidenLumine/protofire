@@ -18,7 +18,11 @@ impl Scheduler {
     }
 
     #[cfg(all(
-        any(target_arch = "x86_64", target_arch = "aarch64"),
+        any(
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            target_arch = "riscv64"
+        ),
         target_os = "none"
     ))]
     pub(crate) fn activate_thread_address_space(&self, thread: &Arc<Thread>) -> bool {
@@ -33,7 +37,11 @@ impl Scheduler {
     }
 
     #[cfg(not(all(
-        any(target_arch = "x86_64", target_arch = "aarch64"),
+        any(
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            target_arch = "riscv64"
+        ),
         target_os = "none"
     )))]
     pub(crate) fn activate_thread_address_space(&self, _thread: &Arc<Thread>) -> bool {
@@ -41,7 +49,11 @@ impl Scheduler {
     }
 
     #[cfg(all(
-        any(target_arch = "x86_64", target_arch = "aarch64"),
+        any(
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            target_arch = "riscv64"
+        ),
         target_os = "none"
     ))]
     pub(crate) fn restore_kernel_address_space(&self) {
@@ -49,7 +61,11 @@ impl Scheduler {
     }
 
     #[cfg(not(all(
-        any(target_arch = "x86_64", target_arch = "aarch64"),
+        any(
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            target_arch = "riscv64"
+        ),
         target_os = "none"
     )))]
     pub(crate) fn restore_kernel_address_space(&self) {}

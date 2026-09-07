@@ -457,9 +457,18 @@ pub mod timer {
             TIMER_INTERVAL.store(interval, Ordering::Relaxed);
         }
 
-        // Per-CPU init: enable the supervisor timer interrupt (stie).
+        // Per-CPU init: enable the supervisor timer interrupt (STIE).
+        //
+        // `csrsi` takes only a 5-bit unsigned immediate, so it cannot reach
+        // sie bit 5 (STIE) — an immediate of 5 sets bits 0 and 2 instead,
+        // silently leaving the timer masked.  Load the bitmask into a
+        // register and use the register form `csrs`.
         unsafe {
-            asm!("csrsi sie, 5", options(nomem, nostack, preserves_flags));
+            asm!(
+                "csrs sie, {t}",
+                t = in(reg) 1u64 << 5,
+                options(nomem, nostack, preserves_flags)
+            );
         }
 
         // Program the first tick.

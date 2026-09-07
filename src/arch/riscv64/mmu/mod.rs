@@ -101,7 +101,16 @@ const PPN_MASK: u64 = 0x0000_0FFF_FFFF_FFFF;
 // ── Types ────────────────────────────────────────────────────────────────
 
 /// A single 512-entry Sv39 translation table (one 4 KiB page).
+///
+/// satp (PPN = root >> 12) and every next-level-table descriptor address the
+/// lower level at 4 KiB granularity, so every table must be page aligned.
+/// Heap-allocated per-process tables are plain `Box<PageTable>` (the kernel
+/// tables additionally sit in `AlignedKernelTranslationTable`); without this
+/// repr the Box was only 8-byte aligned and satp truncated the root to the
+/// start of its 4 KiB page, so the MMU walk read the wrong page and the first
+/// U-mode dispatch fault-looped on kernel .text.
 #[derive(Debug, Clone, Copy)]
+#[repr(C, align(4096))]
 pub struct PageTable(pub [u64; TABLE_ENTRY_COUNT]);
 
 impl PageTable {

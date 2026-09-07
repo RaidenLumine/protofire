@@ -308,10 +308,7 @@ fn handle_interrupt(frame: &mut TrapFrame) {
             crate::kernel::irq_stats::record_irq(INTERRUPT_SUPERVISOR_TIMER as u32);
             let pending_tick = super::timer::prepare_pending_interrupt();
             if let Some(ticks) = pending_tick {
-                let preempted = crate::kernel::process::on_timer_tick(ticks);
-                if preempted {
-                    // Log handler preempt/resume if relevant.
-                }
+                let _ = crate::kernel::process::on_timer_tick(ticks);
                 advance_past_idle_wfi(frame);
             }
         }
@@ -416,6 +413,13 @@ fn handle_supervisor_ecall(frame: &mut TrapFrame) -> bool {
                 );
                 return false;
             }
+            // RISC-V `ecall` does NOT advance `sepc`: on trap it points at the
+            // ecall instruction itself, and `sret` would otherwise re-execute
+            // it forever.  Advance past it now, before any handler that might
+            // snapshot or context-switch the frame, so the recorded resume
+            // point is the instruction after the syscall.  (`ecall` is always
+            // a 4-byte non-compressed instruction.)
+            frame.sepc += 4;
             handle_syscall(frame);
             true
         }

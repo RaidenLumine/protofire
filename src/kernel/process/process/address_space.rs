@@ -30,7 +30,11 @@ impl Process {
     /// tables; a mismatch on the next dispatch signals that the address
     /// space has been replaced and CR3 must be reloaded.
     #[cfg(all(
-        any(target_arch = "x86_64", target_arch = "aarch64"),
+        any(
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            target_arch = "riscv64"
+        ),
         target_os = "none"
     ))]
     pub(crate) fn current_address_space_generation(&self) -> u64 {
