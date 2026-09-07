@@ -41,7 +41,14 @@ use core::arch::asm;
 unsafe fn allow_user_access() {
     if super::mmu::SPAN_ENABLED {
         unsafe {
-            asm!("msr PAN, #0", options(nomem, nostack, preserves_flags));
+            // `nomem` is deliberately absent (matching the x86 `stac`/`clac`
+            // helpers): the compiler must not reorder user-memory loads/stores
+            // across the PAN-clearing instruction, because they fault when
+            // PSTATE.PAN=1.  Without a memory clobber LLVM is free to defer
+            // part of a wide `read_unaligned` of a user struct past the
+            // matching `msr PAN, #1` and re-load those bytes with PAN set —
+            // a spurious permission fault in syscall decode.
+            asm!("msr PAN, #0", options(nostack, preserves_flags));
         }
     }
 }
@@ -60,7 +67,8 @@ unsafe fn allow_user_access() {
 unsafe fn deny_user_access() {
     if super::mmu::SPAN_ENABLED {
         unsafe {
-            asm!("msr PAN, #1", options(nomem, nostack, preserves_flags));
+            // `nomem` deliberately absent — see `allow_user_access`.
+            asm!("msr PAN, #1", options(nostack, preserves_flags));
         }
     }
 }

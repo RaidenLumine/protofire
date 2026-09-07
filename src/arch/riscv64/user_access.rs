@@ -32,7 +32,12 @@ unsafe fn allow_user_access() {
         // SUM = 1 << 18 does not fit in the 5-bit `csrsi` immediate, and the
         // immediate form is silently dropped on some toolchains — use the
         // register form (same caveat as `interrupts::enable`).
-        asm!("csrs sstatus, {sum}", sum = in(reg) SSTATUS_SUM, options(nomem, nostack, preserves_flags));
+        // `nomem` is deliberately absent (matching the x86 `stac`/`clac` and
+        // aarch64 PAN helpers): without a memory clobber LLVM is free to defer
+        // part of a wide `read_unaligned` of a user struct past the matching
+        // SUM clear and re-load those bytes with SUM=0 — a spurious permission
+        // fault in syscall decode.
+        asm!("csrs sstatus, {sum}", sum = in(reg) SSTATUS_SUM, options(nostack, preserves_flags));
     }
 }
 
@@ -45,8 +50,8 @@ unsafe fn allow_user_access() {
 #[inline]
 unsafe fn deny_user_access() {
     unsafe {
-        // Register form — see `allow_user_access`.
-        asm!("csrc sstatus, {sum}", sum = in(reg) SSTATUS_SUM, options(nomem, nostack, preserves_flags));
+        // Register form — see `allow_user_access`; `nomem` deliberately absent.
+        asm!("csrc sstatus, {sum}", sum = in(reg) SSTATUS_SUM, options(nostack, preserves_flags));
     }
 }
 
