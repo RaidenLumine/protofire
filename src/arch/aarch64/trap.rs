@@ -587,13 +587,12 @@ fn handle_syscall(frame: &mut TrapFrame) {
         return;
     }
 
-    // AArch64 `svc` does NOT auto-advance ELR: on exception it points at the
-    // SVC instruction itself, so `eret` would otherwise re-execute it forever.
-    // Advance past it now, before any handler that might snapshot or
-    // context-switch the frame, so the recorded resume point is the
-    // instruction after the syscall.  (SVC is always a 4-byte A64 opcode.)
-    frame.elr += 4;
-
+    // AArch64 `svc` auto-advances ELR_EL1 to the instruction after the SVC
+    // (unlike riscv64 `ecall`, which leaves `sepc` on the ecall itself), so
+    // the hardware-captured `frame.elr` is already the resume point.  Do not
+    // add 4 here: an extra advance skips the instruction that follows the svc
+    // (usually the `ret`) and eret lands 4 bytes into the next literal, which
+    // decodes as an undefined instruction and kills the process.
     let current_thread = crate::kernel::process::Scheduler::global()
         .and_then(|scheduler| scheduler.current_thread());
     let mut syscall_context = SyscallContext::new(
