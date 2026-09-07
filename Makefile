@@ -18,7 +18,7 @@ else
 $(error PROFILE must be either debug or release)
 endif
 
-.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb test-gpu test-parsers verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 build-x8664-demo clippy run run-x8664-vga run-x8664-headless run-aarch64 run-riscv64 clean setup-dev install-hooks
+.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb test-gpu test-parsers verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 build-x8664-demo build-aarch64-demo build-riscv64-demo clippy run run-x8664-vga run-x8664-headless run-aarch64 run-riscv64 run-aarch64-headless run-riscv64-headless clean setup-dev install-hooks
 
 help:
 	@printf '%s\n' \
@@ -47,13 +47,18 @@ help:
 		'  make build-x8664    - build the bare-metal kernel ELF (PROFILE=debug|release)' \
 		'  make build-aarch64  - build the aarch64 bare-metal kernel ELF for QEMU virt' \
 		'  make build-riscv64  - build the riscv64 bare-metal kernel ELF for QEMU virt' \
+		'  make build-x8664-demo - build x86_64 kernel with the in-memory demo disk (shell)' \
+		'  make build-aarch64-demo - build aarch64 kernel with the in-memory demo disk (shell)' \
+		'  make build-riscv64-demo - build riscv64 kernel with the in-memory demo disk (shell)' \
 		'  make clippy         - run clippy for all targets' \
 		'  make run             - boot the x86_64 kernel on QEMU q35 (GUI framebuffer shell)' \
 		'  make run-x8664       - alias of make run (x86_64 GUI interactive shell)' \
 		'  make run-x8664-vga   - like run but through the -vga std (bochs) adapter' \
 		'  make run-x8664-headless - headless x86_64 smoke (no demo-disk, no display)' \
-		'  make run-aarch64    - boot the aarch64 kernel directly on QEMU virt' \
-		'  make run-riscv64    - boot the riscv64 kernel directly on QEMU virt' \
+		'  make run-aarch64    - boot the aarch64 kernel on QEMU virt (GUI virtio-gpu shell)' \
+		'  make run-riscv64    - boot the riscv64 kernel on QEMU virt (GUI virtio-gpu shell)' \
+		'  make run-aarch64-headless - headless aarch64 smoke (no demo-disk, no display)' \
+		'  make run-riscv64-headless - headless riscv64 smoke (no demo-disk, no display)' \
 		'  make clean          - remove Cargo artifacts' \
 		'  make setup-dev      - no-op (runtime and demo crates are co-located in-repo)' \
 		'  make install-hooks  - install the commit-msg git hook (once per clone)' \
@@ -170,8 +175,18 @@ build-x8664-demo:
 build-aarch64:
 	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target aarch64-unknown-none --bin $(CRATE)
 
+# Like build-aarch64 but links the in-memory demo disk so the interactive
+# ring-3 shell boots on the virtio-gpu framebuffer console.
+build-aarch64-demo:
+	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target aarch64-unknown-none --bin $(CRATE) --features demo-disk
+
 build-riscv64:
 	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target riscv64gc-unknown-none-elf --bin $(CRATE)
+
+# Like build-riscv64 but links the in-memory demo disk so the interactive
+# ring-3 shell boots on the virtio-gpu framebuffer console.
+build-riscv64-demo:
+	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target riscv64gc-unknown-none-elf --bin $(CRATE) --features demo-disk
 
 build: build-x8664
 
@@ -186,6 +201,17 @@ clippy:
 RUN_DISPLAY ?= gtk
 RUN_GPU ?= virtio-gpu
 QEMU_GPU_ARGS = $(if $(filter virtio-gpu,$(RUN_GPU)),-device virtio-gpu-pci,$(if $(filter vga,$(RUN_GPU)),-vga std,$(error RUN_GPU must be 'virtio-gpu' or 'vga')))
+
+# MMIO virtio devices for the aarch64/riscv64 QEMU virt machines.  Device id 16
+# is the virtio-gpu (framebuffer console scanout) and id 18 is the virtio-input
+# keyboard that feeds Set-1 scancodes into the PS/2 keyboard layer.
+VIRT_GPU_ARGS = -device virtio-gpu-device
+VIRT_INPUT_ARGS = -device virtio-keyboard-device
+# QEMU 8.x `virt` machines default each virtio-mmio transport to *legacy* mode
+# (force-legacy=true => version register reads 1), but the kernel drives the
+# modern register layout and requires version 2.  Opt every transport into the
+# modern interface.
+VIRT_FORCE_LEGACY = -global virtio-mmio.force-legacy=false
 
 # Boot the kernel on QEMU q35 with a graphical framebuffer console and the
 # interactive ring-3 shell.  Needs --features demo-disk so the shell and the
@@ -231,7 +257,55 @@ run-x8664-headless: build-x8664
 		-no-shutdown \
 		-netdev user,id=net0 -device virtio-net-pci,netdev=net0
 
-run-aarch64: build-aarch64
+# Boot the aarch64 kernel on QEMU virt with a virtio-gpu framebuffer console
+# and a virtio-keyboard, driving the interactive ring-3 shell (demo-disk).
+# -serial stdio stays as a mirrored log and a second input path (type in the
+# window or in the launching terminal).
+run-aarch64: build-aarch64-demo
+	@if [ ! -x "$$(command -v qemu-system-aarch64)" ]; then \
+		echo "qemu-system-aarch64 is not installed; cannot run the aarch64 kernel."; \
+		exit 1; \
+	fi
+	qemu-system-aarch64 \
+		-machine virt \
+		$(VIRT_FORCE_LEGACY) \
+		-cpu max \
+		-smp 1 \
+		-m 1G \
+		-kernel "$(TARGET_DIR)/aarch64-unknown-none/$(PROFILE)/$(CRATE)" \
+		-display $(RUN_DISPLAY) \
+		$(VIRT_GPU_ARGS) \
+		$(VIRT_INPUT_ARGS) \
+		-serial stdio \
+		-no-reboot \
+		-no-shutdown \
+		-netdev user,id=net0 -device virtio-net-device,netdev=net0
+
+# Boot the riscv64 kernel on QEMU virt with a virtio-gpu framebuffer console
+# and a virtio-keyboard, driving the interactive ring-3 shell (demo-disk).
+run-riscv64: build-riscv64-demo
+	@if [ ! -x "$$(command -v qemu-system-riscv64)" ]; then \
+		echo "qemu-system-riscv64 is not installed; cannot run the riscv64 kernel."; \
+		exit 1; \
+	fi
+	qemu-system-riscv64 \
+		-machine virt \
+		$(VIRT_FORCE_LEGACY) \
+		-cpu rv64 \
+		-smp 1 \
+		-m 1G \
+		-kernel "$(TARGET_DIR)/riscv64gc-unknown-none-elf/$(PROFILE)/$(CRATE)" \
+		-display $(RUN_DISPLAY) \
+		$(VIRT_GPU_ARGS) \
+		$(VIRT_INPUT_ARGS) \
+		-serial stdio \
+		-no-reboot \
+		-no-shutdown \
+		-netdev user,id=net0 -device virtio-net-device,netdev=net0
+
+# Original headless aarch64 smoke: no display device, no demo-disk shell
+# (idle banner).  Mirrors the x86 run-x8664-headless target.
+run-aarch64-headless: build-aarch64
 	@if [ ! -x "$$(command -v qemu-system-aarch64)" ]; then \
 		echo "qemu-system-aarch64 is not installed; cannot run the aarch64 kernel."; \
 		exit 1; \
@@ -248,7 +322,9 @@ run-aarch64: build-aarch64
 		-no-shutdown \
 		-netdev user,id=net0 -device virtio-net-device,netdev=net0
 
-run-riscv64: build-riscv64
+# Original headless riscv64 smoke: no display device, no demo-disk shell
+# (idle banner).  Mirrors the x86 run-x8664-headless target.
+run-riscv64-headless: build-riscv64
 	@if [ ! -x "$$(command -v qemu-system-riscv64)" ]; then \
 		echo "qemu-system-riscv64 is not installed; cannot run the riscv64 kernel."; \
 		exit 1; \

@@ -16,6 +16,8 @@
 //! regenerate the glyph table.
 
 use core::ptr;
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use crate::kernel::drivers::framebuffer::FramebufferInfo;
 use crate::kernel::sync::SpinLock;
@@ -537,6 +539,26 @@ impl FramebufferConsole {
 
 static CONSOLE: SpinLock<Option<FramebufferConsole>> = SpinLock::new(None);
 
+/// Set when the framebuffer pixels may have changed since the last flush.
+///
+/// A consumer (e.g. the virtio-gpu driver polling from the timer tick) calls
+/// [`take_dirty`] to learn whether the guest framebuffer needs to be pushed
+/// to the display via `RESOURCE_FLUSH`.
+static DIRTY: AtomicBool = AtomicBool::new(false);
+
+/// Record that the console pixels changed since the last flush.
+pub fn mark_dirty() {
+    DIRTY.store(true, Ordering::Release);
+}
+
+/// Read and clear the dirty flag in one step.
+///
+/// Returns `true` when the framebuffer changed since the previous
+/// [`take_dirty`] call.
+pub fn take_dirty() -> bool {
+    DIRTY.swap(false, Ordering::AcqRel)
+}
+
 /// Install the global framebuffer console.
 ///
 /// # Safety
@@ -547,17 +569,20 @@ pub unsafe fn install_console(fb_ptr: *mut u8, fb_info: FramebufferInfo) {
     let mut console = FramebufferConsole::new(fb_ptr, fb_info);
     console.clear();
     *CONSOLE.lock() = Some(console);
+    mark_dirty();
 }
 
 pub fn console_write(s: &str) {
     if let Some(console) = CONSOLE.lock().as_mut() {
         console.write_str(s);
+        mark_dirty();
     }
 }
 
 pub fn console_clear() {
     if let Some(console) = CONSOLE.lock().as_mut() {
         console.clear();
+        mark_dirty();
     }
 }
 

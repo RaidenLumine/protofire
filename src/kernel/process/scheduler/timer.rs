@@ -55,6 +55,13 @@ impl Scheduler {
         // This is a stop-gap until MSI-X interrupt wiring is in place.
         let _ = crate::kernel::drivers::xhci::xhci_poll();
 
+        // Poll MMIO virtio-input keyboards (aarch64/riscv64 QEMU virt) and
+        // flush the virtio-gpu scanout framebuffer when the console marked it
+        // dirty.  Both are no-ops on hosts/x86 (no IRQ dispatch exists on
+        // those arches, so device servicing is folded into the timer tick).
+        let _ = crate::kernel::drivers::virtio_input::poll_hardware();
+        crate::kernel::drivers::virtio_gpu::poll_flush();
+
         // Drive the native network stack's periodic maintenance (ARP cache
         // eviction, TCP retransmission timers, TimeWait cleanup) when a
         // network device is present.

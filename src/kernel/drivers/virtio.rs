@@ -40,6 +40,10 @@ pub const REG_CONFIG_GENERATION: u64 = 0x0FC;
 pub const MAGIC_VALUE: u32 = 0x74726976; // "virt"
 pub const DEVICE_ID_NET: u32 = 1;
 pub const DEVICE_ID_BLOCK: u32 = 2;
+/// VirtIO device ID for the GPU (VirtIO 1.0 spec §5.7).
+pub const DEVICE_ID_GPU: u32 = 16;
+/// VirtIO device ID for the input device (VirtIO 1.0 spec §5.8).
+pub const DEVICE_ID_INPUT: u32 = 18;
 pub const VIRTIO_VERSION: u32 = 2;
 
 // ─── Status bits (section 4.2.2) ───
@@ -555,18 +559,6 @@ impl VirtQueue {
         if let Some(base) = self.pci_avail_base {
             unsafe {
                 core::ptr::write_volatile((base as *mut u16).add(1), self.driver_avail_idx);
-            }
-            // Verify the write took effect (debug).
-            let readback = unsafe { core::ptr::read_volatile((base as *const u16).add(1)) };
-            if self.driver_avail_idx <= 3 {
-                // Only log the first few to avoid spam.
-                crate::println!(
-                    "[virtio] submit: avail_idx={} base=0x{:x} idx_addr=0x{:x} readback={}",
-                    self.driver_avail_idx,
-                    base as usize,
-                    base as usize + 2,
-                    readback
-                );
             }
         }
         // Memory barrier: make descriptor and idx writes visible to the device
@@ -1110,8 +1102,48 @@ const VIRTIO_MMIO_BASE: usize = 0x0A00_0000;
     not(any(target_arch = "aarch64", target_arch = "riscv64"))
 ))]
 const VIRTIO_MMIO_STRIDE: usize = 0x200;
-#[cfg(target_os = "none")]
+// QEMU `virt` machines create *all* transports up front and bind the
+// `-device virtio-*-device` backends from the *top* of the MMIO window down.
+// With only the three GUI devices the aarch64 transports land at buses 29-31
+// (0x0a00_3a00..0x0a00_3e00), far beyond an 8-slot scan; the window count
+// therefore has to cover every transport QEMU instantiates so gpu/keyboard
+// are found regardless of where they were bound.
+#[cfg(all(target_os = "none", target_arch = "aarch64"))]
+const VIRTIO_MMIO_MAX_SLOTS: usize = 32; // QEMU aarch64 virt: NUM_VIRTIO_TRANSPORTS
+#[cfg(all(target_os = "none", target_arch = "riscv64"))]
+const VIRTIO_MMIO_MAX_SLOTS: usize = 8; // QEMU riscv64 virt: NUM_VIRTIO_TRANSPORTS
+#[cfg(all(
+    target_os = "none",
+    not(any(target_arch = "aarch64", target_arch = "riscv64"))
+))]
 const VIRTIO_MMIO_MAX_SLOTS: usize = 8;
+
+/// Return the MMIO addresses to scan when probing for a VirtIO device.
+///
+/// On platforms whose FDT describes VirtIO MMIO nodes (aarch64/riscv64 QEMU
+/// `virt`), this yields exactly the discovered device slots.  Elsewhere it
+/// falls back to a blind scan of the fixed MMIO window.  Used by the
+/// virtio-gpu and virtio-input probes so they can coexist with the existing
+/// block/network scans on the same MMIO bus.
+#[cfg(target_os = "none")]
+pub fn mmio_slot_addresses() -> alloc::vec::Vec<usize> {
+    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+    {
+        let info = crate::arch::fdt::platform_info();
+        if let (Some(base), Some(count), Some(stride)) = (
+            info.virtio_mmio_base,
+            info.virtio_mmio_count,
+            info.virtio_mmio_stride,
+        ) {
+            return (0..count.min(VIRTIO_MMIO_MAX_SLOTS))
+                .map(|slot| base + slot * stride)
+                .collect();
+        }
+    }
+    (0..VIRTIO_MMIO_MAX_SLOTS)
+        .map(|slot| VIRTIO_MMIO_BASE + slot * VIRTIO_MMIO_STRIDE)
+        .collect()
+}
 
 /// Probe VirtIO MMIO devices (discovered via FDT) for a block device.
 ///

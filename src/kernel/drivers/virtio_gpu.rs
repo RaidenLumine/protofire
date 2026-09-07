@@ -33,28 +33,31 @@ use alloc::sync::Arc;
 // Imports used only by the bare-metal x86_64 device probe / VirtioGpuDevice
 // machinery; the host build keeps just the syscall-facing interface and the
 // in-memory mock.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use alloc::boxed::Box;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use core::ptr;
 
 use crate::kernel::drivers::framebuffer::FramebufferInfo;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::framebuffer_console;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::VirtIoMmio;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::VirtQueue;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_NOTIFY;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::VIRTQ_DESC_F_WRITE;
 use crate::kernel::drivers::Driver;
 use crate::kernel::drivers::DriverCategory;
+// DmaBuffer (frame-allocator DMA) exists only on x86_64; the MMIO platforms
+// (aarch64/riscv64) back the scanout with an identity-mapped heap allocation
+// via `FbBacking::Heap` instead.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::kernel::memory::dma::DmaBuffer;
 use crate::kernel::sync::Mutex;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::println;
 use crate::Error;
 use crate::Result;
@@ -63,10 +66,10 @@ use crate::Result;
 // PCI constants
 // ---------------------------------------------------------------------------
 
-/// Red Hat / QEMU VirtIO vendor ID.
+/// Red Hat / QEMU VirtIO vendor ID (x86_64 PCI probe only).
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 const VIRTIO_VENDOR: u16 = 0x1af4;
-/// VirtIO GPU transitional PCI device ID (QEMU virtio-gpu-pci).
+/// VirtIO GPU transitional PCI device ID (QEMU virtio-gpu-pci; x86_64 only).
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 const VIRTIO_GPU_PCI_DEVICE_ID: u16 = 0x1050;
 
@@ -85,17 +88,17 @@ const VIRTIO_GPU_DEVICE_ID: u32 = 16;
 // GPU commands (spec §5.7.2)
 // ---------------------------------------------------------------------------
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_GET_DISPLAY_INFO: u32 = 0x0100;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_RESOURCE_CREATE_2D: u32 = 0x0101;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_RESOURCE_UNREF: u32 = 0x0102;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_SET_SCANOUT: u32 = 0x0103;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_RESOURCE_FLUSH: u32 = 0x0104;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING: u32 = 0x0106;
 
 // ---------------------------------------------------------------------------
@@ -103,10 +106,10 @@ const VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING: u32 = 0x0106;
 // ---------------------------------------------------------------------------
 
 /// Generic success (no data payload).
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_RESP_OK_NODATA: u32 = 0x1100;
 /// Response to GET_DISPLAY_INFO — contains display info.
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_RESP_OK_DISPLAY_INFO: u32 = 0x1101;
 
 // ---------------------------------------------------------------------------
@@ -115,31 +118,31 @@ const VIRTIO_GPU_RESP_OK_DISPLAY_INFO: u32 = 0x1101;
 
 /// 32-bit BGRx (B in byte 0, G in byte 1, R in byte 2, unused in byte 3).
 /// Matches the existing framebuffer console's pixel format.
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
-const VIRTIO_GPU_FORMAT_BGR_X888: u32 = 260;
+#[cfg(any(test, target_os = "none"))]
+const VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Queue indices
 // ---------------------------------------------------------------------------
 
 /// Control virtqueue (always queue 0).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const CONTROLQ: u16 = 0;
 /// Queue size for the control virtqueue.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const QUEUE_SIZE: u16 = 64;
 
 // ---------------------------------------------------------------------------
 // Default resolution when display info is unavailable
 // ---------------------------------------------------------------------------
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const DEFAULT_WIDTH: u32 = 1024;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const DEFAULT_HEIGHT: u32 = 768;
 
 /// Spin-loop iteration limit for bare-metal completion polling.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const POLL_LIMIT: u32 = 1_000_000;
 
 // ---------------------------------------------------------------------------
@@ -149,7 +152,7 @@ const POLL_LIMIT: u32 = 1_000_000;
 /// Generic control-header sent with every command.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuCtrlHeader {
     hdr_type: u32,
     flags: u32,
@@ -158,7 +161,7 @@ struct VirtioGpuCtrlHeader {
     padding: u32,
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl VirtioGpuCtrlHeader {
     const fn new(cmd: u32) -> Self {
         Self {
@@ -174,7 +177,7 @@ impl VirtioGpuCtrlHeader {
 /// Generic response header returned in every response.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuRespHeader {
     hdr_type: u32,
     flags: u32,
@@ -186,7 +189,7 @@ struct VirtioGpuRespHeader {
 /// One display entry returned by GET_DISPLAY_INFO.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuDisplayInfo {
     rect_x: u32,
     rect_y: u32,
@@ -199,7 +202,7 @@ struct VirtioGpuDisplayInfo {
 /// Response to GET_DISPLAY_INFO — up to 16 display entries.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuRespDisplayInfo {
     hdr: VirtioGpuRespHeader,
     displays: [VirtioGpuDisplayInfo; 16],
@@ -208,7 +211,7 @@ struct VirtioGpuRespDisplayInfo {
 /// Payload for RESOURCE_CREATE_2D.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuResourceCreate2D {
     hdr: VirtioGpuCtrlHeader,
     resource_id: u32,
@@ -217,27 +220,29 @@ struct VirtioGpuResourceCreate2D {
     height: u32,
 }
 
-/// Payload for RESOURCE_ATTACH_BACKING.
+/// Payload for RESOURCE_ATTACH_BACKING, with its (single) memory entry inline.
 ///
-/// NOTE: repr(C, packed) ensures sizeof matches the spec (44 bytes) rather
-/// than the padded 48 bytes that repr(C) alone would produce due to the u64
-/// alignment in VirtioGpuCtrlHeader.  No field references are taken from
-/// this type — only the struct address is passed to the device as a DMA
-/// descriptor address — so the packed repr is safe here.
-#[repr(C, packed)]
+/// The wire format is one contiguous device-readable blob:
+/// [ctrl_hdr(24) | resource_id(4) | nr_entries(4) | mem_entry(16)] = 48 bytes.
+/// QEMU parses the entries immediately after the 32-byte fixed part of the
+/// request stream; an earlier layout that left a 12-byte `padding` gap and
+/// chained the MemEntry in a separate descriptor made QEMU read the padding
+/// as a zero-length entry and fail with RESP_ERR_UNSPEC.
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuAttachBacking {
     hdr: VirtioGpuCtrlHeader,
     resource_id: u32,
     nr_entries: u32,
-    padding: [u32; 3],
+    /// Single contiguous backing chunk (the framebuffer allocation).
+    entries: [VirtioGpuMemEntry; 1],
 }
 
 /// A single memory entry in the backing description (scatter-gather).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuMemEntry {
     addr: u64,
     length: u32,
@@ -247,7 +252,7 @@ struct VirtioGpuMemEntry {
 /// Payload for SET_SCANOUT.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuSetScanout {
     hdr: VirtioGpuCtrlHeader,
     rect_x: u32,
@@ -258,27 +263,27 @@ struct VirtioGpuSetScanout {
     resource_id: u32,
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_CTX_CREATE: u32 = 0x0201;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_CTX_DESTROY: u32 = 0x0202;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_RESOURCE_CREATE_3D: u32 = 0x0204;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D: u32 = 0x0205;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D: u32 = 0x0206;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_SUBMIT_3D: u32 = 0x0208;
 
 /// Feature bit for VIRGL 3D acceleration (spec §5.7.2, feature bit 0).
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_F_VIRGL: u32 = 0;
 
 /// Payload for RESOURCE_FLUSH.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuResourceFlush {
     hdr: VirtioGpuCtrlHeader,
     rect_x: u32,
@@ -292,7 +297,7 @@ struct VirtioGpuResourceFlush {
 /// Payload for VIRTIO_GPU_CMD_RESOURCE_UNREF.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuResourceUnref {
     hdr: VirtioGpuCtrlHeader,
     resource_id: u32,
@@ -306,7 +311,7 @@ struct VirtioGpuResourceUnref {
 /// Payload for VIRTIO_GPU_CMD_CTX_CREATE.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuCtxCreate {
     hdr: VirtioGpuCtrlHeader,
     nlen: u32,
@@ -317,7 +322,7 @@ struct VirtioGpuCtxCreate {
 /// Payload for VIRTIO_GPU_CMD_RESOURCE_CREATE_3D.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuResourceCreate3D {
     hdr: VirtioGpuCtrlHeader,
     resource_id: u32,
@@ -338,7 +343,7 @@ struct VirtioGpuResourceCreate3D {
 /// Payload for VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D / TRANSFER_FROM_HOST_3D.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuTransferHost3D {
     hdr: VirtioGpuCtrlHeader,
     resource_id: u32,
@@ -357,7 +362,7 @@ struct VirtioGpuTransferHost3D {
 /// Payload for VIRTIO_GPU_CMD_SUBMIT_3D.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 struct VirtioGpuCmdSubmit3D {
     hdr: VirtioGpuCtrlHeader,
     size: u32,
@@ -368,38 +373,117 @@ struct VirtioGpuCmdSubmit3D {
 // Driver state
 // ---------------------------------------------------------------------------
 
+// ─── Scanout backing memory ──────────────────────────────────────────────
+
+/// Physical backing for the scanout framebuffer.
+///
+/// x86_64 uses the frame-allocator DMA buffer (physically contiguous below
+/// 1 GiB).  aarch64/riscv64 have no DMA window and run with an identity-mapped
+/// kernel heap, so the scanout is a plain page-aligned heap allocation whose
+/// virtual address *is* its guest-physical address — the same trick the
+/// VirtQueue rings and the virtio-net driver already rely on.
+#[cfg(target_os = "none")]
+enum FbBacking {
+    /// Frame-allocator DMA buffer (x86_64 PCI).
+    #[cfg(target_arch = "x86_64")]
+    Dma(DmaBuffer),
+    /// Identity-mapped heap region (aarch64/riscv64 MMIO).
+    #[cfg(not(target_arch = "x86_64"))]
+    Heap { base: usize, len: usize },
+}
+
+#[cfg(target_os = "none")]
+impl FbBacking {
+    fn as_ptr(&self) -> *mut u8 {
+        match self {
+            #[cfg(target_arch = "x86_64")]
+            FbBacking::Dma(fb) => fb.as_ptr(),
+            #[cfg(not(target_arch = "x86_64"))]
+            FbBacking::Heap { base, .. } => *base as *mut u8,
+        }
+    }
+
+    fn phys_addr(&self) -> usize {
+        match self {
+            #[cfg(target_arch = "x86_64")]
+            FbBacking::Dma(fb) => fb.phys_addr(),
+            #[cfg(not(target_arch = "x86_64"))]
+            FbBacking::Heap { base, .. } => *base,
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            #[cfg(target_arch = "x86_64")]
+            FbBacking::Dma(fb) => fb.len(),
+            #[cfg(not(target_arch = "x86_64"))]
+            FbBacking::Heap { len, .. } => *len,
+        }
+    }
+}
+
+/// Allocate `fb_bytes` of scanout backing memory.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+fn allocate_fb(fb_bytes: usize) -> Option<FbBacking> {
+    let fb_frames = fb_bytes.div_ceil(4096);
+    let fb = DmaBuffer::allocate(fb_frames)?;
+    Some(FbBacking::Dma(fb))
+}
+
+/// Allocate `fb_bytes` as a page-aligned, identity-mapped heap region.
+#[cfg(all(not(target_arch = "x86_64"), target_os = "none"))]
+fn allocate_fb(fb_bytes: usize) -> Option<FbBacking> {
+    use core::alloc::Layout;
+    let layout = Layout::from_size_align(fb_bytes, 4096).ok()?;
+    // Safety: layout is non-zero and the region is never freed — it backs the
+    // scanout for the kernel's whole lifetime.
+    let base = unsafe { alloc::alloc::alloc(layout) };
+    if base.is_null() {
+        return None;
+    }
+    unsafe { core::ptr::write_bytes(base, 0u8, fb_bytes) };
+    Some(FbBacking::Heap {
+        base: base as usize,
+        len: fb_bytes,
+    })
+}
+
 /// A VirtIO GPU device instance.
 ///
-/// Wraps the MMIO transport, one control virtqueue, and the DMA-able
-/// framebuffer backing memory.
+/// Wraps the MMIO transport, one control virtqueue, and the physically-backed
+/// framebuffer memory (`DmaBuffer` on x86_64, an identity-mapped heap region
+/// on the MMIO platforms).
 ///
 /// Constructed only by the bare-metal `init_gpu_device` probe; the host build
 /// exercises the syscall interface through the in-memory
 /// [`mock::MockGpuDevice`] instead.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 struct VirtioGpuDevice {
     transport: VirtIoMmio,
     queue: Mutex<VirtQueue>,
     scanout_resource_id: u32,
-    fb: DmaBuffer,
+    fb: FbBacking,
     /// Whether VIRTIO_GPU_F_VIRGL was negotiated with the device.
     has_virgl: bool,
+    /// Current scanout dimensions, `(0, 0)` until the first mode set.
+    scanout_size: Mutex<(u32, u32)>,
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl VirtioGpuDevice {
     /// Create a new device wrapper.  The transport must have completed
     /// `discover()` (but not yet `init_device()` — that is done by
     /// [`init_queues`]).  The queue is set up via `new_pci` so the ring
     /// layout includes the spec-mandated flags/idx prefix needed for
     /// device-visible ring access.
-    fn new(transport: VirtIoMmio, fb: DmaBuffer, has_virgl: bool) -> Self {
+    fn new(transport: VirtIoMmio, fb: FbBacking, has_virgl: bool) -> Self {
         Self {
             transport,
             queue: Mutex::new(VirtQueue::new_pci(QUEUE_SIZE)),
             scanout_resource_id: 1,
             fb,
             has_virgl,
+            scanout_size: Mutex::new((0, 0)),
         }
     }
 
@@ -581,72 +665,17 @@ impl VirtioGpuDevice {
             length: size,
             padding: 0,
         };
+        // The whole request (fixed part + mem entry) is sent as one contiguous
+        // device-readable descriptor, which is how Linux builds ATTACH_BACKING
+        // and how QEMU expects to parse it.
         let req = VirtioGpuAttachBacking {
             hdr: VirtioGpuCtrlHeader::new(VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING),
             resource_id,
             nr_entries: 1, // single contiguous chunk
-            padding: [0; 3],
+            entries: [entry],
         };
-        // ATTACH_BACKING is a two-part command: a data descriptor (the
-        // AttachBacking struct) followed by one or more MemEntry descriptors.
-        //
-        // The VirtIO spec says the request is: [ctrl_hdr | ... | entries]
-        // sent as a single device-readable descriptor chain.  However, QEMU's
-        // implementation accepts the attach command with a single data
-        // descriptor that contains only the header (the entries are embedded
-        // in a data descriptor that follows).
-        //
-        // For simplicity we use a 3-descriptor chain: [ctrl_hdr, mem_entry,
-        // response_hdr].  The device reads the first two and writes the third.
-        //
-        // Unfortunately, the generic do_command only supports 2 descriptors.
-        // We inline the queue operations here for the 3-descriptor case.
-
-        let mut queue = self.queue.lock();
-        let head = queue.alloc_chain(3).ok_or(Error::DeviceError)?;
-        let req_desc = head;
-        let entry_desc = queue.descriptors[req_desc as usize].next;
-        let resp_desc = queue.descriptors[entry_desc as usize].next;
-
-        queue.set_desc(
-            req_desc,
-            &req as *const VirtioGpuAttachBacking as u64,
-            core::mem::size_of::<VirtioGpuAttachBacking>() as u32,
-            0,
-        );
-
-        let mut entry_copy = entry;
-        queue.set_desc(
-            entry_desc,
-            &mut entry_copy as *mut VirtioGpuMemEntry as u64,
-            core::mem::size_of::<VirtioGpuMemEntry>() as u32,
-            0, // device-readable
-        );
-
-        let mut resp_hdr: VirtioGpuRespHeader = Default::default();
-        queue.set_desc(
-            resp_desc,
-            &mut resp_hdr as *mut VirtioGpuRespHeader as u64,
-            core::mem::size_of::<VirtioGpuRespHeader>() as u32,
-            VIRTQ_DESC_F_WRITE,
-        );
-
-        queue.submit(head);
-        drop(queue);
-        self.kick();
-        self.poll_completion()?;
-
-        let mut queue = self.queue.lock();
-        let _completed = queue.consume_completion().ok_or(Error::DeviceError)?;
-        drop(queue);
-
-        if resp_hdr.hdr_type != VIRTIO_GPU_RESP_OK_NODATA {
-            println!(
-                "[virtio-gpu] ATTACH_BACKING failed: resp={:#010x}",
-                resp_hdr.hdr_type
-            );
-            return Err(Error::DeviceError);
-        }
+        let mut resp: VirtioGpuRespHeader = Default::default();
+        self.do_command(&req, &mut resp, VIRTIO_GPU_RESP_OK_NODATA)?;
 
         println!(
             "[virtio-gpu] backing attached: resource_id={} addr={:#x} size={}",
@@ -919,10 +948,10 @@ impl VirtioGpuDevice {
     fn set_resolution(&self, width: u32, height: u32) -> Result<()> {
         let rid = self.scanout_resource_id;
 
-        self.create_2d_resource(rid, width, height, VIRTIO_GPU_FORMAT_BGR_X888)?;
+        self.create_2d_resource(rid, width, height, VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM)?;
         println!(
             "[virtio-gpu] created 2D resource {}: {}x{} format={}",
-            rid, width, height, VIRTIO_GPU_FORMAT_BGR_X888
+            rid, width, height, VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM
         );
 
         let fb_size = width * height * 4; // 32 bpp
@@ -931,10 +960,27 @@ impl VirtioGpuDevice {
         self.set_scanout(rid, width, height)?;
         println!("[virtio-gpu] scanout set to resource {}", rid);
 
+        // Record the scanout size so a later `flush_scanout` (from the timer
+        // tick) can push framebuffer updates to the display.
+        *self.scanout_size.lock() = (width, height);
+
         self.flush_resource(rid, width, height)?;
         println!("[virtio-gpu] resource flushed to display");
 
         Ok(())
+    }
+
+    /// Re-flush the current scanout surface to the display.
+    ///
+    /// Polled from the scheduler timer tick whenever the framebuffer console
+    /// marks itself dirty, so the guest-side framebuffer stays live on the
+    /// QEMU display without display-update IRQs.
+    fn flush_scanout(&self) -> Result<()> {
+        let (width, height) = *self.scanout_size.lock();
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+        self.flush_resource(self.scanout_resource_id, width, height)
     }
 }
 
@@ -951,6 +997,51 @@ static FB_INFO: SpinLock<Option<FramebufferInfo>> = SpinLock::new(None);
 pub fn framebuffer_info() -> Option<FramebufferInfo> {
     *FB_INFO.lock()
 }
+
+// ─── Polled scanout flusher (bare metal) ──────────────────────────────────
+
+/// The GPU whose scanout framebuffer is installed as the console, used by the
+/// timer-tick poller to push dirty frames to the display.
+#[cfg(target_os = "none")]
+static SCANOUT_DEVICE: Mutex<Option<Arc<VirtioGpuDevice>>> = Mutex::new(None);
+
+/// Re-entrancy guard for [`poll_flush`]: `flush_scanout` submits to the
+/// control queue and polls for its completion, so it must never run twice on
+/// the same tick.
+#[cfg(target_os = "none")]
+static FLUSH_IN_PROGRESS: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Push the console framebuffer to the display if it changed since the last
+/// tick.  Called from the scheduler timer tick.  No-op while no virtio-gpu
+/// console is installed — on x86 the console falls back to the bochs/VGA
+/// device, which the bochs-display driver reads directly and needs no flush.
+#[cfg(target_os = "none")]
+pub fn poll_flush() {
+    use core::sync::atomic::Ordering;
+    if FLUSH_IN_PROGRESS.load(Ordering::Acquire) {
+        return;
+    }
+    let device = match SCANOUT_DEVICE.lock().as_ref().cloned() {
+        Some(device) => device,
+        None => return,
+    };
+    // Consume the dirty flag only when there is a device to flush to.  A dirty
+    // mark raised while no scanout device is installed is harmless: installing
+    // the console (install_console) re-marks dirty before the first flush.
+    if !framebuffer_console::take_dirty() {
+        return;
+    }
+    if FLUSH_IN_PROGRESS.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _ = device.flush_scanout();
+    FLUSH_IN_PROGRESS.store(false, Ordering::Release);
+}
+
+/// Host stub: no display to flush.
+#[cfg(not(target_os = "none"))]
+pub fn poll_flush() {}
 
 // ---------------------------------------------------------------------------
 // Driver registration (for the DriverManager)
@@ -1024,7 +1115,7 @@ pub fn set_gpu_device_for_test(device: Option<Arc<dyn GpuDevice>>) {
 }
 
 /// Adapter so the real device satisfies the syscall-facing interface.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl GpuDevice for VirtioGpuDevice {
     fn ctx_create(&self, ctx_id: u32) -> Result<()> {
         self.ctx_create(ctx_id, &[])
@@ -1339,17 +1430,50 @@ fn probe_and_init() -> Option<()> {
     Some(())
 }
 
+// ---------------------------------------------------------------------------
+// aarch64 / riscv64 bare-metal probe (VirtIO MMIO transport)
+// ---------------------------------------------------------------------------
+
+/// Find a virtio-gpu MMIO device on the VirtIO MMIO bus, initialise it, and
+/// install the framebuffer console.  Returns `Some(())` on success.
+#[cfg(all(
+    target_os = "none",
+    any(target_arch = "aarch64", target_arch = "riscv64")
+))]
+fn probe_and_init() -> Option<()> {
+    use crate::kernel::drivers::virtio::BareMmioRegion;
+
+    for addr in crate::kernel::drivers::virtio::mmio_slot_addresses() {
+        // Safety: `addr` is a VirtIO MMIO register block discovered from the
+        // FDT or the fixed MMIO window; it stays mapped for the kernel's
+        // lifetime and access is serialised by the transport.
+        let region = unsafe { BareMmioRegion::new(addr) };
+        let mut transport = VirtIoMmio::new(Box::new(region));
+
+        if transport.discover().is_err() {
+            continue;
+        }
+        if transport.device_id() != crate::kernel::drivers::virtio::DEVICE_ID_GPU {
+            continue;
+        }
+        println!("[virtio-gpu] found virtio-gpu at 0x{:x}", addr);
+        return init_gpu_device(transport).map(|_| ());
+    }
+    None
+}
+
 /// Shared initialisation once the transport is set up.
 ///
 /// 1. `init_device_with_features`
-/// 2. Allocate DMA-able framebuffer backing (fixed default resolution for MVP)
+/// 2. Allocate physically-backed framebuffer memory (fixed default resolution
+///    for MVP; DMA buffer on x86_64, identity-mapped heap on the MMIO arches)
 /// 3. Configure the control queue and set DRIVER_OK
 /// 4. Query display info (informational; uses default for MVP)
 /// 5. Create a 2D resource, attach backing, set scanout, flush
 /// 6. Install the framebuffer console
 ///
 /// Returns `(width, height)` on success.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
     // 1. Negotiate features — request VIRTIO_GPU_F_VIRGL (bit 0) for 3D.
     let virgl_mask = 1u32 << VIRTIO_GPU_F_VIRGL;
@@ -1363,13 +1487,12 @@ fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
     let fb_width = DEFAULT_WIDTH;
     let fb_height = DEFAULT_HEIGHT;
 
-    // 2. Allocate DMA-able framebuffer backing.
+    // 2. Allocate physically-backed framebuffer memory (DMA buffer on x86_64,
+    // identity-mapped heap region on the aarch64/riscv64 MMIO platforms).
     let fb_bytes = (fb_width * fb_height * 4) as usize;
-    let fb_frames = fb_bytes.div_ceil(4096);
-    let fb = DmaBuffer::allocate(fb_frames)?;
+    let fb = allocate_fb(fb_bytes)?;
     println!(
-        "[virtio-gpu] allocated {} frames ({}) at phys={:#x}",
-        fb_frames,
+        "[virtio-gpu] allocated {} bytes of scanout backing at phys={:#x}",
         fb.len(),
         fb.phys_addr(),
     );
@@ -1420,9 +1543,12 @@ fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
         fb_height / 16,
     );
 
-    // Hand the device to the syscall layer (VIRGL 3D).  The global keeps the
-    // DMA buffer alive for the kernel's lifetime.
-    *GPU_DEVICE.lock() = Some(Arc::new(gpu));
+    // Hand the device to the syscall layer (VIRGL 3D) and to the polled
+    // scanout-flusher.  The globals keep the device + backing alive for the
+    // kernel's lifetime.
+    let gpu = Arc::new(gpu);
+    *SCANOUT_DEVICE.lock() = Some(gpu.clone());
+    *GPU_DEVICE.lock() = Some(gpu);
 
     Some((fb_width, fb_height))
 }
@@ -1432,7 +1558,7 @@ fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
 // ---------------------------------------------------------------------------
 
 /// Host-side / non-x86_64 stub: virtio-gpu not available.
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(not(target_os = "none"))]
 fn probe_and_init() -> Option<()> {
     None
 }
@@ -1483,12 +1609,12 @@ mod tests {
 
     #[test]
     fn attach_backing_size() {
-        // 24 (ctrl_hdr) + 4 + 4 + 12 (padding) = 44; packed repr avoids trailing
-        // alignment.
+        // 24 (ctrl_hdr) + 4 (resource_id) + 4 (nr_entries) + 16 (one mem_entry)
+        // = 48; the entry is inline so QEMU finds it right after the fixed part.
         assert_eq!(
             core::mem::size_of::<VirtioGpuAttachBacking>(),
-            44,
-            "VirtioGpuAttachBacking must be exactly 44 bytes (spec §5.7.2)"
+            48,
+            "VirtioGpuAttachBacking must be exactly 48 bytes (spec §5.7.2)"
         );
     }
 
@@ -1566,7 +1692,7 @@ mod tests {
 
     #[test]
     fn constants_are_sane() {
-        assert_eq!(VIRTIO_GPU_FORMAT_BGR_X888, 260);
+        assert_eq!(VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM, 2);
         assert_eq!(VIRTIO_GPU_CMD_GET_DISPLAY_INFO, 0x0100);
         assert_eq!(VIRTIO_GPU_CMD_RESOURCE_CREATE_2D, 0x0101);
         assert_eq!(VIRTIO_GPU_CMD_RESOURCE_UNREF, 0x0102);

@@ -16,6 +16,7 @@ pub mod serial;
 pub mod usb_hid;
 pub mod virtio;
 pub mod virtio_gpu;
+pub mod virtio_input;
 pub mod virtio_net;
 pub mod virtio_pci;
 pub mod virtio_pci_modern;
@@ -226,6 +227,10 @@ impl DriverManager {
 
         self.register(serial::driver());
         self.register(keyboard::driver());
+        // VirtIO input (MMIO keyboards on aarch64/riscv64 QEMU virt) must be
+        // registered directly after the PS/2 keyboard layer so its event-buffer
+        // injections are decoded by an already-initialised KeyboardCore.
+        self.register(virtio_input::driver());
         self.register(ata::driver());
         // AHCI/SATA driver: discovers controllers via PCI enumeration
         // (class=0x01/subclass=0x06).  Registers after ATA PIO so both
