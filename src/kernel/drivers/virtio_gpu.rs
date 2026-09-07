@@ -98,6 +98,13 @@ const VIRTIO_GPU_CMD_RESOURCE_UNREF: u32 = 0x0102;
 const VIRTIO_GPU_CMD_SET_SCANOUT: u32 = 0x0103;
 #[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_RESOURCE_FLUSH: u32 = 0x0104;
+/// Upload guest framebuffer bytes into the host-side resource image.
+///
+/// QEMU's non-VIRGL ("2D") path keeps the displayable scanout in a host pixman
+/// buffer that is populated only by this command; RESOURCE_FLUSH then pushes
+/// that host image to the display.  Without the upload the scanout stays black.
+#[cfg(any(test, target_os = "none"))]
+const VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D: u32 = 0x0105;
 #[cfg(any(test, target_os = "none"))]
 const VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING: u32 = 0x0106;
 
@@ -290,6 +297,29 @@ struct VirtioGpuResourceFlush {
     rect_y: u32,
     rect_w: u32,
     rect_h: u32,
+    resource_id: u32,
+    padding: u32,
+}
+
+/// Payload for TRANSFER_TO_HOST_2D (fixed part; the pixel data follows in a
+/// second device-readable descriptor, spec §5.7.6.5.7).
+///
+/// Wire layout (matches the `virtio_gpu_transfer_to_host_2d` that QEMU and
+/// Linux both use): `hdr(24) | rect{x,y,w,h}(16) | offset:le64(8) |
+/// resource_id(4) | padding(4)` = 56 bytes.  The `resource_id` sits *after*
+/// the rect and the 64-bit offset — putting it first (the natural struct
+/// order) makes QEMU read `resource_id` from our padding and reject the
+/// command with `RESP_ERR_INVALID_RESOURCE_ID`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+#[cfg(any(test, target_os = "none"))]
+struct VirtioGpuTransferHost2D {
+    hdr: VirtioGpuCtrlHeader,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    offset: u64,
     resource_id: u32,
     padding: u32,
 }
@@ -872,6 +902,74 @@ impl VirtioGpuDevice {
         self.do_command(&req, &mut resp, VIRTIO_GPU_RESP_OK_NODATA)
     }
 
+    /// Upload the full framebuffer into a 2D resource so a subsequent
+    /// [`Self::flush_resource`] has content to display.
+    ///
+    /// QEMU's non-VIRGL path samples the guest backing only when the guest
+    /// issues TRANSFER_TO_HOST_2D; without it the host-side scanout image is
+    /// never populated and the display stays black no matter how many
+    /// RESOURCE_FLUSH commands are sent.  The pixel data travels as a second
+    /// device-readable descriptor chained after the request header.
+    fn transfer_to_host_2d(
+        &self,
+        resource_id: u32,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        let req = VirtioGpuTransferHost2D {
+            hdr: VirtioGpuCtrlHeader::new(VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D),
+            x,
+            y,
+            w: width,
+            h: height,
+            offset: 0,
+            resource_id,
+            padding: 0,
+        };
+        let data_len = (width as usize) * (height as usize) * 4; // 32 bpp
+        let mut resp: VirtioGpuRespHeader = Default::default();
+
+        // 3-descriptor chain — the same shape SUBMIT_3D uses:
+        //   [0] 2D-transfer header (device-readable)
+        //   [1] framebuffer bytes (device-readable)
+        //   [2] response header (device-writable)
+        let mut queue = self.queue.lock();
+        let head = queue.alloc_chain(3).ok_or(Error::DeviceError)?;
+        let req_desc = head;
+        let data_desc = queue.descriptors[req_desc as usize].next;
+        let resp_desc = queue.descriptors[data_desc as usize].next;
+
+        queue.set_desc(
+            req_desc,
+            &req as *const VirtioGpuTransferHost2D as u64,
+            core::mem::size_of::<VirtioGpuTransferHost2D>() as u32,
+            0,
+        );
+        // The backing region is identity-mapped (VA == guest phys) on the MMIO
+        // arches, so the device-visible address is the plain framebuffer
+        // pointer.  Kept alive by `self` until the completion is consumed.
+        queue.set_desc(data_desc, self.fb.as_ptr() as u64, data_len as u32, 0);
+        queue.set_desc(
+            resp_desc,
+            &mut resp as *mut VirtioGpuRespHeader as u64,
+            core::mem::size_of::<VirtioGpuRespHeader>() as u32,
+            VIRTQ_DESC_F_WRITE,
+        );
+
+        queue.submit(head);
+        drop(queue);
+        self.kick();
+        self.poll_completion()?;
+
+        let mut queue = self.queue.lock();
+        queue.consume_completion().ok_or(Error::DeviceError)?;
+        drop(queue);
+
+        Self::check_response(&resp, VIRTIO_GPU_RESP_OK_NODATA)
+    }
+
     /// Submit a VIRGL command stream to a context for rendering.
     ///
     /// `cmd_stream` must be valid for the duration of the call; the device
@@ -980,6 +1078,10 @@ impl VirtioGpuDevice {
         if width == 0 || height == 0 {
             return Ok(());
         }
+        // Upload the guest framebuffer into the host resource, then push it to
+        // the display.  RESOURCE_FLUSH alone only re-blits the host-side image,
+        // which stays blank until a TRANSFER_TO_HOST_2D populates it.
+        self.transfer_to_host_2d(self.scanout_resource_id, 0, 0, width, height)?;
         self.flush_resource(self.scanout_resource_id, width, height)
     }
 }
@@ -1673,6 +1775,18 @@ mod tests {
     }
 
     #[test]
+    fn transfer_host_2d_size() {
+        // hdr(24) + resource_id/x/y/w/h + offset + padding = 52, padded to the
+        // struct's 8-byte alignment (the hdr's u64 fencing) — the same layout
+        // Linux's un-packed virtio_gpu_transfer_host_2d puts on the wire.
+        assert_eq!(
+            core::mem::size_of::<VirtioGpuTransferHost2D>(),
+            56,
+            "VirtioGpuTransferHost2D must be 56 bytes"
+        );
+    }
+
+    #[test]
     fn transfer_host_3d_size() {
         assert_eq!(
             core::mem::size_of::<VirtioGpuTransferHost3D>(),
@@ -1698,6 +1812,7 @@ mod tests {
         assert_eq!(VIRTIO_GPU_CMD_RESOURCE_UNREF, 0x0102);
         assert_eq!(VIRTIO_GPU_CMD_SET_SCANOUT, 0x0103);
         assert_eq!(VIRTIO_GPU_CMD_RESOURCE_FLUSH, 0x0104);
+        assert_eq!(VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, 0x0105);
         assert_eq!(VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING, 0x0106);
         assert_eq!(VIRTIO_GPU_RESP_OK_NODATA, 0x1100);
         assert_eq!(VIRTIO_GPU_RESP_OK_DISPLAY_INFO, 0x1101);
