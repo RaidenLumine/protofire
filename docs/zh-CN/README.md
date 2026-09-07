@@ -200,9 +200,9 @@ pub struct Kernel {
 | `build` | 构建 x86_64 内核 ELF（`x86_64-unknown-none`） |
 | `build-aarch64` | 构建 AArch64 内核 ELF（`aarch64-unknown-none`） |
 | `build-riscv64` | 构建 RISC-V 内核 ELF（`riscv64gc-unknown-none-elf`） |
-| `run` | 在 QEMU q35 上启动 x86_64（无磁盘，串行控制台） |
-| `run-aarch64` | 在 QEMU virt 上启动 AArch64 |
-| `run-riscv64` | 在 QEMU virt 上启动 RISC-V |
+| `run` | 在 QEMU q35 上启动 x86_64 演示 shell，经 `-serial stdio` 交互（无窗口） |
+| `run-aarch64` | 在 QEMU virt 上启动 AArch64 演示 shell，经 `-serial stdio` 交互（无窗口） |
+| `run-riscv64` | 在 QEMU virt 上启动 RISC-V 演示 shell，经 `-serial stdio` 交互（无窗口） |
 | `check` | 宿主机 + 裸机类型检查 |
 | `check-aarch64` / `check-riscv64` | 交叉目标类型检查 |
 | `test` | 宿主机端单元测试 + 集成测试（使用 `demo-disk`） |

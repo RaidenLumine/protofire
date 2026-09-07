@@ -202,9 +202,9 @@ The top-level `Makefile` provides:
 | `build` | Build x86_64 kernel ELF (`x86_64-unknown-none`) |
 | `build-aarch64` | Build AArch64 kernel ELF (`aarch64-unknown-none`) |
 | `build-riscv64` | Build RISC-V kernel ELF (`riscv64gc-unknown-none-elf`) |
-| `run` | Boot x86_64 on QEMU q35 (no disk, serial console) |
-| `run-aarch64` | Boot AArch64 on QEMU virt |
-| `run-riscv64` | Boot RISC-V on QEMU virt |
+| `run` | x86_64 demo shell on QEMU q35, interactive over `-serial stdio` (no window) |
+| `run-aarch64` | AArch64 demo shell on QEMU virt, interactive over `-serial stdio` (no window) |
+| `run-riscv64` | RISC-V demo shell on QEMU virt, interactive over `-serial stdio` (no window) |
 | `check` | Host + bare-metal type checks |
 | `check-aarch64` / `check-riscv64` | Cross-target type checks |
 | `test` | Host-side unit + integration tests (with `demo-disk`) |
