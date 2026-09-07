@@ -6,13 +6,16 @@
 //! (`protofire_demo_program_aarch64_rust`) so the kernel can extract it as a
 //! raw blob and relocate it into a user demo slot.  Because of that relocation
 //! every datum the payload touches must be addressed PC-relative through
-//! `adr_relative_address!` (`adrp` + `add :lo12:`); a plain `fn as usize` would
+//! `adr_relative_address!` (a single `adr`); a plain `fn as usize` would
 //! bake the kernel-link absolute address into the section and break after the
 //! blob is copied to user space.
 //!
-//! Faults are recovered by skipping the fixed 4-byte AArch64 instruction that
-//! raised the abort, so the trigger helpers below use exactly one faulting
-//! instruction each and the exception handler advances the frame by 4 bytes.
+//! Faults are recovered in the payload's exception handler: a data abort skips
+//! the fixed 4-byte AArch64 instruction that raised it, while an instruction
+//! abort (whose `ELR` is the non-executable branch target, not the `br`) hands
+//! control back to the in-section resume label the trigger pre-armed in `x30`.
+//! The trigger helpers below therefore use exactly one faulting instruction
+//! each, and the data-abort ones are recoverable by a 4-byte advance.
 
 #![cfg_attr(not(test), allow(dead_code))]
 
@@ -24,6 +27,8 @@ use crate::abi::exception::AArch64UserExceptionFrame;
 use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_EXECUTE;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_READ;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_UNKNOWN;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_WRITE;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
@@ -50,19 +55,23 @@ use crate::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
 
-/// Compute the runtime address of a symbol inside this payload section using
-/// PC-relative `adrp`/`add :lo12:`.  The linker bakes the page-relative
-/// offsets, and because the whole section moves as one unit when the kernel
-/// relocates the blob into a user slot, the computed address stays correct at
-/// whatever address the payload ends up running from.
+/// Compute the runtime address of a symbol inside this payload section using a
+/// single PC-relative `adr`.  The payload blob is copied verbatim from the
+/// kernel `.text` sub-range into a user demo slot whose base is *not* page
+/// aligned with the kernel address, so a two-instruction `adrp`+`add
+/// #:lo12:` would be wrong: `adrp` reconstructs the link-time page and the
+/// `:lo12:` addend is only valid when the whole section moves by a multiple of
+/// 4 KiB.  `adr` encodes the full ±1 MiB PC-relative offset, so it stays
+/// correct under any relocation as long as symbol and reference stay within
+/// ~2 KiB of each other — which every payload reference does, because the
+/// whole section is contiguous and small.
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 macro_rules! adr_relative_address {
     ($symbol:path) => {{
         let address: usize;
         unsafe {
             core::arch::asm!(
-                "adrp {address}, {symbol}",
-                "add {address}, {address}, #:lo12:{symbol}",
+                "adr {address}, {symbol}",
                 address = lateout(reg) address,
                 symbol = sym $symbol,
                 options(nostack, preserves_flags),
@@ -374,21 +383,35 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
         RUST_PAYLOAD_WAIT_ERROR_PREFIX.len(),
         termination.error_code as usize,
     );
-    let syndrome =
-        AArch64AbortSyndrome::from_exception(termination.vector as u8, termination.error_code);
+    // Decode the abort syndrome inline instead of mapping over the Option:
+    // the payload blob may only branch within itself, and the compiler emitted
+    // even a monomorphised core `Option::map` closure out of section at kernel
+    // link time — an address that is meaningless after the blob is relocated
+    // into a user slot.  Mirror `AArch64AbortSyndrome` exactly: an abort vector
+    // of 0x20/0x24 means the low six ISS bits are the fault-status code, and for
+    // a data abort ISS bit 6 is the write-not-read bit.
+    let abort_vector = termination.vector as u8;
+    let iss = termination.error_code as u32;
+    let is_abort_syndrome = abort_vector == AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR
+        || abort_vector == AARCH64_EXCEPTION_DATA_ABORT_VECTOR;
     write_prefixed_hex(
         adr_relative_address!(RUST_PAYLOAD_WAIT_FSC_PREFIX),
         RUST_PAYLOAD_WAIT_FSC_PREFIX.len(),
-        syndrome
-            .map(|s| s.fault_status_code() as usize)
-            .unwrap_or(0),
+        if is_abort_syndrome { (iss & 0x3f) as usize } else { 0 },
     );
+    let access_code = if !is_abort_syndrome {
+        AARCH64_ABORT_ACCESS_KIND_UNKNOWN
+    } else if abort_vector == AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR {
+        AARCH64_ABORT_ACCESS_KIND_EXECUTE
+    } else if iss & (1 << 6) != 0 {
+        AARCH64_ABORT_ACCESS_KIND_WRITE
+    } else {
+        AARCH64_ABORT_ACCESS_KIND_READ
+    };
     write_prefixed_hex(
         adr_relative_address!(RUST_PAYLOAD_WAIT_ACCESS_PREFIX),
         RUST_PAYLOAD_WAIT_ACCESS_PREFIX.len(),
-        syndrome
-            .map(|s| s.access_kind_code() as usize)
-            .unwrap_or(u8::MAX as usize),
+        access_code as usize,
     );
     write_prefixed_hex(
         adr_relative_address!(RUST_PAYLOAD_WAIT_KIND_PREFIX),
@@ -400,8 +423,17 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
 
 /// Payload exception handler.  The kernel delivers the abort frame in `x0` and
 /// the payload is expected to return via `return_from_exception` after deciding
-/// how to resume.  AArch64 instructions are fixed-width (4 bytes), so recovery
-/// means skipping exactly one instruction past the faulting access.
+/// how to resume.
+///
+/// Recovery differs by abort class.  A data abort is raised *by* a specific
+/// instruction inside this RX section, so skipping the fixed 4-byte AArch64
+/// instruction resumes just past the faulting access.  An instruction abort is
+/// different: it is raised on a *branch target*, so `ELR` (the frame's
+/// `instruction_pointer`) is the non-executable address the payload branched
+/// to, not the `br` itself — adding 4 would keep walking up the non-exec page
+/// forever.  The stack-exec trigger pre-arms `x30` with an in-section resume
+/// label before branching, so for that class the handler redirects the frame to
+/// `x30` instead.
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
@@ -440,8 +472,14 @@ extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
             );
         }
 
-        // Skip the single 4-byte instruction that raised the abort.
-        frame_ref.instruction_pointer += 4;
+        // See the function-level comment: skip the faulting 4-byte instruction
+        // for data aborts, but hand an instruction abort back to the resume
+        // label its trigger pre-armed in `x30`.
+        if frame_ref.vector as u8 == AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR {
+            frame_ref.instruction_pointer = frame_ref.x30;
+        } else {
+            frame_ref.instruction_pointer += 4;
+        }
         return_from_exception(frame);
     }
 }
@@ -464,8 +502,11 @@ unsafe fn trigger_local_code_write_fault_once() {
 }
 
 /// Copy a `ret` instruction onto the (non-executable) user stack and branch to
-/// it.  `br x11` raises an instruction abort; the handler skips the 4-byte `br`
-/// and resumes at the copied `ret`, which returns to the stack restore below.
+/// it.  `br x11` raises an instruction abort whose `ELR` is the stack address it
+/// tried to fetch from, so before branching the trigger pre-arms `x30` with the
+/// in-section resume label `3:`; the handler restores the frame to `x30` and
+/// execution continues at the stack restore below.  The `ret` word at `2:` is
+/// the decoy the branch attempted to execute and is never run.
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
