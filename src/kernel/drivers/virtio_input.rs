@@ -5,9 +5,10 @@
 //! QEMU's `virt` machines expose keyboards as MMIO virtio-input devices
 //! (`-device virtio-keyboard-device`, device id 18) on the same MMIO bus as
 //! virtio-net and virtio-gpu.  The device reports Linux input (evdev) key
-//! events on its event virtqueue: three little-endian `u32` fields
-//! (`type`/`code`/`value`), `EV_KEY` (1) with the Linux key code, and a
-//! value of 0 (release) / 1 (press) / 2 (autorepeat).
+//! events on its event virtqueue, each `struct virtio_input_event` being
+//! `type: le16`, `code: le16`, `value: le32` (8 bytes, spec §5.8.3): `EV_KEY`
+//! (1) carries the Linux key code in `code`, and `value` is 0 (release) /
+//! 1 (press) / 2 (autorepeat).
 //!
 //! aarch64/riscv64 have no PS/2 keyboard, so this driver is the window-input
 //! path for those platforms: it translates EV_KEY events back to PS/2 Set-1
@@ -104,7 +105,9 @@ const EVENT_QUEUE: u16 = 0;
 ))]
 const EVENT_QUEUE_SIZE: u16 = 64;
 
-/// Each event is `type` + `code` + `value`, all `le32`.
+/// Each event is `type: le16` + `code: le16` + `value: le32` = 8 bytes
+/// (virtio spec §5.8.3).  Reading it as three `le32` mis-parses every event —
+/// the key code (e.g. `0x1E` for KEY_A) leaks into the high bytes of `type`.
 #[cfg(any(
     test,
     all(
@@ -112,7 +115,7 @@ const EVENT_QUEUE_SIZE: u16 = 64;
         any(target_arch = "aarch64", target_arch = "riscv64")
     )
 ))]
-const EVENT_BYTES: usize = 12;
+const EVENT_BYTES: usize = 8;
 
 /// EV_KEY event type.
 #[cfg(any(
@@ -122,7 +125,7 @@ const EVENT_BYTES: usize = 12;
         any(target_arch = "aarch64", target_arch = "riscv64")
     )
 ))]
-const EV_KEY: u32 = 1;
+const EV_KEY: u16 = 1;
 
 /// PS/2 Set-1 break-code bit and the E0 extended prefix, mirrored from the
 /// keyboard driver (which keeps these private).
@@ -143,7 +146,7 @@ const SET1_BREAK_BIT: u8 = 0x80;
 ))]
 const SET1_EXTENDED_PREFIX: u8 = 0xE0;
 
-/// A raw VirtIO input event: three little-endian `u32` words.
+/// A raw VirtIO input event: `type`/`code` are `le16`, `value` is `le32`.
 #[cfg(any(
     test,
     all(
@@ -153,8 +156,8 @@ const SET1_EXTENDED_PREFIX: u8 = 0xE0;
 ))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct VirtioInputEvent {
-    event_type: u32,
-    code: u32,
+    event_type: u16,
+    code: u16,
     value: u32,
 }
 
@@ -168,9 +171,9 @@ struct VirtioInputEvent {
 ))]
 fn read_event(buf: &[u8; EVENT_BYTES]) -> VirtioInputEvent {
     VirtioInputEvent {
-        event_type: u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
-        code: u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
-        value: u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
+        event_type: u16::from_le_bytes([buf[0], buf[1]]),
+        code: u16::from_le_bytes([buf[2], buf[3]]),
+        value: u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
     }
 }
 
@@ -229,7 +232,7 @@ fn event_scancodes(event: &VirtioInputEvent) -> Option<[u8; 2]> {
     if event.event_type != EV_KEY {
         return None;
     }
-    let (code, extended) = evdev_to_set1(event.code)?;
+    let (code, extended) = evdev_to_set1(event.code as u32)?;
     // value 0 = release, 1 = press, 2 = autorepeat (treated as another press).
     let make = if event.value == 0 {
         code | SET1_BREAK_BIT
@@ -548,12 +551,14 @@ mod tests {
     }
 
     #[test]
-    fn le32_event_bytes_decode() {
+    fn le16_le16_le32_event_bytes_decode() {
+        // Wire layout: type(le16)=1, code(le16)=30, value(le32)=1 → 8 bytes.
         let buf = [
-            1u8, 0, 0, 0, // type = 1 (EV_KEY)
-            0x1E, 0, 0, 0, // code = 30 (KEY_A)
+            1u8, 0, // type = 1 (EV_KEY)
+            0x1E, 0, // code = 30 (KEY_A)
             1, 0, 0, 0, // value = 1 (press)
         ];
+        assert_eq!(buf.len(), EVENT_BYTES);
         let event = read_event(&buf);
         assert_eq!(
             event,
@@ -563,5 +568,6 @@ mod tests {
                 value: 1,
             }
         );
+        assert_eq!(event_scancodes(&event), Some([0x1E, 0]));
     }
 }
