@@ -10,7 +10,7 @@
 //! module provides `with_user_access_guard` which sets AC for the duration of
 //! a single user-memory access, then clears it.
 //!
-//! Functions that return references into user memory (`user_str`,
+//! Functions that return references into user memory (e.g.
 //! `optional_user_input_slice`) bracket the *dereference* with a SMAP guard,
 //! but the returned reference may still point to user pages.  Callers must
 //! ensure that any further reads through that reference also happen inside a
@@ -126,8 +126,8 @@ pub(super) fn user_path_arg(
     let ptr = context.arg(path_arg) as *const u8;
     let len = context.arg(len_arg);
     if len == 0 {
-        // Preserve the previous `user_str` behaviour: a zero-length path is
-        // rejected up front rather than decoded to an empty string.
+        // A zero-length path is rejected up front rather than decoded to an
+        // empty string.
         return Err(Error::InvalidArgument);
     }
     // Copy the path into kernel-owned memory while the SMAP guard is held.
@@ -141,8 +141,8 @@ pub(super) fn user_bounded_str(ptr: *const u8, len: usize, max_len: usize) -> Re
         return Err(Error::InvalidArgument);
     }
     if len == 0 {
-        // Preserve the previous `user_str` behaviour: a zero-length input is
-        // rejected rather than decoded to an empty string.
+        // A zero-length input is rejected rather than decoded to an empty
+        // string.
         return Err(Error::InvalidArgument);
     }
 
@@ -429,13 +429,6 @@ pub(crate) unsafe fn write_user_value_untracked<T: Copy>(addr: u64, value: &T) {
     })
 }
 
-pub(super) fn user_str<'a>(ptr: *const u8, len: usize) -> Result<&'a str> {
-    with_user_access_guard(|| {
-        let bytes = optional_user_input_slice(ptr, len)?.ok_or(Error::InvalidArgument)?;
-        core::str::from_utf8(bytes).map_err(|_| Error::InvalidArgument)
-    })
-}
-
 pub(super) fn user_string(ptr: *const u8, len: usize) -> Result<String> {
     if len == 0 {
         return Ok(String::new());
@@ -444,8 +437,6 @@ pub(super) fn user_string(ptr: *const u8, len: usize) -> Result<String> {
     // SMAP guard wraps the read from user memory through to_string()'s copy
     // into kernel-owned storage.
     with_user_access_guard(|| {
-        // user_str internally guards its own dereference; the outer guard
-        // extends coverage to the to_string() copy into kernel memory.
         let bytes = optional_user_input_slice(ptr, len)?.ok_or(Error::InvalidArgument)?;
         let s = core::str::from_utf8(bytes).map_err(|_| Error::InvalidArgument)?;
         Ok(s.to_string())
@@ -1293,7 +1284,6 @@ mod tests {
     use super::optional_user_input_slice;
     use super::optional_user_output_slice;
     use super::user_bounded_str;
-    use super::user_str;
     use super::user_string;
     use super::validate_user_input_buffer;
     use super::validate_user_output_buffer;
@@ -1425,15 +1415,6 @@ mod tests {
             user_bounded_str(bytes.as_ptr(), bytes.len(), TEST_MAX_STRING_BYTES),
             Err(Error::InvalidArgument)
         );
-    }
-
-    #[test]
-    fn user_str_accepts_long_utf8_when_caller_does_not_impose_extra_limit() {
-        let bytes = vec![b'a'; TEST_MAX_STRING_BYTES + 1];
-
-        let decoded = user_str(bytes.as_ptr(), bytes.len()).expect("decode long user string");
-
-        assert_eq!(decoded.len(), bytes.len());
     }
 
     #[test]

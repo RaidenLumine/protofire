@@ -8,6 +8,11 @@
 //! multiboot payload does not guarantee the controller left the keyboard
 //! interrupt armed, so the kernel must enable it itself.
 
+// The controller-programming path (registers, busy-wait helpers and init) only
+// exists on bare metal: host / non-bare-metal builds just get the no-op init
+// stub at the bottom, so everything here is cfg-gated to that target.
+#![cfg(all(target_arch = "x86_64", target_os = "none"))]
+
 use super::port::Port;
 
 const STATUS_PORT: u16 = 0x64;
@@ -74,7 +79,6 @@ fn wait_output_full() {
 /// Finally the keyboard itself is told to enable scanning (0xF4); until it
 /// receives that it does not report key presses to the controller, so
 /// without it the IRQ1 line stays silent for real keystrokes and `sendkey`.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn init() {
     let mut status = Port::<u8>::new(STATUS_PORT);
     let mut data = Port::<u8>::new(DATA_PORT);
