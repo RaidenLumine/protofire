@@ -33,11 +33,10 @@ pub(crate) fn initial_instruction_pointer(
         target_os = "none"
     )))]
     {
-        if _user_start.is_some() {
-            unsupported_user_thread_entry as *const () as usize
-        } else {
-            _entry_point
-        }
+        // Host / non-bare-metal builds cannot run user-mode threads, so there
+        // is no unsupported-start redirect anymore: a thread just begins at its
+        // requested entry point like any other host thread.
+        _entry_point
     }
 }
 
@@ -61,12 +60,4 @@ pub(crate) fn initialize_frame_kernel_stack(
         let _ = _stack_len;
         stack_top & !0xF
     }
-}
-
-#[cfg(not(all(
-    any(target_arch = "x86_64", target_arch = "aarch64"),
-    target_os = "none"
-)))]
-pub(crate) fn unsupported_user_thread_entry() {
-    crate::println!("[user  ] user-mode threads are only executable on bare-metal targets");
 }

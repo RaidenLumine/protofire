@@ -217,12 +217,6 @@ pub(crate) use types::UserPendingExceptionFrame;
 pub(crate) use constants::USER_THREAD_STACK_ALIGNMENT;
 
 // Re-export items moved to sub-modules that tests still import via `super::`.
-#[cfg(not(all(
-    any(target_arch = "x86_64", target_arch = "aarch64"),
-    target_os = "none"
-)))]
-#[allow(unused_imports)]
-pub(crate) use entry::unsupported_user_thread_entry;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 #[allow(unused_imports)]
 pub(crate) use exception::align_down;
