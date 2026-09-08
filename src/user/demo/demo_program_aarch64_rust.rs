@@ -444,48 +444,50 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
 extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
     frame: *mut AArch64UserExceptionFrame,
 ) -> ! {
-    unsafe {
-        let frame_ref = &mut *frame;
-        if let Some(syndrome) =
-            AArch64AbortSyndrome::from_exception(frame_ref.vector as u8, frame_ref.error_code)
-        {
-            // These strings are the payload's own copies — kernel .rodata is
-            // not position-independent and would be stale after relocation.
-            write_section_message(
-                adr_relative_address!(RUST_PAYLOAD_PERMISSION_LEVEL3),
-                RUST_PAYLOAD_PERMISSION_LEVEL3.len(),
-            );
-            match syndrome.access_kind_code() {
-                AARCH64_ABORT_ACCESS_KIND_READ => write_section_message(
-                    adr_relative_address!(RUST_PAYLOAD_READ_NAME),
-                    RUST_PAYLOAD_READ_NAME.len(),
-                ),
-                AARCH64_ABORT_ACCESS_KIND_WRITE => write_section_message(
-                    adr_relative_address!(RUST_PAYLOAD_WRITE_NAME),
-                    RUST_PAYLOAD_WRITE_NAME.len(),
-                ),
-                AARCH64_ABORT_ACCESS_KIND_EXECUTE => write_section_message(
-                    adr_relative_address!(RUST_PAYLOAD_EXECUTE_NAME),
-                    RUST_PAYLOAD_EXECUTE_NAME.len(),
-                ),
-                _ => {}
-            }
-            write_section_message(
-                adr_relative_address!(RUST_PAYLOAD_NEWLINE),
-                RUST_PAYLOAD_NEWLINE.len(),
-            );
+    // Safety: the kernel passes the abort frame as the sole argument and keeps
+    // it alive for the whole handler; `return_from_exception` below resumes it.
+    let frame_ref = unsafe { &mut *frame };
+    if let Some(syndrome) =
+        AArch64AbortSyndrome::from_exception(frame_ref.vector as u8, frame_ref.error_code)
+    {
+        // These strings are the payload's own copies — kernel .rodata is
+        // not position-independent and would be stale after relocation.
+        write_section_message(
+            adr_relative_address!(RUST_PAYLOAD_PERMISSION_LEVEL3),
+            RUST_PAYLOAD_PERMISSION_LEVEL3.len(),
+        );
+        match syndrome.access_kind_code() {
+            AARCH64_ABORT_ACCESS_KIND_READ => write_section_message(
+                adr_relative_address!(RUST_PAYLOAD_READ_NAME),
+                RUST_PAYLOAD_READ_NAME.len(),
+            ),
+            AARCH64_ABORT_ACCESS_KIND_WRITE => write_section_message(
+                adr_relative_address!(RUST_PAYLOAD_WRITE_NAME),
+                RUST_PAYLOAD_WRITE_NAME.len(),
+            ),
+            AARCH64_ABORT_ACCESS_KIND_EXECUTE => write_section_message(
+                adr_relative_address!(RUST_PAYLOAD_EXECUTE_NAME),
+                RUST_PAYLOAD_EXECUTE_NAME.len(),
+            ),
+            _ => {}
         }
-
-        // See the function-level comment: skip the faulting 4-byte instruction
-        // for data aborts, but hand an instruction abort back to the resume
-        // label its trigger pre-armed in `x30`.
-        if frame_ref.vector as u8 == AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR {
-            frame_ref.instruction_pointer = frame_ref.x30;
-        } else {
-            frame_ref.instruction_pointer += 4;
-        }
-        return_from_exception(frame);
+        write_section_message(
+            adr_relative_address!(RUST_PAYLOAD_NEWLINE),
+            RUST_PAYLOAD_NEWLINE.len(),
+        );
     }
+
+    // See the function-level comment: skip the faulting 4-byte instruction
+    // for data aborts, but hand an instruction abort back to the resume
+    // label its trigger pre-armed in `x30`.
+    if frame_ref.vector as u8 == AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR {
+        frame_ref.instruction_pointer = frame_ref.x30;
+    } else {
+        frame_ref.instruction_pointer += 4;
+    }
+    // Safety: resume the adjusted abort frame; only reachable after the frame
+    // has been redirected to the correct resume point above.
+    unsafe { return_from_exception(frame) }
 }
 
 /// Store to a byte inside this RX payload section.  The user page is
@@ -585,7 +587,7 @@ pub fn payload_bytes() -> &'static [u8] {
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 pub fn payload_entry_offset() -> usize {
-    let entry = protofire_demo_program_aarch64_rust_entry as usize;
+    let entry = protofire_demo_program_aarch64_rust_entry as *const () as usize;
     let start = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_AARCH64_RUST_SECTION_START) as usize;
     entry
         .checked_sub(start)
