@@ -397,7 +397,11 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
     write_prefixed_hex(
         adr_relative_address!(RUST_PAYLOAD_WAIT_FSC_PREFIX),
         RUST_PAYLOAD_WAIT_FSC_PREFIX.len(),
-        if is_abort_syndrome { (iss & 0x3f) as usize } else { 0 },
+        if is_abort_syndrome {
+            (iss & 0x3f) as usize
+        } else {
+            0
+        },
     );
     let access_code = if !is_abort_syndrome {
         AARCH64_ABORT_ACCESS_KIND_UNKNOWN
@@ -502,11 +506,11 @@ unsafe fn trigger_local_code_write_fault_once() {
 }
 
 /// Copy a `ret` instruction onto the (non-executable) user stack and branch to
-/// it.  `br x11` raises an instruction abort whose `ELR` is the stack address it
-/// tried to fetch from, so before branching the trigger pre-arms `x30` with the
-/// in-section resume label `3:`; the handler restores the frame to `x30` and
-/// execution continues at the stack restore below.  The `ret` word at `2:` is
-/// the decoy the branch attempted to execute and is never run.
+/// it.  `br x11` raises an instruction abort whose `ELR` is the stack address
+/// it tried to fetch from, so before branching the trigger pre-arms `x30` with
+/// the in-section resume label `3:`; the handler restores the frame to `x30`
+/// and execution continues at the stack restore below.  The `ret` word at `2:`
+/// is the decoy the branch attempted to execute and is never run.
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]

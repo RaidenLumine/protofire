@@ -59,7 +59,7 @@ impl Scheduler {
         // flush the virtio-gpu scanout framebuffer when the console marked it
         // dirty.  Both are no-ops on hosts/x86 (no IRQ dispatch exists on
         // those arches, so device servicing is folded into the timer tick).
-        let _ = crate::kernel::drivers::virtio_input::poll_hardware();
+        crate::kernel::drivers::virtio_input::poll_hardware();
         crate::kernel::drivers::virtio_gpu::poll_flush();
 
         // Drive the native network stack's periodic maintenance (ARP cache
