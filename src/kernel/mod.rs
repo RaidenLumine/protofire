@@ -1337,10 +1337,6 @@ impl Kernel {
 
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 fn demo_worker_a() {
-    #[cfg(protofire_trusted_key)]
-    {
-        crate::println!("[e2e] demo_worker_a starting...");
-    }
     run_demo_worker("worker-a");
 }
 
