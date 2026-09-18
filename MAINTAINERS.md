@@ -1,7 +1,5 @@
 # Maintainers
 
-[English](./MAINTAINERS.md) | [简体中文](./MAINTAINERS.zh-CN.md)
-
 This file lists the maintainers of the Protofire kernel, their scope, and how
 the project is governed.
 

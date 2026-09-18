@@ -1,7 +1,5 @@
 # Protofire Roadmap
 
-[English](./ROADMAP.md) | [简体中文](./ROADMAP.zh-CN.md)
-
 This roadmap describes where the Protofire kernel is headed. It is maintained
 by the project maintainers and updated as work lands. Milestones are indicative,
 not commitments — priorities can shift with contributors' interest.

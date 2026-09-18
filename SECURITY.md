@@ -1,7 +1,5 @@
 # Security Policy
 
-[English](./SECURITY.md) | [简体中文](./SECURITY.zh-CN.md)
-
 Protofire is a research-grade bare-metal kernel prototype. Security is taken
 seriously: the kernel implements PAN/SMAP/SUM, the Biba integrity model, MAC
 type enforcement, seccomp filtering, per-thread stack canaries, an audit

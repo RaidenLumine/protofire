@@ -1,7 +1,5 @@
 # Contributing to the kernel
 
-[English](./CONTRIBUTING.md) | [简体中文](./CONTRIBUTING.zh-CN.md)
-
 Thank you for considering contributing to **Protofire** — a bare-metal `#![no_std]`
 monolithic kernel written in Rust, targeting x86_64, AArch64, and RISC-V 64. All
 contributions are welcome: code, documentation, tests, issue reports, bug fixes,
