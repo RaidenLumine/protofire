@@ -18,7 +18,46 @@ else
 $(error PROFILE must be either debug or release)
 endif
 
-.PHONY: help doctor fmt fmt-check test test-lib test-fast test-concurrency test-storage test-fat32 test-usb test-gpu test-parsers verify verify-p0 verify-p1 verify-p2 verify-p3 check check-host check-target check-aarch64 check-riscv64 check-aarch64-runtime build build-aarch64 build-riscv64 build-x8664-demo build-aarch64-demo build-riscv64-demo clippy run run-x8664-headless run-aarch64 run-riscv64 run-aarch64-headless run-riscv64-headless clean setup-dev install-hooks
+.PHONY: help \
+		doctor \
+		fmt \
+		fmt-check \
+		test \
+		test-lib \
+		test-fast \
+		test-concurrency \
+		test-storage \
+		test-fat32 \
+		test-usb \
+		test-gpu \
+		test-parsers \
+		verify \
+		verify-p0 \
+		verify-p1 \
+		verify-p2 \
+		verify-p3 \
+		check \
+		check-host \
+		check-target \
+		check-aarch64 \
+		check-riscv64 \
+		check-aarch64-runtime \
+		build \
+		build-aarch64 \
+		build-riscv64 \
+		build-x8664-demo \
+		build-aarch64-demo \
+		build-riscv64-demo \
+		clippy \
+		run \
+		run-x8664-headless \
+		run-aarch64 \
+		run-riscv64 \
+		run-aarch64-headless \
+		run-riscv64-headless \
+		clean \
+		setup-dev \
+		install-hooks
 
 help:
 	@printf '%s\n' \
