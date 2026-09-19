@@ -223,6 +223,6 @@ pub(crate) use exception::align_down;
 #[cfg(target_arch = "aarch64")]
 #[allow(unused_imports)]
 pub(crate) use exception::build_aarch64_exception_delivery;
-#[cfg(any(target_arch = "x86_64", test))]
+#[cfg(target_arch = "x86_64")]
 #[allow(unused_imports)]
 pub(crate) use exception::build_x86_64_exception_delivery;

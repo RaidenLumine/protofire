@@ -14,6 +14,10 @@
 //! 3. Free ASIDs via `free_asid()` when destroying address spaces.
 //! 4. Use `ttbr0_with_asid(root, asid)` to construct TTBR0_EL1 values.
 
+// ASID allocation is bare-metal only.
+#![cfg_attr(not(target_os = "none"), allow(dead_code))]
+
+#[cfg(target_os = "none")]
 use core::arch::asm;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;

@@ -124,6 +124,13 @@ pub unsafe fn with_user_access<T>(f: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
+/// Convenience: execute a closure outside a user-access window.
+///
+/// # Safety
+///
+/// Same contract as the bare-metal variant: the caller must ensure the user
+/// memory touched by `f` is valid.  Host builds have no PAN state, so the
+/// closure runs directly.
 pub unsafe fn with_user_access<T>(f: impl FnOnce() -> T) -> T {
     f()
 }

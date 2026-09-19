@@ -1176,25 +1176,41 @@ impl Table {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_arch = "x86_64")]
     use alloc::sync::Arc;
 
+    #[cfg(target_arch = "x86_64")]
     use crate::arch::mmu::materialize_user_address_space;
+    #[cfg(target_arch = "x86_64")]
     use crate::kernel::memory::paging::PagePermissions;
+    #[cfg(target_arch = "x86_64")]
     use crate::kernel::process::Process;
+    #[cfg(target_arch = "x86_64")]
     use crate::kernel::process::ProcessUserAddressSpace;
+    #[cfg(target_arch = "x86_64")]
     use crate::kernel::sync::Mutex as KernelMutex;
+    #[cfg(target_arch = "x86_64")]
     use crate::user::program::UserImageLoadPlan;
+    #[cfg(target_arch = "x86_64")]
     use crate::user::program::UserImageSegmentPlan;
+    #[cfg(target_arch = "x86_64")]
     use crate::user::program::USER_EXCEPTION_STACK_GUARD_SIZE;
+    #[cfg(target_arch = "x86_64")]
     use crate::user::program::USER_EXCEPTION_STACK_SIZE;
+    #[cfg(target_arch = "x86_64")]
     use crate::user::program::USER_IMAGE_STACK_GAP;
+    #[cfg(target_arch = "x86_64")]
     use crate::user::program::USER_PAGE_SIZE;
+    #[cfg(target_arch = "x86_64")]
     use crate::user::program::USER_STACK_GUARD_SIZE;
+    #[cfg(target_arch = "x86_64")]
     use crate::user::program::USER_STACK_SIZE;
+    #[cfg(target_arch = "x86_64")]
     use crate::user::program::X86_64_USER_STACK_TOP;
     use crate::Error;
 
     use super::user_memory::copy_user_bytes;
+    #[cfg(target_arch = "x86_64")]
     use super::user_memory::validate_user_mapping;
     use super::validate_known_flags;
     use super::validate_zeroed_args;
@@ -1203,6 +1219,9 @@ mod tests {
     use super::Table;
     use super::PUBLIC_SYSCALL_COUNT;
 
+    // The pointer-validation fixture materializes a real user address space,
+    // which only the x86_64 host build can do in-process.
+    #[cfg(target_arch = "x86_64")]
     #[derive(Clone)]
     struct ValidationFixture {
         process: Arc<crate::kernel::process::Process>,
@@ -1213,6 +1232,7 @@ mod tests {
         guard_start: usize,
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn build_validation_fixture() -> ValidationFixture {
         let entry_point = 0x0000_0000_0040_1000;
         let image_start = 0x0000_0000_0040_1000;
@@ -1266,6 +1286,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn validation_fixture() -> ValidationFixture {
         static FIXTURE: KernelMutex<Option<ValidationFixture>> = KernelMutex::new(None);
         let mut slot = FIXTURE.lock();
@@ -1298,6 +1319,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn validate_user_mapping_accepts_readable_user_pages() {
         let fixture = validation_fixture();
 
@@ -1322,6 +1344,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn validate_user_mapping_accepts_zero_length_without_translation() {
         let fixture = validation_fixture();
 
@@ -1337,6 +1360,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn validate_user_mapping_accepts_single_byte_at_mapped_page_tail() {
         let fixture = validation_fixture();
 
@@ -1352,6 +1376,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn validate_user_mapping_accepts_exact_mapped_page_range() {
         let fixture = validation_fixture();
 
@@ -1367,6 +1392,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn validate_user_mapping_rejects_unmapped_user_pages() {
         let fixture = validation_fixture();
 
@@ -1382,6 +1408,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn validate_user_mapping_rejects_missing_permissions() {
         let fixture = validation_fixture();
 
@@ -1397,6 +1424,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn validate_user_mapping_accepts_ranges_crossing_mapped_stack_pages() {
         let fixture = validation_fixture();
         let cross_page_start = fixture.stack_bottom + USER_PAGE_SIZE - 1;
@@ -1422,6 +1450,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn validate_user_mapping_rejects_ranges_crossing_into_unmapped_gap() {
         let fixture = validation_fixture();
 
@@ -1437,6 +1466,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn validate_user_mapping_rejects_address_range_overflow() {
         let fixture = validation_fixture();
 

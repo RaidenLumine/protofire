@@ -9,7 +9,10 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_os = "none")
+))]
 use crate::kernel::memory::paging::MappingKind;
 use crate::kernel::memory::paging::PagePermissions;
 use crate::kernel::process::ProcessUserAddressSpace;
@@ -441,6 +444,10 @@ pub(crate) fn aarch64_initial_auxv_entries(entry_point: usize) -> [(u64, u64); 2
     ]
 }
 
+#[cfg_attr(
+    all(target_arch = "aarch64", not(target_os = "none")),
+    allow(dead_code)
+)]
 pub(crate) fn build_initial_user_stack(
     stack_bottom: usize,
     stack_top: usize,
@@ -517,6 +524,10 @@ pub(crate) fn build_initial_user_stack(
     })
 }
 
+#[cfg_attr(
+    all(target_arch = "aarch64", not(target_os = "none")),
+    allow(dead_code)
+)]
 pub(crate) fn push_c_strings(
     stack_pointer: &mut usize,
     values: &[String],
@@ -540,6 +551,10 @@ pub(crate) fn push_c_strings(
     Ok(addresses)
 }
 
+#[cfg_attr(
+    all(target_arch = "aarch64", not(target_os = "none")),
+    allow(dead_code)
+)]
 pub(crate) fn write_u64_stack_entry(
     writes: &mut Vec<(usize, Vec<u8>)>,
     cursor: &mut usize,

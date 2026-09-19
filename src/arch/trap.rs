@@ -2,20 +2,20 @@
 //!
 //! Shared trap-frame aliases and cross-architecture trap helpers.
 
-#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+#[cfg(target_arch = "aarch64")]
 pub use super::aarch64::trap::TrapFrame;
 
-#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+#[cfg(target_arch = "aarch64")]
 pub fn entered_from_user_mode(frame: &TrapFrame) -> bool {
     super::aarch64::trap::entered_from_user_mode(frame)
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+#[cfg(target_arch = "aarch64")]
 pub fn instruction_pointer(frame: &TrapFrame) -> usize {
     super::aarch64::trap::instruction_pointer(frame)
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+#[cfg(target_arch = "aarch64")]
 pub fn vector(frame: &TrapFrame) -> u8 {
     super::aarch64::trap::vector(frame)
 }
@@ -38,9 +38,6 @@ pub fn vector(frame: &TrapFrame) -> u8 {
     frame.vector as u8
 }
 
-#[cfg(not(any(
-    all(target_arch = "aarch64", target_os = "none"),
-    target_arch = "x86_64"
-)))]
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrapFrame;

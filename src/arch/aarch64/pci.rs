@@ -795,5 +795,5 @@ pub fn find_device(
 ) -> Option<&PciDeviceInfo> {
     devices
         .iter()
-        .find(|dev| dev.vendor_id == vendor_id && device_id.map_or(true, |id| dev.device_id == id))
+        .find(|dev| dev.vendor_id == vendor_id && device_id.is_none_or(|id| dev.device_id == id))
 }

@@ -683,6 +683,10 @@ impl Thread {
         Ok(Some(restored))
     }
 
+    #[cfg_attr(
+        all(target_arch = "aarch64", not(target_os = "none")),
+        allow(dead_code)
+    )]
     pub(crate) fn replace_aarch64_user_image(&self, start: UserThreadStart) -> Result<()> {
         self.replace_user_execution_state(start, |_| {})?;
         self.set_aarch64_user_context(AArch64UserThreadContext::from_start(start));

@@ -138,7 +138,13 @@ impl Thread {
         Ok(())
     }
 
-    #[cfg_attr(all(target_arch = "riscv64", target_os = "none"), allow(dead_code))]
+    #[cfg_attr(
+        any(
+            all(target_arch = "riscv64", target_os = "none"),
+            all(target_arch = "aarch64", not(target_os = "none"))
+        ),
+        allow(dead_code)
+    )]
     pub(crate) fn replace_user_execution_state(
         &self,
         start: UserThreadStart,

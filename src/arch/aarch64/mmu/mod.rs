@@ -13,6 +13,10 @@
 //! user slots)   [0x8000_0000, ...)                 unused by the runtime
 //! tables
 
+// The translation tables, ASID helpers and demo user slots are bare-metal
+// only; a host build compiles them but never maps anything.
+#![cfg_attr(not(target_os = "none"), allow(dead_code))]
+
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 use core::arch::asm;
 use core::ptr;
@@ -29,6 +33,7 @@ use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
 mod asid;
 
+#[cfg(target_os = "none")]
 use asid::allocate_asid;
 use asid::free_asid;
 use asid::ttbr0_with_asid;
@@ -244,6 +249,14 @@ pub struct PreparedProcessAddressSpace {
     asid: u64,
 }
 
+/// What [`PreparedProcessAddressSpace::fork_clone`] hands back: the child
+/// hierarchy plus the copy-on-write and non-shared page triples.
+pub type ForkClonedAddressSpace = (
+    PreparedProcessAddressSpace,
+    Vec<(usize, usize, PagePermissions)>,
+    Vec<(usize, usize, PagePermissions)>,
+);
+
 // ── Kernel translation tables ────────────────────────────────────────────
 
 /// A `TranslationTable` pinned to its own 4 KiB page.
@@ -284,7 +297,7 @@ fn table_entry(address: usize) -> u64 {
 
 /// Convert a virtual address to its L2 block index within the RAM window.
 fn user_block_index(virtual_address: usize) -> Option<usize> {
-    if virtual_address < KERNEL_TEXT_BASE || virtual_address >= KERNEL_TEXT_END {
+    if !(KERNEL_TEXT_BASE..KERNEL_TEXT_END).contains(&virtual_address) {
         return None;
     }
     let block_index =
@@ -564,9 +577,7 @@ fn allocate_runtime_pt_page() -> Option<usize> {
                 break;
             }
         }
-        let Some((page_index, mask)) = found else {
-            return None;
-        };
+        let (page_index, mask) = found?;
         if RUNTIME_PT_POOL_BITMAP
             .compare_exchange(taken, taken | mask, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
@@ -825,7 +836,7 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     // L1[0]: device / MMIO window [0, 1 GiB) as a single 1 GiB block.
     l1.0[0] = device_l1_block_entry(DEVICE_MMIO_BASE);
     // L1[1]: RAM window [1 GiB, 2 GiB) → L2 table.
-    l1.0[1] = table_entry(l2_ptr as *mut TranslationTable as usize);
+    l1.0[1] = table_entry(l2_ptr as usize);
 
     let l2 = unsafe { &mut *l2_ptr };
     // L2: cover the full RAM window with 2 MiB kernel RWX blocks so the
@@ -839,7 +850,7 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     let mapped_page_count = 2 * (KERNEL_TEXT_END - KERNEL_TEXT_BASE) / TRANSLATION_GRANULE_SIZE;
 
     Some(PreparedRuntimeKernelPageTables {
-        root_table_address: l1_ptr as *mut TranslationTable as usize,
+        root_table_address: l1_ptr as usize,
         window_count,
         mapped_page_count,
     })
@@ -1032,9 +1043,7 @@ fn allocate_demo_user_slot_index() -> Option<usize> {
                 break;
             }
         }
-        let Some((slot_index, mask)) = found else {
-            return None;
-        };
+        let (slot_index, mask) = found?;
         if DEMO_SLOT_TAKEN
             .compare_exchange(taken, taken | mask, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
@@ -1582,13 +1591,7 @@ impl PreparedProcessAddressSpace {
 
     /// Clone the address space for `fork`, returning the child plus the
     /// shared (copy-on-write) and child page lists.
-    pub fn fork_clone(
-        &mut self,
-    ) -> Option<(
-        PreparedProcessAddressSpace,
-        Vec<(usize, usize, PagePermissions)>,
-        Vec<(usize, usize, PagePermissions)>,
-    )> {
+    pub fn fork_clone(&mut self) -> Option<ForkClonedAddressSpace> {
         // Clone the full table hierarchy.
         let mut child_l1 = Box::new(TranslationTable::zeroed());
         let mut child_l2 = Box::new(TranslationTable::zeroed());

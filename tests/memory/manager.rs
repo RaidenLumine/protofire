@@ -2,11 +2,13 @@
 //!
 //! Host-side integration tests for the software memory manager facade.
 
+#[cfg(target_arch = "x86_64")]
 use protofire::arch::mmu::bootstrap_identity_mapping;
 use protofire::kernel::memory::paging::MappingKind;
 use protofire::kernel::memory::paging::PagePermissions;
 use protofire::kernel::memory::paging::PAGE_SIZE;
 use protofire::kernel::memory::AddressTranslation;
+#[cfg(target_arch = "x86_64")]
 use protofire::kernel::memory::BootstrapTranslation;
 use protofire::kernel::memory::MemoryManager;
 use protofire::kernel::memory::PlannedKernelRegion;

@@ -3,6 +3,9 @@
 //! AArch64 SMP arch support: spin-table AP wakeup, MMU-config save/restore,
 //! GIC SGI (IPI) delivery, and AP entry-point logic.
 
+// AP bring-up and SGI delivery only run on bare metal.
+#![cfg_attr(not(target_os = "none"), allow(dead_code))]
+
 use crate::kernel::percpu::PerCpuData;
 use alloc::vec::Vec;
 use core::sync::atomic::AtomicU64;
@@ -248,7 +251,7 @@ fn discover_aps() -> Vec<(u32, u64)> {
     }
     let mut aps = Vec::new();
     for id in 1..total {
-        aps.push((id as u32, id as u64));
+        aps.push((id, id as u64));
     }
     crate::println!("[smp   ] FDT: {} CPUs total, {} AP(s)", total, aps.len());
     aps

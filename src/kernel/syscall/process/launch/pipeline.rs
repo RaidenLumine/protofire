@@ -382,6 +382,16 @@ pub(crate) fn fork(
     Ok(super::super::SyscallDispatch::complete(child.pid() as usize))
 }
 
+/// Host builds have no per-process address space to clone, so `fork` reports
+/// itself unsupported; the bare-metal arm below owns the real AArch64 path.
+#[cfg(all(target_arch = "aarch64", not(target_os = "none")))]
+pub(crate) fn fork(
+    context: &mut super::super::SyscallContext,
+) -> Result<super::super::SyscallDispatch> {
+    super::super::validate_zeroed_args(context, 0)?;
+    Err(Error::Unsupported)
+}
+
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub(crate) fn fork(
     context: &mut super::super::SyscallContext,

@@ -560,7 +560,11 @@ pub(crate) fn validate_user_mapping(
     Ok(())
 }
 
-#[cfg(all(target_arch = "x86_64", not(target_os = "none"), not(test),))]
+#[cfg(any(
+    all(target_arch = "x86_64", not(target_os = "none"), not(test)),
+    all(target_arch = "aarch64", not(target_os = "none")),
+    all(target_arch = "riscv64", not(target_os = "none"))
+))]
 pub(crate) fn validate_user_mapping(
     _process: &crate::kernel::process::Process,
     _start: usize,

@@ -453,7 +453,7 @@ fn ptrace_to_abi_regs(
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
     use super::*;
     use crate::kernel::process::process::types::X86_64UserThreadContext;

@@ -8,6 +8,11 @@
 //! When the hardware entropy pool is exhausted, Z=0 and the returned value
 //! should be discarded.
 
+// The RNDR wrappers are bare-metal only; a host build keeps them for the
+// entropy API but never calls them.
+#![cfg_attr(not(target_os = "none"), allow(dead_code))]
+
+#[cfg(target_os = "none")]
 use core::arch::asm;
 
 /// Maximum retry count when the entropy source is temporarily exhausted.

@@ -159,8 +159,20 @@ pub const ASLR_STACK_SLIDE_MAX: usize = 64 * USER_PAGE_SIZE; // 256 KiB
 
 // ── auxiliary vector constants ────────────────────────────────────────
 
+#[cfg_attr(
+    all(target_arch = "aarch64", not(target_os = "none")),
+    allow(dead_code)
+)]
 pub(crate) const AUXV_AT_NULL: u64 = 0;
+#[cfg_attr(
+    all(target_arch = "aarch64", not(target_os = "none")),
+    allow(dead_code)
+)]
 pub(crate) const AUXV_AT_PAGESZ: u64 = 6;
+#[cfg_attr(
+    all(target_arch = "aarch64", not(target_os = "none")),
+    allow(dead_code)
+)]
 pub(crate) const AUXV_AT_ENTRY: u64 = 9;
 #[cfg(target_arch = "x86_64")]
 pub(crate) const X86_64_AUXV_AT_PAGESZ: u64 = AUXV_AT_PAGESZ;

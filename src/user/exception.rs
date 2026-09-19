@@ -123,11 +123,22 @@ impl AArch64UserException {
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 impl AArch64UserException {
     #[inline(always)]
+    /// # Safety
+    /// The caller must provide a valid user-space handler entry point for the
+    /// current process image. Supplying an invalid address will fault when the
+    /// kernel later dispatches the exception back to user mode.
     pub unsafe fn install_handler_from_user_mode(vector: u8, handler: usize) -> usize {
         Self::install_handler_from_user_mode_with(vector, handler, 0, 0)
     }
 
     #[inline(always)]
+    /// Install an AArch64 exception handler with an explicit user stack and
+    /// flags.
+    ///
+    /// # Safety
+    /// The caller must ensure `handler` and `stack_pointer` are valid
+    /// user-space addresses for the current process and that `flags` satisfy
+    /// the exception ABI contract.
     pub unsafe fn install_handler_from_user_mode_with(
         vector: u8,
         handler: usize,
@@ -146,6 +157,12 @@ impl AArch64UserException {
     }
 
     #[inline(always)]
+    /// Return to user mode from a previously delivered exception frame.
+    ///
+    /// # Safety
+    /// `frame` must point at a live user exception frame with the exact layout
+    /// expected by the running architecture. Passing any other pointer is
+    /// invalid and may fault during kernel validation.
     pub unsafe fn return_from_frame_from_user_mode(
         frame: *const AArch64UserExceptionFrame,
     ) -> usize {

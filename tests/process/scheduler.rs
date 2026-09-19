@@ -6,11 +6,13 @@
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
+#[cfg(target_arch = "x86_64")]
 use protofire::arch::x86_64::gdt;
 use protofire::kernel::process::sleep_current;
 use protofire::kernel::process::ProcessState;
 use protofire::kernel::process::Scheduler;
 use protofire::kernel::process::ThreadWaitOutcome;
+#[cfg(target_arch = "x86_64")]
 use protofire::kernel::process::UserThreadStart;
 use protofire::kernel::sync::Event;
 use protofire::kernel::sync::Semaphore;
@@ -37,6 +39,7 @@ fn spawned_threads_receive_kernel_stacks() {
 }
 
 #[test]
+#[cfg(target_arch = "x86_64")]
 fn spawned_user_threads_keep_initial_x86_64_context() {
     let _guard = test_lock();
     let scheduler = Scheduler::new();

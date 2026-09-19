@@ -203,6 +203,18 @@ pub fn tlb_generation() -> u64 {
     TLB_GENERATION.load(core::sync::atomic::Ordering::Acquire)
 }
 
+/// Return the current TLB shootdown generation counter.
+///
+/// Host builds never perform remote TLB invalidations, so the counter the
+/// per-arch SMP helpers compare against stays at zero.
+#[cfg(all(
+    not(target_os = "none"),
+    any(target_arch = "aarch64", target_arch = "riscv64")
+))]
+pub fn tlb_generation() -> u64 {
+    0
+}
+
 // ── Boot CR3 ───────────────────────────────────────────────────────────
 
 /// Boot Page Table root (PML4) physical address.  Saved before

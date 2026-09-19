@@ -374,6 +374,10 @@ pub(crate) struct LoadedProgramInstallState {
 }
 
 impl LoadedProgramInstallState {
+    #[cfg_attr(
+        all(target_arch = "aarch64", not(target_os = "none")),
+        allow(dead_code)
+    )]
     pub(crate) fn user_thread_start(&self) -> Option<UserThreadStart> {
         self.user_thread_start
     }

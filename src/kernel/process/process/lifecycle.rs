@@ -918,6 +918,7 @@ mod tests {
     use alloc::boxed::Box;
     use alloc::sync::Arc;
     use alloc::vec;
+    #[cfg(target_arch = "x86_64")]
     use alloc::vec::Vec;
 
     use crate::abi::process::SA_RESTART;
@@ -928,6 +929,7 @@ mod tests {
     use crate::kernel::process::Scheduler;
     use crate::kernel::process::TerminationReason;
     use crate::kernel::process::Thread;
+    #[cfg(target_arch = "x86_64")]
     use crate::kernel::process::UserThreadStart;
     use crate::Error;
 

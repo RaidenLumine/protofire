@@ -643,7 +643,12 @@ pub(crate) enum ProcessAddressSpaceStorage {
 pub(crate) struct ProcessUserAddressSpace {
     summary: UserAddressSpaceSummary,
     process_summary: Option<ProcessAddressSpaceSummary>,
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+    // Only bare-metal AArch64/RISC-V keep a prepared translation hierarchy
+    // here; a host of either architecture has none to hold.
+    #[cfg(all(
+        any(target_arch = "aarch64", target_arch = "riscv64"),
+        target_os = "none"
+    ))]
     storage: PreparedProcessAddressSpace,
     // The prepared hierarchy is only consumed on bare-metal or unit-test builds.
     #[cfg_attr(not(any(test, target_os = "none")), allow(dead_code))]
@@ -706,6 +711,29 @@ impl ProcessUserAddressSpace {
         }
     }
 
+    /// Build an address-space handle on a host that never prepares one.
+    ///
+    /// AArch64 hosts do not emulate a user address space, so the handle is
+    /// summary-only; [`Self::prepared_process_address_space_mut`] reports that
+    /// there is nothing to hand out.
+    #[cfg(all(target_arch = "aarch64", not(target_os = "none")))]
+    pub(crate) fn from_prepared_process(_prepared: PreparedProcessAddressSpace) -> Self {
+        Self {
+            summary: UserAddressSpaceSummary {
+                root_table_address: 0,
+                mapped_page_count: 0,
+                image_page_count: 0,
+                stack_page_count: 0,
+                table_page_count: 0,
+                pml4_entry_count: 0,
+                pdpt_count: 0,
+                page_directory_count: 0,
+                page_table_count: 0,
+            },
+            process_summary: None,
+        }
+    }
+
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
     pub(crate) fn from_prepared_process(prepared: PreparedProcessAddressSpace) -> Self {
         let summary = UserAddressSpaceSummary {
@@ -747,23 +775,58 @@ impl ProcessUserAddressSpace {
 
     /// Return the virtual address range `(start, end_exclusive)` covering all
     /// user pages, or `None` when there are no user pages.
+    #[cfg(target_arch = "x86_64")]
     pub(crate) fn user_page_va_range(&self) -> Option<(usize, usize)> {
-        #[cfg(target_arch = "x86_64")]
-        {
-            match &self.storage {
-                ProcessAddressSpaceStorage::UserOnly(prepared) => prepared.user_page_va_range(),
-                ProcessAddressSpaceStorage::Combined(prepared) => prepared.user_page_va_range(),
-            }
-        }
-        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-        {
-            self.storage.user_page_va_range()
+        match &self.storage {
+            ProcessAddressSpaceStorage::UserOnly(prepared) => prepared.user_page_va_range(),
+            ProcessAddressSpaceStorage::Combined(prepared) => prepared.user_page_va_range(),
         }
     }
 
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+    /// Return the virtual address range covering the prepared process
+    /// hierarchy.
+    #[cfg(all(
+        any(target_arch = "aarch64", target_arch = "riscv64"),
+        target_os = "none"
+    ))]
+    pub(crate) fn user_page_va_range(&self) -> Option<(usize, usize)> {
+        self.storage.user_page_va_range()
+    }
+
+    /// Report that an AArch64/RISC-V host has no user address space to range.
+    #[cfg(all(
+        any(target_arch = "aarch64", target_arch = "riscv64"),
+        not(target_os = "none")
+    ))]
+    pub(crate) fn user_page_va_range(&self) -> Option<(usize, usize)> {
+        None
+    }
+
+    #[cfg(all(
+        any(target_arch = "aarch64", target_arch = "riscv64"),
+        target_os = "none"
+    ))]
     pub(crate) fn user_thread_start(&self) -> UserThreadStart {
         self.storage.user_thread_start()
+    }
+
+    /// Report the placeholder thread start an AArch64/RISC-V host has.
+    ///
+    /// Host builds never prepare a user address space, so nothing reads this
+    /// value; it exists so the thread-creation paths keep compiling.
+    #[cfg_attr(
+        all(
+            any(target_arch = "aarch64", target_arch = "riscv64"),
+            not(target_os = "none")
+        ),
+        allow(dead_code)
+    )]
+    #[cfg(all(
+        any(target_arch = "aarch64", target_arch = "riscv64"),
+        not(target_os = "none")
+    ))]
+    pub(crate) fn user_thread_start(&self) -> UserThreadStart {
+        UserThreadStart::new(0, 0, None)
     }
 
     #[cfg(any(
@@ -872,11 +935,25 @@ impl ProcessUserAddressSpace {
 
     /// Return a mutable reference to the underlying
     /// [`PreparedProcessAddressSpace`] for fork operations.
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+    #[cfg(all(
+        any(target_arch = "aarch64", target_arch = "riscv64"),
+        target_os = "none"
+    ))]
     pub(crate) fn prepared_process_address_space_mut(
         &mut self,
     ) -> Option<&mut crate::arch::mmu::PreparedProcessAddressSpace> {
         Some(&mut self.storage)
+    }
+
+    /// Report that a host AArch64/RISC-V build has no prepared hierarchy.
+    #[cfg(all(
+        any(target_arch = "aarch64", target_arch = "riscv64"),
+        not(target_os = "none")
+    ))]
+    pub(crate) fn prepared_process_address_space_mut(
+        &mut self,
+    ) -> Option<&mut crate::arch::mmu::PreparedProcessAddressSpace> {
+        None
     }
 }
 

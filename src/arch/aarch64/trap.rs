@@ -137,6 +137,7 @@ extern "C" fn aarch64_trap_dispatch(frame: &mut TrapFrame) {
         // to user mode, matching the x86_64 interrupt_dispatch ordering.
         crate::kernel::softirq::process_softirqs();
         if entered_from_user {
+            #[cfg(all(target_arch = "aarch64", target_os = "none"))]
             try_async_signal_delivery_aarch64(frame);
         }
         validate_user_return_frame_or_terminate(frame, entered_from_user);
@@ -920,6 +921,7 @@ fn log_user_exception_termination(frame: &TrapFrame) {
 ///
 /// Semantics match the x86_64 `try_async_signal_delivery` — called from
 /// the trap dispatch path before returning to user mode after an IRQ.
+#[cfg(target_os = "none")]
 fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
     use crate::abi::process::AArch64SignalFrame;
     use crate::abi::process::AARCH64_SIGNAL_FRAME_SIZE;

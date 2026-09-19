@@ -2,6 +2,10 @@
 //!
 //! AArch64 architecture bring-up glue, platform hooks, and backend exports.
 
+// Most of this module is bare-metal bring-up; a host build compiles it but
+// never calls it.
+#![cfg_attr(not(target_os = "none"), allow(dead_code))]
+
 use core::arch::asm;
 use core::fmt::Write;
 use core::fmt::{self};
