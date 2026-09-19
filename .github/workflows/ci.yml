@@ -2,6 +2,13 @@
 # Purpose: CI for the protofire kernel repo.  The kernel is self-contained
 # (shared shell/runtime logic and demo ELF builders are merged into the
 # kernel crate) and needs no external distribution to build.
+#
+#   quality-gates  - the Linux verification gates (check, verify-p0, clippy)
+#   host-check     - the environment check, type-check, clippy and the three
+#                    bare-metal builds on every supported host: Linux, Windows
+#                    and Intel macOS (the arm64 macOS runners cannot run the
+#                    host-side checks; see README -> Host requirements)
+#   commit-message - the commit-msg hook over every PR commit
 
 name: ci
 
@@ -44,6 +51,61 @@ jobs:
         run: ${{ matrix.gate.command }}
         env:
           CARGO: cargo
+
+  host-check:
+    name: host (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          # `macos-latest` is arm64 and would meet the x86_64-only host-side
+          # code paths head on; the Intel image is the host users actually have.
+          - macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "nightly-2026-08-24"
+          components: rustfmt, clippy, llvm-tools-preview
+          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf
+
+      - name: Install GNU make and a POSIX shell (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install make --no-progress -y
+          # GNU make runs the recipes through `sh`, which the runner ships in
+          # Git for Windows rather than on PATH.
+          foreach ($dir in @('C:\Program Files\Git\usr\bin', 'C:\msys64\usr\bin')) {
+            if (Test-Path $dir) {
+              $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            }
+          }
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check the environment
+        run: make doctor
+
+      - name: Type-check
+        run: make check
+
+      - name: Clippy
+        run: make clippy
+
+      - name: Cross-build every bare-metal target
+        run: |
+          make build
+          make build-aarch64
+          make build-riscv64
 
   commit-message:
     runs-on: ubuntu-latest
