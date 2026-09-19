@@ -6,7 +6,7 @@
 
 #![cfg_attr(test, allow(dead_code))]
 
-use crate::user::demo::elf_builder::build_artifact_from_payload;
+use crate::user::demo::elf_builder::build_artifact_or_metadata_only;
 use crate::user::demo::elf_builder::build_metadata_only_artifact;
 pub use crate::user::demo::elf_builder::DemoProgramArtifact;
 
@@ -23,7 +23,7 @@ const AARCH64_DEMO_PROGRAM_MACHINE: u16 = 0xB7;
 /// AArch64 and both must resolve to a payload that exists and links; the
 /// Rust-authored section is the only such AArch64 payload in the tree.
 pub fn build_demo_program_artifact() -> DemoProgramArtifact {
-    build_artifact_from_payload(
+    build_artifact_or_metadata_only(
         super::demo_program_aarch64_rust::payload_bytes(),
         super::demo_program_aarch64_rust::payload_entry_offset(),
         DEMO_PROGRAM_ENTRY as u64,
@@ -32,7 +32,7 @@ pub fn build_demo_program_artifact() -> DemoProgramArtifact {
 }
 
 pub fn build_fault_demo_program_artifact() -> DemoProgramArtifact {
-    build_artifact_from_payload(
+    build_artifact_or_metadata_only(
         super::demo_program_aarch64_fault::payload_bytes(),
         0,
         DEMO_PROGRAM_ENTRY as u64,
@@ -41,7 +41,7 @@ pub fn build_fault_demo_program_artifact() -> DemoProgramArtifact {
 }
 
 pub fn build_rust_demo_program_artifact() -> DemoProgramArtifact {
-    build_artifact_from_payload(
+    build_artifact_or_metadata_only(
         super::demo_program_aarch64_rust::payload_bytes(),
         super::demo_program_aarch64_rust::payload_entry_offset(),
         DEMO_PROGRAM_ENTRY as u64,

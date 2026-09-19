@@ -114,6 +114,30 @@ pub fn build_metadata_only_artifact(machine: u16) -> DemoProgramArtifact {
     DemoProgramArtifact { bytes: image }
 }
 
+// ── payload-optional builder ─────────────────────────────────────────────
+
+/// Build a loadable artifact from a payload, or a metadata-only one when the
+/// payload is absent.
+///
+/// A host that cannot carry the demo payload sections — anything assembling
+/// COFF or Mach-O objects — compiles the payload accessors down to an empty
+/// slice, and the demo disk still has to be buildable there.  Every demo
+/// manifest carries a `host_proxy` entry, so an artifact with no `PT_LOAD`
+/// segment is loaded through the in-kernel proxy instead of a ring-3 image:
+/// the same path the shell artifacts already take.
+pub fn build_artifact_or_metadata_only(
+    payload: &[u8],
+    entry_offset: usize,
+    entry_base: u64,
+    machine: u16,
+) -> DemoProgramArtifact {
+    if payload.is_empty() {
+        return build_metadata_only_artifact(machine);
+    }
+
+    build_artifact_from_payload(payload, entry_offset, entry_base, machine)
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────
 
 fn write_u16(image: &mut [u8], offset: usize, value: u16) {

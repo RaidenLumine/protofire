@@ -6,7 +6,7 @@
 
 #![cfg_attr(test, allow(dead_code))]
 
-use super::elf_builder::build_artifact_from_payload;
+use super::elf_builder::build_artifact_or_metadata_only;
 use super::elf_builder::build_metadata_only_artifact;
 pub use super::elf_builder::DemoProgramArtifact;
 
@@ -15,7 +15,7 @@ use crate::user::program::DEMO_PROGRAM_ENTRY;
 const RISCV64_DEMO_PROGRAM_MACHINE: u16 = 0xF3; // EM_RISCV
 
 pub fn build_demo_program_artifact() -> DemoProgramArtifact {
-    build_artifact_from_payload(
+    build_artifact_or_metadata_only(
         super::demo_program_riscv64::payload_bytes(),
         0,
         DEMO_PROGRAM_ENTRY as u64,
