@@ -62,7 +62,7 @@ endif
 help:
 	@printf '%s\n' \
 		'Available targets:' \
-		'  make doctor         - check whether the local toolchain is ready' \
+		'  make doctor         - check the environment, failing if a required tool is absent' \
 		'  make verify         - run the default P3 verification gate (override with VERIFY_TIER=p0..p3)' \
 		'  make verify-p0      - format check + host/x86_64/aarch64 build checks + header coverage' \
 		'  make verify-p1      - P0 plus fast concurrency/path/I-O/ABI regressions' \
