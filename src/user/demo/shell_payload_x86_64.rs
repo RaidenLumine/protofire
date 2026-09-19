@@ -2,19 +2,24 @@
 //!
 //! Symbol bridge for the Ring 3 x86_64 shell payload section.
 
+#![cfg_attr(test, allow(dead_code))]
+
 #[cfg(test)]
 const PAYLOAD_SECTION_NAME: &str = "adastra_shell_payload";
 
-#[cfg(target_arch = "x86_64")]
+// The payload is hand-written ELF assembly, so it is assembled for the
+// bare-metal x86_64 target and for an ELF host (Linux) only.  A COFF or Mach-O
+// host cannot assemble it; those builds take the empty fallback below.
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 core::arch::global_asm!(include_str!("shell_payload_x86_64.asm"));
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 unsafe extern "C" {
     static adastra_shell_payload_start: u8;
     static adastra_shell_payload_end: u8;
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 pub fn payload_bytes() -> &'static [u8] {
     unsafe {
         let start = core::ptr::addr_of!(adastra_shell_payload_start);
@@ -29,7 +34,7 @@ pub fn payload_bytes() -> &'static [u8] {
     }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none"))))]
 pub fn payload_bytes() -> &'static [u8] {
     &[]
 }
@@ -42,7 +47,11 @@ pub fn payload_entry_offset() -> usize {
 
 #[cfg(test)]
 mod tests {
+    // The payload-section checks below inspect an ELF image and therefore run
+    // on a Linux host only; their imports carry the same gate.
+    #[cfg(target_os = "linux")]
     use super::payload_bytes;
+    #[cfg(target_os = "linux")]
     use super::PAYLOAD_SECTION_NAME;
 
     #[cfg(target_os = "linux")]

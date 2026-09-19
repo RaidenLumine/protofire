@@ -3,7 +3,17 @@
 //! Rust-authored x86_64 demo I/O payload (files, directories, spawn/wait) and
 //! its host-side validation helpers.
 
-#![cfg_attr(not(test), allow(dead_code))]
+// The payload body and its constants exist only for x86_64 Linux/bare-metal
+// builds.  Outside the unit-test harness, and on every host that cannot carry
+// an ELF payload section (a Windows host, for instance), the empty fallbacks
+// below are compiled instead and those constants end up unreferenced.
+#![cfg_attr(
+    any(
+        not(test),
+        not(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))
+    ),
+    allow(dead_code)
+)]
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 use core::mem::MaybeUninit;
@@ -316,6 +326,14 @@ pub fn payload_entry_offset() -> usize {
     entry
         .checked_sub(start)
         .expect("rust io demo payload entry must follow section start")
+}
+
+// Hosts that cannot carry the ELF payload sections (e.g. a Windows host, whose
+// objects are COFF) get an empty payload and a zero entry offset so the ELF
+// builder facades still link.
+#[cfg(not(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none"))))]
+pub fn payload_entry_offset() -> usize {
+    0
 }
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]

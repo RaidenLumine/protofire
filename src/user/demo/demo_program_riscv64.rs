@@ -11,16 +11,19 @@ const PAYLOAD_START_SYMBOL: &str = "protofire_demo_program_riscv64_payload_start
 #[cfg(test)]
 const PAYLOAD_END_SYMBOL: &str = "protofire_demo_program_riscv64_payload_end";
 
-#[cfg(target_arch = "riscv64")]
+// The payload is hand-written ELF assembly, so it is assembled for the
+// bare-metal RISC-V target and for an ELF host (Linux) only.  A COFF or Mach-O
+// host cannot assemble it; those builds take the empty fallback below.
+#[cfg(all(target_arch = "riscv64", any(target_os = "linux", target_os = "none")))]
 core::arch::global_asm!(include_str!("demo_program_riscv64_payload.S"));
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", any(target_os = "linux", target_os = "none")))]
 unsafe extern "C" {
     static protofire_demo_program_riscv64_payload_start: u8;
     static protofire_demo_program_riscv64_payload_end: u8;
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", any(target_os = "linux", target_os = "none")))]
 pub fn payload_bytes() -> &'static [u8] {
     unsafe {
         let start = core::ptr::addr_of!(protofire_demo_program_riscv64_payload_start);
@@ -35,15 +38,20 @@ pub fn payload_bytes() -> &'static [u8] {
     }
 }
 
-#[cfg(not(target_arch = "riscv64"))]
+#[cfg(not(all(target_arch = "riscv64", any(target_os = "linux", target_os = "none"))))]
 pub fn payload_bytes() -> &'static [u8] {
     &[]
 }
 
 #[cfg(test)]
 mod tests {
+    // The payload-section checks below inspect an ELF image and therefore run
+    // on a Linux host only; their imports carry the same gate.
+    #[cfg(target_os = "linux")]
     use super::PAYLOAD_END_SYMBOL;
+    #[cfg(target_os = "linux")]
     use super::PAYLOAD_START_SYMBOL;
+    #[cfg(target_os = "linux")]
     use super::RISCV64_TARGET;
 
     #[cfg(target_os = "linux")]

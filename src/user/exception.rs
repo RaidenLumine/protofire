@@ -85,11 +85,18 @@ pub use crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
 pub use crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_NONE;
 pub use crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
 pub use crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
-// `SyscallNumber` is only used from the x86_64/AArch64 dispatchers below; on
-// RISC-V the import is unused, so silence it for that target only.
+// `SyscallNumber` is only used from the x86_64/AArch64 dispatchers below, and
+// those exist for bare-metal and Linux-host builds only; RISC-V and any other
+// host (Windows, macOS) leave the import unused, so silence it there.
 #[cfg_attr(target_arch = "riscv64", allow(unused_imports))]
 use crate::kernel::syscall::SyscallContext;
-#[cfg_attr(target_arch = "riscv64", allow(unused_imports))]
+#[cfg_attr(
+    not(all(
+        any(target_arch = "x86_64", target_arch = "aarch64"),
+        any(target_os = "linux", target_os = "none")
+    )),
+    allow(unused_imports)
+)]
 use crate::kernel::syscall::SyscallNumber;
 
 pub struct AArch64UserException;
