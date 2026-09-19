@@ -21,6 +21,7 @@ endif
 .PHONY: help \
 		doctor \
 		fmt \
+		fmt-all \
 		fmt-check \
 		test \
 		test-lib \
@@ -81,6 +82,7 @@ help:
 		'  make test-gpu       - run VIRGL 3D demo renderer integration tests' \
 		'  make test-parsers   - run the deterministic in-tree parser fuzz harnesses' \
 		'  make fmt            - format the source tree' \
+		'  make fmt-all        - format the source tree and all dependencies' \
 		'  make fmt-check      - verify formatting without modifying files' \
 		'  make build          - build the bare-metal kernel ELF (PROFILE=debug|release)' by default \
 		'  make build-x8664    - build the bare-metal kernel ELF (PROFILE=debug|release)' \
