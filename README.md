@@ -19,7 +19,7 @@ make doctor
 
 `make doctor` prints one line per tool and Rust target, exits non-zero when
 something the build depends on is missing, and is the same command CI runs on
-Linux, Windows and macOS.
+Linux (x86_64 and arm64), Windows and macOS.
 
 What the repository cannot pin is a short list — rustup, GNU make with a POSIX
 shell, QEMU for the run targets, and your platform's own linker for host-side
@@ -66,22 +66,27 @@ optional — no target builds a bootable ISO image yet.
 
 ### Host requirements
 
-The bare-metal builds and the QEMU run targets are host-independent. Host-side
-checks are x86_64-only, for two reasons: the demo payloads are hand-written ELF
-assembly, which a host producing COFF or Mach-O objects cannot assemble, and
-the host-side code paths (`ptrace`, user address space, payload disassembly)
-are `cfg(target_arch = "x86_64")`.
+The checks and the bare-metal builds are host-independent: where a host cannot
+assemble the ELF payload sections, the demo disk falls back to the `host_proxy`
+artifacts every demo manifest already names — the same path the shell takes.
+
+What still pins a host down is the test suite. It drives x86_64 user-mode code
+(`ptrace`, user address space, exception frames) inside the test process, so
+`make test` needs an x86_64 host; `make doctor`, `make check`, `make clippy`
+and the cross-builds do not.
 
 | Host | `make doctor` / `check` / `clippy` / `build*` | `make test` |
 |------|-----------------------------------------------|-------------|
 | Linux x86_64 | supported — the reference host, covered by CI | supported, and what CI runs |
-| Windows x86_64 | supported, covered by CI | not yet: the payload-dependent tests need an ELF payload, which this host does not build — use WSL2 |
-| macOS x86_64 (Intel) | supported, covered by CI | not yet, same reason as Windows |
-| arm64 host (Apple Silicon, Windows on Arm) | not supported: the host-side code is x86_64-only. An x86_64 container (`docker run --platform linux/amd64`) or an x86_64 machine is the way in | not supported |
+| Windows x86_64 | supported, covered by CI | supported, covered by CI |
+| macOS x86_64 (Intel) | supported, covered by CI | supported, covered by CI |
+| Linux arm64 | supported, covered by CI | needs an x86_64 host |
+| macOS arm64 (Apple Silicon) | supported — the same host paths as Linux arm64 | needs an x86_64 host |
 
-An Apple Silicon Mac is the case worth calling out: it cross-builds the
-bare-metal targets and runs QEMU fine, but the host-side checks need an
-emulated x86_64 environment.
+An Apple Silicon Mac cross-builds every bare-metal target, runs QEMU and passes
+the checks; only the in-process x86_64 test suite needs an x86_64 machine or
+container (`docker run --platform linux/amd64`). Other arm64 hosts — Windows on
+Arm, for instance — are untested; treat them as needing an x86_64 container.
 
 ## Build & Test
 
