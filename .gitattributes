@@ -1,0 +1,28 @@
+# File: .gitattributes
+# Purpose: Pin line endings and mark binary assets so the working tree is
+# identical on Linux, macOS, and Windows checkouts.
+
+# Text files are stored and checked out with LF.  The POSIX scripts, the
+# Makefile, the assembly payloads, and the linker scripts are all consumed by
+# `sh`, GNU make, and rustc, each of which breaks on a stray CR.
+* text=auto eol=lf
+
+# POSIX shell scripts and the git hooks derived from them must stay LF.
+*.sh text eol=lf
+scripts/hooks/* text eol=lf
+
+# GNU make is tab- and line-ending-sensitive.
+Makefile text eol=lf
+*.mk text eol=lf
+
+# Assembly and linker scripts are handed to the toolchain verbatim.
+*.asm text eol=lf
+*.S text eol=lf
+*.ld text eol=lf
+
+# Binary assets: never diff, never normalize.
+*.dtb binary
+*.iso binary
+*.img binary
+*.bin binary
+*.elf binary
