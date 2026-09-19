@@ -282,5 +282,4 @@ event loops to determine when I/O operations will not block.
 
 ## See Also
 
-- [Subsystem overview](../en/network.md) — high-level network stack description
-- [Documentation index](../README.md) — complete document tree
+- [Documentation index](README.md) — complete document tree

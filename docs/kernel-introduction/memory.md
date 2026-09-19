@@ -587,5 +587,4 @@ discovered, the kernel falls back to in-memory `page_content` storage
 
 ## See Also
 
-- [Subsystem overview](../en/memory.md) — high-level memory management description
-- [Documentation index](../README.md) — complete document tree
+- [Documentation index](README.md) — complete document tree

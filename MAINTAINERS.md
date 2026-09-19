@@ -53,8 +53,8 @@ process.
 
 ## Documentation & Community
 
-*   **File paths**: `docs/`, `README.md`, `README.en.md`
-*   Raiden Lumine (<2557597107@qq.com>) - Owns: technical documentation, the `docs/` directory, bilingual (en/zh-CN) translations, community operations.
+*   **File paths**: `docs/`, `README.md`
+*   Raiden Lumine (<2557597107@qq.com>) - Owns: technical documentation, the `docs/` directory (including the `docs/fmts/` contributor specifications), community operations.
 
 ## Responsibilities
 
@@ -66,7 +66,8 @@ Maintainers are expected to:
   version bumps.
 - Keep `make verify-p3` green and gate releases on it.
 - Maintain [ROADMAP.md](ROADMAP.md) and keep
-  [docs/current-status](docs/) in sync with reality.
+  [docs/kernel-introduction/current-status.md](docs/kernel-introduction/current-status.md)
+  in sync with reality.
 - Handle security reports per [SECURITY.md](SECURITY.md).
 
 ## Review Policy

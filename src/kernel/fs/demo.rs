@@ -4,8 +4,6 @@
 //!
 //! ═══════════════════════════════════════════════════════════════════════════
 //! LEGACY MODULE — prefer alternatives for new code:
-//!   - `test_support::build_test_zone_image` for tests that just need a valid
-//!     SimpleFs image (avoids pulling in assembly payload sections).
 //!   - `SimpleFs::build_image` / `SimpleFs::build_image_with_headroom` for
 //!     constructing SimpleFs images directly.
 //!

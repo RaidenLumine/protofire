@@ -91,7 +91,7 @@ pub(crate) struct ErofsSuperblock {
     pub feature_incompat: u32,
 }
 
-// Safety: the superblock is read from a byte buffer.
+// SAFETY: the superblock is read from a byte buffer.
 unsafe impl Send for ErofsSuperblock {}
 unsafe impl Sync for ErofsSuperblock {}
 

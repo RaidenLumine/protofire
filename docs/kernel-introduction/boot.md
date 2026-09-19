@@ -419,5 +419,4 @@ GRUB (Multiboot2)       or      QEMU -kernel (PVH ELF note)
 
 ## See Also
 
-- [Subsystem overview](../en/boot.md) — high-level boot flow description
-- [Documentation index](../README.md) — complete document tree
+- [Documentation index](README.md) — complete document tree

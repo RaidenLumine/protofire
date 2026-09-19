@@ -553,5 +553,4 @@ original parent terminates before the child.
 
 ## See Also
 
-- [Subsystem overview](../en/process.md) — high-level process and thread model description
-- [Documentation index](../README.md) — complete document tree
+- [Documentation index](README.md) — complete document tree

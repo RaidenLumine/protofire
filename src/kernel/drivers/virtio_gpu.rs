@@ -465,7 +465,7 @@ fn allocate_fb(fb_bytes: usize) -> Option<FbBacking> {
 fn allocate_fb(fb_bytes: usize) -> Option<FbBacking> {
     use core::alloc::Layout;
     let layout = Layout::from_size_align(fb_bytes, 4096).ok()?;
-    // Safety: layout is non-zero and the region is never freed — it backs the
+    // SAFETY: layout is non-zero and the region is never freed — it backs the
     // scanout for the kernel's whole lifetime.
     let base = unsafe { alloc::alloc::alloc(layout) };
     if base.is_null() {
@@ -624,7 +624,7 @@ impl VirtioGpuDevice {
     /// Interpret the first 4 bytes of `response` as a response type and
     /// compare it with `expected`.
     fn check_response<R>(response: &R, expected: u32) -> Result<()> {
-        // Safety: every GPU response starts with a VirtioGpuRespHeader whose
+        // SAFETY: every GPU response starts with a VirtioGpuRespHeader whose
         // first field is hdr_type (u32).  Reading the first 4 bytes is valid
         // for any repr(C) response struct.
         let resp_type = unsafe { *(response as *const _ as *const u32) };
@@ -1546,7 +1546,7 @@ fn probe_and_init() -> Option<()> {
     use crate::kernel::drivers::virtio::BareMmioRegion;
 
     for addr in crate::kernel::drivers::virtio::mmio_slot_addresses() {
-        // Safety: `addr` is a VirtIO MMIO register block discovered from the
+        // SAFETY: `addr` is a VirtIO MMIO register block discovered from the
         // FDT or the fixed MMIO window; it stays mapped for the kernel's
         // lifetime and access is serialised by the transport.
         let region = unsafe { BareMmioRegion::new(addr) };

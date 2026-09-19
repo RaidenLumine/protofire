@@ -73,7 +73,7 @@ pub fn wait_signal(timeout_ticks: u64) -> Option<ProcessSignalRecord> {
     let mut buf = [0u8; core::mem::size_of::<ProcessSignalRecord>()];
     match syscall::sys_wait_signal(timeout_ticks, &mut buf) {
         Ok(()) => {
-            // Safety: the kernel writes a valid ProcessSignalRecord into buf.
+            // SAFETY: the kernel writes a valid ProcessSignalRecord into buf.
             // The layout is repr(C) and binary-stable.
             let record: ProcessSignalRecord = unsafe { core::ptr::read(buf.as_ptr().cast()) };
             Some(record)

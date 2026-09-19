@@ -5,7 +5,7 @@ by the project maintainers and updated as work lands. Milestones are indicative,
 not commitments — priorities can shift with contributors' interest.
 
 The authoritative picture of what exists today is
-[docs/en/current-status.md](docs/en/current-status.md).
+[docs/kernel-introduction/current-status.md](docs/kernel-introduction/current-status.md).
 
 ---
 
@@ -73,5 +73,5 @@ The authoritative picture of what exists today is
 
 Pick a milestone, open an issue to claim it, and read
 [CONTRIBUTING.md](CONTRIBUTING.md). Known gaps in the code are tracked in
-[docs/en/current-status.md](docs/en/current-status.md); anything labelled
+[docs/kernel-introduction/current-status.md](docs/kernel-introduction/current-status.md); anything labelled
 `good first issue` is a good starting point.

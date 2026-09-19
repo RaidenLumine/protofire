@@ -424,5 +424,5 @@ Route handlers are `fn(&HttpRequest, Option<&str>) -> HttpResponse` function poi
 
 ## See Also
 
-- [Syscall ABI reference](../en/syscall.md) — SyscallNumber enum, dispatch table, pointer specs
-- [Documentation index](../README.md) — complete document tree
+- [Syscall ABI reference](syscall.md) — SyscallNumber enum, dispatch table, pointer specs
+- [Documentation index](README.md) — complete document tree

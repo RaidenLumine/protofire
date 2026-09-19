@@ -380,7 +380,7 @@ fn probe_input() {
     use crate::kernel::drivers::virtio::BareMmioRegion;
 
     for addr in crate::kernel::drivers::virtio::mmio_slot_addresses() {
-        // Safety: `addr` is a VirtIO MMIO register block discovered from the
+        // SAFETY: `addr` is a VirtIO MMIO register block discovered from the
         // FDT or the fixed MMIO window; it stays mapped for the kernel's
         // lifetime and access is serialised by the transport.
         let region = unsafe { BareMmioRegion::new(addr) };

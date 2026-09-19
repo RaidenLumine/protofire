@@ -378,5 +378,4 @@ complexity.
 
 ## See Also
 
-- [Subsystem overview](../en/filesystem.md) — high-level VFS and SimpleFs description
-- [Documentation index](../README.md) — complete document tree
+- [Documentation index](README.md) — complete document tree

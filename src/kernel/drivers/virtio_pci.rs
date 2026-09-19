@@ -143,7 +143,7 @@ pub struct PciLegacyMmioRegion {
     queue_desc: core::cell::Cell<u64>,
 }
 
-// Safety: IO port access is guarded by the driver-level Mutex that
+// SAFETY: IO port access is guarded by the driver-level Mutex that
 // serialises all transport operations.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 unsafe impl Send for PciLegacyMmioRegion {}

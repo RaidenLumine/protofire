@@ -123,7 +123,7 @@ impl KernelLogRing {
     }
 }
 
-// Safety: the ring buffer is self-contained and only accessed under the Mutex.
+// SAFETY: the ring buffer is self-contained and only accessed under the Mutex.
 unsafe impl Send for KernelLogRing {}
 unsafe impl Sync for KernelLogRing {}
 

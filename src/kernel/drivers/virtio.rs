@@ -341,7 +341,7 @@ impl Drop for VirtQueue {
     }
 }
 
-// Safety: VirtQueue is always accessed under the transport Mutex in
+// SAFETY: VirtQueue is always accessed under the transport Mutex in
 // practice.  The raw pointers inside the PCI variant are stable and
 // never shared across threads without synchronisation.
 unsafe impl Send for VirtQueue {}
@@ -417,7 +417,7 @@ impl VirtQueue {
         unsafe { core::ptr::write_bytes(page, 0u8, region_len) };
 
         // Build slices that borrow from the page.
-        // Safety: the page outlives the VirtQueue; the Vecs are never
+        // SAFETY: the page outlives the VirtQueue; the Vecs are never
         // deallocated individually — only the page is freed on Drop.
         let desc_ptr = page as *mut VirtqDesc;
         for i in 0..qsz {
@@ -1248,7 +1248,7 @@ impl BareMmioRegion {
     }
 }
 
-// Safety: BareMmioRegion wraps a raw pointer to MMIO space.  The pointer is
+// SAFETY: BareMmioRegion wraps a raw pointer to MMIO space.  The pointer is
 // never deallocated and the region is valid for the entire kernel lifetime.
 // Concurrent access is guarded by the Mutex in VirtIoBlock (or by the
 // transport layer itself for MMIO registers that are device-synchronized).

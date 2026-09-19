@@ -181,7 +181,7 @@ On AArch64 and RISC-V the partitioning follows the same principle with arch-spec
 
 ### Kernel Stack and Guard Pages
 
-Each kernel thread has a dedicated stack region backed by physical frames. Below each stack is a single unmapped guard page that triggers a page fault on stack overflow. The guard page is allocated and mapped during thread creation in `process/thread.rs` and is described in the [Kernel Stack Guard Pages](../en/memory.md#kernel-stack-guard-page) overview. This applies to both kernel threads and user-thread kernel stacks.
+Each kernel thread has a dedicated stack region backed by physical frames. Below each stack is a single unmapped guard page that triggers a page fault on stack overflow. The guard page is allocated and mapped during thread creation in `process/thread.rs` and is described in the memory overview under [Kernel Address Space](memory.md#kernel-address-space). This applies to both kernel threads and user-thread kernel stacks.
 
 ### Heap
 
@@ -318,27 +318,27 @@ common case), a default single-node topology maps all CPUs to node 0.
 
 ## Related Documentation
 
-### Subsystem Overviews (`docs/en/`)
+### Subsystem Overviews (`docs/kernel-introduction/`)
 
 | Document | Description |
 |----------|-------------|
-| [`docs/en/README.md`](../en/README.md) | Architecture overview, subsystem dependency graph, memory layout, build system |
-| [`docs/en/boot.md`](../en/boot.md) | Boot flow, Kernel::init() step-by-step, SMP |
-| [`docs/en/memory.md`](../en/memory.md) | Physical/virtual memory management, TLSF heap, page tables |
-| [`docs/en/process.md`](../en/process.md) | Process model, thread states, scheduler, security tokens |
-| [`docs/en/filesystem.md`](../en/filesystem.md) | VFS layer, SimpleFS on-disk format, two-phase commit |
-| [`docs/en/network.md`](../en/network.md) | Network stack, DHCP, TCP/UDP, DNS |
-| [`docs/en/syscall.md`](../en/syscall.md) | Syscall dispatch table, ABI catalog |
-| [`docs/en/shared-user-runtime.md`](../en/shared-user-runtime.md) | Shared ABI types and syscall wrappers (module `src/user/shared/`) |
+| [`README.md`](README.md) | Architecture overview, subsystem dependency graph, memory layout, build system |
+| [`boot.md`](boot.md) | Boot flow, Kernel::init() step-by-step, SMP |
+| [`memory.md`](memory.md) | Physical/virtual memory management, TLSF heap, page tables |
+| [`process.md`](process.md) | Process model, thread states, scheduler, security tokens |
+| [`filesystem.md`](filesystem.md) | VFS layer, SimpleFS on-disk format, two-phase commit |
+| [`network.md`](network.md) | Network stack, DHCP, TCP/UDP, DNS |
+| [`syscall.md`](syscall.md) | Syscall dispatch table, ABI catalog |
+| [`shared-user-runtime.md`](shared-user-runtime.md) | Shared ABI types and syscall wrappers (module `src/user/shared/`) |
+| [`current-status.md`](current-status.md) | Per-subsystem implementation status and known gaps |
 
-### Kernel Developer Reference (`docs/kernel/`)
+### Contributor Specifications (`docs/fmts/`)
 
 | Document | Description |
 |----------|-------------|
-| [`docs/kernel/boot.md`](../kernel/boot.md) | Arch-specific entries, PS/2 probe, filesystem init, file map |
-| [`docs/kernel/memory.md`](../kernel/memory.md) | Frame allocator internals, TLSF layout, page table ops, swap |
-| [`docs/kernel/process.md`](../kernel/process.md) | Scheduler core types, thread lifecycle, process groups, signals |
-| [`docs/kernel/filesystem.md`](../kernel/filesystem.md) | VFS trait methods, filesystem driver table, file I/O internals |
-| [`docs/kernel/network.md`](../kernel/network.md) | **Layered architecture, protocol files, sockopts, poll readiness** |
-| [`docs/kernel/syscall.md`](../kernel/syscall.md) | `SyscallNumber` enum, `SYSCALL_REGISTRY`, pointer specs |
-| [`docs/en/shared-user-runtime.md`](../en/shared-user-runtime.md) | Syscall wrapper conventions, dispatch internals, module map |
+| [`docs/fmts/README.md`](../fmts/README.md) | Index of the normative specifications, and how they are enforced |
+| [`docs/fmts/code-style.md`](../fmts/code-style.md) | Formatting, naming, module layout, imports, error handling |
+| [`docs/fmts/comments.md`](../fmts/comments.md) | File headers, module and item documentation, `// SAFETY:`, markers |
+| [`docs/fmts/unsafe-and-safety.md`](../fmts/unsafe-and-safety.md) | `unsafe` discipline, MMIO, user-memory validation, panic policy |
+| [`docs/fmts/testing.md`](../fmts/testing.md) | Test placement, registration, fault injection, fuzzing |
+| [`docs/fmts/syscall-abi.md`](../fmts/syscall-abi.md) | `SyscallNumber` enum, `SYSCALL_REGISTRY`, pointer specs, wrappers |

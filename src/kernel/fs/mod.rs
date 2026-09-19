@@ -12,8 +12,7 @@ pub mod luks2;
 // ═══════════════════════════════════════════════════════════════════════
 // Legacy demo disk builder — kept for the fs.init() boot path and
 // kernel-side MBR tests.  New code that just needs a SimpleFs image
-// should use `test_support::build_test_zone_image` or call
-// `SimpleFs::build_image` directly.
+// should call `SimpleFs::build_image` directly.
 // The canonical distribution copy lives in protofire-os/demo-disk.
 // ═══════════════════════════════════════════════════════════════════════
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
@@ -22,10 +21,6 @@ pub mod demo;
 pub use demo::build_demo_disk_image;
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
 pub use demo::build_demo_disk_image_with_key;
-// ── Test support ─────────────────────────────────────────────────────────
-// Lightweight SimpleFs image builders for tests and demo-disk feature.
-// Prefer these over the legacy `demo::build_zone_image` when you just
-// need a valid SimpleFs image.
 pub mod devfs;
 pub mod erofs;
 pub mod exfat;

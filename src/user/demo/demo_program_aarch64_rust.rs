@@ -369,7 +369,7 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
 
     // The child faults by executing from the stack (`--trigger-fault=stack-exec`),
     // so the termination record carries an instruction-abort permission fault.
-    // Safety: wait_process_blocking reported exactly
+    // SAFETY: wait_process_blocking reported exactly
     // PROCESS_TERMINATION_RECORD_SIZE bytes written above, so the record is
     // fully initialised.
     let termination = unsafe { termination.assume_init() };
@@ -444,7 +444,7 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
 extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
     frame: *mut AArch64UserExceptionFrame,
 ) -> ! {
-    // Safety: the kernel passes the abort frame as the sole argument and keeps
+    // SAFETY: the kernel passes the abort frame as the sole argument and keeps
     // it alive for the whole handler; `return_from_exception` below resumes it.
     let frame_ref = unsafe { &mut *frame };
     if let Some(syndrome) =
@@ -485,7 +485,7 @@ extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
     } else {
         frame_ref.instruction_pointer += 4;
     }
-    // Safety: resume the adjusted abort frame; only reachable after the frame
+    // SAFETY: resume the adjusted abort frame; only reachable after the frame
     // has been redirected to the correct resume point above.
     unsafe { return_from_exception(frame) }
 }

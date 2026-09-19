@@ -30,7 +30,7 @@ See [README.md](README.md) for the complete build/test matrix.
 
 1. [Development Setup](#development-setup)
 2. [Where to Start](#where-to-start)
-3. [Communication & Discussion](#communication-discussion)
+3. [Communication & Discussion](#communication--discussion)
 4. [Code Style & Conventions](#code-style--conventions)
 5. [Verification Gate](#verification-gate)
 6. [Adding or Modifying a Syscall](#adding-or-modifying-a-syscall)
@@ -56,6 +56,11 @@ See [README.md](README.md) for the complete build/test matrix.
   and for the interactive demo shell.
 - `rustfmt` and `clippy` (both listed in the toolchain file).
 
+Per-platform install commands (GNU make, QEMU, Windows notes), the useful make
+variables, and the host support matrix live in
+[README.md § Environment Setup](README.md#environment-setup). `make doctor`
+reports what is still missing on your machine.
+
 ### First Build
 
 ```bash
@@ -68,10 +73,10 @@ make run            # boot x86_64 under QEMU (demo shell with ~40 builtins)
 
 ## Where to Start
 
-- Read the [docs](docs/) first
-  [`docs/en/README.md`](docs/en/README.md) (architecture overview),
-  [`docs/en/syscall.md`](docs/en/syscall.md) (ABI), and
-  [`docs/en/current-status.md`](docs/en/current-status.md) (subsystem status).
+- Read the [kernel introduction](docs/kernel-introduction/README.md)
+  (architecture overview), [`syscall.md`](docs/kernel-introduction/syscall.md)
+  (ABI), and [`current-status.md`](docs/kernel-introduction/current-status.md)
+  (subsystem status).
 - Good first tasks are usually marked with the `good first issue` label on
   GitHub; if none exist, the "known gaps" in `current-status.md` are excellent
   starting points.
@@ -89,7 +94,7 @@ Layout of the kernel crate:
 | `src/user/shared/` | **Single source of truth for the syscall ABI** |
 | `src/util/` | Utility helpers |
 | `tests/` | Host-side integration tests (fs, io, memory, net, process, simplefs, sync, syscall) |
-| `docs/` | Bilingual architecture & subsystem docs (`en/` and `zh-CN/`) |
+| `docs/` | Architecture & subsystem docs (`kernel-introduction/`) and contributor specifications (`fmts/`) |
 
 ---
 
@@ -124,6 +129,17 @@ The codebase is ~215,000 lines of Rust across 600+ files; consistency matters.
   feature table in [README.md](README.md)). Gate new work appropriately.
 - **Tests:** add unit tests with new modules and integration coverage under
   `tests/` when behaviour is user-visible.
+
+The list above is the short form. The full specifications — rationale, enforced
+checks, and worked examples — live in [`docs/fmts/`](docs/fmts/README.md):
+
+| Specification | Covers |
+|---------------|--------|
+| [`code-style.md`](docs/fmts/code-style.md) | Formatting, naming, module layout, imports, error handling, feature gating |
+| [`comments.md`](docs/fmts/comments.md) | File headers, module and item documentation, `// SAFETY:`, markers |
+| [`unsafe-and-safety.md`](docs/fmts/unsafe-and-safety.md) | `unsafe` discipline, MMIO, user-memory validation, panic policy |
+| [`testing.md`](docs/fmts/testing.md) | Test placement, registration, fault injection, fuzzing |
+| [`syscall-abi.md`](docs/fmts/syscall-abi.md) | Numbering, stability classes, pointer specs, wrappers |
 
 ---
 
@@ -172,18 +188,23 @@ rules strictly:
 6. **Validate user pointers** through the central `SYSCALL_POINTER_SPECS`
    table — never dereference user addresses without validation.
 7. **Add typed wrapper(s)** in `src/user/shared/syscall.rs`.
-8. **Update the docs:** `docs/en/syscall.md` and `docs/zh-CN/syscall.md`.
+8. **Update the docs:** `docs/kernel-introduction/syscall.md`.
 9. **Add tests:** unit tests for the handler and, where user-visible,
    integration coverage in `tests/syscall/`.
+
+The full procedure — including the pointer-spec table, the handler shape, and
+the review checklist — is in [`docs/fmts/syscall-abi.md`](docs/fmts/syscall-abi.md).
 
 ---
 
 ## Documentation
 
-- Docs are bilingual: `docs/en/` (English) and `docs/zh-CN/` (Simplified Chinese).
-  When you change a subsystem, update the matching docs in **both** directories
-  and the status document `docs/<lang>/current-status.md`.
-- Keep the index at [`docs/README.md`](docs/README.md) in sync.
+- Docs are written in English and live under `docs/kernel-introduction/`. When
+  you change a subsystem, update the matching document and the status document
+  [`docs/kernel-introduction/current-status.md`](docs/kernel-introduction/current-status.md).
+- Contributor specifications live under `docs/fmts/`; start at
+  [`docs/fmts/README.md`](docs/fmts/README.md). If your change alters a
+  convention, update the specification in the same PR.
 - Code comments should be written in English.
 
 ---
@@ -213,11 +234,13 @@ not *what* (the diff already shows what).
 
 **Subject line (first line):**
 
-- Imperative mood, capitalised: `Fix ATA timeouts on cold boot`, not `fixed`.
+- Imperative mood, capitalised: `Fix ATA timeouts on cold boot` — not `fixed`,
+  `Fixes`, or `Fixing`.
 - At most 72 characters.
 - No trailing period.
-- A `<type>:` prefix is encouraged (`fix:`, `feat:`, `docs:`, `refactor:`,
-  `chore:`, `test:`); release markers like `Protofire 0.1.x:` are also used.
+- A `<type>:` prefix is required: `feat:`, `fix:`, `refactor:`, `chore:`,
+  `docs:`, `test:`, `style:`. Release markers like `Protofire 0.3.0` are the one
+  exception. A scope is optional — `fix(ata): ...`.
 - `Merge ...` and `Revert "..."` lines generated by git are exempt.
 
 **Body (blank line, then paragraphs):**
@@ -262,6 +285,10 @@ required `Signed-off-by:` trailer on every `git commit` (install once with
 `make install-hooks`) and again on every pull request in CI. If your message is
 rejected, read the error and `git commit --amend` — the check is fast and
 precise.
+
+The exact semantics of that hook — the check order, its exemptions, the cases it
+cannot see at all, and how to write a commit message in Chinese — are specified
+in [`docs/fmts/commits.md`](docs/fmts/commits.md).
 
 ---
 

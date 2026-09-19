@@ -457,6 +457,6 @@ The full workflow spans four locations:
 
 ## See Also
 
-- [Subsystem overview](../en/syscall.md) — high-level syscall ABI description
-- [Shared user runtime reference](../en/shared-user-runtime.md) — syscall wrapper conventions, dual-environment dispatch
-- [Documentation index](../README.md) — complete document tree
+- [Shared user runtime reference](shared-user-runtime.md) — syscall wrapper conventions, dual-environment dispatch
+- [Syscall ABI specification](../fmts/syscall-abi.md) — numbering rules, stability classes, pointer specs, the procedure for adding a syscall
+- [Documentation index](README.md) — complete document tree

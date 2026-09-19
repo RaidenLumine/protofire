@@ -506,7 +506,7 @@ pub(super) fn signalfd_readable(state: &Arc<super::types::SignalFdState>) -> Res
 fn write_signal_record(buffer: &mut [u8], record: &crate::abi::process::ProcessSignalRecord) {
     let ptr = record as *const _ as *const u8;
     let len = core::mem::size_of::<crate::abi::process::ProcessSignalRecord>();
-    // Safety: the buffer is guaranteed to be at least `len` bytes by callers.
+    // SAFETY: the buffer is guaranteed to be at least `len` bytes by callers.
     unsafe {
         core::ptr::copy_nonoverlapping(ptr, buffer.as_mut_ptr(), len);
     }

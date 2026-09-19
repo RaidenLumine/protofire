@@ -1177,7 +1177,7 @@ pub fn device_write(buffer: &[u8]) -> Result<usize> {
         }
         let mut guard = HDA_CONTROLLER.lock();
         let ctrl = guard.as_mut().ok_or(crate::Error::Unsupported)?;
-        // Safety: the mutex guards the controller, so this holds the only
+        // SAFETY: the mutex guards the controller, so this holds the only
         // reference to its MMIO mapping and DMA buffers.
         unsafe { ctrl.write_pcm(rate, samples) }?;
         Ok(buffer.len())

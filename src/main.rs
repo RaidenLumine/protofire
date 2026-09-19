@@ -1,8 +1,6 @@
 //! src/main.rs
 //!
 //! Bare-metal kernel entrypoint plus the host-side `mkimage` utility command.
-
-//! Protofire Kernel Main Entry Point
 //!
 //! This file contains the main entry points for both bare-metal kernel
 //! operation and host-side utility commands. For bare-metal targets, it

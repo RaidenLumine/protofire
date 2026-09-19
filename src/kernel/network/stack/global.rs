@@ -177,7 +177,7 @@ impl NetworkStack {
     /// Return a reference to the global network stack, or `None` if not yet
     /// initialised.
     pub fn global() -> Option<&'static NetworkStack> {
-        // Safety: the pointer is either null or was initialised by
+        // SAFETY: the pointer is either null or was initialised by
         // `init_with_device` and remains valid for the kernel lifetime.
         unsafe { load_global_stack().as_ref() }
     }
@@ -197,7 +197,7 @@ impl NetworkStack {
     }
 }
 
-// Safety: NetworkStack is only accessed through the global AtomicPtr on
+// SAFETY: NetworkStack is only accessed through the global AtomicPtr on
 // bare-metal (single-consumer poll path, mutex-guarded protocol tables).
 // Host tests may use multiple threads but all mutable state is behind
 // Mutex or Atomic.

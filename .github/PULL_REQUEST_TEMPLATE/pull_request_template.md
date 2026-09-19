@@ -29,8 +29,9 @@
 
 ## Documentation
 
-- [ ] Docs updated in both `docs/en/` and `docs/zh-CN/` (where applicable)
-- [ ] `docs/<lang>/current-status.md` reflects the change
+- [ ] `docs/kernel-introduction/` updated (where applicable)
+- [ ] `docs/kernel-introduction/current-status.md` reflects the change
+- [ ] `docs/fmts/` updated if the change alters a convention
 
 ## Attribution
 

@@ -125,6 +125,6 @@ impl Drop for KernelStack {
     }
 }
 
-// Safety: the stack pointer is valid for the lifetime of the KernelStack.
+// SAFETY: the stack pointer is valid for the lifetime of the KernelStack.
 unsafe impl Send for KernelStack {}
 unsafe impl Sync for KernelStack {}
