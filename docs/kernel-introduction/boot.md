@@ -338,8 +338,10 @@ UEFI/BIOS ──> GRUB ──> Multiboot2 ──> _start ──> kernel_entry() 
 
 ### 7.4 Toolchain Checks
 
-`make doctor` (via `scripts/doctor.sh`) verifies that `grub-mkrescue` and
-`xorriso` are present in addition to the Rust toolchain.
+`make doctor` (via `scripts/doctor.sh`) reports the Rust toolchain, the three
+pinned bare-metal targets and the optional `grub-mkrescue` / `xorriso` helpers.
+It exits non-zero when a required tool or target is missing, so it doubles as
+the environment check in CI.
 
 ---
 

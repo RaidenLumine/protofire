@@ -10,74 +10,78 @@ This is a bare-metal `#![no_std]` monolithic kernel written in Rust, targeting x
 
 ## Environment Setup
 
-The repository is self-contained — there are no external crates to fetch — but
-it does need a pinned Rust toolchain and GNU make. QEMU is required only by the
-`make run*` targets. Check the result at any time with `make doctor`.
-
-### 1. Rust toolchain
-
-Install [rustup](https://rustup.rs/) and then run any command inside the
-repository:
+Everything the build needs is either pinned in this repository or checked by
+one command:
 
 ```bash
-rustup show     # downloads the pinned toolchain on first use
+make doctor
 ```
 
-[`rust-toolchain.toml`](rust-toolchain.toml) pins the channel
-(`nightly-2026-08-24`), the components (`rustfmt`, `clippy`,
-`llvm-tools-preview`) and the three bare-metal targets — `x86_64-unknown-none`,
-`aarch64-unknown-none` and `riscv64gc-unknown-none-elf` — so rustup installs all
-of them automatically. The first command therefore downloads a few hundred
-megabytes; no separate `rustup target add` step is needed.
+`make doctor` prints one line per tool and Rust target, exits non-zero when
+something the build depends on is missing, and is the same command CI runs on
+Linux, Windows and macOS.
 
-### 2. Build tools and QEMU
+What the repository cannot pin is a short list — rustup, GNU make with a POSIX
+shell, QEMU for the run targets, and your platform's own linker for host-side
+binaries — so the rest of this section is only that list, and the versions the
+files already pin are not repeated here.
+
+### What the repository already pins
+
+- **Toolchain and targets.** [`rust-toolchain.toml`](rust-toolchain.toml) is the
+  single source of truth for the channel, the `rustfmt` / `clippy` /
+  `llvm-tools-preview` components, and the three bare-metal targets. Install
+  [rustup](https://rustup.rs/) and run any command inside the repository: the
+  first one downloads the pinned toolchain with its targets, so there is no
+  `rustup target add` step to remember. Do not trust a version written in
+  prose — read that file.
+- **No cross compiler.** All three `*-none` targets link with the `rust-lld`
+  that ships inside the toolchain, so cross-compiling needs no
+  `gcc-aarch64-*`, no `gcc-riscv64-*`, no `*-none-elf` binutils, and no
+  `bootimage`-style helper. `make build`, `make build-aarch64` and
+  `make build-riscv64` work from any host.
+- **Line endings.** LF everywhere, enforced by
+  [`.gitattributes`](.gitattributes); a `core.autocrlf=true` checkout still
+  gives `sh`, GNU make and rustc the files they expect.
+- **Host linker.** Host-side targets — the tests, build scripts and the
+  `mkimage` helper — are ordinary native binaries, so they use the platform's
+  own linker: `cc` on Linux, the Xcode command line tools on macOS, and the
+  Visual Studio C++ build tools on an MSVC Windows host. `make check` and
+  `make clippy` do not link, so they do not need any of it.
+
+### What you install
 
 | Platform | Command |
 |----------|---------|
-| Debian / Ubuntu | `sudo apt install make gcc qemu-system-x86 qemu-system-arm qemu-system-misc` |
-| Fedora / RHEL | `sudo dnf install make gcc qemu-system-x86 qemu-system-aarch64 qemu-system-riscv` |
+| Debian / Ubuntu | `sudo apt install make qemu-system-x86 qemu-system-arm qemu-system-misc` |
+| Fedora / RHEL | `sudo dnf install make qemu-system-x86 qemu-system-aarch64 qemu-system-riscv` |
 | Arch | `sudo pacman -S base-devel qemu-system-x86 qemu-system-aarch64 qemu-system-riscv` |
-| macOS | `brew install make qemu`, then invoke `gmake` — the Makefile needs GNU make, and the `make` on macOS is BSD make |
-| Windows | MSYS2 or Git Bash for `make` and `sh` (`pacman -S make` in MSYS2, or `choco install make`), plus QEMU from the [Windows installer](https://www.qemu.org/download/#windows) or `choco install qemu` / `scoop install qemu` |
+| macOS | nothing for make — Apple ships GNU Make 3.81, and the Makefile stays within it; `brew install qemu` for the run targets, or `brew install make` if you would rather have a current GNU make (it installs as `gmake`) |
+| Windows | `choco install make` (or MSYS2: `pacman -S make`), then run the Makefile from Git Bash so `sh` is on `PATH`; QEMU from the [Windows installer](https://www.qemu.org/download/#windows), or `choco install qemu` / `scoop install qemu` |
 
 QEMU provides `qemu-system-x86_64`, `qemu-system-aarch64` and
-`qemu-system-riscv64`; only the run targets and `make check-aarch64-runtime`
-need it. `grub-mkrescue` and `xorriso` are optional — no target builds a
-bootable ISO image yet.
+`qemu-system-riscv64`, and only the run targets and
+`make check-aarch64-runtime` need it. `grub-mkrescue` and `xorriso` are
+optional — no target builds a bootable ISO image yet.
 
-Line endings are pinned to LF by [`.gitattributes`](.gitattributes), so a
-Windows checkout still produces scripts, the Makefile, and the assembly
-payloads in the form `sh`, GNU make and rustc expect — even with
-`core.autocrlf=true`.
+### Host requirements
 
-### 3. Check the environment
+The bare-metal builds and the QEMU run targets are host-independent. Host-side
+checks are x86_64-only, for two reasons: the demo payloads are hand-written ELF
+assembly, which a host producing COFF or Mach-O objects cannot assemble, and
+the host-side code paths (`ptrace`, user address space, payload disassembly)
+are `cfg(target_arch = "x86_64")`.
 
-```bash
-make doctor     # lists every tool and Rust target, and flags what is missing
-```
+| Host | `make doctor` / `check` / `clippy` / `build*` | `make test` |
+|------|-----------------------------------------------|-------------|
+| Linux x86_64 | supported — the reference host, covered by CI | supported, and what CI runs |
+| Windows x86_64 | supported, covered by CI | not yet: the payload-dependent tests need an ELF payload, which this host does not build — use WSL2 |
+| macOS x86_64 (Intel) | supported, covered by CI | not yet, same reason as Windows |
+| arm64 host (Apple Silicon, Windows on Arm) | not supported: the host-side code is x86_64-only. An x86_64 container (`docker run --platform linux/amd64`) or an x86_64 machine is the way in | not supported |
 
-### Useful make variables
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `PROFILE` | `debug` | `debug` or `release` build profile |
-| `TARGET` | `x86_64-unknown-none` | bare-metal target used by `check-target` and `build-x8664` |
-| `TARGET_DIR` | `target` | Cargo artifact directory |
-| `CARGO_FLAGS` | `--offline` | passed to every cargo invocation; with no dependencies the default keeps builds hermetic, override it (e.g. `make test CARGO_FLAGS=`) to let cargo reach the network |
-| `VERIFY_TIER` | `p3` | tier used by `make verify` (`p0` … `p3`) |
-
-### Host support
-
-The bare-metal cross-builds do not depend on the host. The host-side checks are
-x86_64-only: the demo payloads are hand-written ELF assembly, so a host that
-produces COFF or Mach-O objects cannot assemble them.
-
-| Host | `make check` / `make clippy` / `make build*` | `make test` |
-|------|----------------------------------------------|-------------|
-| Linux x86_64 | supported | supported — the reference host, and what CI runs |
-| Windows x86_64 (MSYS2 / Git Bash) | supported | not yet: the payload-dependent host tests fail on an empty demo payload — run `make test` under WSL2 |
-| macOS x86_64 | supported (`gmake`) | not yet, same reason as Windows |
-| aarch64 host (Apple Silicon, Windows on Arm) | not supported — the host-side code paths are x86_64-only | not supported |
+An Apple Silicon Mac is the case worth calling out: it cross-builds the
+bare-metal targets and runs QEMU fine, but the host-side checks need an
+emulated x86_64 environment.
 
 ## Build & Test
 
@@ -118,6 +122,16 @@ make run-riscv64
 # Clippy (all targets, warnings as errors on critical lints)
 make clippy
 ```
+
+### Useful make variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PROFILE` | `debug` | `debug` or `release` build profile |
+| `TARGET` | `x86_64-unknown-none` | bare-metal target used by `check-target` and `build-x8664` |
+| `TARGET_DIR` | `target` | Cargo artifact directory |
+| `CARGO_FLAGS` | `--offline` | passed to every cargo invocation; with no dependencies the default keeps builds hermetic — override it (e.g. `make test CARGO_FLAGS=`) to let cargo reach the network |
+| `VERIFY_TIER` | `p3` | tier used by `make verify` (`p0` … `p3`) |
 
 ## Structure
 

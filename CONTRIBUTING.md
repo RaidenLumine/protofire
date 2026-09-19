@@ -56,10 +56,11 @@ See [README.md](README.md) for the complete build/test matrix.
   and for the interactive demo shell.
 - `rustfmt` and `clippy` (both listed in the toolchain file).
 
-Per-platform install commands (GNU make, QEMU, Windows notes), the useful make
-variables, and the host support matrix live in
-[README.md § Environment Setup](README.md#environment-setup). `make doctor`
-reports what is still missing on your machine.
+Per-platform install commands (GNU make, QEMU, the host linker), the host
+support matrix, and the useful make variables live in
+[README.md § Environment Setup](README.md#environment-setup) and
+[README.md § Build & Test](README.md#build--test). `make doctor` reports what
+is still missing on your machine and fails when a required tool is absent.
 
 ### First Build
 
