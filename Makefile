@@ -145,6 +145,11 @@ test-concurrency:
 test-storage:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fs_maintenance --test memory_manager --test page_table --test simplefs --test simplefs_recovery --test simplefs_fault_matrix --test simplefs_undo_property --test fat32
 
+test-fs-locking:
+	@echo "Running Filesystem Lock-Discipline Tests..."
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test sync_lock
+	@echo "Filesystem lock-discipline tests completed"
+
 test-fat32:
 	@echo "Running FAT32 Filesystem Integration Tests..."
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fat32

@@ -29,6 +29,16 @@ impl KernelStack {
     /// Allocate a kernel stack with a guard page when the frame allocator is
     /// available; otherwise fall back to a heap allocation.
     pub(crate) fn new(guard_size: usize, stack_size: usize) -> Self {
+        // Why the frame-backed path was abandoned, reported once the
+        // memory-manager guard has been released.
+        //
+        // The message cannot be printed where the failure is detected: that
+        // would mean writing to the console while holding the global
+        // memory-manager spinlock.  Console output goes through `format_args!`
+        // and the serial writer, which can allocate, and an allocation that
+        // needs frames re-enters the very lock being held.
+        let mut mapping_failure: Option<crate::Error> = None;
+
         // Try frame-backed allocation first so the guard page can be left
         // unmapped.
         if let Some(mut mm) = crate::kernel::memory::global_mut() {
@@ -43,11 +53,8 @@ impl KernelStack {
                     stack_size,
                     crate::kernel::memory::paging::PagePermissions::READ_WRITE,
                 ) {
-                    crate::println!(
-                        "[thread] kernel stack map_region failed ({}); falling back to heap",
-                        e.as_str()
-                    );
                     mm.deallocate_frames(base, total_frames);
+                    mapping_failure = Some(e);
                 } else {
                     // The guard region is kept out of the software PageTable
                     // above, but on bare metal the hardware page tables may
@@ -82,6 +89,13 @@ impl KernelStack {
                     };
                 }
             }
+        }
+
+        if let Some(error) = mapping_failure {
+            crate::println!(
+                "[thread] kernel stack map_region failed ({}); falling back to heap",
+                error.as_str()
+            );
         }
 
         // Fallback: heap allocation with no guard page.

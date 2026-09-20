@@ -28,6 +28,10 @@ name = "fs_maintenance"
 path = "tests/fs/maintenance.rs"
 
 [[test]]
+name = "sync_lock"
+path = "tests/fs/sync_lock.rs"
+
+[[test]]
 name = "fat32"
 path = "tests/fat32.rs"
 

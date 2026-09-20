@@ -57,17 +57,52 @@ impl<T> SpinLock<T> {
         }
     }
 
-    /// Acquire the lock without disabling interrupts.
+    /// Acquire the lock without masking interrupts.
     ///
-    /// Use only when the caller guarantees:
-    /// 1. No interrupt handler tries to lock this same lock (else deadlock on
-    ///    the same CPU).
-    /// 2. The critical section is short enough that preemption while holding
-    ///    the lock is unlikely.
+    /// # This is a second lock discipline, and it is in tension with the first
     ///
-    /// This is necessary for SMP correctness when the critical section may
-    /// overlap with a cross-CPU TLB shootdown: the other CPU sends an IPI and
-    /// waits for acknowledgment, which requires local interrupts to be enabled.
+    /// [`lock`](Self::lock) masks interrupts for the whole critical section, so
+    /// its holder cannot be preempted.  This one does not, so its holder can.
+    /// Mixing the two on one lock gives you a failure mode either way:
+    ///
+    /// - **A holder here is preemptible.**  If another thread acquires the same
+    ///   lock with [`lock`](Self::lock), that thread spins with interrupts
+    ///   masked.  On a single CPU the preempted holder then needs the timer to
+    ///   be rescheduled, and the timer needs interrupts — so neither side ever
+    ///   moves again.  This is a permanent wedge, not a slow path.
+    /// - **Masking interrupts here instead is not free either.**  Some callers
+    ///   hold a lock across `memory::global_mut()`.  If another CPU holds the
+    ///   memory-manager lock and is waiting for a TLB-shootdown acknowledgement
+    ///   from this one, masking interrupts here is exactly what stops the
+    ///   acknowledgement.
+    ///
+    /// # When this is justified
+    ///
+    /// The second hazard needs the critical section to acquire the
+    /// memory-manager lock, because that is the lock a TLB shootdown runs
+    /// under.  So the precise criterion is: **use this only if the critical
+    /// section calls `memory::global_mut()`.**
+    ///
+    /// Nothing else justifies it.  Allocating does not: the kernel heap is a
+    /// pre-sized static array with its own lock and never reaches the memory
+    /// manager, so a critical section that only allocates is fully covered by
+    /// the ordinary [`lock`](Self::lock).
+    ///
+    /// Prefer removing the reason over choosing a discipline.  Restructure the
+    /// caller to release this lock before touching the memory manager — the
+    /// two-phase load in `user/program/launch_reference.rs` is the worked
+    /// example — and then [`lock`](Self::lock) is correct and the wedge above
+    /// cannot happen at all.
+    ///
+    /// # Current status
+    ///
+    /// **Nothing calls this.**  Every former caller held a lock across
+    /// `memory::global_mut()` and has been restructured to release it first, so
+    /// the criterion above is met by nothing.  The method is kept as a
+    /// documented capability rather than deleted, because the TLB-shootdown
+    /// reason it exists for is real; reintroducing a caller means re-checking
+    /// that its critical section acquires the memory-manager lock, and on SMP
+    /// hardware, not just under emulation.
     pub fn lock_without_irq_disable(&self) -> SpinLockGuard<'_, T> {
         // Note: interrupts are NOT saved/disabled — the caller must ensure
         // it is safe to receive interrupts while holding this lock.

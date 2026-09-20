@@ -37,9 +37,27 @@ impl<T> Mutex<T> {
         }
     }
 
-    /// Acquire the mutex without disabling interrupts.
+    /// Try to acquire the mutex without waiting for it.
     ///
-    /// See [`SpinLock::lock_without_irq_disable`] for safety requirements.
+    /// Returns `None` when another thread holds the lock.  The interesting use
+    /// is asserting lock discipline: a test can check that a lock is *not* held
+    /// at a point where holding it would serialise unrelated work behind a slow
+    /// operation.
+    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+        Some(MutexGuard {
+            mutex: self,
+            inner: self.inner.try_lock()?,
+        })
+    }
+
+    /// Acquire the mutex without masking interrupts.
+    ///
+    /// This is a different lock discipline from [`lock`](Self::lock), and the
+    /// two cannot be mixed freely on one lock: a holder here is preemptible,
+    /// while a waiter using [`lock`](Self::lock) spins with interrupts masked
+    /// and can therefore wait forever on a uniprocessor.  See
+    /// [`SpinLock::lock_without_irq_disable`] for the full statement of the
+    /// hazard and the conditions under which this is acceptable.
     pub fn lock_without_irq_disable(&self) -> MutexGuard<'_, T> {
         MutexGuard {
             mutex: self,
