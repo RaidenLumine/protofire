@@ -17,6 +17,26 @@ pub fn init() {
     crate::arch::serial::init();
 }
 
+/// Serialises one formatted line onto the console.
+///
+/// Without it, concurrent `print!` calls from different CPUs interleave *at
+/// byte granularity*: the UART write loop takes no lock (see
+/// `SerialDevice::write_bytes`), and `_print` reaches it in two separate calls
+/// — the per-CPU prefix and then the message.  The result is text like
+/// `p[user  ] rust data: rotofire shell (user)`, where another CPU's prefix
+/// landed inside a word and a character was lost.
+///
+/// That is worse than untidy output.  The console is the only diagnostic
+/// channel this kernel has, and every log-based tool — including
+/// `scripts/check-smp-runtime.sh` — reads it.  A mangled line turns a healthy
+/// boot into a reported failure, which is exactly what happened twice before
+/// this lock existed.
+///
+/// Held across the serial write only.  The ring buffer and framebuffer writers
+/// that follow take their own locks, and nesting those under this one would
+/// invite a lock-order cycle for no gain to the console output itself.
+static CONSOLE_LOCK: crate::kernel::sync::Mutex<()> = crate::kernel::sync::Mutex::new(());
+
 /// Per-CPU log prefix for SMP systems, e.g. `"[cpu0] "`.
 /// Returns an empty string on single-CPU / non-bare-metal targets.
 fn cpu_log_prefix() -> &'static str {
@@ -39,7 +59,45 @@ fn cpu_log_prefix() -> &'static str {
     ""
 }
 
+/// Announce, once, that the console dropped bytes.
+///
+/// A transmitter that times out leaves no trace on its own: the UART is where
+/// the trace would go.  From the outside it looks like the machine stopped,
+/// which is the same thing a CPU stuck for an unrelated reason looks like —
+/// and that ambiguity is what let a stalled console write masquerade as a
+/// halted AP bring-up.
+///
+/// Reported lazily, from the layer *above* the UART: the first message that
+/// gets through afterwards carries the notice, so the count and the message it
+/// interrupted appear together.  Written through `arch::write_fmt` rather than
+/// `_print` so it cannot recurse back into this function.
+fn report_transmit_timeouts() {
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+
+    if REPORTED.load(Ordering::Relaxed) {
+        return;
+    }
+    let dropped = crate::arch::serial::transmit_timeout_count();
+    if dropped == 0 {
+        return;
+    }
+    REPORTED.store(true, Ordering::Relaxed);
+
+    let _ = crate::arch::write_fmt(format_args!(
+        "[uart  ] transmitter timed out {} time(s); {} byte(s) dropped. \
+         The console was not writable, so a log that stops here may be a \
+         stalled write rather than a stalled CPU.\n",
+        dropped, dropped
+    ));
+}
+
 pub fn _print(args: fmt::Arguments<'_>) {
+    // One line, one holder: the prefix and the message must reach the UART as
+    // a unit.
+    let _console = CONSOLE_LOCK.lock();
+
+    report_transmit_timeouts();
+
     // Prepend per-CPU prefix on SMP systems.
     let prefix = cpu_log_prefix();
     if !prefix.is_empty() {
@@ -78,6 +136,11 @@ impl fmt::Write for FbConsoleWriter {
 }
 
 pub fn write_bytes(bytes: &[u8]) {
+    // The same lock `_print` takes.  This path carries console and shell
+    // output, which does not go through `_print`, and both end up in the same
+    // UART — so they need the same lock or they interleave with each other.
+    let _console = CONSOLE_LOCK.lock();
+
     // Runtime debug output shares the serial device sink so `/system/dev/debug`
     // and `/system/dev/serial0` observe the same byte stream in tests and on
     // hardware.

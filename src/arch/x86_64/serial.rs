@@ -11,6 +11,36 @@ use super::port::Port;
 
 const COM1: u16 = 0x3F8;
 
+/// Bytes dropped because the transmitter never reported ready.
+///
+/// Counted rather than printed at the point of failure: this runs inside the
+/// console write path, so printing here would recurse.  A caller above the
+/// UART reads it and announces it once — see
+/// `util::debug::report_transmit_timeouts`.  Without that, a transmitter that
+/// times out is invisible: the symptom is a log that stops, which is
+/// indistinguishable from the CPU having stopped for an unrelated reason.
+static TRANSMIT_TIMEOUTS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Return how many bytes the console has dropped.
+pub fn transmit_timeout_count() -> u64 {
+    TRANSMIT_TIMEOUTS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// How long to wait for the UART's transmitter to report ready.
+///
+/// The wait is bounded on purpose.  This is the kernel's only diagnostic
+/// channel, and it runs on whatever CPU happens to be printing — including the
+/// BSP in the middle of bringing up an AP, with the other APs printing too.
+/// An unbounded wait here means a transmitter that never reports ready stops
+/// that CPU for good, and the log simply ends with no explanation: the last
+/// line is the one printed *before* the stuck write, so a stalled console
+/// looks exactly like a stall in the code between two prints.
+///
+/// Dropping the byte keeps the kernel running so the failure can be reported.
+/// The bound is generous — a working UART clears the bit within a few spins, so
+/// reaching it means something is wrong rather than merely slow.
+const TRANSMIT_READY_SPIN_LIMIT: u32 = 1_000_000;
+
 pub struct SerialPort {
     data: Port<u8>,
     interrupt_enable: Port<u8>,
@@ -61,7 +91,17 @@ impl SerialPort {
             self.init();
         }
 
-        while !self.can_transmit() {}
+        let mut spins: u32 = 0;
+        while !self.can_transmit() {
+            spins += 1;
+            if spins >= TRANSMIT_READY_SPIN_LIMIT {
+                // Give up on this byte rather than the machine.  See the note
+                // on `TRANSMIT_READY_SPIN_LIMIT`.
+                TRANSMIT_TIMEOUTS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+            core::hint::spin_loop();
+        }
 
         unsafe {
             self.data.write(byte);

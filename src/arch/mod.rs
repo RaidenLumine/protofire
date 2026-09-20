@@ -597,6 +597,23 @@ pub mod serial {
         let _ = message;
     }
 
+    /// Return how many bytes the console has dropped because the transmitter
+    /// never reported ready.
+    ///
+    /// Only the x86_64 UART polls a readiness bit, so every other target
+    /// reports zero and cannot drop bytes this way.
+    pub fn transmit_timeout_count() -> u64 {
+        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+        {
+            return super::x86_64::serial::transmit_timeout_count();
+        }
+
+        #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+        {
+            0
+        }
+    }
+
     /// Write a single byte to the serial port.
     ///
     /// # Parameters
