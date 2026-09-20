@@ -12,10 +12,14 @@ pub mod crypto;
 pub mod device;
 pub mod drivers;
 pub mod fs;
+// Only the bare-metal polling threads emit heartbeats.
+#[cfg(target_os = "none")]
+pub mod heartbeat;
 pub mod io;
 pub mod irq_balance;
 pub mod irq_stats;
 pub mod kernel_log;
+pub mod maintenance;
 pub mod memory;
 pub mod network;
 pub mod nmi;
@@ -515,6 +519,15 @@ impl Kernel {
             println!("[init  ] spawning demo threads...");
             self.spawn_system_programs();
         }
+        // Deferred maintenance gets its own thread on every boot, not just the
+        // demo one: the timer tick no longer performs the periodic write-back
+        // itself, so something has to.
+        #[cfg(target_os = "none")]
+        self.scheduler.spawn_kernel_named(
+            maintenance::MAINTENANCE_THREAD_NAME,
+            maintenance::maintenance_entry,
+        );
+
         println!("[init  ] starting idle process...");
         self.scheduler.start_idle_process();
 

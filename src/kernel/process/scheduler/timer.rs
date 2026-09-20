@@ -71,21 +71,23 @@ impl Scheduler {
         }
 
         // Persistent block cache: advance the dirty-block aging clock every
-        // tick, and periodically write back blocks that have aged past the
-        // threshold so dirty data reaches stable storage without an explicit
-        // fsync/sync.  Both are lock-free / best-effort and cheap.
+        // tick.  That is a single atomic add, so it belongs here.
         crate::kernel::fs::block_cache::advance_cache_tick();
+
+        // The periodic jobs below are only *requested* here.
+        //
+        // Writing back aged blocks and persisting the audit ring both take the
+        // global filesystem lock and touch a block device.  Doing that from the
+        // timer interrupt meant issuing disk I/O with interrupts masked, which
+        // stops the clock and everything scheduled from it for the length of a
+        // flush.  The maintenance thread performs the work instead; see
+        // `src/kernel/maintenance.rs`.
         if ticks.is_multiple_of(crate::kernel::fs::block_cache::WRITE_BACK_PERIOD_TICKS) {
-            let _ = crate::kernel::fs::sync_global_caches_aged(
-                crate::kernel::fs::block_cache::WRITE_BACK_AGE_TICKS,
-            );
+            crate::kernel::maintenance::request_block_cache_write_back();
         }
 
-        // Persist the audit ring buffer to the root filesystem when enabled.
-        // Bounded by a period so disk I/O is not issued every tick.  No-op
-        // (and zero-cost) while audit persistence is disabled.
         if ticks.is_multiple_of(crate::kernel::audit::persist::PERSIST_PERIOD_TICKS) {
-            crate::kernel::audit::persist::persist_to_file();
+            crate::kernel::maintenance::request_audit_persist();
         }
 
         // DHCP lease renewal — bare-metal only; there is no DHCP server in

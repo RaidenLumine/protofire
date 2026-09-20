@@ -3,13 +3,17 @@
 //! Optional audit-log persistence: drains the ring buffer to a file on the
 //! root filesystem.
 //!
-//! Persistence is opt-in (`set_persistence(true)`).  When enabled, a periodic
-//! maintenance path (the scheduler timer tick) calls [`persist_to_file`],
-//! which peeks a batch of records from the ring buffer, serializes them as
-//! text lines, appends them to the audit log file, syncs, and only then
+//! Persistence is opt-in (`set_persistence(true)`).  When enabled, the
+//! maintenance thread (`src/kernel/maintenance.rs`) calls [`persist_to_file`]
+//! on a period, which peeks a batch of records from the ring buffer, serializes
+//! them as text lines, appends them to the audit log file, syncs, and only then
 //! advances the ring consumer index — a failed write never drops records.
 //! If the root filesystem is not mounted the flush is skipped and the buffer
 //! keeps working in pure in-memory mode.
+//!
+//! The caller must be thread context.  This writes a file, so it takes the
+//! global filesystem lock and reaches a block device; the timer tick only sets
+//! a flag and never calls in here.
 
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;

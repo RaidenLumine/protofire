@@ -52,6 +52,7 @@ pub(crate) mod handle;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::ptr;
 use core::sync::atomic::AtomicPtr;
 use core::sync::atomic::Ordering;
@@ -154,16 +155,37 @@ pub fn global() -> Option<&'static Mutex<FileSystem>> {
     unsafe { fs.as_ref() }
 }
 
+/// Snapshot the mounted filesystems so the caller can flush them without
+/// holding the filesystem lock.
+///
+/// Flushing a mounted filesystem reaches its block device, and that can take
+/// as long as the device takes.  Holding the global filesystem lock across all
+/// of them serialises every other filesystem operation in the kernel behind
+/// the slowest disk, with interrupts masked; on an SMP machine every other CPU
+/// spins on the lock for that whole time.
+///
+/// Taking the `Arc`s first and releasing the lock fixes that without weakening
+/// anything: an `Arc` keeps the filesystem alive even if it is unmounted while
+/// the flush is in flight, and flushing a just-unmounted volume is harmless —
+/// it is the same blocks on the same device, and flushing them is the point.
+fn mounted_filesystems() -> Vec<Arc<dyn VfsTrait>> {
+    let Some(fs) = global() else {
+        return Vec::new();
+    };
+
+    fs.lock()
+        .mounted_fs
+        .values()
+        .map(|mount| mount.fs.clone())
+        .collect()
+}
+
 /// Flush every mounted filesystem's pending data and metadata to stable
 /// storage (POSIX `sync(2)`).  Best-effort when no global filesystem is
 /// installed (host test builds).
 pub fn sync_global_all() -> Result<()> {
-    let Some(fs) = global() else {
-        return Ok(());
-    };
-    let fs = fs.lock();
-    for mount in fs.mounted_fs.values() {
-        mount.fs.sync()?;
+    for filesystem in mounted_filesystems() {
+        filesystem.sync()?;
     }
     Ok(())
 }
@@ -171,12 +193,8 @@ pub fn sync_global_all() -> Result<()> {
 /// Flush every mounted filesystem's pending file data (POSIX `syncfs`-style
 /// data-only variant).  Best-effort when no global filesystem is installed.
 pub fn sync_global_data() -> Result<()> {
-    let Some(fs) = global() else {
-        return Ok(());
-    };
-    let fs = fs.lock();
-    for mount in fs.mounted_fs.values() {
-        mount.fs.sync_data()?;
+    for filesystem in mounted_filesystems() {
+        filesystem.sync_data()?;
     }
     Ok(())
 }
@@ -187,13 +205,9 @@ pub fn sync_global_data() -> Result<()> {
 /// Returns the total number of blocks written.  Best-effort when no global
 /// filesystem is installed (returns 0).
 pub fn sync_global_caches_aged(age_ticks: u64) -> Result<usize> {
-    let Some(fs) = global() else {
-        return Ok(0);
-    };
-    let fs = fs.lock();
     let mut total = 0_usize;
-    for mount in fs.mounted_fs.values() {
-        total += mount.fs.flush_aged(age_ticks)?;
+    for filesystem in mounted_filesystems() {
+        total += filesystem.flush_aged(age_ticks)?;
     }
     Ok(total)
 }
