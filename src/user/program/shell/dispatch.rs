@@ -349,19 +349,24 @@ fn spawn_ring3_utility(_cwd: &str, elf_path: &str, _argv: &[String]) -> CmdResul
             Some(fs) => fs,
             None => return CmdResult::error(1, "shell: filesystem not available\n".into()),
         };
-        let fs_guard = fs.lock_without_irq_disable();
-        let loaded =
-            match crate::user::program::loader::load_from_filesystem(&fs_guard, _cwd, elf_path) {
-                Ok(l) => l,
-                Err(e) => {
-                    drop(fs_guard);
-                    return CmdResult::error(
-                        126,
-                        alloc::format!("shell: cannot load `{}` — {:?}\n", elf_path, e),
-                    );
-                }
-            };
+        let fs_guard = fs.lock();
+        // Read the image under the lock; release it before the second phase,
+        // which calls `memory::global_mut()` and must not run with the
+        // filesystem lock held.
+        let image = crate::user::program::load_filesystem_image(&fs_guard, _cwd, elf_path);
         drop(fs_guard);
+
+        let loaded = match image.and_then(|(descriptor, image)| {
+            crate::user::program::finish_loading_program(descriptor, image)
+        }) {
+            Ok(l) => l,
+            Err(e) => {
+                return CmdResult::error(
+                    126,
+                    alloc::format!("shell: cannot load `{}` — {:?}\n", elf_path, e),
+                );
+            }
+        };
 
         let scheduler = match crate::kernel::process::Scheduler::global() {
             Some(s) => s,
@@ -412,16 +417,16 @@ fn try_spawn_external(cwd: &str, command: &str, _argv: &[String]) -> Option<CmdR
 
         // Load the ELF directly from the filesystem.
         let fs = crate::kernel::fs::global()?;
-        let fs_guard = fs.lock_without_irq_disable();
-        let loaded =
-            match crate::user::program::loader::load_from_filesystem(&fs_guard, cwd, &elf_path) {
-                Ok(l) => l,
-                Err(_) => {
-                    drop(fs_guard);
-                    return None;
-                }
-            };
+        let fs_guard = fs.lock();
+        // Same split as above: the image read is all that needs the lock.
+        let image = crate::user::program::load_filesystem_image(&fs_guard, cwd, &elf_path);
         drop(fs_guard);
+
+        let loaded = image
+            .and_then(|(descriptor, image)| {
+                crate::user::program::finish_loading_program(descriptor, image)
+            })
+            .ok()?;
 
         // Spawn as a user-mode process with guest privileges.
         let scheduler = crate::kernel::process::Scheduler::global()?;

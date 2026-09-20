@@ -912,10 +912,21 @@ impl Kernel {
     /// diagnostic and continues.
     #[cfg(target_os = "none")]
     fn spawn_init_program(&self, init_path: &str) {
-        let fs = self.fs.lock();
-        match program::load_from_filesystem(&fs, "/", init_path) {
+        // Hold the filesystem lock only for reading the image.  The second
+        // phase calls `memory::global_mut()`, and holding this lock across that
+        // is the cross-CPU hazard the note on
+        // `SpinLock::lock_without_irq_disable` describes: a TLB shootdown runs
+        // under the memory-manager lock, and this lock masks interrupts, so
+        // this CPU could not acknowledge one while waiting for that lock.
+        let image = {
+            let fs = self.fs.lock();
+            program::load_filesystem_image(&fs, "/", init_path)
+        };
+
+        match image
+            .and_then(|(descriptor, image)| program::finish_loading_program(descriptor, image))
+        {
             Ok(loaded) => {
-                drop(fs);
                 match program::launch_loaded_program_with_security_token(
                     &self.scheduler,
                     loaded,

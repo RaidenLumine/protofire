@@ -47,10 +47,13 @@ pub(super) struct InstalledAppReference<'a> {
 }
 
 /// Load an installed program in two phases so the filesystem lock is released
-/// before [`finish_loading_program`] calls `global_mut()`.  This prevents a
-/// cross-CPU deadlock: the filesystem `SpinLock` disables local interrupts,
-/// which would prevent the local CPU from acknowledging a TLB-shootdown IPI
-/// from another CPU that holds the memory-manager lock.
+/// before [`finish_loading_program`] calls `global_mut()`.
+///
+/// The split is load-bearing, not tidiness.  Holding the filesystem lock across
+/// `global_mut()` would mean acquiring the memory-manager lock with interrupts
+/// masked, and a TLB shootdown runs under that lock: another CPU could be
+/// waiting for an acknowledgement from this one while this one waits for the
+/// lock it is holding.  Released first, neither hazard applies.
 pub(crate) fn load_installed_catalog_split_phase(
     fs: &'static Mutex<FileSystem>,
     cwd: &str,
@@ -61,11 +64,12 @@ pub(crate) fn load_installed_catalog_split_phase(
     let allow_working_dir_override = overrides.working_dir.is_some();
 
     // ── Phase 1: resolve the launch reference and read the ELF image from
-    //    the filesystem.  Use lock_without_irq_disable so that interrupts
-    //    remain enabled — another CPU may hold the memory-manager lock and
-    //    need a TLB-shootdown IPI acknowledgment from us. ──
+    //    the filesystem.  The ordinary lock is correct here: this phase never
+    //    reaches `memory::global_mut()`, which is the only thing that would
+    //    make the interrupts-on discipline necessary.  See the note on
+    //    `SpinLock::lock_without_irq_disable`. ──
     let (catalog_path, descriptor, image) = {
-        let fs_guard = fs.lock_without_irq_disable();
+        let fs_guard = fs.lock();
         let resolved =
             resolve_installed_launch_reference(&fs_guard, &normalized_cwd, launch_reference)?;
         let (descriptor, image) = resolve_and_load_catalog_image_at_depth(
@@ -87,7 +91,7 @@ pub(crate) fn load_installed_catalog_split_phase(
 
     // ── Phase 3: validate the installed catalog (briefly re-lock fs). ──
     {
-        let fs_guard = fs.lock_without_irq_disable();
+        let fs_guard = fs.lock();
         validate_installed_catalog_launch_with_options(
             &fs_guard,
             &catalog_path,

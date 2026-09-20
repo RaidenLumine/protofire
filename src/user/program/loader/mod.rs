@@ -559,17 +559,32 @@ pub struct LaunchedProgram {
 
 // ── public load functions ─────────────────────────────────────────────
 
-pub fn load_from_filesystem(fs: &FileSystem, cwd: &str, path: &str) -> Result<LoadedProgram> {
+/// Phase 1 of [`load_from_filesystem`]: read the program image.
+///
+/// Split out so a caller can hold the filesystem lock for exactly this and no
+/// longer.  Phase 2 is [`finish_loading_program`], which calls
+/// `memory::global_mut()` and therefore must run with the filesystem lock
+/// released — see the two-phase load in `user/program/launch_reference.rs` for
+/// the same shape applied to catalog loads.
+pub(crate) fn load_filesystem_image(
+    fs: &FileSystem,
+    cwd: &str,
+    path: &str,
+) -> Result<(LoadedProgramDescriptor, Vec<u8>)> {
     let normalized_cwd = crate::kernel::fs::path::normalize_path(cwd, "/")?;
     let normalized_path = crate::kernel::fs::path::normalize_path(path, &normalized_cwd)?;
     let descriptor =
         LoadedProgramDescriptor::from_direct_filesystem_load(normalized_path, normalized_cwd);
     let image = read_program_image(fs, &descriptor.working_dir, &descriptor.path)?;
-    let runtime = descriptor.prepare_runtime(&image)?;
 
+    Ok((descriptor, image))
+}
+
+pub fn load_from_filesystem(fs: &FileSystem, cwd: &str, path: &str) -> Result<LoadedProgram> {
     // Direct filesystem loads have no catalog or manifest metadata, so the
     // loaded record carries only the resolved image path and minimal defaults.
-    Ok(descriptor.into_loaded_program(runtime))
+    let (descriptor, image) = load_filesystem_image(fs, cwd, path)?;
+    finish_loading_program(descriptor, image)
 }
 
 pub fn load_from_catalog(fs: &FileSystem, cwd: &str, catalog_path: &str) -> Result<LoadedProgram> {

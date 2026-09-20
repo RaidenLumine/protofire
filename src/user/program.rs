@@ -47,6 +47,13 @@ pub use self::catalog::LaunchManifest;
 pub use self::catalog::SpawnProcessOverrides;
 
 pub use self::loader::load_from_catalog;
+// Phase-split loading: callers inside the kernel use these to hold the
+// filesystem lock for the image read only.  Not part of the public surface.
+// Bare-metal only: the boot path and the shell are the consumers.
+#[cfg(target_os = "none")]
+pub(crate) use self::loader::finish_loading_program;
+#[cfg(target_os = "none")]
+pub(crate) use self::loader::load_filesystem_image;
 pub use self::loader::load_from_catalog_with_overrides;
 pub use self::loader::load_from_filesystem;
 pub use self::loader::plan_user_image_load;
