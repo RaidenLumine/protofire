@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 PROFILE="${PROFILE:-debug}"
 RUN_X86_64_RUNTIME="${RUN_X86_64_RUNTIME:-0}"
 RUN_AARCH64_RUNTIME="${RUN_AARCH64_RUNTIME:-0}"
+RUN_SMP_RUNTIME="${RUN_SMP_RUNTIME:-0}"
 VERIFY_TIER="${1:-${VERIFY_TIER:-p2}}"
 
 case "$PROFILE" in
@@ -128,14 +129,22 @@ run_p2() {
 }
 
 run_p3() {
-    # P3 is the release-grade gate: static analysis plus optional AArch64 QEMU runtime smoke.
-    # x86_64 runtime smoke is exercised manually via `make run`.
+    # P3 is the release-grade gate: static analysis plus optional QEMU runtime
+    # smoke.  The SMP smoke is the only check anywhere that boots more than one
+    # CPU, which is the only way the cross-CPU paths run at all; it stays
+    # opt-in because it is slow and needs QEMU.
     run_p2
     run_make_step "make clippy" clippy
     if [ "$RUN_AARCH64_RUNTIME" = "1" ]; then
         run_make_step "make check-aarch64-runtime" check-aarch64-runtime
     else
         printf '==> verify[%s]: skipping aarch64 runtime smoke (set RUN_AARCH64_RUNTIME=1 to enable)\n' \
+            "$VERIFY_TIER"
+    fi
+    if [ "$RUN_SMP_RUNTIME" = "1" ]; then
+        run_make_step "make check-smp-runtime" check-smp-runtime
+    else
+        printf '==> verify[%s]: skipping SMP runtime smoke (set RUN_SMP_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"
     fi
 }

@@ -8,6 +8,12 @@ CARGO_FLAGS ?= --offline
 CRATE ?= protofire
 PROFILE ?= debug
 TARGET_DIR ?= target
+# Guest CPUs for every QEMU run target.  One is the default because most of the
+# suite is single-CPU by design, but the kernel brings up APs and schedules on
+# them, so `make run-x8664 SMP=4` is how you exercise the SMP paths locally —
+# in particular the cross-CPU TLB-shootdown interactions that a single CPU
+# cannot reach at all.
+SMP ?= 1
 TARGET ?= x86_64-unknown-none
 
 ifeq ($(PROFILE),release)
@@ -210,6 +216,16 @@ check-aarch64-runtime:
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-aarch64-runtime.sh
 
+# Boot the kernel on several emulated CPUs and assert that the APs came up and
+# that it is still making progress afterwards.  Single-CPU runs cannot reach
+# the cross-CPU paths at all, so this is the only check that exercises them.
+check-smp-runtime:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		SMP_CPUS="$(SMP)" \
+		sh ./scripts/check-smp-runtime.sh
+
 # Kernel build targets.  Ring3 ELF payload wrappers are built in-kernel
 # (src/user/demo/); where the demo volume still needs a ring3 binary that no
 # longer exists, a small placeholder ELF is provided inline in
@@ -266,7 +282,7 @@ run-x8664: build-x8664-demo
 	qemu-system-x86_64 \
 		-machine q35 \
 		-cpu max \
-		-smp 1 \
+		-smp $(SMP) \
 		-m 1G \
 		-kernel "$(TARGET_DIR)/x86_64-unknown-none/$(PROFILE)/$(CRATE)" \
 		-display none \
@@ -284,7 +300,7 @@ run-x8664-headless: build-x8664
 	qemu-system-x86_64 \
 		-machine q35 \
 		-cpu max \
-		-smp 1 \
+		-smp $(SMP) \
 		-m 1G \
 		-kernel "$(TARGET_DIR)/x86_64-unknown-none/$(PROFILE)/$(CRATE)" \
 		-display none \
@@ -305,7 +321,7 @@ run-aarch64: build-aarch64-demo
 		-machine virt \
 		$(VIRT_FORCE_LEGACY) \
 		-cpu max \
-		-smp 1 \
+		-smp $(SMP) \
 		-m 1G \
 		-kernel "$(TARGET_DIR)/aarch64-unknown-none/$(PROFILE)/$(CRATE)" \
 		-display none \
@@ -326,7 +342,7 @@ run-riscv64: build-riscv64-demo
 		-machine virt \
 		$(VIRT_FORCE_LEGACY) \
 		-cpu rv64 \
-		-smp 1 \
+		-smp $(SMP) \
 		-m 1G \
 		-kernel "$(TARGET_DIR)/riscv64gc-unknown-none-elf/$(PROFILE)/$(CRATE)" \
 		-display none \
@@ -345,7 +361,7 @@ run-aarch64-headless: build-aarch64
 	qemu-system-aarch64 \
 		-machine virt \
 		-cpu max \
-		-smp 1 \
+		-smp $(SMP) \
 		-m 1G \
 		-kernel "$(TARGET_DIR)/aarch64-unknown-none/$(PROFILE)/$(CRATE)" \
 		-display none \
@@ -364,7 +380,7 @@ run-riscv64-headless: build-riscv64
 	qemu-system-riscv64 \
 		-machine virt \
 		-cpu rv64 \
-		-smp 1 \
+		-smp $(SMP) \
 		-m 1G \
 		-kernel "$(TARGET_DIR)/riscv64gc-unknown-none-elf/$(PROFILE)/$(CRATE)" \
 		-display none \

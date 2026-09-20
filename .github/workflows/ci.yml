@@ -8,6 +8,10 @@
 #                    bare-metal builds and (on x86_64) the host test suite, on
 #                    every supported host: Linux, Windows, Intel macOS and
 #                    Linux arm64 (see README -> Host requirements)
+#   smp-runtime    - boot the kernel on four emulated CPUs and check that it
+#                    comes up and keeps making progress.  Every other gate
+#                    runs on one CPU, where the cross-CPU paths cannot execute
+#                    at all.
 #   commit-message - the commit-msg hook over every PR commit
 
 name: ci
@@ -51,6 +55,54 @@ jobs:
         run: ${{ matrix.gate.command }}
         env:
           CARGO: cargo
+
+  smp-runtime:
+    # The only gate that starts the kernel more than once — and the only one
+    # that starts it on more than one CPU, which is the only way the AP
+    # bring-up and cross-CPU paths run.
+    #
+    # It uses the default accelerator: GitHub's runners may or may not expose
+    # /dev/kvm, and QEMU falls back to TCG, which is what this check wants
+    # anyway — emulated timing interleaves vCPUs genuinely without depending
+    # on the hardware underneath.
+    name: smp runtime (4 cpus)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "nightly-2026-08-24"
+          components: rustfmt, clippy, llvm-tools-preview
+          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+
+      - name: Boot on four CPUs
+        run: make check-smp-runtime SMP=4
+        env:
+          CARGO: cargo
+          SMP_RUNTIME_LOG: smp-runtime.log
+          # Deliberately the plain build.  The `liveness_heartbeat` build
+          # currently stalls during AP bring-up on some machines, which is a
+          # defect this job should not be mixed up with.
+          FEATURES: demo-disk
+
+      - name: Upload the serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smp-runtime-log
+          path: smp-runtime.log
+          if-no-files-found: ignore
 
   host-check:
     name: host (${{ matrix.os }})

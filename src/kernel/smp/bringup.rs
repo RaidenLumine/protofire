@@ -480,8 +480,18 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) -> bool {
     let stack_top = unsafe { stack.add(AP_STACK_SIZE) };
 
     // Allocate per-CPU data and a private TSS for this AP.
+    //
+    // Each step is announced before it runs.  This window has stalled on real
+    // hardware-replacement runs with the log ending on the line above, and the
+    // steps here are exactly the ones that touch shared state (the heap, the
+    // scheduler registries) while earlier APs are already running — so when it
+    // stalls again, the last marker names the step rather than leaving the
+    // question open.  Three lines per boot for a path that has produced a
+    // silent hang is a good trade.  See `docs` note on SMP bring-up.
+    crate::println!("[smp   ]   prepare: per-cpu data");
     let percpu = Box::new(crate::kernel::percpu::PerCpuData::zeroed());
     let percpu_ptr = Box::into_raw(percpu);
+    crate::println!("[smp   ]   prepare: ap task state segment");
     let ap_tss = Box::new(crate::arch::x86_64::gdt::TaskStateSegment::new());
     let ap_tss_ptr = Box::into_raw(ap_tss);
     unsafe {
@@ -503,6 +513,7 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) -> bool {
     unsafe {
         (*percpu_ptr).scheduler = ap_scheduler_ptr;
     }
+    crate::println!("[smp   ]   prepare: ap scheduler registered");
     unsafe {
         register_percpu_scheduler(cpu_id, ap_scheduler_ptr);
     }
@@ -524,8 +535,10 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) -> bool {
     unsafe {
         (*ap_scheduler_ptr).start_idle_process();
     }
+    crate::println!("[smp   ]   prepare: ap idle process started");
 
     // AP started flag.
+    crate::println!("[smp   ]   prepare: started flag");
     let started = Box::new(AtomicBool::new(false));
     let started_ptr = Box::into_raw(started);
 
