@@ -605,7 +605,7 @@ pub mod serial {
     pub fn transmit_timeout_count() -> u64 {
         #[cfg(all(target_arch = "x86_64", target_os = "none"))]
         {
-            return super::x86_64::serial::transmit_timeout_count();
+            super::x86_64::serial::transmit_timeout_count()
         }
 
         #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
