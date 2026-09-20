@@ -667,6 +667,21 @@ pub(crate) fn runtime_kernel_page_plan_impl(heap_bounds: (usize, usize)) -> Opti
         text_end
     };
 
+    // The kernel heap is a static array inside `.bss`, so the two ranges are
+    // nested by construction and `validate_heap_region` accepts exactly that —
+    // but only when the heap lies fully inside BSS.  The heap's bounds are
+    // rounded outward to page boundaries (see `MemoryManager::init_kernel_heap`)
+    // while the linker's `__bss_end` is not, so whenever the last BSS object
+    // happens to end less than a page before the heap's rounded end, the heap
+    // appears to poke out of BSS by a few hundred bytes and the entire plan is
+    // rejected.  Every user-program load then fails with `InvalidArgument`,
+    // which is what made this look like a loader bug.
+    //
+    // Rounding the BSS end out to a page fixes the containment.  BSS is the
+    // last image region, so this can only ever cover trailing padding, and the
+    // page is mapped read-write regardless — the heap already requires it.
+    let bss_end = page_align_up(core::ptr::addr_of!(__bss_end) as usize);
+
     KernelPagePlan::from_ranges(
         (core::ptr::addr_of!(__text_start) as usize, text_end_covered),
         linker_symbol_range(
@@ -677,12 +692,16 @@ pub(crate) fn runtime_kernel_page_plan_impl(heap_bounds: (usize, usize)) -> Opti
             core::ptr::addr_of!(__data_start),
             core::ptr::addr_of!(__data_end),
         ),
-        linker_symbol_range(
-            core::ptr::addr_of!(__bss_start),
-            core::ptr::addr_of!(__bss_end),
-        ),
+        (core::ptr::addr_of!(__bss_start) as usize, bss_end),
         heap_bounds,
     )
+}
+
+/// Round `address` up to the next page boundary.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+fn page_align_up(address: usize) -> usize {
+    let page_size = crate::kernel::memory::paging::PAGE_SIZE;
+    (address + page_size - 1) & !(page_size - 1)
 }
 
 #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
