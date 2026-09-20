@@ -173,7 +173,14 @@ pub(super) fn repair_volume(context: &mut SyscallContext) -> Result<SyscallDispa
         return Err(Error::InternalError);
     };
     let fs = fs_guard.lock();
-    let report = fs.check_and_repair_volume_normalized(&path)?;
+    // A volume check walks and repairs the whole volume, which is the longest
+    // single hold of the global filesystem lock reachable from a syscall.
+    // Measured separately from the ordinary syscall path so the two can be
+    // told apart in the report.
+    let report = crate::kernel::fs::lock_timing::measure(
+        crate::kernel::fs::lock_timing::LockScope::VolumeRepair,
+        || fs.check_and_repair_volume_normalized(&path),
+    )?;
     let raw = VolumeRepairReportRaw::from(report);
 
     // Write the report to user memory.

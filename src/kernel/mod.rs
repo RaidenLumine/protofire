@@ -326,8 +326,18 @@ impl Kernel {
         unsafe {
             fs::install_global_unchecked(&self.fs);
         }
-        let (tx_recovered, tx_repaired) = self.recover_install_management_state();
-        let (vol_checked, vol_repaired) = self.recover_volumes();
+        // Boot recovery walks and repairs every mounted volume while holding
+        // the global filesystem lock.  Measured as its own scope because it is
+        // a one-off whose cost is otherwise invisible in the syscall numbers.
+        let (tx_recovered, tx_repaired, vol_checked, vol_repaired) =
+            crate::kernel::fs::lock_timing::measure(
+                crate::kernel::fs::lock_timing::LockScope::BootRecovery,
+                || {
+                    let (tx_recovered, tx_repaired) = self.recover_install_management_state();
+                    let (vol_checked, vol_repaired) = self.recover_volumes();
+                    (tx_recovered, tx_repaired, vol_checked, vol_repaired)
+                },
+            );
         #[cfg(any(feature = "demo-disk", test))]
         self.log_demo_storage_sample();
         boot.set_recovery_summary(tx_recovered, tx_repaired, vol_checked, vol_repaired);

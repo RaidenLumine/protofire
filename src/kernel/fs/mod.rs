@@ -30,6 +30,7 @@ pub mod fat32;
 pub(crate) mod fuse;
 pub mod iso9660;
 pub mod layout;
+pub mod lock_timing;
 pub mod ntfs;
 pub mod partition;
 pub mod path;

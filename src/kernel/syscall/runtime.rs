@@ -77,9 +77,17 @@ where
 {
     // Keep syscall-side filesystem locking in one place so thin wrappers do
     // not each repeat `global_fs()?.lock()` boilerplate.
+    //
+    // This is also the one chokepoint every filesystem syscall passes through,
+    // which makes it the right place to measure how long a syscall holds the
+    // global lock.  The measurement is atomics only, so it cannot distort the
+    // interval it records.
     let fs = global_fs()?;
     let mut fs = fs.lock();
-    f(&mut fs)
+    crate::kernel::fs::lock_timing::measure(
+        crate::kernel::fs::lock_timing::LockScope::SyscallOperation,
+        || f(&mut fs),
+    )
 }
 
 pub(super) fn with_current_process_security_token_fs<F, T>(f: F) -> Result<T>
