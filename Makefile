@@ -170,6 +170,11 @@ test-parsers:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test parser_fuzz
 	@echo "Parser fuzz harnesses completed"
 
+test-service:
+	@echo "Running Service Registry and /service Filesystem Integration Tests..."
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test servicefs
+	@echo "Service filesystem tests completed"
+
 verify:
 	sh ./scripts/verify.sh "$${VERIFY_TIER:-p3}"
 

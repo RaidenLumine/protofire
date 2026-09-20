@@ -36,6 +36,7 @@ pub mod partition;
 pub mod path;
 pub mod pipe;
 pub mod procfs;
+pub mod servicefs;
 pub mod simplefs;
 pub mod squashfs;
 #[cfg(any(test, feature = "demo-disk"))]
@@ -96,6 +97,7 @@ pub(crate) const KERNEL_LOGS_MOUNT_DEVICE: &str = "/dev/protofire-kernel-logs";
 pub(crate) const KERNEL_LOGS_MOUNT_PATH: &str = "/system/logs";
 pub(crate) const PROCFS_MOUNT_PATH: &str = "/proc";
 pub(crate) const DEVFS_MOUNT_PATH: &str = "/dev";
+pub(crate) const SERVICEFS_MOUNT_PATH: &str = "/service";
 pub(crate) const TEMP_FS_NAME: &str = "simplefs-temp";
 pub(crate) const TEMP_MOUNT_DEVICE: &str = "/dev/protofire-temp";
 pub(crate) const TEMP_MOUNT_PATH: &str = "/tmp";

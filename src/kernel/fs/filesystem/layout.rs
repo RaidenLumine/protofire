@@ -34,6 +34,7 @@ use super::super::KERNEL_LOGS_FS_NAME;
 use super::super::KERNEL_LOGS_MOUNT_DEVICE;
 use super::super::KERNEL_LOGS_MOUNT_PATH;
 use super::super::PROCFS_MOUNT_PATH;
+use super::super::SERVICEFS_MOUNT_PATH;
 use super::super::TEMP_FS_NAME;
 use super::super::TEMP_MOUNT_DEVICE;
 use super::super::TEMP_MOUNT_PATH;
@@ -56,6 +57,7 @@ impl FileSystem {
         self.install_kernel_logs_layout();
         self.install_procfs_layout();
         self.install_devfs_layout();
+        self.install_servicefs_layout();
     }
 
     pub(crate) fn mount_zone(&mut self, zone: StorageZone) {
@@ -104,6 +106,16 @@ impl FileSystem {
     /// Register and mount devfs at `/dev`.
     pub(crate) fn install_devfs_layout(&mut self) {
         let _ = crate::kernel::fs::devfs::mount_devfs(DEVFS_MOUNT_PATH);
+    }
+
+    /// Register and mount servicefs at `/service`.
+    ///
+    /// Unlike the zones above, this mount has nothing to do with storage: it
+    /// is the read-only window onto the runtime service registry, and it is
+    /// mounted on every boot so that a service which fails to start has
+    /// somewhere to say so.
+    pub(crate) fn install_servicefs_layout(&mut self) {
+        let _ = crate::kernel::fs::servicefs::mount_servicefs(SERVICEFS_MOUNT_PATH);
     }
 
     /// Mount a memory-backed writable SimpleFs volume at `/tmp`.

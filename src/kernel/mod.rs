@@ -31,8 +31,9 @@ pub mod random;
 pub mod scheduler;
 // Service-definition parsing (`/system/rc.d/*.toml`) is only exercised by the
 // demo distribution's embedded default services; a pure kernel boot spawns
-// the distribution's `/system/init.elf` directly and never reads rc.d.
-#[cfg(any(feature = "demo-disk", test))]
+// the distribution's `/system/init.elf` directly and never reads rc.d.  The
+// module is still built unconditionally because its runtime registry backs the
+// `/service` filesystem, which every boot mounts.
 pub mod service;
 pub mod shm;
 pub mod smp;
@@ -41,6 +42,14 @@ pub mod sync;
 pub mod syscall;
 pub mod topology;
 pub mod user;
+
+// Only the demo-gated embedded-service helper builds a `ServiceDefinition`
+// by hand; the config-driven path takes ownership of already-allocated
+// strings from the parser.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+use alloc::string::String;
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+use alloc::vec::Vec;
 
 use crate::arch;
 use crate::println;
@@ -803,6 +812,11 @@ impl Kernel {
     /// the demo-disk builder also writes the rc.d config files.
     #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
     fn spawn_system_programs(&self) {
+        // Start the supervisor before any service, so a service that dies
+        // during boot is already someone's problem.
+        self.scheduler
+            .spawn_kernel_named(SERVICE_SUPERVISOR_NAME, service_supervisor_entry);
+
         // Try loading service definitions from the boot filesystem.
         let fs = self.fs.lock();
         let services = service::load_services_from_fs(&fs, service::SERVICE_CONFIG_DIR);
@@ -817,61 +831,140 @@ impl Kernel {
     }
 
     /// Spawn services from a parsed list of service definitions.
+    ///
+    /// Every service is registered before any of them runs, so a service that
+    /// fails to start still appears in `/service` next to the ones that did.
     #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
     fn spawn_service_list(&self, services: &[service::ServiceDefinition]) {
+        let now_tick = self.scheduler.current_tick();
         for svc in services {
-            match svc.kind {
-                service::ServiceKind::KernelThread => {
-                    if let Some(entry_name) = &svc.entry {
-                        if let Some(func) = resolve_worker(entry_name) {
-                            self.scheduler.spawn_kernel_named(&svc.name, func);
-                            println!("[service] kernel thread {} started", svc.name);
-                        } else {
-                            println!("[service] unknown worker entry: {}", entry_name);
-                        }
-                    }
-                }
-                service::ServiceKind::UserProgram => {
-                    if let Some(path) = &svc.path {
-                        println!("[service] spawning user program {} ({})", svc.name, path);
-                        self.spawn_demo_user_program(path);
-                    }
-                }
-            }
+            service::register(svc, now_tick);
+        }
+        for svc in services {
+            self.spawn_service(svc, now_tick, false);
         }
     }
 
+    /// Spawn one service and record the outcome in the registry.
+    ///
+    /// Delegates to [`spawn_service`], which the supervisor thread also uses,
+    /// so a boot-time spawn and a restart cannot drift apart in how they treat
+    /// the registry.  The difference is only in how a user program is started:
+    /// the boot path goes through [`Kernel::spawn_demo_user_program`], which
+    /// logs the loaded image, and the supervisor spawns quietly because the
+    /// image has already been described once.
+    #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+    fn spawn_service(
+        &self,
+        svc: &service::ServiceDefinition,
+        now_tick: u64,
+        restart: bool,
+    ) -> Option<u32> {
+        spawn_service(&self.scheduler, svc, now_tick, restart, |path| {
+            self.spawn_demo_user_program(path)
+                .map(|launched| launched.process.pid())
+        })
+    }
+
+    /// Register and spawn one embedded default service.
+    ///
+    /// The embedded defaults have no `/system/rc.d` declaration behind them, so
+    /// this synthesises one.  That keeps the record `/service` reports for them
+    /// the same shape as a config-driven service's, instead of the registry
+    /// having two kinds of entry.
+    #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+    fn spawn_embedded_service(
+        &self,
+        name: &str,
+        kind: service::ServiceKind,
+        target: &str,
+        auto_restart: bool,
+        now_tick: u64,
+    ) {
+        let is_user_program = matches!(kind, service::ServiceKind::UserProgram);
+        let definition = service::ServiceDefinition {
+            name: String::from(name),
+            kind,
+            path: is_user_program.then(|| String::from(target)),
+            entry: (!is_user_program).then(|| String::from(target)),
+            args: Vec::new(),
+            auto_restart,
+            security: service::ServiceSecurity::Guest,
+        };
+
+        service::register(&definition, now_tick);
+        self.spawn_service(&definition, now_tick, false);
+    }
+
     /// Embedded default services that match the previous hard-coded behaviour.
+    ///
     /// This is transitional — the distribution should provide
-    /// `/system/rc.d/defaults.toml` instead.
+    /// `/system/rc.d/defaults.toml` instead.  Every service here is registered
+    /// with `auto_restart = false`, for two reasons: the demo programs are
+    /// one-shot by design — the fault demos exist to crash — and the shell must
+    /// stay down once the user exits it, or `exit` would mean "come back in two
+    /// seconds".  Restarting is additionally broken today; see
+    /// [`service_supervisor_entry`].
     #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
     fn spawn_embedded_default_services(&self) {
-        self.scheduler
-            .spawn_kernel_named("kworker-a", demo_worker_a);
-        self.scheduler
-            .spawn_kernel_named("kworker-b", demo_worker_b);
-        self.scheduler
-            .spawn_kernel_named("kworker-syscall-fs", demo_syscall_fs_worker);
+        let now_tick = self.scheduler.current_tick();
+
+        for (name, entry) in [
+            ("kworker-a", "demo_worker_a"),
+            ("kworker-b", "demo_worker_b"),
+            ("kworker-syscall-fs", "demo_syscall_fs_worker"),
+        ] {
+            self.spawn_embedded_service(
+                name,
+                service::ServiceKind::KernelThread,
+                entry,
+                false,
+                now_tick,
+            );
+        }
 
         println!(
             "[init  ] spawning shell ({})...",
             program::SHELL_CURRENT_PATH
         );
-        self.spawn_demo_user_program(program::SHELL_CURRENT_PATH);
+        self.spawn_embedded_service(
+            "shell",
+            service::ServiceKind::UserProgram,
+            program::SHELL_CURRENT_PATH,
+            false,
+            now_tick,
+        );
         println!("[init  ] shell spawn complete");
 
         #[cfg(target_arch = "x86_64")]
         {
-            for launch_reference in [
-                program::DEMO_RUST_IO_CURRENT_PATH,
-                program::DEMO_CURRENT_PATH,
-                program::DEMO_FAULT_CURRENT_PATH,
-                program::DEMO_INVALID_OPCODE_CURRENT_PATH,
-                program::DEMO_GENERAL_PROTECTION_CURRENT_PATH,
-                program::DEMO_ONE_SHOT_PAGE_FAULT_CURRENT_PATH,
-                program::DEMO_NESTED_PAGE_FAULT_CURRENT_PATH,
+            // `demo-fault` is the only embedded service that asks to be
+            // restarted.  It crashes on purpose, which is exactly the case the
+            // supervisor exists for: it should come back, run out of its
+            // restart budget, and end up `abandoned` in
+            // `/service/demo-launcher-fault/state`.
+            //
+            // Keeping one service on the restart path means every stock boot
+            // exercises the whole supervision loop — detect, restart, exhaust
+            // the budget, abandon — on real hardware, which is the only
+            // coverage runtime respawn has.  It found a uniprocessor wedge
+            // once already; see the note on `service_supervisor_entry`.
+            for (launch_reference, auto_restart) in [
+                (program::DEMO_RUST_IO_CURRENT_PATH, false),
+                (program::DEMO_CURRENT_PATH, false),
+                (program::DEMO_FAULT_CURRENT_PATH, true),
+                (program::DEMO_INVALID_OPCODE_CURRENT_PATH, false),
+                (program::DEMO_GENERAL_PROTECTION_CURRENT_PATH, false),
+                (program::DEMO_ONE_SHOT_PAGE_FAULT_CURRENT_PATH, false),
+                (program::DEMO_NESTED_PAGE_FAULT_CURRENT_PATH, false),
             ] {
-                self.spawn_demo_user_program(launch_reference);
+                self.spawn_embedded_service(
+                    &service_name_for_program(launch_reference),
+                    service::ServiceKind::UserProgram,
+                    launch_reference,
+                    auto_restart,
+                    now_tick,
+                );
             }
         }
 
@@ -890,7 +983,13 @@ impl Kernel {
                 );
             }
             for launch_reference in [program::DEMO_CURRENT_PATH, program::DEMO_RUST_CURRENT_PATH] {
-                self.spawn_demo_user_program(launch_reference);
+                self.spawn_embedded_service(
+                    &service_name_for_program(launch_reference),
+                    service::ServiceKind::UserProgram,
+                    launch_reference,
+                    false,
+                    now_tick,
+                );
             }
         }
 
@@ -909,7 +1008,13 @@ impl Kernel {
                 );
             }
             for launch_reference in [program::DEMO_CURRENT_PATH] {
-                self.spawn_demo_user_program(launch_reference);
+                self.spawn_embedded_service(
+                    &service_name_for_program(launch_reference),
+                    service::ServiceKind::UserProgram,
+                    launch_reference,
+                    false,
+                    now_tick,
+                );
             }
         }
 
@@ -1477,6 +1582,203 @@ fn transaction_log_entry_kind_label(kind: fs::NodeKind) -> &'static str {
 // Maps worker entry names (from service config files) to kernel thread
 // entry-point functions.  Extended by the distribution when it needs
 // additional kernel worker threads.
+
+/// Derive a service name from a program path.
+///
+/// `/system/demo-fault.elf` becomes `demo-fault` and
+/// `/apps/current/shell.toml` becomes `shell`.  A service name is one path
+/// component in `/service`, so it cannot contain a slash, and neither the
+/// directory nor the extension carries information the registry does not
+/// already hold — the full path is still in `/service/<name>/describe`.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+fn service_name_for_program(path: &str) -> String {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    let stem = match file.rsplit_once('.') {
+        // A leading dot names a hidden file rather than an extension, so
+        // `.profile` keeps its name.
+        Some((stem, _extension)) if !stem.is_empty() => stem,
+        _ => file,
+    };
+    String::from(stem)
+}
+
+/// How often the supervisor thread wakes up, in scheduler ticks.
+///
+/// This bounds the delay between a service dying and the system noticing.  A
+/// quarter of a second is well inside human perception for a service that is
+/// down, and the supervisor sleeps between passes, so the interval costs
+/// nothing when nothing has failed.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+const SERVICE_SUPERVISOR_POLL_TICKS: u64 = 25;
+
+/// Name of the kernel thread that supervises services.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+const SERVICE_SUPERVISOR_NAME: &str = "service-supervisor";
+
+/// Spawn one service and record the outcome in the registry.
+///
+/// Returns the new instance's PID, or `None` when the service could not be
+/// started — in which case the registry already holds the reason, so
+/// `/service/<name>/describe` can still answer for a boot log that has
+/// scrolled away.
+///
+/// `restart` says whether this spawn is a supervisor retry.  It only changes
+/// the bookkeeping: the attempt is charged against the restart budget before
+/// the spawn is attempted, so a service whose program can never be loaded is
+/// retired instead of retried forever.
+///
+/// `launch_user_program` is how a user-program service is started.  It is a
+/// parameter rather than a call so that this function stays independent of
+/// `Kernel`, which is what lets the supervisor thread — a plain `fn()` with no
+/// access to the kernel object — share the implementation.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+fn spawn_service(
+    scheduler: &Scheduler,
+    svc: &service::ServiceDefinition,
+    now_tick: u64,
+    restart: bool,
+    launch_user_program: impl FnOnce(&str) -> Option<u32>,
+) -> Option<u32> {
+    if restart {
+        service::note_restart_attempt(&svc.name, now_tick);
+    }
+
+    let pid = match svc.kind {
+        service::ServiceKind::KernelThread => {
+            let entry_name = svc.entry.as_deref().unwrap_or("");
+            match resolve_worker(entry_name) {
+                Some(func) => {
+                    println!("[service] kernel thread {} started", svc.name);
+                    Some(scheduler.spawn_kernel_named(&svc.name, func).pid())
+                }
+                None => {
+                    println!("[service] unknown worker entry: {}", entry_name);
+                    service::mark_failed(&svc.name, "unknown worker entry", now_tick);
+                    None
+                }
+            }
+        }
+        service::ServiceKind::UserProgram => match svc.path.as_deref() {
+            Some(path) => {
+                println!("[service] spawning user program {} ({})", svc.name, path);
+                match launch_user_program(path) {
+                    Some(pid) => Some(pid),
+                    None => {
+                        service::mark_failed(&svc.name, "user program failed to load", now_tick);
+                        None
+                    }
+                }
+            }
+            None => {
+                println!("[service] {} declares no program path", svc.name);
+                service::mark_failed(&svc.name, "no program path declared", now_tick);
+                None
+            }
+        },
+    };
+
+    if let Some(pid) = pid {
+        service::mark_running(&svc.name, Some(pid), now_tick);
+    }
+    pid
+}
+
+/// The service supervisor.
+///
+/// This runs as a sleeping kernel thread rather than from the idle loop.  The
+/// idle thread is only chosen when nothing else is runnable, so a single
+/// userspace process that never blocks — a shell polling the console, a
+/// spinning worker — can keep supervision from running at all.  Sleeping on
+/// the scheduler's own wait queue makes the supervisor an ordinary thread that
+/// is guaranteed a turn, and costs nothing between passes.
+///
+/// # Runtime respawn
+///
+/// This is the kernel's first caller that spawns a process from an
+/// already-scheduled thread, rather than from the boot thread before
+/// `Kernel::run`.  That turned out to expose a latent uniprocessor wedge, and
+/// the reason is worth keeping written down because `auto_restart` now
+/// exercises it on every boot.
+///
+/// The symptom was a machine that went completely silent: no output, no timer,
+/// no progress, at the `processes.lock()` inside
+/// `Scheduler::register_spawned_thread`.  The cause was a lock-discipline
+/// mismatch.  `kernel::sync::Mutex` is a `SpinLock`, which masks interrupts for
+/// its whole critical section, but the memory manager's own lock did not.  So:
+///
+/// 1. A thread took the memory-manager lock and was preempted by the timer,
+///    which was permitted because interrupts were never masked.
+/// 2. The supervisor took `processes.lock()` — masking interrupts — and inside
+///    it grew a `Vec`, reached the heap allocator, and called into the memory
+///    manager.
+/// 3. The supervisor then spun on the memory-manager lock with interrupts
+///    masked.  The holder could only be rescheduled by the timer, and the timer
+///    needed interrupts.  Neither side could move again.
+///
+/// With one thread and no preemption this was unreachable, which is why every
+/// boot-time spawn had always worked.  The fix is the one this file's history
+/// points at: keep both lock families on the same discipline, so a holder is
+/// never preemptible.  See `MEMORY_MANAGER_LOCK` in
+/// `src/kernel/memory/global.rs`.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+fn service_supervisor_entry() {
+    let mut passes: u64 = 0;
+    loop {
+        process::sleep_current(SERVICE_SUPERVISOR_POLL_TICKS);
+        passes += 1;
+
+        let Some(scheduler) = Scheduler::global() else {
+            continue;
+        };
+        let now_tick = scheduler.current_tick();
+
+        // The second of two independent heartbeats; see
+        // `kernel::heartbeat` for what the pair distinguishes.
+        heartbeat::beat("supervisor", passes, now_tick);
+
+        // Compute the whole plan before acting on any of it: restarting
+        // re-enters the scheduler and the filesystem, and doing that while
+        // holding the registry lock would deadlock against the next
+        // `/service` read.
+        let steps = service::plan_supervision(now_tick, |pid| {
+            scheduler
+                .process_by_pid(pid)
+                .is_some_and(|process| process.state() != process::ProcessState::Terminated)
+        });
+
+        for step in steps {
+            match step.action {
+                service::SupervisionAction::Restart => {
+                    let Some(record) = service::record(&step.name) else {
+                        continue;
+                    };
+                    println!(
+                        "[service] restarting {} (attempt {})",
+                        step.name,
+                        record.restarts.saturating_add(1)
+                    );
+                    spawn_service(scheduler, &record.definition, now_tick, true, |path| {
+                        program::spawn_from_global(scheduler, path)
+                            .ok()
+                            .map(|launched| launched.process.pid())
+                    });
+                }
+                service::SupervisionAction::Abandon => {
+                    println!(
+                        "[service] abandoning {} after its restart budget",
+                        step.name
+                    );
+                    service::mark_abandoned(&step.name, "restart budget exhausted", now_tick);
+                }
+                service::SupervisionAction::LeaveStopped => {
+                    println!("[service] {} stopped", step.name);
+                    service::mark_stopped(&step.name, "process exited", now_tick);
+                }
+                service::SupervisionAction::WaitForBackoff => {}
+            }
+        }
+    }
+}
 
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 struct WorkerEntry {
