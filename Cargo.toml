@@ -115,6 +115,7 @@ demo-disk = []
 # own bridge in src/user/program/shell/syscall_bridge.rs.
 runtime = []
 fs_profiler = []
+heap_audit = []
 net_profiler = []
 alloc_profiler = []
 fault_profiler = []

@@ -161,15 +161,25 @@ pub(crate) unsafe fn block_set_prev_phys_of_next(block: usize, new_prev: usize) 
     if next < heap_end {
         #[cfg(debug_assertions)]
         {
-            debug_assert!(
-                next.is_multiple_of(HEAP_BLOCK_ALIGNMENT),
-                "block_set_prev_phys_of_next: next=0x{next:x} not aligned; block=0x{block:x} size={size}"
-            );
+            // Report only on failure.  `debug_assert!` cannot run a statement,
+            // and this is a hot path — a diagnostic called on every block
+            // coalesce would print, and printing allocates, and allocating
+            // feeds more heap operations.
+            if !next.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+                report_heap_trace();
+                panic!(
+                    "block_set_prev_phys_of_next: next=0x{next:x} not aligned; \
+                     block=0x{block:x} size={size}"
+                );
+            }
             let write_addr = next.checked_add(8).expect("prev_phys write overflow");
-            debug_assert!(
-                write_addr <= heap_end,
-                "block_set_prev_phys_of_next: write at 0x{write_addr:x} beyond heap_end 0x{heap_end:x}; block=0x{block:x} size={size}"
-            );
+            if write_addr > heap_end {
+                report_heap_trace();
+                panic!(
+                    "block_set_prev_phys_of_next: write at 0x{write_addr:x} beyond \
+                     heap_end 0x{heap_end:x}; block=0x{block:x} size={size}"
+                );
+            }
         }
         block_set_prev_phys(next, new_prev);
     }
@@ -214,6 +224,392 @@ pub(crate) fn list_index(fl: usize, sl: usize) -> usize {
     (fl - FL_MIN) * SL_COUNT + sl
 }
 
+/// Print the blocks the walk passed through on its way to a defect.
+///
+/// A defect address alone cannot distinguish "this header was overwritten"
+/// from "the walk arrived here by the wrong route", and the two have opposite
+/// causes: the first is a bad write, the second is a bad size somewhere
+/// earlier.  The route makes that decidable.
+#[cfg(feature = "heap_audit")]
+unsafe fn report_walk_route(state: &AllocatorState, defect_address: usize) {
+    // Only the tail of the route is printed.  A heap has thousands of blocks;
+    // what matters is the handful just before the walk's step went wrong, not
+    // the first sixty from the start.
+    const TAIL: usize = 8;
+    let mut tail = [(0_usize, 0_usize, false, 0_usize); TAIL];
+    let mut seen = 0_usize;
+    let mut stopped_early = false;
+
+    let mut block = state.start;
+    let mut steps = 0_usize;
+
+    while block < state.end && steps < 1_000_000 {
+        let size = block_size(block);
+        let used = block_is_used(block);
+        tail[seen % TAIL] = (block, size, used, block_prev_phys(block));
+        seen += 1;
+
+        if size < MIN_FREE_BLOCK || !size.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+            stopped_early = true;
+            break;
+        }
+        if block >= defect_address {
+            break;
+        }
+        block = block.wrapping_add(size);
+        steps += 1;
+    }
+
+    crate::println!(
+        "[heap  ] walk route into the defect ({} blocks walked{}):",
+        steps,
+        if stopped_early {
+            ", stopped on an invalid size"
+        } else {
+            ""
+        }
+    );
+
+    let shown = seen.min(TAIL);
+    for offset in 0..shown {
+        let (address, size, used, prev) = tail[(seen - shown + offset) % TAIL];
+        let marker = if address == defect_address { " <-" } else { "" };
+        crate::println!(
+            "[heap  ]   0x{:x} size={} {} prev_phys=0x{:x}{}",
+            address,
+            size,
+            if used { "used" } else { "free" },
+            prev,
+            marker
+        );
+    }
+}
+
+/// Report a detected heap problem: the first damage a full walk finds, then
+/// the recent operation history.
+///
+/// The allocator's own checks fire wherever a free-list traversal happens to
+/// land, which is often not where the damage is.  Walking the physical block
+/// list first pins the earliest bad block instead, and the trace then says what
+/// touched nearby memory last.  Both only run on a path that is already
+/// failing, so the cost is irrelevant; neither is worth running per operation,
+/// which is why this is not wired into the ordinary allocate/free path.
+pub(crate) unsafe fn report_heap_damage(state: &AllocatorState, caller: &str) {
+    match check_invariants(state) {
+        Ok(()) => {
+            crate::println!(
+                "[heap  ] {}: block list walks clean; damage is not visible from the start",
+                caller
+            );
+        }
+        Err(defect) => {
+            crate::println!(
+                "[heap  ] {}: first damage at 0x{:x}: {}",
+                caller,
+                defect.address,
+                defect.reason
+            );
+        }
+    }
+    report_heap_trace();
+}
+
+// ─── Post-operation audit ─────────────────────────────────────────────────
+
+/// Set while a damage report is being printed.
+///
+/// Printing allocates, and the heap it would allocate from is the one that is
+/// damaged — so an unguarded report re-enters the audit, which reports, which
+/// allocates, and the output runs away.  While this is set the audit stays
+/// quiet so the report can finish and the panic can happen.
+#[cfg(feature = "heap_audit")]
+static HEAP_AUDIT_REPORTING: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Walk the whole heap after one operation, and stop at the operation that
+/// damaged it.
+///
+/// With the walk only running where a free-list traversal happens to pass,
+/// damage is reported long after the write that caused it and from an unrelated
+/// place.  Auditing after every operation pins it to the operation itself,
+/// which — together with [`report_heap_damage`]'s history — names the culprit.
+///
+/// This is `O(blocks)` per operation and exists only under the `heap_audit`
+/// feature: it is a diagnostic build, not something to ship.
+#[cfg(feature = "heap_audit")]
+pub(crate) unsafe fn audit_after_operation(state: &AllocatorState, operation: &str) {
+    use core::sync::atomic::Ordering;
+
+    if HEAP_AUDIT_REPORTING.load(Ordering::Acquire) {
+        return;
+    }
+    let Err(defect) = check_invariants(state) else {
+        return;
+    };
+
+    HEAP_AUDIT_REPORTING.store(true, Ordering::Release);
+    crate::println!(
+        "[heap  ] damage first seen after {}: 0x{:x}: {}",
+        operation,
+        defect.address,
+        defect.reason
+    );
+
+    report_walk_route(state, defect.address);
+
+    // Raw words around the defect.  With the operation named, the remaining
+    // question is what the damaged header actually holds — a stale pointer, a
+    // payload value, or zero — and that is only visible in the bytes.
+    // Wide enough to include the block *before* the one the walk choked on:
+    // the question is whether that block's size word agrees with the boundary
+    // its successor records.
+    let window_start = defect
+        .address
+        .saturating_sub(8 * core::mem::size_of::<usize>());
+    for offset in 0..14 {
+        let address = window_start + offset * core::mem::size_of::<usize>();
+        if address < state.start || address + core::mem::size_of::<usize>() > state.end {
+            continue;
+        }
+        let word = (address as *const usize).read();
+        let marker = if address == defect.address { " <-" } else { "" };
+        crate::println!("[heap  ]   0x{:x}: 0x{:016x}{}", address, word, marker);
+    }
+
+    report_heap_trace();
+    panic!("heap audit: block list damaged by {}", operation);
+}
+
+// ─── Structural invariant checking ────────────────────────────────────────
+
+/// Bytes reserved at the end of every allocation for a canary word.
+///
+/// A block header sits immediately before the next block's payload, so an
+/// allocation that writes past its own bytes damages the *next* block's
+/// header — the shape of every corruption this heap has produced.  The canary
+/// is the first thing such an overrun meets, and it is checked when the
+/// offending allocation is freed, which attributes the damage to a specific
+/// pointer instead of leaving a free-list walk to trip over it later.
+pub(crate) const CANARY_SIZE: usize = 8;
+
+/// Value written into the canary slot.
+///
+/// Any fixed value can in principle be reproduced by a wild write, but the
+/// point is to catch overruns, which write *data*, not this word.
+const CANARY_VALUE: usize = 0xC0DE_C0DE_C0DE_C0DE;
+
+/// Write the canary into the last word of the block starting at `block_start`.
+///
+/// The request is inflated by `CANARY_SIZE` when the block is carved, so this
+/// word is always inside the block and never inside the caller's bytes.  It
+/// sits at the block end rather than immediately after the payload: an earlier
+/// attempt to place it at `payload + requested_size` broke the allocator's size
+/// accounting whenever the payload was pushed forward by an alignment larger
+/// than the block alignment, and
+/// `tlsf_random_alloc_free_sequence_matches_model` caught it.  See the note on
+/// [`canary_check`].
+pub(crate) unsafe fn canary_write(block_start: usize) {
+    let size = block_size(block_start);
+    let canary = block_start.wrapping_add(size).wrapping_sub(CANARY_SIZE);
+    (canary as *mut usize).write(CANARY_VALUE);
+}
+
+/// Verify the canary of the block starting at `block_start`.
+///
+/// Returns a defect rather than panicking so callers — and tests — can decide
+/// what to do.  The free path treats it as fatal, because continuing with a
+/// damaged heap turns a located fault into arbitrary misbehaviour.
+///
+/// # Coverage
+///
+/// This catches an overrun that reaches the last word of the block, which is
+/// the shape every corruption here has had: the next block's header sits at
+/// exactly that address.  It does *not* catch an overrun that stays inside the
+/// alignment padding — up to fifteen bytes between the caller's last byte and
+/// the block end.  Closing that gap needs the canary placed at
+/// `payload + requested_size`, which needs the requested size on the free path;
+/// the placement above is what the suite verifies.
+pub(crate) unsafe fn canary_check(block_start: usize) -> Result<(), HeapDefect> {
+    let size = block_size(block_start);
+    if size < CANARY_SIZE {
+        return Err(HeapDefect {
+            address: block_start,
+            reason: "block is smaller than the canary it must hold",
+        });
+    }
+
+    let canary = block_start.wrapping_add(size).wrapping_sub(CANARY_SIZE);
+    let found = (canary as *const usize).read();
+    if found != CANARY_VALUE {
+        return Err(HeapDefect {
+            address: block_start,
+            reason: "canary overwritten: an allocation wrote past its own bytes",
+        });
+    }
+
+    Ok(())
+}
+
+/// A structural defect found by [`check_invariants`].
+///
+/// Carries the address the walk was examining, because the defect often shows
+/// up one block *after* the write that caused it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HeapDefect {
+    pub(crate) address: usize,
+    pub(crate) reason: &'static str,
+}
+
+/// Walk the whole heap and check that the block list is well formed.
+///
+/// The allocator's existing checks fire when a *free-list walk* happens to
+/// reach a damaged block, which makes detection a matter of luck: a corrupt
+/// header that no traversal happens to touch goes unnoticed, and one that is
+/// touched is reported far from the write that caused it.  This walks the
+/// physical block list instead, so the same defect is found by any call and at
+/// the earliest block the walk reaches.
+///
+/// The invariants are the ones the allocator maintains by construction:
+///
+/// 1. Every block starts on an alignment boundary.
+/// 2. Every block is at least [`MIN_FREE_BLOCK`] bytes.
+/// 3. Every block ends inside the heap, and the walk lands exactly on `end`.
+/// 4. A block's `prev_phys` field points at the block before it, which is the
+///    boundary-tag pairing that coalescing depends on.
+pub(crate) unsafe fn check_invariants(state: &AllocatorState) -> Result<(), HeapDefect> {
+    if state.start == 0 || state.end <= state.start {
+        return Err(HeapDefect {
+            address: state.start,
+            reason: "heap bounds are not initialised",
+        });
+    }
+
+    let mut block = state.start;
+    let mut previous: Option<usize> = None;
+
+    while block < state.end {
+        if !block.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+            return Err(HeapDefect {
+                address: block,
+                reason: "block is not aligned",
+            });
+        }
+
+        let size = block_size(block);
+        if size < MIN_FREE_BLOCK {
+            return Err(HeapDefect {
+                address: block,
+                reason: "block size is below the minimum free block size",
+            });
+        }
+        if !size.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+            return Err(HeapDefect {
+                address: block,
+                reason: "block size is not a multiple of the block alignment",
+            });
+        }
+
+        let next = block.wrapping_add(size);
+        if next > state.end {
+            return Err(HeapDefect {
+                address: block,
+                reason: "block extends past the end of the heap",
+            });
+        }
+
+        // The boundary tag: this block's successor records this block as its
+        // physical predecessor.  A mismatch means one of the two headers was
+        // overwritten.
+        if next < state.end {
+            let recorded_prev = block_prev_phys(next);
+            if recorded_prev != block {
+                return Err(HeapDefect {
+                    address: next,
+                    reason: "prev_phys does not point at the preceding block",
+                });
+            }
+        }
+
+        if let Some(previous) = previous {
+            if block_prev_phys(block) != previous {
+                return Err(HeapDefect {
+                    address: block,
+                    reason: "prev_phys does not point at the preceding block",
+                });
+            }
+        }
+
+        previous = Some(block);
+        block = next;
+    }
+
+    if block != state.end {
+        return Err(HeapDefect {
+            address: block,
+            reason: "block walk did not land on the end of the heap",
+        });
+    }
+
+    Ok(())
+}
+
+// ─── Recent-operation trace ───────────────────────────────────────────────
+
+/// How many recent heap operations are remembered for post-mortem reporting.
+pub(crate) const HEAP_TRACE_DEPTH: usize = 32;
+
+/// Recent operations: an address with an operation tag in the low bits.
+///
+/// Blocks are `HEAP_BLOCK_ALIGNMENT`-aligned, so an address's low bits are
+/// always free and the tag needs no packing scheme.
+static HEAP_TRACE: [core::sync::atomic::AtomicUsize; HEAP_TRACE_DEPTH] =
+    [const { core::sync::atomic::AtomicUsize::new(0) }; HEAP_TRACE_DEPTH];
+static HEAP_TRACE_CURSOR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Operation tags, small enough for the alignment gap.
+pub(crate) const TRACE_ALLOC: usize = 1;
+pub(crate) const TRACE_DEALLOC: usize = 2;
+const TRACE_TAG_MASK: usize = 0xF;
+
+/// Record a heap operation.
+///
+/// Called from inside the allocator's own critical section, where interrupts
+/// are masked, so relaxed atomics suffice: this cannot race with itself on one
+/// CPU, and it must not take a lock of its own.
+pub(crate) fn record_heap_trace(tag: usize, address: usize) {
+    let slot =
+        HEAP_TRACE_CURSOR.fetch_add(1, core::sync::atomic::Ordering::Relaxed) % HEAP_TRACE_DEPTH;
+    HEAP_TRACE[slot].store(
+        (address & !TRACE_TAG_MASK) | (tag & TRACE_TAG_MASK),
+        core::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// Print the most recent heap operations, oldest first.
+///
+/// This answers "who touched this memory last" without a debugger, because the
+/// corruption it exists for is a race that does not reproduce on demand.
+/// Called from every validation failure, before the panic.
+pub(crate) fn report_heap_trace() {
+    let cursor = HEAP_TRACE_CURSOR.load(core::sync::atomic::Ordering::Relaxed);
+    let depth = cursor.min(HEAP_TRACE_DEPTH);
+    crate::println!("[heap  ] last {} heap operations (oldest first):", depth);
+
+    for offset in 0..depth {
+        let index = (cursor + HEAP_TRACE_DEPTH - depth + offset) % HEAP_TRACE_DEPTH;
+        let entry = HEAP_TRACE[index].load(core::sync::atomic::Ordering::Relaxed);
+        if entry == 0 {
+            continue;
+        }
+        let name = match entry & TRACE_TAG_MASK {
+            TRACE_ALLOC => "alloc  ",
+            TRACE_DEALLOC => "dealloc",
+            _ => "unknown",
+        };
+        crate::println!("[heap  ]   {} 0x{:x}", name, entry & !TRACE_TAG_MASK);
+    }
+}
+
 /// Debug-only validation: check that a block looks sane before touching its
 /// free-list linkage.  Returns the (fl, sl) mapping if valid.
 #[cfg(debug_assertions)]
@@ -223,23 +619,28 @@ pub(crate) unsafe fn validate_block(
     caller: &str,
 ) -> (usize, usize) {
     if block == 0 {
+        report_heap_damage(state, caller);
         panic!("{caller}: null block");
     }
     if block < state.start || block >= state.end {
+        report_heap_damage(state, caller);
         panic!(
             "{caller}: block 0x{block:x} outside heap [0x{:x}, 0x{:x})",
             state.start, state.end
         );
     }
     if !block.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+        report_heap_damage(state, caller);
         panic!("{caller}: block 0x{block:x} misaligned");
     }
     let size = block_size(block);
     if size < MIN_FREE_BLOCK {
+        report_heap_damage(state, caller);
         panic!("{caller}: block 0x{block:x} size {size} below MIN_FREE_BLOCK");
     }
     let end = block.wrapping_add(size);
     if end > state.end {
+        report_heap_damage(state, caller);
         panic!(
             "{caller}: block 0x{block:x} size {size} overflows heap end 0x{:x}",
             state.end
@@ -247,6 +648,7 @@ pub(crate) unsafe fn validate_block(
     }
     let (fl, sl) = mapping(size);
     if !(FL_MIN..=FL_MAX).contains(&fl) {
+        report_heap_damage(state, caller);
         panic!(
             "{caller}: block 0x{block:x} size {size} maps to fl={fl} (FL_MAX={FL_MAX}); \
              first 16 bytes: {:02x?}",

@@ -152,16 +152,20 @@ impl KernelGlobalAllocator {
         profiler: &AllocProfiler,
     ) -> *mut u8 {
         let requested_size = layout.size().max(1);
+        // Reserve room for the block's canary.  It is part of what the block
+        // must hold, so it has to be in the size the carve is computed from —
+        // otherwise the canary would land on the caller's last bytes.
+        let reserved_size = requested_size.saturating_add(super::tlsf::CANARY_SIZE);
         let requested_align = layout.align().max(HEAP_BLOCK_ALIGNMENT);
 
         // The block we request from the free lists must be large enough for
         // the header, the payload, and worst‑case alignment padding.
         // Tail-rounding to HEAP_BLOCK_ALIGNMENT is deterministic, so we
         // fold it in exactly:
-        let end_round = HEAP_BLOCK_ALIGNMENT.wrapping_sub(HEADER_SIZE.wrapping_add(requested_size))
+        let end_round = HEAP_BLOCK_ALIGNMENT.wrapping_sub(HEADER_SIZE.wrapping_add(reserved_size))
             % HEAP_BLOCK_ALIGNMENT;
         let mut min_block_size = HEADER_SIZE
-            .saturating_add(requested_size)
+            .saturating_add(reserved_size)
             .saturating_add(requested_align.saturating_sub(HEAP_BLOCK_ALIGNMENT))
             .saturating_add(end_round);
 
@@ -216,7 +220,7 @@ impl KernelGlobalAllocator {
 
                 let mut alloc_end = match alloc_header_start
                     .checked_add(HEADER_SIZE)
-                    .and_then(|a| a.checked_add(requested_size))
+                    .and_then(|a| a.checked_add(reserved_size))
                 {
                     Some(addr) => addr,
                     None => {
@@ -274,6 +278,21 @@ impl KernelGlobalAllocator {
                 let suffix_size = block_end.wrapping_sub(alloc_end);
                 let suffix_created = suffix_size >= MIN_FREE_BLOCK;
 
+                // A suffix too small to stand as a free block cannot be a block
+                // at all, so it is absorbed into the allocation.
+                //
+                // Leaving it out orphans the bytes between this allocation and
+                // the next block: they belong to no block, their header is
+                // never written, and `state.available` never accounts for
+                // them.  Any walk along the physical block list — and any
+                // coalesce that reaches a neighbouring free block — then steps
+                // into that gap, reads a size of zero, and reports a damaged
+                // heap from a place that was never a block.
+                //
+                // The prefix below has always been absorbed for exactly this
+                // reason; the suffix has to be treated the same way.
+                let allocation_end = if suffix_created { alloc_end } else { block_end };
+
                 // ── Mark the allocated block as used ──
                 // A sub-minimum prefix (smaller than MIN_FREE_BLOCK) is too
                 // small to be inserted as a free block.  Absorb it into the
@@ -287,19 +306,19 @@ impl KernelGlobalAllocator {
                     block_clear_used(candidate);
                     insert_free_block(state, candidate);
 
-                    let allocated_size = alloc_end.wrapping_sub(alloc_header_start);
+                    let allocated_size = allocation_end.wrapping_sub(alloc_header_start);
                     block_set_size(alloc_header_start, allocated_size);
                     block_set_used(alloc_header_start);
                     (alloc_header_start, allocated_size)
                 } else if prefix_size > 0 {
-                    let allocated_size = alloc_end.wrapping_sub(candidate);
+                    let allocated_size = allocation_end.wrapping_sub(candidate);
                     block_set_size(candidate, allocated_size);
                     block_set_used(candidate);
                     // Already inside the enclosing `unsafe` block above.
                     core::ptr::write(alloc_header_start as *mut usize, candidate);
                     (candidate, allocated_size)
                 } else {
-                    let allocated_size = alloc_end.wrapping_sub(alloc_header_start);
+                    let allocated_size = allocation_end.wrapping_sub(alloc_header_start);
                     block_set_size(alloc_header_start, allocated_size);
                     block_set_used(alloc_header_start);
                     (alloc_header_start, allocated_size)
@@ -319,7 +338,26 @@ impl KernelGlobalAllocator {
                 }
                 if suffix_created {
                     block_set_prev_phys_of_next(alloc_end, alloc_end);
+                } else if block_end < state.end {
+                    // No suffix: the allocation now runs to the end of the
+                    // free block it was carved from, so the block after it has
+                    // a new physical predecessor.  Leaving the old value in
+                    // place is invisible whenever `alloc_start` happens to
+                    // equal the free block's original start — which is every
+                    // case without a prefix — but as soon as a prefix is
+                    // created the successor still points at the pre-split
+                    // start, and the next full walk reports a defect far from
+                    // the operation that caused it.
+                    block_set_prev_phys(block_end, alloc_start);
                 }
+
+                // ── Canary ──
+                // Written once the block's extent is final.  The request was
+                // inflated by `CANARY_SIZE` when the block was carved, so this
+                // word sits after the caller's bytes and the first thing an
+                // overrun meets is the canary rather than the next block's
+                // header.
+                super::tlsf::canary_write(alloc_start);
 
                 // ── Accounting: only the bytes that become unavailable are
                 //    removed.  The allocated block (which may include an
@@ -329,6 +367,8 @@ impl KernelGlobalAllocator {
                 state.available = state.available.saturating_sub(allocated_size);
 
                 profiler.add_heap_bytes_allocated(allocated_size as u64);
+                #[cfg(feature = "heap_audit")]
+                super::tlsf::audit_after_operation(state, "allocate");
                 break 'search payload_start as *mut u8;
             }
         };
@@ -410,6 +450,20 @@ impl KernelGlobalAllocator {
             return false;
         }
 
+        // The canary is checked here, while the block is still intact and
+        // still identifiable as this allocation: the address reported points at
+        // the allocation that overran rather than at whichever free-list walk
+        // later stumbled over the damage.
+        if let Err(defect) = unsafe { super::tlsf::canary_check(header_start) } {
+            unsafe {
+                super::tlsf::report_heap_damage(state, "deallocate");
+            }
+            panic!(
+                "heap canary: block 0x{:x} was overrun ({})",
+                defect.address, defect.reason
+            );
+        }
+
         state.available = state.available.saturating_add(size);
 
         // Mark the block as free.
@@ -425,6 +479,10 @@ impl KernelGlobalAllocator {
         }
 
         profiler.add_heap_bytes_freed(size as u64);
+        #[cfg(feature = "heap_audit")]
+        unsafe {
+            super::tlsf::audit_after_operation(state, "deallocate");
+        }
         true
     }
 
@@ -455,19 +513,29 @@ impl KernelGlobalAllocator {
 
 unsafe impl GlobalAlloc for KernelGlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let result = self.with_state(|state| Self::allocate_locked(state, layout, &self.profiler));
-        if !result.is_null() {
-            self.profiler.inc_heap_allocs();
-        }
-        result
+        self.with_state(|state| {
+            let result = Self::allocate_locked(state, layout, &self.profiler);
+            if !result.is_null() {
+                // Recorded inside the allocator's critical section, so the
+                // trace is ordered with respect to the heap changes it
+                // describes.
+                super::tlsf::record_heap_trace(super::tlsf::TRACE_ALLOC, result as usize);
+                self.profiler.inc_heap_allocs();
+            }
+            result
+        })
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
-        let had_bytes =
-            self.with_state(|state| Self::deallocate_locked(state, ptr, &self.profiler));
-        if had_bytes {
-            self.profiler.inc_heap_frees();
-        }
+        self.with_state(|state| {
+            // Recorded before the free, so a pointer freed twice shows up as
+            // two adjacent entries instead of being hidden by the corruption
+            // the second free causes.
+            super::tlsf::record_heap_trace(super::tlsf::TRACE_DEALLOC, ptr as usize);
+            if Self::deallocate_locked(state, ptr, &self.profiler) {
+                self.profiler.inc_heap_frees();
+            }
+        });
     }
 }
 

@@ -13,7 +13,11 @@
 mod tests {
     use super::super::allocator::KernelGlobalAllocator;
     use super::super::tlsf::block_next_free;
+    use super::super::tlsf::block_set_size;
     use super::super::tlsf::block_size;
+    use super::super::tlsf::canary_check;
+    use super::super::tlsf::canary_write;
+    use super::super::tlsf::check_invariants;
     use super::super::tlsf::list_index;
     use super::super::tlsf::mapping;
     use super::super::tlsf::AllocatorState;
@@ -95,6 +99,190 @@ mod tests {
         }
     }
 
+    /// An allocation that writes past its own bytes must be attributed to that
+    /// allocation, rather than surfacing later as a damaged free list.
+    ///
+    /// This is the failure this heap has actually produced: a block header
+    /// holding a value it could never have been given, found only when some
+    /// free-list walk happened to reach it.
+    ///
+    /// A block must be large enough to hold the payload it was handed out for.
+    /// Alignment larger than the block alignment pushes the payload forward
+    /// inside the block, so a size computed from the block header instead of
+    /// from the payload's real position can come up short — and the shortfall
+    /// lands in the next block's header.
+    #[test]
+    fn a_payload_is_contained_by_the_block_that_holds_it() {
+        let _model_guard = TEST_MODEL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        HOST_HEAP_MODEL.ensure_init();
+
+        let profiler = AllocProfiler::new();
+        // Alignment well above the block alignment, so the payload is pushed
+        // forward; the second allocation guarantees a following block header.
+        let aligned_layout = Layout::from_size_align(100, 64).unwrap();
+        let follower_layout = Layout::from_size_align(64, 16).unwrap();
+        let mut aligned: *mut u8 = core::ptr::null_mut();
+        let mut follower: *mut u8 = core::ptr::null_mut();
+
+        HOST_HEAP_MODEL.with_state(|state| unsafe {
+            aligned = KernelGlobalAllocator::allocate_locked(state, aligned_layout, &profiler);
+            assert!(!aligned.is_null());
+            follower = KernelGlobalAllocator::allocate_locked(state, follower_layout, &profiler);
+            assert!(!follower.is_null());
+            assert_eq!(check_invariants(state), Ok(()));
+
+            // Write exactly the bytes the layout promises — nothing beyond it.
+            aligned.write_bytes(0xAA, aligned_layout.size());
+
+            assert_eq!(
+                check_invariants(state),
+                Ok(()),
+                "writing exactly the allocated size must not escape the block"
+            );
+
+            assert!(KernelGlobalAllocator::deallocate_locked(
+                state, aligned, &profiler
+            ));
+            assert!(KernelGlobalAllocator::deallocate_locked(
+                state, follower, &profiler
+            ));
+        });
+    }
+
+    #[test]
+    fn canary_attributes_an_overrun_to_the_allocation_that_caused_it() {
+        let _model_guard = TEST_MODEL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        HOST_HEAP_MODEL.ensure_init();
+
+        let profiler = AllocProfiler::new();
+        let layout = Layout::from_size_align(64, 16).unwrap();
+        let mut pointer: *mut u8 = core::ptr::null_mut();
+
+        HOST_HEAP_MODEL.with_state(|state| unsafe {
+            pointer = KernelGlobalAllocator::allocate_locked(state, layout, &profiler);
+            assert!(!pointer.is_null());
+            // A well-behaved allocation has to pass, or the check is noise on
+            // a healthy heap.
+            let block = pointer as usize - HEADER_SIZE;
+            assert_eq!(
+                canary_check(block),
+                Ok(()),
+                "a freshly allocated block must carry an intact canary"
+            );
+
+            // Damage the last word of the block — the address the next block's
+            // header occupies, which is where every overrun here has landed.
+            let block_end = block + block_size(block);
+            (block_end as *mut usize)
+                .sub(1)
+                .write(0xDEAD_BEEF_DEAD_BEEF);
+            let defect = canary_check(block).expect_err("an overrun must be detected");
+            assert_eq!(defect.address, block);
+
+            // Repair before freeing, so the shared heap stays clean for the
+            // rest of the suite.
+            canary_write(block);
+            assert_eq!(canary_check(block), Ok(()));
+            assert!(KernelGlobalAllocator::deallocate_locked(
+                state, pointer, &profiler
+            ));
+        });
+    }
+
+    /// The invariant checker must accept a heap that has been used normally.
+    #[test]
+    fn invariants_hold_across_allocate_and_free() {
+        let _model_guard = TEST_MODEL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        HOST_HEAP_MODEL.ensure_init();
+
+        let profiler = AllocProfiler::new();
+        let sizes = [16_usize, 64, 256, 4096, 17];
+        let mut pointers = Vec::new();
+
+        HOST_HEAP_MODEL.with_state(|state| unsafe {
+            for size in sizes {
+                let layout = Layout::from_size_align(size, 16).unwrap();
+                let pointer = KernelGlobalAllocator::allocate_locked(state, layout, &profiler);
+                assert!(!pointer.is_null());
+                pointers.push((pointer, layout));
+                assert_eq!(check_invariants(state), Ok(()));
+            }
+        });
+
+        HOST_HEAP_MODEL.with_state(|state| unsafe {
+            for (pointer, _layout) in pointers.iter().rev() {
+                assert!(KernelGlobalAllocator::deallocate_locked(
+                    state, *pointer, &profiler
+                ));
+                assert_eq!(check_invariants(state), Ok(()));
+            }
+        });
+    }
+
+    /// The checker has to reject the exact damage seen in the field: a block
+    /// header whose size word has been overwritten.
+    ///
+    /// This is the property that makes the checker worth having.  The
+    /// allocator's own checks only fire when a free-list walk happens to reach
+    /// a damaged block, so damage that no traversal touches stays invisible; a
+    /// full walk finds it every time.
+    #[test]
+    fn invariants_detect_a_corrupted_block_size() {
+        let _model_guard = TEST_MODEL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        HOST_HEAP_MODEL.ensure_init();
+
+        let profiler = AllocProfiler::new();
+        let layout = Layout::from_size_align(128, 16).unwrap();
+        let mut pointer: *mut u8 = core::ptr::null_mut();
+
+        HOST_HEAP_MODEL.with_state(|state| unsafe {
+            pointer = KernelGlobalAllocator::allocate_locked(state, layout, &profiler);
+            assert!(!pointer.is_null());
+            assert_eq!(check_invariants(state), Ok(()));
+        });
+
+        HOST_HEAP_MODEL.with_state(|state| unsafe {
+            // The header sits immediately before the payload.
+            let block = pointer as usize - HEADER_SIZE;
+            let original = block_size(block);
+
+            // Zeroing the size word is what the field reports showed.
+            block_set_size(block, 0);
+            let defect = check_invariants(state).expect_err("a zeroed block size must be rejected");
+            assert_eq!(defect.address, block);
+
+            // An unaligned size is the other shape the field showed, and has to
+            // be caught rather than sliding through as merely implausible.
+            //
+            // `+ 2`, not `+ 1`: the size word's low bit is the used/free flag,
+            // so `+ 1` only sets the flag and reads back as the original size.
+            // A size has to be a multiple of the block alignment, which means
+            // any set bit in 1..4 is genuine damage.
+            block_set_size(block, original + 2);
+            assert!(
+                check_invariants(state).is_err(),
+                "a block size that is not alignment-multiple must be rejected"
+            );
+
+            // Restore before releasing the shared heap: the model is global,
+            // so a test that left damage behind would break the next one.
+            block_set_size(block, original);
+            assert_eq!(check_invariants(state), Ok(()));
+
+            assert!(KernelGlobalAllocator::deallocate_locked(
+                state, pointer, &profiler
+            ));
+        });
+    }
+
     #[test]
     fn fresh_allocator_state_starts_uninitialized() {
         let state = AllocatorState::new();
@@ -134,6 +322,12 @@ mod tests {
 
         let (start, end) = HOST_HEAP_MODEL.bounds();
         assert_eq!(end.wrapping_sub(start), KERNEL_HEAP_SIZE);
+
+        // A freshly initialised heap must already satisfy every structural
+        // invariant; if this fails the checker itself is wrong.
+        HOST_HEAP_MODEL.with_state(|state| unsafe {
+            assert_eq!(check_invariants(state), Ok(()));
+        });
 
         let profiler = AllocProfiler::new();
         let layout = Layout::from_size_align(64, 16).unwrap();
@@ -299,6 +493,22 @@ mod tests {
         let mut successful_alloc = 0usize;
 
         for step in 0..4000 {
+            // Every operation must leave the physical block list well formed.
+            //
+            // The checks below — alignment, bounds, no overlap — passed while
+            // the allocator was in fact corrupting its own heap on every boot:
+            // they look at allocations, not at the block chain that ties them
+            // together.  Walking the chain is what catches a leaked hole or a
+            // stale `prev_phys`, and it is checked here after every step so a
+            // regression names the step that caused it.
+            HOST_HEAP_MODEL.with_state(|state| unsafe {
+                assert_eq!(
+                    check_invariants(state),
+                    Ok(()),
+                    "step {step}: block list is not well formed after the previous operation"
+                );
+            });
+
             if rng.next_usize(2) == 0 {
                 // Allocate.
                 attempted_alloc += 1;
