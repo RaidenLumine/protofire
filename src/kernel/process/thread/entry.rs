@@ -58,6 +58,22 @@ pub(crate) fn initialize_frame_kernel_stack(
     {
         let _ = _stack_ptr;
         let _ = _stack_len;
-        stack_top & !0xF
+        // Leave room for the deepest frame the exception entry can save.
+        //
+        // `stack_top` is exclusive: the first address past the usable stack.
+        // Returning it as the initial SP leaves the vector stub nowhere to
+        // put its 304-byte frame — it subtracts that much and stores at
+        // `sp + offset`, and the upper slots land past the mapped end.  A
+        // margin of exactly one frame means the entry always fits, and it
+        // stays inside the mapped region because the region ends at
+        // `stack_top`.
+        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+        {
+            (stack_top & !0xF).saturating_sub(crate::arch::aarch64::trap::EXCEPTION_FRAME_BYTES)
+        }
+        #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
+        {
+            stack_top & !0xF
+        }
     }
 }

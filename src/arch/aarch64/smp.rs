@@ -210,7 +210,11 @@ fn bring_up_one(cpu_id: u32, idx: usize) {
     crate::println!("[smp   ] bring_up_one: cpu={}", cpu_id);
 
     let stack = unsafe { &raw mut (*AP_STACKS.get())[idx].0[0] };
-    let stack_top = unsafe { stack.add(AP_STACK_SIZE) };
+    // Same margin the thread entry leaves: an AP that takes an exception
+    // before it has pushed anything needs a trap frame below the mapped end
+    // of its stack, and `stack_top` is exclusive.
+    let stack_top =
+        unsafe { stack.add(AP_STACK_SIZE - crate::arch::aarch64::trap::EXCEPTION_FRAME_BYTES) };
 
     // Pre-create scheduler + idle process.
     use alloc::boxed::Box;

@@ -28,16 +28,21 @@ fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
 /// aarch64 counterpart; see the x86_64 version for why the result is returned.
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
-    let page_size = crate::kernel::memory::frame::FRAME_SIZE;
-    let mut enforced = true;
-    for offset in (0..guard_size).step_by(page_size) {
-        // `invalidate_page`, not `unmap_page`: the guard has to be
-        // reversible, and `unmap_page` zeroes the descriptor.
-        let cleared =
-            unsafe { crate::arch::aarch64::mmu::invalidate_page(base.add(offset) as usize) };
-        enforced &= cleared;
-    }
-    enforced
+    // Not installed, and reported as such by the caller.
+    //
+    // Clearing the guard page here crashed the kernel: the frames are not at
+    // the virtual addresses this walk assumes, so the invalidation landed on a
+    // page the kernel was still using, and the machine then trapped inside the
+    // exception entry, saving a frame over the hole the guard had just made.
+    // Skipping it keeps every frame mapped and turns the missing guard into one
+    // reported line, which is strictly better than a machine that dies on boot.
+    //
+    // `unmap_page` and `invalidate_page` both need the virtual address the
+    // frame is actually mapped at, and `base` is not it here.  Restoring the
+    // guard means finding that address first — the same question as whether
+    // the aarch64 frame pool is mapped one-to-one.
+    let _ = (base, guard_size);
+    false
 }
 
 /// Host and other targets have no hardware guard pages to enforce.

@@ -72,7 +72,16 @@ pub struct TrapFrame {
     _reserved: u64,
 }
 
-const _: [(); 304] = [(); size_of::<TrapFrame>()];
+/// Bytes the vector stub subtracts from SP before saving any register.
+///
+/// Must equal `TRAP_FRAME_SIZE` in `trap.S`, which the assertion below keeps
+/// honest.  Stack setup uses this name to leave room for a frame at the top of
+/// a kernel stack: the stub subtracts this much and stores at `sp + offset`,
+/// so a stack whose initial SP is the exclusive top has nowhere to put the
+/// frame.
+pub(crate) const EXCEPTION_FRAME_BYTES: usize = 304;
+
+const _: [(); EXCEPTION_FRAME_BYTES] = [(); size_of::<TrapFrame>()];
 
 unsafe extern "C" {
     static __aarch64_exception_vectors: u8;
