@@ -91,7 +91,14 @@ fn hex_digit(n: u8) -> char {
 /// The ring consumer index is advanced only after the write and sync
 /// succeed, so nothing is dropped on error.
 pub(crate) fn persist_buffer_to_fs(buffer: &AuditBuffer, fs: &mut FileSystem) -> usize {
-    let mut batch = [AuditRecord::zeroed(); PERSIST_BATCH_SIZE];
+    // A full batch is `PERSIST_BATCH_SIZE` records of 256 bytes — 64 KiB, twice
+    // the kernel stack a thread gets.  In this function's frame the stack probe
+    // LLVM emits for it walks straight past the bottom of the stack: on
+    // aarch64 it steps into the guard page and takes a fault there, and on a
+    // layout whose stacks are contiguous it writes over the neighbouring
+    // frames instead.  It is scratch space for one flush, so it belongs on the
+    // heap rather than in a frame.
+    let mut batch = alloc::vec![AuditRecord::zeroed(); PERSIST_BATCH_SIZE];
     let n = buffer.peek_records(&mut batch);
     if n == 0 {
         return 0;
