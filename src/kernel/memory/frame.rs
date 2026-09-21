@@ -289,6 +289,12 @@ impl FrameAllocator {
     fn zero_frame_range(&self, frame_start: usize, count: usize) -> Option<()> {
         let address = self.frame_address(frame_start)?;
         let byte_len = count.checked_mul(FRAME_SIZE)?;
+        // A frame the allocator hands out has to be writable, and this is the
+        // first access to one after it comes back.  Repair the mapping at the
+        // one place every allocation passes through, instead of asking each
+        // subsystem that un-maps a page to remember to undo it before freeing
+        // the frames.
+        super::arch::ensure_identity_mapped_range(address, byte_len);
         unsafe {
             core::ptr::write_bytes(address as *mut u8, 0, byte_len);
         }

@@ -104,6 +104,38 @@ pub(crate) fn install_user_page_arch(
     }
 }
 
+/// Ensure a range of identity-mapped kernel frames is present in the live
+/// hardware page tables.
+///
+/// The frame allocator promises that a frame it hands out is writable, and it
+/// keeps that promise here rather than relying on whoever un-mapped the page
+/// to put it back.  The frame pool is identity-mapped by construction, so
+/// "present" is the invariant; the allocator is the only place that sees every
+/// path a frame travels on, which is what makes it the right boundary for the
+/// guarantee.  A kernel stack's guard page is the source today: it is
+/// un-presented on purpose, and without this the frame comes back to the pool
+/// still un-presented and faults the allocator's own zeroing write.
+///
+/// On x86_64 this is a set-bit: `unmap_page` clears only the Present bit and
+/// leaves the rest of the entry intact.  aarch64's `unmap_page` zeroes the
+/// whole descriptor instead, so its counterpart is a re-map of a page whose
+/// attributes have to be restated, and it does not exist yet — aarch64 still
+/// carries this hazard.
+pub(crate) fn ensure_identity_mapped_range(address: usize, byte_len: usize) {
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    {
+        let mut offset = 0;
+        while offset < byte_len {
+            unsafe { crate::arch::x86_64::paging::restore_page(address + offset) };
+            offset += super::frame::FRAME_SIZE;
+        }
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+    {
+        let _ = (address, byte_len);
+    }
+}
+
 /// Unmap a user page from the live hardware page tables via the arch MMU.
 pub(crate) fn unmap_user_page_arch(virtual_address: usize) -> bool {
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
