@@ -79,6 +79,12 @@ aarch64_ap_startup:
     // Called from boot.S spin table: x0 = cpu_id, MMU off.
     // All data addresses are physical (identity-mapped).
 
+    // `x0` is this AP's stack top, and setting the stack pointer here is the
+    // entry's own job: PSCI drops a core straight at this label with whatever
+    // stack the firmware left behind, so a path that assumed someone else had
+    // set SP would start a core that pushes into memory it does not own.
+    mov     sp, x0
+
     // 1. Restore MMU configuration from saved BSP values.
     adrp    x1, AARCH64_BOOT_TTBR0
     add     x1, x1, :lo12:AARCH64_BOOT_TTBR0
@@ -138,8 +144,14 @@ unsafe extern "C" {
 // ── Rust AP entry point ────────────────────────────────────────────────
 
 #[no_mangle]
-unsafe extern "C" fn aarch64_ap_entry_rust(cpu_id: u64) -> ! {
-    let cpu_id32 = cpu_id as u32;
+unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
+    // Which core this is comes from the hardware, not from an argument: the
+    // entry point's register carries the stack top now, and `MPIDR_EL1` is the
+    // authority on identity either way.
+    let mpidr: u64;
+    unsafe { core::arch::asm!("mrs {}, mpidr_el1", out(reg) mpidr) };
+    let cpu_id32 = (mpidr & 0xff) as u32;
+    let cpu_id = cpu_id32 as u64;
 
     // Point TPIDR_EL1 → this AP's PerCpuData.
     let percpu = ap_percpu_data(cpu_id32);

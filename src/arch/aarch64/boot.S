@@ -24,7 +24,7 @@ _start:
     cbz x4, 2f           /* If 0 → WFE and retry */
     ldr x5, [x2, #8]     /* Load stack_top */
     mov sp, x5
-    mov x0, x1           /* arg0 = cpu_id (the BSP set x0 expectation) */
+    mov x0, x5           /* arg0 = this AP's stack top */
     br x4                /* Jump to aarch64_ap_startup */
 
 2:  wfe
