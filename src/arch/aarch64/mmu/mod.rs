@@ -1082,6 +1082,74 @@ fn ensure_image_facts(heap_bounds: (usize, usize)) {
             crate::println!("[mm    ] kernel map facts not installed from the image ranges");
         }
     }
+
+    report_uncovered_facts();
+}
+
+/// Read the valid bit of the 4 KiB leaf for `virtual_address`.
+///
+/// Read-only on purpose.  The walk the invalidation uses *splits* blocks to
+/// reach a leaf, so checking the tables with it would be the thing that changes
+/// them; a check has to be able to say "not covered" without doing anything
+/// about it.
+fn leaf_is_present(virtual_address: usize) -> bool {
+    let root = current_root_table_address();
+    if root == 0 {
+        return false;
+    }
+    let l1_entry =
+        unsafe { ptr::read_volatile((root as *const u64).add((virtual_address >> 30) & 0x1FF)) };
+    if l1_entry & 0x1 == 0 {
+        return false;
+    }
+    if l1_entry & 0x3 == DESCRIPTOR_BLOCK {
+        return true; // a 1 GiB block covers it
+    }
+    let l2 = (l1_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
+    let l2_entry = unsafe { ptr::read_volatile(l2.add((virtual_address >> 21) & 0x1FF)) };
+    if l2_entry & 0x1 == 0 {
+        return false;
+    }
+    if l2_entry & 0x3 == DESCRIPTOR_BLOCK {
+        return true; // a 2 MiB block covers it
+    }
+    let l3 = (l2_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
+    unsafe { ptr::read_volatile(l3.add((virtual_address >> 12) & 0x1FF)) & 0x1 != 0 }
+}
+
+/// Say once where the kernel's own tables are missing something the facts
+/// describe.
+///
+/// This is the positive form of the check that was missing all along: instead
+/// of a fault somewhere else telling us a page was never mapped, the kernel
+/// compares what it says about itself with what it actually built, at its own
+/// edges and its middle.
+fn report_uncovered_facts() {
+    static REPORTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    let Some(facts) = crate::kernel::memory::map_facts::get() else {
+        return;
+    };
+    let mut missing = 0usize;
+    for (kind, address) in facts.probe_addresses() {
+        if leaf_is_present(address) {
+            continue;
+        }
+        missing += 1;
+        if missing <= 4 && !REPORTED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+            let _ = crate::arch::write_fmt(format_args!(
+                "[mm    ] kernel table gap: {:#x} ({:?}) is not mapped\n",
+                address, kind
+            ));
+        }
+    }
+    // The first gap is printed once; the count is what a caller
+    // watching a boot needs in order to tell silence from "a little missing".
+    if missing > 4 {
+        let _ = crate::arch::write_fmt(format_args!(
+            "[mm    ] kernel table gaps: {} more\n",
+            missing - 4
+        ));
+    }
 }
 
 fn classify_kernel_address(
