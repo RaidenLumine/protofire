@@ -74,6 +74,14 @@ impl KernelStack {
                     }
                     #[cfg(all(target_arch = "aarch64", target_os = "none"))]
                     {
+                        // NOTE: the aarch64 `unmap_page` zeroes the whole leaf
+                        // descriptor rather than clearing a valid bit, so its
+                        // counterpart is a re-map, not a set-bit, and does not
+                        // exist yet.  Until it does, aarch64 frees guard frames
+                        // with their entries destroyed and can hand a
+                        // non-present frame back to the allocator's zeroing
+                        // write — the same hazard the x86_64 teardown below
+                        // now closes.
                         let page_size = crate::kernel::memory::frame::FRAME_SIZE;
                         for offset in (0..guard_size).step_by(page_size) {
                             unsafe {
@@ -129,6 +137,37 @@ impl Drop for KernelStack {
                 // Unmap the usable stack region from the software page table.
                 if let Some(mut mm) = crate::kernel::memory::global_mut() {
                     let _ = mm.unmap(self.stack_ptr as usize, self.stack_len);
+
+                    // Put the guard pages back in the hardware page tables
+                    // before the frames return to the pool.
+                    //
+                    // `new` cleared their Present bits so an overflow would
+                    // fault instead of silently corrupting memory.  The frame
+                    // allocator does not know about that: it hands the frames
+                    // out again, and its first act on a recycled frame is to
+                    // zero it.  A frame whose entry is still non-present would
+                    // fault *inside the allocator*, which holds the memory
+                    // manager's lock, so the fault cannot be resolved and the
+                    // machine stops with no further output.  Re-presenting the
+                    // entries here is what keeps recycled frames writable.
+                    //
+                    // The guard length is not stored in the guard's frames, so
+                    // it is recovered the same way `new` derived it: the
+                    // backing spans guard + stack, and the guard is everything
+                    // below `stack_ptr`.
+                    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+                    {
+                        let page_size = crate::kernel::memory::frame::FRAME_SIZE;
+                        let guard_bytes = self.stack_ptr as usize - (*base as usize);
+                        for offset in (0..guard_bytes).step_by(page_size) {
+                            unsafe {
+                                crate::arch::x86_64::paging::restore_page(
+                                    (*base).add(offset) as usize
+                                );
+                            }
+                        }
+                    }
+
                     mm.deallocate_frames(*base, *total_frames);
                 }
             }

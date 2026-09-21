@@ -937,6 +937,61 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
     true
 }
 
+/// Undo an [`unmap_page`] for a 4 KiB page: set its Present bit back.
+///
+/// [`unmap_page`] clears only the Present bit, leaving every other field of
+/// the entry intact, so restoring it is exactly setting that bit again.  The
+/// pair exists because frame recycling needs it: the kernel stack clears the
+/// Present bit on its guard pages, and the frames under them go back to the
+/// frame allocator, whose first act on a recycled frame is to zero it.  With
+/// the entry still non-present that write faults inside the allocator — under
+/// the memory manager's own lock, so nothing can be diagnosed from the fault
+/// and the machine simply stops.  Restoring the entry before the frames are
+/// freed keeps "a frame the allocator owns is mapped and writable" true.
+///
+/// Returns `true` when the page was unmapped and is now mapped again, and
+/// `false` when it was already present or the address could not be resolved.
+///
+/// # Safety
+///
+/// The caller must be restoring a page that *should* be accessible: the entry
+/// had been un-presented, not deallocated, so re-presenting it exposes the
+/// same physical frame to the kernel again.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub unsafe fn restore_page(virtual_address: usize) -> bool {
+    let va = virtual_address;
+
+    let root = match current_root_table_address_impl() {
+        Some(r) => r,
+        None => return false,
+    };
+
+    let pml4_entry = core::ptr::read_volatile((root as *const u64).add((va >> 39) & 0x1FF));
+    if pml4_entry & PAGE_ENTRY_PRESENT == 0 {
+        return false;
+    }
+    let pdpt = (pml4_entry & PAGE_ENTRY_ADDRESS_MASK) as *const u64;
+    let pdpt_entry = core::ptr::read_volatile(pdpt.add((va >> 30) & 0x1FF));
+    if pdpt_entry & PAGE_ENTRY_PRESENT == 0 || pdpt_entry & PAGE_ENTRY_LARGE != 0 {
+        return false;
+    }
+    let pd = (pdpt_entry & PAGE_ENTRY_ADDRESS_MASK) as *const u64;
+    let pd_entry = core::ptr::read_volatile(pd.add((va >> 21) & 0x1FF));
+    if pd_entry & PAGE_ENTRY_PRESENT == 0 || pd_entry & PAGE_ENTRY_LARGE != 0 {
+        return false;
+    }
+    let pt = (pd_entry & PAGE_ENTRY_ADDRESS_MASK) as *mut u64;
+    let pt_index = (va >> 12) & 0x1FF;
+    let pte = core::ptr::read_volatile(pt.add(pt_index));
+    if pte == 0 || pte & PAGE_ENTRY_PRESENT != 0 {
+        return false; // never mapped, or already accessible
+    }
+
+    core::ptr::write_volatile(pt.add(pt_index), pte | PAGE_ENTRY_PRESENT);
+    crate::kernel::smp::tlb_shootdown(va);
+    true
+}
+
 /// Host / test stub: no live hardware page tables to manipulate.
 ///
 /// # Safety
@@ -945,5 +1000,15 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
 /// `unsafe` qualifier to match the bare-metal signature.
 #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
 pub unsafe fn unmap_page(_virtual_address: usize) -> bool {
+    false
+}
+
+/// Host / test stub: no live hardware page tables to restore.
+///
+/// # Safety
+///
+/// Always safe to call; `unsafe` to match the bare-metal signature.
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+pub unsafe fn restore_page(_virtual_address: usize) -> bool {
     false
 }
