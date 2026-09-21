@@ -1028,6 +1028,18 @@ pub fn prepared_runtime_kernel_page_tables_active() -> bool {
     current_root_table_address() == prepared.root_table_address
 }
 
+/// The VA window the kernel's own stacks live in.
+///
+/// Outside the RAM window and above it, so a stack's guard page can be a hole
+/// in *this* window's own table: nothing else is described by that table, and
+/// leaving a page out of it cannot disturb anything else.  That is the whole
+/// reason stacks get a window rather than frames carved from the pool — the
+/// pool is shared, so a hole punched there is a hole in the kernel's own
+/// storage.
+pub(crate) const STACK_WINDOW_BASE: usize = KERNEL_TEXT_END;
+pub(crate) const STACK_WINDOW_SIZE: usize = 0x1000_0000; // 256 MiB
+pub(crate) const STACK_WINDOW_END: usize = STACK_WINDOW_BASE + STACK_WINDOW_SIZE;
+
 extern "C" {
     static __text_start: u8;
     static __text_end: u8;
@@ -1069,7 +1081,17 @@ fn ensure_image_facts(heap_bounds: (usize, usize)) {
         ),
         heap: heap_bounds,
     };
-    let _ = ranges.install();
+    // The stack window joins the facts as the architecture's own range: it is
+    // a kernel range like any other, and it is the one the guard pages will be
+    // holes in.
+    let stack_window = crate::kernel::memory::map_facts::Region::new(
+        crate::kernel::memory::map_facts::RegionKind::StackWindow,
+        STACK_WINDOW_BASE,
+        STACK_WINDOW_END,
+        true,
+        false,
+    );
+    let _ = ranges.install_with(&[stack_window]);
 
     // Report the one outcome worth reporting: nothing published, which means
     // the ranges contradict each other and every later reader will fall back
@@ -1131,6 +1153,12 @@ fn report_uncovered_facts() {
     };
     let mut missing = 0usize;
     for (kind, address) in facts.probe_addresses() {
+        // The stack window is a reservation rather than a mapping: its pages
+        // appear as stacks are created, and its guard pages are holes by
+        // design, so "not mapped yet" is the expected answer here.
+        if kind == crate::kernel::memory::map_facts::RegionKind::StackWindow {
+            continue;
+        }
         if leaf_is_present(address) {
             continue;
         }
