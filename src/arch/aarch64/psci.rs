@@ -25,6 +25,38 @@ pub enum PsciConduit {
 const PSCI_0_2_FN_SYSTEM_OFF: u64 = 0x8400_0008;
 const PSCI_0_2_FN64_SYSTEM_RESET: u64 = 0xC400_0009;
 const PSCI_0_2_FN64_SYSTEM_RESET2: u64 = 0xC400_0012;
+const PSCI_0_2_FN_PSCI_VERSION: u64 = 0x8400_0000;
+const PSCI_0_2_FN64_CPU_ON: u64 = 0xC400_0003;
+
+/// PSCI version, or `None` when the interface does not answer.
+///
+/// Worth asking before anything else: a call that is unsupported returns a
+/// negative status, and a bring-up path that assumed support would report a
+/// core as started that never moved.
+#[allow(dead_code)] // the AP wiring calls this next
+pub fn version() -> Option<u32> {
+    let result = unsafe { psci_call(PSCI_0_2_FN_PSCI_VERSION, 0, 0, 0) };
+    (result >= 0).then_some(result as u32)
+}
+
+/// Bring one CPU up at `entry`, with `context` placed in its `x0`.
+///
+/// Returns the PSCI status rather than a flag the caller has to watch: a core
+/// that did not start says so, at the call, with a reason.
+///
+/// # Safety
+///
+/// `entry` must be a valid kernel entry point and `context` whatever that
+/// entry expects to receive.
+#[allow(dead_code)] // the AP wiring calls this next
+pub unsafe fn cpu_on(target_cpu: u64, entry: u64, context: u64) -> Result<(), i64> {
+    let result = unsafe { psci_call(PSCI_0_2_FN64_CPU_ON, target_cpu, entry, context) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(result)
+    }
+}
 
 /// Configured conduit.  QEMU virt and most firmware expose PSCI via `smc`;
 /// a firmware tree walker could set `hvc` at boot if needed.
