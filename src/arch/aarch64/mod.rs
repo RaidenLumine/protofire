@@ -528,3 +528,14 @@ pub mod timer {
         }
     }
 }
+/// Keep the device-tree pointer the boot protocol passed in `x0`.
+///
+/// Called from `boot.S` before the Rust entry, while BSS is already zeroed and
+/// the boot stack is in place.  Storing it here is what lets the kernel find
+/// the CPU list: without it the blob address stays zero, the flattened device
+/// tree parses to nothing, and AP discovery concludes there is one CPU.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+#[no_mangle]
+pub extern "C" fn aarch64_store_handoff(blob: usize) {
+    crate::arch::boot::store_handoff_address(blob);
+}
