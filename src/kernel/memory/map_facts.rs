@@ -153,6 +153,40 @@ impl KernelMapFacts {
     }
 }
 
+/// Where the facts live once they have been derived.
+///
+/// A `SyncUnsafeCell` in the same style as the kernel's other boot-time
+/// tables rather than an atomic pointer: the value is written once, before any
+/// second CPU runs, and read-only afterwards.  `INSTALLED` guards the
+/// write-once rule so a later, differently-derived set cannot silently become
+/// the answer for tables that were already built from the first.
+static FACTS: crate::util::sync_unsafe_cell::SyncUnsafeCell<KernelMapFacts> =
+    crate::util::sync_unsafe_cell::SyncUnsafeCell::new(KernelMapFacts::empty());
+static INSTALLED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Install the kernel's mapping facts.
+///
+/// Returns `true` when this call installed them, `false` when they were
+/// already there.  The first derivation wins: rebuilding the answer after the
+/// tables exist would let the facts describe something other than what was
+/// built.
+pub(crate) fn install(facts: KernelMapFacts) -> bool {
+    if INSTALLED.swap(true, core::sync::atomic::Ordering::AcqRel) {
+        return false;
+    }
+    unsafe {
+        *FACTS.get() = facts;
+    }
+    true
+}
+
+/// The kernel's mapping facts, if they have been derived yet.
+pub(crate) fn get() -> Option<&'static KernelMapFacts> {
+    INSTALLED
+        .load(core::sync::atomic::Ordering::Acquire)
+        .then(|| unsafe { &*FACTS.get() })
+}
+
 #[cfg(test)]
 mod tests {
     use super::KernelMapFacts;

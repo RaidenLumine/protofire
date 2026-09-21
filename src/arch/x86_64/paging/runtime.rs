@@ -884,7 +884,7 @@ unsafe fn split_pd_large_page(pd: *const u64, pd_index: usize, entry: u64) -> Op
     let leaves = table as *mut u64;
     for index in 0..512usize {
         let offset = index as u64 * X86_PAGE_SIZE as u64;
-        core::ptr::write_volatile(leaves.add(index), base + offset | flags);
+        core::ptr::write_volatile(leaves.add(index), (base + offset) | flags);
     }
 
     let installed = table as u64 | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
