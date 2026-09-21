@@ -22,17 +22,6 @@ enum KernelStackBacking {
 pub(crate) struct KernelStack {
     stack_ptr: *mut u8,
     stack_len: usize,
-    /// Bytes of guard below `stack_ptr`, or `0` for a heap-backed stack.
-    ///
-    /// Recorded rather than derived.  The guard is a property of the
-    /// allocation, and the un-map in `new` and the re-map in `drop` have to
-    /// agree on it; recomputing it from the pointers on the way out made that
-    /// agreement implicit, and would silently stop restoring anything the day
-    /// the layout changed.
-    // Only the x86_64 teardown reads it today; aarch64's counterpart is the
-    // re-map noted below and does not exist yet.
-    #[cfg_attr(not(all(target_arch = "x86_64", target_os = "none")), allow(dead_code))]
-    guard_len: usize,
     backing: KernelStackBacking,
 }
 
@@ -104,7 +93,6 @@ impl KernelStack {
                     return Self {
                         stack_ptr,
                         stack_len: stack_size,
-                        guard_len: guard_size,
                         backing: KernelStackBacking::Frame { base, total_frames },
                     };
                 }
@@ -125,7 +113,6 @@ impl KernelStack {
         Self {
             stack_ptr,
             stack_len,
-            guard_len: 0,
             backing: KernelStackBacking::Heap(boxed),
         }
     }
@@ -150,31 +137,13 @@ impl Drop for KernelStack {
                 // Unmap the usable stack region from the software page table.
                 if let Some(mut mm) = crate::kernel::memory::global_mut() {
                     let _ = mm.unmap(self.stack_ptr as usize, self.stack_len);
-
-                    // Put the guard pages back in the hardware page tables
-                    // before the frames return to the pool.
-                    //
-                    // `new` cleared their Present bits so an overflow would
-                    // fault instead of silently corrupting memory.  The frame
-                    // allocator does not know about that: it hands the frames
-                    // out again, and its first act on a recycled frame is to
-                    // zero it.  A frame whose entry is still non-present would
-                    // fault *inside the allocator*, which holds the memory
-                    // manager's lock, so the fault cannot be resolved and the
-                    // machine stops with no further output.  Re-presenting the
-                    // entries here is what keeps recycled frames writable.
-                    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-                    {
-                        let page_size = crate::kernel::memory::frame::FRAME_SIZE;
-                        for offset in (0..self.guard_len).step_by(page_size) {
-                            unsafe {
-                                crate::arch::x86_64::paging::restore_page(
-                                    (*base).add(offset) as usize
-                                );
-                            }
-                        }
-                    }
-
+                    // The guard pages are left un-presented here.  Putting
+                    // them back is the frame allocator's job rather than this
+                    // one: it guarantees that a frame it hands out is
+                    // writable, and keeping the repair there covers every
+                    // caller instead of asking each subsystem to undo its own
+                    // un-mapping before freeing frames.  See
+                    // `memory::arch::ensure_identity_mapped_range`.
                     mm.deallocate_frames(*base, *total_frames);
                 }
             }
