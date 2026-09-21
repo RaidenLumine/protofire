@@ -1,17 +1,18 @@
-// File: src/kernel/memory/map_facts.rs
-// Purpose: the kernel's own mapping ranges, as one source of truth.
-//
-// What the kernel maps, and what each range is for, is currently worked out
-// separately by the page plan, by each architecture's runtime table builder,
-// and again by the fault-report classifier.  Three answers to one question is
-// how they came to disagree — a plan that said "outside-kernel-plan" for an
-// address the live tables covered, and tables built for a range nothing else
-// agreed was the kernel's.
-//
-// This module is the answer in one place.  It is deliberately arch-neutral and
-// dependency-free: callers hand it ranges, it validates them and answers
-// questions about them, and nothing here allocates, because it is derived
-// before the heap exists.
+//! src/kernel/memory/map_facts.rs
+//!
+//! The kernel's own mapping ranges, as one source of truth.
+//!
+//! What the kernel maps, and what each range is for, is currently worked out
+//! separately by the page plan, by each architecture's runtime table builder,
+//! and again by the fault-report classifier.  Three answers to one question is
+//! how they came to disagree — a plan that said "outside-kernel-plan" for an
+//! address the live tables covered, and tables built for a range nothing else
+//! agreed was the kernel's.
+//!
+//! This module is the answer in one place.  It is deliberately arch-neutral and
+//! dependency-free: callers hand it ranges, it validates them and answers
+//! questions about them, and nothing here allocates, because it is derived
+//! before the heap exists.
 
 // Introduced as an unused skeleton: step 1b wires the consumers.  Removing
 // this line is part of that step.

@@ -1,17 +1,18 @@
-// File: src/kernel/process/thread/stack_window.rs
-// Purpose: hand out addresses inside the kernel's stack window.
-//
-// The window itself is the architecture's declaration and is recorded in the
-// kernel's mapping facts; this hands out slices of it.  A stack gets its guard
-// page first and its usable pages after, which makes the guard a page this
-// allocator *never hands out* — as opposed to a page that is handed out and
-// then un-mapped somewhere else.
-//
-// That difference is the point.  A guard created by editing a shared mapping
-// is a hole in the kernel's own storage: neighbouring stacks and allocator
-// metadata live in the same blocks, so anything that changes one page is
-// changing what the rest of the kernel sees.  A page that was never allocated
-// cannot be reached by anything at all.
+//! src/kernel/process/thread/stack_window.rs
+//!
+//! Hand out addresses inside the kernel's stack window.
+//!
+//! The window itself is the architecture's declaration and is recorded in the
+//! kernel's mapping facts; this hands out slices of it.  A stack gets its guard
+//! page first and its usable pages after, which makes the guard a page this
+//! allocator *never hands out* — as opposed to a page that is handed out and
+//! then un-mapped somewhere else.
+//!
+//! That difference is the point.  A guard created by editing a shared mapping
+//! is a hole in the kernel's own storage: neighbouring stacks and allocator
+//! metadata live in the same blocks, so anything that changes one page is
+//! changing what the rest of the kernel sees.  A page that was never allocated
+//! cannot be reached by anything at all.
 
 // The allocator and the layout are live now — they are what the kernel stack
 // is made of.  What this covers is the read-only surface a check or a test
