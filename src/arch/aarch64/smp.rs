@@ -198,6 +198,22 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
 // ── AP bring-up ────────────────────────────────────────────────────────
 
 pub(crate) fn bring_up_aps() {
+    // The conduit has to be chosen before it is used: an `smc` or `hvc` this
+    // platform cannot reach is an undefined instruction, not an error return.
+    if !crate::arch::aarch64::psci::init_conduit_from_platform() {
+        crate::println!("[smp   ] no PSCI conduit here — running single-CPU");
+        return;
+    }
+    match crate::arch::aarch64::psci::version() {
+        Some(version) => {
+            crate::println!("[smp   ] PSCI version {:#x}", version);
+        }
+        None => {
+            crate::println!("[smp   ] PSCI unavailable — running single-CPU");
+            return;
+        }
+    }
+
     let aps = discover_aps();
     if aps.is_empty() {
         crate::println!("[smp   ] no APs to bring up — running single-CPU");
@@ -245,23 +261,30 @@ fn bring_up_one(cpu_id: u32, idx: usize) {
 
     // Fill spin table: stack_top first, then entry_addr with release ordering.
     let entry = aarch64_ap_startup as *const () as u64;
-    unsafe {
-        (*aarch64_spin_table.get())[idx].stack_top = stack_top as u64;
-        core::sync::atomic::fence(Ordering::Release);
-        (*aarch64_spin_table.get())[idx].entry_addr = entry;
+    // Start it through PSCI, with the stack top as the context the entry reads
+    // from `x0`.  The status comes back here instead of being waited for.
+    match unsafe { crate::arch::aarch64::psci::cpu_on(cpu_id as u64, entry, stack_top as u64) } {
+        Ok(()) => {
+            crate::println!("  [smp   ] cpu={} started", cpu_id);
+        }
+        Err(status) => {
+            crate::println!("  [smp   ] cpu={} CPU_ON rejected: {:#x}", cpu_id, status);
+        }
     }
-    core::sync::atomic::fence(Ordering::SeqCst);
-    unsafe {
-        core::arch::asm!("dsb ish", "sev", options(nostack));
-    }
-
-    crate::println!("  [smp   ] cpu={} started", cpu_id);
 }
 
 // ── AP discovery ───────────────────────────────────────────────────────
 
 fn discover_aps() -> Vec<(u32, u64)> {
-    let total = crate::arch::fdt::cpu_count();
+    // The device tree is the authority when it arrives; when it does not — the
+    // boot protocol's pointer measured as zero on this machine — the
+    // distributor still knows how many CPU interfaces it was built with.
+    let from_fdt = crate::arch::fdt::cpu_count();
+    let total = if from_fdt > 1 {
+        from_fdt
+    } else {
+        gicd_cpu_count().unwrap_or(from_fdt)
+    };
     if total <= 1 {
         return Vec::new();
     }
@@ -269,8 +292,21 @@ fn discover_aps() -> Vec<(u32, u64)> {
     for id in 1..total {
         aps.push((id, id as u64));
     }
-    crate::println!("[smp   ] FDT: {} CPUs total, {} AP(s)", total, aps.len());
+    crate::println!("[smp   ] {} CPUs total, {} AP(s)", total, aps.len());
     aps
+}
+
+/// Cores the distributor reports, `GICD_TYPER.CPUNumber` (bits [7:5]).
+///
+/// `None` when the register reads as all ones, which is what an absent or
+/// unmapped distributor looks like; a count taken from that would invent
+/// cores.
+fn gicd_cpu_count() -> Option<u32> {
+    let typer = unsafe { core::ptr::read_volatile((gicd_base() + 0x004) as *const u32) };
+    if typer == u32::MAX {
+        return None;
+    }
+    Some(((typer >> 5) & 0x7) + 1)
 }
 
 // ── GIC SGI (IPI) delivery ─────────────────────────────────────────────

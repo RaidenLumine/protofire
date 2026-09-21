@@ -58,9 +58,42 @@ pub unsafe fn cpu_on(target_cpu: u64, entry: u64, context: u64) -> Result<(), i6
     }
 }
 
-/// Configured conduit.  QEMU virt and most firmware expose PSCI via `smc`;
-/// a firmware tree walker could set `hvc` at boot if needed.
-static CONDUIT: PsciConduit = PsciConduit::Smc;
+/// Configured conduit, as one of the two SMCCC instructions.
+///
+/// Which one is reachable is a property of the platform, and guessing wrong is
+/// an undefined instruction rather than an error return.
+const CONDUIT_SMC: u8 = 0;
+const CONDUIT_HVC: u8 = 1;
+static CONDUIT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(CONDUIT_HVC);
+
+/// Choose the conduit this platform can actually reach.
+///
+/// EL2 first, and deliberately: a CPU model that *supports* EL3 is not
+/// evidence that EL3 firmware is present, while a machine booted straight into
+/// EL1 by QEMU has QEMU's own EL2 answering `hvc`.  Measured the hard way — a
+/// `smc` chosen on the strength of `ID_AA64PFR0_EL1`'s EL3 field came back as
+/// an undefined instruction (`ec=0x00`) before AP bring-up ran.
+///
+/// `ID_AA64PFR0_EL1` reports an implemented exception level as zero in its
+/// field, so EL2 = 0 means `hvc` has somewhere to go and EL3 = 0 gives `smc`
+/// a fallback when it does not.
+pub fn init_conduit_from_platform() -> bool {
+    let pfr0: u64;
+    unsafe {
+        asm!("mrs {}, id_aa64pfr0_el1", out(reg) pfr0, options(nomem, nostack));
+    }
+    let el3 = (pfr0 >> 12) & 0xf;
+    let el2 = (pfr0 >> 8) & 0xf;
+    let conduit = if el2 == 0 {
+        CONDUIT_HVC
+    } else if el3 == 0 {
+        CONDUIT_SMC
+    } else {
+        return false;
+    };
+    CONDUIT.store(conduit, core::sync::atomic::Ordering::Relaxed);
+    true
+}
 
 /// Invoke a PSCI call via the configured conduit.
 ///
@@ -73,8 +106,8 @@ static CONDUIT: PsciConduit = PsciConduit::Smc;
 /// call may trap to EL3/EL2.
 unsafe fn psci_call(fnid: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
     let mut result: i64;
-    match CONDUIT {
-        PsciConduit::Smc => {
+    match CONDUIT.load(core::sync::atomic::Ordering::Relaxed) {
+        CONDUIT_SMC => {
             asm!(
                 "smc #0",
                 in("x0") fnid,
@@ -85,7 +118,7 @@ unsafe fn psci_call(fnid: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
                 options(nomem, nostack, preserves_flags),
             );
         }
-        PsciConduit::Hvc => {
+        _ => {
             asm!(
                 "hvc #0",
                 in("x0") fnid,
