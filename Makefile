@@ -49,6 +49,7 @@ endif
 		check-aarch64 \
 		check-riscv64 \
 		check-aarch64-runtime \
+		check-aarch64-smp-runtime \
 		build \
 		build-aarch64 \
 		build-riscv64 \
@@ -219,6 +220,13 @@ check-aarch64-runtime:
 # Boot the kernel on several emulated CPUs and assert that the APs came up and
 # that it is still making progress afterwards.  Single-CPU runs cannot reach
 # the cross-CPU paths at all, so this is the only check that exercises them.
+check-aarch64-smp-runtime:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		SMP_CPUS="$(SMP)" \
+		sh ./scripts/check-aarch64-smp.sh
+
 check-smp-runtime:
 	PROFILE="$(PROFILE)" \
 		CRATE="$(CRATE)" \
