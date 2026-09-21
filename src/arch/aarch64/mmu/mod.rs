@@ -1487,10 +1487,19 @@ pub fn prepare_runtime_process_address_space(
     let mut user_l3 = Box::new(TranslationTable::zeroed());
 
     unsafe {
-        // Start from the already prepared kernel layout, then splice one user
-        // L3 table into the slot's 2 MiB window.
-        *l1 = *KERNEL_L1_TABLE.get();
-        *l2 = *KERNEL_L2_TABLE.get();
+        // Start from the kernel layout the CPU is actually running on, then
+        // splice one user L3 table into the slot's 2 MiB window.
+        //
+        // Reading the activated root rather than the `KERNEL_L1_TABLE` and
+        // `KERNEL_L2_TABLE` statics: those are a second copy of the kernel's
+        // tables, and a copy can be stale, empty, or simply not the one that
+        // was activated.  The root is the table in use, which is the only one
+        // whose contents are worth deriving an address space from.
+        let kernel_root = PREPARED_ROOT_TABLE.load(Ordering::Relaxed) as *const TranslationTable;
+        *l1 = *kernel_root;
+        let kernel_window =
+            ((*kernel_root).0[1] & 0x0000_FFFF_FFFF_F000) as *const TranslationTable;
+        *l2 = *kernel_window;
     }
 
     l1.0[1] = table_entry(l2.as_ref() as *const TranslationTable as usize);
@@ -1586,6 +1595,11 @@ fn activate_prepared_process_address_space_impl(
 ) -> Option<ActivatedProcessAddressSpace> {
     let previous_root_table_address = current_root_table_address();
     let already_active = previous_root_table_address == address_space.root_table_address();
+
+    // An address space that does not carry the kernel's own ranges is a kernel
+    // that cannot be entered while it is running: checked here, at the moment
+    // the tables change, rather than left to the first exception to discover.
+    check_facts_coverage();
 
     if !already_active {
         let ttbr0 = ttbr0_with_asid(address_space.root_table_address(), address_space.asid);
