@@ -48,6 +48,12 @@ pub const SPAN_ENABLED: bool = true;
 /// Size of one translation granule (4 KiB).
 const TRANSLATION_GRANULE_SIZE: usize = 4096;
 
+/// Bytes one L2 entry covers when it is a block rather than a table.
+///
+/// The architectural size, named here so the L1 split does not borrow a
+/// constant that happens to have the same value for another reason.
+const L2_BLOCK_SIZE: usize = 0x20_0000;
+
 /// Number of entries in every translation table.
 const TABLE_ENTRY_COUNT: usize = 512;
 
@@ -593,12 +599,20 @@ fn allocate_runtime_pt_page() -> Option<usize> {
 
 /// Split a 1 GiB L1 block into an L2 table of 2 MiB kernel blocks.
 fn split_l1_block(l1: *mut u64, l1_index: usize, l1_entry: u64, l2_table: usize) {
-    let block_base = (l1_entry & 0x0000_FFFF_C000_0000) as usize;
+    // Copy the source entry and swap only its descriptor type, exactly as
+    // `split_l2_block` does one level down, and let each block's offset fill
+    // the address bits a 1 GiB-aligned entry left zero.
+    //
+    // Rebuilding the entries from scratch — which this did — silently replaced
+    // the attributes of everything in the block, because a 1 GiB block holds
+    // the kernel text, BSS, the frame pool and the page tables together.  One
+    // guard page's split then re-described all of them.
+    let block_template = (l1_entry & !0x3u64) | DESCRIPTOR_BLOCK;
     let l2 = l2_table as *mut u64;
     for block_index in 0..TABLE_ENTRY_COUNT {
-        let address = block_base + block_index * USER_DEMO_REGION_SIZE;
+        let address = block_index as u64 * L2_BLOCK_SIZE as u64;
         unsafe {
-            ptr::write_volatile(l2.add(block_index), kernel_l2_block_entry(address));
+            ptr::write_volatile(l2.add(block_index), block_template + address);
         }
     }
     unsafe {

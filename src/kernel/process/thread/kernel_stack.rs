@@ -42,6 +42,13 @@ fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
     // guard means finding that address first — the same question as whether
     // the aarch64 frame pool is mapped one-to-one.
     let _ = (base, guard_size);
+    // Installing it makes the machine trap on boot, and the trap is the guard
+    // working: the exception entry's own frame save lands on it, which means
+    // some context is running with a stack pointer at (or past) the bottom of
+    // its stack.  With the guard absent that write corrupts memory silently,
+    // which is why the machine appears healthy without it.  Enabling the guard
+    // again is the right end state and belongs with the fix for whatever sets
+    // that stack pointer, not with this call.
     false
 }
 
