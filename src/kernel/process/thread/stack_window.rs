@@ -13,9 +13,14 @@
 // changing what the rest of the kernel sees.  A page that was never allocated
 // cannot be reached by anything at all.
 
-// Introduced as an unused skeleton: the kernel stack allocation moves onto it
-// next, and that step removes this line.
+// The allocator and the layout are live now — they are what the kernel stack
+// is made of.  What this covers is the read-only surface a check or a test
+// uses to look at the window's state (`used_bytes`, `remaining_bytes`,
+// `guard_pages`): real parts of the interface, with no caller in the kernel
+// proper yet.
 #![allow(dead_code)]
+
+use crate::kernel::sync::Mutex;
 
 /// Page size the window is divided into.
 const WINDOW_PAGE: usize = 4096;
@@ -116,10 +121,61 @@ impl StackWindow {
     pub(crate) fn remaining_bytes(&self) -> usize {
         self.end - self.next
     }
+
+    /// Roll back the most recent allocation.
+    ///
+    /// Returns true when `layout` was the top of the bump and the window is
+    /// back where it was before it.  Only the top can be rolled back: a hole
+    /// in the middle is a range the allocator would hand out a second time,
+    /// so a reservation someone else has already built past stays reserved —
+    /// wasted bytes rather than two stacks at one address.
+    pub(crate) fn release(&mut self, layout: &StackLayout) -> bool {
+        if layout.usable_end != self.next {
+            return false;
+        }
+        self.next = layout.guard_start;
+        true
+    }
 }
 
 fn round_up_pages(bytes: usize) -> usize {
     bytes.div_ceil(WINDOW_PAGE) * WINDOW_PAGE
+}
+
+/// The kernel's window, once the architecture has named one.
+///
+/// Filled in on first use rather than at a fixed boot step: the architecture
+/// answers with a range, the first stack gets the window, and every later one
+/// gets the same allocator's next slice.  The lock covers one reservation and
+/// is released before the caller reaches for anything else, so nothing here
+/// can be waiting on this while holding the memory manager.
+static KERNEL_STACK_WINDOW: Mutex<Option<StackWindow>> = Mutex::new(None);
+
+/// Reserve a stack inside the kernel's window.
+///
+/// `None` when the architecture names no window, or when the window has no
+/// room for another stack; the caller then keeps whatever shape its stacks had
+/// before the window existed.  A caller that cannot back the reservation with
+/// memory gives it back with [`release_in_kernel_window`].
+pub(crate) fn allocate_in_kernel_window(
+    guard_bytes: usize,
+    stack_bytes: usize,
+) -> Option<StackLayout> {
+    let (base, end) = crate::kernel::memory::arch::stack_window()?;
+    let mut slot = KERNEL_STACK_WINDOW.lock();
+    let window = slot.get_or_insert_with(|| StackWindow::new(base, end));
+    window.allocate(guard_bytes, stack_bytes)
+}
+
+/// Give back a reservation that could not be backed.
+///
+/// Answers whether the window actually moved back; see
+/// [`StackWindow::release`] for why it may not have.
+pub(crate) fn release_in_kernel_window(layout: &StackLayout) -> bool {
+    match KERNEL_STACK_WINDOW.lock().as_mut() {
+        Some(window) => window.release(layout),
+        None => false,
+    }
 }
 
 #[cfg(test)]
@@ -178,5 +234,27 @@ mod tests {
         let layout = window.allocate(4096, 0).expect("one page fits");
         assert_eq!(layout.usable_start, BASE + 4096);
         assert!(window.allocate(4096, 0).is_none());
+    }
+
+    #[test]
+    fn only_the_top_reservation_comes_back() {
+        let mut window = StackWindow::new(BASE, END);
+        let first = window.allocate(4096, 0x8000).expect("first");
+        let second = window.allocate(4096, 0x8000).expect("second");
+
+        // The first one is not the top while the second is out: giving it
+        // back would leave a hole the allocator would hand out twice.
+        assert!(!window.release(&first));
+        assert_eq!(window.used_bytes(), 2 * (4096 + 0x8000));
+
+        assert!(window.release(&second));
+        assert_eq!(window.used_bytes(), 4096 + 0x8000);
+        assert!(window.release(&first));
+        assert_eq!(window.used_bytes(), 0);
+
+        // And the bytes go out again rather than being lost.
+        let again = window.allocate(4096, 0x8000).expect("again");
+        assert_eq!(again.guard_start, first.guard_start);
+        assert_eq!(again.usable_end, first.usable_end);
     }
 }

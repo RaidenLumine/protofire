@@ -159,7 +159,6 @@ pub(crate) fn ensure_identity_mapped_range(address: usize, byte_len: usize) {
 /// Piece by piece rather than a range, because a stack's pages are the pages
 /// the stack allocator handed out and nothing else; the guard is simply not in
 /// the list.
-#[allow(dead_code)] // the stack migration wires this next
 pub(crate) fn map_stack_page_arch(virtual_address: usize, physical_address: usize) -> bool {
     #[cfg(all(target_arch = "aarch64", target_os = "none"))]
     {
@@ -176,7 +175,6 @@ pub(crate) fn map_stack_page_arch(virtual_address: usize, physical_address: usiz
 ///
 /// Counterpart of [`map_stack_page_arch`]; a target without a window has
 /// nothing to remove, which is also what `false` says.
-#[allow(dead_code)] // the stack migration wires this next
 pub(crate) fn unmap_stack_page_arch(virtual_address: usize) -> bool {
     #[cfg(all(target_arch = "aarch64", target_os = "none"))]
     {
@@ -186,6 +184,29 @@ pub(crate) fn unmap_stack_page_arch(virtual_address: usize) -> bool {
     {
         let _ = virtual_address;
         false
+    }
+}
+
+/// The address range the architecture reserves for kernel stacks, if it has
+/// one.
+///
+/// A window is the architecture's declaration and not a kernel-side constant,
+/// because only the architecture knows whether it can carry a range nothing
+/// else is mapped in — and a range that nothing else is mapped in is what
+/// makes a guard page a page the kernel never allocated rather than a hole
+/// punched in shared storage.  A target without one answers `None` here, and
+/// its stacks keep the shape they had.
+pub(crate) fn stack_window() -> Option<(usize, usize)> {
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        Some((
+            crate::arch::aarch64::mmu::STACK_WINDOW_BASE,
+            crate::arch::aarch64::mmu::STACK_WINDOW_END,
+        ))
+    }
+    #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
+    {
+        None
     }
 }
 

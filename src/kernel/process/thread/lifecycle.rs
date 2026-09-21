@@ -677,8 +677,9 @@ impl Thread {
 
     /// Return `(bottom, top)` bounds of the kernel stack allocation.
     ///
-    /// The stack grows downward from `top` toward `bottom`.  The range
-    /// includes the unmapped guard page at the bottom.
+    /// The stack grows downward from `top` toward `bottom`, and `bottom` is
+    /// the lowest address the thread may use: the guard page below it is not
+    /// part of the range.
     pub fn stack_bounds(&self) -> (usize, usize) {
         let bottom = self.kernel_stack.stack_ptr() as usize;
         (bottom, bottom + self.kernel_stack.stack_len())

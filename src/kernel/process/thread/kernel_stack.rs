@@ -1,9 +1,19 @@
 //! src/kernel/process/thread/kernel_stack.rs
 //!
-//! Kernel stack allocation and lifetime management with an optional
-//! unmapped guard page below the usable region.
+//! Kernel stack allocation and lifetime management.
+//!
+//! A stack is a window-backed allocation when its architecture has a stack
+//! window: its pages are mapped inside a range nothing else is mapped in, and
+//! its guard is a page that range's allocator never handed out.  Targets
+//! without a window keep the older shape — frames at their own addresses, with
+//! the guard cleared by the architecture's un-map routine — and a machine with
+//! no frame allocator at all falls back to a heap buffer with no guard.
 
 use alloc::boxed::Box;
+
+use crate::kernel::memory::frame::FRAME_SIZE;
+
+use super::stack_window::StackLayout;
 
 /// Clear the present/valid bit on every guard page, and report whether every
 /// one of them was actually cleared.
@@ -78,6 +88,15 @@ fn report_guard_not_enforced(guard_size: usize) {
 
 /// Backing storage for a kernel stack.
 enum KernelStackBacking {
+    /// Window-backed: `layout` names the stack inside the architecture's
+    /// window and `frames` is the contiguous run its usable pages are mapped
+    /// to.  There is no guard entry here because there is no guard memory:
+    /// the pages the allocator did not hand out have nothing behind them.
+    Window {
+        layout: StackLayout,
+        frames: *mut u8,
+        page_count: usize,
+    },
     /// Frame-allocated: `base` points to the guard page, `total_frames` covers
     /// guard + usable stack.
     Frame { base: *mut u8, total_frames: usize },
@@ -97,9 +116,90 @@ pub(crate) struct KernelStack {
 }
 
 impl KernelStack {
-    /// Allocate a kernel stack with a guard page when the frame allocator is
-    /// available; otherwise fall back to a heap allocation.
+    /// Allocate a kernel stack.
+    ///
+    /// - a window-backed stack, when the architecture has a stack window and
+    ///   the frame allocator can fill one;
+    /// - otherwise the frame-backed shape the architecture used before windows
+    ///   existed;
+    /// - otherwise a heap buffer, when there is no frame allocator at all.
     pub(crate) fn new(guard_size: usize, stack_size: usize) -> Self {
+        if let Some(stack) = Self::new_in_stack_window(guard_size, stack_size) {
+            return stack;
+        }
+        Self::new_frame_backed(guard_size, stack_size)
+    }
+
+    /// Allocate a kernel stack inside the architecture's stack window.
+    ///
+    /// This is where a guard costs nothing.  The window hands out
+    /// guard-then-usable slices, the usable pages get frames, and the guard
+    /// gets nothing at all: no frame, no leaf, and no un-mapping step that
+    /// could fail.  A page the kernel never allocated cannot be reached, which
+    /// is a stronger statement than a page whose mapping someone removed.
+    ///
+    /// Answers `None` when the architecture names no window or when the window
+    /// is full, which is how a target without one keeps its old shape.
+    fn new_in_stack_window(guard_size: usize, stack_size: usize) -> Option<Self> {
+        let layout = super::stack_window::allocate_in_kernel_window(guard_size, stack_size)?;
+        let page_count = layout.usable_len() / FRAME_SIZE;
+
+        let frames = match crate::kernel::memory::global_mut() {
+            Some(mut memory) => memory.allocate_frames(page_count),
+            None => None,
+        };
+        let Some(frames) = frames else {
+            super::stack_window::release_in_kernel_window(&layout);
+            return None;
+        };
+
+        let mut mapped = 0;
+        while mapped < page_count {
+            let offset = mapped * FRAME_SIZE;
+            if !crate::kernel::memory::arch::map_stack_page_arch(
+                layout.usable_start + offset,
+                frames as usize + offset,
+            ) {
+                break;
+            }
+            mapped += 1;
+        }
+        if mapped < page_count {
+            // Half a stack is not a stack: undo the pages that did go in and
+            // hand back both the frames and the addresses.
+            while mapped > 0 {
+                mapped -= 1;
+                crate::kernel::memory::arch::unmap_stack_page_arch(
+                    layout.usable_start + mapped * FRAME_SIZE,
+                );
+            }
+            if let Some(mut memory) = crate::kernel::memory::global_mut() {
+                memory.deallocate_frames(frames, page_count);
+            }
+            super::stack_window::release_in_kernel_window(&layout);
+            return None;
+        }
+
+        Some(Self {
+            stack_ptr: layout.usable_start as *mut u8,
+            stack_len: layout.usable_len(),
+            backing: KernelStackBacking::Window {
+                layout,
+                frames,
+                page_count,
+            },
+        })
+    }
+
+    /// Allocate frames at their own addresses, with the guard page cleared by
+    /// the architecture's un-map routine.
+    ///
+    /// The guard here is a hole someone punched in the kernel's own storage
+    /// rather than a page nobody allocated: the frames are identity mapped
+    /// along with everything else, so the guard only exists if the walk that
+    /// clears it can reach the leaf, which a coarse mapping stops it from
+    /// doing.  That is why the answer is reported rather than assumed.
+    fn new_frame_backed(guard_size: usize, stack_size: usize) -> Self {
         // Why the frame-backed path was abandoned, reported once the
         // memory-manager guard has been released.
         //
@@ -188,6 +288,21 @@ impl KernelStack {
 impl Drop for KernelStack {
     fn drop(&mut self) {
         match &self.backing {
+            KernelStackBacking::Window {
+                layout,
+                frames,
+                page_count,
+            } => {
+                // The guard is not in this list, and not because it was
+                // skipped: the allocator never handed it out, so there is no
+                // mapping to take back.
+                for page in layout.usable_pages() {
+                    crate::kernel::memory::arch::unmap_stack_page_arch(page);
+                }
+                if let Some(mut memory) = crate::kernel::memory::global_mut() {
+                    memory.deallocate_frames(*frames, *page_count);
+                }
+            }
             KernelStackBacking::Frame { base, total_frames } => {
                 // Unmap the usable stack region from the software page table.
                 if let Some(mut mm) = crate::kernel::memory::global_mut() {
