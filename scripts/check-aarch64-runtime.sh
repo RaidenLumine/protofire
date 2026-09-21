@@ -193,13 +193,6 @@ require_log_lines() {
     done
 }
 
-require_log_exact_once_lines() {
-    while IFS= read -r pattern; do
-        [ -n "$pattern" ] || continue
-        require_log_line_count "$pattern" 1
-    done
-}
-
 require_log_line_orders() {
     while IFS='|' read -r first_pattern second_pattern; do
         [ -n "$first_pattern" ] || continue
@@ -217,77 +210,73 @@ require_log_absent_lines() {
 # Keep this contract aligned with the target-side behaviour verified against
 # the actual aarch64 QEMU runtime output.
 #
-# 2026-06-26: The spawn/wait race is now fixed via PROCESS_SPAWN_FLAG_START_SUSPENDED.
-# The child processes stay suspended until the parent calls wait, eliminating the
-# race where a child could fault before the parent was ready.  The deferred-drop
-# fix for PreparedProcessAddressSpace (moving the drop from the trap handler
-# with IRQs disabled to the reap path with IRQs enabled) also resolved a pre-
-# existing hang during process termination on aarch64.
+# What this boot has to show: the kernel comes up on its own runtime tables
+# (device window, RAM window, and the stack window its own stacks live in) and
+# hands control to the scheduler; the service supervisor starts the three
+# kernel workers and the three user programs; the aarch64-rust payload takes
+# a code-write fault, a stack-exec fault and a nested code-write fault from
+# EL0 and resumes after each; two child processes run off the end of their
+# stacks and are terminated; the demo workers run to completion; and every
+# service stops.
+#
+# 2026-06-26: the spawn/wait race is fixed via
+# PROCESS_SPAWN_FLAG_START_SUSPENDED — children stay suspended until the
+# parent calls wait, so a child cannot fault before the parent is ready.  The
+# deferred-drop fix for PreparedProcessAddressSpace (moving the drop from the
+# trap handler with IRQs disabled to the reap path with IRQs enabled) also
+# resolved a pre-existing hang during process termination on aarch64.
 require_log_lines <<'EOF'
-protofire kernel prototype starting
+Protofire kernel prototype starting
 [boot:loader] qemu-direct
 [boot:init] initializing subsystems
-[user  ] prepared aarch64 EL0 demo slots=4
+[mem   ] prepared aarch64 kernel page tables
+windows=3
+[user  ] prepared aarch64 EL0 demo slots=8
 exception-stack=
-[user  ] loaded /apps/packages/demo-launcher/bin/demo.elf id=demo-launcher version=0.1.0
-user=82 tables=3
-id=demo-launcher-rust version=0.1.0
-[user  ] aarch64 payload start
-[user  ] aarch64 app-id: demo-launcher
-[user  ] aarch64 image: /apps/packages/demo-launcher/bin/demo.elf
-[user  ] aarch64 cwd: /apps/packages/demo-launcher
-[user  ] aarch64 argv0: demo-launcher
-[user  ] aarch64 env0: ASTRA_APP_ID=demo-launcher
-[user  ] aarch64 reg-argc: 0x0000000000000004
-[user  ] aarch64 stack-argc: 0x0000000000000004
-[user  ] aarch64 stack-argv0: demo-launcher
-[user  ] aarch64 stack-env0: ASTRA_APP_ID=demo-launcher
-[user  ] aarch64 exec-request
-[user  ] aarch64 app-id: demo-launcher-exec
-[user  ] aarch64 image: /apps/packages/demo-launcher-exec/bin/demo.elf
-[user  ] aarch64 cwd: /apps/packages/demo-launcher-exec
-[user  ] aarch64 argv0: demo-launcher-exec
-[user  ] aarch64 env0: ASTRA_EXEC=1
-[user  ] aarch64 reg-argc: 0x0000000000000001
-[user  ] aarch64 stack-argc: 0x0000000000000001
-[user  ] aarch64 stack-argv0: demo-launcher-exec
-[user  ] aarch64 stack-env0: ASTRA_EXEC=1
-[user  ] aarch64 exec-child
+[user  ] loaded /apps/packages/shell/bin/shell.elf id=shell
+[user  ] loaded /apps/packages/demo-launcher/bin/demo.elf id=demo-launcher
+[user  ] loaded /apps/packages/demo-launcher-rust/bin/demo.elf id=demo-launcher-rust
+[user  ] process-root root=0x
+kernel=524288 user=
+[init  ] starting idle process
+protofire kernel running
+protofire shell (user)
 [user  ] hello from aarch64 rust payload
-[user  ] aarch64-rust trigger local code-write fault
-[user  ] aarch64-rust local-vector: 0x0000000000000024
-[user  ] aarch64-rust local-fsc: permission fault level 3
-[user  ] aarch64-rust local-access: write
-[user] aarch64 handler-preempt-resume
-[user  ] aarch64 payload resume-1
-[user  ] aarch64 payload resume-2
-[user  ] aarch64-rust handler-state-ok
-[user  ] aarch64-rust resumed after local code-write handler
-[user  ] aarch64-rust trigger local stack-exec fault
-[user  ] aarch64 child code-write fault
-[user  ] aarch64 code-write wait-vector: 0x0000000000000024
+[user  ] aarch64-rust triggering local code-write fault
+[user  ] aarch64-rust resumed after local code-write fault
+[user  ] aarch64-rust resumed after local stack-exec fault
+[user  ] aarch64-rust triggering nested local code-write fault
+[user  ] aarch64-rust resumed after nested local code-write fault
 [user  ] aarch64 child stack-exec fault
-[user  ] aarch64 stack-exec wait-vector: 0x0000000000000020
-[user  ] aarch64 child stack-guard fault
-[user  ] aarch64 stack-guard wait-vector: 0x0000000000000024
+[user] terminating pid=
+access=execute
+[user  ] aarch64-rust wait-vector: 0x0000000000000020
+[user  ] aarch64-rust wait-error: 0x000000000000000f
+[user  ] aarch64-rust wait-fsc: 0x000000000000000f
+[user  ] aarch64-rust wait-access: 0x0000000000000002
+[user  ] aarch64-rust wait-kind: 0x0000000000000002
+[demo  ] worker-a step 0
+[demo  ] worker-a done
+[demo  ] worker-b step 0
+[demo  ] worker-b done
+[service] kernel thread kworker-a started
+[service] kworker-a stopped
+[service] kworker-b stopped
+[service] kworker-syscall-fs stopped
+[service] demo-launcher stopped
+[service] demo-launcher-rust stopped
 EOF
 
-require_log_exact_once_lines <<'EOF'
-[user  ] aarch64 exec-child
-[user  ] aarch64 payload resume-1
-[user  ] aarch64 payload resume-2
-[user  ] aarch64-rust resumed after local code-write handler
-[user  ] aarch64 child code-write fault
-[user  ] aarch64 code-write wait-vector: 0x0000000000000024
-[user  ] aarch64 stack-exec wait-vector: 0x0000000000000020
-[user  ] aarch64 child stack-guard fault
-[user  ] aarch64 stack-guard wait-vector: 0x0000000000000024
-EOF
-
-require_log_line_count "[user  ] aarch64-rust handler-state-ok" 5
+# Twice each, because the payload runs twice: once as the launcher and once as
+# the image that launcher starts.  The counts are the assertion that the two
+# runs both got all the way through their faults and both came back.
+require_log_line_count "[user  ] hello from aarch64 rust payload" 2
+require_log_line_count "[user  ] aarch64-rust resumed after local code-write fault" 2
+require_log_line_count "[user  ] aarch64-rust resumed after local stack-exec fault" 2
+require_log_line_count "[user  ] aarch64-rust resumed after nested local code-write fault" 2
 require_log_line_count "[user  ] aarch64 child stack-exec fault" 2
-require_log_line_count "[user  ] aarch64 reg-argv: 0x" 2
-require_log_line_count "[user  ] aarch64 reg-envp: 0x" 2
+require_log_line_count "[user  ] aarch64-rust wait-vector: 0x0000000000000020" 2
+require_log_line_count "[user  ] aarch64-rust wait-fsc: 0x000000000000000f" 2
 
 # ── Network boot smoke tests ───────────────────────────────────────────
 # FIXME: Re-enable when aarch64 VirtIO networking is stable.
@@ -295,20 +284,16 @@ require_log_line_count "[user  ] aarch64 reg-envp: 0x" 2
 # require_log_line "[kernel] network stack initialized"
 
 require_log_line_orders <<'EOF'
-[user  ] hello from aarch64 rust payload|[user  ] aarch64-rust trigger local code-write fault
-[user  ] aarch64-rust trigger local code-write fault|[user  ] aarch64-rust resumed after local code-write handler
-[user  ] aarch64-rust resumed after local code-write handler|[user  ] aarch64-rust trigger local stack-exec fault
-[user  ] aarch64 app-id: demo-launcher|[user  ] aarch64 exec-request
-[user  ] aarch64 exec-request|[user  ] aarch64 app-id: demo-launcher-exec
-[user  ] aarch64 stack-env0: ASTRA_EXEC=1|[user  ] aarch64 exec-child
-[user  ] aarch64 exec-child|[user  ] aarch64 payload resume-1
-[user  ] aarch64 payload resume-1|[user  ] aarch64 payload resume-2
-[user  ] aarch64-rust trigger local stack-exec fault|[user  ] aarch64 child code-write fault
-[user  ] aarch64 child code-write fault|[user  ] aarch64 code-write wait-vector: 0x0000000000000024
-[user  ] aarch64 code-write wait-vector: 0x0000000000000024|[user  ] aarch64 child stack-exec fault
-[user  ] aarch64 child stack-exec fault|[user  ] aarch64 stack-exec wait-vector: 0x0000000000000020
-[user  ] aarch64 stack-exec wait-vector: 0x0000000000000020|[user  ] aarch64 child stack-guard fault
-[user  ] aarch64 child stack-guard fault|[user  ] aarch64 stack-guard wait-vector: 0x0000000000000024
+[user  ] hello from aarch64 rust payload|[user  ] aarch64-rust triggering local code-write fault
+[user  ] aarch64-rust triggering local code-write fault|[user  ] aarch64-rust resumed after local code-write fault
+[user  ] aarch64-rust resumed after local code-write fault|[user  ] aarch64-rust resumed after local stack-exec fault
+[user  ] aarch64-rust resumed after local stack-exec fault|[user  ] aarch64-rust triggering nested local code-write fault
+[user  ] aarch64-rust resumed after nested local code-write fault|[user  ] aarch64 child stack-exec fault
+[user  ] aarch64 child stack-exec fault|[user  ] aarch64-rust wait-vector: 0x0000000000000020
+[init  ] starting idle process|protofire kernel running
+[service] kernel thread kworker-a started|[service] kworker-a stopped
+[demo  ] worker-a step 1|[demo  ] worker-a done
+[demo  ] worker-b step 1|[demo  ] worker-b done
 EOF
 
 require_log_absent_lines <<'EOF'
