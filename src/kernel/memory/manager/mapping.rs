@@ -170,9 +170,15 @@ impl MemoryManager {
             // Skip if this would conflict with a kernel mapping.
             if let Some((_, _, existing_kind)) = self.page_table.lookup_mapping(page_addr) {
                 match existing_kind {
-                    MappingKind::KernelHeap | MappingKind::Identity | MappingKind::DeviceMemory => {
-                        continue
-                    }
+                    // Kernel state: a user registration must not touch it.
+                    // `KernelStack` belongs here for the same reason it is
+                    // excluded from the reclaim paths — the kernel writes to a
+                    // stack while handling the fault a missing mapping would
+                    // raise.
+                    MappingKind::KernelHeap
+                    | MappingKind::KernelStack
+                    | MappingKind::Identity
+                    | MappingKind::DeviceMemory => continue,
                     // User-space kinds: silently unmap the old entry first.
                     MappingKind::Anonymous
                     | MappingKind::DemandPaged

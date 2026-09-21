@@ -119,10 +119,14 @@ impl KernelStack {
                 let stack_ptr = unsafe { base.add(guard_size) };
                 // Map only the usable stack region; the guard page stays
                 // unmapped so any access faults.
-                if let Err(e) = mm.map_region(
+                // Mapped as a kernel stack, not as `Anonymous`: the reclaim
+                // and relocation paths pick candidates by kind, and a stack
+                // must never be one of them.
+                if let Err(e) = mm.map_region_with_kind(
                     stack_ptr as usize,
                     stack_size,
                     crate::kernel::memory::paging::PagePermissions::READ_WRITE,
+                    crate::kernel::memory::paging::MappingKind::KernelStack,
                 ) {
                     mm.deallocate_frames(base, total_frames);
                     mapping_failure = Some(e);

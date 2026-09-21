@@ -33,6 +33,14 @@ impl AdviceHint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MappingKind {
     KernelHeap,
+    /// A kernel stack.
+    ///
+    /// Never reclaimed and never relocated.  The kernel writes to a stack
+    /// while handling the very fault a missing mapping would raise, and a stack
+    /// that moves leaves every frame pointer into it dangling — so this is not
+    /// a label but the thing that keeps stacks out of the reclaim and
+    /// relocation paths, which select their candidates by kind.
+    KernelStack,
     Anonymous,
     Identity,
     DeviceMemory,
@@ -58,6 +66,7 @@ impl MappingKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::KernelHeap => "kernel-heap",
+            Self::KernelStack => "kernel-stack",
             Self::Anonymous => "anonymous",
             Self::Identity => "identity",
             Self::DeviceMemory => "device-memory",
