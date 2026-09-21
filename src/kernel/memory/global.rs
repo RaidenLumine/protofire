@@ -6,6 +6,7 @@ use core::cell::UnsafeCell;
 use core::ptr;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering;
 
 use super::manager::MemoryManager;
@@ -34,6 +35,90 @@ pub(crate) static GLOBAL_MEMORY_MANAGER: AtomicPtr<MemoryManager> = AtomicPtr::n
 /// Keeping the two lock families on the same discipline — interrupts off for
 /// the whole critical section — removes step 1 and with it the wedge.
 static MEMORY_MANAGER_LOCK: AtomicBool = AtomicBool::new(false);
+
+/// Id recorded in [`MEMORY_MANAGER_LOCK_OWNER`] while no CPU holds the lock.
+const NO_CPU: u32 = u32::MAX;
+
+/// Id of the CPU executing this code.
+///
+/// Reads the per-CPU data, which [`crate::util::debug`] already reads on every
+/// printed line, so it is safe wherever the console is.
+fn current_cpu() -> u32 {
+    crate::kernel::percpu::get().cpu_id
+}
+
+/// Which CPU holds a lock, or [`NO_CPU`] while it is free.
+///
+/// A plain `AtomicBool` cannot answer the one question a fault handler has to
+/// ask: whether the lock it cannot take is *this* CPU's own.  Waiting for a
+/// lock another CPU holds is ordinary contention that ends; waiting for one
+/// this CPU holds is a deadlock that never does, because the guard that would
+/// release it is below the frame doing the waiting.
+pub(crate) struct LockOwner {
+    owner: AtomicU32,
+}
+
+impl LockOwner {
+    pub(crate) const fn new() -> Self {
+        Self {
+            owner: AtomicU32::new(NO_CPU),
+        }
+    }
+
+    /// Record that this CPU has taken the lock.
+    pub(crate) fn acquired(&self) {
+        self.owner.store(current_cpu(), Ordering::Relaxed);
+    }
+
+    /// Record that the lock is free again.
+    pub(crate) fn released(&self) {
+        // Release rather than Relaxed: the next acquirer must not be able to
+        // read the owner as still naming the previous holder after it has
+        // taken the lock.
+        self.owner.store(NO_CPU, Ordering::Release);
+    }
+
+    /// Whether the lock is held by the CPU running this code.
+    pub(crate) fn held_by_current_cpu(&self) -> bool {
+        self.owner.load(Ordering::Relaxed) == current_cpu()
+    }
+
+    /// The raw recorded owner, for tests that need to name a *different* CPU.
+    #[cfg(test)]
+    pub(crate) fn owner_for_tests(&self) -> u32 {
+        self.owner.load(Ordering::Relaxed)
+    }
+
+    /// Set the recorded owner directly, for tests that need to name a
+    /// *different* CPU — something [`acquired`](Self::acquired) cannot do,
+    /// since it always records the CPU it runs on.
+    #[cfg(test)]
+    pub(crate) fn set_owner_for_tests(&self, cpu: u32) {
+        self.owner.store(cpu, Ordering::Relaxed);
+    }
+
+    /// The value meaning "no CPU holds this".
+    #[cfg(test)]
+    pub(crate) const FREE: u32 = NO_CPU;
+}
+
+/// CPU currently inside the memory-manager critical section.
+static MEMORY_MANAGER_LOCK_OWNER: LockOwner = LockOwner::new();
+
+/// Whether *this* CPU is already inside a [`global_mut`] critical section.
+///
+/// A caller that can observe this must not try to take the lock.  The guard
+/// that would release it lives on this CPU's stack, below the current frame,
+/// so it cannot run until this frame returns — and this frame would be waiting
+/// for exactly that.  With interrupts masked, as [`global_mut`] now leaves
+/// them, nothing can break the cycle either.
+///
+/// The one caller that needs this is the x86_64 page-fault handler: it cannot
+/// resolve a fault until it holds the memory manager, and the fault may well
+/// have been raised *by* the critical section it would have to wait for.
+pub(crate) fn held_by_current_cpu() -> bool {
+    MEMORY_MANAGER_LOCK_OWNER.held_by_current_cpu()
+}
 
 /// RAII guard returned by [`global_mut`].
 ///
@@ -68,6 +153,9 @@ impl core::ops::DerefMut for MemoryManagerGuard {
 impl Drop for MemoryManagerGuard {
     fn drop(&mut self) {
         if self.locked {
+            // Clear the owner before releasing, so the next acquirer never
+            // sees the lock free while it still names the previous holder.
+            MEMORY_MANAGER_LOCK_OWNER.released();
             MEMORY_MANAGER_LOCK.store(false, Ordering::Release);
             self.locked = false;
             // Release before restoring: the next acquirer must not observe the
@@ -101,6 +189,16 @@ pub(crate) unsafe fn install_global_unchecked(memory: &MemoryManager) {
 /// Same lifetime constraints as [`install_global_unchecked`].
 pub unsafe fn install_global_for_tests(memory: &MemoryManager) {
     GLOBAL_MEMORY_MANAGER.store(memory as *const _ as *mut _, Ordering::SeqCst);
+}
+
+/// Return the global slot to its "no memory manager" state.
+///
+/// Only for tests that install one to exercise the accessors: the library's
+/// unit tests share a process, so a test that installs a manager must put the
+/// slot back rather than leave it pointing at its own stack frame.
+#[cfg(test)]
+pub(crate) fn uninstall_global_for_tests() {
+    GLOBAL_MEMORY_MANAGER.store(ptr::null_mut(), Ordering::SeqCst);
 }
 
 pub(crate) fn global() -> Option<&'static MemoryManager> {
@@ -140,12 +238,49 @@ pub(crate) fn global_mut() -> Option<MemoryManagerGuard> {
         crate::arch::interrupts::restore(interrupts_were_enabled);
         None
     } else {
+        MEMORY_MANAGER_LOCK_OWNER.acquired();
         Some(MemoryManagerGuard {
             manager: UnsafeCell::new(unsafe { &mut *memory }),
             locked: true,
             interrupts_were_enabled,
         })
     }
+}
+
+/// Take the lock only if it is free, never waiting for it.
+///
+/// Used by diagnostics that must not be able to stall the path reporting them
+/// — the fault profiler counters in the exception handlers.  A missed
+/// increment costs a number in a report; waiting there can cost the machine.
+///
+/// Returns `None` when the lock is held, by this CPU or another, and when no
+/// memory manager is installed.
+pub(crate) fn try_global_mut() -> Option<MemoryManagerGuard> {
+    // Mask first, then make the one attempt, so a holder here is never
+    // preemptible — the same discipline as `global_mut`, just without a loop.
+    let interrupts_were_enabled = crate::arch::interrupts::save_and_disable();
+
+    if MEMORY_MANAGER_LOCK
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        crate::arch::interrupts::restore(interrupts_were_enabled);
+        return None;
+    }
+
+    let memory = GLOBAL_MEMORY_MANAGER.load(Ordering::SeqCst);
+    if memory.is_null() {
+        MEMORY_MANAGER_LOCK.store(false, Ordering::Release);
+        crate::arch::interrupts::restore(interrupts_were_enabled);
+        return None;
+    }
+
+    MEMORY_MANAGER_LOCK_OWNER.acquired();
+    Some(MemoryManagerGuard {
+        manager: UnsafeCell::new(unsafe { &mut *memory }),
+        locked: true,
+        interrupts_were_enabled,
+    })
 }
 
 /// Public accessor for integration tests (single-threaded, no locking).

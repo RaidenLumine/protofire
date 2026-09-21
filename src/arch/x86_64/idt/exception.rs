@@ -44,7 +44,28 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
         // termination after the logging/recovery pass completes.
         let fault_address = fault_address.unwrap_or_default();
         let page_fault = PageFaultError::from_error_code(context.error_code);
-        if let Some(mut memory) = crate::kernel::memory::global_mut() {
+
+        // Do not wait for a lock this CPU already holds.
+        //
+        // The fault may have been raised by the critical section itself — the
+        // frame allocator touching a page its own metadata says is mapped is
+        // the ordinary way that happens.  The guard that would release the
+        // lock is then on this CPU's stack, below the faulting frame, so
+        // waiting for it cannot end: this frame never returns, the guard never
+        // drops, and interrupts are masked for the whole spin.  The machine
+        // stops silently, which is how a layout-dependent allocator bug looked
+        // like an AP bring-up failure.
+        //
+        // Waiting for *another* CPU is still correct, so only the re-entrant
+        // case is refused; the fault is then reported below with
+        // `sw=memory-manager-locked-by-this-cpu`, and a kernel-mode fault
+        // reaches the fatal halt with a RIP and an address to work from.
+        let memory_manager = if crate::kernel::memory::held_by_current_cpu() {
+            None
+        } else {
+            crate::kernel::memory::global_mut()
+        };
+        if let Some(mut memory) = memory_manager {
             // ── fault profiler: page fault type counters ──
             memory.fault_profiler.inc_faults_total();
             memory.fault_profiler.inc_page_faults_total();
@@ -240,14 +261,31 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
                 );
             }
         } else {
+            // Two different failures reach here, and they call for different
+            // investigations, so they are not collapsed into one word.  A
+            // missing memory manager is an early-boot problem; the lock being
+            // held by this CPU means the fault was raised from inside a
+            // `global_mut` critical section, and the rip names its site.
+            let (software_state, diagnosis) = if crate::kernel::memory::held_by_current_cpu() {
+                (
+                    "memory-manager-locked-by-this-cpu",
+                    "fault-raised-inside-memory-manager; the guard that would \
+                     release it is below this frame, so it cannot be resolved \
+                     from the fault handler",
+                )
+            } else {
+                ("memory-manager-unavailable", "memory-manager-unavailable")
+            };
             println!(
-                "[{}] {} addr={:#018x} access={} mode={} reason={} sw=memory-manager-unavailable diagnosis=memory-manager-unavailable reserved={} pk={} ss={} sgx={} error={:#018x} rip={:#018x} cs={:#018x} rflags={:#018x}",
+                "[{}] {} addr={:#018x} access={} mode={} reason={} sw={} diagnosis={} reserved={} pk={} ss={} sgx={} error={:#018x} rip={:#018x} cs={:#018x} rflags={:#018x}",
                 log_prefix,
                 exception_name(context.vector),
                 fault_address,
                 page_fault.access_kind(),
                 page_fault.privilege_level(),
                 page_fault.reason(),
+                software_state,
+                diagnosis,
                 page_fault.reserved_bit_violation,
                 page_fault.protection_key,
                 page_fault.shadow_stack,
@@ -274,7 +312,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
         }
 
         // ── fault profiler: non-PF exception type counters ──
-        if let Some(memory) = crate::kernel::memory::global_mut() {
+        if let Some(memory) = crate::kernel::memory::try_global_mut() {
             memory.fault_profiler.inc_faults_total();
             match vector {
                 v if v == X86_64_EXCEPTION_INVALID_OPCODE_VECTOR as u64 => {
@@ -313,7 +351,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
             match thread.deliver_x86_64_user_exception(context, fault_address) {
                 Ok(true) => {
                     // ── fault profiler: delivered to user handler ──
-                    if let Some(memory) = crate::kernel::memory::global_mut() {
+                    if let Some(memory) = crate::kernel::memory::try_global_mut() {
                         memory.fault_profiler.inc_faults_delivered_to_handler();
                     }
 
@@ -328,7 +366,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
                 }
                 Ok(false) => {
                     // ── fault profiler: no user handler ──
-                    if let Some(memory) = crate::kernel::memory::global_mut() {
+                    if let Some(memory) = crate::kernel::memory::try_global_mut() {
                         memory.fault_profiler.inc_faults_no_handler();
                     }
                 }
@@ -345,7 +383,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
         }
         log_user_exception_termination(context, fault_address);
         // ── fault profiler: user exception termination ──
-        if let Some(memory) = crate::kernel::memory::global_mut() {
+        if let Some(memory) = crate::kernel::memory::try_global_mut() {
             memory.fault_profiler.inc_faults_terminated();
         }
         // Record the fault in the per-process fault ring buffer for
@@ -355,7 +393,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
     }
 
     // ── fault profiler: kernel fatal halt ──
-    if let Some(memory) = crate::kernel::memory::global_mut() {
+    if let Some(memory) = crate::kernel::memory::try_global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
     }
 
