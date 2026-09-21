@@ -682,18 +682,46 @@ pub(crate) fn runtime_kernel_page_plan_impl(heap_bounds: (usize, usize)) -> Opti
     // page is mapped read-write regardless — the heap already requires it.
     let bss_end = page_align_up(core::ptr::addr_of!(__bss_end) as usize);
 
-    KernelPagePlan::from_ranges(
-        (core::ptr::addr_of!(__text_start) as usize, text_end_covered),
-        linker_symbol_range(
+    let ranges = crate::kernel::memory::map_facts::ImageRanges {
+        text: (core::ptr::addr_of!(__text_start) as usize, text_end_covered),
+        rodata: linker_symbol_range(
             core::ptr::addr_of!(__rodata_start),
             core::ptr::addr_of!(__rodata_end),
         ),
-        linker_symbol_range(
+        data: linker_symbol_range(
             core::ptr::addr_of!(__data_start),
             core::ptr::addr_of!(__data_end),
         ),
-        (core::ptr::addr_of!(__bss_start) as usize, bss_end),
-        heap_bounds,
+        bss: (core::ptr::addr_of!(__bss_start) as usize, bss_end),
+        heap: heap_bounds,
+    };
+
+    // Publish the facts, and build the plan from the very same ranges: one
+    // derivation, so the plan and the facts cannot describe different layouts.
+    //
+    // Publish once.  A second derivation is expected — the plan and the cached
+    // spec both come through here — and is silent, because the latch is the
+    // point: the facts describe the tables that were built first.
+    //
+    // What is worth reporting is the other outcome: nothing published, which
+    // means the ranges are inconsistent with each other.  Once rather than
+    // every boot, and it names the problem instead of leaving a plan shaped by
+    // ranges nothing else agrees with.
+    let _ = ranges.install();
+    if crate::kernel::memory::map_facts::get().is_none() {
+        static REPORTED: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
+        if !REPORTED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+            crate::println!("[mm    ] kernel map facts not installed from the image ranges");
+        }
+    }
+
+    KernelPagePlan::from_ranges(
+        ranges.text,
+        ranges.rodata,
+        ranges.data,
+        ranges.bss,
+        ranges.heap,
     )
 }
 
