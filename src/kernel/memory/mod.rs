@@ -13,6 +13,7 @@ pub mod frame;
 pub(crate) mod global;
 pub mod heap;
 pub(crate) mod manager;
+pub(crate) mod map_facts;
 pub mod paging;
 pub mod swap;
 #[cfg(test)]
