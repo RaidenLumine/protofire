@@ -149,6 +149,46 @@ pub(crate) fn ensure_identity_mapped_range(address: usize, byte_len: usize) {
     }
 }
 
+/// Map one frame at an address inside the kernel's stack window.
+///
+/// The window is the architecture's own range and the tables under it belong
+/// to stacks alone, which is why this is a separate call from the user-page
+/// shims: mapping there cannot disturb anything else, and a target without a
+/// separate window says so rather than quietly mapping somewhere shared.
+///
+/// Piece by piece rather than a range, because a stack's pages are the pages
+/// the stack allocator handed out and nothing else; the guard is simply not in
+/// the list.
+#[allow(dead_code)] // the stack migration wires this next
+pub(crate) fn map_stack_page_arch(virtual_address: usize, physical_address: usize) -> bool {
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        unsafe { crate::arch::aarch64::mmu::map_stack_page(virtual_address, physical_address) }
+    }
+    #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
+    {
+        let _ = (virtual_address, physical_address);
+        false
+    }
+}
+
+/// Remove one frame from the stack window.
+///
+/// Counterpart of [`map_stack_page_arch`]; a target without a window has
+/// nothing to remove, which is also what `false` says.
+#[allow(dead_code)] // the stack migration wires this next
+pub(crate) fn unmap_stack_page_arch(virtual_address: usize) -> bool {
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        unsafe { crate::arch::aarch64::mmu::unmap_stack_page(virtual_address) }
+    }
+    #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
+    {
+        let _ = virtual_address;
+        false
+    }
+}
+
 /// Unmap a user page from the live hardware page tables via the arch MMU.
 pub(crate) fn unmap_user_page_arch(virtual_address: usize) -> bool {
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
