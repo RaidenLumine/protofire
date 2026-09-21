@@ -1110,7 +1110,6 @@ fn stack_window_l3(virtual_address: usize) -> Option<*mut u64> {
 ///
 /// `virtual_address` must name a page the caller owns — the stack window's
 /// allocator is the only thing that hands those out.
-#[allow(dead_code)] // the stack migration wires this next
 pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: usize) -> bool {
     if !(STACK_WINDOW_BASE..STACK_WINDOW_END).contains(&virtual_address) {
         return false;
@@ -1143,7 +1142,6 @@ pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: us
 /// # Safety
 ///
 /// As [`map_stack_page`]: the address must be one the caller owns.
-#[allow(dead_code)] // the stack migration wires this next
 pub(crate) unsafe fn unmap_stack_page(virtual_address: usize) -> bool {
     if !(STACK_WINDOW_BASE..STACK_WINDOW_END).contains(&virtual_address) {
         return false;
