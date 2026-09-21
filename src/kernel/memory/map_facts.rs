@@ -169,6 +169,30 @@ impl KernelMapFacts {
             .min_by_key(|region| region.end - region.start)
             .map(|region| region.kind)
     }
+
+    /// A few addresses inside every region, for a caller that wants to check
+    /// that the mapping it built actually covers them.
+    ///
+    /// First, middle and last: both boundaries and somewhere in between.  A
+    /// region whose middle is mapped and whose edge is not is exactly the kind
+    /// of gap this exists to catch, and sampling only the middle would report
+    /// it as fine.
+    ///
+    /// Allocation-free, like everything else here: the caller may be checking
+    /// the tables before the heap exists.
+    pub(crate) fn probe_addresses(&self) -> impl Iterator<Item = (RegionKind, usize)> + '_ {
+        self.declared().flat_map(|region| {
+            let first = region.start;
+            let middle = region.start + (region.end - region.start) / 2;
+            let last = region.end - 1;
+            [
+                (region.kind, first),
+                (region.kind, middle),
+                (region.kind, last),
+            ]
+            .into_iter()
+        })
+    }
 }
 
 /// Where the facts live once they have been derived.
@@ -343,5 +367,32 @@ mod tests {
             heap: (0x5000, 0x6000),
         };
         assert!(!ranges.install());
+    }
+
+    #[test]
+    fn probe_addresses_sample_both_edges_and_the_middle() {
+        let facts = KernelMapFacts::from_ranges(&[TEXT, HEAP]).expect("valid ranges");
+        let probes: [(RegionKind, usize); 6] = {
+            let mut probes = [(RegionKind::Text, 0usize); 6];
+            for (slot, probe) in probes.iter_mut().zip(facts.probe_addresses()) {
+                *slot = probe;
+            }
+            probes
+        };
+        assert_eq!(
+            probes,
+            [
+                (RegionKind::Text, 0x1000),
+                (RegionKind::Text, 0x1800),
+                (RegionKind::Text, 0x1fff),
+                (RegionKind::Heap, 0x2000),
+                (RegionKind::Heap, 0x3000),
+                (RegionKind::Heap, 0x3fff),
+            ]
+        );
+        // Every probe is inside the range it names.
+        for (kind, address) in facts.probe_addresses() {
+            assert_eq!(facts.classify(address), Some(kind));
+        }
     }
 }
