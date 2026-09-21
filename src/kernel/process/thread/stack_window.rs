@@ -13,6 +13,16 @@
 //! metadata live in the same blocks, so anything that changes one page is
 //! changing what the rest of the kernel sees.  A page that was never allocated
 //! cannot be reached by anything at all.
+//!
+//! A window is a bump allocator, so its budget counts the stacks it has *ever*
+//! handed out rather than the ones alive at once, and it has two of them: the
+//! addresses, and the translation-table pages the window's third level comes
+//! from.  Running out of either is not a failure — allocation falls back to
+//! the shape stacks had before the window existed, and the kernel then says
+//! the guard is not installed, which is true.  Handing a dead stack's slice to
+//! a live one would buy that budget back at the price of a stale stack pointer
+//! writing into a live stack instead of faulting, which is a trade for whoever
+//! needs the budget to make, not for this file to make quietly.
 
 // The allocator and the layout are live now — they are what the kernel stack
 // is made of.  What this covers is the read-only surface a check or a test
