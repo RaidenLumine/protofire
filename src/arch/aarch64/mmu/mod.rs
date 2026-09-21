@@ -958,16 +958,35 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
 
 pub fn runtime_prepared_translation(
     address: usize,
-    heap_bounds: (usize, usize),
+    // Carried by the kernel's mapping facts now, so it is not consulted here;
+    // the parameter stays so callers keep passing the same thing they always
+    // did.
+    _heap_bounds: (usize, usize),
 ) -> Option<PreparedTranslation> {
-    let _ = heap_bounds;
-
     if (DEVICE_MMIO_BASE..DEVICE_MMIO_END).contains(&address) {
         Some(PreparedTranslation {
             physical_address: address,
             permissions: PagePermissions::READ_WRITE,
         })
+    } else if let Some(region) = crate::kernel::memory::map_facts::get()
+        .and_then(|facts| facts.classify(address).and_then(|kind| facts.region(kind)))
+    {
+        // The permissions come from the same derivation the tables were built
+        // from, instead of one blanket "read-write-execute" for the whole
+        // window.
+        Some(PreparedTranslation {
+            physical_address: address,
+            permissions: if region.executable {
+                PagePermissions::READ_WRITE_EXECUTE
+            } else if region.writable {
+                PagePermissions::READ_WRITE
+            } else {
+                PagePermissions::READ
+            },
+        })
     } else if (KERNEL_TEXT_BASE..KERNEL_TEXT_END).contains(&address) {
+        // Ranges the facts do not describe — the frame pool and the rest of the
+        // window — keep the answer this function has always given.
         Some(PreparedTranslation {
             physical_address: address,
             permissions: PagePermissions::READ_WRITE_EXECUTE,
