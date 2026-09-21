@@ -110,8 +110,18 @@ fn relocate_user_frame(page_table: &mut PageTable, old_addr: usize, new_addr: us
     }
 
     // Re-map in hardware: unmap the old physical frame, install the new one.
-    let _ = unmap_user_page_arch(va);
+    //
+    // If the install fails, the old frame goes back before returning.  Leaving
+    // the page unmapped makes the hardware disagree with the software page
+    // table, which still describes the old frame, and the next access then
+    // faults on a page the kernel believes is mapped — a divergence that is
+    // invisible until something touches it and then reads as a memory bug
+    // somewhere else entirely.
+    let had_mapping = unmap_user_page_arch(va);
     if BARE_METAL && !install_user_page_arch(va, new_addr, perms) {
+        if had_mapping {
+            let _ = install_user_page_arch(va, old_addr, perms);
+        }
         return false;
     }
 
