@@ -5,6 +5,62 @@
 
 use alloc::boxed::Box;
 
+/// Clear the present/valid bit on every guard page, and report whether every
+/// one of them was actually cleared.
+///
+/// The result is returned rather than discarded because a guard that silently
+/// did not get installed is indistinguishable from one that did: the same boot
+/// either way, and the difference only shows up much later as a stack overflow
+/// that corrupts memory instead of faulting.  `unmap_page` refuses to act on a
+/// page inside a large mapping, which it has no way to split, so a missing
+/// guard is a real outcome here rather than a theoretical one.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
+    let page_size = crate::kernel::memory::frame::FRAME_SIZE;
+    let mut enforced = true;
+    for offset in (0..guard_size).step_by(page_size) {
+        let cleared = unsafe { crate::arch::x86_64::paging::unmap_page(base.add(offset) as usize) };
+        enforced &= cleared;
+    }
+    enforced
+}
+
+/// aarch64 counterpart; see the x86_64 version for why the result is returned.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
+    let page_size = crate::kernel::memory::frame::FRAME_SIZE;
+    let mut enforced = true;
+    for offset in (0..guard_size).step_by(page_size) {
+        let cleared = unsafe { crate::arch::aarch64::mmu::unmap_page(base.add(offset) as usize) };
+        enforced &= cleared;
+    }
+    enforced
+}
+
+/// Host and other targets have no hardware guard pages to enforce.
+#[cfg(not(any(
+    all(target_arch = "x86_64", target_os = "none"),
+    all(target_arch = "aarch64", target_os = "none")
+)))]
+fn enforce_guard_pages(_base: *mut u8, _guard_size: usize) -> bool {
+    true
+}
+
+/// Say once that the overflow hazard the guard exists for is not covered here.
+///
+/// Once is enough: the answer depends on where the frames landed, so every
+/// later stack would report the same thing.
+fn report_guard_not_enforced(guard_size: usize) {
+    static REPORTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    if !REPORTED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+        crate::println!(
+            "[thread] kernel stack guard pages are not enforced: the frames sit in a mapping \
+             `unmap_page` will not split, so an overflow into {} byte(s) will not fault",
+            guard_size
+        );
+    }
+}
+
 /// Backing storage for a kernel stack.
 enum KernelStackBacking {
     /// Frame-allocated: `base` points to the guard page, `total_frames` covers
@@ -58,38 +114,18 @@ impl KernelStack {
                 } else {
                     // The guard region is kept out of the software PageTable
                     // above, but on bare metal the hardware page tables may
-                    // still have a residual mapping (e.g. from the bootstrap
-                    // identity map or a prepared coarse-grained entry).  Walk
-                    // the live hardware tables and clear the present/valid bit
-                    // for each guard page so that stack overflows fault
-                    // immediately instead of corrupting memory silently.
-                    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-                    {
-                        let page_size = crate::kernel::memory::frame::FRAME_SIZE;
-                        for offset in (0..guard_size).step_by(page_size) {
-                            unsafe {
-                                crate::arch::x86_64::paging::unmap_page(base.add(offset) as usize);
-                            }
-                        }
-                    }
-                    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-                    {
-                        // NOTE: the aarch64 `unmap_page` zeroes the whole leaf
-                        // descriptor rather than clearing a valid bit, so its
-                        // counterpart is a re-map, not a set-bit, and does not
-                        // exist yet.  Until it does, aarch64 frees guard frames
-                        // with their entries destroyed and can hand a
-                        // non-present frame back to the allocator's zeroing
-                        // write — the same hazard the x86_64 teardown below
-                        // now closes.
-                        let page_size = crate::kernel::memory::frame::FRAME_SIZE;
-                        for offset in (0..guard_size).step_by(page_size) {
-                            unsafe {
-                                crate::arch::aarch64::mmu::unmap_page(base.add(offset) as usize);
-                            }
-                        }
-                    }
+                    // still hold a residual mapping, from the bootstrap
+                    // identity map or a prepared coarse-grained entry.  Clear
+                    // the present/valid bit for each guard page so an overflow
+                    // faults instead of corrupting memory silently.
+                    let guard_not_enforced = !enforce_guard_pages(base, guard_size);
 
+                    // Report outside the critical section: this prints, and
+                    // printing can allocate.
+                    drop(mm);
+                    if guard_not_enforced {
+                        report_guard_not_enforced(guard_size);
+                    }
                     return Self {
                         stack_ptr,
                         stack_len: stack_size,
