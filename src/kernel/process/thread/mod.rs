@@ -18,6 +18,7 @@ use super::TerminationReason;
 
 pub(crate) mod constants;
 pub(crate) mod kernel_stack;
+mod stack_window;
 pub(crate) mod types;
 
 #[cfg(any(target_arch = "aarch64", test))]
