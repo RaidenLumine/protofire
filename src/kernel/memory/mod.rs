@@ -26,9 +26,11 @@ pub use dma::DmaBuffer;
 pub(crate) use global::global;
 pub(crate) use global::global_mut;
 pub use global::global_mut_for_tests;
+#[cfg(target_arch = "x86_64")]
 pub(crate) use global::held_by_current_cpu;
 pub use global::install_global_for_tests;
 pub(crate) use global::install_global_unchecked;
+#[cfg(target_arch = "x86_64")]
 pub(crate) use global::try_global_mut;
 #[cfg(test)]
 pub(crate) use global::uninstall_global_for_tests;

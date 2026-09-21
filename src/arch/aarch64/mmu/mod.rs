@@ -756,6 +756,92 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
     true
 }
 
+/// Walk to the leaf descriptor covering `virtual_address`, splitting a block
+/// descriptor on the way when the address needs a finer grain.
+fn leaf_descriptor(virtual_address: usize) -> Option<*mut u64> {
+    let root = current_root_table_address();
+    if root == 0 {
+        return None;
+    }
+    let l1_index = (virtual_address >> 30) & 0x1FF;
+    let l2_index = (virtual_address >> 21) & 0x1FF;
+    let l3_index = (virtual_address >> 12) & 0x1FF;
+
+    let l1 = root as *mut u64;
+    let l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
+    if l1_entry & 0x1 == 0 {
+        return None;
+    }
+    let l2 = if l1_entry & 0x3 == DESCRIPTOR_BLOCK {
+        let table = allocate_runtime_pt_page()?;
+        split_l1_block(l1, l1_index, l1_entry, table);
+        let updated = unsafe { ptr::read_volatile(l1.add(l1_index)) };
+        (updated & 0x0000_FFFF_FFFF_F000) as *mut u64
+    } else {
+        (l1_entry & 0x0000_FFFF_FFFF_F000) as *mut u64
+    };
+
+    let l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
+    if l2_entry & 0x1 == 0 {
+        return None;
+    }
+    let l3 = if l2_entry & 0x3 == DESCRIPTOR_BLOCK {
+        let table = allocate_runtime_pt_page()?;
+        split_l2_block(l2, l2_index, l2_entry, table);
+        let updated = unsafe { ptr::read_volatile(l2.add(l2_index)) };
+        (updated & 0x0000_FFFF_FFFF_F000) as *mut u64
+    } else {
+        (l2_entry & 0x0000_FFFF_FFFF_F000) as *mut u64
+    };
+
+    Some(unsafe { l3.add(l3_index) })
+}
+
+/// Make a page fault without discarding what maps it.
+///
+/// [`unmap_page`] zeroes the leaf, throwing away the output address and the
+/// attributes along with validity.  A guard page wants the fault without that
+/// loss: its frames are still the kernel's and need their identity mapping back
+/// the moment the allocator hands them out again, and attributes cannot be
+/// reconstructed from a descriptor that has been destroyed.  Clearing only the
+/// valid bit faults the same way and is reversible by the same walk.
+///
+/// # Safety
+///
+/// As [`unmap_page`]: no code or data may be relied on at that address
+/// afterwards.
+pub unsafe fn invalidate_page(virtual_address: usize) -> bool {
+    let Some(leaf) = leaf_descriptor(virtual_address) else {
+        return false;
+    };
+    let entry = unsafe { ptr::read_volatile(leaf) };
+    if entry & 0x1 == 0 {
+        return false; // already invalid
+    }
+    unsafe { ptr::write_volatile(leaf, entry & !0x1) };
+    flush_tlb_page(virtual_address);
+    true
+}
+
+/// Undo [`invalidate_page`] for the same address.
+///
+/// # Safety
+///
+/// The caller must be restoring a page that should be accessible: the
+/// descriptor had been made invalid, not deallocated.
+pub unsafe fn restore_page(virtual_address: usize) -> bool {
+    let Some(leaf) = leaf_descriptor(virtual_address) else {
+        return false;
+    };
+    let entry = unsafe { ptr::read_volatile(leaf) };
+    if entry == 0 || entry & 0x1 != 0 {
+        return false; // never mapped, or already valid
+    }
+    unsafe { ptr::write_volatile(leaf, entry | 0x1) };
+    flush_tlb_page(virtual_address);
+    true
+}
+
 /// Map a device-MMIO region at a fixed virtual address.
 ///
 /// # Safety

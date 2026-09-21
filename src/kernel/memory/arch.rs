@@ -130,7 +130,20 @@ pub(crate) fn ensure_identity_mapped_range(address: usize, byte_len: usize) {
             offset += super::frame::FRAME_SIZE;
         }
     }
-    #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        // The aarch64 guard clears only the valid bit, so restoring it is the
+        // same set-bit walk x86_64 uses.
+        let mut offset = 0;
+        while offset < byte_len {
+            unsafe { crate::arch::aarch64::mmu::restore_page(address + offset) };
+            offset += super::frame::FRAME_SIZE;
+        }
+    }
+    #[cfg(not(any(
+        all(target_arch = "x86_64", target_os = "none"),
+        all(target_arch = "aarch64", target_os = "none")
+    )))]
     {
         let _ = (address, byte_len);
     }

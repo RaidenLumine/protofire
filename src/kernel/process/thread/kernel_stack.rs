@@ -31,7 +31,10 @@ fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
     let page_size = crate::kernel::memory::frame::FRAME_SIZE;
     let mut enforced = true;
     for offset in (0..guard_size).step_by(page_size) {
-        let cleared = unsafe { crate::arch::aarch64::mmu::unmap_page(base.add(offset) as usize) };
+        // `invalidate_page`, not `unmap_page`: the guard has to be
+        // reversible, and `unmap_page` zeroes the descriptor.
+        let cleared =
+            unsafe { crate::arch::aarch64::mmu::invalidate_page(base.add(offset) as usize) };
         enforced &= cleared;
     }
     enforced
