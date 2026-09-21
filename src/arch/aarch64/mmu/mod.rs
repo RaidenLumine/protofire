@@ -290,6 +290,17 @@ static KERNEL_L1_TABLE: AlignedKernelTranslationTable =
 static KERNEL_L2_TABLE: AlignedKernelTranslationTable =
     AlignedKernelTranslationTable::new(TranslationTable::zeroed());
 
+/// The stack window's second-level table.
+///
+/// Established with the kernel's own tables rather than on demand, because a
+/// process address space is derived from the kernel's root by copying its L1:
+/// a table the kernel adds *after* that copy is one the process root never
+/// references, and the stack it holds faults inside the new address space.
+/// One L2 built here is shared by every derived root, so the L3 tables the
+/// window fills in later are visible to all of them.
+static KERNEL_STACK_WINDOW_L2_TABLE: AlignedKernelTranslationTable =
+    AlignedKernelTranslationTable::new(TranslationTable::zeroed());
+
 static PREPARED_ROOT_TABLE: AtomicUsize = AtomicUsize::new(0);
 static PREPARED_WINDOW_COUNT: AtomicUsize = AtomicUsize::new(0);
 static PREPARED_MAPPED_PAGE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -926,10 +937,12 @@ fn validate_runtime_layout(heap_bounds: (usize, usize)) -> Option<()> {
 unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPageTables> {
     let l1_ptr = KERNEL_L1_TABLE.get();
     let l2_ptr = KERNEL_L2_TABLE.get();
+    let stack_window_l2_ptr = KERNEL_STACK_WINDOW_L2_TABLE.get();
 
     unsafe {
         *l1_ptr = TranslationTable::zeroed();
         *l2_ptr = TranslationTable::zeroed();
+        *stack_window_l2_ptr = TranslationTable::zeroed();
     }
 
     let l1 = unsafe { &mut *l1_ptr };
@@ -937,6 +950,9 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     l1.0[0] = device_l1_block_entry(DEVICE_MMIO_BASE);
     // L1[1]: RAM window [1 GiB, 2 GiB) → L2 table.
     l1.0[1] = table_entry(l2_ptr as usize);
+    // L1[2]: the stack window → its own L2 table, built here so that every
+    // address space derived from this root shares it.
+    l1.0[STACK_WINDOW_L1_INDEX] = table_entry(stack_window_l2_ptr as usize);
 
     let l2 = unsafe { &mut *l2_ptr };
     // L2: cover the full RAM window with 2 MiB kernel RWX blocks so the
@@ -946,7 +962,7 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
         l2.0[block_index] = kernel_l2_block_entry(block_address);
     }
 
-    let window_count = 2usize;
+    let window_count = 3usize;
     let mapped_page_count = 2 * (KERNEL_TEXT_END - KERNEL_TEXT_BASE) / TRANSLATION_GRANULE_SIZE;
 
     Some(PreparedRuntimeKernelPageTables {
@@ -1040,26 +1056,34 @@ pub(crate) const STACK_WINDOW_BASE: usize = KERNEL_TEXT_END;
 pub(crate) const STACK_WINDOW_SIZE: usize = 0x1000_0000; // 256 MiB
 pub(crate) const STACK_WINDOW_END: usize = STACK_WINDOW_BASE + STACK_WINDOW_SIZE;
 
+/// Which L1 slot the window occupies.
+///
+/// It sits immediately above the RAM window, and one slot covers 1 GiB, so the
+/// whole window fits in one entry — asserted rather than assumed, because a
+/// window that outgrew its slot would silently describe someone else's range.
+const STACK_WINDOW_L1_INDEX: usize = STACK_WINDOW_BASE >> 30;
+const _: () = assert!(STACK_WINDOW_BASE & ((1 << 30) - 1) == 0);
+const _: () = assert!(STACK_WINDOW_END - STACK_WINDOW_BASE <= 1 << 30);
+
 /// Walk to the L3 table for `virtual_address`, building what is missing.
 ///
 /// The stack window's own tables: the RAM window is described by L1[1] and the
-/// device window by L1[0], so this builds L1[2] downwards and nothing it does
-/// touches the tables the rest of the kernel is mapped by.
+/// device window by L1[0], so this walks L1[2] downwards and nothing it does
+/// touches the tables the rest of the kernel is mapped by.  Only the L3 level
+/// is built on demand, one table per 2 MiB of window; the levels above it come
+/// with the kernel's tables (see `KERNEL_STACK_WINDOW_L2_TABLE`).
 fn stack_window_l3(virtual_address: usize) -> Option<*mut u64> {
     let root = current_root_table_address();
     if root == 0 {
         return None;
     }
-    let l1 = root as *mut u64;
-    let l1_index = (virtual_address >> 30) & 0x1FF;
-    let mut l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
-    if l1_entry & 0x1 == 0 {
-        let table = allocate_runtime_pt_page()?;
-        unsafe { ptr::write_volatile(l1.add(l1_index), table_entry(table)) };
-        l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
-    }
-    if l1_entry & 0x3 == DESCRIPTOR_BLOCK {
-        return None; // a block where the window's table should be
+    let l1_entry = unsafe { ptr::read_volatile((root as *const u64).add(STACK_WINDOW_L1_INDEX)) };
+    if l1_entry & 0x1 == 0 || l1_entry & 0x3 == DESCRIPTOR_BLOCK {
+        // Either the kernel's tables have not been built — the window's slot
+        // is established with them — or something else describes that range.
+        // Refusing is what keeps this walk from building a second L2 that the
+        // roots derived from the kernel's would not share.
+        return None;
     }
     let l2 = (l1_entry & 0x0000_FFFF_FFFF_F000) as *mut u64;
     let l2_index = (virtual_address >> 21) & 0x1FF;
