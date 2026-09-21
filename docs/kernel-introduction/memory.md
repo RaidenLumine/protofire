@@ -477,9 +477,16 @@ The kernel heap occupies a contiguous region (`KERNEL_HEAP_SIZE` = 16 MiB),
 registered as `MappingKind::KernelHeap` in the software page table.  The heap
 backs all `alloc`/`dealloc` calls via the `GlobalAlloc` trait.
 
-Kernel stacks (described in `src/kernel/stack.rs`, not in the memory module
-itself) are frame-backed regions with an unmapped guard page below the stack to
-catch stack underflow.  Each thread receives its own dedicated kernel stack.
+Kernel stacks (described in `src/kernel/process/thread/kernel_stack.rs`, not in
+the memory module itself) each have a dedicated region with a guard below them,
+so an overflow faults instead of writing over whatever comes next.  Where the
+architecture names a VA window for kernel stacks — AArch64 does — the stack is a
+slice of that window: the usable pages are backed by frames and the guard is a
+slice the allocator never hands out, so there is no mapping to remove and
+nothing that can fail to remove it.  Elsewhere the stack is a run of frames at
+their own addresses and the guard is the page below it, un-presented by the
+architecture's `unmap_page`; a coarse mapping can refuse that, and the kernel
+reports it at boot rather than pretending the guard is there.
 
 ### User Address Space
 

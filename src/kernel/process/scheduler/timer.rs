@@ -153,7 +153,8 @@ impl Scheduler {
 
         // Periodically check the current thread's kernel stack usage so
         // we can warn before a stack overflow silently corrupts heap memory.
-        // (A full unmapped guard page requires frame-allocator support.)
+        // This is the early warning; the guard page below the stack is what
+        // stops the overflow itself.
         if ticks.trailing_zeros() >= 7 {
             // Check roughly every 128 ticks.
             if let Some(thread) = self.current.lock().as_ref() {

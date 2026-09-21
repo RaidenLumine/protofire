@@ -36,29 +36,17 @@ fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
 }
 
 /// aarch64 counterpart; see the x86_64 version for why the result is returned.
+///
+/// Only the frame-backed fallback reaches this now: a window-backed stack's
+/// guard is not installed by anyone, so there is nothing here to install.  For
+/// the fallback the answer is still that the guard is not there — its frames
+/// sit at their own addresses, which this walk cannot derive, and clearing the
+/// wrong page took the machine down inside the exception entry the last time
+/// it was tried.  The caller reports that, which is the honest answer for a
+/// shape this architecture cannot guarantee.
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
-    // Not installed, and reported as such by the caller.
-    //
-    // Clearing the guard page here crashed the kernel: the frames are not at
-    // the virtual addresses this walk assumes, so the invalidation landed on a
-    // page the kernel was still using, and the machine then trapped inside the
-    // exception entry, saving a frame over the hole the guard had just made.
-    // Skipping it keeps every frame mapped and turns the missing guard into one
-    // reported line, which is strictly better than a machine that dies on boot.
-    //
-    // `unmap_page` and `invalidate_page` both need the virtual address the
-    // frame is actually mapped at, and `base` is not it here.  Restoring the
-    // guard means finding that address first — the same question as whether
-    // the aarch64 frame pool is mapped one-to-one.
     let _ = (base, guard_size);
-    // Installing it makes the machine trap on boot, and the trap is the guard
-    // working: the exception entry's own frame save lands on it, which means
-    // some context is running with a stack pointer at (or past) the bottom of
-    // its stack.  With the guard absent that write corrupts memory silently,
-    // which is why the machine appears healthy without it.  Enabling the guard
-    // again is the right end state and belongs with the fix for whatever sets
-    // that stack pointer, not with this call.
     false
 }
 

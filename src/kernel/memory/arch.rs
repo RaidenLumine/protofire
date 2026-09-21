@@ -112,15 +112,17 @@ pub(crate) fn install_user_page_arch(
 /// to put it back.  The frame pool is identity-mapped by construction, so
 /// "present" is the invariant; the allocator is the only place that sees every
 /// path a frame travels on, which is what makes it the right boundary for the
-/// guarantee.  A kernel stack's guard page is the source today: it is
-/// un-presented on purpose, and without this the frame comes back to the pool
-/// still un-presented and faults the allocator's own zeroing write.
+/// guarantee.  A kernel stack's guard page is the source today, on the targets
+/// whose stacks are frames at their own addresses: the guard is un-presented on
+/// purpose, and without this the frame comes back to the pool still
+/// un-presented and faults the allocator's own zeroing write.  A stack in an
+/// architecture's stack window never un-presents a frame — its guard has no
+/// frame to un-present — so this is a no-op for those.
 ///
 /// On x86_64 this is a set-bit: `unmap_page` clears only the Present bit and
-/// leaves the rest of the entry intact.  aarch64's `unmap_page` zeroes the
-/// whole descriptor instead, so its counterpart is a re-map of a page whose
-/// attributes have to be restated, and it does not exist yet — aarch64 still
-/// carries this hazard.
+/// leaves the rest of the entry intact.  aarch64 cleared the valid bit the same
+/// way (`invalidate_page`) and puts it back the same way (`restore_page`), so
+/// the repair is a set-bit on both.
 pub(crate) fn ensure_identity_mapped_range(address: usize, byte_len: usize) {
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
     {

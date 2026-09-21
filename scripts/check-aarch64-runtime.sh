@@ -324,6 +324,18 @@ require_log_absent_lines <<'EOF'
 [FATAL] aarch64 trap
 EOF
 
+# The kernel stack's guard page is part of the boot contract, not a property
+# of the machine the boot happens to run on.  A stack lives in the
+# architecture's own window, its guard is the slice of that window the
+# allocator never hands out, and the kernel's tables cover what they say they
+# cover — so a guard that had to be reported as missing, or a kernel range the
+# facts describe but the tables do not map, fails this check rather than
+# showing up later as an overflow that corrupts memory instead of faulting.
+require_log_absent_lines <<'EOF'
+[thread] kernel stack guard pages are not enforced
+[mm    ] kernel table gap
+EOF
+
 require_log_absent_line "[user  ] aarch64-rust spawn failed: "
 require_log_absent_line "[user  ] aarch64-rust wait failed: "
 require_log_absent_line "[user  ] aarch64 wait-status: 0xffffffffffffffff"
