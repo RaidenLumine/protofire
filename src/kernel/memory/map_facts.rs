@@ -111,13 +111,29 @@ impl KernelMapFacts {
             facts.regions[facts.count] = Some(*region);
             facts.count += 1;
         }
-        facts.ranges_are_disjoint().then_some(facts)
+        facts.ranges_are_consistent().then_some(facts)
     }
 
-    fn ranges_are_disjoint(&self) -> bool {
+    /// Whether the declared ranges can all be true at once.
+    ///
+    /// Ranges must not overlap, with one exception: the kernel heap is a
+    /// static array inside BSS, so `Heap` is contained in `Bss` by
+    /// construction.  Allowing exactly that nesting keeps the facts a
+    /// description of the real layout instead of a shape the layout has to
+    /// satisfy — and anything else overlapping is still refused.
+    fn ranges_are_consistent(&self) -> bool {
         for (index, first) in self.declared().enumerate() {
             for second in self.declared().skip(index + 1) {
-                if first.start < second.end && second.start < first.end {
+                if !(first.start < second.end && second.start < first.end) {
+                    continue; // no overlap at all
+                }
+                let nested = (second.start >= first.start && second.end <= first.end)
+                    || (first.start >= second.start && first.end <= second.end);
+                let bss_and_heap = matches!(
+                    (first.kind, second.kind),
+                    (RegionKind::Bss, RegionKind::Heap) | (RegionKind::Heap, RegionKind::Bss)
+                );
+                if !(nested && bss_and_heap) {
                     return false;
                 }
             }
@@ -145,10 +161,12 @@ impl KernelMapFacts {
 
     /// What `address` belongs to, if it is kernel address space at all.
     ///
-    /// Ranges are required to be disjoint, so at most one can match.
+    /// The narrowest match wins, so an address in the heap answers `Heap` even
+    /// though the heap also lies inside BSS.
     pub(crate) fn classify(&self, address: usize) -> Option<RegionKind> {
         self.declared()
-            .find(|region| region.contains(address))
+            .filter(|region| region.contains(address))
+            .min_by_key(|region| region.end - region.start)
             .map(|region| region.kind)
     }
 }
@@ -187,8 +205,58 @@ pub(crate) fn get() -> Option<&'static KernelMapFacts> {
         .then(|| unsafe { &*FACTS.get() })
 }
 
+/// The image ranges, in the order they appear in memory.
+///
+/// Every architecture derives the same five from its own linker symbols; this
+/// is the one place that decides what they *mean* (read-only text, writable
+/// data, and so on), so an architecture cannot end up describing a range
+/// differently from the others.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ImageRanges {
+    pub(crate) text: (usize, usize),
+    pub(crate) rodata: (usize, usize),
+    pub(crate) data: (usize, usize),
+    pub(crate) bss: (usize, usize),
+    pub(crate) heap: (usize, usize),
+}
+
+impl ImageRanges {
+    /// The regions these ranges describe, ready for [`from_ranges`].
+    ///
+    /// [`from_ranges`]: Self::regions
+    pub(crate) fn regions(&self) -> [Region; 5] {
+        [
+            Region::new(RegionKind::Text, self.text.0, self.text.1, false, true),
+            Region::new(
+                RegionKind::Rodata,
+                self.rodata.0,
+                self.rodata.1,
+                false,
+                false,
+            ),
+            Region::new(RegionKind::Data, self.data.0, self.data.1, true, false),
+            Region::new(RegionKind::Bss, self.bss.0, self.bss.1, true, false),
+            Region::new(RegionKind::Heap, self.heap.0, self.heap.1, true, false),
+        ]
+    }
+
+    /// Validate and install in one step: what the architectures call.
+    ///
+    /// Returns `false` when the ranges are inconsistent (empty, out of order,
+    /// overlapping) or when facts were already installed.  A caller that gets
+    /// `false` at boot has a layout it did not expect, which is worth failing
+    /// on rather than mapping something arbitrary.
+    pub(crate) fn install(&self) -> bool {
+        match KernelMapFacts::from_ranges(&self.regions()) {
+            Some(facts) => install(facts),
+            None => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::ImageRanges;
     use super::KernelMapFacts;
     use super::Region;
     use super::RegionKind;
@@ -235,5 +303,45 @@ mod tests {
             kinds
         };
         assert_eq!(kinds, [RegionKind::Text, RegionKind::Heap]);
+    }
+
+    #[test]
+    fn image_ranges_describe_the_five_standard_regions() {
+        // The heap really is inside BSS in this kernel, so the standard shape
+        // has to validate as it stands.
+        let ranges = ImageRanges {
+            text: (0x1000, 0x2000),
+            rodata: (0x2000, 0x3000),
+            data: (0x3000, 0x4000),
+            bss: (0x4000, 0x6000),
+            heap: (0x5000, 0x6000),
+        };
+        let regions = ranges.regions();
+        assert_eq!(regions[0].kind, RegionKind::Text);
+        assert!(!regions[0].writable && regions[0].executable);
+        assert_eq!(regions[1].kind, RegionKind::Rodata);
+        assert!(!regions[1].writable && !regions[1].executable);
+        assert!(regions[2].writable && !regions[2].executable);
+        assert!(regions[3].writable);
+        assert_eq!(regions[4].kind, RegionKind::Heap);
+
+        let facts = KernelMapFacts::from_ranges(&regions).expect("heap inside bss is the layout");
+        assert_eq!(facts.classify(0x5000), Some(RegionKind::Heap));
+        assert_eq!(facts.classify(0x4500), Some(RegionKind::Bss));
+        assert_eq!(facts.classify(0x6000), None);
+    }
+
+    #[test]
+    fn image_ranges_reject_a_layout_that_overlaps() {
+        // `bss` and `data` overlapping is not a shape the kernel has; only the
+        // heap-inside-BSS nesting is allowed.
+        let ranges = ImageRanges {
+            text: (0x1000, 0x2000),
+            rodata: (0x2000, 0x3000),
+            data: (0x3000, 0x4000),
+            bss: (0x3800, 0x5000),
+            heap: (0x5000, 0x6000),
+        };
+        assert!(!ranges.install());
     }
 }
