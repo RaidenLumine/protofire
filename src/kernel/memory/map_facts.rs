@@ -282,6 +282,31 @@ impl ImageRanges {
             None => false,
         }
     }
+
+    /// Validate and install the five image ranges, plus anything the
+    /// architecture adds.
+    ///
+    /// The stack window is the reason this exists: it is a range the kernel
+    /// reserves for its own stacks, and where it goes is an architecture's
+    /// decision, not something derivable from the image.  Adding it to the same
+    /// facts keeps one answer to "what does the kernel map" instead of an
+    /// architecture's private side list.
+    pub(crate) fn install_with(&self, extra: &[Region]) -> bool {
+        let image = self.regions();
+        if image.len() + extra.len() > MAX_REGIONS {
+            return false;
+        }
+        let mut all = [image[0]; MAX_REGIONS];
+        let mut count = 0usize;
+        for region in image.into_iter().chain(extra.iter().copied()) {
+            all[count] = region;
+            count += 1;
+        }
+        match KernelMapFacts::from_ranges(&all[..count]) {
+            Some(facts) => install(facts),
+            None => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -391,5 +416,34 @@ mod tests {
         assert!(probes.contains(&(RegionKind::Text, 0x1fff)));
         assert!(probes.contains(&(RegionKind::Heap, 0x2000)));
         assert!(probes.contains(&(RegionKind::Heap, 0x3fff)));
+    }
+
+    #[test]
+    fn an_architecture_can_add_its_own_range() {
+        // The stack window sits outside the image, and the facts must accept it
+        // as one of the kernel's ranges rather than as an architecture's
+        // private fact.
+        let ranges = ImageRanges {
+            text: (0x1000, 0x2000),
+            rodata: (0x2000, 0x3000),
+            data: (0x3000, 0x4000),
+            bss: (0x4000, 0x6000),
+            heap: (0x5000, 0x6000),
+        };
+        let window = Region::new(RegionKind::StackWindow, 0x8000, 0xa000, true, false);
+
+        // A conflicting addition is refused.
+        let overlapping = Region::new(RegionKind::DeviceMmio, 0x9000, 0xb000, true, false);
+        assert!(!ranges.install_with(&[window, overlapping]));
+
+        // A clean one is accepted, and classification sees it.
+        let image = ranges.regions();
+        let mut all = [window; 6];
+        all[..image.len()].copy_from_slice(&image);
+        let facts =
+            KernelMapFacts::from_ranges(&all).expect("window outside the image is consistent");
+        assert_eq!(facts.classify(0x8000), Some(RegionKind::StackWindow));
+        assert_eq!(facts.classify(0x9fff), Some(RegionKind::StackWindow));
+        assert_eq!(facts.classify(0xa000), None);
     }
 }
