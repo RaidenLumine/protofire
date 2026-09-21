@@ -1040,6 +1040,101 @@ pub(crate) const STACK_WINDOW_BASE: usize = KERNEL_TEXT_END;
 pub(crate) const STACK_WINDOW_SIZE: usize = 0x1000_0000; // 256 MiB
 pub(crate) const STACK_WINDOW_END: usize = STACK_WINDOW_BASE + STACK_WINDOW_SIZE;
 
+/// Walk to the L3 table for `virtual_address`, building what is missing.
+///
+/// The stack window's own tables: the RAM window is described by L1[1] and the
+/// device window by L1[0], so this builds L1[2] downwards and nothing it does
+/// touches the tables the rest of the kernel is mapped by.
+fn stack_window_l3(virtual_address: usize) -> Option<*mut u64> {
+    let root = current_root_table_address();
+    if root == 0 {
+        return None;
+    }
+    let l1 = root as *mut u64;
+    let l1_index = (virtual_address >> 30) & 0x1FF;
+    let mut l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
+    if l1_entry & 0x1 == 0 {
+        let table = allocate_runtime_pt_page()?;
+        unsafe { ptr::write_volatile(l1.add(l1_index), table_entry(table)) };
+        l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
+    }
+    if l1_entry & 0x3 == DESCRIPTOR_BLOCK {
+        return None; // a block where the window's table should be
+    }
+    let l2 = (l1_entry & 0x0000_FFFF_FFFF_F000) as *mut u64;
+    let l2_index = (virtual_address >> 21) & 0x1FF;
+    let mut l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
+    if l2_entry & 0x1 == 0 {
+        let table = allocate_runtime_pt_page()?;
+        unsafe { ptr::write_volatile(l2.add(l2_index), table_entry(table)) };
+        l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
+    }
+    if l2_entry & 0x3 == DESCRIPTOR_BLOCK {
+        return None;
+    }
+    let l3 = (l2_entry & 0x0000_FFFF_FFFF_F000) as *mut u64;
+    Some(unsafe { l3.add((virtual_address >> 12) & 0x1FF) })
+}
+
+/// Map one 4 KiB frame at a stack-window address.
+///
+/// The window's tables are built on demand, so the first stack in a region
+/// costs the tables and later ones do not.  The leaf is an ordinary kernel
+/// page: read-write, non-executable, normal memory.
+///
+/// # Safety
+///
+/// `virtual_address` must name a page the caller owns — the stack window's
+/// allocator is the only thing that hands those out.
+#[allow(dead_code)] // the stack migration wires this next
+pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: usize) -> bool {
+    if !(STACK_WINDOW_BASE..STACK_WINDOW_END).contains(&virtual_address) {
+        return false;
+    }
+    let Some(leaf) = stack_window_l3(virtual_address) else {
+        return false;
+    };
+    unsafe {
+        ptr::write_volatile(
+            leaf,
+            (physical_address as u64 & 0x0000_FFFF_FFFF_F000)
+                | DESCRIPTOR_PAGE
+                | AP_EL1_RW
+                | SH_OUTER
+                | AF_ACCESS
+                | NG_NOT_GLOBAL
+                | MAIR_ATTR_NORMAL,
+        );
+    }
+    flush_tlb_page(virtual_address);
+    true
+}
+
+/// Remove a frame from a stack-window address.
+///
+/// Clearing the leaf is safe here for the reason the window exists: this
+/// address belongs to exactly one stack, so there is nothing else in the table
+/// that could be affected by the hole.
+///
+/// # Safety
+///
+/// As [`map_stack_page`]: the address must be one the caller owns.
+#[allow(dead_code)] // the stack migration wires this next
+pub(crate) unsafe fn unmap_stack_page(virtual_address: usize) -> bool {
+    if !(STACK_WINDOW_BASE..STACK_WINDOW_END).contains(&virtual_address) {
+        return false;
+    }
+    let Some(leaf) = stack_window_l3(virtual_address) else {
+        return false;
+    };
+    if unsafe { ptr::read_volatile(leaf) } & 0x1 == 0 {
+        return false;
+    }
+    unsafe { ptr::write_volatile(leaf, 0) };
+    flush_tlb_page(virtual_address);
+    true
+}
+
 extern "C" {
     static __text_start: u8;
     static __text_end: u8;
