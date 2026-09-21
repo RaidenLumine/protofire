@@ -1070,6 +1070,18 @@ fn ensure_image_facts(heap_bounds: (usize, usize)) {
         heap: heap_bounds,
     };
     let _ = ranges.install();
+
+    // Report the one outcome worth reporting: nothing published, which means
+    // the ranges contradict each other and every later reader will fall back
+    // to its own derivation.  Once, and in the log where a layout problem
+    // belongs — instead of surfacing later as a fault about something else.
+    if crate::kernel::memory::map_facts::get().is_none() {
+        static REPORTED: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
+        if !REPORTED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+            crate::println!("[mm    ] kernel map facts not installed from the image ranges");
+        }
+    }
 }
 
 fn classify_kernel_address(
