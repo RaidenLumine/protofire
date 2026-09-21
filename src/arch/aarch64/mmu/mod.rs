@@ -1021,10 +1021,56 @@ extern "C" {
 }
 
 /// Classify a kernel address into a region kind using the linker symbols.
+///
+/// The linker symbols are read here, so this is where aarch64 derives the
+/// kernel's mapping facts — once, and only if nothing has published them yet.
+/// After that the answer comes from the facts rather than from a second set of
+/// comparisons, which is what keeps this architecture's idea of the kernel's
+/// ranges identical to the plan's.
+fn ensure_image_facts(heap_bounds: (usize, usize)) {
+    if crate::kernel::memory::map_facts::get().is_some() {
+        return;
+    }
+    let ranges = crate::kernel::memory::map_facts::ImageRanges {
+        text: (
+            ptr::addr_of!(__text_start) as usize,
+            ptr::addr_of!(__text_end) as usize,
+        ),
+        rodata: (
+            ptr::addr_of!(__rodata_start) as usize,
+            ptr::addr_of!(__rodata_end) as usize,
+        ),
+        data: (
+            ptr::addr_of!(__data_start) as usize,
+            ptr::addr_of!(__data_end) as usize,
+        ),
+        bss: (
+            ptr::addr_of!(__bss_start) as usize,
+            ptr::addr_of!(__bss_end) as usize,
+        ),
+        heap: heap_bounds,
+    };
+    let _ = ranges.install();
+}
+
 fn classify_kernel_address(
     virtual_address: usize,
     heap_bounds: (usize, usize),
 ) -> Option<PlannedRegionKind> {
+    use crate::kernel::memory::map_facts::RegionKind as Fact;
+
+    ensure_image_facts(heap_bounds);
+    if let Some(facts) = crate::kernel::memory::map_facts::get() {
+        return match facts.classify(virtual_address) {
+            Some(Fact::Text) => Some(PlannedRegionKind::KernelText),
+            Some(Fact::Rodata) => Some(PlannedRegionKind::KernelRodata),
+            Some(Fact::Data) => Some(PlannedRegionKind::KernelData),
+            Some(Fact::Bss) => Some(PlannedRegionKind::KernelBss),
+            Some(Fact::Heap) => Some(PlannedRegionKind::KernelHeap),
+            _ => None,
+        };
+    }
+
     let text_start = ptr::addr_of!(__text_start) as usize;
     let text_end = ptr::addr_of!(__text_end) as usize;
     let rodata_start = ptr::addr_of!(__rodata_start) as usize;
