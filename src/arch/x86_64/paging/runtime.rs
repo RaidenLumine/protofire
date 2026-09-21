@@ -859,6 +859,39 @@ fn current_stack_pointer_impl() -> Option<usize> {
     Some(stack_pointer)
 }
 
+/// Replace a 2 MiB page with a table of 4 KiB pages covering the same range.
+///
+/// One 4 KiB page inside a 2 MiB mapping cannot be un-mapped on its own, so
+/// the mapping has to be described page by page first.  The split is
+/// translation-preserving: every leaf gets the original page's attributes and
+/// its own slice of the same physical range, so nothing changes until the
+/// caller edits one leaf.  Without this, a guard page whose frames land inside
+/// a large page is silently not installed, and a stack overflow corrupts
+/// memory instead of faulting.
+///
+/// Returns the table entry that was installed in the parent, or `None` when no
+/// page-table page is available.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+unsafe fn split_pd_large_page(pd: *const u64, pd_index: usize, entry: u64) -> Option<u64> {
+    let table = alloc_runtime_pt_page()?;
+
+    // The large page keeps its address in bits 21..51 and its attributes
+    // everywhere else, so the leaves are that base plus an offset, carrying
+    // every attribute bit (`!PAGE_ENTRY_ADDRESS_MASK`) and no longer being
+    // large pages themselves.
+    let base = entry & LARGE_PAGE_ADDRESS_MASK;
+    let flags = entry & !PAGE_ENTRY_ADDRESS_MASK & !PAGE_ENTRY_LARGE;
+    let leaves = table as *mut u64;
+    for index in 0..512usize {
+        let offset = index as u64 * X86_PAGE_SIZE as u64;
+        core::ptr::write_volatile(leaves.add(index), base + offset | flags);
+    }
+
+    let installed = table as u64 | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
+    core::ptr::write_volatile(pd.add(pd_index) as *mut u64, installed);
+    Some(installed)
+}
+
 /// Unmap a single 4 KiB page in the live x86_64 hardware page tables by
 /// clearing the Present bit and flushing the TLB for that virtual address.
 ///
@@ -904,13 +937,18 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
     let pd_addr = (pdpt_entry & PAGE_ENTRY_ADDRESS_MASK) as usize;
     let pd = pd_addr as *const u64;
     let pd_index = (va >> 21) & 0x1FF;
-    let pd_entry = core::ptr::read_volatile(pd.add(pd_index));
+    let mut pd_entry = core::ptr::read_volatile(pd.add(pd_index));
     if pd_entry & PAGE_ENTRY_PRESENT == 0 {
         return false;
     }
-    // 2 MiB huge page — can't partially unmap.
+    // A 2 MiB page has to be split before one page inside it can be
+    // un-mapped; a page-table page is the cost of installing a guard page
+    // there, and it is paid only for the stacks that need it.
     if pd_entry & PAGE_ENTRY_LARGE != 0 {
-        return false;
+        let Some(split) = split_pd_large_page(pd, pd_index, pd_entry) else {
+            return false;
+        };
+        pd_entry = split;
     }
 
     // PT — the leaf 4 KiB PTE
