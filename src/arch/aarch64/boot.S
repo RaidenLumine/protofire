@@ -44,6 +44,13 @@ _start:
     b 2b
 
 3:
+    /* x0 still holds the device-tree pointer the boot protocol handed us;
+       keep it where the kernel can find it.  AP discovery reads the CPU list
+       from that blob, so losing it here is what left the machine running on
+       one core while the other three spun waiting for a start they were never
+       told about. */
+    bl aarch64_store_handoff
+
     bl kernel_entry_aarch64
 
 4:
