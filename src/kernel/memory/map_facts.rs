@@ -170,30 +170,36 @@ impl KernelMapFacts {
             .map(|region| region.kind)
     }
 
-    /// A few addresses inside every region, for a caller that wants to check
-    /// that the mapping it built actually covers them.
+    /// Addresses inside every region, for a caller that wants to check that
+    /// the mapping it built actually covers them.
     ///
-    /// First, middle and last: both boundaries and somewhere in between.  A
-    /// region whose middle is mapped and whose edge is not is exactly the kind
-    /// of gap this exists to catch, and sampling only the middle would report
-    /// it as fine.
+    /// [`MAX_PROBES`] evenly spaced samples per region, always including the
+    /// first and last address.  Three points — first, middle, last — cannot
+    /// see a gap inside six hundred megabytes of BSS, which is where this
+    /// kernel's frame pool and its stacks live; a fixed budget of samples
+    /// across each region is what makes the check able to answer at all.
     ///
     /// Allocation-free, like everything else here: the caller may be checking
     /// the tables before the heap exists.
     pub(crate) fn probe_addresses(&self) -> impl Iterator<Item = (RegionKind, usize)> + '_ {
         self.declared().flat_map(|region| {
-            let first = region.start;
-            let middle = region.start + (region.end - region.start) / 2;
-            let last = region.end - 1;
-            [
-                (region.kind, first),
-                (region.kind, middle),
-                (region.kind, last),
-            ]
-            .into_iter()
+            let length = region.end - region.start;
+            let stride = (length / MAX_PROBES).max(1);
+            let mut probes = [(region.kind, region.start); MAX_PROBES];
+            for (index, slot) in probes.iter_mut().enumerate() {
+                let address = region.start + index * stride;
+                *slot = (region.kind, address.min(region.end - 1));
+            }
+            // The last address is always sampled, so a region is never checked
+            // only up to whatever the stride happened to reach.
+            probes[MAX_PROBES - 1] = (region.kind, region.end - 1);
+            probes.into_iter()
         })
     }
 }
+
+/// Samples taken per region by [`KernelMapFacts::probe_addresses`].
+pub(crate) const MAX_PROBES: usize = 64;
 
 /// Where the facts live once they have been derived.
 ///
@@ -370,29 +376,20 @@ mod tests {
     }
 
     #[test]
-    fn probe_addresses_sample_both_edges_and_the_middle() {
+    fn probe_addresses_cover_each_region_including_its_edges() {
+        use super::MAX_PROBES;
+
         let facts = KernelMapFacts::from_ranges(&[TEXT, HEAP]).expect("valid ranges");
-        let probes: [(RegionKind, usize); 6] = {
-            let mut probes = [(RegionKind::Text, 0usize); 6];
-            for (slot, probe) in probes.iter_mut().zip(facts.probe_addresses()) {
-                *slot = probe;
-            }
-            probes
-        };
-        assert_eq!(
-            probes,
-            [
-                (RegionKind::Text, 0x1000),
-                (RegionKind::Text, 0x1800),
-                (RegionKind::Text, 0x1fff),
-                (RegionKind::Heap, 0x2000),
-                (RegionKind::Heap, 0x3000),
-                (RegionKind::Heap, 0x3fff),
-            ]
-        );
-        // Every probe is inside the range it names.
+        let probes: alloc::vec::Vec<(RegionKind, usize)> = facts.probe_addresses().collect();
+        assert_eq!(probes.len(), 2 * MAX_PROBES);
+
+        // Every probe is inside the range it names, and both edges are sampled.
         for (kind, address) in facts.probe_addresses() {
             assert_eq!(facts.classify(address), Some(kind));
         }
+        assert!(probes.contains(&(RegionKind::Text, 0x1000)));
+        assert!(probes.contains(&(RegionKind::Text, 0x1fff)));
+        assert!(probes.contains(&(RegionKind::Heap, 0x2000)));
+        assert!(probes.contains(&(RegionKind::Heap, 0x3fff)));
     }
 }

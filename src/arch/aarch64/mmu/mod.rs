@@ -1083,7 +1083,7 @@ fn ensure_image_facts(heap_bounds: (usize, usize)) {
         }
     }
 
-    report_uncovered_facts();
+    check_facts_coverage();
 }
 
 /// Read the valid bit of the 4 KiB leaf for `virtual_address`.
@@ -1150,6 +1150,16 @@ fn report_uncovered_facts() {
             missing - 4
         ));
     }
+}
+
+/// Re-run the coverage check on demand.
+///
+/// The check runs during boot, where a layout problem belongs.  A caller that
+/// changes the kernel's own tables afterwards — installing a guard page, for
+/// instance — can ask again, so a gap created by that change is reported at
+/// the change rather than discovered later by whatever touches the page.
+pub(crate) fn check_facts_coverage() {
+    report_uncovered_facts();
 }
 
 fn classify_kernel_address(
