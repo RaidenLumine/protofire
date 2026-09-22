@@ -391,7 +391,14 @@ pub mod serial {
             core::arch::asm!(
                 "ecall",
                 in("a7") 1usize,
-                in("a0") c as usize,
+                inlateout("a0") c as usize => _,
+                // An SBI call preserves every register except `a0` and `a1`,
+                // and OpenSBI uses both for its return value.  A register the
+                // asm block does not mention is one the compiler is free to
+                // keep a live value in across the `ecall` — so `a1` has to be
+                // declared.  See `set_timer` for what that cost when it was
+                // not.
+                lateout("a1") _,
                 options(nostack, preserves_flags)
             );
         }
@@ -547,7 +554,17 @@ pub mod timer {
                 "ecall",
                 in("a7") SBI_EXT_TIME,
                 in("a6") SBI_SET_TIMER,
-                in("a0") stime_value,
+                inlateout("a0") stime_value => _,
+                // The SBI calling convention preserves every register except
+                // `a0` and `a1`: firmware puts the error code and the return
+                // value there.  Leaving `a1` unlisted told the compiler it
+                // could keep a live value in it across the `ecall`, and
+                // `prepare_next_tick` did exactly that — it held the new tick
+                // count in `a1` while this call wiped it, so every interrupt
+                // after the first reported tick 1.  The scheduler then never
+                // saw a deadline elapse: timed waits never woke, `sleep` never
+                // returned, and the riscv64 demo stopped at its first exit.
+                lateout("a1") _,
                 options(nomem, nostack, preserves_flags)
             );
         }

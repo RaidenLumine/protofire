@@ -83,7 +83,10 @@ unsafe fn sbi_hart_start(hartid: u64, start_addr: usize, opaque: u64) -> i64 {
         core::arch::asm!(
             "ecall",
             inlateout("a0") hartid => ret,
-            in("a1") start_addr,
+            // `a1` carries `start_addr` in and is clobbered by firmware out:
+            // SBI preserves every register *except* `a0` and `a1`, so this is
+            // an in-out rather than a plain input.
+            inlateout("a1") start_addr => _,
             in("a2") opaque,
             in("a6") SBI_HSM_HART_START,
             in("a7") SBI_EXT_HSM,
