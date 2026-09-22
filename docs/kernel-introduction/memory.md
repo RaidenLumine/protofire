@@ -490,12 +490,16 @@ than copying them, because a stack is mapped into the window after a root is
 derived and the root has to see it.  A slice a dead stack gives back is not
 freed but *retired*: it is handed out again only once every CPU has dropped the
 translation for it, because a stale TLB entry would otherwise shadow the new
-mapping with the old frame.  On x86_64 that evidence is the per-CPU flush record
-in `kernel/smp/tlb.rs`; on AArch64 the page invalidation is inner-shareable, so
-the hardware has already done it.  Waiting never blocks — a slice that is not
-ready stays retired and the allocator takes the next address.  Elsewhere the
-stack is a run of frames at their own addresses and the guard is the page below
-it, un-presented by the architecture's `unmap_page`; a coarse mapping can refuse
+mapping with the old frame.  On AArch64 the page invalidation is inner-shareable
+(`tlbi ...is`), so the hardware has already done it; on x86_64, where the
+invalidation is local, a changed range is *posted* to `kernel/smp/tlb.rs` and
+every other CPU walks it on its next kernel entry, invalidating only the pages
+named there and publishing how far it has walked.  A full flush is still what
+happens when the log is full or the range is very large, but it is no longer
+what every unmap costs.  Waiting never blocks — a slice that is not ready stays
+retired and the allocator takes the next address.  Elsewhere the stack is a run
+of frames at their own addresses and the guard is the page below it,
+un-presented by the architecture's `unmap_page`; a coarse mapping can refuse
 that, and the kernel reports it at boot rather than pretending the guard is
 there.
 

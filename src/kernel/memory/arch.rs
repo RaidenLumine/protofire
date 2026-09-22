@@ -45,20 +45,13 @@ pub fn detected_memory() -> Option<usize> {
 /// Invalidate the TLB for every page in `[virtual_address, virtual_address +
 /// length)` on all CPUs.
 ///
-/// On single-CPU / non-bare-metal targets this is a no-op.  On SMP-capable
-/// targets, sends an IPI to each online AP and waits for acknowledgment
-/// before returning.
+/// One request for the whole range rather than one per page: the range is a
+/// single edit from the TLB's point of view, and on x86_64 each page-sized
+/// request used to make every other CPU flush its entire TLB.  On targets that
+/// broadcast their invalidations where the page table is edited, this is a
+/// no-op.
 pub(crate) fn shootdown_range(virtual_address: usize, length: usize) {
-    let start = align_down_page(virtual_address);
-    let end = match virtual_address.checked_add(length) {
-        Some(end) => end,
-        None => return,
-    };
-    let mut va = start;
-    while va < end {
-        crate::kernel::smp::tlb_shootdown(va);
-        va = va.saturating_add(paging::PAGE_SIZE);
-    }
+    crate::kernel::smp::tlb_shootdown_range(virtual_address, length);
 }
 
 pub(crate) const fn align_down_page(value: usize) -> usize {

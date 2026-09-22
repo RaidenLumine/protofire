@@ -48,6 +48,7 @@
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
+use crate::kernel::smp::InvalidationMark;
 use crate::kernel::sync::Mutex;
 
 /// Page size the window is divided into.
@@ -100,10 +101,10 @@ fn page_starts(start: usize, end: usize) -> impl Iterator<Item = usize> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct RetiredSlice {
     layout: StackLayout,
-    /// Opaque to this file: the caller's evidence that a translation for
-    /// `layout` may still be cached.  Retirement is ordered, so the stamps
-    /// only have to be monotone.
-    stamp: u64,
+    /// Opaque to this file: the caller's evidence about the translations of
+    /// `layout`.  What it means is the caller's business — the window only
+    /// asks the grace predicate whether it is spent.
+    mark: InvalidationMark,
 }
 
 /// Hands out stack addresses from a fixed window.
@@ -149,13 +150,13 @@ impl StackWindow {
     /// shape this hands out.
     ///
     /// `ready` is the grace predicate: it answers whether a slice retired with
-    /// the given stamp may be handed out again.  It is consulted on every
+    /// the given mark may be handed out again.  It is consulted on every
     /// allocation, so a slice waits exactly as long as it has to.
     pub(crate) fn allocate(
         &mut self,
         guard_bytes: usize,
         stack_bytes: usize,
-        ready: impl Fn(u64) -> bool,
+        ready: impl Fn(InvalidationMark) -> bool,
     ) -> Option<StackLayout> {
         let guard = round_up_pages(guard_bytes).max(WINDOW_PAGE);
         let usable = round_up_pages(stack_bytes).max(WINDOW_PAGE);
@@ -222,42 +223,43 @@ impl StackWindow {
 
     /// Retire an allocation that has been given back.
     ///
-    /// `stamp` is the caller's evidence about translations — see
-    /// [`RetiredSlice`].  Only a slice that is currently out can be retired,
-    /// and stamps arrive in the same order the slices do (the caller reads one
-    /// under this window's lock), which is what lets [`Self::drain`] stop at
-    /// the first slice that is still waiting.
-    pub(crate) fn retire(&mut self, layout: &StackLayout, stamp: u64) -> bool {
+    /// `mark` is the caller's evidence about translations — see
+    /// [`RetiredSlice`].  Only a slice that is currently out can be retired:
+    /// the window knows what it handed out, so a slice given back twice, or a
+    /// layout that was never handed out, is refused rather than quietly
+    /// turning two stacks into one address.
+    pub(crate) fn retire(&mut self, layout: &StackLayout, mark: InvalidationMark) -> bool {
         let Some(index) = self.live.iter().position(|slot| slot == layout) else {
             return false;
         };
-        debug_assert!(
-            self.retired.back().is_none_or(|last| stamp >= last.stamp),
-            "retirement stamps must not move backwards"
-        );
         self.live.swap_remove(index);
         self.retired.push_back(RetiredSlice {
             layout: *layout,
-            stamp,
+            mark,
         });
         true
     }
 
     /// Move every retired slice the grace predicate has cleared into the
-    /// recycled list, oldest first, stopping at the first one still waiting.
+    /// recycled list.
     ///
-    /// Stopping rather than scanning on is what keeps the order: stamps only
-    /// move forward down the queue, so a slice behind one that is still
-    /// waiting could not be ready either.
-    pub(crate) fn drain(&mut self, ready: impl Fn(u64) -> bool) -> usize {
+    /// Readiness is asked of each slice on its own: one that is still waiting
+    /// does not hold back a later one that is ready, because whether a mark is
+    /// spent says nothing about the order the slices were retired in.
+    pub(crate) fn drain(&mut self, ready: impl Fn(InvalidationMark) -> bool) -> usize {
         let mut moved = 0;
-        while let Some(slice) = self.retired.front() {
-            if !ready(slice.stamp) {
-                break;
+        let mut index = 0;
+        while index < self.retired.len() {
+            if ready(self.retired[index].mark) {
+                let slice = self
+                    .retired
+                    .remove(index)
+                    .expect("index is inside the queue");
+                self.recycled.push(slice.layout);
+                moved += 1;
+            } else {
+                index += 1;
             }
-            let slice = self.retired.pop_front().expect("front was just read");
-            self.recycled.push(slice.layout);
-            moved += 1;
         }
         moved
     }
@@ -310,23 +312,23 @@ pub(crate) fn allocate_in_kernel_window(
 /// Give back a slice, and say whether the window recorded it.
 ///
 /// The slice is retired, not freed: it becomes available again only once every
-/// CPU has dropped the translation for it.  That is true of a reservation that
-/// was never backed, too — it is simpler to have one rule for every slice that
-/// has left the window than to keep a second, weaker rule for one case.
+/// CPU has dropped its translation.  The request covers the usable pages and
+/// stops there: the guard was never mapped, so there is no translation of it to
+/// drop.  A reservation that was never backed is retired the same way — it is
+/// simpler to have one rule for every slice that has left the window than to
+/// keep a second, weaker rule for one case.
 pub(crate) fn retire_in_kernel_window(layout: &StackLayout) -> bool {
+    let mark =
+        crate::kernel::smp::post_range_invalidation(layout.usable_start, layout.usable_len());
     match KERNEL_STACK_WINDOW.lock().as_mut() {
-        Some(window) => {
-            // The stamp is read under the same lock the retirement is queued
-            // under, so the queue is ordered by it without any sorting.
-            let stamp = crate::kernel::smp::request_remote_tlb_flush_generation();
-            window.retire(layout, stamp)
-        }
+        Some(window) => window.retire(layout, mark),
         None => false,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::InvalidationMark;
     use super::StackWindow;
 
     const BASE: usize = 0x8000_0000;
@@ -335,14 +337,18 @@ mod tests {
     const STACK: usize = 0x8000;
 
     /// Grace predicate for the cases where the wait is not what is being
-    /// tested: every stamp is stale.
-    fn ready(_stamp: u64) -> bool {
+    /// tested: every mark is spent.
+    fn ready(_mark: InvalidationMark) -> bool {
         true
     }
 
     /// Grace predicate for "nothing has reported in yet".
-    fn waiting(_stamp: u64) -> bool {
+    fn waiting(_mark: InvalidationMark) -> bool {
         false
+    }
+
+    fn posted(position: u64) -> InvalidationMark {
+        InvalidationMark::Posted(position)
     }
 
     #[test]
@@ -404,7 +410,7 @@ mod tests {
         let first = window.allocate(GUARD, STACK, ready).expect("first");
         let second = window.allocate(GUARD, STACK, ready).expect("second");
 
-        assert!(window.retire(&second, 1));
+        assert!(window.retire(&second, posted(1)));
         assert_eq!(window.retired_bytes(), GUARD + STACK);
         assert_eq!(window.recycled_bytes(), 0);
 
@@ -433,19 +439,21 @@ mod tests {
     }
 
     #[test]
-    fn the_drain_stops_at_the_first_slice_still_waiting() {
+    fn a_slice_that_is_still_waiting_does_not_hold_back_a_ready_one() {
         let mut window = StackWindow::new(BASE, END);
         let first = window.allocate(GUARD, STACK, ready).expect("first");
         let second = window.allocate(GUARD, STACK, ready).expect("second");
-        assert!(window.retire(&first, 1));
-        assert!(window.retire(&second, 2));
+        assert!(window.retire(&first, posted(1)));
+        assert!(window.retire(&second, posted(2)));
 
-        // Stamps only move forward, so the newer slice cannot be ready while
-        // the older one is not: the drain stops instead of scanning past it.
-        assert_eq!(window.drain(|stamp| stamp >= 2), 0);
-        assert_eq!(window.retired_bytes(), 2 * (GUARD + STACK));
+        // The marks are asked about on their own: a request that was promoted,
+        // or a CPU that reported in out of order, can leave a later slice
+        // ready while an earlier one is not.
+        assert_eq!(window.drain(|mark| mark == posted(2)), 1);
+        assert_eq!(window.retired_bytes(), GUARD + STACK);
+        assert_eq!(window.recycled_bytes(), GUARD + STACK);
 
-        assert_eq!(window.drain(ready), 2);
+        assert_eq!(window.drain(ready), 1);
         assert_eq!(window.retired_bytes(), 0);
         assert_eq!(window.recycled_bytes(), 2 * (GUARD + STACK));
     }
@@ -454,13 +462,13 @@ mod tests {
     fn only_a_slice_that_is_out_can_be_retired() {
         let mut window = StackWindow::new(BASE, END);
         let live = window.allocate(GUARD, STACK, ready).expect("first");
-        assert!(window.retire(&live, 1));
+        assert!(window.retire(&live, posted(1)));
         assert_eq!(window.live.len(), 0);
 
         // Retiring it again would put one address in the queue twice, which is
         // the one thing the queue exists to prevent — and it is now caught by
         // identity rather than by hoping the shapes do not overlap.
-        assert!(!window.retire(&live, 2));
+        assert!(!window.retire(&live, posted(2)));
 
         // So is a layout the window never handed out, however close it looks.
         let alien = super::StackLayout {
@@ -468,7 +476,113 @@ mod tests {
             usable_start: live.usable_start + 0x10,
             usable_end: live.usable_end + 0x10,
         };
-        assert!(!window.retire(&alien, 3));
+        assert!(!window.retire(&alien, posted(3)));
         assert_eq!(window.retired_bytes(), GUARD + STACK);
+    }
+
+    /// Whether a mark has been spent, given how far every CPU has walked.
+    fn spent(mark: InvalidationMark, walked_past: u64) -> bool {
+        match mark {
+            InvalidationMark::Posted(position) => position < walked_past,
+            InvalidationMark::Flushed(_) | InvalidationMark::Nothing => true,
+        }
+    }
+
+    /// The allocator under churn: stacks come and go for a long time, and the
+    /// grace is spent at a different moment than the retirement.
+    ///
+    /// Two properties have to hold through all of it.  An address handed out
+    /// may not belong to a live stack or be waiting its grace — that is the
+    /// bug the queue exists to prevent, and one address handed out twice is
+    /// two stacks writing over each other.  And the window has to keep working
+    /// once it is full: a spent address comes back, so the same pointers go
+    /// round instead of the window failing.
+    #[test]
+    fn churn_never_hands_out_an_address_twice() {
+        let mut window = StackWindow::new(BASE, END);
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut random = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        let mut out: alloc::vec::Vec<super::StackLayout> = alloc::vec::Vec::new();
+        // The slices this test has retired and whose grace has not been spent:
+        // what the window still has waiting, as far as the caller can tell.
+        let mut waiting: alloc::vec::Vec<(super::StackLayout, u64)> = alloc::vec::Vec::new();
+        let mut posted_count = 0u64;
+        let mut walked_past = 0u64;
+        let mut exhausted = 0usize;
+
+        for _ in 0..20_000 {
+            match random() % 4 {
+                0 | 1 => {
+                    let before = window.reuse_count();
+                    match window.allocate(GUARD, STACK, |mark| spent(mark, walked_past)) {
+                        Some(layout) => {
+                            assert!(
+                                !out.contains(&layout),
+                                "an address was handed out while a stack was using it"
+                            );
+                            assert!(
+                                !waiting.iter().any(|(other, _)| *other == layout),
+                                "an address came back before its grace was spent"
+                            );
+                            // A reuse is only ever a spent slice.
+                            assert!(before == window.reuse_count() || walked_past > 0);
+                            out.push(layout);
+                        }
+                        None => exhausted += 1,
+                    }
+                }
+                2 => {
+                    if !out.is_empty() {
+                        let index = (random() as usize) % out.len();
+                        let layout = out.swap_remove(index);
+                        posted_count += 1;
+                        assert!(window.retire(&layout, InvalidationMark::Posted(posted_count)));
+                        waiting.push((layout, posted_count));
+                    }
+                }
+                _ => {
+                    // Every CPU catches up with everything posted so far,
+                    // which is also when the window may hand those slices out
+                    // again.
+                    walked_past = posted_count + 1;
+                    waiting.retain(|(_, position)| *position >= walked_past);
+                }
+            }
+        }
+
+        // The window really did fill up at some point, and it kept going: the
+        // spent addresses came back rather than the allocator giving up.
+        assert!(exhausted > 0, "the churn never filled the window");
+        assert!(
+            window.reuse_count() > 0,
+            "the churn never handed out a recycled slice"
+        );
+
+        // And once everything is spent, nothing is left waiting: every
+        // address the window ever handed out is either in a stack or back in
+        // the recycled list, with nothing stranded in between.
+        walked_past = posted_count + 1;
+        let drained = window.drain(|mark| spent(mark, walked_past));
+        assert!(
+            drained >= waiting.len(),
+            "the window had less waiting than the caller retired"
+        );
+        assert_eq!(window.retired_bytes(), 0);
+        let live_bytes: usize = window
+            .live
+            .iter()
+            .map(|layout| layout.usable_end - layout.guard_start)
+            .sum();
+        assert_eq!(
+            window.recycled_bytes() + live_bytes,
+            window.used_bytes(),
+            "addresses went missing between the window and its slices"
+        );
     }
 }
