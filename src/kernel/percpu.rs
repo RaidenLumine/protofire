@@ -2,14 +2,17 @@
 //!
 //! Per-CPU data infrastructure for SMP.
 //!
-//! On x86_64 bare-metal, each CPU's [`PerCpuData`] is accessed via the GS
-//! segment base register (IA32_GS_BASE MSR, 0xC0000101).  The BSP instance
-//! is a static; AP instances are heap-allocated during CPU bring-up (Phase 5).
+//! Each CPU gets its own [`PerCpuData`] block, and each architecture keeps the
+//! pointer to it somewhere the CPU can reach cheaply: `gs` on x86_64,
+//! `TPIDR_EL1` on aarch64, `tp` on riscv64.  *Which register* is the
+//! architecture's business and lives in [`crate::arch::percpu`]; this module
+//! owns the block itself and the accessors built on it, and names no
+//! architecture at all.
 //!
-//! On other architectures and test builds, a single static [`PerCpuData`] is
-//! returned by [`get()`].
+//! A target with no such register — the host, and any future target that has
+//! not declared its own — reports a base of zero, and the accessors fall back
+//! to a single static block, which is what single-CPU mode means.
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
 // ── PerCpuData struct ────────────────────────────────────────────────────
@@ -60,9 +63,10 @@ pub struct PerCpuData {
 // no concurrent access to the raw pointers within.
 unsafe impl Sync for PerCpuData {}
 
-// Compile-time size and field-offset checks (x86_64 only — the layout must
-// match what the assembly inlines expect).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+// Compile-time size and field-offset checks.  Every architecture reads the
+// scheduler field by offset rather than through a Rust field access (that is
+// what makes the lookup one or two instructions), so the layout is part of the
+// contract, not an implementation detail.
 const _: () = {
     if core::mem::size_of::<PerCpuData>() != 64 {
         panic!("PerCpuData must be exactly 64 bytes");
@@ -80,7 +84,6 @@ const _: () = {
 
 /// Byte offset of `scheduler` within [`PerCpuData`], used by the GS-based
 /// fast-path (`mov reg, gs:[PERCPU_OFFSET_SCHEDULER]`).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub const PERCPU_OFFSET_SCHEDULER: usize = 8;
 
 impl PerCpuData {
@@ -99,108 +102,26 @@ impl PerCpuData {
     }
 }
 
-// ── BSP static (x86_64 bare-metal) ──────────────────────────────────────
-
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-static BSP_PERCPU: SyncUnsafeCell<PerCpuData> = SyncUnsafeCell::new(PerCpuData::zeroed());
-
-/// Set up the GS segment base to point to the BSP [`PerCpuData`].
-///
-/// Writes `IA32_GS_BASE` MSR (`0xC0000101`).  Must be called once during
-/// early boot, after GDT load but before any `get()` or
-/// `current_scheduler_ptr()` call.
-///
-/// # Safety
-///
-/// The caller must ensure this runs exactly once on the BSP.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub unsafe fn early_init_gs_base() {
-    let base = BSP_PERCPU.get() as u64;
-    unsafe {
-        core::arch::asm!(
-            "mov ecx, 0xC0000101",  // IA32_GS_BASE
-            "wrmsr",
-            in("eax") base as u32,
-            in("edx") (base >> 32) as u32,
-            out("ecx") _,
-        );
-    }
-}
-
-/// Set up the kernel GS base MSR for `swapgs` support.
-///
-/// Writes `IA32_KERNEL_GS_BASE` MSR (`0xC0000102`) to point to the BSP
-/// [`PerCpuData`].  When user mode sets GS to its own selector (overwriting
-/// `IA32_GS_BASE`), the interrupt entry path uses `swapgs` to exchange
-/// GS_BASE ↔ KERNEL_GS_BASE, restoring the kernel's per-CPU view.
-///
-/// Must be called once during early boot, after [`early_init_gs_base`].
-///
-/// # Safety
-///
-/// The caller must ensure this runs exactly once on the BSP.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub unsafe fn early_init_kernel_gs_base() {
-    let base = BSP_PERCPU.get() as u64;
-    unsafe {
-        core::arch::asm!(
-            "mov ecx, 0xC0000102",  // IA32_KERNEL_GS_BASE
-            "wrmsr",
-            in("eax") base as u32,
-            in("edx") (base >> 32) as u32,
-            out("ecx") _,
-        );
-    }
-}
-
-/// Set the kernel GS base MSR for an AP.
-///
-/// Writes `IA32_KERNEL_GS_BASE` (`0xC0000102`) so that `swapgs` on this CPU
-/// correctly swaps to the per-CPU data.  Call during AP boot, after the
-/// per-CPU data pointer is written to `IA32_GS_BASE`.
-///
-/// # Safety
-///
-/// Must be called once per AP, after the AP's [`PerCpuData`] is allocated
-/// and GS base is pointed to it.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub unsafe fn init_ap_kernel_gs_base(percpu: *const PerCpuData) {
-    let base = percpu as u64;
-    unsafe {
-        core::arch::asm!(
-            "mov ecx, 0xC0000102",  // IA32_KERNEL_GS_BASE
-            "wrmsr",
-            in("eax") base as u32,
-            in("edx") (base >> 32) as u32,
-            out("ecx") _,
-        );
-    }
-}
-
-/// Fill in the BSP's per-CPU data fields after the scheduler and LAPIC are
-/// available.
-///
-/// Called during [`Kernel::init`] after the LAPIC is up.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub fn init_bsp(scheduler: *mut crate::kernel::process::Scheduler, lapic_id: u8, tss: *mut u8) {
-    let percpu = unsafe { &mut *BSP_PERCPU.get() };
-    percpu.cpu_id = 0;
-    percpu.lapic_id = lapic_id;
-    percpu.scheduler = scheduler;
-    percpu.tss = tss;
-}
-
 // ── Public accessors ────────────────────────────────────────────────────
 
 /// Return a reference to the current CPU's [`PerCpuData`].
 ///
-/// On x86_64 bare-metal, reads the GS base via `rdmsr` and dereferences it.
-/// On other targets / test builds, returns a static default (single-CPU mode).
+/// The architecture supplies the base; a base of zero means per-CPU data is
+/// not installed yet (or this target has none), and the caller gets the static
+/// fallback, which reads as an idle CPU with no scheduler.
 ///
 /// This is the slow-but-safe path; use [`current_scheduler_ptr`] for the
-/// hot path (single `gs:` load).
+/// hot path.
 pub fn get() -> &'static PerCpuData {
-    get_impl()
+    let base = crate::arch::percpu::base();
+    if base == 0 {
+        // SAFETY: the fallback is a static, and every CPU that reaches it sees
+        // the same zeroed block; nothing mutates it through this reference.
+        return unsafe { &*EARLY_FALLBACK.get() };
+    }
+    // SAFETY: a non-zero base is this CPU's live PerCpuData; each CPU sees only
+    // its own, so the shared reference is not shared in practice.
+    unsafe { &*(base as *const PerCpuData) }
 }
 
 /// Return a mutable reference to the current CPU's [`PerCpuData`].
@@ -211,133 +132,35 @@ pub fn get() -> &'static PerCpuData {
 /// concurrently accessing the per-CPU data.  Access from a different
 /// CPU is always safe because each CPU has its own instance.
 pub fn get_mut() -> &'static mut PerCpuData {
-    // Resolve the base pointer and reconstruct a mutable reference.
-    // Each CPU accesses only its own PerCpuData, so this is safe.
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        let base: u64;
-        unsafe {
-            core::arch::asm!(
-                "mov ecx, 0xC0000101",
-                "rdmsr",
-                "shl rdx, 32",
-                "or rax, rdx",
-                out("rax") base,
-                out("rdx") _,
-                out("rcx") _,
-            );
-        }
-        assert!(base != 0, "PerCpuData GS base not initialised");
-        unsafe { &mut *(base as *mut PerCpuData) }
+    let base = crate::arch::percpu::base();
+    if base == 0 {
+        // Two architectures install the base before anything can reach
+        // per-CPU data and one does not; the difference is theirs to state.
+        assert!(
+            !crate::arch::percpu::expects_base_installed(),
+            "PerCpuData base not initialised"
+        );
+        // SAFETY: as `get`, plus the caller's own guarantee that nothing else
+        // on this CPU is touching the block.
+        return unsafe { &mut *EARLY_FALLBACK.get() };
     }
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        let base: u64;
-        unsafe {
-            core::arch::asm!("mrs {}, tpidr_el1", out(reg) base, options(nostack));
-        }
-        if base == 0 {
-            static EARLY_FALLBACK: crate::util::sync_unsafe_cell::SyncUnsafeCell<PerCpuData> =
-                crate::util::sync_unsafe_cell::SyncUnsafeCell::new(PerCpuData::zeroed());
-            unsafe { &mut *EARLY_FALLBACK.get() }
-        } else {
-            unsafe { &mut *(base as *mut PerCpuData) }
-        }
-    }
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    {
-        let base: u64;
-        unsafe {
-            core::arch::asm!("mv {}, tp", out(reg) base, options(nostack));
-        }
-        if base == 0 {
-            static EARLY_FALLBACK: crate::util::sync_unsafe_cell::SyncUnsafeCell<PerCpuData> =
-                crate::util::sync_unsafe_cell::SyncUnsafeCell::new(PerCpuData::zeroed());
-            unsafe { &mut *EARLY_FALLBACK.get() }
-        } else {
-            unsafe { &mut *(base as *mut PerCpuData) }
-        }
-    }
-    #[cfg(not(any(
-        all(target_arch = "x86_64", target_os = "none"),
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "riscv64", target_os = "none"),
-    )))]
-    {
-        static GLOBAL_PERCPU: crate::util::sync_unsafe_cell::SyncUnsafeCell<PerCpuData> =
-            crate::util::sync_unsafe_cell::SyncUnsafeCell::new(PerCpuData::zeroed());
-        unsafe { &mut *GLOBAL_PERCPU.get() }
-    }
+    // SAFETY: each CPU accesses only its own PerCpuData, so the exclusive
+    // reference is not shared with another CPU.
+    unsafe { &mut *(base as *mut PerCpuData) }
 }
 
-fn get_impl() -> &'static PerCpuData {
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        let base: u64;
-        unsafe {
-            core::arch::asm!(
-                "mov ecx, 0xC0000101",
-                "rdmsr",
-                "shl rdx, 32",
-                "or rax, rdx",
-                out("rax") base,
-                out("rdx") _,
-                out("rcx") _,
-            );
-        }
-        if base == 0 {
-            // GS base not yet initialised (extremely early boot).
-            // Return a zeroed fallback so callers see null scheduler.
-            static EARLY_FALLBACK: PerCpuData = PerCpuData::zeroed();
-            &EARLY_FALLBACK
-        } else {
-            unsafe { &*(base as *const PerCpuData) }
-        }
-    }
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        let base: u64;
-        unsafe {
-            core::arch::asm!("mrs {}, tpidr_el1", out(reg) base, options(nostack));
-        }
-        if base == 0 {
-            static EARLY_FALLBACK: PerCpuData = PerCpuData::zeroed();
-            &EARLY_FALLBACK
-        } else {
-            unsafe { &*(base as *const PerCpuData) }
-        }
-    }
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    {
-        let base: u64;
-        unsafe {
-            core::arch::asm!("mv {}, tp", out(reg) base, options(nostack));
-        }
-        if base == 0 {
-            static EARLY_FALLBACK: PerCpuData = PerCpuData::zeroed();
-            &EARLY_FALLBACK
-        } else {
-            unsafe { &*(base as *const PerCpuData) }
-        }
-    }
-    #[cfg(not(any(
-        all(target_arch = "x86_64", target_os = "none"),
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "riscv64", target_os = "none"),
-    )))]
-    {
-        static GLOBAL_PERCPU: PerCpuData = PerCpuData::zeroed();
-        &GLOBAL_PERCPU
-    }
-}
+/// The block handed out before this CPU's own is installed.
+///
+/// Zeroed, so `cpu_id` reads 0 and `scheduler` reads null: early callers see an
+/// idle CPU rather than a fault, which is what boot-time code before per-CPU
+/// setup needs.
+static EARLY_FALLBACK: SyncUnsafeCell<PerCpuData> = SyncUnsafeCell::new(PerCpuData::zeroed());
 
 /// Fast-path: return the current CPU's scheduler pointer.
 ///
-/// - x86_64 bare-metal: single `mov reg, gs:[PERCPU_OFFSET_SCHEDULER]` (1
-///   insn).
-/// - AArch64 bare-metal: `mrs reg, tpidr_el1` followed by load from offset 8
-///   (the `scheduler` field in [`PerCpuData`]).
-/// - Other targets: returns null (callers fall back to the global `AtomicPtr`).
+/// One architecture-specific instruction sequence — `gs:`-relative on x86_64,
+/// base register plus a load elsewhere — and null on a target with no per-CPU
+/// register, where callers fall back to the global `AtomicPtr`.
 ///
 /// # Safety
 ///
@@ -345,136 +168,23 @@ fn get_impl() -> &'static PerCpuData {
 /// Callers must use `as_ref()` with appropriate lifetime management.
 #[inline]
 pub fn current_scheduler_ptr() -> *mut crate::kernel::process::Scheduler {
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        let ptr: *mut crate::kernel::process::Scheduler;
-        unsafe {
-            core::arch::asm!(
-                "mov {}, gs:[{}]",
-                out(reg) ptr,
-                const PERCPU_OFFSET_SCHEDULER,
-                options(nostack, readonly),
-            );
-        }
-        ptr
-    }
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        let base: u64;
-        unsafe {
-            core::arch::asm!("mrs {}, tpidr_el1", out(reg) base, options(nostack));
-        }
-        if base == 0 {
-            core::ptr::null_mut()
-        } else {
-            // The scheduler field is at offset 8 in PerCpuData (same layout).
-            unsafe { *((base + 8) as *const *mut crate::kernel::process::Scheduler) }
-        }
-    }
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    {
-        let base: u64;
-        unsafe {
-            core::arch::asm!("mv {}, tp", out(reg) base, options(nostack));
-        }
-        if base == 0 {
-            core::ptr::null_mut()
-        } else {
-            unsafe { *((base + 8) as *const *mut crate::kernel::process::Scheduler) }
-        }
-    }
-    #[cfg(not(any(
-        all(target_arch = "x86_64", target_os = "none"),
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "riscv64", target_os = "none"),
-    )))]
-    {
-        core::ptr::null_mut()
-    }
+    crate::arch::percpu::scheduler_ptr()
 }
 
 /// Update the per-CPU scheduler pointer for the current CPU.
 ///
-/// On x86_64 bare-metal this resolves the current CPU's [`PerCpuData`] via
-/// the GS segment base, so it works for both BSP and APs.  On AArch64 the
-/// same is done via TPIDR_EL1.  On other targets this is a no-op (the global
-/// `AtomicPtr` path is used instead).
-#[cfg(any(
-    all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none"),
-))]
+/// It resolves the current CPU's [`PerCpuData`] through the architecture's base
+/// register, so it works for the BSP and for APs alike.  A base of zero means
+/// this CPU has no per-CPU block — a target without the register — and the call
+/// is a no-op, matching the global `AtomicPtr` path callers use there.
 pub fn set_current_scheduler(scheduler: *mut crate::kernel::process::Scheduler) {
-    let base: u64;
-    unsafe {
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        core::arch::asm!(
-            "mov ecx, 0xC0000101",
-            "rdmsr",
-            "shl rdx, 32",
-            "or rax, rdx",
-            out("rax") base,
-            out("rdx") _,
-            out("rcx") _,
-        );
-        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-        core::arch::asm!("mrs {}, tpidr_el1", out(reg) base, options(nostack));
-        #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-        core::arch::asm!("mv {}, tp", out(reg) base, options(nostack));
-    }
+    let base = crate::arch::percpu::base();
     if base != 0 {
+        // SAFETY: a non-zero base is this CPU's own block, which the caller of
+        // `set_current_scheduler` owns; the field write is the only access.
         let percpu = unsafe { &mut *(base as *mut PerCpuData) };
         percpu.scheduler = scheduler;
     }
-}
-
-#[cfg(not(any(
-    all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none"),
-)))]
-pub fn set_current_scheduler(_scheduler: *mut crate::kernel::process::Scheduler) {
-    // no-op on non-bare-metal: the global AtomicPtr path is used instead
-}
-
-/// Set the AArch64 per-CPU data pointer via TPIDR_EL1.
-#[cfg(all(target_arch = "aarch64", target_os = "none"))]
-pub fn aarch64_set_tpidr_el1(val: u64) {
-    unsafe {
-        core::arch::asm!("msr tpidr_el1, {}", in(reg) val, options(nostack));
-    }
-}
-
-/// Host stub for aarch64_set_tpidr_el1.
-#[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
-pub fn aarch64_set_tpidr_el1(_val: u64) {
-    // no-op on non-AArch64
-}
-
-/// Global slot holding the current hart's PerCpuData pointer.
-///
-/// The RISC-V trap vector (src/arch/riscv64/trap.S) loads `tp` from this
-/// slot on every kernel entry, because when a trap arrives from U-mode `tp`
-/// holds the *user* thread's value and cannot be trusted.  The slot is kept
-/// in sync with the `tp` register by [`riscv64_set_tp`].  Single-hart in
-/// this prototype, so one slot suffices.
-#[cfg(all(target_arch = "riscv64", target_os = "none"))]
-#[no_mangle]
-pub static mut RISCV64_PERCPU_PTR: u64 = 0;
-
-/// Set the RISC-V per-CPU data pointer via the tp (x4) register.
-#[cfg(all(target_arch = "riscv64", target_os = "none"))]
-pub fn riscv64_set_tp(val: u64) {
-    unsafe {
-        core::arch::asm!("mv tp, {}", in(reg) val, options(nostack));
-        RISCV64_PERCPU_PTR = val;
-    }
-}
-
-/// Host stub for riscv64_set_tp.
-#[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
-pub fn riscv64_set_tp(_val: u64) {
-    // no-op on non-RISC-V
 }
 
 #[cfg(test)]

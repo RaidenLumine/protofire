@@ -364,25 +364,13 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
     let ap_tss = unsafe { (*percpu_ptr).tss as *mut crate::arch::x86_64::gdt::TaskStateSegment };
     crate::arch::x86_64::gdt::init_ap(ap_tss);
 
-    // Set GS base to point to this CPU's PerCpuData.
-    let gs_base = percpu_ptr as u64;
+    // Point both GS bases at this CPU's PerCpuData, so `gs:`-relative
+    // per-CPU access and `swapgs` on the interrupt path both see it.
+    //
+    // SAFETY: `percpu_ptr` is this AP's live PerCpuData, and this runs once
+    // on this AP, after its GDT is loaded.
     unsafe {
-        core::arch::asm!(
-            "mov ecx, 0xC0000101",  // IA32_GS_BASE
-            "wrmsr",
-            in("eax") gs_base as u32,
-            in("edx") (gs_base >> 32) as u32,
-            out("ecx") _,
-        );
-        // Also set IA32_KERNEL_GS_BASE so that swapgs works correctly
-        // when this CPU enters/exits user mode via interrupts.
-        core::arch::asm!(
-            "mov ecx, 0xC0000102",  // IA32_KERNEL_GS_BASE
-            "wrmsr",
-            in("eax") gs_base as u32,
-            in("edx") (gs_base >> 32) as u32,
-            out("ecx") _,
-        );
+        crate::arch::x86_64::percpu::init_ap_gs_bases(percpu_ptr);
     }
 
     // Initialize the local APIC on this CPU.

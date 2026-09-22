@@ -65,7 +65,7 @@ mod                          block                        1
 mod                          fs                           4
 mod                          memory                       3
 mod                          network                      3
-mod                          percpu                       6
+mod                          percpu                       3
 mod                          power                        1
 mod                          procfs                       1
 mod                          smp                          13
@@ -77,7 +77,7 @@ network                      random                       5
 network                      sync                         41
 nmi                          sync                         1
 oom                          process                      3
-percpu                       process                      8
+percpu                       process                      3
 percpu                       topology                     2
 power                        sync                         2
 process                      audit                        1

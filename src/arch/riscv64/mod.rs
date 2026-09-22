@@ -88,6 +88,7 @@ pub mod cpufreq;
 pub mod irq_balance;
 pub mod mmu;
 pub mod pci;
+pub mod percpu;
 pub mod rtc;
 pub mod smp;
 pub mod trap;

@@ -161,7 +161,11 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
             crate::arch::halt();
         }
     }
-    crate::kernel::percpu::aarch64_set_tpidr_el1(percpu as u64);
+    // SAFETY: `percpu` is this AP's live PerCpuData, allocated before the AP
+    // was started, and this runs once per AP on that AP.
+    unsafe {
+        crate::arch::percpu::set_base(percpu as u64);
+    }
 
     // Initialise GIC CPU interface and timer (per-CPU).
     crate::arch::aarch64::interrupt_controller::init_gicc();

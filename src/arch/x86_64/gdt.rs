@@ -107,15 +107,12 @@ pub fn init() {
         );
     }
 
-    // Wire up the GS segment base to the BSP's PerCpuData so that
-    // per-CPU accessors work from this point onward.
+    // Point both GS bases at the BSP's PerCpuData so that per-CPU accessors
+    // work from this point onward.
     // SAFETY: called once during early boot, before any other CPU exists.
     #[cfg(target_os = "none")]
     unsafe {
-        crate::kernel::percpu::early_init_gs_base();
-        // Also set IA32_KERNEL_GS_BASE so that swapgs works correctly
-        // when entering/exiting user mode via interrupts.
-        crate::kernel::percpu::early_init_kernel_gs_base();
+        crate::arch::x86_64::percpu::init_bsp_gs_bases();
     }
 }
 

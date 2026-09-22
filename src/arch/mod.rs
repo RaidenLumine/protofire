@@ -11,6 +11,7 @@ pub mod boot;
 pub mod exception_recoverability;
 pub mod interrupt_controller;
 pub mod mmu;
+pub mod percpu;
 pub mod syscall_trap;
 pub mod timer;
 pub mod trap;

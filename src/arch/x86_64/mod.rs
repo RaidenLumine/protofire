@@ -13,6 +13,7 @@ pub mod interrupt_controller;
 pub mod interrupts;
 pub mod paging;
 pub mod pci;
+pub mod percpu;
 pub mod port;
 pub mod serial;
 pub mod timer;

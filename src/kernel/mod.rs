@@ -418,11 +418,15 @@ impl Kernel {
             // percpu tables store them as u8.
             let lapic_id = lapic_id as u8;
             crate::kernel::smp::save_bsp_lapic_id(lapic_id);
-            crate::kernel::percpu::init_bsp(
-                &self.scheduler as *const Scheduler as *mut Scheduler,
-                lapic_id,
-                crate::arch::x86_64::gdt::bsp_tss_ptr() as *mut u8,
-            );
+            // SAFETY: the BSP's per-CPU block is a static, the GS base already
+            // points at it, and this runs once during boot.
+            unsafe {
+                crate::arch::x86_64::percpu::init_bsp_data(
+                    &self.scheduler as *const Scheduler as *mut Scheduler,
+                    lapic_id,
+                    crate::arch::x86_64::gdt::bsp_tss_ptr() as *mut u8,
+                );
+            }
             // Register the BSP scheduler in the static percpu-scheduler table
             // so cross-CPU operations can find it.
             unsafe {
@@ -446,7 +450,11 @@ impl Kernel {
                 (*percpu_ptr).cpu_id = 0; // BSP
                 (*percpu_ptr).scheduler = &self.scheduler as *const Scheduler as *mut Scheduler;
             }
-            crate::kernel::percpu::aarch64_set_tpidr_el1(percpu_ptr as u64);
+            // SAFETY: `percpu_ptr` is the BSP's freshly allocated block, and it
+            // outlives every access (it is never freed).
+            unsafe {
+                crate::arch::percpu::set_base(percpu_ptr as u64);
+            }
             // Register the BSP scheduler in the per-CPU table so cross-CPU
             // operations (wake, reschedule IPI) can find it.
             crate::kernel::smp::register_percpu_scheduler(
@@ -467,7 +475,11 @@ impl Kernel {
                 (*percpu_ptr).cpu_id = 0; // BSP
                 (*percpu_ptr).scheduler = &self.scheduler as *const Scheduler as *mut Scheduler;
             }
-            crate::kernel::percpu::riscv64_set_tp(percpu_ptr as u64);
+            // SAFETY: `percpu_ptr` is the BSP's freshly allocated block, and it
+            // outlives every access (it is never freed).
+            unsafe {
+                crate::arch::percpu::set_base(percpu_ptr as u64);
+            }
 
             // Store the PerCpuData pointer at the boot stack bottom so the
             // trap handler (trap.S) can load it into tp on every kernel entry.
