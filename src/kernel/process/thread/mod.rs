@@ -21,6 +21,9 @@ pub(crate) mod kernel_stack;
 mod stack_window;
 pub(crate) mod types;
 
+#[cfg_attr(not(target_os = "none"), allow(unused_imports))]
+pub(crate) use stack_window::window_stats;
+
 #[cfg(any(target_arch = "aarch64", test))]
 pub(crate) mod arch_aarch64;
 #[cfg(any(target_arch = "riscv64", test))]

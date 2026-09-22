@@ -107,6 +107,25 @@ struct RetiredSlice {
     mark: InvalidationMark,
 }
 
+/// A snapshot of the window's state, for diagnostics.
+///
+/// `reserved` is the bump frontier: addresses handed out at least once.  The
+/// rest are where those bytes are now — in a live stack, waiting out a
+/// retirement, or back in the recycled list — and `reused` counts the
+/// allocations that came from that list rather than from the frontier, which
+/// is the number a machine that never reuses anything would leave at zero.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) struct WindowStats {
+    pub(crate) base: usize,
+    pub(crate) end: usize,
+    pub(crate) reserved: usize,
+    pub(crate) live: usize,
+    pub(crate) retired: usize,
+    pub(crate) recycled: usize,
+    pub(crate) stacks: usize,
+    pub(crate) reused: usize,
+}
+
 /// Hands out stack addresses from a fixed window.
 #[derive(Debug)]
 pub(crate) struct StackWindow {
@@ -203,6 +222,24 @@ impl StackWindow {
     /// How many allocations have been served from the recycled list.
     pub(crate) fn reuse_count(&self) -> usize {
         self.reuses
+    }
+
+    /// Take a snapshot of the window's state.
+    pub(crate) fn stats(&self) -> WindowStats {
+        WindowStats {
+            base: self.base,
+            end: self.end,
+            reserved: self.used_bytes(),
+            live: self
+                .live
+                .iter()
+                .map(|layout| layout.usable_end - layout.guard_start)
+                .sum(),
+            retired: self.retired_bytes(),
+            recycled: self.recycled_bytes(),
+            stacks: self.live.len(),
+            reused: self.reuses,
+        }
     }
 
     /// Bytes sitting in the retirement queue, waiting for the grace predicate.
@@ -324,6 +361,12 @@ pub(crate) fn retire_in_kernel_window(layout: &StackLayout) -> bool {
         Some(window) => window.retire(layout, mark),
         None => false,
     }
+}
+
+/// A snapshot of the kernel's stack window, or `None` where the architecture
+/// names no window for kernel stacks to come from.
+pub(crate) fn window_stats() -> Option<WindowStats> {
+    KERNEL_STACK_WINDOW.lock().as_ref().map(StackWindow::stats)
 }
 
 #[cfg(test)]

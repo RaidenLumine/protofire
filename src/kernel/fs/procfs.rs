@@ -292,6 +292,39 @@ fn processes_data() -> Vec<u8> {
     format!("{}\n", count).into_bytes()
 }
 
+/// The TLB's invalidation log, and the kernel stack window that waits on it.
+///
+/// Both are allocation structures with a fallback, and both are sized by
+/// constants that a machine's workload has to justify rather than the other way
+/// round — this is the file that says whether they are sized right:
+/// `full-flushes` climbing with `pending` at the limit means the log wants to
+/// be bigger, `lag` between the cursors means one CPU is being left behind, and
+/// `reused` staying at zero means the window is only ever growing.
+fn tlb_data() -> Vec<u8> {
+    let posted = crate::kernel::smp::posted_invalidation_stats();
+    let mut out = format!(
+        "posted: {}\nwalked: {}\nfull-flushes: {}\npending: {}\nlag: {}\n",
+        posted.postings, posted.walked, posted.full_flushes, posted.pending, posted.lag
+    );
+
+    match crate::kernel::process::thread::window_stats() {
+        Some(window) => out.push_str(&format!(
+            "stack-window: base={:#x} end={:#x} reserved={} live={} retired={} recycled={} stacks={} reused={}\n",
+            window.base,
+            window.end,
+            window.reserved,
+            window.live,
+            window.retired,
+            window.recycled,
+            window.stacks,
+            window.reused
+        )),
+        None => out.push_str("stack-window: none\n"),
+    }
+
+    out.into_bytes()
+}
+
 // ---------------------------------------------------------------------------
 // Data producers (per-process)
 // ---------------------------------------------------------------------------
@@ -452,6 +485,7 @@ const ROOT_STATIC_ENTRIES: &[(&str, NodeKind)] = &[
     ("uptime", NodeKind::File),
     ("mounts", NodeKind::File),
     ("processes", NodeKind::File),
+    ("tlb", NodeKind::File),
 ];
 
 pub struct ProcFs;
@@ -490,6 +524,7 @@ impl VfsTrait for ProcFs {
                 "uptime" => Ok(Arc::new(StaticDataVNode::new("uptime", uptime_data))),
                 "mounts" => Ok(Arc::new(StaticDataVNode::new("mounts", mounts_data))),
                 "processes" => Ok(Arc::new(StaticDataVNode::new("processes", processes_data))),
+                "tlb" => Ok(Arc::new(StaticDataVNode::new("tlb", tlb_data))),
                 _ => Err(Error::NotFound),
             },
         }
@@ -657,6 +692,23 @@ mod tests {
         let n = vnode.read(0, &mut buf).expect("read");
         let s = core::str::from_utf8(&buf[..n]).expect("utf8");
         assert!(s.trim_end().parse::<usize>().is_ok());
+    }
+
+    #[test]
+    fn procfs_lookup_tlb_reports_both_structures() {
+        let p = ProcFs;
+        let vnode = p.lookup("tlb").expect("tlb node");
+        assert_eq!(vnode.kind(), NodeKind::File);
+        let mut buf = [0u8; 512];
+        let n = vnode.read(0, &mut buf).expect("read");
+        let s = core::str::from_utf8(&buf[..n]).expect("utf8");
+        // The log's counters, and the window's line even where there is no
+        // window to report on: the file is read to answer "did the window
+        // recycle" as much as "is the log backing up".
+        assert!(s.contains("posted: "), "{s}");
+        assert!(s.contains("full-flushes: "), "{s}");
+        assert!(s.contains("pending: "), "{s}");
+        assert!(s.contains("stack-window: "), "{s}");
     }
 
     #[test]

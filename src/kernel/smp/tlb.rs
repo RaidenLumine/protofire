@@ -63,14 +63,17 @@ fn release_shootdown_lock() {
     SHOOTDOWN_LOCK.store(false, core::sync::atomic::Ordering::Release);
 }
 
-/// Global TLB generation counter, bumped by [`PostedLog::post_full_flush`]
-/// whenever a request has to drop *everything* rather than a named range: the
-/// posted log being full, a range too large to walk a page at a time, or the
-/// PCID allocator reusing a PCID.  Each CPU that performs such a flush
-/// publishes the value it read, and a request's mark carries the value its own
-/// bump produced — so a published mark proves the flush came after the
-/// page-table edit, which a plain "has seen generation N" does not.
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+/// Full-flush counter for the architectures that keep their latch here.
+///
+/// x86_64's counter lives in its posted log instead — the log is where the
+/// sequences have to agree with each other, and a counter shared with the host
+/// build would let one test's flush look like another test's.
+///
+/// aarch64 and riscv64 compare this against their per-CPU latch in their IPI
+/// handlers.  Nothing in this tree bumps it: they broadcast their page
+/// invalidations where the page table is edited, so the handler is the path
+/// that would serve a request nobody has needed yet.
+#[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
 static TLB_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// How many invalidations can be waiting to be walked at once.
@@ -79,6 +82,13 @@ static TLB_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::Atomi
 /// hold what a tick's worth of page-table work produces.  When it does fill
 /// up, the request that cannot be appended asks for a full flush instead of
 /// waiting for room — see [`PostedLog::post`].
+///
+/// 256 is far above what the demo boot produces — `/proc/tlb` reports
+/// `pending: 0` there, drained every tick — and far below the burst the churn
+/// check makes on purpose, which is the pair of observations this number is
+/// sized from: enough headroom that a healthy machine never promotes, and
+/// small enough that the promotion path is the one that covers the burst.
+/// Read the file on a different workload before changing it.
 #[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 const POSTED_SLOTS: usize = 256;
 
@@ -88,6 +98,11 @@ const POSTED_SLOTS: usize = 256;
 /// they are trying to avoid — tearing down an address space is one request for
 /// thousands of pages — and a single entry that long would also hold the log
 /// against everyone else.
+///
+/// One page of the demo's own page-table traffic is a user-page map or a stack
+/// guard; the ranges that go past this are the ones that free memory in bulk,
+/// which is exactly where a targeted invalidation would be doing thousands of
+/// `invlpg`s to save a flush.
 #[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 const FULL_FLUSH_PAGES: usize = 32;
 
@@ -123,6 +138,28 @@ pub(crate) enum InvalidationMark {
     Flushed(u64),
     /// The architecture invalidated it everywhere already.
     Nothing,
+}
+
+/// A snapshot of the posted-invalidation log.
+///
+/// Read by the `/proc/tlb` file and by the churn check: the numbers are what
+/// says whether the log is sized for the machine (`pending` riding at the
+/// limit and `full_flushes` climbing) or whether a CPU is being left behind
+/// (`lag` growing).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) struct PostedStats {
+    /// Requests that went into the log.
+    pub(crate) postings: u64,
+    /// Entries a CPU has walked out of it.
+    pub(crate) walked: u64,
+    /// Requests that asked for a full flush instead of a slot: a range too
+    /// long to walk, a log with no room for the entry, or the PCID allocator
+    /// reusing a PCID.
+    pub(crate) full_flushes: u64,
+    /// Entries posted and not yet walked by every CPU.
+    pub(crate) pending: u64,
+    /// How far apart the CPUs' cursors are.  Wide means one CPU is behind.
+    pub(crate) lag: u64,
 }
 
 /// One pending invalidation: a page-aligned byte range `[start, end)`.
@@ -172,6 +209,16 @@ pub(crate) struct PostedLog {
     /// interrupts off: a handler can retire a stack too, and it would
     /// otherwise spin on a lock its own interrupted context is holding.
     appending: core::sync::atomic::AtomicBool,
+    /// Requests that went into the log.
+    postings: core::sync::atomic::AtomicU64,
+    /// Entries a CPU has walked.
+    walked: core::sync::atomic::AtomicU64,
+    /// Requests that asked for a full flush.
+    full_flushes: core::sync::atomic::AtomicU64,
+    /// Full-flush generation: the value a mark carries and a CPU publishes
+    /// after flushing.  Instance-owned, because the sequences a caller waits
+    /// on are this log's and nothing else's.
+    generation: core::sync::atomic::AtomicU64,
 }
 
 #[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
@@ -183,7 +230,16 @@ impl PostedLog {
             cursors: [const { core::sync::atomic::AtomicU64::new(0) }; LOG_CPUS],
             flushed: [const { core::sync::atomic::AtomicU64::new(0) }; LOG_CPUS],
             appending: core::sync::atomic::AtomicBool::new(false),
+            postings: core::sync::atomic::AtomicU64::new(0),
+            walked: core::sync::atomic::AtomicU64::new(0),
+            full_flushes: core::sync::atomic::AtomicU64::new(0),
+            generation: core::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// The current full-flush generation.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
     }
 
     /// The CPUs whose cursors have to pass an entry before its slot is spent.
@@ -227,12 +283,14 @@ impl PostedLog {
         slot.start.store(start, Ordering::Relaxed);
         slot.end.store(end, Ordering::Relaxed);
         self.head.store(head + 1, Ordering::Release);
+        self.postings.fetch_add(1, Ordering::Relaxed);
         InvalidationMark::Posted(head)
     }
 
     /// Ask every CPU to drop everything, at a fresh generation.
     pub(crate) fn post_full_flush(&self) -> InvalidationMark {
-        let generation = TLB_GENERATION.fetch_add(1, Ordering::Release) + 1;
+        self.full_flushes.fetch_add(1, Ordering::Relaxed);
+        let generation = self.generation.fetch_add(1, Ordering::Release) + 1;
         InvalidationMark::Flushed(generation)
     }
 
@@ -254,7 +312,7 @@ impl PostedLog {
             return;
         }
         let head = self.head.load(Ordering::Acquire);
-        let generation = TLB_GENERATION.load(Ordering::Acquire);
+        let generation = self.generation.load(Ordering::Acquire);
         if generation > self.flushed[cpu].load(Ordering::Relaxed) {
             flush();
             // Both records say "everything asked for before this point is
@@ -272,6 +330,7 @@ impl PostedLog {
             let end = slot.end.load(Ordering::Acquire);
             invalidate(start, end);
             cursor += 1;
+            self.walked.fetch_add(1, Ordering::Relaxed);
         }
         // Only publish when there was something to walk: this runs on every
         // kernel entry, and the cursor is a line the other CPUs read.
@@ -288,6 +347,23 @@ impl PostedLog {
                 .all(|cpu| self.cursors[cpu].load(Ordering::Acquire) > position),
             InvalidationMark::Flushed(generation) => (0..self.cpus(online))
                 .all(|cpu| self.flushed[cpu].load(Ordering::Acquire) >= generation),
+        }
+    }
+
+    /// Take a snapshot of the log's counters.
+    pub(crate) fn stats(&self, online: u32) -> PostedStats {
+        let head = self.head.load(Ordering::Acquire);
+        let cursors: alloc::vec::Vec<u64> = (0..self.cpus(online))
+            .map(|cpu| self.cursors[cpu].load(Ordering::Acquire))
+            .collect();
+        let min = cursors.iter().copied().min().unwrap_or(head);
+        let max = cursors.iter().copied().max().unwrap_or(head);
+        PostedStats {
+            postings: self.postings.load(Ordering::Relaxed),
+            walked: self.walked.load(Ordering::Relaxed),
+            full_flushes: self.full_flushes.load(Ordering::Relaxed),
+            pending: head.saturating_sub(min),
+            lag: max.saturating_sub(min),
         }
     }
 }
@@ -431,8 +507,9 @@ pub fn apply_remote_tlb_invalidations() {
     );
     // The log keeps its own record for the marks; this arch-neutral field is
     // what the other architectures' IPI handlers compare against, so keep it
-    // telling the same story.
-    percpu.tlb_generation_seen = TLB_GENERATION.load(Ordering::Acquire);
+    // telling the same story.  On x86_64 the counter that matters is the log's
+    // own; this is the log's answer, not a second one.
+    percpu.tlb_generation_seen = POSTED.generation();
 }
 
 /// Ask every CPU to drop everything on its next kernel entry.
@@ -490,6 +567,21 @@ pub fn all_cpus_flushed(mark: InvalidationMark) -> bool {
     // build has no way to answer.
     debug_assert!(matches!(mark, InvalidationMark::Nothing));
     true
+}
+
+/// A snapshot of the posted-invalidation log, for diagnostics.
+///
+/// Zeroes where this build has no log to read: the architectures that
+/// broadcast their invalidations never post anything, and a host build has no
+/// hardware TLB to keep one for.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn posted_invalidation_stats() -> PostedStats {
+    POSTED.stats(online_cpu_count())
+}
+
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+pub fn posted_invalidation_stats() -> PostedStats {
+    PostedStats::default()
 }
 
 /// Handle a TLB shootdown IPI on any CPU (BSP or AP).
@@ -556,11 +648,9 @@ pub fn online_cpu_count() -> u32 {
 
 /// Return the current TLB shootdown generation counter.
 ///
-/// This is cross-arch — used by AArch64/RISC-V SMP to check whether a TLB
-/// flush is needed, and bumped on every architecture by the posted log when a
-/// request asks for a full flush.
-#[cfg(target_os = "none")]
-#[cfg_attr(all(target_arch = "x86_64", target_os = "none"), allow(dead_code))]
+/// This is what AArch64/RISC-V SMP compare their own latches against; their
+/// page invalidations are broadcasts, so nothing here bumps it.
+#[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
 pub fn tlb_generation() -> u64 {
     TLB_GENERATION.load(core::sync::atomic::Ordering::Acquire)
 }
@@ -744,6 +834,15 @@ mod tests {
         machine.catch_up(3);
         assert!(machine.log.flushed(mark, CPUS));
         machine.assert_no_stale_translations();
+
+        // The counters say what happened: one request posted, walked once per
+        // CPU, nothing left pending and no CPU ahead of another.
+        let stats = machine.log.stats(CPUS);
+        assert_eq!(stats.postings, 1);
+        assert_eq!(stats.walked, CPUS as u64);
+        assert_eq!(stats.pending, 0);
+        assert_eq!(stats.lag, 0);
+        assert_eq!(stats.full_flushes, 0);
     }
 
     #[test]
@@ -778,6 +877,10 @@ mod tests {
             .filter(|mark| matches!(mark, InvalidationMark::Flushed(_)))
             .count();
         assert!(promoted > 0, "the log never filled up");
+        assert_eq!(machine.log.stats(CPUS).full_flushes, promoted as u64);
+        // The generation is the sequence the marks carry, so one bump per
+        // promoted request puts it exactly at the count of them.
+        assert_eq!(machine.log.generation(), promoted as u64);
 
         // One catch-up per CPU honours all of them, including the ones that
         // had to be promoted, without walking what the flush already covered.
@@ -794,6 +897,10 @@ mod tests {
             flushes <= CPUS as usize,
             "a promoted request cost more than one flush per CPU"
         );
+        // The log is drained afterwards, and the burst is what is left of it.
+        let stats = machine.log.stats(CPUS);
+        assert!(stats.pending <= POSTED_SLOTS as u64);
+        assert_eq!(stats.lag, 0);
     }
 
     /// The mechanism under churn: edits, touches and catch-ups interleaved for
