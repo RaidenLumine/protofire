@@ -626,6 +626,95 @@ pub(crate) const X86_STACK_WINDOW_SIZE: usize = 0x1000_0000;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) const X86_STACK_WINDOW_END: usize = X86_STACK_WINDOW_BASE + X86_STACK_WINDOW_SIZE;
 
+/// Walk to the leaf for a stack-window address, building what is missing.
+///
+/// The window's own tables, reached from the running root: the rest of the
+/// kernel is mapped by levels this never rewrites, so a stack's page table
+/// cannot disturb anything but stacks.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[allow(dead_code)] // the migration calls these next
+unsafe fn stack_window_leaf(virtual_address: usize) -> Option<*mut u64> {
+    let root = crate::arch::x86_64::control_regs::read_cr3() as usize & 0x000f_ffff_ffff_f000;
+    if root == 0 {
+        return None;
+    }
+    let mut table = root as *mut u64;
+    for shift in [39u32, 30, 21] {
+        let index = (virtual_address >> shift) & 0x1ff;
+        let mut entry = unsafe { core::ptr::read_volatile(table.add(index)) };
+        if entry & PAGE_ENTRY_PRESENT == 0 {
+            let page = unsafe { alloc_runtime_pt_page() }?;
+            unsafe {
+                core::ptr::write_volatile(
+                    table.add(index),
+                    page as u64 | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE,
+                )
+            };
+            entry = unsafe { core::ptr::read_volatile(table.add(index)) };
+        }
+        // A large page where a table should be means this address is not the
+        // window's: refusing is better than rewriting someone else's mapping.
+        if entry & PAGE_ENTRY_LARGE != 0 {
+            return None;
+        }
+        table = (entry & PAGE_ENTRY_ADDRESS_MASK) as *mut u64;
+    }
+    Some(unsafe { table.add((virtual_address >> 12) & 0x1ff) })
+}
+
+/// Map one 4 KiB frame at a stack-window address.
+///
+/// # Safety
+///
+/// `virtual_address` must name a page the caller owns; the window's allocator
+/// is the only thing that hands those out.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[allow(dead_code)] // the migration calls these next
+pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: usize) -> bool {
+    if !(X86_STACK_WINDOW_BASE..X86_STACK_WINDOW_END).contains(&virtual_address) {
+        return false;
+    }
+    let Some(leaf) = (unsafe { stack_window_leaf(virtual_address) }) else {
+        return false;
+    };
+    unsafe {
+        core::ptr::write_volatile(
+            leaf,
+            (physical_address as u64 & 0x000f_ffff_ffff_f000)
+                | PAGE_ENTRY_PRESENT
+                | PAGE_ENTRY_WRITABLE,
+        )
+    };
+    invalidate_tlb(virtual_address);
+    true
+}
+
+/// Remove a frame from a stack-window address.
+///
+/// Clearing the leaf is safe here for the reason the window exists: the
+/// address belongs to one stack, so there is nothing else in that table for
+/// the hole to affect.
+///
+/// # Safety
+///
+/// As [`map_stack_page`]: the address must be one the caller owns.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[allow(dead_code)] // the migration calls these next
+pub(crate) unsafe fn unmap_stack_page(virtual_address: usize) -> bool {
+    if !(X86_STACK_WINDOW_BASE..X86_STACK_WINDOW_END).contains(&virtual_address) {
+        return false;
+    }
+    let Some(leaf) = (unsafe { stack_window_leaf(virtual_address) }) else {
+        return false;
+    };
+    if unsafe { core::ptr::read_volatile(leaf) } & PAGE_ENTRY_PRESENT == 0 {
+        return false;
+    }
+    unsafe { core::ptr::write_volatile(leaf, 0) };
+    invalidate_tlb(virtual_address);
+    true
+}
+
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn install_runtime_kernel_page_tables(
     spec: &KernelPageTableSpec,
