@@ -448,10 +448,40 @@ everyday code:
 
 ---
 
+## 13. Layer dependencies
+
+A `use crate::kernel::<module>::...` is not a private decision: it is an edge in
+the kernel's dependency graph, and the graph is checked.
+[`scripts/check-layering.sh`](../../scripts/check-layering.sh) counts every such
+edge and compares the result with
+[`scripts/layering-baseline.txt`](../../scripts/layering-baseline.txt); an edge
+that grows, or an edge the census does not mention, fails `make check-layering`.
+
+Two directions are wrong by definition, and are expected to stay at zero:
+
+- **`block` names nothing.** `src/kernel/block.rs` is the interface the disk
+  drivers implement and the filesystem builds on.  If a driver has to name the
+  filesystem to hand a device over, the interface is in the wrong place — the
+  hand-off goes through `block::publish_device`, and whoever owns the device map
+  installs itself as the sink at boot.
+- **`drivers` does not name `fs`.** A disk driver knows a controller and a
+  device interface; who mounts what on top of it is not its business.
+
+Everything else in the census is debt with a number attached: the cycles it
+lists (`fs` <-> `process`, `process` <-> `smp`, `process` <-> `sync`, `memory`
+<-> `fs`) come apart in cuts, and a cut is finished when its rows reach zero and
+the census is re-recorded (`sh scripts/check-layering.sh --record`) in the same
+change.  The rule for a new edge is the same as for any other budget here: it
+has to be argued for in the change that adds it, not discovered later.
+
+---
+
 ## Related documents
 
 - [docs/fmts/comments.md](comments.md) — file headers, doc comments, `// SAFETY:`
 - [docs/fmts/unsafe-and-safety.md](unsafe-and-safety.md) — what is allowed in an
   `unsafe` block
 - [docs/fmts/testing.md](testing.md) — test layout and registration
+- [docs/kernel-introduction/filesystem.md](../kernel-introduction/filesystem.md)
+  — where the block layer sits and why
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) — the short form of these rules

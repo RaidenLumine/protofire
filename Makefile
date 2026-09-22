@@ -49,6 +49,7 @@ endif
 		check-aarch64 \
 		check-riscv64 \
 		check-unsafe-comments \
+		check-layering \
 		check-x8664-runtime \
 		check-x8664-churn \
 		check-aarch64-runtime \
@@ -85,6 +86,7 @@ help:
 		'  make check-aarch64  - run bare-metal type checks for aarch64-unknown-none' \
 		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
 		'  make check-unsafe-comments - fail if any configuration gained an undocumented `unsafe` block' \
+		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
@@ -233,6 +235,15 @@ check-riscv64:
 # telling the truth about the tree.  See docs/fmts/unsafe-and-safety.md §3.
 check-unsafe-comments:
 	sh ./scripts/check-unsafe-comments.sh
+
+# Hold the line on the kernel's module dependency graph.  The census in
+# `scripts/layering-baseline.txt` records how often each module names every
+# other one; a count that grows, a row that shrinks without the census being
+# re-recorded, or an edge the census does not mention all fail.  The cycles it
+# still lists (`fs` <-> `process`, `process` <-> `smp`, ...) are the layering
+# debt, and the counts are the finish line for each cut.
+check-layering:
+	sh ./scripts/check-layering.sh
 
 # Boot the kernel on a single emulated CPU with the demo disk and assert that
 # the user programs actually run.  The SMP smoke cannot see a defect that

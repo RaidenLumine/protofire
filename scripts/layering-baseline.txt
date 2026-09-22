@@ -1,0 +1,133 @@
+# Kernel module dependency edges: the census scripts/check-layering.sh
+# ratchets.
+#
+# Each row is `<from module> <to module> <occurrences>`: how many times a file
+# under `src/kernel/<from>` names `crate::kernel::<to>::` in code (line
+# comments stripped, self-references skipped).  The gate fails when a count
+# rises, when a row shrinks without the census being re-recorded, or when the
+# tree has an edge no row mentions — so a new dependency between two modules
+# has to be added here on purpose.
+#
+# Re-record with `sh scripts/check-layering.sh --record` in every change that
+# moves an edge.
+#
+# Two directions are wrong on purpose and are expected to reach zero:
+#
+#   * `block` naming anything else — it is the layer the disk drivers and the
+#     filesystem both build on, so it must stay at the bottom.
+#   * `drivers` naming `fs` — a driver hands a found device over through
+#     `kernel::block::publish_device`; it does not know who consumes it.
+#
+# The cycles the census still shows — `fs` <-> `process`, `process` <-> `smp`,
+# `process` <-> `sync`, `memory` <-> `fs` — are the debt the layering cuts are
+# working down.  The counts are the finish line for each cut.
+#
+# from                         to                           count
+audit                        fs                           6
+audit                        process                      2
+block                        sync                         1
+boot_report                  sync                         1
+console                      process                      1
+console                      sync                         5
+device                       drivers                      4
+device                       fs                           5
+device                       process                      2
+drivers                      block                        14
+drivers                      memory                       6
+drivers                      network                      2
+drivers                      process                      2
+drivers                      sync                         30
+fs                           compression                  2
+fs                           crypto                       9
+fs                           kernel_log                   1
+fs                           memory                       5
+fs                           process                      47
+fs                           service                      3
+fs                           smp                          1
+fs                           sync                         36
+heartbeat                    process                      1
+io                           device                       10
+io                           process                      12
+irq_stats                    percpu                       1
+irq_stats                    sync                         3
+kernel_log                   fs                           4
+kernel_log                   sync                         1
+maintenance                  audit                        1
+maintenance                  fs                           3
+maintenance                  heartbeat                    1
+maintenance                  process                      2
+memory                       fs                           4
+memory                       oom                          2
+memory                       percpu                       4
+memory                       smp                          1
+memory                       topology                     1
+mod                          block                        1
+mod                          fs                           4
+mod                          memory                       3
+mod                          network                      3
+mod                          percpu                       6
+mod                          power                        1
+mod                          smp                          13
+mod                          topology                     12
+network                      crypto                       30
+network                      fs                           6
+network                      process                      3
+network                      random                       5
+network                      sync                         41
+nmi                          sync                         1
+oom                          process                      3
+percpu                       process                      8
+percpu                       topology                     2
+power                        sync                         2
+process                      audit                        4
+process                      device                       7
+process                      drivers                      4
+process                      fs                           15
+process                      irq_balance                  2
+process                      maintenance                  2
+process                      memory                       25
+process                      network                      16
+process                      percpu                       12
+process                      power                        1
+process                      shm                          1
+process                      smp                          29
+process                      softirq                      1
+process                      sync                         34
+process                      syscall                      3
+process                      user                         2
+random                       crypto                       2
+random                       sync                         1
+service                      config                       2
+service                      fs                           3
+service                      process                      2
+service                      sync                         2
+shm                          memory                       7
+shm                          process                      1
+shm                          scheduler                    3
+shm                          sync                         1
+smp                          memory                       6
+smp                          percpu                       6
+smp                          process                      9
+smp                          sync                         2
+sync                         process                      16
+syscall                      audit                        9
+syscall                      boot_report                  2
+syscall                      drivers                      3
+syscall                      fs                           52
+syscall                      irq_balance                  3
+syscall                      irq_stats                    1
+syscall                      kernel_log                   4
+syscall                      memory                       20
+syscall                      network                      18
+syscall                      percpu                       1
+syscall                      power                        1
+syscall                      process                      171
+syscall                      random                       1
+syscall                      sync                         14
+syscall                      user                         2
+user                         fs                           3
+user                         process                      7
+user                         sync                         1
+vm_churn                     memory                       1
+vm_churn                     process                      6
+vm_churn                     smp                          3
