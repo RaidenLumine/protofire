@@ -610,19 +610,25 @@ pub(crate) fn active_runtime_kernel_page_table_check_impl(
 
 /// The VA window the kernel's own stacks live in.
 ///
-/// Deliberately in the canonical *high* half rather than somewhere in the low
-/// 4 GiB: those ranges are taken by the kernel image and frame pool (to about
-/// 585 MiB), by PCI BAR identity mappings (commonly 2..4 GiB) and by the local
-/// APIC and IOAPIC at `0xFEC0_0000`/`0xFEE0_0000`, so a window there would be a
-/// collision waiting for a device.  The high half is address space this kernel
-/// otherwise never touches, and its tables are built on demand like any other.
+/// Inside the low 1 GiB on purpose, in the gap between the kernel image and the
+/// end of that first GiB.  The image and its BSS run to about 612 MiB of the
+/// gigabyte, and everything else that wants address space here — the local APIC
+/// at `0xFEE0_0000`, the IOAPIC at `0xFEC0_0000`, PCI BARs — sits above it, so
+/// `0x3000_0000` is clear.
 ///
-/// 256 MiB is far more than the kernel needs and costs nothing until used: the
+/// The reason it matters where the window sits is the kernel's table
+/// construction: it builds one PDPT and one PD hanging off `PML4[0]`, which is
+/// exactly the first GiB.  A window in the high half would need a second chain
+/// of its own; a window in the first GiB rides the levels that already exist,
+/// so its top structure can be built with the kernel's own tables — which is
+/// what keeps it visible to every root derived from them.
+///
+/// 64 MiB is far more than the kernel needs and costs nothing until used: the
 /// window is a reservation, and its guard pages are pages nobody allocates.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub(crate) const X86_STACK_WINDOW_BASE: usize = 0xffff_8000_0000_0000;
+pub(crate) const X86_STACK_WINDOW_BASE: usize = 0x3000_0000;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub(crate) const X86_STACK_WINDOW_SIZE: usize = 0x1000_0000;
+pub(crate) const X86_STACK_WINDOW_SIZE: usize = 0x0400_0000;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) const X86_STACK_WINDOW_END: usize = X86_STACK_WINDOW_BASE + X86_STACK_WINDOW_SIZE;
 
