@@ -226,6 +226,18 @@ A `pub fn` reachable from nowhere but its own module is a defect that review
 should catch; there is no `dead_code` lint standing in for that judgement in
 the kernel build.
 
+The same judgement, applied to `#[allow(dead_code)]`: it says the compiler
+cannot prove what you can, and it is worth less the longer it lives.  A
+module-wide one has to carry **why** the item is unread and **when** the line
+goes.  The two file-level allows this rule was written for had both gone
+stale — one covered an unused skeleton whose consumers had existed for months,
+the other a "no caller yet" set that had six callers — and nothing in the tree
+said so.  Prefer the narrowest form that silences exactly what is
+intentionally unread: an attribute on the item, a `#[cfg]` gate naming the
+targets that do read it, or `#[cfg(test)]` for a surface only tests use.
+Deleting the line and reading what the compiler names is the cheapest audit
+available, so reach for it before reading the code.
+
 ---
 
 ## 7. Error handling

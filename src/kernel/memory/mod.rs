@@ -13,6 +13,16 @@ pub mod frame;
 pub(crate) mod global;
 pub mod heap;
 pub(crate) mod manager;
+// What the kernel maps, derived once and published.  The two architectures
+// that consume it are x86_64 and aarch64; riscv64 derives its own mapping and
+// has no reader yet, so the module is compiled where something reads it — the
+// two bare-metal targets that do, and the host tests that exercise it.  When
+// riscv64 grows a reader, its name joins them.
+#[cfg(any(
+    all(target_arch = "x86_64", target_os = "none"),
+    all(target_arch = "aarch64", target_os = "none"),
+    test
+))]
 pub(crate) mod map_facts;
 pub mod paging;
 pub mod swap;

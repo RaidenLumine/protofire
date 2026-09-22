@@ -17,6 +17,10 @@
 //! sessions with transport keypairs, handshake initiation/response
 //! processing, and transport data encryption with nonce tracking.
 
+// Why: the responder's second Diffie-Hellman step is not wired yet, so the
+// HKDF-3 it needs and the static key it keeps are defined but unread.
+// When to remove: when a peer's response is processed end to end — then every
+// item this covers has a caller, and the line goes.
 #![allow(dead_code)]
 
 use alloc::collections::VecDeque;

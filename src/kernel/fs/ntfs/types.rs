@@ -5,8 +5,10 @@
 //
 // NOTE: The NTFS driver is a work-in-progress.  This file defines the
 // complete on-disk format, but only a subset of fields are wired through.
-// The module-level annotation below suppresses dead-code warnings on
-// intentionally-defined-but-not-yet-used structures.
+//
+// Why: a field the parser does not read yet is still part of the format's
+// description, and the description is what the parser is written against.
+// When to remove: when every field here is read by the parser.
 #![allow(dead_code)]
 use alloc::string::String;
 use alloc::vec::Vec;

@@ -8,6 +8,12 @@
 //! without a window keep the older shape — frames at their own addresses, with
 //! the guard cleared by the architecture's un-map routine — and a machine with
 //! no frame allocator at all falls back to a heap buffer with no guard.
+//!
+//! The fallback is not a leftover.  riscv64 has no window yet, so the
+//! frame-backed shape is its only one; on x86_64 and aarch64 it appears when
+//! the window or the frame pool is exhausted, which is the honest answer there
+//! too.  It stops being needed on an architecture when that architecture has a
+//! window *and* enough frames for every stack it can ask for.
 
 use alloc::boxed::Box;
 
@@ -278,7 +284,7 @@ impl KernelStack {
     /// the churn check does — has to ask, because allocation falls back rather
     /// than failing: a target without a window, a window with no room, and a
     /// frame pool with no frames all end up in one of the other two shapes.
-    #[cfg_attr(not(feature = "stack_churn"), allow(dead_code))]
+    #[cfg(feature = "stack_churn")]
     pub(crate) fn is_window_backed(&self) -> bool {
         matches!(self.backing, KernelStackBacking::Window { .. })
     }

@@ -24,8 +24,8 @@
 //!
 //! This module is a bare-metal feature.  It is compiled on host builds purely
 //! for compile coverage, where its allocator and flush paths are dead code;
-//! the `#![allow(dead_code)]` below documents that rather than hiding a real
-//! unused path.
+//! the annotation below documents that rather than hiding a real unused path.
+//! When it goes: when the host build stops compiling the module.
 
 #![allow(dead_code)]
 

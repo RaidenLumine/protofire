@@ -38,13 +38,6 @@
 //! address instead.  A CPU that never reports in costs address space, not
 //! correctness, and the window cannot be made to block on one.
 
-// The allocator and the layout are live now — they are what the kernel stack
-// is made of.  What this covers is the read-only surface a check or a test
-// uses to look at the window's state (`used_bytes`, `retired_bytes`,
-// `recycled_bytes`, `reuse_count`, `guard_pages`): real parts of the
-// interface, with no caller in the kernel proper yet.
-#![allow(dead_code)]
-
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
@@ -69,11 +62,6 @@ pub(crate) struct StackLayout {
 }
 
 impl StackLayout {
-    /// The address a kernel stack starts from: the top of the usable region.
-    pub(crate) const fn stack_top(&self) -> usize {
-        self.usable_end
-    }
-
     pub(crate) const fn usable_len(&self) -> usize {
         self.usable_end - self.usable_start
     }
@@ -81,15 +69,6 @@ impl StackLayout {
     /// The page-aligned starts of the usable region.
     pub(crate) fn usable_pages(&self) -> impl Iterator<Item = usize> + '_ {
         page_starts(self.usable_start, self.usable_end)
-    }
-
-    /// The page-aligned starts of the guard region.
-    ///
-    /// Nothing maps these; a caller that wants to *check* the guard is a hole
-    /// (the coverage check, say) can enumerate them, which is why they are
-    /// named rather than derived at each use.
-    pub(crate) fn guard_pages(&self) -> impl Iterator<Item = usize> + '_ {
-        page_starts(self.guard_start, self.usable_start)
     }
 }
 
@@ -213,10 +192,6 @@ impl StackWindow {
     /// Bytes of the window handed out so far, guard pages included.
     pub(crate) fn used_bytes(&self) -> usize {
         self.next - self.base
-    }
-
-    pub(crate) fn remaining_bytes(&self) -> usize {
-        self.end - self.next
     }
 
     /// How many allocations have been served from the recycled list.
@@ -403,8 +378,8 @@ mod tests {
         assert_eq!(layout.guard_start, BASE);
         assert_eq!(layout.usable_start, BASE + 4096);
         assert_eq!(layout.usable_len(), 0x8000);
-        assert_eq!(layout.stack_top(), BASE + 4096 + 0x8000);
-        assert_eq!(layout.guard_pages().collect::<alloc::vec::Vec<_>>(), [BASE]);
+        assert_eq!(layout.usable_end, BASE + 4096 + 0x8000);
+        assert_eq!(layout.usable_start - layout.guard_start, 4096);
         assert_eq!(
             layout.usable_pages().count(),
             8,
@@ -434,7 +409,11 @@ mod tests {
         let layout = window.allocate(1, 1, ready).expect("one page each");
         assert_eq!(layout.usable_start, BASE + 4096);
         assert_eq!(layout.usable_len(), 4096);
-        assert_eq!(window.remaining_bytes(), END - BASE - 2 * 4096);
+        let stats = window.stats();
+        assert_eq!(
+            stats.end - stats.base - stats.reserved,
+            END - BASE - 2 * 4096
+        );
     }
 
     #[test]

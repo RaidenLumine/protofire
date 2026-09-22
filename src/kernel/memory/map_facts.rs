@@ -14,10 +14,6 @@
 //! questions about them, and nothing here allocates, because it is derived
 //! before the heap exists.
 
-// Introduced as an unused skeleton: step 1b wires the consumers.  Removing
-// this line is part of that step.
-#![allow(dead_code)]
-
 /// What a kernel range is for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum RegionKind {
@@ -32,12 +28,8 @@ pub(crate) enum RegionKind {
     Bss,
     /// The kernel heap.
     Heap,
-    /// The frame pool the allocator hands frames out of.
-    FramePool,
     /// The region kernel stacks are mapped in.
     StackWindow,
-    /// Device MMIO windows.
-    DeviceMmio,
 }
 
 /// One range of kernel address space.
@@ -68,6 +60,12 @@ impl Region {
         }
     }
 
+    /// Whether `address` falls inside this range.
+    ///
+    /// Read by the facts-based classifier below, which aarch64 and riscv64
+    /// use; x86_64 asks the same question of its page-table plan, which is
+    /// derived from the same ranges.  Unused on one target, not dead.
+    #[cfg_attr(all(target_arch = "x86_64", target_os = "none"), allow(dead_code))]
     pub(crate) const fn contains(&self, address: usize) -> bool {
         address >= self.start && address < self.end
     }
@@ -147,15 +145,25 @@ impl KernelMapFacts {
     }
 
     /// Every declared range, in the order the caller gave them.
+    ///
+    /// Tests are the only readers: the boot-time coverage check asks
+    /// [`Self::probe_addresses`] instead, which samples a range rather than
+    /// collecting it.
+    #[cfg(test)]
     pub(crate) fn regions(&self) -> impl Iterator<Item = Region> + '_ {
         self.declared()
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.count
     }
 
     /// The first range declared for `kind`.
+    ///
+    /// Unused on x86_64 for the same reason as [`Self::classify`]: that
+    /// target's answer comes from its page-table plan.
+    #[cfg_attr(all(target_arch = "x86_64", target_os = "none"), allow(dead_code))]
     pub(crate) fn region(&self, kind: RegionKind) -> Option<Region> {
         self.declared().find(|region| region.kind == kind)
     }
@@ -164,6 +172,12 @@ impl KernelMapFacts {
     ///
     /// The narrowest match wins, so an address in the heap answers `Heap` even
     /// though the heap also lies inside BSS.
+    ///
+    /// Unused on x86_64: that architecture classifies an address against its
+    /// page-table plan (`planned_kernel_region`), which is built from the same
+    /// ranges, so this is unused on one target of three rather than an
+    /// unexercised second opinion.
+    #[cfg_attr(all(target_arch = "x86_64", target_os = "none"), allow(dead_code))]
     pub(crate) fn classify(&self, address: usize) -> Option<RegionKind> {
         self.declared()
             .filter(|region| region.contains(address))
@@ -230,6 +244,11 @@ pub(crate) fn install(facts: KernelMapFacts) -> bool {
 }
 
 /// The kernel's mapping facts, if they have been derived yet.
+///
+/// The readers are the two architectures that check their tables against the
+/// facts; host tests derive and validate directly, so the global hand-off has
+/// no reader there.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 pub(crate) fn get() -> Option<&'static KernelMapFacts> {
     INSTALLED
         .load(core::sync::atomic::Ordering::Acquire)
@@ -269,19 +288,6 @@ impl ImageRanges {
             Region::new(RegionKind::Bss, self.bss.0, self.bss.1, true, false),
             Region::new(RegionKind::Heap, self.heap.0, self.heap.1, true, false),
         ]
-    }
-
-    /// Validate and install in one step: what the architectures call.
-    ///
-    /// Returns `false` when the ranges are inconsistent (empty, out of order,
-    /// overlapping) or when facts were already installed.  A caller that gets
-    /// `false` at boot has a layout it did not expect, which is worth failing
-    /// on rather than mapping something arbitrary.
-    pub(crate) fn install(&self) -> bool {
-        match KernelMapFacts::from_ranges(&self.regions()) {
-            Some(facts) => install(facts),
-            None => false,
-        }
     }
 
     /// Validate and install the five image ranges, plus anything the
@@ -398,7 +404,7 @@ mod tests {
             bss: (0x3800, 0x5000),
             heap: (0x5000, 0x6000),
         };
-        assert!(!ranges.install());
+        assert!(!ranges.install_with(&[]));
     }
 
     #[test]
@@ -434,7 +440,7 @@ mod tests {
         let window = Region::new(RegionKind::StackWindow, 0x8000, 0xa000, true, false);
 
         // A conflicting addition is refused.
-        let overlapping = Region::new(RegionKind::DeviceMmio, 0x9000, 0xb000, true, false);
+        let overlapping = Region::new(RegionKind::Bss, 0x9000, 0xb000, true, false);
         assert!(!ranges.install_with(&[window, overlapping]));
 
         // A clean one is accepted, and classification sees it.
