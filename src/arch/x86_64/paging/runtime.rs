@@ -608,6 +608,24 @@ pub(crate) fn active_runtime_kernel_page_table_check_impl(
     None
 }
 
+/// The VA window the kernel's own stacks live in.
+///
+/// Deliberately in the canonical *high* half rather than somewhere in the low
+/// 4 GiB: those ranges are taken by the kernel image and frame pool (to about
+/// 585 MiB), by PCI BAR identity mappings (commonly 2..4 GiB) and by the local
+/// APIC and IOAPIC at `0xFEC0_0000`/`0xFEE0_0000`, so a window there would be a
+/// collision waiting for a device.  The high half is address space this kernel
+/// otherwise never touches, and its tables are built on demand like any other.
+///
+/// 256 MiB is far more than the kernel needs and costs nothing until used: the
+/// window is a reservation, and its guard pages are pages nobody allocates.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub(crate) const X86_STACK_WINDOW_BASE: usize = 0xffff_8000_0000_0000;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub(crate) const X86_STACK_WINDOW_SIZE: usize = 0x1000_0000;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub(crate) const X86_STACK_WINDOW_END: usize = X86_STACK_WINDOW_BASE + X86_STACK_WINDOW_SIZE;
+
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn install_runtime_kernel_page_tables(
     spec: &KernelPageTableSpec,
@@ -707,7 +725,17 @@ pub(crate) fn runtime_kernel_page_plan_impl(heap_bounds: (usize, usize)) -> Opti
     // means the ranges are inconsistent with each other.  Once rather than
     // every boot, and it names the problem instead of leaving a plan shaped by
     // ranges nothing else agrees with.
-    let _ = ranges.install();
+    // The stack window joins the facts here, the same way it does on aarch64:
+    // a kernel range in its own right, and the one the guard pages will be
+    // holes in.  Nothing allocates from it yet.
+    let stack_window = crate::kernel::memory::map_facts::Region::new(
+        crate::kernel::memory::map_facts::RegionKind::StackWindow,
+        X86_STACK_WINDOW_BASE,
+        X86_STACK_WINDOW_END,
+        true,
+        false,
+    );
+    let _ = ranges.install_with(&[stack_window]);
     if crate::kernel::memory::map_facts::get().is_none() {
         static REPORTED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
@@ -1085,8 +1113,7 @@ pub unsafe fn restore_page(_virtual_address: usize) -> bool {
 /// them.  A large page counts as covering the address, since it maps it.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn leaf_is_present(virtual_address: usize) -> bool {
-    let root =
-        unsafe { crate::arch::x86_64::control_regs::read_cr3() as usize } & 0x000f_ffff_ffff_f000;
+    let root = crate::arch::x86_64::control_regs::read_cr3() as usize & 0x000f_ffff_ffff_f000;
     if root == 0 {
         return false;
     }
