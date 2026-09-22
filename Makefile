@@ -48,6 +48,7 @@ endif
 		check-target \
 		check-aarch64 \
 		check-riscv64 \
+		check-unsafe-comments \
 		check-x8664-runtime \
 		check-x8664-churn \
 		check-aarch64-runtime \
@@ -81,6 +82,7 @@ help:
 		'  make check          - run both host and bare-metal type checks' \
 		'  make check-aarch64  - run bare-metal type checks for aarch64-unknown-none' \
 		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
+		'  make check-unsafe-comments - fail if any configuration gained an undocumented `unsafe` block' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
@@ -214,6 +216,19 @@ check-aarch64:
 
 check-riscv64:
 	$(CARGO) check $(CARGO_FLAGS) --target riscv64gc-unknown-none-elf
+
+# Hold the line on undocumented `unsafe` blocks.  The tree has far more
+# `unsafe` blocks than written safety arguments, so the lint cannot be a gate
+# on its own: switched to `deny` it fails with 2,867 diagnostics across the
+# four configurations today, and the honest answer to that is a comment on
+# every block that argues nothing.  This is a ratchet instead.  Each
+# configuration in
+# `scripts/unsafe-comment-baseline.txt` may report no more than the count
+# recorded there, and a count that *drops* has to be re-recorded in the same
+# change (`sh scripts/check-unsafe-comments.sh --record`) so the baseline keeps
+# telling the truth about the tree.  See docs/fmts/unsafe-and-safety.md §3.
+check-unsafe-comments:
+	sh ./scripts/check-unsafe-comments.sh
 
 # Boot the kernel on a single emulated CPU with the demo disk and assert that
 # the user programs actually run.  The SMP smoke cannot see a defect that

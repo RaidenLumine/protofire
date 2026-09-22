@@ -11,12 +11,16 @@ consequences. When a kernel dereferences a user-supplied address without
 checking it, the result is not a segfault in a sandboxed process; it is the
 machine.
 
-The tree contains roughly 1,300 `unsafe` blocks, 260 `unsafe fn` declarations,
-65 `unsafe impl`s, 190 inline-asm blocks, and 300 volatile MMIO accesses. None of
-it is checked by a lint — there is no `#![deny(clippy::undocumented_unsafe_blocks)]`
-and no equivalent anywhere in the configuration. What keeps this sound is a
-convention, applied consistently, and reviewed carefully. This document is that
-convention.
+The tree contains roughly 1,500 `unsafe` blocks, 282 `unsafe fn` declarations,
+65 `unsafe impl`s, 195 inline-asm blocks, and 332 volatile accesses, across 179
+of the 624 `.rs` files in `src/` and `tests/`. Most of those blocks carry no
+safety argument yet — 870 of them in the x86_64 kernel build, 785 in the host
+build, as `clippy::undocumented_unsafe_blocks` counts them — and that number is
+held by a ratchet rather than a `deny`: a new undocumented block turns
+`make check-unsafe-comments` red, while writing the argument for an existing one
+is a debt paid down at whatever pace the work around it allows. What keeps the
+code sound is the convention below, applied consistently and reviewed
+carefully. This document is that convention.
 
 ---
 
@@ -101,6 +105,33 @@ and never sees the `stac`/`clac` window. Expose an `unsafe fn` only when the
 precondition genuinely cannot be established at the call boundary (a layout the
 caller knows and the callee does not, an initialisation ordering the caller
 controls).
+
+### The ratchet
+
+`clippy::undocumented_unsafe_blocks` is enabled for the four configurations the
+kernel is built in, but counted rather than denied.
+[`scripts/check-unsafe-comments.sh`](../../scripts/check-unsafe-comments.sh)
+reads [`scripts/unsafe-comment-baseline.txt`](../../scripts/unsafe-comment-baseline.txt)
+and fails the gate when any configuration reports **more** undocumented blocks
+than the baseline records. A count that **falls** has to be re-recorded in the
+same change (`sh scripts/check-unsafe-comments.sh --record`), so the baseline
+always tells the truth about the tree.
+
+The reason for a ratchet instead of `#![deny(...)]` is the state the tree is in:
+a deny fails almost three thousand times today, and the only way to make it pass
+in one change is to paste a comment onto every block — which is precisely the
+failure mode the paragraph above warns about. A `// SAFETY:` that restates the
+code teaches the next reader to skip them. The ratchet makes every *new* block
+pay for itself, and leaves the existing ones to be paid down deliberately.
+
+Two consequences are worth knowing:
+
+- The counts are clippy diagnostics, so they are tied to the toolchain pinned in
+  `rust-toolchain.toml` and to the lint's message text. A toolchain bump that
+  moves them is expected; re-record in that change.
+- Deleting a block, or writing a real argument for one, *lowers* the count and
+  the gate will ask for the new number. That is deliberate: a baseline left at
+  the old figure would quietly grant the next change the difference.
 
 ---
 
@@ -269,6 +300,8 @@ For every `unsafe` block in the diff:
 - [ ] User memory is validated through the `user_memory` helpers, with
       validation outside the SMAP/PAN/SUM guard.
 - [ ] MMIO accesses are volatile, correctly sized, and ordered where required.
+- [ ] No configuration gained an undocumented block
+      (`make check-unsafe-comments`).
 - [ ] `make verify-p3` is green.
 
 ---

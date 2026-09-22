@@ -1,0 +1,23 @@
+# Undocumented `unsafe` blocks per configuration: the ratchet baseline read by
+# scripts/check-unsafe-comments.sh.
+#
+# Each row is `<clippy configuration> <count>`.  The count is the number of
+# `unsafe block missing a safety comment` diagnostics clippy prints for that
+# configuration with `-W clippy::undocumented_unsafe_blocks`.  The check fails
+# when a count rises; a count that falls has to be recorded in the same change.
+#
+# Re-record the whole file with `sh scripts/check-unsafe-comments.sh --record`
+# in the change that moves the toolchain (the counts include the lint's exact
+# message, so a new clippy can move them without a line of kernel code
+# changing) and in every change that writes or removes safety comments.
+#
+# `host` is the default target and is counted with `--all-targets`, so it
+# includes `tests/`.  The three bare-metal targets have no test harness to
+# build, so they are counted without `--all-targets`; they cover the kernel
+# library and its binaries.
+#
+# config                       count
+host                         785
+x86_64-unknown-none          870
+aarch64-unknown-none         641
+riscv64gc-unknown-none-elf   571
