@@ -56,6 +56,13 @@ impl KernelPageTableSpec {
             spec.add_region_windows(region)?;
         }
 
+        // The kernel's own stacks live in a window of their own, and it is
+        // registered here so its top structure is built with the kernel's
+        // tables rather than grown later inside whichever root happens to be
+        // active: a derived root carries what the kernel's tables carry.
+        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+        spec.ensure_window(crate::arch::x86_64::paging::runtime::X86_STACK_WINDOW_BASE)?;
+
         // Map device MMIO regions as identity-mapped, supervisor, read-write,
         // non-executable pages so drivers can access hardware registers after
         // the runtime page tables replace the bootstrap identity mapping.
