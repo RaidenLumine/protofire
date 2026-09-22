@@ -109,6 +109,12 @@ require_log_line() {
         bytes="$(wc -c <"$log_file" | tr -d ' ')"
         printf 'missing aarch64 runtime log: %s\n' "$pattern" >&2
         printf '  serial log: %s bytes\n' "$bytes" >&2
+        # Keep the whole log; see the riscv64 check for why a failure that may
+        # not reproduce is worth the disk.
+        preserved="${TMPDIR:-/tmp}/protofire-aarch64-runtime-failed.log"
+        if cp "$log_file" "$preserved" 2>/dev/null; then
+            printf '  full log preserved at: %s\n' "$preserved" >&2
+        fi
         if [ "$bytes" -eq 0 ]; then
             printf '  the guest produced no serial output at all: that is a local\n' >&2
             printf '  invocation problem, not a kernel hang\n' >&2

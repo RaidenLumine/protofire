@@ -123,6 +123,13 @@ esac
 fail_with_log() {
     reason="$1"
     printf 'riscv64 runtime check failed: %s\n' "$reason" >&2
+    # Keep the whole log.  A failure that cannot be reproduced on the next run
+    # is only diagnosable if the run that failed left its evidence behind, and
+    # a gate that goes red once in a while is exactly that kind of failure.
+    preserved="${TMPDIR:-/tmp}/protofire-riscv64-runtime-failed.log"
+    if cp "$log_file" "$preserved" 2>/dev/null; then
+        printf '  full log preserved at: %s\n' "$preserved" >&2
+    fi
     printf '  last lines of the log:\n' >&2
     # `strings` rather than `cat`: OpenSBI's banner leaves a NUL in the log.
     tail -n 12 "$log_file" | tr -d '\000' >&2
