@@ -56,10 +56,27 @@ fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
     false
 }
 
+/// riscv64 has no window and no guard it can install; say so rather than
+/// claiming one.
+///
+/// The frame-backed fallback's guard is a hole in the kernel's own identity
+/// mapping, and clearing it means splitting the block that covers it — the same
+/// walk that faulted on aarch64 the first time (`split_l2_block` carries that
+/// story).  The answer here is therefore the aarch64 one: the caller reports
+/// that the guard is not enforced, which is true.  What would make it true
+/// instead is a stack window on this architecture, the same mechanism the other
+/// two have; until then a riscv64 kernel stack overflows into whatever the
+/// identity map happens to put below it.
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+fn enforce_guard_pages(_base: *mut u8, _guard_size: usize) -> bool {
+    false
+}
+
 /// Host and other targets have no hardware guard pages to enforce.
 #[cfg(not(any(
     all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none")
+    all(target_arch = "aarch64", target_os = "none"),
+    all(target_arch = "riscv64", target_os = "none")
 )))]
 fn enforce_guard_pages(_base: *mut u8, _guard_size: usize) -> bool {
     true
@@ -69,12 +86,17 @@ fn enforce_guard_pages(_base: *mut u8, _guard_size: usize) -> bool {
 ///
 /// Once is enough: the answer depends on where the frames landed, so every
 /// later stack would report the same thing.
+///
+/// The wording covers both ways a caller gets here: x86_64 found a mapping
+/// `unmap_page` will not split, and aarch64 and riscv64 have no window to carve
+/// a guard out of in the first place.
 fn report_guard_not_enforced(guard_size: usize) {
     static REPORTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     if !REPORTED.swap(true, core::sync::atomic::Ordering::Relaxed) {
         crate::println!(
-            "[thread] kernel stack guard pages are not enforced: the frames sit in a mapping \
-             `unmap_page` will not split, so an overflow into {} byte(s) will not fault",
+            "[thread] kernel stack guard pages are not enforced: the stack's frames sit in a \
+             mapping with no guard page carved out of it, so an overflow into {} byte(s) will \
+             not fault",
             guard_size
         );
     }
