@@ -166,7 +166,14 @@ pub(crate) fn map_stack_page_arch(virtual_address: usize, physical_address: usiz
     {
         unsafe { crate::arch::aarch64::mmu::map_stack_page(virtual_address, physical_address) }
     }
-    #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    {
+        unsafe { crate::arch::x86_64::paging::map_stack_page(virtual_address, physical_address) }
+    }
+    #[cfg(not(any(
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "x86_64", target_os = "none")
+    )))]
     {
         let _ = (virtual_address, physical_address);
         false
@@ -182,7 +189,14 @@ pub(crate) fn unmap_stack_page_arch(virtual_address: usize) -> bool {
     {
         unsafe { crate::arch::aarch64::mmu::unmap_stack_page(virtual_address) }
     }
-    #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    {
+        unsafe { crate::arch::x86_64::paging::unmap_stack_page(virtual_address) }
+    }
+    #[cfg(not(any(
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "x86_64", target_os = "none")
+    )))]
     {
         let _ = virtual_address;
         false
@@ -206,7 +220,17 @@ pub(crate) fn stack_window() -> Option<(usize, usize)> {
             crate::arch::aarch64::mmu::STACK_WINDOW_END,
         ))
     }
-    #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    {
+        Some((
+            crate::arch::x86_64::paging::X86_STACK_WINDOW_BASE,
+            crate::arch::x86_64::paging::X86_STACK_WINDOW_END,
+        ))
+    }
+    #[cfg(not(any(
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "x86_64", target_os = "none")
+    )))]
     {
         None
     }

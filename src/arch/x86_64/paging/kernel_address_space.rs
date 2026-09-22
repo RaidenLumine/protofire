@@ -57,11 +57,25 @@ impl KernelPageTableSpec {
         }
 
         // The kernel's own stacks live in a window of their own, and it is
-        // registered here so its top structure is built with the kernel's
+        // registered here so its page tables are built with the kernel's own
         // tables rather than grown later inside whichever root happens to be
         // active: a derived root carries what the kernel's tables carry.
+        //
+        // Every slot of the window is registered, not just the one the
+        // window starts in.  The window is handed out by a bump allocator, so
+        // a stack can land anywhere in it, and a slot's table has to exist in
+        // the kernel's tables before any root derives from them — a slot left
+        // to the first stack mapped into it would only ever exist in the root
+        // that was running at that moment.
         #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        spec.ensure_window(crate::arch::x86_64::paging::runtime::X86_STACK_WINDOW_BASE)?;
+        {
+            let mut base = crate::arch::x86_64::paging::runtime::X86_STACK_WINDOW_BASE;
+            let end = crate::arch::x86_64::paging::runtime::X86_STACK_WINDOW_END;
+            while base < end {
+                spec.ensure_window(base)?;
+                base = base.checked_add(PAGE_DIRECTORY_WINDOW_SIZE)?;
+            }
+        }
 
         // Map device MMIO regions as identity-mapped, supervisor, read-write,
         // non-executable pages so drivers can access hardware registers after

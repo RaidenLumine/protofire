@@ -734,6 +734,25 @@ pub(crate) fn install_process_kernel_window(
     let pml4_index = pml4_index(window.base_address);
     let pdpt_index = page_directory_pointer_index(window.base_address);
 
+    // The stack window is the one kernel window whose contents change after a
+    // root is derived: a stack's pages are mapped when the thread that owns
+    // them is created.  Copying its table would freeze the root at derivation
+    // time, so the root shares the kernel's own directory entry and sees every
+    // stack mapped afterwards — the same reason the device-MMIO region shares
+    // its table a few lines below.
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    if crate::arch::x86_64::paging::is_stack_window_address(window.base_address) {
+        ensure_prepared_pdpt(pdpts, pml4_index);
+        ensure_prepared_pd(pds, pml4_index, pdpt_index);
+        let pd = find_prepared_pd_mut(pds, pml4_index, pdpt_index)?;
+        if pd.table.0[window.page_directory_index] & PAGE_ENTRY_PRESENT != 0 {
+            return None;
+        }
+        pd.table.0[window.page_directory_index] =
+            crate::arch::x86_64::paging::kernel_stack_window_entry(window.page_directory_index)?;
+        return Some(());
+    }
+
     // 2 MiB huge-page window: the kernel spec carries no 4 KiB PTEs for it
     // (see KernelPageTableSpec::from_plan), so install the huge PDE (PS bit
     // set) directly, mirroring install_runtime_kernel_page_tables.  Without

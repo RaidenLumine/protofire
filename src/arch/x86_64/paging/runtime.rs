@@ -632,39 +632,63 @@ pub(crate) const X86_STACK_WINDOW_SIZE: usize = 0x0400_0000;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) const X86_STACK_WINDOW_END: usize = X86_STACK_WINDOW_BASE + X86_STACK_WINDOW_SIZE;
 
-/// Walk to the leaf for a stack-window address, building what is missing.
-///
-/// The window's own tables, reached from the running root: the rest of the
-/// kernel is mapped by levels this never rewrites, so a stack's page table
-/// cannot disturb anything but stacks.
+/// Is `address` inside the range the kernel keeps for its own stacks?
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[allow(dead_code)] // the migration calls these next
-unsafe fn stack_window_leaf(virtual_address: usize) -> Option<*mut u64> {
-    let root = crate::arch::x86_64::control_regs::read_cr3() as usize & 0x000f_ffff_ffff_f000;
-    if root == 0 {
+pub(crate) fn is_stack_window_address(address: usize) -> bool {
+    (X86_STACK_WINDOW_BASE..X86_STACK_WINDOW_END).contains(&address)
+}
+
+/// The kernel's own page-directory entry for one slot of the stack window.
+///
+/// A process address space shares this entry rather than copying the table it
+/// points at.  The window is the one kernel window whose contents change as
+/// the kernel runs — a stack is mapped when a thread is created — so a root
+/// that copied the table at derivation time would keep the window as it was
+/// then: empty.  Handing the root the same table pointer the kernel's own
+/// tables hold keeps every stack mapped afterwards visible under it.
+///
+/// `None` when the slot holds no table, which is early boot (the runtime
+/// tables are still zero) or an index outside the window.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub(crate) fn kernel_stack_window_entry(page_directory_index: usize) -> Option<u64> {
+    if !(X86_STACK_WINDOW_BASE / PAGE_DIRECTORY_WINDOW_SIZE
+        ..X86_STACK_WINDOW_END / PAGE_DIRECTORY_WINDOW_SIZE)
+        .contains(&page_directory_index)
+    {
         return None;
     }
-    let mut table = root as *mut u64;
-    for shift in [39u32, 30, 21] {
-        let index = (virtual_address >> shift) & 0x1ff;
-        let mut entry = unsafe { core::ptr::read_volatile(table.add(index)) };
-        if entry & PAGE_ENTRY_PRESENT == 0 {
-            let page = unsafe { alloc_runtime_pt_page() }?;
-            unsafe {
-                core::ptr::write_volatile(
-                    table.add(index),
-                    page as u64 | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE,
-                )
-            };
-            entry = unsafe { core::ptr::read_volatile(table.add(index)) };
-        }
-        // A large page where a table should be means this address is not the
-        // window's: refusing is better than rewriting someone else's mapping.
-        if entry & PAGE_ENTRY_LARGE != 0 {
-            return None;
-        }
-        table = (entry & PAGE_ENTRY_ADDRESS_MASK) as *mut u64;
+    let entry = unsafe {
+        core::ptr::read_volatile((*KERNEL_PD.get()).0.as_ptr().add(page_directory_index))
+    };
+    if entry & PAGE_ENTRY_PRESENT == 0 || entry & PAGE_ENTRY_LARGE != 0 {
+        return None;
     }
+    Some(entry)
+}
+
+/// Walk to the leaf for a stack-window address.
+///
+/// The walk starts at the kernel's own page directory rather than at the
+/// running root.  The window's tables are built with the kernel's tables at
+/// boot (see `KernelPageTableSpec::from_plan`), so every root that derives
+/// from them carries the same table — and a mapping made while a process root
+/// happens to be active therefore lands where every other root looks, instead
+/// of in a private table only that root can see.
+///
+/// Nothing is built here.  A missing slot means nothing built it, and
+/// growing one now would grow it in exactly one root: the one that happens to
+/// be running.  Refusing lets the caller fall back to the shape stacks had
+/// before the window existed.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+unsafe fn stack_window_leaf(virtual_address: usize) -> Option<*mut u64> {
+    if !is_stack_window_address(virtual_address) {
+        return None;
+    }
+    // The window lives below the first GiB, so its PDPT index is 0 and the
+    // kernel directory is the one every root carries that slot from.
+    let directory_index = (virtual_address >> 21) & 0x1ff;
+    let entry = kernel_stack_window_entry(directory_index)?;
+    let table = (entry & PAGE_ENTRY_ADDRESS_MASK) as *mut u64;
     Some(unsafe { table.add((virtual_address >> 12) & 0x1ff) })
 }
 
@@ -675,11 +699,7 @@ unsafe fn stack_window_leaf(virtual_address: usize) -> Option<*mut u64> {
 /// `virtual_address` must name a page the caller owns; the window's allocator
 /// is the only thing that hands those out.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[allow(dead_code)] // the migration calls these next
 pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: usize) -> bool {
-    if !(X86_STACK_WINDOW_BASE..X86_STACK_WINDOW_END).contains(&virtual_address) {
-        return false;
-    }
     let Some(leaf) = (unsafe { stack_window_leaf(virtual_address) }) else {
         return false;
     };
@@ -705,11 +725,7 @@ pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: us
 ///
 /// As [`map_stack_page`]: the address must be one the caller owns.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[allow(dead_code)] // the migration calls these next
 pub(crate) unsafe fn unmap_stack_page(virtual_address: usize) -> bool {
-    if !(X86_STACK_WINDOW_BASE..X86_STACK_WINDOW_END).contains(&virtual_address) {
-        return false;
-    }
     let Some(leaf) = (unsafe { stack_window_leaf(virtual_address) }) else {
         return false;
     };

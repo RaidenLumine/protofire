@@ -480,10 +480,14 @@ backs all `alloc`/`dealloc` calls via the `GlobalAlloc` trait.
 Kernel stacks (described in `src/kernel/process/thread/kernel_stack.rs`, not in
 the memory module itself) each have a dedicated region with a guard below them,
 so an overflow faults instead of writing over whatever comes next.  Where the
-architecture names a VA window for kernel stacks — AArch64 does — the stack is a
+architecture names a VA window for kernel stacks — AArch64 and x86_64 do, at
+`arch/aarch64/mmu/mod.rs` and `arch/x86_64/paging/runtime.rs` — the stack is a
 slice of that window: the usable pages are backed by frames and the guard is a
 slice the allocator never hands out, so there is no mapping to remove and
-nothing that can fail to remove it.  Elsewhere the stack is a run of frames at
+nothing that can fail to remove it.  The window's page tables are built with
+the kernel's own tables at boot and a process address space shares them rather
+than copying them, because a stack is mapped into the window after a root is
+derived and the root has to see it.  Elsewhere the stack is a run of frames at
 their own addresses and the guard is the page below it, un-presented by the
 architecture's `unmap_page`; a coarse mapping can refuse that, and the kernel
 reports it at boot rather than pretending the guard is there.

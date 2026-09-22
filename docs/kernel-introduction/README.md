@@ -181,7 +181,7 @@ On AArch64 and RISC-V the partitioning follows the same principle with arch-spec
 
 ### Kernel Stack and Guard Pages
 
-Each kernel thread has a dedicated stack, and each stack has a guard page below it so that an overflow faults instead of writing over whatever comes next. On AArch64 the stack is a slice of the architecture's own stack window (`arch/aarch64/mmu/mod.rs`): the usable pages are backed by frames and the guard is a slice the allocator never hands out. Where an architecture has no such window the stack is a run of frames at its own addresses and the guard is the page below it, cleared by that architecture's `unmap_page`. Both shapes are described in the memory overview under [Kernel Address Space](memory.md#kernel-address-space), and both apply to kernel threads and to user-thread kernel stacks.
+Each kernel thread has a dedicated stack, and each stack has a guard page below it so that an overflow faults instead of writing over whatever comes next. On AArch64 and x86_64 the stack is a slice of the architecture's own stack window (`arch/aarch64/mmu/mod.rs`, `arch/x86_64/paging/runtime.rs`): the usable pages are backed by frames and the guard is a slice the allocator never hands out. Where an architecture has no such window the stack is a run of frames at its own addresses and the guard is the page below it, cleared by that architecture's `unmap_page`. Both shapes are described in the memory overview under [Kernel Address Space](memory.md#kernel-address-space), and both apply to kernel threads and to user-thread kernel stacks.
 
 ### Heap
 
