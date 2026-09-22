@@ -35,8 +35,9 @@ esac
 run_make_step() {
     description="$1"
     target="$2"
+    shift 2
     printf '==> verify[%s]: %s\n' "$VERIFY_TIER" "$description"
-    make "$target" PROFILE="$PROFILE"
+    make "$target" PROFILE="$PROFILE" "$@"
 }
 
 check_source_headers() {
@@ -160,9 +161,13 @@ run_p3() {
             "$VERIFY_TIER"
     fi
     if [ "$RUN_SMP_RUNTIME" = "1" ]; then
-        run_make_step "make check-smp-runtime" check-smp-runtime
+        # The SMP smoke is meaningless on one CPU, and the Makefile's own
+        # default is one because that is what `make run` should give a
+        # developer.  Asking for the smoke therefore asks for four CPUs;
+        # VERIFY_SMP overrides it.
+        run_make_step "make check-smp-runtime" check-smp-runtime "SMP=${VERIFY_SMP:-4}"
     else
-        printf '==> verify[%s]: skipping SMP runtime smoke (set RUN_SMP_RUNTIME=1 to enable)\n' \
+        printf '==> verify[%s]: skipping SMP runtime smoke (set RUN_SMP_RUNTIME=1, and VERIFY_SMP for the CPU count, to enable)\n' \
             "$VERIFY_TIER"
     fi
 }
