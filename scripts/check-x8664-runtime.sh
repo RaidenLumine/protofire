@@ -198,6 +198,17 @@ if [ "$user_exits" -lt 5 ]; then
     fail_with_log "expected at least 5 user programs to exit, saw $user_exits"
 fi
 
+# ── A retired stack's address came back ────────────────────────────────
+#
+# A kernel stack is handed a slice of the window, and when the stack dies the
+# slice is retired until every CPU has dropped its translation for it.  If that
+# grace were never satisfied the machine would still look healthy — the window
+# would simply grow forever and the property would be gone without a symptom,
+# which is exactly the kind of regression a check exists to catch.  The demo
+# tears stacks down and creates more, so one slice does come back, and the
+# kernel says so once.
+require_log_line "[thread] kernel stack window: a retired slice is in use again"
+
 # ── Nothing reported damage ────────────────────────────────────────────
 if grep -F "FATAL" "$log_file" >/dev/null 2>&1; then
     fail_with_log "the kernel reported a fatal error during the run"
