@@ -23,6 +23,8 @@
 //! Returns 0 on success, negative error code on failure.
 
 use alloc::vec::Vec;
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 /// Maximum number of secondary CPUs we attempt to boot.
 const MAX_APS: usize = 8;
@@ -100,37 +102,53 @@ unsafe fn sbi_hart_start(hartid: u64, start_addr: usize, opaque: u64) -> i64 {
 // FDT CPU discovery
 // ---------------------------------------------------------------------------
 
-/// Read the BSP hart ID via `mhartid`.
+/// Hart the kernel is running on, as the boot protocol reported it.
 ///
-/// In S-mode, `mhartid` is not directly readable — but OpenSBI provides
-/// the hart ID via `a0` on entry if configured.  Since we arrive from
-/// OpenSBI with only the FDT pointer in `a1`, we query OpenSBI at runtime.
+/// `u64::MAX` until `store_boot_hart` has been called.
+static BOOT_HART: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Record the hart ID the boot protocol handed us in `a0`.
 ///
-/// We use a lightweight approach: probe the hart ID via the SBI HSM
-/// `hart_get_status` extension, or fall back to FDT-based detection
-/// (matching the boot hart CPU node).
+/// Called from `boot.S` before the Rust entry, from the same registers the
+/// platform hands over in: `a0` is the boot hart's ID and `a1` is the flattened
+/// device tree.  `mhartid` is not readable from S-mode, so this is the only
+/// authoritative answer about which hart is running the kernel.
+pub fn store_boot_hart(hartid: u64) {
+    BOOT_HART.store(hartid, Ordering::Release);
+}
+
+/// The hart the kernel booted on.
+///
+/// It is *not* always hart 0.  QEMU `virt` with several harts hands the reset
+/// to whichever hart it likes, and OpenSBI then reports that hart as the boot
+/// hart — boots have landed on 0 and on 1 here.  Assuming 0 meant that on the
+/// harts-1 boot the bring-up loop asked SBI to start the hart it was already
+/// running on, got `SBI_ERR_ALREADY_STARTED`, and left the machine one hart
+/// short with nothing but a log line to say why.
 fn bsp_hartid() -> Option<u64> {
-    // On QEMU virt, the BSP is always hart 0.  For multi-hart systems
-    // we discover the exact hart ID from the FDT below, and filter
-    // out hart 0 as the BSP.
-    Some(0)
+    let hartid = BOOT_HART.load(Ordering::Acquire);
+    (hartid != u64::MAX).then_some(hartid)
 }
 
 /// Discover secondary hart IDs from the Flattened Device Tree.
 ///
 /// The shared FDT module exposes the total CPU count parsed from the `/cpus`
-/// node, but provides no raw FDT-pointer accessor for riscv64 (the pointer
-/// the bootloader passed in `a1` is not stored anywhere).  We therefore
-/// derive the secondary hart IDs from that count: on QEMU `virt` and other
-/// OpenSBI platforms hart IDs are contiguous starting at 0, and the BSP is
-/// hart 0.  When the FDT has not been parsed (the common case in this
-/// prototype) the count is 0 and no secondary harts are reported.
+/// node.  On QEMU `virt` and other OpenSBI platforms hart IDs are contiguous
+/// starting at 0, so the harts are `0..cpu_count` and the only one to skip is
+/// the one the kernel is running on.  When the FDT has not been parsed the
+/// count is 0 and no secondary harts are reported.
 fn discover_secondary_hartids() -> Vec<u64> {
     let mut hartids = Vec::new();
 
     let total = crate::arch::fdt::cpu_count() as u64;
-    let bsp_hartid = bsp_hartid().unwrap_or(0);
-    for hartid in 1..total {
+    let Some(bsp_hartid) = bsp_hartid() else {
+        // Without the boot hart's ID there is no way to tell a secondary hart
+        // from the one already running, and starting the running hart is an
+        // error rather than a start.  Report and start nothing.
+        crate::println!("[smp] riscv64: boot hart ID unknown; not starting any hart");
+        return hartids;
+    };
+    for hartid in 0..total {
         if hartid != bsp_hartid {
             hartids.push(hartid);
         }

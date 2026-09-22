@@ -16,6 +16,22 @@ core::arch::global_asm!(include_str!("trap.S"));
 
 pub struct RiscV64;
 
+/// Keep the boot hart ID and the device-tree pointer the platform handed over.
+///
+/// Called from `boot.S` before the Rust entry, the same way aarch64 does it
+/// there.  `a0` is the hart the kernel is running on — not always hart 0, and
+/// not readable from S-mode — and `a1` is the blob that tells the kernel how
+/// many harts the machine has.  Without the address, `parse_fdt` sees nothing,
+/// `cpu_count()` is zero, and `bring_up_aps` concludes there is one CPU and
+/// starts none; everything the platform description carries (PCIe ECAM, IMSIC,
+/// the timer rate) falls back to a hardcoded `virt` guess at the same time.
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+#[no_mangle]
+pub extern "C" fn riscv64_store_handoff(hartid: usize, blob: usize) {
+    crate::arch::boot::store_handoff_address(blob);
+    smp::store_boot_hart(hartid as u64);
+}
+
 impl Arch for RiscV64 {
     fn init_early() {
         trap::init();
