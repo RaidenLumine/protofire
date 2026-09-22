@@ -290,6 +290,12 @@ impl Drop for KernelStack {
                 if let Some(mut memory) = crate::kernel::memory::global_mut() {
                     memory.deallocate_frames(*frames, *page_count);
                 }
+                // The range comes back if it is the window's top, which covers
+                // the ordinary case — stacks torn down in the order they were
+                // created — without a bookkeeping structure and without ever
+                // handing one address to two stacks: a reservation someone has
+                // already built past stays reserved.
+                let _ = super::stack_window::release_in_kernel_window(layout);
             }
             KernelStackBacking::Frame { base, total_frames } => {
                 // Unmap the usable stack region from the software page table.
