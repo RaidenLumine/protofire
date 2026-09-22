@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 PROFILE="${PROFILE:-debug}"
 RUN_X86_64_RUNTIME="${RUN_X86_64_RUNTIME:-0}"
 RUN_AARCH64_RUNTIME="${RUN_AARCH64_RUNTIME:-0}"
+RUN_RISCV64_RUNTIME="${RUN_RISCV64_RUNTIME:-0}"
 RUN_SMP_RUNTIME="${RUN_SMP_RUNTIME:-0}"
 VERIFY_TIER="${1:-${VERIFY_TIER:-p2}}"
 
@@ -133,8 +134,9 @@ run_p3() {
     # smoke.  The x86_64 smoke boots a single CPU and is what a wedge that
     # stops the machine where the multi-CPU run would keep going has to fail;
     # the SMP smoke is the only check anywhere that boots more than one CPU,
-    # which is the only way the cross-CPU paths run at all.  All three stay
-    # opt-in because they are slow and need QEMU.
+    # which is the only way the cross-CPU paths run at all; and each of the
+    # three architectures has a smoke of its own, so no target's kernel can go
+    # un-booted.  They stay opt-in because they are slow and need QEMU.
     run_p2
     run_make_step "make clippy" clippy
     run_make_step "make check-unsafe-comments" check-unsafe-comments
@@ -148,6 +150,12 @@ run_p3() {
         run_make_step "make check-aarch64-runtime" check-aarch64-runtime
     else
         printf '==> verify[%s]: skipping aarch64 runtime smoke (set RUN_AARCH64_RUNTIME=1 to enable)\n' \
+            "$VERIFY_TIER"
+    fi
+    if [ "$RUN_RISCV64_RUNTIME" = "1" ]; then
+        run_make_step "make check-riscv64-runtime" check-riscv64-runtime
+    else
+        printf '==> verify[%s]: skipping riscv64 runtime smoke (set RUN_RISCV64_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"
     fi
     if [ "$RUN_SMP_RUNTIME" = "1" ]; then

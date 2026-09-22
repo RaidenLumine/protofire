@@ -53,6 +53,7 @@ endif
 		check-x8664-churn \
 		check-aarch64-runtime \
 		check-aarch64-smp-runtime \
+		check-riscv64-runtime \
 		build \
 		build-aarch64 \
 		build-riscv64 \
@@ -86,6 +87,7 @@ help:
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
+		'  make check-riscv64-runtime - run the headless QEMU virt riscv64 demo smoke check' \
 		'  make test           - run host-side unit and integration tests' \
 		'  make test-lib       - run library unit tests only' \
 		'  make test-fast      - run path/I-O/syscall/user integration regressions' \
@@ -254,6 +256,17 @@ check-aarch64-runtime:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-aarch64-runtime.sh
+
+# The riscv64 counterpart of the aarch64 smoke check.  riscv64 was the one
+# architecture whose kernel was never booted by a gate, and the two defects that
+# hiding cost — a stack guard reported as installed that was not, and an SBI
+# call that clobbered the register holding the tick count — are both invisible
+# to a type check and loud in a boot.
+check-riscv64-runtime:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-riscv64-runtime.sh
 
 # Boot the kernel on several emulated CPUs and assert that the APs came up and
 # that it is still making progress afterwards.  Single-CPU runs cannot reach
