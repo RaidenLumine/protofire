@@ -1,4 +1,4 @@
-//! src/kernel/process/mac/check.rs
+//! src/kernel/security/mac/check.rs
 //!
 //! MAC enforcement entry points: classify objects by path, decide access
 //! against the policy, and emit an audit record on denial.
@@ -10,7 +10,6 @@ use alloc::string::String;
 
 use crate::kernel::audit::types::AuditEventType;
 use crate::kernel::audit::types::AuditRecord;
-use crate::kernel::process::Scheduler;
 use crate::Error;
 use crate::Result;
 
@@ -65,19 +64,6 @@ fn path_is_exact_or_child_of(path: &str, prefix: &str) -> bool {
     false
 }
 
-/// Resolve the current process pid for audit records (0 in host tests).
-fn current_pid() -> u32 {
-    Scheduler::global()
-        .and_then(|s| s.current_thread())
-        .map(|t| t.process().pid())
-        .unwrap_or(0)
-}
-
-/// Current scheduler tick for audit timestamps.
-fn current_timestamp() -> u64 {
-    Scheduler::global().map(|s| s.current_tick()).unwrap_or(0)
-}
-
 /// Emit a MAC-denial audit record.
 fn emit_mac_denial(
     subject: MacType,
@@ -93,12 +79,15 @@ fn emit_mac_denial(
     payload[12..16].copy_from_slice(&perms.to_le_bytes());
 
     let id = MAC_AUDIT_ID.fetch_add(1, Ordering::Relaxed);
-    let pid = current_pid();
+    // The actor fields belong to the audit layer, which is the layer that
+    // reaches the scheduler: a security decision should not have to know how
+    // to find the current process to say that it denied something.
+    let (pid, timestamp) = crate::kernel::audit::current_actor();
     let mut record = AuditRecord::zeroed();
     record.fill(
         id,
         id,
-        current_timestamp(),
+        timestamp,
         AuditEventType::MacDenial,
         pid,
         uid,

@@ -3,9 +3,9 @@
 //! Access-check helpers (free functions).
 //! These determine required access bits and mount write-visibility rules.
 
-use crate::kernel::process::SecurityToken;
-use crate::kernel::process::HANDLE_RIGHT_READ;
-use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::kernel::security::SecurityToken;
+use crate::kernel::security::HANDLE_RIGHT_READ;
+use crate::kernel::security::HANDLE_RIGHT_WRITE;
 
 use super::super::layout;
 use super::super::vfs::NodeKind;

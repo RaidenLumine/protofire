@@ -11,8 +11,8 @@ use crate::kernel::drivers::serial;
 use crate::kernel::fs::DirectoryEntry;
 use crate::kernel::fs::FileMetadata;
 use crate::kernel::fs::NodeKind;
-use crate::kernel::process::HANDLE_RIGHT_READ;
-use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::kernel::handle_rights::HANDLE_RIGHT_READ;
+use crate::kernel::handle_rights::HANDLE_RIGHT_WRITE;
 use crate::util::debug;
 use crate::Error;
 use crate::Result;
@@ -392,6 +392,16 @@ pub fn device_descriptor(name: &str) -> Option<&'static DeviceDescriptor> {
     DEVICE_DESCRIPTORS
         .iter()
         .find(|descriptor| descriptor.name == name)
+}
+
+/// Every device the kernel provides, in registry order.
+///
+/// This is what `/dev` lists.  A directory listing has to come from the
+/// registry, not from the virtual-device nodes: those are the `/system/dev`
+/// aliases, and a filesystem that lists them under `/dev` shows a directory
+/// whose entries do not exist there.
+pub fn device_descriptors() -> &'static [DeviceDescriptor] {
+    &DEVICE_DESCRIPTORS
 }
 
 pub fn supported_device_rights(name: &str) -> Option<u32> {

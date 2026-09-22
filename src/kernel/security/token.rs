@@ -1,12 +1,33 @@
-//! src/kernel/process/process/security.rs
+//! src/kernel/security/token.rs
 //!
-//! Process security token: integrity levels, permission checks, MAC type.
+//! The security token: who a request runs as, what it may do, and the MAC
+//! subject label it carries.
+//!
+//! This lives below `process` and below `fs` because both need it and neither
+//! owns it.  A filesystem asks the token whether a path may be read; the
+//! process layer asks it whether an operation is privileged; and the two must
+//! be able to hold the same answer without one depending on the other.
 
-use super::constants::*;
-use crate::kernel::process::mac::MacType;
-use crate::kernel::process::mac::MAC_TYPE_SYSTEM;
-use crate::kernel::process::mac::MAC_TYPE_UNTRUSTED;
-use crate::kernel::process::mac::MAC_TYPE_USER;
+use super::mac::MacType;
+use super::mac::MAC_TYPE_SYSTEM;
+use super::mac::MAC_TYPE_UNTRUSTED;
+use super::mac::MAC_TYPE_USER;
+
+// ── Identities ──────────────────────────────────────────────────────────
+
+pub type UserId = u32;
+pub type GroupId = u32;
+
+pub const ROOT_USER_ID: UserId = 0;
+pub const ROOT_GROUP_ID: GroupId = 0;
+pub const DEFAULT_GUEST_USER_ID: UserId = 1000;
+pub const DEFAULT_GUEST_GROUP_ID: GroupId = 1000;
+
+// The rights a handle may carry are a bottom-level concept shared with the
+// device and audit layers, not something this layer owns.  Re-exported here
+// because the token is what a caller usually has in hand when checking them.
+pub use crate::kernel::handle_rights::HANDLE_RIGHT_READ;
+pub use crate::kernel::handle_rights::HANDLE_RIGHT_WRITE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IntegrityLevel {

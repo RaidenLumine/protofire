@@ -29,8 +29,8 @@ use crate::kernel::fs::FileSystem;
 use crate::kernel::fs::OPEN_ALWAYS;
 use crate::kernel::fs::SEEK_END;
 #[cfg(test)]
-use crate::kernel::process::HANDLE_RIGHT_READ;
-use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::kernel::handle_rights::HANDLE_RIGHT_READ;
+use crate::kernel::handle_rights::HANDLE_RIGHT_WRITE;
 
 /// How many records to persist in one flush.
 const PERSIST_BATCH_SIZE: usize = 256;

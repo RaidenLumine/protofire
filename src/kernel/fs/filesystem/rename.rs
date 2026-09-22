@@ -2,7 +2,7 @@
 //!
 //! filesystem/rename — FileSystem rename methods.
 
-use crate::kernel::process::SecurityToken;
+use crate::kernel::security::SecurityToken;
 use crate::Result;
 
 use super::super::FileSystem;

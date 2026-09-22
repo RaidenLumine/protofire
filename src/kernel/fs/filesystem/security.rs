@@ -5,7 +5,7 @@
 use alloc::string::String;
 use alloc::sync::Arc;
 
-use crate::kernel::process::SecurityToken;
+use crate::kernel::security::SecurityToken;
 use crate::Result;
 
 use super::super::vfs::Metadata;
@@ -342,25 +342,25 @@ impl FileSystem {
         // revoked regardless of the DAC outcome.
         if context.access.allowed {
             let class = if metadata.kind == NodeKind::Directory {
-                crate::kernel::process::mac::MAC_CLASS_DIR
+                crate::kernel::security::mac::MAC_CLASS_DIR
             } else {
-                crate::kernel::process::mac::MAC_CLASS_FILE
+                crate::kernel::security::mac::MAC_CLASS_FILE
             };
             let mut perms = 0;
             if required_access & ACCESS_READ_BIT != 0 {
-                perms |= crate::kernel::process::mac::MAC_PERM_READ;
+                perms |= crate::kernel::security::mac::MAC_PERM_READ;
             }
             if required_access & ACCESS_WRITE_BIT != 0 {
-                perms |= crate::kernel::process::mac::MAC_PERM_WRITE;
+                perms |= crate::kernel::security::mac::MAC_PERM_WRITE;
             }
             if required_access & ACCESS_EXECUTE_BIT != 0 {
                 if metadata.kind == NodeKind::Directory {
-                    perms |= crate::kernel::process::mac::MAC_PERM_SEARCH;
+                    perms |= crate::kernel::security::mac::MAC_PERM_SEARCH;
                 } else {
-                    perms |= crate::kernel::process::mac::MAC_PERM_EXEC;
+                    perms |= crate::kernel::security::mac::MAC_PERM_EXEC;
                 }
             }
-            if crate::kernel::process::mac::check_file(
+            if crate::kernel::security::mac::check_file(
                 security_token.mac_type(),
                 normalized,
                 class,

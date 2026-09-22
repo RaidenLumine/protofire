@@ -40,6 +40,8 @@ impl FileSystem {
             },
         );
 
+        crate::kernel::fs::publish_mount_snapshot(self.mount_points());
+
         Ok(())
     }
 
@@ -52,6 +54,8 @@ impl FileSystem {
         self.mounted_fs
             .remove(&mount_path)
             .map(|_| ())
-            .ok_or(crate::Error::NotFound)
+            .ok_or(crate::Error::NotFound)?;
+        crate::kernel::fs::publish_mount_snapshot(self.mount_points());
+        Ok(())
     }
 }

@@ -15,10 +15,12 @@ use super::super::block::BlockDevice;
 use super::super::block::BlockSliceDevice;
 use super::super::block::MemoryBlockDevice;
 use super::super::block::BLOCK_SIZE;
+use super::super::devfs;
 use super::super::layout::StorageZone;
 use super::super::layout::DEFAULT_ZONES;
 use super::super::layout::{self};
 use super::super::partition::read_mbr_partitions;
+use super::super::servicefs;
 use super::super::simplefs::SimpleFs;
 use super::super::simplefs::SimpleFsVolume;
 use super::super::vfs::NodeKind;
@@ -29,11 +31,14 @@ use super::path_helpers::build_demo_memory_device;
 use super::types::BootDiskLayoutSource;
 use super::types::ZoneDeviceBindings;
 
+use super::super::DEVFS_FS_NAME;
+use super::super::DEVFS_MOUNT_DEVICE;
 use super::super::DEVFS_MOUNT_PATH;
 use super::super::KERNEL_LOGS_FS_NAME;
 use super::super::KERNEL_LOGS_MOUNT_DEVICE;
 use super::super::KERNEL_LOGS_MOUNT_PATH;
-use super::super::PROCFS_MOUNT_PATH;
+use super::super::SERVICEFS_FS_NAME;
+use super::super::SERVICEFS_MOUNT_DEVICE;
 use super::super::SERVICEFS_MOUNT_PATH;
 use super::super::TEMP_FS_NAME;
 use super::super::TEMP_MOUNT_DEVICE;
@@ -55,7 +60,6 @@ impl FileSystem {
 
         self.install_virtual_device_layout();
         self.install_kernel_logs_layout();
-        self.install_procfs_layout();
         self.install_devfs_layout();
         self.install_servicefs_layout();
     }
@@ -98,14 +102,18 @@ impl FileSystem {
         );
     }
 
-    /// Register and mount procfs at `/proc`.
-    pub(crate) fn install_procfs_layout(&mut self) {
-        let _ = crate::kernel::fs::procfs::mount_procfs(PROCFS_MOUNT_PATH);
-    }
-
     /// Register and mount devfs at `/dev`.
+    ///
+    /// Registered and mounted on `self` rather than through
+    /// `crate::kernel::fs::global()`: this runs while the filesystem is being
+    /// initialised, before anything has installed it as the global, and a
+    /// helper that looks the global up fails silently here.  That is exactly
+    /// what happened — `/dev`, `/service` and `/proc` were all missing from a
+    /// boot that reported no error, because every one of those mounts went
+    /// through a global that did not exist yet.
     pub(crate) fn install_devfs_layout(&mut self) {
-        let _ = crate::kernel::fs::devfs::mount_devfs(DEVFS_MOUNT_PATH);
+        self.register(DEVFS_FS_NAME, Arc::new(devfs::DevFs));
+        let _ = self.mount(DEVFS_MOUNT_DEVICE, DEVFS_MOUNT_PATH, DEVFS_FS_NAME, 0);
     }
 
     /// Register and mount servicefs at `/service`.
@@ -115,7 +123,13 @@ impl FileSystem {
     /// mounted on every boot so that a service which fails to start has
     /// somewhere to say so.
     pub(crate) fn install_servicefs_layout(&mut self) {
-        let _ = crate::kernel::fs::servicefs::mount_servicefs(SERVICEFS_MOUNT_PATH);
+        self.register(SERVICEFS_FS_NAME, Arc::new(servicefs::ServiceFs));
+        let _ = self.mount(
+            SERVICEFS_MOUNT_DEVICE,
+            SERVICEFS_MOUNT_PATH,
+            SERVICEFS_FS_NAME,
+            0,
+        );
     }
 
     /// Mount a memory-backed writable SimpleFs volume at `/tmp`.

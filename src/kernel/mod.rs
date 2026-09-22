@@ -13,6 +13,7 @@ pub mod crypto;
 pub mod device;
 pub mod drivers;
 pub mod fs;
+pub mod handle_rights;
 // Only the bare-metal polling threads emit heartbeats.
 #[cfg(target_os = "none")]
 pub mod heartbeat;
@@ -28,8 +29,10 @@ pub mod oom;
 pub mod percpu;
 pub mod power;
 pub mod process;
+pub mod procfs;
 pub mod random;
 pub mod scheduler;
+pub mod security;
 // Service-definition parsing (`/system/rc.d/*.toml`) is only exercised by the
 // demo distribution's embedded default services; a pure kernel boot spawns
 // the distribution's `/system/init.elf` directly and never reads rc.d.  The
@@ -358,6 +361,17 @@ impl Kernel {
                 fs.lock().register_block_device(name, device);
             }
         });
+        // `/proc` is a view over the process table rather than a part of the
+        // filesystem, so the mount is issued here, by the layer that knows
+        // both.  It also has to wait for the global above: `mount_procfs`
+        // looks it up, and when `fs`'s own layout tried this earlier there was
+        // no global yet — the mount failed into a `let _ =` that no boot ever
+        // reported, which is why `/proc` was not on the machine.
+        if let Err(error) = crate::kernel::procfs::mount_procfs(fs::PROCFS_MOUNT_PATH) {
+            println!("[fs    ] procfs not mounted at /proc: {}", error.as_str());
+        } else {
+            println!("[fs    ] mounted procfs at /proc");
+        }
         // Boot recovery walks and repairs every mounted volume while holding
         // the global filesystem lock.  Measured as its own scope because it is
         // a one-off whose cost is otherwise invisible in the syscall numbers.

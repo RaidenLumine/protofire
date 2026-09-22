@@ -3,7 +3,9 @@
 //! Process subsystem exports and shared process/thread type definitions.
 
 pub mod context;
-pub mod mac;
+// The MAC policy is in the security layer, below this module and below `fs`.
+// Re-exported so `process::mac::...` keeps naming the same thing.
+pub use crate::kernel::security::mac;
 #[allow(clippy::module_inception)]
 pub mod posix_timer;
 #[allow(clippy::module_inception)]

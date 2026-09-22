@@ -132,8 +132,20 @@ impl FileSystem for DevFs {
     }
 
     fn read_dir(&self, path: &str, index: usize) -> Result<DirectoryEntry> {
-        if path == "/" || path.is_empty() || device::is_virtual_device_directory(path) {
-            return device::virtual_device_directory_entry(index).ok_or(Error::InvalidArgument);
+        // `/dev` lists the device registry.  Running past the end is the end of
+        // the listing, which the caller detects by `NotFound` — reporting it as
+        // an invalid argument is what made an empty or exhausted directory look
+        // like a broken one.
+        if path == "/" || path.is_empty() {
+            let descriptor = device::device_descriptors()
+                .get(index)
+                .ok_or(Error::NotFound)?;
+            let metadata = descriptor.metadata();
+            return Ok(DirectoryEntry::new(
+                metadata.kind,
+                metadata.size,
+                String::from(descriptor.name),
+            ));
         }
         Err(Error::NotFound)
     }
@@ -159,6 +171,11 @@ impl FileSystem for DevFs {
 pub fn mount_devfs(mount_path: &str) -> Result<()> {
     let fs = crate::kernel::fs::global().ok_or(Error::InternalError)?;
     let mut fs_guard = fs.lock();
-    fs_guard.register("devfs", Arc::new(DevFs));
-    fs_guard.mount("/dev/adastra-devfs", mount_path, "devfs", 0)
+    fs_guard.register(crate::kernel::fs::DEVFS_FS_NAME, Arc::new(DevFs));
+    fs_guard.mount(
+        crate::kernel::fs::DEVFS_MOUNT_DEVICE,
+        mount_path,
+        crate::kernel::fs::DEVFS_FS_NAME,
+        0,
+    )
 }

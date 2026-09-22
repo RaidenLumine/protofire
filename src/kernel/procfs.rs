@@ -1,6 +1,11 @@
-//! src/kernel/fs/procfs.rs
+//! src/kernel/procfs.rs
 //!
 //! ProcFS — a synthetic filesystem exposing kernel and process information.
+//!
+//! It lives above both `fs` and `process`, because that is what it is: a
+//! read-only view over the process table, presented through the filesystem
+//! interface.  Keeping it inside `fs` made the filesystem depend on the
+//! scheduler for no reason other than where this file happened to sit.
 //!
 //! ## Nodes
 //!
@@ -35,6 +40,10 @@ use crate::kernel::process::ProcessId;
 use crate::kernel::process::ProcessState;
 use crate::Error;
 use crate::Result;
+
+/// Name procfs registers under, and the synthetic device it is mounted from.
+pub const FS_NAME: &str = "procfs";
+pub const MOUNT_DEVICE: &str = "/dev/adastra-procfs";
 
 // ---------------------------------------------------------------------------
 // Static data VNode
@@ -272,12 +281,13 @@ fn uptime_data() -> Vec<u8> {
 
 fn mounts_data() -> Vec<u8> {
     let mut out = Vec::new();
-    if let Some(fs) = crate::kernel::fs::global() {
-        let fs_guard = fs.lock();
-        for mount in fs_guard.mount_points() {
-            let line = format!("{} {} {} ro 0 0\n", mount.device, mount.path, mount.fs_name);
-            out.extend_from_slice(line.as_bytes());
-        }
+    // The mount table itself is behind the filesystem lock, and this producer
+    // already runs inside it — taking it again here is a self-deadlock.  The
+    // snapshot is the mount table as of the last mount or unmount; see
+    // `kernel::fs::MOUNT_SNAPSHOT`.
+    for mount in crate::kernel::fs::mount_snapshot() {
+        let line = format!("{} {} {} ro 0 0\n", mount.device, mount.path, mount.fs_name);
+        out.extend_from_slice(line.as_bytes());
     }
     if out.is_empty() {
         out.extend_from_slice(b"(no mounts)\n");
@@ -681,8 +691,8 @@ fn lookup_pid_file(pid: ProcessId, filename: &str) -> Result<Arc<dyn VNode>> {
 pub fn mount_procfs(mount_path: &str) -> Result<()> {
     let fs = crate::kernel::fs::global().ok_or(Error::InternalError)?;
     let mut fs_guard = fs.lock();
-    fs_guard.register("procfs", Arc::new(ProcFs));
-    fs_guard.mount("/dev/adastra-procfs", mount_path, "procfs", 0)
+    fs_guard.register(FS_NAME, Arc::new(ProcFs));
+    fs_guard.mount(MOUNT_DEVICE, mount_path, FS_NAME, 0)
 }
 
 // ---------------------------------------------------------------------------

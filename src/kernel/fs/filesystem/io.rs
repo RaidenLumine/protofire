@@ -2,8 +2,8 @@
 //!
 //! FileSystem read, write, replace methods.
 
-use crate::kernel::process::SecurityToken;
-use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::kernel::security::SecurityToken;
+use crate::kernel::security::HANDLE_RIGHT_WRITE;
 use crate::Result;
 
 use super::super::vfs::NodeKind;

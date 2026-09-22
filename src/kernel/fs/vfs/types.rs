@@ -7,10 +7,10 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::abi::fs as fs_abi;
-use crate::kernel::process::IntegrityLevel;
-use crate::kernel::process::SecurityToken;
-use crate::kernel::process::DEFAULT_GUEST_GROUP_ID;
-use crate::kernel::process::DEFAULT_GUEST_USER_ID;
+use crate::kernel::security::IntegrityLevel;
+use crate::kernel::security::SecurityToken;
+use crate::kernel::security::DEFAULT_GUEST_GROUP_ID;
+use crate::kernel::security::DEFAULT_GUEST_USER_ID;
 use crate::Error;
 use crate::Result;
 

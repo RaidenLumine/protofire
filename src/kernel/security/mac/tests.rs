@@ -1,4 +1,4 @@
-//! src/kernel/process/mac/tests.rs
+//! src/kernel/security/mac/tests.rs
 //!
 //! Host tests for the MAC policy engine and object classification.
 

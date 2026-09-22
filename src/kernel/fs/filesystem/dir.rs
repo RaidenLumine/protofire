@@ -2,7 +2,7 @@
 //!
 //! FileSystem directory create, remove, stat, read methods.
 
-use crate::kernel::process::SecurityToken;
+use crate::kernel::security::SecurityToken;
 use crate::Result;
 
 use super::super::vfs::DirectoryEntry;

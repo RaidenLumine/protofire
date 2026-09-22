@@ -397,8 +397,13 @@ impl VfsTrait for ServiceFs {
 pub fn mount_servicefs(mount_path: &str) -> Result<()> {
     let fs = crate::kernel::fs::global().ok_or(Error::InternalError)?;
     let mut fs_guard = fs.lock();
-    fs_guard.register("servicefs", Arc::new(ServiceFs));
-    fs_guard.mount("/dev/protofire-servicefs", mount_path, "servicefs", 0)
+    fs_guard.register(crate::kernel::fs::SERVICEFS_FS_NAME, Arc::new(ServiceFs));
+    fs_guard.mount(
+        crate::kernel::fs::SERVICEFS_MOUNT_DEVICE,
+        mount_path,
+        crate::kernel::fs::SERVICEFS_FS_NAME,
+        0,
+    )
 }
 
 // ---------------------------------------------------------------------------

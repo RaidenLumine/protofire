@@ -52,12 +52,12 @@ pub use super::super::thread::X86_64UserThreadContext;
 
 use super::constants::*;
 
-// Re-export types that were moved to the security submodule so existing
-// `use super::types::*` imports continue to work.
+// Re-export types from the security layer so existing `use super::types::*`
+// imports continue to work.
 #[allow(unused_imports)]
-pub(crate) use super::security::IntegrityLevel;
+pub(crate) use crate::kernel::security::IntegrityLevel;
 #[allow(unused_imports)]
-pub(crate) use super::security::SecurityToken;
+pub(crate) use crate::kernel::security::SecurityToken;
 
 /// Per-file-descriptor flags stored alongside the handle binding.
 ///

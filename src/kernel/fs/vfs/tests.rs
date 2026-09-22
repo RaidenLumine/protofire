@@ -6,8 +6,8 @@
 use super::*;
 use crate::abi::fs::FILE_KIND_DIRECTORY;
 use crate::abi::fs::FILE_KIND_FILE;
-use crate::kernel::process::IntegrityLevel;
-use crate::kernel::process::SecurityToken;
+use crate::kernel::security::IntegrityLevel;
+use crate::kernel::security::SecurityToken;
 use crate::Error;
 
 #[test]

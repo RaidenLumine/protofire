@@ -8,7 +8,7 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::process::SecurityToken;
+use crate::kernel::security::SecurityToken;
 use crate::Result;
 
 use super::super::block::BlockDeviceInfo;

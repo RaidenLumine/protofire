@@ -4,7 +4,7 @@
 
 use alloc::sync::Arc;
 
-use crate::kernel::process::SecurityToken;
+use crate::kernel::security::SecurityToken;
 use crate::Result;
 
 use super::filesystem::access_helpers::mount_allows_write_for_security_token;

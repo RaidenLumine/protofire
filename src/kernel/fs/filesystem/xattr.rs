@@ -5,9 +5,9 @@
 
 use alloc::vec::Vec;
 
-use crate::kernel::process::SecurityToken;
-use crate::kernel::process::HANDLE_RIGHT_READ;
-use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::kernel::security::SecurityToken;
+use crate::kernel::security::HANDLE_RIGHT_READ;
+use crate::kernel::security::HANDLE_RIGHT_WRITE;
 use crate::Error;
 use crate::Result;
 

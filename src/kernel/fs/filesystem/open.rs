@@ -2,7 +2,7 @@
 //!
 //! FileSystem open and create file methods.
 
-use crate::kernel::process::SecurityToken;
+use crate::kernel::security::SecurityToken;
 use crate::Result;
 
 use super::super::FileHandle;

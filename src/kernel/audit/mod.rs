@@ -77,6 +77,26 @@ pub fn emit_record(record: types::AuditRecord) -> bool {
     global().map(|buffer| buffer.emit(record)).unwrap_or(false)
 }
 
+/// Who is running, and when: the actor fields an audit record carries.
+///
+/// Resolved here rather than by each producer.  Audit is the layer that
+/// reaches the scheduler anyway; a producer below it — the MAC checks in the
+/// security layer, for instance — should be able to say *what* happened
+/// without also having to know how to find the current process.
+///
+/// Returns `(pid, tick)`, both zero when no scheduler is installed (host
+/// tests).
+pub fn current_actor() -> (u32, u64) {
+    let Some(scheduler) = crate::kernel::process::Scheduler::global() else {
+        return (0, 0);
+    };
+    let pid = scheduler
+        .current_thread()
+        .map(|thread| thread.process().pid())
+        .unwrap_or(0);
+    (pid, scheduler.current_tick())
+}
+
 /// Read up to `max` audit records from the global buffer into `records`.
 /// Returns the number of records actually copied, or 0 if not initialised.
 pub fn read_records(records: &mut [types::AuditRecord]) -> usize {

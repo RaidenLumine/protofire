@@ -39,7 +39,6 @@ pub mod ntfs;
 pub mod partition;
 pub mod path;
 pub mod pipe;
-pub mod procfs;
 pub mod servicefs;
 pub mod simplefs;
 pub mod squashfs;
@@ -84,6 +83,29 @@ use filesystem::types::MountPoint;
 // ── Global filesystem singleton ──
 static GLOBAL_FS: AtomicPtr<Mutex<FileSystem>> = AtomicPtr::new(ptr::null_mut());
 
+/// Projection of the mount table, for readers that run *inside* the filesystem
+/// lock.
+///
+/// `/proc/mounts` is produced while the VFS holds the filesystem lock: the
+/// producer runs inside the very read that found the node, so a producer that
+/// takes that lock again deadlocks the machine.  It did — `/proc` became
+/// reachable and `cat /proc/mounts` stopped the shell dead.
+///
+/// The mount table stays the only source of truth: this is written from it, by
+/// [`publish_mount_snapshot`], at the two points that change it (mount and
+/// unmount), and readers take only this lock.  The lock order is always
+/// filesystem → snapshot, never the other way round.
+static MOUNT_SNAPSHOT: Mutex<Vec<MountInfo>> = Mutex::new(Vec::new());
+
+/// The mount table as of the last mount or unmount.
+pub fn mount_snapshot() -> Vec<MountInfo> {
+    MOUNT_SNAPSHOT.lock().clone()
+}
+
+pub(crate) fn publish_mount_snapshot(entries: Vec<MountInfo>) {
+    *MOUNT_SNAPSHOT.lock() = entries;
+}
+
 // ── Public constants ──
 pub const SEEK_SET: usize = 0;
 pub const SEEK_CUR: usize = 1;
@@ -102,6 +124,10 @@ pub(crate) const KERNEL_LOGS_MOUNT_PATH: &str = "/system/logs";
 pub(crate) const PROCFS_MOUNT_PATH: &str = "/proc";
 pub(crate) const DEVFS_MOUNT_PATH: &str = "/dev";
 pub(crate) const SERVICEFS_MOUNT_PATH: &str = "/service";
+pub(crate) const DEVFS_FS_NAME: &str = "devfs";
+pub(crate) const DEVFS_MOUNT_DEVICE: &str = "/dev/adastra-devfs";
+pub(crate) const SERVICEFS_FS_NAME: &str = "servicefs";
+pub(crate) const SERVICEFS_MOUNT_DEVICE: &str = "/dev/protofire-servicefs";
 pub(crate) const TEMP_FS_NAME: &str = "simplefs-temp";
 pub(crate) const TEMP_MOUNT_DEVICE: &str = "/dev/protofire-temp";
 pub(crate) const TEMP_MOUNT_PATH: &str = "/tmp";

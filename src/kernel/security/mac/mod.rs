@@ -1,4 +1,4 @@
-//! src/kernel/process/mac/mod.rs
+//! src/kernel/security/mac/mod.rs
 //!
 //! Mandatory Access Control (MAC) — a SELinux-style Type-Enforcement engine.
 //!
@@ -7,7 +7,7 @@
 //! - `check`   — object-type classification and enforcement entry points.
 //!
 //! The subject label (`mac_type`) lives on
-//! [`crate::kernel::process::SecurityToken`]; the object label for a file is
+//! [`crate::kernel::security::SecurityToken`]; the object label for a file is
 //! derived from its path (with optional runtime overrides).  When no policy is
 //! loaded the engine is permissive, so existing behaviour is unchanged; once
 //! enforcement is enabled, requests matching no rule are denied by default.

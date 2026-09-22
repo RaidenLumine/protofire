@@ -15,12 +15,13 @@ pub mod fork;
 pub mod handle_entry;
 pub mod handle_ops;
 pub mod lifecycle;
-pub mod security;
 pub mod socket_ops;
 pub mod types;
 
 // ── Re-exports (consumed by `crate::kernel::process`) ───────────────────
 
+pub use crate::kernel::security::IntegrityLevel;
+pub use crate::kernel::security::SecurityToken;
 pub use constants::FileDescriptor;
 pub use constants::GroupId;
 pub use constants::Handle;
@@ -36,8 +37,6 @@ pub use constants::STDERR_FD;
 pub use constants::STDIN_FD;
 pub use constants::STDOUT_FD;
 pub use handle_entry::home_dir_for_uid;
-pub use security::IntegrityLevel;
-pub use security::SecurityToken;
 pub use types::ExceptionTermination;
 pub use types::FdFlags;
 pub use types::HandleEntry;
