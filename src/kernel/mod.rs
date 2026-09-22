@@ -209,6 +209,10 @@ impl Kernel {
 
         self.prepare_arch_paging();
 
+        // The kernel's tables now describe what it says they do, or this says
+        // where they do not — at boot, rather than from a fault later.
+        crate::kernel::memory::arch::check_kernel_map_coverage();
+
         let t1 = tick();
         boot.record_subsystem(
             "memory",

@@ -313,3 +313,14 @@ pub(crate) fn planned_kernel_region(
 ) -> Option<PlannedKernelRegion> {
     None
 }
+/// Check that the running kernel tables cover what the kernel's facts describe.
+///
+/// Arch-neutral entry point so the boot path asks once, the same way on every
+/// architecture that can answer; a target whose tables this does not cover
+/// says nothing rather than lying.
+pub(crate) fn check_kernel_map_coverage() {
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    {
+        crate::arch::x86_64::paging::report_kernel_map_coverage();
+    }
+}

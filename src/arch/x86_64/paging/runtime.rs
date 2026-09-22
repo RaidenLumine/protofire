@@ -1078,3 +1078,71 @@ pub unsafe fn unmap_page(_virtual_address: usize) -> bool {
 pub unsafe fn restore_page(_virtual_address: usize) -> bool {
     false
 }
+/// Read the present bit of the 4 KiB leaf covering `virtual_address`.
+///
+/// Read-only on purpose: the walk the invalidation uses splits large pages to
+/// reach a leaf, so checking the tables with it would be the thing that changed
+/// them.  A large page counts as covering the address, since it maps it.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+fn leaf_is_present(virtual_address: usize) -> bool {
+    let root =
+        unsafe { crate::arch::x86_64::control_regs::read_cr3() as usize } & 0x000f_ffff_ffff_f000;
+    if root == 0 {
+        return false;
+    }
+    let mut table = root as *const u64;
+    for (index, shift) in [
+        ((virtual_address >> 39) & 0x1ff, 39u32),
+        ((virtual_address >> 30) & 0x1ff, 30),
+        ((virtual_address >> 21) & 0x1ff, 21),
+        ((virtual_address >> 12) & 0x1ff, 12),
+    ] {
+        let entry = unsafe { core::ptr::read_volatile(table.add(index)) };
+        if entry & PAGE_ENTRY_PRESENT == 0 {
+            return false;
+        }
+        if entry & PAGE_ENTRY_LARGE != 0 && shift != 12 {
+            return true; // a large page maps it
+        }
+        table = (entry & PAGE_ENTRY_ADDRESS_MASK) as *const u64;
+    }
+    true
+}
+
+/// Report, once, where the kernel's own tables disagree with its own facts.
+///
+/// Every fault the aarch64 chase ended on was a page the kernel believed was
+/// mapped and the hardware did not have.  x86_64 had no way to notice that
+/// about itself either — its layout-sensitive AP stall was the same shape — so
+/// it gets the same positive check: for each range the facts describe, look at
+/// the leaf the running tables hold for that range's first, middle and last
+/// address, and say so when one is missing.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub(crate) fn report_kernel_map_coverage() {
+    static REPORTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    let Some(facts) = crate::kernel::memory::map_facts::get() else {
+        return;
+    };
+    let mut missing = 0usize;
+    for (kind, address) in facts.probe_addresses() {
+        // A stack window is a reservation: its pages appear as stacks are
+        // created, so "not mapped yet" is its expected answer.
+        if kind == crate::kernel::memory::map_facts::RegionKind::StackWindow {
+            continue;
+        }
+        if leaf_is_present(address) {
+            continue;
+        }
+        missing += 1;
+        if !REPORTED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+            crate::println!(
+                "[mm    ] kernel table gap: {:#x} ({:?}) is not mapped",
+                address,
+                kind
+            );
+        }
+    }
+    if missing > 0 {
+        crate::println!("[mm    ] kernel table gaps: {} total", missing);
+    }
+}
