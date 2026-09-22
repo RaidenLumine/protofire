@@ -69,6 +69,13 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Capture the guest's serial output with `-serial file:` rather than `-serial
+# stdio` plus a shell redirect.  The two are not equivalent: QEMU's stdio
+# back-end is qualified by the *terminal it inherits*, and with a tty on stdin
+# and a redirected stdout it sent nothing at all here — the log stayed at zero
+# bytes, the boot looked like a machine that never started, and the check went
+# red or green depending on how the caller had launched it.  The x86_64 check
+# was converted for the same reason; see it for the rest of the note.
 set +e
 timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -machine virt \
@@ -77,10 +84,10 @@ timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -m "$QEMU_RAM" \
     -kernel "$KERNEL_BIN" \
     -display none \
-    -serial stdio \
+    -serial "file:$log_file" \
     -no-reboot \
     -no-shutdown \
-    -netdev user,id=net0 -device virtio-net-device,netdev=net0 >"$log_file" 2>&1
+    -netdev user,id=net0 -device virtio-net-device,netdev=net0 >/dev/null 2>>"$log_file"
 status=$?
 set -e
 
@@ -99,7 +106,13 @@ esac
 require_log_line() {
     pattern="$1"
     if ! grep -F "$pattern" "$log_file" >/dev/null 2>&1; then
+        bytes="$(wc -c <"$log_file" | tr -d ' ')"
         printf 'missing aarch64 runtime log: %s\n' "$pattern" >&2
+        printf '  serial log: %s bytes\n' "$bytes" >&2
+        if [ "$bytes" -eq 0 ]; then
+            printf '  the guest produced no serial output at all: that is a local\n' >&2
+            printf '  invocation problem, not a kernel hang\n' >&2
+        fi
         if [ "$remove_log_on_exit" = "0" ]; then
             printf 'full aarch64 runtime log preserved at: %s\n' "$log_file" >&2
         fi
