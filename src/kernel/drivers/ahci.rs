@@ -347,288 +347,293 @@ impl AhciPort {
     /// `bar5_phys` must be the physical base address of an AHCI controller's
     /// PCI BAR5, and the port must be implemented and have a device attached.
     unsafe fn init(bar5_phys: u64, port: u8) -> crate::Result<Self> {
-        use crate::arch::mmu::map_device_mmio;
-        use core::ptr::read_volatile;
-        use core::ptr::write_volatile;
+        unsafe {
+            use crate::arch::mmu::map_device_mmio;
+            use core::ptr::read_volatile;
+            use core::ptr::write_volatile;
 
-        // AHCI BAR5 is typically 8 KiB–64 KiB; we map the full BAR for the
-        // HBA registers and up to 32 port register blocks (32 × 0x80 = 0x1000).
-        // A safe default is 32 KiB (0x8000).
-        let bar5_size = 0x8000_usize;
-        let hba = map_device_mmio(bar5_phys, bar5_size).ok_or(crate::Error::NotFound)?;
+            // AHCI BAR5 is typically 8 KiB–64 KiB; we map the full BAR for the
+            // HBA registers and up to 32 port register blocks (32 × 0x80 = 0x1000).
+            // A safe default is 32 KiB (0x8000).
+            let bar5_size = 0x8000_usize;
+            let hba = map_device_mmio(bar5_phys, bar5_size).ok_or(crate::Error::NotFound)?;
 
-        // ── 1. Verify AHCI mode is enabled ────────────────────────────
-        let ghc: u32 = read_volatile(hba.add(AHCI_REG_GHC) as *const u32);
-        if (ghc & GHC_AE) == 0 {
-            write_volatile(hba.add(AHCI_REG_GHC) as *mut u32, ghc | GHC_AE);
-        }
+            // ── 1. Verify AHCI mode is enabled ────────────────────────────
+            let ghc: u32 = read_volatile(hba.add(AHCI_REG_GHC) as *const u32);
+            if (ghc & GHC_AE) == 0 {
+                write_volatile(hba.add(AHCI_REG_GHC) as *mut u32, ghc | GHC_AE);
+            }
 
-        // ── 2. Allocate port DMA buffers ──────────────────────────────
-        let clb_frames = AHCI_CL_TOTAL_SIZE.div_ceil(4096);
-        let fb_frames = AHCI_RFIS_SIZE.div_ceil(4096);
-        let ct_frames = AHCI_CT_TOTAL_SIZE.div_ceil(4096);
-        let io_buf_frames = 1;
+            // ── 2. Allocate port DMA buffers ──────────────────────────────
+            let clb_frames = AHCI_CL_TOTAL_SIZE.div_ceil(4096);
+            let fb_frames = AHCI_RFIS_SIZE.div_ceil(4096);
+            let ct_frames = AHCI_CT_TOTAL_SIZE.div_ceil(4096);
+            let io_buf_frames = 1;
 
-        let clb = DmaBuffer::allocate(clb_frames.max(1)).ok_or(crate::Error::OutOfMemory)?;
-        let fb = DmaBuffer::allocate(fb_frames.max(1)).ok_or(crate::Error::OutOfMemory)?;
-        let ct = DmaBuffer::allocate(ct_frames.max(1)).ok_or(crate::Error::OutOfMemory)?;
-        let io_buf = DmaBuffer::allocate(io_buf_frames).ok_or(crate::Error::OutOfMemory)?;
+            let clb = DmaBuffer::allocate(clb_frames.max(1)).ok_or(crate::Error::OutOfMemory)?;
+            let fb = DmaBuffer::allocate(fb_frames.max(1)).ok_or(crate::Error::OutOfMemory)?;
+            let ct = DmaBuffer::allocate(ct_frames.max(1)).ok_or(crate::Error::OutOfMemory)?;
+            let io_buf = DmaBuffer::allocate(io_buf_frames).ok_or(crate::Error::OutOfMemory)?;
 
-        // Verify alignment requirements (must hold even with >4 K frames).
-        debug_assert!(
-            clb.phys_addr().is_multiple_of(AHCI_CL_TOTAL_SIZE),
-            "AHCI CLB not {}-aligned at {:#x}",
-            AHCI_CL_TOTAL_SIZE,
-            clb.phys_addr()
-        );
-        debug_assert!(
-            fb.phys_addr().is_multiple_of(AHCI_RFIS_SIZE),
-            "AHCI FB not {}-aligned at {:#x}",
-            AHCI_RFIS_SIZE,
-            fb.phys_addr()
-        );
+            // Verify alignment requirements (must hold even with >4 K frames).
+            debug_assert!(
+                clb.phys_addr().is_multiple_of(AHCI_CL_TOTAL_SIZE),
+                "AHCI CLB not {}-aligned at {:#x}",
+                AHCI_CL_TOTAL_SIZE,
+                clb.phys_addr()
+            );
+            debug_assert!(
+                fb.phys_addr().is_multiple_of(AHCI_RFIS_SIZE),
+                "AHCI FB not {}-aligned at {:#x}",
+                AHCI_RFIS_SIZE,
+                fb.phys_addr()
+            );
 
-        // Clear the Received FIS region (prevents stale data on first use).
-        // The DmaBuffer constructor already zeroes, but explicitly clear it
-        // for clarity.
-        core::ptr::write_bytes(fb.as_ptr(), 0, AHCI_RFIS_SIZE);
+            // Clear the Received FIS region (prevents stale data on first use).
+            // The DmaBuffer constructor already zeroes, but explicitly clear it
+            // for clarity.
+            core::ptr::write_bytes(fb.as_ptr(), 0, AHCI_RFIS_SIZE);
 
-        // ── 3. Stop port command engine (if running) ──────────────────
-        let cmd_addr = port_reg(hba, port, PORT_CMD);
-        let mut cmd: u32 = read_volatile(cmd_addr as *const u32);
+            // ── 3. Stop port command engine (if running) ──────────────────
+            let cmd_addr = port_reg(hba, port, PORT_CMD);
+            let mut cmd: u32 = read_volatile(cmd_addr as *const u32);
 
-        // Clear ST and FRE to stop the command engine.
-        if (cmd & CMD_ST) != 0 {
-            write_volatile(cmd_addr as *mut u32, cmd & !CMD_ST);
-        }
-        // Wait for CR (Command List Running) to clear.
-        let mut waited = 0;
-        loop {
+            // Clear ST and FRE to stop the command engine.
+            if (cmd & CMD_ST) != 0 {
+                write_volatile(cmd_addr as *mut u32, cmd & !CMD_ST);
+            }
+            // Wait for CR (Command List Running) to clear.
+            let mut waited = 0;
+            loop {
+                cmd = read_volatile(cmd_addr as *const u32);
+                if (cmd & CMD_CR) == 0 {
+                    break;
+                }
+                waited += 1;
+                if waited > PORT_CMD_POLL_LIMIT {
+                    return Err(crate::Error::TimedOut);
+                }
+                core::hint::spin_loop();
+            }
+
+            // Clear FRE.
+            if (cmd & CMD_FRE) != 0 {
+                write_volatile(cmd_addr as *mut u32, cmd & !CMD_FRE);
+            }
+            // Wait for FR (FIS Receive Running) to clear.
+            let mut waited = 0;
+            loop {
+                cmd = read_volatile(cmd_addr as *const u32);
+                if (cmd & CMD_FR) == 0 {
+                    break;
+                }
+                waited += 1;
+                if waited > PORT_CMD_POLL_LIMIT {
+                    return Err(crate::Error::TimedOut);
+                }
+                core::hint::spin_loop();
+            }
+
+            // ── 4. Clear port error status ────────────────────────────────
+            write_volatile(port_reg(hba, port, PORT_SERR) as *mut u32, PX_SERR_CLEAR);
+            // Clear pending interrupts.
+            write_volatile(port_reg(hba, port, PORT_IS) as *mut u32, 0xFFFF_FFFF);
+
+            // ── 5. Set up port DMA pointers ───────────────────────────────
+            let clb_phys = clb.phys_addr() as u64;
+            let fb_phys = fb.phys_addr() as u64;
+
+            write_volatile(port_reg(hba, port, PORT_CLB) as *mut u32, clb_phys as u32);
+            write_volatile(
+                port_reg(hba, port, PORT_CLBU) as *mut u32,
+                (clb_phys >> 32) as u32,
+            );
+            write_volatile(port_reg(hba, port, PORT_FB) as *mut u32, fb_phys as u32);
+            write_volatile(
+                port_reg(hba, port, PORT_FBU) as *mut u32,
+                (fb_phys >> 32) as u32,
+            );
+
+            // ── 6. Start port command engine ──────────────────────────────
+            // Set FRE first, then ST, per the AHCI init sequence.
             cmd = read_volatile(cmd_addr as *const u32);
-            if (cmd & CMD_CR) == 0 {
-                break;
+            cmd |= CMD_FRE | CMD_ST;
+            write_volatile(cmd_addr as *mut u32, cmd);
+
+            // Confirm ST and FRE are active.
+            let mut waited = 0;
+            loop {
+                cmd = read_volatile(cmd_addr as *const u32);
+                if (cmd & (CMD_ST | CMD_FRE)) == (CMD_ST | CMD_FRE) {
+                    break;
+                }
+                waited += 1;
+                if waited > PORT_CMD_POLL_LIMIT {
+                    return Err(crate::Error::TimedOut);
+                }
+                core::hint::spin_loop();
             }
-            waited += 1;
-            if waited > PORT_CMD_POLL_LIMIT {
-                return Err(crate::Error::TimedOut);
-            }
-            core::hint::spin_loop();
+
+            // ── 7. Identify device ────────────────────────────────────────
+            let mut port_ctrl = Self {
+                hba,
+                port,
+                clb,
+                fb,
+                ct,
+                block_count: 0,
+                block_size: 512,
+                model: [0u8; 40],
+                io_buf: Mutex::new(io_buf),
+            };
+
+            port_ctrl.identify_device()?;
+
+            Ok(port_ctrl)
         }
-
-        // Clear FRE.
-        if (cmd & CMD_FRE) != 0 {
-            write_volatile(cmd_addr as *mut u32, cmd & !CMD_FRE);
-        }
-        // Wait for FR (FIS Receive Running) to clear.
-        let mut waited = 0;
-        loop {
-            cmd = read_volatile(cmd_addr as *const u32);
-            if (cmd & CMD_FR) == 0 {
-                break;
-            }
-            waited += 1;
-            if waited > PORT_CMD_POLL_LIMIT {
-                return Err(crate::Error::TimedOut);
-            }
-            core::hint::spin_loop();
-        }
-
-        // ── 4. Clear port error status ────────────────────────────────
-        write_volatile(port_reg(hba, port, PORT_SERR) as *mut u32, PX_SERR_CLEAR);
-        // Clear pending interrupts.
-        write_volatile(port_reg(hba, port, PORT_IS) as *mut u32, 0xFFFF_FFFF);
-
-        // ── 5. Set up port DMA pointers ───────────────────────────────
-        let clb_phys = clb.phys_addr() as u64;
-        let fb_phys = fb.phys_addr() as u64;
-
-        write_volatile(port_reg(hba, port, PORT_CLB) as *mut u32, clb_phys as u32);
-        write_volatile(
-            port_reg(hba, port, PORT_CLBU) as *mut u32,
-            (clb_phys >> 32) as u32,
-        );
-        write_volatile(port_reg(hba, port, PORT_FB) as *mut u32, fb_phys as u32);
-        write_volatile(
-            port_reg(hba, port, PORT_FBU) as *mut u32,
-            (fb_phys >> 32) as u32,
-        );
-
-        // ── 6. Start port command engine ──────────────────────────────
-        // Set FRE first, then ST, per the AHCI init sequence.
-        cmd = read_volatile(cmd_addr as *const u32);
-        cmd |= CMD_FRE | CMD_ST;
-        write_volatile(cmd_addr as *mut u32, cmd);
-
-        // Confirm ST and FRE are active.
-        let mut waited = 0;
-        loop {
-            cmd = read_volatile(cmd_addr as *const u32);
-            if (cmd & (CMD_ST | CMD_FRE)) == (CMD_ST | CMD_FRE) {
-                break;
-            }
-            waited += 1;
-            if waited > PORT_CMD_POLL_LIMIT {
-                return Err(crate::Error::TimedOut);
-            }
-            core::hint::spin_loop();
-        }
-
-        // ── 7. Identify device ────────────────────────────────────────
-        let mut port_ctrl = Self {
-            hba,
-            port,
-            clb,
-            fb,
-            ct,
-            block_count: 0,
-            block_size: 512,
-            model: [0u8; 40],
-            io_buf: Mutex::new(io_buf),
-        };
-
-        port_ctrl.identify_device()?;
-
-        Ok(port_ctrl)
     }
 
     /// Send IDENTIFY DEVICE to the attached SATA device and parse the
     /// response into `block_count` and `model`.
     unsafe fn identify_device(&mut self) -> crate::Result<()> {
-        use core::ptr::read_volatile;
-        use core::ptr::write_volatile;
+        unsafe {
+            use core::ptr::read_volatile;
+            use core::ptr::write_volatile;
 
-        // Use the IO bounce buffer as the 512-byte IDENTIFY data destination.
-        let identify_buf = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
+            // Use the IO bounce buffer as the 512-byte IDENTIFY data destination.
+            let identify_buf = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
 
-        let ct_phys = self.ct.phys_addr() as u64;
-        let cmd_slot = 0; // Use slot 0 for IDENTIFY.
+            let ct_phys = self.ct.phys_addr() as u64;
+            let cmd_slot = 0; // Use slot 0 for IDENTIFY.
 
-        // Build the H2D Register FIS.
-        let fis = H2dRegisterFis {
-            fis_type: FIS_TYPE_H2D,
-            flags: 0x80, // C=1 (copy), W=0 (read from device)
-            command: ATA_CMD_IDENTIFY,
-            feature_low: 0,
-            lba0: 0,
-            lba1: 0,
-            lba2: 0,
-            device: ATA_DEV_LBA,
-            lba3: 0,
-            lba4: 0,
-            lba5: 0,
-            feature_high: 0,
-            count_low: 0,
-            count_high: 0,
-            _rsvd: [0u8; 6],
-        };
+            // Build the H2D Register FIS.
+            let fis = H2dRegisterFis {
+                fis_type: FIS_TYPE_H2D,
+                flags: 0x80, // C=1 (copy), W=0 (read from device)
+                command: ATA_CMD_IDENTIFY,
+                feature_low: 0,
+                lba0: 0,
+                lba1: 0,
+                lba2: 0,
+                device: ATA_DEV_LBA,
+                lba3: 0,
+                lba4: 0,
+                lba5: 0,
+                feature_high: 0,
+                count_low: 0,
+                count_high: 0,
+                _rsvd: [0u8; 6],
+            };
 
-        // Write the FIS at offset 0 of the command table.
-        write_volatile(self.ct.as_ptr() as *mut H2dRegisterFis, fis);
+            // Write the FIS at offset 0 of the command table.
+            write_volatile(self.ct.as_ptr() as *mut H2dRegisterFis, fis);
 
-        // Build one PRDT entry pointing to the IDENTIFY data buffer.
-        let prdt_entry = AhciPrdtEntry {
-            dba: identify_buf.phys_addr() as u32,
-            dbau: (identify_buf.phys_addr() >> 32) as u32,
-            _rsvd: 0,
-            dbc: 512 - 1, // Data byte count = 512 (0-based: 511 = 512 bytes)
-        };
-        write_volatile(
-            self.ct.as_ptr().add(AHCI_CT_BASE_SIZE) as *mut AhciPrdtEntry,
-            prdt_entry,
-        );
+            // Build one PRDT entry pointing to the IDENTIFY data buffer.
+            let prdt_entry = AhciPrdtEntry {
+                dba: identify_buf.phys_addr() as u32,
+                dbau: (identify_buf.phys_addr() >> 32) as u32,
+                _rsvd: 0,
+                dbc: 512 - 1, // Data byte count = 512 (0-based: 511 = 512 bytes)
+            };
+            write_volatile(
+                self.ct.as_ptr().add(AHCI_CT_BASE_SIZE) as *mut AhciPrdtEntry,
+                prdt_entry,
+            );
 
-        // Set up the Command List entry (slot 0).
-        let cl_entry = self.clb.as_ptr().add(cmd_slot * AHCI_CL_ENTRY_SIZE) as *mut AhciCmdHeader;
-        write_volatile(
-            cl_entry,
-            AhciCmdHeader {
-                _rsvd0: 0,
-                prdtl: 1, // One PRDT entry
-                _rsvd1: [0u8; 12],
-                ctba: ct_phys as u32,
-                ctbau: (ct_phys >> 32) as u32,
-                _rsvd6: 0,
-                _rsvd7: 0,
-            },
-        );
+            // Set up the Command List entry (slot 0).
+            let cl_entry =
+                self.clb.as_ptr().add(cmd_slot * AHCI_CL_ENTRY_SIZE) as *mut AhciCmdHeader;
+            write_volatile(
+                cl_entry,
+                AhciCmdHeader {
+                    _rsvd0: 0,
+                    prdtl: 1, // One PRDT entry
+                    _rsvd1: [0u8; 12],
+                    ctba: ct_phys as u32,
+                    ctbau: (ct_phys >> 32) as u32,
+                    _rsvd6: 0,
+                    _rsvd7: 0,
+                },
+            );
 
-        // Ring the command issue doorbell.
-        write_volatile(
-            port_reg(self.hba, self.port, PORT_CI) as *mut u32,
-            1 << cmd_slot,
-        );
+            // Ring the command issue doorbell.
+            write_volatile(
+                port_reg(self.hba, self.port, PORT_CI) as *mut u32,
+                1 << cmd_slot,
+            );
 
-        // Poll for completion (wait for slot bit to clear in PxCI).
-        let mut waited = 0;
-        loop {
-            let ci: u32 = read_volatile(port_reg(self.hba, self.port, PORT_CI) as *const u32);
-            if (ci & (1 << cmd_slot)) == 0 {
-                break;
+            // Poll for completion (wait for slot bit to clear in PxCI).
+            let mut waited = 0;
+            loop {
+                let ci: u32 = read_volatile(port_reg(self.hba, self.port, PORT_CI) as *const u32);
+                if (ci & (1 << cmd_slot)) == 0 {
+                    break;
+                }
+                waited += 1;
+                if waited > IDENTIFY_POLL_LIMIT {
+                    return Err(crate::Error::TimedOut);
+                }
+                core::hint::spin_loop();
             }
-            waited += 1;
-            if waited > IDENTIFY_POLL_LIMIT {
-                return Err(crate::Error::TimedOut);
+
+            // Check for error status (PxTFD.ERR bit or PxIS.TFES).
+            let tfd: u32 = read_volatile(port_reg(self.hba, self.port, PORT_TFD) as *const u32);
+            if (tfd & 0x01) != 0 {
+                // Bit 0 of TFD = ERR (error register non-zero)
+                return Err(crate::Error::NotFound);
             }
-            core::hint::spin_loop();
-        }
+            let pis: u32 = read_volatile(port_reg(self.hba, self.port, PORT_IS) as *const u32);
+            if (pis & PIS_TFES) != 0 {
+                return Err(crate::Error::NotFound);
+            }
 
-        // Check for error status (PxTFD.ERR bit or PxIS.TFES).
-        let tfd: u32 = read_volatile(port_reg(self.hba, self.port, PORT_TFD) as *const u32);
-        if (tfd & 0x01) != 0 {
-            // Bit 0 of TFD = ERR (error register non-zero)
-            return Err(crate::Error::NotFound);
-        }
-        let pis: u32 = read_volatile(port_reg(self.hba, self.port, PORT_IS) as *const u32);
-        if (pis & PIS_TFES) != 0 {
-            return Err(crate::Error::NotFound);
-        }
+            // Parse the IDENTIFY data (512 bytes at identify_buf).
+            // Word 60-61: LBA28 capacity (if word 83 bit 10 = 0, no LBA48)
+            // Word 100-103: LBA48 capacity
+            let data = identify_buf.as_slice();
+            let words = { core::slice::from_raw_parts(data.as_ptr() as *const u16, 256) };
 
-        // Parse the IDENTIFY data (512 bytes at identify_buf).
-        // Word 60-61: LBA28 capacity (if word 83 bit 10 = 0, no LBA48)
-        // Word 100-103: LBA48 capacity
-        let data = identify_buf.as_slice();
-        let words = unsafe { core::slice::from_raw_parts(data.as_ptr() as *const u16, 256) };
+            // Check for LBA48 support (word 83, bit 10).
+            let support_lba48 = (words[83] & (1 << 10)) != 0;
 
-        // Check for LBA48 support (word 83, bit 10).
-        let support_lba48 = (words[83] & (1 << 10)) != 0;
+            self.block_count = if support_lba48 {
+                // Words 100-103 form a 64-bit LBA count (little-endian).
+                (words[100] as u64)
+                    | ((words[101] as u64) << 16)
+                    | ((words[102] as u64) << 32)
+                    | ((words[103] as u64) << 48)
+            } else {
+                // Words 60-61 form a 28-bit LBA count.
+                ((words[60] as u64) | ((words[61] as u64) << 16)) & 0x0FFF_FFFF
+            };
 
-        self.block_count = if support_lba48 {
-            // Words 100-103 form a 64-bit LBA count (little-endian).
-            (words[100] as u64)
-                | ((words[101] as u64) << 16)
-                | ((words[102] as u64) << 32)
-                | ((words[103] as u64) << 48)
-        } else {
-            // Words 60-61 form a 28-bit LBA count.
-            ((words[60] as u64) | ((words[61] as u64) << 16)) & 0x0FFF_FFFF
-        };
-
-        // Copy model string (words 27-46, 20 words = 40 bytes, ATA byte-swapped).
-        let model_start = 27 * 2;
-        let model_bytes = &data[model_start..model_start + 40];
-        for (i, chunk) in model_bytes.chunks(2).enumerate() {
-            if chunk.len() == 2 {
-                self.model[i * 2] = chunk[1]; // high byte first (big-endian within each word)
-                if (i * 2 + 1) < 40 {
-                    self.model[i * 2 + 1] = chunk[0];
+            // Copy model string (words 27-46, 20 words = 40 bytes, ATA byte-swapped).
+            let model_start = 27 * 2;
+            let model_bytes = &data[model_start..model_start + 40];
+            for (i, chunk) in model_bytes.chunks(2).enumerate() {
+                if chunk.len() == 2 {
+                    self.model[i * 2] = chunk[1]; // high byte first (big-endian within each word)
+                    if (i * 2 + 1) < 40 {
+                        self.model[i * 2 + 1] = chunk[0];
+                    }
                 }
             }
+
+            // Log identification result.
+            let model_bytes: alloc::vec::Vec<u8> = data[27 * 2..27 * 2 + 40]
+                .chunks(2)
+                .flat_map(|w| [w[1], w[0]])
+                .collect();
+            let model_str = core::str::from_utf8(&model_bytes).unwrap_or("(invalid utf8)");
+            crate::println!(
+                "[ahci  ] port {}: {} blocks, model: {}",
+                self.port,
+                self.block_count,
+                model_str,
+            );
+
+            Ok(())
         }
-
-        // Log identification result.
-        let model_bytes: alloc::vec::Vec<u8> = data[27 * 2..27 * 2 + 40]
-            .chunks(2)
-            .flat_map(|w| [w[1], w[0]])
-            .collect();
-        let model_str = core::str::from_utf8(&model_bytes).unwrap_or("(invalid utf8)");
-        crate::println!(
-            "[ahci  ] port {}: {} blocks, model: {}",
-            self.port,
-            self.block_count,
-            model_str,
-        );
-
-        Ok(())
     }
 
     /// Submit a DMA command via the command list and poll for completion.
@@ -646,101 +651,104 @@ impl AhciPort {
         is_write: bool,
         buf_phys: u64,
     ) -> crate::Result<()> {
-        use core::ptr::read_volatile;
-        use core::ptr::write_volatile;
+        unsafe {
+            use core::ptr::read_volatile;
+            use core::ptr::write_volatile;
 
-        let ct_phys = self.ct.phys_addr() as u64;
-        let cmd_slot = 0; // Single slot for Phase 1.
+            let ct_phys = self.ct.phys_addr() as u64;
+            let cmd_slot = 0; // Single slot for Phase 1.
 
-        let data_byte_count = (block_count as usize) * 512;
+            let data_byte_count = (block_count as usize) * 512;
 
-        // ── 1. Build the H2D Register FIS ──────────────────────────────
-        let fis = H2dRegisterFis {
-            fis_type: FIS_TYPE_H2D,
-            flags: if is_write { 0x80 | (1 << 6) } else { 0x80 }, // C=1, W=write
-            command: fis_command,
-            feature_low: 0,
-            lba0: lba as u8,
-            lba1: (lba >> 8) as u8,
-            lba2: (lba >> 16) as u8,
-            device: ATA_DEV_LBA | ((lba >> 24) as u8 & 0x0F),
-            lba3: (lba >> 32) as u8,
-            lba4: (lba >> 40) as u8,
-            lba5: (lba >> 48) as u8,
-            feature_high: 0,
-            count_low: block_count as u8,
-            count_high: (block_count >> 8) as u8,
-            _rsvd: [0u8; 6],
-        };
-        write_volatile(self.ct.as_ptr() as *mut H2dRegisterFis, fis);
+            // ── 1. Build the H2D Register FIS ──────────────────────────────
+            let fis = H2dRegisterFis {
+                fis_type: FIS_TYPE_H2D,
+                flags: if is_write { 0x80 | (1 << 6) } else { 0x80 }, // C=1, W=write
+                command: fis_command,
+                feature_low: 0,
+                lba0: lba as u8,
+                lba1: (lba >> 8) as u8,
+                lba2: (lba >> 16) as u8,
+                device: ATA_DEV_LBA | ((lba >> 24) as u8 & 0x0F),
+                lba3: (lba >> 32) as u8,
+                lba4: (lba >> 40) as u8,
+                lba5: (lba >> 48) as u8,
+                feature_high: 0,
+                count_low: block_count as u8,
+                count_high: (block_count >> 8) as u8,
+                _rsvd: [0u8; 6],
+            };
+            write_volatile(self.ct.as_ptr() as *mut H2dRegisterFis, fis);
 
-        // ── 2. Build the PRDT entry ───────────────────────────────────
-        let prdt_entry = AhciPrdtEntry {
-            dba: buf_phys as u32,
-            dbau: (buf_phys >> 32) as u32,
-            _rsvd: 0,
-            dbc: (data_byte_count - 1) as u32, // 0-based byte count
-        };
-        write_volatile(
-            self.ct.as_ptr().add(AHCI_CT_BASE_SIZE) as *mut AhciPrdtEntry,
-            prdt_entry,
-        );
-
-        // ── 3. Set up the Command List entry (slot 0) ──────────────────
-        let cl_entry = self.clb.as_ptr().add(cmd_slot * AHCI_CL_ENTRY_SIZE) as *mut AhciCmdHeader;
-        write_volatile(
-            cl_entry,
-            AhciCmdHeader {
-                _rsvd0: 0,
-                prdtl: 1,
-                _rsvd1: [0u8; 12],
-                ctba: ct_phys as u32,
-                ctbau: (ct_phys >> 32) as u32,
-                _rsvd6: 0,
-                _rsvd7: 0,
-            },
-        );
-
-        // ── 4. Ring the doorbell ──────────────────────────────────────
-        // Clear any stale completion status first.
-        write_volatile(
-            port_reg(self.hba, self.port, PORT_IS) as *mut u32,
-            PIS_DHR | PIS_TFES,
-        );
-        write_volatile(
-            port_reg(self.hba, self.port, PORT_CI) as *mut u32,
-            1 << cmd_slot,
-        );
-
-        // ── 5. Poll for completion ────────────────────────────────────
-        let mut waited = 0;
-        loop {
-            let ci: u32 = read_volatile(port_reg(self.hba, self.port, PORT_CI) as *const u32);
-            if (ci & (1 << cmd_slot)) == 0 {
-                break;
-            }
-            waited += 1;
-            if waited > CMD_COMPLETE_POLL_LIMIT {
-                return Err(crate::Error::TimedOut);
-            }
-            core::hint::spin_loop();
-        }
-
-        // ── 6. Check for errors ───────────────────────────────────────
-        let tfd: u32 = read_volatile(port_reg(self.hba, self.port, PORT_TFD) as *const u32);
-        if (tfd & 0x01) != 0 {
-            // ERR bit set — read the error register for diagnostics.
-            let err_reg = ((tfd >> 8) & 0xFF) as u8;
-            crate::println!(
-                "[ahci  ] DMA cmd {:#04x} error: TFD={:#010x} ERR={:#04x}",
-                fis_command,
-                tfd,
-                err_reg,
+            // ── 2. Build the PRDT entry ───────────────────────────────────
+            let prdt_entry = AhciPrdtEntry {
+                dba: buf_phys as u32,
+                dbau: (buf_phys >> 32) as u32,
+                _rsvd: 0,
+                dbc: (data_byte_count - 1) as u32, // 0-based byte count
+            };
+            write_volatile(
+                self.ct.as_ptr().add(AHCI_CT_BASE_SIZE) as *mut AhciPrdtEntry,
+                prdt_entry,
             );
-            return Err(crate::Error::DeviceError);
-        }
 
-        Ok(())
+            // ── 3. Set up the Command List entry (slot 0) ──────────────────
+            let cl_entry =
+                self.clb.as_ptr().add(cmd_slot * AHCI_CL_ENTRY_SIZE) as *mut AhciCmdHeader;
+            write_volatile(
+                cl_entry,
+                AhciCmdHeader {
+                    _rsvd0: 0,
+                    prdtl: 1,
+                    _rsvd1: [0u8; 12],
+                    ctba: ct_phys as u32,
+                    ctbau: (ct_phys >> 32) as u32,
+                    _rsvd6: 0,
+                    _rsvd7: 0,
+                },
+            );
+
+            // ── 4. Ring the doorbell ──────────────────────────────────────
+            // Clear any stale completion status first.
+            write_volatile(
+                port_reg(self.hba, self.port, PORT_IS) as *mut u32,
+                PIS_DHR | PIS_TFES,
+            );
+            write_volatile(
+                port_reg(self.hba, self.port, PORT_CI) as *mut u32,
+                1 << cmd_slot,
+            );
+
+            // ── 5. Poll for completion ────────────────────────────────────
+            let mut waited = 0;
+            loop {
+                let ci: u32 = read_volatile(port_reg(self.hba, self.port, PORT_CI) as *const u32);
+                if (ci & (1 << cmd_slot)) == 0 {
+                    break;
+                }
+                waited += 1;
+                if waited > CMD_COMPLETE_POLL_LIMIT {
+                    return Err(crate::Error::TimedOut);
+                }
+                core::hint::spin_loop();
+            }
+
+            // ── 6. Check for errors ───────────────────────────────────────
+            let tfd: u32 = read_volatile(port_reg(self.hba, self.port, PORT_TFD) as *const u32);
+            if (tfd & 0x01) != 0 {
+                // ERR bit set — read the error register for diagnostics.
+                let err_reg = ((tfd >> 8) & 0xFF) as u8;
+                crate::println!(
+                    "[ahci  ] DMA cmd {:#04x} error: TFD={:#010x} ERR={:#04x}",
+                    fis_command,
+                    tfd,
+                    err_reg,
+                );
+                return Err(crate::Error::DeviceError);
+            }
+
+            Ok(())
+        }
     }
 }
 

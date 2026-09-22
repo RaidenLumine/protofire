@@ -566,10 +566,12 @@ pub fn take_dirty() -> bool {
 /// `fb_ptr` must point to a writeable linear framebuffer matching `fb_info`
 /// that stays mapped for the kernel's lifetime.
 pub unsafe fn install_console(fb_ptr: *mut u8, fb_info: FramebufferInfo) {
-    let mut console = FramebufferConsole::new(fb_ptr, fb_info);
-    console.clear();
-    *CONSOLE.lock() = Some(console);
-    mark_dirty();
+    unsafe {
+        let mut console = FramebufferConsole::new(fb_ptr, fb_info);
+        console.clear();
+        *CONSOLE.lock() = Some(console);
+        mark_dirty();
+    }
 }
 
 pub fn console_write(s: &str) {

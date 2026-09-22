@@ -424,9 +424,11 @@ pub(super) fn read_user_value<T: Copy>(
 /// bytes.  The caller must have already validated the address range.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn write_user_value_untracked<T: Copy>(addr: u64, value: &T) {
-    with_user_access_guard(|| {
-        (addr as *mut T).write_unaligned(*value);
-    })
+    unsafe {
+        with_user_access_guard(|| {
+            (addr as *mut T).write_unaligned(*value);
+        })
+    }
 }
 
 pub(super) fn user_string(ptr: *const u8, len: usize) -> Result<String> {

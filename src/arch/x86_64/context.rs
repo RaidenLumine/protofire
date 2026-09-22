@@ -92,7 +92,9 @@ unsafe extern "C" {
 /// `current` must be the currently running context and `next` must be a context
 /// that is ready to resume (its stack and instruction pointer must be valid).
 pub unsafe fn switch(current: *mut Context, next: *const Context) {
-    x86_64_context_switch(current, next);
+    unsafe {
+        x86_64_context_switch(current, next);
+    }
 }
 
 /// Enter ring-3 (user mode) with the given thread context and never return
@@ -104,58 +106,60 @@ pub unsafe fn switch(current: *mut Context, next: *const Context) {
 /// segments), a valid user-mode stack pointer, and a valid user-mode
 /// instruction pointer.  The kernel stack used before this call is discarded.
 pub unsafe fn enter_user_mode_with_context(context: &X86_64UserThreadContext) -> ! {
-    asm!(
-        // Load user-mode data segment selectors (DS, ES, FS).
-        // GS is intentionally left with the kernel selector so that
-        // per-CPU access via gs: segment works after the next interrupt
-        // without swapgs MSR state-machine complications.  User programs
-        // on this kernel do not yet use GS for thread-local storage.
-        "mov ax, word ptr [rdi + {stack_segment_offset}]",
-        "mov ds, ax",
-        "mov es, ax",
-        "mov fs, ax",
-        "push qword ptr [rdi + {stack_segment_offset}]",
-        "push qword ptr [rdi + {stack_pointer_offset}]",
-        "push qword ptr [rdi + {rflags_offset}]",
-        "push qword ptr [rdi + {code_segment_offset}]",
-        "push qword ptr [rdi + {instruction_pointer_offset}]",
-        "mov r15, qword ptr [rdi + {r15_offset}]",
-        "mov r14, qword ptr [rdi + {r14_offset}]",
-        "mov r13, qword ptr [rdi + {r13_offset}]",
-        "mov r12, qword ptr [rdi + {r12_offset}]",
-        "mov r11, qword ptr [rdi + {r11_offset}]",
-        "mov r10, qword ptr [rdi + {r10_offset}]",
-        "mov r9, qword ptr [rdi + {r9_offset}]",
-        "mov r8, qword ptr [rdi + {r8_offset}]",
-        "mov rbp, qword ptr [rdi + {rbp_offset}]",
-        "mov rbx, qword ptr [rdi + {rbx_offset}]",
-        "mov rax, qword ptr [rdi + {rax_offset}]",
-        "mov rcx, qword ptr [rdi + {rcx_offset}]",
-        "mov rdx, qword ptr [rdi + {rdx_offset}]",
-        "mov rsi, qword ptr [rdi + {rsi_offset}]",
-        "mov rdi, qword ptr [rdi + {rdi_offset}]",
-        "iretq",
-        in("rdi") context,
-        rax_offset = const offset_of!(X86_64UserThreadContext, rax),
-        rbx_offset = const offset_of!(X86_64UserThreadContext, rbx),
-        rcx_offset = const offset_of!(X86_64UserThreadContext, rcx),
-        rdx_offset = const offset_of!(X86_64UserThreadContext, rdx),
-        rsi_offset = const offset_of!(X86_64UserThreadContext, rsi),
-        rdi_offset = const offset_of!(X86_64UserThreadContext, rdi),
-        rbp_offset = const offset_of!(X86_64UserThreadContext, rbp),
-        r8_offset = const offset_of!(X86_64UserThreadContext, r8),
-        r9_offset = const offset_of!(X86_64UserThreadContext, r9),
-        r10_offset = const offset_of!(X86_64UserThreadContext, r10),
-        r11_offset = const offset_of!(X86_64UserThreadContext, r11),
-        r12_offset = const offset_of!(X86_64UserThreadContext, r12),
-        r13_offset = const offset_of!(X86_64UserThreadContext, r13),
-        r14_offset = const offset_of!(X86_64UserThreadContext, r14),
-        r15_offset = const offset_of!(X86_64UserThreadContext, r15),
-        instruction_pointer_offset = const offset_of!(X86_64UserThreadContext, instruction_pointer),
-        code_segment_offset = const offset_of!(X86_64UserThreadContext, code_segment),
-        rflags_offset = const offset_of!(X86_64UserThreadContext, rflags),
-        stack_pointer_offset = const offset_of!(X86_64UserThreadContext, stack_pointer),
-        stack_segment_offset = const offset_of!(X86_64UserThreadContext, stack_segment),
-        options(noreturn)
-    );
+    unsafe {
+        asm!(
+            // Load user-mode data segment selectors (DS, ES, FS).
+            // GS is intentionally left with the kernel selector so that
+            // per-CPU access via gs: segment works after the next interrupt
+            // without swapgs MSR state-machine complications.  User programs
+            // on this kernel do not yet use GS for thread-local storage.
+            "mov ax, word ptr [rdi + {stack_segment_offset}]",
+            "mov ds, ax",
+            "mov es, ax",
+            "mov fs, ax",
+            "push qword ptr [rdi + {stack_segment_offset}]",
+            "push qword ptr [rdi + {stack_pointer_offset}]",
+            "push qword ptr [rdi + {rflags_offset}]",
+            "push qword ptr [rdi + {code_segment_offset}]",
+            "push qword ptr [rdi + {instruction_pointer_offset}]",
+            "mov r15, qword ptr [rdi + {r15_offset}]",
+            "mov r14, qword ptr [rdi + {r14_offset}]",
+            "mov r13, qword ptr [rdi + {r13_offset}]",
+            "mov r12, qword ptr [rdi + {r12_offset}]",
+            "mov r11, qword ptr [rdi + {r11_offset}]",
+            "mov r10, qword ptr [rdi + {r10_offset}]",
+            "mov r9, qword ptr [rdi + {r9_offset}]",
+            "mov r8, qword ptr [rdi + {r8_offset}]",
+            "mov rbp, qword ptr [rdi + {rbp_offset}]",
+            "mov rbx, qword ptr [rdi + {rbx_offset}]",
+            "mov rax, qword ptr [rdi + {rax_offset}]",
+            "mov rcx, qword ptr [rdi + {rcx_offset}]",
+            "mov rdx, qword ptr [rdi + {rdx_offset}]",
+            "mov rsi, qword ptr [rdi + {rsi_offset}]",
+            "mov rdi, qword ptr [rdi + {rdi_offset}]",
+            "iretq",
+            in("rdi") context,
+            rax_offset = const offset_of!(X86_64UserThreadContext, rax),
+            rbx_offset = const offset_of!(X86_64UserThreadContext, rbx),
+            rcx_offset = const offset_of!(X86_64UserThreadContext, rcx),
+            rdx_offset = const offset_of!(X86_64UserThreadContext, rdx),
+            rsi_offset = const offset_of!(X86_64UserThreadContext, rsi),
+            rdi_offset = const offset_of!(X86_64UserThreadContext, rdi),
+            rbp_offset = const offset_of!(X86_64UserThreadContext, rbp),
+            r8_offset = const offset_of!(X86_64UserThreadContext, r8),
+            r9_offset = const offset_of!(X86_64UserThreadContext, r9),
+            r10_offset = const offset_of!(X86_64UserThreadContext, r10),
+            r11_offset = const offset_of!(X86_64UserThreadContext, r11),
+            r12_offset = const offset_of!(X86_64UserThreadContext, r12),
+            r13_offset = const offset_of!(X86_64UserThreadContext, r13),
+            r14_offset = const offset_of!(X86_64UserThreadContext, r14),
+            r15_offset = const offset_of!(X86_64UserThreadContext, r15),
+            instruction_pointer_offset = const offset_of!(X86_64UserThreadContext, instruction_pointer),
+            code_segment_offset = const offset_of!(X86_64UserThreadContext, code_segment),
+            rflags_offset = const offset_of!(X86_64UserThreadContext, rflags),
+            stack_pointer_offset = const offset_of!(X86_64UserThreadContext, stack_pointer),
+            stack_segment_offset = const offset_of!(X86_64UserThreadContext, stack_segment),
+            options(noreturn)
+        );
+    }
 }

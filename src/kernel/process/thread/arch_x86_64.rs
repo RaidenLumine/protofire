@@ -274,28 +274,34 @@ impl X86_64UserExceptionFrame {
 /// memory and no guard is needed.
 #[cfg(target_os = "none")]
 unsafe fn write_x86_64_user_exception_frame(frame_pointer: usize, frame: X86_64UserExceptionFrame) {
-    crate::arch::x86_64::user_access::with_user_access(|| {
-        (frame_pointer as *mut X86_64UserExceptionFrame).write(frame);
-    });
+    unsafe {
+        crate::arch::x86_64::user_access::with_user_access(|| {
+            (frame_pointer as *mut X86_64UserExceptionFrame).write(frame);
+        });
+    }
 }
 
 #[cfg(not(target_os = "none"))]
 unsafe fn write_x86_64_user_exception_frame(frame_pointer: usize, frame: X86_64UserExceptionFrame) {
-    (frame_pointer as *mut X86_64UserExceptionFrame).write(frame);
+    unsafe {
+        (frame_pointer as *mut X86_64UserExceptionFrame).write(frame);
+    }
 }
 
 /// Read the user-mode exception frame back from the user stack at
 /// `frame_pointer` (SMAP-guarded on bare metal, plain on host).
 #[cfg(target_os = "none")]
 unsafe fn read_x86_64_user_exception_frame(frame_pointer: usize) -> X86_64UserExceptionFrame {
-    crate::arch::x86_64::user_access::with_user_access(|| {
-        (frame_pointer as *const X86_64UserExceptionFrame).read()
-    })
+    unsafe {
+        crate::arch::x86_64::user_access::with_user_access(|| {
+            (frame_pointer as *const X86_64UserExceptionFrame).read()
+        })
+    }
 }
 
 #[cfg(not(target_os = "none"))]
 unsafe fn read_x86_64_user_exception_frame(frame_pointer: usize) -> X86_64UserExceptionFrame {
-    (frame_pointer as *const X86_64UserExceptionFrame).read()
+    unsafe { (frame_pointer as *const X86_64UserExceptionFrame).read() }
 }
 
 #[cfg(target_arch = "x86_64")]

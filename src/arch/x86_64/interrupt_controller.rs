@@ -135,8 +135,10 @@ fn mask_irqs(master_mask: u8, slave_mask: u8) {
 }
 
 unsafe fn io_wait() {
-    let mut port = Port::<u8>::new(0x80);
-    port.write(0);
+    unsafe {
+        let mut port = Port::<u8>::new(0x80);
+        port.write(0);
+    }
 }
 
 // ---------------------------------------------------------------------------

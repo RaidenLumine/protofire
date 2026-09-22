@@ -105,32 +105,34 @@ pub fn init_conduit_from_platform() -> bool {
 /// The function IDs and arguments must be valid PSCI values.  A malformed
 /// call may trap to EL3/EL2.
 unsafe fn psci_call(fnid: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
-    let mut result: i64;
-    match CONDUIT.load(core::sync::atomic::Ordering::Relaxed) {
-        CONDUIT_SMC => {
-            asm!(
-                "smc #0",
-                in("x0") fnid,
-                in("x1") arg0,
-                in("x2") arg1,
-                in("x3") arg2,
-                lateout("x0") result,
-                options(nomem, nostack, preserves_flags),
-            );
+    unsafe {
+        let mut result: i64;
+        match CONDUIT.load(core::sync::atomic::Ordering::Relaxed) {
+            CONDUIT_SMC => {
+                asm!(
+                    "smc #0",
+                    in("x0") fnid,
+                    in("x1") arg0,
+                    in("x2") arg1,
+                    in("x3") arg2,
+                    lateout("x0") result,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+            _ => {
+                asm!(
+                    "hvc #0",
+                    in("x0") fnid,
+                    in("x1") arg0,
+                    in("x2") arg1,
+                    in("x3") arg2,
+                    lateout("x0") result,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
         }
-        _ => {
-            asm!(
-                "hvc #0",
-                in("x0") fnid,
-                in("x1") arg0,
-                in("x2") arg1,
-                in("x3") arg2,
-                lateout("x0") result,
-                options(nomem, nostack, preserves_flags),
-            );
-        }
+        result
     }
-    result
 }
 
 /// Reset the machine.  Tries `SYSTEM_RESET`, then `SYSTEM_RESET2`

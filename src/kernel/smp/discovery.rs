@@ -69,12 +69,14 @@ pub struct LocalApicEntry {
 /// area (0xE0000–0xFFFFF) for the "RSD PTR " signature.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 unsafe fn find_rsdp(multiboot_info: usize) -> Option<*const Rsdp> {
-    // Try Multiboot2 tags first.
-    if let Some(rsdp) = find_rsdp_via_multiboot2(multiboot_info) {
-        return Some(rsdp);
+    unsafe {
+        // Try Multiboot2 tags first.
+        if let Some(rsdp) = find_rsdp_via_multiboot2(multiboot_info) {
+            return Some(rsdp);
+        }
+        // Fall back to BIOS area scan.
+        find_rsdp_via_bios_scan()
     }
-    // Fall back to BIOS area scan.
-    find_rsdp_via_bios_scan()
 }
 
 /// Search Multiboot2 info tags for ACPI RSDP (type 14 or 15).

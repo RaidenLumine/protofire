@@ -451,250 +451,256 @@ impl NvmeController {
     /// PCI BAR0, obtained from PCI enumeration.
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
     unsafe fn init(bar0_phys: u64) -> crate::Result<Self> {
-        use crate::arch::mmu::map_device_mmio;
-        use core::ptr::read_volatile;
-        use core::ptr::write_volatile;
+        unsafe {
+            use crate::arch::mmu::map_device_mmio;
+            use core::ptr::read_volatile;
+            use core::ptr::write_volatile;
 
-        let bar0_size = 8192; // NVMe BAR0 is at least 8 KiB
-        let bar0 = map_device_mmio(bar0_phys, bar0_size).ok_or(crate::Error::NotFound)?;
+            let bar0_size = 8192; // NVMe BAR0 is at least 8 KiB
+            let bar0 = map_device_mmio(bar0_phys, bar0_size).ok_or(crate::Error::NotFound)?;
 
-        // ── 1. Read controller capabilities ──────────────────────────
-        let cap: u64 = read_volatile(bar0.add(NVME_REG_CAP) as *const u64);
-        // CAP.MQES is a spec-defined 16-bit field (max 65535); +1 fits in
-        // u32 (max 65536).  The CAP_MQES_MASK constant already extracts only
-        // the low 16 bits, making the `as u32` sound for all valid inputs.
-        let max_queue_entries = ((cap & CAP_MQES_MASK) + 1) as u32;
-        let dstrd = ((cap >> 32) & 0xF) as u32;
+            // ── 1. Read controller capabilities ──────────────────────────
+            let cap: u64 = read_volatile(bar0.add(NVME_REG_CAP) as *const u64);
+            // CAP.MQES is a spec-defined 16-bit field (max 65535); +1 fits in
+            // u32 (max 65536).  The CAP_MQES_MASK constant already extracts only
+            // the low 16 bits, making the `as u32` sound for all valid inputs.
+            let max_queue_entries = ((cap & CAP_MQES_MASK) + 1) as u32;
+            let dstrd = ((cap >> 32) & 0xF) as u32;
 
-        let queue_entries = DEFAULT_QUEUE_SIZE as u32;
-        if queue_entries > max_queue_entries {
-            return Err(crate::Error::Unsupported);
-        }
-        let asq_entries = queue_entries;
-        let acq_entries = queue_entries;
-        let iosq_entries = queue_entries;
-        let iocq_entries = queue_entries;
-
-        // ── 2. Disable controller ────────────────────────────────────
-        // CC.EN = 0
-        write_volatile(bar0.add(NVME_REG_CC) as *mut u32, 0);
-        // Wait for CSTS.RDY = 0
-        let mut waited = 0;
-        loop {
-            let csts: u32 = read_volatile(bar0.add(NVME_REG_CSTS) as *const u32);
-            if (csts & CSTS_RDY) == 0 {
-                break;
+            let queue_entries = DEFAULT_QUEUE_SIZE as u32;
+            if queue_entries > max_queue_entries {
+                return Err(crate::Error::Unsupported);
             }
-            waited += 1;
-            if waited > COMPLETION_POLL_LIMIT {
-                return Err(crate::Error::TimedOut);
+            let asq_entries = queue_entries;
+            let acq_entries = queue_entries;
+            let iosq_entries = queue_entries;
+            let iocq_entries = queue_entries;
+
+            // ── 2. Disable controller ────────────────────────────────────
+            // CC.EN = 0
+            write_volatile(bar0.add(NVME_REG_CC) as *mut u32, 0);
+            // Wait for CSTS.RDY = 0
+            let mut waited = 0;
+            loop {
+                let csts: u32 = read_volatile(bar0.add(NVME_REG_CSTS) as *const u32);
+                if (csts & CSTS_RDY) == 0 {
+                    break;
+                }
+                waited += 1;
+                if waited > COMPLETION_POLL_LIMIT {
+                    return Err(crate::Error::TimedOut);
+                }
+                core::hint::spin_loop();
             }
-            core::hint::spin_loop();
-        }
 
-        // ── 3. Allocate queue DMA buffers ────────────────────────────
-        let asq_frames = ((asq_entries as usize * SQ_ENTRY_SIZE)
-            .saturating_add(NVME_PAGE_SIZE - 1))
-            / NVME_PAGE_SIZE;
-        let acq_frames = ((acq_entries as usize * CQ_ENTRY_SIZE)
-            .saturating_add(NVME_PAGE_SIZE - 1))
-            / NVME_PAGE_SIZE;
-        let iosq_frames = ((iosq_entries as usize * SQ_ENTRY_SIZE)
-            .saturating_add(NVME_PAGE_SIZE - 1))
-            / NVME_PAGE_SIZE;
-        let iocq_frames = ((iocq_entries as usize * CQ_ENTRY_SIZE)
-            .saturating_add(NVME_PAGE_SIZE - 1))
-            / NVME_PAGE_SIZE;
+            // ── 3. Allocate queue DMA buffers ────────────────────────────
+            let asq_frames = ((asq_entries as usize * SQ_ENTRY_SIZE)
+                .saturating_add(NVME_PAGE_SIZE - 1))
+                / NVME_PAGE_SIZE;
+            let acq_frames = ((acq_entries as usize * CQ_ENTRY_SIZE)
+                .saturating_add(NVME_PAGE_SIZE - 1))
+                / NVME_PAGE_SIZE;
+            let iosq_frames = ((iosq_entries as usize * SQ_ENTRY_SIZE)
+                .saturating_add(NVME_PAGE_SIZE - 1))
+                / NVME_PAGE_SIZE;
+            let iocq_frames = ((iocq_entries as usize * CQ_ENTRY_SIZE)
+                .saturating_add(NVME_PAGE_SIZE - 1))
+                / NVME_PAGE_SIZE;
 
-        let asq = DmaBuffer::allocate(asq_frames).ok_or(crate::Error::OutOfMemory)?;
-        let acq = DmaBuffer::allocate(acq_frames).ok_or(crate::Error::OutOfMemory)?;
-        let iosq = DmaBuffer::allocate(iosq_frames).ok_or(crate::Error::OutOfMemory)?;
-        let iocq = DmaBuffer::allocate(iocq_frames).ok_or(crate::Error::OutOfMemory)?;
-        let io_buf = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
+            let asq = DmaBuffer::allocate(asq_frames).ok_or(crate::Error::OutOfMemory)?;
+            let acq = DmaBuffer::allocate(acq_frames).ok_or(crate::Error::OutOfMemory)?;
+            let iosq = DmaBuffer::allocate(iosq_frames).ok_or(crate::Error::OutOfMemory)?;
+            let iocq = DmaBuffer::allocate(iocq_frames).ok_or(crate::Error::OutOfMemory)?;
+            let io_buf = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
 
-        // ── 4. Configure admin queues ────────────────────────────────
-        // AQA: ACQS (11:0) | ASQS (27:16)
-        let aqa = ((acq_entries - 1) & 0xFFF) | (((asq_entries - 1) & 0xFFF) << 16);
-        write_volatile(bar0.add(NVME_REG_AQA) as *mut u32, aqa);
-        // ASQ and ACQ base addresses (64-bit physical)
-        write_volatile(bar0.add(NVME_REG_ASQ) as *mut u64, asq.phys_addr() as u64);
-        write_volatile(bar0.add(NVME_REG_ACQ) as *mut u64, acq.phys_addr() as u64);
+            // ── 4. Configure admin queues ────────────────────────────────
+            // AQA: ACQS (11:0) | ASQS (27:16)
+            let aqa = ((acq_entries - 1) & 0xFFF) | (((asq_entries - 1) & 0xFFF) << 16);
+            write_volatile(bar0.add(NVME_REG_AQA) as *mut u32, aqa);
+            // ASQ and ACQ base addresses (64-bit physical)
+            write_volatile(bar0.add(NVME_REG_ASQ) as *mut u64, asq.phys_addr() as u64);
+            write_volatile(bar0.add(NVME_REG_ACQ) as *mut u64, acq.phys_addr() as u64);
 
-        // ── 5. Enable controller ─────────────────────────────────────
-        let cc = CC_EN | ((6_u32) << 16) | ((4_u32) << 20); // IOSQES=6 (64 B), IOCQES=4 (16 B)
-        write_volatile(bar0.add(NVME_REG_CC) as *mut u32, cc);
-        // Wait for CSTS.RDY = 1
-        waited = 0;
-        loop {
-            let csts: u32 = read_volatile(bar0.add(NVME_REG_CSTS) as *const u32);
-            if (csts & CSTS_RDY) != 0 {
-                break;
+            // ── 5. Enable controller ─────────────────────────────────────
+            let cc = CC_EN | ((6_u32) << 16) | ((4_u32) << 20); // IOSQES=6 (64 B), IOCQES=4 (16 B)
+            write_volatile(bar0.add(NVME_REG_CC) as *mut u32, cc);
+            // Wait for CSTS.RDY = 1
+            waited = 0;
+            loop {
+                let csts: u32 = read_volatile(bar0.add(NVME_REG_CSTS) as *const u32);
+                if (csts & CSTS_RDY) != 0 {
+                    break;
+                }
+                waited += 1;
+                if waited > COMPLETION_POLL_LIMIT {
+                    return Err(crate::Error::TimedOut);
+                }
+                core::hint::spin_loop();
             }
-            waited += 1;
-            if waited > COMPLETION_POLL_LIMIT {
-                return Err(crate::Error::TimedOut);
+
+            // ── 6. Identify controller & namespace ───────────────────────
+            // Use a temporary DMA buffer for the 4 KiB identify response.
+            let identify_buf = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
+            let mut ctrl = Self {
+                bar0,
+                dstrd,
+                asq,
+                acq,
+                asq_tail: 0,
+                acq_head: 0,
+                acq_phase: true,
+                iosq,
+                iocq,
+                iosq_entries,
+                iocq_entries,
+                io_state: Mutex::new(NvmeIoState {
+                    iosq_tail: 0,
+                    iocq_head: 0,
+                    iocq_phase: true,
+                    next_cmd_id: 0,
+                }),
+                nsid: 1,
+                block_count: 0,
+                block_size: 512,
+                io_buf: Mutex::new(io_buf),
+            };
+
+            // IDENTIFY controller (CNS=1)
+            let mut sqe = NvmeSqe::zeroed();
+            sqe.set_opcode(ADMIN_IDENTIFY);
+            sqe.set_nsid(0);
+            sqe.set_prp1(identify_buf.phys_addr() as u64);
+            sqe.set_cdw(CNS_IDENTIFY_CONTROLLER, 0, 0);
+            let cqe = ctrl.admin_submit_and_wait(&sqe)?;
+            if !cqe.is_success() {
+                return Err(crate::Error::NotFound);
             }
-            core::hint::spin_loop();
+
+            // Parse namespace count from identify data.
+            let identify_ctrl: &IdentifyController =
+                { &*(identify_buf.as_ptr() as *const IdentifyController) };
+            let ns_count = identify_ctrl.namespace_count();
+            if ns_count == 0 {
+                return Err(crate::Error::NotFound);
+            }
+
+            // IDENTIFY namespace (CNS=0, NSID=1)
+            let mut sqe = NvmeSqe::zeroed();
+            sqe.set_opcode(ADMIN_IDENTIFY);
+            sqe.set_nsid(1);
+            sqe.set_prp1(identify_buf.phys_addr() as u64);
+            sqe.set_cdw(CNS_IDENTIFY_NAMESPACE, 0, 0);
+            let cqe = ctrl.admin_submit_and_wait(&sqe)?;
+            if !cqe.is_success() {
+                return Err(crate::Error::NotFound);
+            }
+
+            let identify_ns: &IdentifyNamespace =
+                { &*(identify_buf.as_ptr() as *const IdentifyNamespace) };
+            ctrl.block_count = identify_ns.nsze;
+            ctrl.block_size = identify_ns.lba_size();
+
+            // drop the temporary identify buffer
+            drop(identify_buf);
+
+            // ── 7. Create I/O queue pair ─────────────────────────────────
+            // Create I/O CQ (qid=1, vector=0, contiguous)
+            let iocq_phys = ctrl.iocq.phys_addr() as u64;
+            let mut sqe = NvmeSqe::zeroed();
+            sqe.set_opcode(ADMIN_CREATE_IOCQ);
+            sqe.set_prp1(iocq_phys);
+            sqe.set_cdw(((iocq_entries - 1) << 16) | 1, 1, 0);
+            // DW11[0] = PC (physically contiguous), DW11[1] = EN (enabled)
+            let cqe = ctrl.admin_submit_and_wait(&sqe)?;
+            if !cqe.is_success() {
+                return Err(crate::Error::NotFound);
+            }
+
+            // Create I/O SQ (qid=1, cqid=1, contiguous)
+            let iosq_phys = ctrl.iosq.phys_addr() as u64;
+            let mut sqe = NvmeSqe::zeroed();
+            sqe.set_opcode(ADMIN_CREATE_IOSQ);
+            sqe.set_prp1(iosq_phys);
+            sqe.set_cdw(((iosq_entries - 1) << 16) | 1, (1 << 16) | 1, 0);
+            // DW11[0] = PC, DW11[1] = EN, DW11[16:31] = CQID (1)
+            let cqe = ctrl.admin_submit_and_wait(&sqe)?;
+            if !cqe.is_success() {
+                return Err(crate::Error::NotFound);
+            }
+
+            Ok(ctrl)
         }
-
-        // ── 6. Identify controller & namespace ───────────────────────
-        // Use a temporary DMA buffer for the 4 KiB identify response.
-        let identify_buf = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
-        let mut ctrl = Self {
-            bar0,
-            dstrd,
-            asq,
-            acq,
-            asq_tail: 0,
-            acq_head: 0,
-            acq_phase: true,
-            iosq,
-            iocq,
-            iosq_entries,
-            iocq_entries,
-            io_state: Mutex::new(NvmeIoState {
-                iosq_tail: 0,
-                iocq_head: 0,
-                iocq_phase: true,
-                next_cmd_id: 0,
-            }),
-            nsid: 1,
-            block_count: 0,
-            block_size: 512,
-            io_buf: Mutex::new(io_buf),
-        };
-
-        // IDENTIFY controller (CNS=1)
-        let mut sqe = NvmeSqe::zeroed();
-        sqe.set_opcode(ADMIN_IDENTIFY);
-        sqe.set_nsid(0);
-        sqe.set_prp1(identify_buf.phys_addr() as u64);
-        sqe.set_cdw(CNS_IDENTIFY_CONTROLLER, 0, 0);
-        let cqe = ctrl.admin_submit_and_wait(&sqe)?;
-        if !cqe.is_success() {
-            return Err(crate::Error::NotFound);
-        }
-
-        // Parse namespace count from identify data.
-        let identify_ctrl: &IdentifyController =
-            unsafe { &*(identify_buf.as_ptr() as *const IdentifyController) };
-        let ns_count = identify_ctrl.namespace_count();
-        if ns_count == 0 {
-            return Err(crate::Error::NotFound);
-        }
-
-        // IDENTIFY namespace (CNS=0, NSID=1)
-        let mut sqe = NvmeSqe::zeroed();
-        sqe.set_opcode(ADMIN_IDENTIFY);
-        sqe.set_nsid(1);
-        sqe.set_prp1(identify_buf.phys_addr() as u64);
-        sqe.set_cdw(CNS_IDENTIFY_NAMESPACE, 0, 0);
-        let cqe = ctrl.admin_submit_and_wait(&sqe)?;
-        if !cqe.is_success() {
-            return Err(crate::Error::NotFound);
-        }
-
-        let identify_ns: &IdentifyNamespace =
-            unsafe { &*(identify_buf.as_ptr() as *const IdentifyNamespace) };
-        ctrl.block_count = identify_ns.nsze;
-        ctrl.block_size = identify_ns.lba_size();
-
-        // drop the temporary identify buffer
-        drop(identify_buf);
-
-        // ── 7. Create I/O queue pair ─────────────────────────────────
-        // Create I/O CQ (qid=1, vector=0, contiguous)
-        let iocq_phys = ctrl.iocq.phys_addr() as u64;
-        let mut sqe = NvmeSqe::zeroed();
-        sqe.set_opcode(ADMIN_CREATE_IOCQ);
-        sqe.set_prp1(iocq_phys);
-        sqe.set_cdw(((iocq_entries - 1) << 16) | 1, 1, 0);
-        // DW11[0] = PC (physically contiguous), DW11[1] = EN (enabled)
-        let cqe = ctrl.admin_submit_and_wait(&sqe)?;
-        if !cqe.is_success() {
-            return Err(crate::Error::NotFound);
-        }
-
-        // Create I/O SQ (qid=1, cqid=1, contiguous)
-        let iosq_phys = ctrl.iosq.phys_addr() as u64;
-        let mut sqe = NvmeSqe::zeroed();
-        sqe.set_opcode(ADMIN_CREATE_IOSQ);
-        sqe.set_prp1(iosq_phys);
-        sqe.set_cdw(((iosq_entries - 1) << 16) | 1, (1 << 16) | 1, 0);
-        // DW11[0] = PC, DW11[1] = EN, DW11[16:31] = CQID (1)
-        let cqe = ctrl.admin_submit_and_wait(&sqe)?;
-        if !cqe.is_success() {
-            return Err(crate::Error::NotFound);
-        }
-
-        Ok(ctrl)
     }
 
     /// Submit a command on the admin SQ and poll for completion.
     unsafe fn admin_submit_and_wait(&mut self, sqe: &NvmeSqe) -> crate::Result<NvmeCqe> {
-        use core::ptr::read_volatile;
-        use core::ptr::write_volatile;
+        unsafe {
+            use core::ptr::read_volatile;
+            use core::ptr::write_volatile;
 
-        let tail = self.asq_tail as usize;
-        let asq_entries = ((self.asq.len() / SQ_ENTRY_SIZE) as u32).min(DEFAULT_QUEUE_SIZE as u32);
-        debug_assert!(
-            tail < asq_entries as usize,
-            "ASQ tail {tail} out of bounds for {asq_entries} entries"
-        );
-        let dst = self.asq.as_ptr().add(tail * SQ_ENTRY_SIZE) as *mut NvmeSqe;
-        write_volatile(dst, *sqe);
-
-        // Advance tail with wrap.
-        self.asq_tail = (self.asq_tail + 1) % asq_entries;
-
-        // Ring SQ doorbell.
-        let sq_doorbell = self.bar0.add(sq_doorbell_offset(0, self.dstrd));
-        // NVMe doorbell registers are u32-aligned per spec §3.1.9.
-        debug_assert!(
-            (sq_doorbell as usize).is_multiple_of(core::mem::align_of::<u32>()),
-            "SQ doorbell misaligned: {:#x}",
-            sq_doorbell as usize
-        );
-        write_volatile(sq_doorbell as *mut u32, self.asq_tail);
-
-        // Spin until a completion with the expected phase bit arrives.
-        let mut waited = 0;
-        loop {
-            let acq_entries =
-                ((self.acq.len() / CQ_ENTRY_SIZE) as u32).min(DEFAULT_QUEUE_SIZE as u32);
+            let tail = self.asq_tail as usize;
+            let asq_entries =
+                ((self.asq.len() / SQ_ENTRY_SIZE) as u32).min(DEFAULT_QUEUE_SIZE as u32);
             debug_assert!(
-                (self.acq_head as usize) < acq_entries as usize,
-                "ACQ head {} out of bounds for {acq_entries} entries",
-                self.acq_head
+                tail < asq_entries as usize,
+                "ASQ tail {tail} out of bounds for {asq_entries} entries"
             );
-            let cqe_ptr =
-                self.acq
-                    .as_ptr()
-                    .add(self.acq_head as usize * CQ_ENTRY_SIZE) as *const NvmeCqe;
-            let cqe = read_volatile(cqe_ptr);
-            let phase = (cqe.status & 0x1) != 0;
-            if phase == self.acq_phase {
-                // Advance head with wrap.
-                self.acq_head = (self.acq_head + 1) % acq_entries;
-                // Flip phase at wrap.
-                if self.acq_head == 0 {
-                    self.acq_phase = !self.acq_phase;
-                }
-                // Ring CQ doorbell.
-                let cq_doorbell = self.bar0.add(cq_doorbell_offset(0, self.dstrd));
+            let dst = self.asq.as_ptr().add(tail * SQ_ENTRY_SIZE) as *mut NvmeSqe;
+            write_volatile(dst, *sqe);
+
+            // Advance tail with wrap.
+            self.asq_tail = (self.asq_tail + 1) % asq_entries;
+
+            // Ring SQ doorbell.
+            let sq_doorbell = self.bar0.add(sq_doorbell_offset(0, self.dstrd));
+            // NVMe doorbell registers are u32-aligned per spec §3.1.9.
+            debug_assert!(
+                (sq_doorbell as usize).is_multiple_of(core::mem::align_of::<u32>()),
+                "SQ doorbell misaligned: {:#x}",
+                sq_doorbell as usize
+            );
+            write_volatile(sq_doorbell as *mut u32, self.asq_tail);
+
+            // Spin until a completion with the expected phase bit arrives.
+            let mut waited = 0;
+            loop {
+                let acq_entries =
+                    ((self.acq.len() / CQ_ENTRY_SIZE) as u32).min(DEFAULT_QUEUE_SIZE as u32);
                 debug_assert!(
-                    (cq_doorbell as usize).is_multiple_of(core::mem::align_of::<u32>()),
-                    "CQ doorbell misaligned: {:#x}",
-                    cq_doorbell as usize
+                    (self.acq_head as usize) < acq_entries as usize,
+                    "ACQ head {} out of bounds for {acq_entries} entries",
+                    self.acq_head
                 );
-                write_volatile(cq_doorbell as *mut u32, self.acq_head);
-                return Ok(cqe);
+                let cqe_ptr = self
+                    .acq
+                    .as_ptr()
+                    .add(self.acq_head as usize * CQ_ENTRY_SIZE)
+                    as *const NvmeCqe;
+                let cqe = read_volatile(cqe_ptr);
+                let phase = (cqe.status & 0x1) != 0;
+                if phase == self.acq_phase {
+                    // Advance head with wrap.
+                    self.acq_head = (self.acq_head + 1) % acq_entries;
+                    // Flip phase at wrap.
+                    if self.acq_head == 0 {
+                        self.acq_phase = !self.acq_phase;
+                    }
+                    // Ring CQ doorbell.
+                    let cq_doorbell = self.bar0.add(cq_doorbell_offset(0, self.dstrd));
+                    debug_assert!(
+                        (cq_doorbell as usize).is_multiple_of(core::mem::align_of::<u32>()),
+                        "CQ doorbell misaligned: {:#x}",
+                        cq_doorbell as usize
+                    );
+                    write_volatile(cq_doorbell as *mut u32, self.acq_head);
+                    return Ok(cqe);
+                }
+                waited += 1;
+                if waited > COMPLETION_POLL_LIMIT {
+                    return Err(crate::Error::TimedOut);
+                }
+                core::hint::spin_loop();
             }
-            waited += 1;
-            if waited > COMPLETION_POLL_LIMIT {
-                return Err(crate::Error::TimedOut);
-            }
-            core::hint::spin_loop();
         }
     }
 
@@ -770,35 +776,38 @@ impl NvmeController {
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
     #[allow(dead_code)] // Wired when shutdown path is integrated.
     unsafe fn shutdown(&mut self) {
-        // Delete I/O Submission Queue (qid=1).
-        let mut sqe = NvmeSqe::zeroed();
-        sqe.set_opcode(ADMIN_DELETE_IOSQ);
-        sqe.set_nsid(0);
-        sqe.set_cdw(1, 0, 0); // CDW10 bits 15:0 = QID to delete
-        let _ = self.admin_submit_and_wait(&sqe);
+        unsafe {
+            // Delete I/O Submission Queue (qid=1).
+            let mut sqe = NvmeSqe::zeroed();
+            sqe.set_opcode(ADMIN_DELETE_IOSQ);
+            sqe.set_nsid(0);
+            sqe.set_cdw(1, 0, 0); // CDW10 bits 15:0 = QID to delete
+            let _ = self.admin_submit_and_wait(&sqe);
 
-        // Delete I/O Completion Queue (qid=1).
-        let mut sqe = NvmeSqe::zeroed();
-        sqe.set_opcode(ADMIN_DELETE_IOCQ);
-        sqe.set_nsid(0);
-        sqe.set_cdw(1, 0, 0); // CDW10 bits 15:0 = QID to delete
-        let _ = self.admin_submit_and_wait(&sqe);
+            // Delete I/O Completion Queue (qid=1).
+            let mut sqe = NvmeSqe::zeroed();
+            sqe.set_opcode(ADMIN_DELETE_IOCQ);
+            sqe.set_nsid(0);
+            sqe.set_cdw(1, 0, 0); // CDW10 bits 15:0 = QID to delete
+            let _ = self.admin_submit_and_wait(&sqe);
 
-        // Disable the controller.
-        core::ptr::write_volatile(self.bar0.add(NVME_REG_CC) as *mut u32, 0);
+            // Disable the controller.
+            core::ptr::write_volatile(self.bar0.add(NVME_REG_CC) as *mut u32, 0);
 
-        // Wait for CSTS.RDY = 0.
-        let mut waited = 0;
-        loop {
-            let csts: u32 = core::ptr::read_volatile(self.bar0.add(NVME_REG_CSTS) as *const u32);
-            if (csts & CSTS_RDY) == 0 {
-                break;
+            // Wait for CSTS.RDY = 0.
+            let mut waited = 0;
+            loop {
+                let csts: u32 =
+                    core::ptr::read_volatile(self.bar0.add(NVME_REG_CSTS) as *const u32);
+                if (csts & CSTS_RDY) == 0 {
+                    break;
+                }
+                waited += 1;
+                if waited > COMPLETION_POLL_LIMIT {
+                    break;
+                }
+                core::hint::spin_loop();
             }
-            waited += 1;
-            if waited > COMPLETION_POLL_LIMIT {
-                break;
-            }
-            core::hint::spin_loop();
         }
     }
 }

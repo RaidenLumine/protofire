@@ -113,12 +113,14 @@ fn bitmap_word(word_idx: usize) -> &'static core::sync::atomic::AtomicU64 {
 /// privileged instruction.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 unsafe fn invpcid(desc: &InvpcidDesc, typ: u64) {
-    asm!(
-        "invpcid {typ}, [{desc}]",
-        typ = in(reg) typ,
-        desc = in(reg) desc,
-        options(nostack, preserves_flags)
-    );
+    unsafe {
+        asm!(
+            "invpcid {typ}, [{desc}]",
+            typ = in(reg) typ,
+            desc = in(reg) desc,
+            options(nostack, preserves_flags)
+        );
+    }
 }
 
 /// Invalidate all non-global TLB entries on the current CPU.

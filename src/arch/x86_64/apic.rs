@@ -66,75 +66,80 @@ static mut HIGH_PTS: [PageTablePage; 2] = [PageTablePage::ZEROED; 2];
 /// interrupts disabled, and before any other CPU exists.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn map_device_mmio_page(_phys_addr: usize) {
-    static MAPPED: AtomicBool = AtomicBool::new(false);
-    if MAPPED.swap(true, Ordering::Acquire) {
-        return; // already set up
-    }
-
-    // Read the active PML4 address from CR3.
-    let pml4_addr: u64;
     unsafe {
-        core::arch::asm!(
-            "mov {}, cr3",
-            out(reg) pml4_addr,
-            options(nostack, preserves_flags)
-        );
-    }
-    let pml4 = (pml4_addr as usize & PAGE_ENTRY_ADDRESS_MASK as usize)
-        as *mut [u64; PAGE_TABLE_ENTRY_COUNT];
-
-    // LAPIC (0xFEE0_0000) and IOAPIC (0xFEC0_0000) are in PML4[0],
-    // PDPT[3] (covers 3 GiB – 4 GiB).  Read KERNEL_PDPT from PML4[0].
-    let pdpt = ((*pml4)[0] as usize & PAGE_ENTRY_ADDRESS_MASK as usize)
-        as *mut [u64; PAGE_TABLE_ENTRY_COUNT];
-
-    // PD indices within PDPT[3] (PDPT base = 0xC000_0000):
-    //   LAPIC  0xFEE0_0000 → PD[503] (0x1F7)
-    //   IOAPIC 0xFEC0_0000 → PD[502] (0x1F6)
-    // Both PT indices are 0x000 (page offset within the 2 MiB PD entry).
-    const LAPIC_PD_IDX: usize = 503;
-    const IOAPIC_PD_IDX: usize = 502;
-
-    unsafe {
-        // Wire up the statically-allocated PTs regardless.
-        HIGH_PD.0[LAPIC_PD_IDX] =
-            (core::ptr::addr_of!(HIGH_PTS[0]) as u64) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-        HIGH_PTS[0].0[0] = (0xFEE0_0000u64) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-
-        HIGH_PD.0[IOAPIC_PD_IDX] =
-            (core::ptr::addr_of!(HIGH_PTS[1]) as u64) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-        HIGH_PTS[1].0[0] = (0xFEC0_0000u64) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-
-        let existing_pdpt_entry = (*pdpt)[3];
-
-        if existing_pdpt_entry & PAGE_ENTRY_PRESENT != 0 {
-            // PDPT[3] already has a valid PD — likely created by
-            // `map_device_mmio` for a PCI BAR (e.g. framebuffer) that sits in
-            // the 3–4 GiB range.  Add LAPIC/IOAPIC entries to the existing PD
-            // instead of replacing the PDPT entry.
-            let existing_pd = (existing_pdpt_entry as usize & PAGE_ENTRY_ADDRESS_MASK as usize)
-                as *mut [u64; PAGE_TABLE_ENTRY_COUNT];
-
-            // Only write if the target entries are currently empty, avoiding
-            // overwriting an existing mapping for the same physical pages.
-            if (*existing_pd)[LAPIC_PD_IDX] & PAGE_ENTRY_PRESENT == 0 {
-                (*existing_pd)[LAPIC_PD_IDX] = HIGH_PD.0[LAPIC_PD_IDX];
-            }
-            if (*existing_pd)[IOAPIC_PD_IDX] & PAGE_ENTRY_PRESENT == 0 {
-                (*existing_pd)[IOAPIC_PD_IDX] = HIGH_PD.0[IOAPIC_PD_IDX];
-            }
-        } else {
-            // No existing mapping for the 3–4 GiB region — install HIGH_PD
-            // directly as the PDPT entry.
-            (*pdpt)[3] =
-                (core::ptr::addr_of!(HIGH_PD) as u64) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
+        static MAPPED: AtomicBool = AtomicBool::new(false);
+        if MAPPED.swap(true, Ordering::Acquire) {
+            return; // already set up
         }
-    }
 
-    // Flush all TLB entries so the new LAPIC/IOAPIC mappings take effect.
-    // A plain CR3 reload would not flush once CR4.PCIDE is set, so go through
-    // the PCID-aware path (INVPCID when active, CR3 reload otherwise).
-    crate::arch::x86_64::paging::pcid::flush_all_tlb();
+        // Read the active PML4 address from CR3.
+        let pml4_addr: u64;
+        {
+            core::arch::asm!(
+                "mov {}, cr3",
+                out(reg) pml4_addr,
+                options(nostack, preserves_flags)
+            );
+        }
+        let pml4 = (pml4_addr as usize & PAGE_ENTRY_ADDRESS_MASK as usize)
+            as *mut [u64; PAGE_TABLE_ENTRY_COUNT];
+
+        // LAPIC (0xFEE0_0000) and IOAPIC (0xFEC0_0000) are in PML4[0],
+        // PDPT[3] (covers 3 GiB – 4 GiB).  Read KERNEL_PDPT from PML4[0].
+        let pdpt = ((*pml4)[0] as usize & PAGE_ENTRY_ADDRESS_MASK as usize)
+            as *mut [u64; PAGE_TABLE_ENTRY_COUNT];
+
+        // PD indices within PDPT[3] (PDPT base = 0xC000_0000):
+        //   LAPIC  0xFEE0_0000 → PD[503] (0x1F7)
+        //   IOAPIC 0xFEC0_0000 → PD[502] (0x1F6)
+        // Both PT indices are 0x000 (page offset within the 2 MiB PD entry).
+        const LAPIC_PD_IDX: usize = 503;
+        const IOAPIC_PD_IDX: usize = 502;
+
+        {
+            // Wire up the statically-allocated PTs regardless.
+            HIGH_PD.0[LAPIC_PD_IDX] = (core::ptr::addr_of!(HIGH_PTS[0]) as u64)
+                | PAGE_ENTRY_PRESENT
+                | PAGE_ENTRY_WRITABLE;
+            HIGH_PTS[0].0[0] = (0xFEE0_0000u64) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
+
+            HIGH_PD.0[IOAPIC_PD_IDX] = (core::ptr::addr_of!(HIGH_PTS[1]) as u64)
+                | PAGE_ENTRY_PRESENT
+                | PAGE_ENTRY_WRITABLE;
+            HIGH_PTS[1].0[0] = (0xFEC0_0000u64) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
+
+            let existing_pdpt_entry = (*pdpt)[3];
+
+            if existing_pdpt_entry & PAGE_ENTRY_PRESENT != 0 {
+                // PDPT[3] already has a valid PD — likely created by
+                // `map_device_mmio` for a PCI BAR (e.g. framebuffer) that sits in
+                // the 3–4 GiB range.  Add LAPIC/IOAPIC entries to the existing PD
+                // instead of replacing the PDPT entry.
+                let existing_pd = (existing_pdpt_entry as usize & PAGE_ENTRY_ADDRESS_MASK as usize)
+                    as *mut [u64; PAGE_TABLE_ENTRY_COUNT];
+
+                // Only write if the target entries are currently empty, avoiding
+                // overwriting an existing mapping for the same physical pages.
+                if (*existing_pd)[LAPIC_PD_IDX] & PAGE_ENTRY_PRESENT == 0 {
+                    (*existing_pd)[LAPIC_PD_IDX] = HIGH_PD.0[LAPIC_PD_IDX];
+                }
+                if (*existing_pd)[IOAPIC_PD_IDX] & PAGE_ENTRY_PRESENT == 0 {
+                    (*existing_pd)[IOAPIC_PD_IDX] = HIGH_PD.0[IOAPIC_PD_IDX];
+                }
+            } else {
+                // No existing mapping for the 3–4 GiB region — install HIGH_PD
+                // directly as the PDPT entry.
+                (*pdpt)[3] = (core::ptr::addr_of!(HIGH_PD) as u64)
+                    | PAGE_ENTRY_PRESENT
+                    | PAGE_ENTRY_WRITABLE;
+            }
+        }
+
+        // Flush all TLB entries so the new LAPIC/IOAPIC mappings take effect.
+        // A plain CR3 reload would not flush once CR4.PCIDE is set, so go through
+        // the PCID-aware path (INVPCID when active, CR3 reload otherwise).
+        crate::arch::x86_64::paging::pcid::flush_all_tlb();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -193,7 +198,7 @@ pub const ICR_TRIGGER_LEVEL: u32 = 1 << 15;
 /// [`map_device_mmio_page`]) and `offset` must be within the LAPIC register
 /// window.
 pub unsafe fn lapic_read(offset: u32) -> u32 {
-    core::ptr::read_volatile((LAPIC_MMIO_BASE_DEFAULT + offset as usize) as *const u32)
+    unsafe { core::ptr::read_volatile((LAPIC_MMIO_BASE_DEFAULT + offset as usize) as *const u32) }
 }
 
 /// Write a 32-bit value to the LAPIC register at `offset`.
@@ -202,10 +207,12 @@ pub unsafe fn lapic_read(offset: u32) -> u32 {
 ///
 /// Same requirements as [`lapic_read`].
 pub unsafe fn lapic_write(offset: u32, value: u32) {
-    core::ptr::write_volatile(
-        (LAPIC_MMIO_BASE_DEFAULT + offset as usize) as *mut u32,
-        value,
-    );
+    unsafe {
+        core::ptr::write_volatile(
+            (LAPIC_MMIO_BASE_DEFAULT + offset as usize) as *mut u32,
+            value,
+        );
+    }
 }
 
 /// Acknowledge the current interrupt by writing the LAPIC EOI register.

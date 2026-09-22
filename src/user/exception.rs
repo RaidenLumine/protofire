@@ -128,7 +128,7 @@ impl AArch64UserException {
     /// current process image. Supplying an invalid address will fault when the
     /// kernel later dispatches the exception back to user mode.
     pub unsafe fn install_handler_from_user_mode(vector: u8, handler: usize) -> usize {
-        Self::install_handler_from_user_mode_with(vector, handler, 0, 0)
+        unsafe { Self::install_handler_from_user_mode_with(vector, handler, 0, 0) }
     }
 
     #[inline(always)]
@@ -145,15 +145,17 @@ impl AArch64UserException {
         stack_pointer: usize,
         flags: usize,
     ) -> usize {
-        UserSyscall::invoke_raw_status_from_user_mode(
-            SyscallNumber::InstallExceptionHandler as usize,
-            vector as usize,
-            handler,
-            stack_pointer,
-            flags,
-            0,
-            0,
-        )
+        unsafe {
+            UserSyscall::invoke_raw_status_from_user_mode(
+                SyscallNumber::InstallExceptionHandler as usize,
+                vector as usize,
+                handler,
+                stack_pointer,
+                flags,
+                0,
+                0,
+            )
+        }
     }
 
     #[inline(always)]
@@ -166,15 +168,17 @@ impl AArch64UserException {
     pub unsafe fn return_from_frame_from_user_mode(
         frame: *const AArch64UserExceptionFrame,
     ) -> usize {
-        UserSyscall::invoke_raw_status_from_user_mode(
-            SyscallNumber::ReturnFromException as usize,
-            frame as usize,
-            0,
-            0,
-            0,
-            0,
-            0,
-        )
+        unsafe {
+            UserSyscall::invoke_raw_status_from_user_mode(
+                SyscallNumber::ReturnFromException as usize,
+                frame as usize,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        }
     }
 }
 
@@ -210,12 +214,14 @@ impl X86_64UserException {
     /// current process image. Supplying an invalid address will fault when the
     /// kernel later dispatches the exception back to user mode.
     pub unsafe fn install_handler_from_user_mode(vector: u8, handler: usize) -> usize {
-        Self::install_handler_from_user_mode_with(
-            vector,
-            handler,
-            0,
-            X86_64_USER_EXCEPTION_HANDLER_FLAG_NONE,
-        )
+        unsafe {
+            Self::install_handler_from_user_mode_with(
+                vector,
+                handler,
+                0,
+                X86_64_USER_EXCEPTION_HANDLER_FLAG_NONE,
+            )
+        }
     }
 
     #[inline(always)]
@@ -232,15 +238,17 @@ impl X86_64UserException {
         stack_pointer: usize,
         flags: usize,
     ) -> usize {
-        UserSyscall::invoke_raw_status_from_user_mode(
-            SyscallNumber::InstallExceptionHandler as usize,
-            vector as usize,
-            handler,
-            stack_pointer,
-            flags,
-            0,
-            0,
-        )
+        unsafe {
+            UserSyscall::invoke_raw_status_from_user_mode(
+                SyscallNumber::InstallExceptionHandler as usize,
+                vector as usize,
+                handler,
+                stack_pointer,
+                flags,
+                0,
+                0,
+            )
+        }
     }
 
     #[inline(always)]
@@ -253,14 +261,16 @@ impl X86_64UserException {
     pub unsafe fn return_from_frame_from_user_mode(
         frame: *const X86_64UserExceptionFrame,
     ) -> usize {
-        UserSyscall::invoke_raw_status_from_user_mode(
-            SyscallNumber::ReturnFromException as usize,
-            frame as usize,
-            0,
-            0,
-            0,
-            0,
-            0,
-        )
+        unsafe {
+            UserSyscall::invoke_raw_status_from_user_mode(
+                SyscallNumber::ReturnFromException as usize,
+                frame as usize,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        }
     }
 }

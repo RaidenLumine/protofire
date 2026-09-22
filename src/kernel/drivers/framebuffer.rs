@@ -131,27 +131,37 @@ enum VbeLayout {
 impl VbeLayout {
     /// 16-bit read of VBE register `index`.
     unsafe fn read_reg(&self, base: usize, index: u16) -> u16 {
-        match self {
-            VbeLayout::Flat => core::ptr::read_volatile(
-                (base + VBE_DISPI_FLAT_BASE + (index as usize) * 2) as *const u16,
-            ),
-            VbeLayout::IndexData => {
-                core::ptr::write_volatile((base as *mut u16).add(VBE_DISPI_IO_INDEX / 2), index);
-                core::ptr::read_volatile((base as *const u16).add(VBE_DISPI_IO_DATA / 2))
+        unsafe {
+            match self {
+                VbeLayout::Flat => core::ptr::read_volatile(
+                    (base + VBE_DISPI_FLAT_BASE + (index as usize) * 2) as *const u16,
+                ),
+                VbeLayout::IndexData => {
+                    core::ptr::write_volatile(
+                        (base as *mut u16).add(VBE_DISPI_IO_INDEX / 2),
+                        index,
+                    );
+                    core::ptr::read_volatile((base as *const u16).add(VBE_DISPI_IO_DATA / 2))
+                }
             }
         }
     }
 
     /// 16-bit write of VBE register `index`.
     unsafe fn write_reg(&self, base: usize, index: u16, val: u16) {
-        match self {
-            VbeLayout::Flat => core::ptr::write_volatile(
-                (base + VBE_DISPI_FLAT_BASE + (index as usize) * 2) as *mut u16,
-                val,
-            ),
-            VbeLayout::IndexData => {
-                core::ptr::write_volatile((base as *mut u16).add(VBE_DISPI_IO_INDEX / 2), index);
-                core::ptr::write_volatile((base as *mut u16).add(VBE_DISPI_IO_DATA / 2), val);
+        unsafe {
+            match self {
+                VbeLayout::Flat => core::ptr::write_volatile(
+                    (base + VBE_DISPI_FLAT_BASE + (index as usize) * 2) as *mut u16,
+                    val,
+                ),
+                VbeLayout::IndexData => {
+                    core::ptr::write_volatile(
+                        (base as *mut u16).add(VBE_DISPI_IO_INDEX / 2),
+                        index,
+                    );
+                    core::ptr::write_volatile((base as *mut u16).add(VBE_DISPI_IO_DATA / 2), val);
+                }
             }
         }
     }

@@ -76,24 +76,26 @@ mod tests {
     /// size S must sit in `free_lists[list_index(mapping(S))]` — never in a
     /// smaller or larger class.
     unsafe fn verify_size_class_placement(state: &AllocatorState) {
-        for fl in FL_MIN..=FL_MAX {
-            for sl in 0..SL_COUNT {
-                let idx = list_index(fl, sl);
-                let mut current = state.free_lists[idx];
-                while current != 0 {
-                    let size = block_size(current);
-                    // Every free-listed block is at least MIN_FREE_BLOCK
-                    // (= 1 << FL_MIN), so mapping() is always well-defined.
-                    assert!(
-                        size >= (1 << FL_MIN),
-                        "free block 0x{current:x} has size {size} below the mapping minimum"
-                    );
-                    assert_eq!(
-                        mapping(size),
-                        (fl, sl),
-                        "free block 0x{current:x} of size {size} placed in class ({fl}, {sl})"
-                    );
-                    current = block_next_free(current);
+        unsafe {
+            for fl in FL_MIN..=FL_MAX {
+                for sl in 0..SL_COUNT {
+                    let idx = list_index(fl, sl);
+                    let mut current = state.free_lists[idx];
+                    while current != 0 {
+                        let size = block_size(current);
+                        // Every free-listed block is at least MIN_FREE_BLOCK
+                        // (= 1 << FL_MIN), so mapping() is always well-defined.
+                        assert!(
+                            size >= (1 << FL_MIN),
+                            "free block 0x{current:x} has size {size} below the mapping minimum"
+                        );
+                        assert_eq!(
+                            mapping(size),
+                            (fl, sl),
+                            "free block 0x{current:x} of size {size} placed in class ({fl}, {sl})"
+                        );
+                        current = block_next_free(current);
+                    }
                 }
             }
         }

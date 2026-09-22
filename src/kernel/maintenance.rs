@@ -89,7 +89,7 @@ pub(crate) fn reset_for_tests() {
 #[cfg(target_os = "none")]
 pub(crate) fn maintenance_entry() {
     let mut passes: u64 = 0;
-    /// Cycles observed at the first pass, kept until the rate can be derived.
+    // Cycles observed at the first pass, kept until the rate can be derived.
     #[cfg(feature = "fs_lock_timing")]
     let mut calibration_start: Option<u64> = None;
 

@@ -69,6 +69,12 @@ use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
 macro_rules! adr_relative_address {
     ($symbol:path) => {{
         let address: usize;
+        // The macro carries its own `unsafe` because it expands in both
+        // unsafe and safe contexts: inside an `unsafe fn` that makes the
+        // block redundant (which the lint says), and anywhere else it is the
+        // only thing keeping the assembly legal (which the lint cannot see
+        // from inside one expansion).
+        #[allow(unused_unsafe)]
         unsafe {
             core::arch::asm!(
                 "adr {address}, {symbol}",
@@ -497,14 +503,16 @@ extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 unsafe fn trigger_local_code_write_fault_once() {
-    let probe = adr_relative_address!(RUST_PAYLOAD_CODE_WRITE_PROBE);
-    core::arch::asm!(
-        "mov w12, #'!'",
-        "strb w12, [{probe}]",
-        probe = in(reg) probe,
-        out("x12") _,
-        options(preserves_flags),
-    );
+    unsafe {
+        let probe = adr_relative_address!(RUST_PAYLOAD_CODE_WRITE_PROBE);
+        core::arch::asm!(
+            "mov w12, #'!'",
+            "strb w12, [{probe}]",
+            probe = in(reg) probe,
+            out("x12") _,
+            options(preserves_flags),
+        );
+    }
 }
 
 /// Copy a `ret` instruction onto the (non-executable) user stack and branch to
@@ -517,23 +525,25 @@ unsafe fn trigger_local_code_write_fault_once() {
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 unsafe fn trigger_local_stack_exec_fault_once() {
-    core::arch::asm!(
-        "sub sp, sp, #16",
-        "adr x11, 2f",
-        "ldr w12, [x11]",
-        "str w12, [sp]",
-        "mov x11, sp",
-        "adr x30, 3f",
-        "br x11",
-        "2:",
-        ".word 0xd65f03c0",
-        "3:",
-        "add sp, sp, #16",
-        out("x11") _,
-        out("x12") _,
-        out("x30") _,
-        options(preserves_flags),
-    );
+    unsafe {
+        core::arch::asm!(
+            "sub sp, sp, #16",
+            "adr x11, 2f",
+            "ldr w12, [x11]",
+            "str w12, [sp]",
+            "mov x11, sp",
+            "adr x30, 3f",
+            "br x11",
+            "2:",
+            ".word 0xd65f03c0",
+            "3:",
+            "add sp, sp, #16",
+            out("x11") _,
+            out("x12") _,
+            out("x30") _,
+            options(preserves_flags),
+        );
+    }
 }
 
 /// A second store into the RX section.  The handler is installed with
@@ -543,14 +553,16 @@ unsafe fn trigger_local_stack_exec_fault_once() {
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 unsafe fn trigger_nested_local_code_write_fault_once() {
-    let probe = adr_relative_address!(RUST_PAYLOAD_CODE_WRITE_PROBE);
-    core::arch::asm!(
-        "mov w12, #'?'",
-        "strb w12, [{probe}]",
-        probe = in(reg) probe,
-        out("x12") _,
-        options(preserves_flags),
-    );
+    unsafe {
+        let probe = adr_relative_address!(RUST_PAYLOAD_CODE_WRITE_PROBE);
+        core::arch::asm!(
+            "mov w12, #'?'",
+            "strb w12, [{probe}]",
+            probe = in(reg) probe,
+            out("x12") _,
+            options(preserves_flags),
+        );
+    }
 }
 
 /// Write `value` as `prefix` followed by a hex number and a newline.

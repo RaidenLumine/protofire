@@ -284,7 +284,7 @@ impl KernelStack {
     /// the churn check does — has to ask, because allocation falls back rather
     /// than failing: a target without a window, a window with no room, and a
     /// frame pool with no frames all end up in one of the other two shapes.
-    #[cfg(feature = "stack_churn")]
+    #[cfg(all(feature = "stack_churn", target_os = "none"))]
     pub(crate) fn is_window_backed(&self) -> bool {
         matches!(self.backing, KernelStackBacking::Window { .. })
     }

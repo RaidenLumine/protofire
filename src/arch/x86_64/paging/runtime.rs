@@ -40,23 +40,25 @@ static RUNTIME_PT_ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// before pool depletion causes driver failures.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn alloc_runtime_pt_page() -> Option<usize> {
-    let index = RUNTIME_PT_ALLOC_COUNT.fetch_add(1, Ordering::AcqRel);
-    if index >= RUNTIME_PT_POOL_SIZE {
-        RUNTIME_PT_ALLOC_COUNT.fetch_sub(1, Ordering::AcqRel);
-        return None;
+    unsafe {
+        let index = RUNTIME_PT_ALLOC_COUNT.fetch_add(1, Ordering::AcqRel);
+        if index >= RUNTIME_PT_POOL_SIZE {
+            RUNTIME_PT_ALLOC_COUNT.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        // Warn when the pool is near exhaustion (≥56 of 64 pages used).
+        if index >= 56 {
+            crate::println!(
+                "[mmio  ] runtime PT pool near exhaustion: {}/{} pages used",
+                index + 1,
+                RUNTIME_PT_POOL_SIZE,
+            );
+        }
+        let base = RUNTIME_PT_POOL.get() as *mut u8;
+        let page_ptr = base.add(index * X86_PAGE_SIZE);
+        core::ptr::write_bytes(page_ptr, 0, X86_PAGE_SIZE);
+        Some(page_ptr as usize)
     }
-    // Warn when the pool is near exhaustion (≥56 of 64 pages used).
-    if index >= 56 {
-        crate::println!(
-            "[mmio  ] runtime PT pool near exhaustion: {}/{} pages used",
-            index + 1,
-            RUNTIME_PT_POOL_SIZE,
-        );
-    }
-    let base = RUNTIME_PT_POOL.get() as *mut u8;
-    let page_ptr = base.add(index * X86_PAGE_SIZE);
-    core::ptr::write_bytes(page_ptr, 0, X86_PAGE_SIZE);
-    Some(page_ptr as usize)
 }
 
 /// Check whether a physical address range overlaps the kernel image (text,
@@ -104,150 +106,169 @@ pub(crate) fn overlaps_kernel(phys: usize, size: usize) -> bool {
 /// data, bss).  This function is only available on bare-metal x86_64.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn map_device_mmio(phys: u64, size: usize) -> Option<*mut u8> {
-    // 4-level paging supports up to 48-bit physical addresses.  Reject
-    // addresses beyond this limit (no current PCI BAR exceeds 48 bits).
-    if phys >= (1u64 << 48) {
-        return None;
-    }
-    if size == 0 {
-        return None;
-    }
-
-    // Sanity check: the MMIO range must not overlap kernel memory.
-    debug_assert!(
-        !overlaps_kernel(phys as usize, size),
-        "map_device_mmio: range [{:#x}, {:#x}) overlaps kernel image",
-        phys,
-        phys.saturating_add(size as u64),
-    );
-
-    let page_start = align_down(phys as usize, X86_PAGE_SIZE);
-    let page_end = align_up((phys as usize).saturating_add(size), X86_PAGE_SIZE)?;
-
-    let cr3 = current_root_table_address_impl()?;
-    let pml4 = cr3 as *mut u64;
-
-    let mut addr = page_start;
-    while addr < page_end {
-        // Try 2 MiB large page when the remaining range is at least 2 MiB
-        // and both the physical address and virtual address are 2 MiB aligned.
-        let remaining = page_end - addr;
-        if remaining >= PAGE_DIRECTORY_WINDOW_SIZE && addr & (PAGE_DIRECTORY_WINDOW_SIZE - 1) == 0 {
-            map_device_large_page(pml4, addr)?;
-            addr = addr.saturating_add(PAGE_DIRECTORY_WINDOW_SIZE);
-        } else {
-            map_device_4k_page(pml4, addr)?;
-            addr = addr.saturating_add(X86_PAGE_SIZE);
+    unsafe {
+        // 4-level paging supports up to 48-bit physical addresses.  Reject
+        // addresses beyond this limit (no current PCI BAR exceeds 48 bits).
+        if phys >= (1u64 << 48) {
+            return None;
         }
-    }
+        if size == 0 {
+            return None;
+        }
 
-    Some(phys as *mut u8)
+        // Sanity check: the MMIO range must not overlap kernel memory.
+        debug_assert!(
+            !overlaps_kernel(phys as usize, size),
+            "map_device_mmio: range [{:#x}, {:#x}) overlaps kernel image",
+            phys,
+            phys.saturating_add(size as u64),
+        );
+
+        let page_start = align_down(phys as usize, X86_PAGE_SIZE);
+        let page_end = align_up((phys as usize).saturating_add(size), X86_PAGE_SIZE)?;
+
+        let cr3 = current_root_table_address_impl()?;
+        let pml4 = cr3 as *mut u64;
+
+        let mut addr = page_start;
+        while addr < page_end {
+            // Try 2 MiB large page when the remaining range is at least 2 MiB
+            // and both the physical address and virtual address are 2 MiB aligned.
+            let remaining = page_end - addr;
+            if remaining >= PAGE_DIRECTORY_WINDOW_SIZE
+                && addr & (PAGE_DIRECTORY_WINDOW_SIZE - 1) == 0
+            {
+                map_device_large_page(pml4, addr)?;
+                addr = addr.saturating_add(PAGE_DIRECTORY_WINDOW_SIZE);
+            } else {
+                map_device_4k_page(pml4, addr)?;
+                addr = addr.saturating_add(X86_PAGE_SIZE);
+            }
+        }
+
+        Some(phys as *mut u8)
+    }
 }
 
 /// Map a single 2 MiB device-MMIO large page.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn map_device_large_page(pml4: *mut u64, phys: usize) -> Option<()> {
-    let pml4_idx = pml4_index(phys);
-    let pdpt_idx = page_directory_pointer_index(phys);
-    let pd_idx = page_directory_slot_index(phys);
+    unsafe {
+        let pml4_idx = pml4_index(phys);
+        let pdpt_idx = page_directory_pointer_index(phys);
+        let pd_idx = page_directory_slot_index(phys);
 
-    ensure_runtime_pdpt(pml4, pml4_idx)?;
-    let pdpt = read_runtime_pdpt(pml4, pml4_idx)?;
-    let pd = ensure_runtime_pd(pdpt, pdpt_idx)?;
+        ensure_runtime_pdpt(pml4, pml4_idx)?;
+        let pdpt = read_runtime_pdpt(pml4, pml4_idx)?;
+        let pd = ensure_runtime_pd(pdpt, pdpt_idx)?;
 
-    // Large-page (2 MiB) entry in the Page Directory.
-    let entry = (phys as u64 & LARGE_PAGE_ADDRESS_MASK)
-        | PAGE_ENTRY_PRESENT
-        | PAGE_ENTRY_WRITABLE
-        | PAGE_ENTRY_LARGE
-        | PAGE_ENTRY_CACHE_DISABLE
-        | PAGE_ENTRY_NO_EXECUTE;
+        // Large-page (2 MiB) entry in the Page Directory.
+        let entry = (phys as u64 & LARGE_PAGE_ADDRESS_MASK)
+            | PAGE_ENTRY_PRESENT
+            | PAGE_ENTRY_WRITABLE
+            | PAGE_ENTRY_LARGE
+            | PAGE_ENTRY_CACHE_DISABLE
+            | PAGE_ENTRY_NO_EXECUTE;
 
-    core::ptr::write_volatile(pd.add(pd_idx), entry);
-    invalidate_tlb(phys);
-    Some(())
+        core::ptr::write_volatile(pd.add(pd_idx), entry);
+        invalidate_tlb(phys);
+        Some(())
+    }
 }
 
 /// Map a single 4 KiB device-MMIO page.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn map_device_4k_page(pml4: *mut u64, phys: usize) -> Option<()> {
-    let pml4_idx = pml4_index(phys);
-    let pdpt_idx = page_directory_pointer_index(phys);
-    let pd_idx = page_directory_slot_index(phys);
-    let pt_idx = page_table_index(phys);
+    unsafe {
+        let pml4_idx = pml4_index(phys);
+        let pdpt_idx = page_directory_pointer_index(phys);
+        let pd_idx = page_directory_slot_index(phys);
+        let pt_idx = page_table_index(phys);
 
-    ensure_runtime_pdpt(pml4, pml4_idx)?;
-    let pdpt = read_runtime_pdpt(pml4, pml4_idx)?;
-    let pd = ensure_runtime_pd(pdpt, pdpt_idx)?;
+        ensure_runtime_pdpt(pml4, pml4_idx)?;
+        let pdpt = read_runtime_pdpt(pml4, pml4_idx)?;
+        let pd = ensure_runtime_pd(pdpt, pdpt_idx)?;
 
-    // Check if the PD entry is already a 2 MiB large page; if so, skip.
-    let pd_entry = core::ptr::read_volatile(pd.add(pd_idx));
-    if pd_entry & PAGE_ENTRY_LARGE != 0 {
-        return Some(()); // already mapped as large page
+        // Check if the PD entry is already a 2 MiB large page; if so, skip.
+        let pd_entry = core::ptr::read_volatile(pd.add(pd_idx));
+        if pd_entry & PAGE_ENTRY_LARGE != 0 {
+            return Some(()); // already mapped as large page
+        }
+
+        let pt = ensure_runtime_pt(pd, pd_idx)?;
+
+        let entry = (phys as u64 & PAGE_ENTRY_ADDRESS_MASK)
+            | PAGE_ENTRY_PRESENT
+            | PAGE_ENTRY_WRITABLE
+            | PAGE_ENTRY_CACHE_DISABLE
+            | PAGE_ENTRY_NO_EXECUTE;
+
+        core::ptr::write_volatile(pt.add(pt_idx), entry);
+        invalidate_tlb(phys);
+        Some(())
     }
-
-    let pt = ensure_runtime_pt(pd, pd_idx)?;
-
-    let entry = (phys as u64 & PAGE_ENTRY_ADDRESS_MASK)
-        | PAGE_ENTRY_PRESENT
-        | PAGE_ENTRY_WRITABLE
-        | PAGE_ENTRY_CACHE_DISABLE
-        | PAGE_ENTRY_NO_EXECUTE;
-
-    core::ptr::write_volatile(pt.add(pt_idx), entry);
-    invalidate_tlb(phys);
-    Some(())
 }
 
 /// Ensure a PML4 entry exists for the given index, allocating a PDPT if needed.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn ensure_runtime_pdpt(pml4: *mut u64, pml4_idx: usize) -> Option<()> {
-    let entry = core::ptr::read_volatile(pml4.add(pml4_idx));
-    if entry & PAGE_ENTRY_PRESENT == 0 {
-        let pdpt_phys = alloc_runtime_pt_page()?;
-        let new_entry =
-            (pdpt_phys as u64 & PAGE_ENTRY_ADDRESS_MASK) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-        core::ptr::write_volatile(pml4.add(pml4_idx), new_entry);
+    unsafe {
+        let entry = core::ptr::read_volatile(pml4.add(pml4_idx));
+        if entry & PAGE_ENTRY_PRESENT == 0 {
+            let pdpt_phys = alloc_runtime_pt_page()?;
+            let new_entry = (pdpt_phys as u64 & PAGE_ENTRY_ADDRESS_MASK)
+                | PAGE_ENTRY_PRESENT
+                | PAGE_ENTRY_WRITABLE;
+            core::ptr::write_volatile(pml4.add(pml4_idx), new_entry);
+        }
+        Some(())
     }
-    Some(())
 }
 
 /// Read the physical address of a PDPT from its PML4 entry.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn read_runtime_pdpt(pml4: *mut u64, pml4_idx: usize) -> Option<*mut u64> {
-    let entry = core::ptr::read_volatile(pml4.add(pml4_idx));
-    if entry & PAGE_ENTRY_PRESENT == 0 {
-        return None;
+    unsafe {
+        let entry = core::ptr::read_volatile(pml4.add(pml4_idx));
+        if entry & PAGE_ENTRY_PRESENT == 0 {
+            return None;
+        }
+        Some((entry as usize & PAGE_ENTRY_ADDRESS_MASK as usize) as *mut u64)
     }
-    Some((entry as usize & PAGE_ENTRY_ADDRESS_MASK as usize) as *mut u64)
 }
 
 /// Ensure a PD exists for the given PDPT index, allocating one if needed.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn ensure_runtime_pd(pdpt: *mut u64, pdpt_idx: usize) -> Option<*mut u64> {
-    let entry = core::ptr::read_volatile(pdpt.add(pdpt_idx));
-    if entry & PAGE_ENTRY_PRESENT == 0 {
-        let pd_phys = alloc_runtime_pt_page()?;
-        let new_entry =
-            (pd_phys as u64 & PAGE_ENTRY_ADDRESS_MASK) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-        core::ptr::write_volatile(pdpt.add(pdpt_idx), new_entry);
-        return Some(pd_phys as *mut u64);
+    unsafe {
+        let entry = core::ptr::read_volatile(pdpt.add(pdpt_idx));
+        if entry & PAGE_ENTRY_PRESENT == 0 {
+            let pd_phys = alloc_runtime_pt_page()?;
+            let new_entry = (pd_phys as u64 & PAGE_ENTRY_ADDRESS_MASK)
+                | PAGE_ENTRY_PRESENT
+                | PAGE_ENTRY_WRITABLE;
+            core::ptr::write_volatile(pdpt.add(pdpt_idx), new_entry);
+            return Some(pd_phys as *mut u64);
+        }
+        Some((entry as usize & PAGE_ENTRY_ADDRESS_MASK as usize) as *mut u64)
     }
-    Some((entry as usize & PAGE_ENTRY_ADDRESS_MASK as usize) as *mut u64)
 }
 
 /// Ensure a PT exists for the given PD index, allocating one if needed.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn ensure_runtime_pt(pd: *mut u64, pd_idx: usize) -> Option<*mut u64> {
-    let entry = core::ptr::read_volatile(pd.add(pd_idx));
-    if entry & PAGE_ENTRY_PRESENT == 0 {
-        let pt_phys = alloc_runtime_pt_page()?;
-        let new_entry =
-            (pt_phys as u64 & PAGE_ENTRY_ADDRESS_MASK) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-        core::ptr::write_volatile(pd.add(pd_idx), new_entry);
-        return Some(pt_phys as *mut u64);
+    unsafe {
+        let entry = core::ptr::read_volatile(pd.add(pd_idx));
+        if entry & PAGE_ENTRY_PRESENT == 0 {
+            let pt_phys = alloc_runtime_pt_page()?;
+            let new_entry = (pt_phys as u64 & PAGE_ENTRY_ADDRESS_MASK)
+                | PAGE_ENTRY_PRESENT
+                | PAGE_ENTRY_WRITABLE;
+            core::ptr::write_volatile(pd.add(pd_idx), new_entry);
+            return Some(pt_phys as *mut u64);
+        }
+        Some((entry as usize & PAGE_ENTRY_ADDRESS_MASK as usize) as *mut u64)
     }
-    Some((entry as usize & PAGE_ENTRY_ADDRESS_MASK as usize) as *mut u64)
 }
 
 /// Invalidate the TLB for a single virtual address on all CPUs.
@@ -294,42 +315,45 @@ pub unsafe fn install_user_page(
     physical_address: usize,
     permissions: PagePermissions,
 ) -> Option<()> {
-    if virtual_address >= X86_64_USER_CANONICAL_END {
-        return None;
+    unsafe {
+        if virtual_address >= X86_64_USER_CANONICAL_END {
+            return None;
+        }
+
+        let cr3 = current_root_table_address_impl()?;
+        let pml4 = cr3 as *mut u64;
+
+        let pml4_idx = pml4_index(virtual_address);
+        let pdpt_idx = page_directory_pointer_index(virtual_address);
+        let pd_idx = page_directory_slot_index(virtual_address);
+        let pt_idx = page_table_index(virtual_address);
+
+        ensure_runtime_pdpt(pml4, pml4_idx)?;
+        let pdpt = read_runtime_pdpt(pml4, pml4_idx)?;
+        let pd = ensure_runtime_pd(pdpt, pdpt_idx)?;
+
+        // Don't overwrite a large page.
+        let pd_entry = core::ptr::read_volatile(pd.add(pd_idx));
+        if pd_entry & PAGE_ENTRY_LARGE != 0 {
+            return None;
+        }
+
+        let pt = ensure_runtime_pt(pd, pd_idx)?;
+
+        let mut entry =
+            (align_down(physical_address, X86_PAGE_SIZE) as u64) & PAGE_ENTRY_ADDRESS_MASK;
+        entry |= PAGE_ENTRY_PRESENT | PAGE_ENTRY_USER;
+        if permissions.contains(PagePermissions::WRITE) {
+            entry |= PAGE_ENTRY_WRITABLE;
+        }
+        if !permissions.contains(PagePermissions::EXECUTE) {
+            entry |= PAGE_ENTRY_NO_EXECUTE;
+        }
+
+        core::ptr::write_volatile(pt.add(pt_idx), entry);
+        invalidate_tlb(virtual_address);
+        Some(())
     }
-
-    let cr3 = current_root_table_address_impl()?;
-    let pml4 = cr3 as *mut u64;
-
-    let pml4_idx = pml4_index(virtual_address);
-    let pdpt_idx = page_directory_pointer_index(virtual_address);
-    let pd_idx = page_directory_slot_index(virtual_address);
-    let pt_idx = page_table_index(virtual_address);
-
-    ensure_runtime_pdpt(pml4, pml4_idx)?;
-    let pdpt = read_runtime_pdpt(pml4, pml4_idx)?;
-    let pd = ensure_runtime_pd(pdpt, pdpt_idx)?;
-
-    // Don't overwrite a large page.
-    let pd_entry = core::ptr::read_volatile(pd.add(pd_idx));
-    if pd_entry & PAGE_ENTRY_LARGE != 0 {
-        return None;
-    }
-
-    let pt = ensure_runtime_pt(pd, pd_idx)?;
-
-    let mut entry = (align_down(physical_address, X86_PAGE_SIZE) as u64) & PAGE_ENTRY_ADDRESS_MASK;
-    entry |= PAGE_ENTRY_PRESENT | PAGE_ENTRY_USER;
-    if permissions.contains(PagePermissions::WRITE) {
-        entry |= PAGE_ENTRY_WRITABLE;
-    }
-    if !permissions.contains(PagePermissions::EXECUTE) {
-        entry |= PAGE_ENTRY_NO_EXECUTE;
-    }
-
-    core::ptr::write_volatile(pt.add(pt_idx), entry);
-    invalidate_tlb(virtual_address);
-    Some(())
 }
 
 /// Host-side stub.
@@ -759,45 +783,47 @@ pub(crate) unsafe fn unmap_stack_page(virtual_address: usize) -> bool {
 pub(crate) unsafe fn install_runtime_kernel_page_tables(
     spec: &KernelPageTableSpec,
 ) -> PreparedRuntimeKernelPageTables {
-    let pml4 = KERNEL_PML4.get();
-    let pdpt = KERNEL_PDPT.get();
-    let pd = KERNEL_PD.get();
-    let pts = KERNEL_PTS.get();
+    unsafe {
+        let pml4 = KERNEL_PML4.get();
+        let pdpt = KERNEL_PDPT.get();
+        let pd = KERNEL_PD.get();
+        let pts = KERNEL_PTS.get();
 
-    *pml4 = RawPageTable::zeroed();
-    *pdpt = RawPageTable::zeroed();
-    *pd = RawPageTable::zeroed();
-    for slot in 0..MAX_KERNEL_PT_WINDOWS {
-        (*pts)[slot] = RawPageTable::zeroed();
-    }
-
-    (*pml4).0[0] = table_pointer_entry(pdpt as usize);
-    (*pdpt).0[0] = table_pointer_entry(pd as usize);
-
-    for (slot, window) in spec.windows.iter().enumerate() {
-        if let Some(pde) = spec.huge_pd_entries.get(&window.page_directory_index) {
-            // 2 MiB huge page: set the PD entry directly (PS bit set),
-            // bypassing the PT level entirely.
-            (*pd).0[window.page_directory_index] = *pde;
-        } else {
-            // Normal 4 KiB window: PD points to a PT filled with PTEs.
-            let pt = core::ptr::addr_of_mut!((*pts)[slot]);
-            (*pd).0[window.page_directory_index] = table_pointer_entry(pt as usize);
-            (*pt).0 = window.entries;
+        *pml4 = RawPageTable::zeroed();
+        *pdpt = RawPageTable::zeroed();
+        *pd = RawPageTable::zeroed();
+        for slot in 0..MAX_KERNEL_PT_WINDOWS {
+            (*pts)[slot] = RawPageTable::zeroed();
         }
+
+        (*pml4).0[0] = table_pointer_entry(pdpt as usize);
+        (*pdpt).0[0] = table_pointer_entry(pd as usize);
+
+        for (slot, window) in spec.windows.iter().enumerate() {
+            if let Some(pde) = spec.huge_pd_entries.get(&window.page_directory_index) {
+                // 2 MiB huge page: set the PD entry directly (PS bit set),
+                // bypassing the PT level entirely.
+                (*pd).0[window.page_directory_index] = *pde;
+            } else {
+                // Normal 4 KiB window: PD points to a PT filled with PTEs.
+                let pt = core::ptr::addr_of_mut!((*pts)[slot]);
+                (*pd).0[window.page_directory_index] = table_pointer_entry(pt as usize);
+                (*pt).0 = window.entries;
+            }
+        }
+
+        let summary = PreparedRuntimeKernelPageTables {
+            root_table_address: pml4 as usize,
+            window_count: spec.window_count(),
+            mapped_page_count: spec.mapped_page_count(),
+        };
+
+        PREPARED_ROOT_TABLE.store(summary.root_table_address, Ordering::SeqCst);
+        PREPARED_WINDOW_COUNT.store(summary.window_count, Ordering::SeqCst);
+        PREPARED_MAPPED_PAGE_COUNT.store(summary.mapped_page_count, Ordering::SeqCst);
+
+        summary
     }
-
-    let summary = PreparedRuntimeKernelPageTables {
-        root_table_address: pml4 as usize,
-        window_count: spec.window_count(),
-        mapped_page_count: spec.mapped_page_count(),
-    };
-
-    PREPARED_ROOT_TABLE.store(summary.root_table_address, Ordering::SeqCst);
-    PREPARED_WINDOW_COUNT.store(summary.window_count, Ordering::SeqCst);
-    PREPARED_MAPPED_PAGE_COUNT.store(summary.mapped_page_count, Ordering::SeqCst);
-
-    summary
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
@@ -1058,23 +1084,25 @@ fn current_stack_pointer_impl() -> Option<usize> {
 /// page-table page is available.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 unsafe fn split_pd_large_page(pd: *const u64, pd_index: usize, entry: u64) -> Option<u64> {
-    let table = alloc_runtime_pt_page()?;
+    unsafe {
+        let table = alloc_runtime_pt_page()?;
 
-    // The large page keeps its address in bits 21..51 and its attributes
-    // everywhere else, so the leaves are that base plus an offset, carrying
-    // every attribute bit (`!PAGE_ENTRY_ADDRESS_MASK`) and no longer being
-    // large pages themselves.
-    let base = entry & LARGE_PAGE_ADDRESS_MASK;
-    let flags = entry & !PAGE_ENTRY_ADDRESS_MASK & !PAGE_ENTRY_LARGE;
-    let leaves = table as *mut u64;
-    for index in 0..512usize {
-        let offset = index as u64 * X86_PAGE_SIZE as u64;
-        core::ptr::write_volatile(leaves.add(index), (base + offset) | flags);
+        // The large page keeps its address in bits 21..51 and its attributes
+        // everywhere else, so the leaves are that base plus an offset, carrying
+        // every attribute bit (`!PAGE_ENTRY_ADDRESS_MASK`) and no longer being
+        // large pages themselves.
+        let base = entry & LARGE_PAGE_ADDRESS_MASK;
+        let flags = entry & !PAGE_ENTRY_ADDRESS_MASK & !PAGE_ENTRY_LARGE;
+        let leaves = table as *mut u64;
+        for index in 0..512usize {
+            let offset = index as u64 * X86_PAGE_SIZE as u64;
+            core::ptr::write_volatile(leaves.add(index), (base + offset) | flags);
+        }
+
+        let installed = table as u64 | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
+        core::ptr::write_volatile(pd.add(pd_index) as *mut u64, installed);
+        Some(installed)
     }
-
-    let installed = table as u64 | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-    core::ptr::write_volatile(pd.add(pd_index) as *mut u64, installed);
-    Some(installed)
 }
 
 /// Unmap a single 4 KiB page in the live x86_64 hardware page tables by
@@ -1089,75 +1117,77 @@ unsafe fn split_pd_large_page(pd: *const u64, pd_index: usize, entry: u64) -> Op
 /// `virtual_address` — the page becomes inaccessible immediately.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn unmap_page(virtual_address: usize) -> bool {
-    let va = virtual_address;
+    unsafe {
+        let va = virtual_address;
 
-    // ── Walk CR3 → PML4 → PDPT → PD → PT ──────────────────────
-    let root = match current_root_table_address_impl() {
-        Some(r) => r,
-        None => return false,
-    };
-
-    // PML4
-    let pml4 = root as *const u64;
-    let pml4_index = (va >> 39) & 0x1FF;
-    let pml4_entry = core::ptr::read_volatile(pml4.add(pml4_index));
-    if pml4_entry & PAGE_ENTRY_PRESENT == 0 {
-        return false;
-    }
-
-    // PDPT
-    let pdpt_addr = (pml4_entry & PAGE_ENTRY_ADDRESS_MASK) as usize;
-    let pdpt = pdpt_addr as *const u64;
-    let pdpt_index = (va >> 30) & 0x1FF;
-    let pdpt_entry = core::ptr::read_volatile(pdpt.add(pdpt_index));
-    if pdpt_entry & PAGE_ENTRY_PRESENT == 0 {
-        return false;
-    }
-    // 1 GiB huge page — can't partially unmap.
-    if pdpt_entry & PAGE_ENTRY_LARGE != 0 {
-        return false;
-    }
-
-    // PD
-    let pd_addr = (pdpt_entry & PAGE_ENTRY_ADDRESS_MASK) as usize;
-    let pd = pd_addr as *const u64;
-    let pd_index = (va >> 21) & 0x1FF;
-    let mut pd_entry = core::ptr::read_volatile(pd.add(pd_index));
-    if pd_entry & PAGE_ENTRY_PRESENT == 0 {
-        return false;
-    }
-    // A 2 MiB page has to be split before one page inside it can be
-    // un-mapped; a page-table page is the cost of installing a guard page
-    // there, and it is paid only for the stacks that need it.
-    if pd_entry & PAGE_ENTRY_LARGE != 0 {
-        let Some(split) = split_pd_large_page(pd, pd_index, pd_entry) else {
-            return false;
+        // ── Walk CR3 → PML4 → PDPT → PD → PT ──────────────────────
+        let root = match current_root_table_address_impl() {
+            Some(r) => r,
+            None => return false,
         };
-        pd_entry = split;
+
+        // PML4
+        let pml4 = root as *const u64;
+        let pml4_index = (va >> 39) & 0x1FF;
+        let pml4_entry = core::ptr::read_volatile(pml4.add(pml4_index));
+        if pml4_entry & PAGE_ENTRY_PRESENT == 0 {
+            return false;
+        }
+
+        // PDPT
+        let pdpt_addr = (pml4_entry & PAGE_ENTRY_ADDRESS_MASK) as usize;
+        let pdpt = pdpt_addr as *const u64;
+        let pdpt_index = (va >> 30) & 0x1FF;
+        let pdpt_entry = core::ptr::read_volatile(pdpt.add(pdpt_index));
+        if pdpt_entry & PAGE_ENTRY_PRESENT == 0 {
+            return false;
+        }
+        // 1 GiB huge page — can't partially unmap.
+        if pdpt_entry & PAGE_ENTRY_LARGE != 0 {
+            return false;
+        }
+
+        // PD
+        let pd_addr = (pdpt_entry & PAGE_ENTRY_ADDRESS_MASK) as usize;
+        let pd = pd_addr as *const u64;
+        let pd_index = (va >> 21) & 0x1FF;
+        let mut pd_entry = core::ptr::read_volatile(pd.add(pd_index));
+        if pd_entry & PAGE_ENTRY_PRESENT == 0 {
+            return false;
+        }
+        // A 2 MiB page has to be split before one page inside it can be
+        // un-mapped; a page-table page is the cost of installing a guard page
+        // there, and it is paid only for the stacks that need it.
+        if pd_entry & PAGE_ENTRY_LARGE != 0 {
+            let Some(split) = split_pd_large_page(pd, pd_index, pd_entry) else {
+                return false;
+            };
+            pd_entry = split;
+        }
+
+        // PT — the leaf 4 KiB PTE
+        let pt_addr = (pd_entry & PAGE_ENTRY_ADDRESS_MASK) as usize;
+        let pt = pt_addr as *mut u64;
+        let pt_index = (va >> 12) & 0x1FF;
+        let pte = core::ptr::read_volatile(pt.add(pt_index));
+        if pte & PAGE_ENTRY_PRESENT == 0 {
+            return false; // already unmapped
+        }
+
+        // Clear the Present bit and invalidate the TLB entry on all CPUs.
+        core::ptr::write_volatile(pt.add(pt_index), pte & !PAGE_ENTRY_PRESENT);
+
+        // `tlb_shootdown` invalidates the local entry immediately and bumps a
+        // global generation counter that remote CPUs observe on their next
+        // kernel entry (timer tick / syscall / exception), flushing their TLB.
+        // Unlike an IPI → ack shootdown it sends no IPIs, so it is safe to call
+        // from an AP during early boot.  A remote CPU that kept a stale valid
+        // translation could otherwise still access the unmapped page (TLB hit
+        // without a page walk), so the full-coverage flush matters.
+        crate::kernel::smp::tlb_shootdown(va);
+
+        true
     }
-
-    // PT — the leaf 4 KiB PTE
-    let pt_addr = (pd_entry & PAGE_ENTRY_ADDRESS_MASK) as usize;
-    let pt = pt_addr as *mut u64;
-    let pt_index = (va >> 12) & 0x1FF;
-    let pte = core::ptr::read_volatile(pt.add(pt_index));
-    if pte & PAGE_ENTRY_PRESENT == 0 {
-        return false; // already unmapped
-    }
-
-    // Clear the Present bit and invalidate the TLB entry on all CPUs.
-    core::ptr::write_volatile(pt.add(pt_index), pte & !PAGE_ENTRY_PRESENT);
-
-    // `tlb_shootdown` invalidates the local entry immediately and bumps a
-    // global generation counter that remote CPUs observe on their next
-    // kernel entry (timer tick / syscall / exception), flushing their TLB.
-    // Unlike an IPI → ack shootdown it sends no IPIs, so it is safe to call
-    // from an AP during early boot.  A remote CPU that kept a stale valid
-    // translation could otherwise still access the unmapped page (TLB hit
-    // without a page walk), so the full-coverage flush matters.
-    crate::kernel::smp::tlb_shootdown(va);
-
-    true
 }
 
 /// Undo an [`unmap_page`] for a 4 KiB page: set its Present bit back.
@@ -1182,37 +1212,39 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
 /// same physical frame to the kernel again.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn restore_page(virtual_address: usize) -> bool {
-    let va = virtual_address;
+    unsafe {
+        let va = virtual_address;
 
-    let root = match current_root_table_address_impl() {
-        Some(r) => r,
-        None => return false,
-    };
+        let root = match current_root_table_address_impl() {
+            Some(r) => r,
+            None => return false,
+        };
 
-    let pml4_entry = core::ptr::read_volatile((root as *const u64).add((va >> 39) & 0x1FF));
-    if pml4_entry & PAGE_ENTRY_PRESENT == 0 {
-        return false;
-    }
-    let pdpt = (pml4_entry & PAGE_ENTRY_ADDRESS_MASK) as *const u64;
-    let pdpt_entry = core::ptr::read_volatile(pdpt.add((va >> 30) & 0x1FF));
-    if pdpt_entry & PAGE_ENTRY_PRESENT == 0 || pdpt_entry & PAGE_ENTRY_LARGE != 0 {
-        return false;
-    }
-    let pd = (pdpt_entry & PAGE_ENTRY_ADDRESS_MASK) as *const u64;
-    let pd_entry = core::ptr::read_volatile(pd.add((va >> 21) & 0x1FF));
-    if pd_entry & PAGE_ENTRY_PRESENT == 0 || pd_entry & PAGE_ENTRY_LARGE != 0 {
-        return false;
-    }
-    let pt = (pd_entry & PAGE_ENTRY_ADDRESS_MASK) as *mut u64;
-    let pt_index = (va >> 12) & 0x1FF;
-    let pte = core::ptr::read_volatile(pt.add(pt_index));
-    if pte == 0 || pte & PAGE_ENTRY_PRESENT != 0 {
-        return false; // never mapped, or already accessible
-    }
+        let pml4_entry = core::ptr::read_volatile((root as *const u64).add((va >> 39) & 0x1FF));
+        if pml4_entry & PAGE_ENTRY_PRESENT == 0 {
+            return false;
+        }
+        let pdpt = (pml4_entry & PAGE_ENTRY_ADDRESS_MASK) as *const u64;
+        let pdpt_entry = core::ptr::read_volatile(pdpt.add((va >> 30) & 0x1FF));
+        if pdpt_entry & PAGE_ENTRY_PRESENT == 0 || pdpt_entry & PAGE_ENTRY_LARGE != 0 {
+            return false;
+        }
+        let pd = (pdpt_entry & PAGE_ENTRY_ADDRESS_MASK) as *const u64;
+        let pd_entry = core::ptr::read_volatile(pd.add((va >> 21) & 0x1FF));
+        if pd_entry & PAGE_ENTRY_PRESENT == 0 || pd_entry & PAGE_ENTRY_LARGE != 0 {
+            return false;
+        }
+        let pt = (pd_entry & PAGE_ENTRY_ADDRESS_MASK) as *mut u64;
+        let pt_index = (va >> 12) & 0x1FF;
+        let pte = core::ptr::read_volatile(pt.add(pt_index));
+        if pte == 0 || pte & PAGE_ENTRY_PRESENT != 0 {
+            return false; // never mapped, or already accessible
+        }
 
-    core::ptr::write_volatile(pt.add(pt_index), pte | PAGE_ENTRY_PRESENT);
-    crate::kernel::smp::tlb_shootdown(va);
-    true
+        core::ptr::write_volatile(pt.add(pt_index), pte | PAGE_ENTRY_PRESENT);
+        crate::kernel::smp::tlb_shootdown(va);
+        true
+    }
 }
 
 /// Host / test stub: no live hardware page tables to manipulate.

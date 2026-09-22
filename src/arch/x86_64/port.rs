@@ -38,49 +38,63 @@ impl<T: PortValue> Port<T> {
     ///
     /// The caller must ensure the wrapped port can be read as `T`.
     pub unsafe fn read(&mut self) -> T {
-        T::read(self.port)
+        unsafe { T::read(self.port) }
     }
 
     /// # Safety
     ///
     /// The caller must ensure the wrapped port can be written as `T`.
     pub unsafe fn write(&mut self, value: T) {
-        T::write(self.port, value);
+        unsafe {
+            T::write(self.port, value);
+        }
     }
 }
 
 impl PortValue for u8 {
     unsafe fn read(port: u16) -> Self {
-        let value: u8;
-        asm!("in al, dx", out("al") value, in("dx") port, options(nomem, nostack, preserves_flags));
-        value
+        unsafe {
+            let value: u8;
+            asm!("in al, dx", out("al") value, in("dx") port, options(nomem, nostack, preserves_flags));
+            value
+        }
     }
 
     unsafe fn write(port: u16, value: Self) {
-        asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
+        unsafe {
+            asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
+        }
     }
 }
 
 impl PortValue for u16 {
     unsafe fn read(port: u16) -> Self {
-        let value: u16;
-        asm!("in ax, dx", out("ax") value, in("dx") port, options(nomem, nostack, preserves_flags));
-        value
+        unsafe {
+            let value: u16;
+            asm!("in ax, dx", out("ax") value, in("dx") port, options(nomem, nostack, preserves_flags));
+            value
+        }
     }
 
     unsafe fn write(port: u16, value: Self) {
-        asm!("out dx, ax", in("dx") port, in("ax") value, options(nomem, nostack, preserves_flags));
+        unsafe {
+            asm!("out dx, ax", in("dx") port, in("ax") value, options(nomem, nostack, preserves_flags));
+        }
     }
 }
 
 impl PortValue for u32 {
     unsafe fn read(port: u16) -> Self {
-        let value: u32;
-        asm!("in eax, dx", out("eax") value, in("dx") port, options(nomem, nostack, preserves_flags));
-        value
+        unsafe {
+            let value: u32;
+            asm!("in eax, dx", out("eax") value, in("dx") port, options(nomem, nostack, preserves_flags));
+            value
+        }
     }
 
     unsafe fn write(port: u16, value: Self) {
-        asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack, preserves_flags));
+        unsafe {
+            asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack, preserves_flags));
+        }
     }
 }

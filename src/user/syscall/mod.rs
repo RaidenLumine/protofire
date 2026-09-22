@@ -89,7 +89,7 @@ impl UserSyscall {
         number: SyscallNumber,
         args: [usize; syscall_abi::ARG_COUNT],
     ) -> crate::Result<usize> {
-        Self::invoke_raw_from_user_mode(number as usize, args)
+        unsafe { Self::invoke_raw_from_user_mode(number as usize, args) }
     }
 
     #[cfg(any(
@@ -107,12 +107,14 @@ impl UserSyscall {
         number: usize,
         args: [usize; syscall_abi::ARG_COUNT],
     ) -> crate::Result<usize> {
-        // The raw trap returns the shared encoded syscall status word; decode it
-        // here so higher layers can work with `Result<usize>` directly.
-        let status = Self::invoke_raw_status_from_user_mode(
-            number, args[0], args[1], args[2], args[3], args[4], args[5],
-        );
-        syscall_abi::decode_result(status)
+        unsafe {
+            // The raw trap returns the shared encoded syscall status word; decode it
+            // here so higher layers can work with `Result<usize>` directly.
+            let status = Self::invoke_raw_status_from_user_mode(
+                number, args[0], args[1], args[2], args[3], args[4], args[5],
+            );
+            syscall_abi::decode_result(status)
+        }
     }
 
     // Keep a scalar-only raw path available for extracted payload sections so
@@ -134,22 +136,24 @@ impl UserSyscall {
         arg4: usize,
         arg5: usize,
     ) -> usize {
-        let status: usize;
-        // Match the x86_64 user->kernel syscall ABI: syscall number in `rax`,
-        // arguments in the standard interrupt registers, encoded status back in
-        // `rax`.
-        asm!(
-            "int {vector}",
-            vector = const syscall_abi::X86_64_INTERRUPT_VECTOR,
-            inlateout("rax") number => status,
-            in("rdi") arg0,
-            in("rsi") arg1,
-            in("rdx") arg2,
-            in("rcx") arg3,
-            in("r8") arg4,
-            in("r9") arg5,
-        );
-        status
+        unsafe {
+            let status: usize;
+            // Match the x86_64 user->kernel syscall ABI: syscall number in `rax`,
+            // arguments in the standard interrupt registers, encoded status back in
+            // `rax`.
+            asm!(
+                "int {vector}",
+                vector = const syscall_abi::X86_64_INTERRUPT_VECTOR,
+                inlateout("rax") number => status,
+                in("rdi") arg0,
+                in("rsi") arg1,
+                in("rdx") arg2,
+                in("rcx") arg3,
+                in("r8") arg4,
+                in("r9") arg5,
+            );
+            status
+        }
     }
 
     // Keep a scalar-only raw path available for extracted payload sections so
@@ -173,21 +177,23 @@ impl UserSyscall {
         arg4: usize,
         arg5: usize,
     ) -> usize {
-        let status: usize;
-        // Match the AArch64 user->kernel syscall ABI: syscall number in `x8`,
-        // arguments in `x0..x5`, encoded status returned through `x0`.
-        asm!(
-            "svc #0",
-            in("x8") number,
-            inlateout("x0") arg0 => status,
-            in("x1") arg1,
-            in("x2") arg2,
-            in("x3") arg3,
-            in("x4") arg4,
-            in("x5") arg5,
-            options(nostack),
-        );
-        status
+        unsafe {
+            let status: usize;
+            // Match the AArch64 user->kernel syscall ABI: syscall number in `x8`,
+            // arguments in `x0..x5`, encoded status returned through `x0`.
+            asm!(
+                "svc #0",
+                in("x8") number,
+                inlateout("x0") arg0 => status,
+                in("x1") arg1,
+                in("x2") arg2,
+                in("x3") arg3,
+                in("x4") arg4,
+                in("x5") arg5,
+                options(nostack),
+            );
+            status
+        }
     }
 }
 

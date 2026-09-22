@@ -430,22 +430,28 @@ mod controller {
 
     /// MMIO helpers for 32-bit, 16-bit, and 8-bit register access.
     unsafe fn reg_read32(base: *mut u8, offset: usize) -> u32 {
-        read_volatile(base.add(offset) as *const u32)
+        unsafe { read_volatile(base.add(offset) as *const u32) }
     }
     unsafe fn reg_write32(base: *mut u8, offset: usize, val: u32) {
-        write_volatile(base.add(offset) as *mut u32, val);
+        unsafe {
+            write_volatile(base.add(offset) as *mut u32, val);
+        }
     }
     unsafe fn reg_read16(base: *mut u8, offset: usize) -> u16 {
-        read_volatile(base.add(offset) as *const u16)
+        unsafe { read_volatile(base.add(offset) as *const u16) }
     }
     unsafe fn reg_write16(base: *mut u8, offset: usize, val: u16) {
-        write_volatile(base.add(offset) as *mut u16, val);
+        unsafe {
+            write_volatile(base.add(offset) as *mut u16, val);
+        }
     }
     unsafe fn reg_read8(base: *mut u8, offset: usize) -> u8 {
-        read_volatile(base.add(offset) as *const u8)
+        unsafe { read_volatile(base.add(offset) as *const u8) }
     }
     unsafe fn reg_write8(base: *mut u8, offset: usize, val: u8) {
-        write_volatile(base.add(offset), val);
+        unsafe {
+            write_volatile(base.add(offset), val);
+        }
     }
 
     /// The HDA host controller.
@@ -499,102 +505,105 @@ mod controller {
         /// `bar0_phys` is the physical base address of BAR0, `bar0_size`
         /// the length of the MMIO region.
         pub unsafe fn new(bar0_phys: u64, bar0_size: usize) -> Option<Self> {
-            let mmio = map_device_mmio(bar0_phys, bar0_size)?;
-            let regs = mmio;
+            unsafe {
+                let mmio = map_device_mmio(bar0_phys, bar0_size)?;
+                let regs = mmio;
 
-            // Read capabilities.
-            let cap = reg_read16(regs, HDA_CAP);
-            let iss = ((cap >> 12) & 0x0F) as u8;
-            let oss = ((cap >> 8) & 0x0F) as u8;
-            let bss = ((cap >> 4) & 0x0F) as u8;
-            let _nsdo = (cap & 0x0F) as u8;
+                // Read capabilities.
+                let cap = reg_read16(regs, HDA_CAP);
+                let iss = ((cap >> 12) & 0x0F) as u8;
+                let oss = ((cap >> 8) & 0x0F) as u8;
+                let bss = ((cap >> 4) & 0x0F) as u8;
+                let _nsdo = (cap & 0x0F) as u8;
 
-            println!(
-                "[hda   ] CAP=0x{:04x} ISS={} OSS={} BSS={}",
-                cap, iss, oss, bss
-            );
+                println!(
+                    "[hda   ] CAP=0x{:04x} ISS={} OSS={} BSS={}",
+                    cap, iss, oss, bss
+                );
 
-            // Allocate DMA buffers.
-            let corb_buf = DmaBuffer::allocate(1)?; // 4 KiB
-            let rirb_buf = DmaBuffer::allocate(1)?; // 4 KiB
+                // Allocate DMA buffers.
+                let corb_buf = DmaBuffer::allocate(1)?; // 4 KiB
+                let rirb_buf = DmaBuffer::allocate(1)?; // 4 KiB
 
-            let mut ctrl = Self {
-                regs,
-                cap,
-                num_input_streams: iss,
-                num_output_streams: oss,
-                num_bidir_streams: bss,
-                corb_buf,
-                rirb_buf,
-                corb_wp: 0,
-                rirb_rp: 0xFFFF,
-                codec0_vendor: 0,
-                playback_bdl: None,
-                playback_data: None,
-                playback_ring: BdlRingState::new(),
-                active_rate: 0,
-                converter_nid: 0,
-                stream_tag: 0,
-                position_spins: 0,
-            };
+                let mut ctrl = Self {
+                    regs,
+                    cap,
+                    num_input_streams: iss,
+                    num_output_streams: oss,
+                    num_bidir_streams: bss,
+                    corb_buf,
+                    rirb_buf,
+                    corb_wp: 0,
+                    rirb_rp: 0xFFFF,
+                    codec0_vendor: 0,
+                    playback_bdl: None,
+                    playback_data: None,
+                    playback_ring: BdlRingState::new(),
+                    active_rate: 0,
+                    converter_nid: 0,
+                    stream_tag: 0,
+                    position_spins: 0,
+                };
 
-            // Reset controller.
-            ctrl.reset().ok()?;
+                // Reset controller.
+                ctrl.reset().ok()?;
 
-            // Initialise CORB.
-            ctrl.init_corb().ok()?;
+                // Initialise CORB.
+                ctrl.init_corb().ok()?;
 
-            // Initialise RIRB.
-            ctrl.init_rirb().ok()?;
+                // Initialise RIRB.
+                ctrl.init_rirb().ok()?;
 
-            // Check for codecs on the link.
-            if !ctrl.detect_codecs() {
-                println!("[hda   ] no codecs detected on the link");
-                return Some(ctrl); // Still return the controller for later use.
-            }
-
-            // Read VENDOR_ID from codec 0, node 0.
-            match ctrl.read_codec_param(0, 0, param_id::VENDOR_ID) {
-                Ok(vid) => {
-                    let vendor = (vid >> 16) as u16;
-                    let device = vid as u16;
-                    println!(
-                        "[hda   ] codec 0 VENDOR_ID = {:#010x} (vendor={:#06x} device={:#06x})",
-                        vid, vendor, device
-                    );
-                    ctrl.codec0_vendor = vid;
+                // Check for codecs on the link.
+                if !ctrl.detect_codecs() {
+                    println!("[hda   ] no codecs detected on the link");
+                    return Some(ctrl); // Still return the controller for later
+                                       // use.
                 }
-                Err(e) => {
-                    println!("[hda   ] codec 0 VENDOR_ID read failed: {}", e.as_str());
-                }
-            }
 
-            // Enumerate the codec widget graph for a playback output
-            // converter and allocate the playback DMA buffers when one is
-            // found.
-            match ctrl.find_output_converter(0) {
-                Ok(nid) => {
-                    ctrl.converter_nid = nid;
-                    ctrl.stream_tag = 1;
-                    if let (Some(mut bdl), Some(data)) =
-                        (DmaBuffer::allocate(1), DmaBuffer::allocate(BDL_ENTRIES))
-                    {
-                        let _ = populate_bdl(bdl.as_mut_slice(), data.phys_addr() as u64);
-                        ctrl.playback_bdl = Some(bdl);
-                        ctrl.playback_data = Some(data);
+                // Read VENDOR_ID from codec 0, node 0.
+                match ctrl.read_codec_param(0, 0, param_id::VENDOR_ID) {
+                    Ok(vid) => {
+                        let vendor = (vid >> 16) as u16;
+                        let device = vid as u16;
                         println!(
-                            "[hda   ] playback: output converter nid={} stream_tag={}",
-                            nid, ctrl.stream_tag
+                            "[hda   ] codec 0 VENDOR_ID = {:#010x} (vendor={:#06x} device={:#06x})",
+                            vid, vendor, device
                         );
+                        ctrl.codec0_vendor = vid;
+                    }
+                    Err(e) => {
+                        println!("[hda   ] codec 0 VENDOR_ID read failed: {}", e.as_str());
                     }
                 }
-                Err(e) => {
-                    println!("[hda   ] no output converter found: {}", e.as_str());
-                }
-            }
 
-            println!("[hda   ] controller initialised");
-            Some(ctrl)
+                // Enumerate the codec widget graph for a playback output
+                // converter and allocate the playback DMA buffers when one is
+                // found.
+                match ctrl.find_output_converter(0) {
+                    Ok(nid) => {
+                        ctrl.converter_nid = nid;
+                        ctrl.stream_tag = 1;
+                        if let (Some(mut bdl), Some(data)) =
+                            (DmaBuffer::allocate(1), DmaBuffer::allocate(BDL_ENTRIES))
+                        {
+                            let _ = populate_bdl(bdl.as_mut_slice(), data.phys_addr() as u64);
+                            ctrl.playback_bdl = Some(bdl);
+                            ctrl.playback_data = Some(data);
+                            println!(
+                                "[hda   ] playback: output converter nid={} stream_tag={}",
+                                nid, ctrl.stream_tag
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        println!("[hda   ] no output converter found: {}", e.as_str());
+                    }
+                }
+
+                println!("[hda   ] controller initialised");
+                Some(ctrl)
+            }
         }
 
         // -------------------------------------------------------------------
@@ -603,43 +612,45 @@ mod controller {
 
         /// Reset the controller (GCTL.CRST toggle).
         unsafe fn reset(&mut self) -> Result<()> {
-            // Clear stale codec wake flags before running the reset (W1C),
-            // mirroring Linux's azx_reset ordering: the codec re-asserts
-            // STATESTS on the CRST de-assert edge, and clearing it afterwards
-            // would swallow that edge.
-            let statests = reg_read16(self.regs, HDA_STATESTS);
-            if statests != 0 {
-                reg_write16(self.regs, HDA_STATESTS, statests);
-            }
-
-            // Assert reset (CRST = 0).
-            reg_write32(self.regs, HDA_GCTL, 0);
-            for _ in 0..100_000 {
-                if reg_read32(self.regs, HDA_GCTL) & GCTL_CRST == 0 {
-                    break;
+            unsafe {
+                // Clear stale codec wake flags before running the reset (W1C),
+                // mirroring Linux's azx_reset ordering: the codec re-asserts
+                // STATESTS on the CRST de-assert edge, and clearing it afterwards
+                // would swallow that edge.
+                let statests = reg_read16(self.regs, HDA_STATESTS);
+                if statests != 0 {
+                    reg_write16(self.regs, HDA_STATESTS, statests);
                 }
-            }
-            if reg_read32(self.regs, HDA_GCTL) & GCTL_CRST != 0 {
-                return Err(crate::Error::TimedOut);
-            }
 
-            // De-assert reset (CRST = 1).
-            reg_write32(self.regs, HDA_GCTL, GCTL_CRST);
-            for _ in 0..100_000 {
+                // Assert reset (CRST = 0).
+                reg_write32(self.regs, HDA_GCTL, 0);
+                for _ in 0..100_000 {
+                    if reg_read32(self.regs, HDA_GCTL) & GCTL_CRST == 0 {
+                        break;
+                    }
+                }
                 if reg_read32(self.regs, HDA_GCTL) & GCTL_CRST != 0 {
-                    break;
+                    return Err(crate::Error::TimedOut);
                 }
-            }
-            if reg_read32(self.regs, HDA_GCTL) & GCTL_CRST == 0 {
-                return Err(crate::Error::TimedOut);
-            }
 
-            // Wait 50 us for link to stabilise (simple spin loop).
-            for _ in 0..10_000 {
-                core::hint::spin_loop();
-            }
+                // De-assert reset (CRST = 1).
+                reg_write32(self.regs, HDA_GCTL, GCTL_CRST);
+                for _ in 0..100_000 {
+                    if reg_read32(self.regs, HDA_GCTL) & GCTL_CRST != 0 {
+                        break;
+                    }
+                }
+                if reg_read32(self.regs, HDA_GCTL) & GCTL_CRST == 0 {
+                    return Err(crate::Error::TimedOut);
+                }
 
-            Ok(())
+                // Wait 50 us for link to stabilise (simple spin loop).
+                for _ in 0..10_000 {
+                    core::hint::spin_loop();
+                }
+
+                Ok(())
+            }
         }
 
         // -------------------------------------------------------------------
@@ -648,61 +659,63 @@ mod controller {
 
         /// Initialise the CORB engine.
         unsafe fn init_corb(&mut self) -> Result<()> {
-            // Reset CORB: set CORBRP = 0 (this triggers a reset).
-            reg_write16(self.regs, HDA_CORBRP, 0);
-            for _ in 0..100_000 {
-                if reg_read16(self.regs, HDA_CORBRP) == 0 {
-                    break;
+            unsafe {
+                // Reset CORB: set CORBRP = 0 (this triggers a reset).
+                reg_write16(self.regs, HDA_CORBRP, 0);
+                for _ in 0..100_000 {
+                    if reg_read16(self.regs, HDA_CORBRP) == 0 {
+                        break;
+                    }
                 }
-            }
-            if reg_read16(self.regs, HDA_CORBRP) != 0 {
-                return Err(crate::Error::TimedOut);
-            }
-
-            // Set CORB size to 256 entries if programmable.
-            let corbsize = reg_read8(self.regs, HDA_CORBSIZE);
-            let prog = corbsize & (1 << CORBSIZE_CAP_SHIFT);
-            if prog != 0 {
-                let size_field = (CORBSIZE_256 << CORBSIZE_SIZE_SHIFT) & CORBSIZE_SIZE_MASK;
-                reg_write8(
-                    self.regs,
-                    HDA_CORBSIZE,
-                    (corbsize & !CORBSIZE_SIZE_MASK) | size_field,
-                );
-            }
-
-            // Set CORB base address.
-            let corb_phys = self.corb_buf.phys_addr() as u64;
-            reg_write32(self.regs, HDA_CORBLBASE, corb_phys as u32);
-            reg_write32(self.regs, HDA_CORBUBASE, (corb_phys >> 32) as u32);
-
-            // Set CORBRP = 0 again after programming base.
-            reg_write16(self.regs, HDA_CORBRP, 0);
-            for _ in 0..100_000 {
-                if reg_read16(self.regs, HDA_CORBRP) == 0 {
-                    break;
+                if reg_read16(self.regs, HDA_CORBRP) != 0 {
+                    return Err(crate::Error::TimedOut);
                 }
-            }
-            if reg_read16(self.regs, HDA_CORBRP) != 0 {
-                return Err(crate::Error::TimedOut);
-            }
 
-            // Start CORB engine.
-            reg_write8(self.regs, HDA_CORBCTL, CORBCTL_CORBRUN);
-            for _ in 0..100_000 {
-                if reg_read8(self.regs, HDA_CORBCTL) & CORBCTL_CORBRUN != 0 {
-                    break;
+                // Set CORB size to 256 entries if programmable.
+                let corbsize = reg_read8(self.regs, HDA_CORBSIZE);
+                let prog = corbsize & (1 << CORBSIZE_CAP_SHIFT);
+                if prog != 0 {
+                    let size_field = (CORBSIZE_256 << CORBSIZE_SIZE_SHIFT) & CORBSIZE_SIZE_MASK;
+                    reg_write8(
+                        self.regs,
+                        HDA_CORBSIZE,
+                        (corbsize & !CORBSIZE_SIZE_MASK) | size_field,
+                    );
                 }
-            }
-            if reg_read8(self.regs, HDA_CORBCTL) & CORBCTL_CORBRUN == 0 {
-                return Err(crate::Error::TimedOut);
-            }
 
-            // Initialise write pointer to 0.
-            reg_write16(self.regs, HDA_CORBWP, 0);
-            self.corb_wp = 0;
+                // Set CORB base address.
+                let corb_phys = self.corb_buf.phys_addr() as u64;
+                reg_write32(self.regs, HDA_CORBLBASE, corb_phys as u32);
+                reg_write32(self.regs, HDA_CORBUBASE, (corb_phys >> 32) as u32);
 
-            Ok(())
+                // Set CORBRP = 0 again after programming base.
+                reg_write16(self.regs, HDA_CORBRP, 0);
+                for _ in 0..100_000 {
+                    if reg_read16(self.regs, HDA_CORBRP) == 0 {
+                        break;
+                    }
+                }
+                if reg_read16(self.regs, HDA_CORBRP) != 0 {
+                    return Err(crate::Error::TimedOut);
+                }
+
+                // Start CORB engine.
+                reg_write8(self.regs, HDA_CORBCTL, CORBCTL_CORBRUN);
+                for _ in 0..100_000 {
+                    if reg_read8(self.regs, HDA_CORBCTL) & CORBCTL_CORBRUN != 0 {
+                        break;
+                    }
+                }
+                if reg_read8(self.regs, HDA_CORBCTL) & CORBCTL_CORBRUN == 0 {
+                    return Err(crate::Error::TimedOut);
+                }
+
+                // Initialise write pointer to 0.
+                reg_write16(self.regs, HDA_CORBWP, 0);
+                self.corb_wp = 0;
+
+                Ok(())
+            }
         }
 
         // -------------------------------------------------------------------
@@ -711,45 +724,47 @@ mod controller {
 
         /// Initialise the RIRB engine.
         unsafe fn init_rirb(&mut self) -> Result<()> {
-            // Set RIRB size to 256 entries if programmable.
-            let rirbsize = reg_read8(self.regs, HDA_RIRBSIZE);
-            let prog = rirbsize & 1; // bit 0: size programmable
-            if prog != 0 {
-                let size_field = (RIRBSIZE_256 << RIRBSIZE_SIZE_SHIFT) & RIRBSIZE_SIZE_MASK;
+            unsafe {
+                // Set RIRB size to 256 entries if programmable.
+                let rirbsize = reg_read8(self.regs, HDA_RIRBSIZE);
+                let prog = rirbsize & 1; // bit 0: size programmable
+                if prog != 0 {
+                    let size_field = (RIRBSIZE_256 << RIRBSIZE_SIZE_SHIFT) & RIRBSIZE_SIZE_MASK;
+                    reg_write8(
+                        self.regs,
+                        HDA_RIRBSIZE,
+                        (rirbsize & !RIRBSIZE_SIZE_MASK) | size_field,
+                    );
+                }
+
+                // Set RIRB base address.
+                let rirb_phys = self.rirb_buf.phys_addr() as u64;
+                reg_write32(self.regs, HDA_RIRBLBASE, rirb_phys as u32);
+                reg_write32(self.regs, HDA_RIRBUBASE, (rirb_phys >> 32) as u32);
+
+                // Set Response Interrupt Count to 1 (interrupt after each response).
+                reg_write16(self.regs, HDA_RINTCNT, 1);
+
+                // Enable DMA engine and response interrupt.
                 reg_write8(
                     self.regs,
-                    HDA_RIRBSIZE,
-                    (rirbsize & !RIRBSIZE_SIZE_MASK) | size_field,
+                    HDA_RIRBCTL,
+                    RIRBCTL_DMAEN | RIRBCTL_RINTCTL | RIRBCTL_OIC,
                 );
-            }
-
-            // Set RIRB base address.
-            let rirb_phys = self.rirb_buf.phys_addr() as u64;
-            reg_write32(self.regs, HDA_RIRBLBASE, rirb_phys as u32);
-            reg_write32(self.regs, HDA_RIRBUBASE, (rirb_phys >> 32) as u32);
-
-            // Set Response Interrupt Count to 1 (interrupt after each response).
-            reg_write16(self.regs, HDA_RINTCNT, 1);
-
-            // Enable DMA engine and response interrupt.
-            reg_write8(
-                self.regs,
-                HDA_RIRBCTL,
-                RIRBCTL_DMAEN | RIRBCTL_RINTCTL | RIRBCTL_OIC,
-            );
-            for _ in 0..100_000 {
-                if reg_read8(self.regs, HDA_RIRBCTL) & RIRBCTL_DMAEN != 0 {
-                    break;
+                for _ in 0..100_000 {
+                    if reg_read8(self.regs, HDA_RIRBCTL) & RIRBCTL_DMAEN != 0 {
+                        break;
+                    }
                 }
-            }
-            if reg_read8(self.regs, HDA_RIRBCTL) & RIRBCTL_DMAEN == 0 {
-                return Err(crate::Error::TimedOut);
-            }
+                if reg_read8(self.regs, HDA_RIRBCTL) & RIRBCTL_DMAEN == 0 {
+                    return Err(crate::Error::TimedOut);
+                }
 
-            // Read initial RIRBWP (may be 0xFFFF indicating empty).
-            self.rirb_rp = reg_read16(self.regs, HDA_RIRBWP);
+                // Read initial RIRBWP (may be 0xFFFF indicating empty).
+                self.rirb_rp = reg_read16(self.regs, HDA_RIRBWP);
 
-            Ok(())
+                Ok(())
+            }
         }
 
         // -------------------------------------------------------------------
@@ -764,21 +779,23 @@ mod controller {
         ///
         /// Returns `true` if at least one codec is detected.
         unsafe fn detect_codecs(&mut self) -> bool {
-            for _ in 0..CODEC_WAIT_SPINS {
-                let statests = reg_read16(self.regs, HDA_STATESTS);
-                let mut present = false;
-                for i in 0..MAX_CODECS {
-                    if statests & (1u16 << i) != 0 {
-                        println!("[hda   ] codec {} present", i);
-                        present = true;
+            unsafe {
+                for _ in 0..CODEC_WAIT_SPINS {
+                    let statests = reg_read16(self.regs, HDA_STATESTS);
+                    let mut present = false;
+                    for i in 0..MAX_CODECS {
+                        if statests & (1u16 << i) != 0 {
+                            println!("[hda   ] codec {} present", i);
+                            present = true;
+                        }
                     }
+                    if present {
+                        return true;
+                    }
+                    core::hint::spin_loop();
                 }
-                if present {
-                    return true;
-                }
-                core::hint::spin_loop();
+                false
             }
-            false
         }
 
         // -------------------------------------------------------------------
@@ -791,64 +808,68 @@ mod controller {
         /// advanced.  The function then polls the RIRB write pointer for a
         /// response.
         unsafe fn send_verb(&mut self, verb: u32) -> Result<u32> {
-            // Write the verb at CORBWP + 1, then advance CORBWP to it. The
-            // controller reads from CORBRP + 1, so the first verb lands at
-            // entry 1, matching Linux's azx_corb_send_cmd semantics.
-            let corb_idx = (self.corb_wp as usize + 1) % CORB_ENTRIES;
-            let corb_ptr = self.corb_buf.as_ptr() as *mut u32;
-            write_volatile(corb_ptr.add(corb_idx), verb);
+            unsafe {
+                // Write the verb at CORBWP + 1, then advance CORBWP to it. The
+                // controller reads from CORBRP + 1, so the first verb lands at
+                // entry 1, matching Linux's azx_corb_send_cmd semantics.
+                let corb_idx = (self.corb_wp as usize + 1) % CORB_ENTRIES;
+                let corb_ptr = self.corb_buf.as_ptr() as *mut u32;
+                write_volatile(corb_ptr.add(corb_idx), verb);
 
-            let new_wp = corb_idx as u16;
-            reg_write16(self.regs, HDA_CORBWP, new_wp);
-            self.corb_wp = new_wp;
+                let new_wp = corb_idx as u16;
+                reg_write16(self.regs, HDA_CORBWP, new_wp);
+                self.corb_wp = new_wp;
 
-            // Poll for a response in the RIRB. RIRBWP advancing is the
-            // readiness signal; the response entry is written at the new
-            // pointer position, so read it there.
-            let last_rp = self.rirb_rp;
-            for _ in 0..500_000 {
-                let wp = reg_read16(self.regs, HDA_RIRBWP);
+                // Poll for a response in the RIRB. RIRBWP advancing is the
+                // readiness signal; the response entry is written at the new
+                // pointer position, so read it there.
+                let last_rp = self.rirb_rp;
+                for _ in 0..500_000 {
+                    let wp = reg_read16(self.regs, HDA_RIRBWP);
 
-                // RIRBWP of 0xFFFF means the buffer is empty.
-                if wp == 0xFFFF || wp == last_rp {
-                    core::hint::spin_loop();
-                    continue;
-                }
-
-                // The controller writes the response entry at the new write
-                // pointer before RIRBWP becomes visible, so it sits at wp.
-                let rirb_idx = wp as usize % RIRB_ENTRIES;
-                let rirb_ptr = self.rirb_buf.as_ptr() as *const u32;
-                let resp_low = read_volatile(rirb_ptr.add(rirb_idx * 2));
-                let resp_high = read_volatile(rirb_ptr.add(rirb_idx * 2 + 1));
-
-                // Some controllers (QEMU's intel-hda included) leave the
-                // VALID flag clear on solicited responses — their upper word
-                // carries just the codec address — so give the DMA a short
-                // settle window, then trust the write-pointer advance.
-                for _ in 0..100 {
-                    if resp_high & 0x01 != 0 {
-                        break;
+                    // RIRBWP of 0xFFFF means the buffer is empty.
+                    if wp == 0xFFFF || wp == last_rp {
+                        core::hint::spin_loop();
+                        continue;
                     }
-                    core::hint::spin_loop();
+
+                    // The controller writes the response entry at the new write
+                    // pointer before RIRBWP becomes visible, so it sits at wp.
+                    let rirb_idx = wp as usize % RIRB_ENTRIES;
+                    let rirb_ptr = self.rirb_buf.as_ptr() as *const u32;
+                    let resp_low = read_volatile(rirb_ptr.add(rirb_idx * 2));
+                    let resp_high = read_volatile(rirb_ptr.add(rirb_idx * 2 + 1));
+
+                    // Some controllers (QEMU's intel-hda included) leave the
+                    // VALID flag clear on solicited responses — their upper word
+                    // carries just the codec address — so give the DMA a short
+                    // settle window, then trust the write-pointer advance.
+                    for _ in 0..100 {
+                        if resp_high & 0x01 != 0 {
+                            break;
+                        }
+                        core::hint::spin_loop();
+                    }
+
+                    // Consumed — remember this position.
+                    self.rirb_rp = wp;
+
+                    // Clear RIRBSTS interrupt flags (W1C).
+                    reg_write8(self.regs, HDA_RIRBSTS, RIRBSTS_RINTFL | RIRBSTS_OIS);
+
+                    return Ok(resp_low);
                 }
 
-                // Consumed — remember this position.
-                self.rirb_rp = wp;
-
-                // Clear RIRBSTS interrupt flags (W1C).
-                reg_write8(self.regs, HDA_RIRBSTS, RIRBSTS_RINTFL | RIRBSTS_OIS);
-
-                return Ok(resp_low);
+                Err(crate::Error::TimedOut)
             }
-
-            Err(crate::Error::TimedOut)
         }
 
         /// Read a codec parameter (e.g. VENDOR_ID) via GET_PARAMETER.
         pub unsafe fn read_codec_param(&mut self, cad: u8, nid: u8, param: u8) -> Result<u32> {
-            let verb = get_param(cad, nid, param);
-            self.send_verb(verb)
+            unsafe {
+                let verb = get_param(cad, nid, param);
+                self.send_verb(verb)
+            }
         }
 
         // -------------------------------------------------------------------
@@ -857,10 +878,12 @@ mod controller {
 
         /// Read the subordinate node list of `nid`: (start node, count).
         unsafe fn subordinate_node_count(&mut self, cad: u8, nid: u8) -> Result<(u8, u16)> {
-            let v = self.read_codec_param(cad, nid, param_id::SUBORDINATE_NODE_COUNT)?;
-            let start = (v & 0xFF) as u8;
-            let count = ((v >> 16) & 0xFF) as u8;
-            Ok((start, count as u16))
+            unsafe {
+                let v = self.read_codec_param(cad, nid, param_id::SUBORDINATE_NODE_COUNT)?;
+                let start = (v & 0xFF) as u8;
+                let count = ((v >> 16) & 0xFF) as u8;
+                Ok((start, count as u16))
+            }
         }
 
         /// Find an audio output converter widget reachable from the root node.
@@ -869,21 +892,23 @@ mod controller {
         /// the first widget whose AW_CAPABILITIES type (bits 20:24) is 0
         /// (audio output converter).
         unsafe fn find_output_converter(&mut self, cad: u8) -> Result<u8> {
-            let (afg, _count) = self.subordinate_node_count(cad, 0)?;
-            // Audio function groups report type 0x1 in FUNCTION_GROUP_TYPE.
-            let fgt = self.read_codec_param(cad, afg, param_id::FUNCTION_GROUP_TYPE)?;
-            if fgt & 0xFF != 0x01 {
-                return Err(crate::Error::NotFound);
-            }
-            let (start, count) = self.subordinate_node_count(cad, afg)?;
-            for i in 0..count {
-                let nid = start.wrapping_add(i as u8);
-                let caps = self.read_codec_param(cad, nid, param_id::AW_CAPABILITIES)?;
-                if (caps & AW_WCAP_TYPE_MASK) >> AW_WCAP_TYPE_SHIFT == AW_WID_AUDIO_OUTPUT {
-                    return Ok(nid);
+            unsafe {
+                let (afg, _count) = self.subordinate_node_count(cad, 0)?;
+                // Audio function groups report type 0x1 in FUNCTION_GROUP_TYPE.
+                let fgt = self.read_codec_param(cad, afg, param_id::FUNCTION_GROUP_TYPE)?;
+                if fgt & 0xFF != 0x01 {
+                    return Err(crate::Error::NotFound);
                 }
+                let (start, count) = self.subordinate_node_count(cad, afg)?;
+                for i in 0..count {
+                    let nid = start.wrapping_add(i as u8);
+                    let caps = self.read_codec_param(cad, nid, param_id::AW_CAPABILITIES)?;
+                    if (caps & AW_WCAP_TYPE_MASK) >> AW_WCAP_TYPE_SHIFT == AW_WID_AUDIO_OUTPUT {
+                        return Ok(nid);
+                    }
+                }
+                Err(crate::Error::NotFound)
             }
-            Err(crate::Error::NotFound)
         }
 
         // -------------------------------------------------------------------
@@ -892,73 +917,79 @@ mod controller {
 
         /// Read the stream's link position in buffer (SDLPIB).
         unsafe fn stream_link_position(&self) -> u32 {
-            reg_read32(self.regs, HDA_SD_BASE + HDA_SDLPIB)
+            unsafe { reg_read32(self.regs, HDA_SD_BASE + HDA_SDLPIB) }
         }
 
         /// Stop the playback stream by clearing SDCTL.SRUN (two-step).
         unsafe fn stop_playback_stream(&mut self) {
-            let sd = HDA_SD_BASE;
-            let ctl = reg_read32(self.regs, sd + HDA_SDCTL);
-            if ctl & SDCTL_SRUN == 0 {
-                return;
+            unsafe {
+                let sd = HDA_SD_BASE;
+                let ctl = reg_read32(self.regs, sd + HDA_SDCTL);
+                if ctl & SDCTL_SRUN == 0 {
+                    return;
+                }
+                // Assert the stop latch, drop SRUN, then release the latch.
+                reg_write32(self.regs, sd + HDA_SDCTL, ctl | SDCTL_SRUN_RESET);
+                reg_write32(
+                    self.regs,
+                    sd + HDA_SDCTL,
+                    ctl & !(SDCTL_SRUN | SDCTL_SRUN_RESET),
+                );
             }
-            // Assert the stop latch, drop SRUN, then release the latch.
-            reg_write32(self.regs, sd + HDA_SDCTL, ctl | SDCTL_SRUN_RESET);
-            reg_write32(
-                self.regs,
-                sd + HDA_SDCTL,
-                ctl & !(SDCTL_SRUN | SDCTL_SRUN_RESET),
-            );
         }
 
         /// Program the stream descriptor for playback at `format` and start
         /// the DMA engine (stream 0, output direction).
         unsafe fn setup_playback_stream(&mut self, format: u16) -> Result<()> {
-            let sd = HDA_SD_BASE;
-            self.stop_playback_stream();
-            // Clear stale status (W1C).
-            reg_write8(self.regs, sd + HDA_SDSTS, SDSTS_BCIS | SDSTS_FIFO_READY);
-            // Format, cyclic buffer length, last-valid descriptor index, and
-            // BDL base address.  SDLVI must be `BDL_ENTRIES - 1` so the DMA
-            // engine traverses the full ring; QEMU intel-hda derives the
-            // descriptor count as `lvi + 1`, and real silicon won't run DMA
-            // at all with LVI = 0.
-            reg_write16(self.regs, sd + HDA_SDFMT, format);
-            reg_write32(self.regs, sd + HDA_SDCBL, BDL_TOTAL_LEN);
-            reg_write16(self.regs, sd + HDA_SDLVI, (BDL_ENTRIES - 1) as u16);
-            let bdl = self
-                .playback_bdl
-                .as_ref()
-                .ok_or(crate::Error::Unsupported)?;
-            let bdl_phys = bdl.phys_addr() as u64;
-            reg_write32(self.regs, sd + HDA_SDBDPL, bdl_phys as u32);
-            reg_write32(self.regs, sd + HDA_SDBDPU, (bdl_phys >> 32) as u32);
-            // Start: stream tag + output direction (DIR = 0) + SRUN.
-            let sctl = ((self.stream_tag as u32) & 0x0F) << SDCTL_STRM_TAG_SHIFT | SDCTL_SRUN;
-            reg_write32(self.regs, sd + HDA_SDCTL, sctl);
-            Ok(())
+            unsafe {
+                let sd = HDA_SD_BASE;
+                self.stop_playback_stream();
+                // Clear stale status (W1C).
+                reg_write8(self.regs, sd + HDA_SDSTS, SDSTS_BCIS | SDSTS_FIFO_READY);
+                // Format, cyclic buffer length, last-valid descriptor index, and
+                // BDL base address.  SDLVI must be `BDL_ENTRIES - 1` so the DMA
+                // engine traverses the full ring; QEMU intel-hda derives the
+                // descriptor count as `lvi + 1`, and real silicon won't run DMA
+                // at all with LVI = 0.
+                reg_write16(self.regs, sd + HDA_SDFMT, format);
+                reg_write32(self.regs, sd + HDA_SDCBL, BDL_TOTAL_LEN);
+                reg_write16(self.regs, sd + HDA_SDLVI, (BDL_ENTRIES - 1) as u16);
+                let bdl = self
+                    .playback_bdl
+                    .as_ref()
+                    .ok_or(crate::Error::Unsupported)?;
+                let bdl_phys = bdl.phys_addr() as u64;
+                reg_write32(self.regs, sd + HDA_SDBDPL, bdl_phys as u32);
+                reg_write32(self.regs, sd + HDA_SDBDPU, (bdl_phys >> 32) as u32);
+                // Start: stream tag + output direction (DIR = 0) + SRUN.
+                let sctl = ((self.stream_tag as u32) & 0x0F) << SDCTL_STRM_TAG_SHIFT | SDCTL_SRUN;
+                reg_write32(self.regs, sd + HDA_SDCTL, sctl);
+                Ok(())
+            }
         }
 
         /// Route the playback stream into the output converter and power it
         /// to D0.
         unsafe fn setup_codec_playback(&mut self, cad: u8) -> Result<()> {
-            let converter = self.converter_nid;
-            if converter == 0 {
-                return Err(crate::Error::NotFound);
+            unsafe {
+                let converter = self.converter_nid;
+                if converter == 0 {
+                    return Err(crate::Error::NotFound);
+                }
+                let tag = self.stream_tag & 0x0F;
+                // Power the widget to D0.
+                self.send_verb(hda_verb(cad, converter, VERB_SET_POWER_STATE, 0))?;
+                // Point the converter at the stream tag (format index 0).
+                self.send_verb(hda_verb(cad, converter, VERB_SET_STREAM_FORMAT, tag << 4))?;
+                // Two-channel (stereo) sample slot mapping.
+                self.send_verb(hda_verb(
+                    cad,
+                    converter,
+                    VERB_SET_CONVERTER_STREAM_CHANNEL,
+                    (tag << 4) | 0x01,
+                ))?;
+                Ok(())
             }
-            let tag = self.stream_tag & 0x0F;
-            // Power the widget to D0.
-            self.send_verb(hda_verb(cad, converter, VERB_SET_POWER_STATE, 0))?;
-            // Point the converter at the stream tag (format index 0).
-            self.send_verb(hda_verb(cad, converter, VERB_SET_STREAM_FORMAT, tag << 4))?;
-            // Two-channel (stereo) sample slot mapping.
-            self.send_verb(hda_verb(
-                cad,
-                converter,
-                VERB_SET_CONVERTER_STREAM_CHANNEL,
-                (tag << 4) | 0x01,
-            ))?;
-            Ok(())
         }
 
         /// Copy PCM samples into the BDL ring and wait for the DMA engine to
@@ -973,51 +1004,53 @@ mod controller {
         /// The caller must hold the only reference to this controller; the
         /// method touches its MMIO mapping and DMA buffers exclusively.
         pub unsafe fn write_pcm(&mut self, rate: u32, samples: &[u8]) -> Result<()> {
-            if self.converter_nid == 0 {
-                return Err(crate::Error::Unsupported);
-            }
-            if rate == 0 {
-                return Err(crate::Error::InvalidArgument);
-            }
-
-            // Re-program the stream when the caller switches sample rates.
-            if self.active_rate != rate {
-                self.stop_playback_stream();
-                let format = hda_format(rate, 2, 16);
-                self.setup_playback_stream(format)?;
-                self.setup_codec_playback(0)?;
-                self.playback_ring = BdlRingState::new();
-                self.active_rate = rate;
-                self.position_spins = 0;
-            }
-
-            let mut done = 0usize;
-            while done < samples.len() {
-                let link_pos = self.stream_link_position();
-                self.playback_ring.sync_read_from_link(link_pos);
-                let free = self.playback_ring.free_space();
-                if free == 0 {
-                    // Bounded wait so a stalled codec cannot wedge the caller
-                    // forever.
-                    self.position_spins += 1;
-                    if self.position_spins >= MAX_POSITION_SPINS {
-                        return Err(crate::Error::TimedOut);
-                    }
-                    core::hint::spin_loop();
-                    continue;
+            unsafe {
+                if self.converter_nid == 0 {
+                    return Err(crate::Error::Unsupported);
                 }
-                let chunk = core::cmp::min(free as usize, samples.len() - done);
-                let data = self
-                    .playback_data
-                    .as_mut()
-                    .ok_or(crate::Error::Unsupported)?;
-                let written = self
-                    .playback_ring
-                    .copy_into(data.as_mut_slice(), &samples[done..done + chunk]);
-                done += written;
-                self.position_spins = 0;
+                if rate == 0 {
+                    return Err(crate::Error::InvalidArgument);
+                }
+
+                // Re-program the stream when the caller switches sample rates.
+                if self.active_rate != rate {
+                    self.stop_playback_stream();
+                    let format = hda_format(rate, 2, 16);
+                    self.setup_playback_stream(format)?;
+                    self.setup_codec_playback(0)?;
+                    self.playback_ring = BdlRingState::new();
+                    self.active_rate = rate;
+                    self.position_spins = 0;
+                }
+
+                let mut done = 0usize;
+                while done < samples.len() {
+                    let link_pos = self.stream_link_position();
+                    self.playback_ring.sync_read_from_link(link_pos);
+                    let free = self.playback_ring.free_space();
+                    if free == 0 {
+                        // Bounded wait so a stalled codec cannot wedge the caller
+                        // forever.
+                        self.position_spins += 1;
+                        if self.position_spins >= MAX_POSITION_SPINS {
+                            return Err(crate::Error::TimedOut);
+                        }
+                        core::hint::spin_loop();
+                        continue;
+                    }
+                    let chunk = core::cmp::min(free as usize, samples.len() - done);
+                    let data = self
+                        .playback_data
+                        .as_mut()
+                        .ok_or(crate::Error::Unsupported)?;
+                    let written = self
+                        .playback_ring
+                        .copy_into(data.as_mut_slice(), &samples[done..done + chunk]);
+                    done += written;
+                    self.position_spins = 0;
+                }
+                Ok(())
             }
-            Ok(())
         }
     }
 }

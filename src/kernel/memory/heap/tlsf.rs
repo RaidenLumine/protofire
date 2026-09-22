@@ -104,47 +104,55 @@ pub(crate) fn align_up(value: usize, align: usize) -> Option<usize> {
 /// Read the full `size` field (includes the used/free flag in bit 0).
 #[inline(always)]
 pub(crate) unsafe fn block_raw_size(block: usize) -> usize {
-    (block as *const usize).read()
+    unsafe { (block as *const usize).read() }
 }
 
 /// Read the block size *without* the used/free flag.
 #[inline(always)]
 pub(crate) unsafe fn block_size(block: usize) -> usize {
-    block_raw_size(block) & !BLOCK_USED_FLAG
+    unsafe { block_raw_size(block) & !BLOCK_USED_FLAG }
 }
 
 /// Write the block size, preserving the used/free flag.
 #[inline(always)]
 pub(crate) unsafe fn block_set_size(block: usize, size: usize) {
-    let flag = block_raw_size(block) & BLOCK_USED_FLAG;
-    (block as *mut usize).write(size | flag);
+    unsafe {
+        let flag = block_raw_size(block) & BLOCK_USED_FLAG;
+        (block as *mut usize).write(size | flag);
+    }
 }
 
 #[inline(always)]
 pub(crate) unsafe fn block_is_used(block: usize) -> bool {
-    block_raw_size(block) & BLOCK_USED_FLAG != 0
+    unsafe { block_raw_size(block) & BLOCK_USED_FLAG != 0 }
 }
 
 #[inline(always)]
 pub(crate) unsafe fn block_set_used(block: usize) {
-    let raw = block_raw_size(block);
-    (block as *mut usize).write(raw | BLOCK_USED_FLAG);
+    unsafe {
+        let raw = block_raw_size(block);
+        (block as *mut usize).write(raw | BLOCK_USED_FLAG);
+    }
 }
 
 #[inline(always)]
 pub(crate) unsafe fn block_clear_used(block: usize) {
-    let raw = block_raw_size(block);
-    (block as *mut usize).write(raw & !BLOCK_USED_FLAG);
+    unsafe {
+        let raw = block_raw_size(block);
+        (block as *mut usize).write(raw & !BLOCK_USED_FLAG);
+    }
 }
 
 #[inline(always)]
 pub(crate) unsafe fn block_prev_phys(block: usize) -> usize {
-    (block as *const usize).add(1).read()
+    unsafe { (block as *const usize).add(1).read() }
 }
 
 #[inline(always)]
 pub(crate) unsafe fn block_set_prev_phys(block: usize, prev: usize) {
-    (block as *mut usize).add(1).write(prev);
+    unsafe {
+        (block as *mut usize).add(1).write(prev);
+    }
 }
 
 /// Update the `prev_phys` pointer of the block that physically follows
@@ -154,34 +162,36 @@ pub(crate) unsafe fn block_set_prev_phys(block: usize, prev: usize) {
 /// for **every** block — free or used.  When the block is later freed,
 /// `coalesce` reads `prev_phys` to locate the physical predecessor.
 pub(crate) unsafe fn block_set_prev_phys_of_next(block: usize, new_prev: usize) {
-    let size = block_size(block);
-    let next = block.wrapping_add(size);
-    let heap = KERNEL_HEAP.get() as *mut u8 as usize;
-    let heap_end = heap.wrapping_add(KERNEL_HEAP_SIZE);
-    if next < heap_end {
-        #[cfg(debug_assertions)]
-        {
-            // Report only on failure.  `debug_assert!` cannot run a statement,
-            // and this is a hot path — a diagnostic called on every block
-            // coalesce would print, and printing allocates, and allocating
-            // feeds more heap operations.
-            if !next.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
-                report_heap_trace();
-                panic!(
-                    "block_set_prev_phys_of_next: next=0x{next:x} not aligned; \
+    unsafe {
+        let size = block_size(block);
+        let next = block.wrapping_add(size);
+        let heap = KERNEL_HEAP.get() as *mut u8 as usize;
+        let heap_end = heap.wrapping_add(KERNEL_HEAP_SIZE);
+        if next < heap_end {
+            #[cfg(debug_assertions)]
+            {
+                // Report only on failure.  `debug_assert!` cannot run a statement,
+                // and this is a hot path — a diagnostic called on every block
+                // coalesce would print, and printing allocates, and allocating
+                // feeds more heap operations.
+                if !next.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+                    report_heap_trace();
+                    panic!(
+                        "block_set_prev_phys_of_next: next=0x{next:x} not aligned; \
                      block=0x{block:x} size={size}"
-                );
-            }
-            let write_addr = next.checked_add(8).expect("prev_phys write overflow");
-            if write_addr > heap_end {
-                report_heap_trace();
-                panic!(
-                    "block_set_prev_phys_of_next: write at 0x{write_addr:x} beyond \
+                    );
+                }
+                let write_addr = next.checked_add(8).expect("prev_phys write overflow");
+                if write_addr > heap_end {
+                    report_heap_trace();
+                    panic!(
+                        "block_set_prev_phys_of_next: write at 0x{write_addr:x} beyond \
                      heap_end 0x{heap_end:x}; block=0x{block:x} size={size}"
-                );
+                    );
+                }
             }
+            block_set_prev_phys(next, new_prev);
         }
-        block_set_prev_phys(next, new_prev);
     }
 }
 
@@ -189,12 +199,14 @@ pub(crate) unsafe fn block_set_prev_phys_of_next(block: usize, new_prev: usize) 
 
 #[inline(always)]
 pub(crate) unsafe fn block_next_free(block: usize) -> usize {
-    (block as *const usize).add(FREE_NEXT_OFFSET / 8).read()
+    unsafe { (block as *const usize).add(FREE_NEXT_OFFSET / 8).read() }
 }
 
 #[inline(always)]
 pub(crate) unsafe fn block_set_next_free(block: usize, next: usize) {
-    (block as *mut usize).add(FREE_NEXT_OFFSET / 8).write(next);
+    unsafe {
+        (block as *mut usize).add(FREE_NEXT_OFFSET / 8).write(next);
+    }
 }
 
 // ─── TLSF mapping ─────────────────────────────────────────────────────────
@@ -232,56 +244,58 @@ pub(crate) fn list_index(fl: usize, sl: usize) -> usize {
 /// earlier.  The route makes that decidable.
 #[cfg(feature = "heap_audit")]
 unsafe fn report_walk_route(state: &AllocatorState, defect_address: usize) {
-    // Only the tail of the route is printed.  A heap has thousands of blocks;
-    // what matters is the handful just before the walk's step went wrong, not
-    // the first sixty from the start.
-    const TAIL: usize = 8;
-    let mut tail = [(0_usize, 0_usize, false, 0_usize); TAIL];
-    let mut seen = 0_usize;
-    let mut stopped_early = false;
+    unsafe {
+        // Only the tail of the route is printed.  A heap has thousands of blocks;
+        // what matters is the handful just before the walk's step went wrong, not
+        // the first sixty from the start.
+        const TAIL: usize = 8;
+        let mut tail = [(0_usize, 0_usize, false, 0_usize); TAIL];
+        let mut seen = 0_usize;
+        let mut stopped_early = false;
 
-    let mut block = state.start;
-    let mut steps = 0_usize;
+        let mut block = state.start;
+        let mut steps = 0_usize;
 
-    while block < state.end && steps < 1_000_000 {
-        let size = block_size(block);
-        let used = block_is_used(block);
-        tail[seen % TAIL] = (block, size, used, block_prev_phys(block));
-        seen += 1;
+        while block < state.end && steps < 1_000_000 {
+            let size = block_size(block);
+            let used = block_is_used(block);
+            tail[seen % TAIL] = (block, size, used, block_prev_phys(block));
+            seen += 1;
 
-        if size < MIN_FREE_BLOCK || !size.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
-            stopped_early = true;
-            break;
+            if size < MIN_FREE_BLOCK || !size.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+                stopped_early = true;
+                break;
+            }
+            if block >= defect_address {
+                break;
+            }
+            block = block.wrapping_add(size);
+            steps += 1;
         }
-        if block >= defect_address {
-            break;
-        }
-        block = block.wrapping_add(size);
-        steps += 1;
-    }
 
-    crate::println!(
-        "[heap  ] walk route into the defect ({} blocks walked{}):",
-        steps,
-        if stopped_early {
-            ", stopped on an invalid size"
-        } else {
-            ""
-        }
-    );
-
-    let shown = seen.min(TAIL);
-    for offset in 0..shown {
-        let (address, size, used, prev) = tail[(seen - shown + offset) % TAIL];
-        let marker = if address == defect_address { " <-" } else { "" };
         crate::println!(
-            "[heap  ]   0x{:x} size={} {} prev_phys=0x{:x}{}",
-            address,
-            size,
-            if used { "used" } else { "free" },
-            prev,
-            marker
+            "[heap  ] walk route into the defect ({} blocks walked{}):",
+            steps,
+            if stopped_early {
+                ", stopped on an invalid size"
+            } else {
+                ""
+            }
         );
+
+        let shown = seen.min(TAIL);
+        for offset in 0..shown {
+            let (address, size, used, prev) = tail[(seen - shown + offset) % TAIL];
+            let marker = if address == defect_address { " <-" } else { "" };
+            crate::println!(
+                "[heap  ]   0x{:x} size={} {} prev_phys=0x{:x}{}",
+                address,
+                size,
+                if used { "used" } else { "free" },
+                prev,
+                marker
+            );
+        }
     }
 }
 
@@ -295,23 +309,25 @@ unsafe fn report_walk_route(state: &AllocatorState, defect_address: usize) {
 /// failing, so the cost is irrelevant; neither is worth running per operation,
 /// which is why this is not wired into the ordinary allocate/free path.
 pub(crate) unsafe fn report_heap_damage(state: &AllocatorState, caller: &str) {
-    match check_invariants(state) {
-        Ok(()) => {
-            crate::println!(
-                "[heap  ] {}: block list walks clean; damage is not visible from the start",
-                caller
-            );
+    unsafe {
+        match check_invariants(state) {
+            Ok(()) => {
+                crate::println!(
+                    "[heap  ] {}: block list walks clean; damage is not visible from the start",
+                    caller
+                );
+            }
+            Err(defect) => {
+                crate::println!(
+                    "[heap  ] {}: first damage at 0x{:x}: {}",
+                    caller,
+                    defect.address,
+                    defect.reason
+                );
+            }
         }
-        Err(defect) => {
-            crate::println!(
-                "[heap  ] {}: first damage at 0x{:x}: {}",
-                caller,
-                defect.address,
-                defect.reason
-            );
-        }
+        report_heap_trace();
     }
-    report_heap_trace();
 }
 
 // ─── Post-operation audit ─────────────────────────────────────────────────
@@ -338,46 +354,48 @@ static HEAP_AUDIT_REPORTING: core::sync::atomic::AtomicBool =
 /// feature: it is a diagnostic build, not something to ship.
 #[cfg(feature = "heap_audit")]
 pub(crate) unsafe fn audit_after_operation(state: &AllocatorState, operation: &str) {
-    use core::sync::atomic::Ordering;
+    unsafe {
+        use core::sync::atomic::Ordering;
 
-    if HEAP_AUDIT_REPORTING.load(Ordering::Acquire) {
-        return;
-    }
-    let Err(defect) = check_invariants(state) else {
-        return;
-    };
-
-    HEAP_AUDIT_REPORTING.store(true, Ordering::Release);
-    crate::println!(
-        "[heap  ] damage first seen after {}: 0x{:x}: {}",
-        operation,
-        defect.address,
-        defect.reason
-    );
-
-    report_walk_route(state, defect.address);
-
-    // Raw words around the defect.  With the operation named, the remaining
-    // question is what the damaged header actually holds — a stale pointer, a
-    // payload value, or zero — and that is only visible in the bytes.
-    // Wide enough to include the block *before* the one the walk choked on:
-    // the question is whether that block's size word agrees with the boundary
-    // its successor records.
-    let window_start = defect
-        .address
-        .saturating_sub(8 * core::mem::size_of::<usize>());
-    for offset in 0..14 {
-        let address = window_start + offset * core::mem::size_of::<usize>();
-        if address < state.start || address + core::mem::size_of::<usize>() > state.end {
-            continue;
+        if HEAP_AUDIT_REPORTING.load(Ordering::Acquire) {
+            return;
         }
-        let word = (address as *const usize).read();
-        let marker = if address == defect.address { " <-" } else { "" };
-        crate::println!("[heap  ]   0x{:x}: 0x{:016x}{}", address, word, marker);
-    }
+        let Err(defect) = check_invariants(state) else {
+            return;
+        };
 
-    report_heap_trace();
-    panic!("heap audit: block list damaged by {}", operation);
+        HEAP_AUDIT_REPORTING.store(true, Ordering::Release);
+        crate::println!(
+            "[heap  ] damage first seen after {}: 0x{:x}: {}",
+            operation,
+            defect.address,
+            defect.reason
+        );
+
+        report_walk_route(state, defect.address);
+
+        // Raw words around the defect.  With the operation named, the remaining
+        // question is what the damaged header actually holds — a stale pointer, a
+        // payload value, or zero — and that is only visible in the bytes.
+        // Wide enough to include the block *before* the one the walk choked on:
+        // the question is whether that block's size word agrees with the boundary
+        // its successor records.
+        let window_start = defect
+            .address
+            .saturating_sub(8 * core::mem::size_of::<usize>());
+        for offset in 0..14 {
+            let address = window_start + offset * core::mem::size_of::<usize>();
+            if address < state.start || address + core::mem::size_of::<usize>() > state.end {
+                continue;
+            }
+            let word = (address as *const usize).read();
+            let marker = if address == defect.address { " <-" } else { "" };
+            crate::println!("[heap  ]   0x{:x}: 0x{:016x}{}", address, word, marker);
+        }
+
+        report_heap_trace();
+        panic!("heap audit: block list damaged by {}", operation);
+    }
 }
 
 // ─── Structural invariant checking ────────────────────────────────────────
@@ -409,9 +427,11 @@ const CANARY_VALUE: usize = 0xC0DE_C0DE_C0DE_C0DE;
 /// `tlsf_random_alloc_free_sequence_matches_model` caught it.  See the note on
 /// [`canary_check`].
 pub(crate) unsafe fn canary_write(block_start: usize) {
-    let size = block_size(block_start);
-    let canary = block_start.wrapping_add(size).wrapping_sub(CANARY_SIZE);
-    (canary as *mut usize).write(CANARY_VALUE);
+    unsafe {
+        let size = block_size(block_start);
+        let canary = block_start.wrapping_add(size).wrapping_sub(CANARY_SIZE);
+        (canary as *mut usize).write(CANARY_VALUE);
+    }
 }
 
 /// Verify the canary of the block starting at `block_start`.
@@ -430,24 +450,26 @@ pub(crate) unsafe fn canary_write(block_start: usize) {
 /// `payload + requested_size`, which needs the requested size on the free path;
 /// the placement above is what the suite verifies.
 pub(crate) unsafe fn canary_check(block_start: usize) -> Result<(), HeapDefect> {
-    let size = block_size(block_start);
-    if size < CANARY_SIZE {
-        return Err(HeapDefect {
-            address: block_start,
-            reason: "block is smaller than the canary it must hold",
-        });
-    }
+    unsafe {
+        let size = block_size(block_start);
+        if size < CANARY_SIZE {
+            return Err(HeapDefect {
+                address: block_start,
+                reason: "block is smaller than the canary it must hold",
+            });
+        }
 
-    let canary = block_start.wrapping_add(size).wrapping_sub(CANARY_SIZE);
-    let found = (canary as *const usize).read();
-    if found != CANARY_VALUE {
-        return Err(HeapDefect {
-            address: block_start,
-            reason: "canary overwritten: an allocation wrote past its own bytes",
-        });
-    }
+        let canary = block_start.wrapping_add(size).wrapping_sub(CANARY_SIZE);
+        let found = (canary as *const usize).read();
+        if found != CANARY_VALUE {
+            return Err(HeapDefect {
+                address: block_start,
+                reason: "canary overwritten: an allocation wrote past its own bytes",
+            });
+        }
 
-    Ok(())
+        Ok(())
+    }
 }
 
 /// A structural defect found by [`check_invariants`].
@@ -477,80 +499,82 @@ pub(crate) struct HeapDefect {
 /// 4. A block's `prev_phys` field points at the block before it, which is the
 ///    boundary-tag pairing that coalescing depends on.
 pub(crate) unsafe fn check_invariants(state: &AllocatorState) -> Result<(), HeapDefect> {
-    if state.start == 0 || state.end <= state.start {
-        return Err(HeapDefect {
-            address: state.start,
-            reason: "heap bounds are not initialised",
-        });
-    }
-
-    let mut block = state.start;
-    let mut previous: Option<usize> = None;
-
-    while block < state.end {
-        if !block.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+    unsafe {
+        if state.start == 0 || state.end <= state.start {
             return Err(HeapDefect {
-                address: block,
-                reason: "block is not aligned",
+                address: state.start,
+                reason: "heap bounds are not initialised",
             });
         }
 
-        let size = block_size(block);
-        if size < MIN_FREE_BLOCK {
-            return Err(HeapDefect {
-                address: block,
-                reason: "block size is below the minimum free block size",
-            });
-        }
-        if !size.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
-            return Err(HeapDefect {
-                address: block,
-                reason: "block size is not a multiple of the block alignment",
-            });
-        }
+        let mut block = state.start;
+        let mut previous: Option<usize> = None;
 
-        let next = block.wrapping_add(size);
-        if next > state.end {
-            return Err(HeapDefect {
-                address: block,
-                reason: "block extends past the end of the heap",
-            });
-        }
-
-        // The boundary tag: this block's successor records this block as its
-        // physical predecessor.  A mismatch means one of the two headers was
-        // overwritten.
-        if next < state.end {
-            let recorded_prev = block_prev_phys(next);
-            if recorded_prev != block {
-                return Err(HeapDefect {
-                    address: next,
-                    reason: "prev_phys does not point at the preceding block",
-                });
-            }
-        }
-
-        if let Some(previous) = previous {
-            if block_prev_phys(block) != previous {
+        while block < state.end {
+            if !block.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
                 return Err(HeapDefect {
                     address: block,
-                    reason: "prev_phys does not point at the preceding block",
+                    reason: "block is not aligned",
                 });
             }
+
+            let size = block_size(block);
+            if size < MIN_FREE_BLOCK {
+                return Err(HeapDefect {
+                    address: block,
+                    reason: "block size is below the minimum free block size",
+                });
+            }
+            if !size.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+                return Err(HeapDefect {
+                    address: block,
+                    reason: "block size is not a multiple of the block alignment",
+                });
+            }
+
+            let next = block.wrapping_add(size);
+            if next > state.end {
+                return Err(HeapDefect {
+                    address: block,
+                    reason: "block extends past the end of the heap",
+                });
+            }
+
+            // The boundary tag: this block's successor records this block as its
+            // physical predecessor.  A mismatch means one of the two headers was
+            // overwritten.
+            if next < state.end {
+                let recorded_prev = block_prev_phys(next);
+                if recorded_prev != block {
+                    return Err(HeapDefect {
+                        address: next,
+                        reason: "prev_phys does not point at the preceding block",
+                    });
+                }
+            }
+
+            if let Some(previous) = previous {
+                if block_prev_phys(block) != previous {
+                    return Err(HeapDefect {
+                        address: block,
+                        reason: "prev_phys does not point at the preceding block",
+                    });
+                }
+            }
+
+            previous = Some(block);
+            block = next;
         }
 
-        previous = Some(block);
-        block = next;
-    }
+        if block != state.end {
+            return Err(HeapDefect {
+                address: block,
+                reason: "block walk did not land on the end of the heap",
+            });
+        }
 
-    if block != state.end {
-        return Err(HeapDefect {
-            address: block,
-            reason: "block walk did not land on the end of the heap",
-        });
+        Ok(())
     }
-
-    Ok(())
 }
 
 // ─── Recent-operation trace ───────────────────────────────────────────────
@@ -618,79 +642,83 @@ pub(crate) unsafe fn validate_block(
     block: usize,
     caller: &str,
 ) -> (usize, usize) {
-    if block == 0 {
-        report_heap_damage(state, caller);
-        panic!("{caller}: null block");
-    }
-    if block < state.start || block >= state.end {
-        report_heap_damage(state, caller);
-        panic!(
-            "{caller}: block 0x{block:x} outside heap [0x{:x}, 0x{:x})",
-            state.start, state.end
-        );
-    }
-    if !block.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
-        report_heap_damage(state, caller);
-        panic!("{caller}: block 0x{block:x} misaligned");
-    }
-    let size = block_size(block);
-    if size < MIN_FREE_BLOCK {
-        report_heap_damage(state, caller);
-        panic!("{caller}: block 0x{block:x} size {size} below MIN_FREE_BLOCK");
-    }
-    let end = block.wrapping_add(size);
-    if end > state.end {
-        report_heap_damage(state, caller);
-        panic!(
-            "{caller}: block 0x{block:x} size {size} overflows heap end 0x{:x}",
-            state.end
-        );
-    }
-    let (fl, sl) = mapping(size);
-    if !(FL_MIN..=FL_MAX).contains(&fl) {
-        report_heap_damage(state, caller);
-        panic!(
-            "{caller}: block 0x{block:x} size {size} maps to fl={fl} (FL_MAX={FL_MAX}); \
+    unsafe {
+        if block == 0 {
+            report_heap_damage(state, caller);
+            panic!("{caller}: null block");
+        }
+        if block < state.start || block >= state.end {
+            report_heap_damage(state, caller);
+            panic!(
+                "{caller}: block 0x{block:x} outside heap [0x{:x}, 0x{:x})",
+                state.start, state.end
+            );
+        }
+        if !block.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+            report_heap_damage(state, caller);
+            panic!("{caller}: block 0x{block:x} misaligned");
+        }
+        let size = block_size(block);
+        if size < MIN_FREE_BLOCK {
+            report_heap_damage(state, caller);
+            panic!("{caller}: block 0x{block:x} size {size} below MIN_FREE_BLOCK");
+        }
+        let end = block.wrapping_add(size);
+        if end > state.end {
+            report_heap_damage(state, caller);
+            panic!(
+                "{caller}: block 0x{block:x} size {size} overflows heap end 0x{:x}",
+                state.end
+            );
+        }
+        let (fl, sl) = mapping(size);
+        if !(FL_MIN..=FL_MAX).contains(&fl) {
+            report_heap_damage(state, caller);
+            panic!(
+                "{caller}: block 0x{block:x} size {size} maps to fl={fl} (FL_MAX={FL_MAX}); \
              first 16 bytes: {:02x?}",
-            core::slice::from_raw_parts(block as *const u8, 16)
-        );
+                core::slice::from_raw_parts(block as *const u8, 16)
+            );
+        }
+        (fl, sl)
     }
-    (fl, sl)
 }
 
 // ─── Free‑list management ─────────────────────────────────────────────────
 
 /// Insert `block` into the appropriate free list.
 pub(crate) unsafe fn insert_free_block(state: &mut AllocatorState, block: usize) {
-    debug_assert!(!block_is_used(block));
-    let size = block_size(block);
+    unsafe {
+        debug_assert!(!block_is_used(block));
+        let size = block_size(block);
 
-    if size < MIN_FREE_BLOCK {
-        // Block is too small to be on a free list — this can happen when a
-        // remainder after splitting is tiny.  It will be absorbed by the
-        // next coalesce.
-        return;
+        if size < MIN_FREE_BLOCK {
+            // Block is too small to be on a free list — this can happen when a
+            // remainder after splitting is tiny.  It will be absorbed by the
+            // next coalesce.
+            return;
+        }
+
+        #[cfg(debug_assertions)]
+        let (fl, sl) = validate_block(state, block, "insert_free_block");
+        #[cfg(not(debug_assertions))]
+        let (fl, sl) = mapping(size);
+        let idx = list_index(fl, sl);
+
+        // Singly‑linked list insertion at head.
+        let head = state.free_lists[idx];
+        block_set_next_free(block, head);
+        // Zero the first MIN_FREE_BLOCK bytes of the payload (past next_free) so
+        // that a future split that places a new block header here won't see stale
+        // application data as block metadata.
+        zero_fresh_header_region(block);
+        state.free_lists[idx] = block;
+
+        // Update bitmaps.
+        let fl_bit = 1u32 << (fl - FL_MIN);
+        state.fl_bitmap |= fl_bit;
+        state.sl_bitmaps[fl - FL_MIN] |= 1u32 << sl;
     }
-
-    #[cfg(debug_assertions)]
-    let (fl, sl) = validate_block(state, block, "insert_free_block");
-    #[cfg(not(debug_assertions))]
-    let (fl, sl) = mapping(size);
-    let idx = list_index(fl, sl);
-
-    // Singly‑linked list insertion at head.
-    let head = state.free_lists[idx];
-    block_set_next_free(block, head);
-    // Zero the first MIN_FREE_BLOCK bytes of the payload (past next_free) so
-    // that a future split that places a new block header here won't see stale
-    // application data as block metadata.
-    zero_fresh_header_region(block);
-    state.free_lists[idx] = block;
-
-    // Update bitmaps.
-    let fl_bit = 1u32 << (fl - FL_MIN);
-    state.fl_bitmap |= fl_bit;
-    state.sl_bitmaps[fl - FL_MIN] |= 1u32 << sl;
 }
 
 /// Zero a generous prefix of the free block's payload (past `next_free`)
@@ -704,11 +732,13 @@ pub(crate) unsafe fn insert_free_block(state: &mut AllocatorState, block: usize)
 const FRESH_ZERO_BYTES: usize = 2048;
 
 unsafe fn zero_fresh_header_region(block: usize) {
-    let size = block_size(block);
-    let zero_start = block + HEADER_SIZE + 8; // past next_free
-    let zero_end = (block + FRESH_ZERO_BYTES).min(block + size);
-    if zero_start < zero_end {
-        core::ptr::write_bytes(zero_start as *mut u8, 0, zero_end - zero_start);
+    unsafe {
+        let size = block_size(block);
+        let zero_start = block + HEADER_SIZE + 8; // past next_free
+        let zero_end = (block + FRESH_ZERO_BYTES).min(block + size);
+        if zero_start < zero_end {
+            core::ptr::write_bytes(zero_start as *mut u8, 0, zero_end - zero_start);
+        }
     }
 }
 
@@ -716,43 +746,45 @@ unsafe fn zero_fresh_header_region(block: usize) {
 /// For singly‑linked lists, this scans the appropriate list to find the
 /// block's predecessor.
 pub(crate) unsafe fn remove_free_block(state: &mut AllocatorState, block: usize) {
-    let size = block_size(block);
-    if size < MIN_FREE_BLOCK {
-        return;
-    }
-
-    #[cfg(debug_assertions)]
-    let (fl, sl) = validate_block(state, block, "remove_free_block(target)");
-    #[cfg(not(debug_assertions))]
-    let (fl, sl) = mapping(size);
-    let idx = list_index(fl, sl);
-
-    let mut prev: usize = 0;
-    let mut current = state.free_lists[idx];
-
-    while current != 0 {
-        #[cfg(debug_assertions)]
-        validate_block(state, current, "remove_free_block(traverse)");
-
-        if current == block {
-            // Found it — unlink.
-            let next = block_next_free(current);
-            if prev == 0 {
-                state.free_lists[idx] = next;
-            } else {
-                block_set_next_free(prev, next);
-            }
-            break;
+    unsafe {
+        let size = block_size(block);
+        if size < MIN_FREE_BLOCK {
+            return;
         }
-        prev = current;
-        current = block_next_free(current);
-    }
 
-    // If the list is now empty, clear the bitmap bits.
-    if state.free_lists[idx] == 0 {
-        state.sl_bitmaps[fl - FL_MIN] &= !(1u32 << sl);
-        if state.sl_bitmaps[fl - FL_MIN] == 0 {
-            state.fl_bitmap &= !(1u32 << (fl - FL_MIN));
+        #[cfg(debug_assertions)]
+        let (fl, sl) = validate_block(state, block, "remove_free_block(target)");
+        #[cfg(not(debug_assertions))]
+        let (fl, sl) = mapping(size);
+        let idx = list_index(fl, sl);
+
+        let mut prev: usize = 0;
+        let mut current = state.free_lists[idx];
+
+        while current != 0 {
+            #[cfg(debug_assertions)]
+            validate_block(state, current, "remove_free_block(traverse)");
+
+            if current == block {
+                // Found it — unlink.
+                let next = block_next_free(current);
+                if prev == 0 {
+                    state.free_lists[idx] = next;
+                } else {
+                    block_set_next_free(prev, next);
+                }
+                break;
+            }
+            prev = current;
+            current = block_next_free(current);
+        }
+
+        // If the list is now empty, clear the bitmap bits.
+        if state.free_lists[idx] == 0 {
+            state.sl_bitmaps[fl - FL_MIN] &= !(1u32 << sl);
+            if state.sl_bitmaps[fl - FL_MIN] == 0 {
+                state.fl_bitmap &= !(1u32 << (fl - FL_MIN));
+            }
         }
     }
 }
@@ -762,43 +794,45 @@ pub(crate) unsafe fn remove_free_block(state: &mut AllocatorState, block: usize)
 /// a poisoned pointer.
 #[cfg(debug_assertions)]
 pub(crate) unsafe fn scan_free_lists(state: &AllocatorState) {
-    let mut fl_bits = state.fl_bitmap;
-    while fl_bits != 0 {
-        let fl_bit = fl_bits.trailing_zeros() as usize;
-        fl_bits &= fl_bits - 1;
-        // Corrupted fl_bitmap may have bits beyond FL_COUNT; skip them.
-        if fl_bit >= FL_COUNT {
-            continue;
-        }
-        let fl = fl_bit + FL_MIN;
-        let mut sl_bits = state.sl_bitmaps[fl_bit];
-        while sl_bits != 0 {
-            let sl = sl_bits.trailing_zeros() as usize;
-            sl_bits &= sl_bits - 1;
-            if sl >= SL_COUNT {
+    unsafe {
+        let mut fl_bits = state.fl_bitmap;
+        while fl_bits != 0 {
+            let fl_bit = fl_bits.trailing_zeros() as usize;
+            fl_bits &= fl_bits - 1;
+            // Corrupted fl_bitmap may have bits beyond FL_COUNT; skip them.
+            if fl_bit >= FL_COUNT {
                 continue;
             }
-            let idx = list_index(fl, sl);
-            let mut current = state.free_lists[idx];
-            let mut depth = 0;
-            while current != 0 {
-                depth += 1;
-                // Cycle detection only fires in debug builds; in release
-                // the loop is bounded by the block count (worst-case: O(N)
-                // walk of every free block, still finite).
-                if depth > 10_000 {
-                    if cfg!(debug_assertions) {
-                        panic!(
+            let fl = fl_bit + FL_MIN;
+            let mut sl_bits = state.sl_bitmaps[fl_bit];
+            while sl_bits != 0 {
+                let sl = sl_bits.trailing_zeros() as usize;
+                sl_bits &= sl_bits - 1;
+                if sl >= SL_COUNT {
+                    continue;
+                }
+                let idx = list_index(fl, sl);
+                let mut current = state.free_lists[idx];
+                let mut depth = 0;
+                while current != 0 {
+                    depth += 1;
+                    // Cycle detection only fires in debug builds; in release
+                    // the loop is bounded by the block count (worst-case: O(N)
+                    // walk of every free block, still finite).
+                    if depth > 10_000 {
+                        if cfg!(debug_assertions) {
+                            panic!(
                             "scan_free_lists: cycle or runaway chain at fl={fl} sl={sl} idx={idx}"
                         );
+                        }
+                        // In release mode, abort the walk for this list to
+                        // prevent a livelock.  An undetected cycle would leak
+                        // the affected blocks but won't hang the allocator.
+                        break;
                     }
-                    // In release mode, abort the walk for this list to
-                    // prevent a livelock.  An undetected cycle would leak
-                    // the affected blocks but won't hang the allocator.
-                    break;
+                    validate_block(state, current, "scan_free_lists");
+                    current = block_next_free(current);
                 }
-                validate_block(state, current, "scan_free_lists");
-                current = block_next_free(current);
             }
         }
     }
@@ -864,31 +898,33 @@ pub(crate) unsafe fn validate_coalesce_neighbour(
     predecessor: usize,
     heap_end: usize,
 ) -> Option<usize> {
-    // Must be properly aligned — all real blocks start at 16‑byte boundaries.
-    if !candidate.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
-        return None;
-    }
+    unsafe {
+        // Must be properly aligned — all real blocks start at 16‑byte boundaries.
+        if !candidate.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
+            return None;
+        }
 
-    // Check that the "free" bit is actually set — the caller already verified
-    // this, but a stale word with bit 0 = 0 can fool `block_is_used`.
-    let size = block_size(candidate);
-    if size < MIN_FREE_BLOCK {
-        return None;
-    }
+        // Check that the "free" bit is actually set — the caller already verified
+        // this, but a stale word with bit 0 = 0 can fool `block_is_used`.
+        let size = block_size(candidate);
+        if size < MIN_FREE_BLOCK {
+            return None;
+        }
 
-    // Must not extend past the end of the heap.
-    if candidate.wrapping_add(size) > heap_end {
-        return None;
-    }
+        // Must not extend past the end of the heap.
+        if candidate.wrapping_add(size) > heap_end {
+            return None;
+        }
 
-    // The definitive check: a real adjacent block physically follows
-    // `predecessor`, so its `prev_phys` field MUST point back to it.
-    // Stale data will contain an arbitrary value and fail this check.
-    if block_prev_phys(candidate) != predecessor {
-        return None;
-    }
+        // The definitive check: a real adjacent block physically follows
+        // `predecessor`, so its `prev_phys` field MUST point back to it.
+        // Stale data will contain an arbitrary value and fail this check.
+        if block_prev_phys(candidate) != predecessor {
+            return None;
+        }
 
-    Some(size)
+        Some(size)
+    }
 }
 
 /// Coalesce the free block at `block` with its physically‑adjacent
@@ -896,47 +932,49 @@ pub(crate) unsafe fn validate_coalesce_neighbour(
 ///
 /// The function removes any merged neighbours from their free lists.
 pub(crate) unsafe fn coalesce(state: &mut AllocatorState, block: usize) -> usize {
-    let mut start = block;
-    let mut size = block_size(block);
-    let heap_start = state.start;
-    let heap_end = state.end;
+    unsafe {
+        let mut start = block;
+        let mut size = block_size(block);
+        let heap_start = state.start;
+        let heap_end = state.end;
 
-    // ── Merge with the previous physical block (if free) ──
-    if start > heap_start {
-        let prev = block_prev_phys(start);
-        if prev >= heap_start && prev < start {
-            let prev_size = block_size(prev);
-            let prev_end = prev.wrapping_add(prev_size);
-            if prev_end == start
-                && !block_is_used(prev)
-                && prev.is_multiple_of(HEAP_BLOCK_ALIGNMENT)
-                && prev_size >= MIN_FREE_BLOCK
-            {
-                remove_free_block(state, prev);
-                start = prev;
-                size = size.wrapping_add(prev_size);
+        // ── Merge with the previous physical block (if free) ──
+        if start > heap_start {
+            let prev = block_prev_phys(start);
+            if prev >= heap_start && prev < start {
+                let prev_size = block_size(prev);
+                let prev_end = prev.wrapping_add(prev_size);
+                if prev_end == start
+                    && !block_is_used(prev)
+                    && prev.is_multiple_of(HEAP_BLOCK_ALIGNMENT)
+                    && prev_size >= MIN_FREE_BLOCK
+                {
+                    remove_free_block(state, prev);
+                    start = prev;
+                    size = size.wrapping_add(prev_size);
+                }
             }
         }
-    }
 
-    // ── Merge with the next physical block (if free) ──
-    let end = start.wrapping_add(size);
-    if end < heap_end {
-        let next = end;
-        if !block_is_used(next) {
-            if let Some(next_size) = validate_coalesce_neighbour(next, start, heap_end) {
-                remove_free_block(state, next);
-                size = size.wrapping_add(next_size);
+        // ── Merge with the next physical block (if free) ──
+        let end = start.wrapping_add(size);
+        if end < heap_end {
+            let next = end;
+            if !block_is_used(next) {
+                if let Some(next_size) = validate_coalesce_neighbour(next, start, heap_end) {
+                    remove_free_block(state, next);
+                    size = size.wrapping_add(next_size);
+                }
             }
         }
+
+        // Update the merged block's metadata.
+        block_set_size(start, size);
+        block_clear_used(start);
+
+        // The next physical block (if any) must now point back to us.
+        block_set_prev_phys_of_next(start, start);
+
+        start
     }
-
-    // Update the merged block's metadata.
-    block_set_size(start, size);
-    block_clear_used(start);
-
-    // The next physical block (if any) must now point back to us.
-    block_set_prev_phys_of_next(start, start);
-
-    start
 }

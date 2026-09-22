@@ -42,7 +42,9 @@ pub fn read_cr0() -> u64 {
 /// protected-mode bits while the MMU is active is catastrophic.
 #[inline]
 pub unsafe fn write_cr0(value: u64) {
-    asm!("mov cr0, {}", in(reg) value, options(nomem, nostack));
+    unsafe {
+        asm!("mov cr0, {}", in(reg) value, options(nomem, nostack));
+    }
 }
 
 /// Read the current value of CR2 (the last page-fault linear address).
@@ -73,7 +75,9 @@ pub fn read_cr3() -> u64 {
 /// point of the switch, or the next instruction fetch faults.
 #[inline]
 pub unsafe fn write_cr3(value: u64) {
-    asm!("mov cr3, {}", in(reg) value, options(nomem, nostack));
+    unsafe {
+        asm!("mov cr3, {}", in(reg) value, options(nomem, nostack));
+    }
 }
 
 /// Read the current value of CR4.
@@ -84,9 +88,11 @@ pub unsafe fn write_cr3(value: u64) {
 /// retained for symmetry with the write helpers.
 #[inline]
 pub unsafe fn read_cr4() -> u64 {
-    let value: u64;
-    asm!("mov {}, cr4", out(reg) value, options(nomem, nostack));
-    value
+    unsafe {
+        let value: u64;
+        asm!("mov {}, cr4", out(reg) value, options(nomem, nostack));
+        value
+    }
 }
 
 /// Write CR4.
@@ -97,7 +103,9 @@ pub unsafe fn read_cr4() -> u64 {
 /// raises a #GP fault, so callers must gate writes on CPUID checks.
 #[inline]
 pub unsafe fn write_cr4(value: u64) {
-    asm!("mov cr4, {}", in(reg) value, options(nomem, nostack));
+    unsafe {
+        asm!("mov cr4, {}", in(reg) value, options(nomem, nostack));
+    }
 }
 
 // ── CR4 bits ────────────────────────────────────────────────────────────────

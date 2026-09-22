@@ -209,25 +209,31 @@ extern "C" fn rust_payload_recover_general_protection(frame: *mut X86_64UserExce
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 unsafe fn trigger_page_fault_once() {
-    // A single 3-byte load from an unmapped address.  The recovery handler
-    // skips exactly these three bytes to resume after the faulting access.
-    core::arch::asm!(
-        "mov r10, qword ptr [r10]",
-        in("r10") RUST_PAYLOAD_UNMAPPED_ADDRESS,
-        options(nostack),
-    );
+    unsafe {
+        // A single 3-byte load from an unmapped address.  The recovery handler
+        // skips exactly these three bytes to resume after the faulting access.
+        core::arch::asm!(
+            "mov r10, qword ptr [r10]",
+            in("r10") RUST_PAYLOAD_UNMAPPED_ADDRESS,
+            options(nostack),
+        );
+    }
 }
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 unsafe fn trigger_invalid_opcode_once() {
-    // `ud2` is exactly two bytes; the recovery handler skips them.
-    core::arch::asm!("ud2", options(nostack));
+    unsafe {
+        // `ud2` is exactly two bytes; the recovery handler skips them.
+        core::arch::asm!("ud2", options(nostack));
+    }
 }
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 unsafe fn trigger_general_protection_once() {
-    // `hlt` is a 1-byte privileged instruction that raises #GP in ring 3.
-    core::arch::asm!("hlt", options(nostack));
+    unsafe {
+        // `hlt` is a 1-byte privileged instruction that raises #GP in ring 3.
+        core::arch::asm!("hlt", options(nostack));
+    }
 }
 
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]

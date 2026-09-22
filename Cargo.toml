@@ -9,6 +9,14 @@ authors = ["Raiden Lumine"]
 description = "A Rust bare-metal kernel prototype with a file-oriented user ABI."
 license = "Apache-2.0"
 
+[lints.rust]
+# Edition 2024 makes this the default; on edition 2021 it is opt-in, and the
+# kernel wants it now: an unsafe operation inside an unsafe function is a
+# distinct statement from "this function's contract covers it" — the block is
+# where the reason goes, and the compiler checks the placement rather than
+# trusting the reader to notice it.
+unsafe_op_in_unsafe_fn = "deny"
+
 [lib]
 name = "protofire"
 crate-type = ["rlib"]

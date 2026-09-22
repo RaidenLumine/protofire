@@ -73,6 +73,7 @@ impl NetworkStack {
     /// Create and install the global network stack.
     ///
     /// # Panics
+    ///
     /// Panics if a stack is already installed (double-init is a kernel bug).
     pub fn init_with_device(device: Arc<dyn NetworkDevice>, local_ip: Ipv4Addr) {
         let mac = device.mac_address();
@@ -186,13 +187,16 @@ impl NetworkStack {
     /// bare-metal the stack lives forever.
     ///
     /// # Safety
+    ///
     /// Caller must ensure no concurrent access to the stack is in flight.
     #[cfg(test)]
     pub unsafe fn uninstall_global() {
-        let ptr = swap_global_stack(core::ptr::null_mut());
-        if !ptr.is_null() {
-            // Re-box and drop so the raw pointer is properly freed.
-            let _ = Box::from_raw(ptr);
+        unsafe {
+            let ptr = swap_global_stack(core::ptr::null_mut());
+            if !ptr.is_null() {
+                // Re-box and drop so the raw pointer is properly freed.
+                let _ = Box::from_raw(ptr);
+            }
         }
     }
 }

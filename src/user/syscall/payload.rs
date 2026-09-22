@@ -25,7 +25,7 @@ macro_rules! define_aarch64_payload_runtime {
             arg3: usize,
             arg4: usize,
             arg5: usize,
-        ) -> usize {
+        ) -> usize { unsafe {
             let status: usize;
             core::arch::asm!(
                 "svc #0",
@@ -39,7 +39,7 @@ macro_rules! define_aarch64_payload_runtime {
                 options(nostack),
             );
             status
-        }
+        }}
 
         #[inline(always)]
         #[allow(dead_code)]
@@ -170,13 +170,13 @@ macro_rules! define_aarch64_payload_runtime {
         #[link_section = $section]
         unsafe fn return_from_exception(
             frame: *const $crate::user::exception::AArch64UserExceptionFrame,
-        ) -> ! {
+        ) -> ! { unsafe {
             let _ = $crate::user::exception::AArch64UserException::return_from_frame_from_user_mode(
                 frame,
             );
             // Returning here would mean the kernel rejected the resume request.
             core::arch::asm!("brk #0", options(noreturn));
-        }
+        }}
 
         #[inline(never)]
         #[allow(dead_code)]
@@ -302,7 +302,7 @@ macro_rules! define_x86_64_payload_runtime {
             arg3: usize,
             arg4: usize,
             arg5: usize,
-        ) -> usize {
+        ) -> usize { unsafe {
             let status: usize;
             core::arch::asm!(
                 "int {vector}",
@@ -316,7 +316,7 @@ macro_rules! define_x86_64_payload_runtime {
                 in("r9") arg5,
             );
             status
-        }
+        }}
 
         #[inline(always)]
         #[allow(dead_code)]
@@ -912,7 +912,7 @@ macro_rules! define_x86_64_payload_runtime {
         #[link_section = $section]
         unsafe fn return_from_exception(
             frame: *const $crate::user::exception::X86_64UserExceptionFrame,
-        ) -> ! {
+        ) -> ! { unsafe {
             let _ = payload_runtime_invoke_raw_status(
                 $crate::kernel::syscall::SyscallNumber::ReturnFromException as usize,
                 frame as usize,
@@ -924,7 +924,7 @@ macro_rules! define_x86_64_payload_runtime {
             );
             // Reaching this point means the kernel rejected the resume request.
             core::arch::asm!("ud2", options(noreturn));
-        }
+        }}
 
         #[inline(never)]
         #[allow(dead_code)]
