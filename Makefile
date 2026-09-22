@@ -54,6 +54,7 @@ endif
 		check-aarch64-runtime \
 		check-aarch64-smp-runtime \
 		check-riscv64-runtime \
+		check-riscv64-smp-runtime \
 		build \
 		build-aarch64 \
 		build-riscv64 \
@@ -88,6 +89,7 @@ help:
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
 		'  make check-riscv64-runtime - run the headless QEMU virt riscv64 demo smoke check' \
+		'  make check-riscv64-smp-runtime - boot riscv64 on several harts and check they come up' \
 		'  make test           - run host-side unit and integration tests' \
 		'  make test-lib       - run library unit tests only' \
 		'  make test-fast      - run path/I-O/syscall/user integration regressions' \
@@ -267,6 +269,17 @@ check-riscv64-runtime:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-riscv64-runtime.sh
+
+# Boot riscv64 on several harts and assert that the SBI HSM starts found them.
+# The hart IDs have to come from the device tree, and the hart the kernel is
+# already running on has to be skipped — QEMU gives the reset to whichever hart
+# it likes, and asking SBI to start the running hart is an error, not a start.
+check-riscv64-smp-runtime:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		SMP_CPUS="$(SMP)" \
+		sh ./scripts/check-riscv64-smp.sh
 
 # Boot the kernel on several emulated CPUs and assert that the APs came up and
 # that it is still making progress afterwards.  Single-CPU runs cannot reach
