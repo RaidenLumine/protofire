@@ -68,6 +68,7 @@ impl Scheduler {
         // harmless — the tick's stale pass drops it, which is what that pass
         // exists for.
         if !thread.wake_by_signal() {
+            self.record_wake_refused();
             return false;
         }
 
@@ -84,8 +85,9 @@ impl Scheduler {
             if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(thread_cpu) {
                 target_sched.enqueue_ready_thread_local(thread.clone())
             } else {
-                enqueue_ready_thread(&mut self.ready_queues.lock(), thread.clone())
-            };
+                self.enqueue_ready_thread_local(thread.clone())
+            }
+            .enqueued();
         if enqueued {
             self.record_signal_wake(&thread);
             // Set need_resched on the target CPU if the woken thread has
@@ -140,7 +142,7 @@ impl Scheduler {
                         }
                         remote_sched.enqueue_ready_thread_local(thread)
                     } else {
-                        false
+                        EnqueueOutcome::NotReady
                     }
                 } else {
                     // Fallback: enqueue locally.
@@ -156,7 +158,15 @@ impl Scheduler {
                 )
             };
 
-            if enqueued {
+            if enqueued == EnqueueOutcome::NotReady {
+                // The thread was already woken by something else, or it is
+                // stopped: either way it is not ours to place.  Counted
+                // because a *runnable* thread refused here would be one in no
+                // queue at all.
+                self.record_enqueue_refused();
+            }
+
+            if enqueued.enqueued() {
                 woke_count += 1;
                 // Set need_resched on the target CPU (if remote) or locally.
                 if thread_cpu != current_cpu {
@@ -209,7 +219,22 @@ impl Scheduler {
     }
 
     pub(crate) fn remove_timed_waiter(&self, identity: WaiterIdentity) {
-        let mut waiting_queue = self.waiting_queue.lock();
-        let _ = remove_timed_waiters_by_identity(&mut waiting_queue, identity);
+        let removed = {
+            let mut waiting_queue = self.waiting_queue.lock();
+            take_timed_waiters_by_identity(&mut waiting_queue, identity)
+        };
+        // The registration is gone, so a thread that is still waiting for a
+        // deadline now has nothing that will wake it.  This is the invariant
+        // whose violation was a machine that stopped with a sleeper in it, and
+        // it is counted where it can actually be seen — the removal — rather
+        // than looked for afterwards, when the thread is already unreachable.
+        for waiter in removed {
+            if waiter.thread.state() == super::super::ThreadState::Waiting
+                && waiter.thread.wake_deadline().is_some()
+                && waiter.thread.process().state() != super::super::ProcessState::Terminated
+            {
+                self.record_waiter_lost();
+            }
+        }
     }
 }

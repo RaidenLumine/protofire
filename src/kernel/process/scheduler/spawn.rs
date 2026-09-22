@@ -56,8 +56,9 @@ impl Scheduler {
             if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(target_cpu) {
                 target_sched.enqueue_ready_thread_local(thread.clone())
             } else {
-                enqueue_ready_thread(&mut self.ready_queues.lock(), thread.clone())
-            };
+                self.enqueue_ready_thread_local(thread.clone())
+            }
+            .enqueued();
         if enqueued {
             // If a high-priority thread was just spawned, request reschedule
             // on the target CPU so it can preempt at the next safe point.
@@ -86,8 +87,9 @@ impl Scheduler {
                 if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(target_cpu) {
                     target_sched.enqueue_ready_thread_local(thread.clone())
                 } else {
-                    enqueue_ready_thread(&mut self.ready_queues.lock(), thread.clone())
-                };
+                    self.enqueue_ready_thread_local(thread.clone())
+                }
+                .enqueued();
             if enqueued {
                 if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(target_cpu) {
                     target_sched.maybe_set_need_resched_for(&thread);
@@ -116,8 +118,14 @@ impl Scheduler {
         self.need_resched.store(true, Ordering::Relaxed);
     }
 
-    pub(crate) fn enqueue_ready_thread_local(&self, thread: Arc<Thread>) -> bool {
-        enqueue_ready_thread(&mut self.ready_queues.lock(), thread)
+    pub(crate) fn enqueue_ready_thread_local(&self, thread: Arc<Thread>) -> EnqueueOutcome {
+        let outcome = enqueue_ready_thread(&mut self.ready_queues.lock(), thread);
+        // The single place a local enqueue can fail, so the single place to
+        // count it: a runnable thread refused here is in no queue at all.
+        if outcome == EnqueueOutcome::NotReady {
+            self.record_enqueue_refused();
+        }
+        outcome
     }
 
     pub(crate) fn remove_timed_waiter_for(&self, identity: WaiterIdentity) {

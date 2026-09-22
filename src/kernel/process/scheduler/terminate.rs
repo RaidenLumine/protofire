@@ -145,6 +145,59 @@ impl Scheduler {
         thread.inc_preempt_count();
     }
 
+    /// Count a wake that found nothing to wake.
+    pub(crate) fn record_wake_refused(&self) {
+        self.hotspot_stats.lock().observe_wake_refused();
+    }
+
+    /// Count an enqueue refused because the thread was not runnable.
+    ///
+    /// This is the one that matters: the caller has already made the thread
+    /// `Ready`, so a thread that is not enqueued here is in no queue at all.
+    pub(crate) fn record_enqueue_refused(&self) {
+        self.hotspot_stats.lock().observe_enqueue_refused();
+    }
+
+    /// Count a timed waiter removed while it was still waiting for it.
+    pub(crate) fn record_waiter_lost(&self) {
+        let mut stats = self.hotspot_stats.lock();
+        stats.observe_waiter_lost();
+        // A tripwire, and a cold one: this should never happen, so it is worth
+        // a line the first time it does.
+        if stats.waiter_lost_count == 1 {
+            crate::println!(
+                "[sched ] a timed waiter was dropped while it was still waiting; \
+                 the thread will never be woken"
+            );
+        }
+    }
+
+    /// Count a live process whose threads the scheduler cannot find.
+    ///
+    /// Prints once, because the second and later processes have the same
+    /// cause and the first line already stopped the machine from looking
+    /// healthy.
+    pub(crate) fn record_unplaced_process(
+        &self,
+        pid: crate::kernel::process::ProcessId,
+        name: &str,
+        state: crate::kernel::process::ProcessState,
+    ) {
+        let mut stats = self.hotspot_stats.lock();
+        stats.observe_unplaced_process();
+        let first = stats.unplaced_process_count == 1;
+        drop(stats);
+        if first {
+            crate::println!(
+                "[sched ] process pid={} name={} state={:?} has no thread in any queue: \
+                 nothing will run it again",
+                pid,
+                name,
+                state
+            );
+        }
+    }
+
     pub(crate) fn terminate_current_thread_with_reason(
         &self,
         reason: Option<TerminationReason>,

@@ -61,7 +61,7 @@ pub(crate) fn remove_timed_waiters_from_wait_queues(timed_waiters: Vec<TimedWait
 pub(crate) fn process_elapsed_timed_waiter(
     timed_waiter: TimedWaiter,
     ready_queues: &mut [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT],
-) -> bool {
+) -> EnqueueOutcome {
     let identity = WaiterIdentity::from_thread(&timed_waiter.thread);
     if let Some(cleanup) = &timed_waiter.cleanup {
         cleanup.remove_waiter(identity);
@@ -73,7 +73,9 @@ pub(crate) fn process_elapsed_timed_waiter(
         }
         enqueue_ready_thread(ready_queues, timed_waiter.thread)
     } else {
-        false
+        // The thread was not waiting: somebody else woke it first, so it is
+        // already where it belongs.
+        EnqueueOutcome::NotReady
     }
 }
 
@@ -84,6 +86,27 @@ pub(crate) fn remove_timed_waiters_by_identity(
     let original_len = waiting_queue.len();
     waiting_queue.retain(|waiter| WaiterIdentity::from_thread(&waiter.thread) != identity);
     original_len - waiting_queue.len()
+}
+
+/// The same removal, but handing back what was taken.
+///
+/// The caller that takes a registration away has to be able to ask what it
+/// just did to the thread: a registration removed while the thread is still
+/// waiting for it is a thread nothing will wake.
+pub(crate) fn take_timed_waiters_by_identity(
+    waiting_queue: &mut Vec<TimedWaiter>,
+    identity: WaiterIdentity,
+) -> Vec<TimedWaiter> {
+    let mut taken = Vec::new();
+    let mut index = 0;
+    while index < waiting_queue.len() {
+        if WaiterIdentity::from_thread(&waiting_queue[index].thread) == identity {
+            taken.push(waiting_queue.swap_remove(index));
+        } else {
+            index += 1;
+        }
+    }
+    taken
 }
 
 pub(crate) fn take_stale_timed_waiters(waiting_queue: &mut Vec<TimedWaiter>) -> Vec<TimedWaiter> {
@@ -142,18 +165,39 @@ fn remove_queued_thread(
     removed
 }
 
+/// What an enqueue did with a thread.
+///
+/// A bare `bool` cannot say *why* nothing was queued, and "nothing was
+/// queued" is the only answer that matters: the caller has already made the
+/// thread runnable, so a thread that is not queued here is in no queue at all
+/// and the scheduler will never look at it again.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum EnqueueOutcome {
+    /// The thread is in exactly one ready queue, for its current priority.
+    Enqueued,
+    /// The thread is not `Ready`, so it must not be queued: it is running,
+    /// blocked, stopped or gone.  A *runnable* thread refused here is a bug.
+    NotReady,
+}
+
+impl EnqueueOutcome {
+    pub(crate) fn enqueued(self) -> bool {
+        matches!(self, Self::Enqueued)
+    }
+}
+
 pub(crate) fn enqueue_ready_thread(
     ready_queues: &mut [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT],
     thread: Arc<Thread>,
-) -> bool {
+) -> EnqueueOutcome {
     if !should_dispatch_ready_thread(thread.state()) {
-        return false;
+        return EnqueueOutcome::NotReady;
     }
 
     // Exactly one copy, in the queue for the priority it has now.
     let _ = remove_queued_thread(ready_queues, &thread);
     ready_queues[thread.priority() as usize].push_back(thread);
-    true
+    EnqueueOutcome::Enqueued
 }
 
 /// Requeue a preempted thread.  FIFO threads go to the front of their

@@ -292,6 +292,37 @@ fn processes_data() -> Vec<u8> {
     format!("{}\n", count).into_bytes()
 }
 
+/// The scheduler's own counters, including the exits that used to be silent.
+///
+/// `wake-refused`, `enqueue-refused`, `waiter-lost` and `unplaced-process` are
+/// the four answers to "where did that thread go".  A machine that stops with
+/// work left has one of them non-zero, and the file says which — instead of a
+/// serial log that ends mid-line and a story about which probe was in the
+/// build that day.  `waiter-lost` and `unplaced-process` are tripwires: they
+/// should read zero forever.
+fn sched_data() -> Vec<u8> {
+    let Some(scheduler) = crate::kernel::process::Scheduler::global() else {
+        return b"scheduler: not initialised\n".to_vec();
+    };
+    let stats = scheduler.hotspot_stats();
+    format!(
+        "dispatch: {}\nblock: {}\ntimed-wait-registrations: {}\nsignal-wakes: {}\n\
+         timeout-wakes: {}\npreempts: {}\n\n\
+         wake-refused: {}\nenqueue-refused: {}\nwaiter-lost: {}\nunplaced-process: {}\n",
+        stats.dispatch_count,
+        stats.block_count,
+        stats.timed_wait_registration_count,
+        stats.signal_wake_count,
+        stats.timeout_wake_count,
+        stats.preempt_count,
+        stats.wake_refused_count,
+        stats.enqueue_refused_count,
+        stats.waiter_lost_count,
+        stats.unplaced_process_count,
+    )
+    .into_bytes()
+}
+
 /// The TLB's invalidation log, and the kernel stack window that waits on it.
 ///
 /// Both are allocation structures with a fallback, and both are sized by
@@ -485,6 +516,7 @@ const ROOT_STATIC_ENTRIES: &[(&str, NodeKind)] = &[
     ("uptime", NodeKind::File),
     ("mounts", NodeKind::File),
     ("processes", NodeKind::File),
+    ("sched", NodeKind::File),
     ("tlb", NodeKind::File),
 ];
 
@@ -524,6 +556,7 @@ impl VfsTrait for ProcFs {
                 "uptime" => Ok(Arc::new(StaticDataVNode::new("uptime", uptime_data))),
                 "mounts" => Ok(Arc::new(StaticDataVNode::new("mounts", mounts_data))),
                 "processes" => Ok(Arc::new(StaticDataVNode::new("processes", processes_data))),
+                "sched" => Ok(Arc::new(StaticDataVNode::new("sched", sched_data))),
                 "tlb" => Ok(Arc::new(StaticDataVNode::new("tlb", tlb_data))),
                 _ => Err(Error::NotFound),
             },
@@ -709,6 +742,30 @@ mod tests {
         assert!(s.contains("full-flushes: "), "{s}");
         assert!(s.contains("pending: "), "{s}");
         assert!(s.contains("stack-window: "), "{s}");
+    }
+
+    #[test]
+    fn procfs_lookup_sched_reports_the_refusals() {
+        let p = ProcFs;
+        let vnode = p.lookup("sched").expect("sched node");
+        assert_eq!(vnode.kind(), NodeKind::File);
+        let mut buf = [0u8; 512];
+        let n = vnode.read(0, &mut buf).expect("read");
+        let s = core::str::from_utf8(&buf[..n]).expect("utf8");
+        // Either the scheduler is up and the counters are there, or the file
+        // says why it has nothing to report — never silence.
+        assert!(
+            s.contains("wake-refused: ") || s.contains("scheduler: not initialised"),
+            "{s}"
+        );
+        assert!(
+            s.contains("waiter-lost: ") || s.contains("not initialised"),
+            "{s}"
+        );
+        assert!(
+            s.contains("unplaced-process: ") || s.contains("not initialised"),
+            "{s}"
+        );
     }
 
     #[test]

@@ -16,6 +16,62 @@ use super::BOOST_DURATION_TICKS;
 use super::BOOST_THRESHOLD_TICKS;
 
 impl Scheduler {
+    /// How often the placement watchdog looks.  About a second at 100 Hz.
+    const PLACEMENT_WATCHDOG_PERIOD_TICKS: u64 = 128;
+
+    /// Report every live process whose threads the scheduler cannot find.
+    ///
+    /// "Find" means what the rest of the scheduler means by it: the thread is
+    /// in a ready queue, in the waiting queue, or running.  A thread in none
+    /// of those is one no future tick will dispatch, so a process left in that
+    /// state is a machine that has stopped with its work unfinished — the
+    /// failure this scheduler has actually had.
+    ///
+    /// The process table is reachable, so the check runs from there: every
+    /// process that is alive has to have at least one thread the scheduler can
+    /// find.  A *lost* thread cannot be enumerated directly — that is what
+    /// being lost means — which is why this asks the question from the
+    /// process's side.
+    ///
+    /// Not under the process lock while looking: the lookups take the queue
+    /// locks, and the two are not taken in one fixed order anywhere else.
+    pub(crate) fn watch_process_placement(&self) {
+        /// Enough for a live process list; the demo runs a handful.  Fixed so
+        /// that a watchdog running once a second never allocates.
+        const MAX_WATCHED: usize = 64;
+        let mut watched = [(0u32, crate::kernel::process::ProcessState::New, 0u32); MAX_WATCHED];
+        let mut count = 0usize;
+        for process in self.processes.lock().iter() {
+            if count == MAX_WATCHED {
+                break;
+            }
+            if matches!(
+                process.state(),
+                crate::kernel::process::ProcessState::Terminated
+                    | crate::kernel::process::ProcessState::New
+            ) {
+                continue;
+            }
+            let Some(first_tid) = process.thread_ids().first().copied() else {
+                // A live process with no threads at all: also unplaced.
+                self.record_unplaced_process(process.pid(), &process.name(), process.state());
+                continue;
+            };
+            watched[count] = (process.pid(), process.state(), first_tid);
+            count += 1;
+        }
+
+        for (pid, state, tid) in watched.into_iter().take(count) {
+            if self.find_thread_by_pid_and_tid(pid, tid).is_none() {
+                let name = self
+                    .process_by_pid(pid)
+                    .map(|process| process.name())
+                    .unwrap_or_else(|| alloc::string::String::from("?"));
+                self.record_unplaced_process(pid, &name, state);
+            }
+        }
+    }
+
     /// Handle a timer tick, including preemption by default.
     ///
     /// Convenience wrapper around [`handle_timer_tick_with_preemption`]
@@ -173,6 +229,18 @@ impl Scheduler {
 
         // Wake expired sleepers first so a just-readied thread can participate
         // in the same timeslice-boundary preemption decision.
+        //
+        // Before waking them, check that the threads the scheduler is
+        // responsible for can still be found at all.  A thread that is in no
+        // queue is a thread nothing will ever run, and the only time that can
+        // be seen is when there is nothing else to run — which is exactly
+        // when it matters.  Cheap: no allocation, one lookup per process,
+        // about once a second.
+        if ticks.is_multiple_of(Self::PLACEMENT_WATCHDOG_PERIOD_TICKS)
+            && ready_queue_len(&self.ready_queues.lock()) == 0
+        {
+            self.watch_process_placement();
+        }
         let _ = self.wake_ready_threads(ticks);
 
         if !allow_preemption {

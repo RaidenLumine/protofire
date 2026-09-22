@@ -81,10 +81,10 @@ mod tests {
         realtime.set_priority(ThreadPriority::Realtime);
 
         // Enqueue in a scrambled order.
-        assert!(enqueue_ready_thread(&mut queues, normal.clone()));
-        assert!(enqueue_ready_thread(&mut queues, idle.clone()));
-        assert!(enqueue_ready_thread(&mut queues, high.clone()));
-        assert!(enqueue_ready_thread(&mut queues, realtime.clone()));
+        assert!(enqueue_ready_thread(&mut queues, normal.clone()).enqueued());
+        assert!(enqueue_ready_thread(&mut queues, idle.clone()).enqueued());
+        assert!(enqueue_ready_thread(&mut queues, high.clone()).enqueued());
+        assert!(enqueue_ready_thread(&mut queues, realtime.clone()).enqueued());
 
         // take_next dispatches highest-priority first.
         assert_eq!(
@@ -122,7 +122,7 @@ mod tests {
         let stopped = Thread::new_kernel(process.clone(), idle_entry);
         assert!(stopped.suspend());
 
-        assert!(enqueue_ready_thread(&mut queues, ready.clone()));
+        assert!(enqueue_ready_thread(&mut queues, ready.clone()).enqueued());
         // A Stopped thread must never sit in the ready queue.
         queues[stopped.priority() as usize].push_back(stopped.clone());
         assert_eq!(prune_nondispatchable_ready_threads(&mut queues), 1);
@@ -136,7 +136,7 @@ mod tests {
         let blocked = Thread::new_kernel(process.clone(), idle_entry);
         blocked.block_until(10);
 
-        assert!(!enqueue_ready_thread(&mut queues, blocked.clone()));
+        assert!(!enqueue_ready_thread(&mut queues, blocked.clone()).enqueued());
         assert!(!has_dispatchable_ready_thread(&mut queues));
     }
 
@@ -189,7 +189,7 @@ mod tests {
             thread: thread.clone(),
             cleanup: None,
         };
-        assert!(process_elapsed_timed_waiter(waiter, &mut queues));
+        assert!(process_elapsed_timed_waiter(waiter, &mut queues).enqueued());
         assert_eq!(thread.state(), ThreadState::Ready);
         assert_eq!(
             take_next_dispatchable_thread(&mut queues)
@@ -271,7 +271,7 @@ mod tests {
         a.set_sched_policy(ThreadSchedPolicy::SchedFifo);
 
         let mut queues: [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT] = Default::default();
-        assert!(enqueue_ready_thread(&mut queues, b.clone()));
+        assert!(enqueue_ready_thread(&mut queues, b.clone()).enqueued());
         requeue_preempted_thread(&mut queues, a.clone());
 
         // FIFO preemption: `a` jumps to the front, ahead of the queued `b`.
@@ -292,13 +292,13 @@ mod tests {
         let thread = Thread::new_kernel(process.clone(), idle_entry);
 
         let mut queues: [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT] = Default::default();
-        assert!(enqueue_ready_thread(&mut queues, thread.clone()));
+        assert!(enqueue_ready_thread(&mut queues, thread.clone()).enqueued());
 
         // The starvation boost promotes a thread while it is sitting in the
         // queue.  Enqueueing it again must move it, not add a second copy:
         // two copies is one thread that two CPUs can dispatch at once.
         thread.set_priority(ThreadPriority::High);
-        assert!(enqueue_ready_thread(&mut queues, thread.clone()));
+        assert!(enqueue_ready_thread(&mut queues, thread.clone()).enqueued());
 
         let queued: usize = queues.iter().map(|queue| queue.len()).sum();
         assert_eq!(queued, 1, "the same thread was queued twice");
@@ -319,7 +319,7 @@ mod tests {
         let thread = Thread::new_kernel(process.clone(), idle_entry);
 
         let mut queues: [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT] = Default::default();
-        assert!(enqueue_ready_thread(&mut queues, thread.clone()));
+        assert!(enqueue_ready_thread(&mut queues, thread.clone()).enqueued());
         thread.set_priority(ThreadPriority::High);
         requeue_preempted_thread(&mut queues, thread.clone());
 
@@ -342,8 +342,8 @@ mod tests {
         assert_eq!(thread_a.tid(), thread_b.tid());
         {
             let mut queues = first.ready_queues.lock();
-            assert!(enqueue_ready_thread(&mut queues, thread_b.clone()));
-            assert!(enqueue_ready_thread(&mut queues, thread_a.clone()));
+            assert!(enqueue_ready_thread(&mut queues, thread_b.clone()).enqueued());
+            assert!(enqueue_ready_thread(&mut queues, thread_a.clone()).enqueued());
         }
 
         assert_eq!(
@@ -381,8 +381,8 @@ mod tests {
         let kernel = Thread::new_kernel(process.clone(), idle_entry);
 
         let mut queues: [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT] = Default::default();
-        assert!(enqueue_ready_thread(&mut queues, user.clone()));
-        assert!(enqueue_ready_thread(&mut queues, kernel.clone()));
+        assert!(enqueue_ready_thread(&mut queues, user.clone()).enqueued());
+        assert!(enqueue_ready_thread(&mut queues, kernel.clone()).enqueued());
         assert_eq!(queues[ThreadPriority::Normal as usize].len(), 2);
 
         // A full dispatch cycle: every thread is taken exactly once.
@@ -396,6 +396,65 @@ mod tests {
     fn scheduler_new_has_zero_hotspot_stats() {
         let scheduler = Scheduler::new();
         assert_eq!(scheduler.hotspot_stats(), SchedulerHotspotStats::default());
+    }
+
+    #[test]
+    fn taking_a_registration_from_a_waiting_thread_is_counted() {
+        // The shape of the wedge: a registration is removed while the thread
+        // is still waiting for its deadline, which leaves nothing that will
+        // ever wake it.  The counter is where that is supposed to show up.
+        let scheduler = Scheduler::new();
+        let process = Process::new(61, "lost-waiter");
+        let thread = Thread::new_kernel(process.clone(), idle_entry);
+        {
+            let mut processes = scheduler.processes.lock();
+            processes.push(process.clone());
+        }
+
+        thread.block_until(10_000);
+        let identity = crate::kernel::sync::wait::WaiterIdentity::from_thread(&thread);
+        scheduler.register_timed_waiter(thread.clone(), None);
+        assert_eq!(scheduler.waiting_count(), 1);
+
+        scheduler.remove_timed_waiter(identity);
+
+        assert_eq!(scheduler.waiting_count(), 0);
+        assert_eq!(thread.state(), ThreadState::Waiting);
+        assert_eq!(scheduler.hotspot_stats().waiter_lost_count, 1);
+    }
+
+    #[test]
+    fn a_live_process_with_no_placed_thread_is_counted() {
+        // A process the scheduler can no longer find in any queue is a
+        // process it will never run again.
+        let scheduler = Scheduler::new();
+        let process = Process::new(62, "unplaced");
+        let thread = Thread::new_kernel(process.clone(), idle_entry);
+        process.set_state(super::super::super::ProcessState::Ready);
+        {
+            let mut processes = scheduler.processes.lock();
+            processes.push(process.clone());
+        }
+        let _unplaced = thread; // never enqueued, never waiting, never current
+
+        scheduler.watch_process_placement();
+        assert_eq!(scheduler.hotspot_stats().unplaced_process_count, 1);
+
+        // A thread the scheduler can find is not reported, even when nothing
+        // is ready to run: the process is parked, not lost.
+        let scheduled = Scheduler::new();
+        let parked = Process::new(63, "parked");
+        parked.set_state(super::super::super::ProcessState::Waiting);
+        let parked_thread = Thread::new_kernel(parked.clone(), idle_entry);
+        {
+            let mut processes = scheduled.processes.lock();
+            processes.push(parked.clone());
+        }
+        parked_thread.block_until(500);
+        scheduled.register_timed_waiter(parked_thread.clone(), None);
+
+        scheduled.watch_process_placement();
+        assert_eq!(scheduled.hotspot_stats().unplaced_process_count, 0);
     }
 
     #[test]
@@ -573,7 +632,7 @@ mod tests {
                     }
                     let prio = threads[idx].priority() as usize;
                     assert!(
-                        enqueue_ready_thread(&mut queues, threads[idx].clone()),
+                        enqueue_ready_thread(&mut queues, threads[idx].clone()).enqueued(),
                         "step {step}: enqueue of dispatchable thread {idx} rejected"
                     );
                     model.push((idx, threads[idx].tid(), prio));
@@ -676,7 +735,7 @@ mod tests {
         let mut queues: [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT] = Default::default();
         // Enqueue A, B, C at the same priority — FIFO must dispatch A, B, C.
         for t in &threads {
-            assert!(enqueue_ready_thread(&mut queues, t.clone()));
+            assert!(enqueue_ready_thread(&mut queues, t.clone()).enqueued());
         }
         let mut order = Vec::new();
         while let Some(t) = take_next_dispatchable_thread(&mut queues) {

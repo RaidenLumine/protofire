@@ -18,6 +18,37 @@ pub struct SchedulerHotspotStats {
     pub signal_wake_count: u64,
     pub timeout_wake_count: u64,
     pub preempt_count: u64,
+
+    // ── Refusals and losses ────────────────────────────────────────────
+    //
+    // These are the exits that used to be silent.  A scheduler that makes a
+    // thread runnable has to put it somewhere; when one of these climbs, the
+    // answer to "where did the thread go" is in the number rather than in a
+    // serial log that stops mid-line.
+    /// `wake_thread` was asked to wake a thread that was not waiting.
+    ///
+    /// Harmless on its own (a signal to a running thread), and *not*
+    /// harmless when it happens after the thread's timeout registration was
+    /// taken away — which is why it is counted.
+    pub wake_refused_count: u64,
+    /// An enqueue was refused because the thread was not `Ready`.
+    ///
+    /// The creator of a `Ready` thread that is in no queue: a thread the
+    /// scheduler will never look at again.
+    pub enqueue_refused_count: u64,
+    /// A timed waiter was taken out of the timer queue while it was still
+    /// `Waiting` with a deadline.
+    ///
+    /// This is the signature of the wedge the scheduler had: a sleeper that
+    /// nobody will ever wake.  It should stay zero; it is here so that the
+    /// next time it is not, the number says so.
+    pub waiter_lost_count: u64,
+    /// A live process had no thread the scheduler could find — not in a ready
+    /// queue, not in the waiting queue, not running.
+    ///
+    /// A thread the scheduler cannot find is a thread it will never schedule
+    /// again, so this is the shape "the machine stopped with work left" has.
+    pub unplaced_process_count: u64,
 }
 
 impl SchedulerHotspotStats {
@@ -43,6 +74,22 @@ impl SchedulerHotspotStats {
 
     pub(crate) fn observe_preempt(&mut self) {
         self.preempt_count = self.preempt_count.saturating_add(1);
+    }
+
+    pub(crate) fn observe_wake_refused(&mut self) {
+        self.wake_refused_count = self.wake_refused_count.saturating_add(1);
+    }
+
+    pub(crate) fn observe_enqueue_refused(&mut self) {
+        self.enqueue_refused_count = self.enqueue_refused_count.saturating_add(1);
+    }
+
+    pub(crate) fn observe_waiter_lost(&mut self) {
+        self.waiter_lost_count = self.waiter_lost_count.saturating_add(1);
+    }
+
+    pub(crate) fn observe_unplaced_process(&mut self) {
+        self.unplaced_process_count = self.unplaced_process_count.saturating_add(1);
     }
 }
 
