@@ -42,6 +42,10 @@ pub mod sync;
 pub mod syscall;
 pub mod topology;
 pub mod user;
+// A boot-time stress of the stack window and the TLB log; only the runtime
+// check that asks for it builds it in.
+#[cfg(target_os = "none")]
+pub mod vm_churn;
 
 // Only the demo-gated embedded-service helper builds a `ServiceDefinition`
 // by hand; the config-driven path takes ownership of already-allocated
@@ -540,6 +544,12 @@ impl Kernel {
             maintenance::MAINTENANCE_THREAD_NAME,
             maintenance::maintenance_entry,
         );
+
+        // Ask the window and the invalidation log for more than they have,
+        // before the idle process starts and the machine settles into its
+        // steady state.  Compiled in by the churn feature only.
+        #[cfg(target_os = "none")]
+        vm_churn::run();
 
         println!("[init  ] starting idle process...");
         self.scheduler.start_idle_process();

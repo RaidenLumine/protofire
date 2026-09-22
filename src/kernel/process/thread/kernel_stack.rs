@@ -271,6 +271,17 @@ impl KernelStack {
     pub(crate) fn stack_top(&self) -> usize {
         self.stack_ptr as usize + self.stack_len
     }
+
+    /// Whether this stack came out of the architecture's stack window.
+    ///
+    /// A caller that wants to know whether the window could still serve it —
+    /// the churn check does — has to ask, because allocation falls back rather
+    /// than failing: a target without a window, a window with no room, and a
+    /// frame pool with no frames all end up in one of the other two shapes.
+    #[cfg_attr(not(feature = "stack_churn"), allow(dead_code))]
+    pub(crate) fn is_window_backed(&self) -> bool {
+        matches!(self.backing, KernelStackBacking::Window { .. })
+    }
 }
 
 impl Drop for KernelStack {

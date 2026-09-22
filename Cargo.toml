@@ -126,6 +126,11 @@ fs_profiler = []
 fs_lock_timing = []
 heap_audit = []
 liveness_heartbeat = []
+# Asks the stack window and the posted-invalidation log for more than they can
+# hold, so the fallbacks (frames at their own addresses, full TLB flushes) are
+# exercised rather than merely reasoned about.  Used by the x86_64 runtime
+# check; it costs tens of megabytes of frames for the moment it runs.
+stack_churn = []
 net_profiler = []
 alloc_profiler = []
 fault_profiler = []

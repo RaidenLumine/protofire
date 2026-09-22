@@ -49,6 +49,7 @@ endif
 		check-aarch64 \
 		check-riscv64 \
 		check-x8664-runtime \
+		check-x8664-churn \
 		check-aarch64-runtime \
 		check-aarch64-smp-runtime \
 		build \
@@ -81,6 +82,7 @@ help:
 		'  make check-aarch64  - run bare-metal type checks for aarch64-unknown-none' \
 		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
+		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
 		'  make test           - run host-side unit and integration tests' \
 		'  make test-lib       - run library unit tests only' \
@@ -222,6 +224,15 @@ check-x8664-runtime:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-runtime.sh
+
+# Boot with the stack-window churn: ask the window for more stacks than it has
+# and the invalidation log for more requests than it can hold, then check the
+# counts that come back.  A diagnostic rather than a gate — see the script.
+check-x8664-churn:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-churn.sh
 
 check-aarch64-runtime:
 	PROFILE="$(PROFILE)" \
