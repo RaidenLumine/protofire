@@ -48,6 +48,7 @@ endif
 		check-target \
 		check-aarch64 \
 		check-riscv64 \
+		check-x8664-runtime \
 		check-aarch64-runtime \
 		check-aarch64-smp-runtime \
 		build \
@@ -79,6 +80,7 @@ help:
 		'  make check          - run both host and bare-metal type checks' \
 		'  make check-aarch64  - run bare-metal type checks for aarch64-unknown-none' \
 		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
+		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
 		'  make test           - run host-side unit and integration tests' \
 		'  make test-lib       - run library unit tests only' \
@@ -210,6 +212,16 @@ check-aarch64:
 
 check-riscv64:
 	$(CARGO) check $(CARGO_FLAGS) --target riscv64gc-unknown-none-elf
+
+# Boot the kernel on a single emulated CPU with the demo disk and assert that
+# the user programs actually run.  The SMP smoke cannot see a defect that
+# takes one CPU down at a time, and a single CPU is what `make run` gives a
+# developer, so this is the check a wedge like that has to fail.
+check-x8664-runtime:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-runtime.sh
 
 check-aarch64-runtime:
 	PROFILE="$(PROFILE)" \

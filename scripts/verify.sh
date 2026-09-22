@@ -130,11 +130,19 @@ run_p2() {
 
 run_p3() {
     # P3 is the release-grade gate: static analysis plus optional QEMU runtime
-    # smoke.  The SMP smoke is the only check anywhere that boots more than one
-    # CPU, which is the only way the cross-CPU paths run at all; it stays
-    # opt-in because it is slow and needs QEMU.
+    # smoke.  The x86_64 smoke boots a single CPU and is what a wedge that
+    # stops the machine where the multi-CPU run would keep going has to fail;
+    # the SMP smoke is the only check anywhere that boots more than one CPU,
+    # which is the only way the cross-CPU paths run at all.  All three stay
+    # opt-in because they are slow and need QEMU.
     run_p2
     run_make_step "make clippy" clippy
+    if [ "$RUN_X86_64_RUNTIME" = "1" ]; then
+        run_make_step "make check-x8664-runtime" check-x8664-runtime
+    else
+        printf '==> verify[%s]: skipping x86_64 runtime smoke (set RUN_X86_64_RUNTIME=1 to enable)\n' \
+            "$VERIFY_TIER"
+    fi
     if [ "$RUN_AARCH64_RUNTIME" = "1" ]; then
         run_make_step "make check-aarch64-runtime" check-aarch64-runtime
     else

@@ -245,10 +245,40 @@ if [ "$service_lines" -eq 0 ]; then
     fail_with_log "no service activity after boot; the machine may have stalled"
 fi
 
+# ── The user programs actually ran ─────────────────────────────────────
+#
+# "Still making progress" is not the same as "reached user mode".  A kernel
+# can hand the CPU to a process address space that does not map the stack it
+# is standing on and then stop there: every marker above is printed before
+# that hand-off, so the shell banner and the service lines were all present in
+# a boot where no user program ever printed a byte.  What a user program says
+# about itself is the only part of the boot that proves the ring-3 path ran,
+# so at least one of them has to have said something and exited.
+user_exits="$(count_log_line "[user  ] exit pid=")"
+if [ "$user_exits" -eq 0 ]; then
+    fail_with_log "no user program reached user mode and exited"
+fi
+
 # ── Nothing reported damage ────────────────────────────────────────────
 if grep -F "FATAL" "$log_file" >/dev/null 2>&1; then
     fail_with_log "the kernel reported a fatal error during the run"
 fi
+
+# ── The kernel stack's guard is real ───────────────────────────────────
+#
+# A kernel stack lives in the architecture's own window, its guard is a slice
+# of that window nothing ever allocates, and the kernel's tables cover what
+# the mapping facts say they cover.  A guard the kernel had to report missing,
+# or a kernel range the facts describe but the tables do not map, is a real
+# defect — and one that would otherwise first show up as an overflow that
+# corrupts memory instead of faulting.
+for pattern in \
+    "[thread] kernel stack guard pages are not enforced" \
+    "[mm    ] kernel table gap"; do
+    if grep -F "$pattern" "$log_file" >/dev/null 2>&1; then
+        fail_with_log "unexpected log line: $pattern"
+    fi
+done
 
 # ── Liveness after boot, when the build carries heartbeats ─────────────
 #
