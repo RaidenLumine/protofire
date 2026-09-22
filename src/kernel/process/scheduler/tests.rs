@@ -287,6 +287,81 @@ mod tests {
     }
 
     #[test]
+    fn a_priority_change_leaves_one_queued_copy() {
+        let process = Process::new(41, "priority-move");
+        let thread = Thread::new_kernel(process.clone(), idle_entry);
+
+        let mut queues: [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT] = Default::default();
+        assert!(enqueue_ready_thread(&mut queues, thread.clone()));
+
+        // The starvation boost promotes a thread while it is sitting in the
+        // queue.  Enqueueing it again must move it, not add a second copy:
+        // two copies is one thread that two CPUs can dispatch at once.
+        thread.set_priority(ThreadPriority::High);
+        assert!(enqueue_ready_thread(&mut queues, thread.clone()));
+
+        let queued: usize = queues.iter().map(|queue| queue.len()).sum();
+        assert_eq!(queued, 1, "the same thread was queued twice");
+        assert_eq!(queues[ThreadPriority::High as usize].len(), 1);
+        assert_eq!(queues[ThreadPriority::Normal as usize].len(), 0);
+
+        // And it comes out once, at its new priority.
+        assert_eq!(
+            take_next_dispatchable_thread(&mut queues).map(|t| t.tid()),
+            Some(thread.tid())
+        );
+        assert!(take_next_dispatchable_thread(&mut queues).is_none());
+    }
+
+    #[test]
+    fn requeue_after_a_priority_change_moves_the_only_copy() {
+        let process = Process::new(42, "priority-requeue");
+        let thread = Thread::new_kernel(process.clone(), idle_entry);
+
+        let mut queues: [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT] = Default::default();
+        assert!(enqueue_ready_thread(&mut queues, thread.clone()));
+        thread.set_priority(ThreadPriority::High);
+        requeue_preempted_thread(&mut queues, thread.clone());
+
+        let queued: usize = queues.iter().map(|queue| queue.len()).sum();
+        assert_eq!(queued, 1, "the same thread was queued twice");
+        assert_eq!(queues[ThreadPriority::High as usize].len(), 1);
+    }
+
+    #[test]
+    fn thread_lookup_is_scoped_to_its_process() {
+        // Every process numbers its threads from one, so two processes both
+        // have a tid 1.  A lookup that matches the tid alone finds whichever
+        // it sees first — this is how a per-process operation (ptrace) can end
+        // up acting on another process's thread.
+        let first = Scheduler::new();
+        let process_a = Process::new(51, "lookup-a");
+        let process_b = Process::new(52, "lookup-b");
+        let thread_a = Thread::new_kernel(process_a.clone(), idle_entry);
+        let thread_b = Thread::new_kernel(process_b.clone(), idle_entry);
+        assert_eq!(thread_a.tid(), thread_b.tid());
+        {
+            let mut queues = first.ready_queues.lock();
+            assert!(enqueue_ready_thread(&mut queues, thread_b.clone()));
+            assert!(enqueue_ready_thread(&mut queues, thread_a.clone()));
+        }
+
+        assert_eq!(
+            first
+                .find_thread_by_pid_and_tid(51, thread_a.tid())
+                .map(|thread| thread.pid()),
+            Some(51)
+        );
+        assert_eq!(
+            first
+                .find_thread_by_pid_and_tid(52, thread_b.tid())
+                .map(|thread| thread.pid()),
+            Some(52)
+        );
+        assert!(first.find_thread_by_pid_and_tid(53, 1).is_none());
+    }
+
+    #[test]
     fn thread_has_dispatch_address_space_predicates() {
         let process = Process::new(13, "dispatch-space");
         // Kernel threads share the kernel address space: always dispatchable.

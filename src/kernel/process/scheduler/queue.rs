@@ -119,6 +119,29 @@ pub(crate) fn has_dispatchable_ready_thread(
     ready_queues.iter().any(|queue| !queue.is_empty())
 }
 
+/// Remove every queued copy of `thread`, wherever it is queued.
+///
+/// The ready queues are indexed by priority, and a thread's priority can
+/// change while it sits in one — the starvation boost does exactly that.  So
+/// "is this thread queued?" is a question about the *thread*, not about the
+/// queue for the priority it happens to have now.  Asking only that one queue
+/// is how the same thread ends up queued twice, and a thread queued twice can
+/// be dispatched twice.
+fn remove_queued_thread(
+    ready_queues: &mut [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT],
+    thread: &Thread,
+) -> bool {
+    let pid = thread.pid();
+    let tid = thread.tid();
+    let mut removed = false;
+    for queue in ready_queues.iter_mut() {
+        let before = queue.len();
+        queue.retain(|queued| !(queued.pid() == pid && queued.tid() == tid));
+        removed |= queue.len() != before;
+    }
+    removed
+}
+
 pub(crate) fn enqueue_ready_thread(
     ready_queues: &mut [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT],
     thread: Arc<Thread>,
@@ -127,18 +150,9 @@ pub(crate) fn enqueue_ready_thread(
         return false;
     }
 
-    let priority = thread.priority() as usize;
-    let pid = thread.pid();
-    let tid = thread.tid();
-    let ready_queue = &mut ready_queues[priority];
-    if ready_queue
-        .iter()
-        .any(|queued| queued.pid() == pid && queued.tid() == tid)
-    {
-        return false;
-    }
-
-    ready_queue.push_back(thread);
+    // Exactly one copy, in the queue for the priority it has now.
+    let _ = remove_queued_thread(ready_queues, &thread);
+    ready_queues[thread.priority() as usize].push_back(thread);
     true
 }
 
@@ -152,17 +166,9 @@ pub(crate) fn requeue_preempted_thread(
     if !should_dispatch_ready_thread(thread.state()) {
         return;
     }
-    let priority = thread.priority() as usize;
-    let pid = thread.pid();
-    let tid = thread.tid();
-    let ready_queue = &mut ready_queues[priority];
-    if ready_queue
-        .iter()
-        .any(|queued| queued.pid() == pid && queued.tid() == tid)
-    {
-        return;
-    }
 
+    let _ = remove_queued_thread(ready_queues, &thread);
+    let ready_queue = &mut ready_queues[thread.priority() as usize];
     if thread.sched_policy() == ThreadSchedPolicy::SchedFifo {
         ready_queue.push_front(thread);
     } else {

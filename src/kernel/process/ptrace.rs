@@ -371,7 +371,9 @@ fn find_first_thread(target: &Process) -> Result<Arc<Thread>> {
     let scheduler = Scheduler::global().ok_or(Error::Unsupported)?;
     let threads = target.thread_ids();
     let tid = *threads.first().ok_or(Error::NotFound)?;
-    scheduler.find_thread_by_tid(tid).ok_or(Error::NotFound)
+    scheduler
+        .find_thread_by_pid_and_tid(target.pid(), tid)
+        .ok_or(Error::NotFound)
 }
 
 /// Push a ptrace event onto the process's event queue.

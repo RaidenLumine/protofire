@@ -184,15 +184,21 @@ impl Scheduler {
             .cloned()
     }
 
-    /// Find a thread by its TID, scanning the ready queues, waiting queue,
-    /// and current thread slot.
-    pub fn find_thread_by_tid(&self, tid: ThreadId) -> Option<Arc<Thread>> {
+    /// Find a thread by process and thread id, scanning the ready queues, the
+    /// waiting queue and the current thread slot.
+    ///
+    /// The tid alone does not name a thread: every process numbers its threads
+    /// from one, so a tid-only search finds whichever thread happens to be
+    /// scanned first — another process's.  A caller that means *its* thread has
+    /// to say which process it means.
+    pub fn find_thread_by_pid_and_tid(&self, pid: ProcessId, tid: ThreadId) -> Option<Arc<Thread>> {
+        let matches = |thread: &Thread| thread.pid() == pid && thread.tid() == tid;
         // Check ready queues.
         {
             let ready = self.ready_queues.lock();
             for queue in ready.iter() {
                 for t in queue.iter() {
-                    if t.tid() == tid {
+                    if matches(t) {
                         return Some(t.clone());
                     }
                 }
@@ -202,14 +208,14 @@ impl Scheduler {
         {
             let waiting = self.waiting_queue.lock();
             for w in waiting.iter() {
-                if w.thread.tid() == tid {
+                if matches(&w.thread) {
                     return Some(w.thread.clone());
                 }
             }
         }
         // Check current thread.
         if let Some(current) = self.current_thread() {
-            if current.tid() == tid {
+            if matches(&current) {
                 return Some(current);
             }
         }

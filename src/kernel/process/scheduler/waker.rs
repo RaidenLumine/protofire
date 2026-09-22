@@ -59,17 +59,26 @@ impl Scheduler {
 
     pub(crate) fn wake_thread(&self, thread: Arc<Thread>) -> bool {
         let thread_cpu = thread.cpu_affinity();
-        // Remove timed waiter from the thread's affinity CPU (where it
-        // was blocked).  On single-CPU or early boot, fall back to the
-        // local scheduler.
+
+        // Wake it before taking its timeout registration away.  The other
+        // order leaves a thread that is still waiting with no way to be woken
+        // by its deadline: the registration is gone, and a refusal here
+        // (the thread was not actually waiting) returns before anything puts
+        // it back.  A registration left on a thread that is not waiting is
+        // harmless — the tick's stale pass drops it, which is what that pass
+        // exists for.
+        if !thread.wake_by_signal() {
+            return false;
+        }
+
+        // The thread is ready now, so it no longer needs a deadline on this
+        // CPU (or on its affinity CPU, where it was blocked).
         if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(thread_cpu) {
             target_sched.remove_timed_waiter_for(WaiterIdentity::from_thread(&thread));
         } else {
             self.remove_timed_waiter(WaiterIdentity::from_thread(&thread));
         }
-        if !thread.wake_by_signal() {
-            return false;
-        }
+
         // Enqueue into the thread's affinity CPU's ready queues.
         let enqueued =
             if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(thread_cpu) {
