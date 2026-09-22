@@ -6,9 +6,9 @@
 
 use alloc::sync::Arc;
 
-use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::block::BlockDevice;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use crate::kernel::fs::block::DeviceHealth;
+use crate::kernel::block::DeviceHealth;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::kernel::memory::DmaBuffer;
 #[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
@@ -16,7 +16,7 @@ use crate::Error;
 use crate::Result;
 
 #[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
-use crate::kernel::fs::block::BLOCK_SIZE;
+use crate::kernel::block::BLOCK_SIZE;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::kernel::sync::Mutex;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
@@ -990,7 +990,7 @@ mod tests {
     use super::STATUS_ERR;
     use super::STATUS_FLOATING_BUS;
     use super::STATUS_NONE;
-    use crate::kernel::fs::block::BLOCK_SIZE;
+    use crate::kernel::block::BLOCK_SIZE;
     use crate::Error;
 
     #[test]

@@ -3,7 +3,11 @@
 //! Filesystem facade that mounts volumes, resolves paths, and exposes VFS
 //! operations.
 
-pub mod block;
+// The block layer itself lives at `src/kernel/block.rs`, below this module:
+// `drivers` implements `BlockDevice` and must not have to name `fs` to do it.
+// The re-export keeps the historical `fs::block` path working, and that path is
+// one-way — the filesystem depends on the block layer, not the other way round.
+pub use crate::kernel::block;
 pub mod block_cache;
 pub mod btrfs;
 pub mod crypt_device;

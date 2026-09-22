@@ -1,6 +1,12 @@
-//! src/kernel/fs/block.rs
+//! src/kernel/block.rs
 //!
-//! Block-device abstractions and in-memory block-device helpers.
+//! The block layer: the block-device interface, the in-memory devices that
+//! implement it, and the slot a driver publishes a newly found device through.
+//!
+//! This sits below the filesystem on purpose.  A disk driver has to name the
+//! device interface to implement it, and it must not have to name the
+//! filesystem to do that — the filesystem is one consumer of the interface, not
+//! its owner.
 
 use alloc::string::String;
 use alloc::string::ToString;
@@ -228,6 +234,49 @@ impl BlockDevice for BlockSliceDevice {
 
     fn device_health(&self) -> DeviceHealth {
         self.parent.device_health()
+    }
+}
+
+// ── Device publication ──────────────────────────────────────────────────
+
+/// The sink a found device is handed to, installed once at boot.
+///
+/// A driver has to name the block interface to implement it, and it must not
+/// have to name the filesystem to hand the device over.  The filesystem owns
+/// the device map and sits *above* this layer, so the hand-off goes through a
+/// slot the layer below can reach without naming it: whoever owns the map
+/// installs itself here, and the driver calls [`publish_device`].
+///
+/// Deliberately a plain function pointer rather than a closure: no allocation,
+/// no capture, and one sink — a second source of truth for "which devices
+/// exist" is the thing this is here to avoid.
+/// The sink a published device goes to: its name, and the device.
+pub type DeviceSink = fn(&str, Arc<dyn BlockDevice>);
+
+static DEVICE_PUBLISHER: Mutex<Option<DeviceSink>> = Mutex::new(None);
+
+/// Install the sink for [`publish_device`].
+pub fn set_device_publisher(publisher: DeviceSink) {
+    *DEVICE_PUBLISHER.lock() = Some(publisher);
+}
+
+/// Hand a device to the installed sink.
+///
+/// Returns whether it was delivered.  With no sink installed the device is
+/// dropped — that is the case in a build that never installs one, such as a
+/// host test that builds its devices directly, and it is reported rather than
+/// passed over in silence.
+pub fn publish_device(name: &str, device: Arc<dyn BlockDevice>) -> bool {
+    // Copy the sink out and release the lock before calling it: the publisher
+    // takes the filesystem lock, and holding this one across that would put two
+    // unrelated locks in a fixed order for no reason.
+    let publisher = *DEVICE_PUBLISHER.lock();
+    match publisher {
+        Some(publish) => {
+            publish(name, device);
+            true
+        }
+        None => false,
     }
 }
 

@@ -242,9 +242,9 @@ const _: () = assert!(core::mem::size_of::<H2dRegisterFis>() == 20);
 // Driver integration
 // ---------------------------------------------------------------------------
 
+use crate::kernel::block::BlockDevice;
 use crate::kernel::drivers::Driver;
 use crate::kernel::drivers::DriverCategory;
-use crate::kernel::fs::block::BlockDevice;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::kernel::memory::DmaBuffer;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]

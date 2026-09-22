@@ -4,6 +4,7 @@
 //! and syscall table.
 
 pub mod audit;
+pub mod block;
 pub mod boot_report;
 pub mod compression;
 pub mod config;
@@ -347,6 +348,16 @@ impl Kernel {
         unsafe {
             fs::install_global_unchecked(&self.fs);
         }
+        // Devices the drivers find are published through the block layer and
+        // land in the filesystem's device map, which is the only place that
+        // owns one.  The hook is installed here because *this* is the layer
+        // that knows both: a disk driver cannot name the filesystem, and the
+        // filesystem cannot see the drivers.
+        crate::kernel::block::set_device_publisher(|name, device| {
+            if let Some(fs) = fs::global() {
+                fs.lock().register_block_device(name, device);
+            }
+        });
         // Boot recovery walks and repairs every mounted volume while holding
         // the global filesystem lock.  Measured as its own scope because it is
         // a one-off whose cost is otherwise invisible in the syscall numbers.

@@ -6,8 +6,8 @@
 //!
 //! Based on the VirtIO v1.2 specification, MMIO transport section.
 
-use crate::kernel::fs::block::BlockDevice;
-use crate::kernel::fs::block::DeviceHealth;
+use crate::kernel::block::BlockDevice;
+use crate::kernel::block::DeviceHealth;
 use crate::Error;
 use crate::Result;
 

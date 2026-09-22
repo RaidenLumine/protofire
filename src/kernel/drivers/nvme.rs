@@ -330,9 +330,9 @@ pub struct NvmeNamespace {
 // Driver integration
 // ---------------------------------------------------------------------------
 
+use crate::kernel::block::BlockDevice;
 use crate::kernel::drivers::Driver;
 use crate::kernel::drivers::DriverCategory;
-use crate::kernel::fs::block::BlockDevice;
 use crate::kernel::memory::DmaBuffer;
 use crate::kernel::sync::Mutex;
 use alloc::sync::Arc;

@@ -15,6 +15,7 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use crate::kernel::block::DeviceHealth;
 use crate::kernel::drivers::virtio::VirtIoMmio;
 use crate::kernel::drivers::virtio::VirtQueue;
 use crate::kernel::drivers::virtio::REG_QUEUE_NOTIFY;
@@ -23,7 +24,6 @@ use crate::kernel::drivers::virtio::VIRTQ_DESC_F_WRITE;
 use crate::kernel::drivers::virtio::{self};
 use crate::kernel::drivers::Driver;
 use crate::kernel::drivers::DriverCategory;
-use crate::kernel::fs::block::DeviceHealth;
 use crate::kernel::network::link::device::NetworkDevice;
 use crate::kernel::sync::Mutex;
 use crate::Error;

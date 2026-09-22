@@ -156,13 +156,21 @@ for `SimpleFs::build_image()` and `build_image_with_headroom()`.
 
 ## Block Layer
 
+The block layer lives at `src/kernel/block.rs`, *below* the filesystem.
+`fs::block` still names it — the filesystem re-exports the module so that the
+path stays valid — but the dependency runs one way: the filesystem and the disk
+drivers both depend on the block layer, and neither depends on the other.  A
+driver implements `BlockDevice` without naming `fs`; when it finds a device it
+calls `block::publish_device`, and the filesystem — which owns the device map —
+installs itself as the sink at boot.
+
 ### BLOCK_SIZE
 
-`src/kernel/fs/block.rs` defines `BLOCK_SIZE = 512`. All block I/O operates in multiples of this.
+`src/kernel/block.rs` defines `BLOCK_SIZE = 512`. All block I/O operates in multiples of this.
 
 ### BlockDevice trait
 
-`src/kernel/fs/block.rs` — key methods: `name()`, `block_size()` (default 512), `block_count()`,
+`src/kernel/block.rs` — key methods: `name()`, `block_size()` (default 512), `block_count()`,
 `is_read_only()`, `read_blocks(lba, buffer)`, `write_blocks(lba, data)`, `flush()`,
 `device_health()` (returns `Healthy` | `Degraded` | `Failed`).
 
@@ -359,7 +367,7 @@ complexity.
 | `src/kernel/fs/filesystem/types.rs` | `MountPoint`, `MountInfo`, `StorageInitReport` |
 | `src/kernel/fs/filesystem/profiler.rs` | `FsProfiler` — operation counters |
 | `src/kernel/fs/path.rs` | `normalize_path()` — canonical path normalization |
-| `src/kernel/fs/block.rs` | `BlockDevice` trait, `MemoryBlockDevice`, `BlockSliceDevice`, `BLOCK_SIZE` |
+| `src/kernel/block.rs` | `BlockDevice` trait, `MemoryBlockDevice`, `BlockSliceDevice`, `BLOCK_SIZE`, `publish_device()` |
 | `src/kernel/fs/block_cache.rs` | `BlockCache` — 128-slot LRU cache with write-through/back |
 | `src/kernel/fs/partition.rs` | MBR partition table parsing/writing |
 | `src/kernel/fs/layout.rs` | `StorageZone` enum, mount flags, zone block ranges |

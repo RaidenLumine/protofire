@@ -14,9 +14,9 @@ use core::sync::atomic::Ordering;
 
 use alloc::sync::Arc;
 
+use crate::kernel::block::BlockDevice;
+use crate::kernel::block::DeviceHealth;
 use crate::kernel::drivers::xhci::with_controller;
-use crate::kernel::fs::block::BlockDevice;
-use crate::kernel::fs::block::DeviceHealth;
 use crate::kernel::sync::Mutex;
 use crate::println;
 use crate::Error;
@@ -473,10 +473,14 @@ pub fn probe_geometry() {
         }
     }
 
-    // Register with the filesystem as a block device.
-    if let Some(fs) = crate::kernel::fs::global() {
-        let mut fs_lock = fs.lock();
-        fs_lock.register_block_device("usb-msd", alloc::sync::Arc::new(UsbMsdBlockDevice));
+    // Publish the device through the block layer.  Who consumes it is not this
+    // driver's business — the filesystem owns the device map and installs
+    // itself as the sink at boot.
+    let device: alloc::sync::Arc<dyn crate::kernel::block::BlockDevice> =
+        alloc::sync::Arc::new(UsbMsdBlockDevice);
+    if crate::kernel::block::publish_device("usb-msd", device) {
         println!("[usbmsd] Registered as block device 'usb-msd'");
+    } else {
+        println!("[usbmsd] No block-device sink installed; 'usb-msd' was not registered");
     }
 }

@@ -32,7 +32,7 @@ pub mod usb_msd;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::block::BlockDevice;
+use crate::kernel::block::BlockDevice;
 use crate::kernel::network::link::device::NetworkDevice;
 use crate::println;
 use crate::Result;
