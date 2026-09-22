@@ -137,7 +137,7 @@ impl KernelStack {
             None => None,
         };
         let Some(frames) = frames else {
-            super::stack_window::release_in_kernel_window(&layout);
+            super::stack_window::retire_in_kernel_window(&layout);
             return None;
         };
 
@@ -164,7 +164,7 @@ impl KernelStack {
             if let Some(mut memory) = crate::kernel::memory::global_mut() {
                 memory.deallocate_frames(frames, page_count);
             }
-            super::stack_window::release_in_kernel_window(&layout);
+            super::stack_window::retire_in_kernel_window(&layout);
             return None;
         }
 
@@ -290,12 +290,20 @@ impl Drop for KernelStack {
                 if let Some(mut memory) = crate::kernel::memory::global_mut() {
                     memory.deallocate_frames(*frames, *page_count);
                 }
-                // The range comes back if it is the window's top, which covers
-                // the ordinary case — stacks torn down in the order they were
-                // created — without a bookkeeping structure and without ever
-                // handing one address to two stacks: a reservation someone has
-                // already built past stays reserved.
-                let _ = super::stack_window::release_in_kernel_window(layout);
+                // The frames are free to go back now: an address is all a stale
+                // translation can reach, and only the thread that owns this
+                // stack ever walks into it — through its own stack pointer, or
+                // as the TSS's RSP0 while it is the running thread.  The stack
+                // is dropped when the last reference to that thread is gone, so
+                // there is no path left to the frames through it.
+                //
+                // The slice is retired rather than freed: it comes back when
+                // every CPU has dropped its translation for it, so a later
+                // stack can be handed this address without a stale TLB entry
+                // shadowing the new mapping (see `stack_window.rs`).  The
+                // request goes out here, after the unmapping above, because
+                // that is the first moment the slice is no longer in use.
+                let _ = super::stack_window::retire_in_kernel_window(layout);
             }
             KernelStackBacking::Frame { base, total_frames } => {
                 // Unmap the usable stack region from the software page table.

@@ -68,6 +68,21 @@ fn release_shootdown_lock() {
 #[cfg(target_os = "none")]
 static TLB_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
+/// What each CPU has finished invalidating, published for the other CPUs to
+/// read.
+///
+/// `CPU_FLUSHED_GENERATION[cpu] = generation` means: *CPU `cpu` has completed
+/// a full TLB flush, and the generation counter read `generation` when that
+/// flush was requested.*  It is written after the flush, never before, because
+/// another CPU may reuse an address on the strength of it — see
+/// [`all_cpus_flushed`].
+///
+/// This is deliberately separate from the per-CPU `tlb_generation_seen` latch,
+/// which each CPU keeps for itself and which nothing else may read.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+static CPU_FLUSHED_GENERATION: [core::sync::atomic::AtomicU64; super::bringup::MAX_CPUS] =
+    [const { core::sync::atomic::AtomicU64::new(0) }; super::bringup::MAX_CPUS];
+
 /// Diagnostic: total number of shootdown IPI handler invocations per CPU.
 /// Incremented unconditionally so we can tell whether the IPI ever arrived.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
@@ -101,6 +116,57 @@ pub fn tlb_shootdown(va: usize) {
     TLB_GENERATION.fetch_add(1, Ordering::Release);
 }
 
+/// Record that this CPU has finished invalidating, as of `generation`.
+///
+/// Must be called *after* the flush, with the generation the flush was
+/// performed for.  Publishing first would let another CPU reuse an address
+/// whose translation this one still holds.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+fn publish_flushed_generation(cpu_id: u32, generation: u64) {
+    // An id outside the array is not a CPU this kernel counts, and writing it
+    // into some other CPU's slot would let a slice be reused on a flush that
+    // never happened.  Not publishing is the safe answer: the grace stays
+    // unsatisfied and the window keeps taking new addresses.
+    if let Some(slot) = CPU_FLUSHED_GENERATION.get(cpu_id as usize) {
+        slot.store(generation, Ordering::Release);
+    }
+}
+
+/// Has every online CPU dropped the translations a flush request at
+/// `generation` asked for?
+///
+/// This is the grace period an address must wait out before it can be handed
+/// out again: an address that was mapped once and is about to be mapped again
+/// must not still be cached anywhere, or the new mapping would be shadowed by
+/// a stale translation to the old frame.
+///
+/// How much has to be waited for is an architecture property:
+///
+/// - x86_64 invalidates the local TLB only, so the answer is whatever the CPUS
+///   themselves published after they flushed.  A CPU that has not published a
+///   request cannot be assumed to have dropped it, and the caller then simply
+///   keeps the address retired a little longer — the check never blocks.
+/// - aarch64's page invalidation is inner-shareable (`tlbi ...is`) and its `dsb
+///   ish` completes it, so the hardware has already done to every CPU what
+///   x86_64 asks the others to do on their next kernel entry.  There is nothing
+///   left to wait for.
+/// - riscv64 has no stack window to hand out, and host builds have no TLB.
+///
+/// A CPU that is stuck with interrupts disabled can hold the answer back
+/// indefinitely; that costs window addresses, never correctness, which is why
+/// the caller treats "not yet" as "use the next address instead".
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn all_cpus_flushed(generation: u64) -> bool {
+    let online = online_cpu_count() as usize;
+    (0..online.min(super::bringup::MAX_CPUS))
+        .all(|cpu| CPU_FLUSHED_GENERATION[cpu].load(Ordering::Acquire) >= generation)
+}
+
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+pub fn all_cpus_flushed(_generation: u64) -> bool {
+    true
+}
+
 /// Apply any pending TLB invalidations that were requested by another CPU
 /// since the last time this CPU checked.
 ///
@@ -112,11 +178,14 @@ pub fn apply_remote_tlb_invalidations() {
     let current_gen = TLB_GENERATION.load(Ordering::Acquire);
     let percpu = crate::kernel::percpu::get_mut();
     if current_gen != percpu.tlb_generation_seen {
-        percpu.tlb_generation_seen = current_gen;
         // With CR4.PCIDE set, a same-PCID CR3 reload does NOT flush the TLB,
         // so the flush must go through the PCID-aware path: INVPCID when
         // active, a plain CR3 reload otherwise.
         crate::arch::x86_64::paging::pcid::flush_all_tlb();
+        // The latch and the published record both say "flushed through
+        // `current_gen`", and both are written only once the flush is done.
+        percpu.tlb_generation_seen = current_gen;
+        publish_flushed_generation(percpu.cpu_id, current_gen);
     }
 }
 
@@ -129,6 +198,33 @@ pub fn apply_remote_tlb_invalidations() {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn request_remote_tlb_flush() {
     TLB_GENERATION.fetch_add(1, Ordering::Release);
+}
+
+/// Ask every CPU to flush, and answer with the generation that request
+/// belongs to.
+///
+/// The caller keeps the returned value and later asks [`all_cpus_flushed`]
+/// whether every CPU has caught up with it.  Taking the value *after* the
+/// page-table edit is what ties the two together: a CPU that publishes this
+/// generation or later has taken its slow path after the edit was published.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn request_remote_tlb_flush_generation() -> u64 {
+    TLB_GENERATION.fetch_add(1, Ordering::Release) + 1
+}
+
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+pub fn request_remote_tlb_flush_generation() -> u64 {
+    // Nothing to wait out where the architecture broadcasts its invalidations,
+    // and nothing to record where there is no hardware TLB.  The value still
+    // orders retirements first-in-first-out.
+    #[cfg(target_os = "none")]
+    {
+        TLB_GENERATION.fetch_add(1, core::sync::atomic::Ordering::Release) + 1
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        0
+    }
 }
 
 /// Handle a TLB shootdown IPI on any CPU (BSP or AP).

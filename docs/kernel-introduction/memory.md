@@ -487,10 +487,17 @@ slice the allocator never hands out, so there is no mapping to remove and
 nothing that can fail to remove it.  The window's page tables are built with
 the kernel's own tables at boot and a process address space shares them rather
 than copying them, because a stack is mapped into the window after a root is
-derived and the root has to see it.  Elsewhere the stack is a run of frames at
-their own addresses and the guard is the page below it, un-presented by the
-architecture's `unmap_page`; a coarse mapping can refuse that, and the kernel
-reports it at boot rather than pretending the guard is there.
+derived and the root has to see it.  A slice a dead stack gives back is not
+freed but *retired*: it is handed out again only once every CPU has dropped the
+translation for it, because a stale TLB entry would otherwise shadow the new
+mapping with the old frame.  On x86_64 that evidence is the per-CPU flush record
+in `kernel/smp/tlb.rs`; on AArch64 the page invalidation is inner-shareable, so
+the hardware has already done it.  Waiting never blocks — a slice that is not
+ready stays retired and the allocator takes the next address.  Elsewhere the
+stack is a run of frames at their own addresses and the guard is the page below
+it, un-presented by the architecture's `unmap_page`; a coarse mapping can refuse
+that, and the kernel reports it at boot rather than pretending the guard is
+there.
 
 ### User Address Space
 

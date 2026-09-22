@@ -258,6 +258,21 @@ pub(crate) unsafe fn invalidate_tlb(virtual_address: usize) {
     crate::kernel::smp::tlb_shootdown(virtual_address);
 }
 
+/// Drop this CPU's translation for one page without asking the others to.
+///
+/// For the stack window, the remote request is asked once per *slice* rather
+/// than once per page: a slice is eight pages, and each request makes every
+/// other CPU flush its whole TLB on its next kernel entry.  The slice's owner
+/// asks as it hands the slice back — see
+/// `stack_window::retire_in_kernel_window` — which is also where the request
+/// has to happen, because until then the mapping is still in use.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+unsafe fn invalidate_tlb_local(virtual_address: usize) {
+    unsafe {
+        core::arch::asm!("invlpg [{}]", in(reg) virtual_address, options(nostack));
+    }
+}
+
 /// Install or update a user-accessible 4 KiB page mapping in the live
 /// kernel page tables.  Creates intermediate page-table structures (PDPT,
 /// PD, PT) as needed from the runtime pool.
@@ -711,7 +726,10 @@ pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: us
                 | PAGE_ENTRY_WRITABLE,
         )
     };
-    invalidate_tlb(virtual_address);
+    // A fresh mapping needs no remote request: an address is only ever handed
+    // out again after [`crate::kernel::smp::all_cpus_flushed`] has said that no
+    // CPU still holds it, so no CPU can be looking at the old leaf.
+    unsafe { invalidate_tlb_local(virtual_address) };
     true
 }
 
@@ -733,7 +751,7 @@ pub(crate) unsafe fn unmap_stack_page(virtual_address: usize) -> bool {
         return false;
     }
     unsafe { core::ptr::write_volatile(leaf, 0) };
-    invalidate_tlb(virtual_address);
+    unsafe { invalidate_tlb_local(virtual_address) };
     true
 }
 
