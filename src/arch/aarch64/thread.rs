@@ -440,21 +440,17 @@ impl Thread {
             .swap(true, Ordering::SeqCst)
     }
 
+    #[cfg(target_arch = "aarch64")]
     pub(crate) fn clear_aarch64_exception_preempt_resume_logged(&self) {
         self.aarch64
             .preempt_resume_logged
             .store(false, Ordering::SeqCst);
     }
 
+    #[cfg(target_arch = "aarch64")]
     fn reset_aarch64_exception_delivery_state(&self) {
         self.aarch64.pending_exception_frames.lock().clear();
         self.clear_aarch64_exception_preempt_resume_logged();
-    }
-
-    pub(crate) fn clear_aarch64_user_runtime_state(&self) {
-        *self.aarch64.user_context.lock() = None;
-        *self.aarch64.exception_handlers.lock() = [None; AARCH64_EXCEPTION_VECTOR_COUNT];
-        self.reset_aarch64_exception_delivery_state();
     }
 }
 
@@ -780,6 +776,16 @@ impl AArch64UserThreadState {
             pending_exception_frames: *self.pending_exception_frames.lock(),
             preempt_resume_logged: self.preempt_resume_logged.load(Ordering::SeqCst),
         }
+    }
+
+    /// Drop this state: the saved context, the handler table, any pending
+    /// frames and the "already logged" latch.  What a terminating thread must
+    /// not keep.
+    pub(crate) fn clear(&self) {
+        *self.user_context.lock() = None;
+        *self.exception_handlers.lock() = [None; AARCH64_EXCEPTION_VECTOR_COUNT];
+        self.pending_exception_frames.lock().clear();
+        self.preempt_resume_logged.store(false, Ordering::SeqCst);
     }
 
     /// Put a copy back, replacing what this thread holds now.

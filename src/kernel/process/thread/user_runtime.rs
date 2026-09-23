@@ -42,23 +42,14 @@ impl Thread {
         execution_state.user_start = None;
         drop(execution_state);
 
-        #[cfg(any(target_arch = "aarch64", test))]
-        self.clear_aarch64_user_runtime_state();
-        #[cfg(target_arch = "x86_64")]
-        self.clear_x86_64_user_runtime_state();
+        // The per-architecture half is the architecture's to clear; see
+        // `crate::arch::thread`.
+        crate::arch::thread::clear_user_runtime_state(self);
     }
 
     pub(crate) fn snapshot_user_runtime_state(&self) -> Result<ThreadUserRuntimeState> {
         self.ensure_user_runtime_mutable()?;
-        let state = ThreadUserRuntimeState {
-            execution_state: *self.execution_state.lock(),
-            #[cfg(any(target_arch = "aarch64", test))]
-            aarch64: self.aarch64.snapshot(),
-            #[cfg(target_arch = "x86_64")]
-            x86_64: self.x86_64.snapshot(),
-            #[cfg(any(target_arch = "riscv64", test))]
-            riscv64: self.riscv64.snapshot(),
-        };
+        let state = crate::arch::thread::new_user_runtime_state(self, *self.execution_state.lock());
         Self::validate_restored_user_runtime_state(&state)?;
         Ok(state)
     }
@@ -70,22 +61,14 @@ impl Thread {
             .ok_or(Error::InvalidArgument)?;
         user_start.validate()?;
 
-        #[cfg(any(target_arch = "aarch64", test))]
-        state.aarch64.validate()?;
-        #[cfg(target_arch = "x86_64")]
-        state.x86_64.validate()?;
-
-        Ok(())
+        crate::arch::thread::validate_user_runtime_state(state)
     }
 
     pub(crate) fn restore_user_runtime_state(&self, state: ThreadUserRuntimeState) -> Result<()> {
         self.ensure_runtime_mutable()?;
         Self::validate_restored_user_runtime_state(&state)?;
         *self.execution_state.lock() = state.execution_state;
-        #[cfg(any(target_arch = "aarch64", test))]
-        self.aarch64.restore(state.aarch64);
-        #[cfg(target_arch = "x86_64")]
-        self.x86_64.restore(state.x86_64);
+        crate::arch::thread::restore_user_runtime_state(self, state);
         Ok(())
     }
 

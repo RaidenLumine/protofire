@@ -352,14 +352,9 @@ impl Thread {
         self.x86_64.pending_exception_frames.lock().len()
     }
 
+    /// Drop the frames a nested delivery left stacked.
     fn reset_x86_64_exception_delivery_state(&self) {
         self.x86_64.pending_exception_frames.lock().clear();
-    }
-
-    pub(crate) fn clear_x86_64_user_runtime_state(&self) {
-        *self.x86_64.user_context.lock() = None;
-        *self.x86_64.exception_handlers.lock() = [None; X86_64_EXCEPTION_VECTOR_COUNT];
-        self.reset_x86_64_exception_delivery_state();
     }
 
     pub(crate) fn capture_x86_64_user_context_from_interrupt(&self, context: &InterruptContext) {
@@ -605,6 +600,14 @@ impl X86_64UserThreadState {
             exception_handlers: *self.exception_handlers.lock(),
             pending_exception_frames: *self.pending_exception_frames.lock(),
         }
+    }
+
+    /// Drop this state: the saved context, the handler table and any pending
+    /// frames.  What a terminating thread must not keep.
+    pub(crate) fn clear(&self) {
+        *self.user_context.lock() = None;
+        *self.exception_handlers.lock() = [None; X86_64_EXCEPTION_VECTOR_COUNT];
+        self.pending_exception_frames.lock().clear();
     }
 
     /// Put a copy back, replacing what this thread holds now.

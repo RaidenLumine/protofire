@@ -34,6 +34,12 @@ impl RiscV64UserThreadState {
         }
     }
 
+    /// Drop this state: the saved context.  What a terminating thread must not
+    /// keep.
+    pub(crate) fn clear(&self) {
+        *self.user_context.lock() = None;
+    }
+
     /// Put a copy back, replacing what this thread holds now.
     #[allow(dead_code)]
     pub(crate) fn restore(&self, snapshot: RiscV64UserThreadStateSnapshot) {
@@ -315,12 +321,6 @@ impl Thread {
         if let Some(context) = user_context {
             context.write_to_trap(frame);
         }
-    }
-
-    #[cfg(target_arch = "riscv64")]
-    #[allow(dead_code)]
-    fn clear_riscv64_user_runtime_state(&self) {
-        *self.riscv64.user_context.lock() = None;
     }
 }
 
