@@ -173,7 +173,6 @@ impl Thread {
             terminate_pending: AtomicBool::new(false),
             cpu_affinity: AtomicU32::new(0),
             boosted: AtomicBool::new(false),
-            active_address_space_generation: AtomicU64::new(0),
             canary: AtomicU64::new(0),
         });
 
@@ -198,26 +197,6 @@ impl Thread {
     /// Return a reference to the [`Process`] this thread belongs to.
     pub fn process(&self) -> &Arc<Process> {
         &self.process
-    }
-
-    /// Return the address-space generation that was active when this thread
-    /// last loaded the page-table root (CR3 / TTBR0_EL1), or 0 if the thread
-    /// Record that this thread has activated the given address-space
-    /// generation.
-    #[cfg_attr(
-        not(all(
-            any(target_arch = "x86_64", target_arch = "aarch64"),
-            target_os = "none"
-        )),
-        allow(dead_code)
-    )]
-    /// Record that this thread has activated the given address-space
-    /// generation.
-    ///
-    /// Used by the page-fault handler to detect stale TLB entries.
-    pub(crate) fn set_active_address_space_generation(&self, generation: u64) {
-        self.active_address_space_generation
-            .store(generation, Ordering::Release);
     }
 
     /// Push a fault record into the owning process's per-process fault ring

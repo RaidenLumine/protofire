@@ -2,8 +2,6 @@
 //!
 //! Process address-space management: install, translate, activate.
 
-use ::core::sync::atomic::Ordering;
-
 #[cfg(all(
     any(target_arch = "aarch64", target_arch = "riscv64"),
     target_os = "none"
@@ -18,27 +16,6 @@ use super::Process;
 impl Process {
     pub(crate) fn install_user_address_space(&self, address_space: ProcessUserAddressSpace) {
         *self.user_address_space.lock() = Some(address_space);
-        // Bump the generation so any thread that has already activated the
-        // previous address space will reload CR3 on its next dispatch.
-        self.address_space_generation
-            .fetch_add(1, Ordering::Release);
-    }
-
-    /// Return the current address-space generation counter.
-    ///
-    /// Threads snapshot this value after activating the process page
-    /// tables; a mismatch on the next dispatch signals that the address
-    /// space has been replaced and CR3 must be reloaded.
-    #[cfg(all(
-        any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-            target_arch = "riscv64"
-        ),
-        target_os = "none"
-    ))]
-    pub(crate) fn current_address_space_generation(&self) -> u64 {
-        self.address_space_generation.load(Ordering::Acquire)
     }
 
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]

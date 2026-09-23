@@ -106,16 +106,6 @@ pub struct Thread {
     /// on demotion back to Normal.  Never `true` for native High or
     /// Realtime threads.
     boosted: AtomicBool,
-    /// Snapshot of [`Process::current_address_space_generation`] taken after
-    /// the most recent successful CR3 activation.
-    #[cfg_attr(
-        not(all(
-            any(target_arch = "x86_64", target_arch = "aarch64"),
-            target_os = "none"
-        )),
-        allow(dead_code)
-    )]
-    active_address_space_generation: AtomicU64,
     /// Random canary value for the compiler-inserted stack-protector check.
     /// Updated on each context switch from this field into the global
     /// `__stack_chk_guard`.

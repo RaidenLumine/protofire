@@ -105,7 +105,6 @@ impl Process {
             suspended_thread: Mutex::new(None),
             deferred_user_address_space_drop: Mutex::new(None),
             termination_reaped: AtomicBool::new(false),
-            address_space_generation: AtomicU64::new(0),
             program_break: AtomicU64::new(0),
             shm_va_hint: AtomicU64::new(0),
             shm_attachments: Mutex::new(Vec::new()),

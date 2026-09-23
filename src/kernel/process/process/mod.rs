@@ -116,7 +116,6 @@ pub struct Process {
     /// parent reaps the process with interrupts enabled.
     deferred_user_address_space_drop: Mutex<Option<ProcessUserAddressSpace>>,
     termination_reaped: AtomicBool,
-    address_space_generation: AtomicU64,
     program_break: AtomicU64,
     /// Hint virtual address for the next shared-memory segment attachment.
     shm_va_hint: AtomicU64,

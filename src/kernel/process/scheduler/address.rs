@@ -29,10 +29,6 @@ impl Scheduler {
         #[cfg(target_arch = "x86_64")]
         crate::arch::x86_64::gdt::set_kernel_stack_top(thread.kernel_stack_top());
         let activated = thread.process().activate_address_space_for_thread();
-        let current_gen = thread.process().current_address_space_generation();
-        if activated {
-            thread.set_active_address_space_generation(current_gen);
-        }
         activated
     }
 
