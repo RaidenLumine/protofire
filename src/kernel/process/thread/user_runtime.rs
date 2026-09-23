@@ -40,10 +40,6 @@ impl Thread {
         let mut execution_state = self.execution_state.lock();
         execution_state.kernel_entry = None;
         execution_state.user_start = None;
-        #[cfg(target_arch = "x86_64")]
-        {
-            execution_state.x86_64_exception_stack_pointer = None;
-        }
         drop(execution_state);
 
         #[cfg(any(target_arch = "aarch64", test))]

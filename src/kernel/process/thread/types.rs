@@ -213,10 +213,6 @@ pub(crate) struct ThreadExecutionState {
     pub(crate) entry_point: usize,
     pub(crate) kernel_entry: Option<fn()>,
     pub(crate) user_start: Option<UserThreadStart>,
-    #[cfg(target_arch = "x86_64")]
-    pub(crate) x86_64_exception_stack_pointer: Option<usize>,
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-    pub(crate) _arch_exception_stack_pointer: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy)]

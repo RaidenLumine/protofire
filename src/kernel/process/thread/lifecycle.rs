@@ -156,12 +156,6 @@ impl Thread {
             entry_point,
             kernel_entry,
             user_start,
-            #[cfg(target_arch = "x86_64")]
-            x86_64_exception_stack_pointer: user_start
-                .and_then(|start| start.exception_stack_pointer),
-            #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-            _arch_exception_stack_pointer: user_start
-                .and_then(|start| start.exception_stack_pointer),
         };
 
         let thread = Arc::new(Self {

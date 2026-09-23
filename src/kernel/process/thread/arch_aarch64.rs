@@ -412,9 +412,7 @@ impl Thread {
     /// Return the AArch64 user exception stack pointer, if one was configured
     /// at thread creation.
     pub fn aarch64_exception_stack_pointer(&self) -> Option<usize> {
-        self.execution_state
-            .lock()
-            .user_start
+        self.user_start()
             .and_then(|start| start.exception_stack_pointer)
     }
 

@@ -313,7 +313,8 @@ impl Thread {
     /// Return the x86_64 user exception stack pointer, if one was configured
     /// at thread creation.
     pub fn x86_64_exception_stack_pointer(&self) -> Option<usize> {
-        self.execution_state.lock().x86_64_exception_stack_pointer
+        self.user_start()
+            .and_then(|start| start.exception_stack_pointer)
     }
 
     /// Return the registered user exception handler for the given interrupt
@@ -505,9 +506,11 @@ impl Thread {
     }
 
     pub(crate) fn replace_x86_64_user_image(&self, start: UserThreadStart) -> Result<()> {
-        self.replace_user_execution_state(start, |execution_state| {
-            execution_state.x86_64_exception_stack_pointer = start.exception_stack_pointer;
-        })?;
+        // The exception stack pointer is part of the start descriptor, and
+        // `replace_user_execution_state` installs that; there is no second copy
+        // to keep in step any more (the aarch64 half has called it this way all
+        // along).
+        self.replace_user_execution_state(start, |_| {})?;
         *self.x86_64.user_context.lock() = Some(X86_64UserThreadContext::from_start(start));
         // Replacing the image is `exec`-like: prior handlers and pending
         // exception frames belong to the old image and must not survive.
