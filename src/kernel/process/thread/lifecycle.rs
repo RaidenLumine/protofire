@@ -111,7 +111,7 @@ impl Thread {
         let thread = Self::new_inner(process, start.instruction_pointer, None, Some(start));
         // Overwrite the user context with the full fork context (which
         // includes preserved register values like RBX, RCX, etc.).
-        *thread.x86_64_user_context.lock() = Some(context);
+        *thread.x86_64.user_context.lock() = Some(context);
         Ok(thread)
     }
 
@@ -183,11 +183,26 @@ impl Thread {
         let mut context = Context::new(initial_instruction_pointer(entry_point, user_start));
         context.set_stack_pointer(initial_stack_pointer);
         #[cfg(any(target_arch = "aarch64", test))]
-        let aarch64_user_context = user_start.map(AArch64UserThreadContext::from_start);
+        let mut aarch64_state = AArch64UserThreadState::new();
+        #[cfg(any(target_arch = "aarch64", test))]
+        {
+            aarch64_state.user_context =
+                Mutex::new(user_start.map(AArch64UserThreadContext::from_start));
+        }
         #[cfg(target_arch = "x86_64")]
-        let x86_64_user_context = user_start.map(X86_64UserThreadContext::from_start);
+        let mut x86_64_state = X86_64UserThreadState::new();
+        #[cfg(target_arch = "x86_64")]
+        {
+            x86_64_state.user_context =
+                Mutex::new(user_start.map(X86_64UserThreadContext::from_start));
+        }
         #[cfg(any(target_arch = "riscv64", test))]
-        let riscv64_user_context = user_start.map(RiscV64UserThreadContext::from_start);
+        let mut riscv64_state = RiscV64UserThreadState::new();
+        #[cfg(any(target_arch = "riscv64", test))]
+        {
+            riscv64_state.user_context =
+                Mutex::new(user_start.map(RiscV64UserThreadContext::from_start));
+        }
         let execution_state = ThreadExecutionState {
             entry_point,
             kernel_entry,
@@ -205,21 +220,11 @@ impl Thread {
             process: process.clone(),
             execution_state: Mutex::new(execution_state),
             #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_user_context: Mutex::new(aarch64_user_context),
-            #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_exception_handlers: Mutex::new([None; AARCH64_EXCEPTION_VECTOR_COUNT]),
-            #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_pending_exception_frames: Mutex::new(AArch64PendingExceptionFrameStack::new()),
-            #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_exception_preempt_resume_logged: AtomicBool::new(false),
+            aarch64: aarch64_state,
             #[cfg(target_arch = "x86_64")]
-            x86_64_user_context: Mutex::new(x86_64_user_context),
-            #[cfg(target_arch = "x86_64")]
-            x86_64_exception_handlers: Mutex::new([None; X86_64_EXCEPTION_VECTOR_COUNT]),
-            #[cfg(target_arch = "x86_64")]
-            x86_64_pending_exception_frames: Mutex::new(X86_64PendingExceptionFrameStack::new()),
+            x86_64: x86_64_state,
             #[cfg(any(target_arch = "riscv64", test))]
-            riscv64_user_context: Mutex::new(riscv64_user_context),
+            riscv64: riscv64_state,
             priority: Mutex::new(ThreadPriority::default()),
             context: ContextCell::new(context),
             state: Mutex::new(ThreadState::Ready),
@@ -833,7 +838,7 @@ impl Thread {
     /// Return the saved RISC-V user thread context (PC + GPRs), or `None` if
     /// this thread has never entered user mode.
     pub fn riscv64_user_context(&self) -> Option<RiscV64UserThreadContext> {
-        *self.riscv64_user_context.lock()
+        *self.riscv64.user_context.lock()
     }
 
     #[cfg(any(target_arch = "riscv64", test))]
@@ -853,7 +858,7 @@ impl Thread {
     #[cfg(any(target_arch = "riscv64", test))]
     #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
     pub(crate) fn set_riscv64_user_context(&self, context: RiscV64UserThreadContext) {
-        *self.riscv64_user_context.lock() = Some(context);
+        *self.riscv64.user_context.lock() = Some(context);
     }
 
     #[cfg(any(target_arch = "riscv64", test))]
@@ -889,7 +894,7 @@ impl Thread {
     #[cfg(target_arch = "riscv64")]
     #[allow(dead_code)]
     fn clear_riscv64_user_runtime_state(&self) {
-        *self.riscv64_user_context.lock() = None;
+        *self.riscv64.user_context.lock() = None;
     }
 }
 

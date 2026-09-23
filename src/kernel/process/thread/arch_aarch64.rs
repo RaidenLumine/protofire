@@ -4,6 +4,7 @@
 
 use core::mem::size_of;
 
+use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
 
@@ -379,7 +380,7 @@ impl Thread {
     /// Return a snapshot of the threadʼs last-known AArch64 user-mode register
     /// state, if one has been captured.
     pub fn aarch64_user_context(&self) -> Option<AArch64UserThreadContext> {
-        *self.aarch64_user_context.lock()
+        *self.aarch64.user_context.lock()
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -397,7 +398,7 @@ impl Thread {
 
     #[cfg(target_arch = "aarch64")]
     pub(crate) fn set_aarch64_user_context(&self, context: AArch64UserThreadContext) {
-        *self.aarch64_user_context.lock() = Some(context);
+        *self.aarch64.user_context.lock() = Some(context);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -427,7 +428,8 @@ impl Thread {
         &self,
         vector: u8,
     ) -> Option<AArch64UserExceptionHandlerRegistration> {
-        self.aarch64_exception_handlers
+        self.aarch64
+            .exception_handlers
             .lock()
             .get(vector as usize)
             .copied()
@@ -436,29 +438,31 @@ impl Thread {
 
     /// Number of nested exception frames currently pending delivery to EL0.
     pub fn aarch64_pending_exception_depth(&self) -> usize {
-        self.aarch64_pending_exception_frames.lock().len()
+        self.aarch64.pending_exception_frames.lock().len()
     }
 
     #[cfg(target_arch = "aarch64")]
     pub(crate) fn mark_aarch64_exception_preempt_resume_logged(&self) -> bool {
         !self
-            .aarch64_exception_preempt_resume_logged
+            .aarch64
+            .preempt_resume_logged
             .swap(true, Ordering::SeqCst)
     }
 
     pub(crate) fn clear_aarch64_exception_preempt_resume_logged(&self) {
-        self.aarch64_exception_preempt_resume_logged
+        self.aarch64
+            .preempt_resume_logged
             .store(false, Ordering::SeqCst);
     }
 
     fn reset_aarch64_exception_delivery_state(&self) {
-        self.aarch64_pending_exception_frames.lock().clear();
+        self.aarch64.pending_exception_frames.lock().clear();
         self.clear_aarch64_exception_preempt_resume_logged();
     }
 
     pub(crate) fn clear_aarch64_user_runtime_state(&self) {
-        *self.aarch64_user_context.lock() = None;
-        *self.aarch64_exception_handlers.lock() = [None; AARCH64_EXCEPTION_VECTOR_COUNT];
+        *self.aarch64.user_context.lock() = None;
+        *self.aarch64.exception_handlers.lock() = [None; AARCH64_EXCEPTION_VECTOR_COUNT];
         self.reset_aarch64_exception_delivery_state();
     }
 }
@@ -497,7 +501,7 @@ impl Thread {
             return Err(Error::Unsupported);
         }
 
-        let mut handlers = self.aarch64_exception_handlers.lock();
+        let mut handlers = self.aarch64.exception_handlers.lock();
         let slot = handlers
             .get_mut(vector as usize)
             .ok_or(Error::InvalidArgument)?;
@@ -573,7 +577,7 @@ impl Thread {
         error_code: u64,
         fault_address: Option<usize>,
     ) -> Result<Option<AArch64UserThreadContext>> {
-        let mut handlers = self.aarch64_exception_handlers.lock();
+        let mut handlers = self.aarch64.exception_handlers.lock();
         let slot = handlers
             .get_mut(vector as usize)
             .ok_or(Error::InvalidArgument)?;
@@ -582,7 +586,7 @@ impl Thread {
         };
         let resume_context = resume_context.validate_runtime_state()?;
 
-        let mut pending = self.aarch64_pending_exception_frames.lock();
+        let mut pending = self.aarch64.pending_exception_frames.lock();
         let delivery_stack_pointer = match plan_user_exception_delivery(
             &pending,
             registration.stack_pointer,
@@ -637,7 +641,7 @@ impl Thread {
         frame_pointer: usize,
     ) -> Result<Option<AArch64UserThreadContext>> {
         {
-            let pending = self.aarch64_pending_exception_frames.lock();
+            let pending = self.aarch64.pending_exception_frames.lock();
             let Some(active) = pending.top() else {
                 return Ok(None);
             };
@@ -666,7 +670,7 @@ impl Thread {
             .validate_runtime_state()?;
 
         let pending_empty = {
-            let mut pending = self.aarch64_pending_exception_frames.lock();
+            let mut pending = self.aarch64.pending_exception_frames.lock();
             let Some(pending_empty) =
                 pop_pending_user_exception_frame(&mut pending, frame_pointer)?
             else {
@@ -692,7 +696,7 @@ impl Thread {
         self.set_aarch64_user_context(AArch64UserThreadContext::from_start(start));
         // Replacing the image is `exec`-like: prior handlers and pending
         // exception frames belong to the old image and must not survive.
-        *self.aarch64_exception_handlers.lock() = [None; AARCH64_EXCEPTION_VECTOR_COUNT];
+        *self.aarch64.exception_handlers.lock() = [None; AARCH64_EXCEPTION_VECTOR_COUNT];
         self.reset_aarch64_exception_delivery_state();
         Ok(())
     }
@@ -746,5 +750,34 @@ impl Thread {
         };
         crate::arch::interrupts::enable();
         entry();
+    }
+}
+/// This architecture's per-thread state.
+///
+/// One field on `Thread` instead of four: the saved user context, the handler
+/// table, the pending-frame stack and the "we already said the delivery was
+/// preempted" latch all belong to the same user thread and are read and written
+/// by the same paths.
+pub struct AArch64UserThreadState {
+    /// Saved user context; absent until the thread first enters user mode.
+    pub(crate) user_context: Mutex<Option<AArch64UserThreadContext>>,
+    /// Installed user-exception handlers, indexed by vector.
+    pub(crate) exception_handlers:
+        Mutex<[Option<AArch64UserExceptionHandlerRegistration>; AARCH64_EXCEPTION_VECTOR_COUNT]>,
+    /// Frames stacked for nested deliveries that have not returned yet.
+    pub(crate) pending_exception_frames: Mutex<AArch64PendingExceptionFrameStack>,
+    /// Whether the preempted-delivery notice has already been logged, so a
+    /// repeated delivery does not repeat it.
+    pub(crate) preempt_resume_logged: core::sync::atomic::AtomicBool,
+}
+
+impl AArch64UserThreadState {
+    pub(crate) const fn new() -> Self {
+        Self {
+            user_context: Mutex::new(None),
+            exception_handlers: Mutex::new([None; AARCH64_EXCEPTION_VECTOR_COUNT]),
+            pending_exception_frames: Mutex::new(AArch64PendingExceptionFrameStack::new()),
+            preempt_resume_logged: core::sync::atomic::AtomicBool::new(false),
+        }
     }
 }

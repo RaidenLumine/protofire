@@ -72,23 +72,24 @@ impl Thread {
         let state = ThreadUserRuntimeState {
             execution_state: *self.execution_state.lock(),
             #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_user_context: *self.aarch64_user_context.lock(),
+            aarch64_user_context: *self.aarch64.user_context.lock(),
             #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_exception_handlers: *self.aarch64_exception_handlers.lock(),
+            aarch64_exception_handlers: *self.aarch64.exception_handlers.lock(),
             #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_pending_exception_frames: *self.aarch64_pending_exception_frames.lock(),
+            aarch64_pending_exception_frames: *self.aarch64.pending_exception_frames.lock(),
             #[cfg(any(target_arch = "aarch64", test))]
             aarch64_exception_preempt_resume_logged: self
-                .aarch64_exception_preempt_resume_logged
+                .aarch64
+                .preempt_resume_logged
                 .load(Ordering::SeqCst),
             #[cfg(target_arch = "x86_64")]
-            x86_64_user_context: *self.x86_64_user_context.lock(),
+            x86_64_user_context: *self.x86_64.user_context.lock(),
             #[cfg(target_arch = "x86_64")]
-            x86_64_exception_handlers: *self.x86_64_exception_handlers.lock(),
+            x86_64_exception_handlers: *self.x86_64.exception_handlers.lock(),
             #[cfg(target_arch = "x86_64")]
-            x86_64_pending_exception_frames: *self.x86_64_pending_exception_frames.lock(),
+            x86_64_pending_exception_frames: *self.x86_64.pending_exception_frames.lock(),
             #[cfg(any(target_arch = "riscv64", test))]
-            riscv64_user_context: *self.riscv64_user_context.lock(),
+            riscv64_user_context: *self.riscv64.user_context.lock(),
         };
         Self::validate_restored_user_runtime_state(&state)?;
         Ok(state)
@@ -121,19 +122,19 @@ impl Thread {
         *self.execution_state.lock() = state.execution_state;
         #[cfg(any(target_arch = "aarch64", test))]
         {
-            *self.aarch64_user_context.lock() = state.aarch64_user_context;
-            *self.aarch64_exception_handlers.lock() = state.aarch64_exception_handlers;
-            *self.aarch64_pending_exception_frames.lock() = state.aarch64_pending_exception_frames;
-            self.aarch64_exception_preempt_resume_logged.store(
+            *self.aarch64.user_context.lock() = state.aarch64_user_context;
+            *self.aarch64.exception_handlers.lock() = state.aarch64_exception_handlers;
+            *self.aarch64.pending_exception_frames.lock() = state.aarch64_pending_exception_frames;
+            self.aarch64.preempt_resume_logged.store(
                 state.aarch64_exception_preempt_resume_logged,
                 Ordering::SeqCst,
             );
         }
         #[cfg(target_arch = "x86_64")]
         {
-            *self.x86_64_user_context.lock() = state.x86_64_user_context;
-            *self.x86_64_exception_handlers.lock() = state.x86_64_exception_handlers;
-            *self.x86_64_pending_exception_frames.lock() = state.x86_64_pending_exception_frames;
+            *self.x86_64.user_context.lock() = state.x86_64_user_context;
+            *self.x86_64.exception_handlers.lock() = state.x86_64_exception_handlers;
+            *self.x86_64.pending_exception_frames.lock() = state.x86_64_pending_exception_frames;
         }
         Ok(())
     }

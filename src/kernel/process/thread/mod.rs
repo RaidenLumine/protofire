@@ -72,24 +72,16 @@ pub struct Thread {
     tid: ThreadId,
     process: Arc<Process>,
     execution_state: Mutex<ThreadExecutionState>,
+    // One state object per architecture rather than one field per thing it
+    // holds: the saved context, the handler table and the pending-frame stack
+    // are read and written together, and the architecture that owns them also
+    // owns the rules about them.
     #[cfg(any(target_arch = "aarch64", test))]
-    aarch64_user_context: Mutex<Option<AArch64UserThreadContext>>,
-    #[cfg(any(target_arch = "aarch64", test))]
-    aarch64_exception_handlers:
-        Mutex<[Option<AArch64UserExceptionHandlerRegistration>; AARCH64_EXCEPTION_VECTOR_COUNT]>,
-    #[cfg(any(target_arch = "aarch64", test))]
-    aarch64_pending_exception_frames: Mutex<AArch64PendingExceptionFrameStack>,
-    #[cfg(any(target_arch = "aarch64", test))]
-    aarch64_exception_preempt_resume_logged: AtomicBool,
+    pub(crate) aarch64: AArch64UserThreadState,
     #[cfg(target_arch = "x86_64")]
-    pub(crate) x86_64_user_context: Mutex<Option<X86_64UserThreadContext>>,
-    #[cfg(target_arch = "x86_64")]
-    x86_64_exception_handlers:
-        Mutex<[Option<X86_64UserExceptionHandlerRegistration>; X86_64_EXCEPTION_VECTOR_COUNT]>,
-    #[cfg(target_arch = "x86_64")]
-    x86_64_pending_exception_frames: Mutex<X86_64PendingExceptionFrameStack>,
+    pub(crate) x86_64: X86_64UserThreadState,
     #[cfg(any(target_arch = "riscv64", test))]
-    riscv64_user_context: Mutex<Option<RiscV64UserThreadContext>>,
+    pub(crate) riscv64: RiscV64UserThreadState,
     priority: Mutex<ThreadPriority>,
     context: ContextCell,
     state: Mutex<ThreadState>,

@@ -5,8 +5,27 @@
 use core::mem::size_of;
 
 use super::types::UserThreadStart;
+use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
+
+/// This architecture's per-thread state.
+///
+/// riscv64 keeps only the saved user context so far; the field exists as a
+/// struct anyway so that the `Thread` has the same shape on every architecture
+/// and adding state later does not mean touching the kernel's one struct.
+pub struct RiscV64UserThreadState {
+    /// Saved user context; absent until the thread first enters user mode.
+    pub(crate) user_context: Mutex<Option<RiscV64UserThreadContext>>,
+}
+
+impl RiscV64UserThreadState {
+    pub(crate) const fn new() -> Self {
+        Self {
+            user_context: Mutex::new(None),
+        }
+    }
+}
 
 // ── RISC-V 64 user-thread context ────────────────────────────────────
 
