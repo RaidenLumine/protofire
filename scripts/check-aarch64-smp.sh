@@ -24,7 +24,7 @@ SMP_CPUS="${SMP_CPUS:-4}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-60}"
 QEMU="${QEMU:-qemu-system-aarch64}"
 
-KERNEL_BIN="${TARGET_DIR}/aarch64-unknown-none/${PROFILE}/${CRATE}"
+KERNEL_BIN="${TARGET_DIR}/aarch64-unknown-none/${PROFILE}/${CRATE}.img"
 
 case "$SMP_CPUS" in
     ''|*[!0-9]*)
@@ -44,8 +44,11 @@ case "$PROFILE" in
     release) profile_flag="--release" ;;
     *) profile_flag="" ;;
 esac
-"$CARGO" build --offline $profile_flag --target aarch64-unknown-none --bin "$CRATE" \
-    --features demo-disk
+# The Image, not the ELF: only the arm64 Image boot path is handed a device
+# tree, and a kernel that boots without one silently falls back to hardcoded
+# platform constants.  See scripts/build-aarch64-image.sh.
+FEATURES="demo-disk" PROFILE="$PROFILE" CRATE="$CRATE" TARGET_DIR="$TARGET_DIR" \
+    sh ./scripts/build-aarch64-image.sh
 
 log_file="$(mktemp)"
 trap 'rm -f "$log_file"' EXIT INT TERM
@@ -73,6 +76,12 @@ grep -q "^\[smp   \] PSCI version" "$log_file" ||
     fail "the kernel never asked PSCI for its version"
 grep -q "^\[smp   \] ${SMP_CPUS} CPUs total, ${expected_aps} AP(s)" "$log_file" ||
     fail "expected ${expected_aps} AP(s) out of ${SMP_CPUS} CPUs"
+# The device tree has to have arrived: the CPU list AP discovery walks comes
+# from it, and this check is what says the boot is using it rather than the
+# hardware fallbacks.
+grep -q "info=0x00000000" "$log_file" &&
+    fail "the kernel was booted without a device tree"
+
 grep -q "^\[smp   \] ${expected_aps} AP(s) online" "$log_file" ||
     fail "expected ${expected_aps} AP(s) online"
 

@@ -58,6 +58,8 @@ endif
 		check-riscv64-smp-runtime \
 		build \
 		build-aarch64 \
+		build-aarch64-image \
+		build-aarch64-image-plain \
 		build-riscv64 \
 		build-x8664-demo \
 		build-aarch64-demo \
@@ -106,6 +108,7 @@ help:
 		'  make build          - build the bare-metal kernel ELF (PROFILE=debug|release)' by default \
 		'  make build-x8664    - build the bare-metal kernel ELF (PROFILE=debug|release)' \
 		'  make build-aarch64  - build the aarch64 bare-metal kernel ELF for QEMU virt' \
+		'  make build-aarch64-image - build the aarch64 kernel as the bootable arm64 Image (device tree)' \
 		'  make build-riscv64  - build the riscv64 bare-metal kernel ELF for QEMU virt' \
 		'  make build-x8664-demo - build x86_64 kernel with the in-memory demo disk (shell)' \
 		'  make build-aarch64-demo - build aarch64 kernel with the in-memory demo disk (shell)' \
@@ -324,6 +327,27 @@ build-x8664-demo:
 build-aarch64:
 	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target aarch64-unknown-none --bin $(CRATE)
 
+# The bootable form: QEMU hands a device tree to a kernel only on the Linux boot
+# path, which it recognises by the arm64 `Image` header.  Everything that boots
+# aarch64 uses this; the ELF above stays the artifact to debug with.  See
+# scripts/build-aarch64-image.sh.
+build-aarch64-image:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		FEATURES="demo-disk" \
+		sh ./scripts/build-aarch64-image.sh
+
+# The same Image without the in-memory demo disk, for the headless smoke that
+# exists to watch a boot that has nothing to run.
+build-aarch64-image-plain:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		FEATURES="" \
+		IMAGE="$(TARGET_DIR)/aarch64-unknown-none/$(PROFILE)/$(CRATE)-plain.img" \
+		sh ./scripts/build-aarch64-image.sh
+
 # Like build-aarch64 but links the in-memory demo disk so the interactive
 # ring-3 shell boots over -serial stdio (no display device attached).
 build-aarch64-demo:
@@ -395,7 +419,7 @@ run-x8664-headless: build-x8664
 # Boot the aarch64 kernel on QEMU virt driving the interactive ring-3 shell
 # (demo-disk) over -serial stdio.  Pure serial terminal: no display or input
 # device is attached, so the virtio-gpu/virtio-keyboard drivers stay cold.
-run-aarch64: build-aarch64-demo
+run-aarch64: build-aarch64-image
 	@if [ ! -x "$$(command -v qemu-system-aarch64)" ]; then \
 		echo "qemu-system-aarch64 is not installed; cannot run the aarch64 kernel."; \
 		exit 1; \
@@ -406,7 +430,7 @@ run-aarch64: build-aarch64-demo
 		-cpu max \
 		-smp $(SMP) \
 		-m 1G \
-		-kernel "$(TARGET_DIR)/aarch64-unknown-none/$(PROFILE)/$(CRATE)" \
+		-kernel "$(TARGET_DIR)/aarch64-unknown-none/$(PROFILE)/$(CRATE).img" \
 		-display none \
 		-serial stdio \
 		-no-reboot \
@@ -436,7 +460,7 @@ run-riscv64: build-riscv64-demo
 
 # Original headless aarch64 smoke: no display device, no demo-disk shell
 # (idle banner).  Mirrors the x86 run-x8664-headless target.
-run-aarch64-headless: build-aarch64
+run-aarch64-headless: build-aarch64-image-plain
 	@if [ ! -x "$$(command -v qemu-system-aarch64)" ]; then \
 		echo "qemu-system-aarch64 is not installed; cannot run the aarch64 kernel."; \
 		exit 1; \
@@ -446,7 +470,7 @@ run-aarch64-headless: build-aarch64
 		-cpu max \
 		-smp $(SMP) \
 		-m 1G \
-		-kernel "$(TARGET_DIR)/aarch64-unknown-none/$(PROFILE)/$(CRATE)" \
+		-kernel "$(TARGET_DIR)/aarch64-unknown-none/$(PROFILE)/$(CRATE)-plain.img" \
 		-display none \
 		-serial stdio \
 		-no-reboot \

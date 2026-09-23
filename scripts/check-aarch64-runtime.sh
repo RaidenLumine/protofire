@@ -16,7 +16,7 @@ TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
 # to fit it into the default 512 MiB, so default to 2 GiB (override via QEMU_RAM).
 QEMU_RAM="${QEMU_RAM:-2G}"
 QEMU_AARCH64="${QEMU_AARCH64:-qemu-system-aarch64}"
-KERNEL_BIN="${TARGET_DIR}/aarch64-unknown-none/${PROFILE}/${CRATE}"
+KERNEL_BIN="${TARGET_DIR}/aarch64-unknown-none/${PROFILE}/${CRATE}.img"
 AARCH64_RUNTIME_LOG="${AARCH64_RUNTIME_LOG:-}"
 
 case "$PROFILE" in
@@ -45,7 +45,11 @@ case "$PROFILE" in
     release) profile_flag="--release" ;;
     *) profile_flag="" ;;
 esac
-"$CARGO" build --offline $profile_flag --target aarch64-unknown-none --bin "$CRATE" --features demo-disk
+# The Image, not the ELF: only the arm64 Image boot path is handed a device
+# tree, and a kernel that boots without one silently falls back to hardcoded
+# platform constants.  See scripts/build-aarch64-image.sh.
+FEATURES="demo-disk" PROFILE="$PROFILE" CRATE="$CRATE" TARGET_DIR="$TARGET_DIR" \
+    sh ./scripts/build-aarch64-image.sh
 
 if [ ! -f "$KERNEL_BIN" ]; then
     printf 'aarch64 kernel binary not found: %s\n' "$KERNEL_BIN" >&2
@@ -295,6 +299,17 @@ require_log_line_count "[user  ] aarch64-rust resumed after local stack-exec fau
 require_log_line_count "[user  ] aarch64-rust resumed after nested local code-write fault" 2
 require_log_line_count "[user  ] aarch64 child stack-exec fault" 2
 require_log_line_count "[user  ] aarch64-rust wait-vector: 0x0000000000000020" 2
+# ── The device tree arrived and was used ──────────────────────────────
+#
+# QEMU hands a device tree over only on the arm64 `Image` boot path, and this
+# check boots that Image.  Two assertions, because either alone can pass while
+# the kernel is really running on hardcoded constants: the hand-off address
+# must not be the zero a bare-metal ELF gets, and the device tree must have
+# driven a probe — the virtio-mmio window is enumerated from it rather than
+# guessed.
+require_log_absent_line "info=0x00000000"
+require_log_line "[drivers] probing"
+
 require_log_line_count "[user  ] aarch64-rust wait-fsc: 0x000000000000000f" 2
 
 # ── Network boot smoke tests ───────────────────────────────────────────

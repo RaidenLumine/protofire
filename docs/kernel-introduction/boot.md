@@ -38,16 +38,25 @@ GRUB / PVH ──> _start (32-bit) ──> setup_page_tables ──> enable_long
 ### 1.2 AArch64 -- `src/arch/aarch64/boot.S`
 
 ```
-QEMU virt ──> _start (EL1) ──> BSS clear ──> kernel_entry_aarch64(dtb)
+QEMU virt ──> _start (EL1) ──> park DTB ──> BSS clear ──> kernel_entry_aarch64(dtb)
 ```
 
 1. Reads `MPIDR_EL1` and extracts the low 8 bits (CPU affinity).
 2. **Non-zero CPUs spin** in a `wfe` loop (spin-table pattern).  Only CPU 0
    (the BSP) proceeds.
-3. BSP: sets SP to `__boot_stack_top`, clears BSS (`__bss_start` .. `__bss_end`),
-   then calls `kernel_entry_aarch64(device_tree_blob)`.
-4. The DTB address arrives in x0 (QEMU convention) and is passed through
-   unchanged.
+3. BSP: sets SP to `__boot_stack_top`, then **parks the device tree** in the
+   reserved `.dtb_copy` region before clearing BSS.  QEMU's blob sits at
+   `0x48000000`, which is inside the kernel's own 512 MiB frame-pool BSS array,
+   so clearing BSS would erase it before the kernel could read it.  The copy is
+   clamped to the region's size and its address is what Rust is handed.
+4. Clears BSS (`__bss_start` .. `__bss_end`), then calls
+   `kernel_entry_aarch64(parked_device_tree)`.
+
+The blob is only there because the kernel is booted as an arm64 `Image`: QEMU
+installs a device tree for the Linux boot path and for nothing else, so a
+bare-metal ELF gets `x0 = 0` and no blob in memory at all.  `make
+build-aarch64-image` produces that Image; see
+[§7.2](#72-qemu-direct-boot).
 
 ### 1.3 RISC-V 64 -- `src/arch/riscv64/boot.S`
 
@@ -314,12 +323,28 @@ with interrupts enabled via the architecture-specific `idle()` function.
 |---|---|---|
 | `make build` | `x86_64-unknown-none` | `target/x86_64-unknown-none/debug|release/protofire` |
 | `make build-aarch64` | `aarch64-unknown-none` | `target/aarch64-unknown-none/debug|release/protofire` |
+| `make build-aarch64-image` | `aarch64-unknown-none` | `target/aarch64-unknown-none/debug|release/protofire.img` (bootable; plus the ELF) |
 | `make build-riscv64` | `riscv64gc-unknown-none-elf` | `target/riscv64gc-unknown-none-elf/debug|release/protofire` |
 
 ### 7.2 QEMU Direct Boot
 
-The `make run` / `make run-aarch64` / `make run-riscv64` targets pass the
-ELF directly via QEMU's `-kernel` flag.  No bootloader image is needed.
+The `make run` / `make run-aarch64` / `make run-riscv64` targets pass a kernel
+image via QEMU's `-kernel` flag.  No bootloader is needed, but for aarch64 the
+*format* of that image decides what the kernel can discover:
+
+- x86_64 uses the ELF (Multiboot2 is not involved; QEMU jumps to the ELF
+  entry).
+- **aarch64 uses the arm64 `Image`**, the flat binary with the 64-byte header
+  that QEMU recognises by its `ARM\x64` magic.  That is the Linux boot path,
+  and it is the only one on which QEMU writes a device tree and hands its
+  address over in `x0`.  Booted as a bare-metal ELF instead, the kernel gets
+  `x0 = 0` and falls back to hardcoded `virt` constants for the GIC, the UART,
+  the virtio-mmio window, the RTC and the CPU list — silently, which is what it
+  did until the Image was produced.  `scripts/build-aarch64-image.sh` builds it;
+  the header's `text_offset` parks the header 64 bytes before the kernel's link
+  address so the code still runs where it was linked.
+- riscv64 uses the ELF: OpenSBI hands the device tree over in `a1` regardless
+  of the format, so `make run-riscv64` boots the ELF directly.
 
 - x86_64 uses `-machine q35` with `virtio-net-pci`.
 - AArch64 uses `-machine virt` with `virtio-net-device`.
