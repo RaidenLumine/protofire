@@ -1,4 +1,4 @@
-//! src/kernel/process/thread/arch_x86_64.rs
+//! src/arch/x86_64/thread.rs
 //!
 //! x86_64 user-thread context and exception handling types.
 
@@ -18,24 +18,24 @@ use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
 
-use super::exception::build_user_exception_delivery;
-use super::exception::finish_user_exception_delivery;
-use super::exception::install_user_exception_handler_registration;
-use super::exception::is_supported_x86_64_user_exception_vector;
-use super::exception::plan_user_exception_delivery;
-use super::exception::pop_pending_user_exception_frame;
-use super::exception::x86_64_user_exception_handler_allows_nested;
-use super::exception::x86_64_user_exception_handler_is_one_shot;
-use super::exception::x86_64_user_exception_handler_requires_exception_stack;
-use super::exception::PendingExceptionFrameStack;
-use super::exception::UserExceptionDeliveryBuildSpec;
-use super::exception::UserExceptionDeliverySelection;
-use super::exception::UserExceptionHandlerInstallProfile;
+use crate::kernel::process::thread::exception::build_user_exception_delivery;
+use crate::kernel::process::thread::exception::finish_user_exception_delivery;
+use crate::kernel::process::thread::exception::install_user_exception_handler_registration;
+use crate::kernel::process::thread::exception::is_supported_x86_64_user_exception_vector;
+use crate::kernel::process::thread::exception::plan_user_exception_delivery;
+use crate::kernel::process::thread::exception::pop_pending_user_exception_frame;
+use crate::kernel::process::thread::exception::x86_64_user_exception_handler_allows_nested;
+use crate::kernel::process::thread::exception::x86_64_user_exception_handler_is_one_shot;
+use crate::kernel::process::thread::exception::x86_64_user_exception_handler_requires_exception_stack;
+use crate::kernel::process::thread::exception::PendingExceptionFrameStack;
+use crate::kernel::process::thread::exception::UserExceptionDeliveryBuildSpec;
+use crate::kernel::process::thread::exception::UserExceptionDeliverySelection;
+use crate::kernel::process::thread::exception::UserExceptionHandlerInstallProfile;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use super::lifecycle::should_enter_user_mode;
-use super::types::is_canonical_user_address;
-use super::types::UserThreadStart;
-use super::Thread;
+use crate::kernel::process::thread::lifecycle::should_enter_user_mode;
+use crate::kernel::process::thread::types::is_canonical_user_address;
+use crate::kernel::process::thread::types::UserThreadStart;
+use crate::kernel::process::thread::Thread;
 
 // ── x86_64 user-thread context & exception handling ─────────────────
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

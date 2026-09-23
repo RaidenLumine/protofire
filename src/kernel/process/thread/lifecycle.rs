@@ -34,7 +34,7 @@ use crate::Result;
     target_arch = "riscv64",
     test
 ))]
-use super::arch::*;
+use crate::arch::thread::*;
 
 use super::super::Context;
 use super::super::ContextCell;

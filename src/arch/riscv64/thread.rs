@@ -1,11 +1,11 @@
-//! src/kernel/process/thread/arch_riscv64.rs
+//! src/arch/riscv64/thread.rs
 //!
 //! RISC-V 64 user-thread context types.
 
 use core::mem::size_of;
 
-use super::types::UserThreadStart;
-use super::Thread;
+use crate::kernel::process::thread::types::UserThreadStart;
+use crate::kernel::process::thread::Thread;
 use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;

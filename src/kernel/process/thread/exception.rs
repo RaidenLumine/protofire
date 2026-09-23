@@ -6,8 +6,8 @@
 // One import for every architecture's names: the facade in `arch.rs` has
 // already chosen which of them exist on this target, so the gate that used to
 // sit on each of these lines lives there instead.
-use super::arch::*;
 use super::types::is_canonical_user_address;
+use crate::arch::thread::*;
 use crate::Error;
 use crate::Result;
 

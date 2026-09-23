@@ -24,28 +24,11 @@ pub(crate) mod types;
 #[cfg_attr(not(target_os = "none"), allow(unused_imports))]
 pub(crate) use stack_window::window_stats;
 
-// The per-architecture halves live beside this file and are selected in one
-// place rather than re-gated per name; see `arch.rs`.
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    test
-))]
-mod arch;
-#[cfg(any(target_arch = "aarch64", test))]
-pub(crate) mod arch_aarch64;
-#[cfg(any(target_arch = "riscv64", test))]
-pub(crate) mod arch_riscv64;
-#[cfg(target_arch = "x86_64")]
-pub(crate) mod arch_x86_64;
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    test
-))]
-pub use arch::*;
+// The per-architecture halves live under `src/arch/<arch>/thread.rs` and are
+// pulled in by `crate::arch::thread`, which is the one place that says which
+// of them exist on this target.  Re-exported here because the names are part
+// of this module's surface.
+pub use crate::arch::thread::*;
 
 pub(crate) mod entry;
 // User-exception delivery exists on the two architectures that implement

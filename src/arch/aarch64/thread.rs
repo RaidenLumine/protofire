@@ -1,4 +1,4 @@
-//! src/kernel/process/thread/arch_aarch64.rs
+//! src/arch/aarch64/thread.rs
 //!
 //! AArch64 user-thread context and exception handling types.
 
@@ -22,37 +22,37 @@ pub use crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEP
 use core::sync::atomic::Ordering;
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-use super::lifecycle::should_enter_user_mode;
+use crate::kernel::process::thread::lifecycle::should_enter_user_mode;
 // Only the delivery builder below needs these, and it exists on aarch64 alone.
 #[cfg(target_arch = "aarch64")]
-use super::exception::build_user_exception_delivery;
-use super::exception::PendingExceptionFrameStack;
+use crate::kernel::process::thread::exception::build_user_exception_delivery;
+use crate::kernel::process::thread::exception::PendingExceptionFrameStack;
 #[cfg(target_arch = "aarch64")]
-use super::exception::UserExceptionDeliveryBuildSpec;
-use super::types::UserThreadStart;
-use super::Thread;
+use crate::kernel::process::thread::exception::UserExceptionDeliveryBuildSpec;
+use crate::kernel::process::thread::types::UserThreadStart;
+use crate::kernel::process::thread::Thread;
 
 #[cfg(target_arch = "aarch64")]
-use super::exception::aarch64_user_exception_handler_allows_nested;
+use crate::kernel::process::thread::exception::aarch64_user_exception_handler_allows_nested;
 #[cfg(target_arch = "aarch64")]
-use super::exception::aarch64_user_exception_handler_is_one_shot;
+use crate::kernel::process::thread::exception::aarch64_user_exception_handler_is_one_shot;
 #[cfg(target_arch = "aarch64")]
-use super::exception::aarch64_user_exception_handler_requires_exception_stack;
+use crate::kernel::process::thread::exception::aarch64_user_exception_handler_requires_exception_stack;
 #[cfg(target_arch = "aarch64")]
 #[cfg(target_arch = "aarch64")]
-use super::exception::finish_user_exception_delivery;
+use crate::kernel::process::thread::exception::finish_user_exception_delivery;
 #[cfg(target_arch = "aarch64")]
-use super::exception::install_user_exception_handler_registration;
+use crate::kernel::process::thread::exception::install_user_exception_handler_registration;
 #[cfg(target_arch = "aarch64")]
-use super::exception::is_supported_aarch64_user_exception_vector;
+use crate::kernel::process::thread::exception::is_supported_aarch64_user_exception_vector;
 #[cfg(target_arch = "aarch64")]
-use super::exception::plan_user_exception_delivery;
+use crate::kernel::process::thread::exception::plan_user_exception_delivery;
 #[cfg(target_arch = "aarch64")]
-use super::exception::pop_pending_user_exception_frame;
+use crate::kernel::process::thread::exception::pop_pending_user_exception_frame;
 #[cfg(target_arch = "aarch64")]
-use super::exception::UserExceptionDeliverySelection;
+use crate::kernel::process::thread::exception::UserExceptionDeliverySelection;
 #[cfg(target_arch = "aarch64")]
-use super::exception::UserExceptionHandlerInstallProfile;
+use crate::kernel::process::thread::exception::UserExceptionHandlerInstallProfile;
 
 // ── AArch64 user-thread context & exception handling ─────────────────
 

@@ -11,7 +11,7 @@ pub(crate) use super::constants::*;
 
 // Arch-type imports needed by ThreadUserRuntimeState.
 // One import for every architecture's names; `arch.rs` holds the gates.
-use super::arch::*;
+use crate::arch::thread::*;
 
 // ── UserThreadStart ──────────────────────────────────────────────────────
 

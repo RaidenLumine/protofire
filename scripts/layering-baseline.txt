@@ -95,7 +95,7 @@ process                      security                     11
 process                      shm                          1
 process                      smp                          29
 process                      softirq                      1
-process                      sync                         36
+process                      sync                         33
 process                      syscall                      3
 process                      user                         2
 procfs                       fs                           10

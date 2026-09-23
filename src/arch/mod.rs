@@ -13,6 +13,7 @@ pub mod interrupt_controller;
 pub mod mmu;
 pub mod percpu;
 pub mod syscall_trap;
+pub mod thread;
 pub mod timer;
 pub mod trap;
 
