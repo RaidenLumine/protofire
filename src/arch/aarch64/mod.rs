@@ -194,6 +194,29 @@ pub mod interrupt_controller {
                 return;
             }
 
+            // Refuse to touch a GICv3.  The device tree says which controller
+            // this machine has, and this driver speaks GICv2: the distributor
+            // register layout differs, the CPU interface is not a frame in
+            // memory at all (it is the ICC_* system registers), and SGIs live
+            // with the redistributors rather than at `GICD_SGIR`.  Programming
+            // the v2 layout on a v3 machine writes into registers that mean
+            // something else — which used to happen in silence, because the
+            // parser records the version and nothing read it.
+            //
+            // Stopping here is the honest answer until this driver grows a v3
+            // path: a machine with no interrupt controller initialised cannot
+            // keep time, and saying so beats running without them.
+            if crate::arch::fdt::platform_info().gicv3_detected {
+                crate::println!(
+                    "[irq   ] the device tree reports a GICv3, but this kernel's aarch64 \
+                     interrupt driver implements GICv2 only — stopping instead of \
+                     programming registers that mean something else"
+                );
+                loop {
+                    crate::arch::halt();
+                }
+            }
+
             // Reprogram the distributor and CPU interface atomically with local IRQs
             // masked.
             super::interrupts::disable();
