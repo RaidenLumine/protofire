@@ -23,20 +23,15 @@ use super::exception::UserExceptionDeliveryBuildSpec;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use super::lifecycle::should_enter_user_mode;
 use super::types::is_canonical_user_address;
-use super::types::PendingExceptionFrameStack;
 use super::types::UserThreadStart;
 use super::Thread;
 
 #[cfg(target_arch = "x86_64")]
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::exception::finish_user_exception_delivery;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::exception::install_user_exception_handler_registration;
 #[cfg(target_arch = "x86_64")]
 use super::exception::is_supported_x86_64_user_exception_vector;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::exception::plan_user_exception_delivery;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::exception::pop_pending_user_exception_frame;
 #[cfg(target_arch = "x86_64")]
 use super::exception::x86_64_user_exception_handler_allows_nested;
@@ -44,9 +39,8 @@ use super::exception::x86_64_user_exception_handler_allows_nested;
 use super::exception::x86_64_user_exception_handler_is_one_shot;
 #[cfg(target_arch = "x86_64")]
 use super::exception::x86_64_user_exception_handler_requires_exception_stack;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+use super::exception::PendingExceptionFrameStack;
 use super::exception::UserExceptionDeliverySelection;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::exception::UserExceptionHandlerInstallProfile;
 
 // ── x86_64 user-thread context & exception handling ─────────────────

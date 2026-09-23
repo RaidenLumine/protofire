@@ -48,6 +48,10 @@ pub(crate) mod arch_x86_64;
 pub use arch::*;
 
 pub(crate) mod entry;
+// User-exception delivery exists on the two architectures that implement
+// it, and on the host, where the tests drive it directly.  Saying so once
+// here is what lets everything inside the module drop its own gate.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 pub(crate) mod exception;
 pub(crate) mod lifecycle;
 #[cfg(test)]
@@ -158,21 +162,10 @@ pub use types::THREAD_PRIORITY_COUNT;
 pub(crate) use lifecycle::*;
 #[allow(unused_imports)]
 pub(crate) use types::is_canonical_user_address;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-#[allow(unused_imports)]
-pub(crate) use types::PendingExceptionFrameStack;
 #[allow(unused_imports)]
 pub(crate) use types::ThreadExecutionState;
 #[allow(unused_imports)]
 pub(crate) use types::ThreadUserRuntimeState;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-#[allow(unused_imports)]
-pub(crate) use types::UserPendingExceptionFrame;
 
 #[allow(unused_imports)]
 pub(crate) use constants::USER_THREAD_STACK_ALIGNMENT;
-
-// Re-export items moved to sub-modules that tests still import via `super::`.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-#[allow(unused_imports)]
-pub(crate) use exception::align_down;

@@ -87,7 +87,6 @@ impl Thread {
     /// Try to create a user thread.  Validates the start address; returns
     /// an error if the instruction pointer is outside userspace.
     pub(crate) fn try_new_user(process: Arc<Process>, start: UserThreadStart) -> Result<Arc<Self>> {
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
         let start = start.validate()?;
         Ok(Self::new_inner(
             process,

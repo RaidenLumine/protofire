@@ -3,33 +3,97 @@
 //! Architecture-generic user-exception delivery: frame layout, stack-pointer
 //! selection, nested-delivery policies, and per-arch delivery builders.
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 // One import for every architecture's names: the facade in `arch.rs` has
 // already chosen which of them exist on this target, so the gate that used to
 // sit on each of these lines lives there instead.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::arch::*;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::types::is_canonical_user_address;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-use super::types::PendingExceptionFrameStack;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-use super::types::UserPendingExceptionFrame;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use crate::Error;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use crate::Result;
+
+// ── Shared exception-frame stack (aarch64 + x86_64) ─────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct UserPendingExceptionFrame {
+    pub(crate) frame_pointer: usize,
+    pub(crate) flags: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PendingExceptionFrameStack<const CAPACITY: usize> {
+    len: usize,
+    entries: [UserPendingExceptionFrame; CAPACITY],
+}
+
+#[cfg_attr(test, allow(dead_code))]
+impl<const CAPACITY: usize> PendingExceptionFrameStack<CAPACITY> {
+    const EMPTY_ENTRY: UserPendingExceptionFrame = UserPendingExceptionFrame {
+        frame_pointer: 0,
+        flags: 0,
+    };
+
+    pub(crate) const fn new() -> Self {
+        Self {
+            len: 0,
+            entries: [Self::EMPTY_ENTRY; CAPACITY],
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(crate) fn top(&self) -> Option<UserPendingExceptionFrame> {
+        if self.len == 0 {
+            None
+        } else {
+            Some(self.entries[self.len - 1])
+        }
+    }
+
+    pub(crate) fn push(&mut self, entry: UserPendingExceptionFrame) -> Result<()> {
+        if self.len == CAPACITY {
+            return Err(Error::Busy);
+        }
+
+        self.entries[self.len] = entry;
+        self.len += 1;
+        Ok(())
+    }
+
+    pub(crate) fn pop_expected(
+        &mut self,
+        frame_pointer: usize,
+    ) -> Result<Option<UserPendingExceptionFrame>> {
+        let Some(entry) = self.top() else {
+            return Ok(None);
+        };
+
+        if entry.frame_pointer != frame_pointer {
+            return Err(Error::InvalidArgument);
+        }
+
+        self.len -= 1;
+        Ok(Some(entry))
+    }
+}
 
 // ── Arch-specific delivery builders ─────────────────────────────────────
 
 // ── Generic delivery helpers ────────────────────────────────────────────
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 pub(crate) const fn align_down(value: usize, align: usize) -> usize {
     value & !(align - 1)
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UserExceptionDeliveryBuildSpec {
     pub(crate) resume_stack_pointer: usize,
@@ -39,7 +103,6 @@ pub(crate) struct UserExceptionDeliveryBuildSpec {
     pub(crate) handler: usize,
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 pub(crate) fn build_user_exception_delivery<Context: Copy, Frame>(
     spec: UserExceptionDeliveryBuildSpec,
     resume_context: Context,
@@ -59,7 +122,6 @@ pub(crate) fn build_user_exception_delivery<Context: Copy, Frame>(
     Ok((frame_pointer, frame, handler_context))
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 fn compute_user_exception_frame_pointer(
     resume_stack_pointer: usize,
     exception_stack_pointer: Option<usize>,
@@ -85,7 +147,6 @@ fn compute_user_exception_frame_pointer(
     Ok(frame_pointer)
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 fn validate_user_exception_handler_registration(
     handler: usize,
     stack_pointer: usize,
@@ -118,7 +179,6 @@ fn validate_user_exception_handler_registration(
     Ok(stack_pointer)
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UserExceptionHandlerInstallProfile {
     pub(crate) supported_flags: usize,
@@ -127,7 +187,6 @@ pub(crate) struct UserExceptionHandlerInstallProfile {
     pub(crate) has_thread_exception_stack: bool,
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 pub(crate) fn install_user_exception_handler_registration<R>(
     slot: &mut Option<R>,
     handler: usize,
@@ -157,7 +216,6 @@ pub(crate) fn install_user_exception_handler_registration<R>(
     Ok(())
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 fn normalize_optional_user_exception_stack_pointer(stack_pointer: usize) -> Result<Option<usize>> {
     let stack_pointer = (stack_pointer != 0).then_some(stack_pointer);
     if let Some(address) = stack_pointer {
@@ -169,7 +227,6 @@ fn normalize_optional_user_exception_stack_pointer(stack_pointer: usize) -> Resu
     Ok(stack_pointer)
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 const fn user_exception_nested_delivery_allowed(
     active_allows_nested: bool,
     registration_allows_nested: bool,
@@ -177,14 +234,12 @@ const fn user_exception_nested_delivery_allowed(
     active_allows_nested && registration_allows_nested
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UserExceptionDeliverySelection {
     Blocked,
     Deliver { stack_pointer: Option<usize> },
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 fn select_user_exception_delivery_stack_pointer(
     nested: bool,
     resume_stack_pointer: usize,
@@ -200,7 +255,6 @@ fn select_user_exception_delivery_stack_pointer(
     registration_stack_pointer.or(thread_exception_stack_pointer)
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 pub(crate) fn plan_user_exception_delivery<const CAPACITY: usize>(
     pending: &PendingExceptionFrameStack<CAPACITY>,
     registration_stack_pointer: Option<usize>,
@@ -233,7 +287,6 @@ pub(crate) fn plan_user_exception_delivery<const CAPACITY: usize>(
     })
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 pub(crate) fn finish_user_exception_delivery<R, const CAPACITY: usize>(
     slot: &mut Option<R>,
     pending: &mut PendingExceptionFrameStack<CAPACITY>,
@@ -255,7 +308,6 @@ pub(crate) fn finish_user_exception_delivery<R, const CAPACITY: usize>(
     Ok(())
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 pub(crate) fn pop_pending_user_exception_frame<const CAPACITY: usize>(
     pending: &mut PendingExceptionFrameStack<CAPACITY>,
     frame_pointer: usize,

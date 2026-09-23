@@ -23,10 +23,10 @@ use core::sync::atomic::Ordering;
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 use super::lifecycle::should_enter_user_mode;
-use super::types::PendingExceptionFrameStack;
 // Only the delivery builder below needs these, and it exists on aarch64 alone.
 #[cfg(target_arch = "aarch64")]
 use super::exception::build_user_exception_delivery;
+use super::exception::PendingExceptionFrameStack;
 #[cfg(target_arch = "aarch64")]
 use super::exception::UserExceptionDeliveryBuildSpec;
 use super::types::UserThreadStart;

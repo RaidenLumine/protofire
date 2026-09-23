@@ -105,7 +105,6 @@ impl Thread {
         start: UserThreadStart,
         update_arch_state: impl FnOnce(&mut ThreadExecutionState),
     ) -> Result<()> {
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
         let start = start.validate()?;
         self.ensure_user_runtime_mutable()?;
         let mut execution_state = self.execution_state.lock();
