@@ -24,6 +24,11 @@ use core::sync::atomic::Ordering;
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 use super::lifecycle::should_enter_user_mode;
 use super::types::PendingExceptionFrameStack;
+// Only the delivery builder below needs these, and it exists on aarch64 alone.
+#[cfg(target_arch = "aarch64")]
+use super::exception::build_user_exception_delivery;
+#[cfg(target_arch = "aarch64")]
+use super::exception::UserExceptionDeliveryBuildSpec;
 use super::types::UserThreadStart;
 use super::Thread;
 
@@ -34,7 +39,6 @@ use super::exception::aarch64_user_exception_handler_is_one_shot;
 #[cfg(target_arch = "aarch64")]
 use super::exception::aarch64_user_exception_handler_requires_exception_stack;
 #[cfg(target_arch = "aarch64")]
-use super::exception::build_aarch64_exception_delivery;
 #[cfg(target_arch = "aarch64")]
 use super::exception::finish_user_exception_delivery;
 #[cfg(target_arch = "aarch64")]
@@ -819,4 +823,42 @@ impl AArch64UserThreadStateSnapshot {
             .validate_runtime_state()?;
         Ok(())
     }
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn build_aarch64_exception_delivery(
+    resume_context: AArch64UserThreadContext,
+    exception_stack_pointer: Option<usize>,
+    require_exception_stack: bool,
+    vector: u8,
+    error_code: u64,
+    fault_address: Option<usize>,
+    handler: usize,
+) -> Result<(usize, AArch64UserExceptionFrame, AArch64UserThreadContext)> {
+    build_user_exception_delivery(
+        UserExceptionDeliveryBuildSpec {
+            resume_stack_pointer: resume_context.stack_pointer as usize,
+            exception_stack_pointer,
+            require_exception_stack,
+            frame_size: size_of::<AArch64UserExceptionFrame>(),
+            handler,
+        },
+        resume_context,
+        |resume_context| {
+            AArch64UserExceptionFrame::from_user_context(
+                resume_context,
+                vector,
+                error_code,
+                fault_address.unwrap_or(0),
+            )
+        },
+        |handler_context, handler, frame_pointer| {
+            // The handler starts with the synthetic exception frame as both
+            // its stack top and first argument, matching the public user
+            // exception ABI.
+            handler_context.instruction_pointer = handler as u64;
+            handler_context.stack_pointer = frame_pointer as u64;
+            handler_context.x0 = frame_pointer as u64;
+        },
+    )
 }

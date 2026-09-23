@@ -4,12 +4,6 @@
 //! selection, nested-delivery policies, and per-arch delivery builders.
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-use crate::Error;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-use crate::Result;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-use ::core::mem::size_of;
-
 // One import for every architecture's names: the facade in `arch.rs` has
 // already chosen which of them exist on this target, so the gate that used to
 // sit on each of these lines lives there instead.
@@ -21,84 +15,12 @@ use super::types::is_canonical_user_address;
 use super::types::PendingExceptionFrameStack;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::types::UserPendingExceptionFrame;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+use crate::Error;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+use crate::Result;
 
 // ── Arch-specific delivery builders ─────────────────────────────────────
-
-#[cfg(target_arch = "x86_64")]
-pub(crate) fn build_x86_64_exception_delivery(
-    resume_context: X86_64UserThreadContext,
-    exception_stack_pointer: Option<usize>,
-    require_exception_stack: bool,
-    vector: u8,
-    error_code: u64,
-    fault_address: Option<usize>,
-    handler: usize,
-) -> Result<(usize, X86_64UserExceptionFrame, X86_64UserThreadContext)> {
-    build_user_exception_delivery(
-        UserExceptionDeliveryBuildSpec {
-            resume_stack_pointer: resume_context.stack_pointer as usize,
-            exception_stack_pointer,
-            require_exception_stack,
-            frame_size: size_of::<X86_64UserExceptionFrame>(),
-            handler,
-        },
-        resume_context,
-        |resume_context| {
-            X86_64UserExceptionFrame::from_user_context(
-                resume_context,
-                vector,
-                error_code,
-                fault_address.unwrap_or(0),
-            )
-        },
-        |handler_context, handler, frame_pointer| {
-            // The handler starts with the synthetic exception frame as both
-            // its stack top and first argument, matching the public user
-            // exception ABI.
-            handler_context.instruction_pointer = handler as u64;
-            handler_context.stack_pointer = frame_pointer as u64;
-            handler_context.rdi = frame_pointer as u64;
-        },
-    )
-}
-
-#[cfg(target_arch = "aarch64")]
-pub(crate) fn build_aarch64_exception_delivery(
-    resume_context: AArch64UserThreadContext,
-    exception_stack_pointer: Option<usize>,
-    require_exception_stack: bool,
-    vector: u8,
-    error_code: u64,
-    fault_address: Option<usize>,
-    handler: usize,
-) -> Result<(usize, AArch64UserExceptionFrame, AArch64UserThreadContext)> {
-    build_user_exception_delivery(
-        UserExceptionDeliveryBuildSpec {
-            resume_stack_pointer: resume_context.stack_pointer as usize,
-            exception_stack_pointer,
-            require_exception_stack,
-            frame_size: size_of::<AArch64UserExceptionFrame>(),
-            handler,
-        },
-        resume_context,
-        |resume_context| {
-            AArch64UserExceptionFrame::from_user_context(
-                resume_context,
-                vector,
-                error_code,
-                fault_address.unwrap_or(0),
-            )
-        },
-        |handler_context, handler, frame_pointer| {
-            // The handler starts with the synthetic exception frame as both
-            // its stack top and first argument, matching the public user
-            // exception ABI.
-            handler_context.instruction_pointer = handler as u64;
-            handler_context.stack_pointer = frame_pointer as u64;
-            handler_context.x0 = frame_pointer as u64;
-        },
-    )
-}
 
 // ── Generic delivery helpers ────────────────────────────────────────────
 
@@ -109,16 +31,16 @@ pub(crate) const fn align_down(value: usize, align: usize) -> usize {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct UserExceptionDeliveryBuildSpec {
-    resume_stack_pointer: usize,
-    exception_stack_pointer: Option<usize>,
-    require_exception_stack: bool,
-    frame_size: usize,
-    handler: usize,
+pub(crate) struct UserExceptionDeliveryBuildSpec {
+    pub(crate) resume_stack_pointer: usize,
+    pub(crate) exception_stack_pointer: Option<usize>,
+    pub(crate) require_exception_stack: bool,
+    pub(crate) frame_size: usize,
+    pub(crate) handler: usize,
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-fn build_user_exception_delivery<Context: Copy, Frame>(
+pub(crate) fn build_user_exception_delivery<Context: Copy, Frame>(
     spec: UserExceptionDeliveryBuildSpec,
     resume_context: Context,
     build_frame: impl FnOnce(Context) -> Frame,

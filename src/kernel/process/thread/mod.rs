@@ -176,9 +176,3 @@ pub(crate) use constants::USER_THREAD_STACK_ALIGNMENT;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 #[allow(unused_imports)]
 pub(crate) use exception::align_down;
-#[cfg(target_arch = "aarch64")]
-#[allow(unused_imports)]
-pub(crate) use exception::build_aarch64_exception_delivery;
-#[cfg(target_arch = "x86_64")]
-#[allow(unused_imports)]
-pub(crate) use exception::build_x86_64_exception_delivery;

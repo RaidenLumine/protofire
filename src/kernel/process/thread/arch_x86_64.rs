@@ -10,12 +10,16 @@ pub use crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
 pub use crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_NONE;
 pub use crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
 pub use crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
+use core::mem::size_of;
+
 use crate::arch::trap::TrapFrame as InterruptContext;
 use crate::arch::x86_64::gdt;
 use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
 
+use super::exception::build_user_exception_delivery;
+use super::exception::UserExceptionDeliveryBuildSpec;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use super::lifecycle::should_enter_user_mode;
 use super::types::is_canonical_user_address;
@@ -24,7 +28,6 @@ use super::types::UserThreadStart;
 use super::Thread;
 
 #[cfg(target_arch = "x86_64")]
-use super::exception::build_x86_64_exception_delivery;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::exception::finish_user_exception_delivery;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
@@ -660,4 +663,42 @@ impl X86_64UserThreadStateSnapshot {
             .validate_runtime_state()?;
         Ok(())
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn build_x86_64_exception_delivery(
+    resume_context: X86_64UserThreadContext,
+    exception_stack_pointer: Option<usize>,
+    require_exception_stack: bool,
+    vector: u8,
+    error_code: u64,
+    fault_address: Option<usize>,
+    handler: usize,
+) -> Result<(usize, X86_64UserExceptionFrame, X86_64UserThreadContext)> {
+    build_user_exception_delivery(
+        UserExceptionDeliveryBuildSpec {
+            resume_stack_pointer: resume_context.stack_pointer as usize,
+            exception_stack_pointer,
+            require_exception_stack,
+            frame_size: size_of::<X86_64UserExceptionFrame>(),
+            handler,
+        },
+        resume_context,
+        |resume_context| {
+            X86_64UserExceptionFrame::from_user_context(
+                resume_context,
+                vector,
+                error_code,
+                fault_address.unwrap_or(0),
+            )
+        },
+        |handler_context, handler, frame_pointer| {
+            // The handler starts with the synthetic exception frame as both
+            // its stack top and first argument, matching the public user
+            // exception ABI.
+            handler_context.instruction_pointer = handler as u64;
+            handler_context.stack_pointer = frame_pointer as u64;
+            handler_context.rdi = frame_pointer as u64;
+        },
+    )
 }
