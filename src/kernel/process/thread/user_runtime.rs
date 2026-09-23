@@ -3,22 +3,7 @@
 //! User-runtime state management: snapshot, validate, restore, replace, and
 //! clear user-mode execution context.
 
-#[cfg(any(target_arch = "aarch64", test))]
-use ::core::sync::atomic::Ordering;
-
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    test
-))]
 use crate::Error;
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    test
-))]
 use crate::Result;
 
 use super::super::ProcessState;
@@ -72,24 +57,11 @@ impl Thread {
         let state = ThreadUserRuntimeState {
             execution_state: *self.execution_state.lock(),
             #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_user_context: *self.aarch64.user_context.lock(),
-            #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_exception_handlers: *self.aarch64.exception_handlers.lock(),
-            #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_pending_exception_frames: *self.aarch64.pending_exception_frames.lock(),
-            #[cfg(any(target_arch = "aarch64", test))]
-            aarch64_exception_preempt_resume_logged: self
-                .aarch64
-                .preempt_resume_logged
-                .load(Ordering::SeqCst),
+            aarch64: self.aarch64.snapshot(),
             #[cfg(target_arch = "x86_64")]
-            x86_64_user_context: *self.x86_64.user_context.lock(),
-            #[cfg(target_arch = "x86_64")]
-            x86_64_exception_handlers: *self.x86_64.exception_handlers.lock(),
-            #[cfg(target_arch = "x86_64")]
-            x86_64_pending_exception_frames: *self.x86_64.pending_exception_frames.lock(),
+            x86_64: self.x86_64.snapshot(),
             #[cfg(any(target_arch = "riscv64", test))]
-            riscv64_user_context: *self.riscv64.user_context.lock(),
+            riscv64: self.riscv64.snapshot(),
         };
         Self::validate_restored_user_runtime_state(&state)?;
         Ok(state)
@@ -103,15 +75,9 @@ impl Thread {
         user_start.validate()?;
 
         #[cfg(any(target_arch = "aarch64", test))]
-        {
-            let user_context = state.aarch64_user_context.ok_or(Error::InvalidArgument)?;
-            user_context.validate_runtime_state()?;
-        }
+        state.aarch64.validate()?;
         #[cfg(target_arch = "x86_64")]
-        {
-            let user_context = state.x86_64_user_context.ok_or(Error::InvalidArgument)?;
-            user_context.validate_runtime_state()?;
-        }
+        state.x86_64.validate()?;
 
         Ok(())
     }
@@ -121,21 +87,9 @@ impl Thread {
         Self::validate_restored_user_runtime_state(&state)?;
         *self.execution_state.lock() = state.execution_state;
         #[cfg(any(target_arch = "aarch64", test))]
-        {
-            *self.aarch64.user_context.lock() = state.aarch64_user_context;
-            *self.aarch64.exception_handlers.lock() = state.aarch64_exception_handlers;
-            *self.aarch64.pending_exception_frames.lock() = state.aarch64_pending_exception_frames;
-            self.aarch64.preempt_resume_logged.store(
-                state.aarch64_exception_preempt_resume_logged,
-                Ordering::SeqCst,
-            );
-        }
+        self.aarch64.restore(state.aarch64);
         #[cfg(target_arch = "x86_64")]
-        {
-            *self.x86_64.user_context.lock() = state.x86_64_user_context;
-            *self.x86_64.exception_handlers.lock() = state.x86_64_exception_handlers;
-            *self.x86_64.pending_exception_frames.lock() = state.x86_64_pending_exception_frames;
-        }
+        self.x86_64.restore(state.x86_64);
         Ok(())
     }
 

@@ -26,6 +26,36 @@ impl RiscV64UserThreadState {
             user_context: Mutex::new(None),
         }
     }
+
+    /// Take a plain-data copy, for suspending a thread and resuming it later.
+    pub(crate) fn snapshot(&self) -> RiscV64UserThreadStateSnapshot {
+        RiscV64UserThreadStateSnapshot {
+            user_context: *self.user_context.lock(),
+        }
+    }
+
+    /// Put a copy back, replacing what this thread holds now.
+    #[allow(dead_code)]
+    pub(crate) fn restore(&self, snapshot: RiscV64UserThreadStateSnapshot) {
+        *self.user_context.lock() = snapshot.user_context;
+    }
+}
+
+/// A [`RiscV64UserThreadState`] as plain data, taken and put back whole.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RiscV64UserThreadStateSnapshot {
+    pub(crate) user_context: Option<RiscV64UserThreadContext>,
+}
+
+impl RiscV64UserThreadStateSnapshot {
+    /// Reject a snapshot a thread could not resume from; see the x86_64 half.
+    #[allow(dead_code)]
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.user_context
+            .ok_or(Error::InvalidArgument)?
+            .validate_runtime_state()?;
+        Ok(())
+    }
 }
 
 // ── RISC-V 64 user-thread context ────────────────────────────────────

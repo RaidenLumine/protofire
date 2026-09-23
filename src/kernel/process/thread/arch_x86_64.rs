@@ -621,4 +621,43 @@ impl X86_64UserThreadState {
             pending_exception_frames: Mutex::new(X86_64PendingExceptionFrameStack::new()),
         }
     }
+
+    /// Take a plain-data copy, for suspending a thread and resuming it later.
+    pub(crate) fn snapshot(&self) -> X86_64UserThreadStateSnapshot {
+        X86_64UserThreadStateSnapshot {
+            user_context: *self.user_context.lock(),
+            exception_handlers: *self.exception_handlers.lock(),
+            pending_exception_frames: *self.pending_exception_frames.lock(),
+        }
+    }
+
+    /// Put a copy back, replacing what this thread holds now.
+    pub(crate) fn restore(&self, snapshot: X86_64UserThreadStateSnapshot) {
+        *self.user_context.lock() = snapshot.user_context;
+        *self.exception_handlers.lock() = snapshot.exception_handlers;
+        *self.pending_exception_frames.lock() = snapshot.pending_exception_frames;
+    }
+}
+
+/// A [`X86_64UserThreadState`] as plain data, taken and put back whole.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct X86_64UserThreadStateSnapshot {
+    pub(crate) user_context: Option<X86_64UserThreadContext>,
+    pub(crate) exception_handlers:
+        [Option<X86_64UserExceptionHandlerRegistration>; X86_64_EXCEPTION_VECTOR_COUNT],
+    pub(crate) pending_exception_frames: X86_64PendingExceptionFrameStack,
+}
+
+impl X86_64UserThreadStateSnapshot {
+    /// Reject a snapshot a thread could not resume from.
+    ///
+    /// The context is required — a snapshot without one describes a thread that
+    /// has never run in user mode — and it has to be one the architecture would
+    /// accept on the way back in.
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.user_context
+            .ok_or(Error::InvalidArgument)?
+            .validate_runtime_state()?;
+        Ok(())
+    }
 }

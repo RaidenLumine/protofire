@@ -780,4 +780,43 @@ impl AArch64UserThreadState {
             preempt_resume_logged: core::sync::atomic::AtomicBool::new(false),
         }
     }
+
+    /// Take a plain-data copy, for suspending a thread and resuming it later.
+    pub(crate) fn snapshot(&self) -> AArch64UserThreadStateSnapshot {
+        AArch64UserThreadStateSnapshot {
+            user_context: *self.user_context.lock(),
+            exception_handlers: *self.exception_handlers.lock(),
+            pending_exception_frames: *self.pending_exception_frames.lock(),
+            preempt_resume_logged: self.preempt_resume_logged.load(Ordering::SeqCst),
+        }
+    }
+
+    /// Put a copy back, replacing what this thread holds now.
+    pub(crate) fn restore(&self, snapshot: AArch64UserThreadStateSnapshot) {
+        *self.user_context.lock() = snapshot.user_context;
+        *self.exception_handlers.lock() = snapshot.exception_handlers;
+        *self.pending_exception_frames.lock() = snapshot.pending_exception_frames;
+        self.preempt_resume_logged
+            .store(snapshot.preempt_resume_logged, Ordering::SeqCst);
+    }
+}
+
+/// An [`AArch64UserThreadState`] as plain data, taken and put back whole.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AArch64UserThreadStateSnapshot {
+    pub(crate) user_context: Option<AArch64UserThreadContext>,
+    pub(crate) exception_handlers:
+        [Option<AArch64UserExceptionHandlerRegistration>; AARCH64_EXCEPTION_VECTOR_COUNT],
+    pub(crate) pending_exception_frames: AArch64PendingExceptionFrameStack,
+    pub(crate) preempt_resume_logged: bool,
+}
+
+impl AArch64UserThreadStateSnapshot {
+    /// Reject a snapshot a thread could not resume from; see the x86_64 half.
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.user_context
+            .ok_or(Error::InvalidArgument)?
+            .validate_runtime_state()?;
+        Ok(())
+    }
 }

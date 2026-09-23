@@ -3,19 +3,7 @@
 //! Pure type definitions for the thread module: user-thread start descriptor,
 //! scheduling metadata, thread state, wait outcomes, and runtime state.
 
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    test
-))]
 use crate::Error;
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    test
-))]
 use crate::Result;
 use core::fmt;
 
@@ -23,12 +11,6 @@ pub(crate) use super::constants::*;
 
 // Arch-type imports needed by ThreadUserRuntimeState.
 // One import for every architecture's names; `arch.rs` holds the gates.
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    test
-))]
 use super::arch::*;
 
 // ── UserThreadStart ──────────────────────────────────────────────────────
@@ -110,12 +92,6 @@ const fn is_user_thread_stack_pointer_aligned(stack_pointer: usize) -> bool {
 
 // ── Canonical user address check (shared across arch validators) ────────
 
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    test
-))]
 pub(crate) const fn is_canonical_user_address(address: usize) -> bool {
     address <= 0x0000_7FFF_FFFF_FFFF
 }
@@ -308,23 +284,14 @@ pub(crate) struct ThreadExecutionState {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ThreadUserRuntimeState {
     pub(crate) execution_state: ThreadExecutionState,
+    // The per-architecture part is that architecture's own snapshot type, for
+    // the same reason the live state is: one field per architecture, and the
+    // rules about its contents live with the architecture.
     #[cfg(any(target_arch = "aarch64", test))]
-    pub(crate) aarch64_user_context: Option<AArch64UserThreadContext>,
-    #[cfg(any(target_arch = "aarch64", test))]
-    pub(crate) aarch64_exception_handlers:
-        [Option<AArch64UserExceptionHandlerRegistration>; AARCH64_EXCEPTION_VECTOR_COUNT],
-    #[cfg(any(target_arch = "aarch64", test))]
-    pub(crate) aarch64_pending_exception_frames: AArch64PendingExceptionFrameStack,
-    #[cfg(any(target_arch = "aarch64", test))]
-    pub(crate) aarch64_exception_preempt_resume_logged: bool,
+    pub(crate) aarch64: AArch64UserThreadStateSnapshot,
     #[cfg(target_arch = "x86_64")]
-    pub(crate) x86_64_user_context: Option<X86_64UserThreadContext>,
-    #[cfg(target_arch = "x86_64")]
-    pub(crate) x86_64_exception_handlers:
-        [Option<X86_64UserExceptionHandlerRegistration>; X86_64_EXCEPTION_VECTOR_COUNT],
-    #[cfg(target_arch = "x86_64")]
-    pub(crate) x86_64_pending_exception_frames: X86_64PendingExceptionFrameStack,
+    pub(crate) x86_64: X86_64UserThreadStateSnapshot,
     #[cfg(any(target_arch = "riscv64", test))]
     #[allow(dead_code)]
-    pub(crate) riscv64_user_context: Option<RiscV64UserThreadContext>,
+    pub(crate) riscv64: RiscV64UserThreadStateSnapshot,
 }
