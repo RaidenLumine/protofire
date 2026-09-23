@@ -22,24 +22,14 @@ use core::fmt;
 pub(crate) use super::constants::*;
 
 // Arch-type imports needed by ThreadUserRuntimeState.
-#[cfg(any(target_arch = "aarch64", test))]
-use super::arch_aarch64::AArch64PendingExceptionFrameStack;
-#[cfg(any(target_arch = "aarch64", test))]
-use super::arch_aarch64::AArch64UserExceptionHandlerRegistration;
-#[cfg(any(target_arch = "aarch64", test))]
-use super::arch_aarch64::AArch64UserThreadContext;
-#[cfg(any(target_arch = "aarch64", test))]
-use super::arch_aarch64::AARCH64_EXCEPTION_VECTOR_COUNT;
-#[cfg(any(target_arch = "riscv64", test))]
-use super::arch_riscv64::RiscV64UserThreadContext;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64PendingExceptionFrameStack;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64UserExceptionHandlerRegistration;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64UserThreadContext;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64_EXCEPTION_VECTOR_COUNT;
+// One import for every architecture's names; `arch.rs` holds the gates.
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    test
+))]
+use super::arch::*;
 
 // ── UserThreadStart ──────────────────────────────────────────────────────
 

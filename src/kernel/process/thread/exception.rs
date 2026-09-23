@@ -10,36 +10,11 @@ use crate::Result;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use ::core::mem::size_of;
 
-#[cfg(target_arch = "aarch64")]
-use super::arch_aarch64::AArch64UserExceptionFrame;
-#[cfg(target_arch = "aarch64")]
-use super::arch_aarch64::AArch64UserThreadContext;
-#[cfg(target_arch = "aarch64")]
-use super::arch_aarch64::AARCH64_EXCEPTION_DATA_ABORT_VECTOR;
-#[cfg(target_arch = "aarch64")]
-use super::arch_aarch64::AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR;
-#[cfg(target_arch = "aarch64")]
-use super::arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
-#[cfg(target_arch = "aarch64")]
-use super::arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
-#[cfg(target_arch = "aarch64")]
-use super::arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64UserExceptionFrame;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64UserThreadContext;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64_EXCEPTION_INVALID_OPCODE_VECTOR;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64_EXCEPTION_PAGE_FAULT_VECTOR;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
-#[cfg(target_arch = "x86_64")]
-use super::arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
+// One import for every architecture's names: the facade in `arch.rs` has
+// already chosen which of them exist on this target, so the gate that used to
+// sit on each of these lines lives there instead.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+use super::arch::*;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
 use super::types::is_canonical_user_address;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]

@@ -24,12 +24,28 @@ pub(crate) mod types;
 #[cfg_attr(not(target_os = "none"), allow(unused_imports))]
 pub(crate) use stack_window::window_stats;
 
+// The per-architecture halves live beside this file and are selected in one
+// place rather than re-gated per name; see `arch.rs`.
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    test
+))]
+mod arch;
 #[cfg(any(target_arch = "aarch64", test))]
 pub(crate) mod arch_aarch64;
 #[cfg(any(target_arch = "riscv64", test))]
 pub(crate) mod arch_riscv64;
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod arch_x86_64;
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    test
+))]
+pub use arch::*;
 
 pub(crate) mod entry;
 pub(crate) mod exception;
@@ -38,16 +54,7 @@ pub(crate) mod lifecycle;
 mod tests;
 pub(crate) mod user_runtime;
 
-// ── Private imports for Thread struct fields (not in public re-exports) ─
-
-#[cfg(any(target_arch = "aarch64", test))]
-use arch_aarch64::AArch64PendingExceptionFrameStack;
-#[cfg(any(target_arch = "aarch64", test))]
-use arch_aarch64::AARCH64_EXCEPTION_VECTOR_COUNT;
-#[cfg(target_arch = "x86_64")]
-use arch_x86_64::X86_64PendingExceptionFrameStack;
-#[cfg(target_arch = "x86_64")]
-use arch_x86_64::X86_64_EXCEPTION_VECTOR_COUNT;
+// ── Thread struct fields ────────────────────────────────────────────────
 
 use kernel_stack::KernelStack;
 
@@ -152,53 +159,6 @@ pub use types::ThreadSummary;
 pub use types::ThreadWaitOutcome;
 pub use types::UserThreadStart;
 pub use types::THREAD_PRIORITY_COUNT;
-
-#[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::AArch64UserExceptionFrame;
-#[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::AArch64UserExceptionHandlerRegistration;
-#[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::AArch64UserThreadContext;
-#[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::AARCH64_EXCEPTION_DATA_ABORT_VECTOR;
-#[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR;
-#[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::AARCH64_PENDING_USER_EXCEPTION_FRAME_CAPACITY;
-#[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
-#[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_NONE;
-#[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
-#[cfg(any(target_arch = "aarch64", test))]
-pub use arch_aarch64::AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
-
-#[cfg(any(target_arch = "riscv64", test))]
-pub use arch_riscv64::RiscV64UserThreadContext;
-
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64UserExceptionFrame;
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64UserExceptionHandlerRegistration;
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64UserThreadContext;
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR;
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64_EXCEPTION_INVALID_OPCODE_VECTOR;
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64_EXCEPTION_PAGE_FAULT_VECTOR;
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64_PENDING_USER_EXCEPTION_FRAME_CAPACITY;
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_NONE;
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
-#[cfg(target_arch = "x86_64")]
-pub use arch_x86_64::X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 
 // ── crate-internal re-exports ───────────────────────────────────────────
 
