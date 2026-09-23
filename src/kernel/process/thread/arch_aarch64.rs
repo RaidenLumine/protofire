@@ -56,7 +56,6 @@ use super::exception::UserExceptionHandlerInstallProfile;
 
 // ── AArch64 user-thread context & exception handling ─────────────────
 
-#[cfg(any(target_arch = "aarch64", test))]
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AArch64UserThreadContext {
@@ -96,10 +95,8 @@ pub struct AArch64UserThreadContext {
     pub saved_program_status: u64,
 }
 
-#[cfg(any(target_arch = "aarch64", test))]
 const _: [(); 272] = [(); size_of::<AArch64UserThreadContext>()];
 
-#[cfg(any(target_arch = "aarch64", test))]
 impl AArch64UserThreadContext {
     const INITIAL_SPSR: u64 = 0;
     const USER_MODE_SPSR_MASK: u64 = 0b1111;
@@ -261,10 +258,8 @@ impl AArch64UserThreadContext {
     }
 }
 
-#[cfg(any(target_arch = "aarch64", test))]
 pub(crate) const AARCH64_EXCEPTION_VECTOR_COUNT: usize = 64;
 
-#[cfg(any(target_arch = "aarch64", test))]
 // Keep nested user-exception delivery bounded so the per-thread bookkeeping can
 // stay fixed-size and avoid heap allocation inside trap handling.
 pub const AARCH64_PENDING_USER_EXCEPTION_FRAME_CAPACITY: usize = 4;
@@ -275,7 +270,6 @@ pub(crate) const AARCH64_USER_EXCEPTION_HANDLER_SUPPORTED_FLAGS: usize =
         | AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK
         | AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
 
-#[cfg(any(target_arch = "aarch64", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AArch64UserExceptionHandlerRegistration {
     pub handler: usize,
@@ -283,11 +277,9 @@ pub struct AArch64UserExceptionHandlerRegistration {
     pub flags: usize,
 }
 
-#[cfg(any(target_arch = "aarch64", test))]
 pub(crate) type AArch64PendingExceptionFrameStack =
     PendingExceptionFrameStack<AARCH64_PENDING_USER_EXCEPTION_FRAME_CAPACITY>;
 
-#[cfg(any(target_arch = "aarch64", test))]
 #[cfg_attr(test, allow(dead_code))]
 impl AArch64UserExceptionFrame {
     pub(crate) fn from_user_context(
@@ -379,7 +371,6 @@ impl AArch64UserExceptionFrame {
 
 // ── Thread: aarch64 context & exception delivery ───────────────────
 
-#[cfg(any(target_arch = "aarch64", test))]
 impl Thread {
     /// Return a snapshot of the threadʼs last-known AArch64 user-mode register
     /// state, if one has been captured.

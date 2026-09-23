@@ -60,7 +60,6 @@ impl RiscV64UserThreadStateSnapshot {
 
 // ── RISC-V 64 user-thread context ────────────────────────────────────
 
-#[cfg(any(target_arch = "riscv64", test))]
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RiscV64UserThreadContext {
@@ -99,10 +98,8 @@ pub struct RiscV64UserThreadContext {
     pub saved_program_status: u64,
 }
 
-#[cfg(any(target_arch = "riscv64", test))]
 const _: [(); 264] = [(); size_of::<RiscV64UserThreadContext>()];
 
-#[cfg(any(target_arch = "riscv64", test))]
 #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
 impl RiscV64UserThreadContext {
     // SPP = 0 → User mode; SPIE = 1 so `sret` arms SIE (interrupts enabled)
@@ -262,7 +259,6 @@ impl RiscV64UserThreadContext {
 /// The riscv64 half of the thread API, next to the x86_64 and aarch64
 /// halves rather than scattered through the shared lifecycle code.
 impl Thread {
-    #[cfg(any(target_arch = "riscv64", test))]
     #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
     /// Return the saved RISC-V user thread context (PC + GPRs), or `None` if
     /// this thread has never entered user mode.
@@ -270,7 +266,6 @@ impl Thread {
         *self.riscv64.user_context.lock()
     }
 
-    #[cfg(any(target_arch = "riscv64", test))]
     #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
     pub(crate) fn validated_riscv64_user_context(
         &self,
@@ -284,13 +279,11 @@ impl Thread {
             .transpose()
     }
 
-    #[cfg(any(target_arch = "riscv64", test))]
     #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
     pub(crate) fn set_riscv64_user_context(&self, context: RiscV64UserThreadContext) {
         *self.riscv64.user_context.lock() = Some(context);
     }
 
-    #[cfg(any(target_arch = "riscv64", test))]
     #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
     fn update_riscv64_user_context_if_valid(&self, context: RiscV64UserThreadContext) -> bool {
         let Ok(context) = context.validate_runtime_state() else {

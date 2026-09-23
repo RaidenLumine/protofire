@@ -19,33 +19,25 @@ use crate::Error;
 use crate::Result;
 
 use super::exception::build_user_exception_delivery;
+use super::exception::finish_user_exception_delivery;
+use super::exception::install_user_exception_handler_registration;
+use super::exception::is_supported_x86_64_user_exception_vector;
+use super::exception::plan_user_exception_delivery;
+use super::exception::pop_pending_user_exception_frame;
+use super::exception::x86_64_user_exception_handler_allows_nested;
+use super::exception::x86_64_user_exception_handler_is_one_shot;
+use super::exception::x86_64_user_exception_handler_requires_exception_stack;
+use super::exception::PendingExceptionFrameStack;
 use super::exception::UserExceptionDeliveryBuildSpec;
+use super::exception::UserExceptionDeliverySelection;
+use super::exception::UserExceptionHandlerInstallProfile;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use super::lifecycle::should_enter_user_mode;
 use super::types::is_canonical_user_address;
 use super::types::UserThreadStart;
 use super::Thread;
 
-#[cfg(target_arch = "x86_64")]
-use super::exception::finish_user_exception_delivery;
-use super::exception::install_user_exception_handler_registration;
-#[cfg(target_arch = "x86_64")]
-use super::exception::is_supported_x86_64_user_exception_vector;
-use super::exception::plan_user_exception_delivery;
-use super::exception::pop_pending_user_exception_frame;
-#[cfg(target_arch = "x86_64")]
-use super::exception::x86_64_user_exception_handler_allows_nested;
-#[cfg(target_arch = "x86_64")]
-use super::exception::x86_64_user_exception_handler_is_one_shot;
-#[cfg(target_arch = "x86_64")]
-use super::exception::x86_64_user_exception_handler_requires_exception_stack;
-use super::exception::PendingExceptionFrameStack;
-use super::exception::UserExceptionDeliverySelection;
-use super::exception::UserExceptionHandlerInstallProfile;
-
 // ── x86_64 user-thread context & exception handling ─────────────────
-
-#[cfg(target_arch = "x86_64")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct X86_64UserThreadContext {
     pub rax: u64,
@@ -69,8 +61,6 @@ pub struct X86_64UserThreadContext {
     pub stack_pointer: u64,
     pub stack_segment: u64,
 }
-
-#[cfg(target_arch = "x86_64")]
 impl X86_64UserThreadContext {
     pub(crate) const INITIAL_RFLAGS: u64 = 0x202;
     const RFLAGS_REQUIRED_BITS: u64 = 1 << 1;
@@ -175,34 +165,22 @@ impl X86_64UserThreadContext {
         context.saved_stack_segment = self.stack_segment;
     }
 }
-
-#[cfg(target_arch = "x86_64")]
 pub(crate) const X86_64_EXCEPTION_VECTOR_COUNT: usize = 32;
-
-#[cfg(target_arch = "x86_64")]
 // Keep nested user-exception delivery bounded so the per-thread bookkeeping can
 // stay fixed-size and avoid heap allocation inside trap handling.
 pub const X86_64_PENDING_USER_EXCEPTION_FRAME_CAPACITY: usize = 4;
-
-#[cfg(target_arch = "x86_64")]
 pub(crate) const X86_64_USER_EXCEPTION_HANDLER_SUPPORTED_FLAGS: usize =
     X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT
         | X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK
         | X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
-
-#[cfg(target_arch = "x86_64")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct X86_64UserExceptionHandlerRegistration {
     pub handler: usize,
     pub stack_pointer: Option<usize>,
     pub flags: usize,
 }
-
-#[cfg(target_arch = "x86_64")]
 pub(crate) type X86_64PendingExceptionFrameStack =
     PendingExceptionFrameStack<X86_64_PENDING_USER_EXCEPTION_FRAME_CAPACITY>;
-
-#[cfg(target_arch = "x86_64")]
 impl X86_64UserExceptionFrame {
     pub(crate) fn from_user_context(
         context: X86_64UserThreadContext,
@@ -301,8 +279,6 @@ unsafe fn read_x86_64_user_exception_frame(frame_pointer: usize) -> X86_64UserEx
 unsafe fn read_x86_64_user_exception_frame(frame_pointer: usize) -> X86_64UserExceptionFrame {
     unsafe { (frame_pointer as *const X86_64UserExceptionFrame).read() }
 }
-
-#[cfg(target_arch = "x86_64")]
 impl Thread {
     /// Return a snapshot of the threadʼs last-known x86_64 user-mode register
     /// state, if one has been captured.
@@ -658,8 +634,6 @@ impl X86_64UserThreadStateSnapshot {
         Ok(())
     }
 }
-
-#[cfg(target_arch = "x86_64")]
 pub(crate) fn build_x86_64_exception_delivery(
     resume_context: X86_64UserThreadContext,
     exception_stack_pointer: Option<usize>,
