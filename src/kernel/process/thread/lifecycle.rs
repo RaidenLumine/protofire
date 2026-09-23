@@ -14,7 +14,10 @@ use alloc::sync::Arc;
 use crate::kernel::process::scheduler::TIME_SLICE_TICKS;
 use crate::kernel::sync::Event;
 use crate::kernel::sync::Mutex;
-#[cfg(any(target_arch = "riscv64", test))]
+// Only the "neither x86_64 nor aarch64" arm below uses it, and that arm is the
+// one riscv64 takes; the riscv64 methods that used to need it now live in
+// `arch_riscv64.rs`.
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 use crate::Error;
 #[cfg(any(
     target_arch = "x86_64",
@@ -831,70 +834,6 @@ impl Thread {
         let result = Err(Error::Unsupported);
 
         result
-    }
-
-    #[cfg(any(target_arch = "riscv64", test))]
-    #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
-    /// Return the saved RISC-V user thread context (PC + GPRs), or `None` if
-    /// this thread has never entered user mode.
-    pub fn riscv64_user_context(&self) -> Option<RiscV64UserThreadContext> {
-        *self.riscv64.user_context.lock()
-    }
-
-    #[cfg(any(target_arch = "riscv64", test))]
-    #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
-    pub(crate) fn validated_riscv64_user_context(
-        &self,
-    ) -> Result<Option<RiscV64UserThreadContext>> {
-        self.riscv64_user_context()
-            .map(|context| {
-                context
-                    .validate_runtime_state()
-                    .map_err(|_| Error::InternalError)
-            })
-            .transpose()
-    }
-
-    #[cfg(any(target_arch = "riscv64", test))]
-    #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
-    pub(crate) fn set_riscv64_user_context(&self, context: RiscV64UserThreadContext) {
-        *self.riscv64.user_context.lock() = Some(context);
-    }
-
-    #[cfg(any(target_arch = "riscv64", test))]
-    #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
-    fn update_riscv64_user_context_if_valid(&self, context: RiscV64UserThreadContext) -> bool {
-        let Ok(context) = context.validate_runtime_state() else {
-            return false;
-        };
-        self.set_riscv64_user_context(context);
-        true
-    }
-
-    #[cfg(target_arch = "riscv64")]
-    pub(crate) fn capture_riscv64_user_context_from_trap(
-        &self,
-        frame: &crate::arch::riscv64::trap::TrapFrame,
-    ) {
-        let _ =
-            self.update_riscv64_user_context_if_valid(RiscV64UserThreadContext::from_trap(frame));
-    }
-
-    #[cfg(target_arch = "riscv64")]
-    pub(crate) fn write_riscv64_user_context_to_trap(
-        &self,
-        frame: &mut crate::arch::riscv64::trap::TrapFrame,
-    ) {
-        let user_context = self.riscv64_user_context();
-        if let Some(context) = user_context {
-            context.write_to_trap(frame);
-        }
-    }
-
-    #[cfg(target_arch = "riscv64")]
-    #[allow(dead_code)]
-    fn clear_riscv64_user_runtime_state(&self) {
-        *self.riscv64.user_context.lock() = None;
     }
 }
 
