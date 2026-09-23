@@ -96,6 +96,22 @@ pub(crate) const fn is_canonical_user_address(address: usize) -> bool {
     address <= 0x0000_7FFF_FFFF_FFFF
 }
 
+/// A user context captured at `fork`, ready to become a new thread.
+///
+/// Each architecture's saved context plays this role.  The trait is what lets
+/// [`crate::kernel::process::thread::Thread::new_user_fork`] be one function
+/// instead of three: the kernel asks the context where the child resumes and
+/// how to hand itself to the thread, and names neither a register nor a
+/// context type to do it.
+pub(crate) trait UserForkContext: Copy {
+    /// Where the child resumes, and which stack it runs on.
+    fn user_thread_start(&self) -> UserThreadStart;
+
+    /// Give this context to `thread`, so the child resumes with the parent's
+    /// registers rather than at a fresh user start.
+    fn install(&self, thread: &super::Thread);
+}
+
 // ── Scheduling types ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]

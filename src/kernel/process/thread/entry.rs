@@ -12,26 +12,15 @@ pub(crate) fn initial_instruction_pointer(
     _entry_point: usize,
     _user_start: Option<UserThreadStart>,
 ) -> usize {
-    #[cfg(all(
-        any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-            target_arch = "riscv64"
-        ),
-        target_os = "none"
-    ))]
+    // Every bare-metal target starts a thread at the trampoline that builds
+    // the first frame; the list of architectures here was the list of targets
+    // this crate has, written out.  What the code means is "bare metal".
+    #[cfg(target_os = "none")]
     {
         super::super::scheduler::thread_trampoline as *const () as usize
     }
 
-    #[cfg(not(all(
-        any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-            target_arch = "riscv64"
-        ),
-        target_os = "none"
-    )))]
+    #[cfg(not(target_os = "none"))]
     {
         // Host / non-bare-metal builds cannot run user-mode threads, so there
         // is no unsupported-start redirect anymore: a thread just begins at its

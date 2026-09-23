@@ -52,6 +52,7 @@ use super::types::ThreadSchedStats;
 use super::types::ThreadState;
 use super::types::ThreadSummary;
 use super::types::ThreadWaitOutcome;
+use super::types::UserForkContext;
 use super::types::UserThreadStart;
 use super::Thread;
 
@@ -96,72 +97,18 @@ impl Thread {
         ))
     }
 
-    /// Create a user thread for a fork child, seeding the full
-    /// [`X86_64UserThreadContext`] so the child resumes with the same
-    /// register state as the parent (except RAX, which callers set to 0).
-    #[cfg(target_arch = "x86_64")]
-    pub fn new_user_fork(
-        process: Arc<Process>,
-        context: X86_64UserThreadContext,
-    ) -> Result<Arc<Self>> {
-        let start = UserThreadStart::new(
-            context.instruction_pointer as usize,
-            context.stack_pointer as usize,
-            None::<usize>,
-        );
-        let start = start.validate()?;
-        let thread = Self::new_inner(process, start.instruction_pointer, None, Some(start));
-        // Overwrite the user context with the full fork context (which
-        // includes preserved register values like RBX, RCX, etc.).
-        *thread.x86_64.user_context.lock() = Some(context);
-        Ok(thread)
-    }
-
-    /// Create a user thread for a fork child, seeding the full
-    /// [`AArch64UserThreadContext`] so the child resumes with the same
-    /// register state as the parent (except x0, which callers set to 0).
+    /// Create a user thread for a fork child.
     ///
-    /// Only compiled on bare-metal AArch64 — tested via the fork syscall
-    /// integration path.
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    pub fn new_user_fork(
+    /// The child resumes with the parent's saved register state rather than at
+    /// a fresh user start; which context that is, and how it is handed over, is
+    /// the architecture's business — see [`UserForkContext`].
+    pub(crate) fn new_user_fork<C: UserForkContext>(
         process: Arc<Process>,
-        context: AArch64UserThreadContext,
+        context: C,
     ) -> Result<Arc<Self>> {
-        let start = UserThreadStart::new(
-            context.instruction_pointer as usize,
-            context.stack_pointer as usize,
-            None::<usize>,
-        );
-        let start = start.validate()?;
+        let start = context.user_thread_start().validate()?;
         let thread = Self::new_inner(process, start.instruction_pointer, None, Some(start));
-        // Overwrite the user context with the full fork context.
-        #[cfg(any(target_arch = "aarch64", test))]
-        thread.set_aarch64_user_context(context);
-        Ok(thread)
-    }
-
-    /// Create a user thread for a fork child, seeding the full
-    /// [`RiscV64UserThreadContext`] so the child resumes with the same
-    /// register state as the parent (except a0, which callers set to 0).
-    ///
-    /// Only compiled on bare-metal RISC-V — tested via the fork syscall
-    /// integration path.
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    pub fn new_user_fork(
-        process: Arc<Process>,
-        context: RiscV64UserThreadContext,
-    ) -> Result<Arc<Self>> {
-        let start = UserThreadStart::new(
-            context.instruction_pointer as usize,
-            context.x2 as usize,
-            None::<usize>,
-        );
-        let start = start.validate()?;
-        let thread = Self::new_inner(process, start.instruction_pointer, None, Some(start));
-        // Overwrite the user context with the full fork context.
-        #[cfg(any(target_arch = "riscv64", test))]
-        thread.set_riscv64_user_context(context);
+        context.install(&thread);
         Ok(thread)
     }
 

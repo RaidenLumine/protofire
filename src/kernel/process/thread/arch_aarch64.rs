@@ -400,7 +400,8 @@ impl Thread {
             .transpose()
     }
 
-    #[cfg(target_arch = "aarch64")]
+    // Available wherever the state is, like the getter above it: this is a
+    // write to a field, not an operation on hardware.
     pub(crate) fn set_aarch64_user_context(&self, context: AArch64UserThreadContext) {
         *self.aarch64.user_context.lock() = Some(context);
     }
@@ -861,4 +862,18 @@ pub(crate) fn build_aarch64_exception_delivery(
             handler_context.x0 = frame_pointer as u64;
         },
     )
+}
+
+impl crate::kernel::process::thread::types::UserForkContext for AArch64UserThreadContext {
+    fn user_thread_start(&self) -> UserThreadStart {
+        UserThreadStart::new(
+            self.instruction_pointer as usize,
+            self.stack_pointer as usize,
+            None,
+        )
+    }
+
+    fn install(&self, thread: &Thread) {
+        thread.set_aarch64_user_context(*self);
+    }
 }

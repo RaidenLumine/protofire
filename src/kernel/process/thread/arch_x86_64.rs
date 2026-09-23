@@ -696,3 +696,17 @@ pub(crate) fn build_x86_64_exception_delivery(
         },
     )
 }
+
+impl crate::kernel::process::thread::types::UserForkContext for X86_64UserThreadContext {
+    fn user_thread_start(&self) -> UserThreadStart {
+        UserThreadStart::new(
+            self.instruction_pointer as usize,
+            self.stack_pointer as usize,
+            None,
+        )
+    }
+
+    fn install(&self, thread: &Thread) {
+        *thread.x86_64.user_context.lock() = Some(*self);
+    }
+}

@@ -326,3 +326,13 @@ impl Thread {
         *self.riscv64.user_context.lock() = None;
     }
 }
+
+impl crate::kernel::process::thread::types::UserForkContext for RiscV64UserThreadContext {
+    fn user_thread_start(&self) -> UserThreadStart {
+        UserThreadStart::new(self.instruction_pointer as usize, self.x2 as usize, None)
+    }
+
+    fn install(&self, thread: &Thread) {
+        thread.set_riscv64_user_context(*self);
+    }
+}
