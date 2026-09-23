@@ -43,11 +43,7 @@ fn spawned_threads_receive_kernel_stacks() {
 fn spawned_user_threads_keep_initial_x86_64_context() {
     let _guard = test_lock();
     let scheduler = Scheduler::new();
-    let start = UserThreadStart {
-        instruction_pointer: 0x401000,
-        stack_pointer: 0x7fff_ffff_f000,
-        exception_stack_pointer: None,
-    };
+    let start = UserThreadStart::new(0x401000, 0x7fff_ffff_f000, None);
     let thread = scheduler.spawn_user_named("user", start);
     let context = thread
         .x86_64_user_context()

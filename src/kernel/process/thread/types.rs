@@ -20,10 +20,14 @@ pub struct UserThreadStart {
     pub instruction_pointer: usize,
     pub stack_pointer: usize,
     pub exception_stack_pointer: Option<usize>,
-    #[cfg(target_arch = "aarch64")]
-    pub aarch64_argument_registers: [usize; 3],
-    #[cfg(target_arch = "riscv64")]
-    pub riscv64_argument_registers: [usize; 3],
+    /// The first three arguments, for the architectures that pass them in
+    /// registers (x0–x2 on aarch64, a0–a2 on riscv64).  x86_64 passes
+    /// arguments on the stack and leaves this zero.
+    ///
+    /// Kept arch-neutral rather than as one field per architecture: the
+    /// payload is three words either way, and a shared descriptor that grows a
+    /// field per architecture cannot be read without a gate at every use.
+    pub startup_arguments: [usize; 3],
 }
 
 impl UserThreadStart {
@@ -36,10 +40,7 @@ impl UserThreadStart {
             instruction_pointer,
             stack_pointer,
             exception_stack_pointer,
-            #[cfg(target_arch = "aarch64")]
-            aarch64_argument_registers: [0; 3],
-            #[cfg(target_arch = "riscv64")]
-            riscv64_argument_registers: [0; 3],
+            startup_arguments: [0; 3],
         }
     }
 
@@ -73,15 +74,9 @@ impl UserThreadStart {
         Ok(self)
     }
 
-    #[cfg(target_arch = "aarch64")]
-    pub const fn with_aarch64_argument_registers(mut self, argument_registers: [usize; 3]) -> Self {
-        self.aarch64_argument_registers = argument_registers;
-        self
-    }
-
-    #[cfg(target_arch = "riscv64")]
-    pub const fn with_riscv64_argument_registers(mut self, argument_registers: [usize; 3]) -> Self {
-        self.riscv64_argument_registers = argument_registers;
+    /// Set the arguments the entry trampoline passes in registers.
+    pub const fn with_startup_arguments(mut self, startup_arguments: [usize; 3]) -> Self {
+        self.startup_arguments = startup_arguments;
         self
     }
 }

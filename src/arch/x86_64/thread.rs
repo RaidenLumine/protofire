@@ -613,6 +613,13 @@ impl X86_64UserThreadState {
         *self.exception_handlers.lock() = snapshot.exception_handlers;
         *self.pending_exception_frames.lock() = snapshot.pending_exception_frames;
     }
+
+    /// The state a thread starts with, given where it will run.
+    pub(crate) fn for_user_start(user_start: Option<UserThreadStart>) -> Self {
+        let mut state = Self::new();
+        state.user_context = Mutex::new(user_start.map(X86_64UserThreadContext::from_start));
+        state
+    }
 }
 
 /// A [`X86_64UserThreadState`] as plain data, taken and put back whole.

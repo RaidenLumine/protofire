@@ -39,6 +39,13 @@ impl RiscV64UserThreadState {
     pub(crate) fn restore(&self, snapshot: RiscV64UserThreadStateSnapshot) {
         *self.user_context.lock() = snapshot.user_context;
     }
+
+    /// The state a thread starts with, given where it will run.
+    pub(crate) fn for_user_start(user_start: Option<UserThreadStart>) -> Self {
+        let mut state = Self::new();
+        state.user_context = Mutex::new(user_start.map(RiscV64UserThreadContext::from_start));
+        state
+    }
 }
 
 /// A [`RiscV64UserThreadState`] as plain data, taken and put back whole.
@@ -129,10 +136,7 @@ impl RiscV64UserThreadContext {
     /// instruction pointer and sstatus (SPP = User) are set for U-mode
     /// execution.
     pub fn from_start(start: UserThreadStart) -> Self {
-        #[cfg(target_arch = "riscv64")]
-        let [a0, a1, a2] = start.riscv64_argument_registers;
-        #[cfg(not(target_arch = "riscv64"))]
-        let [a0, a1, a2] = [0; 3];
+        let [a0, a1, a2] = start.startup_arguments;
         Self {
             x1: 0,
             x2: start.stack_pointer as u64,
@@ -327,5 +331,63 @@ impl crate::kernel::process::thread::types::UserForkContext for RiscV64UserThrea
 
     fn install(&self, thread: &Thread) {
         thread.set_riscv64_user_context(*self);
+    }
+}
+
+// ── RISC-V 64 entry trampoline ──────────────────────────────────────
+
+impl Thread {
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    /// Entry trampoline for RISC-V user threads.  Validates the user context,
+    /// switches to U-mode if the thread has a valid `UserThreadStart`, or
+    /// calls the kernel entry function for pure kernel threads.
+    ///
+    /// Called by the scheduler when this thread is dispatched.
+    pub fn run_entry(&self) {
+        let user_start_present = self.user_start().is_some();
+        let user_context = match self.validated_riscv64_user_context() {
+            Ok(user_context) => user_context,
+            Err(_) => {
+                crate::println!(
+                    "[user  ] invalid riscv64 user context before U-mode entry pid={} tid={}",
+                    self.pid(),
+                    self.tid()
+                );
+                return;
+            }
+        };
+
+        if user_start_present && user_context.is_none() {
+            crate::println!(
+                "[user  ] missing riscv64 user context before first U-mode entry pid={} tid={}",
+                self.pid(),
+                self.tid()
+            );
+            return;
+        }
+
+        if crate::kernel::process::thread::lifecycle::should_enter_user_mode(
+            user_start_present,
+            user_context.is_some(),
+        ) {
+            let Some(context) = user_context else {
+                return;
+            };
+            unsafe {
+                crate::arch::riscv64::context::enter_user_mode_with_context(&context);
+            }
+        }
+
+        let Some(entry) = self.kernel_entry() else {
+            crate::println!(
+                "[sched ] refusing to run thread with untyped kernel entry pid={} tid={} entry=0x{:x}",
+                self.pid(),
+                self.tid(),
+                self.entry_point()
+            );
+            return;
+        };
+        crate::arch::interrupts::enable();
+        entry();
     }
 }

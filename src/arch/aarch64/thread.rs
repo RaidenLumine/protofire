@@ -132,10 +132,7 @@ impl AArch64UserThreadContext {
     /// (argument registers); the instruction pointer, stack pointer, and
     /// SPSR are set for EL0 execution.
     pub fn from_start(start: UserThreadStart) -> Self {
-        #[cfg(target_arch = "aarch64")]
-        let [x0, x1, x2] = start.aarch64_argument_registers;
-        #[cfg(not(target_arch = "aarch64"))]
-        let [x0, x1, x2] = [0; 3];
+        let [x0, x1, x2] = start.startup_arguments;
         Self {
             x0: x0 as u64,
             x1: x1 as u64,
@@ -792,6 +789,13 @@ impl AArch64UserThreadState {
         *self.pending_exception_frames.lock() = snapshot.pending_exception_frames;
         self.preempt_resume_logged
             .store(snapshot.preempt_resume_logged, Ordering::SeqCst);
+    }
+
+    /// The state a thread starts with, given where it will run.
+    pub(crate) fn for_user_start(user_start: Option<UserThreadStart>) -> Self {
+        let mut state = Self::new();
+        state.user_context = Mutex::new(user_start.map(AArch64UserThreadContext::from_start));
+        state
     }
 }
 

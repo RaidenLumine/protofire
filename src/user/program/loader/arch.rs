@@ -250,9 +250,7 @@ pub(crate) fn prepare_loaded_user_thread_start(
     };
     let argument_registers =
         build_aarch64_startup_argument_registers(start.stack_pointer, arguments.len())?;
-    Ok(Some(
-        start.with_aarch64_argument_registers(argument_registers),
-    ))
+    Ok(Some(start.with_startup_arguments(argument_registers)))
 }
 
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
@@ -268,9 +266,7 @@ pub(crate) fn prepare_loaded_user_thread_start(
     };
     let argument_registers =
         build_riscv64_startup_argument_registers(start.stack_pointer, arguments.len())?;
-    Ok(Some(
-        start.with_riscv64_argument_registers(argument_registers),
-    ))
+    Ok(Some(start.with_startup_arguments(argument_registers)))
 }
 
 #[cfg(not(any(
