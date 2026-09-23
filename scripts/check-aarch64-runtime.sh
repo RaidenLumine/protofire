@@ -352,4 +352,50 @@ if [ "$remove_log_on_exit" = "0" ]; then
     printf 'aarch64 runtime log saved to %s\n' "$log_file"
 fi
 
+# ── The same kernel on a GICv3 machine ────────────────────────────────
+#
+# This driver implements GICv2 only, and the machine above is a GICv2 one
+# (`arm,cortex-a15-gic` in its device tree) — so every run of this check so far
+# has been a run on the controller the driver happens to understand.  A GICv3
+# is a different shape: the CPU interface is the `ICC_*` system registers
+# rather than a frame at `0x0801_0000`, and SGIs live with the redistributors.
+# Programming the v2 layout onto one used to end in a data abort at exactly that
+# address, inside interrupt-controller init.
+#
+# What is asserted is the answer, not the mechanism: the kernel must say it
+# speaks GICv2 only and stop, rather than touch a controller it does not
+# understand.  The assertion is on the message and on the absence of the fault,
+# so it keeps holding as the driver grows a v3 path — at which point the boot
+# will simply go further and the message will disappear, which is a change
+# someone should make deliberately.
+gicv3_log="$(mktemp)"
+set +e
+timeout 10s "$QEMU_AARCH64" \
+    -machine virt,gic-version=3 \
+    -cpu max \
+    -smp 1 \
+    -m "$QEMU_RAM" \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -serial "file:$gicv3_log" \
+    -no-reboot \
+    -no-shutdown \
+    -netdev user,id=net0 -device virtio-net-device,netdev=net0 >/dev/null 2>&1
+set -e
+
+if ! grep -F "aarch64 interrupt driver implements GICv2 only" "$gicv3_log" >/dev/null 2>&1; then
+    printf 'aarch64 runtime check failed: a GICv3 machine was not told what this driver speaks\n' >&2
+    printf '  last lines of that boot:\n' >&2
+    tail -n 12 "$gicv3_log" | tr -d '\000' >&2
+    rm -f "$gicv3_log"
+    exit 1
+fi
+if grep -F "far=0x0000000008010000" "$gicv3_log" >/dev/null 2>&1; then
+    printf 'aarch64 runtime check failed: the GICv3 boot faulted at the GICv2 CPU interface\n' >&2
+    tail -n 12 "$gicv3_log" | tr -d '\000' >&2
+    rm -f "$gicv3_log"
+    exit 1
+fi
+rm -f "$gicv3_log"
+
 printf 'aarch64 runtime check passed at current metadata/fault/wait boundary\n'

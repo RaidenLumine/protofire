@@ -139,6 +139,8 @@ pub mod interrupt_controller {
     const GICD_ICPENDR0: usize = 0x280;
     const GICD_IPRIORITYR: usize = 0x400;
     const GICD_ITARGETSR: usize = 0x1800;
+    /// Peripheral ID 2: bits [7:4] report the architecture revision.
+    const GICD_PIDR2: usize = 0xFE8;
 
     const GICC_CTLR: usize = 0x0000;
     const GICC_PMR: usize = 0x0004;
@@ -194,23 +196,32 @@ pub mod interrupt_controller {
                 return;
             }
 
-            // Refuse to touch a GICv3.  The device tree says which controller
-            // this machine has, and this driver speaks GICv2: the distributor
-            // register layout differs, the CPU interface is not a frame in
-            // memory at all (it is the ICC_* system registers), and SGIs live
-            // with the redistributors rather than at `GICD_SGIR`.  Programming
-            // the v2 layout on a v3 machine writes into registers that mean
-            // something else — which used to happen in silence, because the
-            // parser records the version and nothing read it.
+            // Ask the controller what it is before programming it.  `GICD_PIDR2`
+            // reports the architecture revision in bits [7:4] — 2 for GICv2, 3
+            // for GICv3 — and unlike the device tree it answers on every boot
+            // path, including this kernel's: on aarch64 QEMU hands us no device
+            // tree at all (a bare-metal ELF gets `x0 = 0`), so a guard that
+            // waits to be told by the DT would never fire.
             //
-            // Stopping here is the honest answer until this driver grows a v3
-            // path: a machine with no interrupt controller initialised cannot
-            // keep time, and saying so beats running without them.
-            if crate::arch::fdt::platform_info().gicv3_detected {
+            // This driver speaks GICv2: distributor register layout, a
+            // memory-mapped CPU interface at `0x0801_0000`, SGIs at
+            // `GICD_SGIR`.  A GICv3 has none of that in that shape — the CPU
+            // interface is the `ICC_*` system registers and SGIs live with the
+            // redistributors — so programming the v2 layout onto one writes
+            // into registers that mean something else.  Measured: that ends in
+            // a data abort at `far=0x0801_0000` inside this very function.
+            //
+            // Stopping here is the honest answer until the driver grows a v3
+            // path: a machine whose interrupt controller is not initialised
+            // cannot keep time, and saying so beats running without one.
+            let architecture_revision = (distributor_read(GICD_PIDR2) >> 4) & 0xF;
+            if architecture_revision != 2 {
                 crate::println!(
-                    "[irq   ] the device tree reports a GICv3, but this kernel's aarch64 \
-                     interrupt driver implements GICv2 only — stopping instead of \
-                     programming registers that mean something else"
+                    "[irq   ] this kernel's aarch64 interrupt driver implements GICv2 only; \
+                     the controller at {:#x} reports architecture revision {} — stopping \
+                     instead of programming registers that mean something else",
+                    gicd_base(),
+                    architecture_revision
                 );
                 loop {
                     crate::arch::halt();
