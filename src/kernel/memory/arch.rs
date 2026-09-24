@@ -154,72 +154,26 @@ pub(crate) fn detect_memory() -> usize {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
 pub(crate) fn bootstrap_translation(virtual_address: usize) -> Option<BootstrapTranslation> {
-    let mapping = crate::arch::mmu::bootstrap_identity_mapping();
-    // Report early identity-map view to aid diagnosis before full runtime mappings
-    // stabilize.
-    crate::arch::mmu::bootstrap_translate(virtual_address).map(|physical_address| {
-        BootstrapTranslation {
-            physical_address,
-            page_size: mapping.page_size,
-            writable: mapping.writable,
-            executable: mapping.executable,
-        }
-    })
+    crate::arch::mmu::bootstrap_translation(virtual_address)
 }
 
-#[cfg(not(target_arch = "x86_64"))]
-pub(crate) fn bootstrap_translation(_virtual_address: usize) -> Option<BootstrapTranslation> {
-    None
-}
-
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn prepared_page_tables_active() -> bool {
-    // Only meaningful on bare-metal x86_64 where prepared runtime tables can be
-    // switched in.
-    crate::arch::mmu::prepared_runtime_kernel_page_tables_active()
+    crate::arch::mmu::prepared_page_tables_active()
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-pub(crate) fn prepared_page_tables_active() -> bool {
-    false
-}
-
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn prepared_translation(
     virtual_address: usize,
     heap_bounds: (usize, usize),
 ) -> Option<PreparedTranslation> {
-    crate::arch::mmu::runtime_prepared_translation(virtual_address, heap_bounds)
-        .map(PreparedTranslation::from)
+    crate::arch::mmu::prepared_translation(virtual_address, heap_bounds)
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-pub(crate) fn prepared_translation(
-    _virtual_address: usize,
-    _heap_bounds: (usize, usize),
-) -> Option<PreparedTranslation> {
-    None
-}
-
-#[cfg(target_arch = "x86_64")]
 pub(crate) fn planned_kernel_region(
     virtual_address: usize,
     heap_bounds: (usize, usize),
 ) -> Option<PlannedKernelRegion> {
-    // Classify the address against the intended kernel page-layout plan.
-    crate::arch::mmu::runtime_kernel_page_plan(heap_bounds)?
-        .classify(virtual_address)
-        .map(PlannedKernelRegion::from)
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-pub(crate) fn planned_kernel_region(
-    _virtual_address: usize,
-    _heap_bounds: (usize, usize),
-) -> Option<PlannedKernelRegion> {
-    None
+    crate::arch::mmu::planned_kernel_region(virtual_address, heap_bounds)
 }
 /// Check that the running kernel tables cover what the kernel's facts describe.
 ///
@@ -227,8 +181,5 @@ pub(crate) fn planned_kernel_region(
 /// architecture that can answer; a target whose tables this does not cover
 /// says nothing rather than lying.
 pub(crate) fn check_kernel_map_coverage() {
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        crate::arch::x86_64::paging::report_kernel_map_coverage();
-    }
+    crate::arch::mmu::report_kernel_map_coverage();
 }

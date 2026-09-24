@@ -156,3 +156,100 @@ pub unsafe fn install_user_page(
 pub unsafe fn unmap_page(_virtual_address: usize) -> bool {
     false
 }
+
+// ── Diagnostics an architecture may not be able to answer ───────────────
+//
+// The kernel asks these about the tables it *prepared*, which is a thing only
+// x86_64 does here: it is the architecture whose runtime tables are built
+// ahead of the switch and described in the kernel's own vocabulary.  The
+// answers are the kernel's diagnostic types (`BootstrapTranslation`,
+// `PreparedTranslation`, `PlannedKernelRegion`), which is not a layering
+// problem: `x86_64::paging` already produces them, and the stubs below are
+// what a target that has no such tables says instead of guessing.
+
+#[cfg(target_arch = "x86_64")]
+pub fn bootstrap_translation(
+    virtual_address: usize,
+) -> Option<crate::kernel::memory::diagnostics::BootstrapTranslation> {
+    let mapping = super::x86_64::paging::bootstrap_identity_mapping();
+    // Report early identity-map view to aid diagnosis before full runtime
+    // mappings stabilize.
+    super::x86_64::paging::bootstrap_translate(virtual_address).map(|physical_address| {
+        crate::kernel::memory::diagnostics::BootstrapTranslation {
+            physical_address,
+            page_size: mapping.page_size,
+            writable: mapping.writable,
+            executable: mapping.executable,
+        }
+    })
+}
+
+/// No bootstrap identity map of this shape to describe.
+#[cfg(not(target_arch = "x86_64"))]
+pub fn bootstrap_translation(
+    _virtual_address: usize,
+) -> Option<crate::kernel::memory::diagnostics::BootstrapTranslation> {
+    None
+}
+
+/// Are the prepared runtime kernel page tables the active ones?
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn prepared_page_tables_active() -> bool {
+    super::x86_64::paging::prepared_runtime_kernel_page_tables_active()
+}
+
+/// Only x86_64 bare metal prepares a table set it can switch to.
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+pub fn prepared_page_tables_active() -> bool {
+    false
+}
+
+/// What the kernel's prepared tables say about an address, if it can say.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn prepared_translation(
+    virtual_address: usize,
+    heap_bounds: (usize, usize),
+) -> Option<crate::kernel::memory::diagnostics::PreparedTranslation> {
+    super::x86_64::paging::runtime_prepared_translation(virtual_address, heap_bounds)
+        .map(crate::kernel::memory::diagnostics::PreparedTranslation::from)
+}
+
+/// No prepared table set to read.
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+pub fn prepared_translation(
+    _virtual_address: usize,
+    _heap_bounds: (usize, usize),
+) -> Option<crate::kernel::memory::diagnostics::PreparedTranslation> {
+    None
+}
+
+/// Which intended kernel page-layout region an address falls in, if any.
+#[cfg(target_arch = "x86_64")]
+pub fn planned_kernel_region(
+    virtual_address: usize,
+    heap_bounds: (usize, usize),
+) -> Option<crate::kernel::memory::diagnostics::PlannedKernelRegion> {
+    // Classify the address against the intended kernel page-layout plan.
+    super::x86_64::paging::runtime_kernel_page_plan(heap_bounds)?
+        .classify(virtual_address)
+        .map(crate::kernel::memory::diagnostics::PlannedKernelRegion::from)
+}
+
+/// No page-layout plan to classify against.
+#[cfg(not(target_arch = "x86_64"))]
+pub fn planned_kernel_region(
+    _virtual_address: usize,
+    _heap_bounds: (usize, usize),
+) -> Option<crate::kernel::memory::diagnostics::PlannedKernelRegion> {
+    None
+}
+
+/// Report whether the running tables cover what the kernel's facts describe.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn report_kernel_map_coverage() {
+    super::x86_64::paging::report_kernel_map_coverage();
+}
+
+/// Nothing to check where this build has no kernel page-table plan.
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+pub fn report_kernel_map_coverage() {}

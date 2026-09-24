@@ -438,7 +438,9 @@ interrupt state on drop.
 ## 6. Architecture Dispatch
 
 `src/kernel/memory/arch.rs` provides thin wrappers around platform MMU
-primitives.
+primitives.  They are forwarders: the per-architecture answers — including
+"this target has none" — live in `src/arch/mmu.rs`, so this file names no
+architecture at all.
 
 ### TLB Shootdown
 
