@@ -24,9 +24,9 @@ macro_rules! payload_or_stub {
 
         /// A host (or another architecture) sees a payload it cannot have.
         #[cfg(not(all(
-                                    target_arch = $arch,
-                                    any(target_os = "linux", target_os = "none")
-                                )))]
+                                            target_arch = $arch,
+                                            any(target_os = "linux", target_os = "none")
+                                        )))]
         pub mod $name {
             pub fn payload_bytes() -> &'static [u8] {
                 &[]
