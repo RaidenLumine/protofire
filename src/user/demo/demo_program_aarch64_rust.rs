@@ -19,40 +19,23 @@
 
 #![cfg_attr(not(test), allow(dead_code))]
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AArch64AbortSyndrome;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AArch64UserExceptionFrame;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_EXECUTE;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_READ;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_UNKNOWN;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_WRITE;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AARCH64_EXCEPTION_DATA_ABORT_VECTOR;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::ProcessSpawnOptions;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::ProcessSpawnStringRef;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::ProcessTerminationRecord;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::PROCESS_SPAWN_FLAG_OVERRIDE_ARGUMENTS;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::PROCESS_SPAWN_FLAG_OVERRIDE_ENVIRONMENT;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
 
 /// Compute the runtime address of a symbol inside this payload section using a
@@ -65,7 +48,6 @@ use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
 /// correct under any relocation as long as symbol and reference stay within
 /// ~2 KiB of each other — which every payload reference does, because the
 /// whole section is contiguous and small.
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 macro_rules! adr_relative_address {
     ($symbol:path) => {{
         let address: usize;
@@ -87,140 +69,113 @@ macro_rules! adr_relative_address {
     }};
 }
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_HELLO_MESSAGE: [u8; b"[user  ] hello from aarch64 rust payload\n".len()] =
     *b"[user  ] hello from aarch64 rust payload\n";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_TRIGGER_LOCAL_FAULT_MESSAGE: [u8;
     b"[user  ] aarch64-rust triggering local code-write fault\n".len()] =
     *b"[user  ] aarch64-rust triggering local code-write fault\n";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_RESUMED_LOCAL_FAULT_MESSAGE: [u8;
     b"[user  ] aarch64-rust resumed after local code-write fault\n".len()] =
     *b"[user  ] aarch64-rust resumed after local code-write fault\n";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_RESUMED_LOCAL_EXEC_FAULT_MESSAGE: [u8;
     b"[user  ] aarch64-rust resumed after local stack-exec fault\n".len()] =
     *b"[user  ] aarch64-rust resumed after local stack-exec fault\n";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_TRIGGER_NESTED_LOCAL_FAULT_MESSAGE: [u8;
     b"[user  ] aarch64-rust triggering nested local code-write fault\n".len()] =
     *b"[user  ] aarch64-rust triggering nested local code-write fault\n";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_RESUMED_NESTED_LOCAL_FAULT_MESSAGE: [u8;
     b"[user  ] aarch64-rust resumed after nested local code-write fault\n".len()] =
     *b"[user  ] aarch64-rust resumed after nested local code-write fault\n";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_WAIT_VECTOR_PREFIX: [u8; b"[user  ] aarch64-rust wait-vector: ".len()] =
     *b"[user  ] aarch64-rust wait-vector: ";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_WAIT_ERROR_PREFIX: [u8; b"[user  ] aarch64-rust wait-error: ".len()] =
     *b"[user  ] aarch64-rust wait-error: ";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_WAIT_FSC_PREFIX: [u8; b"[user  ] aarch64-rust wait-fsc: ".len()] =
     *b"[user  ] aarch64-rust wait-fsc: ";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_WAIT_ACCESS_PREFIX: [u8; b"[user  ] aarch64-rust wait-access: ".len()] =
     *b"[user  ] aarch64-rust wait-access: ";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_SPAWN_FAILED_PREFIX: [u8; b"[user  ] aarch64-rust spawn failed: ".len()] =
     *b"[user  ] aarch64-rust spawn failed: ";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_WAIT_FAILED_PREFIX: [u8; b"[user  ] aarch64-rust wait failed: ".len()] =
     *b"[user  ] aarch64-rust wait failed: ";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_WAIT_SIZE_PREFIX: [u8; b"[user  ] aarch64-rust wait-size: ".len()] =
     *b"[user  ] aarch64-rust wait-size: ";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_WAIT_KIND_PREFIX: [u8; b"[user  ] aarch64-rust wait-kind: ".len()] =
     *b"[user  ] aarch64-rust wait-kind: ";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_INSTALL_FAILED_PREFIX: [u8; b"[user  ] aarch64-rust install-handler failed: "
     .len()] = *b"[user  ] aarch64-rust install-handler failed: ";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_CHILD_CATALOG_PATH: [u8; b"app:demo-launcher-fault@0.1.0".len()] =
     *b"app:demo-launcher-fault@0.1.0";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_CHILD_ARGV0: [u8; b"demo-launcher-fault-rust-child".len()] =
     *b"demo-launcher-fault-rust-child";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_CHILD_ARGV1: [u8; b"--trigger-fault=stack-exec".len()] =
     *b"--trigger-fault=stack-exec";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_CHILD_ENV0: [u8; b"ASTRA_APP_ID=demo-launcher-fault-rust-child".len()] =
     *b"ASTRA_APP_ID=demo-launcher-fault-rust-child";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_CHILD_ENV1: [u8; b"ASTRA_PARENT=demo-launcher-rust".len()] =
     *b"ASTRA_PARENT=demo-launcher-rust";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_PERMISSION_LEVEL3: [u8; b"permission fault level 3".len()] =
     *b"permission fault level 3";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_READ_NAME: [u8; b"read".len()] = *b"read";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_WRITE_NAME: [u8; b"write".len()] = *b"write";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_EXECUTE_NAME: [u8; b"execute".len()] = *b"execute";
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_NEWLINE: [u8; b"\n".len()] = *b"\n";
 
 /// A writable byte inside this RX section used as the fault probe target.  The
 /// user view of the payload section is read-execute, so a store to this byte
 /// raises a data abort (permission fault).
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 static RUST_PAYLOAD_CODE_WRITE_PROBE: u8 = 0;
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 unsafe extern "C" {
     #[link_name = "__start_protofire_demo_program_aarch64_rust"]
     static PROTOFIRE_DEMO_PROGRAM_AARCH64_RUST_SECTION_START: u8;
@@ -228,10 +183,8 @@ unsafe extern "C" {
     static PROTOFIRE_DEMO_PROGRAM_AARCH64_RUST_SECTION_END: u8;
 }
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 crate::user::syscall::define_aarch64_payload_runtime!("protofire_demo_program_aarch64_rust");
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 extern "C" fn protofire_demo_program_aarch64_rust_entry(
@@ -444,7 +397,6 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
 /// forever.  The stack-exec trigger pre-arms `x30` with an in-section resume
 /// label before branching, so for that class the handler redirects the frame to
 /// `x30` instead.
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
@@ -499,7 +451,6 @@ extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
 /// Store to a byte inside this RX payload section.  The user page is
 /// read-execute (writes fault), so the `strb` below raises a data abort.  The
 /// handler skips exactly the 4 bytes of the `strb` and resumes at the caller.
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 unsafe fn trigger_local_code_write_fault_once() {
@@ -521,7 +472,6 @@ unsafe fn trigger_local_code_write_fault_once() {
 /// the in-section resume label `3:`; the handler restores the frame to `x30`
 /// and execution continues at the stack restore below.  The `ret` word at `2:`
 /// is the decoy the branch attempted to execute and is never run.
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 unsafe fn trigger_local_stack_exec_fault_once() {
@@ -549,7 +499,6 @@ unsafe fn trigger_local_stack_exec_fault_once() {
 /// A second store into the RX section.  The handler is installed with
 /// `ALLOW_NESTED`, and this re-entry exercises that path from the payload's own
 /// flow before it moves on to spawning the child.
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 unsafe fn trigger_nested_local_code_write_fault_once() {
@@ -566,7 +515,6 @@ unsafe fn trigger_nested_local_code_write_fault_once() {
 }
 
 /// Write `value` as `prefix` followed by a hex number and a newline.
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 fn write_prefixed_hex(prefix: usize, prefix_len: usize, value: usize) {
@@ -578,7 +526,6 @@ fn write_prefixed_hex(prefix: usize, prefix_len: usize, value: usize) {
     );
 }
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 pub fn payload_bytes() -> &'static [u8] {
     unsafe {
         let start = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_AARCH64_RUST_SECTION_START);
@@ -592,12 +539,7 @@ pub fn payload_bytes() -> &'static [u8] {
     }
 }
 
-#[cfg(not(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))))]
-pub fn payload_bytes() -> &'static [u8] {
-    &[]
-}
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 pub fn payload_entry_offset() -> usize {
     let entry = protofire_demo_program_aarch64_rust_entry as *const () as usize;
     let start = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_AARCH64_RUST_SECTION_START) as usize;
@@ -606,7 +548,3 @@ pub fn payload_entry_offset() -> usize {
         .expect("aarch64 rust demo payload entry must follow section start")
 }
 
-#[cfg(not(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))))]
-pub fn payload_entry_offset() -> usize {
-    0
-}

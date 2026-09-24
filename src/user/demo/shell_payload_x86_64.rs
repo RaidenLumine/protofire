@@ -10,16 +10,13 @@ const PAYLOAD_SECTION_NAME: &str = "adastra_shell_payload";
 // The payload is hand-written ELF assembly, so it is assembled for the
 // bare-metal x86_64 target and for an ELF host (Linux) only.  A COFF or Mach-O
 // host cannot assemble it; those builds take the empty fallback below.
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 core::arch::global_asm!(include_str!("shell_payload_x86_64.asm"));
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 unsafe extern "C" {
     static adastra_shell_payload_start: u8;
     static adastra_shell_payload_end: u8;
 }
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 pub fn payload_bytes() -> &'static [u8] {
     unsafe {
         let start = core::ptr::addr_of!(adastra_shell_payload_start);
@@ -34,10 +31,6 @@ pub fn payload_bytes() -> &'static [u8] {
     }
 }
 
-#[cfg(not(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none"))))]
-pub fn payload_bytes() -> &'static [u8] {
-    &[]
-}
 
 /// Entry is at offset 0 — the first instruction at
 /// `adastra_shell_payload_start` is `jmp shell_main`.

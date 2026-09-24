@@ -330,4 +330,38 @@ mod tests {
         assert!(segments.is_empty(), "shell ELF must have no load segments");
         assert_eq!(artifact.bytes.len(), 64, "shell artifact is header-only");
     }
+
+    /// The demo payload is relocated into a user slot before it runs, so every
+    /// direct branch inside it has to stay inside it: a branch that lands
+    /// outside the blob would execute whatever happens to be there in the new
+    /// address space.
+    #[test]
+    fn asm_demo_payload_target_branches_stay_self_contained() {
+        let Some(range) = target_symbol_range(
+            AARCH64_TARGET,
+            DEMO_PAYLOAD_START,
+            "protofire_demo_program_aarch64_payload_code_end",
+        ) else {
+            return;
+        };
+
+        assert!(!range.bytes.is_empty());
+        crate::user::payload_test_support::assert_aarch64_direct_branches_stay_within(&range);
+    }
+
+    /// As above, for the fault payload: it is a payload of its own, and its
+    /// branches are checked against its own extent.
+    #[test]
+    fn asm_fault_payload_target_branches_stay_self_contained() {
+        let Some(range) = target_symbol_range(
+            AARCH64_TARGET,
+            FAULT_PAYLOAD_START,
+            "protofire_demo_program_aarch64_fault_payload_code_end",
+        ) else {
+            return;
+        };
+
+        assert!(!range.bytes.is_empty());
+        crate::user::payload_test_support::assert_aarch64_direct_branches_stay_within(&range);
+    }
 }

@@ -15,27 +15,18 @@
     allow(dead_code)
 )]
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 use core::mem::MaybeUninit;
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::ProcessSpawnOptions;
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::ProcessSpawnStringRef;
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::ProcessTerminationRecord;
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::PROCESS_TERMINATION_KIND_EXCEPTION;
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::PROCESS_TERMINATION_KIND_EXIT;
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
 
 const RUST_IO_PAYLOAD_READ_BUFFER_CAPACITY: usize = 256;
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 macro_rules! rip_relative_address {
     ($symbol:path) => {{
         let address: usize;
@@ -51,230 +42,184 @@ macro_rules! rip_relative_address {
     }};
 }
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_HELLO_MESSAGE: [u8; b"[user  ] hello from rust io payload\n".len()] =
     *b"[user  ] hello from rust io payload\n";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_RESUMED_AFTER_YIELD_MESSAGE: [u8;
     b"[user  ] resumed after rust io yield\n".len()] = *b"[user  ] resumed after rust io yield\n";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_APP_ID_PREFIX: [u8; b"[user  ] rust app-id: ".len()] =
     *b"[user  ] rust app-id: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_CWD_PREFIX: [u8; b"[user  ] rust cwd: ".len()] = *b"[user  ] rust cwd: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_IMAGE_PREFIX: [u8; b"[user  ] rust image: ".len()] =
     *b"[user  ] rust image: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_MANIFEST_PREFIX: [u8; b"[user  ] rust manifest: ".len()] =
     *b"[user  ] rust manifest: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_ARG0_PREFIX: [u8; b"[user  ] rust argv0: ".len()] =
     *b"[user  ] rust argv0: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_ENV0_PREFIX: [u8; b"[user  ] rust env0: ".len()] = *b"[user  ] rust env0: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_STACK_ARG0_PREFIX: [u8; b"[user  ] rust stack-argv0: ".len()] =
     *b"[user  ] rust stack-argv0: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_STACK_ENV0_PREFIX: [u8; b"[user  ] rust stack-env0: ".len()] =
     *b"[user  ] rust stack-env0: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_STACK_AUX_PAGESZ_PREFIX: [u8; b"[user  ] rust stack-aux-pagesz: ".len()] =
     *b"[user  ] rust stack-aux-pagesz: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_STACK_AUX_ENTRY_PREFIX: [u8; b"[user  ] rust stack-aux-entry: ".len()] =
     *b"[user  ] rust stack-aux-entry: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_FILE_PREFIX: [u8; b"[user  ] rust file: ".len()] = *b"[user  ] rust file: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_DATA_PREFIX: [u8; b"[user  ] rust data: ".len()] = *b"[user  ] rust data: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_MKDIR_PREFIX: [u8; b"[user  ] rust mkdir: ".len()] =
     *b"[user  ] rust mkdir: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_SESSION_FILE_PREFIX: [u8; b"[user  ] rust session-file: ".len()] =
     *b"[user  ] rust session-file: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_SESSION_PREFIX: [u8; b"[user  ] rust session: ".len()] =
     *b"[user  ] rust session: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_REMOVED_PREFIX: [u8; b"[user  ] rust removed: ".len()] =
     *b"[user  ] rust removed: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_PID_PREFIX: [u8; b"[user  ] rust wait-pid: ".len()] =
     *b"[user  ] rust wait-pid: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXIT_PREFIX: [u8; b"[user  ] rust wait-exit: ".len()] =
     *b"[user  ] rust wait-exit: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_VECTOR_PREFIX: [u8; b"[user  ] rust wait-vector: ".len()] =
     *b"[user  ] rust wait-vector: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_ERROR_PREFIX: [u8; b"[user  ] rust wait-error: ".len()] =
     *b"[user  ] rust wait-error: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_ADDRESS_PREFIX: [u8; b"[user  ] rust wait-addr: ".len()] =
     *b"[user  ] rust wait-addr: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_PID_PREFIX: [u8; b"[user  ] rust wait-exception-pid: "
     .len()] = *b"[user  ] rust wait-exception-pid: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_VECTOR_PREFIX: [u8;
     b"[user  ] rust wait-exception-vector: ".len()] = *b"[user  ] rust wait-exception-vector: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_ERROR_PREFIX: [u8; b"[user  ] rust wait-exception-error: "
     .len()] = *b"[user  ] rust wait-exception-error: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_ADDRESS_PREFIX: [u8; b"[user  ] rust wait-exception-addr: "
     .len()] = *b"[user  ] rust wait-exception-addr: ";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_CHILD_CATALOG_PATH: [u8; b"app:demo-launcher-rust@0.1.0".len()] =
     *b"app:demo-launcher-rust@0.1.0";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_CHILD_ARGV0: [u8; b"demo-launcher-rust-child".len()] =
     *b"demo-launcher-rust-child";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_CHILD_ARGV1: [u8; b"--spawned-by=rust-io".len()] =
     *b"--spawned-by=rust-io";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_CHILD_ENV0: [u8; b"ASTRA_APP_ID=demo-launcher-rust-child".len()] =
     *b"ASTRA_APP_ID=demo-launcher-rust-child";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_CHILD_ENV1: [u8; b"ASTRA_PARENT=demo-launcher-rust-io".len()] =
     *b"ASTRA_PARENT=demo-launcher-rust-io";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_CHILD_ARGV0: [u8;
     b"demo-launcher-rust-unhandled-page-fault-child".len()] =
     *b"demo-launcher-rust-unhandled-page-fault-child";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_CHILD_ARGV1: [u8; b"--trigger-unhandled-page-fault".len()] =
     *b"--trigger-unhandled-page-fault";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_WAIT_EXCEPTION_CHILD_ENV0: [u8;
     b"ASTRA_APP_ID=demo-launcher-rust-unhandled-page-fault-child".len()] =
     *b"ASTRA_APP_ID=demo-launcher-rust-unhandled-page-fault-child";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_NEWLINE: [u8; b"\n".len()] = *b"\n";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_README_PATH: [u8; b"/system/runtime/README.txt".len()] =
     *b"/system/runtime/README.txt";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_DATA_PATH: [u8; b"/data/users/guest/downloads/ring3-rust-io.txt".len()] =
     *b"/data/users/guest/downloads/ring3-rust-io.txt";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_STATE_DIR_PATH: [u8; b"/data/users/guest/downloads/rust-io-state".len()] =
     *b"/data/users/guest/downloads/rust-io-state";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_SESSION_PATH: [u8;
     b"/data/users/guest/downloads/rust-io-state/session.log".len()] =
     *b"/data/users/guest/downloads/rust-io-state/session.log";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_TEMP_PATH: [u8; b"/data/users/guest/downloads/rust-io-state/temp.bin"
     .len()] = *b"/data/users/guest/downloads/rust-io-state/temp.bin";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_DATA_BYTES: [u8; b"rust io data path roundtrip".len()] =
     *b"rust io data path roundtrip";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_SESSION_BYTES: [u8; b"rust io session persisted".len()] =
     *b"rust io session persisted";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_SESSION_TRUNCATED_BYTES: [u8; b"rust io session".len()] =
     *b"rust io session";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[link_section = "adastra_demo_program_rust_io"]
 static RUST_IO_PAYLOAD_TEMP_BYTES: [u8; b"temporary rust io state".len()] =
     *b"temporary rust io state";
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 unsafe extern "C" {
     static adastra_demo_program_rust_io_entry: u8;
 
@@ -284,10 +229,8 @@ unsafe extern "C" {
     static ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_END: u8;
 }
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 crate::user::syscall::define_x86_64_payload_runtime!("adastra_demo_program_rust_io");
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 core::arch::global_asm!(
     r#"
 .section adastra_demo_program_rust_io,"ax",@progbits
@@ -300,7 +243,6 @@ adastra_demo_program_rust_io_entry:
     main = sym adastra_demo_program_rust_io_main_from_stack,
 );
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 pub fn payload_bytes() -> &'static [u8] {
     unsafe {
         let start = core::ptr::addr_of!(ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_START);
@@ -314,12 +256,7 @@ pub fn payload_bytes() -> &'static [u8] {
     }
 }
 
-#[cfg(not(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none"))))]
-pub fn payload_bytes() -> &'static [u8] {
-    &[]
-}
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 pub fn payload_entry_offset() -> usize {
     let entry = core::ptr::addr_of!(adastra_demo_program_rust_io_entry) as usize;
     let start = core::ptr::addr_of!(ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_START) as usize;
@@ -331,12 +268,7 @@ pub fn payload_entry_offset() -> usize {
 // Hosts that cannot carry the ELF payload sections (e.g. a Windows host, whose
 // objects are COFF) get an empty payload and a zero entry offset so the ELF
 // builder facades still link.
-#[cfg(not(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none"))))]
-pub fn payload_entry_offset() -> usize {
-    0
-}
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 fn ensure_ok(status: usize, exit_code: usize) -> usize {
     if payload_runtime_status_is_error(status) {
         exit_with_code(exit_code);
@@ -344,20 +276,17 @@ fn ensure_ok(status: usize, exit_code: usize) -> usize {
     status
 }
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 fn ensure_exact(actual: usize, expected: usize, exit_code: usize) {
     if actual != expected {
         exit_with_code(exit_code);
     }
 }
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 fn ensure_ok_or_already_exists(status: usize, _exit_code: usize) {
     // The state directory may already exist on a re-run; continue either way.
     let _ = status;
 }
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 fn write_prefixed_bytes(prefix: usize, prefix_len: usize, bytes: usize, byte_len: usize) {
     write_section_message(prefix, prefix_len);
     write_section_message(bytes, byte_len);
@@ -367,7 +296,6 @@ fn write_prefixed_bytes(prefix: usize, prefix_len: usize, bytes: usize, byte_len
     );
 }
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 fn write_prefixed_c_string(prefix: usize, prefix_len: usize, c_string: usize) {
     write_section_message(prefix, prefix_len);
     payload_runtime_write_c_string(c_string);
@@ -377,7 +305,6 @@ fn write_prefixed_c_string(prefix: usize, prefix_len: usize, c_string: usize) {
     );
 }
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 fn write_prefixed_hex(prefix: usize, prefix_len: usize, value: usize) {
     write_section_message(prefix, prefix_len);
     payload_runtime_write_hex(value);
@@ -387,7 +314,6 @@ fn write_prefixed_hex(prefix: usize, prefix_len: usize, value: usize) {
     );
 }
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[allow(clippy::too_many_arguments)]
 fn spawn_child_and_wait(
     catalog_path: usize,
@@ -474,7 +400,6 @@ fn spawn_child_and_wait(
     }
 }
 
-#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 #[inline(never)]
 #[link_section = "adastra_demo_program_rust_io"]
 extern "C" fn adastra_demo_program_rust_io_main_from_stack(initial_stack: usize) -> ! {
