@@ -1,29 +1,19 @@
 //! src/kernel/smp/tlb.rs
 //!
-//! TLB shootdown, cross-CPU invalidation, and boot CR3 management.
+//! TLB invalidation across CPUs: the log of what has been edited and who has
+//! walked it.
+//!
+//! The ledger here is architecture-neutral — a fixed ring of ranges, a cursor
+//! per CPU, and the marks a caller waits on — and so is the question it
+//! answers ("has every CPU dropped this?").  What an instruction to drop a
+//! translation looks like, and whether an edit needs the other CPUs told at
+//! all, is the architecture's; see [`crate::arch::tlb`].
 
-// The posted log is the same code on the machine and in tests, so the import
-// follows the log rather than the architecture.
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 use core::sync::atomic::Ordering;
 
 // The online-CPU set is the registry's, not this file's: every caller here
 // asks the same question the scheduler asks.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use super::bringup::online_cpu_count;
-
-/// Full-flush counter for the architectures that keep their latch here.
-///
-/// x86_64's counter lives in its posted log instead — the log is where the
-/// sequences have to agree with each other, and a counter shared with the host
-/// build would let one test's flush look like another test's.
-///
-/// aarch64 and riscv64 compare this against their per-CPU latch in their IPI
-/// handlers.  Nothing in this tree bumps it: they broadcast their page
-/// invalidations where the page table is edited, so the handler is the path
-/// that would serve a request nobody has needed yet.
-#[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
-static TLB_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// How many invalidations can be waiting to be walked at once.
 ///
@@ -38,7 +28,6 @@ static TLB_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::Atomi
 /// sized from: enough headroom that a healthy machine never promotes, and
 /// small enough that the promotion path is the one that covers the burst.
 /// Read the file on a different workload before changing it.
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 const POSTED_SLOTS: usize = 256;
 
 /// Ranges longer than this are dropped with a full flush rather than walked.
@@ -52,7 +41,6 @@ const POSTED_SLOTS: usize = 256;
 /// guard; the ranges that go past this are the ones that free memory in bulk,
 /// which is exactly where a targeted invalidation would be doing thousands of
 /// `invlpg`s to save a flush.
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 const FULL_FLUSH_PAGES: usize = 32;
 
 /// How many CPU ids the log keeps cursors for.
@@ -61,25 +49,18 @@ const FULL_FLUSH_PAGES: usize = 32;
 /// number, so the storage has one shape everywhere and a test can drive it with
 /// any id the machine could produce; the assertions below keep the two from
 /// drifting apart.
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 const LOG_CPUS: usize = 17;
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 const _: () = assert!(LOG_CPUS == super::bringup::MAX_CPUS);
 
 /// What a caller keeps so it can tell when its request has been honoured.
 ///
 /// The variant carries the evidence: a posted range is honoured when every CPU
 /// has walked past its position, and a flush is honoured when every CPU has
-/// published a flush at or after its generation.  `Nothing` is what an
-/// architecture answers when it has already invalidated the range everywhere
-/// (AArch64 broadcasts its page invalidations) or when there is no hardware
-/// TLB to invalidate (host builds).
+/// published a flush at or after its generation.  `Nothing` is what this
+/// kernel answers when the architecture's edit already reached every CPU — or
+/// when there is only one of them, as on the host.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[cfg_attr(
-    not(any(all(target_arch = "x86_64", target_os = "none"), test)),
-    allow(dead_code)
-)]
 pub(crate) enum InvalidationMark {
     /// The request is at this position in the posted log.
     Posted(u64),
@@ -112,13 +93,11 @@ pub(crate) struct PostedStats {
 }
 
 /// One pending invalidation: a page-aligned byte range `[start, end)`.
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 struct PostedSlot {
     start: core::sync::atomic::AtomicUsize,
     end: core::sync::atomic::AtomicUsize,
 }
 
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 impl PostedSlot {
     const fn new() -> Self {
         Self {
@@ -144,7 +123,6 @@ impl PostedSlot {
 /// Everything here is per-instance rather than global so the mechanism can be
 /// driven by tests on the host, where the effects are recordings instead of
 /// `invlpg`s.
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 pub(crate) struct PostedLog {
     slots: [PostedSlot; POSTED_SLOTS],
     /// Next position to hand out.  A consumer walks up to the value it read.
@@ -170,7 +148,6 @@ pub(crate) struct PostedLog {
     generation: core::sync::atomic::AtomicU64,
 }
 
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 impl PostedLog {
     pub(crate) const fn new() -> Self {
         Self {
@@ -184,11 +161,6 @@ impl PostedLog {
             full_flushes: core::sync::atomic::AtomicU64::new(0),
             generation: core::sync::atomic::AtomicU64::new(0),
         }
-    }
-
-    /// The current full-flush generation.
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Acquire)
     }
 
     /// The CPUs whose cursors have to pass an entry before its slot is spent.
@@ -318,27 +290,14 @@ impl PostedLog {
 }
 
 /// Keep this CPU's interrupts off while a producer holds the append lock.
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 struct AppendGuard {
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    rflags: u64,
+    interrupts_were_enabled: bool,
     lock: *const core::sync::atomic::AtomicBool,
 }
 
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 impl AppendGuard {
     fn take(lock: &core::sync::atomic::AtomicBool) -> Self {
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        let rflags = unsafe {
-            let flags: u64;
-            core::arch::asm!(
-                "pushfq",
-                "pop {}",
-                "cli",
-                out(reg) flags,
-            );
-            flags
-        };
+        let interrupts_were_enabled = crate::arch::interrupts::save_and_disable();
         while lock
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
@@ -346,40 +305,21 @@ impl AppendGuard {
             core::hint::spin_loop();
         }
         Self {
-            #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-            rflags,
+            interrupts_were_enabled,
             lock,
         }
     }
 }
 
-#[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 impl Drop for AppendGuard {
     fn drop(&mut self) {
         unsafe { (*self.lock).store(false, Ordering::Release) };
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        if self.rflags & (1 << 9) != 0 {
-            unsafe { core::arch::asm!("sti", options(nomem, nostack, preserves_flags)) };
-        }
+        crate::arch::interrupts::restore(self.interrupts_were_enabled);
     }
 }
 
 /// The log of invalidations waiting to be walked.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 static POSTED: PostedLog = PostedLog::new();
-
-/// Drop this CPU's translations for every page in `[start, end)`.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-unsafe fn invalidate_local_range(start: usize, end: usize) {
-    let page = crate::kernel::memory::paging::PAGE_SIZE;
-    let mut va = start;
-    while va < end {
-        // SAFETY: invalidating a translation is safe for any address; the next
-        // access walks the tables again.
-        unsafe { core::arch::asm!("invlpg [{}]", in(reg) va, options(nostack)) };
-        va += page;
-    }
-}
 
 /// Request a TLB shootdown for the given virtual address on all CPUs.
 ///
@@ -389,12 +329,11 @@ unsafe fn invalidate_local_range(start: usize, end: usize) {
 /// whole TLB, which cost far more than the translation being replaced —
 /// especially for the user address space, where a single unmap used to ask for
 /// one per page.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg_attr(not(all(target_arch = "x86_64", target_os = "none")), allow(dead_code))] // x86_64's page-table runtime is the only caller
 pub fn tlb_shootdown(va: usize) {
     let page = crate::kernel::memory::paging::PAGE_SIZE;
     let start = va & !(page - 1);
-    unsafe { invalidate_local_range(start, start + page) };
-    POSTED.post(start, start + page, online_cpu_count());
+    drop_range(start, start + page);
 }
 
 /// Request a shootdown for a run of pages, as one request.
@@ -402,7 +341,6 @@ pub fn tlb_shootdown(va: usize) {
 /// A range is one entry in the log rather than one per page: tearing down an
 /// address space is a single edit from the TLB's point of view, and the log is
 /// fixed size.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn tlb_shootdown_range(virtual_address: usize, byte_len: usize) {
     let page = crate::kernel::memory::paging::PAGE_SIZE;
     let start = virtual_address & !(page - 1);
@@ -418,17 +356,25 @@ pub fn tlb_shootdown_range(virtual_address: usize, byte_len: usize) {
     if (end - start) / page > FULL_FLUSH_PAGES {
         // Past a certain length the walk costs more than the flush it avoids,
         // which is also why such a range is promoted on the other CPUs.
-        crate::arch::x86_64::paging::pcid::flush_all_tlb();
-    } else {
-        unsafe { invalidate_local_range(start, end) };
+        crate::arch::tlb::drop_local_all();
+        if crate::arch::tlb::other_cpus_need_telling() {
+            let _ = POSTED.post_full_flush();
+        }
+        return;
     }
-    POSTED.post(start, end, online_cpu_count());
+    drop_range(start, end);
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-pub fn tlb_shootdown_range(_virtual_address: usize, _byte_len: usize) {
-    // The architectures that broadcast their invalidations do it where the
-    // page table is edited, so there is nothing to post here.
+/// Drop `[start, end)` here, and have the other CPUs drop it when they can.
+///
+/// The architecture decides whether either half is work: where an edit
+/// already reaches every CPU, both are no-ops, and where it does not, the
+/// local drop happens here because the edit path did not do it.
+fn drop_range(start: usize, end: usize) {
+    crate::arch::tlb::drop_local_range(start, end);
+    if crate::arch::tlb::other_cpus_need_telling() {
+        POSTED.post(start, end, online_cpu_count());
+    }
 }
 
 /// Apply the invalidations another CPU has posted since this CPU last looked.
@@ -437,7 +383,7 @@ pub fn tlb_shootdown_range(_virtual_address: usize, _byte_len: usize) {
 /// *after* the interrupt context has been saved: it is what makes another
 /// CPU's page-table edit visible here, and what lets that CPU know its edit
 /// has been seen everywhere.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg_attr(not(target_os = "none"), allow(dead_code))] // no host TLB to catch up
 pub fn apply_remote_tlb_invalidations() {
     let percpu = crate::kernel::percpu::get_mut();
     let cpu_id = percpu.cpu_id;
@@ -445,21 +391,16 @@ pub fn apply_remote_tlb_invalidations() {
     POSTED.catch_up(
         cpu_id,
         online,
-        &mut |start, end| unsafe { invalidate_local_range(start, end) },
-        &mut || crate::arch::x86_64::paging::pcid::flush_all_tlb(),
+        &mut crate::arch::tlb::drop_local_range,
+        &mut crate::arch::tlb::drop_local_all,
     );
-    // The log keeps its own record for the marks; this arch-neutral field is
-    // what the other architectures' IPI handlers compare against, so keep it
-    // telling the same story.  On x86_64 the counter that matters is the log's
-    // own; this is the log's answer, not a second one.
-    percpu.tlb_generation_seen = POSTED.generation();
 }
 
 /// Ask every CPU to drop everything on its next kernel entry.
 ///
 /// Used by the PCID allocator when a wrap-around reuses PCIDs that may still
 /// be tagged in remote TLBs, where naming a range is not possible.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg_attr(not(all(target_arch = "x86_64", target_os = "none")), allow(dead_code))] // PCIDs are an x86_64 allocator
 pub fn request_remote_tlb_flush() {
     let _ = POSTED.post_full_flush();
 }
@@ -470,7 +411,6 @@ pub fn request_remote_tlb_flush() {
 /// that says every CPU has dropped the range — which is the grace an address
 /// needs before it can be handed out again.  The request must be made *after*
 /// the page-table edit; that ordering is what the mark's answer rests on.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn post_range_invalidation(virtual_address: usize, byte_len: usize) -> InvalidationMark {
     let page = crate::kernel::memory::paging::PAGE_SIZE;
     let start = virtual_address & !(page - 1);
@@ -480,13 +420,13 @@ pub fn post_range_invalidation(virtual_address: usize, byte_len: usize) -> Inval
     else {
         return InvalidationMark::Nothing;
     };
+    // Where an edit reaches every CPU on its own, there is nothing to post and
+    // nothing to wait for: the answer is the same "already done" that the
+    // architecture gives for the drop.
+    if !crate::arch::tlb::other_cpus_need_telling() {
+        return InvalidationMark::Nothing;
+    }
     POSTED.post(start, end, online_cpu_count())
-}
-
-/// Nothing to post where the architecture's invalidation is a broadcast.
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-pub fn post_range_invalidation(_virtual_address: usize, _byte_len: usize) -> InvalidationMark {
-    InvalidationMark::Nothing
 }
 
 /// Has every online CPU dropped what `mark` asked for?
@@ -497,93 +437,18 @@ pub fn post_range_invalidation(_virtual_address: usize, _byte_len: usize) -> Inv
 /// elapsed time — a CPU that has not reported in keeps the answer `false`, and
 /// the caller then keeps the address retired a little longer rather than
 /// blocking.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn all_cpus_flushed(mark: InvalidationMark) -> bool {
     POSTED.flushed(mark, online_cpu_count())
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-pub fn all_cpus_flushed(mark: InvalidationMark) -> bool {
-    // Only `Nothing` is ever produced where this build cannot check a mark:
-    // AArch64's page invalidation is inner-shareable and already done, and a
-    // host build has no TLB.  Anything else would be asking a question this
-    // build has no way to answer.
-    debug_assert!(matches!(mark, InvalidationMark::Nothing));
-    true
-}
-
 /// A snapshot of the posted-invalidation log, for diagnostics.
 ///
-/// Zeroes where this build has no log to read: the architectures that
-/// broadcast their invalidations never post anything, and a host build has no
-/// hardware TLB to keep one for.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+/// Zeroes on the architectures whose edits never post anything — the log is
+/// the same structure everywhere, and it is empty because nothing was ever
+/// put in it.
 pub fn posted_invalidation_stats() -> PostedStats {
     POSTED.stats(online_cpu_count())
 }
-
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-pub fn posted_invalidation_stats() -> PostedStats {
-    PostedStats::default()
-}
-
-/// Return the current TLB shootdown generation counter.
-///
-/// This is what AArch64/RISC-V SMP compare their own latches against; their
-/// page invalidations are broadcasts, so nothing here bumps it.
-#[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
-pub fn tlb_generation() -> u64 {
-    TLB_GENERATION.load(core::sync::atomic::Ordering::Acquire)
-}
-
-/// Return the current TLB shootdown generation counter.
-///
-/// Host builds never perform remote TLB invalidations, so the counter the
-/// per-arch SMP helpers compare against stays at zero.
-#[cfg(all(
-    not(target_os = "none"),
-    any(target_arch = "aarch64", target_arch = "riscv64")
-))]
-pub fn tlb_generation() -> u64 {
-    0
-}
-
-// ── Boot CR3 ───────────────────────────────────────────────────────────
-
-/// Boot Page Table root (PML4) physical address.  Saved before
-/// [`crate::arch::mmu::activate_prepared_runtime_kernel_page_tables`]
-/// switches away from the bootstrap identity map.  The boot page tables
-/// identity-map the first 1 GiB with 2 MiB pages, which covers all AP
-/// trampoline code/data (0x8000–0xA000) and any ACPI table below 1 GiB.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub(crate) static BOOT_CR3: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-
-/// Save the current CR3 value (the boot page-table root) for AP startup.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub fn save_boot_cr3() {
-    let cr3: u64;
-    unsafe {
-        core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags));
-    }
-    BOOT_CR3.store(cr3, core::sync::atomic::Ordering::Release);
-}
-
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[allow(dead_code)]
-pub fn save_boot_cr3() {}
-
-// ── Stubs for non-bare-metal targets ───────────────────────────────────
-
-/// Stub for non-bare-metal targets (tests, other architectures).
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[allow(dead_code)] // the arch-facing API; only x86_64 posts to the log
-pub fn tlb_shootdown(_va: usize) {
-    // no-op: single-CPU or test environment
-}
-
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[allow(dead_code)]
-pub fn apply_remote_tlb_invalidations() {}
 
 #[cfg(test)]
 mod tests {
@@ -756,8 +621,17 @@ mod tests {
         assert!(promoted > 0, "the log never filled up");
         assert_eq!(machine.log.stats(CPUS).full_flushes, promoted as u64);
         // The generation is the sequence the marks carry, so one bump per
-        // promoted request puts it exactly at the count of them.
-        assert_eq!(machine.log.generation(), promoted as u64);
+        // promoted request makes them exactly 1..=promoted, in order and with
+        // nothing skipped.
+        let mut generations: Vec<u64> = marks
+            .iter()
+            .filter_map(|mark| match mark {
+                InvalidationMark::Flushed(generation) => Some(*generation),
+                _ => None,
+            })
+            .collect();
+        generations.sort_unstable();
+        assert_eq!(generations, (1..=promoted as u64).collect::<Vec<u64>>());
 
         // One catch-up per CPU honours all of them, including the ones that
         // had to be promoted, without walking what the flush already covered.

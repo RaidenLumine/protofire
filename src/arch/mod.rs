@@ -15,6 +15,7 @@ pub mod percpu;
 pub mod syscall_trap;
 pub mod thread;
 pub mod timer;
+pub mod tlb;
 pub mod trap;
 
 #[cfg(target_arch = "aarch64")]

@@ -207,6 +207,28 @@ impl TrampolineData {
     }
 }
 
+// ── Boot page-table root ───────────────────────────────────────────────
+
+/// Boot Page Table root (PML4) physical address.  Saved before
+/// [`crate::arch::mmu::activate_prepared_runtime_kernel_page_tables`]
+/// switches away from the bootstrap identity map, and read back when an AP
+/// starts: the trampoline runs on the boot tables, which identity-map the
+/// first 1 GiB with 2 MiB pages and so cover all of its code and data
+/// (0x8000–0xA000) and any ACPI table below 1 GiB.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub(crate) static BOOT_CR3: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Save the current CR3 value (the boot page-table root) for AP startup.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn save_boot_cr3() {
+    let cr3: u64;
+    // SAFETY: reading CR3 has no side effects.
+    unsafe {
+        core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags));
+    }
+    BOOT_CR3.store(cr3, Ordering::Release);
+}
+
 // ── IPI delivery ───────────────────────────────────────────────────────
 
 /// Send an IPI to a specific APIC ID.
@@ -515,7 +537,7 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
 
     // Use the saved boot CR3 (identity-maps first 1 GiB) rather than the
     // runtime kernel page-table root, which may not identity-map low memory.
-    let cr3 = super::tlb::BOOT_CR3.load(core::sync::atomic::Ordering::Acquire);
+    let cr3 = BOOT_CR3.load(Ordering::Acquire);
 
     // Read the runtime CR3 (the active kernel page-table root) so the AP
     // can switch to it before calling ap_entry.  ap_entry accesses LAPIC

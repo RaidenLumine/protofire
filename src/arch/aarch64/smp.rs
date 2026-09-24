@@ -409,21 +409,17 @@ pub(crate) fn handle_reschedule_sgi() {
     }
 }
 
+/// Apply whatever another core has asked this one to drop.
+///
+/// The request arrives as an SGI, and what it means is "walk the kernel's
+/// invalidation log": the CPU that edited a page table posted the range it
+/// changed, and this is the other half of that.  Today nothing on this
+/// architecture posts — its edits invalidate to the inner-shareable domain
+/// where they happen — so the walk finds an empty log; it is here because it
+/// is the receiving half of the message, and because a walk is what a
+/// shootdown request means wherever one is sent.
 pub(crate) fn handle_tlb_shootdown_sgi() {
-    let generation = crate::kernel::smp::tlb::tlb_generation();
-    let p = crate::kernel::percpu::get_mut();
-    if generation != p.tlb_generation_seen {
-        p.tlb_generation_seen = generation;
-        unsafe {
-            core::arch::asm!(
-                "dsb ish",
-                "tlbi vmalle1is",
-                "dsb ish",
-                "isb",
-                options(nostack)
-            );
-        }
-    }
+    crate::kernel::smp::apply_remote_tlb_invalidations();
 }
 
 // ── AP PerCpuData allocation ───────────────────────────────────────────

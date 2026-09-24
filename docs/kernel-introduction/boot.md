@@ -241,12 +241,13 @@ the timeouts of a sleeping thread are swept by whichever CPU is ticking (see
 | Offset | Field | Description |
 |---|---|---|
 | 0 | `cpu_id: u32` | Logical CPU ID |
-| 4 | `lapic_id: u8` | Local APIC ID |
-| 5 | `numa_node_id: u8` | NUMA node ID (0xFF = NUMA_NODE_NONE) |
+| 4 | `lapic_id: u8` | Local APIC ID (x86_64) |
 | 8 | `scheduler: *mut Scheduler` | CPU scheduler pointer (GS fast-path) |
 | 16 | `tss: *mut u8` | Task State Segment pointer |
-| 24 | `tlb_generation_seen: u64` | TLB invalidation generation |
-| 32 | `context_switches: u64` | Saturation counter |
+| 24 | `context_switches: u64` | Saturation counter |
+| 32 | `kernel_entries: u64` | Kernel entry/exit counter |
+| 40 | `numa_node_id: u8` | NUMA node ID (0xFF = NUMA_NODE_NONE) |
+| 41 | `_reserved: [u8; 23]` | Reserved |
 
 On x86_64 the per-CPU data is accessed via the GS segment base
 (IA32_GS_BASE MSR, `0xC0000101`).  The `scheduler` field is loaded with

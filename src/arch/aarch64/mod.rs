@@ -107,6 +107,7 @@ pub mod trap;
 pub mod user_access;
 
 pub(crate) mod smp;
+pub mod tlb;
 
 pub mod interrupt_controller {
     use core::sync::atomic::AtomicBool;

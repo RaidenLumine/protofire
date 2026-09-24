@@ -114,7 +114,7 @@ shm                          memory                       7
 shm                          process                      1
 shm                          scheduler                    3
 shm                          sync                         1
-smp                          memory                       6
+smp                          memory                       5
 smp                          percpu                       7
 smp                          process                      5
 sync                         process                      16

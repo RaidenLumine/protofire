@@ -18,6 +18,6 @@
 #
 # config                       count
 host                         784
-x86_64-unknown-none          846
+x86_64-unknown-none          840
 aarch64-unknown-none         630
 riscv64gc-unknown-none-elf   560

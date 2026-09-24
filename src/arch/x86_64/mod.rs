@@ -17,6 +17,7 @@ pub mod percpu;
 pub mod port;
 pub mod serial;
 pub mod timer;
+pub mod tlb;
 pub mod user_access;
 
 // Priority 3: new driver modules.

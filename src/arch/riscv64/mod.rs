@@ -91,6 +91,7 @@ pub mod pci;
 pub mod percpu;
 pub mod rtc;
 pub mod smp;
+pub mod tlb;
 pub mod trap;
 pub mod user_access;
 

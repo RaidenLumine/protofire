@@ -45,18 +45,14 @@ pub struct PerCpuData {
     /// Stored as `*mut u8` so the struct compiles on all architectures;
     /// x86_64 code casts to `*mut crate::arch::x86_64::gdt::TaskStateSegment`.
     pub tss: *mut u8,
-    /// Offset 24: Last-observed TLB generation.  Compared against the
-    /// global [`super::smp::TLB_GENERATION`] counter on each kernel entry;
-    /// a mismatch triggers a full CR3 reload (TLB flush).
-    pub tlb_generation_seen: u64,
-    /// Offset 32: Per-CPU context switch counter (saturating).
+    /// Offset 24: Per-CPU context switch counter (saturating).
     pub context_switches: u64,
-    /// Offset 40: Per-CPU kernel entry/exit counter.
+    /// Offset 32: Per-CPU kernel entry/exit counter.
     pub kernel_entries: u64,
-    /// Offset 48: NUMA node ID (NUMA_NODE_NONE = 0xFF = none).
+    /// Offset 40: NUMA node ID (NUMA_NODE_NONE = 0xFF = none).
     pub numa_node_id: crate::kernel::topology::NodeId,
-    /// Offset 49..64: Reserved for future expansion.
-    _reserved: [u8; 15],
+    /// Offset 41..64: Reserved for future expansion.
+    _reserved: [u8; 23],
 }
 
 // SAFETY: each CPU accesses only its own PerCpuData instance, so there is
@@ -93,11 +89,10 @@ impl PerCpuData {
             lapic_id: 0,
             scheduler: core::ptr::null_mut(),
             tss: core::ptr::null_mut(),
-            tlb_generation_seen: 0,
             context_switches: 0,
             kernel_entries: 0,
             numa_node_id: crate::kernel::topology::NUMA_NODE_NONE,
-            _reserved: [0; 15],
+            _reserved: [0; 23],
         }
     }
 }

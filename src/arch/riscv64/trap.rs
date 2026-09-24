@@ -353,15 +353,10 @@ fn handle_interrupt(frame: &mut TrapFrame) {
             if let Some(sched) = crate::kernel::process::Scheduler::global() {
                 sched.set_need_resched();
             }
-            // Check for TLB shootdown request.
-            let gen = crate::kernel::smp::tlb::tlb_generation();
-            let p = crate::kernel::percpu::get_mut();
-            if gen != p.tlb_generation_seen {
-                p.tlb_generation_seen = gen;
-                unsafe {
-                    asm!("sfence.vma", options(nostack));
-                }
-            }
+            // Check for TLB shootdown request: walk whatever another hart
+            // posted for us to drop.  The log is the request; there is no
+            // second counter beside it that could disagree with it.
+            crate::kernel::smp::apply_remote_tlb_invalidations();
             // Clear SIP.SSIP (Supervisor Software Interrupt Pending, bit 1).
             unsafe {
                 asm!("csrci sip, 2", options(nomem, nostack, preserves_flags));
