@@ -52,11 +52,13 @@ impl Scheduler {
     /// Not under the process lock while looking: the lookups take the queue
     /// locks, and the two are not taken in one fixed order anywhere else.
     pub(crate) fn watch_process_placement(&self) {
+        use super::terminate::UnplacedDetail;
         use crate::kernel::process::ProcessState;
         const CAPACITY: usize = Scheduler::PLACEMENT_WATCHDOG_CAPACITY;
 
-        let mut watched = [(0u32, ProcessState::New, 0u32); CAPACITY];
-        let mut threadless = [(0u32, ProcessState::New); CAPACITY];
+        // (pid, state, first tid, how many threads the process has)
+        let mut watched = [(0u32, ProcessState::New, 0u32, 0usize); CAPACITY];
+        let mut threadless = [(0u32, ProcessState::New, UnplacedDetail::NoThreads); CAPACITY];
         let mut count = 0usize;
         let mut threadless_count = 0usize;
         for process in self.process_table().lock().iter() {
@@ -73,20 +75,29 @@ impl Scheduler {
                 // A live process with no threads at all: also unplaced, and not
                 // a matter of timing — nothing is on its way to being placed.
                 if threadless_count < CAPACITY {
-                    threadless[threadless_count] = (process.pid(), process.state());
+                    threadless[threadless_count] = (
+                        process.pid(),
+                        process.state(),
+                        UnplacedDetail::NoThreads,
+                    );
                     threadless_count += 1;
                 }
                 continue;
             };
             if count < CAPACITY {
-                watched[count] = (process.pid(), process.state(), first_tid);
+                watched[count] = (
+                    process.pid(),
+                    process.state(),
+                    first_tid,
+                    process.thread_ids().len(),
+                );
                 count += 1;
             }
         }
 
         let mut missing = [(0u32, 0u32); CAPACITY];
         let mut missing_count = 0usize;
-        for &(pid, _state, tid) in watched.iter().take(count) {
+        for &(pid, _state, tid, _threads) in watched.iter().take(count) {
             if self.find_thread_anywhere_by_pid_and_tid(pid, tid).is_none() {
                 missing[missing_count] = (pid, tid);
                 missing_count += 1;
@@ -110,15 +121,28 @@ impl Scheduler {
             *suspects = next;
         }
 
-        for &(pid, state) in threadless.iter().take(threadless_count) {
-            self.report_unplaced(pid, state);
+        for &(pid, state, detail) in threadless.iter().take(threadless_count) {
+            self.report_unplaced(pid, state, &detail);
         }
         for &pid in confirmed.iter().take(confirmed_count) {
-            let state = self
+            let (state, threads, holding_suspended) = self
                 .process_by_pid(pid)
-                .map(|process| process.state())
-                .unwrap_or(ProcessState::New);
-            self.report_unplaced(pid, state);
+                .map(|process| {
+                    (
+                        process.state(),
+                        process.thread_ids().len(),
+                        process.has_suspended_thread(),
+                    )
+                })
+                .unwrap_or((ProcessState::New, 0, false));
+            self.report_unplaced(
+                pid,
+                state,
+                &UnplacedDetail::NoPlacedThread {
+                    threads,
+                    holding_suspended,
+                },
+            );
         }
     }
 
@@ -127,12 +151,13 @@ impl Scheduler {
         &self,
         pid: crate::kernel::process::ProcessId,
         state: crate::kernel::process::ProcessState,
+        detail: &super::terminate::UnplacedDetail,
     ) {
         let name = self
             .process_by_pid(pid)
             .map(|process| process.name())
             .unwrap_or_else(|| alloc::string::String::from("?"));
-        self.record_unplaced_process(pid, &name, state);
+        self.record_unplaced_process(pid, &name, state, detail);
     }
 
     /// Handle a timer tick, including preemption by default.

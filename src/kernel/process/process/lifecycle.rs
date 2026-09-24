@@ -265,6 +265,16 @@ impl Process {
         self.threads.lock().clone()
     }
 
+    /// Is a thread of this process parked in the suspended-spawn slot?
+    ///
+    /// A thread waiting there is in no queue the scheduler can see: it is
+    /// held for `resume_suspended_process`, which is called by the parent's
+    /// `wait`.  Reported by the placement watchdog, so that "nothing will run
+    /// this" can be told apart from "it is waiting to be resumed".
+    pub(crate) fn has_suspended_thread(&self) -> bool {
+        self.suspended_thread.lock().is_some()
+    }
+
     /// Store the thread for a suspended (START_SUSPENDED) spawn.  The scheduler
     /// will retrieve and enqueue it when the parent calls `wait_process`.
     pub(crate) fn store_suspended_thread(&self, thread: alloc::sync::Arc<super::super::Thread>) {

@@ -15,6 +15,37 @@ use super::super::ThreadId;
 
 use super::Scheduler;
 
+/// What the placement watchdog saw when it named a process.
+///
+/// The two ways a process can be unplaced look the same in the report
+/// otherwise, and they are different findings: a process with no threads left
+/// is bookkeeping that did not finish, and one whose thread is in no queue is
+/// a thread the scheduler has to account for.  Saying which one it was costs
+/// nothing here and saves a round of guessing.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum UnplacedDetail {
+    /// The process has no threads at all.
+    NoThreads,
+    /// The process has this many threads, and none of them was in a queue.
+    NoPlacedThread { threads: usize, holding_suspended: bool },
+}
+
+impl core::fmt::Display for UnplacedDetail {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoThreads => write!(formatter, "(no threads at all)"),
+            Self::NoPlacedThread {
+                threads,
+                holding_suspended,
+            } => write!(
+                formatter,
+                "({threads} thread(s), none placed, suspended-slot {})",
+                if *holding_suspended { "full" } else { "empty" }
+            ),
+        }
+    }
+}
+
 impl Scheduler {
     pub(crate) fn terminate_sibling_threads(&self, process: &Process, current_tid: ThreadId) {
         let pid = process.pid();
@@ -154,8 +185,23 @@ impl Scheduler {
     ///
     /// This is the one that matters: the caller has already made the thread
     /// `Ready`, so a thread that is not enqueued here is in no queue at all.
+    ///
+    /// Said once as well as counted, because it is the *cause* the placement
+    /// watchdog cannot name: by the time the watchdog looks, all it can see is
+    /// a thread in no queue, and this is the line that says whether the enqueue
+    /// that should have placed it was refused.  Same reasoning as the other
+    /// tripwires: a number nobody reads is not an explanation.
     pub(crate) fn record_enqueue_refused(&self) {
-        self.hotspot_stats.lock().observe_enqueue_refused();
+        let mut stats = self.hotspot_stats.lock();
+        stats.observe_enqueue_refused();
+        let first = stats.enqueue_refused_count == 1;
+        drop(stats);
+        if first {
+            crate::println!(
+                "[sched ] a runnable thread was refused by the ready queue: \
+                 it is in no queue at all"
+            );
+        }
     }
 
     /// Count a timed waiter removed while it was still waiting for it.
@@ -182,6 +228,7 @@ impl Scheduler {
         pid: crate::kernel::process::ProcessId,
         name: &str,
         state: crate::kernel::process::ProcessState,
+        detail: &UnplacedDetail,
     ) {
         let mut stats = self.hotspot_stats.lock();
         stats.observe_unplaced_process();
@@ -189,11 +236,12 @@ impl Scheduler {
         drop(stats);
         if first {
             crate::println!(
-                "[sched ] process pid={} name={} state={:?} has no thread in any queue: \
+                "[sched ] process pid={} name={} state={:?} {} has no thread in any queue: \
                  nothing will run it again",
                 pid,
                 name,
-                state
+                state,
+                detail,
             );
         }
     }
