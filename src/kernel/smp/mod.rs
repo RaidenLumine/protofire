@@ -1,32 +1,19 @@
 //! src/kernel/smp/mod.rs
 //!
-//! SMP subsystem — AP discovery, bring-up, and TLB shootdown.
+//! What every architecture has to agree on once more than one CPU is running:
+//! which CPUs are online, and who has dropped which translation.
 //!
-//! ## Boot flow
-//!
-//! 1. BSP discovers AP LAPIC IDs via ACPI MADT parsing.
-//! 2. Trampoline code is copied to a low physical address (0x8000).
-//! 3. For each AP: allocate a kernel stack, write entry data to the trampoline
-//!    page, then send INIT-SIPI-SIPI via the LAPIC ICR.
-//! 4. The AP starts in 16-bit real mode, transitions to 64-bit long mode, and
-//!    calls [`ap_entry`].
-//! 5. [`ap_entry`] initialises per-CPU data, sets GS base, configures the local
-//!    APIC, and enters the idle loop.
-//!
-//! ## Memory layout
-//!
-//! The trampoline sits at physical address `TRAMPOLINE_BASE` (0x8000),
-//! identity-mapped in the boot page tables.  A data page follows at
-//! `TRAMPOLINE_DATA_BASE` (0x9000) for passing parameters to APs.
+//! Starting a CPU is the architecture's business — `arch/x86_64/smp.rs`
+//! (ACPI MADT, a trampoline and INIT-SIPI-SIPI), `arch/aarch64/smp.rs` (the
+//! device tree and PSCI), `arch/riscv64/smp.rs` (SBI HSM) — and so is
+//! reaching one afterwards (`arch::ipi`) and reading the tables that name
+//! them (`arch/x86_64/acpi.rs`).  What is here is the part that would be
+//! written twice otherwise: [`bringup`] holds the registry a CPU joins when
+//! it can be dispatched on, and [`tlb`] holds the log of invalidations the
+//! other CPUs have to walk.
 
 pub(crate) mod bringup;
-pub(crate) mod discovery;
 pub(crate) mod tlb;
 
 pub(crate) use bringup::*;
-#[cfg_attr(
-    not(all(target_arch = "x86_64", target_os = "none")),
-    allow(unused_imports)
-)]
-pub(crate) use discovery::*;
 pub(crate) use tlb::*;

@@ -1,13 +1,19 @@
-//! src/kernel/smp/discovery.rs
+//! src/arch/x86_64/acpi.rs
 //!
-//! ACPI/MADT parsing, RSDP discovery, and AP list management.
+//! The ACPI tables this architecture is told about at boot: the MADT, which
+//! names the processors, and the SRAT/SLIT pair, which says how far apart they
+//! and their memory are.
+//!
+//! Parsed through the RSDP that the boot hand-off carries, before the runtime
+//! page tables replace the bootstrap identity map — the tables live at physical
+//! addresses the identity map covers and the runtime map may not.
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use alloc::vec::Vec;
 
 // ── ACPI structures (minimal — only what MADT parsing needs) ────────────
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 #[repr(C, packed)]
 struct Rsdp {
     signature: [u8; 8],
@@ -17,7 +23,7 @@ struct Rsdp {
     rsdt_address: u32,
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 #[repr(C, packed)]
 #[allow(dead_code)]
 struct RsdpV2 {
@@ -28,7 +34,7 @@ struct RsdpV2 {
     _reserved: [u8; 3],
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 #[repr(C, packed)]
 struct SdtHeader {
     signature: [u8; 4],
@@ -42,7 +48,7 @@ struct SdtHeader {
     creator_revision: u32,
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 #[repr(C, packed)]
 struct Madt {
     header: SdtHeader,
@@ -67,7 +73,7 @@ pub struct LocalApicEntry {
 /// First checks the Multiboot2 info for ACPI tags (type 14 = old RSDP,
 /// type 15 = new RSDP).  Falls back to scanning the BIOS read-only memory
 /// area (0xE0000–0xFFFFF) for the "RSD PTR " signature.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn find_rsdp(multiboot_info: usize) -> Option<*const Rsdp> {
     unsafe {
         // Try Multiboot2 tags first.
@@ -80,7 +86,7 @@ unsafe fn find_rsdp(multiboot_info: usize) -> Option<*const Rsdp> {
 }
 
 /// Search Multiboot2 info tags for ACPI RSDP (type 14 or 15).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn find_rsdp_via_multiboot2(multiboot_info: usize) -> Option<*const Rsdp> {
     if multiboot_info == 0 {
         return None;
@@ -128,7 +134,7 @@ unsafe fn find_rsdp_via_multiboot2(multiboot_info: usize) -> Option<*const Rsdp>
 
 /// Scan the BIOS memory area (0xE0000–0xFFFFF) for the "RSD PTR " signature
 /// on a 16-byte boundary.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn find_rsdp_via_bios_scan() -> Option<*const Rsdp> {
     let start: usize = 0xE0000;
     let end: usize = 0x100000;
@@ -162,7 +168,7 @@ unsafe fn find_rsdp_via_bios_scan() -> Option<*const Rsdp> {
 /// # Safety
 ///
 /// `addr` must be a valid physical address within the identity-mapped region.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn read_phys_u8(addr: usize) -> u8 {
     unsafe { core::ptr::read_volatile(addr as *const u8) }
 }
@@ -171,7 +177,7 @@ unsafe fn read_phys_u8(addr: usize) -> u8 {
 ///
 /// Uses volatile byte-by-byte reads to avoid alignment requirements while
 /// still preventing the compiler from reordering or eliding the access.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn read_phys_u32(addr: usize) -> u32 {
     let b0 = unsafe { read_phys_u8(addr) } as u32;
     let b1 = unsafe { read_phys_u8(addr + 1) } as u32;
@@ -181,7 +187,7 @@ unsafe fn read_phys_u32(addr: usize) -> u32 {
 }
 
 /// Parse the MADT and return a list of enabled local APIC entries.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn parse_madt(madt_addr: usize) -> Vec<LocalApicEntry> {
     let mut entries = Vec::new();
 
@@ -231,7 +237,7 @@ unsafe fn parse_madt(madt_addr: usize) -> Vec<LocalApicEntry> {
 ///
 /// Returns a vector of (logical_cpu_id, lapic_id) pairs for all enabled
 /// processors except the BSP.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 pub fn discover_aps(multiboot_info: usize) -> Vec<(u32, u8)> {
     let rsdp = match unsafe { find_rsdp(multiboot_info) } {
         Some(rsdp) => rsdp,
@@ -304,7 +310,7 @@ pub fn discover_aps(multiboot_info: usize) -> Vec<(u32, u8)> {
 }
 
 /// Search the RSDT for a table with the given 4-byte signature.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn find_table_in_rsdt(rsdt_addr: usize, signature: &[u8; 4]) -> Option<usize> {
     let header = unsafe { &*(rsdt_addr as *const SdtHeader) };
     let entry_count = (header.length as usize - core::mem::size_of::<SdtHeader>()) / 4;
@@ -335,14 +341,14 @@ unsafe fn find_table_in_rsdt(rsdt_addr: usize, signature: &[u8; 4]) -> Option<us
 
 /// Stores the AP list discovered before the page-table switch so it can be
 /// used later during bring-up.  See [`store_early_aps`] and [`take_early_aps`].
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 static EARLY_APS: crate::util::sync_unsafe_cell::SyncUnsafeCell<
     Option<alloc::vec::Vec<(u32, u8)>>,
 > = crate::util::sync_unsafe_cell::SyncUnsafeCell::new(None);
 
 /// Store the AP list discovered during early boot (before the page-table
 /// switch).  Must be called at most once.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 pub fn store_early_aps(aps: alloc::vec::Vec<(u32, u8)>) {
     unsafe {
         *EARLY_APS.get() = Some(aps);
@@ -350,27 +356,16 @@ pub fn store_early_aps(aps: alloc::vec::Vec<(u32, u8)>) {
 }
 
 /// Retrieve the early-discovered AP list (if any).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 pub fn take_early_aps() -> Option<alloc::vec::Vec<(u32, u8)>> {
     unsafe { (*EARLY_APS.get()).take() }
-}
-
-/// Stub for non-bare-metal targets.
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[allow(dead_code)]
-pub fn store_early_aps(_aps: alloc::vec::Vec<(u32, u8)>) {}
-
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[allow(dead_code)]
-pub fn take_early_aps() -> Option<alloc::vec::Vec<(u32, u8)>> {
-    None
 }
 
 // ── Early-discovered NUMA data ─────────────────────────────────────────
 
 /// A single processor-local APIC affinity record parsed from the ACPI SRAT.
 /// Only compiled on x86_64 bare-metal where `discover_numa`/SRAT parsing runs.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 #[derive(Debug, Clone)]
 pub struct CpuAffinity {
     /// Whether this processor is enabled (SRAT flags bit 0).
@@ -383,7 +378,7 @@ pub struct CpuAffinity {
 
 /// A single x2APIC affinity record parsed from the ACPI SRAT.
 /// Only compiled on x86_64 bare-metal where `discover_numa`/SRAT parsing runs.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 #[derive(Debug, Clone)]
 pub struct X2ApicAffinity {
     /// Whether this processor is enabled (SRAT flags bit 0).
@@ -396,7 +391,7 @@ pub struct X2ApicAffinity {
 
 /// A single memory affinity record parsed from the ACPI SRAT.
 /// Only compiled on x86_64 bare-metal where `discover_numa`/SRAT parsing runs.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 #[derive(Debug, Clone)]
 pub struct MemoryAffinity {
     /// Whether this memory region is enabled (SRAT flags bit 0).
@@ -414,7 +409,7 @@ pub struct MemoryAffinity {
 /// data, nothing is stored and the kernel falls back to a single-node
 /// topology.  Only compiled on x86_64 bare-metal where SRAT/SLIT parsing runs
 /// and `build_numa_topology_from_srat` consumes the records.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 #[derive(Debug, Clone)]
 pub struct EarlyNumaData {
     /// `(logical_cpu_id, apic_id)` for every enabled processor, in the same
@@ -433,12 +428,12 @@ pub struct EarlyNumaData {
 
 /// Stores the NUMA data discovered before the page-table switch so it can be
 /// consumed later during topology initialisation.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 static EARLY_NUMA: crate::util::sync_unsafe_cell::SyncUnsafeCell<Option<EarlyNumaData>> =
     crate::util::sync_unsafe_cell::SyncUnsafeCell::new(None);
 
 /// Locate an ACPI table with the given 4-byte signature via the RSDP/RSDT.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn find_acpi_table(rsdp: *const Rsdp, signature: &[u8; 4]) -> Option<usize> {
     let rsdt_addr = unsafe { read_phys_u32(rsdp as usize + 16) } as usize;
     if rsdt_addr == 0 {
@@ -448,7 +443,7 @@ unsafe fn find_acpi_table(rsdp: *const Rsdp, signature: &[u8; 4]) -> Option<usiz
 }
 
 /// Read a little-endian u64 from a potentially unaligned physical address.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn read_phys_u64(addr: usize) -> u64 {
     let lo = unsafe { read_phys_u32(addr) } as u64;
     let hi = unsafe { read_phys_u32(addr + 4) } as u64;
@@ -456,7 +451,7 @@ unsafe fn read_phys_u64(addr: usize) -> u64 {
 }
 
 /// Parse the ACPI SRAT and return the affinity records.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn parse_srat(
     srat_addr: usize,
 ) -> (Vec<CpuAffinity>, Vec<MemoryAffinity>, Vec<X2ApicAffinity>) {
@@ -525,7 +520,7 @@ unsafe fn parse_srat(
 /// Parse the ACPI SLIT distance matrix.
 ///
 /// Returns `None` when the matrix is absent or out of bounds.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe fn parse_slit(slit_addr: usize) -> Option<Vec<Vec<u8>>> {
     let header = unsafe { &*(slit_addr as *const SdtHeader) };
     let table_end = slit_addr + header.length as usize;
@@ -563,7 +558,7 @@ unsafe fn parse_slit(slit_addr: usize) -> Option<Vec<Vec<u8>>> {
 /// the kernel's NUMA topology initialisation.  When the handoff carries no
 /// usable SRAT data, nothing is stored and the kernel falls back to a
 /// single-node topology.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 pub fn discover_numa(multiboot_info: usize) {
     let rsdp = match unsafe { find_rsdp(multiboot_info) } {
         Some(rsdp) => rsdp,
@@ -626,20 +621,7 @@ pub fn discover_numa(multiboot_info: usize) {
 }
 
 /// Retrieve the early-discovered NUMA data (if any).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 pub fn take_early_numa() -> Option<EarlyNumaData> {
     unsafe { (*EARLY_NUMA.get()).take() }
-}
-
-/// Stub for non-bare-metal targets.
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[allow(dead_code)]
-pub fn discover_numa(_multiboot_info: usize) {}
-
-/// Stub for non-bare-metal targets.  The real `EarlyNumaData` type is only
-/// compiled on x86_64 bare-metal, so this stub reports "no NUMA data".
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[allow(dead_code)]
-pub fn take_early_numa() -> Option<()> {
-    None
 }

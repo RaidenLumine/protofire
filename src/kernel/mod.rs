@@ -184,11 +184,11 @@ impl Kernel {
         {
             crate::arch::x86_64::smp::save_boot_cr3();
             let handoff = crate::arch::boot::handoff_address();
-            let aps = crate::kernel::smp::discover_aps(handoff);
-            crate::kernel::smp::store_early_aps(aps);
+            let aps = crate::arch::x86_64::acpi::discover_aps(handoff);
+            crate::arch::x86_64::acpi::store_early_aps(aps);
             // Discover NUMA topology from ACPI SRAT/SLIT (before page-table
             // switch, while the identity map still covers physical memory).
-            crate::kernel::smp::discover_numa(handoff);
+            crate::arch::x86_64::acpi::discover_numa(handoff);
         }
         #[cfg(all(target_arch = "aarch64", target_os = "none"))]
         {
@@ -516,7 +516,7 @@ impl Kernel {
         // ── SMP AP bring-up (x86_64) ──
         #[cfg(all(target_arch = "x86_64", target_os = "none"))]
         {
-            if let Some(aps) = crate::kernel::smp::take_early_aps() {
+            if let Some(aps) = crate::arch::x86_64::acpi::take_early_aps() {
                 if !aps.is_empty() {
                     println!("[init  ] SMP: bringing up {} AP(s)...", aps.len());
                     crate::arch::x86_64::smp::bring_up_aps(&aps);
@@ -628,7 +628,7 @@ impl Kernel {
     fn init_numa(&self) {
         // ── x86_64: use ACPI SRAT/SLIT data discovered pre-page-table-switch
         #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        if let Some(numa) = crate::kernel::smp::take_early_numa() {
+        if let Some(numa) = crate::arch::x86_64::acpi::take_early_numa() {
             let topo = Self::build_numa_topology_from_srat(&numa);
             let node_count = topo.nodes.len();
             crate::kernel::topology::init(topo);
@@ -685,7 +685,7 @@ impl Kernel {
     /// Build a [`Topology`] from ACPI SRAT/SLIT data.
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
     fn build_numa_topology_from_srat(
-        numa: &crate::kernel::smp::EarlyNumaData,
+        numa: &crate::arch::x86_64::acpi::EarlyNumaData,
     ) -> crate::kernel::topology::Topology {
         use crate::kernel::topology::NodeId;
         use crate::kernel::topology::NumaNode;

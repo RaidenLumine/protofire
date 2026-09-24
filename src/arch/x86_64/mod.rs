@@ -26,6 +26,7 @@ pub mod user_access;
 pub(crate) mod smp;
 
 // Priority 3: new driver modules.
+pub mod acpi;
 pub mod ahci;
 pub mod apic;
 // The ATA driver speaks the legacy task-file registers; it is compiled on
