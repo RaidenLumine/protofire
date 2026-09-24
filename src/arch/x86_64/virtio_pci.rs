@@ -1,7 +1,7 @@
-//! src/kernel/drivers/virtio_pci.rs
+//! src/arch/x86_64/virtio_pci.rs
 //!
-//! VirtIO PCI legacy transport layer.
-//! VirtIO legacy PCI transport on x86_64.
+//! The VirtIO PCI transport's legacy interface: the one whose registers live
+//! in an IO-port BAR.
 //!
 //! On x86_64 QEMU with the Q35 machine, VirtIO network devices are
 //! attached to the PCI bus (virtio-net-pci).  The legacy PCI interface
@@ -11,10 +11,10 @@
 //! register set so the existing [`VirtIoMmio`] transport can drive a
 //! PCI-attached VirtIO device without modification.
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::arch::x86_64::port::Port;
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::MmioRegion;
 
 // ─── Re-exported MMIO register offsets (MUST match virtio.rs) ──────────
@@ -22,47 +22,47 @@ use crate::kernel::drivers::virtio::MmioRegion;
 // The values are verified against virtio.rs at compile time via static
 // assertions below.
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_CONFIG_GENERATION;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_DEVICE_FEATURES;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_DEVICE_FEATURES_SEL;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_DEVICE_ID;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_DRIVER_FEATURES;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_DRIVER_FEATURES_SEL;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_MAGIC_VALUE;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_DESC_HIGH;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_DESC_LOW;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_DEVICE_HIGH;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_DEVICE_LOW;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_DRIVER_HIGH;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_DRIVER_LOW;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_NOTIFY;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_NUM;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_NUM_MAX;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_READY;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_QUEUE_SEL;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_STATUS;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_VENDOR_ID;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::drivers::virtio::REG_VERSION;
 
 /// VirtIO magic value (little-endian "virt").
@@ -131,7 +131,7 @@ const PCI_ISR_STATUS: u16 = 0x13;
 /// through the legacy IO BAR.  VIRTIO_NET_F_MAC (bit 5) is masked from
 /// DeviceFeatures so the driver falls back to the default QEMU MAC
 /// address (52:54:00:12:34:56).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 pub struct PciLegacyMmioRegion {
     /// IO-port base address from BAR0.
     io_base: u16,
@@ -145,12 +145,12 @@ pub struct PciLegacyMmioRegion {
 
 // SAFETY: IO port access is guarded by the driver-level Mutex that
 // serialises all transport operations.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe impl Send for PciLegacyMmioRegion {}
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe impl Sync for PciLegacyMmioRegion {}
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl PciLegacyMmioRegion {
     /// Create a new PCI legacy MMIO adapter.
     ///
@@ -220,7 +220,7 @@ impl PciLegacyMmioRegion {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl MmioRegion for PciLegacyMmioRegion {
     fn read32(&self, offset: u64) -> u32 {
         match offset {
@@ -383,10 +383,13 @@ impl MmioRegion for PciLegacyMmioRegion {
 
 // ─── Stub for non-x86_64 / host targets ─────────────────────────────────
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+/// A host build has no IO-port BAR to read, so the adapter stands in for one
+/// without registers behind it — enough for the callers to compile, and for
+/// the tests that build a region to describe a device to construct.
+#[cfg(not(target_os = "none"))]
 pub struct PciLegacyMmioRegion;
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(not(target_os = "none"))]
 impl PciLegacyMmioRegion {
     #[allow(unused)]
     pub fn new(_io_base: u16, _device_id: u16, _vendor_id: u16) -> Self {

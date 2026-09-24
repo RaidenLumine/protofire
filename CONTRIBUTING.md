@@ -168,6 +168,31 @@ cargo build --features demo-disk --target aarch64-unknown-none
 cargo build --features demo-disk --target riscv64gc-unknown-none-elf
 ```
 
+### Moving code between modules: clear the incremental cache first
+
+The bare-metal targets build with incremental compilation on, and Cargo's
+cache for a target is keyed by the code that produced it.  Moving a module to
+another file changes which codegen unit defines what, and the objects reused
+from the previous build then refer to symbols the new build emitted somewhere
+else — as *hidden* ones, which the linker cannot resolve:
+
+```
+rust-lld: error: undefined hidden symbol: protofire::kernel::topology::GLOBAL_TOPOLOGY
+```
+
+The names in that error have nothing to do with the file that moved, which is
+what makes it worth recognising: it is not a real unresolved reference, it is
+a stale cache.  Clear the target's artefacts and rebuild, and the link
+succeeds:
+
+```bash
+cargo clean --target x86_64-unknown-none -p protofire
+# ... and the same for aarch64-unknown-none / riscv64gc-unknown-none-elf
+```
+
+`cargo clean -p protofire` without `--target` only clears the host's
+artefacts, so a large move still needs the per-target one.
+
 ---
 
 ## Adding or Modifying a Syscall

@@ -19,6 +19,7 @@ pub mod serial;
 pub mod timer;
 pub mod tlb;
 pub mod user_access;
+pub mod virtio_pci;
 
 // AP trampoline and bring-up: bare metal only, because the trampoline's
 // assembly symbols come from the kernel binary (`main.rs`).

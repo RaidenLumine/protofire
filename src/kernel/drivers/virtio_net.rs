@@ -815,7 +815,7 @@ fn probe_pci_net_x86_64() -> Option<Arc<dyn NetworkDevice>> {
     use crate::arch::x86_64::pci::pci_enumerate_buses;
     use crate::arch::x86_64::pci::PciAddress;
     use crate::arch::x86_64::pci::COMMAND;
-    use crate::kernel::drivers::virtio_pci::PciLegacyMmioRegion;
+    use crate::arch::x86_64::virtio_pci::PciLegacyMmioRegion;
     use crate::kernel::drivers::virtio_pci_modern::PciModernRegion;
     use alloc::boxed::Box;
 
