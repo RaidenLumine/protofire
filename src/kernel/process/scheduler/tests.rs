@@ -393,6 +393,54 @@ mod tests {
     }
 
     #[test]
+    fn a_suspended_thread_in_a_ready_queue_is_dropped_and_unrecoverable() {
+        // A ready queue is supposed to hold threads that can run.  A thread
+        // suspended while it sits in one is exactly what it must not hold, and
+        // the dispatch walk can only drop it — it goes out of the queue and
+        // nowhere else.  What makes that worth a test is that the drop is not
+        // recoverable: `continue_threads_of_process`, the path that resumes
+        // stopped threads, looks for them *in* the queues.
+        //
+        // So this pins three things: the walk returns nothing, it says it
+        // dropped one, and the thread is afterwards in no queue this scheduler
+        // (or any of them) can find.
+        let scheduler = Scheduler::new();
+        let process = Process::new(71, "suspended-in-queue");
+        let thread = Thread::new_kernel(process.clone(), idle_entry);
+        process.set_state(super::super::super::ProcessState::Ready);
+        {
+            let mut processes = scheduler.processes.lock();
+            processes.push(process.clone());
+        }
+        assert!(scheduler
+            .enqueue_ready_thread_local(thread.clone())
+            .enqueued());
+        assert_eq!(scheduler.ready_count(), 1);
+
+        thread.suspend();
+
+        let mut queues = scheduler.ready_queues.lock();
+        let (next, dropped) =
+            super::super::queue::take_next_dispatchable_thread_with_dropped(&mut queues);
+        drop(queues);
+
+        assert!(next.is_none(), "a suspended thread is not dispatchable");
+        assert_eq!(dropped, 1, "the walk has to say what it discarded");
+        assert_eq!(scheduler.ready_count(), 0);
+        assert!(
+            scheduler
+                .find_thread_by_pid_and_tid(process.pid(), thread.tid())
+                .is_none(),
+            "dropped out of the queue, the thread is in no queue at all"
+        );
+        assert_eq!(
+            scheduler.continue_threads_of_process(&process),
+            0,
+            "and the resume path only walks queues, so it cannot find it"
+        );
+    }
+
+    #[test]
     fn scheduler_new_has_zero_hotspot_stats() {
         let scheduler = Scheduler::new();
         assert_eq!(scheduler.hotspot_stats(), SchedulerHotspotStats::default());

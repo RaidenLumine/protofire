@@ -114,10 +114,13 @@ impl Scheduler {
                 return;
             }
 
-            let next_thread = {
+            let (next_thread, dropped) = {
                 let mut ready_queues = self.ready_queues.lock();
-                take_next_dispatchable_thread(&mut ready_queues)
+                take_next_dispatchable_thread_with_dropped(&mut ready_queues)
             };
+            if dropped != 0 {
+                self.record_dropped_ready(dropped);
+            }
 
             let Some(next_thread) = next_thread else {
                 // No runnable local thread — try to steal work from another

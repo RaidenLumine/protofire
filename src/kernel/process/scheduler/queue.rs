@@ -236,20 +236,42 @@ pub(crate) fn requeue_preempted_thread(
     true
 }
 
+/// Walk the ready queues and answer with the next thread to run.
+///
+/// The same walk as [`take_next_dispatchable_thread_with_dropped`], for
+/// callers that are not in a position to record what it discards.
 pub(crate) fn take_next_dispatchable_thread(
     ready_queues: &mut [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT],
 ) -> Option<Arc<Thread>> {
+    take_next_dispatchable_thread_with_dropped(ready_queues).0
+}
+
+/// Walk the ready queues, answering with the next thread to run and with how
+/// many entries were not dispatchable.
+///
+/// The count is not decoration.  A ready queue is supposed to hold only
+/// `Ready` threads, so an entry that is not one is a thread that has just left
+/// the scheduler's view — popped out of the queue and put nowhere — and this
+/// is the only place that sees it happen.
+/// [`super::Scheduler::record_dropped_ready`] says so the first time.
+pub(crate) fn take_next_dispatchable_thread_with_dropped(
+    ready_queues: &mut [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT],
+) -> (Option<Arc<Thread>>, usize) {
+    let mut dropped = 0usize;
     // Scan from highest priority (Realtime) to lowest (Idle).
     for priority in (0..THREAD_PRIORITY_COUNT).rev() {
         let queue = &mut ready_queues[priority];
         while let Some(thread) = queue.pop_front() {
             if should_dispatch_ready_thread(thread.state()) {
-                return Some(thread);
+                return (Some(thread), dropped);
             }
+            // Not `Ready`: the dispatch rules do not allow it to run, and it
+            // goes nowhere.  Counted by the caller.
+            dropped += 1;
         }
     }
 
-    None
+    (None, dropped)
 }
 
 /// Count the total number of ready threads across all priority levels.

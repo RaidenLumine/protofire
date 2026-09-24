@@ -49,6 +49,14 @@ pub struct SchedulerHotspotStats {
     /// A thread the scheduler cannot find is a thread it will never schedule
     /// again, so this is the shape "the machine stopped with work left" has.
     pub unplaced_process_count: u64,
+    /// A ready-queue entry could not be dispatched and was dropped.
+    ///
+    /// A ready queue holds threads that can run, so an entry it cannot
+    /// dispatch is an entry that was put there by mistake or left in a state
+    /// the queue does not accept — and the walk that finds it discards it
+    /// rather than keeping it anywhere.  Should read zero; when it does not,
+    /// whatever put that thread in the queue is the thing to look at.
+    pub dropped_ready_count: u64,
     /// A thread left the CPU and was not put back into any queue.
     ///
     /// The close of every scheduling pass that ends on another thread takes
@@ -100,6 +108,10 @@ impl SchedulerHotspotStats {
 
     pub(crate) fn observe_unplaced_process(&mut self) {
         self.unplaced_process_count = self.unplaced_process_count.saturating_add(1);
+    }
+
+    pub(crate) fn observe_dropped_ready(&mut self, count: usize) {
+        self.dropped_ready_count = self.dropped_ready_count.saturating_add(count as u64);
     }
 
     pub(crate) fn observe_dropped_current(&mut self) {

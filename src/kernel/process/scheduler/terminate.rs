@@ -226,6 +226,25 @@ impl Scheduler {
         }
     }
 
+    /// Count ready-queue entries that could not be dispatched and were dropped.
+    ///
+    /// Same family as the other two: the thread leaves the scheduler's view
+    /// without a queue, and nothing else notices.  Unlike them this one is
+    /// supposed to be impossible — a ready queue holds threads that can run —
+    /// which is why it is counted where the queue is walked.
+    pub(crate) fn record_dropped_ready(&self, count: usize) {
+        let mut stats = self.hotspot_stats.lock();
+        stats.observe_dropped_ready(count);
+        let first = stats.dropped_ready_count == count as u64;
+        drop(stats);
+        if first {
+            crate::println!(
+                "[sched ] a ready-queue entry could not be dispatched: \
+                 it is in no queue at all"
+            );
+        }
+    }
+
     /// Count a timed waiter removed while it was still waiting for it.
     pub(crate) fn record_waiter_lost(&self) {
         let mut stats = self.hotspot_stats.lock();

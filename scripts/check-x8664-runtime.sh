@@ -137,6 +137,16 @@ fail_with_log() {
         tail -n 12 "$log_file" >&2
     fi
 
+    # The scheduler says out loud when it has lost track of a thread, and that
+    # line is what turns "the boot did not finish" into something to act on —
+    # which thread, and whether the machine was already missing it.  It is
+    # printed rather than asserted: a run that says this and *does* finish is a
+    # machine that recovered, and the verdict here stays "did it finish?".
+    if grep -F "[sched ]" "$log_file" >/dev/null 2>&1; then
+        printf '  the scheduler reported threads it lost track of:\n' >&2
+        grep -F "[sched ]" "$log_file" >&2
+    fi
+
     if [ "$remove_log_on_exit" = "0" ]; then
         printf '  full log preserved at: %s\n' "$log_file" >&2
     else
