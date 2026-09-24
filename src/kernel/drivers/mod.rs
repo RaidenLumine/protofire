@@ -17,7 +17,6 @@ pub mod virtio_gpu;
 pub mod virtio_input;
 pub mod virtio_net;
 pub mod virtio_pci_modern;
-pub mod virtio_pci_msix;
 pub mod xhci;
 
 /// PC speaker driver (PIT channel 2 tone generation).

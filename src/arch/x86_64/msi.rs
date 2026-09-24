@@ -83,12 +83,18 @@ impl MsixTableEntry {
 }
 
 /// Set up an MSI-X table entry for a given vector and destination.
+///
+/// The entry comes back **masked**.  A table entry is live as soon as it is
+/// written, and the vector in `data` is one the caller has usually not
+/// finished preparing for — so the mask is what keeps a half-programmed
+/// entry from raising an interrupt, and unmasking is a separate, deliberate
+/// step once the rest of the device is ready.
 pub fn msix_compose_entry(dest_apic_id: u8, vector: u8, delivery_mode: u32) -> MsixTableEntry {
     MsixTableEntry {
         message_address_low: msi_compose_address(dest_apic_id),
         message_address_high: 0,
         message_data: msi_compose_data(vector, delivery_mode),
-        vector_control: 0, // unmasked
+        vector_control: MsixTableEntry::MASK_BIT,
     }
 }
 
@@ -126,7 +132,8 @@ mod tests {
     #[test]
     fn msix_entry_compose() {
         let entry = msix_compose_entry(0, 44, MSI_DELIVERY_FIXED);
-        assert!(!entry.is_masked());
+        // Masked until the caller says otherwise: see the function's note.
+        assert!(entry.is_masked());
         assert_eq!(entry.message_address_low, 0xFEE0_0000);
         assert_eq!(entry.message_data & 0xFF, 44);
     }
