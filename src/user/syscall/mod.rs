@@ -2,6 +2,8 @@
 //!
 //! User-side syscall builders and architecture-specific invocation helpers.
 
+// The invocation primitives below are the only users of these, and they exist
+// on exactly the two architectures that can enter the kernel from user mode.
 #[cfg(any(
     all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")),
     all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))
@@ -13,7 +15,6 @@ use core::arch::asm;
     all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))
 ))]
 use crate::abi::syscall as syscall_abi;
-// Needed only by the architecture-specific invocation primitives below.
 #[cfg(any(
     all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")),
     all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))
@@ -22,47 +23,14 @@ use crate::kernel::syscall::SyscallNumber;
 
 pub struct UserSyscall;
 
-// Re-export the architecture-specific exception-handler flags behind one user
-// API so demo/runtime code can stay target-agnostic.
-#[cfg(target_arch = "x86_64")]
-pub const USER_EXCEPTION_HANDLER_FLAGS_NONE: usize =
-    crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_NONE;
-#[cfg(target_arch = "aarch64")]
-pub const USER_EXCEPTION_HANDLER_FLAGS_NONE: usize =
-    crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_NONE;
-#[cfg(not(target_arch = "x86_64"))]
-#[cfg(not(target_arch = "aarch64"))]
-pub const USER_EXCEPTION_HANDLER_FLAGS_NONE: usize = 0;
-
-#[cfg(target_arch = "x86_64")]
-pub const USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT: usize =
-    crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
-#[cfg(target_arch = "aarch64")]
-pub const USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT: usize =
-    crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
-#[cfg(not(target_arch = "x86_64"))]
-#[cfg(not(target_arch = "aarch64"))]
-pub const USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT: usize = 0;
-
-#[cfg(target_arch = "x86_64")]
-pub const USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK: usize =
-    crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
-#[cfg(target_arch = "aarch64")]
-pub const USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK: usize =
-    crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
-#[cfg(not(target_arch = "x86_64"))]
-#[cfg(not(target_arch = "aarch64"))]
-pub const USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK: usize = 0;
-
-#[cfg(target_arch = "x86_64")]
-pub const USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize =
-    crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
-#[cfg(target_arch = "aarch64")]
-pub const USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize =
-    crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
-#[cfg(not(target_arch = "x86_64"))]
-#[cfg(not(target_arch = "aarch64"))]
-pub const USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize = 0;
+// Re-export the exception-handler flags behind one user API so demo and
+// runtime code can stay target-agnostic.  They live in the ABI module, where
+// the per-architecture names are, and where the assertion that their
+// numbering agrees is.
+pub use crate::abi::exception::USER_EXCEPTION_HANDLER_FLAGS_NONE;
+pub use crate::abi::exception::USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+pub use crate::abi::exception::USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
+pub use crate::abi::exception::USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 
 // ── submodules ────────────────────────────────────────────────────
 
@@ -73,11 +41,17 @@ mod process;
 
 // ── invocation primitives ──────────────────────────────────────────
 
+/// The trap entry, where this target has one.
+///
+/// Every method below is the same instruction with a different calling
+/// convention wrapped around it, so the gate is on the block rather than
+/// repeated on each one: a target that cannot enter the kernel from user mode
+/// has no `UserSyscall` at all, which is what the absent methods said.
+#[cfg(any(
+    all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")),
+    all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))
+))]
 impl UserSyscall {
-    #[cfg(any(
-        all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")),
-        all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))
-    ))]
     #[inline(always)]
     /// Invoke a typed syscall directly from user mode.
     ///
@@ -92,10 +66,6 @@ impl UserSyscall {
         unsafe { Self::invoke_raw_from_user_mode(number as usize, args) }
     }
 
-    #[cfg(any(
-        all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")),
-        all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))
-    ))]
     #[inline(always)]
     /// Invoke a raw syscall number directly from user mode.
     ///

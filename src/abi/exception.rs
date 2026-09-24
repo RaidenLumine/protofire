@@ -252,6 +252,47 @@ pub const X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK: usize = 1 
 
 pub const X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize = 1 << 2;
 
+// ── The flags a user exception handler is installed with ────────────────
+//
+// One set of names for code that should not care which architecture it was
+// compiled for — the user-side syscall builders and the demo payloads.
+//
+// The two architectures' sets above carry the same numbers, and that is a
+// choice this kernel made rather than a coincidence between two conventions,
+// so it is asserted here rather than assumed: a set that drifts fails the
+// build at the line that would otherwise have gone unnoticed, and the
+// per-architecture names stay as the ABI's own record of what each handler
+// installs.
+pub const USER_EXCEPTION_HANDLER_FLAGS_NONE: usize = 0;
+
+pub const USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT: usize = 1 << 0;
+
+pub const USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK: usize = 1 << 1;
+
+pub const USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize = 1 << 2;
+
+const _: () = {
+    assert!(AARCH64_USER_EXCEPTION_HANDLER_FLAG_NONE == USER_EXCEPTION_HANDLER_FLAGS_NONE);
+    assert!(AARCH64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT == USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT);
+    assert!(
+        AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK
+            == USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK
+    );
+    assert!(
+        AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED
+            == USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED
+    );
+    assert!(X86_64_USER_EXCEPTION_HANDLER_FLAG_NONE == USER_EXCEPTION_HANDLER_FLAGS_NONE);
+    assert!(X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT == USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT);
+    assert!(
+        X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK
+            == USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK
+    );
+    assert!(
+        X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED == USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED
+    );
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct X86_64PageFaultError {
     pub present: bool,
