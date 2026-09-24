@@ -13,6 +13,7 @@ pub mod exception_recoverability;
 pub mod interrupt_controller;
 pub mod ipi;
 pub mod mmu;
+pub mod pci;
 pub mod percpu;
 pub mod syscall_trap;
 pub mod thread;
