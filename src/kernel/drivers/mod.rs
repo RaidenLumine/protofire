@@ -4,7 +4,6 @@
 //! Driver manager that initializes hardware drivers and exposes boot-time
 //! devices.
 
-pub mod ahci;
 pub mod framebuffer;
 pub mod framebuffer_console;
 pub mod hda;
@@ -234,7 +233,7 @@ impl DriverManager {
         // AHCI/SATA driver: discovers controllers via PCI enumeration
         // (class=0x01/subclass=0x06).  Registers after ATA PIO so both
         // legacy-IDE and AHCI-mode controllers are discovered.
-        self.register(ahci::driver());
+        self.register(crate::arch::ata::ahci_driver());
         self.register(virtio::driver());
         self.register(virtio_net::driver());
 
@@ -297,7 +296,7 @@ impl DriverManager {
             None
         };
         if self.boot_disk.is_none() {
-            self.boot_disk = ahci::probe_boot_disk();
+            self.boot_disk = crate::arch::ata::ahci_probe_boot_disk();
         }
         if self.boot_disk.is_none() {
             self.boot_disk = virtio::probe_boot_disk();

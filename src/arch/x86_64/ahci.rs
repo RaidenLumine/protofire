@@ -1,4 +1,4 @@
-//! src/kernel/drivers/ahci.rs
+//! src/arch/x86_64/ahci.rs
 //!
 //! AHCI (SATA) host controller driver.
 //! AHCI 1.3 SATA controller driver implementing the `BlockDevice` trait.
@@ -47,79 +47,79 @@ pub const AHCI_REG_VS: usize = 0x10;
 pub const AHCI_REG_BOHC: usize = 0x28;
 
 // GHC register bits.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const GHC_AE: u32 = 1 << 31; // AHCI Enable
 
 // ---------------------------------------------------------------------------
 // Port register offsets (per port, stride = 0x80)
 // ---------------------------------------------------------------------------
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_BASE: usize = 0x100;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_STRIDE: usize = 0x80;
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_CLB: usize = 0x00; // Command List Base (lower 32)
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_CLBU: usize = 0x04; // Command List Base (upper 32)
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_FB: usize = 0x08; // FIS Base (lower 32)
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_FBU: usize = 0x0C; // FIS Base (upper 32)
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_IS: usize = 0x10; // Interrupt Status
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_CMD: usize = 0x18; // Command and Status
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_TFD: usize = 0x20; // Task File Data
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_SERR: usize = 0x30; // SATA Error
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_CI: usize = 0x38; // Command Issue
 
 // PxCMD bits.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const CMD_ST: u32 = 1; // Start (Command List running)
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const CMD_FRE: u32 = 1 << 4; // FIS Receive Enable
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const CMD_FR: u32 = 1 << 14; // FIS Receive Running (read-only)
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const CMD_CR: u32 = 1 << 15; // Command List Running (read-only)
 
 // Port interrupt bits.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PIS_DHR: u32 = 1 << 0; // Device to Host Register FIS
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PIS_TFES: u32 = 1 << 30; // Task File Error Status
 
 // Error bits to clear on init (all recoverable diag + err).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PX_SERR_CLEAR: u32 = 0xFFFF_FFFF;
 
 // ---------------------------------------------------------------------------
 // ATA command constants
 // ---------------------------------------------------------------------------
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const ATA_CMD_IDENTIFY: u8 = 0xEC;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const ATA_CMD_FLUSH_CACHE: u8 = 0xE7;
 
 // ATA device register values.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_DEV_LBA: u8 = 0x40; // LBA mode bit
 
 // ---------------------------------------------------------------------------
 // FIS type constants
 // ---------------------------------------------------------------------------
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const FIS_TYPE_H2D: u8 = 0x27; // Register — Host to Device
                                // The remaining FIS types have no live production consumer yet (the driver
                                // only ever *sends* the H2D FIS); they are asserted distinct by a unit test.
@@ -148,7 +148,7 @@ pub const AHCI_CT_BASE_SIZE: usize = 0x80;
 /// bounce-buffer single-block I/O; one PRD entry suffices).
 pub const AHCI_MAX_PRDT: usize = 1;
 /// Total Command Table allocation per slot.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const AHCI_CT_TOTAL_SIZE: usize = AHCI_CT_BASE_SIZE + AHCI_MAX_PRDT * 16;
 
 // ---------------------------------------------------------------------------
@@ -156,13 +156,13 @@ const AHCI_CT_TOTAL_SIZE: usize = AHCI_CT_BASE_SIZE + AHCI_MAX_PRDT * 16;
 // ---------------------------------------------------------------------------
 
 /// Iteration limit for port command-engine state transitions (ST/CR/FR).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PORT_CMD_POLL_LIMIT: u32 = 1_000_000;
 /// Iteration limit for command completion (single-block I/O).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const CMD_COMPLETE_POLL_LIMIT: u32 = 10_000_000;
 /// Iteration limit for IDENTIFY DEVICE completion.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const IDENTIFY_POLL_LIMIT: u32 = 10_000_000;
 
 // ---------------------------------------------------------------------------
@@ -245,9 +245,9 @@ const _: () = assert!(core::mem::size_of::<H2dRegisterFis>() == 20);
 use crate::kernel::block::BlockDevice;
 use crate::kernel::drivers::Driver;
 use crate::kernel::drivers::DriverCategory;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::memory::DmaBuffer;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::sync::Mutex;
 use alloc::sync::Arc;
 use core::sync::atomic::AtomicBool;
@@ -258,7 +258,7 @@ static AHCI_PROBED: AtomicBool = AtomicBool::new(false);
 /// Stores the BAR5 physical address and first-found port of an AHCI controller
 /// discovered during PCI enumeration so that `probe_boot_disk` can initialise
 /// it later.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 static AHCI_BAR5: Mutex<Option<(u64, u8)>> = Mutex::new(None);
 
 struct AhciDriver;
@@ -294,7 +294,7 @@ pub fn driver() -> Arc<dyn Driver> {
 ///
 /// Bare-metal-only: there is no SATA controller to program on host / other
 /// targets, where `probe_boot_disk` returns `None` instead.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 struct AhciPort {
     /// Virtual (identity-mapped) pointer to the HBA MMIO region (BAR5).
     hba: *mut u8,
@@ -326,19 +326,19 @@ struct AhciPort {
 // is single-threaded.  All mutable state is behind `Mutex` or accessed
 // exclusively during initialisation.  The raw `hba` pointer is an
 // identity-mapped MMIO region safe to access from any thread.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe impl Send for AhciPort {}
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 unsafe impl Sync for AhciPort {}
 
 /// Compute the MMIO address of a port register.
 #[inline]
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn port_reg(hba: *mut u8, port: u8, reg: usize) -> *mut u8 {
     unsafe { hba.add(PORT_BASE + (port as usize) * PORT_STRIDE + reg) }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl AhciPort {
     /// Initialise an AHCI port at `bar5_phys` for the given `port` number.
     ///
@@ -754,7 +754,7 @@ impl AhciPort {
 
 // ─── BlockDevice implementation ──────────────────────────────────────────
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl BlockDevice for AhciPort {
     fn name(&self) -> &str {
         "sata0"
@@ -867,7 +867,7 @@ impl BlockDevice for AhciPort {
 
 /// Enumerate AHCI PCI devices and store the first one for later
 /// initialisation by `probe_boot_disk`.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn probe_ahci() -> crate::Result<()> {
     use crate::arch::x86_64::pci::pci_enumerate_buses;
     use crate::println;
@@ -925,7 +925,9 @@ fn probe_ahci() -> crate::Result<()> {
     Ok(())
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+/// A host build has no PCI configuration space to walk, so there is no
+/// controller to bring up and nothing to report.
+#[cfg(not(target_os = "none"))]
 fn probe_ahci() -> crate::Result<()> {
     Ok(())
 }
@@ -936,7 +938,7 @@ fn probe_ahci() -> crate::Result<()> {
 ///
 /// This is called as a mid-priority fallback by the driver manager
 /// (after ATA PIO, before NVMe).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     use crate::println;
 
@@ -968,7 +970,8 @@ pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     Some(Arc::new(controller))
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+/// A host build discovers nothing, so there is nothing to hand back.
+#[cfg(not(target_os = "none"))]
 pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     None
 }
