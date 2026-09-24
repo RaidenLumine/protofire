@@ -426,7 +426,11 @@ mod tests {
     #[test]
     fn a_live_process_with_no_placed_thread_is_counted() {
         // A process the scheduler can no longer find in any queue is a
-        // process it will never run again.
+        // process it will never run again — but one look cannot say so.  Every
+        // block and every yield takes the thread out of `current` before it
+        // lands in its next queue, and for that window it is in no queue at
+        // all: identical to being lost, except that it ends.  The report is
+        // therefore the second consecutive sighting.
         let scheduler = Scheduler::new();
         let process = Process::new(62, "unplaced");
         let thread = Thread::new_kernel(process.clone(), idle_entry);
@@ -438,10 +442,18 @@ mod tests {
         let _unplaced = thread; // never enqueued, never waiting, never current
 
         scheduler.watch_process_placement();
+        assert_eq!(
+            scheduler.hotspot_stats().unplaced_process_count,
+            0,
+            "one sighting is a thread between two queues, not a lost one"
+        );
+
+        scheduler.watch_process_placement();
         assert_eq!(scheduler.hotspot_stats().unplaced_process_count, 1);
 
         // A thread the scheduler can find is not reported, even when nothing
-        // is ready to run: the process is parked, not lost.
+        // is ready to run: the process is parked, not lost, and looking twice
+        // does not change that.
         let scheduled = Scheduler::new();
         let parked = Process::new(63, "parked");
         parked.set_state(super::super::super::ProcessState::Waiting);
@@ -453,6 +465,7 @@ mod tests {
         parked_thread.block_until(500);
         scheduled.register_timed_waiter(parked_thread.clone(), None);
 
+        scheduled.watch_process_placement();
         scheduled.watch_process_placement();
         assert_eq!(scheduled.hotspot_stats().unplaced_process_count, 0);
     }

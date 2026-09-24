@@ -457,10 +457,13 @@ impl Kernel {
             }
             // Register the BSP scheduler in the per-CPU table so cross-CPU
             // operations (wake, reschedule IPI) can find it.
-            crate::kernel::smp::register_percpu_scheduler(
-                0,
-                &self.scheduler as *const Scheduler as *mut Scheduler,
-            );
+            // SAFETY: `self.scheduler` lives as long as the kernel does.
+            unsafe {
+                crate::kernel::smp::register_percpu_scheduler(
+                    0,
+                    &self.scheduler as *const Scheduler as *mut Scheduler,
+                );
+            }
             println!("[init  ] aarch64: BSP percpu cpu_id=0 TPIDR_EL1 set");
         }
 
@@ -493,10 +496,13 @@ impl Kernel {
 
             // Register the BSP scheduler in the per-CPU table so cross-CPU
             // operations (wake, reschedule IPI) can find it.
-            crate::kernel::smp::register_percpu_scheduler(
-                0,
-                &self.scheduler as *const Scheduler as *mut Scheduler,
-            );
+            // SAFETY: `self.scheduler` lives as long as the kernel does.
+            unsafe {
+                crate::kernel::smp::register_percpu_scheduler(
+                    0,
+                    &self.scheduler as *const Scheduler as *mut Scheduler,
+                );
+            }
             println!("[init  ] riscv64: BSP percpu cpu_id=0 tp set");
         }
 

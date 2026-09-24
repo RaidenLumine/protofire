@@ -500,6 +500,19 @@ pub mod timer {
             .unwrap_or_else(read_counter_frequency);
         let interval = (counter_frequency / TIMER_TICK_HZ as u64).max(1);
         TIMER_INTERVAL.store(interval, Ordering::Relaxed);
+
+        // The timer is a private peripheral interrupt, and so is every register
+        // that configures it: in GICv2 the SGI/PPI bank of the distributor
+        // (`IGROUPR0`, `IPRIORITYR0-7`, `ISENABLER0`) is banked, so `init`
+        // configured the BSP's copy and not this one.  A core that arms its
+        // countdown without enabling its own PPI counts down to an interrupt
+        // nobody will take: it then idles for a tick that never arrives, and so
+        // does every thread parked on it — a sleeper never wakes, and a
+        // long-running thread is never preempted.
+        super::interrupt_controller::set_group1(TIMER_INTERRUPT_ID);
+        crate::arch::interrupt_controller::set_priority(TIMER_INTERRUPT_ID, 0x40);
+        crate::arch::interrupt_controller::enable_interrupt(TIMER_INTERRUPT_ID);
+
         program_next_tick(interval);
     }
 

@@ -93,9 +93,9 @@ process                      percpu                       12
 process                      power                        1
 process                      security                     11
 process                      shm                          1
-process                      smp                          29
+process                      smp                          31
 process                      softirq                      1
-process                      sync                         33
+process                      sync                         34
 process                      syscall                      3
 process                      user                         2
 procfs                       fs                           10
@@ -115,9 +115,8 @@ shm                          process                      1
 shm                          scheduler                    3
 shm                          sync                         1
 smp                          memory                       6
-smp                          percpu                       6
-smp                          process                      9
-smp                          sync                         2
+smp                          percpu                       7
+smp                          process                      5
 sync                         process                      16
 syscall                      audit                        9
 syscall                      boot_report                  2

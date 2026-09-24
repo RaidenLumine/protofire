@@ -231,10 +231,10 @@ pub fn bring_up_aps() {
         }
     }
 
-    // Record the online AP count for the SMP subsystem.  The x86_64-only
-    // `ONLINE_AP_COUNT` static is not compiled on riscv64; use the shared
-    // setter that the AArch64 backend also uses.
-    crate::kernel::smp::bringup::set_online_ap_count(online_aps);
+    // No online-AP count is kept here.  A hart is a CPU the scheduler can use
+    // once it has registered a scheduler, and these harts park in `wfi`
+    // without one — so the registry, which counts exactly the CPUs that did
+    // register, already answers 1 for this machine and answers it truthfully.
 }
 
 /// Entry point for secondary harts, called from the assembly trampoline

@@ -107,6 +107,28 @@ impl Scheduler {
         }
     }
 
+    /// Wake every sleeper whose deadline has passed, on every CPU.
+    ///
+    /// A sleeping thread waits in the queue of the CPU it sleeps on, and a
+    /// timer tick is the only thing that wakes it.  That makes "which CPUs
+    /// take a timer interrupt" a liveness question rather than a hardware
+    /// detail: an x86_64 AP never takes one — the PIT is wired to the boot
+    /// CPU — so a worker that sleeps while running on an AP would stay asleep
+    /// for the life of the machine.  So the sweep covers every CPU, and the
+    /// take is exclusive: whichever CPU looks first removes the waiter, and
+    /// the second finds nothing to do.
+    pub(crate) fn wake_expired_sleepers(&self, ticks: u64) -> usize {
+        let mut woke = self.wake_ready_threads(ticks);
+        let local_cpu = crate::kernel::percpu::get().cpu_id;
+        crate::kernel::smp::for_each_percpu_scheduler(|cpu_id, sched| {
+            if cpu_id != local_cpu {
+                woke += sched.wake_ready_threads(ticks);
+            }
+        });
+        woke
+    }
+
+    /// Wake the sleepers whose deadline has passed from this scheduler's queue.
     pub(crate) fn wake_ready_threads(&self, ticks: u64) -> usize {
         let (stale, woke) = {
             let mut waiting_queue = self.waiting_queue.lock();
@@ -199,11 +221,14 @@ impl Scheduler {
         }
     }
 
-    pub(crate) fn register_timed_waiter(
-        &self,
-        thread: Arc<Thread>,
-        cleanup: Option<WaitTimeoutCleanupRef>,
-    ) {
+    /// Park a thread on this scheduler's waiting queue.
+    ///
+    /// The queue holds every thread the scheduler has taken out of the running
+    /// set: one waiting for a deadline, and one blocked on a wait queue that
+    /// will be woken by whoever signals it.  Holding all of them is what lets
+    /// the scheduler tell "parked" from "lost" at all — a thread it cannot
+    /// find in any queue is one it has no way to run again.
+    pub(crate) fn park_thread(&self, thread: Arc<Thread>, cleanup: Option<WaitTimeoutCleanupRef>) {
         thread
             .last_wait_start
             .store(self.current_tick(), core::sync::atomic::Ordering::Relaxed);
@@ -215,6 +240,19 @@ impl Scheduler {
             WaiterIdentity::from_thread(&thread),
         );
         waiting_queue.push(TimedWaiter { thread, cleanup });
+    }
+
+    /// Park a thread that has a deadline, and count its registration.
+    ///
+    /// The count is about deadlines rather than about parking — it is the
+    /// number the machine's timeouts rest on, and the one a sleeper that never
+    /// woke would have shown up in.
+    pub(crate) fn register_timed_waiter(
+        &self,
+        thread: Arc<Thread>,
+        cleanup: Option<WaitTimeoutCleanupRef>,
+    ) {
+        self.park_thread(thread, cleanup);
         self.record_timed_wait_registration();
     }
 

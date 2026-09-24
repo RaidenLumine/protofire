@@ -8,6 +8,7 @@
 
 use crate::kernel::percpu::PerCpuData;
 use alloc::vec::Vec;
+use core::sync::atomic::AtomicU32;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
 
@@ -180,8 +181,16 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
         }
     }
 
-    // Register in kernel-level per-CPU scheduler table.
-    crate::kernel::smp::bringup::register_percpu_scheduler(cpu_id32, sched_ptr);
+    // Join the scheduler registry — the moment this core becomes a CPU the
+    // kernel can dispatch on, and the moment `online_cpu_count` counts it.
+    // It is done here, on the core itself, rather than by the core that called
+    // `CPU_ON`: a core that never reaches this line never claimed to be up.
+    //
+    // SAFETY: `sched_ptr` was allocated for this CPU by the BSP before the
+    // core was started, and it is never freed.
+    unsafe {
+        crate::kernel::smp::bringup::register_percpu_scheduler(cpu_id32, sched_ptr);
+    }
 
     crate::println!("[smp   ] AP cpu_id={} online", cpu_id);
 
@@ -234,8 +243,10 @@ pub(crate) fn bring_up_aps() {
         bring_up_one(cpu_id, idx);
     }
 
-    crate::kernel::smp::bringup::set_online_ap_count(aps.len() as u32);
-    crate::println!("[smp   ] {} AP(s) online", aps.len());
+    // "Started", not "online": PSCI returns as soon as the request is accepted,
+    // and each core reports for itself from its own entry point — that is the
+    // line the online count is built from, and it is not this one.
+    crate::println!("[smp   ] {} AP(s) started", aps.len());
 }
 
 fn bring_up_one(cpu_id: u32, idx: usize) {
@@ -251,13 +262,12 @@ fn bring_up_one(cpu_id: u32, idx: usize) {
     // Pre-create scheduler + idle process.
     use alloc::boxed::Box;
     let sched = Box::new(crate::kernel::process::Scheduler::new());
-    sched.init_next_cpu(cpu_id);
+    // Bound to this CPU before anything is spawned on it: its idle thread is
+    // pinned there, and the round-robin that places other threads starts there.
+    sched.bind_to_cpu(cpu_id);
     let sched_ptr = Box::into_raw(sched);
 
     allocate_ap_percpu(cpu_id, sched_ptr);
-
-    // Register early so idle thread affinitises to this CPU.
-    crate::kernel::smp::bringup::set_online_ap_count(cpu_id);
 
     unsafe {
         (*sched_ptr).start_idle_process();
@@ -279,18 +289,32 @@ fn bring_up_one(cpu_id: u32, idx: usize) {
 
 // ── AP discovery ───────────────────────────────────────────────────────
 
+/// How many cores a GICv2 distributor can be told to target.
+///
+/// An SGI names its destinations as bits in an eight-bit list on the
+/// distributor, so the controller simply cannot address more than eight of
+/// them.  See [`discover_aps`] for why that is the ceiling on which cores this
+/// kernel brings up.
+const GICV2_CPU_INTERFACES: u32 = 8;
+
 fn discover_aps() -> Vec<(u32, u64)> {
-    // The device tree is the authority when it arrives; when it does not — the
-    // boot protocol's pointer measured as zero on this machine — the
-    // distributor still knows how many CPU interfaces it was built with.
+    // Two authorities with two different answers: the device tree says which
+    // cores exist, the distributor says which of them this kernel can address.
+    // A core beyond the second is a core that can be started and then never
+    // woken — work would be placed on it with no IPI able to reach it — so the
+    // smaller of the two is the number worth bringing up.
     let from_fdt = crate::arch::fdt::cpu_count();
-    let total = if from_fdt > 1 {
-        from_fdt
-    } else {
-        gicd_cpu_count().unwrap_or(from_fdt)
-    };
+    let addressable = gicd_cpu_count().unwrap_or(GICV2_CPU_INTERFACES);
+    let total = from_fdt.min(addressable);
     if total <= 1 {
         return Vec::new();
+    }
+    if from_fdt > total {
+        crate::println!(
+            "[smp   ] {} CPUs present, {} addressable by this interrupt controller",
+            from_fdt,
+            total
+        );
     }
     let mut aps = Vec::new();
     for id in 1..total {
@@ -315,20 +339,14 @@ fn gicd_cpu_count() -> Option<u32> {
 
 // ── GIC SGI (IPI) delivery ─────────────────────────────────────────────
 
-// The SGI-send primitives below are not yet wired into AP reschedule /
-// shootdown signalling (the aarch64 SMP bring-up currently uses memory-based
-// flags), so they are intentionally unused (dead-code allowed).
-#[allow(dead_code)]
 const GICD_SGIR: usize = 0xF00;
 
-#[allow(dead_code)]
 fn gicd_base() -> usize {
     crate::arch::fdt::platform_info()
         .gicd_base
         .unwrap_or(0x0800_0000)
 }
 
-#[allow(dead_code)]
 fn send_sgi(sgi_id: u8, cpu_mask: u8) {
     if sgi_id >= 16 {
         return;
@@ -340,14 +358,27 @@ fn send_sgi(sgi_id: u8, cpu_mask: u8) {
     }
 }
 
-#[allow(dead_code)]
+/// Ask one core to look at its run queue again.
+///
+/// The distributor addresses cores by [[GICV2_CPU_INTERFACES]|bit position] in
+/// the target list, and this kernel calls a core by that same number: the
+/// core's own id, from `MPIDR_EL1`.  A core the list cannot name — id 0 is the
+/// caller, and anything past the list's width — is not one this can reach.
 pub(crate) fn send_reschedule_sgi(cpu_id: u32) {
-    if cpu_id == 0 || cpu_id as usize >= MAX_CPUS {
+    if cpu_id == 0 || cpu_id >= GICV2_CPU_INTERFACES {
         return;
     }
     send_sgi(SGI_RESCHEDULE, 1u8 << (cpu_id as u8));
 }
 
+/// Broadcast a "drop your translations" request to the other cores.
+///
+/// Nothing sends this, and that is the design rather than an omission: this
+/// kernel's page-table edits broadcast their invalidation to the
+/// inner-shareable domain themselves, so no remote translation is left for an
+/// IPI to drop.  The receive side stays wired because it is the other half of
+/// the same message; the send side is here so that the pair is visible
+/// together.
 #[allow(dead_code)]
 pub(crate) fn send_tlb_shootdown_all() {
     let reg = (gicd_base() + GICD_SGIR) as *mut u32;
@@ -357,7 +388,22 @@ pub(crate) fn send_tlb_shootdown_all() {
     }
 }
 
+/// CPUs that have already said they were woken by a reschedule IPI.
+static RESCHEDULE_IPI_ANNOUNCED: AtomicU32 = AtomicU32::new(0);
+
 pub(crate) fn handle_reschedule_sgi() {
+    // A request that arrived and a request that was never sent look the same
+    // from the scheduler's side: both end in "the queue was looked at and had
+    // nothing newer".  The first one per CPU is announced so the two can be
+    // told apart from outside, and the announcement is bounded by the CPU
+    // count rather than by the traffic.
+    let cpu_id = crate::kernel::percpu::get().cpu_id;
+    if cpu_id < crate::kernel::smp::MAX_CPUS as u32 {
+        let bit = 1u32 << cpu_id;
+        if RESCHEDULE_IPI_ANNOUNCED.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
+            crate::println!("[smp   ] cpu={} woke on a reschedule IPI", cpu_id);
+        }
+    }
     if let Some(s) = crate::kernel::process::Scheduler::global() {
         s.set_need_resched();
     }

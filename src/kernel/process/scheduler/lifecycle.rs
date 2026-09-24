@@ -46,6 +46,7 @@ impl Scheduler {
             next_pid: Mutex::new(2),
             freed_pids: Mutex::new(Vec::new()),
             need_resched: AtomicBool::new(false),
+            home_cpu: AtomicU32::new(0),
             next_cpu: AtomicU32::new(0),
             dispatch_context: ContextCell::new(Context::empty()),
             dying_thread: Mutex::new(None),
@@ -53,15 +54,26 @@ impl Scheduler {
             simulated_ticks: Mutex::new(0),
             hotspot_stats: Mutex::new(SchedulerHotspotStats::default()),
             stats: Mutex::new(SchedulerStats::default()),
+            unplaced_suspects: Mutex::new([(0, 0); Self::PLACEMENT_WATCHDOG_CAPACITY]),
         }
     }
 
-    /// Initialise the per-CPU thread-spread counter to `cpu_id`.
+    /// Say which CPU this scheduler belongs to.
     ///
-    /// Each CPU's scheduler keeps a round-robin counter that determines
-    /// which CPU a newly spawned thread is assigned to.
-    pub fn init_next_cpu(&self, cpu_id: u32) {
+    /// Two things follow from it: the CPU's idle thread is pinned here, and
+    /// the round-robin that assigns new threads starts from here — so work
+    /// spawned on this CPU spreads outwards instead of landing on CPU 0.
+    ///
+    /// Called before anything is spawned on the scheduler, which is why it can
+    /// be a plain store.
+    pub fn bind_to_cpu(&self, cpu_id: u32) {
+        self.home_cpu.store(cpu_id, Ordering::Release);
         self.next_cpu.store(cpu_id, Ordering::Release);
+    }
+
+    /// The CPU this scheduler belongs to.
+    pub(crate) fn home_cpu(&self) -> u32 {
+        self.home_cpu.load(Ordering::Acquire)
     }
 
     /// Allocate a fresh PID.
@@ -69,7 +81,19 @@ impl Scheduler {
     /// Reuses freed PIDs before allocating fresh ones so long-running
     /// systems don't exhaust the u32 PID space.  PID `1` is reserved for
     /// the idle process, so allocation starts at `2`.
+    ///
+    /// The pool is the primary scheduler's, whichever CPU asks.  A pid names a
+    /// process in the process registry, and the registry — like the children
+    /// lists and the reaped-pid pool — belongs to the primary scheduler.  With
+    /// a counter per CPU, two CPUs hand the same pid to two different
+    /// processes, and every lookup by pid (wait, reap, signal delivery,
+    /// `/proc/<pid>`) then has two answers and picks one.
     pub(crate) fn allocate_pid(&self) -> u32 {
+        self.primary_scheduler().allocate_pid_from_pool()
+    }
+
+    /// Take the next pid out of the primary scheduler's pool.
+    fn allocate_pid_from_pool(&self) -> u32 {
         // Reuse freed PIDs before allocating fresh ones so long-running
         // systems don't exhaust the u32 PID space.
         if let Some(pid) = self.freed_pids.lock().pop() {

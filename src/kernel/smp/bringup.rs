@@ -4,7 +4,6 @@
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use core::sync::atomic::AtomicBool;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use core::sync::atomic::Ordering;
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
@@ -12,9 +11,6 @@ use crate::arch::x86_64::apic;
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use alloc::boxed::Box;
-
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use alloc::vec::Vec;
 
 // ── Constants ───────────────────────────────────────────────────────────
 
@@ -32,9 +28,20 @@ const TRAMPOLINE_DATA_BASE: u32 = 0x9000;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 const AP_STACK_SIZE: usize = 65536; // 64 KiB
 
-/// Maximum number of APs we will attempt to start.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub(crate) const MAX_APS: usize = 16;
+/// Maximum number of application processors this kernel will store a
+/// scheduler for.
+///
+/// One number for every architecture: the registry below is indexed by logical
+/// CPU id, and a CPU the kernel cannot store a scheduler for is a CPU it
+/// cannot dispatch a thread on.  An architecture that stops bringing cores up
+/// earlier says so where it does that.
+pub const MAX_APS: usize = 16;
+
+/// Maximum total CPUs (BSP + APs).
+pub const MAX_CPUS: usize = MAX_APS + 1;
+
+/// The online-CPU mask is a `u32`, so every CPU has to fit in it.
+const _: () = assert!(MAX_CPUS <= 32);
 
 /// Statically-allocated AP stacks in kernel BSS to guarantee the stack pages
 /// are mapped by the runtime page tables.  The heap-allocated stacks may fall
@@ -64,107 +71,104 @@ static AP_STACKS: crate::util::sync_unsafe_cell::SyncUnsafeCell<[ApStack; MAX_AP
         ApStack([0; AP_STACK_SIZE]),
     ]);
 
-/// Maximum total CPUs (BSP + APs).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub const MAX_CPUS: usize = MAX_APS + 1;
+// ── Per-CPU scheduler registry ─────────────────────────────────────────
 
-/// Per-CPU scheduler pointers indexed by logical CPU ID.
+/// Per-CPU scheduler pointers, indexed by logical CPU id.
 ///
-/// `cpu_id` 0 is the BSP; APs are at indices 1..MAX_CPUS-1.
-/// Each CPU registers its scheduler during boot (BSP via `Kernel::init`,
-/// AP via `ap_entry`), and the pointer lives until shutdown.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+/// `cpu_id` 0 is the BSP; an AP sits at the index it reports as its own id.
+/// Each CPU registers its scheduler during boot — the BSP from `Kernel::init`,
+/// an AP either from the core that starts it or from its own entry point — and
+/// the pointer lives until shutdown.
 static PERCPU_SCHEDULERS: crate::util::sync_unsafe_cell::SyncUnsafeCell<
     [*mut crate::kernel::process::Scheduler; MAX_CPUS],
 > = crate::util::sync_unsafe_cell::SyncUnsafeCell::new([core::ptr::null_mut(); MAX_CPUS]);
 
-/// Register a per-CPU scheduler.
+/// Bit `N` is set once logical CPU `N` has a scheduler, which is the moment it
+/// can run a thread.
+///
+/// This is the kernel's one answer to "how many CPUs are online", and
+/// [`register_percpu_scheduler`] is the only thing that writes it.  It is
+/// derived from the registry rather than kept beside it so that the two cannot
+/// disagree, and it is a mask rather than a number because a count only works
+/// as an index bound when the ids are contiguous — which nothing makes them.
+///
+/// Before this existed, each architecture answered the question its own way:
+/// x86_64 counted the APs whose start it had confirmed, and aarch64 and riscv64
+/// reached a setter that wrote a function-local static nobody read, behind a
+/// count that was the constant 1.  A four-core machine then scheduled on one
+/// core, and the number said everything was fine.
+static ONLINE_CPUS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Register a CPU's scheduler, and with it the CPU.
 ///
 /// # Safety
 ///
-/// Must be called exactly once per CPU during boot.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+/// `scheduler` must stay alive for as long as the kernel runs: every other CPU
+/// reaches it through this registry to place work.  Each `cpu_id` is
+/// registered once, with one pointer.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))] // no CPU registers on a host build
 pub unsafe fn register_percpu_scheduler(
     cpu_id: u32,
     scheduler: *mut crate::kernel::process::Scheduler,
 ) {
     let idx = cpu_id as usize;
-    if idx < MAX_CPUS {
-        let ptrs = unsafe { &mut *PERCPU_SCHEDULERS.get() };
-        ptrs[idx] = scheduler;
+    if idx >= MAX_CPUS {
+        return;
     }
+    // SAFETY: the index is in range, and this is the register-once call for
+    // this CPU, so it owns the slot.
+    unsafe { (*PERCPU_SCHEDULERS.get())[idx] = scheduler };
+    // Whoever sees the bit has to see the pointer, so the pointer is stored
+    // first and the bit is published with a release.
+    ONLINE_CPUS.fetch_or(1 << idx, Ordering::Release);
 }
 
-/// Look up the scheduler for a given CPU.
+/// Look up the scheduler for a CPU.
 ///
-/// Returns `None` if the CPU ID is out of range or the scheduler hasn't
-/// been registered yet.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+/// `None` means that CPU is not online — an id outside [`MAX_CPUS`] included.
+/// Callers use this to decide whether a thread can be placed on a CPU, so the
+/// answer has to be the same question [`cpu_is_online`] answers.
 pub fn get_percpu_scheduler(cpu_id: u32) -> Option<&'static crate::kernel::process::Scheduler> {
     let idx = cpu_id as usize;
-    if idx < MAX_CPUS {
-        let ptrs = unsafe { &*PERCPU_SCHEDULERS.get() };
-        let ptr = ptrs[idx];
-        if !ptr.is_null() {
-            return unsafe { ptr.as_ref() };
-        }
+    if !cpu_is_online(cpu_id) {
+        return None;
     }
-    None
+    // SAFETY: the acquire in `cpu_is_online` is on the bit that the
+    // registering CPU set after storing the pointer, and a registered
+    // scheduler outlives the kernel.
+    unsafe { (*PERCPU_SCHEDULERS.get())[idx].as_ref() }
 }
 
-/// Iterate over all online CPUs' schedulers.
+/// Is this CPU running kernel code — that is, can it be given a thread?
+pub fn cpu_is_online(cpu_id: u32) -> bool {
+    let idx = cpu_id as usize;
+    idx < MAX_CPUS && ONLINE_CPUS.load(Ordering::Acquire) & (1 << idx) != 0
+}
+
+/// Iterate over the online CPUs' schedulers, lowest id first.
 ///
-/// Calls `f` for each registered per-CPU scheduler with `(cpu_id, &Scheduler)`.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+/// Calls `f` with `(cpu_id, &Scheduler)` for each of them.
 pub fn for_each_percpu_scheduler(mut f: impl FnMut(u32, &crate::kernel::process::Scheduler)) {
-    let count = super::tlb::online_cpu_count() as usize;
-    let ptrs = unsafe { &*PERCPU_SCHEDULERS.get() };
-    for (cpu_id, &ptr) in ptrs.iter().enumerate().take(count) {
-        if !ptr.is_null() {
-            if let Some(sched) = unsafe { ptr.as_ref() } {
-                f(cpu_id as u32, sched);
-            }
+    let mask = ONLINE_CPUS.load(Ordering::Acquire);
+    for idx in 0..MAX_CPUS as u32 {
+        if mask & (1 << idx) == 0 {
+            continue;
+        }
+        if let Some(sched) = get_percpu_scheduler(idx) {
+            f(idx, sched);
         }
     }
 }
 
-/// Stubs for non-bare-metal targets.
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-pub fn get_percpu_scheduler(_cpu_id: u32) -> Option<&'static crate::kernel::process::Scheduler> {
-    None
-}
-
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-pub fn for_each_percpu_scheduler(_f: impl FnMut(u32, &crate::kernel::process::Scheduler)) {}
-
-// Serves the AArch64/RISC-V SMP backends (aarch64/smp.rs, kernel BSP init);
-// unused on host/test builds where SMP bring-up is not compiled.
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-pub fn register_percpu_scheduler(cpu_id: u32, sched: *mut crate::kernel::process::Scheduler) {
-    use alloc::collections::BTreeMap;
-    /// Wrapper to make *mut Scheduler Send.
-    ///
-    /// The field is currently write-only: per-CPU scheduler retrieval on
-    /// aarch64/riscv64 goes through `Scheduler::global()` (per-CPU slot), not
-    /// this map.  The map is kept as scaffolding for the SMP backends.
-    #[allow(dead_code)]
-    struct SchedPtr(pub *mut crate::kernel::process::Scheduler);
-    /// SAFETY: Scheduler access is always single-threaded per-CPU.
-    unsafe impl Send for SchedPtr {}
-
-    static PERCPU_SCHEDULERS: crate::kernel::sync::Mutex<BTreeMap<u32, SchedPtr>> =
-        crate::kernel::sync::Mutex::new(BTreeMap::new());
-    PERCPU_SCHEDULERS.lock().insert(cpu_id, SchedPtr(sched));
-}
-
-// Serves the AArch64 SMP backend (aarch64/smp.rs); unused on host/test builds.
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-pub fn set_online_ap_count(count: u32) {
-    use core::sync::atomic::Ordering;
-    static ONLINE_AP_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-    ONLINE_AP_COUNT.store(count, Ordering::Release);
+/// Number of CPUs that can run a thread.
+///
+/// The CPU asking is one of them by definition — this code is running on it —
+/// so the answer is at least 1 even before the BSP registers during init, and
+/// on a host build that never registers at all.  Callers size loops and pick a
+/// CPU for new work with this, and both want a bound rather than the zero an
+/// empty registry would otherwise answer with.
+pub fn online_cpu_count() -> u32 {
+    ONLINE_CPUS.load(Ordering::Acquire).count_ones().max(1)
 }
 
 // ── Trampoline data layout at TRAMPOLINE_DATA_BASE ──────────────────────
@@ -424,7 +428,6 @@ pub fn bring_up_aps(aps: &[(u32, u8)]) {
 
     unsafe { install_trampoline() };
 
-    let mut started_aps: Vec<(u32, u8)> = Vec::new();
     for &(cpu_id, lapic_id) in aps {
         if cpu_id > MAX_APS as u32 {
             crate::println!(
@@ -435,18 +438,15 @@ pub fn bring_up_aps(aps: &[(u32, u8)]) {
             continue;
         }
 
-        if bring_up_single_ap(cpu_id, lapic_id) {
-            started_aps.push((cpu_id, lapic_id));
-        }
+        // The AP joins the scheduler registry from inside this call, once its
+        // start is confirmed — so there is no second bookkeeping pass that
+        // could disagree with the first.
+        bring_up_single_ap(cpu_id, lapic_id);
     }
-
-    // Record online APs for IPI broadcasting.  Only APs whose start was
-    // actually confirmed are counted.
-    finalise_ap_config(&started_aps);
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) -> bool {
+fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     crate::println!(
         "[smp   ] bring_up_single_ap: cpu={} lapic={}",
         cpu_id,
@@ -458,7 +458,7 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) -> bool {
     let idx = cpu_id as usize;
     if idx >= MAX_APS {
         crate::println!("[smp   ] cpu_id={} exceeds MAX_APS={}", cpu_id, MAX_APS);
-        return false;
+        return;
     }
     // Use a statically-allocated AP stack from kernel BSS.  These are
     // guaranteed to be mapped by the runtime page tables.  The AP trampoline
@@ -494,32 +494,15 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) -> bool {
     // creating everything here (single-threaded, BSP only) the AP can
     // enter its dispatch loop without any heap allocations.
     let ap_scheduler = Box::new(crate::kernel::process::Scheduler::new());
-    // Seed the round-robin counter so the idle thread lands on this AP's
-    // scheduler (CPU `cpu_id`) rather than CPU 0.
-    ap_scheduler.init_next_cpu(cpu_id);
+    // Say which CPU this scheduler belongs to before anything is spawned on
+    // it: its idle thread is pinned to that CPU, and the round-robin that
+    // places other threads starts from it.
+    ap_scheduler.bind_to_cpu(cpu_id);
     let ap_scheduler_ptr = Box::into_raw(ap_scheduler);
     unsafe {
         (*percpu_ptr).scheduler = ap_scheduler_ptr;
     }
     crate::println!("[smp   ]   prepare: ap scheduler registered");
-    unsafe {
-        register_percpu_scheduler(cpu_id, ap_scheduler_ptr);
-    }
-
-    // Register this AP in the online-AP arrays *before* calling
-    // start_idle_process so that register_spawned_thread's round-robin
-    // places the idle thread on this AP's scheduler (CPU 1) rather than
-    // the BSP's (CPU 0).  finalise_ap_config will overwrite these with
-    // the same values after bring-up completes.
-    {
-        let idx = (cpu_id - 1) as usize;
-        if idx < MAX_APS {
-            unsafe {
-                (*AP_LAPIC_IDS.get())[idx] = lapic_id;
-            }
-        }
-        ONLINE_AP_COUNT.store(cpu_id, Ordering::Release);
-    }
     unsafe {
         (*ap_scheduler_ptr).start_idle_process();
     }
@@ -619,6 +602,15 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) -> bool {
         );
         // Record CPU → LAPIC ID for the IRQ load balancer.
         crate::arch::x86_64::irq_balance::register_cpu(cpu_id, lapic_id);
+        // The AP is running and can be dispatched to, so it joins the
+        // registry here — after its start was confirmed, not before: a CPU
+        // that never came up must not look schedulable to any other CPU.
+        // SAFETY: `ap_scheduler_ptr` was allocated for this AP and is never
+        // freed, and this is the one registration of that id.
+        unsafe {
+            (*AP_LAPIC_IDS.get())[cpu_id as usize] = lapic_id;
+            register_percpu_scheduler(cpu_id, ap_scheduler_ptr);
+        }
         // Leak the started flag — the AP is running and we may need it later.
         core::mem::forget(unsafe { Box::from_raw(started_ptr) });
     } else {
@@ -629,12 +621,9 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) -> bool {
         );
         // Clean up the started flag.
         drop(unsafe { Box::from_raw(started_ptr) });
-        // Roll back the provisional online-AP count recorded before the
-        // AP's start was confirmed.
-        ONLINE_AP_COUNT.fetch_sub(1, Ordering::Release);
+        // The AP's scheduler was created but is never registered, so this CPU
+        // is not schedulable and no other CPU will place work on it.
     }
-
-    started_ok
 }
 
 // ── Calibrated busy-wait helpers (unused with short inline delays above) ──
@@ -658,36 +647,17 @@ fn spin_delay_us(us: u64) {
     }
 }
 
-// ── Online AP tracking ─────────────────────────────────────────────────
-
-/// Number of APs currently online (set after bring-up completes).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub(crate) static ONLINE_AP_COUNT: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+// ── IPI delivery ───────────────────────────────────────────────────────
 
 /// BSP LAPIC ID, set during early SMP init.  Needed so APs can send
 /// TLB-shootdown IPIs back to the BSP.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 static BSP_LAPIC_ID: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
-/// Store the list of online AP LAPIC IDs for IPI broadcasting.
+/// LAPIC id of each CPU that is online, indexed by logical CPU id.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub(crate) static AP_LAPIC_IDS: crate::util::sync_unsafe_cell::SyncUnsafeCell<[u8; MAX_APS]> =
-    crate::util::sync_unsafe_cell::SyncUnsafeCell::new([0; MAX_APS]);
-
-/// Called after `bring_up_aps` to record the online AP configuration.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub fn finalise_ap_config(aps: &[(u32, u8)]) {
-    let mut ap_count = 0u32;
-    let ids = unsafe { &mut *AP_LAPIC_IDS.get() };
-    for &(_cpu_id, lapic_id) in aps {
-        if ap_count < MAX_APS as u32 {
-            ids[ap_count as usize] = lapic_id;
-            ap_count += 1;
-        }
-    }
-    ONLINE_AP_COUNT.store(ap_count, Ordering::Release);
-}
+pub(crate) static AP_LAPIC_IDS: crate::util::sync_unsafe_cell::SyncUnsafeCell<[u8; MAX_CPUS]> =
+    crate::util::sync_unsafe_cell::SyncUnsafeCell::new([0; MAX_CPUS]);
 
 /// Save the BSP LAPIC ID so APs can send IPIs back to the BSP.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
@@ -697,36 +667,73 @@ pub fn save_bsp_lapic_id(id: u8) {
     crate::arch::x86_64::irq_balance::register_cpu(0, id);
 }
 
-/// Broadcast an IPI to all online APs with the given vector.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[allow(dead_code)]
-pub fn send_ipi_to_all_aps(vector: u8) {
-    let count = ONLINE_AP_COUNT.load(Ordering::Acquire) as usize;
-    let ids = unsafe { &*AP_LAPIC_IDS.get() };
-    for &id in ids.iter().take(count) {
-        send_ipi(id, vector as u32 | apic::ICR_DELIVERY_FIXED);
+/// Ask a CPU to look at its run queue again.
+///
+/// The kernel sends this when it has just made a thread runnable on another
+/// CPU: without it the thread waits for that CPU's next timer tick, and a CPU
+/// with nothing to run is halted rather than ticking — so a wake-up on an idle
+/// core costs a full tick of latency, or arrives never.
+///
+/// A CPU that is not online cannot be asked, and the CPU sending the request
+/// has no reason to ask itself: the BSP checks for pending work on every
+/// kernel exit, and an AP checks before it halts.  How a CPU is reached is the
+/// architecture's business, and each says so in its own
+/// [`send_reschedule_ipi_to`].
+pub fn send_reschedule_ipi(cpu_id: u32) {
+    if !cpu_is_online(cpu_id) || cpu_id == crate::kernel::percpu::get().cpu_id {
+        return;
     }
+    send_reschedule_ipi_to(cpu_id);
 }
 
-/// Send an IPI to the BSP with the given vector.  No-op if BSP_LAPIC_ID
-/// has not been saved yet.  Reserved for future use (e.g. AP→BSP
-/// notification on shutdown or fault).
+/// Send the request to an online CPU that is not this one.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[allow(dead_code)]
-fn send_ipi_to_bsp(vector: u8) {
-    let bsp_id = BSP_LAPIC_ID.load(Ordering::Acquire);
-    if bsp_id != 0 {
-        send_ipi(bsp_id, vector as u32 | apic::ICR_DELIVERY_FIXED);
-    }
+fn send_reschedule_ipi_to(cpu_id: u32) {
+    // CPU 0 is the BSP, which is never one of the APs whose LAPIC ids the
+    // bring-up loop writes; its own id is what reaches it.
+    let hardware_id = if cpu_id == 0 {
+        BSP_LAPIC_ID.load(Ordering::Acquire)
+    } else {
+        // SAFETY: the CPU is online, so its LAPIC id was written before the
+        // registry published that fact, and the acquire in `cpu_is_online` is
+        // what makes the write visible here.
+        unsafe { (*AP_LAPIC_IDS.get())[cpu_id as usize] }
+    };
+    send_ipi(
+        hardware_id,
+        IPI_RESCHEDULE_VECTOR as u32 | apic::ICR_DELIVERY_FIXED,
+    );
 }
+
+/// Send the request as a software-generated interrupt.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+fn send_reschedule_ipi_to(cpu_id: u32) {
+    crate::arch::aarch64::smp::send_reschedule_sgi(cpu_id);
+}
+
+/// RISC-V has no sender here yet: its secondary harts park in `wfi` without
+/// entering the scheduler, so there is no run queue for a request to wake and
+/// nothing that would read the flag it sets.  Sending the IPI is the second
+/// half of putting those harts to work; this is the honest first half.
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+fn send_reschedule_ipi_to(_cpu_id: u32) {}
+
+/// A host build has no other CPU to reach.
+#[cfg(not(all(
+    target_os = "none",
+    any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "riscv64"
+    )
+)))]
+fn send_reschedule_ipi_to(_cpu_id: u32) {}
 
 /// Send an IPI to every online CPU *except* the caller.  Uses the ICR
 /// Destination Shorthand "All Excluding Self" (bits 18:19 = 11) so that
 /// the LAPIC broadcasts the IPI without needing per-destination LAPIC-ID
 /// writes.  This avoids potential LAPIC-ID mismatches and makes the
 /// shootdown path simpler and faster.
-///
-/// Currently unused while cross-CPU IPI delivery is being debugged.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 #[allow(dead_code)]
 fn send_ipi_to_all_other_cpus(vector: u8) {

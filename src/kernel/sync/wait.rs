@@ -178,6 +178,13 @@ impl<T> WaitQueue<T> {
             }
 
             thread.block();
+            // Tell the scheduler this thread is parked.  A thread blocked on a
+            // wait queue is held by that queue, so without a registration here
+            // the scheduler cannot tell it apart from a thread it has lost —
+            // and telling those apart is the whole point of the placement
+            // watchdog.  A timed block registers below, with the deadline that
+            // it will also be woken by.
+            scheduler.park_thread(thread.clone(), None);
             true
         })
     }

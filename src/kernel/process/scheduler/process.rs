@@ -20,6 +20,7 @@ use super::queue::*;
 use super::types::SchedulerHotspotStats;
 use super::types::SchedulerStats;
 use super::Scheduler;
+use crate::kernel::sync::Mutex;
 
 impl Scheduler {
     /// Ensure an idle thread exists when no other thread is runnable.
@@ -37,8 +38,15 @@ impl Scheduler {
             has_dispatchable_ready_thread(&mut ready_queues)
         };
         if !has_ready_thread {
-            self.spawn_kernel_named("idle", idle_entry);
+            self.spawn_idle_thread();
         }
+    }
+
+    /// Create this scheduler's idle thread on the CPU the scheduler belongs to.
+    fn spawn_idle_thread(&self) -> Arc<Thread> {
+        let process = self.create_ready_process("idle");
+        let thread = Thread::new_kernel(process.clone(), idle_entry);
+        self.register_spawned_thread_on_cpu(process, thread, self.home_cpu(), false)
     }
 
     /// Return the TID of the currently running thread, or `None` if
@@ -57,10 +65,8 @@ impl Scheduler {
     }
 
     /// Return the number of registered processes.
-    ///
-    /// Processes are registered only in the primary (CPU 0) scheduler.
     pub fn process_count(&self) -> usize {
-        self.processes.lock().len()
+        self.process_table().lock().len()
     }
 
     /// Select the process with the highest OOM badness score.
@@ -73,7 +79,7 @@ impl Scheduler {
     where
         F: Fn(&Process) -> u64,
     {
-        let processes = self.processes.lock();
+        let processes = self.process_table().lock();
         let mut best: Option<(u32, u64)> = None;
 
         for proc in processes.iter() {
@@ -98,13 +104,21 @@ impl Scheduler {
         // Build a pid → (max_priority, total_cpu_ticks) map from all live
         // threads across all per-CPU schedulers.
         let mut thread_stats: BTreeMap<ProcessId, (ThreadPriority, u64)> = BTreeMap::new();
+        let mut saw_self = false;
         crate::kernel::smp::for_each_percpu_scheduler(|_cpu_id, sched| {
+            // Adding this scheduler's threads twice would double the CPU time
+            // of everything that runs on it, so the walk and the fallback are
+            // one or the other.
+            saw_self |= core::ptr::eq(sched, self);
             sched.collect_thread_stats(&mut thread_stats);
         });
-        // Also collect from local scheduler (handles single-CPU fallback).
-        self.collect_thread_stats(&mut thread_stats);
+        // A scheduler that is not in the registry — a host build, or a CPU
+        // that has not registered yet — is still the one being asked about.
+        if !saw_self {
+            self.collect_thread_stats(&mut thread_stats);
+        }
 
-        self.processes
+        self.process_table()
             .lock()
             .iter()
             .map(|process| {
@@ -177,7 +191,7 @@ impl Scheduler {
     ///
     /// Returns `None` if no process with the given PID is found.
     pub fn process_by_pid(&self, pid: u32) -> Option<Arc<Process>> {
-        self.processes
+        self.process_table()
             .lock()
             .iter()
             .find(|process| process.pid() == pid)
@@ -222,6 +236,30 @@ impl Scheduler {
         None
     }
 
+    /// Find a thread by process and thread id on **any** CPU.
+    ///
+    /// A thread sits on exactly one CPU's queues at a time, and the CPU asking
+    /// does not get to choose which.  So a question about whether a thread is
+    /// placed at all has to be asked of every CPU that could be running it:
+    /// asked only of the local queues it answers "not here" for a thread that
+    /// is simply somewhere else.
+    pub fn find_thread_anywhere_by_pid_and_tid(
+        &self,
+        pid: ProcessId,
+        tid: ThreadId,
+    ) -> Option<Arc<Thread>> {
+        if let Some(thread) = self.find_thread_by_pid_and_tid(pid, tid) {
+            return Some(thread);
+        }
+        let mut found = None;
+        crate::kernel::smp::for_each_percpu_scheduler(|_cpu_id, sched| {
+            if found.is_none() {
+                found = sched.find_thread_by_pid_and_tid(pid, tid);
+            }
+        });
+        found
+    }
+
     /// Reap a terminated process, returning its exit status.
     ///
     /// Removes the process from the parent's children list and from the
@@ -264,6 +302,17 @@ impl Scheduler {
 
     pub(crate) fn primary_scheduler(&self) -> &Self {
         crate::kernel::smp::get_percpu_scheduler(0).unwrap_or(self)
+    }
+
+    /// The machine's process table.
+    ///
+    /// There is one, and it lives on the primary scheduler: a process is a
+    /// machine-wide object, and a table per CPU would answer differently on
+    /// every CPU.  Reads go through here for the same reason writes already
+    /// did — a lookup on an AP's own table finds nothing, because nothing is
+    /// ever pushed there.
+    pub(crate) fn process_table(&self) -> &Mutex<Vec<Arc<Process>>> {
+        &self.primary_scheduler().processes
     }
 
     /// Deliver a signal to a process.

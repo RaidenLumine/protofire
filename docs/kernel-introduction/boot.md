@@ -217,6 +217,23 @@ from 16-bit real mode through protected mode to 64-bit long mode, switches
 to the runtime CR3, and jumps to `ap_entry()` which sets GS base to the
 per-CPU data, configures the local APIC, and enters the idle loop.
 
+**A core counts as online when it registers its scheduler**
+(`register_percpu_scheduler`), which is the moment the kernel can dispatch a
+thread on it and the only thing that writes the online-CPU set the scheduler,
+the shootdown log and `/proc` read (`smp::online_cpu_count`).  Each
+architecture reports for itself: x86_64's boot CPU registers an AP once its
+`ap_started_flag` is set, and aarch64's AP registers itself from its own entry
+point, so a core that never reaches kernel code never claimed to be up.
+
+**A CPU's timer is that CPU's to enable.**  The aarch64 physical timer is a
+private peripheral interrupt, and in GICv2 the registers that arm it
+(`IGROUPR0`, `IPRIORITYR0-7`, `ISENABLER0`) are banked per core — the boot
+CPU's `timer::init()` configures its own copy only, so `timer::init_ap()` arms
+the core's own PPI as well as its countdown.  x86_64 wires its clock the other
+way: the PIT is routed to LAPIC 0, so APs take no timer interrupt at all, and
+the timeouts of a sleeping thread are swept by whichever CPU is ticking (see
+`Scheduler::wake_expired_sleepers`).
+
 ### 4.4 Per-CPU Data
 
 `struct PerCpuData` (`src/kernel/percpu.rs`, 64-byte cache-line-aligned):

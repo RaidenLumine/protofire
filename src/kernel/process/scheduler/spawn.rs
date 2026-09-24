@@ -27,12 +27,38 @@ impl Scheduler {
         // Assign CPU affinity round-robin across all online CPUs.
         let cpu_count = crate::kernel::smp::online_cpu_count();
         let target_cpu = if cpu_count > 1 {
-            let cpu = self.next_cpu.fetch_add(1, Ordering::Relaxed) % cpu_count;
-            thread.set_cpu_affinity(cpu);
-            cpu
+            self.next_cpu.fetch_add(1, Ordering::Relaxed) % cpu_count
         } else {
             0
         };
+        self.place_thread(process, thread, target_cpu, start_suspended)
+    }
+
+    /// Register a thread on a CPU its caller has already chosen.
+    ///
+    /// Placement exists so that work spread over a machine follows the machine
+    /// rather than the boot order; the idle thread is the one thread that is
+    /// not spread, because it is what *this* scheduler's CPU runs when it has
+    /// nothing else.  Placing it anywhere else leaves a CPU that halts with
+    /// the work it was meant to pick up still queued on another core.
+    pub(crate) fn register_spawned_thread_on_cpu(
+        &self,
+        process: Arc<Process>,
+        thread: Arc<Thread>,
+        cpu: u32,
+        start_suspended: bool,
+    ) -> Arc<Thread> {
+        self.place_thread(process, thread, cpu, start_suspended)
+    }
+
+    fn place_thread(
+        &self,
+        process: Arc<Process>,
+        thread: Arc<Thread>,
+        target_cpu: u32,
+        start_suspended: bool,
+    ) -> Arc<Thread> {
+        thread.set_cpu_affinity(target_cpu);
         // Register the process in the primary (BSP, CPU 0) scheduler's
         // process list.  Per-CPU schedulers do not maintain their own process
         // registries: process enumeration (`process_count`,
@@ -41,10 +67,7 @@ impl Scheduler {
         // *local* per-CPU scheduler on bare metal, so pushing to `self` would
         // make a process spawned from a non-CPU0 syscall context invisible to
         // every process scan and leak it at teardown.
-        self.primary_scheduler()
-            .processes
-            .lock()
-            .push(process.clone());
+        self.process_table().lock().push(process.clone());
         if start_suspended {
             // Keep the process in New state — it will be transitioned to
             // Ready and enqueued when the parent calls wait_process.

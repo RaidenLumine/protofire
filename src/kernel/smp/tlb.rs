@@ -7,8 +7,10 @@
 #[cfg(any(all(target_arch = "x86_64", target_os = "none"), test))]
 use core::sync::atomic::Ordering;
 
+// The online-CPU set is the registry's, not this file's: every caller here
+// asks the same question the scheduler asks.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use crate::arch::x86_64::apic;
+use super::bringup::online_cpu_count;
 
 // ── TLB shootdown ─────────────────────────────────────────────────────
 
@@ -599,51 +601,6 @@ pub fn handle_tlb_shootdown() {
         }
     }
     SHOOTDOWN_ACK_COUNT.fetch_add(1, Ordering::Release);
-}
-
-// ── Reschedule IPI ─────────────────────────────────────────────────────
-
-/// Send a reschedule IPI to a specific CPU.
-///
-/// cpu_id=0 is the BSP (self-IPI not needed — the BSP checks need_resched on
-/// every kernel exit).  For APs (cpu_id >= 1), sends `IPI_RESCHEDULE_VECTOR`
-/// so the target CPU invokes its scheduler.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub fn send_reschedule_ipi(cpu_id: u32) {
-    if cpu_id == 0 {
-        return; // BSP: no self-IPI needed
-    }
-    let idx = (cpu_id - 1) as usize;
-    let count = super::bringup::ONLINE_AP_COUNT.load(Ordering::Acquire) as usize;
-    if idx >= count {
-        return;
-    }
-    let ids = unsafe { &*super::bringup::AP_LAPIC_IDS.get() };
-    super::bringup::send_ipi(
-        ids[idx],
-        super::bringup::IPI_RESCHEDULE_VECTOR as u32 | apic::ICR_DELIVERY_FIXED,
-    );
-}
-
-/// Stub for non-bare-metal targets.
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-pub fn send_reschedule_ipi(_cpu_id: u32) {}
-
-// ── Online CPU count ───────────────────────────────────────────────────
-
-/// Return the total number of online CPUs (BSP + APs).
-///
-/// Before AP bring-up completes, returns 1 (BSP only).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub fn online_cpu_count() -> u32 {
-    1 + super::bringup::ONLINE_AP_COUNT.load(Ordering::Acquire)
-}
-
-/// Stub for non-bare-metal targets.
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-pub fn online_cpu_count() -> u32 {
-    // On non-x86_64, report 1 for BSP; updated by `bringup::set_online_ap_count`.
-    1
 }
 
 /// Return the current TLB shootdown generation counter.

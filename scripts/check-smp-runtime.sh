@@ -259,6 +259,24 @@ if [ "$user_exits" -eq 0 ]; then
     fail_with_log "no user program reached user mode and exited"
 fi
 
+# ── A thread parked on a core still wakes ──────────────────────────────
+#
+# The demo workers print a step, sleep, and print the next one.  Waking a
+# sleeper is the job of a timer tick on the CPU it sleeps on, and the boot
+# CPU's clock is the only one this machine wires up — so a worker that runs on
+# an AP spends the rest of the boot asleep, having printed its first step and
+# nothing else.  "Step 0" alone is that; "done" is the same worker having been
+# woken twice more, which only happens if the timeouts reach every CPU's
+# waiting queue.
+if [ "$(count_log_line "[demo  ] worker-a done")" -eq 0 ]; then
+    fail_with_log "the demo worker never finished: a thread parked on a core stopped waking"
+fi
+
+# ── The scheduler can still account for every process ──────────────────
+if grep -F "[sched ]" "$log_file" >/dev/null 2>&1; then
+    fail_with_log "the scheduler reported a process it cannot place"
+fi
+
 # ── Nothing reported damage ────────────────────────────────────────────
 if grep -F "FATAL" "$log_file" >/dev/null 2>&1; then
     fail_with_log "the kernel reported a fatal error during the run"

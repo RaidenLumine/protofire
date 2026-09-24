@@ -78,12 +78,15 @@ std::thread_local! {
 }
 
 // ── Pointer helpers ──
-#[cfg(not(test))]
+//
+// The shared slot below is the host's: on bare metal a scheduler is found
+// through the CPU's own pointer, so nothing writes this one there.
+#[cfg(all(not(test), not(target_os = "none")))]
 pub(crate) fn store_current_scheduler_ptr(scheduler: *mut Scheduler) {
     CURRENT_SCHEDULER.store(scheduler, Ordering::Release);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "none")))]
 pub(crate) fn store_current_scheduler_ptr(scheduler: *mut Scheduler) {
     CURRENT_SCHEDULER.with(|slot| slot.set(scheduler));
 }
@@ -131,6 +134,10 @@ pub struct Scheduler {
     next_pid: Mutex<u32>,
     freed_pids: Mutex<Vec<u32>>,
     pub(crate) need_resched: AtomicBool,
+    /// The CPU this scheduler belongs to, and the start of its round-robin
+    /// cursor.  A scheduler is created by the CPU that will run the core it
+    /// belongs to, which is not always the CPU that dispatches on it.
+    home_cpu: AtomicU32,
     next_cpu: AtomicU32,
     dispatch_context: ContextCell,
     /// Drop-slot for the previously-running [`Arc<Thread>`] that must be freed
@@ -145,4 +152,10 @@ pub struct Scheduler {
     simulated_ticks: Mutex<u64>,
     hotspot_stats: Mutex<SchedulerHotspotStats>,
     pub(crate) stats: Mutex<SchedulerStats>,
+    /// Threads the last placement-watchdog pass saw in no queue.
+    ///
+    /// A thread missing from every queue once may be halfway between two of
+    /// them; the same thread missing again, a second later, is one nothing
+    /// will run.  See [`Scheduler::watch_process_placement`].
+    unplaced_suspects: Mutex<[(u32, u32); Scheduler::PLACEMENT_WATCHDOG_CAPACITY]>,
 }

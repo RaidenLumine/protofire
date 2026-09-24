@@ -247,6 +247,26 @@ All spawn paths:
    thread on the target CPU's ready queue.
 5. Optionally sends a reschedule IPI to the target CPU.
 
+Two of those steps name something machine-wide rather than per-CPU, and both
+have to live where the machine's one copy of it is:
+
+- **The PID pool is the primary scheduler's** (`process_table()` and
+  `allocate_pid()` both resolve to CPU 0's scheduler).  A pid names a process
+  in the process table, and that table is the primary's; a counter per CPU
+  hands the same pid to two processes, and every lookup by pid then has two
+  answers.
+- **The idle thread is pinned to the CPU its scheduler belongs to**
+  (`Scheduler::bind_to_cpu` + `home_cpu`), rather than being left to the
+  round-robin that spreads new work.  An idle thread on someone else's CPU is
+  a CPU with nothing to run.
+
+The placement watchdog (`watch_process_placement`) asks the complementary
+question: a live process whose thread is in no ready queue, no waiting queue,
+and no CPU's current slot is one nothing will run again.  It waits for a
+second sighting before it says so, because a thread being moved between two
+queues is out of every queue for the length of the move — that is how every
+block and every yield begins.
+
 ### Init Program
 
 The first user-space process (PID 1) is spawned using

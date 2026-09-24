@@ -39,10 +39,20 @@ pub(crate) fn has_timed_wait_elapsed(deadline: Option<u64>, ticks: u64) -> bool 
     deadline.is_some_and(|wake_tick| wake_tick <= ticks)
 }
 
-pub(crate) fn timed_waiter_is_active(waiter: &TimedWaiter) -> bool {
+/// Is this thread still parked by the scheduler?
+///
+/// The queue is the scheduler's list of the threads it has taken out of the
+/// running set, and it holds every one of them: a thread blocked with a
+/// deadline, and a thread blocked on a wait queue that will be woken by
+/// whoever signals it.  A registration whose thread is no longer waiting is
+/// what a wake leaves behind, and this is what drops it.
+///
+/// The deadline is not part of the question.  It used to be, which is why a
+/// thread blocked without one was invisible here — and a thread the scheduler
+/// cannot see is one it reports as lost.
+pub(crate) fn parked_waiter_is_active(waiter: &TimedWaiter) -> bool {
     waiter.thread.state() == ThreadState::Waiting
         && waiter.thread.process().state() != ProcessState::Terminated
-        && waiter.thread.wake_deadline().is_some()
 }
 
 pub(crate) fn remove_timed_waiter_from_wait_queue(timed_waiter: TimedWaiter) {
@@ -113,7 +123,7 @@ pub(crate) fn take_stale_timed_waiters(waiting_queue: &mut Vec<TimedWaiter>) -> 
     let mut stale = Vec::new();
     let mut index = 0;
     while index < waiting_queue.len() {
-        if timed_waiter_is_active(&waiting_queue[index]) {
+        if parked_waiter_is_active(&waiting_queue[index]) {
             index += 1;
         } else {
             stale.push(waiting_queue.swap_remove(index));

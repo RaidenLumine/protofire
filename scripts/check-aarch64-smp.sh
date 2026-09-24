@@ -82,14 +82,42 @@ grep -q "^\[smp   \] ${SMP_CPUS} CPUs total, ${expected_aps} AP(s)" "$log_file" 
 grep -q "info=0x00000000" "$log_file" &&
     fail "the kernel was booted without a device tree"
 
-grep -q "^\[smp   \] ${expected_aps} AP(s) online" "$log_file" ||
-    fail "expected ${expected_aps} AP(s) online"
+# "started" is what the boot CPU knows: PSCI returns as soon as it accepts the
+# request.  The cores report for themselves on the next line, and that count is
+# the one that has to match.
+grep -q "^\[smp   \] ${expected_aps} AP(s) started" "$log_file" ||
+    fail "expected the boot CPU to start ${expected_aps} AP(s)"
 
 online="$(grep -c '^\[smp   \] AP cpu_id=.* online' "$log_file" || true)"
 [ "$online" = "$expected_aps" ] ||
     fail "expected ${expected_aps} APs to report themselves online, saw ${online}"
 
+# ── The cores are not decoration ───────────────────────────────────────
+#
+# Every assertion above is printed *before* the APs enter their dispatch
+# loops, and all of them held while those loops were unreachable: the cores
+# came up, could not be given any work, and the machine ran its whole demo on
+# the boot CPU.  Bringing a core up and using it are different claims, and
+# this is the second one:
+#
+#   * a thread spawned for another core has to wake it, which is the only
+#     thing that proves the reschedule IPI was delivered rather than sent;
+#   * the demo's workers sleep between steps, and a sleeper parked on a core
+#     only wakes if that core takes timer interrupts;
+#   * every service stopping is the end of the demo boot.
+reschedule_ipis="$(grep -c 'woke on a reschedule IPI' "$log_file" || true)"
+[ "$reschedule_ipis" -ge 1 ] ||
+    fail "no AP was ever woken by a reschedule IPI: the cores came up and were left idle"
+
+grep -q '\[demo  \] worker-a done' "$log_file" ||
+    fail "the demo worker never finished: a thread parked on a core stopped waking"
+grep -q '\[service\] kworker-b stopped' "$log_file" ||
+    fail "the demo boot never finished: services did not all stop"
+grep -q '^\[sched \]' "$log_file" &&
+    fail "the scheduler reported a process it cannot place"
+
 grep -q 'FATAL' "$log_file" && fail "the boot reported a fatal fault"
 grep -q 'CPU_ON rejected' "$log_file" && fail "PSCI refused to start a core"
 
-printf 'aarch64 SMP check passed: %s CPUs, %s AP(s) online\n' "$SMP_CPUS" "$expected_aps"
+printf 'aarch64 SMP check passed: %s CPUs, %s AP(s) online, %s reschedule IPI(s)\n' \
+    "$SMP_CPUS" "$expected_aps" "$reschedule_ipis"

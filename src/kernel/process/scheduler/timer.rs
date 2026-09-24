@@ -19,6 +19,13 @@ impl Scheduler {
     /// How often the placement watchdog looks.  About a second at 100 Hz.
     const PLACEMENT_WATCHDOG_PERIOD_TICKS: u64 = 128;
 
+    /// How many processes one pass of the watchdog looks at.
+    ///
+    /// Enough for a live process list; the demo runs a handful.  Fixed so that
+    /// a watchdog running once a second never allocates.  It is also the size
+    /// of the suspect list kept between passes, so the two cannot drift apart.
+    pub(crate) const PLACEMENT_WATCHDOG_CAPACITY: usize = 64;
+
     /// Report every live process whose threads the scheduler cannot find.
     ///
     /// "Find" means what the rest of the scheduler means by it: the thread is
@@ -33,43 +40,99 @@ impl Scheduler {
     /// being lost means — which is why this asks the question from the
     /// process's side.
     ///
+    /// One look is not enough to answer it.  A thread is out of every queue
+    /// for the length of every move between them — `current` is taken before
+    /// the thread is parked, and before it is back in a ready queue — and
+    /// another CPU reading the queues during that window sees exactly what a
+    /// lost thread looks like.  Being lost is *permanent* and being between
+    /// queues is not, so the report waits for the next pass to see the same
+    /// thread missing again; the passes are a second apart, which no window
+    /// between two queues reaches.
+    ///
     /// Not under the process lock while looking: the lookups take the queue
     /// locks, and the two are not taken in one fixed order anywhere else.
     pub(crate) fn watch_process_placement(&self) {
-        /// Enough for a live process list; the demo runs a handful.  Fixed so
-        /// that a watchdog running once a second never allocates.
-        const MAX_WATCHED: usize = 64;
-        let mut watched = [(0u32, crate::kernel::process::ProcessState::New, 0u32); MAX_WATCHED];
+        use crate::kernel::process::ProcessState;
+        const CAPACITY: usize = Scheduler::PLACEMENT_WATCHDOG_CAPACITY;
+
+        let mut watched = [(0u32, ProcessState::New, 0u32); CAPACITY];
+        let mut threadless = [(0u32, ProcessState::New); CAPACITY];
         let mut count = 0usize;
-        for process in self.processes.lock().iter() {
-            if count == MAX_WATCHED {
+        let mut threadless_count = 0usize;
+        for process in self.process_table().lock().iter() {
+            if count == CAPACITY && threadless_count == CAPACITY {
                 break;
             }
             if matches!(
                 process.state(),
-                crate::kernel::process::ProcessState::Terminated
-                    | crate::kernel::process::ProcessState::New
+                ProcessState::Terminated | ProcessState::New
             ) {
                 continue;
             }
             let Some(first_tid) = process.thread_ids().first().copied() else {
-                // A live process with no threads at all: also unplaced.
-                self.record_unplaced_process(process.pid(), &process.name(), process.state());
+                // A live process with no threads at all: also unplaced, and not
+                // a matter of timing — nothing is on its way to being placed.
+                if threadless_count < CAPACITY {
+                    threadless[threadless_count] = (process.pid(), process.state());
+                    threadless_count += 1;
+                }
                 continue;
             };
-            watched[count] = (process.pid(), process.state(), first_tid);
-            count += 1;
-        }
-
-        for (pid, state, tid) in watched.into_iter().take(count) {
-            if self.find_thread_by_pid_and_tid(pid, tid).is_none() {
-                let name = self
-                    .process_by_pid(pid)
-                    .map(|process| process.name())
-                    .unwrap_or_else(|| alloc::string::String::from("?"));
-                self.record_unplaced_process(pid, &name, state);
+            if count < CAPACITY {
+                watched[count] = (process.pid(), process.state(), first_tid);
+                count += 1;
             }
         }
+
+        let mut missing = [(0u32, 0u32); CAPACITY];
+        let mut missing_count = 0usize;
+        for &(pid, _state, tid) in watched.iter().take(count) {
+            if self.find_thread_anywhere_by_pid_and_tid(pid, tid).is_none() {
+                missing[missing_count] = (pid, tid);
+                missing_count += 1;
+            }
+        }
+
+        // The same thread missing twice is the finding; missing once is a
+        // thread halfway between two queues.
+        let mut confirmed = [0u32; CAPACITY];
+        let mut confirmed_count = 0usize;
+        {
+            let mut suspects = self.unplaced_suspects.lock();
+            for &(pid, tid) in missing.iter().take(missing_count) {
+                if suspects.contains(&(pid, tid)) && confirmed_count < CAPACITY {
+                    confirmed[confirmed_count] = pid;
+                    confirmed_count += 1;
+                }
+            }
+            let mut next = [(0u32, 0u32); CAPACITY];
+            next[..missing_count].copy_from_slice(&missing[..missing_count]);
+            *suspects = next;
+        }
+
+        for &(pid, state) in threadless.iter().take(threadless_count) {
+            self.report_unplaced(pid, state);
+        }
+        for &pid in confirmed.iter().take(confirmed_count) {
+            let state = self
+                .process_by_pid(pid)
+                .map(|process| process.state())
+                .unwrap_or(ProcessState::New);
+            self.report_unplaced(pid, state);
+        }
+    }
+
+    /// Name a process the watchdog has found unplaced, and count it.
+    fn report_unplaced(
+        &self,
+        pid: crate::kernel::process::ProcessId,
+        state: crate::kernel::process::ProcessState,
+    ) {
+        let name = self
+            .process_by_pid(pid)
+            .map(|process| process.name())
+            .unwrap_or_else(|| alloc::string::String::from("?"));
+        self.record_unplaced_process(pid, &name, state);
     }
 
     /// Handle a timer tick, including preemption by default.
@@ -241,7 +304,7 @@ impl Scheduler {
         {
             self.watch_process_placement();
         }
-        let _ = self.wake_ready_threads(ticks);
+        let _ = self.wake_expired_sleepers(ticks);
 
         if !allow_preemption {
             return false;

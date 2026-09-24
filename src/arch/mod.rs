@@ -345,29 +345,14 @@ pub fn supports_context_switch() -> bool {
 
 /// Number of online CPUs.
 ///
-/// AArch64 and RISC-V derive the count from the FDT CPU nodes; x86_64
-/// consults the SMP bookkeeping after AP bring-up (returning 1 on the
-/// bootstrap CPU or in host builds).
+/// One answer on every architecture, from the one place that knows: a CPU is
+/// online once it has registered a scheduler, whether it came up through ACPI
+/// SIPI, PSCI or SBI.  This used to be answered twice — the device tree's CPU
+/// nodes for aarch64 and riscv64, the AP bookkeeping for x86_64 — and the two
+/// answers disagreed by design: the tree says which cores the machine has, not
+/// which ones are up.
 pub fn cpu_count() -> u32 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        crate::kernel::smp::online_cpu_count()
-    }
-    #[cfg(any(
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "riscv64", target_os = "none")
-    ))]
-    {
-        crate::arch::fdt::cpu_count()
-    }
-    #[cfg(not(any(
-        target_arch = "x86_64",
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "riscv64", target_os = "none")
-    )))]
-    {
-        1
-    }
+    crate::kernel::smp::online_cpu_count()
 }
 
 /// # Safety

@@ -1,6 +1,6 @@
 # Current Status
 
-> **Last updated:** 2026-09-22 **Codebase:** 599 Rust files, ~224,000 lines of Rust in `src/` **Targets:** x86_64 (full), AArch64 (full), RISC-V 64 (partial)
+> **Last updated:** 2026-09-24 **Codebase:** 606 Rust files, ~225,000 lines of Rust in `src/` **Targets:** x86_64 (full), AArch64 (full), RISC-V 64 (partial)
 
 ---
 
@@ -420,9 +420,9 @@ The network stack is the second-largest subsystem at **40,809 lines across 81 fi
 | Feature | x86_64 | AArch64 | RISC-V 64 |
 |---------|--------|---------|-----------|
 | Boot protocol | Multiboot2 / QEMU PVH | QEMU direct `-kernel` | QEMU direct `-kernel` |
-| Interrupt controller | APIC + IOAPIC | GICv2/v3 | PLIC |
-| Timer | APIC timer | Generic timer | CLINT timer |
-| SMP | Full (MADT + AP bringup) | Full (spin-table + GIC SGI) | Full (SBI HSM + FDT CPU nodes) |
+| Interrupt controller | APIC + IOAPIC | GICv2 (a GICv3 is detected and refused) | PLIC |
+| Timer | PIT (IRQ0 → LAPIC 0) | Generic timer (per-core PPI 30) | CLINT timer |
+| SMP | Full (MADT + AP bringup; the tick is the boot CPU's) | Full (PSCI + GIC SGI) | Bring-up only (harts park in `wfi`) |
 | Context switch | Full | Full | Full |
 | PAN/SMAP | SMAP (stac/clac) | PSTATE.PAN (set/clear) | SUM (sstatus) |
 | MSI/MSI-X | Full (vector allocator + table programming) | Full (GIC ITS, LPI) | — |
