@@ -213,12 +213,17 @@ pub(crate) fn enqueue_ready_thread(
 /// Requeue a preempted thread.  FIFO threads go to the front of their
 /// queue to preserve run-to-completion ordering; round-robin threads
 /// go to the back.
+///
+/// Answers whether the thread went back into a queue.  A preempted thread
+/// that was not runnable does not, and it has just left the CPU — so the
+/// caller is the only place that can notice a thread going nowhere, and it
+/// is what [`Scheduler::record_dropped_current`] counts.
 pub(crate) fn requeue_preempted_thread(
     ready_queues: &mut [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT],
     thread: Arc<Thread>,
-) {
+) -> bool {
     if !should_dispatch_ready_thread(thread.state()) {
-        return;
+        return false;
     }
 
     let _ = remove_queued_thread(ready_queues, &thread);
@@ -228,6 +233,7 @@ pub(crate) fn requeue_preempted_thread(
     } else {
         ready_queue.push_back(thread);
     }
+    true
 }
 
 pub(crate) fn take_next_dispatchable_thread(

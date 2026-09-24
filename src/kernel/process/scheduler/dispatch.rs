@@ -254,7 +254,7 @@ impl Scheduler {
     /// If no other thread is runnable this is a no-op.
     pub(crate) fn yield_current_thread(&self) {
         let interrupts_were_enabled = arch::interrupts::save_and_disable();
-        let ctx_ptr = {
+        let (ctx_ptr, requeued) = {
             let thread = match self.current.lock().take() {
                 Some(thread) => thread,
                 None => {
@@ -276,9 +276,12 @@ impl Scheduler {
             // Save the raw context pointer before moving the Arc into the
             // ready queue, avoiding an unnecessary atomic refcount bump.
             let ctx = thread.context_ptr();
-            requeue_preempted_thread(&mut ready_queues, thread); // move, not clone
-            ctx
+            let requeued = requeue_preempted_thread(&mut ready_queues, thread); // move, not clone
+            (ctx, requeued)
         };
+        if !requeued {
+            self.record_dropped_current();
+        }
 
         self.restore_kernel_address_space();
         unsafe {
@@ -313,7 +316,7 @@ impl Scheduler {
     /// Returns `true` if a preemption actually occurred, `false` if there
     /// was no current thread or no other thread was ready.
     pub(crate) fn preempt_current_thread_from_interrupt(&self) -> bool {
-        let ctx_ptr = {
+        let (ctx_ptr, requeued) = {
             let thread = match self.current.lock().take() {
                 Some(thread) => thread,
                 None => return false,
@@ -331,9 +334,12 @@ impl Scheduler {
             // ready queue, avoiding an unnecessary atomic refcount bump.
             let ctx = thread.context_ptr();
             self.record_preempt(&thread);
-            requeue_preempted_thread(&mut ready_queues, thread); // move, not clone
-            ctx
+            let requeued = requeue_preempted_thread(&mut ready_queues, thread); // move, not clone
+            (ctx, requeued)
         };
+        if !requeued {
+            self.record_dropped_current();
+        }
 
         // Timer preemption runs on an interrupt frame. Keep interrupts masked
         // across the address-space restore and context switch so a nested IRQ

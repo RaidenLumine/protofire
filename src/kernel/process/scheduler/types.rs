@@ -49,6 +49,16 @@ pub struct SchedulerHotspotStats {
     /// A thread the scheduler cannot find is a thread it will never schedule
     /// again, so this is the shape "the machine stopped with work left" has.
     pub unplaced_process_count: u64,
+    /// A thread left the CPU and was not put back into any queue.
+    ///
+    /// The close of every scheduling pass that ends on another thread takes
+    /// the running thread out of the current slot and requeues it.  A thread
+    /// that is not runnable at that moment goes nowhere instead — and nothing
+    /// else looks for it, because the resume path (`continue_process`) only
+    /// walks the queues.  Counted because this is a *silent* exit from the
+    /// scheduler's view, and the placement watchdog can only see its
+    /// consequence.
+    pub dropped_current_count: u64,
 }
 
 impl SchedulerHotspotStats {
@@ -90,6 +100,10 @@ impl SchedulerHotspotStats {
 
     pub(crate) fn observe_unplaced_process(&mut self) {
         self.unplaced_process_count = self.unplaced_process_count.saturating_add(1);
+    }
+
+    pub(crate) fn observe_dropped_current(&mut self) {
+        self.dropped_current_count = self.dropped_current_count.saturating_add(1);
     }
 }
 

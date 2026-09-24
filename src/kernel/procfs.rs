@@ -309,7 +309,9 @@ fn processes_data() -> Vec<u8> {
 /// work left has one of them non-zero, and the file says which — instead of a
 /// serial log that ends mid-line and a story about which probe was in the
 /// build that day.  `waiter-lost` and `unplaced-process` are tripwires: they
-/// should read zero forever.
+/// should read zero forever, and `dropped-current` is the third — it is the
+/// one exit from the scheduler's view that leaves no other trace, so it is
+/// what to read when `unplaced-process` is no longer zero.
 fn sched_data() -> Vec<u8> {
     let Some(scheduler) = crate::kernel::process::Scheduler::global() else {
         return b"scheduler: not initialised\n".to_vec();
@@ -318,7 +320,8 @@ fn sched_data() -> Vec<u8> {
     format!(
         "dispatch: {}\nblock: {}\ntimed-wait-registrations: {}\nsignal-wakes: {}\n\
          timeout-wakes: {}\npreempts: {}\n\n\
-         wake-refused: {}\nenqueue-refused: {}\nwaiter-lost: {}\nunplaced-process: {}\n",
+         wake-refused: {}\nenqueue-refused: {}\nwaiter-lost: {}\nunplaced-process: {}\n\
+         dropped-current: {}\n",
         stats.dispatch_count,
         stats.block_count,
         stats.timed_wait_registration_count,
@@ -329,6 +332,7 @@ fn sched_data() -> Vec<u8> {
         stats.enqueue_refused_count,
         stats.waiter_lost_count,
         stats.unplaced_process_count,
+        stats.dropped_current_count,
     )
     .into_bytes()
 }

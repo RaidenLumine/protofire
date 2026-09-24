@@ -75,11 +75,8 @@ impl Scheduler {
                 // A live process with no threads at all: also unplaced, and not
                 // a matter of timing — nothing is on its way to being placed.
                 if threadless_count < CAPACITY {
-                    threadless[threadless_count] = (
-                        process.pid(),
-                        process.state(),
-                        UnplacedDetail::NoThreads,
-                    );
+                    threadless[threadless_count] =
+                        (process.pid(), process.state(), UnplacedDetail::NoThreads);
                     threadless_count += 1;
                 }
                 continue;

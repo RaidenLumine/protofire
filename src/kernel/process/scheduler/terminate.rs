@@ -27,7 +27,10 @@ pub(crate) enum UnplacedDetail {
     /// The process has no threads at all.
     NoThreads,
     /// The process has this many threads, and none of them was in a queue.
-    NoPlacedThread { threads: usize, holding_suspended: bool },
+    NoPlacedThread {
+        threads: usize,
+        holding_suspended: bool,
+    },
 }
 
 impl core::fmt::Display for UnplacedDetail {
@@ -199,6 +202,25 @@ impl Scheduler {
         if first {
             crate::println!(
                 "[sched ] a runnable thread was refused by the ready queue: \
+                 it is in no queue at all"
+            );
+        }
+    }
+
+    /// Count a thread that left the CPU and went nowhere.
+    ///
+    /// The scheduler took it out of the current slot expecting to requeue it,
+    /// and it was not runnable — so it is in no queue now, and the resume path
+    /// only walks queues.  Said once, for the same reason the others are: it is
+    /// the one exit from the scheduler's view that leaves no other trace.
+    pub(crate) fn record_dropped_current(&self) {
+        let mut stats = self.hotspot_stats.lock();
+        stats.observe_dropped_current();
+        let first = stats.dropped_current_count == 1;
+        drop(stats);
+        if first {
+            crate::println!(
+                "[sched ] a thread left the CPU without being requeued: \
                  it is in no queue at all"
             );
         }
