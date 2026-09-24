@@ -276,8 +276,11 @@ Tying page-table operations to hardware:
 | `unmap` | `page_table.unmap` | `shootdown_range()` |
 | `translate` | `page_table.lookup` | — |
 
-After any mapping change, `shootdown_range()` (from `arch.rs`) broadcasts a TLB
-invalidation IPI to all online CPUs.
+After any mapping change, `shootdown_range()` (from `arch.rs`) drops the local
+translation and posts the range to the invalidation log
+(`smp::tlb_shootdown_range`), which every other CPU walks on its next kernel
+entry.  The architectures whose invalidation is an inner-shareable broadcast
+do it where the mapping is edited and post nothing.
 
 ### User Page Registration
 
@@ -444,7 +447,10 @@ pub(crate) fn shootdown_range(virtual_address: usize, length: usize)  // line 42
 ```
 
 Aligns the range to page boundaries and calls `smp::tlb_shootdown(va)` for each
-page.  On SMP targets this sends an IPI and waits for acknowledgment.
+page.  The local translation goes immediately; the request is posted to the
+invalidation log for the other CPUs, which walk what is waiting when they next
+enter the kernel.  A range long enough to be worth more than the walk is a
+full flush instead, on both sides.
 
 ### User Page Installation
 

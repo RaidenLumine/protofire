@@ -12,59 +12,6 @@ use core::sync::atomic::Ordering;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use super::bringup::online_cpu_count;
 
-// ── TLB shootdown ─────────────────────────────────────────────────────
-
-/// Virtual address for the pending TLB shootdown (0 = none).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-static SHOOTDOWN_VA: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-
-/// Number of CPUs that have acknowledged the current shootdown.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-static SHOOTDOWN_ACK_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-
-/// Serialises TLB shootdown protocol entry so that only one CPU at a time
-/// publishes a VA and collects acknowledgements.  Uses the same
-/// exponential-backoff pattern as [`MEMORY_MANAGER_LOCK`] — interrupts
-/// are NOT disabled, so other CPUs can handle our IPI while spinning here.
-///
-/// Currently unused while cross-CPU IPI delivery is being debugged;
-/// see [`tlb_shootdown`] for the generation-counter workaround.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[allow(dead_code)]
-static SHOOTDOWN_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-/// Acquire the shootdown serialisation lock with exponential backoff.
-/// Interrupts remain enabled so the caller (and other CPUs) can still
-/// receive IPIs while contending for this lock.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[allow(dead_code)]
-fn acquire_shootdown_lock() {
-    let mut backoff: u32 = 1;
-    while SHOOTDOWN_LOCK
-        .compare_exchange_weak(
-            false,
-            true,
-            core::sync::atomic::Ordering::Acquire,
-            core::sync::atomic::Ordering::Relaxed,
-        )
-        .is_err()
-    {
-        while SHOOTDOWN_LOCK.load(core::sync::atomic::Ordering::Relaxed) {
-            for _ in 0..backoff.min(64) {
-                core::hint::spin_loop();
-            }
-            backoff = backoff.saturating_mul(2).min(1024);
-        }
-        backoff = 1;
-    }
-}
-
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[allow(dead_code)]
-fn release_shootdown_lock() {
-    SHOOTDOWN_LOCK.store(false, core::sync::atomic::Ordering::Release);
-}
-
 /// Full-flush counter for the architectures that keep their latch here.
 ///
 /// x86_64's counter lives in its posted log instead — the log is where the
@@ -417,12 +364,6 @@ impl Drop for AppendGuard {
     }
 }
 
-/// Diagnostic: total number of shootdown IPI handler invocations per CPU.
-/// Incremented unconditionally so we can tell whether the IPI ever arrived.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub static SHOOTDOWN_HANDLER_COUNT: core::sync::atomic::AtomicU64 =
-    core::sync::atomic::AtomicU64::new(0);
-
 /// The log of invalidations waiting to be walked.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 static POSTED: PostedLog = PostedLog::new();
@@ -586,23 +527,6 @@ pub fn posted_invalidation_stats() -> PostedStats {
     PostedStats::default()
 }
 
-/// Handle a TLB shootdown IPI on any CPU (BSP or AP).
-///
-/// Called from the IDT handler for `IPI_SHOOTDOWN_VECTOR`.
-/// Invalidates the local TLB entry for the address in [`SHOOTDOWN_VA`]
-/// and increments the acknowledgment counter.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub fn handle_tlb_shootdown() {
-    SHOOTDOWN_HANDLER_COUNT.fetch_add(1, Ordering::Relaxed);
-    let va = SHOOTDOWN_VA.load(Ordering::Acquire);
-    if va != 0 {
-        unsafe {
-            core::arch::asm!("invlpg [{}]", in(reg) va, options(nostack));
-        }
-    }
-    SHOOTDOWN_ACK_COUNT.fetch_add(1, Ordering::Release);
-}
-
 /// Return the current TLB shootdown generation counter.
 ///
 /// This is what AArch64/RISC-V SMP compare their own latches against; their
@@ -656,10 +580,6 @@ pub fn save_boot_cr3() {}
 pub fn tlb_shootdown(_va: usize) {
     // no-op: single-CPU or test environment
 }
-
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[allow(dead_code)]
-pub fn handle_tlb_shootdown() {}
 
 #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
 #[allow(dead_code)]

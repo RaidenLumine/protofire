@@ -729,25 +729,8 @@ fn send_reschedule_ipi_to(_cpu_id: u32) {}
 )))]
 fn send_reschedule_ipi_to(_cpu_id: u32) {}
 
-/// Send an IPI to every online CPU *except* the caller.  Uses the ICR
-/// Destination Shorthand "All Excluding Self" (bits 18:19 = 11) so that
-/// the LAPIC broadcasts the IPI without needing per-destination LAPIC-ID
-/// writes.  This avoids potential LAPIC-ID mismatches and makes the
-/// shootdown path simpler and faster.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[allow(dead_code)]
-fn send_ipi_to_all_other_cpus(vector: u8) {
-    const ICR_DSH_ALL_EXC_SELF: u32 = 0b11 << 18;
-    send_ipi(0, vector as u32 | ICR_DSH_ALL_EXC_SELF);
-}
-
 // ── Constants re-export ────────────────────────────────────────────────
 
 /// IPI vector for reschedule requests.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub const IPI_RESCHEDULE_VECTOR: u8 = crate::arch::x86_64::idt::IPI_RESCHEDULE_VECTOR;
-
-/// IPI vector for TLB shootdown requests.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[allow(dead_code)]
-pub const IPI_SHOOTDOWN_VECTOR: u8 = crate::arch::x86_64::idt::IPI_SHOOTDOWN_VECTOR;

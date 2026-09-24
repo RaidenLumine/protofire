@@ -28,7 +28,6 @@ use super::types::InterruptGate;
 use super::types::EARLY_HANDLERS;
 use super::types::IDT;
 use super::types::IPI_RESCHEDULE_VECTOR;
-use super::types::IPI_SHOOTDOWN_VECTOR;
 use super::types::SYSCALL_VECTOR;
 use super::types::USER_INTERRUPT_GATE;
 
@@ -132,17 +131,6 @@ extern "C" fn interrupt_dispatch(context: &mut InterruptContext) {
                 scheduler.set_need_resched();
             }
         }
-        IPI_SHOOTDOWN_VECTOR => {
-            crate::kernel::irq_stats::record_ipi();
-            // Acknowledge LAPIC EOI.
-            #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-            {
-                crate::arch::x86_64::apic::lapic_eoi();
-            }
-            // Execute the pending TLB invalidation.
-            #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-            crate::kernel::smp::handle_tlb_shootdown();
-        }
         _ => {
             crate::kernel::irq_stats::record_spurious();
             println!(
@@ -196,17 +184,12 @@ fn handle_x86_64_nmi(context: &InterruptContext) {
 pub(crate) fn is_irq_vector(vector: u8) -> bool {
     // With APIC/IOAPIC, interrupt vectors can range from 32 (first
     // non-exception vector) up to 254.  The syscall vector (128) is
-    // excluded because it is handled separately.  We also exclude
-    // IPI vectors (reschedule, shootdown) and the LAPIC spurious
-    // vector (0xFF).
+    // excluded because it is handled separately.  We also exclude the
+    // reschedule IPI vector and the LAPIC spurious vector (0xFF).
     //
     // The legacy PIC range (32..=47) is a subset of this range and
     // will still match.
-    vector >= 32
-        && vector != SYSCALL_VECTOR
-        && vector != IPI_RESCHEDULE_VECTOR
-        && vector != IPI_SHOOTDOWN_VECTOR
-        && vector < 255
+    vector >= 32 && vector != SYSCALL_VECTOR && vector != IPI_RESCHEDULE_VECTOR && vector < 255
 }
 
 pub(crate) fn capture_current_user_context(context: &InterruptContext) {

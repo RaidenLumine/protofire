@@ -12,7 +12,6 @@ pub(crate) use dispatch::init;
 pub(crate) use dispatch::init_ap;
 pub use types::InterruptContext;
 pub use types::IPI_RESCHEDULE_VECTOR;
-pub use types::IPI_SHOOTDOWN_VECTOR;
 
 // Crate-internal re-exports for exception functions used by tests and dispatch.
 #[cfg(test)]
