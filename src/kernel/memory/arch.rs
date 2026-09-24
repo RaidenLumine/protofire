@@ -64,37 +64,10 @@ pub(crate) fn install_user_page_arch(
     physical_address: usize,
     permissions: super::paging::PagePermissions,
 ) -> bool {
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        unsafe {
-            crate::arch::mmu::install_user_page(virtual_address, physical_address, permissions)
-        }
+    // SAFETY: the caller owns the mapping it is asking for; every target that
+    // implements this checks the address against its own tables.
+    unsafe { crate::arch::mmu::install_user_page(virtual_address, physical_address, permissions) }
         .is_some()
-    }
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        unsafe {
-            crate::arch::mmu::install_user_page(virtual_address, physical_address, permissions)
-        }
-        .is_some()
-    }
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    {
-        unsafe {
-            crate::arch::mmu::install_user_page(virtual_address, physical_address, permissions)
-        }
-        .is_some()
-    }
-    #[cfg(not(any(
-        all(target_arch = "x86_64", target_os = "none"),
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "riscv64", target_os = "none")
-    )))]
-    {
-        // Host-side / other arch: stub.
-        let _ = (virtual_address, physical_address, permissions);
-        false
-    }
 }
 
 /// Ensure a range of identity-mapped kernel frames is present in the live
@@ -117,30 +90,14 @@ pub(crate) fn install_user_page_arch(
 /// way (`invalidate_page`) and puts it back the same way (`restore_page`), so
 /// the repair is a set-bit on both.
 pub(crate) fn ensure_identity_mapped_range(address: usize, byte_len: usize) {
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        let mut offset = 0;
-        while offset < byte_len {
-            unsafe { crate::arch::x86_64::paging::restore_page(address + offset) };
-            offset += super::frame::FRAME_SIZE;
-        }
-    }
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        // The aarch64 guard clears only the valid bit, so restoring it is the
-        // same set-bit walk x86_64 uses.
-        let mut offset = 0;
-        while offset < byte_len {
-            unsafe { crate::arch::aarch64::mmu::restore_page(address + offset) };
-            offset += super::frame::FRAME_SIZE;
-        }
-    }
-    #[cfg(not(any(
-        all(target_arch = "x86_64", target_os = "none"),
-        all(target_arch = "aarch64", target_os = "none")
-    )))]
-    {
-        let _ = (address, byte_len);
+    let mut offset = 0;
+    while offset < byte_len {
+        // SAFETY: the frame pool is identity-mapped, so the only question is
+        // whether the entry is present, and putting it back is what this asks
+        // for.  A target without such a guard answers that there is nothing
+        // to restore.
+        unsafe { crate::arch::mmu::restore_page(address + offset) };
+        offset += super::frame::FRAME_SIZE;
     }
 }
 
@@ -155,22 +112,9 @@ pub(crate) fn ensure_identity_mapped_range(address: usize, byte_len: usize) {
 /// the stack allocator handed out and nothing else; the guard is simply not in
 /// the list.
 pub(crate) fn map_stack_page_arch(virtual_address: usize, physical_address: usize) -> bool {
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        unsafe { crate::arch::aarch64::mmu::map_stack_page(virtual_address, physical_address) }
-    }
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        unsafe { crate::arch::x86_64::paging::map_stack_page(virtual_address, physical_address) }
-    }
-    #[cfg(not(any(
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "x86_64", target_os = "none")
-    )))]
-    {
-        let _ = (virtual_address, physical_address);
-        false
-    }
+    // SAFETY: the stack allocator owns both the address (inside the window it
+    // was given) and the frame it is mapping there.
+    unsafe { crate::arch::mmu::map_stack_page(virtual_address, physical_address) }
 }
 
 /// Remove one frame from the stack window.
@@ -178,22 +122,8 @@ pub(crate) fn map_stack_page_arch(virtual_address: usize, physical_address: usiz
 /// Counterpart of [`map_stack_page_arch`]; a target without a window has
 /// nothing to remove, which is also what `false` says.
 pub(crate) fn unmap_stack_page_arch(virtual_address: usize) -> bool {
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        unsafe { crate::arch::aarch64::mmu::unmap_stack_page(virtual_address) }
-    }
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        unsafe { crate::arch::x86_64::paging::unmap_stack_page(virtual_address) }
-    }
-    #[cfg(not(any(
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "x86_64", target_os = "none")
-    )))]
-    {
-        let _ = virtual_address;
-        false
-    }
+    // SAFETY: as `map_stack_page_arch`: the address is one the allocator owns.
+    unsafe { crate::arch::mmu::unmap_stack_page(virtual_address) }
 }
 
 /// The address range the architecture reserves for kernel stacks, if it has
@@ -206,52 +136,13 @@ pub(crate) fn unmap_stack_page_arch(virtual_address: usize) -> bool {
 /// punched in shared storage.  A target without one answers `None` here, and
 /// its stacks keep the shape they had.
 pub(crate) fn stack_window() -> Option<(usize, usize)> {
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        Some((
-            crate::arch::aarch64::mmu::STACK_WINDOW_BASE,
-            crate::arch::aarch64::mmu::STACK_WINDOW_END,
-        ))
-    }
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        Some((
-            crate::arch::x86_64::paging::X86_STACK_WINDOW_BASE,
-            crate::arch::x86_64::paging::X86_STACK_WINDOW_END,
-        ))
-    }
-    #[cfg(not(any(
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "x86_64", target_os = "none")
-    )))]
-    {
-        None
-    }
+    crate::arch::mmu::stack_window()
 }
 
 /// Unmap a user page from the live hardware page tables via the arch MMU.
 pub(crate) fn unmap_user_page_arch(virtual_address: usize) -> bool {
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        unsafe { crate::arch::mmu::unmap_page(virtual_address) }
-    }
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        unsafe { crate::arch::mmu::unmap_page(virtual_address) }
-    }
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    {
-        unsafe { crate::arch::mmu::unmap_page(virtual_address) }
-    }
-    #[cfg(not(any(
-        all(target_arch = "x86_64", target_os = "none"),
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "riscv64", target_os = "none")
-    )))]
-    {
-        let _ = virtual_address;
-        false
-    }
+    // SAFETY: the caller is removing a mapping it owns.
+    unsafe { crate::arch::mmu::unmap_page(virtual_address) }
 }
 
 pub(crate) fn detect_memory() -> usize {
