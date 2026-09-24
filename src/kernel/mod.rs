@@ -182,7 +182,7 @@ impl Kernel {
         // trampoline needs the bootstrap identity map (first 1 GiB).
         #[cfg(all(target_arch = "x86_64", target_os = "none"))]
         {
-            crate::kernel::smp::save_boot_cr3();
+            crate::arch::x86_64::smp::save_boot_cr3();
             let handoff = crate::arch::boot::handoff_address();
             let aps = crate::kernel::smp::discover_aps(handoff);
             crate::kernel::smp::store_early_aps(aps);
@@ -417,7 +417,7 @@ impl Kernel {
             // LAPIC IDs fit in a byte on current hardware; the SMP layer and
             // percpu tables store them as u8.
             let lapic_id = lapic_id as u8;
-            crate::kernel::smp::save_bsp_lapic_id(lapic_id);
+            crate::arch::x86_64::smp::save_bsp_lapic_id(lapic_id);
             // SAFETY: the BSP's per-CPU block is a static, the GS base already
             // points at it, and this runs once during boot.
             unsafe {
@@ -519,7 +519,7 @@ impl Kernel {
             if let Some(aps) = crate::kernel::smp::take_early_aps() {
                 if !aps.is_empty() {
                     println!("[init  ] SMP: bringing up {} AP(s)...", aps.len());
-                    crate::kernel::smp::bring_up_aps(&aps);
+                    crate::arch::x86_64::smp::bring_up_aps(&aps);
                 }
             }
         }

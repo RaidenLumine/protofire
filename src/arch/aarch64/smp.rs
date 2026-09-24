@@ -358,13 +358,14 @@ fn send_sgi(sgi_id: u8, cpu_mask: u8) {
     }
 }
 
-/// Ask one core to look at its run queue again.
+/// Ask one core to look at its run queue again, as a software-generated
+/// interrupt.
 ///
 /// The distributor addresses cores by [[GICV2_CPU_INTERFACES]|bit position] in
 /// the target list, and this kernel calls a core by that same number: the
 /// core's own id, from `MPIDR_EL1`.  A core the list cannot name — id 0 is the
 /// caller, and anything past the list's width — is not one this can reach.
-pub(crate) fn send_reschedule_sgi(cpu_id: u32) {
+pub fn send_reschedule_ipi(cpu_id: u32) {
     if cpu_id == 0 || cpu_id >= GICV2_CPU_INTERFACES {
         return;
     }

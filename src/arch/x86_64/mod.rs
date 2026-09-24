@@ -20,6 +20,11 @@ pub mod timer;
 pub mod tlb;
 pub mod user_access;
 
+// AP trampoline and bring-up: bare metal only, because the trampoline's
+// assembly symbols come from the kernel binary (`main.rs`).
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub(crate) mod smp;
+
 // Priority 3: new driver modules.
 pub mod apic;
 pub mod cpufreq;

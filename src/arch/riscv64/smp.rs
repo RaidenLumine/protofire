@@ -237,6 +237,16 @@ pub fn bring_up_aps() {
     // register, already answers 1 for this machine and answers it truthfully.
 }
 
+/// Ask a hart to look at its run queue again.
+///
+/// Nothing to send: the secondary harts park in `wfi` without ever entering
+/// the scheduler, so there is no run queue for a request to wake and nothing
+/// that would read the flag it sets.  Sending the IPI is the second half of
+/// putting those harts to work — the first half is the scheduler they would
+/// have to register — and the kernel's reschedule path is already written to
+/// call this the moment that happens.
+pub fn send_reschedule_ipi(_cpu_id: u32) {}
+
 /// Entry point for secondary harts, called from the assembly trampoline
 /// in boot.S.
 ///

@@ -10,6 +10,7 @@ use crate::kernel::process::Context;
 pub mod boot;
 pub mod exception_recoverability;
 pub mod interrupt_controller;
+pub mod ipi;
 pub mod mmu;
 pub mod percpu;
 pub mod syscall_trap;
