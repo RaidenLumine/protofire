@@ -33,11 +33,11 @@ console                      sync                         5
 device                       drivers                      4
 device                       fs                           5
 device                       handle_rights                2
-drivers                      block                        14
-drivers                      memory                       6
+drivers                      block                        10
+drivers                      memory                       5
 drivers                      network                      2
 drivers                      process                      2
-drivers                      sync                         30
+drivers                      sync                         29
 fs                           compression                  2
 fs                           crypto                       9
 fs                           kernel_log                   1

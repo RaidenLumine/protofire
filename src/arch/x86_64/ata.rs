@@ -1,4 +1,4 @@
-//! src/kernel/drivers/ata.rs
+//! src/arch/x86_64/ata.rs
 //!
 //! ATA disk driver (block I/O).
 //! ATA PIO block-device driver with transfer mode selection and sector I/O
@@ -7,155 +7,155 @@
 use alloc::sync::Arc;
 
 use crate::kernel::block::BlockDevice;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::block::DeviceHealth;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::memory::DmaBuffer;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 use crate::Error;
 use crate::Result;
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 use crate::kernel::block::BLOCK_SIZE;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::kernel::sync::Mutex;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::Result as KernelResult;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use alloc::string::String;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use alloc::string::ToString;
 
-use super::Driver;
-use super::DriverCategory;
+use crate::kernel::drivers::Driver;
+use crate::kernel::drivers::DriverCategory;
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 use crate::arch::x86_64::port::Port;
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PRIMARY_IO_BASE: u16 = 0x1F0;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PRIMARY_CONTROL_BASE: u16 = 0x3F6;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const SECONDARY_IO_BASE: u16 = 0x170;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const SECONDARY_CONTROL_BASE: u16 = 0x376;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_CMD_IDENTIFY: u8 = 0xEC;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_CMD_READ_SECTORS: u8 = 0x20;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_CMD_READ_SECTORS_EXT: u8 = 0x24;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_CMD_WRITE_SECTORS: u8 = 0x30;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_CMD_WRITE_SECTORS_EXT: u8 = 0x34;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const ATA_CMD_CACHE_FLUSH: u8 = 0xE7;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const ATA_CMD_CACHE_FLUSH_EXT: u8 = 0xEA;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const STATUS_ERR: u8 = 0x01;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const STATUS_DRQ: u8 = 0x08;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const STATUS_DF: u8 = 0x20;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const STATUS_DRDY: u8 = 0x40;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const STATUS_BSY: u8 = 0x80;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const POLL_LIMIT: usize = 1_000_000;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const ATA_LBA28_MAX: u64 = 0x0FFF_FFFF;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const ATA_LBA48_MAX: u64 = 0x0000_FFFF_FFFF_FFFF;
 
 // Drive/head register values for CHS/LBA addressing.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const DRIVE_HEAD_PRIMARY_MASTER: u8 = 0xA0;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const DRIVE_HEAD_PRIMARY_SLAVE: u8 = 0xB0;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const LBA_HEAD_PRIMARY_MASTER: u8 = 0xE0;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const LBA_HEAD_PRIMARY_SLAVE: u8 = 0xF0;
 
 // Device Control register bits.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const CTRL_SRST: u8 = 0x04;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const CTRL_NORMAL: u8 = 0x00;
 
 // Status register special values for floating-bus detection.
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const STATUS_FLOATING_BUS: u8 = 0xFF;
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 const STATUS_NONE: u8 = 0x00;
 
 // LBA28 addressing mask.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const LBA28_HEAD_MASK: u8 = 0x0F;
 
 // IDENTIFY command constants.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const IDENTIFY_WORD_COUNT: usize = 256;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const IDENTIFY_LBA48_BIT: usize = 10;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const IDENTIFY_MODEL_START: usize = 27;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const IDENTIFY_MODEL_END: usize = 47;
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const SECTOR_COUNT_1: u8 = 1;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const IO_WAIT_READS: usize = 4;
 
 // ── Bus Master IDE (BMIDE) DMA constants ─────────────────────────────
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_CMD_READ_DMA: u8 = 0xC8;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_CMD_WRITE_DMA: u8 = 0xCA;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;
 
 // BMIDE Command Register (offset 0x00) bits.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const BM_CMD_START_STOP: u8 = 0x01;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const BM_CMD_READ: u8 = 0x08; // 1 = read from device, 0 = write to device
 
 // BMIDE Status Register (offset 0x02) bits.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const BM_STATUS_ACTIVE: u8 = 0x01;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const BM_STATUS_ERROR: u8 = 0x02;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const BM_STATUS_INTERRUPT: u8 = 0x04;
 
 // PRDT entry: bit 31 of the byte-count field marks the end of the table.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const PRD_END_OF_TABLE: u32 = 1 << 31;
 
 /// BMIDE register block for a single ATA channel.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 struct BmideRegs {
     command: Port<u8>,
     status: Port<u8>,
     prdt_ptr: Port<u32>,
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AtaTransferMode {
     Lba28(u32),
     Lba48(u64),
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AtaStatusDecision {
     DeviceMissing,
@@ -166,7 +166,7 @@ enum AtaStatusDecision {
     Waiting,
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 fn transfer_mode_for_lba(lba: u64) -> Result<AtaTransferMode> {
     if lba <= ATA_LBA28_MAX {
         return Ok(AtaTransferMode::Lba28(lba as u32));
@@ -179,7 +179,7 @@ fn transfer_mode_for_lba(lba: u64) -> Result<AtaTransferMode> {
     Err(Error::Unsupported)
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 fn classify_ata_status(status: u8) -> AtaStatusDecision {
     if status == STATUS_NONE || status == STATUS_FLOATING_BUS {
         return AtaStatusDecision::DeviceMissing;
@@ -205,12 +205,12 @@ fn classify_ata_status(status: u8) -> AtaStatusDecision {
 }
 
 #[inline]
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 fn lba_byte(lba: u64, byte_index: usize) -> u8 {
     ((lba >> (byte_index * 8)) & 0xFF) as u8
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 fn validate_block_io_range(block_count: u64, lba: u64, byte_len: usize) -> Result<()> {
     if !byte_len.is_multiple_of(BLOCK_SIZE) {
         return Err(Error::InvalidArgument);
@@ -227,7 +227,7 @@ fn validate_block_io_range(block_count: u64, lba: u64, byte_len: usize) -> Resul
 
 struct AtaDriver;
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 struct AtaPorts {
     data: Port<u16>,
     sector_count: Port<u8>,
@@ -240,7 +240,7 @@ struct AtaPorts {
     control: Port<u8>,
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl AtaPorts {
     fn new(io_base: u16, control_base: u16) -> Self {
         Self {
@@ -257,7 +257,7 @@ impl AtaPorts {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 #[derive(Clone, Copy)]
 struct AtaProbeTarget {
     io_base: u16,
@@ -266,7 +266,7 @@ struct AtaProbeTarget {
     lba_drive_head: u8,
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl AtaProbeTarget {
     const fn new(
         io_base: u16,
@@ -283,7 +283,7 @@ impl AtaProbeTarget {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 const ATA_PROBE_ORDER: [AtaProbeTarget; 4] = [
     AtaProbeTarget::new(
         PRIMARY_IO_BASE,
@@ -311,7 +311,7 @@ const ATA_PROBE_ORDER: [AtaProbeTarget; 4] = [
     ),
 ];
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 pub struct AtaDisk {
     name: &'static str,
     model: String,
@@ -325,7 +325,7 @@ pub struct AtaDisk {
     bmide_base: Option<u16>,
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl AtaDisk {
     fn new(
         name: &'static str,
@@ -421,7 +421,7 @@ impl AtaDisk {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 impl BlockDevice for AtaDisk {
     fn name(&self) -> &str {
         self.name
@@ -501,7 +501,7 @@ impl BlockDevice for AtaDisk {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     let bmide_base = discover_bmide_base();
     ATA_PROBE_ORDER
@@ -511,12 +511,14 @@ pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
         .map(|disk| disk as Arc<dyn BlockDevice>)
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+/// A host build has no task-file registers to read, so there is no disk to
+/// find — and no port I/O to find it through.
+#[cfg(not(target_os = "none"))]
 pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     None
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 pub fn probe_primary_master() -> Option<Arc<AtaDisk>> {
     let bmide_base = discover_bmide_base();
     probe_target(ATA_PROBE_ORDER[0], bmide_base)
@@ -525,7 +527,7 @@ pub fn probe_primary_master() -> Option<Arc<AtaDisk>> {
 /// Try to discover the Bus Master IDE base address from PCI configuration
 /// space.  Returns the I/O base (bit 0 cleared) if a PIIX4/ICH IDE
 /// controller is found at the expected bus/device/function.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn discover_bmide_base() -> Option<u16> {
     use crate::arch::x86_64::pci::raw;
 
@@ -564,7 +566,7 @@ fn discover_bmide_base() -> Option<u16> {
     None
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn probe_target(target: AtaProbeTarget, bmide_base: Option<u16>) -> Option<Arc<AtaDisk>> {
     let mut ports = AtaPorts::new(target.io_base, target.control_base);
 
@@ -620,7 +622,7 @@ fn probe_target(target: AtaProbeTarget, bmide_base: Option<u16>) -> Option<Arc<A
     ))
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn identify_capacity(words: &[u16; IDENTIFY_WORD_COUNT]) -> Option<u64> {
     let lba48_supported = words[83] & (1 << IDENTIFY_LBA48_BIT) != 0;
     if lba48_supported {
@@ -641,7 +643,7 @@ fn identify_capacity(words: &[u16; IDENTIFY_WORD_COUNT]) -> Option<u64> {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn parse_model(words: &[u16; IDENTIFY_WORD_COUNT]) -> String {
     let mut bytes = [0_u8; 40];
 
@@ -662,7 +664,7 @@ fn parse_model(words: &[u16; IDENTIFY_WORD_COUNT]) -> String {
         .to_string()
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn program_read_sector(
     ports: &mut AtaPorts,
     target: AtaProbeTarget,
@@ -677,7 +679,7 @@ fn program_read_sector(
     )
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn program_write_sector(
     ports: &mut AtaPorts,
     target: AtaProbeTarget,
@@ -692,7 +694,7 @@ fn program_write_sector(
     )
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn program_sector_io(
     ports: &mut AtaPorts,
     target: AtaProbeTarget,
@@ -741,7 +743,7 @@ fn program_sector_io(
 /// Try a single-sector DMA read on `disk`.  Returns `Ok(())` on success, or
 /// an error if DMA is unavailable or the transfer fails (caller falls back to
 /// PIO).  The data is placed in `sector`.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn try_dma_read_sector(
     disk: &AtaDisk,
     ports: &mut AtaPorts,
@@ -788,7 +790,7 @@ fn try_dma_read_sector(
 
 /// Try a single-sector DMA write on `disk`.  Returns `Ok(())` on success, or
 /// an error if DMA is unavailable or the transfer fails.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn try_dma_write_sector(
     disk: &AtaDisk,
     ports: &mut AtaPorts,
@@ -832,7 +834,7 @@ fn try_dma_write_sector(
 }
 
 /// Program the ATA registers for a DMA read or write and wait for DRQ.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn program_dma_sector(
     ports: &mut AtaPorts,
     target: AtaProbeTarget,
@@ -849,7 +851,7 @@ fn program_dma_sector(
 
 /// Poll the BMIDE status register until the transfer completes or an error
 /// occurs.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn wait_bmide_done(bmide: &mut BmideRegs) -> KernelResult<()> {
     for _ in 0..POLL_LIMIT {
         let status = unsafe { bmide.status.read() };
@@ -870,7 +872,7 @@ fn wait_bmide_done(bmide: &mut BmideRegs) -> KernelResult<()> {
 }
 
 /// Construct BMIDE registers for a given probe target.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn bmide_regs_for_target(bmide_base: u16, target: AtaProbeTarget) -> BmideRegs {
     let channel_offset = if target.io_base == PRIMARY_IO_BASE {
         0_u16
@@ -885,7 +887,7 @@ fn bmide_regs_for_target(bmide_base: u16, target: AtaProbeTarget) -> BmideRegs {
     }
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+#[cfg(any(test, target_os = "none"))]
 fn cache_flush_command_for_mode(mode: AtaTransferMode) -> u8 {
     match mode {
         AtaTransferMode::Lba28(_) => ATA_CMD_CACHE_FLUSH,
@@ -893,7 +895,7 @@ fn cache_flush_command_for_mode(mode: AtaTransferMode) -> u8 {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn wait_for_not_busy(ports: &mut AtaPorts) -> KernelResult<u8> {
     for _ in 0..POLL_LIMIT {
         let status = unsafe { ports.status_command.read() };
@@ -907,7 +909,7 @@ fn wait_for_not_busy(ports: &mut AtaPorts) -> KernelResult<u8> {
     Err(Error::Busy)
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn wait_for_status_presence(ports: &mut AtaPorts) -> Option<u8> {
     for _ in 0..POLL_LIMIT {
         let status = unsafe { ports.status_command.read() };
@@ -925,7 +927,7 @@ fn wait_for_status_presence(ports: &mut AtaPorts) -> Option<u8> {
     None
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn wait_for_data_request(ports: &mut AtaPorts) -> KernelResult<()> {
     for _ in 0..POLL_LIMIT {
         let status = wait_for_not_busy(ports)?;
@@ -942,7 +944,7 @@ fn wait_for_data_request(ports: &mut AtaPorts) -> KernelResult<()> {
     Err(Error::Busy)
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[cfg(target_os = "none")]
 fn io_wait(ports: &mut AtaPorts) {
     for _ in 0..IO_WAIT_READS {
         let _ = unsafe { ports.alt_status.read() };

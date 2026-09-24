@@ -7,6 +7,7 @@ use core::fmt;
 
 use crate::kernel::process::Context;
 
+pub mod ata;
 pub mod boot;
 pub mod exception_recoverability;
 pub mod interrupt_controller;

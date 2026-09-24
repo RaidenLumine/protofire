@@ -5,7 +5,6 @@
 //! devices.
 
 pub mod ahci;
-pub mod ata;
 pub mod framebuffer;
 pub mod framebuffer_console;
 pub mod hda;
@@ -231,7 +230,7 @@ impl DriverManager {
         // registered directly after the PS/2 keyboard layer so its event-buffer
         // injections are decoded by an already-initialised KeyboardCore.
         self.register(virtio_input::driver());
-        self.register(ata::driver());
+        self.register(crate::arch::ata::driver());
         // AHCI/SATA driver: discovers controllers via PCI enumeration
         // (class=0x01/subclass=0x06).  Registers after ATA PIO so both
         // legacy-IDE and AHCI-mode controllers are discovered.
@@ -292,7 +291,7 @@ impl DriverManager {
         // SATA), then VirtIO (QEMU virt machines), then NVMe (modern PCIe SSD),
         // then USB mass storage (usb-storage devices on an xHCI bus).
         self.boot_disk = if ata_initialized {
-            ata::probe_boot_disk()
+            crate::arch::ata::probe_boot_disk()
         } else {
             println!("[driver] skipping ATA boot-disk probe because ATA init failed");
             None

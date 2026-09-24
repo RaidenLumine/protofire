@@ -27,6 +27,9 @@ pub(crate) mod smp;
 
 // Priority 3: new driver modules.
 pub mod apic;
+// The ATA driver speaks the legacy task-file registers; it is compiled on
+// host builds too, because its command encoding is unit-tested there.
+pub mod ata;
 pub mod cpufreq;
 pub mod ioapic;
 pub mod irq_balance;
