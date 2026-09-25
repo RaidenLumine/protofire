@@ -206,7 +206,7 @@ impl Scheduler {
         // Find the busiest remote CPU.
         let best = {
             let mut best: Option<(u32, usize)> = None;
-            crate::kernel::smp::for_each_percpu_scheduler(|cpu_id, sched| {
+            super::registry::for_each(|cpu_id, sched| {
                 // Skip our own CPU.
                 if cpu_id == crate::kernel::percpu::get().cpu_id {
                     return;
@@ -227,7 +227,7 @@ impl Scheduler {
             return false;
         };
 
-        let Some(victim_sched) = crate::kernel::smp::get_percpu_scheduler(victim_id) else {
+        let Some(victim_sched) = super::registry::for_cpu(victim_id) else {
             return false;
         };
 

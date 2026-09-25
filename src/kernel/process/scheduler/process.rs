@@ -105,7 +105,7 @@ impl Scheduler {
         // threads across all per-CPU schedulers.
         let mut thread_stats: BTreeMap<ProcessId, (ThreadPriority, u64)> = BTreeMap::new();
         let mut saw_self = false;
-        crate::kernel::smp::for_each_percpu_scheduler(|_cpu_id, sched| {
+        super::registry::for_each(|_cpu_id, sched| {
             // Adding this scheduler's threads twice would double the CPU time
             // of everything that runs on it, so the walk and the fallback are
             // one or the other.
@@ -144,7 +144,7 @@ impl Scheduler {
     /// currently-running slot across all per-CPU schedulers.
     pub fn list_thread_summaries(&self, pid: ProcessId) -> Vec<ThreadSummary> {
         let mut threads: Vec<Arc<Thread>> = Vec::new();
-        crate::kernel::smp::for_each_percpu_scheduler(|_cpu_id, sched| {
+        super::registry::for_each(|_cpu_id, sched| {
             sched.collect_thread_summaries_for_pid(pid, &mut threads);
         });
         // Also collect from local scheduler (handles single-CPU fallback).
@@ -252,7 +252,7 @@ impl Scheduler {
             return Some(thread);
         }
         let mut found = None;
-        crate::kernel::smp::for_each_percpu_scheduler(|_cpu_id, sched| {
+        super::registry::for_each(|_cpu_id, sched| {
             if found.is_none() {
                 found = sched.find_thread_by_pid_and_tid(pid, tid);
             }
@@ -301,7 +301,7 @@ impl Scheduler {
     }
 
     pub(crate) fn primary_scheduler(&self) -> &Self {
-        crate::kernel::smp::get_percpu_scheduler(0).unwrap_or(self)
+        super::registry::for_cpu(0).unwrap_or(self)
     }
 
     /// The machine's process table.
@@ -359,7 +359,7 @@ impl Scheduler {
         let process = primary.process_by_pid(pid).ok_or(crate::Error::NotFound)?;
         let mut stopped: u32 = 0;
         // Scan all online CPUs' schedulers.
-        crate::kernel::smp::for_each_percpu_scheduler(|_cpu_id, sched| {
+        super::registry::for_each(|_cpu_id, sched| {
             stopped += sched.stop_threads_of_process(&process);
         });
         // If no per-CPU schedulers are registered (single-CPU), scan local.
@@ -384,7 +384,7 @@ impl Scheduler {
         let process = primary.process_by_pid(pid).ok_or(crate::Error::NotFound)?;
         let mut resumed: u32 = 0;
         // Scan all online CPUs' schedulers.
-        crate::kernel::smp::for_each_percpu_scheduler(|_cpu_id, sched| {
+        super::registry::for_each(|_cpu_id, sched| {
             resumed += sched.continue_threads_of_process(&process);
         });
         // If no per-CPU schedulers are registered (single-CPU), scan local.

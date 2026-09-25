@@ -430,7 +430,7 @@ impl Kernel {
             // Register the BSP scheduler in the static percpu-scheduler table
             // so cross-CPU operations can find it.
             unsafe {
-                crate::kernel::smp::register_percpu_scheduler(
+                crate::kernel::process::scheduler::registry::register(
                     0,
                     &self.scheduler as *const Scheduler as *mut Scheduler,
                 );
@@ -459,7 +459,7 @@ impl Kernel {
             // operations (wake, reschedule IPI) can find it.
             // SAFETY: `self.scheduler` lives as long as the kernel does.
             unsafe {
-                crate::kernel::smp::register_percpu_scheduler(
+                crate::kernel::process::scheduler::registry::register(
                     0,
                     &self.scheduler as *const Scheduler as *mut Scheduler,
                 );
@@ -498,7 +498,7 @@ impl Kernel {
             // operations (wake, reschedule IPI) can find it.
             // SAFETY: `self.scheduler` lives as long as the kernel does.
             unsafe {
-                crate::kernel::smp::register_percpu_scheduler(
+                crate::kernel::process::scheduler::registry::register(
                     0,
                     &self.scheduler as *const Scheduler as *mut Scheduler,
                 );

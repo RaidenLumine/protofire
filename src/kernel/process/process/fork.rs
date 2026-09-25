@@ -122,7 +122,7 @@ impl Process {
         let mut scanned = false;
         if let Some(scheduler) = crate::kernel::process::Scheduler::global() {
             let mut running = false;
-            crate::kernel::smp::for_each_percpu_scheduler(|_cpu_id, sched| {
+            crate::kernel::process::scheduler::registry::for_each(|_cpu_id, sched| {
                 running |= sched.terminate_threads_of_process(self).running_present;
             });
             // Single-CPU (or before per-CPU schedulers are registered): the

@@ -67,8 +67,9 @@ mod                          memory                       3
 mod                          network                      3
 mod                          percpu                       3
 mod                          power                        1
+mod                          process                      3
 mod                          procfs                       1
-mod                          smp                          4
+mod                          smp                          1
 mod                          topology                     12
 network                      crypto                       30
 network                      fs                           6
@@ -93,7 +94,7 @@ process                      percpu                       12
 process                      power                        1
 process                      security                     11
 process                      shm                          1
-process                      smp                          31
+process                      smp                          15
 process                      softirq                      1
 process                      sync                         34
 process                      syscall                      3
@@ -116,7 +117,6 @@ shm                          scheduler                    3
 shm                          sync                         1
 smp                          memory                       5
 smp                          percpu                       2
-smp                          process                      4
 sync                         process                      16
 syscall                      audit                        9
 syscall                      boot_report                  2

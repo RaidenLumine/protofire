@@ -189,7 +189,7 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
     // SAFETY: `sched_ptr` was allocated for this CPU by the BSP before the
     // core was started, and it is never freed.
     unsafe {
-        crate::kernel::smp::bringup::register_percpu_scheduler(cpu_id32, sched_ptr);
+        crate::kernel::process::scheduler::registry::register(cpu_id32, sched_ptr);
     }
 
     crate::println!("[smp   ] AP cpu_id={} online", cpu_id);

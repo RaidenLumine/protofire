@@ -75,17 +75,16 @@ impl Scheduler {
             return thread;
         }
         // Enqueue the thread into its assigned CPU's ready queues.
-        let enqueued =
-            if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(target_cpu) {
-                target_sched.enqueue_ready_thread_local(thread.clone())
-            } else {
-                self.enqueue_ready_thread_local(thread.clone())
-            }
-            .enqueued();
+        let enqueued = if let Some(target_sched) = super::registry::for_cpu(target_cpu) {
+            target_sched.enqueue_ready_thread_local(thread.clone())
+        } else {
+            self.enqueue_ready_thread_local(thread.clone())
+        }
+        .enqueued();
         if enqueued {
             // If a high-priority thread was just spawned, request reschedule
             // on the target CPU so it can preempt at the next safe point.
-            if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(target_cpu) {
+            if let Some(target_sched) = super::registry::for_cpu(target_cpu) {
                 target_sched.maybe_set_need_resched_for(&thread);
             } else {
                 self.maybe_set_need_resched(&thread);
@@ -106,15 +105,14 @@ impl Scheduler {
         // Retrieve the thread stored during the suspended spawn.
         if let Some(thread) = process.take_suspended_thread() {
             let target_cpu = thread.cpu_affinity();
-            let enqueued =
-                if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(target_cpu) {
-                    target_sched.enqueue_ready_thread_local(thread.clone())
-                } else {
-                    self.enqueue_ready_thread_local(thread.clone())
-                }
-                .enqueued();
+            let enqueued = if let Some(target_sched) = super::registry::for_cpu(target_cpu) {
+                target_sched.enqueue_ready_thread_local(thread.clone())
+            } else {
+                self.enqueue_ready_thread_local(thread.clone())
+            }
+            .enqueued();
             if enqueued {
-                if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(target_cpu) {
+                if let Some(target_sched) = super::registry::for_cpu(target_cpu) {
                     target_sched.maybe_set_need_resched_for(&thread);
                 } else {
                     self.maybe_set_need_resched(&thread);

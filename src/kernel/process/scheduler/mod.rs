@@ -35,6 +35,7 @@ pub(crate) mod global;
 pub(crate) mod lifecycle;
 pub(crate) mod process;
 pub(crate) mod queue;
+pub(crate) mod registry;
 pub(crate) mod spawn;
 pub(crate) mod terminate;
 #[cfg(test)]

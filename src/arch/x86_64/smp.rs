@@ -16,7 +16,7 @@ use core::sync::atomic::Ordering;
 use alloc::boxed::Box;
 
 use crate::arch::x86_64::apic;
-use crate::kernel::smp::register_percpu_scheduler;
+use crate::kernel::process::scheduler::registry::register;
 use crate::kernel::smp::MAX_APS;
 use crate::kernel::smp::MAX_CPUS;
 
@@ -534,7 +534,7 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
         // freed, and this is the one registration of that id.
         unsafe {
             (*AP_LAPIC_IDS.get())[cpu_id as usize] = lapic_id;
-            register_percpu_scheduler(cpu_id, ap_scheduler_ptr);
+            register(cpu_id, ap_scheduler_ptr);
         }
         // Leak the started flag — the AP is running and we may need it later.
         core::mem::forget(unsafe { Box::from_raw(started_ptr) });

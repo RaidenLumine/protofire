@@ -74,25 +74,24 @@ impl Scheduler {
 
         // The thread is ready now, so it no longer needs a deadline on this
         // CPU (or on its affinity CPU, where it was blocked).
-        if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(thread_cpu) {
+        if let Some(target_sched) = super::registry::for_cpu(thread_cpu) {
             target_sched.remove_timed_waiter_for(WaiterIdentity::from_thread(&thread));
         } else {
             self.remove_timed_waiter(WaiterIdentity::from_thread(&thread));
         }
 
         // Enqueue into the thread's affinity CPU's ready queues.
-        let enqueued =
-            if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(thread_cpu) {
-                target_sched.enqueue_ready_thread_local(thread.clone())
-            } else {
-                self.enqueue_ready_thread_local(thread.clone())
-            }
-            .enqueued();
+        let enqueued = if let Some(target_sched) = super::registry::for_cpu(thread_cpu) {
+            target_sched.enqueue_ready_thread_local(thread.clone())
+        } else {
+            self.enqueue_ready_thread_local(thread.clone())
+        }
+        .enqueued();
         if enqueued {
             self.record_signal_wake(&thread);
             // Set need_resched on the target CPU if the woken thread has
             // higher priority than what that CPU is currently running.
-            if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(thread_cpu) {
+            if let Some(target_sched) = super::registry::for_cpu(thread_cpu) {
                 target_sched.maybe_set_need_resched_for(&thread);
             } else {
                 self.maybe_set_need_resched(&thread);
@@ -120,7 +119,7 @@ impl Scheduler {
     pub(crate) fn wake_expired_sleepers(&self, ticks: u64) -> usize {
         let mut woke = self.wake_ready_threads(ticks);
         let local_cpu = crate::kernel::percpu::get().cpu_id;
-        crate::kernel::smp::for_each_percpu_scheduler(|cpu_id, sched| {
+        super::registry::for_each(|cpu_id, sched| {
             if cpu_id != local_cpu {
                 woke += sched.wake_ready_threads(ticks);
             }
@@ -153,7 +152,7 @@ impl Scheduler {
 
             // If the thread belongs to a different CPU, enqueue it there.
             let enqueued = if thread_cpu != current_cpu {
-                if let Some(remote_sched) = crate::kernel::smp::get_percpu_scheduler(thread_cpu) {
+                if let Some(remote_sched) = super::registry::for_cpu(thread_cpu) {
                     let identity = WaiterIdentity::from_thread(&thread);
                     if let Some(ref cleanup) = cleanup {
                         cleanup.remove_waiter(identity);
@@ -193,8 +192,7 @@ impl Scheduler {
                 // Set need_resched on the target CPU (if remote) or locally.
                 if thread_cpu != current_cpu {
                     // Thread was enqueued on a remote CPU — wake it up.
-                    if let Some(target_sched) = crate::kernel::smp::get_percpu_scheduler(thread_cpu)
-                    {
+                    if let Some(target_sched) = super::registry::for_cpu(thread_cpu) {
                         target_sched.set_need_resched();
                     }
                     crate::kernel::smp::send_reschedule_ipi(thread_cpu);
