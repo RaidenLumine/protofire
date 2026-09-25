@@ -155,6 +155,14 @@ impl Scheduler {
 
             // Increment per-CPU and global context switch counters.
             let percpu = crate::kernel::percpu::get_mut();
+            // The first thread a CPU dispatches is announced, once per CPU.
+            // "This CPU came up" and "this CPU is being used" are different
+            // claims, and only the second one says the machine is scheduling
+            // across its cores rather than collecting them; the counter that
+            // answers it is already here, so the announcement costs nothing.
+            if percpu.context_switches == 0 {
+                crate::println!("[smp   ] cpu={} dispatched its first thread", percpu.cpu_id);
+            }
             percpu.context_switches = percpu.context_switches.saturating_add(1);
             self.stats.lock().record_context_switch();
 

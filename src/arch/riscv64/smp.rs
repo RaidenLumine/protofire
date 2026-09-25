@@ -5,13 +5,23 @@
 //! ## Boot flow
 //!
 //! 1. BSP discovers secondary hart IDs from the FDT `/cpus` node.
-//! 2. For each secondary hart the BSP allocates a 64 KiB kernel stack.
+//! 2. For each secondary hart the BSP allocates a 64 KiB boot stack, a
+//!    [`PerCpuData`] block, and a scheduler with an idle thread, and publishes
+//!    the block in that hart's per-CPU slot.
 //! 3. [`sbi_hart_start`] is called with the target hart ID and the address of
 //!    `_secondary_start` (in `.text.boot`), passing the stack pointer as the
 //!    opaque context value.
-//! 4. The secondary hart resets, executes the trampoline in [boot.S], sets up
-//!    its exception vectors and MMU context, then calls [`ap_entry`].
-//! 5. [`ap_entry`] initialises per-CPU state and enters the idle loop.
+//! 4. The secondary hart executes the trampoline in [boot.S], which sets its
+//!    stack and its `tp` from the slot the BSP filled, then calls [`ap_entry`].
+//! 5. [`ap_entry`] installs that hart's exception vectors, turns its MMU on,
+//!    joins the scheduler registry, arms its timer, and enters the scheduler
+//!    dispatch loop — from there it is a CPU the kernel runs threads on.
+//!
+//! Two things are deliberately *not* assumed about a hart started this way.
+//! It comes up with paging off, so `satp` is set from the BSP's root table
+//! before anything virtual is touched; and it comes up with `mhartid`
+//! unreadable, so its identity is the hart ID SBI hands it in `a0`, which is
+//! also the index its per-CPU slot and its trap stub are chosen by.
 //!
 //! ## SBI HSM extension
 //!
@@ -23,8 +33,11 @@
 //! Returns 0 on success, negative error code on failure.
 
 use alloc::vec::Vec;
+use core::sync::atomic::AtomicU32;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
+
+use crate::kernel::percpu::PerCpuData;
 
 /// Maximum number of secondary CPUs we attempt to boot.
 const MAX_APS: usize = 8;
@@ -63,6 +76,39 @@ const SBI_EXT_HSM: u64 = 0x48534D;
 
 /// SBI HSM function: start a hart.
 const SBI_HSM_HART_START: u64 = 0;
+
+/// SBI Extension ID for inter-processor interrupts.
+const SBI_EXT_IPI: u64 = 0x735049;
+
+/// SBI IPI function: send an IPI to a set of harts.
+const SBI_IPI_SEND: u64 = 0;
+
+/// Raise a software interrupt on the harts named by `hart_mask`.
+///
+/// `hart_mask` is a bit vector whose bit `i` names hart `i + hart_mask_base`.
+///
+/// # Safety
+///
+/// The extension is present on every SBI implementation this target boots
+/// under; a firmware that does not implement it returns an error rather than
+/// trapping.
+unsafe fn sbi_send_ipi(hart_mask: u64, hart_mask_base: u64) -> i64 {
+    let ret: u64;
+    // SAFETY: SBI ecall with the IPI extension.  `a0` carries the mask in and
+    // the error code out; SBI preserves every other register, so `a1` — which
+    // firmware clobbers — is declared in-out rather than as a plain input.
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            inlateout("a0") hart_mask => ret,
+            inlateout("a1") hart_mask_base => _,
+            in("a6") SBI_IPI_SEND,
+            in("a7") SBI_EXT_IPI,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    ret as i64
+}
 
 /// Start a hart via SBI HSM.
 ///
@@ -125,7 +171,7 @@ pub fn store_boot_hart(hartid: u64) {
 /// harts-1 boot the bring-up loop asked SBI to start the hart it was already
 /// running on, got `SBI_ERR_ALREADY_STARTED`, and left the machine one hart
 /// short with nothing but a log line to say why.
-fn bsp_hartid() -> Option<u64> {
+pub(crate) fn boot_hart_id() -> Option<u64> {
     let hartid = BOOT_HART.load(Ordering::Acquire);
     (hartid != u64::MAX).then_some(hartid)
 }
@@ -141,7 +187,7 @@ fn discover_secondary_hartids() -> Vec<u64> {
     let mut hartids = Vec::new();
 
     let total = crate::arch::fdt::cpu_count() as u64;
-    let Some(bsp_hartid) = bsp_hartid() else {
+    let Some(boot_hart) = boot_hart_id() else {
         // Without the boot hart's ID there is no way to tell a secondary hart
         // from the one already running, and starting the running hart is an
         // error rather than a start.  Report and start nothing.
@@ -149,9 +195,29 @@ fn discover_secondary_hartids() -> Vec<u64> {
         return hartids;
     };
     for hartid in 0..total {
-        if hartid != bsp_hartid {
-            hartids.push(hartid);
+        if hartid == boot_hart {
+            continue;
         }
+        // A hart past the per-CPU table has nowhere for the kernel to keep its
+        // block or its trap stub, and a hart it cannot keep state for is one it
+        // cannot run threads on.  Starting it anyway would give it another
+        // hart's state — the failure this whole pass exists to remove.
+        if hartid as usize >= super::percpu::MAX_HARTS {
+            crate::println!(
+                "[smp] riscv64: hart {} is past the per-CPU table ({} harts); not starting it",
+                hartid,
+                super::percpu::MAX_HARTS
+            );
+            continue;
+        }
+        if hartids.len() >= MAX_APS {
+            crate::println!(
+                "[smp] riscv64: more secondary harts than MAX_APS ({}); not starting the rest",
+                MAX_APS
+            );
+            break;
+        }
+        hartids.push(hartid);
     }
 
     hartids
@@ -161,11 +227,17 @@ fn discover_secondary_hartids() -> Vec<u64> {
 // AP bring-up
 // ---------------------------------------------------------------------------
 
+/// The page table the BSP runs on, saved before any hart is started.
+///
+/// SBI starts a hart with paging off, and gives it no way to ask what the
+/// kernel's root table is; the hart that had it is the only one that can say.
+static BOOT_SATP: AtomicU64 = AtomicU64::new(0);
+
 /// Bring up all secondary harts discovered via FDT.
 ///
-/// For each hart ID, allocate a stack, then call SBI HSM `hart_start`
-/// with the `_secondary_start` trampoline address and the stack pointer
-/// as the opaque context.
+/// Each hart gets its boot stack, its per-CPU block, and its scheduler *before*
+/// `hart_start`: the first instruction the hart runs after the reset reads the
+/// per-CPU slot for its `tp`, so the block has to be there before the hart is.
 pub fn bring_up_aps() {
     let hartids = discover_secondary_hartids();
     if hartids.is_empty() {
@@ -178,138 +250,271 @@ pub fn bring_up_aps() {
         hartids.len()
     );
 
-    let entry = _secondary_start as *const () as usize;
-
-    let mut online_aps = 0u32;
-
-    for (i, &hartid) in hartids.iter().enumerate() {
-        if i >= MAX_APS {
-            crate::println!("[smp] riscv64: reached MAX_APS limit, skipping remaining harts");
-            break;
-        }
-
-        // Allocate stack for this AP from the static pool.
-        // The stack grows downward from the top.
-        let stack_top = unsafe {
-            let stacks = &mut *AP_STACKS.get();
-            let stack_ptr = stacks[i].0.as_mut_ptr_range().end as u64;
-            stack_ptr
-        };
-
-        crate::println!(
-            "[smp] riscv64: SBI hart_start hartid={} entry=0x{:x} stack=0x{:x}",
-            hartid,
-            entry,
-            stack_top
-        );
-
-        // SAFETY: `_secondary_start` points to the trampoline in `.text.boot`
-        // (executable kernel memory).  The target hart is currently stopped
-        // (managed by OpenSBI).  `stack_top` is the top of a statically
-        // allocated 64 KiB BSS stack.
-        let ret = unsafe { sbi_hart_start(hartid, entry, stack_top) };
-        match ret {
-            0 => {
-                // Hart successfully started.  Give it time to come online.
-                for _ in 0..100_000 {
-                    core::hint::spin_loop();
-                }
-                online_aps += 1;
-                crate::println!(
-                    "[smp] riscv64: hart {} online, total APs={}",
-                    hartid,
-                    online_aps
-                );
-            }
-            code => {
-                crate::println!(
-                    "[smp] riscv64: SBI hart_start failed for hartid={} (err={})",
-                    hartid,
-                    code
-                );
-            }
-        }
+    // Read the BSP's root table while the BSP is the only hart that could have
+    // one.  A hart brought up with paging off would be running on the firmware's
+    // identity map with the kernel's mappings absent — which is why the bring-up
+    // below refuses to start anything when this is zero.
+    let satp: u64;
+    // SAFETY: reading `satp` has no side effects.
+    unsafe {
+        core::arch::asm!("csrr {satp}, satp", satp = out(reg) satp, options(nomem, nostack, preserves_flags));
+    }
+    BOOT_SATP.store(satp, Ordering::Release);
+    if satp >> 60 == 0 {
+        crate::println!("[smp] riscv64: BSP has paging off; not starting any hart");
+        return;
     }
 
-    // No online-AP count is kept here.  A hart is a CPU the scheduler can use
-    // once it has registered a scheduler, and these harts park in `wfi`
-    // without one — so the registry, which counts exactly the CPUs that did
-    // register, already answers 1 for this machine and answers it truthfully.
+    for (index, &hartid) in hartids.iter().enumerate() {
+        bring_up_one(hartid, index);
+    }
 }
 
-/// Ask a hart to look at its run queue again.
-///
-/// Nothing to send: the secondary harts park in `wfi` without ever entering
-/// the scheduler, so there is no run queue for a request to wake and nothing
-/// that would read the flag it sets.  Sending the IPI is the second half of
-/// putting those harts to work — the first half is the scheduler they would
-/// have to register — and the kernel's reschedule path is already written to
-/// call this the moment that happens.
-pub fn send_reschedule_ipi(_cpu_id: u32) {}
+fn bring_up_one(hartid: u64, index: usize) {
+    use alloc::boxed::Box;
 
-/// Entry point for secondary harts, called from the assembly trampoline
-/// in boot.S.
+    // The block, the scheduler, and the idle thread are built here, on the BSP,
+    // because a hart that has just been reset has no allocator and no state.
+    let mut percpu = Box::new(PerCpuData::zeroed());
+    percpu.cpu_id = hartid as u32;
+    let sched = Box::new(crate::kernel::process::Scheduler::new());
+    // Bound before anything is placed on it: this hart's first choice of thread
+    // is its own idle thread, and the round-robin that places other work starts
+    // from the CPU the scheduler is bound to.
+    sched.bind_to_cpu(hartid as u32);
+    let sched_ptr = Box::into_raw(sched);
+    percpu.scheduler = sched_ptr;
+    let percpu_ptr = Box::into_raw(percpu);
+    // SAFETY: `sched_ptr` is a live scheduler allocated just above and never
+    // freed; `start_idle_process` is what gives it something to switch to when
+    // it finds no runnable thread.
+    unsafe {
+        (*sched_ptr).start_idle_process();
+    }
+
+    // Publish the block in this hart's slot.  The slot is the only channel: the
+    // hart reads it from its trampoline, and its trap stubs read it on every
+    // kernel entry.  `tp` is left alone — the BSP is running on its own block.
+    // SAFETY: the hart is not running yet, and the block outlives the kernel.
+    unsafe {
+        super::percpu::publish_base(hartid as usize, percpu_ptr as u64);
+    }
+
+    // SAFETY: `AP_STACKS` is a static array of kernel BSS stacks, `index` is a
+    // position in it (the caller iterates at most `MAX_APS` harts), and this
+    // runs before any hart is started, so nothing else is reading the array.
+    let stack_top = unsafe {
+        let stacks = &mut *AP_STACKS.get();
+        // Leave room below the top for the first trap this hart takes: the
+        // frame is built downward from `sp` before anything is pushed, exactly
+        // as on a thread stack, and `stack_top` is exclusive.
+        let base = stacks[index].0.as_mut_ptr();
+        base.add(AP_STACK_SIZE - core::mem::size_of::<super::trap::TrapFrame>()) as u64
+    };
+
+    let entry = _secondary_start as *const () as usize;
+    crate::println!(
+        "[smp] riscv64: SBI hart_start hartid={} entry=0x{:x} stack=0x{:x}",
+        hartid,
+        entry,
+        stack_top
+    );
+
+    // SAFETY: `_secondary_start` points to the trampoline in `.text.boot`
+    // (executable kernel memory).  The target hart is currently stopped
+    // (managed by OpenSBI).  `stack_top` is inside a statically allocated
+    // 64 KiB BSS stack, and every block the hart will touch is published above.
+    let ret = unsafe { sbi_hart_start(hartid, entry, stack_top) };
+    if ret != 0 {
+        crate::println!(
+            "[smp] riscv64: SBI hart_start failed for hartid={} (err={})",
+            hartid,
+            ret
+        );
+    }
+
+    // No online count is kept here: this call reports a request SBI accepted,
+    // and the hart itself reports that it is running — see `ap_entry`.  A hart
+    // that never gets past the reset never claimed to be up.
+}
+
+// ---------------------------------------------------------------------------
+// Reaching another hart
+// ---------------------------------------------------------------------------
+
+/// Ask a hart to look at its run queue again, as a machine software interrupt.
 ///
-/// The trampoline has already set up the initial stack from the value
-/// passed in `a1` (the opaque context from `sbi_hart_start`).  This
-/// function completes hart-local initialisation (exception vectors,
-/// MMU enable, FPU enable) and enters the idle loop.
+/// The request goes through the firmware rather than through the CLINT.  The
+/// CLINT's `msip` registers are the machine level's: writing one from S-mode
+/// here is an access fault, and the hart that gets the trap is the one trying
+/// to send work, not the one that should have received it.  The SBI IPI
+/// extension exists to be the interface for exactly this.
+///
+/// Whether the request reaches the target as an S-mode software interrupt is
+/// the firmware's answer, not this kernel's, and it is not a correctness
+/// dependency either way: the receiving side is `handle_reschedule_ipi`, which
+/// only sets a "look again" flag, and a hart that never sees it still finds the
+/// work on its own next timer tick.  What is given up when no IPI arrives is
+/// latency — up to one tick — not the wake-up.  The kernel's SMP layer does not
+/// send this to the calling hart or to a hart that never came up.
+pub fn send_reschedule_ipi(cpu_id: u32) {
+    // SAFETY: an SBI call.  A firmware without the extension returns an error
+    // instead of trapping, which is why the answer is dropped rather than
+    // asserted on; the call has no memory side effects the caller can observe.
+    let _ = unsafe { sbi_send_ipi(1u64 << cpu_id, 0) };
+}
+
+/// Harts that have already said they were woken by a reschedule IPI.
+static RESCHEDULE_IPI_ANNOUNCED: AtomicU32 = AtomicU32::new(0);
+
+/// Take the reschedule request this hart is servicing, and clear it.
+pub(crate) fn handle_reschedule_ipi() {
+    // A request that arrived and a request that was never sent look the same
+    // from the scheduler's side: both end in "the queue was looked at and had
+    // nothing newer".  The first one per hart is announced so the two can be
+    // told apart from outside, and the announcement is bounded by the hart
+    // count rather than by the traffic.
+    let cpu_id = crate::kernel::percpu::get().cpu_id;
+    if cpu_id < crate::kernel::smp::MAX_CPUS as u32 {
+        let bit = 1u32 << cpu_id;
+        if RESCHEDULE_IPI_ANNOUNCED.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
+            crate::println!("[smp] riscv64: cpu={} woke on a reschedule IPI", cpu_id);
+        }
+    }
+    // `global()` reads this hart's own per-CPU slot, so the flag lands on the
+    // scheduler the request was for.
+    if let Some(sched) = crate::kernel::process::Scheduler::global() {
+        sched.set_need_resched();
+    }
+    // Clear SIP.SSIP: the request is a pending bit, and a hart that returned
+    // from the handler without clearing it would take the same interrupt again
+    // for ever, never reaching the thread the request was about.
+    //
+    // SAFETY: `csrci` on this hart's own `sip`.
+    unsafe {
+        core::arch::asm!("csrci sip, 2", options(nomem, nostack, preserves_flags));
+    }
+}
+
+/// Entry point for secondary harts, called from the assembly trampoline in
+/// boot.S with the hart ID SBI handed this hart in `a0`.
+///
+/// The trampoline has already set the stack from the opaque context and `tp`
+/// from this hart's per-CPU slot.  What is left is what makes the hart a CPU
+/// the kernel can dispatch on: its own exception vector, the page table, the
+/// per-hart interrupt controller state, its timer, and its place in the
+/// scheduler registry — in that order, because a tick that arrives before there
+/// is a scheduler to receive it is a fault rather than a tick.
 ///
 /// # Safety
 ///
-/// Called only from the secondary hart trampoline with a valid kernel
-/// stack pointer in `sp`.
+/// Called only from the trampoline of a hart whose per-CPU block the BSP
+/// published before starting it, with a valid kernel stack in `sp`.
 #[no_mangle]
-unsafe extern "C" fn ap_entry() -> ! {
-    // Set up exception vectors.
-    super::trap::init();
+unsafe extern "C" fn ap_entry(hart_id: u64) -> ! {
+    let cpu_id = hart_id as u32;
+    crate::println!("[smp] riscv64 AP: hart {} running", hart_id);
 
-    // Enable the MMU if the BSP's page tables are active.
-    // Secondary harts inherit the BSP's satp and only need to enable
-    // the MMU if it's not already on.
-    let satp: u64;
-    // SAFETY: reading satp CSR to check MMU status.
+    // 1. This hart's exception vector.  `stvec` is per-hart and a hart started by
+    //    SBI has whatever the firmware left there, so this is not optional and not
+    //    inherited.
+    // SAFETY: the hart ID is this hart's own, handed over by SBI in `a0`, and
+    // the BSP declined to start a hart outside the stub table.
     unsafe {
-        core::arch::asm!(
-            "csrr {satp}, satp",
-            satp = out(reg) satp,
-            options(nomem, nostack, preserves_flags)
-        );
-    }
-    let current_mode = satp >> 60;
-    if current_mode == 0 {
-        // MMU is off — the BSP should have set up satp before bringing
-        // up APs.  Enable Sv39 with the BSP's root table address (which
-        // is identity-mapped for kernel memory).
-        // The satp value is inherited — read the prepared root table.
-        // For now, just note that MMU is not yet active.
-        crate::println!("[smp] riscv64 AP: warning — MMU not active on secondary hart");
+        super::trap::install_for_hart(hart_id as usize);
     }
 
-    // Enable FPU (FS field in sstatus).
-    // SAFETY: modifying sstatus FS bits to enable FPU.
+    // 2. Turn the MMU on with the BSP's root table.  A hart started through HSM
+    //    comes up with paging off; without this it would run on the firmware's
+    //    identity map, where none of the kernel's mappings exist.
+    let satp = BOOT_SATP.load(Ordering::Acquire);
+    let current: u64;
+    // SAFETY: reading `satp` has no side effects.
+    unsafe {
+        core::arch::asm!("csrr {current}, satp", current = out(reg) current, options(nomem, nostack, preserves_flags));
+    }
+    if current >> 60 == 0 {
+        if satp >> 60 == 0 {
+            crate::println!("[smp] riscv64 AP: FATAL — no page table to adopt");
+            loop {
+                crate::arch::halt();
+            }
+        }
+        // SAFETY: `satp` is the root table the BSP runs on and mapped the kernel
+        // in; writing it switches this hart onto the same translations, and
+        // `sfence.vma` drops the TLB entries of the mapping we are leaving.
+        unsafe {
+            core::arch::asm!(
+                "csrw satp, {satp}",
+                "sfence.vma",
+                satp = in(reg) satp,
+                options(nomem, nostack, preserves_flags)
+            );
+        }
+        crate::println!("[smp] riscv64 AP: hart {} paging on", hart_id);
+    }
+
+    // 3. FPU: FS = 0b11 (dirty/clean state is ours to use).
+    // SAFETY: enabling the FPU state in `sstatus` affects only this hart.
     unsafe {
         core::arch::asm!(
             "csrs sstatus, {fs_mask}",
-            fs_mask = in(reg) 0x0000_6000u64, // FS = 0b11 (Clean)
+            fs_mask = in(reg) 0x0000_6000u64,
             options(nomem, nostack, preserves_flags)
         );
     }
 
-    // Enable interrupts.
-    // SAFETY: clearing all DAIF-like bits in sstatus (SIE bit).
-    unsafe {
-        core::arch::asm!("csrsi sstatus, 2", options(nomem, nostack, preserves_flags));
+    // 4. The scheduler the BSP built for this hart, already installed in the
+    //    per-CPU block `tp` points at.
+    let sched_ptr = crate::kernel::percpu::get().scheduler;
+    if sched_ptr.is_null() {
+        crate::println!(
+            "[smp] riscv64 AP: FATAL — hart {} has no scheduler",
+            hart_id
+        );
+        loop {
+            crate::arch::halt();
+        }
     }
 
-    crate::println!("[smp] riscv64 AP: hart online, entering idle loop");
+    // 5. Join the scheduler registry — the moment this hart becomes a CPU the
+    //    kernel can dispatch on, and the moment `online_cpu_count` counts it. It is
+    //    done here, on the hart itself, rather than by the hart that called
+    //    `hart_start`: a hart that never reaches this line never claimed to be up.
+    //
+    // SAFETY: `sched_ptr` was allocated for this CPU by the BSP before this hart
+    // was started, and it is never freed.
+    unsafe {
+        crate::kernel::process::scheduler::registry::register(cpu_id, sched_ptr);
+    }
 
-    // Enter the idle loop.
+    // 6. Per-hart interrupt controller state (this hart's PLIC context threshold)
+    //    and this hart's timer.  Both are per-hart registers: the PLIC claims and
+    //    completes through the context belonging to the hart, and the tick is armed
+    //    in `stimecmp`/SBI for this hart alone.
+    crate::arch::interrupt_controller::init();
+    super::timer::init();
+
+    crate::println!(
+        "[smp] riscv64 AP: hart {} online, cpu_id={}, entering dispatch loop",
+        hart_id,
+        cpu_id
+    );
+
+    // ── Enter the scheduler dispatch loop ──
+    crate::arch::interrupts::enable();
     loop {
-        // SAFETY: WFI wakes on any enabled interrupt; safe to execute
-        // in S-mode idle loop.
+        // SAFETY: `sched_ptr` is this CPU's live scheduler, registered above and
+        // never freed; the loop is the same one the BSP runs.
         unsafe {
-            core::arch::asm!("wfi", options(nomem, nostack));
+            (*sched_ptr).process_deferred_dying();
         }
+        crate::arch::interrupts::disable();
+        // SAFETY: `sched_ptr` is this CPU's live scheduler, registered above and
+        // never freed.
+        unsafe {
+            (*sched_ptr).schedule();
+        }
+        crate::arch::interrupts::enable_and_halt();
     }
 }

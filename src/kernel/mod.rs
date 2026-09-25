@@ -472,26 +472,26 @@ impl Kernel {
         {
             use alloc::boxed::Box;
             // Allocate PerCpuData for the BSP and point tp (x4) at it.
+            //
+            // The BSP is the hart the boot protocol named, which is not always
+            // hart 0 — QEMU hands the reset to whichever hart it likes — and
+            // the ID is what the PLIC context is derived from and what the
+            // registry files this CPU under.  Calling the BSP "0" on a machine
+            // that booted on hart 2 would have it claim and complete
+            // interrupts in hart 0's PLIC context.
+            let cpu_id = crate::arch::riscv64::smp::boot_hart_id().unwrap_or(0) as u32;
             let percpu = Box::new(crate::kernel::percpu::PerCpuData::zeroed());
             let percpu_ptr = Box::into_raw(percpu);
             unsafe {
-                (*percpu_ptr).cpu_id = 0; // BSP
+                (*percpu_ptr).cpu_id = cpu_id;
                 (*percpu_ptr).scheduler = &self.scheduler as *const Scheduler as *mut Scheduler;
             }
             // SAFETY: `percpu_ptr` is the BSP's freshly allocated block, and it
-            // outlives every access (it is never freed).
+            // outlives every access (it is never freed).  `set_base` writes
+            // both `tp` and this hart's per-CPU slot, which is what the trap
+            // entry reloads `tp` from.
             unsafe {
                 crate::arch::percpu::set_base(percpu_ptr as u64);
-            }
-
-            // Store the PerCpuData pointer at the boot stack bottom so the
-            // trap handler (trap.S) can load it into tp on every kernel entry.
-            extern "C" {
-                static __boot_stack_bottom: u8;
-            }
-            unsafe {
-                let boot_stack_bottom = core::ptr::addr_of!(__boot_stack_bottom) as usize;
-                *(boot_stack_bottom as *mut u64) = percpu_ptr as u64;
             }
 
             // Register the BSP scheduler in the per-CPU table so cross-CPU
@@ -499,17 +499,21 @@ impl Kernel {
             // SAFETY: `self.scheduler` lives as long as the kernel does.
             unsafe {
                 crate::kernel::process::scheduler::registry::register(
-                    0,
+                    cpu_id,
                     &self.scheduler as *const Scheduler as *mut Scheduler,
                 );
             }
-            println!("[init  ] riscv64: BSP percpu cpu_id=0 tp set");
+            println!("[init  ] riscv64: BSP percpu cpu_id={} tp set", cpu_id);
         }
 
         // ── Set NUMA node ID on the BSP per-CPU data ──
         if let Some(topo) = topology::global() {
-            let node_id = topo.node_for_cpu(0);
-            crate::kernel::percpu::get_mut().numa_node_id = node_id;
+            // The CPU asking is the BSP, and which logical id that is belongs to
+            // the architecture: 0 where the reset lands on CPU 0, and the hart
+            // the boot protocol named on riscv64.
+            let percpu = crate::kernel::percpu::get_mut();
+            let node_id = topo.node_for_cpu(percpu.cpu_id);
+            percpu.numa_node_id = node_id;
             println!("[init  ] BSP numa_node_id={}", node_id);
         }
 

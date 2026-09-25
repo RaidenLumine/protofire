@@ -6,8 +6,6 @@
 use core::arch::asm;
 use core::mem::size_of;
 use core::ptr::read_volatile;
-use core::sync::atomic::AtomicBool;
-use core::sync::atomic::Ordering;
 
 use crate::abi::syscall as syscall_abi;
 use crate::arch::interrupt_controller::InterruptController;
@@ -19,7 +17,17 @@ use crate::kernel::syscall::SyscallContext;
 use crate::kernel::syscall::{self};
 use crate::println;
 
-static INITIALIZED: AtomicBool = AtomicBool::new(false);
+/// Harts the trap-stub table in `trap.S` can name.
+///
+/// The entry stubs are addressed as a table with a four-byte stride, and the
+/// handler picks its hart's per-CPU slot out of that stride — so a CPU count
+/// the table cannot name is a hart whose traps would run against another
+/// hart's state.  The two numbers are one number, and this is where they are
+/// held together: the table's own size is checked in `trap.S`, and this build
+/// fails here if the kernel starts tracking more CPUs than the table has
+/// stubs.
+const RISCV64_TRAP_STUBS: usize = 17;
+const _: () = assert!(crate::kernel::smp::MAX_CPUS == RISCV64_TRAP_STUBS);
 
 // ── RISC-V exception / interrupt constants ──
 
@@ -101,27 +109,77 @@ pub struct TrapFrame {
 
 const _: [(); 304] = [(); size_of::<TrapFrame>()];
 
-unsafe extern "C" {
-    static __riscv64_trap_entry: u8;
+/// Bytes between one hart's entry stub and the next, as `trap.S` lays them out.
+const TRAP_STUB_STRIDE: usize = 4;
+
+extern "C" {
+    /// The `stvec` value for a hart: its stub in `trap.S`.
+    fn riscv64_trap_stub_for_hart(hart_id: usize) -> usize;
 }
 
-pub fn init() {
-    if INITIALIZED.swap(true, Ordering::Acquire) {
-        return;
-    }
-
+/// Install `hart_id`'s exception vector.
+///
+/// `stvec` is per-hart, so this is a per-hart call: the BSP makes it from
+/// `init_early`, an application hart from its own entry point.  It used to be
+/// guarded by a "first call wins" flag, which meant the second hart to call it
+/// returned without installing anything and ran on whatever `stvec` firmware
+/// left behind — a hart that takes a timer interrupt with no vector does not
+/// degrade, it jumps to address zero.
+///
+/// # Safety
+///
+/// `hart_id` must be the hart this runs on, and must be within the stub
+/// table — a hart the kernel tracks has one by construction.
+pub unsafe fn install_for_hart(hart_id: usize) {
+    // A hart ID past the stub table would index a stub that is not one.  The
+    // table is sized to the CPU count the kernel tracks and the BSP declines to
+    // start a hart it cannot keep state for, so this cannot happen; stub 0
+    // keeps a failure inside the vector table rather than inside whatever
+    // followed it.
+    let indexed = if hart_id < RISCV64_TRAP_STUBS {
+        hart_id
+    } else {
+        0
+    };
+    // SAFETY: `indexed` is inside the stub table (`trap.S` lays out exactly
+    // `RISCV64_TRAP_STUBS`, checked against the CPU count above), so the stub
+    // this asks for exists.
+    let stub = unsafe { riscv64_trap_stub_for_hart(indexed) };
+    // The entry reads its hart out of the offset between the `stvec` it arrived
+    // through and the table base, so consecutive stubs have to be one stride
+    // apart.  `trap.S` asks for the encoding that makes that so; this is the
+    // check that it did, and it costs one compare per hart at boot.
+    // SAFETY: as above — both indices are inside the table.
+    let stride = unsafe { riscv64_trap_stub_for_hart(1) - riscv64_trap_stub_for_hart(0) };
+    assert!(
+        stride == TRAP_STUB_STRIDE,
+        "riscv64: entry stubs are {} bytes apart, not {}; the trap entry reads \
+         its hart out of that offset",
+        stride,
+        TRAP_STUB_STRIDE
+    );
+    // SAFETY: writing `stvec` and `sscratch` affects only this hart, and
+    // `stub` is this hart's own entry point in the kernel's text.
     unsafe {
-        let vector_base = &raw const __riscv64_trap_entry;
         // stvec mode 0: all traps go to BASE (direct mode).
-        asm!(
-            "csrw stvec, {vector_base}",
-            vector_base = in(reg) vector_base,
-            options(nostack, preserves_flags)
-        );
+        asm!("csrw stvec, {stub}", stub = in(reg) stub, options(nostack, preserves_flags));
 
-        // Set up sscratch to hold 0 initially (we're in kernel mode).
+        // sscratch holds 0 in kernel mode: the entry sequence reads it as
+        // "this trap came from a kernel stack, not a user one".
         asm!("csrw sscratch, zero", options(nostack, preserves_flags));
     }
+}
+
+/// Install the boot hart's exception vector.
+pub fn init() {
+    // The boot protocol named this hart in `a0` before the Rust entry; a
+    // missing hand-off means the same boot that cannot name its hart also
+    // finds no harts in the device tree, and 0 is what such a boot is on.
+    let hart_id = crate::arch::riscv64::smp::boot_hart_id().unwrap_or(0) as usize;
+    // SAFETY: the hart ID is this hart's own, straight from the hand-off, and
+    // is inside the table (the table is sized to the CPU count the kernel
+    // tracks, and this is one of those CPUs).
+    unsafe { install_for_hart(hart_id) };
 }
 
 pub fn entered_from_user_mode(frame: &TrapFrame) -> bool {
@@ -345,22 +403,16 @@ fn handle_interrupt(frame: &mut TrapFrame) {
             }
         }
         INTERRUPT_SUPERVISOR_SOFTWARE => {
-            // Software interrupt (IPI): handle reschedule and TLB shootdown,
-            // then clear SIP.SSIP (bit 1).
+            // Software interrupt (IPI): a hart asking this one to look at its
+            // run queue.  What the request is and how it is answered belong to
+            // the hart that receives it — see `smp::handle_reschedule_ipi`,
+            // which also lowers the request.
             crate::kernel::irq_stats::record_ipi();
-            //
-            // Check for reschedule request.
-            if let Some(sched) = crate::kernel::process::Scheduler::global() {
-                sched.set_need_resched();
-            }
+            super::smp::handle_reschedule_ipi();
             // Check for TLB shootdown request: walk whatever another hart
             // posted for us to drop.  The log is the request; there is no
             // second counter beside it that could disagree with it.
             crate::kernel::smp::apply_remote_tlb_invalidations();
-            // Clear SIP.SSIP (Supervisor Software Interrupt Pending, bit 1).
-            unsafe {
-                asm!("csrci sip, 2", options(nomem, nostack, preserves_flags));
-            }
         }
         _ => {
             crate::kernel::irq_stats::record_spurious();

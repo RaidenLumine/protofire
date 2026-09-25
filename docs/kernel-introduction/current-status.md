@@ -422,7 +422,7 @@ The network stack is the second-largest subsystem at **40,809 lines across 81 fi
 | Boot protocol | Multiboot2 / QEMU PVH | QEMU direct `-kernel` | QEMU direct `-kernel` |
 | Interrupt controller | APIC + IOAPIC | GICv2 (a GICv3 is detected and refused) | PLIC |
 | Timer | PIT (IRQ0 → LAPIC 0) | Generic timer (per-core PPI 30) | CLINT timer |
-| SMP | Full (MADT + AP bringup; the tick is the boot CPU's) | Full (PSCI + GIC SGI) | Bring-up only (harts park in `wfi`) |
+| SMP | Full (MADT + AP bringup; the tick is the boot CPU's) | Full (PSCI + GIC SGI) | Full (SBI HSM + per-hart vector, timer, and PLIC context; a cross-hart wake waits for the target's tick) |
 | Context switch | Full | Full | Full |
 | PAN/SMAP | SMAP (stac/clac) | PSTATE.PAN (set/clear) | SUM (sstatus) |
 | MSI/MSI-X | Full (vector allocator + table programming) | Full (GIC ITS, LPI) | — |

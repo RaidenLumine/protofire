@@ -60,12 +60,22 @@ _start:
    Called by SBI HSM `hart_start` (see riscv64/smp.rs bring_up_aps) with:
        a0 = hart_id
        a1 = opaque (stack top, pre-allocated by the BSP)
-   We set the stack pointer from the opaque context and tail-call the Rust
-   ap_entry() function (src/arch/riscv64/smp.rs), which never returns. */
+   A hart started this way comes up with paging off and `tp` holding whatever
+   the firmware left in it, so both are set here, before any Rust code can read
+   per-CPU state: the stack from the opaque context, and the hart's
+   `PerCpuData` from the slot the BSP filled before it started us.  Then we
+   tail-call the Rust ap_entry() (src/arch/riscv64/smp.rs), which never
+   returns. */
 .align 4
 _secondary_start:
     /* Set stack pointer from opaque (passed by BSP via SBI HSM a2). */
     mv sp, a1
+
+    /* tp ← this hart's PerCpuData, from slot `hart_id`. */
+    slli t0, a0, 3
+    la t1, RISCV64_PERCPU_PTRS
+    add t0, t0, t1
+    ld tp, 0(t0)
 
     /* Jump to the Rust entry (tail call — never returns). */
     tail ap_entry
