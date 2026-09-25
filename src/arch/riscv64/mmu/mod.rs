@@ -15,6 +15,9 @@
 //!                                            physical pool and heap — plus
 //!                                            demo user slots carved top-down)
 //!                                            under a 1 GiB QEMU `virt` RAM.
+//!   [0xC000_0000, 0xC400_0000)  PGD[3]     stack window (kernel stacks, one
+//!                                            leaf per usable page, guards left
+//!                                            unfilled)
 
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 use core::arch::asm;
@@ -58,6 +61,30 @@ const DEVICE_MMIO_BASE: usize = 0x0000_0000;
 /// so the AIA IMSIC MSI-X programmer can validate table addresses against the
 /// real window extent.
 pub(crate) const DEVICE_MMIO_END: usize = 0x8000_0000;
+
+/// The VA window the kernel's own stacks live in.
+///
+/// Outside the RAM window and above it, so a stack's guard page can be a hole
+/// in *this* window's own table: nothing else is described by that table, and
+/// leaving a page out of it cannot disturb anything else.  That is the whole
+/// reason stacks get a window rather than frames carved out of the pool — the
+/// pool is shared, so a hole punched there is a hole in the kernel's own
+/// storage, which is what riscv64 had to live with while it had no window.
+pub(crate) const STACK_WINDOW_BASE: usize = 0xC000_0000;
+/// 64 MiB, the same budget the other architectures give their windows: about
+/// 1600 stacks of a guard page plus 32 KiB of usable space, which is far more
+/// than a boot needs and few enough that the churn check can still exhaust it.
+pub(crate) const STACK_WINDOW_SIZE: usize = 0x0400_0000;
+pub(crate) const STACK_WINDOW_END: usize = STACK_WINDOW_BASE + STACK_WINDOW_SIZE;
+
+/// Which PGD slot the window occupies.
+///
+/// Device takes slots 0 and 1, RAM takes slot 2, so the window takes the next
+/// one — asserted rather than assumed, because a window that outgrew its slot
+/// would silently describe someone else's range.
+const STACK_WINDOW_PGD_INDEX: usize = STACK_WINDOW_BASE >> 30;
+const _: () = assert!(STACK_WINDOW_BASE & ((1 << 30) - 1) == 0);
+const _: () = assert!(STACK_WINDOW_END - STACK_WINDOW_BASE <= 1 << 30);
 
 /// Number of preallocated 2 MiB demo user slots.
 const USER_DEMO_SLOT_COUNT: usize = 8;
@@ -259,6 +286,17 @@ impl AlignedKernelTranslationTable {
 static KERNEL_PGD: AlignedKernelTranslationTable =
     AlignedKernelTranslationTable::new(PageTable::zeroed());
 static KERNEL_PMD: AlignedKernelTranslationTable =
+    AlignedKernelTranslationTable::new(PageTable::zeroed());
+
+/// The stack window's second level.
+///
+/// PGD[3] describes this table and nothing else, so a leaf here is a page
+/// nothing outside the window can reach — which is what lets a guard be a leaf
+/// the kernel simply never writes.  Roots derived from the kernel's share this
+/// table rather than copying it, so a page mapped into the window after a
+/// process root exists is visible to that root; a kernel stack needs that,
+/// because the thread using it may be switched in under any address space.
+static KERNEL_STACK_WINDOW_PMD: AlignedKernelTranslationTable =
     AlignedKernelTranslationTable::new(PageTable::zeroed());
 
 static PREPARED_ROOT_TABLE: AtomicUsize = AtomicUsize::new(0);
@@ -753,10 +791,12 @@ fn validate_runtime_layout(heap_bounds: (usize, usize)) -> Option<()> {
 unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPageTables> {
     let pgd_ptr = KERNEL_PGD.get();
     let pmd_ptr = KERNEL_PMD.get();
+    let stack_pmd_ptr = KERNEL_STACK_WINDOW_PMD.get();
 
     unsafe {
         *pgd_ptr = PageTable::zeroed();
         *pmd_ptr = PageTable::zeroed();
+        *stack_pmd_ptr = PageTable::zeroed();
     }
 
     let pgd = unsafe { &mut *pgd_ptr };
@@ -765,6 +805,9 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     pgd.0[1] = device_pgd_block_entry(DEVICE_MMIO_BASE + (1 << 30));
     // PGD[2]: RAM window [0x8000_0000, 0xC000_0000) → PMD table.
     pgd.0[2] = table_entry(pmd_ptr as *mut PageTable as usize);
+    // PGD[3]: the stack window's own table.  Nothing else is described by it,
+    // which is the property the window exists for.
+    pgd.0[STACK_WINDOW_PGD_INDEX] = table_entry(stack_pmd_ptr as *mut PageTable as usize);
 
     let pmd = unsafe { &mut *pmd_ptr };
     // PMD: cover the full RAM window with 2 MiB kernel RWX blocks so the
@@ -775,7 +818,10 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
         pmd.0[block_index] = normal_pmd_block_entry(block_address);
     }
 
-    let window_count = 2usize;
+    // Three windows are described: the device window, the RAM window, and the
+    // stack window.  Only the first two carry pages at this point — a stack is
+    // mapped into the third when a thread is created.
+    let window_count = 3usize;
     let mapped_page_count =
         ((DEVICE_MMIO_END - DEVICE_MMIO_BASE) + KERNEL_RAM_LENGTH) / TRANSLATION_GRANULE_SIZE;
 
@@ -784,6 +830,110 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
         window_count,
         mapped_page_count,
     })
+}
+
+// ── The stack window ─────────────────────────────────────────────────────
+
+/// Walk to the leaf entry for a stack-window address, building the level-0
+/// table when it is missing.
+///
+/// Only the window's slot is walked, and only the leaf level is built on
+/// demand — one table per 2 MiB of window, so the first stack in a region pays
+/// for the tables and later ones do not.  Anything unexpected in the walk is a
+/// refusal rather than a guess: the window's slot is one this file built, so a
+/// block where a table should be is not a case the kernel can have created,
+/// and reinterpreting it would edit someone else's range.
+fn stack_window_leaf(virtual_address: usize) -> Option<*mut u64> {
+    // Before the runtime tables are installed there is no window to map into;
+    // the caller's stack falls back to frames, which is a shape the kernel
+    // reports rather than pretends about.
+    if PREPARED_ROOT_TABLE.load(Ordering::Relaxed) == 0 {
+        return None;
+    }
+
+    let pgd = KERNEL_PGD.get() as *const u64;
+    // SAFETY: the root table is a static the kernel built at boot, and the
+    // index is the window's own slot (an Sv39 table has 512 entries).
+    let entry = unsafe { ptr::read_volatile(pgd.add(STACK_WINDOW_PGD_INDEX)) };
+    if entry & PTE_VALID == 0 {
+        return None;
+    }
+    let pmd = page_base_address(entry) as *const u64;
+    let pmd_slot = pmd_index(virtual_address);
+    // SAFETY: `pmd` came from a table descriptor the kernel wrote at boot, and
+    // `pmd_slot` is inside it (an Sv39 table has 512 entries).
+    let mut pmd_entry = unsafe { ptr::read_volatile(pmd.add(pmd_slot)) };
+    if pmd_entry & PTE_VALID == 0 {
+        let table = allocate_runtime_pt_page()?;
+        // SAFETY: as the read above, plus `table` being a freshly allocated,
+        // zeroed, page-aligned table this call owns until it publishes it.
+        unsafe { ptr::write_volatile(pmd.add(pmd_slot) as *mut u64, table_entry(table)) };
+        // SAFETY: as the first read: the entry is valid now, so reading it back
+        // is reading a descriptor the kernel wrote.
+        pmd_entry = unsafe { ptr::read_volatile(pmd.add(pmd_slot)) };
+    }
+    if pmd_entry & (PTE_READ | PTE_WRITE | PTE_EXECUTE) != 0 {
+        return None;
+    }
+    let pte = page_base_address(pmd_entry) as *mut u64;
+    // SAFETY: the level-0 table was just read from a table descriptor, and the
+    // index is inside it (an Sv39 leaf table has 512 entries).
+    Some(unsafe { pte.add(pte_index(virtual_address)) })
+}
+
+/// Map one 4 KiB frame at a stack-window address.
+///
+/// The leaf is an ordinary kernel page: read-write, non-executable, supervisor
+/// only.  The guard is the page this is never called for.
+///
+/// # Safety
+///
+/// `virtual_address` must name a page the caller owns — the stack window's
+/// allocator is the only thing that hands those out.
+pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: usize) -> bool {
+    if !(STACK_WINDOW_BASE..STACK_WINDOW_END).contains(&virtual_address) {
+        return false;
+    }
+    let Some(leaf) = stack_window_leaf(virtual_address) else {
+        return false;
+    };
+    // SAFETY: the leaf is inside the window's own table, and the caller owns
+    // both the address and the frame being mapped there.
+    unsafe {
+        ptr::write_volatile(leaf, normal_pte_page_entry(physical_address));
+    }
+    flush_tlb_page(virtual_address);
+    true
+}
+
+/// Remove a frame from a stack-window address.
+///
+/// Clearing the leaf is safe here for the reason the window exists: the
+/// address belongs to exactly one stack, so there is nothing else in this table
+/// a hole could affect.
+///
+/// # Safety
+///
+/// As [`map_stack_page`]: the address must be one the caller owns.
+pub(crate) unsafe fn unmap_stack_page(virtual_address: usize) -> bool {
+    if !(STACK_WINDOW_BASE..STACK_WINDOW_END).contains(&virtual_address) {
+        return false;
+    }
+    let Some(leaf) = stack_window_leaf(virtual_address) else {
+        return false;
+    };
+    // SAFETY: as `map_stack_page`: the leaf is inside the window's own table
+    // and the address is one the caller owns.  This reads it to check that a
+    // mapping is there at all — a leaf that is not present is not a mapping
+    // this call owns.
+    if unsafe { ptr::read_volatile(leaf) } & PTE_VALID == 0 {
+        return false;
+    }
+    // SAFETY: the leaf is present, so clearing it removes exactly the mapping
+    // this call was asked to remove.
+    unsafe { ptr::write_volatile(leaf, 0) };
+    flush_tlb_page(virtual_address);
+    true
 }
 
 pub fn runtime_prepared_translation(

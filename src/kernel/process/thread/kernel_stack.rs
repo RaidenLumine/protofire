@@ -9,11 +9,13 @@
 //! the guard cleared by the architecture's un-map routine — and a machine with
 //! no frame allocator at all falls back to a heap buffer with no guard.
 //!
-//! The fallback is not a leftover.  riscv64 has no window yet, so the
-//! frame-backed shape is its only one; on x86_64 and aarch64 it appears when
-//! the window or the frame pool is exhausted, which is the honest answer there
-//! too.  It stops being needed on an architecture when that architecture has a
-//! window *and* enough frames for every stack it can ask for.
+//! All three bare-metal architectures have a window now.  The fallback is not a
+//! leftover: it appears when the window or its translation-table budget is
+//! exhausted, which is the honest answer there too — a stack that cannot be a
+//! slice of the window is a stack whose guard this kernel cannot promise, and
+//! the caller reports that rather than pretending.  It stops being needed on an
+//! architecture when that architecture has a window *and* enough frames and
+//! table pages for every stack it can ask for.
 
 use alloc::boxed::Box;
 
@@ -56,17 +58,17 @@ fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
     false
 }
 
-/// riscv64 has no window and no guard it can install; say so rather than
+/// riscv64's window is where its guards come from; this is the exhausted-window
+/// fallback, and for that one there is no guard to install.  Say so rather than
 /// claiming one.
 ///
 /// The frame-backed fallback's guard is a hole in the kernel's own identity
 /// mapping, and clearing it means splitting the block that covers it — the same
 /// walk that faulted on aarch64 the first time (`split_l2_block` carries that
 /// story).  The answer here is therefore the aarch64 one: the caller reports
-/// that the guard is not enforced, which is true.  What would make it true
-/// instead is a stack window on this architecture, the same mechanism the other
-/// two have; until then a riscv64 kernel stack overflows into whatever the
-/// identity map happens to put below it.
+/// that the guard is not enforced, which is true of this shape.  The window
+/// itself does not come here: a guard inside it is a leaf nobody maps, so an
+/// overflow faults on the first byte.
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 fn enforce_guard_pages(_base: *mut u8, _guard_size: usize) -> bool {
     false
@@ -87,9 +89,12 @@ fn enforce_guard_pages(_base: *mut u8, _guard_size: usize) -> bool {
 /// Once is enough: the answer depends on where the frames landed, so every
 /// later stack would report the same thing.
 ///
-/// The wording covers both ways a caller gets here: x86_64 found a mapping
-/// `unmap_page` will not split, and aarch64 and riscv64 have no window to carve
-/// a guard out of in the first place.
+/// The wording covers both ways a caller gets here: a frame-backed stack was
+/// allocated because the window could not serve it, and x86_64 additionally
+/// found a mapping `unmap_page` will not split.  All three architectures come
+/// here through the fallback and none of them through the window — a window
+/// guard is a leaf nobody maps, so there is nothing to enforce and nothing to
+/// report.
 fn report_guard_not_enforced(guard_size: usize) {
     static REPORTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     if !REPORTED.swap(true, core::sync::atomic::Ordering::Relaxed) {

@@ -490,25 +490,27 @@ backs all `alloc`/`dealloc` calls via the `GlobalAlloc` trait.
 Kernel stacks (described in `src/kernel/process/thread/kernel_stack.rs`, not in
 the memory module itself) each have a dedicated region with a guard below them,
 so an overflow faults instead of writing over whatever comes next.  Where the
-architecture names a VA window for kernel stacks — AArch64 and x86_64 do, at
-`arch/aarch64/mmu/mod.rs` and `arch/x86_64/paging/runtime.rs` — the stack is a
-slice of that window: the usable pages are backed by frames and the guard is a
-slice the allocator never hands out, so there is no mapping to remove and
-nothing that can fail to remove it.  The window's page tables are built with
-the kernel's own tables at boot and a process address space shares them rather
-than copying them, because a stack is mapped into the window after a root is
-derived and the root has to see it.  A slice a dead stack gives back is not
-freed but *retired*: it is handed out again only once every CPU has dropped the
-translation for it, because a stale TLB entry would otherwise shadow the new
-mapping with the old frame.  On AArch64 the page invalidation is inner-shareable
-(`tlbi ...is`), so the hardware has already done it; on x86_64, where the
-invalidation is local, a changed range is *posted* to `kernel/smp/tlb.rs` and
-every other CPU walks it on its next kernel entry, invalidating only the pages
-named there and publishing how far it has walked.  A full flush is still what
-happens when the log is full or the range is very large, but it is no longer
-what every unmap costs.  Waiting never blocks — a slice that is not ready stays
-retired and the allocator takes the next address.  Elsewhere the stack is a run
-of frames at their own addresses and the guard is the page below it,
+architecture names a VA window for kernel stacks — all three do now, at
+`arch/aarch64/mmu/mod.rs`, `arch/x86_64/paging/runtime.rs`, and
+`arch/riscv64/mmu/mod.rs` — the stack is a slice of that window: the usable
+pages are backed by frames and the guard is a slice the allocator never hands
+out, so there is no mapping to remove and nothing that can fail to remove it.
+The window's page tables are built with the kernel's own tables at boot and a
+process address space shares them rather than copying them, because a stack is
+mapped into the window after a root is derived and the root has to see it.  A
+slice a dead stack gives back is not freed but *retired*: it is handed out again
+only once every CPU has dropped the translation for it, because a stale TLB
+entry would otherwise shadow the new mapping with the old frame.  On AArch64 the
+page invalidation is inner-shareable (`tlbi ...is`), so the hardware has already
+done it; on x86_64 and riscv64, where the invalidation is local (`invlpg`,
+`sfence.vma`), a changed range is *posted* to `kernel/smp/tlb.rs` and every
+other CPU walks it on its next kernel entry, invalidating only the pages named
+there and publishing how far it has walked.  A full flush is still what happens
+when the log is full or the range is very large, but it is no longer what every
+unmap costs.  Waiting never blocks — a slice that is not ready stays retired and
+the allocator takes the next address.  A stack the window cannot serve — there
+are no slices left, or no translation-table pages for its level — is a run of
+frames at its own addresses, and the guard there is the page below it,
 un-presented by the architecture's `unmap_page`; a coarse mapping can refuse
 that, and the kernel reports it at boot rather than pretending the guard is
 there.

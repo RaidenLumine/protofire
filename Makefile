@@ -52,6 +52,7 @@ endif
 		check-layering \
 		check-x8664-runtime \
 		check-x8664-churn \
+		check-riscv64-churn \
 		check-aarch64-runtime \
 		check-aarch64-smp-runtime \
 		check-riscv64-runtime \
@@ -91,6 +92,7 @@ help:
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
+		'  make check-riscv64-churn - the same churn on riscv64, whose window is one of the things it checks' \
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
 		'  make check-riscv64-runtime - run the headless QEMU virt riscv64 demo smoke check' \
 		'  make check-riscv64-smp-runtime - boot riscv64 on several harts and check they come up' \
@@ -267,6 +269,16 @@ check-x8664-churn:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-churn.sh
+
+# The riscv64 counterpart.  Its stack window is younger than x86_64's, so this
+# is where "riscv64 gets its stacks from a window, and the guard pages are
+# really enforced" is checked rather than asserted — along with the
+# invalidation grace that hands a retired slice out again.
+check-riscv64-churn:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-riscv64-churn.sh
 
 check-aarch64-runtime:
 	PROFILE="$(PROFILE)" \

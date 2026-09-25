@@ -253,6 +253,9 @@ require_log_absent_line "[FATAL]"
 require_log_absent_line "[WARN ] riscv64"
 require_log_absent_line "unhandled riscv64"
 require_log_absent_line "[thread] kernel stack map_region failed"
+# The window serves this boot's stacks, so the frame-backed shape — the one
+# whose guard cannot be enforced here — is a shape nothing should have taken.
+require_log_absent_line "[thread] kernel stack guard pages are not enforced"
 
 if [ "$remove_log_on_exit" = "0" ]; then
     printf 'riscv64 runtime log saved to %s\n' "$log_file"

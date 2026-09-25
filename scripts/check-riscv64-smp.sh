@@ -136,7 +136,7 @@ require_line "[demo  ] worker-a done"
 require_line "[demo  ] worker-b done"
 require_line "[service] kworker-syscall-fs stopped"
 
-for pattern in "[FATAL]" "unhandled riscv64" "[smp] riscv64: SBI hart_start failed" "MMU not active"; do
+for pattern in "[FATAL]" "unhandled riscv64" "[smp] riscv64: SBI hart_start failed" "MMU not active" "guard pages are not enforced"; do
     if grep -a -F "$pattern" "$log_file" >/dev/null 2>&1; then
         fail "unexpected log line: $pattern"
     fi

@@ -58,8 +58,9 @@ pub type ForkClonedAddressSpace = (
 // what they mean is on the real implementations (`aarch64::mmu`,
 // `x86_64::paging`).
 
-/// A target whose stacks are frames at their own addresses — riscv64, and
-/// every host that is not x86_64 — has no separate window to map into.
+/// A target whose stacks are frames at their own addresses — every host that
+/// is not x86_64, and any future architecture without a window — has no
+/// separate window to map into.
 ///
 /// # Safety
 ///
@@ -67,7 +68,8 @@ pub type ForkClonedAddressSpace = (
 /// same guarantees to; this one has no tables to touch.
 #[cfg(not(any(
     all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none")
+    all(target_arch = "aarch64", target_os = "none"),
+    all(target_arch = "riscv64", target_os = "none")
 )))]
 pub unsafe fn map_stack_page(_virtual_address: usize, _physical_address: usize) -> bool {
     false
@@ -80,7 +82,8 @@ pub unsafe fn map_stack_page(_virtual_address: usize, _physical_address: usize) 
 /// As [`map_stack_page`].
 #[cfg(not(any(
     all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none")
+    all(target_arch = "aarch64", target_os = "none"),
+    all(target_arch = "riscv64", target_os = "none")
 )))]
 pub unsafe fn unmap_stack_page(_virtual_address: usize) -> bool {
     false
@@ -122,9 +125,17 @@ pub fn stack_window() -> Option<(usize, usize)> {
             super::aarch64::mmu::STACK_WINDOW_END,
         ))
     }
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        Some((
+            super::riscv64::mmu::STACK_WINDOW_BASE,
+            super::riscv64::mmu::STACK_WINDOW_END,
+        ))
+    }
     #[cfg(not(any(
         all(target_arch = "x86_64", target_os = "none"),
-        all(target_arch = "aarch64", target_os = "none")
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "riscv64", target_os = "none")
     )))]
     {
         None
