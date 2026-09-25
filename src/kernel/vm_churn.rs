@@ -55,8 +55,12 @@ const CHURN_FALLBACK_RUN: usize = 256;
 /// How many invalidations to post in one go, past what the log can hold.
 ///
 /// The log is 256 slots, so this is comfortably more; the requests that do not
-/// fit become full flushes, which is the path being exercised.
-#[cfg(all(feature = "stack_churn", target_arch = "x86_64", target_os = "none"))]
+/// fit become full flushes, which is the path being exercised.  Architectures
+/// whose edits never post anything — the ones whose invalidation already
+/// reaches every CPU, like aarch64's inner-shareable `tlbi` — skip this half
+/// by posting into a log that is never read, and the checks for them assert
+/// the window's half only.
+#[cfg(feature = "stack_churn")]
 const CHURN_BURST: usize = 384;
 
 #[cfg(feature = "stack_churn")]
@@ -130,8 +134,24 @@ fn churn() {
     // entry in the middle of the loop, and this asks for the full-flush path
     // rather than hoping to catch it.
     drop(held);
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
     post_burst();
+
+    // Walk what was posted, here and now.  The receive side is the other half
+    // of the message, and on a machine whose edits post, a slice that retired
+    // stays retired until every CPU has walked it — so without this the
+    // snapshot below would say "everything retired" and leave it at that.  One
+    // CPU walking is enough to close that on a single-CPU boot, which is the
+    // configuration this runs in; the snapshot is then the evidence that the
+    // addresses came back rather than piling up.
+    crate::kernel::smp::apply_remote_tlb_invalidations();
+
+    // Ask for one stack back.  An address handed out from the recycled list is
+    // one whose retirement finished, and the window announces the first such
+    // reuse itself — which is why the checks assert on that line rather than on
+    // a count printed here.  A machine whose grace never completes still works:
+    // the window simply grows and never reuses.
+    let recovered = KernelStack::new(KERNEL_STACK_GUARD_SIZE, DEFAULT_KERNEL_STACK_SIZE);
+    drop(recovered);
 
     let posted_after = crate::kernel::smp::posted_invalidation_stats();
     crate::println!(
@@ -164,7 +184,6 @@ fn churn() {
 /// edits arrives before any CPU has caught up", which is what a kernel entry
 /// that tears down a range of mappings looks like to the log.
 #[cfg(feature = "stack_churn")]
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn post_burst() {
     use crate::kernel::memory::paging::PAGE_SIZE;
 
@@ -172,13 +191,13 @@ fn post_burst() {
     /// invalidating an unmapped page is harmless.
     const BURST_ADDRESS: usize = 0x0000_7000_0000_0000;
 
-    let interrupts_were_enabled = crate::arch::x86_64::interrupts::are_enabled();
-    crate::arch::x86_64::interrupts::disable();
+    // Where an architecture posts nothing, this fills a log nobody reads; what
+    // it costs is one function call per step, and what it saves is a second
+    // version of this function per architecture.
+    let interrupts_were_enabled = crate::arch::interrupts::save_and_disable();
     for step in 0..CHURN_BURST {
         let start = BURST_ADDRESS + step * PAGE_SIZE;
         let _ = crate::kernel::smp::post_range_invalidation(start, PAGE_SIZE);
     }
-    if interrupts_were_enabled {
-        crate::arch::x86_64::interrupts::enable();
-    }
+    crate::arch::interrupts::restore(interrupts_were_enabled);
 }

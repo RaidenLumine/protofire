@@ -211,6 +211,13 @@ pub fn interrupt_code(frame: &TrapFrame) -> u64 {
 
 #[no_mangle]
 extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
+    // Look at what the other harts have asked this one to drop, before any of
+    // this entry's code reads memory through a translation somebody else may
+    // have changed.  `sfence.vma` is hart-local, so an edit made elsewhere
+    // reaches this hart only through the log — and this is the only place
+    // every entry passes through.
+    crate::kernel::smp::apply_remote_tlb_invalidations();
+
     let entered_from_user = entered_from_user_mode(frame);
     validate_user_entry_frame_or_terminate(frame, entered_from_user);
     capture_current_user_context(frame);
@@ -406,13 +413,11 @@ fn handle_interrupt(frame: &mut TrapFrame) {
             // Software interrupt (IPI): a hart asking this one to look at its
             // run queue.  What the request is and how it is answered belong to
             // the hart that receives it — see `smp::handle_reschedule_ipi`,
-            // which also lowers the request.
+            // which also lowers the request.  Any invalidation that came with
+            // it was already walked at this entry's top, where every entry
+            // passes.
             crate::kernel::irq_stats::record_ipi();
             super::smp::handle_reschedule_ipi();
-            // Check for TLB shootdown request: walk whatever another hart
-            // posted for us to drop.  The log is the request; there is no
-            // second counter beside it that could disagree with it.
-            crate::kernel::smp::apply_remote_tlb_invalidations();
         }
         _ => {
             crate::kernel::irq_stats::record_spurious();

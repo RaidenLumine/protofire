@@ -160,6 +160,16 @@ if [ "$fallbacks" -eq 0 ]; then
     fail_with_log "no stack fell back; the window was never exhausted"
 fi
 
+# ── The retirements came back ──────────────────────────────────────────
+#
+# An edit here posts, so an address the window retired is handed out again only
+# once every CPU has walked the log — the grace.  The churn walks it and then
+# asks for one more stack, and the window announces the first slice that comes
+# back.  Without that line the retirement never completed: the window would
+# still work, but it would only ever grow, and every stack the machine ever made
+# would cost address space for good.
+require_log_line "[thread] kernel stack window: a retired slice is in use again"
+
 # ── The log was asked for more than it could hold ──────────────────────
 #
 # A request that does not fit asks for a full flush instead; zero would mean

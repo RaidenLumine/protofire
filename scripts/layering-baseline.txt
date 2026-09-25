@@ -32,6 +32,11 @@
 # lower altitude.  Each row is the finish line for its cut; a cut is done when
 # its rows reach zero and the census is re-recorded.
 #
+# One module is a diagnostic rather than a layer: `vm_churn` exists to stress
+# the stack window and the invalidation log, so it names `memory`, `process`,
+# and `smp` on purpose — its rows are the number of structures it drives, not
+# a layering direction.
+#
 # from                         to                           count
 audit                        fs                           6
 audit                        handle_rights                2
@@ -148,4 +153,4 @@ user                         process                      7
 user                         sync                         1
 vm_churn                     memory                       1
 vm_churn                     process                      6
-vm_churn                     smp                          3
+vm_churn                     smp                          4
