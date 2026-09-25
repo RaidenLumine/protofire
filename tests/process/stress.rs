@@ -12,9 +12,9 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use protofire::kernel::process::sleep_current;
+use protofire::kernel::process::wait::Event;
+use protofire::kernel::process::wait::Semaphore;
 use protofire::kernel::process::Scheduler;
-use protofire::kernel::sync::Event;
-use protofire::kernel::sync::Semaphore;
 
 // ── Test serialisation ─────────────────────────────────────────────────────
 

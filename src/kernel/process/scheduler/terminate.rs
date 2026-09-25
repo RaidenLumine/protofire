@@ -6,8 +6,8 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::arch;
-use crate::kernel::sync::wait::WaiterIdentity;
 
+use super::super::wait::WaiterIdentity;
 use super::super::Process;
 use super::super::TerminationReason;
 use super::super::Thread;

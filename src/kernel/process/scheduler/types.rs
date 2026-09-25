@@ -4,8 +4,7 @@
 
 use alloc::sync::Arc;
 
-use crate::kernel::sync::WaitTimeoutCleanupRef;
-
+use super::super::wait::WaitTimeoutCleanupRef;
 use super::super::Thread;
 
 // Baseline counters intentionally stay coarse-grained so performance work can

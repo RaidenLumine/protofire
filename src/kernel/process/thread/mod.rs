@@ -9,7 +9,7 @@ use ::core::sync::atomic::AtomicU64;
 use ::core::sync::atomic::AtomicU8;
 use alloc::sync::Arc;
 
-use crate::kernel::sync::Event;
+use crate::kernel::process::wait::Event;
 use crate::kernel::sync::Mutex;
 
 use super::ContextCell;

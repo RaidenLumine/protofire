@@ -11,7 +11,8 @@
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 
-use crate::kernel::sync::Condvar;
+use crate::kernel::process::wait::input_wait;
+use crate::kernel::process::wait::Condvar;
 use crate::kernel::sync::Mutex;
 
 /// Number of bytes in a serialised boot-protocol mouse motion report.
@@ -106,7 +107,7 @@ impl MouseCore {
     /// Read one motion report, blocking up to `timeout_ticks`.
     pub fn read_motion_timeout(&self, timeout_ticks: u64) -> Option<MouseMotion> {
         if !crate::arch::supports_context_switch() {
-            return crate::kernel::sync::input_wait::probe_then_wait_then_probe(
+            return input_wait::probe_then_wait_then_probe(
                 || self.try_read_motion(),
                 || {
                     let _ = self.wait_for_motion_timeout(timeout_ticks);
@@ -114,13 +115,13 @@ impl MouseCore {
             );
         }
 
-        crate::kernel::sync::input_wait::probe_then_timed_wait_loop(
+        input_wait::probe_then_timed_wait_loop(
             timeout_ticks,
             || self.try_read_motion(),
             |remaining| {
                 let motions = self.motions.lock();
                 if !motions.is_empty() {
-                    crate::kernel::sync::input_wait::mark_current_wait_completed();
+                    input_wait::mark_current_wait_completed();
                     return false;
                 }
                 self.motion_ready

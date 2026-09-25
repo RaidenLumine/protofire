@@ -21,11 +21,11 @@ use core::sync::atomic::AtomicU64;
 
 use super::runtime;
 use crate::kernel::process::process::types::EventFdState;
+use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::process::FdFlags;
 use crate::kernel::process::KernelObject;
 use crate::kernel::process::HANDLE_RIGHT_READ;
 use crate::kernel::process::HANDLE_RIGHT_WRITE;
-use crate::kernel::sync::wait::WaitQueue;
 use crate::kernel::syscall::SyscallContext;
 use crate::Error;
 use crate::Result;

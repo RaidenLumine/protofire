@@ -104,7 +104,7 @@ Conventions:
 
 Integration tests exercise a subsystem through its public surface. They are
 grouped by area under `tests/`: `fs/`, `io/`, `memory/`, `net/`, `process/`,
-`sync/`, `syscall/`, `simplefs/`, `drivers/`, `gpu/`, `parsers/`.
+`syscall/`, `simplefs/`, `drivers/`, `gpu/`, `parsers/`.
 
 ```rust
 //! tests/simplefs/fault_matrix.rs
@@ -280,7 +280,7 @@ not a ceiling.
 | A filesystem | `tests/<fs>/` suite; for a writable one, a recovery or fault-matrix case |
 | The allocator or paging | `tests/memory/` — `manager.rs`, `page_table.rs`, `pressure.rs` |
 | The scheduler | `tests/process/scheduler.rs`, `stress.rs`; a concurrency case if wake order changes |
-| A lock or wait queue | `tests/sync/condvar.rs` |
+| A lock or wait queue | `tests/process/condvar.rs` (blocking primitives), `tests/fs/sync_lock.rs` (lock discipline) |
 | A driver | A host-side test where the logic is separable from the hardware; a QEMU boot otherwise |
 | A user-visible behaviour | An integration test under `tests/` that exercises it end to end |
 

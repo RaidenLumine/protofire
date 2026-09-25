@@ -1,4 +1,4 @@
-//! src/kernel/sync/wait.rs
+//! src/kernel/process/wait/queue.rs
 //!
 //! Wait-queue core utilities for parking, waking, and timeout cleanup
 //! integration.
@@ -13,8 +13,7 @@ use crate::kernel::process::Scheduler;
 use crate::kernel::process::Thread;
 use crate::kernel::process::ThreadId;
 use crate::kernel::process::ThreadState;
-
-use super::SpinLock;
+use crate::kernel::sync::SpinLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TimedWaitPlan {

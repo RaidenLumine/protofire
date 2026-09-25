@@ -6,8 +6,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
-use crate::kernel::sync::wait::WaiterIdentity;
-
+use super::super::wait::WaiterIdentity;
 use super::super::Process;
 use super::super::ProcessState;
 use super::super::SecurityToken;

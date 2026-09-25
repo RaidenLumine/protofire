@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn remove_timed_waiters_by_identity_removes_matching_waiter() {
-        use crate::kernel::sync::wait::WaiterIdentity;
+        use crate::kernel::process::wait::WaiterIdentity;
 
         let process = Process::new(17, "identity-remove");
         let a = Thread::new_kernel(process.clone(), idle_entry);
@@ -460,7 +460,7 @@ mod tests {
         }
 
         thread.block_until(10_000);
-        let identity = crate::kernel::sync::wait::WaiterIdentity::from_thread(&thread);
+        let identity = crate::kernel::process::wait::WaiterIdentity::from_thread(&thread);
         scheduler.register_timed_waiter(thread.clone(), None);
         assert_eq!(scheduler.waiting_count(), 1);
 

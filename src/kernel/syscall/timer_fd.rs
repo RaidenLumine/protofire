@@ -18,9 +18,9 @@ use core::sync::atomic::Ordering;
 
 use super::runtime;
 use crate::kernel::process::process::types::TimerFdState;
+use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::process::KernelObject;
 use crate::kernel::process::HANDLE_RIGHT_READ;
-use crate::kernel::sync::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
 use crate::kernel::syscall::SyscallContext;
 use crate::Result;

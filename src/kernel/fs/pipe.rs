@@ -36,7 +36,7 @@ use alloc::vec;
 
 use crate::kernel::fs::vfs::NodeKind;
 use crate::kernel::fs::vfs::VNode;
-use crate::kernel::sync::Condvar;
+use crate::kernel::process::wait::Condvar;
 use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;

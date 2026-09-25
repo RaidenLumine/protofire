@@ -14,6 +14,7 @@ pub mod ptrace;
 pub mod scheduler;
 pub mod seccomp;
 pub mod thread;
+pub mod wait;
 
 pub use crate::kernel::device::CONSOLE_DEVICE_NAME;
 pub use crate::kernel::device::DEBUG_DEVICE_NAME;

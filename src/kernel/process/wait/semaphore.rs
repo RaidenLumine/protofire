@@ -1,12 +1,12 @@
-//! src/kernel/sync/semaphore.rs
+//! src/kernel/process/wait/semaphore.rs
 //!
 //! Counting semaphore with permit accounting, blocking acquire, and timed
 //! waits.
 
 use crate::kernel::process::ThreadWaitOutcome;
 
-use super::wait::plan_timed_wait;
-use super::wait::TimedWaitPlan;
+use super::plan_timed_wait;
+use super::TimedWaitPlan;
 use super::WaitQueue;
 
 pub struct Semaphore {

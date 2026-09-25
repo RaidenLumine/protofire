@@ -1,4 +1,4 @@
-//! tests/sync/condvar.rs
+//! tests/process/condvar.rs
 //!
 //! Host-side integration tests for condition-variable wait, wake, and timeout
 //! behavior.
@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
 
+use protofire::kernel::process::wait::Condvar;
 use protofire::kernel::process::Scheduler;
-use protofire::kernel::sync::Condvar;
 use protofire::kernel::sync::Mutex;
 
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {

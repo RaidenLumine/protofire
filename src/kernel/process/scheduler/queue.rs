@@ -6,9 +6,8 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::sync::wait::WaiterIdentity;
-
 use super::super::thread::ThreadSchedPolicy;
+use super::super::wait::WaiterIdentity;
 use super::super::ProcessState;
 use super::super::Thread;
 use super::super::ThreadState;

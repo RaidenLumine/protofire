@@ -35,7 +35,7 @@ use crate::kernel::network::LocalSocket;
 use crate::kernel::network::TcpConnection;
 use crate::kernel::network::TcpListener;
 use crate::kernel::network::UdpSocket;
-use crate::kernel::sync::wait::WaitQueue;
+use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
 use crate::Result;
 

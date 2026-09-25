@@ -1,24 +1,18 @@
 //! src/kernel/sync/mod.rs
 //!
-//! Synchronization primitive exports for mutexes, events, semaphores, and
-//! waits.
+//! The leaf synchronisation layer: a spinlock and the RAII mutex wrapper over
+//! it.  Neither names a thread, so anything — the heap, the filesystem, a
+//! driver — may use them.
+//!
+//! The primitives that *block a thread* live one layer up, in
+//! [`kernel::process::wait`](crate::kernel::process::wait): parking is a
+//! scheduler act, and a queue that parks threads has no business in the layer
+//! a mutex is built on.
 
-pub mod condvar;
-pub mod event;
-pub(crate) mod input_wait;
 pub mod mutex;
-pub mod semaphore;
 pub mod spinlock;
-pub mod wait;
 
-pub use condvar::Condvar;
-pub use condvar::CondvarWait;
-pub use event::Event;
-pub use event::EventMode;
 pub use mutex::Mutex;
 pub use mutex::MutexGuard;
-pub use semaphore::Semaphore;
 pub use spinlock::SpinLock;
 pub use spinlock::SpinLockGuard;
-pub use wait::WaitQueue;
-pub(crate) use wait::WaitTimeoutCleanupRef;

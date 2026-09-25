@@ -18,8 +18,8 @@ use alloc::sync::Weak;
 
 use super::runtime;
 use super::user_memory;
+use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::process::ThreadWaitOutcome;
-use crate::kernel::sync::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
 use crate::kernel::syscall::SyscallContext;
 use crate::kernel::syscall::SyscallDispatch;

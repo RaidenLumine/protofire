@@ -243,8 +243,9 @@ check-unsafe-comments:
 # `scripts/layering-baseline.txt` records how often each module names every
 # other one; a count that grows, a row that shrinks without the census being
 # re-recorded, or an edge the census does not mention all fail.  The cycles it
-# still lists (`fs` <-> `process`, `process` <-> `smp`, ...) are the layering
-# debt, and the counts are the finish line for each cut.
+# still lists (`process` <-> `fs`, `memory` <-> `fs`, ...) are the layering
+# debt, and the counts are the finish line for each cut.  `sync` is the bottom
+# of the graph now, so naming it is not a dependency to argue about.
 check-layering:
 	sh ./scripts/check-layering.sh
 

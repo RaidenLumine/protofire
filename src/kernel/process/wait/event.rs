@@ -1,12 +1,12 @@
-//! src/kernel/sync/event.rs
+//! src/kernel/process/wait/event.rs
 //!
 //! Manual/auto-reset event primitive for signal-and-wake synchronization.
 
 use crate::kernel::process::Scheduler;
 use crate::kernel::process::ThreadWaitOutcome;
 
-use super::wait::plan_timed_wait;
-use super::wait::TimedWaitPlan;
+use super::plan_timed_wait;
+use super::TimedWaitPlan;
 use super::WaitQueue;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

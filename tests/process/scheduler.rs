@@ -9,13 +9,13 @@ use std::sync::OnceLock;
 #[cfg(target_arch = "x86_64")]
 use protofire::arch::x86_64::gdt;
 use protofire::kernel::process::sleep_current;
+use protofire::kernel::process::wait::Event;
+use protofire::kernel::process::wait::Semaphore;
 use protofire::kernel::process::ProcessState;
 use protofire::kernel::process::Scheduler;
 use protofire::kernel::process::ThreadWaitOutcome;
 #[cfg(target_arch = "x86_64")]
 use protofire::kernel::process::UserThreadStart;
-use protofire::kernel::sync::Event;
-use protofire::kernel::sync::Semaphore;
 
 fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

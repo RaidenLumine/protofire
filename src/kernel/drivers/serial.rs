@@ -10,11 +10,11 @@ use alloc::vec::Vec;
 
 use crate::arch;
 use crate::kernel::console;
-use crate::kernel::sync::input_wait::WaitStatsBookkeeping;
-use crate::kernel::sync::input_wait::{self};
-use crate::kernel::sync::Condvar;
+use crate::kernel::process::wait::input_wait;
+use crate::kernel::process::wait::input_wait::WaitStatsBookkeeping;
+use crate::kernel::process::wait::Condvar;
+use crate::kernel::process::wait::WaitTimeoutCleanupRef;
 use crate::kernel::sync::Mutex;
-use crate::kernel::sync::WaitTimeoutCleanupRef;
 use crate::Result;
 
 use super::Driver;

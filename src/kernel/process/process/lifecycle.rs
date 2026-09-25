@@ -15,9 +15,9 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::sync::Event;
+use crate::kernel::process::wait::Event;
+use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
-use crate::kernel::sync::WaitQueue;
 use crate::kernel::user::resolve_home_dir;
 #[allow(unused_imports)]
 use crate::println;

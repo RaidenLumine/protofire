@@ -99,6 +99,7 @@ kernel::Kernel
     ├── process::Scheduler           (cooperative round-robin, thread lifecycle)
     │     ├── process::Thread        (per-thread context, state machine)
     │     ├── process::Process       (address space, fd table, security token)
+    │     ├── process::wait          (WaitQueue, Event, Semaphore, Condvar)
     │     └── process::Context       (arch register save area)
     ├── fs::FileSystem               (VFS + SimpleFS)
     │     └── fs::simplefs           (on-disk layout, two-phase commit)
@@ -115,7 +116,7 @@ kernel::Kernel
     ├── topology                     (NUMA topology, per-node allocators)
     ├── smp                          (SMP AP discovery and bring-up, x86_64)
     ├── percpu                       (per-CPU scheduler/APIC data, numa_node_id)
-    ├── sync                         (Mutex, SpinLock, Condvar)
+    ├── sync                         (Mutex, SpinLock — the leaf layer)
     ├── crypto                       (signing key verification)
     └── user                         (user database, program loader)
 

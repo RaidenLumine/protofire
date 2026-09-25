@@ -177,11 +177,11 @@ use alloc::sync::Arc;
 use crate::kernel::process::Scheduler;
 use crate::kernel::process::Thread;
 use crate::kernel::process::ThreadWaitOutcome;
+use crate::kernel::sync::Mutex;
+use crate::kernel::sync::MutexGuard;
 
-use super::wait::plan_timed_wait;
-use super::wait::TimedWaitPlan;
-use super::Mutex;
-use super::MutexGuard;
+use super::plan_timed_wait;
+use super::TimedWaitPlan;
 use super::WaitQueue;
 use super::WaitTimeoutCleanupRef;
 ```
@@ -457,20 +457,32 @@ edge and compares the result with
 [`scripts/layering-baseline.txt`](../../scripts/layering-baseline.txt); an edge
 that grows, or an edge the census does not mention, fails `make check-layering`.
 
+`sync` is the bottom of the kernel: a spinlock and the mutex wrapper over it,
+neither of which names a thread.  The primitives that block a thread — the wait
+queue, and the event, semaphore, and condition-variable wrappers over it — live
+in `kernel::process::wait`, next to the scheduler they park through, because
+the dependency really does run that way.  Putting them in `sync` is what made
+the mutex layer name the process layer.
+
 Two directions are wrong by definition, and are expected to stay at zero:
 
-- **`block` names nothing.** `src/kernel/block.rs` is the interface the disk
-  drivers implement and the filesystem builds on.  If a driver has to name the
-  filesystem to hand a device over, the interface is in the wrong place — the
-  hand-off goes through `block::publish_device`, and whoever owns the device map
-  installs itself as the sink at boot.
+- **`block` names nothing above `sync`.** `src/kernel/block.rs` is the interface
+  the disk drivers implement and the filesystem builds on.  If a driver has to
+  name the filesystem to hand a device over, the interface is in the wrong
+  place — the hand-off goes through `block::publish_device`, and whoever owns
+  the device map installs itself as the sink at boot.  Its one row is the leaf
+  mutex, which is where the bottom is.
 - **`drivers` does not name `fs`.** A disk driver knows a controller and a
   device interface; who mounts what on top of it is not its business.
 
-Everything else in the census is debt with a number attached: the cycles it
-lists (`fs` <-> `process`, `process` <-> `smp`, `process` <-> `sync`, `memory`
-<-> `fs`) come apart in cuts, and a cut is finished when its rows reach zero and
-the census is re-recorded (`sh scripts/check-layering.sh --record`) in the same
+Everything else in the census is debt with a number attached, and what is left
+has one shape: `process` names its consumers (`memory`, `syscall`, `network`,
+`fs`, `percpu`, `drivers`, …) for file handles, sockets, counters, and caches,
+while those consumers name `process` back for the two things only it has — a
+thread to run on and a way to block.  `memory` <-> `fs`, `fs` <-> `service`,
+and `fs` <-> `kernel_log` are the same story at a lower altitude.  The cycles
+come apart in cuts, and a cut is finished when its rows reach zero and the
+census is re-recorded (`sh scripts/check-layering.sh --record`) in the same
 change.  The rule for a new edge is the same as for any other budget here: it
 has to be argued for in the change that adds it, not discovered later.
 

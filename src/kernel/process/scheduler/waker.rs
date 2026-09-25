@@ -6,9 +6,9 @@ use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 
 use crate::arch;
-use crate::kernel::sync::wait::WaiterIdentity;
-use crate::kernel::sync::WaitTimeoutCleanupRef;
 
+use super::super::wait::WaitTimeoutCleanupRef;
+use super::super::wait::WaiterIdentity;
 use super::super::Thread;
 
 use super::queue::*;

@@ -13,14 +13,24 @@
 #
 # Two directions are wrong on purpose and are expected to reach zero:
 #
-#   * `block` naming anything else — it is the layer the disk drivers and the
-#     filesystem both build on, so it must stay at the bottom.
+#   * `block` naming anything above `sync` — it is the layer the disk drivers
+#     and the filesystem both build on, so it must stay at the bottom.  The
+#     one row it has is the leaf mutex, which is where the bottom is.
 #   * `drivers` naming `fs` — a driver hands a found device over through
 #     `kernel::block::publish_device`; it does not know who consumes it.
 #
-# The cycles the census still shows — `fs` <-> `process`, `process` <-> `smp`,
-# `process` <-> `sync`, `memory` <-> `fs` — are the debt the layering cuts are
-# working down.  The counts are the finish line for each cut.
+# `process` <-> `sync` and `process` <-> `smp` are gone: `sync` is now a leaf
+# that names no thread, and the per-CPU scheduler table lives in the scheduler.
+# Since `sync` holds only a spinlock and the mutex wrapper over it, naming it
+# is naming the bottom layer.
+#
+# What is left has one shape.  `process` names its consumers — `memory`,
+# `syscall`, `network`, `fs`, `percpu`, `drivers` — for file handles, sockets,
+# counters, and caches; and those consumers name `process` back for the two
+# things only it has: a thread to run on and a way to block.  `memory` <->
+# `fs`, `fs` <-> `service`, and `fs` <-> `kernel_log` are the same story at a
+# lower altitude.  Each row is the finish line for its cut; a cut is done when
+# its rows reach zero and the census is re-recorded.
 #
 # from                         to                           count
 audit                        fs                           6
@@ -28,23 +38,24 @@ audit                        handle_rights                2
 audit                        process                      1
 block                        sync                         1
 boot_report                  sync                         1
-console                      process                      1
-console                      sync                         5
+console                      process                      5
+console                      sync                         1
 device                       drivers                      4
 device                       fs                           5
 device                       handle_rights                2
 drivers                      block                        9
 drivers                      memory                       4
 drivers                      network                      2
-drivers                      process                      2
-drivers                      sync                         28
+drivers                      process                      12
+drivers                      sync                         16
 fs                           compression                  2
 fs                           crypto                       9
 fs                           kernel_log                   1
 fs                           memory                       5
+fs                           process                      1
 fs                           security                     29
 fs                           service                      3
-fs                           sync                         36
+fs                           sync                         35
 heartbeat                    process                      1
 io                           device                       10
 io                           process                      12
@@ -96,7 +107,7 @@ process                      security                     11
 process                      shm                          1
 process                      smp                          15
 process                      softirq                      1
-process                      sync                         34
+process                      sync                         20
 process                      syscall                      3
 process                      user                         2
 procfs                       fs                           10
@@ -117,7 +128,6 @@ shm                          scheduler                    3
 shm                          sync                         1
 smp                          memory                       5
 smp                          percpu                       2
-sync                         process                      16
 syscall                      audit                        9
 syscall                      boot_report                  2
 syscall                      drivers                      3
@@ -129,9 +139,9 @@ syscall                      memory                       20
 syscall                      network                      18
 syscall                      percpu                       1
 syscall                      power                        1
-syscall                      process                      171
+syscall                      process                      177
 syscall                      random                       1
-syscall                      sync                         14
+syscall                      sync                         8
 syscall                      user                         2
 user                         fs                           3
 user                         process                      7

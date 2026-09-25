@@ -287,8 +287,8 @@ fn synthetic_public_file_stat_record(kind: NodeKind, size: usize) -> fs_abi::Fil
 use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 
-use crate::kernel::sync::wait::plan_timed_wait;
-use crate::kernel::sync::wait::TimedWaitPlan;
+use crate::kernel::process::wait::plan_timed_wait;
+use crate::kernel::process::wait::TimedWaitPlan;
 
 /// Read from an eventfd: return the 8-byte counter value and reset (or
 /// decrement in semaphore mode).
@@ -678,7 +678,7 @@ mod tests {
     use crate::kernel::process::process::types::EventFdState;
     use crate::kernel::process::process::types::EFD_NONBLOCK;
     use crate::kernel::process::process::types::EFD_SEMAPHORE;
-    use crate::kernel::sync::wait::WaitQueue;
+    use crate::kernel::process::wait::WaitQueue;
     use crate::Error;
     use alloc::sync::Arc;
     use core::sync::atomic::AtomicU64;

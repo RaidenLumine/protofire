@@ -77,7 +77,7 @@ path = "tests/memory/pressure.rs"
 
 [[test]]
 name = "condvar"
-path = "tests/sync/condvar.rs"
+path = "tests/process/condvar.rs"
 
 [[test]]
 name = "scheduler"

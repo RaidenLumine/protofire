@@ -1,4 +1,4 @@
-//! src/kernel/sync/condvar.rs
+//! src/kernel/process/wait/condvar.rs
 //!
 //! Condition variable primitive built on wait queues and mutex handoff
 //! patterns.
@@ -8,11 +8,11 @@ use alloc::sync::Arc;
 use crate::kernel::process::Scheduler;
 use crate::kernel::process::Thread;
 use crate::kernel::process::ThreadWaitOutcome;
+use crate::kernel::sync::Mutex;
+use crate::kernel::sync::MutexGuard;
 
-use super::wait::plan_timed_wait;
-use super::wait::TimedWaitPlan;
-use super::Mutex;
-use super::MutexGuard;
+use super::plan_timed_wait;
+use super::TimedWaitPlan;
 use super::WaitQueue;
 use super::WaitTimeoutCleanupRef;
 

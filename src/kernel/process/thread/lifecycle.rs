@@ -12,7 +12,7 @@ use ::core::sync::atomic::Ordering;
 use alloc::sync::Arc;
 
 use crate::kernel::process::scheduler::TIME_SLICE_TICKS;
-use crate::kernel::sync::Event;
+use crate::kernel::process::wait::Event;
 use crate::kernel::sync::Mutex;
 // Only the "neither x86_64 nor aarch64" arm below uses it, and that arm is the
 // one riscv64 takes; the riscv64 methods that used to need it now live in

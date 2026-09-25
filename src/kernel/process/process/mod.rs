@@ -67,8 +67,8 @@ use self::constants::STANDARD_FD_COUNT;
 use self::types::FaultRecordRing;
 use self::types::PendingProcessSignalState;
 use crate::kernel::process::thread::ThreadId;
-use crate::kernel::sync::event::Event;
-use crate::kernel::sync::wait::WaitQueue;
+use crate::kernel::process::wait::Event;
+use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
 
 // ── Process struct definition ──

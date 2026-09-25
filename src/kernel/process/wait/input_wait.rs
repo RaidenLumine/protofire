@@ -1,4 +1,4 @@
-//! src/kernel/sync/input_wait.rs
+//! src/kernel/process/wait/input_wait.rs
 //!
 //! Shared helpers for input-style wait loops, timeout bookkeeping, and waiter
 //! statistics.
@@ -7,13 +7,13 @@ use alloc::sync::Arc;
 
 use crate::kernel::process::Scheduler;
 use crate::kernel::process::ThreadWaitOutcome;
+use crate::kernel::sync::Mutex;
 
-use super::wait::plan_timed_wait;
-use super::wait::TimedWaitPlan;
-use super::wait::WaitTimeoutCleanup;
-use super::wait::WaitTimeoutCleanupRef;
-use super::wait::WaiterIdentity;
-use super::Mutex;
+use super::plan_timed_wait;
+use super::queue::WaitTimeoutCleanup;
+use super::TimedWaitPlan;
+use super::WaitTimeoutCleanupRef;
+use super::WaiterIdentity;
 
 pub(crate) trait WaitStatsBookkeeping<K>: Send {
     fn observe_waiter_peak(&mut self, kind: K, predicted_waiters: usize);
