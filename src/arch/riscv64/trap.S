@@ -137,14 +137,28 @@
     ld t0, TRAP_SSTATUS_OFFSET(sp)
     csrw sstatus, t0
 
-    /* Restore sscratch with the kernel sp so the next U-mode trap's
-       `csrrw sp, sscratch, sp` swaps back onto the kernel stack.  Writing the
-       user sp here would make the *next* U-mode trap build its frame on the
-       user stack.  (For a U-mode trap, TRAP_KERNEL_SP is the kernel sp that
-       was saved to sscratch by enter_user_mode; for an S-mode trap it is the
-       interrupted kernel sp.) */
+    /* sscratch means "the kernel stack, and only while this CPU is in user
+       mode": that is what the next U-mode trap's `csrrw sp, sscratch, sp` has
+       to find, so returning to U-mode leaves the kernel sp there.
+
+       Returning to S-mode leaves it *zero*, and that is not symmetry for its
+       own sake.  SAVE_ALL decides which kind of trap it is looking at by
+       whether sscratch was zero, so a non-zero sscratch in kernel mode sends
+       the next kernel trap down the user path with a stack pointer from the
+       last one: the frame it builds lands on top of the frames of whatever was
+       interrupted, which is a corrupted caller rather than a fault.  One CPU
+       survives that for a long time, because the stale pointer is usually only
+       a little off; a second hart taking kernel-mode timer interrupts is what
+       wears it through. */
+    srli t0, t0, 8
+    andi t0, t0, 1          /* SPP: 0 = returning to U-mode, 1 = S-mode */
+    bnez t0, .Lrestore_to_kernel_\@
     ld t0, TRAP_KERNEL_SP_OFFSET(sp)
     csrw sscratch, t0
+    j .Lrestore_sscratch_done_\@
+.Lrestore_to_kernel_\@:
+    csrw sscratch, zero
+.Lrestore_sscratch_done_\@:
 
     /* Restore all general-purpose registers. */
     ld ra,  TRAP_RA_OFFSET(sp)
@@ -183,18 +197,74 @@
 .endm
 
 .section .text.trap, "ax"
-.align 6   /* 64-byte alignment for stvec base */
+.align 6   /* 64-byte alignment for the first stub, and so for stvec */
 
-.global __riscv64_trap_entry
-__riscv64_trap_entry:
+/* ── Per-hart trap entry stubs ─────────────────────────────────────────────
+   `stvec` is a per-hart CSR, so each hart points it at its own stub, and the
+   stub is little more than the hart's name: one jump, four bytes.  The
+   handler then reads back the `stvec` it arrived through and turns the offset
+   into the hart's index — see below.  The stubs stay exactly one four-byte
+   jump each because that offset is the index; `trap.rs` checks the stride once
+   per hart at boot rather than trusting the assembler to have kept it.
+
+   The count must equal `kernel::smp::MAX_CPUS`; `trap.rs` asserts that, so a
+   CPU count the table cannot name fails the build instead of a boot. */
+.set RISCV64_MAX_HARTS, 17
+
+/* Relaxation and compression both off, so a stub is exactly one four-byte
+   `jal`.  Relaxed, it becomes an `auipc` + `jalr` pair that loads an address
+   through a register the interrupted context owns — which would corrupt the
+   trap frame as well as the layout.  Compressed, it becomes a two-byte `c.j`
+   plus whatever padding the assembler picks.  The branches are local, so a
+   plain `jal` always reaches. */
+.option push
+.option norelax
+.option norvc
+
+.global RISCV64_TRAP_STUBS
+RISCV64_TRAP_STUBS:
+.irp hart, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+    .align 2
+    .global __riscv64_trap_entry_\hart
+__riscv64_trap_entry_\hart:
+    jal x0, __riscv64_trap_common
+.endr
+
+/* Entry address for a hart, for whoever installs `stvec` (trap.rs).  The
+   stride is applied here and in the handler below, and nowhere else. */
+.global riscv64_trap_stub_for_hart
+riscv64_trap_stub_for_hart:
+    la t0, RISCV64_TRAP_STUBS
+    slli a0, a0, 2
+    add a0, a0, t0
+    ret
+
+.option pop
+
+.align 4
+__riscv64_trap_common:
     SAVE_ALL
 
-    /* Load the PerCpuData pointer into tp from the global slot written by
-       riscv64_set_tp().  Thread kernel stacks are 32 KiB and only 4 KiB
-       aligned, so the old 64 KiB stack-bottom scan (`and sp, ~65535`)
-       landed mid-stack and read garbage tp. */
-    la tp, RISCV64_PERCPU_PTR
-    ld tp, 0(tp)
+    /* Which hart came in.  `stvec` is this hart's stub, the stubs are four
+       bytes each, so the offset names the hart — and the hart names its
+       `PerCpuData` slot.  A `stvec` that is not one of ours is not a case the
+       kernel can have created; leaving `tp` as the interrupted context left it
+       is the honest answer to it, and the handler below still runs.
+
+       This runs after SAVE_ALL, and uses only t0/t1, which SAVE_ALL has
+       already spilled and which the vector decode clobbers anyway: the
+       interrupted `tp` is in the frame, so nothing about the trap changes. */
+    csrr t0, stvec
+    la t1, RISCV64_TRAP_STUBS
+    sub t0, t0, t1
+    srli t0, t0, 2
+    li t1, RISCV64_MAX_HARTS
+    bgeu t0, t1, .Ltp_kept
+    la t1, RISCV64_PERCPU_PTRS
+    slli t0, t0, 3
+    add t0, t0, t1
+    ld tp, 0(t0)
+.Ltp_kept:
 
     /* Call Rust handler: riscv64_trap_dispatch(&mut frame) */
     mv a0, sp
