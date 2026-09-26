@@ -43,6 +43,78 @@ use crate::kernel::process::thread::types::ThreadUserRuntimeState;
 use crate::kernel::process::thread::Thread;
 use crate::Result;
 
+// ── The state Thread carries ───────────────────────────────────────────
+//
+// One object per architecture inside one object here, rather than one field
+// on `Thread` per architecture: the saved context, the handler table and the
+// pending-frame stack are read and written together, the architecture that
+// owns them also owns the rules about them, and a host build compiles all
+// three shapes so the tests can drive each architecture's rules against the
+// shared logic.
+
+/// The user-runtime state of a thread, for every architecture compiled here.
+pub(crate) struct ThreadUserState {
+    #[cfg(any(target_arch = "aarch64", test))]
+    pub(crate) aarch64: AArch64UserThreadState,
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) x86_64: X86_64UserThreadState,
+    #[cfg(any(target_arch = "riscv64", test))]
+    pub(crate) riscv64: RiscV64UserThreadState,
+}
+
+impl ThreadUserState {
+    /// The state a freshly created thread starts with.
+    pub(crate) fn new_for_user_start(
+        user_start: Option<crate::kernel::process::UserThreadStart>,
+    ) -> Self {
+        Self {
+            #[cfg(any(target_arch = "aarch64", test))]
+            aarch64: AArch64UserThreadState::for_user_start(user_start),
+            #[cfg(target_arch = "x86_64")]
+            x86_64: X86_64UserThreadState::for_user_start(user_start),
+            #[cfg(any(target_arch = "riscv64", test))]
+            riscv64: RiscV64UserThreadState::for_user_start(user_start),
+        }
+    }
+
+    /// The per-architecture halves of a snapshot of this state.
+    fn snapshot(&self) -> ThreadUserRuntimeStateSnapshot {
+        ThreadUserRuntimeStateSnapshot {
+            #[cfg(any(target_arch = "aarch64", test))]
+            aarch64: self.aarch64.snapshot(),
+            #[cfg(target_arch = "x86_64")]
+            x86_64: self.x86_64.snapshot(),
+            #[cfg(any(target_arch = "riscv64", test))]
+            riscv64: self.riscv64.snapshot(),
+        }
+    }
+}
+
+/// The per-architecture halves of a thread's user-runtime snapshot.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ThreadUserRuntimeStateSnapshot {
+    #[cfg(any(target_arch = "aarch64", test))]
+    pub(crate) aarch64: AArch64UserThreadStateSnapshot,
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) x86_64: X86_64UserThreadStateSnapshot,
+    /// Carried but not yet checked: riscv64 has only a saved context and no
+    /// handler table or nested-delivery state to validate.
+    #[cfg(any(target_arch = "riscv64", test))]
+    #[allow(dead_code)]
+    pub(crate) riscv64: RiscV64UserThreadStateSnapshot,
+}
+
+impl ThreadUserRuntimeStateSnapshot {
+    /// Reject a snapshot the architecture could not resume from.
+    fn validate(&self) -> Result<()> {
+        #[cfg(any(target_arch = "aarch64", test))]
+        self.aarch64.validate()?;
+        #[cfg(target_arch = "x86_64")]
+        self.x86_64.validate()?;
+        Ok(())
+    }
+}
+
 /// Drop every architecture's user-runtime state for a thread that is going
 /// away.
 ///
@@ -53,11 +125,11 @@ use crate::Result;
 /// terminated riscv64 thread kept the registers it last held.
 pub(crate) fn clear_user_runtime_state(thread: &Thread) {
     #[cfg(any(target_arch = "aarch64", test))]
-    thread.aarch64.clear();
+    thread.arch.aarch64.clear();
     #[cfg(target_arch = "x86_64")]
-    thread.x86_64.clear();
+    thread.arch.x86_64.clear();
     #[cfg(any(target_arch = "riscv64", test))]
-    thread.riscv64.clear();
+    thread.arch.riscv64.clear();
 }
 
 /// Build the user-runtime snapshot, shared part and per-architecture parts.
@@ -70,12 +142,7 @@ pub(crate) fn new_user_runtime_state(
 ) -> ThreadUserRuntimeState {
     ThreadUserRuntimeState {
         execution_state,
-        #[cfg(any(target_arch = "aarch64", test))]
-        aarch64: thread.aarch64.snapshot(),
-        #[cfg(target_arch = "x86_64")]
-        x86_64: thread.x86_64.snapshot(),
-        #[cfg(any(target_arch = "riscv64", test))]
-        riscv64: thread.riscv64.snapshot(),
+        arch: thread.arch.snapshot(),
     }
 }
 
@@ -89,11 +156,7 @@ pub(crate) fn new_user_runtime_state(
     allow(unused_variables)
 )]
 pub(crate) fn validate_user_runtime_state(state: &ThreadUserRuntimeState) -> Result<()> {
-    #[cfg(any(target_arch = "aarch64", test))]
-    state.aarch64.validate()?;
-    #[cfg(target_arch = "x86_64")]
-    state.x86_64.validate()?;
-    Ok(())
+    state.arch.validate()
 }
 
 /// Put a snapshot back into every architecture's state.
@@ -108,9 +171,9 @@ pub(crate) fn validate_user_runtime_state(state: &ThreadUserRuntimeState) -> Res
 )]
 pub(crate) fn restore_user_runtime_state(thread: &Thread, state: ThreadUserRuntimeState) {
     #[cfg(any(target_arch = "aarch64", test))]
-    thread.aarch64.restore(state.aarch64);
+    thread.arch.aarch64.restore(state.arch.aarch64);
     #[cfg(target_arch = "x86_64")]
-    thread.x86_64.restore(state.x86_64);
+    thread.arch.x86_64.restore(state.arch.x86_64);
 }
 #[cfg(target_arch = "x86_64")]
 pub use x86_64_context::*;

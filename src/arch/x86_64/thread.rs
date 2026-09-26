@@ -283,13 +283,13 @@ impl Thread {
     /// Return a snapshot of the threadʼs last-known x86_64 user-mode register
     /// state, if one has been captured.
     pub fn x86_64_user_context(&self) -> Option<X86_64UserThreadContext> {
-        *self.x86_64.user_context.lock()
+        *self.arch.x86_64.user_context.lock()
     }
 
     /// Overwrite the threadʼs saved user-mode register state.
     /// Used by ptrace PTRACE_SETREGS.
     pub(crate) fn set_x86_64_user_context(&self, ctx: X86_64UserThreadContext) {
-        *self.x86_64.user_context.lock() = Some(ctx);
+        *self.arch.x86_64.user_context.lock() = Some(ctx);
     }
 
     pub(crate) fn validated_x86_64_user_context(&self) -> Result<Option<X86_64UserThreadContext>> {
@@ -306,7 +306,7 @@ impl Thread {
         let Ok(context) = context.validate_runtime_state() else {
             return false;
         };
-        *self.x86_64.user_context.lock() = Some(context);
+        *self.arch.x86_64.user_context.lock() = Some(context);
         true
     }
 
@@ -324,7 +324,8 @@ impl Thread {
         &self,
         vector: u8,
     ) -> Option<X86_64UserExceptionHandlerRegistration> {
-        self.x86_64
+        self.arch
+            .x86_64
             .exception_handlers
             .lock()
             .get(vector as usize)
@@ -349,12 +350,12 @@ impl Thread {
     /// Number of nested exception frames currently pending delivery to user
     /// mode.
     pub fn x86_64_pending_exception_depth(&self) -> usize {
-        self.x86_64.pending_exception_frames.lock().len()
+        self.arch.x86_64.pending_exception_frames.lock().len()
     }
 
     /// Drop the frames a nested delivery left stacked.
     fn reset_x86_64_exception_delivery_state(&self) {
-        self.x86_64.pending_exception_frames.lock().clear();
+        self.arch.x86_64.pending_exception_frames.lock().clear();
     }
 
     pub(crate) fn capture_x86_64_user_context_from_interrupt(&self, context: &InterruptContext) {
@@ -386,7 +387,7 @@ impl Thread {
             return Err(Error::Unsupported);
         }
 
-        let mut handlers = self.x86_64.exception_handlers.lock();
+        let mut handlers = self.arch.x86_64.exception_handlers.lock();
         let slot = handlers
             .get_mut(vector as usize)
             .ok_or(Error::InvalidArgument)?;
@@ -420,7 +421,7 @@ impl Thread {
     ) -> Result<bool> {
         self.ensure_user_runtime_mutable()?;
         let vector = context.vector as u8;
-        let mut handlers = self.x86_64.exception_handlers.lock();
+        let mut handlers = self.arch.x86_64.exception_handlers.lock();
         let slot = handlers
             .get_mut(vector as usize)
             .ok_or(Error::InvalidArgument)?;
@@ -430,7 +431,7 @@ impl Thread {
 
         let resume_context =
             X86_64UserThreadContext::from_interrupt(context).validate_runtime_state()?;
-        let mut pending = self.x86_64.pending_exception_frames.lock();
+        let mut pending = self.arch.x86_64.pending_exception_frames.lock();
         let delivery_stack_pointer = match plan_user_exception_delivery(
             &pending,
             registration.stack_pointer,
@@ -464,7 +465,7 @@ impl Thread {
             x86_64_user_exception_handler_is_one_shot(registration.flags),
         )?;
 
-        *self.x86_64.user_context.lock() = Some(handler_context);
+        *self.arch.x86_64.user_context.lock() = Some(handler_context);
         handler_context.write_to_interrupt(context);
         Ok(true)
     }
@@ -476,7 +477,7 @@ impl Thread {
     ) -> Result<bool> {
         self.ensure_user_runtime_mutable()?;
         {
-            let pending = self.x86_64.pending_exception_frames.lock();
+            let pending = self.arch.x86_64.pending_exception_frames.lock();
             let Some(active) = pending.top() else {
                 return Ok(false);
             };
@@ -489,7 +490,7 @@ impl Thread {
         let restored = frame.into_user_context().validate_runtime_state()?;
 
         {
-            let mut pending = self.x86_64.pending_exception_frames.lock();
+            let mut pending = self.arch.x86_64.pending_exception_frames.lock();
             if pop_pending_user_exception_frame(&mut pending, frame_pointer)?.is_none() {
                 return Ok(false);
             }
@@ -506,10 +507,10 @@ impl Thread {
         // to keep in step any more (the aarch64 half has called it this way all
         // along).
         self.replace_user_execution_state(start, |_| {})?;
-        *self.x86_64.user_context.lock() = Some(X86_64UserThreadContext::from_start(start));
+        *self.arch.x86_64.user_context.lock() = Some(X86_64UserThreadContext::from_start(start));
         // Replacing the image is `exec`-like: prior handlers and pending
         // exception frames belong to the old image and must not survive.
-        *self.x86_64.exception_handlers.lock() = [None; X86_64_EXCEPTION_VECTOR_COUNT];
+        *self.arch.x86_64.exception_handlers.lock() = [None; X86_64_EXCEPTION_VECTOR_COUNT];
         self.reset_x86_64_exception_delivery_state();
         Ok(())
     }
@@ -694,6 +695,6 @@ impl crate::kernel::process::thread::types::UserForkContext for X86_64UserThread
     }
 
     fn install(&self, thread: &Thread) {
-        *thread.x86_64.user_context.lock() = Some(*self);
+        *thread.arch.x86_64.user_context.lock() = Some(*self);
     }
 }

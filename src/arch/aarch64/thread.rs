@@ -372,7 +372,7 @@ impl Thread {
     /// Return a snapshot of the threadʼs last-known AArch64 user-mode register
     /// state, if one has been captured.
     pub fn aarch64_user_context(&self) -> Option<AArch64UserThreadContext> {
-        *self.aarch64.user_context.lock()
+        *self.arch.aarch64.user_context.lock()
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -391,7 +391,7 @@ impl Thread {
     // Available wherever the state is, like the getter above it: this is a
     // write to a field, not an operation on hardware.
     pub(crate) fn set_aarch64_user_context(&self, context: AArch64UserThreadContext) {
-        *self.aarch64.user_context.lock() = Some(context);
+        *self.arch.aarch64.user_context.lock() = Some(context);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -419,7 +419,8 @@ impl Thread {
         &self,
         vector: u8,
     ) -> Option<AArch64UserExceptionHandlerRegistration> {
-        self.aarch64
+        self.arch
+            .aarch64
             .exception_handlers
             .lock()
             .get(vector as usize)
@@ -429,12 +430,13 @@ impl Thread {
 
     /// Number of nested exception frames currently pending delivery to EL0.
     pub fn aarch64_pending_exception_depth(&self) -> usize {
-        self.aarch64.pending_exception_frames.lock().len()
+        self.arch.aarch64.pending_exception_frames.lock().len()
     }
 
     #[cfg(target_arch = "aarch64")]
     pub(crate) fn mark_aarch64_exception_preempt_resume_logged(&self) -> bool {
         !self
+            .arch
             .aarch64
             .preempt_resume_logged
             .swap(true, Ordering::SeqCst)
@@ -442,14 +444,15 @@ impl Thread {
 
     #[cfg(target_arch = "aarch64")]
     pub(crate) fn clear_aarch64_exception_preempt_resume_logged(&self) {
-        self.aarch64
+        self.arch
+            .aarch64
             .preempt_resume_logged
             .store(false, Ordering::SeqCst);
     }
 
     #[cfg(target_arch = "aarch64")]
     fn reset_aarch64_exception_delivery_state(&self) {
-        self.aarch64.pending_exception_frames.lock().clear();
+        self.arch.aarch64.pending_exception_frames.lock().clear();
         self.clear_aarch64_exception_preempt_resume_logged();
     }
 }
@@ -488,7 +491,7 @@ impl Thread {
             return Err(Error::Unsupported);
         }
 
-        let mut handlers = self.aarch64.exception_handlers.lock();
+        let mut handlers = self.arch.aarch64.exception_handlers.lock();
         let slot = handlers
             .get_mut(vector as usize)
             .ok_or(Error::InvalidArgument)?;
@@ -564,7 +567,7 @@ impl Thread {
         error_code: u64,
         fault_address: Option<usize>,
     ) -> Result<Option<AArch64UserThreadContext>> {
-        let mut handlers = self.aarch64.exception_handlers.lock();
+        let mut handlers = self.arch.aarch64.exception_handlers.lock();
         let slot = handlers
             .get_mut(vector as usize)
             .ok_or(Error::InvalidArgument)?;
@@ -573,7 +576,7 @@ impl Thread {
         };
         let resume_context = resume_context.validate_runtime_state()?;
 
-        let mut pending = self.aarch64.pending_exception_frames.lock();
+        let mut pending = self.arch.aarch64.pending_exception_frames.lock();
         let delivery_stack_pointer = match plan_user_exception_delivery(
             &pending,
             registration.stack_pointer,
@@ -628,7 +631,7 @@ impl Thread {
         frame_pointer: usize,
     ) -> Result<Option<AArch64UserThreadContext>> {
         {
-            let pending = self.aarch64.pending_exception_frames.lock();
+            let pending = self.arch.aarch64.pending_exception_frames.lock();
             let Some(active) = pending.top() else {
                 return Ok(None);
             };
@@ -657,7 +660,7 @@ impl Thread {
             .validate_runtime_state()?;
 
         let pending_empty = {
-            let mut pending = self.aarch64.pending_exception_frames.lock();
+            let mut pending = self.arch.aarch64.pending_exception_frames.lock();
             let Some(pending_empty) =
                 pop_pending_user_exception_frame(&mut pending, frame_pointer)?
             else {
@@ -683,7 +686,7 @@ impl Thread {
         self.set_aarch64_user_context(AArch64UserThreadContext::from_start(start));
         // Replacing the image is `exec`-like: prior handlers and pending
         // exception frames belong to the old image and must not survive.
-        *self.aarch64.exception_handlers.lock() = [None; AARCH64_EXCEPTION_VECTOR_COUNT];
+        *self.arch.aarch64.exception_handlers.lock() = [None; AARCH64_EXCEPTION_VECTOR_COUNT];
         self.reset_aarch64_exception_delivery_state();
         Ok(())
     }

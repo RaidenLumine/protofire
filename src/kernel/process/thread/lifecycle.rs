@@ -34,8 +34,6 @@ use crate::Result;
     target_arch = "riscv64",
     test
 ))]
-use crate::arch::thread::*;
-
 use super::super::Context;
 use super::super::ContextCell;
 use super::super::Process;
@@ -132,12 +130,6 @@ impl Thread {
 
         let mut context = Context::new(initial_instruction_pointer(entry_point, user_start));
         context.set_stack_pointer(initial_stack_pointer);
-        #[cfg(any(target_arch = "aarch64", test))]
-        let aarch64_state = AArch64UserThreadState::for_user_start(user_start);
-        #[cfg(target_arch = "x86_64")]
-        let x86_64_state = X86_64UserThreadState::for_user_start(user_start);
-        #[cfg(any(target_arch = "riscv64", test))]
-        let riscv64_state = RiscV64UserThreadState::for_user_start(user_start);
         let execution_state = ThreadExecutionState {
             entry_point,
             kernel_entry,
@@ -148,12 +140,7 @@ impl Thread {
             tid,
             process: process.clone(),
             execution_state: Mutex::new(execution_state),
-            #[cfg(any(target_arch = "aarch64", test))]
-            aarch64: aarch64_state,
-            #[cfg(target_arch = "x86_64")]
-            x86_64: x86_64_state,
-            #[cfg(any(target_arch = "riscv64", test))]
-            riscv64: riscv64_state,
+            arch: crate::arch::thread::ThreadUserState::new_for_user_start(user_start),
             priority: Mutex::new(ThreadPriority::default()),
             context: ContextCell::new(context),
             state: Mutex::new(ThreadState::Ready),

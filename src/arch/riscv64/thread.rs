@@ -273,7 +273,7 @@ impl Thread {
     /// Return the saved RISC-V user thread context (PC + GPRs), or `None` if
     /// this thread has never entered user mode.
     pub fn riscv64_user_context(&self) -> Option<RiscV64UserThreadContext> {
-        *self.riscv64.user_context.lock()
+        *self.arch.riscv64.user_context.lock()
     }
 
     #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
@@ -291,7 +291,7 @@ impl Thread {
 
     #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
     pub(crate) fn set_riscv64_user_context(&self, context: RiscV64UserThreadContext) {
-        *self.riscv64.user_context.lock() = Some(context);
+        *self.arch.riscv64.user_context.lock() = Some(context);
     }
 
     #[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]

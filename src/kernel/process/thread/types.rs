@@ -9,10 +9,6 @@ use core::fmt;
 
 pub(crate) use super::constants::*;
 
-// Arch-type imports needed by ThreadUserRuntimeState.
-// One import for every architecture's names; `arch.rs` holds the gates.
-use crate::arch::thread::*;
-
 // ── UserThreadStart ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,14 +213,8 @@ pub(crate) struct ThreadExecutionState {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ThreadUserRuntimeState {
     pub(crate) execution_state: ThreadExecutionState,
-    // The per-architecture part is that architecture's own snapshot type, for
-    // the same reason the live state is: one field per architecture, and the
-    // rules about its contents live with the architecture.
-    #[cfg(any(target_arch = "aarch64", test))]
-    pub(crate) aarch64: AArch64UserThreadStateSnapshot,
-    #[cfg(target_arch = "x86_64")]
-    pub(crate) x86_64: X86_64UserThreadStateSnapshot,
-    #[cfg(any(target_arch = "riscv64", test))]
-    #[allow(dead_code)]
-    pub(crate) riscv64: RiscV64UserThreadStateSnapshot,
+    /// The per-architecture part: that architecture's own snapshot type, for
+    /// the same reason the live state is.  The rules about its contents live
+    /// with the architecture, in `crate::arch::thread`.
+    pub(crate) arch: crate::arch::thread::ThreadUserRuntimeStateSnapshot,
 }

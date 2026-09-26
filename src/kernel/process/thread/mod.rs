@@ -59,16 +59,10 @@ pub struct Thread {
     tid: ThreadId,
     process: Arc<Process>,
     execution_state: Mutex<ThreadExecutionState>,
-    // One state object per architecture rather than one field per thing it
-    // holds: the saved context, the handler table and the pending-frame stack
-    // are read and written together, and the architecture that owns them also
-    // owns the rules about them.
-    #[cfg(any(target_arch = "aarch64", test))]
-    pub(crate) aarch64: AArch64UserThreadState,
-    #[cfg(target_arch = "x86_64")]
-    pub(crate) x86_64: X86_64UserThreadState,
-    #[cfg(any(target_arch = "riscv64", test))]
-    pub(crate) riscv64: RiscV64UserThreadState,
+    // The user half the architecture owns: the saved context, the handler
+    // table and the pending-frame stack, gathered by `arch::thread` so that
+    // this struct names no architecture.
+    pub(crate) arch: crate::arch::thread::ThreadUserState,
     priority: Mutex<ThreadPriority>,
     context: ContextCell,
     state: Mutex<ThreadState>,
