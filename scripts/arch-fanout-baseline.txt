@@ -20,7 +20,8 @@
 
 
 
-# 59 files, 453 occurrences outside src/arch
+
+# 59 files, 405 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/framebuffer.rs                               4
@@ -30,7 +31,7 @@ drivers/nvme.rs                                      13
 drivers/pcspkr.rs                                    12
 drivers/usb_msd.rs                                   1
 drivers/virtio_gpu.rs                                16
-drivers/virtio_input.rs                              54
+drivers/virtio_input.rs                              6
 drivers/virtio_net.rs                                14
 drivers/virtio.rs                                    16
 drivers/xhci.rs                                      10
