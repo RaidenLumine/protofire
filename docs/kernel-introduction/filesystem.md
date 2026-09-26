@@ -313,7 +313,11 @@ with `OPEN_ALWAYS`, truncates, writes, and verifies byte count.
 
 ## Pipe Support
 
-`src/fs/pipe.rs` implements anonymous pipes as a pair of `VNode`s sharing a ring buffer.
+Anonymous pipes are implemented in `src/kernel/ipc/pipe.rs` as a pair of
+`VNode`s sharing a ring buffer.  They are described here because they present
+the filesystem's `VNode` interface, but the module itself sits under `ipc`: a
+pipe parks its reader and writer on a condition variable, and parking a thread
+is the scheduler's business, not storage's.
 
 **Key types:**
 
@@ -372,7 +376,7 @@ complexity.
 | `src/fs/partition.rs` | MBR partition table parsing/writing |
 | `src/fs/layout.rs` | `StorageZone` enum, mount flags, zone block ranges |
 | `src/fs/handle.rs` | `FileHandle` — open file descriptor |
-| `src/fs/pipe.rs` | Anonymous pipe (`pipe_channel()`, `PipeReadEnd`, `PipeWriteEnd`) |
+| `src/kernel/ipc/pipe.rs` | Anonymous pipe (`pipe_channel()`, `PipeReadEnd`, `PipeWriteEnd`) |
 | `src/fs/simplefs/mod.rs` | `SimpleFs`, `SimpleFsState`, `UndoLog`, `ImageEntry` |
 | `src/fs/simplefs/{superblock,types,constants}.rs` | On-disk format: superblock, `OnDiskInode`, `OnDiskDirEntry`, geometry |
 | `src/fs/simplefs/transaction.rs` | Undo-log transactions, `TransactionContext` |

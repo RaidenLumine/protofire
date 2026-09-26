@@ -1,7 +1,13 @@
-//! src/fs/pipe.rs
+//! src/kernel/ipc/pipe.rs
 //!
 //! Anonymous pipe (FIFO) — a unidirectional byte stream with a shared ring
-//! buffer.
+//! buffer, presented as a pair of filesystem `VNode`s.
+//!
+//! It sits under `kernel::ipc` rather than under `fs` because blocking is the
+//! point: a reader parks when the buffer is empty and a writer parks when it is
+//! full, and parking a thread is the scheduler's business.  Keeping it with the
+//! other inter-process communication means `fs` can stay storage — it names
+//! the ring buffer's mutex, never the scheduler.
 //!
 //! ## Architecture
 //!

@@ -3,8 +3,8 @@
 //! File-descriptor syscall handlers for read/write/seek/close/dup/set-length
 //! operations.
 
-use crate::fs::pipe;
 use crate::kernel::io;
+use crate::kernel::ipc::pipe;
 use crate::kernel::process::Process;
 use crate::kernel::process::HANDLE_RIGHT_READ;
 use crate::kernel::process::HANDLE_RIGHT_WRITE;

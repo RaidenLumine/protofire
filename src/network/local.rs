@@ -23,8 +23,8 @@ use alloc::sync::Arc;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
-use crate::fs::pipe;
 use crate::fs::vfs::VNode;
+use crate::kernel::ipc::pipe;
 use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;

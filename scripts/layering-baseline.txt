@@ -28,6 +28,11 @@
 # Since `sync` holds only a spinlock and the mutex wrapper over it, naming it
 # is naming the bottom layer.
 #
+# `fs` no longer names `process` either.  Its one edge was the anonymous
+# pipe's condition variable, and a pipe that parks a thread is not storage:
+# it is an IPC endpoint that borrows the `VNode` interface, so it moved to
+# `kernel::ipc` and the dependency now points `ipc` -> `fs` instead.
+#
 # What is left has one shape.  `process` names its consumers — `memory`,
 # `syscall`, `network`, `fs`, `percpu`, `drivers` — for file handles, sockets,
 # counters, and caches; and those consumers name `process` back for the two
@@ -61,13 +66,15 @@ fs                           compression                  2
 fs                           crypto                       9
 fs                           kernel_log                   1
 fs                           memory                       5
-fs                           process                      1
 fs                           security                     29
 fs                           service                      3
-fs                           sync                         35
+fs                           sync                         34
 heartbeat                    process                      1
 io                           device                       10
 io                           process                      12
+ipc                          fs                           2
+ipc                          process                      1
+ipc                          sync                         1
 irq_stats                    percpu                       1
 irq_stats                    sync                         3
 kernel_log                   fs                           4
@@ -94,7 +101,8 @@ mod                          smp                          1
 mod                          syscall                      4
 mod                          topology                     12
 network                      crypto                       30
-network                      fs                           6
+network                      fs                           5
+network                      ipc                          1
 network                      process                      3
 network                      random                       5
 network                      sync                         41
@@ -143,7 +151,8 @@ smp                          percpu                       2
 syscall                      audit                        9
 syscall                      boot_report                  2
 syscall                      drivers                      3
-syscall                      fs                           52
+syscall                      fs                           46
+syscall                      ipc                          6
 syscall                      irq_balance                  3
 syscall                      irq_stats                    1
 syscall                      kernel_log                   4

@@ -16,6 +16,7 @@ pub mod handle_rights;
 #[cfg(target_os = "none")]
 pub mod heartbeat;
 pub mod io;
+pub mod ipc;
 pub mod irq_balance;
 pub mod irq_stats;
 pub mod kernel_log;

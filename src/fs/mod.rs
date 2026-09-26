@@ -38,7 +38,6 @@ pub mod lock_timing;
 pub mod ntfs;
 pub mod partition;
 pub mod path;
-pub mod pipe;
 pub mod servicefs;
 pub mod simplefs;
 pub mod squashfs;

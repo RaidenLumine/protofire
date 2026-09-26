@@ -124,7 +124,7 @@ fn set_pipe_sz(
     fd: usize,
     arg: usize,
 ) -> Result<SyscallDispatch> {
-    let size = crate::fs::pipe::round_pipe_size(arg);
+    let size = crate::kernel::ipc::pipe::round_pipe_size(arg);
     let entry = process.fd_entry(fd)?;
     match &entry.object {
         KernelObject::File(file) => {
@@ -144,8 +144,8 @@ mod tests {
     use super::super::SyscallNumber;
     use super::fcntl as fcntl_syscall;
     use crate::abi::fs as fs_abi;
-    use crate::fs::pipe::round_pipe_size;
-    use crate::fs::pipe::DEFAULT_PIPE_CAPACITY;
+    use crate::kernel::ipc::pipe::round_pipe_size;
+    use crate::kernel::ipc::pipe::DEFAULT_PIPE_CAPACITY;
     use crate::kernel::process::HANDLE_RIGHT_READ;
     use crate::kernel::process::HANDLE_RIGHT_WRITE;
     use crate::Error;
@@ -157,7 +157,7 @@ mod tests {
     /// no global filesystem is needed in these tests.
     #[cfg(not(target_os = "none"))]
     fn open_test_pipe(process: &crate::kernel::process::Process) -> (usize, usize) {
-        let (read_vnode, write_vnode) = crate::fs::pipe::pipe_channel();
+        let (read_vnode, write_vnode) = crate::kernel::ipc::pipe::pipe_channel();
         let security = crate::fs::vfs::SecurityDescriptor::root_for_kind(crate::fs::NodeKind::File);
         let security_source = crate::fs::vfs::SecurityDescriptorMutationSupport::LayoutDerivedOnly;
         let read_fd = process

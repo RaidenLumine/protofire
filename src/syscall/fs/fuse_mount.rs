@@ -21,12 +21,12 @@ use alloc::sync::Arc;
 
 use crate::fs::fuse::FuseConnection;
 use crate::fs::fuse::FuseFileSystem;
-use crate::fs::pipe;
 use crate::fs::vfs::FileSystem as VfsTrait;
 use crate::fs::vfs::SecurityDescriptor;
 use crate::fs::vfs::SecurityDescriptorMutationSupport;
 use crate::fs::FileHandle;
 use crate::fs::NodeKind;
+use crate::kernel::ipc::pipe;
 use crate::kernel::process::process::constants::HANDLE_RIGHT_READ;
 use crate::kernel::process::process::constants::HANDLE_RIGHT_WRITE;
 use crate::Result;
