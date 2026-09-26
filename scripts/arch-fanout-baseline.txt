@@ -27,7 +27,8 @@
 
 
 
-# 55 files, 285 occurrences outside src/arch
+
+# 54 files, 273 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/framebuffer.rs                               4
@@ -49,7 +50,6 @@ kernel/process/mod.rs                                9
 kernel/process/process/fork.rs                       3
 kernel/process/process/lifecycle.rs                  6
 kernel/process/process/types.rs                      3
-kernel/process/ptrace.rs                             12
 kernel/process/scheduler/api.rs                      3
 kernel/process/scheduler/mod.rs                      3
 kernel/process/scheduler/spawn.rs                    4

@@ -7,16 +7,9 @@
 
 use alloc::sync::Arc;
 
-// `PTRACE_REGS_SIZE_X86_64` is only referenced from x86_64-gated helpers
-// below; on aarch64 / riscv64 the import is unused, so silence it.
-#[cfg_attr(not(target_arch = "x86_64"), allow(unused_imports))]
 use crate::abi::ptrace::PtraceEventRecord;
-#[cfg_attr(not(target_arch = "x86_64"), allow(unused_imports))]
 use crate::abi::ptrace::PTRACE_EVENT_ATTACH;
-#[cfg_attr(not(target_arch = "x86_64"), allow(unused_imports))]
 use crate::abi::ptrace::PTRACE_EVENT_SYSCALL_EXIT;
-#[cfg_attr(not(target_arch = "x86_64"), allow(unused_imports))]
-use crate::abi::ptrace::PTRACE_REGS_SIZE_X86_64;
 use crate::kernel::process::process::types::ptrace_flags::*;
 use crate::kernel::process::process::types::PtraceEvent;
 use crate::kernel::process::process::types::ThreadId;
@@ -140,73 +133,21 @@ pub fn ptrace_syscall(tracer: &Process, target_pid: ProcessId, _signal: i32) -> 
 }
 
 /// PTRACE_GETREGS: read the tracee's user-mode register file.
-#[cfg(target_arch = "x86_64")]
+///
+/// The layout is the machine's; a machine without one refuses the request.
 pub fn ptrace_get_regs(tracer: &Process, target_pid: ProcessId, buffer: &mut [u8]) -> Result<()> {
     let target = find_process(target_pid)?;
     verify_tracer(tracer, &target)?;
-
-    // Find the first thread of the target process.
     let thread = find_first_thread(&target)?;
-
-    let ctx = thread.x86_64_user_context().ok_or(Error::Unsupported)?;
-
-    // Serialize the register context into the buffer.
-    let regs = abi_to_ptrace_regs(&ctx);
-    let regs_bytes = unsafe {
-        core::slice::from_raw_parts(
-            &regs as *const crate::abi::ptrace::PtraceUserRegsStruct as *const u8,
-            PTRACE_REGS_SIZE_X86_64,
-        )
-    };
-
-    let len = buffer.len().min(PTRACE_REGS_SIZE_X86_64);
-    buffer[..len].copy_from_slice(&regs_bytes[..len]);
-    Ok(())
+    crate::arch::ptrace::get_regs(thread.as_ref(), buffer)
 }
 
 /// PTRACE_SETREGS: write the tracee's user-mode register file.
-#[cfg(target_arch = "x86_64")]
 pub fn ptrace_set_regs(tracer: &Process, target_pid: ProcessId, buffer: &[u8]) -> Result<()> {
     let target = find_process(target_pid)?;
     verify_tracer(tracer, &target)?;
-
     let thread = find_first_thread(&target)?;
-
-    let len = buffer.len().min(PTRACE_REGS_SIZE_X86_64);
-    if len < PTRACE_REGS_SIZE_X86_64 {
-        return Err(Error::InvalidArgument);
-    }
-
-    // Deserialize from buffer into PtraceUserRegsStruct.
-    let mut regs: crate::abi::ptrace::PtraceUserRegsStruct = unsafe { core::mem::zeroed() };
-    let regs_slice = unsafe {
-        core::slice::from_raw_parts_mut(
-            &mut regs as *mut crate::abi::ptrace::PtraceUserRegsStruct as *mut u8,
-            PTRACE_REGS_SIZE_X86_64,
-        )
-    };
-    regs_slice.copy_from_slice(&buffer[..PTRACE_REGS_SIZE_X86_64]);
-
-    // Convert to kernel user context and write it.
-    let ctx = ptrace_to_abi_regs(&regs);
-    thread.set_x86_64_user_context(ctx);
-    Ok(())
-}
-
-/// Non-x86_64 stub for PTRACE_GETREGS.
-#[cfg(not(target_arch = "x86_64"))]
-pub fn ptrace_get_regs(
-    _tracer: &Process,
-    _target_pid: ProcessId,
-    _buffer: &mut [u8],
-) -> Result<()> {
-    Err(Error::Unsupported)
-}
-
-/// Non-x86_64 stub for PTRACE_SETREGS.
-#[cfg(not(target_arch = "x86_64"))]
-pub fn ptrace_set_regs(_tracer: &Process, _target_pid: ProcessId, _buffer: &[u8]) -> Result<()> {
-    Err(Error::Unsupported)
+    crate::arch::ptrace::set_regs(thread.as_ref(), buffer)
 }
 
 /// PTRACE_PEEKDATA: read a word from the tracee's address space.
@@ -364,9 +305,7 @@ fn check_ptrace_permission(tracer: &Process, target: &Process) -> Result<()> {
     Err(Error::PermissionDenied)
 }
 
-/// Find the first thread of a process.
-/// Only used by the x86_64 register helpers below.
-#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+/// Find the first thread of a process: the one whose registers a tracer reads.
 fn find_first_thread(target: &Process) -> Result<Arc<Thread>> {
     let scheduler = Scheduler::global().ok_or(Error::Unsupported)?;
     let threads = target.thread_ids();
@@ -388,117 +327,4 @@ fn resume_tracee(pid: ProcessId) -> Result<()> {
     Ok(())
 }
 
-// ── Register format conversion (x86_64)
-// ───────────────────────────────────────
-
-/// Convert a kernel `X86_64UserThreadContext` to the ABI
-/// `PtraceUserRegsStruct`.
-#[cfg(target_arch = "x86_64")]
-fn abi_to_ptrace_regs(
-    ctx: &crate::kernel::process::process::types::X86_64UserThreadContext,
-) -> crate::abi::ptrace::PtraceUserRegsStruct {
-    crate::abi::ptrace::PtraceUserRegsStruct {
-        rax: ctx.rax,
-        rbx: ctx.rbx,
-        rcx: ctx.rcx,
-        rdx: ctx.rdx,
-        rsi: ctx.rsi,
-        rdi: ctx.rdi,
-        rbp: ctx.rbp,
-        r8: ctx.r8,
-        r9: ctx.r9,
-        r10: ctx.r10,
-        r11: ctx.r11,
-        r12: ctx.r12,
-        r13: ctx.r13,
-        r14: ctx.r14,
-        r15: ctx.r15,
-        rip: ctx.instruction_pointer,
-        cs: ctx.code_segment,
-        rflags: ctx.rflags,
-        rsp: ctx.stack_pointer,
-        ss: ctx.stack_segment,
-        fs_base: 0,
-        gs_base: 0,
-    }
-}
-
-/// Convert an ABI `PtraceUserRegsStruct` back to a kernel
-/// `X86_64UserThreadContext`.
-#[cfg(target_arch = "x86_64")]
-fn ptrace_to_abi_regs(
-    regs: &crate::abi::ptrace::PtraceUserRegsStruct,
-) -> crate::kernel::process::process::types::X86_64UserThreadContext {
-    crate::kernel::process::process::types::X86_64UserThreadContext {
-        rax: regs.rax,
-        rbx: regs.rbx,
-        rcx: regs.rcx,
-        rdx: regs.rdx,
-        rsi: regs.rsi,
-        rdi: regs.rdi,
-        rbp: regs.rbp,
-        r8: regs.r8,
-        r9: regs.r9,
-        r10: regs.r10,
-        r11: regs.r11,
-        r12: regs.r12,
-        r13: regs.r13,
-        r14: regs.r14,
-        r15: regs.r15,
-        instruction_pointer: regs.rip,
-        code_segment: regs.cs,
-        rflags: regs.rflags,
-        stack_pointer: regs.rsp,
-        stack_segment: regs.ss,
-    }
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
-
-#[cfg(all(test, target_arch = "x86_64"))]
-mod tests {
-    use super::*;
-    use crate::kernel::process::process::types::X86_64UserThreadContext;
-
-    #[test]
-    fn abi_ptrace_regs_roundtrip() {
-        let ctx = X86_64UserThreadContext {
-            rax: 1,
-            rbx: 2,
-            rcx: 3,
-            rdx: 4,
-            rsi: 5,
-            rdi: 6,
-            rbp: 7,
-            r8: 8,
-            r9: 9,
-            r10: 10,
-            r11: 11,
-            r12: 12,
-            r13: 13,
-            r14: 14,
-            r15: 15,
-            instruction_pointer: 0x4000_1000,
-            code_segment: 0x33,
-            rflags: 0x202,
-            stack_pointer: 0x7FFF_FF00,
-            stack_segment: 0x2B,
-        };
-
-        let regs = abi_to_ptrace_regs(&ctx);
-        assert_eq!(regs.rax, 1);
-        assert_eq!(regs.rbx, 2);
-        assert_eq!(regs.r15, 15);
-        assert_eq!(regs.rip, 0x4000_1000);
-        assert_eq!(regs.rflags, 0x202);
-        assert_eq!(regs.rsp, 0x7FFF_FF00);
-        assert_eq!(regs.cs, 0x33);
-        assert_eq!(regs.ss, 0x2B);
-        assert_eq!(core::mem::size_of_val(&regs), PTRACE_REGS_SIZE_X86_64);
-
-        let roundtrip = ptrace_to_abi_regs(&regs);
-        assert_eq!(roundtrip.rax, ctx.rax);
-        assert_eq!(roundtrip.instruction_pointer, ctx.instruction_pointer);
-        assert_eq!(roundtrip.stack_pointer, ctx.stack_pointer);
-    }
-}

@@ -17,6 +17,7 @@ pub mod mmu;
 pub mod pci;
 pub mod percpu;
 pub mod platform;
+pub mod ptrace;
 pub mod syscall_trap;
 pub mod thread;
 pub mod timer;
