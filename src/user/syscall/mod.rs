@@ -1,25 +1,11 @@
 //! src/user/syscall/mod.rs
 //!
-//! User-side syscall builders and architecture-specific invocation helpers.
-
-// The invocation primitives below are the only users of these, and they exist
-// on exactly the two architectures that can enter the kernel from user mode.
-#[cfg(any(
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")),
-    all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))
-))]
-use core::arch::asm;
-
-#[cfg(any(
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")),
-    all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))
-))]
-use crate::abi::syscall as syscall_abi;
-#[cfg(any(
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")),
-    all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))
-))]
-use crate::syscall::SyscallNumber;
+//! User-side syscall builders and the trap that enters the kernel.
+//!
+//! The builders are target-independent — they put a request in registers the
+//! ABI fixes — and the trap itself is the machine's, so it lives one file per
+//! machine beside this one.  Everything here that is gated is a single
+//! statement about which machines have a user-mode syscall surface at all.
 
 pub struct UserSyscall;
 
@@ -40,6 +26,16 @@ mod payload;
 mod process;
 
 // ── invocation primitives ──────────────────────────────────────────
+//
+// The instruction that enters the kernel from user mode is the machine's:
+// `int` with the interrupt registers on x86_64, `svc` with `x8` and `x0..x5`
+// on aarch64.  One file per machine holds it, and nothing else here names one.
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
+#[path = "invoke_x86_64.rs"]
+mod invoke;
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
+#[path = "invoke_aarch64.rs"]
+mod invoke;
 
 /// The trap entry, where this target has one.
 ///
@@ -60,8 +56,8 @@ impl UserSyscall {
     /// every pointer encoded in `args` references valid user memory for the
     /// duration of the trap.
     pub unsafe fn invoke_from_user_mode(
-        number: SyscallNumber,
-        args: [usize; syscall_abi::ARG_COUNT],
+        number: crate::syscall::SyscallNumber,
+        args: [usize; crate::abi::syscall::ARG_COUNT],
     ) -> crate::Result<usize> {
         unsafe { Self::invoke_raw_from_user_mode(number as usize, args) }
     }
@@ -75,7 +71,7 @@ impl UserSyscall {
     /// pointer visible to the kernel.
     pub unsafe fn invoke_raw_from_user_mode(
         number: usize,
-        args: [usize; syscall_abi::ARG_COUNT],
+        args: [usize; crate::abi::syscall::ARG_COUNT],
     ) -> crate::Result<usize> {
         unsafe {
             // The raw trap returns the shared encoded syscall status word; decode it
@@ -83,60 +79,21 @@ impl UserSyscall {
             let status = Self::invoke_raw_status_from_user_mode(
                 number, args[0], args[1], args[2], args[3], args[4], args[5],
             );
-            syscall_abi::decode_result(status)
+            crate::abi::syscall::decode_result(status)
         }
     }
 
-    // Keep a scalar-only raw path available for extracted payload sections so
-    // they do not need to materialize large syscall context temporaries.
-    #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
-    #[inline(always)]
-    /// Invoke the x86_64 raw syscall entry and return the encoded status word.
+    /// Invoke this machine's raw syscall entry and return the encoded status
+    /// word.
+    ///
+    /// Keep a scalar-only raw path available for extracted payload sections so
+    /// they do not need to materialize large syscall context temporaries.
     ///
     /// # Safety
+    ///
     /// The caller must pass arguments exactly as required by the raw syscall
     /// ABI and guarantee that any pointer-valued arguments are valid user-space
     /// addresses for kernel access.
-    pub unsafe fn invoke_raw_status_from_user_mode(
-        number: usize,
-        arg0: usize,
-        arg1: usize,
-        arg2: usize,
-        arg3: usize,
-        arg4: usize,
-        arg5: usize,
-    ) -> usize {
-        unsafe {
-            let status: usize;
-            // Match the x86_64 user->kernel syscall ABI: syscall number in `rax`,
-            // arguments in the standard interrupt registers, encoded status back in
-            // `rax`.
-            asm!(
-                "int {vector}",
-                vector = const syscall_abi::X86_64_INTERRUPT_VECTOR,
-                inlateout("rax") number => status,
-                in("rdi") arg0,
-                in("rsi") arg1,
-                in("rdx") arg2,
-                in("rcx") arg3,
-                in("r8") arg4,
-                in("r9") arg5,
-            );
-            status
-        }
-    }
-
-    // Keep a scalar-only raw path available for extracted payload sections so
-    // they do not need to materialize large syscall context temporaries.
-    /// Invoke a raw syscall from AArch64 user mode and return the status.
-    ///
-    /// # Safety
-    ///
-    /// Must be called from AArch64 user mode (EL0).  The `svc #0`
-    /// instruction traps to the kernel; arguments are passed in
-    /// registers `x8` (syscall number) and `x0..x5` per the AArch64
-    /// user→kernel calling convention.
-    #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
     #[inline(always)]
     pub unsafe fn invoke_raw_status_from_user_mode(
         number: usize,
@@ -147,23 +104,7 @@ impl UserSyscall {
         arg4: usize,
         arg5: usize,
     ) -> usize {
-        unsafe {
-            let status: usize;
-            // Match the AArch64 user->kernel syscall ABI: syscall number in `x8`,
-            // arguments in `x0..x5`, encoded status returned through `x0`.
-            asm!(
-                "svc #0",
-                in("x8") number,
-                inlateout("x0") arg0 => status,
-                in("x1") arg1,
-                in("x2") arg2,
-                in("x3") arg3,
-                in("x4") arg4,
-                in("x5") arg5,
-                options(nostack),
-            );
-            status
-        }
+        unsafe { invoke::raw_status(number, arg0, arg1, arg2, arg3, arg4, arg5) }
     }
 }
 

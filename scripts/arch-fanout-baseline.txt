@@ -31,7 +31,8 @@
 
 
 
-# 49 files, 217 occurrences outside src/arch
+
+# 49 files, 211 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/framebuffer.rs                               4
@@ -79,6 +80,6 @@ user/program/loader/mod.rs                           5
 user/shared/abi/ptrace.rs                            2
 user/shared/commands/system.rs                       7
 user/shared/syscall.rs                               2
-user/syscall/mod.rs                                  12
+user/syscall/mod.rs                                  6
 user/syscall/payload.rs                              4
 util/debug.rs                                        1
