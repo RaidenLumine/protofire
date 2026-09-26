@@ -350,7 +350,6 @@ pub(crate) fn exec(
 
 // ── Fork syscall handler ──────────────────────────────────────────────
 
-#[cfg(target_arch = "x86_64")]
 pub(crate) fn fork(
     context: &mut super::super::SyscallContext,
 ) -> Result<super::super::SyscallDispatch> {
@@ -366,106 +365,13 @@ pub(crate) fn fork(
     child.set_parent_pid(process.pid());
     process.add_child(child.pid());
 
-    let child_thread = {
-        let parent_ctx = thread
-            .validated_x86_64_user_context()?
-            .ok_or(Error::InvalidArgument)?;
-        let child_ctx = crate::kernel::process::thread::X86_64UserThreadContext {
-            rax: 0,
-            ..parent_ctx
-        };
-        crate::kernel::process::thread::Thread::new_user_fork(child.clone(), child_ctx)?
-    };
+    // The child's user context is the architecture's to build: the parent's
+    // registers, with the one that reports the fork zeroed.
+    let child_thread = crate::arch::thread::new_fork_thread(child.clone(), thread.as_ref())?;
 
     scheduler.register_spawned_thread(child.clone(), child_thread, false);
 
     Ok(super::super::SyscallDispatch::complete(child.pid() as usize))
-}
-
-/// Host builds have no per-process address space to clone, so `fork` reports
-/// itself unsupported; the bare-metal arm below owns the real AArch64 path.
-#[cfg(all(target_arch = "aarch64", not(target_os = "none")))]
-pub(crate) fn fork(
-    context: &mut super::super::SyscallContext,
-) -> Result<super::super::SyscallDispatch> {
-    super::super::validate_zeroed_args(context, 0)?;
-    Err(Error::Unsupported)
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "none"))]
-pub(crate) fn fork(
-    context: &mut super::super::SyscallContext,
-) -> Result<super::super::SyscallDispatch> {
-    super::super::validate_zeroed_args(context, 0)?;
-
-    let scheduler = super::super::runtime::global_scheduler()?;
-    let process = super::super::runtime::current_process()?;
-    let thread = super::super::runtime::current_thread()?;
-    let mut memory = crate::memory::global_mut().ok_or(Error::InternalError)?;
-
-    let child = process.fork(&mut memory, scheduler.allocate_pid())?;
-
-    child.set_parent_pid(process.pid());
-    process.add_child(child.pid());
-
-    let child_thread = {
-        let parent_ctx = thread
-            .validated_aarch64_user_context()?
-            .ok_or(Error::InvalidArgument)?;
-        let child_ctx = crate::kernel::process::thread::AArch64UserThreadContext {
-            x0: 0,
-            ..parent_ctx
-        };
-        crate::kernel::process::thread::Thread::new_user_fork(child.clone(), child_ctx)?
-    };
-
-    scheduler.register_spawned_thread(child.clone(), child_thread, false);
-
-    Ok(super::super::SyscallDispatch::complete(child.pid() as usize))
-}
-
-#[cfg(all(target_arch = "riscv64", target_os = "none"))]
-pub(crate) fn fork(
-    context: &mut super::super::SyscallContext,
-) -> Result<super::super::SyscallDispatch> {
-    super::super::validate_zeroed_args(context, 0)?;
-
-    let scheduler = super::super::runtime::global_scheduler()?;
-    let process = super::super::runtime::current_process()?;
-    let thread = super::super::runtime::current_thread()?;
-    let mut memory = crate::memory::global_mut().ok_or(Error::InternalError)?;
-
-    let child = process.fork(&mut memory, scheduler.allocate_pid())?;
-
-    child.set_parent_pid(process.pid());
-    process.add_child(child.pid());
-
-    let child_thread = {
-        let parent_ctx = thread
-            .validated_riscv64_user_context()?
-            .ok_or(Error::InvalidArgument)?;
-        let child_ctx = crate::kernel::process::thread::RiscV64UserThreadContext {
-            x10: 0,
-            ..parent_ctx
-        };
-        crate::kernel::process::thread::Thread::new_user_fork(child.clone(), child_ctx)?
-    };
-
-    scheduler.register_spawned_thread(child.clone(), child_thread, false);
-
-    Ok(super::super::SyscallDispatch::complete(child.pid() as usize))
-}
-
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64"
-)))]
-pub(crate) fn fork(
-    _context: &mut super::super::SyscallContext,
-) -> Result<super::super::SyscallDispatch> {
-    let _ = _context;
-    Err(Error::NotImplemented)
 }
 
 // ── Launch request building ───────────────────────────────────────────
@@ -623,16 +529,7 @@ where
 
 fn validate_exec_user_thread_start(start: Option<UserThreadStart>) -> Result<UserThreadStart> {
     let start = start.ok_or(Error::Unsupported)?;
-
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-    {
-        start.validate()
-    }
-
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", test)))]
-    {
-        Ok(start)
-    }
+    crate::arch::thread::validate_user_thread_start(start)
 }
 
 fn rollback_exec_process_state(
@@ -669,39 +566,11 @@ fn rollback_exec_process_state(
 }
 
 fn install_exec_thread_image(thread: &Thread, start: UserThreadStart) -> Result<()> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        thread.replace_x86_64_user_image(start)
-    }
-
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        thread.replace_aarch64_user_image(start)
-    }
-
-    #[cfg(all(
-        not(target_arch = "x86_64"),
-        not(all(target_arch = "aarch64", target_os = "none"))
-    ))]
-    {
-        let _ = thread;
-        let _ = start;
-        Err(Error::Unsupported)
-    }
+    crate::arch::thread::install_user_image(thread, start)
 }
 
-fn activate_exec_process_address_space(_process: &Process) -> Result<()> {
-    #[cfg(all(
-        any(target_arch = "x86_64", target_arch = "aarch64"),
-        target_os = "none"
-    ))]
-    {
-        if !_process.activate_address_space_for_thread() {
-            return Err(Error::InternalError);
-        }
-    }
-
-    Ok(())
+fn activate_exec_process_address_space(process: &Process) -> Result<()> {
+    crate::arch::thread::activate_for_exec(process)
 }
 
 fn exec_process_target(thread: &Arc<Thread>) -> Result<Arc<Process>> {

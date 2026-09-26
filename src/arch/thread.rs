@@ -114,3 +114,142 @@ pub(crate) fn restore_user_runtime_state(thread: &Thread, state: ThreadUserRunti
 }
 #[cfg(target_arch = "x86_64")]
 pub use x86_64_context::*;
+
+// ── The user image a thread runs ───────────────────────────────────────
+//
+// A thread that was just loaded, forked or exec'd has a user half the
+// architecture owns: the context registers the entry reads, the image the
+// MMU maps, and the switch that makes it live.  The syscall layer asks for
+// those here rather than naming an architecture to build them.
+
+/// Build the thread a fork creates.
+///
+/// The child gets the parent's user context with the register its
+/// architecture reports a successful fork in zeroed — `rax` on x86_64, `x0`
+/// on aarch64, `x10` on riscv64.  A host with no per-process address space to
+/// clone says so instead of pretending.
+pub(crate) fn new_fork_thread(
+    child: alloc::sync::Arc<crate::kernel::process::Process>,
+    parent: &Thread,
+) -> Result<alloc::sync::Arc<Thread>> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let parent_ctx = parent
+            .validated_x86_64_user_context()?
+            .ok_or(crate::Error::InvalidArgument)?;
+        let child_ctx = crate::kernel::process::thread::X86_64UserThreadContext {
+            rax: 0,
+            ..parent_ctx
+        };
+        Thread::new_user_fork(child, child_ctx)
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        let parent_ctx = parent
+            .validated_aarch64_user_context()?
+            .ok_or(crate::Error::InvalidArgument)?;
+        let child_ctx = crate::kernel::process::thread::AArch64UserThreadContext {
+            x0: 0,
+            ..parent_ctx
+        };
+        Thread::new_user_fork(child, child_ctx)
+    }
+
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        let parent_ctx = parent
+            .validated_riscv64_user_context()?
+            .ok_or(crate::Error::InvalidArgument)?;
+        let child_ctx = crate::kernel::process::thread::RiscV64UserThreadContext {
+            x10: 0,
+            ..parent_ctx
+        };
+        Thread::new_user_fork(child, child_ctx)
+    }
+
+    // A host build has no per-process address space to clone.
+    #[cfg(all(target_arch = "aarch64", not(target_os = "none")))]
+    {
+        let _ = (child, parent);
+        Err(crate::Error::Unsupported)
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "riscv64"
+    )))]
+    {
+        let _ = (child, parent);
+        Err(crate::Error::NotImplemented)
+    }
+}
+
+/// Check a start descriptor against the rules this architecture has for one.
+///
+/// x86_64 and aarch64 read the entry's stack and register conventions out of
+/// it, so a malformed descriptor is refused before anything is installed;
+/// riscv64 takes the shared shape as it is.
+pub(crate) fn validate_user_thread_start(
+    start: crate::kernel::process::UserThreadStart,
+) -> Result<crate::kernel::process::UserThreadStart> {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
+    {
+        start.validate()
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", test)))]
+    {
+        Ok(start)
+    }
+}
+
+/// Install a freshly loaded image as the thread's user half.
+pub(crate) fn install_user_image(
+    thread: &Thread,
+    start: crate::kernel::process::UserThreadStart,
+) -> Result<()> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        thread.replace_x86_64_user_image(start)
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        thread.replace_aarch64_user_image(start)
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        all(target_arch = "aarch64", target_os = "none")
+    )))]
+    {
+        let _ = (thread, start);
+        Err(crate::Error::Unsupported)
+    }
+}
+
+/// Put a process's address space back in charge after an exec replaced it.
+///
+/// The machines that switch address spaces say whether the switch happened;
+/// riscv64's exec does not activate here, and a host has nothing to switch.
+pub(crate) fn activate_for_exec(process: &crate::kernel::process::Process) -> Result<()> {
+    #[cfg(all(
+        any(target_arch = "x86_64", target_arch = "aarch64"),
+        target_os = "none"
+    ))]
+    {
+        if !process.activate_address_space_for_thread() {
+            return Err(crate::Error::InternalError);
+        }
+    }
+
+    #[cfg(not(all(
+        any(target_arch = "x86_64", target_arch = "aarch64"),
+        target_os = "none"
+    )))]
+    let _ = process;
+
+    Ok(())
+}

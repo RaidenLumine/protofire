@@ -23,7 +23,8 @@
 
 
 
-# 57 files, 346 occurrences outside src/arch
+
+# 56 files, 329 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/framebuffer.rs                               4
@@ -68,7 +69,6 @@ memory/map_facts.rs                                  3
 memory/mod.rs                                        4
 syscall/diagnostic.rs                                6
 syscall/exception_control.rs                         6
-syscall/process/launch/pipeline.rs                   17
 syscall/process/signal.rs                            2
 user/demo/demo_program_x86_64_rust_io.rs             1
 user/demo/demo_program_x86_64_rust.rs                1
