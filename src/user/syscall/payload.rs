@@ -17,7 +17,15 @@ macro_rules! define_aarch64_payload_runtime {
         #[inline(always)]
         #[allow(dead_code)]
         #[link_section = $section]
-        unsafe fn payload_runtime_invoke_raw_status(
+        /// Invoke the payload's raw syscall trap.
+        ///
+        /// Safe to call from the payload: the trap is an operation with an
+        /// erring return — the kernel validates every address it is handed
+        /// before it touches it, and a refused address comes back as an error
+        /// status rather than as undefined behaviour in the caller.  The
+        /// `unsafe` that the payload runtime still needs is the `asm!` below,
+        /// which is where the register contract lives.
+        fn payload_runtime_invoke_raw_status(
             number: usize,
             arg0: usize,
             arg1: usize,
@@ -25,8 +33,14 @@ macro_rules! define_aarch64_payload_runtime {
             arg3: usize,
             arg4: usize,
             arg5: usize,
-        ) -> usize { unsafe {
+        ) -> usize {
+            // SAFETY: the trap instruction is the payload ABI: `x8`/`rax`
+            // carries the syscall number, the argument registers carry the
+            // six words, and the return register carries the status.  The
+            // instruction has no memory side effects of its own; what it asks
+            // the kernel to do with the words is the kernel's to validate.
             let status: usize;
+            unsafe {
             core::arch::asm!(
                 "svc #0",
                 in("x8") number,
@@ -78,34 +92,30 @@ macro_rules! define_aarch64_payload_runtime {
             options: usize,
             options_length: usize,
         ) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::SpawnProcess as usize,
-                    path,
-                    length,
-                    options,
-                    options_length,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::SpawnProcess as usize,
+            path,
+            length,
+            options,
+            options_length,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn wait_process_blocking(pid: usize, record: usize, record_length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::WaitProcess as usize,
-                    pid,
-                    $crate::abi::process::WAIT_PROCESS_BLOCK_INDEFINITELY_TICKS,
-                    record,
-                    record_length,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::WaitProcess as usize,
+            pid,
+            $crate::abi::process::WAIT_PROCESS_BLOCK_INDEFINITELY_TICKS,
+            record,
+            record_length,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
@@ -119,17 +129,15 @@ macro_rules! define_aarch64_payload_runtime {
         #[allow(dead_code)]
         #[link_section = $section]
         fn write_section_message_status(buffer: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::Write as usize,
-                    $crate::kernel::process::STDOUT_FD,
-                    buffer,
-                    length,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::Write as usize,
+            $crate::kernel::process::STDOUT_FD,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
@@ -202,65 +210,55 @@ macro_rules! define_aarch64_payload_runtime {
         #[allow(dead_code)]
         #[link_section = $section]
         fn chdir(path: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::SetCurrentDir as usize,
-                    path,
-                    length,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::SetCurrentDir as usize,
+            path,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn getpid() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::GetPid as usize,
-                    0, 0, 0, 0, 0, 0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::GetPid as usize,
+            0, 0, 0, 0, 0, 0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn getppid() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::GetPpid as usize,
-                    0, 0, 0, 0, 0, 0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::GetPpid as usize,
+            0, 0, 0, 0, 0, 0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn getuid() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::GetUid as usize,
-                    0, 0, 0, 0, 0, 0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::GetUid as usize,
+            0, 0, 0, 0, 0, 0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn getgid() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::GetGid as usize,
-                    0, 0, 0, 0, 0, 0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::GetGid as usize,
+            0, 0, 0, 0, 0, 0,
+            )
         }
 
     };
@@ -294,7 +292,15 @@ macro_rules! define_x86_64_payload_runtime {
         #[inline(always)]
         #[allow(dead_code)]
         #[link_section = $section]
-        unsafe fn payload_runtime_invoke_raw_status(
+        /// Invoke the payload's raw syscall trap.
+        ///
+        /// Safe to call from the payload: the trap is an operation with an
+        /// erring return — the kernel validates every address it is handed
+        /// before it touches it, and a refused address comes back as an error
+        /// status rather than as undefined behaviour in the caller.  The
+        /// `unsafe` that the payload runtime still needs is the `asm!` below,
+        /// which is where the register contract lives.
+        fn payload_runtime_invoke_raw_status(
             number: usize,
             arg0: usize,
             arg1: usize,
@@ -331,255 +337,225 @@ macro_rules! define_x86_64_payload_runtime {
         #[allow(dead_code)]
         #[link_section = $section]
         fn yield_now() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::Yield as usize,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::Yield as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn install_exception_handler(vector: u8, handler: usize, stack_pointer: usize, flags: usize) {
-            unsafe {
-                let _ = payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::InstallExceptionHandler as usize,
-                    vector as usize,
-                    handler,
-                    stack_pointer,
-                    flags,
-                    0,
-                    0,
-                );
-            }
+            let _ = payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::InstallExceptionHandler as usize,
+            vector as usize,
+            handler,
+            stack_pointer,
+            flags,
+            0,
+            0,
+            );
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn app_id(buffer: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::AppId as usize,
-                    buffer,
-                    length,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::AppId as usize,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn app_version(buffer: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::AppVersion as usize,
-                    buffer,
-                    length,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::AppVersion as usize,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn arg_count() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::ArgCount as usize,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::ArgCount as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn arg_value(index: usize, buffer: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::ArgValue as usize,
-                    index,
-                    buffer,
-                    length,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::ArgValue as usize,
+            index,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn env_count() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::EnvCount as usize,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::EnvCount as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn env_value(index: usize, buffer: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::EnvValue as usize,
-                    index,
-                    buffer,
-                    length,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::EnvValue as usize,
+            index,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn current_dir(buffer: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::CurrentDir as usize,
-                    buffer,
-                    length,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::CurrentDir as usize,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn image_path(buffer: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::ImagePath as usize,
-                    buffer,
-                    length,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::ImagePath as usize,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn manifest_path(buffer: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::ManifestPath as usize,
-                    buffer,
-                    length,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::ManifestPath as usize,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn open_path(path: usize, length: usize, flags: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::Open as usize,
-                    path,
-                    length,
-                    flags,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::Open as usize,
+            path,
+            length,
+            flags,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn make_dir(path: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::CreateDir as usize,
-                    path,
-                    length,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::CreateDir as usize,
+            path,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn set_len(fd: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::SetLength as usize,
-                    fd,
-                    length,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::SetLength as usize,
+            fd,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn remove_path(path: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::RemovePath as usize,
-                    path,
-                    length,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::RemovePath as usize,
+            path,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
@@ -591,68 +567,60 @@ macro_rules! define_x86_64_payload_runtime {
             length: usize,
             timeout_ticks: usize,
         ) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::Read as usize,
-                    fd,
-                    buffer,
-                    length,
-                    timeout_ticks,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::Read as usize,
+            fd,
+            buffer,
+            length,
+            timeout_ticks,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn write_fd(fd: usize, buffer: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::Write as usize,
-                    fd,
-                    buffer,
-                    length,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::Write as usize,
+            fd,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn seek_fd(fd: usize, offset: isize, whence: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::Seek as usize,
-                    fd,
-                    offset as usize,
-                    whence,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::Seek as usize,
+            fd,
+            offset as usize,
+            whence,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn close_fd(fd: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::Close as usize,
-                    fd,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::Close as usize,
+            fd,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
@@ -664,17 +632,15 @@ macro_rules! define_x86_64_payload_runtime {
             record: usize,
             record_length: usize,
         ) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::WaitProcess as usize,
-                    pid,
-                    timeout_ticks,
-                    record,
-                    record_length,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::WaitProcess as usize,
+            pid,
+            timeout_ticks,
+            record,
+            record_length,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
@@ -707,17 +673,15 @@ macro_rules! define_x86_64_payload_runtime {
             options: usize,
             options_length: usize,
         ) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::SpawnProcess as usize,
-                    path,
-                    length,
-                    options,
-                    options_length,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::SpawnProcess as usize,
+            path,
+            length,
+            options,
+            options_length,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
@@ -736,17 +700,15 @@ macro_rules! define_x86_64_payload_runtime {
             options: usize,
             options_length: usize,
         ) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::ExecProcess as usize,
-                    path,
-                    length,
-                    options,
-                    options_length,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::ExecProcess as usize,
+            path,
+            length,
+            options,
+            options_length,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
@@ -952,85 +914,75 @@ macro_rules! define_x86_64_payload_runtime {
         #[allow(dead_code)]
         #[link_section = $section]
         fn chdir(path: usize, length: usize) -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::SetCurrentDir as usize,
-                    path,
-                    length,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::SetCurrentDir as usize,
+            path,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn getpid() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::GetPid as usize,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::GetPid as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn getppid() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::GetPpid as usize,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::GetPpid as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn getuid() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::GetUid as usize,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::GetUid as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
         fn getgid() -> usize {
-            unsafe {
-                payload_runtime_invoke_raw_status(
-                    $crate::kernel::syscall::SyscallNumber::GetGid as usize,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-            }
+            payload_runtime_invoke_raw_status(
+            $crate::kernel::syscall::SyscallNumber::GetGid as usize,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
         }
 
     };
