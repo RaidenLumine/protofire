@@ -451,6 +451,8 @@ everyday code:
       and `# Safety` on the unchecked variant.
 - [ ] New feature flags are registered in `Cargo.toml`, `README.md`, and the
       Makefile.
+- [ ] New architecture gates outside `src/arch/` are argued for in §14, and
+      `make check-arch-fanout` is re-recorded if they move.
 - [ ] `make verify-p3` is green.
 
 ---
@@ -492,6 +494,31 @@ come apart in cuts, and a cut is finished when its rows reach zero and the
 census is re-recorded (`sh scripts/check-layering.sh --record`) in the same
 change.  The rule for a new edge is the same as for any other budget here: it
 has to be argued for in the change that adds it, not discovered later.
+
+---
+
+## 14. Architecture gates
+
+Keeping hardware out of the kernel's own code is the same kind of budget, and
+it has the same kind of check.
+[`scripts/check-arch-fanout.sh`](../../scripts/check-arch-fanout.sh) counts
+every `target_arch = "x86_64" | "aarch64" | "riscv64"` in a `.rs` file outside
+`src/arch/`, per file, and compares the result with
+[`scripts/arch-fanout-baseline.txt`](../../scripts/arch-fanout-baseline.txt).
+A count that grows fails `make check-arch-fanout`; a count that drops has to be
+re-recorded in the same change.
+
+The number is what porting costs.  An architecture is supposed to be
+`src/arch/<arch>/` plus its `main.rs` entry point; every gate the census finds
+is a file the fourth architecture has to be taught as well.  The way down is
+the same as the way down for the dependency graph: a gate that says "on this
+architecture, do it this way" is a question the architecture should be
+answering, so it moves behind a shim in `src/arch/` — `arch::thread`,
+`arch::mmu`, `arch::tlb`, and the rest — and the kernel-side code asks the
+question instead of naming an architecture.
+
+`target_os` gates are not counted.  A new architecture is bare-metal too, so
+"is there a kernel here or a host" does not move when one is added.
 
 ---
 

@@ -142,6 +142,7 @@ run_p3() {
     run_make_step "make clippy" clippy
     run_make_step "make check-unsafe-comments" check-unsafe-comments
     run_make_step "make check-layering" check-layering
+    run_make_step "make check-arch-fanout" check-arch-fanout
     if [ "$RUN_X86_64_RUNTIME" = "1" ]; then
         run_make_step "make check-x8664-runtime" check-x8664-runtime
     else

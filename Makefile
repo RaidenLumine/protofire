@@ -261,6 +261,17 @@ check-unsafe-comments:
 check-layering:
 	sh ./scripts/check-layering.sh
 
+# Count the architecture gates that live outside `src/arch/`.  Porting the
+# kernel to a fourth architecture should mean writing that architecture's own
+# directory, and today it also means finding every `#[cfg(target_arch = "…")]`
+# in the tree: 64 files and 554 occurrences of them, measured by
+# `scripts/arch-fanout-baseline.txt`.  This is a ratchet over that number — a
+# count that grows fails, and a count that drops has to be re-recorded in the
+# same change — so the wall `more hardware` runs into is at least visible and
+# only gets shorter.  See §14 of docs/fmts/code-style.md.
+check-arch-fanout:
+	sh ./scripts/check-arch-fanout.sh
+
 # Boot the kernel on a single emulated CPU with the demo disk and assert that
 # the user programs actually run.  The SMP smoke cannot see a defect that
 # takes one CPU down at a time, and a single CPU is what `make run` gives a

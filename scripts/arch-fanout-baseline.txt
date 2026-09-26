@@ -1,0 +1,82 @@
+# Architecture gates outside src/arch/: the census
+# scripts/check-arch-fanout.sh ratchets.
+#
+# Each row is `<file under src/> <occurrences>`: how many times that file names
+# `x86_64`, `aarch64`, or `riscv64` in a `target_arch` gate, with line comments
+# stripped first.  Porting the kernel to a fourth architecture should mean
+# writing that architecture's own directory; every row here is a file the
+# fourth architecture would have to edit as well.  The gate fails when a count
+# rises, when a row shrinks without the census being re-recorded, or when a
+# file the census found has no row — so a new gate outside the arch layer is
+# added here on purpose.
+#
+# Re-record with `sh scripts/check-arch-fanout.sh --record` in every change
+# that moves a gate.  The number to drive down is the pair on the line below
+# this header: files first, then occurrences.
+#
+# 64 files, 554 occurrences outside src/arch
+
+abi/ptrace.rs                                        2
+drivers/framebuffer.rs                               4
+drivers/hda.rs                                       8
+drivers/mod.rs                                       16
+drivers/nvme.rs                                      13
+drivers/pcspkr.rs                                    12
+drivers/usb_msd.rs                                   1
+drivers/virtio_gpu.rs                                16
+drivers/virtio_input.rs                              54
+drivers/virtio_net.rs                                14
+drivers/virtio.rs                                    16
+drivers/xhci.rs                                      10
+fs/demo/absent.rs                                    6
+fs/demo/mod.rs                                       12
+kernel/mod.rs                                        32
+kernel/power/clock.rs                                2
+kernel/power/mod.rs                                  3
+kernel/process/context.rs                            4
+kernel/process/mod.rs                                9
+kernel/process/process/fork.rs                       3
+kernel/process/process/lifecycle.rs                  6
+kernel/process/process/types.rs                      3
+kernel/process/ptrace.rs                             12
+kernel/process/scheduler/address.rs                  13
+kernel/process/scheduler/api.rs                      3
+kernel/process/scheduler/mod.rs                      3
+kernel/process/scheduler/spawn.rs                    4
+kernel/process/thread/entry.rs                       5
+kernel/process/thread/exception.rs                   8
+kernel/process/thread/kernel_stack.rs                6
+kernel/process/thread/lifecycle.rs                   20
+kernel/process/thread/mod.rs                         5
+kernel/process/thread/types.rs                       6
+kernel/process/thread/user_runtime.rs                2
+kernel/random.rs                                     2
+kernel/smp/tlb.rs                                    2
+main.rs                                              13
+memory/diagnostics.rs                                3
+memory/dma.rs                                        2
+memory/global.rs                                     3
+memory/manager/compact.rs                            6
+memory/map_facts.rs                                  3
+memory/mod.rs                                        4
+syscall/diagnostic.rs                                6
+syscall/exception_control.rs                         6
+syscall/memory/user.rs                               30
+syscall/process/launch/pipeline.rs                   17
+syscall/process/signal.rs                            2
+syscall/table.rs                                     28
+user/demo/demo_program_x86_64_rust_io.rs             1
+user/demo/demo_program_x86_64_rust.rs                1
+user/demo/mod.rs                                     3
+user/exception.rs                                    5
+user/mod.rs                                          8
+user/program/constants.rs                            17
+user/program/loader/arch/absent.rs                   3
+user/program/loader/arch/mod.rs                      23
+user/program/loader/mod.rs                           5
+user/shared/abi/ptrace.rs                            2
+user/shared/commands/system.rs                       7
+user/shared/syscall.rs                               2
+user/syscall/mod.rs                                  12
+user/syscall/payload.rs                              4
+util/debug.rs                                        1
