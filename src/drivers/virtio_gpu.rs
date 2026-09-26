@@ -34,7 +34,6 @@ use alloc::sync::Arc;
 // machinery; the host build keeps just the syscall-facing interface and the
 // in-memory mock.
 #[cfg(target_os = "none")]
-use alloc::boxed::Box;
 #[cfg(target_os = "none")]
 use core::ptr;
 
@@ -51,27 +50,11 @@ use crate::drivers::virtio::REG_QUEUE_NOTIFY;
 use crate::drivers::virtio::VIRTQ_DESC_F_WRITE;
 use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
-// DmaBuffer (frame-allocator DMA) exists only on x86_64; the MMIO platforms
-// (aarch64/riscv64) back the scanout with an identity-mapped heap allocation
-// via `FbBacking::Heap` instead.
 use crate::kernel::sync::Mutex;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use crate::memory::dma::DmaBuffer;
 #[cfg(target_os = "none")]
 use crate::println;
 use crate::Error;
 use crate::Result;
-
-// ---------------------------------------------------------------------------
-// PCI constants
-// ---------------------------------------------------------------------------
-
-/// Red Hat / QEMU VirtIO vendor ID (x86_64 PCI probe only).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-const VIRTIO_VENDOR: u16 = 0x1af4;
-/// VirtIO GPU transitional PCI device ID (QEMU virtio-gpu-pci; x86_64 only).
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-const VIRTIO_GPU_PCI_DEVICE_ID: u16 = 0x1050;
 
 // ---------------------------------------------------------------------------
 // VirtIO GPU device type (spec §5.7)
@@ -405,94 +388,15 @@ struct VirtioGpuCmdSubmit3D {
 
 // ─── Scanout backing memory ──────────────────────────────────────────────
 
-/// Physical backing for the scanout framebuffer.
-///
-/// x86_64 uses the frame-allocator DMA buffer (physically contiguous below
-/// 1 GiB).  aarch64/riscv64 have no DMA window and run with an identity-mapped
-/// kernel heap, so the scanout is a plain page-aligned heap allocation whose
-/// virtual address *is* its guest-physical address — the same trick the
-/// VirtQueue rings and the virtio-net driver already rely on.
-#[cfg(target_os = "none")]
-enum FbBacking {
-    /// Frame-allocator DMA buffer (x86_64 PCI).
-    #[cfg(target_arch = "x86_64")]
-    Dma(DmaBuffer),
-    /// Identity-mapped heap region (aarch64/riscv64 MMIO).
-    #[cfg(not(target_arch = "x86_64"))]
-    Heap { base: usize, len: usize },
-}
+// The buffer itself — how a device is handed a physical address — is the
+// machine's; see `crate::arch::scanout`.
 
-#[cfg(target_os = "none")]
-impl FbBacking {
-    fn as_ptr(&self) -> *mut u8 {
-        match self {
-            #[cfg(target_arch = "x86_64")]
-            FbBacking::Dma(fb) => fb.as_ptr(),
-            #[cfg(not(target_arch = "x86_64"))]
-            FbBacking::Heap { base, .. } => *base as *mut u8,
-        }
-    }
-
-    fn phys_addr(&self) -> usize {
-        match self {
-            #[cfg(target_arch = "x86_64")]
-            FbBacking::Dma(fb) => fb.phys_addr(),
-            #[cfg(not(target_arch = "x86_64"))]
-            FbBacking::Heap { base, .. } => *base,
-        }
-    }
-
-    fn len(&self) -> usize {
-        match self {
-            #[cfg(target_arch = "x86_64")]
-            FbBacking::Dma(fb) => fb.len(),
-            #[cfg(not(target_arch = "x86_64"))]
-            FbBacking::Heap { len, .. } => *len,
-        }
-    }
-}
-
-/// Allocate `fb_bytes` of scanout backing memory.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-fn allocate_fb(fb_bytes: usize) -> Option<FbBacking> {
-    let fb_frames = fb_bytes.div_ceil(4096);
-    let fb = DmaBuffer::allocate(fb_frames)?;
-    Some(FbBacking::Dma(fb))
-}
-
-/// Allocate `fb_bytes` as a page-aligned, identity-mapped heap region.
-#[cfg(all(not(target_arch = "x86_64"), target_os = "none"))]
-fn allocate_fb(fb_bytes: usize) -> Option<FbBacking> {
-    use core::alloc::Layout;
-    let layout = Layout::from_size_align(fb_bytes, 4096).ok()?;
-    // SAFETY: layout is non-zero and the region is never freed — it backs the
-    // scanout for the kernel's whole lifetime.
-    let base = unsafe { alloc::alloc::alloc(layout) };
-    if base.is_null() {
-        return None;
-    }
-    unsafe { core::ptr::write_bytes(base, 0u8, fb_bytes) };
-    Some(FbBacking::Heap {
-        base: base as usize,
-        len: fb_bytes,
-    })
-}
-
-/// A VirtIO GPU device instance.
-///
-/// Wraps the MMIO transport, one control virtqueue, and the physically-backed
-/// framebuffer memory (`DmaBuffer` on x86_64, an identity-mapped heap region
-/// on the MMIO platforms).
-///
-/// Constructed only by the bare-metal `init_gpu_device` probe; the host build
-/// exercises the syscall interface through the in-memory
-/// [`mock::MockGpuDevice`] instead.
 #[cfg(target_os = "none")]
 struct VirtioGpuDevice {
     transport: VirtIoMmio,
     queue: Mutex<VirtQueue>,
     scanout_resource_id: u32,
-    fb: FbBacking,
+    fb: crate::arch::scanout::Scanout,
     /// Whether VIRTIO_GPU_F_VIRGL was negotiated with the device.
     has_virgl: bool,
     /// Current scanout dimensions, `(0, 0)` until the first mode set.
@@ -506,7 +410,7 @@ impl VirtioGpuDevice {
     /// [`init_queues`]).  The queue is set up via `new_pci` so the ring
     /// layout includes the spec-mandated flags/idx prefix needed for
     /// device-visible ring access.
-    fn new(transport: VirtIoMmio, fb: FbBacking, has_virgl: bool) -> Self {
+    fn new(transport: VirtIoMmio, fb: crate::arch::scanout::Scanout, has_virgl: bool) -> Self {
         Self {
             transport,
             queue: Mutex::new(VirtQueue::new_pci(QUEUE_SIZE)),
@@ -1161,7 +1065,7 @@ impl Driver for VirtioGpuDriver {
     }
 
     fn init(&self) -> Result<()> {
-        if probe_and_init().is_some() {
+        if probe::and_init().is_some() {
             Ok(())
         } else {
             Err(Error::DeviceError)
@@ -1428,141 +1332,8 @@ pub mod mock {
 }
 
 // ---------------------------------------------------------------------------
-// x86_64 bare-metal probe
+// Shared initialisation
 // ---------------------------------------------------------------------------
-
-/// Find a virtio-gpu PCI device, initialise it, and install the framebuffer
-/// console.  Returns `Some(())` on success.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-fn probe_and_init() -> Option<()> {
-    use crate::arch::mmu::map_device_mmio;
-    use crate::arch::x86_64::pci::pci_config_read_u16;
-    use crate::arch::x86_64::pci::pci_config_write_u16;
-    use crate::arch::x86_64::pci::pci_enumerate_buses;
-    use crate::arch::x86_64::pci::PciAddress;
-    use crate::arch::x86_64::pci::COMMAND;
-    use crate::arch::x86_64::virtio_pci::PciLegacyMmioRegion;
-    use crate::drivers::virtio_pci_modern::PciModernRegion;
-
-    const CMD_IO_SPACE: u16 = 1 << 0;
-    const CMD_MEMORY_SPACE: u16 = 1 << 1;
-    const CMD_BUS_MASTER: u16 = 1 << 2;
-
-    let devices = pci_enumerate_buses();
-    let device = devices
-        .iter()
-        .find(|d| d.vendor_id == VIRTIO_VENDOR && d.device_id == VIRTIO_GPU_PCI_DEVICE_ID)?;
-
-    println!(
-        "[virtio-gpu] found device at {:02x}:{:02x}.{:x}",
-        device.bus, device.device, device.function
-    );
-
-    let pci_addr = PciAddress::new(device.bus, device.device, device.function);
-
-    // Enable IO Space, Memory Space, and Bus Master.
-    let cmd = unsafe { pci_config_read_u16(pci_addr, COMMAND) };
-    unsafe {
-        pci_config_write_u16(
-            pci_addr,
-            COMMAND,
-            cmd | CMD_IO_SPACE | CMD_MEMORY_SPACE | CMD_BUS_MASTER,
-        );
-    }
-
-    // ── Try modern PCI transport via MMIO BAR ──
-    let result = if let Some(mmio_bar) = device
-        .bars
-        .iter()
-        .find(|bar| bar.is_mmio && bar.base_address != 0)
-    {
-        println!(
-            "[virtio-gpu] modern transport: MMIO BAR base=0x{:x} size=0x{:x}",
-            mmio_bar.base_address, mmio_bar.size
-        );
-
-        // Map the MMIO BAR into kernel page tables (identity-mapped).
-        let mapping = unsafe { map_device_mmio(mmio_bar.base_address, mmio_bar.size as usize) };
-        if mapping.is_none() {
-            println!("[virtio-gpu] failed to map MMIO BAR");
-            return None;
-        }
-
-        let region = Box::new(PciModernRegion::new(
-            mmio_bar.base_address as usize,
-            device.device_id,
-            device.vendor_id,
-        ));
-        let mut transport = VirtIoMmio::new(region);
-
-        // Verify it's a valid VirtIO device.
-        if transport.discover().is_err() {
-            println!("[virtio-gpu] modern transport: discover failed");
-            return None;
-        }
-
-        init_gpu_device(transport)
-    } else {
-        // ── Fallback: legacy IO-port BAR ──
-        let io_bar = device
-            .bars
-            .first()
-            .filter(|bar| !bar.is_mmio && bar.base_address != 0)?;
-        let io_base = io_bar.base_address as u16;
-
-        println!("[virtio-gpu] legacy transport: IO BAR base=0x{:x}", io_base);
-
-        let region = Box::new(PciLegacyMmioRegion::new(
-            io_base,
-            device.device_id,
-            device.vendor_id,
-        ));
-        let mut transport = VirtIoMmio::new(region);
-
-        if transport.discover().is_err() {
-            println!("[virtio-gpu] legacy transport: discover failed");
-            return None;
-        }
-
-        init_gpu_device(transport)
-    };
-
-    let (_w, _h) = result?;
-
-    Some(())
-}
-
-// ---------------------------------------------------------------------------
-// aarch64 / riscv64 bare-metal probe (VirtIO MMIO transport)
-// ---------------------------------------------------------------------------
-
-/// Find a virtio-gpu MMIO device on the VirtIO MMIO bus, initialise it, and
-/// install the framebuffer console.  Returns `Some(())` on success.
-#[cfg(all(
-    target_os = "none",
-    any(target_arch = "aarch64", target_arch = "riscv64")
-))]
-fn probe_and_init() -> Option<()> {
-    use crate::drivers::virtio::BareMmioRegion;
-
-    for addr in crate::drivers::virtio::mmio_slot_addresses() {
-        // SAFETY: `addr` is a VirtIO MMIO register block discovered from the
-        // FDT or the fixed MMIO window; it stays mapped for the kernel's
-        // lifetime and access is serialised by the transport.
-        let region = unsafe { BareMmioRegion::new(addr) };
-        let mut transport = VirtIoMmio::new(Box::new(region));
-
-        if transport.discover().is_err() {
-            continue;
-        }
-        if transport.device_id() != crate::drivers::virtio::DEVICE_ID_GPU {
-            continue;
-        }
-        println!("[virtio-gpu] found virtio-gpu at 0x{:x}", addr);
-        return init_gpu_device(transport).map(|_| ());
-    }
-    None
-}
 
 /// Shared initialisation once the transport is set up.
 ///
@@ -1592,7 +1363,7 @@ fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
     // 2. Allocate physically-backed framebuffer memory (DMA buffer on x86_64,
     // identity-mapped heap region on the aarch64/riscv64 MMIO platforms).
     let fb_bytes = (fb_width * fb_height * 4) as usize;
-    let fb = allocate_fb(fb_bytes)?;
+    let fb = crate::arch::scanout::Scanout::allocate(fb_bytes)?;
     println!(
         "[virtio-gpu] allocated {} bytes of scanout backing at phys={:#x}",
         fb.len(),
@@ -1656,14 +1427,26 @@ fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
 }
 
 // ---------------------------------------------------------------------------
-// Non-x86_64 / host stub
+// The transport the machine has
 // ---------------------------------------------------------------------------
 
-/// Host-side / non-x86_64 stub: virtio-gpu not available.
+// A virtio-gpu device is found one of two ways: on x86_64 it is a PCI device
+// whose BAR is mapped and driven through the transport abstraction, and on the
+// device-tree machines it answers on the VirtIO MMIO bus.  One file per
+// machine holds that, and the driver above names none of them.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[path = "virtio_gpu/probe_pci.rs"]
+mod probe;
+#[cfg(all(
+    target_os = "none",
+    any(target_arch = "aarch64", target_arch = "riscv64")
+))]
+#[path = "virtio_gpu/probe_mmio.rs"]
+mod probe;
+/// A host has no bus to probe.
 #[cfg(not(target_os = "none"))]
-fn probe_and_init() -> Option<()> {
-    None
-}
+#[path = "virtio_gpu/probe_absent.rs"]
+mod probe;
 
 // ---------------------------------------------------------------------------
 // Tests

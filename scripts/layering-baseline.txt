@@ -58,7 +58,7 @@ device                       drivers                      4
 device                       fs                           5
 device                       handle_rights                2
 drivers                      block                        10
-drivers                      memory                       4
+drivers                      memory                       3
 drivers                      network                      2
 drivers                      process                      12
 drivers                      sync                         16

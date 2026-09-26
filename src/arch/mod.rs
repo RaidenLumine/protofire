@@ -21,6 +21,9 @@ pub mod pci;
 pub mod percpu;
 pub mod platform;
 pub mod ptrace;
+/// Memory a device draws into, where the machine has a device to draw with.
+#[cfg(target_os = "none")]
+pub mod scanout;
 pub mod syscall_trap;
 pub mod thread;
 pub mod timer;
