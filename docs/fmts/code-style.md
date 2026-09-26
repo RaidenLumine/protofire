@@ -520,6 +520,11 @@ question instead of naming an architecture.
 `target_os` gates are not counted.  A new architecture is bare-metal too, so
 "is there a kernel here or a host" does not move when one is added.
 
+The same rule applies to tests: a suite that needs one target's host build
+puts the gate on the module — `#[cfg(all(test, target_arch = "x86_64"))] mod
+tests { … }` — rather than on each function inside it, so the gate is read
+once and a new test cannot arrive without one.
+
 ---
 
 ## Related documents

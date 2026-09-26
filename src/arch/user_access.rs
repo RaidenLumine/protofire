@@ -203,3 +203,264 @@ pub(crate) fn thread_requires_user_memory_validation(thread: &Thread) -> Result<
         Ok(false)
     }
 }
+
+// ── tests ──────────────────────────────────────────────────────────────
+
+/// The mapping check walks a real user address space, and only the x86_64
+/// host build can materialize one in-process; the other targets take the
+/// no-op arm above and have nothing to walk.  The gate is on the module, so
+/// the tests below do not each carry it.
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests {
+    use alloc::sync::Arc;
+
+    use super::validate_user_mapping;
+    use crate::arch::mmu::materialize_user_address_space;
+    use crate::kernel::process::Process;
+    use crate::kernel::process::ProcessUserAddressSpace;
+    use crate::kernel::sync::Mutex as KernelMutex;
+    use crate::memory::paging::PagePermissions;
+    use crate::user::program::UserImageLoadPlan;
+    use crate::user::program::UserImageSegmentPlan;
+    use crate::user::program::USER_EXCEPTION_STACK_GUARD_SIZE;
+    use crate::user::program::USER_EXCEPTION_STACK_SIZE;
+    use crate::user::program::USER_IMAGE_STACK_GAP;
+    use crate::user::program::USER_PAGE_SIZE;
+    use crate::user::program::USER_STACK_GUARD_SIZE;
+    use crate::user::program::USER_STACK_SIZE;
+    use crate::user::program::X86_64_USER_STACK_TOP;
+    use crate::Error;
+
+    // The pointer-validation fixture materializes a real user address space,
+    // which only the x86_64 host build can do in-process.
+    #[derive(Clone)]
+    struct ValidationFixture {
+        process: Arc<crate::kernel::process::Process>,
+        entry_point: usize,
+        image_end: usize,
+        stack_bottom: usize,
+        stack_pointer: usize,
+        guard_start: usize,
+    }
+
+    fn build_validation_fixture() -> ValidationFixture {
+        let entry_point = 0x0000_0000_0040_1000;
+        let image_start = 0x0000_0000_0040_1000;
+        let image_end = image_start + USER_PAGE_SIZE;
+        let stack_top = X86_64_USER_STACK_TOP;
+        let stack_bottom = stack_top - USER_STACK_SIZE;
+        let stack_guard_start = stack_bottom - USER_STACK_GUARD_SIZE;
+        let exception_stack_top = stack_guard_start;
+        let exception_stack_bottom = exception_stack_top - USER_EXCEPTION_STACK_SIZE;
+        let exception_stack_guard_start = exception_stack_bottom - USER_EXCEPTION_STACK_GUARD_SIZE;
+
+        assert!(image_end + USER_IMAGE_STACK_GAP <= exception_stack_guard_start);
+
+        let plan = UserImageLoadPlan {
+            entry_point,
+            image_start,
+            image_end,
+            stack_guard_start,
+            stack_guard_end: stack_bottom,
+            stack_bottom,
+            stack_top,
+            exception_stack_guard_start,
+            exception_stack_guard_end: exception_stack_bottom,
+            exception_stack_bottom,
+            exception_stack_top,
+            segments: alloc::vec![UserImageSegmentPlan {
+                virtual_start: image_start,
+                virtual_end: image_end,
+                page_start: image_start,
+                page_end: image_end,
+                file_offset: 0,
+                file_size: USER_PAGE_SIZE,
+                zero_start: image_end,
+                zero_end: image_end,
+                permissions: PagePermissions::READ_EXECUTE,
+            }],
+        };
+        let image = alloc::vec![0x90_u8; USER_PAGE_SIZE];
+        let prepared =
+            materialize_user_address_space(&plan, &image).expect("materialize user address space");
+        let process = Process::new(7, "validation-user");
+        process.install_user_address_space(ProcessUserAddressSpace::from_prepared(
+            crate::arch::mmu::ProcessAddressSpace::from_prepared_user(prepared),
+        ));
+
+        ValidationFixture {
+            process,
+            entry_point,
+            image_end,
+            stack_bottom,
+            stack_pointer: stack_top - core::mem::size_of::<usize>(),
+            guard_start: stack_guard_start,
+        }
+    }
+
+    fn validation_fixture() -> ValidationFixture {
+        static FIXTURE: KernelMutex<Option<ValidationFixture>> = KernelMutex::new(None);
+        let mut slot = FIXTURE.lock();
+        if let Some(fixture) = slot.as_ref() {
+            return fixture.clone();
+        }
+
+        let fixture = build_validation_fixture();
+        *slot = Some(fixture.clone());
+        fixture
+    }
+
+    #[test]
+    fn validate_user_mapping_accepts_readable_user_pages() {
+        let fixture = validation_fixture();
+
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                fixture.entry_point,
+                1,
+                PagePermissions::READ,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                fixture.stack_pointer,
+                1,
+                PagePermissions::READ,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_user_mapping_accepts_zero_length_without_translation() {
+        let fixture = validation_fixture();
+
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                usize::MAX,
+                0,
+                PagePermissions::READ,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_user_mapping_accepts_single_byte_at_mapped_page_tail() {
+        let fixture = validation_fixture();
+
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                fixture.image_end - 1,
+                1,
+                PagePermissions::READ,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_user_mapping_accepts_exact_mapped_page_range() {
+        let fixture = validation_fixture();
+
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                fixture.entry_point,
+                USER_PAGE_SIZE,
+                PagePermissions::READ,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_user_mapping_rejects_unmapped_user_pages() {
+        let fixture = validation_fixture();
+
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                fixture.guard_start,
+                1,
+                PagePermissions::READ,
+            ),
+            Err(Error::InvalidArgument)
+        );
+    }
+
+    #[test]
+    fn validate_user_mapping_rejects_missing_permissions() {
+        let fixture = validation_fixture();
+
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                fixture.entry_point,
+                1,
+                PagePermissions::WRITE,
+            ),
+            Err(Error::PermissionDenied)
+        );
+    }
+
+    #[test]
+    fn validate_user_mapping_accepts_ranges_crossing_mapped_stack_pages() {
+        let fixture = validation_fixture();
+        let cross_page_start = fixture.stack_bottom + USER_PAGE_SIZE - 1;
+
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                cross_page_start,
+                2,
+                PagePermissions::READ,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                cross_page_start,
+                2,
+                PagePermissions::WRITE,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_user_mapping_rejects_ranges_crossing_into_unmapped_gap() {
+        let fixture = validation_fixture();
+
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                fixture.image_end - 1,
+                2,
+                PagePermissions::READ,
+            ),
+            Err(Error::InvalidArgument)
+        );
+    }
+
+    #[test]
+    fn validate_user_mapping_rejects_address_range_overflow() {
+        let fixture = validation_fixture();
+
+        assert_eq!(
+            validate_user_mapping(
+                fixture.process.as_ref(),
+                usize::MAX,
+                2,
+                PagePermissions::READ,
+            ),
+            Err(Error::InvalidArgument)
+        );
+    }
+}

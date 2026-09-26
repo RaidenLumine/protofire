@@ -22,6 +22,8 @@
 
 # 60 files, 481 occurrences outside src/arch
 
+# 59 files, 453 occurrences outside src/arch
+
 abi/ptrace.rs                                        2
 drivers/framebuffer.rs                               4
 drivers/hda.rs                                       8
@@ -69,7 +71,6 @@ syscall/diagnostic.rs                                6
 syscall/exception_control.rs                         6
 syscall/process/launch/pipeline.rs                   17
 syscall/process/signal.rs                            2
-syscall/table.rs                                     28
 user/demo/demo_program_x86_64_rust_io.rs             1
 user/demo/demo_program_x86_64_rust.rs                1
 user/demo/mod.rs                                     3

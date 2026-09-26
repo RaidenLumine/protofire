@@ -156,13 +156,13 @@ syscall                      ipc                          6
 syscall                      irq_balance                  3
 syscall                      irq_stats                    1
 syscall                      kernel_log                   4
-syscall                      memory                       18
+syscall                      memory                       17
 syscall                      network                      18
 syscall                      percpu                       1
 syscall                      power                        1
-syscall                      process                      175
+syscall                      process                      172
 syscall                      random                       1
-syscall                      sync                         8
+syscall                      sync                         7
 syscall                      user                         2
 user                         fs                           3
 user                         process                      7
