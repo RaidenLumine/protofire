@@ -109,9 +109,8 @@ pub(crate) fn maintenance_entry() {
         // next due period, and the latch has already been cleared, so a
         // persistently failing device cannot spin this thread.
         if take_block_cache_write_back() {
-            let _ = crate::kernel::fs::sync_global_caches_aged(
-                crate::kernel::fs::block_cache::WRITE_BACK_AGE_TICKS,
-            );
+            let _ =
+                crate::fs::sync_global_caches_aged(crate::fs::block_cache::WRITE_BACK_AGE_TICKS);
         }
 
         if take_audit_persist() {
@@ -143,7 +142,7 @@ pub(crate) fn maintenance_entry() {
             }
 
             if passes.is_multiple_of(LOCK_TIMING_REPORT_PASSES) {
-                crate::kernel::fs::lock_timing::report();
+                crate::fs::lock_timing::report();
             }
         }
     }

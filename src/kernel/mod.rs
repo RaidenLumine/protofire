@@ -11,8 +11,6 @@ pub mod config;
 pub mod console;
 pub mod crypto;
 pub mod device;
-pub mod drivers;
-pub mod fs;
 pub mod handle_rights;
 // Only the bare-metal polling threads emit heartbeats.
 #[cfg(target_os = "none")]
@@ -22,8 +20,6 @@ pub mod irq_balance;
 pub mod irq_stats;
 pub mod kernel_log;
 pub mod maintenance;
-pub mod memory;
-pub mod network;
 pub mod nmi;
 pub mod oom;
 pub mod percpu;
@@ -43,7 +39,6 @@ pub mod shm;
 pub mod smp;
 pub mod softirq;
 pub mod sync;
-pub mod syscall;
 pub mod topology;
 pub mod user;
 // A boot-time stress of the stack window and the TLB log; only the runtime
@@ -66,9 +61,9 @@ use crate::user::program;
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 use crate::user::syscall::UserSyscall;
 
-use drivers::DriverManager;
-use fs::FileSystem;
-use memory::MemoryManager;
+use crate::drivers::DriverManager;
+use crate::fs::FileSystem;
+use crate::memory::MemoryManager;
 use process::Scheduler;
 #[cfg(target_os = "none")]
 use process::SecurityToken;
@@ -125,15 +120,15 @@ pub struct Kernel {
     scheduler: Scheduler,
     fs: Mutex<FileSystem>,
     drivers: DriverManager,
-    syscall_table: syscall::Table,
+    syscall_table: crate::syscall::Table,
     initialized: bool,
 }
 
 impl Drop for Kernel {
     fn drop(&mut self) {
-        fs::uninstall_global(&self.fs);
+        crate::fs::uninstall_global(&self.fs);
         // Clear the thread-local scheduler pointer so that subsequent tests
-        // on the same thread do not see a dangling pointer.  `syscall::Table`
+        // on the same thread do not see a dangling pointer.  `crate::syscall::Table`
         // already clears its global via its own Drop impl.
         #[cfg(test)]
         Scheduler::clear_thread_local_scheduler();
@@ -153,7 +148,7 @@ impl Kernel {
             scheduler: Scheduler::new(),
             fs: Mutex::new(FileSystem::new()),
             drivers: DriverManager::new(),
-            syscall_table: syscall::Table::new(),
+            syscall_table: crate::syscall::Table::new(),
             initialized: false,
         }
     }
@@ -172,7 +167,7 @@ impl Kernel {
         // running system, and `MemoryManager::drop` clears the global slot
         // before host-side teardown releases the storage.
         unsafe {
-            memory::install_global_unchecked(&self.memory);
+            crate::memory::install_global_unchecked(&self.memory);
         }
 
         // ── SMP AP discovery (must run before prepare_arch_paging) ──
@@ -219,7 +214,7 @@ impl Kernel {
 
         // The kernel's tables now describe what it says they do, or this says
         // where they do not — at boot, rather than from a fault later.
-        crate::kernel::memory::arch::check_kernel_map_coverage();
+        crate::memory::arch::check_kernel_map_coverage();
 
         let t1 = tick();
         boot.record_subsystem(
@@ -284,13 +279,13 @@ impl Kernel {
         // QEMU's default guest IP (10.0.2.15) if DHCP fails.
         #[cfg(target_os = "none")]
         if let Some(net_device) = self.drivers.boot_net_device() {
-            use crate::kernel::network::stack::NetworkStack;
+            use crate::network::stack::NetworkStack;
             const DEFAULT_GUEST_IP: [u8; 4] = [10, 0, 2, 15];
             NetworkStack::init_with_device(net_device, [0, 0, 0, 0]);
             println!("[kernel] network stack initialized");
 
             // Attempt DHCP address negotiation.
-            let dhcp_result = crate::kernel::network::dhcp::discover_and_request();
+            let dhcp_result = crate::network::dhcp::discover_and_request();
             let assigned_ip = match dhcp_result {
                 Ok(ref lease) => lease.yiaddr,
                 Err(_) => DEFAULT_GUEST_IP,
@@ -327,7 +322,7 @@ impl Kernel {
                         lease.router.unwrap_or([0; 4])[1],
                         lease.router.unwrap_or([0; 4])[2],
                         lease.router.unwrap_or([0; 4])[3],
-                        lease.lease_ticks / crate::kernel::network::dhcp::TICKS_PER_SECOND,
+                        lease.lease_ticks / crate::network::dhcp::TICKS_PER_SECOND,
                     );
                 } else {
                     println!(
@@ -349,7 +344,7 @@ impl Kernel {
         // SAFETY: the kernel object is created once during boot and never dropped
         // on the bare-metal execution path, so this reference remains valid.
         unsafe {
-            fs::install_global_unchecked(&self.fs);
+            crate::fs::install_global_unchecked(&self.fs);
         }
         // Devices the drivers find are published through the block layer and
         // land in the filesystem's device map, which is the only place that
@@ -357,7 +352,7 @@ impl Kernel {
         // that knows both: a disk driver cannot name the filesystem, and the
         // filesystem cannot see the drivers.
         crate::kernel::block::set_device_publisher(|name, device| {
-            if let Some(fs) = fs::global() {
+            if let Some(fs) = crate::fs::global() {
                 fs.lock().register_block_device(name, device);
             }
         });
@@ -367,7 +362,7 @@ impl Kernel {
         // looks it up, and when `fs`'s own layout tried this earlier there was
         // no global yet — the mount failed into a `let _ =` that no boot ever
         // reported, which is why `/proc` was not on the machine.
-        if let Err(error) = crate::kernel::procfs::mount_procfs(fs::PROCFS_MOUNT_PATH) {
+        if let Err(error) = crate::kernel::procfs::mount_procfs(crate::fs::PROCFS_MOUNT_PATH) {
             println!("[fs    ] procfs not mounted at /proc: {}", error.as_str());
         } else {
             println!("[fs    ] mounted procfs at /proc");
@@ -376,8 +371,8 @@ impl Kernel {
         // the global filesystem lock.  Measured as its own scope because it is
         // a one-off whose cost is otherwise invisible in the syscall numbers.
         let (tx_recovered, tx_repaired, vol_checked, vol_repaired) =
-            crate::kernel::fs::lock_timing::measure(
-                crate::kernel::fs::lock_timing::LockScope::BootRecovery,
+            crate::fs::lock_timing::measure(
+                crate::fs::lock_timing::LockScope::BootRecovery,
                 || {
                     let (tx_recovered, tx_repaired) = self.recover_install_management_state();
                     let (vol_checked, vol_repaired) = self.recover_volumes();
@@ -550,7 +545,7 @@ impl Kernel {
         // SAFETY: the syscall table is owned by the long-lived kernel object and
         // remains valid for all dispatches after initialization.
         unsafe {
-            syscall::install_global_unchecked(&self.syscall_table);
+            crate::syscall::install_global_unchecked(&self.syscall_table);
         }
         let t6 = tick();
         boot.record_subsystem("syscall-table", SUBSYSTEM_STATUS_OK, t5, t6);
@@ -605,7 +600,7 @@ impl Kernel {
         boot.record_subsystem("spawn", SUBSYSTEM_STATUS_OK, t6, t7);
 
         // ── BootReport: memory layout snapshot from heap bounds ──
-        if let Some(mem) = memory::global() {
+        if let Some(mem) = crate::memory::global() {
             let (heap_start, heap_end) = mem.heap_bounds();
             boot.set_memory_layout(
                 (32 * 1024 * 1024) as u64, // physical total: 32 MiB
@@ -800,7 +795,7 @@ impl Kernel {
     /// `&self` reference, avoiding borrow conflicts with the `tick` closure.
     #[cfg(target_os = "none")]
     fn maybe_init_swap(&self) {
-        use crate::kernel::memory::swap::probe_device;
+        use crate::memory::swap::probe_device;
         use alloc::sync::Arc;
 
         // Collect the current set of registered block devices.
@@ -818,7 +813,7 @@ impl Kernel {
             }
             match probe_device(device.as_ref()) {
                 Some((start_lba, page_count)) => {
-                    let result = crate::kernel::memory::global_mut()
+                    let result = crate::memory::global_mut()
                         .map(|mut mm| mm.init_swap(Arc::clone(device), start_lba, page_count));
                     match result {
                         Some(Ok(())) => {
@@ -1102,7 +1097,7 @@ impl Kernel {
     #[cfg(target_os = "none")]
     fn spawn_init_program(&self, init_path: &str) {
         // Hold the filesystem lock only for reading the image.  The second
-        // phase calls `memory::global_mut()`, and holding this lock across that
+        // phase calls `crate::memory::global_mut()`, and holding this lock across that
         // is the cross-CPU hazard the note on
         // `SpinLock::lock_without_irq_disable` describes: a TLB shootdown runs
         // under the memory-manager lock, and this lock masks interrupts, so
@@ -1330,7 +1325,7 @@ impl Kernel {
     #[allow(dead_code)]
     #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
     fn log_demo_storage_sample(&self) {
-        let Some(fs) = fs::global() else {
+        let Some(fs) = crate::fs::global() else {
             return;
         };
 
@@ -1547,7 +1542,7 @@ fn demo_worker_b() {
 
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 fn demo_syscall_fs_worker() {
-    let mut table = syscall::Table::new();
+    let mut table = crate::syscall::Table::new();
     table.init();
 
     let path = DEMO_README_SAMPLE_PATH.as_bytes();
@@ -1630,12 +1625,12 @@ fn transaction_log_repair_reason_label(
 }
 
 #[cfg(any(test, target_os = "none"))]
-fn transaction_log_entry_kind_label(kind: fs::NodeKind) -> &'static str {
+fn transaction_log_entry_kind_label(kind: crate::fs::NodeKind) -> &'static str {
     match kind {
-        fs::NodeKind::Directory => "directory",
-        fs::NodeKind::File => "file",
-        fs::NodeKind::Device => "device",
-        fs::NodeKind::Symlink => "symlink",
+        crate::fs::NodeKind::Directory => "directory",
+        crate::fs::NodeKind::File => "file",
+        crate::fs::NodeKind::Device => "device",
+        crate::fs::NodeKind::Symlink => "symlink",
     }
 }
 
@@ -1780,7 +1775,7 @@ fn spawn_service(
 /// boot-time spawn had always worked.  The fix is the one this file's history
 /// points at: keep both lock families on the same discipline, so a holder is
 /// never preemptible.  See `MEMORY_MANAGER_LOCK` in
-/// `src/kernel/memory/global.rs`.
+/// `src/memory/global.rs`.
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 fn service_supervisor_entry() {
     let mut passes: u64 = 0;
@@ -1877,8 +1872,7 @@ fn resolve_worker(name: &str) -> Option<fn()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::fs::NodeKind;
-    use crate::kernel::fs::{self};
+    use crate::fs::NodeKind;
     use crate::Error;
 
     fn ensure_dir(fs: &FileSystem, path: &str) {
@@ -1891,7 +1885,7 @@ mod tests {
 
     fn write_text_file(fs: &FileSystem, path: &str, text: &str) {
         let mut file = fs
-            .create_file(path, 0, 0, fs::OPEN_ALWAYS)
+            .create_file(path, 0, 0, crate::fs::OPEN_ALWAYS)
             .expect("create test file");
         file.set_len(0).expect("truncate test file");
         let written = fs

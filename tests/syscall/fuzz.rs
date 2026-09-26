@@ -12,9 +12,9 @@
 //! `ptr=0` and `ptr=usize::MAX` reliably hit the null-check or bounds-check
 //! in `user_string`/`user_memory` before dereference.
 
-use protofire::kernel::syscall::SyscallContext;
-use protofire::kernel::syscall::SyscallNumber;
-use protofire::kernel::syscall::Table;
+use protofire::syscall::SyscallContext;
+use protofire::syscall::SyscallNumber;
+use protofire::syscall::Table;
 
 // ── Simple PRNG ─────────────────────────────────────────────────────────────
 

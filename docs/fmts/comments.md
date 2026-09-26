@@ -53,7 +53,7 @@ checked on every `make verify-p0`:
 ### The rules
 
 1. **Line 1 is exactly `//! ` followed by the path relative to the repository
-   root** — `//! src/kernel/fs/mod.rs`, `//! tests/fat32.rs`, `//! build.rs`.
+   root** — `//! src/fs/mod.rs`, `//! tests/fat32.rs`, `//! build.rs`.
    Forward slashes, no leading `./`, and relative to the repository root, **not**
    to `src/`. The checker compares the whole line as a string.
 2. **Line 2 is exactly `//!`** — a bare marker with nothing after it.
@@ -112,7 +112,7 @@ Then add structure if the module has any:
   rules. A `mod.rs` that owns several submodules conventionally lists them:
 
   ```
-  //! src/kernel/network/mod.rs
+  //! src/network/mod.rs
   //!
   //! Kernel-owned TCP connectivity abstraction used by syscall and
   //! remote-download paths.
@@ -271,7 +271,7 @@ use it — and it is what new code should follow:
   `Tests`, `Request codes`.
 
 ASCII rules made of `=` or `-` characters survive in about 36 older files,
-mostly under `src/arch/` and `src/kernel/drivers/`. They are **legacy**: do not
+mostly under `src/arch/` and `src/drivers/`. They are **legacy**: do not
 copy them into new code, and prefer the box-drawing form when you touch a file
 that mixes both.
 

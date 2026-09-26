@@ -6,9 +6,9 @@
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
+use protofire::drivers::keyboard;
+use protofire::drivers::serial;
 use protofire::kernel::console;
-use protofire::kernel::drivers::keyboard;
-use protofire::kernel::drivers::serial;
 use protofire::kernel::process::Scheduler;
 use protofire::kernel::process::ThreadWaitOutcome;
 

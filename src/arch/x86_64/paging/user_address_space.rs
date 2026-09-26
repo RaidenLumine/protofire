@@ -4,7 +4,7 @@
 //! ELF image loading and runtime translation.
 
 use super::*;
-use crate::kernel::memory::paging::PagePermissions;
+use crate::memory::paging::PagePermissions;
 use crate::user::program::UserImageLoadPlan;
 use alloc::boxed::Box;
 use alloc::vec::Vec;

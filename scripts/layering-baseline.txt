@@ -2,11 +2,15 @@
 # ratchets.
 #
 # Each row is `<from module> <to module> <occurrences>`: how many times a file
-# under `src/kernel/<from>` names `crate::kernel::<to>::` in code (line
-# comments stripped, self-references skipped).  The gate fails when a count
-# rises, when a row shrinks without the census being re-recorded, or when the
-# tree has an edge no row mentions — so a new dependency between two modules
-# has to be added here on purpose.
+# belonging to `<from>` names `<to>` in code (line comments stripped,
+# self-references skipped).  A module's files are `src/kernel/<from>/` (or
+# `src/kernel/<from>.rs`), except for the five subsystems that live at the
+# crate root — `fs`, `memory`, `network`, `drivers`, `syscall` — whose files
+# are `src/<from>/` and which are named `crate::<from>::` rather than
+# `crate::kernel::<from>::`.  Both spellings count as edges.  The gate fails
+# when a count rises, when a row shrinks without the census being re-recorded,
+# or when the tree has an edge no row mentions — so a new dependency between
+# two modules has to be added here on purpose.
 #
 # Re-record with `sh scripts/check-layering.sh --record` in every change that
 # moves an edge.
@@ -78,14 +82,16 @@ memory                       percpu                       4
 memory                       smp                          1
 memory                       topology                     1
 mod                          block                        1
-mod                          fs                           4
-mod                          memory                       3
+mod                          drivers                      1
+mod                          fs                           15
+mod                          memory                       6
 mod                          network                      3
 mod                          percpu                       3
 mod                          power                        1
 mod                          process                      3
 mod                          procfs                       1
 mod                          smp                          1
+mod                          syscall                      4
 mod                          topology                     12
 network                      crypto                       30
 network                      fs                           6
@@ -93,6 +99,7 @@ network                      process                      3
 network                      random                       5
 network                      sync                         41
 nmi                          sync                         1
+oom                          memory                       2
 oom                          process                      3
 percpu                       process                      3
 percpu                       topology                     2

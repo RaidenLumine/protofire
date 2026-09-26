@@ -300,7 +300,7 @@ pub(crate) fn allocate_in_kernel_window(
     guard_bytes: usize,
     stack_bytes: usize,
 ) -> Option<StackLayout> {
-    let (base, end) = crate::kernel::memory::arch::stack_window()?;
+    let (base, end) = crate::memory::arch::stack_window()?;
     let (layout, first_reuse) = {
         let mut slot = KERNEL_STACK_WINDOW.lock();
         let window = slot.get_or_insert_with(|| StackWindow::new(base, end));

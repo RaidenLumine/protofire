@@ -24,8 +24,8 @@ pub use super::x86_64::ata::probe_boot_disk;
 mod absent {
     use alloc::sync::Arc;
 
+    use crate::drivers::Driver;
     use crate::kernel::block::BlockDevice;
-    use crate::kernel::drivers::Driver;
 
     struct AtaDriver;
 
@@ -34,8 +34,8 @@ mod absent {
             "ata"
         }
 
-        fn category(&self) -> crate::kernel::drivers::DriverCategory {
-            crate::kernel::drivers::DriverCategory::Storage
+        fn category(&self) -> crate::drivers::DriverCategory {
+            crate::drivers::DriverCategory::Storage
         }
 
         fn init(&self) -> crate::Result<()> {
@@ -61,8 +61,8 @@ mod absent {
             "ahci"
         }
 
-        fn category(&self) -> crate::kernel::drivers::DriverCategory {
-            crate::kernel::drivers::DriverCategory::Storage
+        fn category(&self) -> crate::drivers::DriverCategory {
+            crate::drivers::DriverCategory::Storage
         }
 
         fn init(&self) -> crate::Result<()> {

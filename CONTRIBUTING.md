@@ -210,7 +210,7 @@ rules strictly:
 4. **Versioning:** bump `SYSCALL_ABI_VERSION_MINOR` for additive changes and
    `SYSCALL_ABI_VERSION_MAJOR` for breaking ones.
 5. **Register the handler** in the dispatch table and add the handler module in
-   the appropriate `src/kernel/syscall/` category.
+   the appropriate `src/syscall/` category.
 6. **Validate user pointers** through the central `SYSCALL_POINTER_SPECS`
    table — never dereference user addresses without validation.
 7. **Add typed wrapper(s)** in `src/user/shared/syscall.rs`.

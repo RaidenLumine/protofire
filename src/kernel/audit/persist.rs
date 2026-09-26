@@ -23,11 +23,11 @@ use alloc::string::String;
 #[cfg(test)]
 use alloc::vec::Vec;
 
+use crate::fs::FileSystem;
+use crate::fs::OPEN_ALWAYS;
+use crate::fs::SEEK_END;
 use crate::kernel::audit::buffer::AuditBuffer;
 use crate::kernel::audit::types::AuditRecord;
-use crate::kernel::fs::FileSystem;
-use crate::kernel::fs::OPEN_ALWAYS;
-use crate::kernel::fs::SEEK_END;
 #[cfg(test)]
 use crate::kernel::handle_rights::HANDLE_RIGHT_READ;
 use crate::kernel::handle_rights::HANDLE_RIGHT_WRITE;
@@ -148,7 +148,7 @@ pub fn persist_to_file() -> usize {
     let Some(buffer) = super::global() else {
         return 0;
     };
-    let Some(fs) = crate::kernel::fs::global() else {
+    let Some(fs) = crate::fs::global() else {
         return 0;
     };
     let mut fs = fs.lock();
@@ -158,7 +158,7 @@ pub fn persist_to_file() -> usize {
 /// Read the entire audit log file into a `Vec` (test/diagnostic helper).
 #[cfg(test)]
 fn read_audit_log(fs: &mut FileSystem) -> Vec<u8> {
-    use crate::kernel::fs::OPEN_EXISTING;
+    use crate::fs::OPEN_EXISTING;
 
     let mut file = fs
         .create_file_normalized(AUDIT_LOG_PATH, HANDLE_RIGHT_READ, 0, OPEN_EXISTING)
@@ -178,9 +178,9 @@ fn read_audit_log(fs: &mut FileSystem) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::OPEN_EXISTING;
     use crate::kernel::audit::buffer::AuditBuffer;
     use crate::kernel::audit::types::AuditEventType;
-    use crate::kernel::fs::OPEN_EXISTING;
 
     fn sample_record(payload: &[u8]) -> AuditRecord {
         let mut rec = AuditRecord::zeroed();

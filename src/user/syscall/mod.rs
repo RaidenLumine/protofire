@@ -19,7 +19,7 @@ use crate::abi::syscall as syscall_abi;
     all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")),
     all(target_arch = "aarch64", any(target_os = "linux", target_os = "none"))
 ))]
-use crate::kernel::syscall::SyscallNumber;
+use crate::syscall::SyscallNumber;
 
 pub struct UserSyscall;
 

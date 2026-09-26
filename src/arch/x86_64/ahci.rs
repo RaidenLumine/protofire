@@ -242,13 +242,13 @@ const _: () = assert!(core::mem::size_of::<H2dRegisterFis>() == 20);
 // Driver integration
 // ---------------------------------------------------------------------------
 
+use crate::drivers::Driver;
+use crate::drivers::DriverCategory;
 use crate::kernel::block::BlockDevice;
-use crate::kernel::drivers::Driver;
-use crate::kernel::drivers::DriverCategory;
-#[cfg(target_os = "none")]
-use crate::kernel::memory::DmaBuffer;
 #[cfg(target_os = "none")]
 use crate::kernel::sync::Mutex;
+#[cfg(target_os = "none")]
+use crate::memory::DmaBuffer;
 use alloc::sync::Arc;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;

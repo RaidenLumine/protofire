@@ -10,7 +10,7 @@ use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicUsize;
 
 use super::*;
-use crate::kernel::memory::paging::PagePermissions;
+use crate::memory::paging::PagePermissions;
 
 pub(crate) static INITIALIZED: AtomicBool = AtomicBool::new(false);
 // These atomics publish the most recently prepared runtime kernel page-table

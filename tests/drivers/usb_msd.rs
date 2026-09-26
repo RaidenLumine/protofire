@@ -14,16 +14,16 @@
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
-use protofire::kernel::fs::block::BlockDevice;
-use protofire::kernel::fs::block::BlockSliceDevice;
-use protofire::kernel::fs::block::MemoryBlockDevice;
-use protofire::kernel::fs::block::BLOCK_SIZE;
-use protofire::kernel::fs::fat32::FatVolume;
-use protofire::kernel::fs::partition::read_mbr_partitions;
-use protofire::kernel::fs::partition::write_mbr_partitions;
-use protofire::kernel::fs::partition::MbrPartitionEntry;
-use protofire::kernel::fs::partition::MbrPartitionTable;
-use protofire::kernel::fs::vfs::FileSystem;
+use protofire::fs::block::BlockDevice;
+use protofire::fs::block::BlockSliceDevice;
+use protofire::fs::block::MemoryBlockDevice;
+use protofire::fs::block::BLOCK_SIZE;
+use protofire::fs::fat32::FatVolume;
+use protofire::fs::partition::read_mbr_partitions;
+use protofire::fs::partition::write_mbr_partitions;
+use protofire::fs::partition::MbrPartitionEntry;
+use protofire::fs::partition::MbrPartitionTable;
+use protofire::fs::vfs::FileSystem;
 use protofire::Error;
 use protofire::Result;
 

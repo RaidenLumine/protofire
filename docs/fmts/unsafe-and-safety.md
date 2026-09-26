@@ -32,9 +32,9 @@ little else:
 
 | Category | Examples | Where |
 |----------|----------|-------|
-| **MMIO and port I/O** | `read_volatile` / `write_volatile` on a device BAR, `in`/`out` instructions | `src/kernel/drivers/`, `src/arch/*/` |
+| **MMIO and port I/O** | `read_volatile` / `write_volatile` on a device BAR, `in`/`out` instructions | `src/drivers/`, `src/arch/*/` |
 | **Inline assembly** | Context switch, trap entry/exit, `stac`/`clac`, cache and TLB maintenance | `src/arch/*/`, `src/user/shared/` |
-| **Raw pointer structures** | Page-table walks, the frame bitmap, linked free lists, per-CPU areas | `src/kernel/memory/`, `src/kernel/percpu.rs` |
+| **Raw pointer structures** | Page-table walks, the frame bitmap, linked free lists, per-CPU areas | `src/memory/`, `src/kernel/percpu.rs` |
 | **Global singleton slots** | The `install_global_unchecked` pattern (see [code-style.md §8](code-style.md#8-globals-the-install-pattern)) | Throughout |
 
 Plus `unsafe impl` for `Send`/`Sync` on types that are shared across CPUs and
@@ -186,7 +186,7 @@ else.
 
 Every user pointer arrives as a `usize` in a syscall argument. It is validated
 against the user address window before it is touched — always through the
-helpers in [`src/kernel/syscall/memory/user.rs`](../../src/kernel/syscall/memory/user.rs),
+helpers in [`src/syscall/memory/user.rs`](../../src/syscall/memory/user.rs),
 never by casting and reading. The mechanisms (`SYSCALL_POINTER_SPECS` and the
 `with_*_slice` helpers) are described in
 [syscall-abi.md §7](syscall-abi.md#7-pointer-validation); what matters here is
@@ -212,7 +212,7 @@ x86_64 SMAP, AArch64's PAN, and RISC-V's SUM all forbid supervisor access to
 user pages unless a flag is set. The kernel does not disable these protections;
 it brackets the access instead:
 
-- `with_user_access_guard` (`src/kernel/syscall/memory/user.rs`) is the portable
+- `with_user_access_guard` (`src/syscall/memory/user.rs`) is the portable
   entry point. On host test targets it is a plain call of the closure.
 - Per architecture, the implementations live in
   `src/arch/{x86_64,aarch64,riscv64}/user_access.rs`. The x86_64 version wraps

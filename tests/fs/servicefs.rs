@@ -11,9 +11,9 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use protofire::abi::io::OPEN_FLAG_WRITE;
-use protofire::kernel::fs::servicefs::mount_servicefs;
-use protofire::kernel::fs::FileSystem;
-use protofire::kernel::fs::NodeKind;
+use protofire::fs::servicefs::mount_servicefs;
+use protofire::fs::FileSystem;
+use protofire::fs::NodeKind;
 use protofire::kernel::service;
 use protofire::kernel::service::ServiceDefinition;
 use protofire::kernel::service::ServiceKind;
@@ -49,7 +49,7 @@ impl ServiceTree {
         // for the life of the test binary, so freeing it would leave the slot
         // advertising storage that no longer exists.
         let fs = Box::leak(Box::new(KernelMutex::new(FileSystem::new())));
-        protofire::kernel::fs::install_global(fs);
+        protofire::fs::install_global(fs);
         mount_servicefs("/service").expect("mount servicefs at /service");
 
         Self { fs }
@@ -63,7 +63,7 @@ impl ServiceTree {
 
 impl Drop for ServiceTree {
     fn drop(&mut self) {
-        protofire::kernel::fs::uninstall_global(self.fs);
+        protofire::fs::uninstall_global(self.fs);
         service::reset_registry_for_tests();
     }
 }

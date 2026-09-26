@@ -20,7 +20,7 @@ use alloc::string::String;
 
 use crate::abi::gpu as gpu_abi;
 use crate::abi::virgl as virgl_abi;
-use crate::kernel::syscall;
+use crate::syscall;
 use crate::user::syscall::UserSyscall;
 use crate::Result;
 

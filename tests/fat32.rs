@@ -3,18 +3,18 @@
 //! Host-side integration tests for a mounted FAT32 volume: durability through
 //! the VFS `sync`/`flush_aged` traits, and read-back after a fresh `open` on
 //! the same device.  The small writable FAT32 image mirrors the builder in
-//! `src/kernel/fs/fat32/tests.rs`:
+//! `src/fs/fat32/tests.rs`:
 //!   Sectors 0-31:   reserved region (boot sector in sector 0)
 //!   Sectors 32-39:  FAT tables (2 copies × 4 sectors)
 //!   Sectors 40+:    data region (cluster 2 = root directory)
 
 use std::sync::Arc;
 
-use protofire::kernel::fs::block::MemoryBlockDevice;
-use protofire::kernel::fs::fat32::FatVolume;
-use protofire::kernel::fs::vfs::FileSystem as VfsTrait;
-use protofire::kernel::fs::FileSystem;
-use protofire::kernel::fs::CREATE_NEW;
+use protofire::fs::block::MemoryBlockDevice;
+use protofire::fs::fat32::FatVolume;
+use protofire::fs::vfs::FileSystem as VfsTrait;
+use protofire::fs::FileSystem;
+use protofire::fs::CREATE_NEW;
 
 const BYTES_PER_SECTOR: usize = 512;
 const SECTORS_PER_CLUSTER: u8 = 1;

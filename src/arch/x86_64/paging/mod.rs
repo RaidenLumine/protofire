@@ -23,7 +23,7 @@ mod tests {
     use core::mem::size_of;
 
     use crate::arch::x86_64::paging::*;
-    use crate::kernel::memory::paging::PagePermissions;
+    use crate::memory::paging::PagePermissions;
     use crate::user::program::UserImageLoadPlan;
     use crate::user::program::UserImageSegmentPlan;
     use crate::user::program::USER_EXCEPTION_STACK_GUARD_SIZE;

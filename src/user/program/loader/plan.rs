@@ -7,8 +7,8 @@ use super::*;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::memory::paging::PagePermissions;
 use crate::kernel::process::ProcessUserAddressSpace;
+use crate::memory::paging::PagePermissions;
 use crate::Error;
 use crate::Result;
 

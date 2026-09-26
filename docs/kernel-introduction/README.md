@@ -93,14 +93,22 @@ On AArch64 and RISC-V the serial console is initialized before the banner; on x8
 ## Subsystem Dependency Graph
 
 ```
-kernel::Kernel
+src/                                 (the crate root: peers under one roof)
+    ├── kernel::Kernel               (boot phases, global install, procfs)
+    │     ├── process::Scheduler     (cooperative round-robin, thread lifecycle)
+    │     │     ├── process::Thread  (per-thread context, state machine)
+    │     │     ├── process::Process (address space, fd table, security token)
+    │     │     ├── process::wait    (WaitQueue, Event, Semaphore, Condvar)
+    │     │     └── process::Context (arch register save area)
+    │     ├── shm                    (shared memory regions)
+    │     ├── topology               (NUMA topology, per-node allocators)
+    │     ├── smp                    (SMP AP discovery and bring-up)
+    │     ├── percpu                 (per-CPU scheduler/APIC data, numa_node_id)
+    │     ├── sync                   (Mutex, SpinLock — the leaf layer)
+    │     ├── crypto                 (signing key verification)
+    │     └── user                   (user database, program loader)
     ├── memory::MemoryManager        (TLSF heap, frame allocator, page tables)
     │     └── memory::paging         (arch-generic page table interface)
-    ├── process::Scheduler           (cooperative round-robin, thread lifecycle)
-    │     ├── process::Thread        (per-thread context, state machine)
-    │     ├── process::Process       (address space, fd table, security token)
-    │     ├── process::wait          (WaitQueue, Event, Semaphore, Condvar)
-    │     └── process::Context       (arch register save area)
     ├── fs::FileSystem               (VFS + SimpleFS)
     │     └── fs::simplefs           (on-disk layout, two-phase commit)
     ├── drivers::DriverManager       (VirtIO block/net/input/gpu, PCI probe)
@@ -112,13 +120,10 @@ kernel::Kernel
     │     ├── syscall::net
     │     └── syscall::ipc
     ├── network                      (TCP/UDP/DHCP/DNS, raw sockets)
-    ├── shm                          (shared memory regions)
-    ├── topology                     (NUMA topology, per-node allocators)
-    ├── smp                          (SMP AP discovery and bring-up, x86_64)
-    ├── percpu                       (per-CPU scheduler/APIC data, numa_node_id)
-    ├── sync                         (Mutex, SpinLock — the leaf layer)
-    ├── crypto                       (signing key verification)
-    └── user                         (user database, program loader)
+    ├── arch                         (per-target dispatch layer)
+    ├── abi                          (syscall ABI constants)
+    ├── util                         (logging, formatting)
+    └── user                         (Ring-3 payloads and the shared library)
 
 arch                                 (per-target dispatch layer)
     ├── boot                         (BootInfo, multiboot/FDT parsing)
@@ -130,7 +135,12 @@ arch                                 (per-target dispatch layer)
     └── {x86_64, aarch64, riscv64}   (per-arch: serial, context switch, paging)
 ```
 
-The `Kernel` struct in `src/kernel/mod.rs` owns the top-level subsystems:
+`memory`, `fs`, `drivers`, `syscall`, and `network` are peers of `kernel` at the
+crate root, beside `arch`, `abi`, `util`, and `user`. They used to live under
+`src/kernel/`; the move made the shape of the tree match the shape of the graph,
+and it is why a path below reads `crate::fs::…` rather than `crate::kernel::fs::…`.
+
+The `Kernel` struct in `src/kernel/mod.rs` still owns the top-level subsystems:
 
 ```rust
 pub struct Kernel {
@@ -240,9 +250,9 @@ The `build.rs` script at the repository root selects the per-architecture linker
 | `aarch64-unknown-none` | `linker-aarch64.ld` |
 | `riscv64gc-unknown-none-elf` | `linker-riscv64.ld` |
 
-The demo system volume is constructed in-kernel by `src/kernel/fs/demo.rs`; the launch chain follows the `/apps/current → /apps/catalog → /apps/packages` layout, resolved by `crate::user::program::launch_reference`.
+The demo system volume is constructed in-kernel by `src/fs/demo.rs`; the launch chain follows the `/apps/current → /apps/catalog → /apps/packages` layout, resolved by `crate::user::program::launch_reference`.
 
-Ring-3 ELF payload construction is handled in-kernel by `src/user/demo/` (`elf_builder`); placeholder ELFs for the demo volume are inlined in `src/kernel/fs/demo.rs`.
+Ring-3 ELF payload construction is handled in-kernel by `src/user/demo/` (`elf_builder`); placeholder ELFs for the demo volume are inlined in `src/fs/demo.rs`.
 
 ### CI Verification Gates
 
@@ -257,7 +267,7 @@ The `scripts/verify.sh` script runs tiered checks:
 
 ## ABI Stability Policy
 
-- **Syscall numbers are stable**. The 100-slot dispatch table (`syscall::Table` in `src/kernel/syscall/table.rs`) assigns fixed numbers to operations (open, read, write, close, ioctl, mmap, fork, exec, wait, etc.). New syscalls must use previously unassigned slots.
+- **Syscall numbers are stable**. The 100-slot dispatch table (`syscall::Table` in `src/syscall/table.rs`) assigns fixed numbers to operations (open, read, write, close, ioctl, mmap, fork, exec, wait, etc.). New syscalls must use previously unassigned slots.
 - **`src/user/shared/` is the ABI boundary**. This module defines the ABI record types (`FileStat`, `DirectoryEntryRecord`, `IoVec`, etc.) and syscall wrapper functions. Changes to its public types require coordination across all consumers.
 - The kernel is versioned as `2026.7.1` (calendar versioning). There is no stability guarantee across major versions; ring-3 ELFs are shipped with the demo disk and rebuilt together with the kernel.
 

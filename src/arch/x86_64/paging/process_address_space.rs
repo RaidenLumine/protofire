@@ -4,7 +4,7 @@
 //! page tables into a single hierarchy for CR3 load.
 
 use super::*;
-use crate::kernel::memory::paging::PagePermissions;
+use crate::memory::paging::PagePermissions;
 use crate::println;
 use alloc::boxed::Box;
 use alloc::vec::Vec;

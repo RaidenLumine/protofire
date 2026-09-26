@@ -28,14 +28,14 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::vfs::DirectoryEntry;
-use crate::kernel::fs::vfs::FileSystem as VfsTrait;
-use crate::kernel::fs::vfs::Metadata;
-use crate::kernel::fs::vfs::NodeKind;
-use crate::kernel::fs::vfs::SecurityDescriptor;
-use crate::kernel::fs::vfs::SecurityDescriptorMutationSupport;
-use crate::kernel::fs::vfs::VNode;
-use crate::kernel::fs::vfs::VolumeCheckReport;
+use crate::fs::vfs::DirectoryEntry;
+use crate::fs::vfs::FileSystem as VfsTrait;
+use crate::fs::vfs::Metadata;
+use crate::fs::vfs::NodeKind;
+use crate::fs::vfs::SecurityDescriptor;
+use crate::fs::vfs::SecurityDescriptorMutationSupport;
+use crate::fs::vfs::VNode;
+use crate::fs::vfs::VolumeCheckReport;
 use crate::kernel::process::ProcessId;
 use crate::kernel::process::ProcessState;
 use crate::Error;
@@ -285,7 +285,7 @@ fn mounts_data() -> Vec<u8> {
     // already runs inside it — taking it again here is a self-deadlock.  The
     // snapshot is the mount table as of the last mount or unmount; see
     // `kernel::fs::MOUNT_SNAPSHOT`.
-    for mount in crate::kernel::fs::mount_snapshot() {
+    for mount in crate::fs::mount_snapshot() {
         let line = format!("{} {} {} ro 0 0\n", mount.device, mount.path, mount.fs_name);
         out.extend_from_slice(line.as_bytes());
     }
@@ -694,7 +694,7 @@ fn lookup_pid_file(pid: ProcessId, filename: &str) -> Result<Arc<dyn VNode>> {
 
 /// Register and mount the procfs at the given path (typically `/proc`).
 pub fn mount_procfs(mount_path: &str) -> Result<()> {
-    let fs = crate::kernel::fs::global().ok_or(Error::InternalError)?;
+    let fs = crate::fs::global().ok_or(Error::InternalError)?;
     let mut fs_guard = fs.lock();
     fs_guard.register(FS_NAME, Arc::new(ProcFs));
     fs_guard.mount(MOUNT_DEVICE, mount_path, FS_NAME, 0)

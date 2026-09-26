@@ -6,7 +6,7 @@
 //! Pure formatting and parsing logic is shared via `crate::user::shared::jobs`.
 
 use super::super::*;
-use crate::kernel::syscall;
+use crate::syscall;
 use crate::user::shared::jobs;
 use crate::user::syscall::UserSyscall;
 use alloc::string::String;

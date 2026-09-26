@@ -185,7 +185,7 @@ impl PostedLog {
         if end <= start {
             return InvalidationMark::Nothing;
         }
-        let pages = (end - start) / crate::kernel::memory::paging::PAGE_SIZE;
+        let pages = (end - start) / crate::memory::paging::PAGE_SIZE;
         if pages > FULL_FLUSH_PAGES {
             return self.post_full_flush();
         }
@@ -331,7 +331,7 @@ static POSTED: PostedLog = PostedLog::new();
 /// one per page.
 #[cfg_attr(not(all(target_arch = "x86_64", target_os = "none")), allow(dead_code))] // x86_64's page-table runtime is the only caller
 pub fn tlb_shootdown(va: usize) {
-    let page = crate::kernel::memory::paging::PAGE_SIZE;
+    let page = crate::memory::paging::PAGE_SIZE;
     let start = va & !(page - 1);
     drop_range(start, start + page);
 }
@@ -342,7 +342,7 @@ pub fn tlb_shootdown(va: usize) {
 /// address space is a single edit from the TLB's point of view, and the log is
 /// fixed size.
 pub fn tlb_shootdown_range(virtual_address: usize, byte_len: usize) {
-    let page = crate::kernel::memory::paging::PAGE_SIZE;
+    let page = crate::memory::paging::PAGE_SIZE;
     let start = virtual_address & !(page - 1);
     let Some(end) = virtual_address
         .checked_add(byte_len)
@@ -412,7 +412,7 @@ pub fn request_remote_tlb_flush() {
 /// needs before it can be handed out again.  The request must be made *after*
 /// the page-table edit; that ordering is what the mark's answer rests on.
 pub fn post_range_invalidation(virtual_address: usize, byte_len: usize) -> InvalidationMark {
-    let page = crate::kernel::memory::paging::PAGE_SIZE;
+    let page = crate::memory::paging::PAGE_SIZE;
     let start = virtual_address & !(page - 1);
     let Some(end) = virtual_address
         .checked_add(byte_len)
@@ -459,7 +459,7 @@ mod tests {
     use alloc::collections::BTreeMap;
     use alloc::vec::Vec;
 
-    const PAGE: usize = crate::kernel::memory::paging::PAGE_SIZE;
+    const PAGE: usize = crate::memory::paging::PAGE_SIZE;
     const CPUS: u32 = 4;
     const PAGES: usize = 64;
 

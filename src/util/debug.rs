@@ -130,7 +130,7 @@ struct FbConsoleWriter;
 
 impl fmt::Write for FbConsoleWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        crate::kernel::drivers::framebuffer_console::console_write(s);
+        crate::drivers::framebuffer_console::console_write(s);
         Ok(())
     }
 }
@@ -144,11 +144,11 @@ pub fn write_bytes(bytes: &[u8]) {
     // Runtime debug output shares the serial device sink so `/system/dev/debug`
     // and `/system/dev/serial0` observe the same byte stream in tests and on
     // hardware.
-    let _ = crate::kernel::drivers::serial::write_bytes(bytes);
+    let _ = crate::drivers::serial::write_bytes(bytes);
     // Also capture into the kernel log ring buffer.
     crate::kernel::kernel_log::append_bytes(bytes);
     // Render to the framebuffer console (no-op if not installed).
-    crate::kernel::drivers::framebuffer_console::console_write(
+    crate::drivers::framebuffer_console::console_write(
         core::str::from_utf8(bytes).unwrap_or("\u{FFFD}"),
     );
 }

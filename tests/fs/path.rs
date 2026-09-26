@@ -2,7 +2,7 @@
 //!
 //! Host-side integration tests for slash-only path normalization rules.
 
-use protofire::kernel::fs::path::normalize_path;
+use protofire::fs::path::normalize_path;
 use protofire::Error;
 
 type NormalizeCase = (&'static str, &'static str, &'static str);

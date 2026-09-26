@@ -162,7 +162,7 @@ impl Process {
             if let Some(addr_space) = guard.as_ref() {
                 if let Some((start, end)) = addr_space.user_page_va_range() {
                     let len = end.saturating_sub(start);
-                    if let Some(mut memory) = crate::kernel::memory::global_mut() {
+                    if let Some(mut memory) = crate::memory::global_mut() {
                         memory.unregister_user_page_range(start, len);
                     }
                 }
@@ -192,11 +192,11 @@ impl Process {
     ))]
     pub fn fork(
         self: &Arc<Process>,
-        memory: &mut crate::kernel::memory::MemoryManager,
+        memory: &mut crate::memory::MemoryManager,
         child_pid: u32,
     ) -> Result<Arc<Process>> {
-        use crate::kernel::memory::paging::MappingKind;
-        use crate::kernel::memory::paging::PagePermissions;
+        use crate::memory::paging::MappingKind;
+        use crate::memory::paging::PagePermissions;
 
         self.ensure_mutable()?;
 

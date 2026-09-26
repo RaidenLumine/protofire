@@ -5,13 +5,13 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use protofire::kernel::fs::block::BlockDevice;
-use protofire::kernel::fs::block::MemoryBlockDevice;
-use protofire::kernel::fs::simplefs::ImageEntry;
-use protofire::kernel::fs::simplefs::SimpleFs;
-use protofire::kernel::fs::simplefs::SimpleFsVolume;
-use protofire::kernel::fs::vfs::FileSystem as VfsFileSystem;
-use protofire::kernel::fs::vfs::VNode;
+use protofire::fs::block::BlockDevice;
+use protofire::fs::block::MemoryBlockDevice;
+use protofire::fs::simplefs::ImageEntry;
+use protofire::fs::simplefs::SimpleFs;
+use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::vfs::FileSystem as VfsFileSystem;
+use protofire::fs::vfs::VNode;
 use protofire::Error;
 use protofire::Result;
 

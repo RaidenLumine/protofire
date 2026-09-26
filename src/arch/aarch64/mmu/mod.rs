@@ -27,8 +27,8 @@ use core::sync::atomic::Ordering;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use crate::kernel::memory::paging::PagePermissions;
 use crate::kernel::process::UserThreadStart;
+use crate::memory::paging::PagePermissions;
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
 mod asid;
@@ -987,7 +987,7 @@ pub fn runtime_prepared_translation(
             physical_address: address,
             permissions: PagePermissions::READ_WRITE,
         })
-    } else if let Some(region) = crate::kernel::memory::map_facts::get()
+    } else if let Some(region) = crate::memory::map_facts::get()
         .and_then(|facts| facts.classify(address).and_then(|kind| facts.region(kind)))
     {
         // The permissions come from the same derivation the tables were built
@@ -1179,10 +1179,10 @@ extern "C" {
 /// comparisons, which is what keeps this architecture's idea of the kernel's
 /// ranges identical to the plan's.
 fn ensure_image_facts(heap_bounds: (usize, usize)) {
-    if crate::kernel::memory::map_facts::get().is_some() {
+    if crate::memory::map_facts::get().is_some() {
         return;
     }
-    let ranges = crate::kernel::memory::map_facts::ImageRanges {
+    let ranges = crate::memory::map_facts::ImageRanges {
         text: (
             ptr::addr_of!(__text_start) as usize,
             ptr::addr_of!(__text_end) as usize,
@@ -1204,8 +1204,8 @@ fn ensure_image_facts(heap_bounds: (usize, usize)) {
     // The stack window joins the facts as the architecture's own range: it is
     // a kernel range like any other, and it is the one the guard pages will be
     // holes in.
-    let stack_window = crate::kernel::memory::map_facts::Region::new(
-        crate::kernel::memory::map_facts::RegionKind::StackWindow,
+    let stack_window = crate::memory::map_facts::Region::new(
+        crate::memory::map_facts::RegionKind::StackWindow,
         STACK_WINDOW_BASE,
         STACK_WINDOW_END,
         true,
@@ -1217,7 +1217,7 @@ fn ensure_image_facts(heap_bounds: (usize, usize)) {
     // the ranges contradict each other and every later reader will fall back
     // to its own derivation.  Once, and in the log where a layout problem
     // belongs — instead of surfacing later as a fault about something else.
-    if crate::kernel::memory::map_facts::get().is_none() {
+    if crate::memory::map_facts::get().is_none() {
         static REPORTED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
         if !REPORTED.swap(true, core::sync::atomic::Ordering::Relaxed) {
@@ -1268,7 +1268,7 @@ fn leaf_is_present(virtual_address: usize) -> bool {
 /// edges and its middle.
 fn report_uncovered_facts() {
     static REPORTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-    let Some(facts) = crate::kernel::memory::map_facts::get() else {
+    let Some(facts) = crate::memory::map_facts::get() else {
         return;
     };
     let mut missing = 0usize;
@@ -1276,7 +1276,7 @@ fn report_uncovered_facts() {
         // The stack window is a reservation rather than a mapping: its pages
         // appear as stacks are created, and its guard pages are holes by
         // design, so "not mapped yet" is the expected answer here.
-        if kind == crate::kernel::memory::map_facts::RegionKind::StackWindow {
+        if kind == crate::memory::map_facts::RegionKind::StackWindow {
             continue;
         }
         if leaf_is_present(address) {
@@ -1314,10 +1314,10 @@ fn classify_kernel_address(
     virtual_address: usize,
     heap_bounds: (usize, usize),
 ) -> Option<PlannedRegionKind> {
-    use crate::kernel::memory::map_facts::RegionKind as Fact;
+    use crate::memory::map_facts::RegionKind as Fact;
 
     ensure_image_facts(heap_bounds);
-    if let Some(facts) = crate::kernel::memory::map_facts::get() {
+    if let Some(facts) = crate::memory::map_facts::get() {
         return match facts.classify(virtual_address) {
             Some(Fact::Text) => Some(PlannedRegionKind::KernelText),
             Some(Fact::Rodata) => Some(PlannedRegionKind::KernelRodata),

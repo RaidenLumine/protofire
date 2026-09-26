@@ -34,17 +34,17 @@ mod tests {
     use crate::arch::exception_recoverability::ExceptionRecoveryAction;
     use crate::arch::exception_recoverability::ExceptionRecoveryActionResult;
     use crate::arch::x86_64::gdt;
-    use crate::kernel::memory::paging::MappingKind;
-    use crate::kernel::memory::paging::PagePermissions;
-    use crate::kernel::memory::AddressTranslation;
-    use crate::kernel::memory::BootstrapTranslation;
-    use crate::kernel::memory::MemoryManager;
-    use crate::kernel::memory::PageFaultInsight;
-    use crate::kernel::memory::PlannedKernelRegion;
-    use crate::kernel::memory::PlannedKernelRegionKind;
-    use crate::kernel::memory::PreparedTranslation;
     use crate::kernel::process::ExceptionTermination;
     use crate::kernel::process::TerminationReason;
+    use crate::memory::paging::MappingKind;
+    use crate::memory::paging::PagePermissions;
+    use crate::memory::AddressTranslation;
+    use crate::memory::BootstrapTranslation;
+    use crate::memory::MemoryManager;
+    use crate::memory::PageFaultInsight;
+    use crate::memory::PlannedKernelRegion;
+    use crate::memory::PlannedKernelRegionKind;
+    use crate::memory::PreparedTranslation;
 
     #[repr(C)]
     struct UserModeInterruptFrame {
@@ -281,7 +281,7 @@ mod tests {
         assert!(mapped.in_kernel_heap);
         assert_eq!(
             mapped.translation,
-            Some(crate::kernel::memory::AddressTranslation {
+            Some(crate::memory::AddressTranslation {
                 physical_address: heap_start,
                 permissions: PagePermissions::READ_WRITE,
                 kind: MappingKind::KernelHeap,
@@ -641,7 +641,7 @@ mod tests {
 
         let (heap_start, _) = memory.heap_bounds();
         memory
-            .unmap(heap_start, crate::kernel::memory::paging::PAGE_SIZE)
+            .unmap(heap_start, crate::memory::paging::PAGE_SIZE)
             .expect("unmap one heap page");
 
         let missing = memory.page_fault_insight(heap_start);
@@ -798,12 +798,12 @@ mod tests {
 
         let (heap_start, _) = memory.heap_bounds();
         memory
-            .unmap(heap_start, crate::kernel::memory::paging::PAGE_SIZE)
+            .unmap(heap_start, crate::memory::paging::PAGE_SIZE)
             .expect("unmap one heap page for write upgrade");
         memory
             .map_region_with_kind(
                 heap_start,
-                crate::kernel::memory::paging::PAGE_SIZE,
+                crate::memory::paging::PAGE_SIZE,
                 PagePermissions::READ,
                 MappingKind::KernelHeap,
             )
@@ -872,7 +872,7 @@ mod tests {
         let (_, heap_end) = memory.heap_bounds();
         let result = apply_page_fault_recovery_action(
             &mut memory,
-            heap_end + crate::kernel::memory::paging::PAGE_SIZE,
+            heap_end + crate::memory::paging::PAGE_SIZE,
             ExceptionRecoveryAction::UpgradeKernelHeapPageWrite,
         );
 

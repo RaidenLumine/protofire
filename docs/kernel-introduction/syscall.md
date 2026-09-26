@@ -8,7 +8,7 @@ validation, error encoding, and the shared-user bridge layer (`src/user/shared/`
 
 Arguments and results pass through general-purpose registers. The exact register
 mapping is architecture-specific and defined in `src/abi/syscall.rs` (re-exported
-as `crate::kernel::syscall::abi`).
+as `crate::syscall::abi`).
 
 ### Argument Passing
 
@@ -25,7 +25,7 @@ as `crate::kernel::syscall::abi`).
 All six argument slots are packed into the kernel's `SyscallContext`:
 
 ```rust
-// src/kernel/syscall/table.rs
+// src/syscall/table.rs
 pub struct SyscallContext {
     pub number: usize,
     pub args: [usize; syscall_abi::ARG_COUNT],  // always 6
@@ -63,7 +63,7 @@ and maps to the negative-errno convention at the ABI boundary.
 ## Syscall Numbering
 
 Every public syscall has a fixed number defined in the `SyscallNumber` enum in
-`src/kernel/syscall/table.rs`. Numbers are assigned sequentially with gaps
+`src/syscall/table.rs`. Numbers are assigned sequentially with gaps
 reserved for Dup2 (69) and GetTimeOfDay (70).
 
 ```rust
@@ -154,7 +154,7 @@ pub enum SyscallNumber {
 ### PUBLIC_SYSCALL_COUNT
 
 ```rust
-// src/kernel/syscall/table.rs
+// src/syscall/table.rs
 pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::CompactMemory as u32 + 1;
 ```
 
@@ -261,7 +261,7 @@ Constructors provide ergonomic shorthand:
 
 ### Global Table Installation
 
-The module `src/kernel/syscall/mod.rs` manages a single atomic global table:
+The module `src/syscall/mod.rs` manages a single atomic global table:
 
 ```rust
 static GLOBAL_TABLE: AtomicPtr<Table> = AtomicPtr::new(ptr::null_mut());
@@ -283,7 +283,7 @@ Every syscall that accepts user-space pointers is subject to two layers of
 validation:
 
 1. **Pre-validation** (before handler runs) -- based on the static
-   `SYSCALL_POINTER_SPECS` table in `src/kernel/syscall/memory/user.rs`.
+   `SYSCALL_POINTER_SPECS` table in `src/syscall/memory/user.rs`.
 2. **Handler-level validation** -- the handler itself validates pointers using
    helpers in the same module.
 
@@ -411,7 +411,7 @@ to `Result<usize, isize>`.
 
 The full workflow spans four locations:
 
-1. **Kernel enum variant** in `src/kernel/syscall/table.rs`
+1. **Kernel enum variant** in `src/syscall/table.rs`
    ```rust
    pub enum SyscallNumber {
        // ...
@@ -420,7 +420,7 @@ The full workflow spans four locations:
    ```
 
 2. **Handler function** in an appropriate handler module (e.g.,
-   `src/kernel/syscall/fs/metadata.rs`), with signature:
+   `src/syscall/fs/metadata.rs`), with signature:
    ```rust
    pub(super) fn my_handler(ctx: &mut SyscallContext) -> Result<SyscallDispatch>;
    ```
@@ -430,7 +430,7 @@ The full workflow spans four locations:
    ```
 
 3. **Pointer spec** in `SYSCALL_POINTER_SPECS` within
-   `src/kernel/syscall/memory/user.rs`. The table must have exactly
+   `src/syscall/memory/user.rs`. The table must have exactly
    `PUBLIC_SYSCALL_COUNT` entries -- add a new entry at the end (empty `&[]`
    if no pointer arguments).
 
@@ -447,9 +447,9 @@ The full workflow spans four locations:
 
 | File | Role |
 |------|------|
-| `src/kernel/syscall/mod.rs` | Global table installation, `dispatch()`, `dispatch_with_action()` |
-| `src/kernel/syscall/table.rs` | `SyscallNumber`, `Table`, `SyscallContext`, `SyscallDispatch`, `SYSCALL_REGISTRY` |
-| `src/kernel/syscall/memory/user.rs` | `SYSCALL_POINTER_SPECS`, `validate_syscall_pointers()`, user-memory access helpers |
+| `src/syscall/mod.rs` | Global table installation, `dispatch()`, `dispatch_with_action()` |
+| `src/syscall/table.rs` | `SyscallNumber`, `Table`, `SyscallContext`, `SyscallDispatch`, `SYSCALL_REGISTRY` |
+| `src/syscall/memory/user.rs` | `SYSCALL_POINTER_SPECS`, `validate_syscall_pointers()`, user-memory access helpers |
 | `src/user/shared/syscall.rs` | `SYS_*` constants, `__shell_syscallN` entry points, `sys_*()` wrappers |
 | `src/user/program/shell/syscall_bridge.rs` | Kernel-side `#[no_mangle]` implementations of `__shell_syscallN` |
 

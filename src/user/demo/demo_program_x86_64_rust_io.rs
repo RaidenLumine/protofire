@@ -588,7 +588,7 @@ extern "C" fn adastra_demo_program_rust_io_main_from_stack(initial_stack: usize)
         RUST_IO_PAYLOAD_DATA_BYTES.len(),
         14,
     );
-    ensure_ok(seek_fd(data_fd, 0, crate::kernel::fs::SEEK_SET), 15);
+    ensure_ok(seek_fd(data_fd, 0, crate::fs::SEEK_SET), 15);
     let mut data_buffer = MaybeUninit::<[u8; RUST_IO_PAYLOAD_READ_BUFFER_CAPACITY]>::uninit();
     let data_count = ensure_ok(
         read_fd(
@@ -644,7 +644,7 @@ extern "C" fn adastra_demo_program_rust_io_main_from_stack(initial_stack: usize)
         RUST_IO_PAYLOAD_SESSION_TRUNCATED_BYTES.len(),
         21,
     );
-    ensure_ok(seek_fd(session_fd, 0, crate::kernel::fs::SEEK_SET), 22);
+    ensure_ok(seek_fd(session_fd, 0, crate::fs::SEEK_SET), 22);
     let mut session_buffer = MaybeUninit::<[u8; RUST_IO_PAYLOAD_READ_BUFFER_CAPACITY]>::uninit();
     let session_count = ensure_ok(
         read_fd(

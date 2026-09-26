@@ -145,7 +145,7 @@ pub fn oom_kill() -> bool {
 /// Returns `None` only when both the initial allocation AND the post-OOM retry
 /// fail, indicating genuine exhaustion with no killable victim.
 pub fn allocate_or_oom(count: usize) -> Option<*mut u8> {
-    let frames = super::memory::global_mut()?.allocate_frames(count);
+    let frames = crate::memory::global_mut()?.allocate_frames(count);
 
     if frames.is_some() {
         return frames;
@@ -154,7 +154,7 @@ pub fn allocate_or_oom(count: usize) -> Option<*mut u8> {
     // First attempt failed — invoke the OOM killer.
     if oom_kill() {
         // Retry the allocation after freeing memory.
-        let retry = super::memory::global_mut()?.allocate_frames(count);
+        let retry = crate::memory::global_mut()?.allocate_frames(count);
         if retry.is_some() {
             return retry;
         }

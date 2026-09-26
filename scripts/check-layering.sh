@@ -18,12 +18,16 @@
 #
 # What is counted
 # ---------------
-# One edge per occurrence of `crate::kernel::<module>::` in a file under
-# `src/kernel/<module>/` (or `src/kernel/<module>.rs`) that names a *different*
-# module.  Line comments are stripped first, so prose that mentions a path —
-# including `//!` and `///` — does not count; a path inside a string does, which
-# is the price of not parsing Rust here.  Self-references are skipped: a module
-# may use its own items however it likes.
+# One edge per occurrence of a path that names a *different* module.  A module
+# is a directory under `src/kernel/` (or a `src/kernel/<module>.rs`), or one of
+# the subsystems that live at the crate root: `fs`, `memory`, `network`,
+# `drivers`, `syscall`.  The first are named `crate::kernel::<module>::`, the
+# second `crate::<module>::`, and both spellings count — the graph does not
+# change just because a module moved up a level.  Line comments are stripped
+# first, so prose that mentions a path — including `//!` and `///` — does not
+# count; a path inside a string does, which is the price of not parsing Rust
+# here.  Self-references are skipped: a module may use its own items however it
+# likes.
 #
 # Usage:
 #   sh scripts/check-layering.sh             # check against the baseline
@@ -61,21 +65,52 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# The modules the census tracks, and where their files live.
+#
+# The kernel's own submodules sit under `src/kernel/`; the subsystems that are
+# peers of it — the filesystem, the network stack, the memory manager, the
+# drivers, the syscall table — sit at the crate root, beside `arch` and `user`.
+# Both are modules of the same graph, so a reference to one is an edge whether
+# it is spelled `crate::kernel::fs::` or `crate::fs::`.
+SUBSYSTEMS='crate::(fs|memory|network|drivers|syscall)::'
+
 # Every edge in the tree, as `<from> <to> <count>` sorted by the pair.
 census() {
-    find src/kernel -name '*.rs' | sort | while read -r file; do
+    {
+        find src/kernel -name '*.rs' | sort
+        find src/fs src/memory src/network src/drivers src/syscall -name '*.rs' 2>/dev/null | sort
+    } | while read -r file; do
         rel="${file#src/kernel/}"
-        case "$rel" in
-            */*) from="${rel%%/*}" ;;
-            *) from="${rel%.rs}" ;;
+        case "$file" in
+            src/kernel/*)
+                case "$rel" in
+                    */*) from="${rel%%/*}" ;;
+                    *) from="${rel%.rs}" ;;
+                esac
+                ;;
+            *)
+                rel="${file#src/}"
+                case "$rel" in
+                    */*) from="${rel%%/*}" ;;
+                    *) from="${rel%.rs}" ;;
+                esac
+                ;;
         esac
-        awk -v from="$from" '
+        awk -v from="$from" -v subsystems="$SUBSYSTEMS" '
             { line = $0; sub(/\/\/.*/, "", line) }
             {
                 rest = line
                 while (match(rest, /crate::kernel::[a-z_0-9]+::/)) {
                     tok = substr(rest, RSTART, RLENGTH)
                     sub(/^crate::kernel::/, "", tok)
+                    sub(/::$/, "", tok)
+                    if (tok != from) print from, tok
+                    rest = substr(rest, RSTART + RLENGTH)
+                }
+                rest = line
+                while (match(rest, subsystems)) {
+                    tok = substr(rest, RSTART, RLENGTH)
+                    sub(/^crate::/, "", tok)
                     sub(/::$/, "", tok)
                     if (tok != from) print from, tok
                     rest = substr(rest, RSTART + RLENGTH)

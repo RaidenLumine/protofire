@@ -89,7 +89,7 @@ pub use crate::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPT
 // those exist for bare-metal and Linux-host builds only; RISC-V and any other
 // host (Windows, macOS) leave the import unused, so silence it there.
 #[cfg_attr(target_arch = "riscv64", allow(unused_imports))]
-use crate::kernel::syscall::SyscallContext;
+use crate::syscall::SyscallContext;
 #[cfg_attr(
     not(all(
         any(target_arch = "x86_64", target_arch = "aarch64"),
@@ -97,7 +97,7 @@ use crate::kernel::syscall::SyscallContext;
     )),
     allow(unused_imports)
 )]
-use crate::kernel::syscall::SyscallNumber;
+use crate::syscall::SyscallNumber;
 
 pub struct AArch64UserException;
 

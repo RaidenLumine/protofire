@@ -5,8 +5,8 @@
 //! register layout the kernel GPU handlers expect; the renderer drives them
 //! through `syscall::dispatch`.
 
-use crate::kernel::syscall::SyscallContext;
-use crate::kernel::syscall::SyscallNumber;
+use crate::syscall::SyscallContext;
+use crate::syscall::SyscallNumber;
 
 impl super::UserSyscall {
     // ── GPU (VIRGL 3D) syscalls ───────────────────────────────────────

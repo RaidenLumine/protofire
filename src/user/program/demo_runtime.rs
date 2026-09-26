@@ -15,10 +15,10 @@ use crate::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
 use crate::abi::process::PROCESS_TERMINATION_KIND_EXCEPTION;
 use crate::abi::process::PROCESS_TERMINATION_KIND_EXIT;
 use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
-use crate::kernel::fs;
+use crate::fs;
 use crate::kernel::process::STDOUT_FD;
-use crate::kernel::syscall;
 use crate::println;
+use crate::syscall;
 use crate::Error;
 use crate::Result;
 
@@ -460,7 +460,7 @@ fn demo_rust_io_roundtrip_data_file() -> Result<()> {
         return Err(Error::InternalError);
     }
 
-    let mut seek_ctx = UserSyscall::seek(fd, 0, crate::kernel::fs::SEEK_SET);
+    let mut seek_ctx = UserSyscall::seek(fd, 0, crate::fs::SEEK_SET);
     let reset = syscall::dispatch(&mut seek_ctx)?;
     if reset != 0 {
         let mut close_ctx = UserSyscall::close(fd);
@@ -525,7 +525,7 @@ fn demo_rust_io_create_session_state() -> Result<()> {
         return Err(Error::InternalError);
     }
 
-    let mut seek_ctx = UserSyscall::seek(fd, 0, crate::kernel::fs::SEEK_SET);
+    let mut seek_ctx = UserSyscall::seek(fd, 0, crate::fs::SEEK_SET);
     let reset = syscall::dispatch(&mut seek_ctx)?;
     if reset != 0 {
         let mut close_ctx = UserSyscall::close(fd);
@@ -606,7 +606,7 @@ fn demo_update_data_file() -> Result<()> {
         return Err(Error::InternalError);
     }
 
-    let mut seek_ctx = UserSyscall::seek(fd, 0, crate::kernel::fs::SEEK_SET);
+    let mut seek_ctx = UserSyscall::seek(fd, 0, crate::fs::SEEK_SET);
     let reset = syscall::dispatch(&mut seek_ctx)?;
     if reset != 0 {
         let mut close_ctx = UserSyscall::close(fd);
@@ -691,7 +691,7 @@ fn demo_create_session_log() -> Result<()> {
         return Err(Error::InternalError);
     }
 
-    let mut seek_ctx = UserSyscall::seek(fd, 0, crate::kernel::fs::SEEK_SET);
+    let mut seek_ctx = UserSyscall::seek(fd, 0, crate::fs::SEEK_SET);
     let reset = syscall::dispatch(&mut seek_ctx)?;
     if reset != 0 {
         let mut close_ctx = UserSyscall::close(fd);

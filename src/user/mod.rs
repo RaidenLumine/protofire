@@ -7,7 +7,7 @@
 // disk is actually buildable: on host (tests), under the `demo-disk` feature,
 // or when a target_os != none build can consume them.  A bare-metal kernel
 // build without `demo-disk` does not need them, so they are not compiled in.
-// The in-repo demo-disk builder (`src/kernel/fs/demo.rs`) imports them via
+// The in-repo demo-disk builder (`src/fs/demo.rs`) imports them via
 // `protofire::user::demo::*` with the `demo-disk` feature enabled.
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
 pub mod demo;

@@ -50,7 +50,7 @@ pub(crate) fn prepare_arch_user_address_space(
         .ok_or(Error::InvalidArgument)?;
 
     // Register user pages in the software page table.
-    if let Some(mut memory) = crate::kernel::memory::global_mut() {
+    if let Some(mut memory) = crate::memory::global_mut() {
         let entries: Vec<(usize, usize, PagePermissions, MappingKind)> = prepared
             .user_page_entries()
             .into_iter()

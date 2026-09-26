@@ -5,9 +5,9 @@
 use alloc::string::String;
 
 use crate::abi::fs as fs_abi;
+use crate::fs::FileMetadata;
+use crate::fs::NodeKind;
 use crate::kernel::device;
-use crate::kernel::fs::FileMetadata;
-use crate::kernel::fs::NodeKind;
 use crate::Error;
 use crate::Result;
 
@@ -33,7 +33,7 @@ impl HandleEntry {
     pub(crate) fn is_directory_like(&self) -> bool {
         match &self.object {
             KernelObject::Directory(_) => true,
-            KernelObject::File(file) => file.kind() == crate::kernel::fs::NodeKind::Directory,
+            KernelObject::File(file) => file.kind() == crate::fs::NodeKind::Directory,
             KernelObject::Device(_)
             | KernelObject::Network(_)
             | KernelObject::TlsConnection(_)
@@ -56,7 +56,7 @@ impl HandleEntry {
     pub(crate) fn directory_backing_path(&self) -> Result<&str> {
         match &self.object {
             KernelObject::Directory(path) => Ok(path.as_str()),
-            KernelObject::File(file) if file.kind() == crate::kernel::fs::NodeKind::Directory => {
+            KernelObject::File(file) if file.kind() == crate::fs::NodeKind::Directory => {
                 Ok(file.path())
             }
             KernelObject::File(_)
@@ -159,7 +159,7 @@ impl HandleEntry {
             KernelObject::TcpListener(_) => Err(Error::InvalidArgument),
             KernelObject::UdpSocket(socket) => {
                 let _ = timeout_ticks;
-                match crate::kernel::network::recv_from_udp(&socket, buffer) {
+                match crate::network::recv_from_udp(&socket, buffer) {
                     Ok((n, _, _)) => Ok(n),
                     Err(Error::TimedOut) => Ok(0),
                     Err(e) => Err(e),
@@ -167,7 +167,7 @@ impl HandleEntry {
             }
             KernelObject::DccpSocket(socket) => {
                 let _ = timeout_ticks;
-                match crate::kernel::network::recv_dccp(&socket, buffer) {
+                match crate::network::recv_dccp(&socket, buffer) {
                     Ok((n, _, _)) => Ok(n),
                     Err(Error::TimedOut) => Ok(0),
                     Err(e) => Err(e),

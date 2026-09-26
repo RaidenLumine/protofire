@@ -22,7 +22,7 @@ merely expected.
 | [comments.md](comments.md) | Opening a file to edit it | The enforced file header, module and item docs, `# Safety`/`# Errors`/`# Panics`, section separators, `TODO`/`NOTE` |
 | [unsafe-and-safety.md](unsafe-and-safety.md) | Writing or reviewing an `unsafe` block | What `unsafe` is for, the `// SAFETY:` contract, the ring-3 boundary, MMIO, locking and panic rules |
 | [testing.md](testing.md) | Adding behaviour you want to keep | Unit vs. integration placement, registration, fault injection and property tests, what to test for a given change |
-| [syscall-abi.md](syscall-abi.md) | Touching `src/abi/`, `src/kernel/syscall/`, or `src/user/shared/` | Append-only numbering, stability classes, versioning, pointer specs, the step-by-step procedure |
+| [syscall-abi.md](syscall-abi.md) | Touching `src/abi/`, `src/syscall/`, or `src/user/shared/` | Append-only numbering, stability classes, versioning, pointer specs, the step-by-step procedure |
 | [commits.md](commits.md) | Writing a commit message, or when the hook rejects one | Subject and body rules, type prefixes, the exact hook semantics, writing in Chinese, amend and fixup |
 
 Supporting context, if you have not read it yet:

@@ -9,10 +9,10 @@
 use alloc::string::String;
 use alloc::sync::Arc;
 
-use crate::kernel::fs::vfs::FileSystem;
-use crate::kernel::fs::vfs::NodeKind;
-use crate::kernel::fs::vfs::VNode;
-use crate::kernel::fs::DirectoryEntry;
+use crate::fs::vfs::FileSystem;
+use crate::fs::vfs::NodeKind;
+use crate::fs::vfs::VNode;
+use crate::fs::DirectoryEntry;
 use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;

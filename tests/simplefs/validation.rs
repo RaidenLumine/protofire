@@ -9,15 +9,15 @@ use std::convert::TryInto;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use protofire::kernel::fs::block::BlockDevice;
-use protofire::kernel::fs::block::MemoryBlockDevice;
-use protofire::kernel::fs::block::BLOCK_SIZE;
-use protofire::kernel::fs::simplefs::ImageEntry;
-use protofire::kernel::fs::simplefs::SimpleFs;
-use protofire::kernel::fs::simplefs::SimpleFsVolume;
-use protofire::kernel::fs::vfs::FileSystem as VfsFileSystem;
-use protofire::kernel::fs::vfs::NodeKind;
-use protofire::kernel::fs::vfs::VNode;
+use protofire::fs::block::BlockDevice;
+use protofire::fs::block::MemoryBlockDevice;
+use protofire::fs::block::BLOCK_SIZE;
+use protofire::fs::simplefs::ImageEntry;
+use protofire::fs::simplefs::SimpleFs;
+use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::vfs::FileSystem as VfsFileSystem;
+use protofire::fs::vfs::NodeKind;
+use protofire::fs::vfs::VNode;
 use protofire::Error;
 
 const INODE_SIZE: usize = 32;
@@ -984,7 +984,7 @@ fn simplefs_data_checksum_survives_write_and_reopen() {
 
 #[test]
 fn simplefs_device_health_reports_healthy_for_memory_backed_volume() {
-    use protofire::kernel::fs::block::DeviceHealth;
+    use protofire::fs::block::DeviceHealth;
 
     let image = SimpleFs::build_image(
         "health-check",

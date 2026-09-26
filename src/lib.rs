@@ -14,7 +14,12 @@ extern crate std;
 
 pub mod abi;
 pub mod arch;
+pub mod drivers;
+pub mod fs;
 pub mod kernel;
+pub mod memory;
+pub mod network;
+pub mod syscall;
 pub mod user;
 pub mod util;
 

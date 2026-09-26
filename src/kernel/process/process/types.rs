@@ -12,15 +12,15 @@ use core::fmt;
 use crate::abi::process::ProcessTerminationRecord;
 use crate::arch::mmu::ProcessAddressSpace;
 use crate::arch::mmu::UserTranslation;
-use crate::kernel::fs::vfs::MetadataAccessQueryContext;
-use crate::kernel::fs::vfs::PermissionMetadataRecord;
-use crate::kernel::fs::FileHandle as FsFileHandle;
-use crate::kernel::network::LocalSocket;
-use crate::kernel::network::TcpConnection;
-use crate::kernel::network::TcpListener;
-use crate::kernel::network::UdpSocket;
+use crate::fs::vfs::MetadataAccessQueryContext;
+use crate::fs::vfs::PermissionMetadataRecord;
+use crate::fs::FileHandle as FsFileHandle;
 use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
+use crate::network::LocalSocket;
+use crate::network::TcpConnection;
+use crate::network::TcpListener;
+use crate::network::UdpSocket;
 use crate::Result;
 
 pub use super::super::thread::ThreadId;
@@ -208,11 +208,11 @@ pub enum KernelObject {
     TcpListener(TcpListener),
     UdpSocket(UdpSocket),
     /// DCCP connection-oriented datagram socket (RFC 4340).
-    DccpSocket(crate::kernel::network::DccpSocket),
+    DccpSocket(crate::network::DccpSocket),
     RawSocket(RawSocketHandle),
     LocalSocket(Arc<LocalSocket>),
     /// A TCP connection wrapped with TLS 1.3 encryption.
-    TlsConnection(alloc::sync::Arc<crate::kernel::network::tls::TlsWrappedConnection>),
+    TlsConnection(alloc::sync::Arc<crate::network::tls::TlsWrappedConnection>),
     Process(ProcessId),
     Thread(ThreadId),
     /// Lightweight event notification — readable/writable like a u64 counter.
@@ -683,7 +683,7 @@ impl OpenFile {
     }
 
     /// Filesystem node kind (file, directory, symlink, etc.).
-    pub fn kind(&self) -> crate::kernel::fs::NodeKind {
+    pub fn kind(&self) -> crate::fs::NodeKind {
         self.inner.lock().kind()
     }
 

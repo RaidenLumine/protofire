@@ -7,7 +7,7 @@
 //! an edit has to be posted to the kernel's invalidation log for the rest of
 //! the machine to walk, which is what [`other_cpus_need_telling`] says.
 
-use crate::kernel::memory::paging::PAGE_SIZE;
+use crate::memory::paging::PAGE_SIZE;
 
 /// Drop this CPU's translations for the pages in `[start, end)`.
 ///

@@ -113,12 +113,19 @@ module-wide allow.
 ## 4. Module and file layout
 
 The crate roots declare their modules alphabetically. `src/lib.rs` is the
-shortest example:
+shortest example, and it also shows the shape of the tree: the filesystem, the
+memory manager, the network stack, the drivers, and the syscall table are
+subsystems of the crate in their own right, not submodules of `kernel`:
 
 ```rust
 pub mod abi;
 pub mod arch;
+pub mod drivers;
+pub mod fs;
 pub mod kernel;
+pub mod memory;
+pub mod network;
+pub mod syscall;
 pub mod user;
 pub mod util;
 ```
@@ -138,7 +145,7 @@ The rest of a `mod.rs` follows this order:
 7. `#[cfg(test)] mod tests` at the end of the file.
 
 A file that would otherwise need a `mod.rs` in a subdirectory may instead be
-declared from its parent with `#[path]`, which is how `src/kernel/syscall/`
+declared from its parent with `#[path]`, which is how `src/syscall/`
 organises its handler categories:
 
 ```rust
@@ -148,7 +155,7 @@ mod fs_metadata;
 
 Use that when a directory would hold a single file and the extra `mod.rs` would
 be a level of indirection with nothing in it. Where a directory genuinely has
-several files (`src/kernel/fs/simplefs/`, `src/kernel/network/tcp/`), a normal
+several files (`src/fs/simplefs/`, `src/network/tcp/`), a normal
 `mod.rs` is the right shape.
 
 Re-export deliberately rather than wholesale: `pub use` in a `mod.rs` is how a
@@ -190,9 +197,9 @@ Because granularity is `Item`, a single type imported from a deep path gets its
 own line rather than being nested:
 
 ```rust
-use crate::kernel::fs::DirectoryEntry;
-use crate::kernel::fs::FileMetadata;
-use crate::kernel::fs::NodeKind;
+use crate::fs::DirectoryEntry;
+use crate::fs::FileMetadata;
+use crate::fs::NodeKind;
 ```
 
 Prefer `super::` over `crate::` when the item is genuinely in the parent module

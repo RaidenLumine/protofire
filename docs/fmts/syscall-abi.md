@@ -1,7 +1,7 @@
 # Syscall ABI Specification
 
 > **Status:** normative. Changes to this document require maintainer review.
-> **Applies to:** `src/abi/`, `src/kernel/syscall/`, `src/user/shared/`,
+> **Applies to:** `src/abi/`, `src/syscall/`, `src/user/shared/`,
 > `tests/syscall/`.
 
 The syscall ABI is the compatibility boundary of Protofire. Ring-3 programs are
@@ -49,12 +49,12 @@ single source of truth. It defines:
 
 Consumers, none of which may re-declare a number:
 
-- [`src/kernel/syscall/table.rs`](../../src/kernel/syscall/table.rs) — the
+- [`src/syscall/table.rs`](../../src/syscall/table.rs) — the
   `SyscallNumber` enum, `SYSCALL_REGISTRY`, and `PUBLIC_SYSCALL_COUNT`
   (derived as the highest assigned number plus one).
 - [`src/user/shared/syscall.rs`](../../src/user/shared/syscall.rs) — the typed
   ring-3 wrappers.
-- [`src/kernel/syscall/memory/user.rs`](../../src/kernel/syscall/memory/user.rs)
+- [`src/syscall/memory/user.rs`](../../src/syscall/memory/user.rs)
   — `SYSCALL_POINTER_SPECS`, indexed by number.
 
 Note the direction of the dependency: this manifest lives under `src/user/`, but
@@ -132,17 +132,17 @@ follow-up.
    raise `SYSCALL_COUNT`, and add the name to `syscall_name`. Add its stability
    automatically — do not special-case it.
 2. **Mirror it in the kernel enum.** Add the variant to `SyscallNumber` in
-   [`src/kernel/syscall/table.rs`](../../src/kernel/syscall/table.rs). The
+   [`src/syscall/table.rs`](../../src/syscall/table.rs). The
    variant must be *derived from* the manifest constant, never a literal.
 3. **Declare its pointers.** Add the entry to `SYSCALL_POINTER_SPECS` in
-   [`src/kernel/syscall/memory/user.rs`](../../src/kernel/syscall/memory/user.rs),
+   [`src/syscall/memory/user.rs`](../../src/syscall/memory/user.rs),
    at the index matching the syscall number. An empty slice (`&[]`) is a
    declaration that the syscall takes no pointer arguments or validates them
    entirely itself — not a way to skip the step.
 4. **Write the handler** in the appropriate category module under
-   `src/kernel/syscall/` (see §6).
+   `src/syscall/` (see §6).
 5. **Register the handler** in `SYSCALL_REGISTRY`
-   ([`src/kernel/syscall/table.rs`](../../src/kernel/syscall/table.rs)).
+   ([`src/syscall/table.rs`](../../src/syscall/table.rs)).
 6. **Add the typed wrapper** in
    [`src/user/shared/syscall.rs`](../../src/user/shared/syscall.rs) so ring-3
    callers never build raw register arguments.
@@ -161,7 +161,7 @@ and why the change is permitted there.
 
 ## 6. Kernel handler conventions
 
-Handlers live in category modules under `src/kernel/syscall/` (`misc.rs`,
+Handlers live in category modules under `src/syscall/` (`misc.rs`,
 `io_fd.rs`, `fs/`, `network/`, `process/`, `memory/`, and so on). Pick the module
 that matches the subsystem the syscall acts on; a new file is justified when a
 new category appears, not for a single handler.
@@ -225,7 +225,7 @@ Two tests hold the table honest and must keep passing:
 
 **`user_memory` helpers are the access.** Handlers reach user memory through
 `with_optional_input_slice` / `with_optional_output_slice` (and their siblings
-in `src/kernel/syscall/memory/user.rs`), which validate the range against the
+in `src/syscall/memory/user.rs`), which validate the range against the
 user/kernel boundary and reject anything straddling it. Never cast a `usize`
 argument to a raw pointer and read it directly; every user access in the tree
 goes through this module, and new code is expected to as well.

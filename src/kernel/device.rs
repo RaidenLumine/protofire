@@ -5,12 +5,12 @@
 
 use alloc::string::String;
 
+use crate::drivers::keyboard;
+use crate::drivers::serial;
+use crate::fs::DirectoryEntry;
+use crate::fs::FileMetadata;
+use crate::fs::NodeKind;
 use crate::kernel::console;
-use crate::kernel::drivers::keyboard;
-use crate::kernel::drivers::serial;
-use crate::kernel::fs::DirectoryEntry;
-use crate::kernel::fs::FileMetadata;
-use crate::kernel::fs::NodeKind;
 use crate::kernel::handle_rights::HANDLE_RIGHT_READ;
 use crate::kernel::handle_rights::HANDLE_RIGHT_WRITE;
 use crate::util::debug;
@@ -313,7 +313,7 @@ fn read_keyboard_char_bytes(buffer: &mut [u8], timeout_ticks: u64) -> Result<usi
 }
 
 fn read_mouse_motion_bytes(buffer: &mut [u8], timeout_ticks: u64) -> Result<usize> {
-    use crate::kernel::drivers::mouse;
+    use crate::drivers::mouse;
 
     if buffer.is_empty() {
         return Ok(0);
@@ -340,7 +340,7 @@ fn read_mouse_motion_bytes(buffer: &mut [u8], timeout_ticks: u64) -> Result<usiz
 }
 
 fn write_audio_bytes(buffer: &[u8]) -> Result<usize> {
-    crate::kernel::drivers::hda::device_write(buffer)
+    crate::drivers::hda::device_write(buffer)
 }
 
 fn read_keyboard_scancode_bytes(buffer: &mut [u8], timeout_ticks: u64) -> Result<usize> {
@@ -467,8 +467,8 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    use crate::kernel::fs::FileMetadata;
-    use crate::kernel::fs::NodeKind;
+    use crate::fs::FileMetadata;
+    use crate::fs::NodeKind;
 
     use super::supported_device_rights;
     use super::virtual_device_directory_entry;

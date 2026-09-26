@@ -2,7 +2,7 @@
 
 ## Overview
 
-The filesystem layer (`src/kernel/fs/`) provides a Virtual File System (VFS) that
+The filesystem layer (`src/fs/`) provides a Virtual File System (VFS) that
 mounts volumes, resolves paths, and exposes unified file/directory/device I/O to userspace. It
 supports multiple on-disk formats (SimpleFs, ext4, FAT32, NTFS, btrfs, XFS, F2FS, EROFS, squashfs,
 iso9660) and in-memory pseudo-filesystems (tmpfs, procfs, devfs). The primary native format is
@@ -14,7 +14,7 @@ iso9660) and in-memory pseudo-filesystems (tmpfs, procfs, devfs). The primary na
 
 ### FileSystem facade
 
-The top-level `FileSystem` struct (`src/kernel/fs/mod.rs`) is a singleton managing:
+The top-level `FileSystem` struct (`src/fs/mod.rs`) is a singleton managing:
 
 | Field | Purpose |
 |---|---|
@@ -36,7 +36,7 @@ It is stored in a global `AtomicPtr<Mutex<FileSystem>>` and accessed via `global
 
 ### FileSystem trait
 
-Defined in `src/kernel/fs/vfs/filesystem.rs` — methods include `lookup()`, `stat()`, `read_dir()`,
+Defined in `src/fs/vfs/filesystem.rs` — methods include `lookup()`, `stat()`, `read_dir()`,
 `rename()`, `create_file()`, `create_dir()`, `create_symlink()`, `create_device()`, `hard_link()`,
 `remove_path()`, `check_and_repair()`, `fs_profiler_snapshot()`, `list_xattrs()`,
 `update_security_descriptor()`. `StaticFileSystem` provides a read-only tree from compile-time
@@ -44,13 +44,13 @@ entries — used for procfs, devfs, and similar pseudo-filesystems.
 
 ### VNode trait
 
-Defined in `src/kernel/fs/vfs/vnode.rs` — methods include `name()`, `kind()` (File | Directory |
+Defined in `src/fs/vfs/vnode.rs` — methods include `name()`, `kind()` (File | Directory |
 Device | Symlink), `size()`, `metadata()`, `read()`, `write()`, `set_len()`, `readlink()`, `sync()`,
 `sync_data()`, `list_xattrs()`. All filesystem objects implement this trait.
 
 ### Path resolution
 
-Path normalization lives in `src/kernel/fs/path.rs` (`normalize_path`). It produces absolute,
+Path normalization lives in `src/fs/path.rs` (`normalize_path`). It produces absolute,
 canonical paths with no `.`/`..`/redundant slashes, rejects drive prefixes (`C:`) and embedded
 control characters. The facade's `normalize_path` (in `query.rs`) wraps this with the current
 working directory.
@@ -62,7 +62,7 @@ The `filesystem/path_helpers.rs` module provides utilities used internally by th
 ### Mount system
 
 Mount points are tracked in `FileSystem::mounted_fs` (`BTreeMap<String, MountPoint>`) where each
-`MountPoint` (`src/kernel/fs/filesystem/types.rs`) holds `fs: Arc<dyn VfsTrait>`, `fs_name`,
+`MountPoint` (`src/fs/filesystem/types.rs`) holds `fs: Arc<dyn VfsTrait>`, `fs_name`,
 `device`, and `flags` (bitmask of `MOUNT_READ_ONLY=1`, `MOUNT_EXECUTABLE=2`, `MOUNT_USER_DATA=4`,
 defined in `layout.rs`). `mount()` normalizes the target path, looks up the filesystem by name, and
 inserts the mount point. `unmount()` removes it.
@@ -84,7 +84,7 @@ The built-in virtual mounts are:
 
 ## SimpleFs — On-Disk Format
 
-Source: `src/kernel/fs/simplefs/`. SimpleFs is a custom embedded filesystem with a fixed-block
+Source: `src/fs/simplefs/`. SimpleFs is a custom embedded filesystem with a fixed-block
 layout, dual-superblock design, and undo-log-based transactions.
 
 ### Format versions
@@ -149,7 +149,7 @@ directories), `entry_count`, `data_block`, `block_count`, `size`,
 
 ### ImageEntry
 
-The image builder uses `ImageEntry` (`src/kernel/fs/simplefs/mod.rs`): `{ path: &str, data: &[u8] }`
+The image builder uses `ImageEntry` (`src/fs/simplefs/mod.rs`): `{ path: &str, data: &[u8] }`
 for `SimpleFs::build_image()` and `build_image_with_headroom()`.
 
 ---
@@ -183,7 +183,7 @@ Two concrete implementations:
 
 ### BlockCache
 
-`src/kernel/fs/block_cache.rs` provides a 128-slot LRU cache with:
+`src/fs/block_cache.rs` provides a 128-slot LRU cache with:
 
 - **Write-through** (metadata): `write_through()` persists to device and updates cache.
 - **Write-back** (file data): `write_back()` marks dirty; `flush()` writes to device.
@@ -201,7 +201,7 @@ deferred data writes.
 
 ## Partition Table Parsing
 
-`src/kernel/fs/partition.rs` implements standard MBR parsing via `read_mbr_partitions()` which
+`src/fs/partition.rs` implements standard MBR parsing via `read_mbr_partitions()` which
 reads block 0, validates the 0x55AA signature, parses four partition entries at offset 446
 (each `MbrPartitionEntry`: `bootable`, `partition_type`, `start_block`, `block_count`), checks
 for overlap, and returns `Option<MbrPartitionTable>`. LBA fields are 32-bit (~2 TiB max).
@@ -212,7 +212,7 @@ sector buffer.
 
 ## Transaction / Recovery
 
-Source: `src/kernel/fs/simplefs/transaction.rs`.
+Source: `src/fs/simplefs/transaction.rs`.
 
 ### Undo-log transactions
 
@@ -246,7 +246,7 @@ On mount, a non-zero `pending_commit` indicates an interrupted commit — detect
 
 ### VolumeCheckReport
 
-Returned by `check_and_repair()` (`src/kernel/fs/vfs/types.rs`): tracks `issues_detected`,
+Returned by `check_and_repair()` (`src/fs/vfs/types.rs`): tracks `issues_detected`,
 `repairs_applied`, `orphan_data_blocks`, `checksum_failures`, `staging_orphans_cleaned`,
 `orphan_blocks_cleaned`, and `interrupted_commits`.
 
@@ -259,7 +259,7 @@ resolves the mount point, and delegates to the backend.
 
 ### open / create_file
 
-`src/kernel/fs/filesystem/open.rs`. `create_file_normalized_with_security_token()` implements
+`src/fs/filesystem/open.rs`. `create_file_normalized_with_security_token()` implements
 three dispositions:
 
 | Constant | Value | Behavior |
@@ -272,7 +272,7 @@ Returns a `FileHandle` with position, security descriptor, mount flags, and shar
 
 ### FileHandle
 
-`src/kernel/fs/handle.rs`. Wraps `Arc<dyn VNode>` with cursor position and security context:
+`src/fs/handle.rs`. Wraps `Arc<dyn VNode>` with cursor position and security context:
 
 - `read()` / `write()`: Delegates to `VNode` at current position, advances cursor.
 - `seek()`: Supports `SEEK_SET` (0), `SEEK_CUR` (1), `SEEK_END` (2).
@@ -281,13 +281,13 @@ Returns a `FileHandle` with position, security descriptor, mount flags, and shar
 
 ### read / write / replace
 
-`src/kernel/fs/filesystem/io.rs`. The facade's `read()` and `write()` forward to
+`src/fs/filesystem/io.rs`. The facade's `read()` and `write()` forward to
 `FileHandle::read`/`write`. `replace_file_contents_normalized_with_security_token()` opens a file
 with `OPEN_ALWAYS`, truncates, writes, and verifies byte count.
 
 ### stat / read_dir / query
 
-`src/kernel/fs/filesystem/query.rs`:
+`src/fs/filesystem/query.rs`:
 
 - `stat_normalized_path()`: Merges backend metadata with mount-level security and overlays.
 - `read_dir()`: Merges directory entries from the backend with cross-mount children.
@@ -296,7 +296,7 @@ with `OPEN_ALWAYS`, truncates, writes, and verifies byte count.
 
 ### mkdir / rm
 
-`src/kernel/fs/filesystem/dir.rs`:
+`src/fs/filesystem/dir.rs`:
 
 - `create_dir()` / `create_dir_from()`: Normalizes path, delegates to backend.
 - `remove_path()` / `remove_path_from()`: Normalizes path, delegates to backend.
@@ -304,7 +304,7 @@ with `OPEN_ALWAYS`, truncates, writes, and verifies byte count.
 
 ### rename
 
-`src/kernel/fs/filesystem/rename.rs`:
+`src/fs/filesystem/rename.rs`:
 
 - `rename_path()` / `rename_path_from()`: Normalizes both paths, resolves to the same mount,
   authorizes, and calls `FileSystem::rename()` on the backend.
@@ -313,7 +313,7 @@ with `OPEN_ALWAYS`, truncates, writes, and verifies byte count.
 
 ## Pipe Support
 
-`src/kernel/fs/pipe.rs` implements anonymous pipes as a pair of `VNode`s sharing a ring buffer.
+`src/fs/pipe.rs` implements anonymous pipes as a pair of `VNode`s sharing a ring buffer.
 
 **Key types:**
 
@@ -337,7 +337,7 @@ Created via `pipe_channel()` (16 KiB default) or `pipe_channel_with_capacity(n)`
 
 ## FUSE (Design / Deferred)
 
-`src/kernel/fs/fuse/mod.rs` contains the design document and public type stubs for a minimal FUSE
+`src/fs/fuse/mod.rs` contains the design document and public type stubs for a minimal FUSE
 framework. Implementation submodules (not yet built):
 
 - `protocol.rs`: Wire format (`FuseHeader` + TLV payload)
@@ -357,30 +357,30 @@ complexity.
 
 | File | Purpose |
 |---|---|
-| `src/kernel/fs/mod.rs` | Top-level facade, re-exports, global singleton |
-| `src/kernel/fs/vfs/filesystem.rs` | `FileSystem` trait, `StaticFileSystem` |
-| `src/kernel/fs/vfs/vnode.rs` | `VNode` trait, `StaticVNode` |
-| `src/kernel/fs/vfs/types.rs` | `NodeKind`, `Metadata`, `SecurityDescriptor`, `DirectoryEntry`, `VolumeCheckReport` |
-| `src/kernel/fs/filesystem/{init,mount,open,io,dir,rename}.rs` | VFS operations (init, mount, open, read/write, mkdir/rm, rename) |
-| `src/kernel/fs/filesystem/{path_helpers,resolve,overlay}.rs` | Path resolution, mount resolution, cross-mount directory overlay |
-| `src/kernel/fs/filesystem/{security,security_helpers}.rs` | Access control and security descriptor authorization |
-| `src/kernel/fs/filesystem/types.rs` | `MountPoint`, `MountInfo`, `StorageInitReport` |
-| `src/kernel/fs/filesystem/profiler.rs` | `FsProfiler` — operation counters |
-| `src/kernel/fs/path.rs` | `normalize_path()` — canonical path normalization |
+| `src/fs/mod.rs` | Top-level facade, re-exports, global singleton |
+| `src/fs/vfs/filesystem.rs` | `FileSystem` trait, `StaticFileSystem` |
+| `src/fs/vfs/vnode.rs` | `VNode` trait, `StaticVNode` |
+| `src/fs/vfs/types.rs` | `NodeKind`, `Metadata`, `SecurityDescriptor`, `DirectoryEntry`, `VolumeCheckReport` |
+| `src/fs/filesystem/{init,mount,open,io,dir,rename}.rs` | VFS operations (init, mount, open, read/write, mkdir/rm, rename) |
+| `src/fs/filesystem/{path_helpers,resolve,overlay}.rs` | Path resolution, mount resolution, cross-mount directory overlay |
+| `src/fs/filesystem/{security,security_helpers}.rs` | Access control and security descriptor authorization |
+| `src/fs/filesystem/types.rs` | `MountPoint`, `MountInfo`, `StorageInitReport` |
+| `src/fs/filesystem/profiler.rs` | `FsProfiler` — operation counters |
+| `src/fs/path.rs` | `normalize_path()` — canonical path normalization |
 | `src/kernel/block.rs` | `BlockDevice` trait, `MemoryBlockDevice`, `BlockSliceDevice`, `BLOCK_SIZE`, `publish_device()` |
-| `src/kernel/fs/block_cache.rs` | `BlockCache` — 128-slot LRU cache with write-through/back |
-| `src/kernel/fs/partition.rs` | MBR partition table parsing/writing |
-| `src/kernel/fs/layout.rs` | `StorageZone` enum, mount flags, zone block ranges |
-| `src/kernel/fs/handle.rs` | `FileHandle` — open file descriptor |
-| `src/kernel/fs/pipe.rs` | Anonymous pipe (`pipe_channel()`, `PipeReadEnd`, `PipeWriteEnd`) |
-| `src/kernel/fs/simplefs/mod.rs` | `SimpleFs`, `SimpleFsState`, `UndoLog`, `ImageEntry` |
-| `src/kernel/fs/simplefs/{superblock,types,constants}.rs` | On-disk format: superblock, `OnDiskInode`, `OnDiskDirEntry`, geometry |
-| `src/kernel/fs/simplefs/transaction.rs` | Undo-log transactions, `TransactionContext` |
-| `src/kernel/fs/simplefs/image_staging.rs` | `SimpleFs::build_image()`, `build_image_with_headroom()` |
-| `src/kernel/fs/simplefs/{vfs,file_io,dir_ops,inode_dirent}.rs` | SimpleFs VFS trait impl, data I/O, dirent manipulation, disk serialization |
-| `src/kernel/fs/fuse/mod.rs` | FUSE design doc, protocol types (`FuseOpcode`, `FuseHeader`) |
-| `src/kernel/fs/demo.rs` | Legacy demo disk builder (zone images, MBR layout) |
-| `src/kernel/fs/test_support.rs` | `build_test_zone_image()`, `build_minimal_test_zone_image()` |
+| `src/fs/block_cache.rs` | `BlockCache` — 128-slot LRU cache with write-through/back |
+| `src/fs/partition.rs` | MBR partition table parsing/writing |
+| `src/fs/layout.rs` | `StorageZone` enum, mount flags, zone block ranges |
+| `src/fs/handle.rs` | `FileHandle` — open file descriptor |
+| `src/fs/pipe.rs` | Anonymous pipe (`pipe_channel()`, `PipeReadEnd`, `PipeWriteEnd`) |
+| `src/fs/simplefs/mod.rs` | `SimpleFs`, `SimpleFsState`, `UndoLog`, `ImageEntry` |
+| `src/fs/simplefs/{superblock,types,constants}.rs` | On-disk format: superblock, `OnDiskInode`, `OnDiskDirEntry`, geometry |
+| `src/fs/simplefs/transaction.rs` | Undo-log transactions, `TransactionContext` |
+| `src/fs/simplefs/image_staging.rs` | `SimpleFs::build_image()`, `build_image_with_headroom()` |
+| `src/fs/simplefs/{vfs,file_io,dir_ops,inode_dirent}.rs` | SimpleFs VFS trait impl, data I/O, dirent manipulation, disk serialization |
+| `src/fs/fuse/mod.rs` | FUSE design doc, protocol types (`FuseOpcode`, `FuseHeader`) |
+| `src/fs/demo.rs` | Legacy demo disk builder (zone images, MBR layout) |
+| `src/fs/test_support.rs` | `build_test_zone_image()`, `build_minimal_test_zone_image()` |
 
 ---
 

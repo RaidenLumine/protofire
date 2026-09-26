@@ -3,7 +3,7 @@
 //! Network fuzzing — exercises the local socket infrastructure
 //! with edge-case inputs to verify graceful error handling.
 
-use protofire::kernel::network::local;
+use protofire::network::local;
 
 #[test]
 fn local_socket_bind_twice_fails() {

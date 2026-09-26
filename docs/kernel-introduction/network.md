@@ -3,7 +3,7 @@
 ## Layered Architecture
 
 The network stack is organised in the traditional TCP/IP layering model,
-implemented in `src/kernel/network/`:
+implemented in `src/network/`:
 
 ```
  Application    TLS 1.3, DNS, DHCP, NTP, mDNS, HTTP (user space)
@@ -19,7 +19,7 @@ implemented in `src/kernel/network/`:
 | Transport| `tcp/`, `udp`, `raw`                    | TCP state machine, UDP datagrams      |
 | Application| `dns/`, `dhcp`, `ntp`, `mdns`, `tls/` | DNS resolver, DHCP client, TLS 1.3  |
 
-The global demultiplexer lives in `stack::NetworkStack` (`src/kernel/network/stack/`),
+The global demultiplexer lives in `stack::NetworkStack` (`src/network/stack/`),
 which owns the TCP connection table, UDP socket table, raw socket table, ARP
 cache, NDP cache, and profiler.  `NetworkStack::init_with_device(dev, ip)`
 installs a singleton that `poll()` dispatches incoming frames to the correct
@@ -30,7 +30,7 @@ protocol handler.
 The kernel supports two networking backends, selected at compile time:
 
 - **Native** (`target_os = "none"`, bare-metal): the kernel's own TCP/IP stack
-  implemented in approximately 58 source files under `src/kernel/network/`.
+  implemented in approximately 58 source files under `src/network/`.
   Provides the full set of protocol layers including TCP congestion control
   (`tcp/congestion.rs`), ECN (`tcp/ecn.rs`), SACK, and window scaling.
 
@@ -47,7 +47,7 @@ a `net_abi::NetworkStatus` with capability flags (e.g.,
 space can inspect this through the `network_status()` syscall to decide which
 API surface is available.
 
-## TCP (`src/kernel/network/tcp/`)
+## TCP (`src/network/tcp/`)
 
 The TCP implementation (RFC 793) includes a full 11-state state machine:
 
@@ -106,7 +106,7 @@ the window shrinks to zero, applying backpressure to the peer.
 TIME-WAIT lasts `TIME_WAIT_TICKS = 6000` (60 seconds at 100 Hz), after which
 the connection transitions to `Closed` and is removed from the table.
 
-## UDP (`src/kernel/network/udp.rs`)
+## UDP (`src/network/udp.rs`)
 
 UDP is connectionless.  The `UdpSocketTable` (`udp::UdpSocketTable`) is a
 `BTreeMap<u16, UdpSocket>` keyed by local port.  Each `UdpSocket` has a
@@ -133,7 +133,7 @@ The implementation intentionally releases the UDP table lock before calling
 (which may `poll()` and need to lock the UDP table for incoming datagram
 delivery).
 
-## Local Sockets (`src/kernel/network/local.rs`)
+## Local Sockets (`src/network/local.rs`)
 
 Local sockets provide Unix-domain-style IPC between processes on the same
 machine.  The global registry `LOCAL_SOCKETS: Mutex<BTreeMap<String, Arc<LocalSocket>>>`
@@ -153,7 +153,7 @@ method returns `true` when the pending queue is non-empty.
 The `LocalSocket` type is re-exported from `mod.rs` as `pub use local::LocalSocket`
 and is available as a `KernelObject` variant in the process fd table.
 
-## TLS 1.3 (`src/kernel/network/tls/`)
+## TLS 1.3 (`src/network/tls/`)
 
 The TLS 1.3 client implementation is split into three sub-modules:
 
@@ -192,7 +192,7 @@ let mut buf = [0u8; 4096];
 let n = tls.read(&mut buf, 500)?;
 ```
 
-## DNS Resolution (`src/kernel/network/dns/`)
+## DNS Resolution (`src/network/dns/`)
 
 Sub-module layout:
 

@@ -12,8 +12,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::FileSystem;
-use crate::kernel::memory::paging::PagePermissions;
+use crate::fs::FileSystem;
 use crate::kernel::process::LaunchContext;
 use crate::kernel::process::Process;
 use crate::kernel::process::ProcessAddressSpaceSummary;
@@ -21,6 +20,7 @@ use crate::kernel::process::ProcessUserAddressSpace;
 use crate::kernel::process::Thread;
 use crate::kernel::process::UserAddressSpaceSummary;
 use crate::kernel::process::UserThreadStart;
+use crate::memory::paging::PagePermissions;
 use crate::Error;
 use crate::Result;
 
@@ -568,8 +568,8 @@ pub(crate) fn load_filesystem_image(
     cwd: &str,
     path: &str,
 ) -> Result<(LoadedProgramDescriptor, Vec<u8>)> {
-    let normalized_cwd = crate::kernel::fs::path::normalize_path(cwd, "/")?;
-    let normalized_path = crate::kernel::fs::path::normalize_path(path, &normalized_cwd)?;
+    let normalized_cwd = crate::fs::path::normalize_path(cwd, "/")?;
+    let normalized_path = crate::fs::path::normalize_path(path, &normalized_cwd)?;
     let descriptor =
         LoadedProgramDescriptor::from_direct_filesystem_load(normalized_path, normalized_cwd);
     let image = read_program_image(fs, &descriptor.working_dir, &descriptor.path)?;

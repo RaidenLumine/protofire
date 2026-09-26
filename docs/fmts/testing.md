@@ -116,8 +116,8 @@ mod support;
 
 use std::sync::Arc;
 
-use protofire::kernel::fs::block::BlockDevice;
-use protofire::kernel::fs::simplefs::SimpleFs;
+use protofire::fs::block::BlockDevice;
+use protofire::fs::simplefs::SimpleFs;
 use protofire::Error;
 use protofire::Result;
 ```
@@ -145,7 +145,7 @@ When host tests need builder functions from inside `src/`, add them to a
 pub(crate) mod test_support;
 ```
 
-`src/kernel/fs/test_support.rs` and `src/kernel/syscall/test_support.rs` follow
+`src/fs/test_support.rs` and `src/syscall/test_support.rs` follow
 this shape. The `demo-disk` arm matters because the integration tests are built
 with `--features demo-disk` and need the same helpers a unit test does.
 

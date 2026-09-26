@@ -7,8 +7,8 @@
 //! `syscall::dispatch()` so that shared shared command code can call syscalls
 //! without knowing whether it runs in ring0 or ring3.
 
-use crate::kernel::syscall;
-use crate::kernel::syscall::SyscallContext;
+use crate::syscall;
+use crate::syscall::SyscallContext;
 
 /// Convert a `Result<usize, Error>` from `syscall::dispatch` into an `isize`
 /// compatible with the shared syscall ABI (negative = error).

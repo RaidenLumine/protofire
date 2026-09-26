@@ -4,7 +4,7 @@
 
 The memory subsystem manages physical frames, virtual address
 spaces, kernel heap allocation, and page-table operations.  It is organised
-under `src/kernel/memory/` into the following layers, from bottom to top:
+under `src/memory/` into the following layers, from bottom to top:
 
 1. **Physical memory detection and frame allocation** — discovering available RAM
    and handing out 4 KiB frames.
@@ -37,7 +37,7 @@ Early in boot the architecture-specific binary crate parses the bootloader's
 memory map and records the total physical RAM in a global atomic:
 
 ```rust
-// src/kernel/memory/arch.rs
+// src/memory/arch.rs
 static DETECTED_PHYSICAL_MEMORY: AtomicU64 = AtomicU64::new(0);
 ```
 
@@ -59,7 +59,7 @@ The bootloader sources are:
 
 ## 2. Frame Allocator
 
-Defined in `src/kernel/memory/frame.rs`.
+Defined in `src/memory/frame.rs`.
 
 ```rust
 pub struct FrameAllocator {
@@ -129,7 +129,7 @@ the reclaimed region.
 Through `MemoryManager`:
 
 ```rust
-// src/kernel/memory/manager/init.rs
+// src/memory/manager/init.rs
 pub fn allocate_frames(&mut self, count: usize) -> Option<*mut u8>
 pub fn deallocate_frames(&mut self, ptr: *mut u8, count: usize) -> bool
 ```
@@ -138,7 +138,7 @@ pub fn deallocate_frames(&mut self, ptr: *mut u8, count: usize) -> bool
 
 ## 3. Virtual Memory and Paging
 
-Defined in `src/kernel/memory/paging.rs`.
+Defined in `src/memory/paging.rs`.
 
 ### Page Table Model
 
@@ -172,7 +172,7 @@ by splitting the existing mapping into prefix and suffix fragments.
 ### MappingKind
 
 ```rust
-// src/kernel/memory/paging.rs, line 12
+// src/memory/paging.rs, line 12
 pub enum MappingKind {
     KernelHeap,   // kernel heap region
     Anonymous,    // ordinary anonymous memory
@@ -208,7 +208,7 @@ pub const PAGE_SIZE: usize = 4096;  // paging.rs, line 9
 
 ## 4. Memory Manager
 
-Located in `src/kernel/memory/manager/mod.rs`, the `MemoryManager` is the
+Located in `src/memory/manager/mod.rs`, the `MemoryManager` is the
 central coordinator:
 
 ```rust
@@ -253,7 +253,7 @@ binary crate boot
 ### Global Singleton
 
 ```rust
-// src/kernel/memory/global.rs
+// src/memory/global.rs
 pub(crate) static GLOBAL_MEMORY_MANAGER: AtomicPtr<MemoryManager> = ...;
 ```
 
@@ -330,7 +330,7 @@ associated swap slots.
 ## 5. Kernel Heap
 
 The kernel heap is a **TLSF (Two-Level Segregated Fit)** allocator, defined
-across `src/kernel/memory/heap/`.
+across `src/memory/heap/`.
 
 ```
 heap/
@@ -437,7 +437,7 @@ interrupt state on drop.
 
 ## 6. Architecture Dispatch
 
-`src/kernel/memory/arch.rs` provides thin wrappers around platform MMU
+`src/memory/arch.rs` provides thin wrappers around platform MMU
 primitives.  They are forwarders: the per-architecture answers — including
 "this target has none" — live in `src/arch/mmu.rs`, so this file names no
 architecture at all.
@@ -549,7 +549,7 @@ Reclaimed pages can be:
 - Written to a **swap device** via `SwapArea` — the VA-to-slot mapping is kept
   in `swap_map` (`BTreeMap<usize, u64>`).
 
-### Swap Area (`src/kernel/memory/swap.rs`)
+### Swap Area (`src/memory/swap.rs`)
 
 The `SwapArea` struct wraps an `Arc<dyn BlockDevice>` and manages page slots
 in contiguous block ranges:
@@ -598,24 +598,24 @@ discovered, the kernel falls back to in-memory `page_content` storage
 
 | Component | File |
 |-----------|------|
-| Memory detection | `src/kernel/memory/arch.rs` (lines 12-34, 123-130) |
-| Frame allocator | `src/kernel/memory/frame.rs` |
-| NUMA-aware allocators | `src/kernel/memory/frame.rs` (`MAX_NODES`, `set_node_range()`) |
+| Memory detection | `src/memory/arch.rs` (lines 12-34, 123-130) |
+| Frame allocator | `src/memory/frame.rs` |
+| NUMA-aware allocators | `src/memory/frame.rs` (`MAX_NODES`, `set_node_range()`) |
 | NUMA topology | `src/kernel/topology.rs` |
-| Page table / paging | `src/kernel/memory/paging.rs` |
-| `MemoryManager` struct | `src/kernel/memory/manager/mod.rs` |
-| `MemoryManager::init` | `src/kernel/memory/manager/init.rs` |
-| Mapping operations | `src/kernel/memory/manager/mapping.rs` |
-| Global singleton | `src/kernel/memory/global.rs` |
-| TLSF allocator | `src/kernel/memory/heap/tlsf.rs` |
-| `KernelGlobalAllocator` | `src/kernel/memory/heap/allocator.rs` |
-| `#[global_allocator]` wiring | `src/kernel/memory/heap/wrapper.rs` |
-| Arch MMU dispatch | `src/kernel/memory/arch.rs` |
-| Page-fault handling | `src/kernel/memory/manager/pfault.rs` |
-| Swap / page reclamation | `src/kernel/memory/manager/swap.rs`, `src/kernel/memory/swap.rs` |
-| Swap boot probe | `src/kernel/memory/swap.rs` (`SWAP_MAGIC`, `probe_device()`) |
+| Page table / paging | `src/memory/paging.rs` |
+| `MemoryManager` struct | `src/memory/manager/mod.rs` |
+| `MemoryManager::init` | `src/memory/manager/init.rs` |
+| Mapping operations | `src/memory/manager/mapping.rs` |
+| Global singleton | `src/memory/global.rs` |
+| TLSF allocator | `src/memory/heap/tlsf.rs` |
+| `KernelGlobalAllocator` | `src/memory/heap/allocator.rs` |
+| `#[global_allocator]` wiring | `src/memory/heap/wrapper.rs` |
+| Arch MMU dispatch | `src/memory/arch.rs` |
+| Page-fault handling | `src/memory/manager/pfault.rs` |
+| Swap / page reclamation | `src/memory/manager/swap.rs`, `src/memory/swap.rs` |
+| Swap boot probe | `src/memory/swap.rs` (`SWAP_MAGIC`, `probe_device()`) |
 | Swap boot integration | `src/kernel/mod.rs` (`maybe_init_swap()`) |
-| Allocator profiling | `src/kernel/memory/alloc_profiler.rs` |
+| Allocator profiling | `src/memory/alloc_profiler.rs` |
 
 ---
 

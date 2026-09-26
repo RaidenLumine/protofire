@@ -338,7 +338,7 @@ check-smp-runtime:
 # Kernel build targets.  Ring3 ELF payload wrappers are built in-kernel
 # (src/user/demo/); where the demo volume still needs a ring3 binary that no
 # longer exists, a small placeholder ELF is provided inline in
-# src/kernel/fs/demo.rs so the kernel builds independently.
+# src/fs/demo.rs so the kernel builds independently.
 build-x8664:
 	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target $(TARGET) --bin $(CRATE)
 

@@ -9,7 +9,7 @@
 //! (`BeforePostAction`); `ExecProcess` rewrites the user image, so the capture
 //! must be deferred until after the new image has been applied.
 
-use crate::kernel::syscall::SyscallAction;
+use crate::syscall::SyscallAction;
 use crate::Error;
 use crate::Result;
 
@@ -79,7 +79,7 @@ mod tests {
     use super::ExecProcessApplyResolution;
     use super::ReturnFromExceptionResolution;
     use super::UserContextCapturePoint;
-    use crate::kernel::syscall::SyscallAction;
+    use crate::syscall::SyscallAction;
     use crate::Error;
 
     #[test]

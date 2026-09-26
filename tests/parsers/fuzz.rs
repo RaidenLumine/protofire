@@ -12,10 +12,10 @@
 //! tier-3 work: the ELF loader chain, the LUKS2 metadata scanners, the
 //! network packet parsers, and the filesystem image-open paths.
 
-use protofire::kernel::fs::block::MemoryBlockDevice;
-use protofire::kernel::network::internet::ip::IpAddress;
-use protofire::kernel::network::tls::record::CipherSuite;
-use protofire::kernel::network::tls::record::TrafficKeys;
+use protofire::fs::block::MemoryBlockDevice;
+use protofire::network::internet::ip::IpAddress;
+use protofire::network::tls::record::CipherSuite;
+use protofire::network::tls::record::TrafficKeys;
 use protofire::user::elf::parse_elf64;
 use protofire::user::program::plan_user_image_load;
 
@@ -169,10 +169,10 @@ fn fuzz_elf_loader_structure_aware_mutations() {
 
 #[test]
 fn fuzz_luks2_scanners() {
-    use protofire::kernel::fs::luks2::base64_decode;
-    use protofire::kernel::fs::luks2::json_find_object;
-    use protofire::kernel::fs::luks2::json_find_string;
-    use protofire::kernel::fs::luks2::parse_decimal;
+    use protofire::fs::luks2::base64_decode;
+    use protofire::fs::luks2::json_find_object;
+    use protofire::fs::luks2::json_find_string;
+    use protofire::fs::luks2::parse_decimal;
 
     let keys: &[&str] = &[
         "config",
@@ -211,7 +211,7 @@ fn fuzz_luks2_scanners() {
 /// header + JSON metadata + keyslot base64 decode).
 #[test]
 fn fuzz_luks2_open() {
-    use protofire::kernel::fs::luks2::luks2_open;
+    use protofire::fs::luks2::luks2_open;
 
     let mut rng = Lcg::new(0xF0F0_2021);
     for _ in 0..400 {
@@ -230,8 +230,8 @@ fn fuzz_luks2_open() {
 /// fields drive the multi-sector read and the metadata scanners directly.
 #[test]
 fn fuzz_luks2_open_structure_aware() {
-    use protofire::kernel::fs::block::BLOCK_SIZE;
-    use protofire::kernel::fs::luks2::luks2_open;
+    use protofire::fs::block::BLOCK_SIZE;
+    use protofire::fs::luks2::luks2_open;
 
     const IMAGE_LEN: usize = 1024 * 1024;
 
@@ -278,27 +278,27 @@ where
 
 #[test]
 fn fuzz_network_parsers() {
-    use protofire::kernel::network::dhcp::parse_dhcp_reply;
-    use protofire::kernel::network::dns::parse_a_record;
-    use protofire::kernel::network::dns::parse_aaaa_record;
-    use protofire::kernel::network::dns::parse_ptr_record;
-    use protofire::kernel::network::internet::icmpv6::parse_icmpv6_error_info;
-    use protofire::kernel::network::internet::icmpv6::parse_icmpv6_header;
-    use protofire::kernel::network::internet::igmp::parse_igmp_message;
-    use protofire::kernel::network::internet::ipv4::parse_ipv4_header;
-    use protofire::kernel::network::internet::ipv4::parse_packet as parse_ipv4_packet;
-    use protofire::kernel::network::internet::ipv6::parse_fragment_header;
-    use protofire::kernel::network::internet::ipv6::parse_packet as parse_ipv6_packet;
-    use protofire::kernel::network::ppp::parse_lcp_options;
-    use protofire::kernel::network::ppp::parse_lcp_packet;
-    use protofire::kernel::network::pppoe::parse_tags;
-    use protofire::kernel::network::sctp::chunk::parse_init_params;
-    use protofire::kernel::network::sctp::parse_common_header;
-    use protofire::kernel::network::sctp::parse_sctp_packet;
-    use protofire::kernel::network::tcp::parse_tcp_header;
-    use protofire::kernel::network::tls::certificate::parse_x509_certificate;
-    use protofire::kernel::network::tls::handshake::parse_plaintext_tls_record;
-    use protofire::kernel::network::udp::parse_datagram;
+    use protofire::network::dhcp::parse_dhcp_reply;
+    use protofire::network::dns::parse_a_record;
+    use protofire::network::dns::parse_aaaa_record;
+    use protofire::network::dns::parse_ptr_record;
+    use protofire::network::internet::icmpv6::parse_icmpv6_error_info;
+    use protofire::network::internet::icmpv6::parse_icmpv6_header;
+    use protofire::network::internet::igmp::parse_igmp_message;
+    use protofire::network::internet::ipv4::parse_ipv4_header;
+    use protofire::network::internet::ipv4::parse_packet as parse_ipv4_packet;
+    use protofire::network::internet::ipv6::parse_fragment_header;
+    use protofire::network::internet::ipv6::parse_packet as parse_ipv6_packet;
+    use protofire::network::ppp::parse_lcp_options;
+    use protofire::network::ppp::parse_lcp_packet;
+    use protofire::network::pppoe::parse_tags;
+    use protofire::network::sctp::chunk::parse_init_params;
+    use protofire::network::sctp::parse_common_header;
+    use protofire::network::sctp::parse_sctp_packet;
+    use protofire::network::tcp::parse_tcp_header;
+    use protofire::network::tls::certificate::parse_x509_certificate;
+    use protofire::network::tls::handshake::parse_plaintext_tls_record;
+    use protofire::network::udp::parse_datagram;
 
     // Result-returning parsers (some with checksums that reject most random
     // input — the property under test is "never panic", not "parse").
@@ -397,19 +397,19 @@ fn fuzz_network_parsers() {
             [0u8; 12],
             CipherSuite::Aes128GcmSha256,
         );
-        let _ = protofire::kernel::network::tls::record::parse_tls_record(&mut keys, b);
+        let _ = protofire::network::tls::record::parse_tls_record(&mut keys, b);
     });
 
     // DCCP segment (needs source/destination addresses).
     let src = IpAddress::V4([10, 0, 0, 1]);
     let dst = IpAddress::V4([10, 0, 0, 2]);
     fuzz_byte_parser(0xF0F0_3048, 1500, 512, |b| {
-        let _ = protofire::kernel::network::dccp::parse_segment(b, src, dst);
+        let _ = protofire::network::dccp::parse_segment(b, src, dst);
     });
 
     // DCCP options.
     fuzz_byte_parser(0xF0F0_3049, 1500, 256, |b| {
-        let _ = protofire::kernel::network::dccp::options::parse_options(b);
+        let _ = protofire::network::dccp::options::parse_options(b);
     });
 
     // DHCP reply (magic-cookie checked, so mostly `None` on random input).
@@ -424,7 +424,7 @@ fn fuzz_network_parsers() {
 /// out-of-bounds panic fixed alongside this harness.
 #[test]
 fn fuzz_dhcp_options_structure_aware() {
-    use protofire::kernel::network::dhcp::parse_dhcp_reply;
+    use protofire::network::dhcp::parse_dhcp_reply;
 
     let mut rng = Lcg::new(0xF0F0_304B);
     for _ in 0..6000 {
@@ -442,11 +442,11 @@ fn fuzz_dhcp_options_structure_aware() {
 
 #[test]
 fn fuzz_fs_volume_opens() {
-    use protofire::kernel::fs::btrfs::BtrfsVolume;
-    use protofire::kernel::fs::erofs::EroFsVolume;
-    use protofire::kernel::fs::iso9660::Iso9660Volume;
-    use protofire::kernel::fs::ntfs::NtfsFs;
-    use protofire::kernel::fs::squashfs::SquashfsVolume;
+    use protofire::fs::btrfs::BtrfsVolume;
+    use protofire::fs::erofs::EroFsVolume;
+    use protofire::fs::iso9660::Iso9660Volume;
+    use protofire::fs::ntfs::NtfsFs;
+    use protofire::fs::squashfs::SquashfsVolume;
 
     let mut rng = Lcg::new(0xF0F0_4050);
     for _ in 0..400 {

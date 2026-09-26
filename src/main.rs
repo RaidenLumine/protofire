@@ -197,7 +197,7 @@ fn write_demo_disk_image(path: &Path) -> Result<(), Box<dyn std::error::Error>> 
         fs::create_dir_all(parent)?;
     }
 
-    let image = protofire::kernel::fs::build_demo_disk_image();
+    let image = protofire::fs::build_demo_disk_image();
     fs::write(path, &image)?;
     println!("wrote {} bytes to {}", image.len(), path.display());
     Ok(())

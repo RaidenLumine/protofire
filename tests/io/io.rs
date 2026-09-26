@@ -5,14 +5,14 @@
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
+use protofire::drivers::keyboard;
+use protofire::drivers::serial;
+use protofire::fs::FileSystem;
+use protofire::fs::OPEN_ALWAYS;
+use protofire::fs::SEEK_SET;
+use protofire::fs::{self};
 use protofire::kernel::console;
 use protofire::kernel::device;
-use protofire::kernel::drivers::keyboard;
-use protofire::kernel::drivers::serial;
-use protofire::kernel::fs::FileSystem;
-use protofire::kernel::fs::OPEN_ALWAYS;
-use protofire::kernel::fs::SEEK_SET;
-use protofire::kernel::fs::{self};
 use protofire::kernel::io;
 use protofire::kernel::process::KernelObject;
 use protofire::kernel::process::Process;
@@ -26,7 +26,7 @@ use protofire::kernel::process::STDIN_FD;
 use protofire::kernel::process::STDOUT_FD;
 use protofire::kernel::process::ZERO_DEVICE_NAME;
 use protofire::kernel::sync::Mutex as KernelMutex;
-use protofire::kernel::syscall::Table;
+use protofire::syscall::Table;
 use protofire::user::syscall::UserSyscall;
 use protofire::Error;
 

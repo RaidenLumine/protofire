@@ -9,11 +9,11 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
+use crate::fs::FileHandle as FsFileHandle;
 use crate::kernel::device;
-use crate::kernel::fs::FileHandle as FsFileHandle;
-use crate::kernel::network::tls::TlsWrappedConnection;
-use crate::kernel::network::DccpSocket;
-use crate::kernel::network::TcpConnection;
+use crate::network::tls::TlsWrappedConnection;
+use crate::network::DccpSocket;
+use crate::network::TcpConnection;
 use crate::Error;
 use crate::Result;
 

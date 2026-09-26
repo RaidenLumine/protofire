@@ -125,7 +125,7 @@ pub fn dispatch_lumina_command(
     cwd: &str,
     argv: &[alloc::string::String],
 ) -> (i32, alloc::string::String) {
-    use crate::kernel::fs;
+    use crate::fs;
     let Some(global_fs) = fs::global() else {
         return (
             -1,

@@ -420,7 +420,7 @@ The calling thread blocks on the process's `signal_queue` WaitQueue until
 a signal arrives or the timeout elapses. The `ThreadWaitOutcome` is set to
 `Completed` (signal received) or `TimedOut`.
 
-### sigsuspend (`src/kernel/syscall/process/sigsuspend.rs`)
+### sigsuspend (`src/syscall/process/sigsuspend.rs`)
 
 The `sigsuspend` syscall (#135) provides the POSIX `sigsuspend()` semantic:
 atomically replace the process signal mask with a caller-provided mask,

@@ -5,10 +5,10 @@
 
 use alloc::sync::Arc;
 
-use crate::kernel::network::LocalSocket;
-use crate::kernel::network::TcpListener;
-use crate::kernel::network::UdpSocket;
 use crate::kernel::process::RawSocketHandle;
+use crate::network::LocalSocket;
+use crate::network::TcpListener;
+use crate::network::UdpSocket;
 use crate::Error;
 use crate::Result;
 

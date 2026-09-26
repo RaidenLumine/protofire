@@ -29,8 +29,8 @@ use core::sync::atomic::Ordering;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use crate::kernel::memory::paging::PagePermissions;
 use crate::kernel::process::UserThreadStart;
+use crate::memory::paging::PagePermissions;
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
 mod asid;

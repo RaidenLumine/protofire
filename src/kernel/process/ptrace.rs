@@ -221,14 +221,14 @@ pub fn ptrace_peek_data(
 
     // Use the user memory access helper with the tracee's address space.
     // We need to validate the mapping in the tracee's page table.
-    use crate::kernel::syscall::user_memory;
+    use crate::syscall::user_memory;
 
     let len = data_out.len();
     user_memory::validate_user_mapping(
         &target,
         addr,
         len,
-        crate::kernel::memory::paging::PagePermissions::READ,
+        crate::memory::paging::PagePermissions::READ,
     )?;
 
     // Read from the tracee's address space using raw pointer access.
@@ -249,15 +249,15 @@ pub fn ptrace_poke_data(
     let target = find_process(target_pid)?;
     verify_tracer(tracer, &target)?;
 
-    use crate::kernel::syscall::user_memory;
+    use crate::syscall::user_memory;
 
     let len = data.len();
     user_memory::validate_user_mapping(
         &target,
         addr,
         len,
-        crate::kernel::memory::paging::PagePermissions::READ
-            | crate::kernel::memory::paging::PagePermissions::WRITE,
+        crate::memory::paging::PagePermissions::READ
+            | crate::memory::paging::PagePermissions::WRITE,
     )?;
 
     unsafe {

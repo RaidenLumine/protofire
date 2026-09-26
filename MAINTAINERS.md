@@ -23,7 +23,7 @@ process.
 
 ### Memory Management
 
-*   **File paths**: `src/kernel/memory/`, `src/arch/*/paging` and `src/arch/*/mmu`
+*   **File paths**: `src/memory/`, `src/arch/*/paging` and `src/arch/*/mmu`
 *   Raiden Lumine (<2557597107@qq.com>) - Owns: page tables, TLSF heap allocator, physical/virtual memory, NUMA.
 
 ### Process & Scheduler
@@ -33,22 +33,22 @@ process.
 
 ### File System
 
-*   **File paths**: `src/kernel/fs/`
+*   **File paths**: `src/fs/`
 *   Raiden Lumine (<2557597107@qq.com>) - Owns: the VFS layer, SimpleFs, external filesystems (FAT32, Ext4, XFS, ...), block device interfaces.
 
 ### Device Drivers
 
-*   **File paths**: `src/kernel/drivers/`, `src/arch/*/`
+*   **File paths**: `src/drivers/`, `src/arch/*/`
 *   Raiden Lumine (<2557597107@qq.com>) - Owns: UART, keyboard, display, storage (AHCI/NVMe/VirtIO) and other driver frameworks.
 
 ### Networking
 
-*   **File paths**: `src/kernel/network/`
+*   **File paths**: `src/network/`
 *   Raiden Lumine (<2557597107@qq.com>) - Owns: the network protocol stack, NIC drivers.
 
 ### Syscall ABI & Shared User Runtime
 
-*   **File paths**: `src/abi/`, `src/kernel/syscall/`, `src/user/shared/`
+*   **File paths**: `src/abi/`, `src/syscall/`, `src/user/shared/`
 *   Raiden Lumine (<2557597107@qq.com>) - Owns: the syscall ABI (append-only numbering), kernel dispatch and user wrappers, the shared shell runtime.
 
 ## Documentation & Community

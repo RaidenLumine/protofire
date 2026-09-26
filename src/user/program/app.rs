@@ -16,8 +16,8 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::FileSystem;
-use crate::kernel::fs::NodeKind;
+use crate::fs::FileSystem;
+use crate::fs::NodeKind;
 use crate::Error;
 use crate::Result;
 

@@ -13,7 +13,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::FileSystem;
+use crate::fs::FileSystem;
 use crate::Error;
 use crate::Result;
 

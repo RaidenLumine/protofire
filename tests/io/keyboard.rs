@@ -6,10 +6,10 @@
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-use protofire::kernel::drivers::keyboard::KeyCode;
-use protofire::kernel::drivers::keyboard::KeyEvent;
-use protofire::kernel::drivers::keyboard::KeyModifiers;
-use protofire::kernel::drivers::keyboard::{self};
+use protofire::drivers::keyboard::KeyCode;
+use protofire::drivers::keyboard::KeyEvent;
+use protofire::drivers::keyboard::KeyModifiers;
+use protofire::drivers::keyboard::{self};
 use protofire::kernel::process::Scheduler;
 use protofire::kernel::process::ThreadWaitOutcome;
 

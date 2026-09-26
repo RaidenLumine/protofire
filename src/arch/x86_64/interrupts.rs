@@ -9,9 +9,9 @@ use core::sync::atomic::Ordering;
 
 use super::port::Port;
 use crate::arch::interrupt_controller;
-use crate::kernel::drivers::keyboard;
+use crate::drivers::keyboard;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use crate::kernel::drivers::nvme;
+use crate::drivers::nvme;
 use crate::kernel::process;
 
 // IRQ vector assignments.  When the APIC is active these are routed

@@ -10,7 +10,7 @@ use crate::kernel::block::BlockDevice;
 #[cfg(target_os = "none")]
 use crate::kernel::block::DeviceHealth;
 #[cfg(target_os = "none")]
-use crate::kernel::memory::DmaBuffer;
+use crate::memory::DmaBuffer;
 #[cfg(any(test, target_os = "none"))]
 use crate::Error;
 use crate::Result;
@@ -26,8 +26,8 @@ use alloc::string::String;
 #[cfg(target_os = "none")]
 use alloc::string::ToString;
 
-use crate::kernel::drivers::Driver;
-use crate::kernel::drivers::DriverCategory;
+use crate::drivers::Driver;
+use crate::drivers::DriverCategory;
 
 #[cfg(target_os = "none")]
 use crate::arch::x86_64::port::Port;

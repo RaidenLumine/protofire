@@ -7,7 +7,7 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use super::*;
-use crate::kernel::memory::paging::PagePermissions;
+use crate::memory::paging::PagePermissions;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 

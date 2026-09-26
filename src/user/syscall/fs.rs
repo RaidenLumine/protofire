@@ -2,8 +2,8 @@
 //!
 //! User-side filesystem syscall helpers built on top of `UserSyscall`.
 
-use crate::kernel::syscall::SyscallContext;
-use crate::kernel::syscall::SyscallNumber;
+use crate::syscall::SyscallContext;
+use crate::syscall::SyscallNumber;
 
 impl super::UserSyscall {
     // ── Filesystem syscalls ─────────────────────────────────────────

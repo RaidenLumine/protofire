@@ -11,11 +11,11 @@ use crate::abi::syscall as syscall_abi;
 use crate::arch::interrupt_controller::InterruptController;
 use crate::kernel::process::thread::RiscV64UserThreadContext;
 use crate::kernel::process::TerminationReason;
-use crate::kernel::syscall::table::user_memory;
-use crate::kernel::syscall::SyscallAction;
-use crate::kernel::syscall::SyscallContext;
-use crate::kernel::syscall::{self};
 use crate::println;
+use crate::syscall::table::user_memory;
+use crate::syscall::SyscallAction;
+use crate::syscall::SyscallContext;
+use crate::syscall::{self};
 
 /// Harts the trap-stub table in `trap.S` can name.
 ///
@@ -243,7 +243,7 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
     }
 
     // ── Page fault recovery (demand-paging / CoW) ──
-    if let Some(mut memory) = crate::kernel::memory::global_mut() {
+    if let Some(mut memory) = crate::memory::global_mut() {
         match code {
             EXCEPTION_INSTRUCTION_PAGE_FAULT
             | EXCEPTION_LOAD_PAGE_FAULT
@@ -270,7 +270,7 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
     }
 
     // ── fault profiler: unhandled trap fatal ──
-    if let Some(memory) = crate::kernel::memory::global_mut() {
+    if let Some(memory) = crate::memory::global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
     }
 
@@ -314,7 +314,7 @@ fn validate_user_frame_or_terminate(frame: &TrapFrame, entered_from_user: bool, 
     }
 
     if let Some(thread) = current_thread {
-        if let Some(memory) = crate::kernel::memory::global_mut() {
+        if let Some(memory) = crate::memory::global_mut() {
             memory.fault_profiler.inc_faults_terminated();
         }
         push_fault_record_from_trap(frame);
@@ -334,7 +334,7 @@ fn validate_user_frame_or_terminate(frame: &TrapFrame, entered_from_user: bool, 
         ));
     }
 
-    if let Some(memory) = crate::kernel::memory::global_mut() {
+    if let Some(memory) = crate::memory::global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
     }
 
@@ -579,7 +579,7 @@ fn advance_past_idle_wfi(frame: &mut TrapFrame) {
 fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
     use crate::kernel::process::Process;
     use crate::kernel::process::Scheduler;
-    use crate::kernel::syscall::table::user_memory;
+    use crate::syscall::table::user_memory;
 
     const RISCV64_SIGNAL_FRAME_SIZE: u64 = 32; // 4 × u64
 
@@ -640,7 +640,7 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
         process,
         signal_frame_base as usize,
         total_len,
-        crate::kernel::memory::paging::PagePermissions::WRITE,
+        crate::memory::paging::PagePermissions::WRITE,
     )
     .is_ok();
 

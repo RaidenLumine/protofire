@@ -5,15 +5,15 @@
 
 use std::sync::Arc;
 
-use protofire::kernel::fs::block::BlockDevice;
-use protofire::kernel::fs::block::MemoryBlockDevice;
-use protofire::kernel::fs::block::BLOCK_SIZE;
-use protofire::kernel::fs::simplefs::ImageEntry;
-use protofire::kernel::fs::simplefs::SimpleFs;
-use protofire::kernel::fs::simplefs::SimpleFsVolume;
-use protofire::kernel::fs::vfs::StaticFileSystem;
-use protofire::kernel::fs::FileSystem;
-use protofire::kernel::fs::NodeKind;
+use protofire::fs::block::BlockDevice;
+use protofire::fs::block::MemoryBlockDevice;
+use protofire::fs::block::BLOCK_SIZE;
+use protofire::fs::simplefs::ImageEntry;
+use protofire::fs::simplefs::SimpleFs;
+use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::vfs::StaticFileSystem;
+use protofire::fs::FileSystem;
+use protofire::fs::NodeKind;
 use protofire::Error;
 
 const INODE_SIZE: usize = 32;

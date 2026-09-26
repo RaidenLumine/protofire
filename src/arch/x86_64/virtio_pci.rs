@@ -15,7 +15,7 @@
 use crate::arch::x86_64::port::Port;
 
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::MmioRegion;
+use crate::drivers::virtio::MmioRegion;
 
 // ─── Re-exported MMIO register offsets (MUST match virtio.rs) ──────────
 // We redeclare these as match-arm patterns require numeric literals.
@@ -23,47 +23,47 @@ use crate::kernel::drivers::virtio::MmioRegion;
 // assertions below.
 
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_CONFIG_GENERATION;
+use crate::drivers::virtio::REG_CONFIG_GENERATION;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_DEVICE_FEATURES;
+use crate::drivers::virtio::REG_DEVICE_FEATURES;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_DEVICE_FEATURES_SEL;
+use crate::drivers::virtio::REG_DEVICE_FEATURES_SEL;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_DEVICE_ID;
+use crate::drivers::virtio::REG_DEVICE_ID;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_DRIVER_FEATURES;
+use crate::drivers::virtio::REG_DRIVER_FEATURES;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_DRIVER_FEATURES_SEL;
+use crate::drivers::virtio::REG_DRIVER_FEATURES_SEL;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_MAGIC_VALUE;
+use crate::drivers::virtio::REG_MAGIC_VALUE;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_DESC_HIGH;
+use crate::drivers::virtio::REG_QUEUE_DESC_HIGH;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_DESC_LOW;
+use crate::drivers::virtio::REG_QUEUE_DESC_LOW;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_DEVICE_HIGH;
+use crate::drivers::virtio::REG_QUEUE_DEVICE_HIGH;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_DEVICE_LOW;
+use crate::drivers::virtio::REG_QUEUE_DEVICE_LOW;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_DRIVER_HIGH;
+use crate::drivers::virtio::REG_QUEUE_DRIVER_HIGH;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_DRIVER_LOW;
+use crate::drivers::virtio::REG_QUEUE_DRIVER_LOW;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_NOTIFY;
+use crate::drivers::virtio::REG_QUEUE_NOTIFY;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_NUM;
+use crate::drivers::virtio::REG_QUEUE_NUM;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_NUM_MAX;
+use crate::drivers::virtio::REG_QUEUE_NUM_MAX;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_READY;
+use crate::drivers::virtio::REG_QUEUE_READY;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_QUEUE_SEL;
+use crate::drivers::virtio::REG_QUEUE_SEL;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_STATUS;
+use crate::drivers::virtio::REG_STATUS;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_VENDOR_ID;
+use crate::drivers::virtio::REG_VENDOR_ID;
 #[cfg(target_os = "none")]
-use crate::kernel::drivers::virtio::REG_VERSION;
+use crate::drivers::virtio::REG_VERSION;
 
 /// VirtIO magic value (little-endian "virt").
 #[allow(dead_code)]

@@ -4,15 +4,15 @@
 
 #[cfg(target_arch = "x86_64")]
 use protofire::arch::mmu::bootstrap_identity_mapping;
-use protofire::kernel::memory::paging::MappingKind;
-use protofire::kernel::memory::paging::PagePermissions;
-use protofire::kernel::memory::paging::PAGE_SIZE;
-use protofire::kernel::memory::AddressTranslation;
+use protofire::memory::paging::MappingKind;
+use protofire::memory::paging::PagePermissions;
+use protofire::memory::paging::PAGE_SIZE;
+use protofire::memory::AddressTranslation;
 #[cfg(target_arch = "x86_64")]
-use protofire::kernel::memory::BootstrapTranslation;
-use protofire::kernel::memory::MemoryManager;
-use protofire::kernel::memory::PlannedKernelRegion;
-use protofire::kernel::memory::PlannedKernelRegionKind;
+use protofire::memory::BootstrapTranslation;
+use protofire::memory::MemoryManager;
+use protofire::memory::PlannedKernelRegion;
+use protofire::memory::PlannedKernelRegionKind;
 
 fn align_up(value: usize) -> usize {
     (value + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)

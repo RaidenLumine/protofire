@@ -13,9 +13,9 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
 
-use crate::kernel::fs::layout::DEFAULT_USER_ROOT;
-use crate::kernel::fs::FileSystem;
-use crate::kernel::fs::OPEN_ALWAYS;
+use crate::fs::layout::DEFAULT_USER_ROOT;
+use crate::fs::FileSystem;
+use crate::fs::OPEN_ALWAYS;
 use crate::kernel::process::scheduler::api::idle_entry;
 use crate::kernel::process::thread::ThreadSchedPolicy;
 use crate::kernel::process::HandleEntry;

@@ -15,9 +15,9 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::path::has_drive_prefix;
-use crate::kernel::fs::FileSystem;
-use crate::kernel::fs::{self};
+use crate::fs::path::has_drive_prefix;
+use crate::fs::FileSystem;
+use crate::fs::{self};
 use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
@@ -60,7 +60,7 @@ pub(crate) fn load_installed_catalog_split_phase(
     launch_reference: &str,
     overrides: SpawnProcessOverrides,
 ) -> Result<LoadedProgram> {
-    let normalized_cwd = crate::kernel::fs::path::normalize_path(cwd, "/")?;
+    let normalized_cwd = crate::fs::path::normalize_path(cwd, "/")?;
     let allow_working_dir_override = overrides.working_dir.is_some();
 
     // ── Phase 1: resolve the launch reference and read the ELF image from
@@ -139,7 +139,7 @@ pub(crate) fn resolve_installed_catalog_reference(
         return resolve_installed_app_id_reference(fs, app_reference);
     }
 
-    crate::kernel::fs::path::normalize_path(trimmed, cwd)
+    crate::fs::path::normalize_path(trimmed, cwd)
 }
 
 pub(super) fn parse_installed_app_reference(reference: &str) -> Result<InstalledAppReference<'_>> {

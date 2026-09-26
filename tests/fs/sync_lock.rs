@@ -18,11 +18,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-use protofire::kernel::fs::vfs::DirectoryEntry;
-use protofire::kernel::fs::vfs::FileSystem as VfsTrait;
-use protofire::kernel::fs::vfs::NodeKind;
-use protofire::kernel::fs::vfs::VNode;
-use protofire::kernel::fs::FileSystem;
+use protofire::fs::vfs::DirectoryEntry;
+use protofire::fs::vfs::FileSystem as VfsTrait;
+use protofire::fs::vfs::NodeKind;
+use protofire::fs::vfs::VNode;
+use protofire::fs::FileSystem;
 use protofire::kernel::sync::Mutex as KernelMutex;
 use protofire::Error;
 use protofire::Result;
@@ -77,7 +77,7 @@ impl VNode for ProbeFile {
     }
 
     fn read(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
-        let lock_was_free = protofire::kernel::fs::global()
+        let lock_was_free = protofire::fs::global()
             .and_then(|fs| fs.try_lock())
             .is_some();
         {
@@ -99,7 +99,7 @@ impl FlushProbe {
     fn observe(&self, age_ticks: Option<u64>) {
         // `try_lock` is the whole point: if the caller were holding the global
         // filesystem lock across this flush, the attempt would fail.
-        let lock_was_free = protofire::kernel::fs::global()
+        let lock_was_free = protofire::fs::global()
             .and_then(|fs| fs.try_lock())
             .is_some();
 
@@ -183,7 +183,7 @@ impl ProbeTree {
         // Leaked deliberately: the global keeps the pointer for the life of the
         // test binary, so freeing it would leave the slot dangling.
         let fs = Box::leak(Box::new(KernelMutex::new(FileSystem::new())));
-        protofire::kernel::fs::install_global(fs);
+        protofire::fs::install_global(fs);
 
         {
             let mut guard = fs.lock();
@@ -209,7 +209,7 @@ impl ProbeTree {
 
 impl Drop for ProbeTree {
     fn drop(&mut self) {
-        protofire::kernel::fs::uninstall_global(self.fs);
+        protofire::fs::uninstall_global(self.fs);
     }
 }
 
@@ -247,7 +247,7 @@ fn sync_all_flushes_without_holding_the_filesystem_lock() {
     let _guard = test_lock();
     let tree = ProbeTree::mount();
 
-    protofire::kernel::fs::sync_global_all().expect("sync all");
+    protofire::fs::sync_global_all().expect("sync all");
 
     let observed = tree.observation();
     assert_eq!(
@@ -265,7 +265,7 @@ fn sync_data_flushes_without_holding_the_filesystem_lock() {
     let _guard = test_lock();
     let tree = ProbeTree::mount();
 
-    protofire::kernel::fs::sync_global_data().expect("sync data");
+    protofire::fs::sync_global_data().expect("sync data");
 
     let observed = tree.observation();
     assert_eq!(observed.flushes, 1);
@@ -277,7 +277,7 @@ fn sync_caches_aged_flushes_without_holding_the_filesystem_lock() {
     let _guard = test_lock();
     let tree = ProbeTree::mount();
 
-    let written = protofire::kernel::fs::sync_global_caches_aged(600).expect("sync aged caches");
+    let written = protofire::fs::sync_global_caches_aged(600).expect("sync aged caches");
 
     let observed = tree.observation();
     assert_eq!(observed.flushes, 1);
@@ -301,7 +301,7 @@ fn every_mounted_filesystem_is_flushed() {
             .expect("mount second flush probe");
     }
 
-    protofire::kernel::fs::sync_global_all().expect("sync all");
+    protofire::fs::sync_global_all().expect("sync all");
 
     let observed = tree.observation();
     assert_eq!(observed.flushes, 2, "every mount should be flushed");
@@ -322,7 +322,7 @@ fn a_flush_that_fails_still_releases_the_lock() {
     }
 
     // Nothing is mounted now, so this is a no-op rather than an error.
-    protofire::kernel::fs::sync_global_all().expect("sync with nothing mounted");
+    protofire::fs::sync_global_all().expect("sync with nothing mounted");
 
     assert!(
         tree.fs.try_lock().is_some(),

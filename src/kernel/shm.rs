@@ -12,11 +12,11 @@ use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
 
 use crate::abi::shm as abi;
-use crate::kernel::memory;
-use crate::kernel::memory::frame::FRAME_SIZE;
-use crate::kernel::memory::paging::PagePermissions;
 use crate::kernel::process::Process;
 use crate::kernel::sync::Mutex;
+use crate::memory;
+use crate::memory::frame::FRAME_SIZE;
+use crate::memory::paging::PagePermissions;
 use crate::Error;
 use crate::Result;
 
@@ -106,11 +106,11 @@ impl SharedMemorySegment {
             let pa = self.frames[i];
 
             // 1. Install in live hardware page tables.
-            if !crate::kernel::memory::arch::install_user_page_arch(va, pa, perms) {
+            if !crate::memory::arch::install_user_page_arch(va, pa, perms) {
                 // Roll back on failure.
                 for j in 0..i {
                     let rollback_va = virtual_address + j * FRAME_SIZE;
-                    let _ = crate::kernel::memory::arch::unmap_user_page_arch(rollback_va);
+                    let _ = crate::memory::arch::unmap_user_page_arch(rollback_va);
                 }
                 return Err(Error::InternalError);
             }
@@ -119,10 +119,10 @@ impl SharedMemorySegment {
             let mut memory = memory::global_mut().ok_or(Error::InternalError)?;
             if memory.register_shared_page(va, pa, perms).is_err() {
                 // Roll back.
-                let _ = crate::kernel::memory::arch::unmap_user_page_arch(va);
+                let _ = crate::memory::arch::unmap_user_page_arch(va);
                 for j in 0..i {
                     let rollback_va = virtual_address + j * FRAME_SIZE;
-                    let _ = crate::kernel::memory::arch::unmap_user_page_arch(rollback_va);
+                    let _ = crate::memory::arch::unmap_user_page_arch(rollback_va);
                     memory.unregister_user_page_range(rollback_va, FRAME_SIZE);
                 }
                 return Err(Error::InternalError);
@@ -143,7 +143,7 @@ impl SharedMemorySegment {
     /// tables and the software page table.
     fn detach_one(&self, virtual_address: usize) {
         // 1. Unmap from hardware page tables.
-        let _ = crate::kernel::memory::arch::unmap_user_page_arch(virtual_address);
+        let _ = crate::memory::arch::unmap_user_page_arch(virtual_address);
         // 2. Remove from software page table.
         if let Some(mut memory) = memory::global_mut() {
             memory.unregister_user_page_range(virtual_address, FRAME_SIZE);

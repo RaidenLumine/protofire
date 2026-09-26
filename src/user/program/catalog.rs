@@ -11,8 +11,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::fs::FileSystem;
-use crate::kernel::fs::{self};
+use crate::fs::FileSystem;
+use crate::fs::{self};
 use crate::kernel::process::Scheduler;
 use crate::kernel::process::SecurityToken;
 use crate::kernel::process::HANDLE_RIGHT_READ;
@@ -106,9 +106,9 @@ struct ResolvedCatalogEntry {
 
 impl ResolvedCatalogEntry {
     fn load(fs: &FileSystem, cwd: &str, catalog_path: &str) -> Result<Self> {
-        let normalized_cwd = crate::kernel::fs::path::normalize_path(cwd, "/")?;
+        let normalized_cwd = crate::fs::path::normalize_path(cwd, "/")?;
         let normalized_catalog_path =
-            crate::kernel::fs::path::normalize_path(catalog_path, &normalized_cwd)?;
+            crate::fs::path::normalize_path(catalog_path, &normalized_cwd)?;
         let catalog_text = read_text_file(fs, &normalized_cwd, &normalized_catalog_path)?;
         let catalog = parse_catalog_entry(&catalog_text)?;
 
@@ -298,7 +298,7 @@ impl ResolvedCatalogLaunchContent {
         let environment = environment.unwrap_or(manifest_environment);
         let working_dir =
             working_dir.unwrap_or_else(|| String::from(normalized_manifest_working_dir));
-        let working_dir = crate::kernel::fs::path::normalize_path(&working_dir, normalized_cwd)?;
+        let working_dir = crate::fs::path::normalize_path(&working_dir, normalized_cwd)?;
 
         Ok(Self {
             name,
@@ -360,7 +360,7 @@ pub fn path_parent_dir(path: &str) -> &str {
 pub fn normalize_path_relative_to_file(path: &str, source_file: &str) -> Result<String> {
     // Catalog and manifest metadata paths are resolved from the declaring file,
     // not from the caller's cwd.
-    crate::kernel::fs::path::normalize_path(path, path_parent_dir(source_file))
+    crate::fs::path::normalize_path(path, path_parent_dir(source_file))
 }
 
 pub fn current_execution_security_token() -> SecurityToken {
@@ -377,7 +377,7 @@ fn open_file_from_with_current_security(
     desired_access: u32,
     creation_disposition: u32,
 ) -> Result<fs::FileHandle> {
-    let normalized = crate::kernel::fs::path::normalize_path(path, cwd)?;
+    let normalized = crate::fs::path::normalize_path(path, cwd)?;
     fs.create_file_normalized_with_security_token(
         &normalized,
         desired_access,
@@ -388,7 +388,7 @@ fn open_file_from_with_current_security(
 }
 
 pub fn normalize_path_from_root(path: &str) -> Result<String> {
-    crate::kernel::fs::path::normalize_path(path, "/")
+    crate::fs::path::normalize_path(path, "/")
 }
 
 pub fn normalize_path_pair_from_root(first: &str, second: &str) -> Result<(String, String)> {

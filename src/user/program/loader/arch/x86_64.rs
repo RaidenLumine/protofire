@@ -19,7 +19,7 @@ pub(crate) fn prepare_arch_user_address_space(
     }
     let initial_stack = build_x86_64_initial_user_stack(image_layout, arguments, environment)?;
 
-    if let Some(memory) = crate::kernel::memory::global() {
+    if let Some(memory) = crate::memory::global() {
         // Real runtime builds merge user mappings into a prepared process page
         // table that already contains the kernel half.
         if let Some(mut prepared) = crate::arch::mmu::prepare_runtime_process_address_space(
@@ -46,7 +46,7 @@ pub(crate) fn prepare_arch_user_address_space(
             // Keeping each process's own code frames resident (as the AArch64
             // and RISC-V prepare paths already do) preserves per-process
             // isolation.
-            if let Some(mut memory_mut) = crate::kernel::memory::global_mut() {
+            if let Some(mut memory_mut) = crate::memory::global_mut() {
                 let entries: Vec<(usize, usize, PagePermissions, MappingKind)> = prepared
                     .user_page_entries()
                     .into_iter()

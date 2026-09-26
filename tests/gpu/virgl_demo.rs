@@ -13,10 +13,10 @@ use std::sync::Arc;
 
 use protofire::abi::gpu as gpu_abi;
 use protofire::abi::virgl as virgl_abi;
-use protofire::kernel::drivers::virtio_gpu::mock::MockGpuDevice;
-use protofire::kernel::drivers::virtio_gpu::set_gpu_device_for_test;
-use protofire::kernel::syscall;
-use protofire::kernel::syscall::Table;
+use protofire::drivers::virtio_gpu::mock::MockGpuDevice;
+use protofire::drivers::virtio_gpu::set_gpu_device_for_test;
+use protofire::syscall;
+use protofire::syscall::Table;
 use protofire::user::demo::virgl_renderer::run_virgl_render_demo;
 
 /// Serialises tests: the global syscall table and the global GPU device are

@@ -21,7 +21,7 @@ fn shell_ctrl_c_handler() {
         if let Some(job) = jobs.iter().find(|j| j.id == job_id) {
             let mut ctx =
                 crate::user::syscall::UserSyscall::send_signal(job.pid as usize, 15, 0, 0);
-            let _ = crate::kernel::syscall::dispatch(&mut ctx);
+            let _ = crate::syscall::dispatch(&mut ctx);
         }
     }
 }
@@ -33,7 +33,7 @@ fn shell_ctrl_z_handler() {
         if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
             let mut ctx =
                 crate::user::syscall::UserSyscall::send_signal(job.pid as usize, 20, 0, 0);
-            let _ = crate::kernel::syscall::dispatch(&mut ctx);
+            let _ = crate::syscall::dispatch(&mut ctx);
             job.state = JobState::Stopped;
         }
     }

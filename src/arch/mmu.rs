@@ -9,7 +9,7 @@
 //! same answer a missing window would give — so that kernel code can ask once
 //! instead of writing the same `#[cfg]` ladder for each architecture.
 
-use crate::kernel::memory::paging::PagePermissions;
+use crate::memory::paging::PagePermissions;
 
 /// One translated user page, as much of it as the kernel acts on.
 ///
@@ -153,8 +153,8 @@ pub fn activate_prepared_runtime_kernel_page_tables() -> Option<()> {
 #[cfg(all(target_arch = "aarch64", not(target_os = "none")))]
 pub type ForkClonedAddressSpace = (
     PreparedProcessAddressSpace,
-    alloc::vec::Vec<(usize, usize, crate::kernel::memory::paging::PagePermissions)>,
-    alloc::vec::Vec<(usize, usize, crate::kernel::memory::paging::PagePermissions)>,
+    alloc::vec::Vec<(usize, usize, crate::memory::paging::PagePermissions)>,
+    alloc::vec::Vec<(usize, usize, crate::memory::paging::PagePermissions)>,
 );
 
 // ── Primitives a target may not have ────────────────────────────────────
@@ -258,7 +258,7 @@ pub fn stack_window() -> Option<(usize, usize)> {
 pub unsafe fn install_user_page(
     _virtual_address: usize,
     _physical_address: usize,
-    _permissions: crate::kernel::memory::paging::PagePermissions,
+    _permissions: crate::memory::paging::PagePermissions,
 ) -> Option<usize> {
     None
 }
@@ -286,12 +286,12 @@ pub unsafe fn unmap_page(_virtual_address: usize) -> bool {
 #[cfg(target_arch = "x86_64")]
 pub fn bootstrap_translation(
     virtual_address: usize,
-) -> Option<crate::kernel::memory::diagnostics::BootstrapTranslation> {
+) -> Option<crate::memory::diagnostics::BootstrapTranslation> {
     let mapping = super::x86_64::paging::bootstrap_identity_mapping();
     // Report early identity-map view to aid diagnosis before full runtime
     // mappings stabilize.
     super::x86_64::paging::bootstrap_translate(virtual_address).map(|physical_address| {
-        crate::kernel::memory::diagnostics::BootstrapTranslation {
+        crate::memory::diagnostics::BootstrapTranslation {
             physical_address,
             page_size: mapping.page_size,
             writable: mapping.writable,
@@ -304,7 +304,7 @@ pub fn bootstrap_translation(
 #[cfg(not(target_arch = "x86_64"))]
 pub fn bootstrap_translation(
     _virtual_address: usize,
-) -> Option<crate::kernel::memory::diagnostics::BootstrapTranslation> {
+) -> Option<crate::memory::diagnostics::BootstrapTranslation> {
     None
 }
 
@@ -325,9 +325,9 @@ pub fn prepared_page_tables_active() -> bool {
 pub fn prepared_translation(
     virtual_address: usize,
     heap_bounds: (usize, usize),
-) -> Option<crate::kernel::memory::diagnostics::PreparedTranslation> {
+) -> Option<crate::memory::diagnostics::PreparedTranslation> {
     super::x86_64::paging::runtime_prepared_translation(virtual_address, heap_bounds)
-        .map(crate::kernel::memory::diagnostics::PreparedTranslation::from)
+        .map(crate::memory::diagnostics::PreparedTranslation::from)
 }
 
 /// No prepared table set to read.
@@ -335,7 +335,7 @@ pub fn prepared_translation(
 pub fn prepared_translation(
     _virtual_address: usize,
     _heap_bounds: (usize, usize),
-) -> Option<crate::kernel::memory::diagnostics::PreparedTranslation> {
+) -> Option<crate::memory::diagnostics::PreparedTranslation> {
     None
 }
 
@@ -344,11 +344,11 @@ pub fn prepared_translation(
 pub fn planned_kernel_region(
     virtual_address: usize,
     heap_bounds: (usize, usize),
-) -> Option<crate::kernel::memory::diagnostics::PlannedKernelRegion> {
+) -> Option<crate::memory::diagnostics::PlannedKernelRegion> {
     // Classify the address against the intended kernel page-layout plan.
     super::x86_64::paging::runtime_kernel_page_plan(heap_bounds)?
         .classify(virtual_address)
-        .map(crate::kernel::memory::diagnostics::PlannedKernelRegion::from)
+        .map(crate::memory::diagnostics::PlannedKernelRegion::from)
 }
 
 /// No page-layout plan to classify against.
@@ -356,7 +356,7 @@ pub fn planned_kernel_region(
 pub fn planned_kernel_region(
     _virtual_address: usize,
     _heap_bounds: (usize, usize),
-) -> Option<crate::kernel::memory::diagnostics::PlannedKernelRegion> {
+) -> Option<crate::memory::diagnostics::PlannedKernelRegion> {
     None
 }
 

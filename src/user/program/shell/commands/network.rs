@@ -3,7 +3,7 @@
 //! Network commands (ping).
 
 use super::super::entry::current_process;
-use crate::kernel::network;
+use crate::network;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;

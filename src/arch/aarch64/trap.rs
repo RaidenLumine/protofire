@@ -18,11 +18,11 @@ use crate::arch::exception_recoverability::RecoveryActionLogRecord;
 use crate::arch::syscall_trap;
 use crate::kernel::process::thread::AArch64UserThreadContext;
 use crate::kernel::process::TerminationReason;
-use crate::kernel::syscall::table::user_memory;
-use crate::kernel::syscall::SyscallAction;
-use crate::kernel::syscall::SyscallContext;
-use crate::kernel::syscall::{self};
 use crate::println;
+use crate::syscall::table::user_memory;
+use crate::syscall::SyscallAction;
+use crate::syscall::SyscallContext;
+use crate::syscall::{self};
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
@@ -166,7 +166,7 @@ extern "C" fn aarch64_trap_dispatch(frame: &mut TrapFrame) {
     }
 
     // ── fault profiler: unhandled trap fatal ──
-    if let Some(memory) = crate::kernel::memory::global_mut() {
+    if let Some(memory) = crate::memory::global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
     }
 
@@ -214,7 +214,7 @@ fn validate_user_frame_or_terminate(frame: &TrapFrame, entered_from_user: bool, 
         exception::UserFrameValidationAction::Continue => return,
         exception::UserFrameValidationAction::TerminateCurrentThread => {
             // ── fault profiler: invalid frame termination ──
-            if let Some(memory) = crate::kernel::memory::global_mut() {
+            if let Some(memory) = crate::memory::global_mut() {
                 memory.fault_profiler.inc_faults_terminated();
             }
             let thread = current_thread.expect("validation action requires current thread");
@@ -239,7 +239,7 @@ fn validate_user_frame_or_terminate(frame: &TrapFrame, entered_from_user: bool, 
     }
 
     // ── fault profiler: kernel fatal ──
-    if let Some(memory) = crate::kernel::memory::global_mut() {
+    if let Some(memory) = crate::memory::global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
     }
 
@@ -279,7 +279,7 @@ fn handle_lower_el_sync(frame: &mut TrapFrame) -> bool {
 
     // ── fault profiler: lower-EL sync exception counters ──
     if class != exception::EXCEPTION_CLASS_SVC64 {
-        if let Some(memory) = crate::kernel::memory::global_mut() {
+        if let Some(memory) = crate::memory::global_mut() {
             memory.fault_profiler.inc_faults_total();
             if exception::is_lower_el_sync_abort_class(class) {
                 memory.fault_profiler.inc_page_faults_total();
@@ -310,7 +310,7 @@ fn handle_lower_el_sync(frame: &mut TrapFrame) -> bool {
         if let Some(addr) = fault_address {
             let iss = exception_iss(frame);
             let is_write = (iss >> 6) & 1 == 1; // WnR bit in ISS
-            if let Some(mut memory) = crate::kernel::memory::global_mut() {
+            if let Some(mut memory) = crate::memory::global_mut() {
                 if memory.resolve_page_fault(addr, is_write) {
                     return true;
                 }
@@ -333,7 +333,7 @@ fn handle_lower_el_sync(frame: &mut TrapFrame) -> bool {
                     frame.elr
                 );
                 // ── fault profiler: kernel fatal ──
-                if let Some(memory) = crate::kernel::memory::global_mut() {
+                if let Some(memory) = crate::memory::global_mut() {
                     memory.fault_profiler.inc_faults_kernel_fatal();
                 }
                 return false;
@@ -415,7 +415,7 @@ fn handle_lower_el_sync(frame: &mut TrapFrame) -> bool {
                 if let Some(reason) = lower_el_sync_termination_reason(frame) {
                     log_user_exception_termination(frame);
                     // ── fault profiler: user exception termination ──
-                    if let Some(memory) = crate::kernel::memory::global_mut() {
+                    if let Some(memory) = crate::memory::global_mut() {
                         memory.fault_profiler.inc_faults_terminated();
                     }
                     crate::kernel::process::terminate_current_with_reason(reason);
@@ -438,8 +438,8 @@ fn handle_lower_el_sync(frame: &mut TrapFrame) -> bool {
 /// should treat the trap as fatal.
 fn handle_current_el_sync(frame: &mut TrapFrame) -> bool {
     use crate::arch::exception_recoverability::ExceptionRecoveryAction;
-    use crate::kernel::memory::global_mut;
-    use crate::kernel::memory::paging::PagePermissions;
+    use crate::memory::global_mut;
+    use crate::memory::paging::PagePermissions;
 
     let class = exception_class(frame);
 
@@ -480,16 +480,16 @@ fn handle_current_el_sync(frame: &mut TrapFrame) -> bool {
         return false;
     };
 
-    let page_start = fault_address & !(crate::kernel::memory::paging::PAGE_SIZE - 1);
+    let page_start = fault_address & !(crate::memory::paging::PAGE_SIZE - 1);
 
     match action {
         ExceptionRecoveryAction::MapKernelHeapPage => {
             if memory
                 .map_region_with_kind(
                     page_start,
-                    crate::kernel::memory::paging::PAGE_SIZE,
+                    crate::memory::paging::PAGE_SIZE,
                     PagePermissions::READ_WRITE,
-                    crate::kernel::memory::paging::MappingKind::KernelHeap,
+                    crate::memory::paging::MappingKind::KernelHeap,
                 )
                 .is_ok()
             {
@@ -503,14 +503,14 @@ fn handle_current_el_sync(frame: &mut TrapFrame) -> bool {
         ExceptionRecoveryAction::UpgradeKernelHeapPageWrite => {
             if let Some((phys, _)) = memory.translate(page_start) {
                 // Unmap the read-only entry and re-map with RW.
-                let _ = memory.unmap(page_start, crate::kernel::memory::paging::PAGE_SIZE);
+                let _ = memory.unmap(page_start, crate::memory::paging::PAGE_SIZE);
                 if memory
                     .map_to_with_kind(
                         page_start,
                         phys,
-                        crate::kernel::memory::paging::PAGE_SIZE,
+                        crate::memory::paging::PAGE_SIZE,
                         PagePermissions::READ_WRITE,
-                        crate::kernel::memory::paging::MappingKind::KernelHeap,
+                        crate::memory::paging::MappingKind::KernelHeap,
                     )
                     .is_ok()
                 {
@@ -572,14 +572,14 @@ fn deliver_lower_el_sync_user_exception(
     ) {
         Ok(true) => {
             // ── fault profiler: delivered to user handler ──
-            if let Some(memory) = crate::kernel::memory::global_mut() {
+            if let Some(memory) = crate::memory::global_mut() {
                 memory.fault_profiler.inc_faults_delivered_to_handler();
             }
             Ok(ExceptionRecoveryActionResult::Applied)
         }
         Ok(false) => {
             // ── fault profiler: no user handler ──
-            if let Some(memory) = crate::kernel::memory::global_mut() {
+            if let Some(memory) = crate::memory::global_mut() {
                 memory.fault_profiler.inc_faults_no_handler();
             }
             Ok(ExceptionRecoveryActionResult::Declined)
@@ -936,7 +936,7 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
     use crate::abi::process::AARCH64_SIGNAL_FRAME_SIZE;
     use crate::kernel::process::Process;
     use crate::kernel::process::Scheduler;
-    use crate::kernel::syscall::table::user_memory;
+    use crate::syscall::table::user_memory;
 
     let scheduler = match Scheduler::global() {
         Some(s) => s,
@@ -995,7 +995,7 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
         process,
         signal_frame_base as usize,
         total_len,
-        crate::kernel::memory::paging::PagePermissions::WRITE,
+        crate::memory::paging::PagePermissions::WRITE,
     )
     .is_ok();
 

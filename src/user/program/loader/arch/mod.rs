@@ -18,14 +18,14 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::kernel::process::ProcessUserAddressSpace;
+use crate::kernel::process::UserThreadStart;
 #[cfg(any(
     target_arch = "x86_64",
     all(target_arch = "aarch64", target_os = "none")
 ))]
-use crate::kernel::memory::paging::MappingKind;
-use crate::kernel::memory::paging::PagePermissions;
-use crate::kernel::process::ProcessUserAddressSpace;
-use crate::kernel::process::UserThreadStart;
+use crate::memory::paging::MappingKind;
+use crate::memory::paging::PagePermissions;
 use crate::Error;
 use crate::Result;
 

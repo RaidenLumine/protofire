@@ -375,7 +375,7 @@ impl Process {
         }
 
         let current = self.current_working_dir.lock().clone();
-        let Ok(normalized) = crate::kernel::fs::path::normalize_path(path, &current) else {
+        let Ok(normalized) = crate::fs::path::normalize_path(path, &current) else {
             return;
         };
 
@@ -485,7 +485,7 @@ impl Process {
         if let Some(old_space) = self.user_address_space.lock().as_ref() {
             if let Some((start, end)) = old_space.user_page_va_range() {
                 let len = end.saturating_sub(start);
-                if let Some(mut memory) = crate::kernel::memory::global_mut() {
+                if let Some(mut memory) = crate::memory::global_mut() {
                     memory.unregister_user_page_range(start, len);
                 }
             }
@@ -932,7 +932,6 @@ mod tests {
 
     use crate::abi::process::SA_RESTART;
     use crate::abi::process::SIGNAL_SA_FLAGS_KNOWN;
-    use crate::kernel::memory::MemoryManager;
     use crate::kernel::process::scheduler::api::idle_entry;
     use crate::kernel::process::ProcessState;
     use crate::kernel::process::Scheduler;
@@ -940,6 +939,7 @@ mod tests {
     use crate::kernel::process::Thread;
     #[cfg(target_arch = "x86_64")]
     use crate::kernel::process::UserThreadStart;
+    use crate::memory::MemoryManager;
     use crate::Error;
 
     use super::Process;
@@ -1405,9 +1405,9 @@ mod tests {
             use crate::arch::x86_64::paging::prepare_process_address_space;
             use crate::arch::x86_64::paging::KernelPagePlan;
             use crate::arch::x86_64::paging::KernelPageTableSpec;
-            use crate::kernel::memory::paging::MappingKind;
-            use crate::kernel::memory::paging::PagePermissions;
             use crate::kernel::process::ProcessUserAddressSpace;
+            use crate::memory::paging::MappingKind;
+            use crate::memory::paging::PagePermissions;
             use crate::user::program::UserImageLoadPlan;
             use crate::user::program::UserImageSegmentPlan;
             use crate::user::program::USER_EXCEPTION_STACK_GUARD_SIZE;

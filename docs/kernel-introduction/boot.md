@@ -453,7 +453,7 @@ GRUB (Multiboot2)       or      QEMU -kernel (PVH ELF note)
 | `src/arch/x86_64/ap_trampoline.asm` | AP 16→32→64-bit trampoline |
 | `src/kernel/mod.rs` | `Kernel::init()` pipeline, `maybe_init_swap()` |
 | `src/kernel/topology.rs` | NUMA topology detection |
-| `src/kernel/memory/swap.rs` | `SWAP_MAGIC`, `probe_device()` for boot-time swap detection |
+| `src/memory/swap.rs` | `SWAP_MAGIC`, `probe_device()` for boot-time swap detection |
 | `src/kernel/smp/` | AP discovery, bring-up, TLB shootdown |
 | `src/kernel/percpu.rs` | `PerCpuData` layout (`cpu_id`, `lapic_id`, `numa_node_id`, etc.) |
 | `src/kernel/service.rs` | Service definition loading from rc.d |

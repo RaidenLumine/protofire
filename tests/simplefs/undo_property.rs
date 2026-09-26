@@ -20,10 +20,10 @@ mod support;
 
 use std::sync::Arc;
 
-use protofire::kernel::fs::block::MemoryBlockDevice;
-use protofire::kernel::fs::simplefs::SimpleFs;
-use protofire::kernel::fs::simplefs::SimpleFsVolume;
-use protofire::kernel::fs::vfs::FileSystem as VfsFileSystem;
+use protofire::fs::block::MemoryBlockDevice;
+use protofire::fs::simplefs::SimpleFs;
+use protofire::fs::simplefs::SimpleFsVolume;
+use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::Error;
 
 // ── Deterministic PRNG ─────────────────────────────────────────────────────

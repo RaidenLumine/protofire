@@ -39,7 +39,7 @@ pub use crate::user::shared::abi::syscall::*;
 // an operation with an erring return, not an unchecked memory operation: the
 // bridge hands the words to the kernel's dispatcher, the kernel validates
 // every address it is given before it touches it (see
-// `kernel::syscall::memory::user`), and a refused address comes back as an
+// `syscall::memory::user`), and a refused address comes back as an
 // error status.  The wrappers below can only reach these calls with pointers
 // derived from a live borrow, so the caller has nothing left to get wrong:
 // what remains dangerous is inside the kernel, at the first dereference of

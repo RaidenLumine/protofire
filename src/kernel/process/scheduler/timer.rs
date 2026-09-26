@@ -5,7 +5,7 @@
 use alloc::vec::Vec;
 
 use crate::arch;
-use crate::kernel::drivers::serial;
+use crate::drivers::serial;
 
 use super::super::thread::ThreadSchedPolicy;
 use super::super::ThreadPriority;
@@ -194,26 +194,26 @@ impl Scheduler {
         let _ = serial::poll_hardware_rx();
         // Poll the xHCI event ring for USB HID keyboard reports.
         // This is a stop-gap until MSI-X interrupt wiring is in place.
-        let _ = crate::kernel::drivers::xhci::xhci_poll();
+        let _ = crate::drivers::xhci::xhci_poll();
 
         // Poll MMIO virtio-input keyboards (aarch64/riscv64 QEMU virt) and
         // flush the virtio-gpu scanout framebuffer when the console marked it
         // dirty.  Both are no-ops on hosts/x86 (no IRQ dispatch exists on
         // those arches, so device servicing is folded into the timer tick).
-        crate::kernel::drivers::virtio_input::poll_hardware();
-        crate::kernel::drivers::virtio_gpu::poll_flush();
+        crate::drivers::virtio_input::poll_hardware();
+        crate::drivers::virtio_gpu::poll_flush();
 
         // Drive the native network stack's periodic maintenance (ARP cache
         // eviction, TCP retransmission timers, TimeWait cleanup) when a
         // network device is present.
         #[cfg(any(target_os = "none", test))]
-        if let Some(stack) = crate::kernel::network::stack::NetworkStack::global() {
+        if let Some(stack) = crate::network::stack::NetworkStack::global() {
             stack.advance_tick();
         }
 
         // Persistent block cache: advance the dirty-block aging clock every
         // tick.  That is a single atomic add, so it belongs here.
-        crate::kernel::fs::block_cache::advance_cache_tick();
+        crate::fs::block_cache::advance_cache_tick();
 
         // The periodic jobs below are only *requested* here.
         //
@@ -223,7 +223,7 @@ impl Scheduler {
         // stops the clock and everything scheduled from it for the length of a
         // flush.  The maintenance thread performs the work instead; see
         // `src/kernel/maintenance.rs`.
-        if ticks.is_multiple_of(crate::kernel::fs::block_cache::WRITE_BACK_PERIOD_TICKS) {
+        if ticks.is_multiple_of(crate::fs::block_cache::WRITE_BACK_PERIOD_TICKS) {
             crate::kernel::maintenance::request_block_cache_write_back();
         }
 
@@ -235,7 +235,7 @@ impl Scheduler {
         // test mode.  Check once per second (every 100 ticks at 100 Hz).
         #[cfg(target_os = "none")]
         if ticks.is_multiple_of(100) {
-            crate::kernel::network::dhcp::try_renew_lease();
+            crate::network::dhcp::try_renew_lease();
         }
 
         // Priority boosting: promote starved Normal-priority threads
@@ -243,7 +243,7 @@ impl Scheduler {
         self.boost_starved_threads();
 
         // Check expired timerfds and wake their readers.
-        crate::kernel::syscall::table::timer_fd::check_expired_timerfds(ticks);
+        crate::syscall::table::timer_fd::check_expired_timerfds(ticks);
 
         // Check expired POSIX timers and deliver signals.
         crate::kernel::process::posix_timer::check_expired_timers(ticks);

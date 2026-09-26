@@ -345,7 +345,7 @@ fn spawn_ring3_utility(_cwd: &str, elf_path: &str, _argv: &[String]) -> CmdResul
 
     #[cfg(target_os = "none")]
     {
-        let fs = match crate::kernel::fs::global() {
+        let fs = match crate::fs::global() {
             Some(fs) => fs,
             None => return CmdResult::error(1, "shell: filesystem not available\n".into()),
         };
@@ -416,7 +416,7 @@ fn try_spawn_external(cwd: &str, command: &str, _argv: &[String]) -> Option<CmdR
         let elf_path = resolve_external_command_path(cwd, command)?;
 
         // Load the ELF directly from the filesystem.
-        let fs = crate::kernel::fs::global()?;
+        let fs = crate::fs::global()?;
         let fs_guard = fs.lock();
         // Same split as above: the image read is all that needs the lock.
         let image = crate::user::program::load_filesystem_image(&fs_guard, cwd, &elf_path);
@@ -460,7 +460,7 @@ fn try_spawn_external(cwd: &str, command: &str, _argv: &[String]) -> Option<CmdR
 ///    for `{command}` and `{command}.elf`.
 #[cfg(target_os = "none")]
 fn resolve_external_command_path(cwd: &str, command: &str) -> Option<String> {
-    use crate::kernel::fs::path::normalize_path;
+    use crate::fs::path::normalize_path;
 
     // ── Direct path (absolute or relative to cwd) ──
     if command.starts_with('/') || command.starts_with("./") || command.starts_with("../") {

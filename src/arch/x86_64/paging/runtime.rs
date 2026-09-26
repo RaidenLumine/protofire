@@ -4,7 +4,7 @@
 //! spaces.
 
 use super::*;
-use crate::kernel::memory::paging::PagePermissions;
+use crate::memory::paging::PagePermissions;
 use crate::user::program::UserImageLoadPlan;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
@@ -855,7 +855,7 @@ pub(crate) fn runtime_kernel_page_plan_impl(heap_bounds: (usize, usize)) -> Opti
     // page is mapped read-write regardless — the heap already requires it.
     let bss_end = page_align_up(core::ptr::addr_of!(__bss_end) as usize);
 
-    let ranges = crate::kernel::memory::map_facts::ImageRanges {
+    let ranges = crate::memory::map_facts::ImageRanges {
         text: (core::ptr::addr_of!(__text_start) as usize, text_end_covered),
         rodata: linker_symbol_range(
             core::ptr::addr_of!(__rodata_start),
@@ -883,15 +883,15 @@ pub(crate) fn runtime_kernel_page_plan_impl(heap_bounds: (usize, usize)) -> Opti
     // The stack window joins the facts here, the same way it does on aarch64:
     // a kernel range in its own right, and the one the guard pages will be
     // holes in.  Nothing allocates from it yet.
-    let stack_window = crate::kernel::memory::map_facts::Region::new(
-        crate::kernel::memory::map_facts::RegionKind::StackWindow,
+    let stack_window = crate::memory::map_facts::Region::new(
+        crate::memory::map_facts::RegionKind::StackWindow,
         X86_STACK_WINDOW_BASE,
         X86_STACK_WINDOW_END,
         true,
         false,
     );
     let _ = ranges.install_with(&[stack_window]);
-    if crate::kernel::memory::map_facts::get().is_none() {
+    if crate::memory::map_facts::get().is_none() {
         static REPORTED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
         if !REPORTED.swap(true, core::sync::atomic::Ordering::Relaxed) {
@@ -911,7 +911,7 @@ pub(crate) fn runtime_kernel_page_plan_impl(heap_bounds: (usize, usize)) -> Opti
 /// Round `address` up to the next page boundary.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn page_align_up(address: usize) -> usize {
-    let page_size = crate::kernel::memory::paging::PAGE_SIZE;
+    let page_size = crate::memory::paging::PAGE_SIZE;
     (address + page_size - 1) & !(page_size - 1)
 }
 
@@ -1308,14 +1308,14 @@ fn leaf_is_present(virtual_address: usize) -> bool {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn report_kernel_map_coverage() {
     static REPORTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-    let Some(facts) = crate::kernel::memory::map_facts::get() else {
+    let Some(facts) = crate::memory::map_facts::get() else {
         return;
     };
     let mut missing = 0usize;
     for (kind, address) in facts.probe_addresses() {
         // A stack window is a reservation: its pages appear as stacks are
         // created, so "not mapped yet" is its expected answer.
-        if kind == crate::kernel::memory::map_facts::RegionKind::StackWindow {
+        if kind == crate::memory::map_facts::RegionKind::StackWindow {
             continue;
         }
         if leaf_is_present(address) {

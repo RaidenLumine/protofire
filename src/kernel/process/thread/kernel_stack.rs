@@ -19,7 +19,7 @@
 
 use alloc::boxed::Box;
 
-use crate::kernel::memory::frame::FRAME_SIZE;
+use crate::memory::frame::FRAME_SIZE;
 
 use super::stack_window::StackLayout;
 
@@ -34,7 +34,7 @@ use super::stack_window::StackLayout;
 /// guard is a real outcome here rather than a theoretical one.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
-    let page_size = crate::kernel::memory::frame::FRAME_SIZE;
+    let page_size = crate::memory::frame::FRAME_SIZE;
     let mut enforced = true;
     for offset in (0..guard_size).step_by(page_size) {
         let cleared = unsafe { crate::arch::x86_64::paging::unmap_page(base.add(offset) as usize) };
@@ -165,7 +165,7 @@ impl KernelStack {
         let layout = super::stack_window::allocate_in_kernel_window(guard_size, stack_size)?;
         let page_count = layout.usable_len() / FRAME_SIZE;
 
-        let frames = match crate::kernel::memory::global_mut() {
+        let frames = match crate::memory::global_mut() {
             Some(mut memory) => memory.allocate_frames(page_count),
             None => None,
         };
@@ -177,7 +177,7 @@ impl KernelStack {
         let mut mapped = 0;
         while mapped < page_count {
             let offset = mapped * FRAME_SIZE;
-            if !crate::kernel::memory::arch::map_stack_page_arch(
+            if !crate::memory::arch::map_stack_page_arch(
                 layout.usable_start + offset,
                 frames as usize + offset,
             ) {
@@ -190,11 +190,11 @@ impl KernelStack {
             // hand back both the frames and the addresses.
             while mapped > 0 {
                 mapped -= 1;
-                crate::kernel::memory::arch::unmap_stack_page_arch(
+                crate::memory::arch::unmap_stack_page_arch(
                     layout.usable_start + mapped * FRAME_SIZE,
                 );
             }
-            if let Some(mut memory) = crate::kernel::memory::global_mut() {
+            if let Some(mut memory) = crate::memory::global_mut() {
                 memory.deallocate_frames(frames, page_count);
             }
             super::stack_window::retire_in_kernel_window(&layout);
@@ -233,9 +233,9 @@ impl KernelStack {
 
         // Try frame-backed allocation first so the guard page can be left
         // unmapped.
-        if let Some(mut mm) = crate::kernel::memory::global_mut() {
+        if let Some(mut mm) = crate::memory::global_mut() {
             let total_size = guard_size + stack_size;
-            let total_frames = total_size.div_ceil(crate::kernel::memory::frame::FRAME_SIZE);
+            let total_frames = total_size.div_ceil(crate::memory::frame::FRAME_SIZE);
             if let Some(base) = mm.allocate_frames(total_frames) {
                 let stack_ptr = unsafe { base.add(guard_size) };
                 // Map only the usable stack region; the guard page stays
@@ -246,8 +246,8 @@ impl KernelStack {
                 if let Err(e) = mm.map_region_with_kind(
                     stack_ptr as usize,
                     stack_size,
-                    crate::kernel::memory::paging::PagePermissions::READ_WRITE,
-                    crate::kernel::memory::paging::MappingKind::KernelStack,
+                    crate::memory::paging::PagePermissions::READ_WRITE,
+                    crate::memory::paging::MappingKind::KernelStack,
                 ) {
                     mm.deallocate_frames(base, total_frames);
                     mapping_failure = Some(e);
@@ -329,9 +329,9 @@ impl Drop for KernelStack {
                 // skipped: the allocator never handed it out, so there is no
                 // mapping to take back.
                 for page in layout.usable_pages() {
-                    crate::kernel::memory::arch::unmap_stack_page_arch(page);
+                    crate::memory::arch::unmap_stack_page_arch(page);
                 }
-                if let Some(mut memory) = crate::kernel::memory::global_mut() {
+                if let Some(mut memory) = crate::memory::global_mut() {
                     memory.deallocate_frames(*frames, *page_count);
                 }
                 // The frames are free to go back now: an address is all a stale
@@ -351,7 +351,7 @@ impl Drop for KernelStack {
             }
             KernelStackBacking::Frame { base, total_frames } => {
                 // Unmap the usable stack region from the software page table.
-                if let Some(mut mm) = crate::kernel::memory::global_mut() {
+                if let Some(mut mm) = crate::memory::global_mut() {
                     let _ = mm.unmap(self.stack_ptr as usize, self.stack_len);
                     // The guard pages are left un-presented here.  Putting
                     // them back is the frame allocator's job rather than this

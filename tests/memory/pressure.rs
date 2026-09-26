@@ -2,9 +2,9 @@
 //!
 //! Memory pressure and exhaustion stress tests for the kernel frame allocator.
 
-use protofire::kernel::memory::paging::PagePermissions;
-use protofire::kernel::memory::paging::PAGE_SIZE;
-use protofire::kernel::memory::MemoryManager;
+use protofire::memory::paging::PagePermissions;
+use protofire::memory::paging::PAGE_SIZE;
+use protofire::memory::MemoryManager;
 
 fn align_up(value: usize) -> usize {
     (value + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)

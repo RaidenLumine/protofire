@@ -60,10 +60,10 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
         // case is refused; the fault is then reported below with
         // `sw=memory-manager-locked-by-this-cpu`, and a kernel-mode fault
         // reaches the fatal halt with a RIP and an address to work from.
-        let memory_manager = if crate::kernel::memory::held_by_current_cpu() {
+        let memory_manager = if crate::memory::held_by_current_cpu() {
             None
         } else {
-            crate::kernel::memory::global_mut()
+            crate::memory::global_mut()
         };
         if let Some(mut memory) = memory_manager {
             // ── fault profiler: page fault type counters ──
@@ -266,7 +266,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
             // missing memory manager is an early-boot problem; the lock being
             // held by this CPU means the fault was raised from inside a
             // `global_mut` critical section, and the rip names its site.
-            let (software_state, diagnosis) = if crate::kernel::memory::held_by_current_cpu() {
+            let (software_state, diagnosis) = if crate::memory::held_by_current_cpu() {
                 (
                     "memory-manager-locked-by-this-cpu",
                     "fault-raised-inside-memory-manager; the guard that would \
@@ -312,7 +312,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
         }
 
         // ── fault profiler: non-PF exception type counters ──
-        if let Some(memory) = crate::kernel::memory::try_global_mut() {
+        if let Some(memory) = crate::memory::try_global_mut() {
             memory.fault_profiler.inc_faults_total();
             match vector {
                 v if v == X86_64_EXCEPTION_INVALID_OPCODE_VECTOR as u64 => {
@@ -351,7 +351,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
             match thread.deliver_x86_64_user_exception(context, fault_address) {
                 Ok(true) => {
                     // ── fault profiler: delivered to user handler ──
-                    if let Some(memory) = crate::kernel::memory::try_global_mut() {
+                    if let Some(memory) = crate::memory::try_global_mut() {
                         memory.fault_profiler.inc_faults_delivered_to_handler();
                     }
 
@@ -366,7 +366,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
                 }
                 Ok(false) => {
                     // ── fault profiler: no user handler ──
-                    if let Some(memory) = crate::kernel::memory::try_global_mut() {
+                    if let Some(memory) = crate::memory::try_global_mut() {
                         memory.fault_profiler.inc_faults_no_handler();
                     }
                 }
@@ -383,7 +383,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
         }
         log_user_exception_termination(context, fault_address);
         // ── fault profiler: user exception termination ──
-        if let Some(memory) = crate::kernel::memory::try_global_mut() {
+        if let Some(memory) = crate::memory::try_global_mut() {
             memory.fault_profiler.inc_faults_terminated();
         }
         // Record the fault in the per-process fault ring buffer for
@@ -393,7 +393,7 @@ pub(crate) fn handle_exception(context: &mut InterruptContext, cr2: u64) {
     }
 
     // ── fault profiler: kernel fatal halt ──
-    if let Some(memory) = crate::kernel::memory::try_global_mut() {
+    if let Some(memory) = crate::memory::try_global_mut() {
         memory.fault_profiler.inc_faults_kernel_fatal();
     }
 
@@ -497,7 +497,7 @@ fn log_user_exception_termination(context: &InterruptContext, fault_address: Opt
 
 pub(crate) fn diagnose_page_fault(
     page_fault: PageFaultError,
-    insight: crate::kernel::memory::PageFaultInsight,
+    insight: crate::memory::PageFaultInsight,
 ) -> &'static str {
     match (
         page_fault.present,
@@ -509,7 +509,7 @@ pub(crate) fn diagnose_page_fault(
         insight.planned_region,
     ) {
         (false, _, None, Some(_), _, _, Some(region))
-            if region.kind == crate::kernel::memory::PlannedKernelRegionKind::KernelHeap =>
+            if region.kind == crate::memory::PlannedKernelRegionKind::KernelHeap =>
         {
             "bootstrap-map-expected-but-not-present"
         }
@@ -518,7 +518,7 @@ pub(crate) fn diagnose_page_fault(
         (false, _, None, Some(_), _, None, Some(_)) => "planned-kernel-region-still-bootstrap-only",
         (false, _, None, Some(_), _, None, None) => "bootstrap-map-expected-but-not-present",
         (false, true, None, None, _, None, Some(region))
-            if region.kind == crate::kernel::memory::PlannedKernelRegionKind::KernelHeap =>
+            if region.kind == crate::memory::PlannedKernelRegionKind::KernelHeap =>
         {
             "missing-kernel-heap-mapping"
         }
@@ -532,7 +532,7 @@ pub(crate) fn diagnose_page_fault(
         (true, _, Some(translation), _, _, _, _) if page_fault.write => {
             if translation
                 .permissions
-                .contains(crate::kernel::memory::paging::PagePermissions::WRITE)
+                .contains(crate::memory::paging::PagePermissions::WRITE)
             {
                 "protection-fault-on-writable-page"
             } else {
@@ -542,7 +542,7 @@ pub(crate) fn diagnose_page_fault(
         (true, _, Some(translation), _, _, _, _) if page_fault.instruction_fetch => {
             if translation
                 .permissions
-                .contains(crate::kernel::memory::paging::PagePermissions::EXECUTE)
+                .contains(crate::memory::paging::PagePermissions::EXECUTE)
             {
                 "protection-fault-on-executable-page"
             } else {
@@ -552,7 +552,7 @@ pub(crate) fn diagnose_page_fault(
         (true, _, Some(translation), _, _, _, _) => {
             if translation
                 .permissions
-                .contains(crate::kernel::memory::paging::PagePermissions::READ)
+                .contains(crate::memory::paging::PagePermissions::READ)
             {
                 "protection-fault-on-readable-page"
             } else {
@@ -622,7 +622,7 @@ fn diagnose_invalid_opcode(_rip: u64) -> &'static str {
 pub(crate) fn evaluate_page_fault_recovery_strategy(
     context: &InterruptContext,
     page_fault: PageFaultError,
-    insight: crate::kernel::memory::PageFaultInsight,
+    insight: crate::memory::PageFaultInsight,
 ) -> ExceptionRecoveryDecision {
     // User faults are handled by the thread-level exception delivery path. Only
     // a couple of narrowly scoped kernel-heap faults are recoverable in place.
@@ -632,7 +632,7 @@ pub(crate) fn evaluate_page_fault_recovery_strategy(
 
     if !page_fault.present && insight.translation.is_none() {
         if let Some(region) = insight.planned_region {
-            if region.kind == crate::kernel::memory::PlannedKernelRegionKind::KernelHeap {
+            if region.kind == crate::memory::PlannedKernelRegionKind::KernelHeap {
                 return ExceptionRecoveryDecision::recover_now(
                     ExceptionRecoveryAction::MapKernelHeapPage,
                 );
@@ -642,10 +642,10 @@ pub(crate) fn evaluate_page_fault_recovery_strategy(
 
     if page_fault.present && page_fault.write {
         if let Some(translation) = insight.translation {
-            if translation.kind == crate::kernel::memory::paging::MappingKind::KernelHeap
+            if translation.kind == crate::memory::paging::MappingKind::KernelHeap
                 && !translation
                     .permissions
-                    .contains(crate::kernel::memory::paging::PagePermissions::WRITE)
+                    .contains(crate::memory::paging::PagePermissions::WRITE)
             {
                 return ExceptionRecoveryDecision::recover_now(
                     ExceptionRecoveryAction::UpgradeKernelHeapPageWrite,
@@ -658,19 +658,19 @@ pub(crate) fn evaluate_page_fault_recovery_strategy(
 }
 
 pub(crate) fn apply_page_fault_recovery_action(
-    memory: &mut crate::kernel::memory::MemoryManager,
+    memory: &mut crate::memory::MemoryManager,
     fault_address: usize,
     action: ExceptionRecoveryAction,
 ) -> ExceptionRecoveryActionResult {
     match action {
         ExceptionRecoveryAction::MapKernelHeapPage => {
-            let page_start = fault_address & !(crate::kernel::memory::paging::PAGE_SIZE - 1);
+            let page_start = fault_address & !(crate::memory::paging::PAGE_SIZE - 1);
             if memory
                 .map_region_with_kind(
                     page_start,
-                    crate::kernel::memory::paging::PAGE_SIZE,
-                    crate::kernel::memory::paging::PagePermissions::READ_WRITE,
-                    crate::kernel::memory::paging::MappingKind::KernelHeap,
+                    crate::memory::paging::PAGE_SIZE,
+                    crate::memory::paging::PagePermissions::READ_WRITE,
+                    crate::memory::paging::MappingKind::KernelHeap,
                 )
                 .is_ok()
             {
@@ -680,7 +680,7 @@ pub(crate) fn apply_page_fault_recovery_action(
             }
         }
         ExceptionRecoveryAction::UpgradeKernelHeapPageWrite => {
-            let page_start = fault_address & !(crate::kernel::memory::paging::PAGE_SIZE - 1);
+            let page_start = fault_address & !(crate::memory::paging::PAGE_SIZE - 1);
             let Some((physical_address, _)) = memory.translate(page_start) else {
                 return ExceptionRecoveryActionResult::Declined;
             };
@@ -688,7 +688,7 @@ pub(crate) fn apply_page_fault_recovery_action(
             // Remap the same heap-owned page with wider permissions so the
             // physical backing and mapping-kind bookkeeping stay unchanged.
             if memory
-                .unmap(page_start, crate::kernel::memory::paging::PAGE_SIZE)
+                .unmap(page_start, crate::memory::paging::PAGE_SIZE)
                 .is_err()
             {
                 return ExceptionRecoveryActionResult::Error;
@@ -698,9 +698,9 @@ pub(crate) fn apply_page_fault_recovery_action(
                 .map_to_with_kind(
                     page_start,
                     physical_address,
-                    crate::kernel::memory::paging::PAGE_SIZE,
-                    crate::kernel::memory::paging::PagePermissions::READ_WRITE,
-                    crate::kernel::memory::paging::MappingKind::KernelHeap,
+                    crate::memory::paging::PAGE_SIZE,
+                    crate::memory::paging::PagePermissions::READ_WRITE,
+                    crate::memory::paging::MappingKind::KernelHeap,
                 )
                 .is_ok()
             {

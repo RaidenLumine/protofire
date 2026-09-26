@@ -8,7 +8,7 @@
 
 use alloc::sync::Arc;
 
-use crate::kernel::fs;
+use crate::fs;
 use crate::kernel::process::Process;
 use crate::kernel::process::Scheduler;
 use crate::kernel::process::SecurityToken;

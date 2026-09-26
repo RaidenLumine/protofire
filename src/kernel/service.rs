@@ -165,10 +165,7 @@ pub fn parse_service_config(text: &str) -> Result<Vec<ServiceDefinition>, String
 /// malformed config file doesn't prevent the system from booting — the kernel
 /// falls back to the embedded default configuration when this function returns
 /// an empty list.
-pub fn load_services_from_fs(
-    fs: &crate::kernel::fs::FileSystem,
-    dir: &str,
-) -> Vec<ServiceDefinition> {
+pub fn load_services_from_fs(fs: &crate::fs::FileSystem, dir: &str) -> Vec<ServiceDefinition> {
     let mut all_services: Vec<ServiceDefinition> = Vec::new();
 
     // Walk directory entries by index.  The kernel doesn't have a
@@ -207,11 +204,8 @@ pub fn load_services_from_fs(
 
 /// Open `path` for reading, stat it to get the size, read the entire file
 /// into a `String`, and return it.  Returns `None` on any I/O error.
-fn read_config_file(
-    fs: &crate::kernel::fs::FileSystem,
-    path: &str,
-) -> Option<alloc::string::String> {
-    use crate::kernel::fs::OPEN_EXISTING;
+fn read_config_file(fs: &crate::fs::FileSystem, path: &str) -> Option<alloc::string::String> {
+    use crate::fs::OPEN_EXISTING;
     use crate::kernel::process::HANDLE_RIGHT_READ;
 
     // Open the file for reading (existing files only).

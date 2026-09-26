@@ -10,11 +10,11 @@ use core::sync::atomic::Ordering;
 use crate::abi::syscall as syscall_abi;
 use crate::arch::syscall_trap;
 use crate::kernel::process::TerminationReason;
-use crate::kernel::syscall::table::user_memory;
-use crate::kernel::syscall::SyscallAction;
-use crate::kernel::syscall::SyscallContext;
-use crate::kernel::syscall::{self};
 use crate::println;
+use crate::syscall::table::user_memory;
+use crate::syscall::SyscallAction;
+use crate::syscall::SyscallContext;
+use crate::syscall::{self};
 
 use super::exception::handle_exception;
 use super::exception::page_fault_address;
@@ -410,7 +410,7 @@ fn try_async_signal_delivery(context: &mut InterruptContext) {
         process,
         signal_frame_base as usize,
         total_len,
-        crate::kernel::memory::paging::PagePermissions::WRITE,
+        crate::memory::paging::PagePermissions::WRITE,
     )
     .is_ok();
 
