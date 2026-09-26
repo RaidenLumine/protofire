@@ -14,13 +14,11 @@
 # that moves a gate.  The number to drive down is the pair on the line below
 # this header: files first, then occurrences.
 #
-# 64 files, 554 occurrences outside src/arch
 
-# 62 files, 528 occurrences outside src/arch
 
-# 61 files, 511 occurrences outside src/arch
 
-# 60 files, 481 occurrences outside src/arch
+
+
 
 # 59 files, 453 occurrences outside src/arch
 

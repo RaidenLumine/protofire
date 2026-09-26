@@ -90,7 +90,10 @@ occurrences="$(awk '{ total += $2 } END { print total + 0 }' "$work/census.txt")
 
 if [ "$mode" = "record" ]; then
     next_baseline="$work/baseline.new"
+    # Keep the prose header, drop any totals line a previous record wrote:
+    # there is exactly one, and it is the one appended below.
     awk -v files="$files" -v occurrences="$occurrences" '
+        /^# [0-9]+ files, [0-9]+ occurrences outside src\/arch$/ { next }
         /^#/ { print; next }
         /^$/ { print; next }
         { exit }
