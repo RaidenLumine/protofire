@@ -9,6 +9,7 @@ use crate::kernel::process::Context;
 
 pub mod ata;
 pub mod boot;
+pub mod dispatch;
 pub mod exception_recoverability;
 pub mod interrupt_controller;
 pub mod ipi;

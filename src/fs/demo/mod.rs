@@ -42,32 +42,24 @@ use crate::Result;
 // system zone.  Everything else — the layout, the fallback, the disk — is
 // here.
 
+// One module per machine, all named `content`: the gates select a file, and
+// nothing below has to know which one answered.
 #[cfg(target_arch = "aarch64")]
-mod aarch64;
+#[path = "aarch64.rs"]
+mod content;
 #[cfg(target_arch = "riscv64")]
-mod riscv64;
+#[path = "riscv64.rs"]
+mod content;
 #[cfg(target_arch = "x86_64")]
-mod x86_64;
-
+#[path = "x86_64.rs"]
+mod content;
 #[cfg(not(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
     target_arch = "riscv64"
 )))]
-mod absent;
-
-#[cfg(target_arch = "aarch64")]
-use aarch64 as content;
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64"
-)))]
-use absent as content;
-#[cfg(target_arch = "riscv64")]
-use riscv64 as content;
-#[cfg(target_arch = "x86_64")]
-use x86_64 as content;
+#[path = "absent.rs"]
+mod content;
 
 const DATA_ZONE_EXTRA_INODES: usize = 64;
 

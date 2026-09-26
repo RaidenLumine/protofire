@@ -17,52 +17,23 @@ impl Scheduler {
         self.activate_thread_address_space(thread)
     }
 
-    #[cfg(all(
-        any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-            target_arch = "riscv64"
-        ),
-        target_os = "none"
-    ))]
     pub(crate) fn activate_thread_address_space(&self, thread: &Arc<Thread>) -> bool {
-        #[cfg(target_arch = "x86_64")]
-        crate::arch::x86_64::gdt::set_kernel_stack_top(thread.kernel_stack_top());
-        let activated = thread.process().activate_address_space_for_thread();
-        activated
+        crate::arch::dispatch::entering_thread(thread);
+
+        // A bare-metal machine has page tables to switch; a host has none, and
+        // the caller only asks whether the switch happened.
+        #[cfg(target_os = "none")]
+        {
+            thread.process().activate_address_space_for_thread()
+        }
+        #[cfg(not(target_os = "none"))]
+        {
+            true
+        }
     }
 
-    #[cfg(not(all(
-        any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-            target_arch = "riscv64"
-        ),
-        target_os = "none"
-    )))]
-    pub(crate) fn activate_thread_address_space(&self, _thread: &Arc<Thread>) -> bool {
-        true
-    }
-
-    #[cfg(all(
-        any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-            target_arch = "riscv64"
-        ),
-        target_os = "none"
-    ))]
     pub(crate) fn restore_kernel_address_space(&self) {
+        #[cfg(target_os = "none")]
         let _ = crate::arch::mmu::activate_prepared_runtime_kernel_page_tables();
     }
-
-    #[cfg(not(all(
-        any(
-            target_arch = "x86_64",
-            target_arch = "aarch64",
-            target_arch = "riscv64"
-        ),
-        target_os = "none"
-    )))]
-    pub(crate) fn restore_kernel_address_space(&self) {}
 }
