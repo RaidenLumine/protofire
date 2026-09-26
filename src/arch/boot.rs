@@ -58,11 +58,19 @@ pub fn multiboot2_command_line() -> Option<String> {
 
         // Multiboot2 info structure starts with total_size (u32) and reserved (u32).
         // Tags follow immediately after the 8-byte header.
+        // SAFETY: the bootloader hands over a Multiboot2 info structure, and
+        // its first word is `total_size`; every read below is bounded by that
+        // size, starting with the loop condition on the line after this.
         let total_size = unsafe { *(addr as *const u32) } as usize;
         let mut offset = 8;
 
         while offset + 8 <= total_size {
+            // SAFETY: the loop condition keeps `offset + 8` within
+            // `total_size`, so this word and the size word after it are inside
+            // the structure.
             let tag_type = unsafe { *((addr + offset) as *const u32) };
+            // SAFETY: as the tag-type read above — the same eight bytes the
+            // loop condition bounds cover both words.
             let tag_size = unsafe { *((addr + offset + 4) as *const u32) } as usize;
 
             if tag_type == MULTIBOOT2_TAG_END {
@@ -79,6 +87,9 @@ pub fn multiboot2_command_line() -> Option<String> {
                 let max_len = tag_size.saturating_sub(8);
                 let mut cmdline = String::new();
                 for i in 0..max_len {
+                    // SAFETY: the byte loop is bounded by `max_len`, which is
+                    // `tag_size` minus the tag header, so it stays inside the
+                    // string tag.
                     let byte = unsafe { *string_ptr.add(i) };
                     if byte == 0 {
                         break;
@@ -108,12 +119,18 @@ pub fn multiboot2_memory_map() -> Option<usize> {
         return None;
     }
 
+    // SAFETY: the first word of the hand-off structure, as in the parse above;
+    // the loop condition bounds every later read by it.
     let total_size = unsafe { *(addr as *const u32) } as usize;
     let mut offset = 8;
     let mut total_ram: usize = 0;
 
     while offset + 8 <= total_size {
+        // SAFETY: bounded by the loop condition above, as in the first pass
+        // over these tags.
         let tag_type = unsafe { *((addr + offset) as *const u32) };
+        // SAFETY: as the tag-type read — both words are inside the eight bytes
+        // the loop condition bounds.
         let tag_size = unsafe { *((addr + offset + 4) as *const u32) } as usize;
 
         if tag_type == MULTIBOOT2_TAG_END {
@@ -130,13 +147,30 @@ pub fn multiboot2_memory_map() -> Option<usize> {
             if tag_size < 16 {
                 break;
             }
+            // SAFETY: `tag_size` was checked to be at least 16 above, so this
+            // word and the entry-version word after it are inside the
+            // memory-map tag.
             let entry_size = unsafe { *((addr + offset + 8) as *const u32) } as usize;
-            if entry_size < 16 {
+            // An entry carries `base_addr`, `length`, `type`, and a reserved
+            // word — 24 bytes of fields, which is what the reads below cover.
+            // A bootloader that claims a smaller entry is refused rather than
+            // SAFETY: as the entry-size read above; it is the last word of the
+            // tag's fixed header.
+            // trusted: the tag is bounded, so the type read would otherwise
+            // take bytes from whatever follows.
+            if entry_size < 24 {
                 break;
             }
             let _entry_version = unsafe { *((addr + offset + 12) as *const u32) };
+            // SAFETY: the entry loop's condition keeps a whole
+            // `entry_size`-byte entry inside the tag, and entry sizes below the
+            // 24 bytes of fields were refused above.
             let entries_start = offset + 16;
+            // SAFETY: as the entry's base address — the same entry, whose
+            // fields the loop condition has shown to be present.
             let entries_end = offset + tag_size;
+            // SAFETY: the entry's type word, inside the same bounded entry; this is the
+            // field the 24-byte minimum exists for.
 
             let mut entry_off = entries_start;
             while entry_off + entry_size <= entries_end {

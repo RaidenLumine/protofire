@@ -1,9 +1,10 @@
-//! src/arch/aarch64/fdt.rs
+//! src/arch/fdt.rs
 //!
-//! Minimal Flattened Device Tree parser for AArch64 platform discovery.
+//! Minimal Flattened Device Tree parser for platform discovery.
 //!
-//! QEMU passes a device tree blob (DTB) address in x0 on boot; this module
-//! parses just enough of the FDT to discover the GIC, UART, VirtIO MMIO, and
+//! The platforms that hand a blob over are AArch64 and RISC-V: QEMU passes the
+//! device tree address in a register on boot, and this module parses just
+//! enough of it to discover the interrupt controller, UART, VirtIO MMIO, and
 //! timer addresses.  If parsing fails (malformed FDT, unexpected platform),
 //! all fields are `None` and callers fall back to hardcoded QEMU `virt`
 //! constants.
@@ -483,20 +484,33 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let base = fdt_addr as *const u8;
 
     // Validate magic and version in the header.
+    // SAFETY: the boot protocol says this address is a flattened device tree,
+    // and the format's fixed header is 40 bytes; this reads its first word, and
+    // everything after the header is validated against `totalsize` before it is
+    // used.
     let magic = unsafe { read_u32_be(base, OFF_MAGIC) };
     if magic != FDT_MAGIC {
         return PlatformInfo::empty();
     }
 
+    // SAFETY: a header field, inside the 40 bytes the format guarantees for a
+    // blob the platform handed over.
     let version = unsafe { read_u32_be(base, OFF_VERSION) };
+    // SAFETY: as the version read above: a header field at a fixed offset.
     let last_comp_version = unsafe { read_u32_be(base, OFF_LAST_COMP_VERSION) };
     // We support FDT v17 (the current standard version).
     if version < 17 || last_comp_version > 17 {
         return PlatformInfo::empty();
     }
 
+    // SAFETY: `totalsize` is the blob's own claim, and the checks on the line
+    // after it hold both block offsets inside that size before either is used.
     let totalsize = unsafe { read_u32_be(base, OFF_TOTALSIZE) } as usize;
+    // SAFETY: as `totalsize`: a header field, whose value is checked against
+    // `totalsize` before it is dereferenced.
     let off_dt_struct = unsafe { read_u32_be(base, OFF_OFF_DT_STRUCT) } as usize;
+    // SAFETY: as the structure offset above; the same check covers both block
+    // offsets.
     let off_dt_strings = unsafe { read_u32_be(base, OFF_OFF_DT_STRINGS) } as usize;
 
     // totalsize includes the header; strings block size is totalsize -
@@ -506,10 +520,17 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
         return PlatformInfo::empty();
     }
 
+    // SAFETY: `off_dt_strings < totalsize` was just checked, and the boot
+    // protocol's blob is at least `totalsize` bytes, so this pointer is inside
+    // it.
     let strings_base = unsafe { base.add(off_dt_strings) };
     let strings_size = totalsize - off_dt_strings;
 
+    // SAFETY: as the strings pointer: `off_dt_struct < off_dt_strings <
+    // totalsize`, so this address is inside the blob.
     let struct_ptr = unsafe { base.add(off_dt_struct) };
+    // SAFETY: the structure block ends where the strings block begins, which
+    // the check above ordered; this pointer is that boundary.
     let struct_end = unsafe { base.add(off_dt_strings) }; // struct block ends where strings begin
 
     // Temporary accumulators during tree walk.
@@ -601,11 +622,23 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     // clock-frequency = 3,686,400, which is not the timer rate).
     let mut node_kind: [u8; 16] = [0; 16];
 
-    /// Advance `ptr` to the next 4-byte alignment boundary.
-    fn align4(ptr: *const u8, base_ptr: *const u8) -> *const u8 {
+    /// Advance `ptr` to the next 4-byte alignment boundary, without leaving
+    /// `limit`.
+    ///
+    /// The structure block's tokens and property values are 4-byte aligned, so
+    /// the walk steps to the next boundary after each of them.  Rounding up can
+    /// land past the block, and a pointer formed past the end of the *blob* is
+    /// not one this walk may make — so the arithmetic is `wrapping_add` and the
+    /// result is clamped to `limit`, which the loop's own condition then turns
+    /// into the end of the walk.
+    fn align4(ptr: *const u8, base_ptr: *const u8, limit: *const u8) -> *const u8 {
         let offset = (ptr as usize).wrapping_sub(base_ptr as usize);
-        let aligned = (offset + 3) & !3;
-        unsafe { base_ptr.add(aligned) }
+        let aligned = base_ptr.wrapping_add((offset + 3) & !3);
+        if aligned > limit {
+            limit
+        } else {
+            aligned
+        }
     }
 
     let mut ptr = struct_ptr;
@@ -632,7 +665,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 if ptr < struct_end {
                     ptr = unsafe { ptr.add(1) };
                 }
-                ptr = align4(ptr, base);
+                ptr = align4(ptr, base, struct_end);
 
                 let node_name = core::str::from_utf8(unsafe {
                     core::slice::from_raw_parts(name_start, name_len)
@@ -788,7 +821,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 let value_ptr = ptr;
                 let value_len = len;
                 ptr = unsafe { ptr.add(len) };
-                ptr = align4(ptr, base);
+                ptr = align4(ptr, base, struct_end);
 
                 // After advancing ptr we're safe to read the value.
                 if value_len == 0 || value_ptr.wrapping_add(value_len) > struct_end {
@@ -1451,10 +1484,20 @@ pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
     let mut pending: [Option<DtNode>; 16] = [None; 16];
     let mut depth: usize = 0;
 
-    fn align4(ptr: *const u8, base_ptr: *const u8) -> *const u8 {
+    /// Advance `ptr` to the next 4-byte alignment boundary, without leaving
+    /// `limit`.
+    ///
+    /// As the first walk's copy: the arithmetic wraps and the result is
+    /// clamped, because a pointer formed past the end of the blob is not one
+    /// this walk may make.
+    fn align4(ptr: *const u8, base_ptr: *const u8, limit: *const u8) -> *const u8 {
         let offset = (ptr as usize).wrapping_sub(base_ptr as usize);
-        let aligned = (offset + 3) & !3;
-        unsafe { base_ptr.add(aligned) }
+        let aligned = base_ptr.wrapping_add((offset + 3) & !3);
+        if aligned > limit {
+            limit
+        } else {
+            aligned
+        }
     }
 
     let mut ptr = struct_ptr;
@@ -1479,7 +1522,7 @@ pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
                 if ptr < struct_end {
                     ptr = unsafe { ptr.add(1) };
                 }
-                ptr = align4(ptr, base);
+                ptr = align4(ptr, base, struct_end);
 
                 let raw_name = core::str::from_utf8(unsafe {
                     core::slice::from_raw_parts(name_start, name_len)
@@ -1536,7 +1579,7 @@ pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
                 let value_ptr = ptr;
                 let value_len = len;
                 ptr = unsafe { ptr.add(len) };
-                ptr = align4(ptr, base);
+                ptr = align4(ptr, base, struct_end);
 
                 if value_len == 0 || value_ptr.wrapping_add(value_len) > struct_end {
                     continue;

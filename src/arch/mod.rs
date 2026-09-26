@@ -38,8 +38,11 @@ pub use riscv64::irq_balance;
 #[cfg(target_arch = "x86_64")]
 pub use x86_64::irq_balance;
 
+// The device-tree parser describes the platforms that hand a blob over, not
+// one architecture: aarch64 and riscv64 both parse it, and the host tests
+// parse synthetic blobs with it, so it lives at this level rather than inside
+// the directory of the architecture that happened to write it first.
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
-#[path = "aarch64/fdt.rs"]
 pub mod fdt;
 
 /// Architecture abstraction trait.
