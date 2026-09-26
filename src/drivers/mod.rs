@@ -9,7 +9,21 @@ pub mod framebuffer_console;
 pub mod hda;
 pub mod keyboard;
 pub mod mouse;
+
+/// NVMe driver: PCI enumeration, the controller's BAR, and its queues.
+///
+/// The wire format is in `nvme_protocol` and is compiled everywhere; the
+/// controller is compiled where the machine has one, and every other machine
+/// compiles a file that answers under the same module name.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[path = "nvme.rs"]
 pub mod nvme;
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+#[path = "nvme_absent.rs"]
+pub mod nvme;
+/// The NVMe wire format and register map: a specification, not hardware.
+pub mod nvme_protocol;
+
 pub mod serial;
 pub mod usb_hid;
 pub mod virtio;
@@ -17,9 +31,30 @@ pub mod virtio_gpu;
 pub mod virtio_input;
 pub mod virtio_net;
 pub mod virtio_pci_modern;
+/// xHCI (USB) host controller driver: PCI discovery and BAR0 mapping.
+///
+/// The register map is in `xhci_protocol` and is compiled everywhere; the
+/// controller is compiled where the machine has one, and every other machine
+/// compiles a file that answers under the same module name.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[path = "xhci.rs"]
 pub mod xhci;
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+#[path = "xhci_absent.rs"]
+pub mod xhci;
+/// The xHCI register map and the USB structures its rings carry.
+pub mod xhci_protocol;
 
 /// PC speaker driver (PIT channel 2 tone generation).
+///
+/// The PIT and the speaker gate are PC hardware, so the machine that has them
+/// compiles the driver; every other machine compiles a file that answers under
+/// the same module name and reports that the hardware is not there.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[path = "pcspkr.rs"]
+pub mod pcspkr;
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+#[path = "pcspkr_absent.rs"]
 pub mod pcspkr;
 
 /// USB mass storage class driver (BOT + SCSI).
