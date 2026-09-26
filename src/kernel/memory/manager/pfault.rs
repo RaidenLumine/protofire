@@ -55,6 +55,9 @@ impl MemoryManager {
                 let swap_slot = self.swap_map.remove(&page_addr);
                 if let Some(slot_idx) = swap_slot {
                     let page_buf =
+                        // SAFETY: `frame` is a frame this fault handler just
+                        // allocated to receive the page, and one page is
+                        // exactly what a frame holds.
                         unsafe { core::slice::from_raw_parts_mut(frame, paging::PAGE_SIZE) };
                     match &self.swap_area {
                         Some(area) => {
@@ -90,17 +93,25 @@ impl MemoryManager {
                         .compressed_pages_saved
                         .saturating_sub(paging::PAGE_SIZE.saturating_sub(page.encoded_len()));
                     let page_buf =
+                        // SAFETY: as the swap-in above: a freshly allocated
+                        // frame, exactly one page long.
                         unsafe { core::slice::from_raw_parts_mut(frame, paging::PAGE_SIZE) };
                     if !page.decompress(page_buf) {
                         self.deallocate_frames(frame, 1);
                         return false;
                     }
                 } else if let Some(content) = self.get_page_content(page_addr) {
+                    // SAFETY: `copy_len` is clamped to the page above, so the
+                    // copy stays inside the freshly allocated frame, and
+                    // `content` is the saved page image the memory manager
+                    // owns.
                     unsafe {
                         let copy_len = core::cmp::min(content.len(), paging::PAGE_SIZE);
                         core::ptr::copy_nonoverlapping(content.as_ptr(), frame, copy_len);
                     }
                 } else {
+                    // SAFETY: a fresh frame with no saved content: zeroing one
+                    // page initialises all of it.
                     unsafe { core::ptr::write_bytes(frame, 0, paging::PAGE_SIZE) };
                 }
 
@@ -174,6 +185,10 @@ impl MemoryManager {
                         let adj_frame_phys = adj_frame as usize;
 
                         if let Some((content_ptr, copy_len)) = adj_content_len {
+                            // SAFETY: both frames are this allocator's — the
+                            // adjacent one was just reserved for this fault —
+                            // and the length was clamped to a page when the
+                            // content was captured.
                             unsafe {
                                 core::ptr::copy_nonoverlapping(content_ptr, adj_frame, copy_len);
                             }
@@ -228,6 +243,9 @@ impl MemoryManager {
                     }
                 };
                 // Copy the original page contents.
+                // SAFETY: the source is the page being faulted on and the
+                // destination a frame just allocated for it; one page each, so
+                // the two ranges cannot overlap.
                 unsafe {
                     core::ptr::copy_nonoverlapping(phys as *const u8, new_frame, paging::PAGE_SIZE);
                 }

@@ -372,6 +372,9 @@ impl FramebufferConsole {
         let mut base = self.fb_ptr as usize;
         // Fill the framebuffer with the background color (32-bit pixel).
         for _ in 0..(word / 4) {
+            // SAFETY: `fb_ptr` and the geometry in `fb_info` come from the
+            // driver's own discovery, and this writes exactly `word` bytes of
+            // it, one 32-bit pixel per iteration.
             unsafe { ptr::write_volatile(base as *mut u32, self.bg_color) };
             base += 4;
         }
@@ -460,6 +463,9 @@ impl FramebufferConsole {
             return;
         }
         let offset = (y as usize) * (self.fb_info.pitch as usize) + (x as usize) * 4;
+        // SAFETY: the bounds check above returned for `x`/`y` outside the
+        // panel, and the pitch covers a whole row, so this pixel lies inside
+        // the framebuffer mapping.
         unsafe { ptr::write_volatile((self.fb_ptr as usize + offset) as *mut u32, color) };
     }
 
@@ -468,6 +474,10 @@ impl FramebufferConsole {
         let src_offset = glyph_h * (self.fb_info.pitch as usize);
         let fb_size = self.fb_info.pitch as usize * self.fb_info.height as usize;
         // Move everything up by one glyph row.
+        // SAFETY: source and destination are both inside the framebuffer — the
+        // copy moves the image up by one glyph row — and `ptr::copy` is used
+        // rather than the non-overlapping form precisely because the two ranges
+        // overlap.
         unsafe {
             ptr::copy(
                 (self.fb_ptr as usize + src_offset) as *const u8,
@@ -483,6 +493,9 @@ impl FramebufferConsole {
         let last_row_start = (self.fb_ptr as usize + fb_size - src_offset) as *mut u8;
         let last_row_pixels = (self.fb_info.pitch as usize) * glyph_h / 4;
         for i in 0..last_row_pixels {
+            // SAFETY: the last row starts inside the framebuffer by
+            // construction (`fb_size - src_offset`) and the loop covers exactly
+            // that row's pixels.
             unsafe { ptr::write_volatile(last_row_start.add(i * 4) as *mut u32, self.bg_color) };
         }
         self.cursor_row = self.rows().saturating_sub(1);
@@ -566,6 +579,9 @@ pub fn take_dirty() -> bool {
 /// `fb_ptr` must point to a writeable linear framebuffer matching `fb_info`
 /// that stays mapped for the kernel's lifetime.
 pub unsafe fn install_console(fb_ptr: *mut u8, fb_info: FramebufferInfo) {
+    // SAFETY: the contract stated just above is the caller's — a writable
+    // linear framebuffer matching `fb_info`, mapped for the kernel's lifetime —
+    // and this builds the console on it.
     unsafe {
         let mut console = FramebufferConsole::new(fb_ptr, fb_info);
         console.clear();
@@ -609,6 +625,9 @@ mod tests {
             bpp: 32,
             pitch: 1024 * 4,
         };
+        // SAFETY: test-only use of the constructor with a null pointer: the
+        // test asks about geometry (`rows`/`cols`) and never writes a pixel, so
+        // nothing dereferences it.
         unsafe {
             let c = FramebufferConsole::new(core::ptr::null_mut::<u8>(), fb);
             assert_eq!(c.rows(), 48);

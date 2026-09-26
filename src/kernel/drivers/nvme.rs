@@ -634,6 +634,10 @@ impl NvmeController {
 
     /// Submit a command on the admin SQ and poll for completion.
     unsafe fn admin_submit_and_wait(&mut self, sqe: &NvmeSqe) -> crate::Result<NvmeCqe> {
+        // SAFETY: the controller's admin queues and `bar0` were set up by
+        // `init`, and both are exclusively this controller's; every pointer
+        // this block derives stays inside the DMA buffers `init` allocated for
+        // the queues.
         unsafe {
             use core::ptr::read_volatile;
             use core::ptr::write_volatile;
@@ -715,23 +719,37 @@ impl NvmeController {
         // SAFETY: the I/O SQ DMA buffer is exclusive to this controller;
         // all pointer arithmetic stays within the allocated region.
         let dst = unsafe { self.iosq.as_ptr().add(tail * SQ_ENTRY_SIZE) } as *mut NvmeSqe;
+        // SAFETY: as the note above: `dst` is the submission-queue slot for
+        // `tail` inside this controller's own DMA region, and the device reads
+        // it as one 64-byte entry.
         unsafe { write_volatile(dst, *sqe) };
 
         // Advance tail with wrap.
         state.iosq_tail = (state.iosq_tail + 1) % self.iosq_entries;
 
         // Ring SQ doorbell (queue id = 1).
+        // SAFETY: `bar0` is the mapped controller BAR and the doorbell offset
+        // is the stride the controller itself reported (`dstrd`), so the
+        // address is a register inside that mapping.
         let sq_doorbell = unsafe { self.bar0.add(sq_doorbell_offset(1, self.dstrd)) };
+        // SAFETY: as the doorbell address above; the write is volatile because
+        // the device, not the kernel, consumes it.
         unsafe { write_volatile(sq_doorbell as *mut u32, state.iosq_tail) };
 
         // Spin for completion.
         let mut waited = 0;
         loop {
+            // SAFETY: the completion-queue slot for `head`, inside the DMA
+            // region this controller owns — the same argument as the submission
+            // path above.
             let cqe_ptr = unsafe {
                 self.iocq
                     .as_ptr()
                     .add(state.iocq_head as usize * CQ_ENTRY_SIZE)
             } as *const NvmeCqe;
+            // SAFETY: the completion entry the device writes; the read is
+            // volatile because the device owns it, and the phase check below
+            // decides whether it has been published yet.
             let cqe = unsafe { read_volatile(cqe_ptr) };
             let phase = (cqe.status & 0x1) != 0;
             if phase == state.iocq_phase {
@@ -740,12 +758,16 @@ impl NvmeController {
                     state.iocq_phase = !state.iocq_phase;
                 }
                 // Ring CQ doorbell (queue id = 1).
+                // SAFETY: as the submission doorbell above: a register inside
+                // the mapped BAR at the controller's own stride.
                 let cq_doorbell = unsafe { self.bar0.add(cq_doorbell_offset(1, self.dstrd)) };
                 debug_assert!(
                     (cq_doorbell as usize).is_multiple_of(core::mem::align_of::<u32>()),
                     "IO CQ doorbell misaligned: {:#x}",
                     cq_doorbell as usize
                 );
+                // SAFETY: as the submission doorbell write; volatile for the
+                // same reason.
                 unsafe { write_volatile(cq_doorbell as *mut u32, state.iocq_head) };
                 drop(state);
                 return Ok(cqe);

@@ -253,6 +253,10 @@ impl FrameAllocator {
                     break;
                 }
                 // Move the frame contents into the hole.
+                // SAFETY: both frames come from this allocator's pool in the
+                // same pass — `f` is the live frame being moved and `fill` a
+                // hole the invariant above says is free and below it — so the
+                // two ranges are distinct and inside the pool.
                 unsafe {
                     core::ptr::copy_nonoverlapping(
                         old_addr as *const u8,
@@ -295,6 +299,10 @@ impl FrameAllocator {
         // subsystem that un-maps a page to remember to undo it before freeing
         // the frames.
         super::arch::ensure_identity_mapped_range(address, byte_len);
+        // SAFETY: the range was just made identity-mapped by the call above,
+        // which is what makes a write through the physical address reach the
+        // frames; the length is `count` frames and cannot overflow
+        // (`checked_mul`).
         unsafe {
             core::ptr::write_bytes(address as *mut u8, 0, byte_len);
         }
@@ -465,6 +473,8 @@ mod tests {
         allocator.init(FRAME_SIZE * 8);
 
         let frame = allocator.allocate(1).expect("allocate test frame");
+        // SAFETY: a frame this allocator just handed out, one `FRAME_SIZE`
+        // long; the test fills it to prove the reuse path zeroes it.
         unsafe {
             core::ptr::write_bytes(frame, 0xA5, FRAME_SIZE);
         }
@@ -473,6 +483,8 @@ mod tests {
         let recycled = allocator.allocate(1).expect("reallocate test frame");
         assert_eq!(recycled as usize, frame as usize);
 
+        // SAFETY: as the fill above: the frame is the one the allocator
+        // returned and the slice covers exactly it.
         let bytes = unsafe { core::slice::from_raw_parts(recycled as *const u8, FRAME_SIZE) };
         assert!(bytes.iter().all(|byte| *byte == 0));
     }
@@ -583,6 +595,8 @@ mod tests {
         // live (evens were freed); each holds value (index + 1).
         let base = allocator.base;
         for (i, &_frame) in frames.iter().enumerate() {
+            // SAFETY: `base` is the pool's start and `i` indexes frames this
+            // allocator handed out, so the range is inside the pool.
             unsafe {
                 core::ptr::write_bytes(
                     (base + i * FRAME_SIZE) as *mut u8,
@@ -599,6 +613,8 @@ mod tests {
         let expected: Vec<u8> = (0..8).map(|k| ((k * 2) + 2) as u8).collect();
         for (slot, &value) in expected.iter().enumerate() {
             let frame_base = base + slot * FRAME_SIZE;
+            // SAFETY: as above, for a frame the compaction left in place; the
+            // slice covers one whole frame.
             let bytes = unsafe { core::slice::from_raw_parts(frame_base as *const u8, FRAME_SIZE) };
             assert!(
                 bytes.iter().all(|&b| b == value),

@@ -145,12 +145,17 @@ impl core::ops::Deref for MemoryManagerGuard {
     type Target = MemoryManager;
 
     fn deref(&self) -> &Self::Target {
+        // SAFETY: the guard is only alive while `install_global`'s lock is
+        // held, and the lock is what keeps any other CPU from reaching the
+        // manager through another reference.
         unsafe { &*self.manager.get() }
     }
 }
 
 impl core::ops::DerefMut for MemoryManagerGuard {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: as `Deref`: the guard's exclusive access rests on the same
+        // lock, which the guard releases when it drops.
         unsafe { &mut *self.manager.get() }
     }
 }
@@ -208,6 +213,9 @@ pub(crate) fn uninstall_global_for_tests() {
 
 pub(crate) fn global() -> Option<&'static MemoryManager> {
     let memory = GLOBAL_MEMORY_MANAGER.load(Ordering::SeqCst);
+    // SAFETY: the pointer is published once by `install_global` and never
+    // cleared, so it outlives every caller — the `'static` the signature
+    // promises.
     unsafe { memory.as_ref() }
 }
 
@@ -245,6 +253,9 @@ pub(crate) fn global_mut() -> Option<MemoryManagerGuard> {
     } else {
         MEMORY_MANAGER_LOCK_OWNER.acquired();
         Some(MemoryManagerGuard {
+            // SAFETY: the lock was taken above (the owner is recorded on the
+            // line before), so this is the only live mutable reference to the
+            // manager.
             manager: UnsafeCell::new(unsafe { &mut *memory }),
             locked: true,
             interrupts_were_enabled,
@@ -283,6 +294,9 @@ pub(crate) fn try_global_mut() -> Option<MemoryManagerGuard> {
 
     MEMORY_MANAGER_LOCK_OWNER.acquired();
     Some(MemoryManagerGuard {
+        // SAFETY: as the locked accessor above: this arm is the one taken when
+        // the lock was already held by this CPU, and the manager is reachable
+        // only through it.
         manager: UnsafeCell::new(unsafe { &mut *memory }),
         locked: true,
         interrupts_were_enabled,
@@ -292,5 +306,7 @@ pub(crate) fn try_global_mut() -> Option<MemoryManagerGuard> {
 /// Public accessor for integration tests (single-threaded, no locking).
 pub fn global_mut_for_tests() -> Option<&'static mut MemoryManager> {
     let memory = GLOBAL_MEMORY_MANAGER.load(Ordering::SeqCst);
+    // SAFETY: the integration-test accessor is documented as single-threaded;
+    // the test harness is its only caller and holds no other reference.
     unsafe { memory.as_mut() }
 }
