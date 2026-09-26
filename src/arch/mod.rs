@@ -23,6 +23,10 @@ pub mod trap;
 pub mod user_abi;
 pub mod user_access;
 pub mod user_loader;
+/// The VirtIO MMIO windows the bare-metal machines wire up.  A host has no
+/// such bus, and no driver asks for one there.
+#[cfg(target_os = "none")]
+pub mod virtio_mmio;
 
 #[cfg(target_arch = "aarch64")]
 pub mod aarch64;
@@ -44,8 +48,10 @@ pub use x86_64::irq_balance;
 // The device-tree parser describes the platforms that hand a blob over, not
 // one architecture: aarch64 and riscv64 both parse it, and the host tests
 // parse synthetic blobs with it, so it lives at this level rather than inside
-// the directory of the architecture that happened to write it first.
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
+// the directory of the architecture that happened to write it first.  It is
+// compiled everywhere, too: a machine that has no device tree says so by
+// leaving the table empty, which is what lets the drivers ask it a question
+// instead of asking which architecture they are on.
 pub mod fdt;
 
 /// Architecture abstraction trait.

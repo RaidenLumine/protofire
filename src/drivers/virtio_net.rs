@@ -700,85 +700,58 @@ pub fn driver() -> Arc<dyn Driver> {
 
 /// Probe VirtIO MMIO devices (discovered via FDT) for a network device.
 ///
-/// On platforms where the FDT provides VirtIO MMIO addresses (aarch64 and
-/// riscv64 QEMU virt), we iterate the actual device list.  Falls back to a
-/// blind scan of a fixed range when FDT info is unavailable.
+/// The machine supplies the addresses: the slots its device tree described,
+/// then its own fixed window.  A machine that describes its transports still
+/// gets the window scan afterwards, because this probe has a second place to
+/// look — the PCIe bus — and a wired device is worth finding before falling
+/// back to it.
 #[cfg(target_os = "none")]
 pub fn probe_boot_net() -> Option<Arc<dyn NetworkDevice>> {
     use crate::drivers::virtio::BareMmioRegion;
 
-    #[cfg(target_arch = "aarch64")]
-    const VIRTIO_MMIO_BASE: usize = 0x0A00_0000;
-    #[cfg(target_arch = "aarch64")]
-    const VIRTIO_MMIO_STRIDE: usize = 0x200;
-    #[cfg(target_arch = "riscv64")]
-    // QEMU `virt` maps the 8 virtio-mmio transports at 0x1000_1000 +
-    // slot*0x1000 (0x1000_1000..=0x1000_8000); 0x1000_8000 is the *last*
-    // one, so scanning upward from there reads unmapped MMIO and faults.
-    const VIRTIO_MMIO_BASE: usize = 0x1000_1000;
-    #[cfg(target_arch = "riscv64")]
-    const VIRTIO_MMIO_STRIDE: usize = 0x1000;
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
-    const VIRTIO_MMIO_BASE: usize = 0x0A00_0000;
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
-    const VIRTIO_MMIO_STRIDE: usize = 0x200;
-    const VIRTIO_MMIO_MAX_SLOTS: usize = 8;
-
-    // Try FDT-discovered devices first.
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-    {
-        let info = crate::arch::fdt::platform_info();
-        if let (Some(base), Some(count), Some(stride)) = (
-            info.virtio_mmio_base,
-            info.virtio_mmio_count,
-            info.virtio_mmio_stride,
-        ) {
-            crate::println!(
-                "[drivers] probing {} virtio-mmio slot(s) at 0x{:x} stride 0x{:x} (FDT)",
-                count,
-                base,
-                stride
-            );
-            for slot in 0..count {
-                let addr = base + slot * stride;
-                let region = unsafe { BareMmioRegion::new(addr) };
-                let transport = VirtIoMmio::new(Box::new(region));
-                if let Some(net) = try_virtio_net_device(transport) {
-                    crate::println!("[drivers] virtio-net device found at 0x{:x}", addr);
-                    return Some(net);
-                }
+    // The device tree's own list first, then the machine's fixed window.
+    // Unlike the block probe, this one keeps looking after a described list
+    // comes up empty: a machine can put virtio-net on its PCIe bus instead,
+    // and the PCI probes below are what find those.
+    let described = crate::arch::virtio_mmio::fdt_slots();
+    if let Some(slots) = &described {
+        crate::println!(
+            "[drivers] probing {} virtio-mmio slot(s) from the device tree",
+            slots.len()
+        );
+        for addr in slots {
+            // SAFETY: `addr` is a slot the device tree named as a
+            // `virtio,mmio` transport, so it is mapped and belongs to the
+            // transport this read is about to drive.
+            let region = unsafe { BareMmioRegion::new(*addr) };
+            let transport = VirtIoMmio::new(Box::new(region));
+            if let Some(net) = try_virtio_net_device(transport) {
+                crate::println!("[drivers] virtio-net device found at 0x{:x}", addr);
+                return Some(net);
             }
-            crate::println!(
-                "[drivers] no virtio-net device found (FDT scan, {} slot(s))",
-                count
-            );
-            // Fall through to blind scan and PCI probe.
         }
+        crate::println!(
+            "[drivers] no virtio-net device found (device tree, {} slot(s))",
+            slots.len()
+        );
     }
 
-    // Fallback: blind scan.
+    // Fallback: blind scan of the machine's own window.
+    let window = crate::arch::virtio_mmio::window_slots();
     crate::println!(
-        "[drivers] blind-scanning virtio-mmio at 0x{:x} stride 0x{:x} ({} slot(s))",
-        VIRTIO_MMIO_BASE,
-        VIRTIO_MMIO_STRIDE,
-        VIRTIO_MMIO_MAX_SLOTS
+        "[drivers] blind-scanning {} virtio-mmio slot(s) ({} described by the device tree)",
+        window.len(),
+        described.as_ref().map_or(0, |slots| slots.len())
     );
-    for slot in 0..VIRTIO_MMIO_MAX_SLOTS {
-        let addr = VIRTIO_MMIO_BASE + slot * VIRTIO_MMIO_STRIDE;
+    for addr in window {
         let region = unsafe { BareMmioRegion::new(addr) };
         let transport = VirtIoMmio::new(Box::new(region));
         if let Some(net) = try_virtio_net_device(transport) {
-            crate::println!(
-                "[drivers] virtio-net device found at 0x{:x} (blind scan)",
-                addr
-            );
+            crate::println!("[drivers] virtio-net device found at 0x{:x}", addr);
             return Some(net);
         }
     }
-    crate::println!(
-        "[drivers] no virtio-net device found (blind scan, {} slot(s))",
-        VIRTIO_MMIO_MAX_SLOTS
-    );
+    crate::println!("[drivers] no virtio-net device found in the MMIO window");
 
     // On aarch64, QEMU 8.x `virt` machine places virtio-net devices on the
     // PCIe bus (virtio-net-pci) rather than the MMIO transport.  Probe PCIe

@@ -1151,101 +1151,33 @@ pub fn driver() -> alloc::sync::Arc<dyn Driver> {
     alloc::sync::Arc::new(VirtIoDriver)
 }
 
-#[cfg(all(target_os = "none", target_arch = "aarch64"))]
-const VIRTIO_MMIO_BASE: usize = 0x0A00_0000;
-#[cfg(all(target_os = "none", target_arch = "aarch64"))]
-const VIRTIO_MMIO_STRIDE: usize = 0x200;
-#[cfg(all(target_os = "none", target_arch = "riscv64"))]
-const VIRTIO_MMIO_BASE: usize = 0x1000_1000;
-#[cfg(all(target_os = "none", target_arch = "riscv64"))]
-const VIRTIO_MMIO_STRIDE: usize = 0x1000;
-#[cfg(all(
-    target_os = "none",
-    not(any(target_arch = "aarch64", target_arch = "riscv64"))
-))]
-const VIRTIO_MMIO_BASE: usize = 0x0A00_0000;
-#[cfg(all(
-    target_os = "none",
-    not(any(target_arch = "aarch64", target_arch = "riscv64"))
-))]
-const VIRTIO_MMIO_STRIDE: usize = 0x200;
-// QEMU `virt` machines create *all* transports up front and bind the
-// `-device virtio-*-device` backends from the *top* of the MMIO window down.
-// With only the three GUI devices the aarch64 transports land at buses 29-31
-// (0x0a00_3a00..0x0a00_3e00), far beyond an 8-slot scan; the window count
-// therefore has to cover every transport QEMU instantiates so gpu/keyboard
-// are found regardless of where they were bound.
-#[cfg(all(target_os = "none", target_arch = "aarch64"))]
-const VIRTIO_MMIO_MAX_SLOTS: usize = 32; // QEMU aarch64 virt: NUM_VIRTIO_TRANSPORTS
-#[cfg(all(target_os = "none", target_arch = "riscv64"))]
-const VIRTIO_MMIO_MAX_SLOTS: usize = 8; // QEMU riscv64 virt: NUM_VIRTIO_TRANSPORTS
-#[cfg(all(
-    target_os = "none",
-    not(any(target_arch = "aarch64", target_arch = "riscv64"))
-))]
-const VIRTIO_MMIO_MAX_SLOTS: usize = 8;
-
 /// Return the MMIO addresses to scan when probing for a VirtIO device.
 ///
-/// On platforms whose FDT describes VirtIO MMIO nodes (aarch64/riscv64 QEMU
-/// `virt`), this yields exactly the discovered device slots.  Elsewhere it
-/// falls back to a blind scan of the fixed MMIO window.  Used by the
-/// virtio-gpu and virtio-input probes so they can coexist with the existing
-/// block/network scans on the same MMIO bus.
+/// The machine answers with the slots its device tree described, or with its
+/// fixed window when it described none; a probe stays inside the window's
+/// bound either way.  Used by the virtio-gpu and virtio-input probes so they
+/// can coexist with the block and network scans on the same MMIO bus.
 #[cfg(target_os = "none")]
 pub fn mmio_slot_addresses() -> alloc::vec::Vec<usize> {
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-    {
-        let info = crate::arch::fdt::platform_info();
-        if let (Some(base), Some(count), Some(stride)) = (
-            info.virtio_mmio_base,
-            info.virtio_mmio_count,
-            info.virtio_mmio_stride,
-        ) {
-            return (0..count.min(VIRTIO_MMIO_MAX_SLOTS))
-                .map(|slot| base + slot * stride)
-                .collect();
-        }
-    }
-    (0..VIRTIO_MMIO_MAX_SLOTS)
-        .map(|slot| VIRTIO_MMIO_BASE + slot * VIRTIO_MMIO_STRIDE)
+    crate::arch::virtio_mmio::slot_addresses()
+        .into_iter()
+        .take(crate::arch::virtio_mmio::MAX_SLOTS)
         .collect()
 }
 
 /// Probe VirtIO MMIO devices (discovered via FDT) for a block device.
 ///
-/// On platforms where the FDT provides VirtIO MMIO addresses (aarch64 and
-/// riscv64 QEMU virt), we iterate the actual device list.  Falls back to a
-/// blind scan of a fixed range when FDT info is unavailable.
+/// The device tree's own list is tried first and settles the question — a
+/// machine that described its transports is not then blind-scanned.  A machine
+/// that described none (or has no tree) gets the fixed window.
 #[cfg(target_os = "none")]
 pub fn probe_boot_disk() -> Option<alloc::sync::Arc<dyn BlockDevice>> {
-    // Try FDT-discovered devices first.
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-    {
-        let info = crate::arch::fdt::platform_info();
-        if let (Some(base), Some(count), Some(stride)) = (
-            info.virtio_mmio_base,
-            info.virtio_mmio_count,
-            info.virtio_mmio_stride,
-        ) {
-            for slot in 0..count {
-                let addr = base + slot * stride;
-                if let Some(block) = try_virtio_block_at(addr) {
-                    return Some(block);
-                }
-            }
-            return None;
-        }
+    if let Some(slots) = crate::arch::virtio_mmio::fdt_slots() {
+        return slots.into_iter().find_map(try_virtio_block_at);
     }
-
-    // Fallback: blind scan of a fixed MMIO window.
-    for slot in 0..VIRTIO_MMIO_MAX_SLOTS {
-        let addr = VIRTIO_MMIO_BASE + slot * VIRTIO_MMIO_STRIDE;
-        if let Some(block) = try_virtio_block_at(addr) {
-            return Some(block);
-        }
-    }
-    None
+    crate::arch::virtio_mmio::window_slots()
+        .into_iter()
+        .find_map(try_virtio_block_at)
 }
 
 /// Attempt to initialise a VirtIO block device at the given MMIO address.

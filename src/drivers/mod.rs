@@ -87,7 +87,6 @@ pub trait Driver: Send + Sync {
     /// Empty (the default) means the driver does not participate in
     /// device-tree-driven probing.  Present only on targets with an FDT
     /// (AArch64/RISC-V, and host tests).
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
     fn compatible_strings(&self) -> &'static [&'static str] {
         &[]
     }
@@ -97,7 +96,6 @@ pub trait Driver: Send + Sync {
     /// `node_idx` is the index into the FDT node table and `node` carries the
     /// compatible string, MMIO `reg`, and interrupt specifier parsed from the
     /// device tree.  Returns `Ok(true)` when the driver claims the node.
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
     fn probe_dt(&self, _node_idx: usize, _node: &crate::arch::fdt::DtNode) -> Result<bool> {
         Ok(false)
     }
@@ -257,7 +255,6 @@ impl DriverManager {
         // Device-tree-driven probe: bind registered drivers to FDT nodes
         // (AArch64/RISC-V).  Runs before the init loop so a DT-bound device
         // (e.g. virtio-gpu) is ready when its driver's `init()` runs.
-        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
         self.probe_dt_devices();
 
         let mut ata_initialized = true;
@@ -388,7 +385,6 @@ impl DriverManager {
     /// enumeration.  Runs during `init()` before the per-driver init loop so a
     /// DT-bound device (e.g. virtio-gpu) is ready before its driver's `init`
     /// runs.
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
     fn probe_dt_devices(&mut self) {
         let table = crate::arch::fdt::dt_node_table();
         self.probe_dt_devices_from_table(&table);
@@ -396,7 +392,6 @@ impl DriverManager {
 
     /// Pure variant of [`probe_dt_devices`] that takes an explicit node table
     /// (used by tests to avoid the global table).
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
     fn probe_dt_devices_from_table(&mut self, table: &crate::arch::fdt::DtNodeTable) {
         for (idx, node) in table.nodes[..table.count].iter().enumerate() {
             if node.disabled {
@@ -450,12 +445,10 @@ mod tests {
             Ok(())
         }
 
-        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
         fn compatible_strings(&self) -> &'static [&'static str] {
             &["virtio,mmio"]
         }
 
-        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
         fn probe_dt(&self, _node_idx: usize, node: &crate::arch::fdt::DtNode) -> Result<bool> {
             if let Some(base) = node.mmio_base() {
                 self.probed.lock().push(base);
