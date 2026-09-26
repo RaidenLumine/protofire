@@ -63,6 +63,9 @@ impl KernelGlobalAllocator {
 
     pub(crate) fn with_state<R>(&self, callback: impl FnOnce(&mut AllocatorState) -> R) -> R {
         let _guard = self.acquire_lock();
+        // SAFETY: the state lives behind an `UnsafeCell`, and the lock taken on
+        // the line above is held for as long as this reference is; no other CPU
+        // can reach the same `AllocatorState` while it is live.
         let state = unsafe { &mut *self.state.get() };
 
         if !state.initialized {
@@ -125,6 +128,9 @@ impl KernelGlobalAllocator {
         state.initialized = true;
 
         // Register the entire heap as one free block.
+        // SAFETY: the heap is one fresh region the kernel owns, and this writes
+        // the first block's header before any pointer into that region is
+        // handed out.
         unsafe {
             block_set_size(start, KERNEL_HEAP_SIZE);
             block_clear_used(start);
@@ -188,6 +194,8 @@ impl KernelGlobalAllocator {
                 return null_mut();
             }
 
+            // SAFETY: the candidate came out of the free lists with the lock
+            // held, so its header is a block header the allocator itself wrote.
             unsafe {
                 remove_free_block(state, candidate);
 
@@ -412,14 +420,24 @@ impl KernelGlobalAllocator {
         // flag), so a 16-aligned value there unambiguously marks a forwarded
         // block.
         let header_start = if nominal >= state.start && nominal < state.end {
+            // SAFETY: `nominal` was clamped into the heap above, and its first
+            // word is either the block's size (odd, because the used flag is
+            // set) or the forwarding pointer this allocator writes for an
+            // absorbed alignment prefix — both are words the allocator put
+            // there.
             let fwd = unsafe { *(nominal as *const usize) };
             if fwd >= state.start
                 && fwd < nominal
                 && fwd.is_multiple_of(HEAP_BLOCK_ALIGNMENT)
                 && nominal == fwd.wrapping_add(HEAP_BLOCK_ALIGNMENT)
             {
+                // SAFETY: the forwarding pointer was just validated: inside the
+                // heap, 16-byte aligned, below `nominal`, and exactly one
+                // alignment unit below it.
                 let size = unsafe { block_size(fwd) };
                 let end = fwd.wrapping_add(size);
+                // SAFETY: the same validated block; the checks below confirm it
+                // covers the payload before it is trusted.
                 if unsafe { block_is_used(fwd) }
                     && size >= HEADER_SIZE
                     && fwd <= payload_start
@@ -441,10 +459,14 @@ impl KernelGlobalAllocator {
             return false;
         }
 
+        // SAFETY: `header_start` was bounds-checked against the heap above, and
+        // it either came from the validation above or is `nominal` itself.
         let size = unsafe { block_size(header_start) };
         if size == 0 || size < HEADER_SIZE {
             return false;
         }
+        // SAFETY: the same block, whose size is non-zero and at least a header,
+        // so its size word is a block header's.
         if !unsafe { block_is_used(header_start) } {
             // Already free — double‑free is a no‑op.
             return false;
@@ -454,7 +476,13 @@ impl KernelGlobalAllocator {
         // still identifiable as this allocation: the address reported points at
         // the allocation that overran rather than at whichever free-list walk
         // later stumbled over the damage.
+        // SAFETY: the canary is inside the block — the check refuses a block
+        // too small to hold one — and it is read while the block is still
+        // marked used, before a free-list walk could trip over an overrun.
         if let Err(defect) = unsafe { super::tlsf::canary_check(header_start) } {
+            // SAFETY: this is the damage path and the heap is suspect; the
+            // report walks the lists under the same lock, before anything is
+            // modified, which is what makes the walk worth doing there.
             unsafe {
                 super::tlsf::report_heap_damage(state, "deallocate");
             }
@@ -467,13 +495,19 @@ impl KernelGlobalAllocator {
         state.available = state.available.saturating_add(size);
 
         // Mark the block as free.
+        // SAFETY: the block was identified as an in-use block above; clearing
+        // its flag is the one edit that turns it back into free heap.
         unsafe {
             block_clear_used(header_start);
         }
 
         // Coalesce with physical neighbours, then insert.
+        // SAFETY: the block is free now and its header says how far it extends;
+        // the neighbours it may merge with are validated inside `coalesce`.
         let block = unsafe { coalesce(state, header_start) };
 
+        // SAFETY: the block returned by coalescing is a free block with a valid
+        // header, and the insert links it into the free lists it belongs on.
         unsafe {
             insert_free_block(state, block);
         }
@@ -500,6 +534,8 @@ impl KernelGlobalAllocator {
     /// Panics with diagnostic information on the first invalid block found.
     #[cfg(debug_assertions)]
     pub fn verify_heap_integrity(&self) {
+        // SAFETY: the walk runs inside `with_state`, so it holds the
+        // allocator's lock and the lists it reads cannot change underneath it.
         self.with_state(|state| unsafe {
             scan_free_lists(state);
         });
