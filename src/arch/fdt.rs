@@ -559,6 +559,143 @@ impl Blob {
     }
 }
 
+/// A property's value, as the bytes the blob holds for it.
+///
+/// The walk checks a property's extent against the structure block before it
+/// builds one of these, so the slice is a slice of the blob.  A read past the
+/// *value* — a four-byte property asked for its second word — answers `None`
+/// rather than taking the neighbouring token's bytes, which is what an
+/// unchecked pointer read did.
+#[derive(Clone, Copy)]
+struct Value {
+    bytes: &'static [u8],
+}
+
+impl Value {
+    /// The value's length in bytes.
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// The 32-bit big-endian word at `byte_offset`, if the value holds it.
+    fn word(&self, byte_offset: usize) -> Option<u32> {
+        let end = byte_offset.checked_add(4)?;
+        let raw = self.bytes.get(byte_offset..end)?;
+        Some(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]))
+    }
+
+    /// The value's first `limit` bytes, or all of it when it is shorter.
+    fn up_to(&self, limit: usize) -> &'static [u8] {
+        &self.bytes[..self.bytes.len().min(limit)]
+    }
+}
+
+/// A cursor over the structure block of a validated blob.
+///
+/// The walk is the structure block's grammar: a sequence of 32-bit tokens, a
+/// NUL-terminated name after `BEGIN_NODE`, and a name offset plus a value after
+/// `PROP`.  Every read here is bounded by the block, and the bounds are the
+/// walk's own business rather than something each step of the parser restates —
+/// which is what the pointer arithmetic at the parse loops used to be.
+struct StructWalk {
+    blob: Blob,
+    cursor: *const u8,
+}
+
+impl StructWalk {
+    /// Begin at the start of `blob`'s structure block.
+    fn new(blob: Blob) -> Self {
+        Self {
+            cursor: blob.struct_start,
+            blob,
+        }
+    }
+
+    /// The next token, or `None` at the end of the block.
+    fn token(&mut self) -> Option<u32> {
+        if self.cursor.wrapping_offset(4) > self.blob.struct_end {
+            return None;
+        }
+        // SAFETY: the check above holds four bytes inside the structure block,
+        // and `read_u32_be` reads exactly four.
+        let token = unsafe { read_u32_be(self.cursor, 0) };
+        self.cursor = self.cursor.wrapping_add(4);
+        Some(token)
+    }
+
+    /// The node name at the cursor, advanced past its terminator and padding.
+    fn node_name(&mut self) -> Option<&'static str> {
+        let start = self.cursor;
+        let mut len = 0usize;
+        while self.cursor < self.blob.struct_end {
+            // SAFETY: the loop condition keeps the cursor inside the block.
+            if unsafe { *self.cursor } == 0 {
+                break;
+            }
+            self.cursor = self.cursor.wrapping_add(1);
+            len += 1;
+        }
+        if self.cursor < self.blob.struct_end {
+            self.cursor = self.cursor.wrapping_add(1);
+        }
+        self.align();
+        // SAFETY: the scan above stopped at a terminator or at the end of the
+        // block, so these `len` bytes are inside the blob.
+        let bytes = unsafe { core::slice::from_raw_parts(start, len) };
+        Some(core::str::from_utf8(bytes).unwrap_or(""))
+    }
+
+    /// The next property's name offset and value, advanced past both.
+    ///
+    /// The value is `None` when the property's extent does not lie inside the
+    /// block; the cursors are advanced either way, so the caller can skip the
+    /// property and keep walking.
+    fn property(&mut self) -> Option<(usize, Option<Value>)> {
+        if self.cursor.wrapping_offset(8) > self.blob.struct_end {
+            return None;
+        }
+        // SAFETY: the check above holds the two header words inside the block.
+        let len = unsafe { read_u32_be(self.cursor, 0) } as usize;
+        // SAFETY: as the length read above.
+        let nameoff = unsafe { read_u32_be(self.cursor, 4) } as usize;
+        self.cursor = self.cursor.wrapping_add(8);
+
+        let value_start = self.cursor;
+        self.cursor = self.cursor.wrapping_add(len);
+        self.align();
+
+        let value = if len == 0 || value_start.wrapping_add(len) > self.blob.struct_end {
+            None
+        } else {
+            // SAFETY: the check above holds the whole property inside the
+            // structure block, so these are bytes of the blob.
+            Some(Value {
+                bytes: unsafe { core::slice::from_raw_parts(value_start, len) },
+            })
+        };
+        Some((nameoff, value))
+    }
+
+    /// The property-name string at `offset` in the strings block.
+    fn string(&self, offset: usize) -> Option<&'static str> {
+        // SAFETY: the strings block's base and length come from the blob's own
+        // header, checked when the blob was validated.
+        unsafe { read_str(self.blob.strings_base, self.blob.strings_size, offset) }
+    }
+
+    /// Advance to the next 4-byte boundary, without leaving the block.
+    fn align(&mut self) {
+        let base = self.blob.base as usize;
+        let offset = (self.cursor as usize).wrapping_sub(base);
+        let aligned = self.blob.base.wrapping_add((offset + 3) & !3);
+        self.cursor = if aligned > self.blob.struct_end {
+            self.blob.struct_end
+        } else {
+            aligned
+        };
+    }
+}
+
 // ---------------------------------------------------------------------------
 // FDT parsing
 // ---------------------------------------------------------------------------
@@ -573,12 +710,6 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let Some(blob) = Blob::from_addr(fdt_addr) else {
         return PlatformInfo::empty();
     };
-    let base = blob.base;
-    let strings_base = blob.strings_base;
-    let strings_size = blob.strings_size;
-    let struct_ptr = blob.struct_start;
-    let struct_end = blob.struct_end;
-
     // Temporary accumulators during tree walk.
     let mut info = PlatformInfo::empty();
     let mut virtio_mmio_bases: [Option<usize>; 8] = [None; 8];
@@ -668,55 +799,15 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     // clock-frequency = 3,686,400, which is not the timer rate).
     let mut node_kind: [u8; 16] = [0; 16];
 
-    /// Advance `ptr` to the next 4-byte alignment boundary, without leaving
-    /// `limit`.
-    ///
-    /// The structure block's tokens and property values are 4-byte aligned, so
-    /// the walk steps to the next boundary after each of them.  Rounding up can
-    /// land past the block, and a pointer formed past the end of the *blob* is
-    /// not one this walk may make — so the arithmetic is `wrapping_add` and the
-    /// result is clamped to `limit`, which the loop's own condition then turns
-    /// into the end of the walk.
-    fn align4(ptr: *const u8, base_ptr: *const u8, limit: *const u8) -> *const u8 {
-        let offset = (ptr as usize).wrapping_sub(base_ptr as usize);
-        let aligned = base_ptr.wrapping_add((offset + 3) & !3);
-        if aligned > limit {
-            limit
-        } else {
-            aligned
-        }
-    }
-
-    let mut ptr = struct_ptr;
+    let mut walk = StructWalk::new(blob);
 
     // Main structure-block loop.
-    while ptr < struct_end {
-        if ptr.wrapping_offset(4) > struct_end {
-            break;
-        }
-
-        let token = unsafe { read_u32_be(ptr, 0) };
-        ptr = unsafe { ptr.add(4) };
-
+    while let Some(token) = walk.token() {
         match token {
             FDT_BEGIN_NODE => {
-                // Node name: NUL-terminated string.
-                let name_start = ptr;
-                let mut name_len: usize = 0;
-                while ptr < struct_end && unsafe { *ptr } != 0 {
-                    ptr = unsafe { ptr.add(1) };
-                    name_len += 1;
-                }
-                // Skip the NUL terminator.
-                if ptr < struct_end {
-                    ptr = unsafe { ptr.add(1) };
-                }
-                ptr = align4(ptr, base, struct_end);
-
-                let node_name = core::str::from_utf8(unsafe {
-                    core::slice::from_raw_parts(name_start, name_len)
-                })
-                .unwrap_or("");
+                let Some(node_name) = walk.node_name() else {
+                    break;
+                };
 
                 // Count CPU nodes — they are children of the "/cpus" node.
                 // At this point current_depth is the parent depth. A CPU node
@@ -853,26 +944,16 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
             }
 
             FDT_PROP => {
-                if ptr.wrapping_offset(8) > struct_end {
+                let Some((nameoff, value)) = walk.property() else {
                     break;
-                }
-
-                let len = unsafe { read_u32_be(ptr, 0) } as usize;
-                let nameoff = unsafe { read_u32_be(ptr, 4) } as usize;
-                ptr = unsafe { ptr.add(8) };
-
-                let prop_name = unsafe { read_str(strings_base, strings_size, nameoff) };
-
-                // Advance past the property value.
-                let value_ptr = ptr;
-                let value_len = len;
-                ptr = unsafe { ptr.add(len) };
-                ptr = align4(ptr, base, struct_end);
-
-                // After advancing ptr we're safe to read the value.
-                if value_len == 0 || value_ptr.wrapping_add(value_len) > struct_end {
+                };
+                let prop_name = walk.string(nameoff);
+                // A property whose extent does not lie inside the block is
+                // skipped, not walked into.
+                let Some(value) = value else {
                     continue;
-                }
+                };
+                let value_len = value.len();
 
                 let ctx = if current_depth < path.len() {
                     path[current_depth]
@@ -889,20 +970,16 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 match prop_name {
                     Some("#address-cells") => {
                         if value_len >= 4 && current_depth < path.len() {
-                            path[current_depth].address_cells =
-                                unsafe { read_u32_be(value_ptr, 0) };
+                            path[current_depth].address_cells = value.word(0).unwrap_or(0);
                         }
                     }
                     Some("#size-cells") => {
                         if value_len >= 4 && current_depth < path.len() {
-                            path[current_depth].size_cells = unsafe { read_u32_be(value_ptr, 0) };
+                            path[current_depth].size_cells = value.word(0).unwrap_or(0);
                         }
                     }
                     Some("compatible") => {
-                        let compatible = core::str::from_utf8(unsafe {
-                            core::slice::from_raw_parts(value_ptr, value_len.min(128))
-                        })
-                        .unwrap_or("");
+                        let compatible = core::str::from_utf8(value.up_to(128)).unwrap_or("");
 
                         // Check compat strings that require reading the parent's `reg`.
                         if compatible.contains(COMPAT_GIC_400)
@@ -966,19 +1043,21 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         // Iterate over all (address, size) entries in the reg value.
                         let entry_count = value_len / entry_bytes;
                         for entry_idx in 0..entry_count {
-                            let entry_ptr = unsafe { value_ptr.add(entry_idx * entry_bytes) };
+                            let entry_offset = entry_idx * entry_bytes;
 
                             let mut addr: u64 = 0;
                             for i in 0..ac {
-                                let cell = unsafe { read_u32_be(entry_ptr, i * cell_bytes) } as u64;
+                                let cell =
+                                    value.word(entry_offset + i * cell_bytes).unwrap_or(0) as u64;
                                 addr = (addr << 32) | cell;
                             }
                             let entry_size: u64 = {
                                 let mut s: u64 = 0;
                                 for i in 0..sc {
-                                    let cell =
-                                        unsafe { read_u32_be(entry_ptr, (ac + i) * cell_bytes) }
-                                            as u64;
+                                    let cell = value
+                                        .word(entry_offset + (ac + i) * cell_bytes)
+                                        .unwrap_or(0)
+                                        as u64;
                                     s = (s << 32) | cell;
                                 }
                                 s
@@ -1059,8 +1138,8 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                     }
                     Some("bus-range") if value_len >= 8 && current_is_pci_host => {
                         // bus-range is two u32 cells: first bus, last bus.
-                        let first_bus = unsafe { read_u32_be(value_ptr, 0) };
-                        let last_bus = unsafe { read_u32_be(value_ptr, 4) };
+                        let first_bus = value.word(0).unwrap_or(0);
+                        let last_bus = value.word(4).unwrap_or(0);
                         if first_bus <= last_bus && last_bus <= 255 {
                             info.ecam_start_bus = Some(first_bus as u8);
                             info.ecam_end_bus = Some(last_bus as u8);
@@ -1073,7 +1152,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                     Some("timebase-frequency")
                         if value_len >= 4 && info.timer_frequency.is_none() =>
                     {
-                        let freq = unsafe { read_u32_be(value_ptr, 0) } as u64;
+                        let freq = value.word(0).unwrap_or(0) as u64;
                         info.timer_frequency = Some(freq);
                     }
                     // Generic clock-frequency is only the timer rate on timer/CPU
@@ -1085,9 +1164,9 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             && in_timer_or_cpu_node =>
                     {
                         // Timer clock-frequency is a single u32 (or u64 on some platforms).
-                        let freq_hi = unsafe { read_u32_be(value_ptr, 0) } as u64;
+                        let freq_hi = value.word(0).unwrap_or(0) as u64;
                         if value_len >= 8 {
-                            let freq_lo = unsafe { read_u32_be(value_ptr, 4) } as u64;
+                            let freq_lo = value.word(4).unwrap_or(0) as u64;
                             info.timer_frequency = Some((freq_hi << 32) | freq_lo);
                         } else {
                             info.timer_frequency = Some(freq_hi);
@@ -1097,14 +1176,13 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         // The RISC-V ISA string (e.g. "rv64imafdc_sstc_zicbom").
                         // Check for the "_sstc" or "sstc_" substring indicating the
                         // Sstc (Supervisor Timer Compare) extension is present.
-                        let isa_bytes =
-                            unsafe { core::slice::from_raw_parts(value_ptr, value_len.min(256)) };
+                        let isa_bytes = value.up_to(256);
                         if let Ok(isa_str) = core::str::from_utf8(isa_bytes) {
                             info.has_sstc = isa_str.contains("sstc");
                         }
                     }
                     Some("numa-node-id") if value_len >= 4 => {
-                        let node_id = unsafe { read_u32_be(value_ptr, 0) } as u8;
+                        let node_id = value.word(0).unwrap_or(0) as u8;
                         // CPU node: associate the current CPU index with the node.
                         if cpu_node_idx >= 0 {
                             fdt_numa.add_cpu(cpu_node_idx as u32, node_id);
@@ -1128,15 +1206,15 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         const TRIPLET: usize = CELL * 3;
                         let entry_count = value_len / TRIPLET;
                         for i in 0..entry_count {
-                            let ep = unsafe { value_ptr.add(i * TRIPLET) };
-                            let local = unsafe { read_u32_be(ep, 0) };
-                            let remote = unsafe { read_u32_be(ep, CELL) };
-                            let distance = unsafe { read_u32_be(ep, CELL * 2) } as u8;
+                            let base = i * TRIPLET;
+                            let local = value.word(base).unwrap_or(0);
+                            let remote = value.word(base + CELL).unwrap_or(0);
+                            let distance = value.word(base + CELL * 2).unwrap_or(0) as u8;
                             fdt_numa.set_distance(local, remote, distance);
                         }
                     }
                     Some("phandle") if value_len >= 4 => {
-                        node_phandle = Some(unsafe { read_u32_be(value_ptr, 0) });
+                        node_phandle = Some(value.word(0).unwrap_or(0));
                         // Some DTs place `compatible` before `phandle`; pick
                         // the table's phandle up even in that case.
                         if opp_table_active && current_depth == opp_table_depth {
@@ -1144,10 +1222,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         }
                     }
                     Some("status") if value_len >= 1 => {
-                        let status = core::str::from_utf8(unsafe {
-                            core::slice::from_raw_parts(value_ptr, value_len.min(16))
-                        })
-                        .unwrap_or("");
+                        let status = core::str::from_utf8(value.up_to(16)).unwrap_or("");
                         if status.contains("disabled") {
                             if opp_table_active && current_depth == opp_table_depth {
                                 current_table_disabled = true;
@@ -1160,11 +1235,11 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         // `opp-hz` is a frequency in Hz, encoded as one or two
                         // 32-bit big-endian cells (u32 or u64 value).
                         let hz = if value_len >= 8 {
-                            let hi = unsafe { read_u32_be(value_ptr, 0) } as u64;
-                            let lo = unsafe { read_u32_be(value_ptr, 4) } as u64;
+                            let hi = value.word(0).unwrap_or(0) as u64;
+                            let lo = value.word(4).unwrap_or(0) as u64;
                             (hi << 32) | lo
                         } else if value_len >= 4 {
-                            (unsafe { read_u32_be(value_ptr, 0) }) as u64
+                            (value.word(0).unwrap_or(0)) as u64
                         } else {
                             0
                         };
@@ -1177,7 +1252,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         // (freq_hz, volt_uv) pairs, each a u32 cell.
                         let mut i = 0usize;
                         while i + 8 <= value_len {
-                            let freq = unsafe { read_u32_be(value_ptr, i) } as u64;
+                            let freq = value.word(i).unwrap_or(0) as u64;
                             if freq != 0 {
                                 legacy_opp_min = legacy_opp_min.min(freq);
                                 legacy_opp_max = legacy_opp_max.max(freq);
@@ -1192,7 +1267,7 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             && cpu_opp_count < cpu_opp_phandles.len() =>
                     {
                         // CPU node references an OPP table via phandle(s).
-                        cpu_opp_phandles[cpu_opp_count] = unsafe { read_u32_be(value_ptr, 0) };
+                        cpu_opp_phandles[cpu_opp_count] = value.word(0).unwrap_or(0);
                         cpu_opp_count += 1;
                     }
                     // fixed-clock output rate: u32 or u64 Hz cells.  Gated on
@@ -1201,9 +1276,9 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                     Some("clock-frequency")
                         if node_is_fixed_clock && value_len >= 4 && node_clock_rate.is_none() =>
                     {
-                        let hi = unsafe { read_u32_be(value_ptr, 0) } as u64;
+                        let hi = value.word(0).unwrap_or(0) as u64;
                         let rate = if value_len >= 8 {
-                            let lo = unsafe { read_u32_be(value_ptr, 4) } as u64;
+                            let lo = value.word(4).unwrap_or(0) as u64;
                             (hi << 32) | lo
                         } else {
                             hi
@@ -1214,16 +1289,16 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                     }
                     // fixed-factor-clock ratio.
                     Some("clock-mult") if node_is_factor_clock && value_len >= 4 => {
-                        node_clock_mult = unsafe { read_u32_be(value_ptr, 0) };
+                        node_clock_mult = value.word(0).unwrap_or(0);
                     }
                     Some("clock-div") if node_is_factor_clock && value_len >= 4 => {
-                        node_clock_div = unsafe { read_u32_be(value_ptr, 0) };
+                        node_clock_div = value.word(0).unwrap_or(0);
                     }
                     Some("clocks") if value_len >= 4 => {
                         // First cell is the referenced clock's phandle.  On a
                         // CPU node this is the CPU clock; on a
                         // fixed-factor-clock node it is the parent clock.
-                        let ph = unsafe { read_u32_be(value_ptr, 0) };
+                        let ph = value.word(0).unwrap_or(0);
                         if cpu_node_idx >= 0 && cpu_clock_count < cpu_clock_phandles.len() {
                             cpu_clock_phandles[cpu_clock_count] = ph;
                             cpu_clock_count += 1;
@@ -1486,12 +1561,6 @@ pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
     let Some(blob) = Blob::from_addr(fdt_addr) else {
         return table;
     };
-    let base = blob.base;
-    let strings_base = blob.strings_base;
-    let strings_size = blob.strings_size;
-    let struct_ptr = blob.struct_start;
-    let struct_end = blob.struct_end;
-
     /// Track #address-cells / #size-cells per depth (inherited from parents).
     #[derive(Clone, Copy)]
     struct Cells {
@@ -1508,50 +1577,14 @@ pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
     let mut pending: [Option<DtNode>; 16] = [None; 16];
     let mut depth: usize = 0;
 
-    /// Advance `ptr` to the next 4-byte alignment boundary, without leaving
-    /// `limit`.
-    ///
-    /// As the first walk's copy: the arithmetic wraps and the result is
-    /// clamped, because a pointer formed past the end of the blob is not one
-    /// this walk may make.
-    fn align4(ptr: *const u8, base_ptr: *const u8, limit: *const u8) -> *const u8 {
-        let offset = (ptr as usize).wrapping_sub(base_ptr as usize);
-        let aligned = base_ptr.wrapping_add((offset + 3) & !3);
-        if aligned > limit {
-            limit
-        } else {
-            aligned
-        }
-    }
+    let mut walk = StructWalk::new(blob);
 
-    let mut ptr = struct_ptr;
-
-    while ptr < struct_end {
-        if ptr.wrapping_offset(4) > struct_end {
-            break;
-        }
-
-        let token = unsafe { read_u32_be(ptr, 0) };
-        ptr = unsafe { ptr.add(4) };
-
+    while let Some(token) = walk.token() {
         match token {
             FDT_BEGIN_NODE => {
-                // Node name: NUL-terminated string.
-                let name_start = ptr;
-                let mut name_len = 0usize;
-                while ptr < struct_end && unsafe { *ptr } != 0 {
-                    ptr = unsafe { ptr.add(1) };
-                    name_len += 1;
-                }
-                if ptr < struct_end {
-                    ptr = unsafe { ptr.add(1) };
-                }
-                ptr = align4(ptr, base, struct_end);
-
-                let raw_name = core::str::from_utf8(unsafe {
-                    core::slice::from_raw_parts(name_start, name_len)
-                })
-                .unwrap_or("");
+                let Some(raw_name) = walk.node_name() else {
+                    break;
+                };
 
                 // Enter the node: its own depth is the parent depth + 1.
                 let node_depth = depth + 1;
@@ -1591,23 +1624,14 @@ pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
             }
 
             FDT_PROP => {
-                if ptr.wrapping_offset(8) > struct_end {
+                let Some((nameoff, value)) = walk.property() else {
                     break;
-                }
-                let len = unsafe { read_u32_be(ptr, 0) } as usize;
-                let nameoff = unsafe { read_u32_be(ptr, 4) } as usize;
-                ptr = unsafe { ptr.add(8) };
-
-                let prop_name = unsafe { read_str(strings_base, strings_size, nameoff) };
-
-                let value_ptr = ptr;
-                let value_len = len;
-                ptr = unsafe { ptr.add(len) };
-                ptr = align4(ptr, base, struct_end);
-
-                if value_len == 0 || value_ptr.wrapping_add(value_len) > struct_end {
+                };
+                let prop_name = walk.string(nameoff);
+                let Some(value) = value else {
                     continue;
-                }
+                };
+                let value_len = value.len();
 
                 let Some(prop) = prop_name else { continue };
                 let Some(node) = pending.get_mut(depth).and_then(|slot| slot.as_mut()) else {
@@ -1616,20 +1640,20 @@ pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
 
                 match prop {
                     "#address-cells" if value_len >= 4 => {
-                        let ac = unsafe { read_u32_be(value_ptr, 0) };
+                        let ac = value.word(0).unwrap_or(0);
                         if depth < cells.len() {
                             cells[depth].address = ac;
                         }
                     }
                     "#size-cells" if value_len >= 4 => {
-                        let sc = unsafe { read_u32_be(value_ptr, 0) };
+                        let sc = value.word(0).unwrap_or(0);
                         if depth < cells.len() {
                             cells[depth].size = sc;
                         }
                     }
                     "compatible" => {
                         // Copy the first NUL-terminated compatible string.
-                        let bytes = unsafe { core::slice::from_raw_parts(value_ptr, value_len) };
+                        let bytes = value.up_to(value_len);
                         let first = bytes.split(|&b| b == 0).next().unwrap_or(bytes);
                         let clen = core::cmp::min(first.len(), node.compatible.len() - 1);
                         node.compatible[..clen].copy_from_slice(&first[..clen]);
@@ -1645,15 +1669,15 @@ pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
                         }
                         let entries = core::cmp::min(value_len / entry_bytes, node.reg.len());
                         for i in 0..entries {
-                            let ep = unsafe { value_ptr.add(i * entry_bytes) };
+                            let base = i * entry_bytes;
                             let mut addr: u64 = 0;
                             for cell in 0..ac {
-                                let v = unsafe { read_u32_be(ep, cell * 4) } as u64;
+                                let v = value.word(base + cell * 4).unwrap_or(0) as u64;
                                 addr = (addr << 32) | v;
                             }
                             let mut size: u64 = 0;
                             for cell in 0..sc {
-                                let v = unsafe { read_u32_be(ep, (ac + cell) * 4) } as u64;
+                                let v = value.word(base + (ac + cell) * 4).unwrap_or(0) as u64;
                                 size = (size << 32) | v;
                             }
                             node.reg[i] = DtRegEntry { base: addr, size };
@@ -1661,16 +1685,13 @@ pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
                         }
                     }
                     "interrupts" if value_len >= 4 => {
-                        node.irq = Some(unsafe { read_u32_be(value_ptr, 0) });
+                        node.irq = Some(value.word(0).unwrap_or(0));
                     }
                     "phandle" if value_len >= 4 => {
-                        node.phandle = Some(unsafe { read_u32_be(value_ptr, 0) });
+                        node.phandle = Some(value.word(0).unwrap_or(0));
                     }
                     "status" => {
-                        let status = core::str::from_utf8(unsafe {
-                            core::slice::from_raw_parts(value_ptr, value_len.min(16))
-                        })
-                        .unwrap_or("");
+                        let status = core::str::from_utf8(value.up_to(16)).unwrap_or("");
                         if status.contains("disabled") {
                             node.disabled = true;
                         }
