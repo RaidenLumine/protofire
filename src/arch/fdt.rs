@@ -467,6 +467,99 @@ unsafe fn read_str(
 }
 
 // ---------------------------------------------------------------------------
+// A blob whose header has been checked
+// ---------------------------------------------------------------------------
+
+/// A device-tree blob whose header has been validated.
+///
+/// The parser reads the header — magic, version, `totalsize`, and the two block
+/// offsets — and keeps the bounds the two blocks live between.  That read is
+/// the one trust this module makes: the boot protocol says the address is a
+/// flattened device tree, whose header is a fixed 40 bytes, and everything past
+/// the header is reached only through bounds checked against the blob's own
+/// `totalsize`.  Having one place decide that is what lets the walks below take
+/// a validated blob instead of re-deciding it per field.
+#[derive(Clone, Copy)]
+struct Blob {
+    /// The blob's first byte.
+    base: *const u8,
+    /// The first byte of the structure block.
+    struct_start: *const u8,
+    /// The end of the structure block, which is where the strings block
+    /// begins.
+    struct_end: *const u8,
+    /// The first byte of the strings block.
+    strings_base: *const u8,
+    /// The strings block's length in bytes.
+    strings_size: usize,
+}
+
+impl Blob {
+    /// Validate the header of the blob at `fdt_addr`.
+    ///
+    /// `None` when the address is null, the magic is wrong, the version is not
+    /// one this parser handles, or the block offsets do not lie inside
+    /// `totalsize` with the structure block before the strings block.
+    fn from_addr(fdt_addr: usize) -> Option<Self> {
+        if fdt_addr == 0 {
+            return None;
+        }
+        let base = fdt_addr as *const u8;
+
+        // SAFETY: the boot protocol says this address is a flattened device
+        // tree, and the format's header is a fixed 40 bytes — so these reads,
+        // all inside that header, are inside the blob the protocol promised.
+        // Nothing past the header is touched until `totalsize` is read and
+        // checked below.
+        let magic = unsafe { read_u32_be(base, OFF_MAGIC) };
+        if magic != FDT_MAGIC {
+            return None;
+        }
+        // SAFETY: as the magic read above: a header field at a fixed offset.
+        let version = unsafe { read_u32_be(base, OFF_VERSION) };
+        // SAFETY: as above.
+        let last_comp_version = unsafe { read_u32_be(base, OFF_LAST_COMP_VERSION) };
+        // We support FDT v17 (the current standard version).
+        if version < 17 || last_comp_version > 17 {
+            return None;
+        }
+
+        // SAFETY: as the header reads above.
+        let totalsize = unsafe { read_u32_be(base, OFF_TOTALSIZE) } as usize;
+        // SAFETY: as above.
+        let off_dt_struct = unsafe { read_u32_be(base, OFF_OFF_DT_STRUCT) } as usize;
+        // SAFETY: as above.
+        let off_dt_strings = unsafe { read_u32_be(base, OFF_OFF_DT_STRINGS) } as usize;
+
+        // `totalsize` is the blob's own claim, and the blob the boot protocol
+        // handed over is at least that long.  These checks hold both offsets
+        // inside it and order the structure block before the strings block,
+        // which is what makes every pointer the walks form one the blob
+        // contains.
+        if off_dt_struct >= totalsize
+            || off_dt_strings >= totalsize
+            || off_dt_struct >= off_dt_strings
+        {
+            return None;
+        }
+
+        // SAFETY: `off_dt_strings < totalsize` and the blob is at least
+        // `totalsize` bytes, so this address is inside it.
+        let strings_base = unsafe { base.add(off_dt_strings) };
+        // SAFETY: as the strings pointer: `off_dt_struct < off_dt_strings`.
+        let struct_start = unsafe { base.add(off_dt_struct) };
+
+        Some(Self {
+            base,
+            struct_start,
+            struct_end: strings_base,
+            strings_base,
+            strings_size: totalsize - off_dt_strings,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // FDT parsing
 // ---------------------------------------------------------------------------
 
@@ -477,61 +570,14 @@ unsafe fn read_str(
 /// the returned `PlatformInfo` will have all fields set to `None` — the
 /// caller should fall back to hardcoded constants.
 pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
-    if fdt_addr == 0 {
+    let Some(blob) = Blob::from_addr(fdt_addr) else {
         return PlatformInfo::empty();
-    }
-
-    let base = fdt_addr as *const u8;
-
-    // Validate magic and version in the header.
-    // SAFETY: the boot protocol says this address is a flattened device tree,
-    // and the format's fixed header is 40 bytes; this reads its first word, and
-    // everything after the header is validated against `totalsize` before it is
-    // used.
-    let magic = unsafe { read_u32_be(base, OFF_MAGIC) };
-    if magic != FDT_MAGIC {
-        return PlatformInfo::empty();
-    }
-
-    // SAFETY: a header field, inside the 40 bytes the format guarantees for a
-    // blob the platform handed over.
-    let version = unsafe { read_u32_be(base, OFF_VERSION) };
-    // SAFETY: as the version read above: a header field at a fixed offset.
-    let last_comp_version = unsafe { read_u32_be(base, OFF_LAST_COMP_VERSION) };
-    // We support FDT v17 (the current standard version).
-    if version < 17 || last_comp_version > 17 {
-        return PlatformInfo::empty();
-    }
-
-    // SAFETY: `totalsize` is the blob's own claim, and the checks on the line
-    // after it hold both block offsets inside that size before either is used.
-    let totalsize = unsafe { read_u32_be(base, OFF_TOTALSIZE) } as usize;
-    // SAFETY: as `totalsize`: a header field, whose value is checked against
-    // `totalsize` before it is dereferenced.
-    let off_dt_struct = unsafe { read_u32_be(base, OFF_OFF_DT_STRUCT) } as usize;
-    // SAFETY: as the structure offset above; the same check covers both block
-    // offsets.
-    let off_dt_strings = unsafe { read_u32_be(base, OFF_OFF_DT_STRINGS) } as usize;
-
-    // totalsize includes the header; strings block size is totalsize -
-    // off_dt_strings.
-    if off_dt_struct >= totalsize || off_dt_strings >= totalsize || off_dt_struct >= off_dt_strings
-    {
-        return PlatformInfo::empty();
-    }
-
-    // SAFETY: `off_dt_strings < totalsize` was just checked, and the boot
-    // protocol's blob is at least `totalsize` bytes, so this pointer is inside
-    // it.
-    let strings_base = unsafe { base.add(off_dt_strings) };
-    let strings_size = totalsize - off_dt_strings;
-
-    // SAFETY: as the strings pointer: `off_dt_struct < off_dt_strings <
-    // totalsize`, so this address is inside the blob.
-    let struct_ptr = unsafe { base.add(off_dt_struct) };
-    // SAFETY: the structure block ends where the strings block begins, which
-    // the check above ordered; this pointer is that boundary.
-    let struct_end = unsafe { base.add(off_dt_strings) }; // struct block ends where strings begin
+    };
+    let base = blob.base;
+    let strings_base = blob.strings_base;
+    let strings_size = blob.strings_size;
+    let struct_ptr = blob.struct_start;
+    let struct_end = blob.struct_end;
 
     // Temporary accumulators during tree walk.
     let mut info = PlatformInfo::empty();
@@ -1437,36 +1483,14 @@ pub fn dt_node_table() -> DtNodeTable {
 /// devices; also directly testable against a synthetic FDT.
 pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
     let mut table = DtNodeTable::empty();
-    if fdt_addr == 0 {
+    let Some(blob) = Blob::from_addr(fdt_addr) else {
         return table;
-    }
-
-    let base = fdt_addr as *const u8;
-
-    // Validate the header exactly like `parse_fdt`.
-    let magic = unsafe { read_u32_be(base, OFF_MAGIC) };
-    if magic != FDT_MAGIC {
-        return table;
-    }
-    let version = unsafe { read_u32_be(base, OFF_VERSION) };
-    let last_comp_version = unsafe { read_u32_be(base, OFF_LAST_COMP_VERSION) };
-    if version < 17 || last_comp_version > 17 {
-        return table;
-    }
-
-    let totalsize = unsafe { read_u32_be(base, OFF_TOTALSIZE) } as usize;
-    let off_dt_struct = unsafe { read_u32_be(base, OFF_OFF_DT_STRUCT) } as usize;
-    let off_dt_strings = unsafe { read_u32_be(base, OFF_OFF_DT_STRINGS) } as usize;
-
-    if off_dt_struct >= totalsize || off_dt_strings >= totalsize || off_dt_struct >= off_dt_strings
-    {
-        return table;
-    }
-
-    let strings_base = unsafe { base.add(off_dt_strings) };
-    let strings_size = totalsize - off_dt_strings;
-    let struct_ptr = unsafe { base.add(off_dt_struct) };
-    let struct_end = unsafe { base.add(off_dt_strings) };
+    };
+    let base = blob.base;
+    let strings_base = blob.strings_base;
+    let strings_size = blob.strings_size;
+    let struct_ptr = blob.struct_start;
+    let struct_end = blob.struct_end;
 
     /// Track #address-cells / #size-cells per depth (inherited from parents).
     #[derive(Clone, Copy)]
