@@ -47,6 +47,7 @@ endif
 		check-host \
 		check-target \
 		check-aarch64 \
+		check-aarch64-host \
 		check-riscv64 \
 		check-unsafe-comments \
 		check-layering \
@@ -87,6 +88,7 @@ help:
 		'  make verify-p3      - P2 plus clippy and optional AArch64 runtime smoke' \
 		'  make check          - run both host and bare-metal type checks' \
 		'  make check-aarch64  - run bare-metal type checks for aarch64-unknown-none' \
+		'  make check-aarch64-host - type-check aarch64-unknown-linux-gnu, where the arch modules also build' \
 		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
 		'  make check-unsafe-comments - fail if any configuration gained an undocumented `unsafe` block' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
@@ -214,13 +216,21 @@ verify-p2:
 verify-p3:
 	sh ./scripts/verify.sh p3
 
-check: check-host check-target
+check: check-host check-target check-aarch64-host
 
 check-host: setup-dev
 	$(CARGO) check $(CARGO_FLAGS)
 
 check-target:
 	$(CARGO) check $(CARGO_FLAGS) --target $(TARGET)
+
+# The aarch64 *host* configuration.  Every architecture module is written to
+# compile on a host — that is what lets the tests build the same code the
+# machine runs — so this configuration is part of the build's contract, and it
+# went unnoticed for want of a gate: a `#[cfg]` on a module another module
+# named left it unable to resolve on this target, and nothing checked.
+check-aarch64-host:
+	$(CARGO) check $(CARGO_FLAGS) --target aarch64-unknown-linux-gnu
 
 check-aarch64:
 	$(CARGO) check $(CARGO_FLAGS) --target aarch64-unknown-none

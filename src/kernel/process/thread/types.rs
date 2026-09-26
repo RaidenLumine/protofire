@@ -98,6 +98,10 @@ pub(crate) const fn is_canonical_user_address(address: usize) -> bool {
 /// instead of three: the kernel asks the context where the child resumes and
 /// how to hand itself to the thread, and names neither a register nor a
 /// context type to do it.
+// Every architecture implements it, and the fork path that consumes it is
+// bare-metal: a host never launches a user process, so on a host this trait and
+// the constructor below have no caller.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 pub(crate) trait UserForkContext: Copy {
     /// Where the child resumes, and which stack it runs on.
     fn user_thread_start(&self) -> UserThreadStart;

@@ -40,8 +40,10 @@ BASELINE="${BASELINE:-scripts/unsafe-comment-baseline.txt}"
 
 # The configurations the count is taken over.  `host` is the default target
 # (the host build, tests included); the rest are the kernel's three
-# architectures.
-CONFIGS="host x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf"
+# architectures, plus the aarch64 host: every architecture module is written to
+# compile on a host as well, that configuration is built by `make check`, and a
+# configuration no ratchet counts is where debt goes to hide.
+CONFIGS="host x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf aarch64-unknown-linux-gnu"
 
 LINT_MESSAGE="unsafe block missing a safety comment"
 

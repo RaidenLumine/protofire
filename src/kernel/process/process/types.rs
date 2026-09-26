@@ -617,7 +617,16 @@ impl ProcessUserAddressSpace {
     /// The user entry point and stack pointer this hierarchy pins, if it pins
     /// them.  The loaders of the two architectures that do read it; x86_64
     /// applies them to the thread's context at install time instead.
-    #[cfg_attr(target_arch = "x86_64", allow(dead_code))] // x86_64's loaders do not ask
+    // The loaders that ask are the two bare-metal halves; every other
+    // configuration — x86_64, and a host of either of the other two — has no
+    // caller for it.
+    #[cfg_attr(
+        not(any(
+            all(target_arch = "aarch64", target_os = "none"),
+            all(target_arch = "riscv64", target_os = "none")
+        )),
+        allow(dead_code)
+    )]
     pub(crate) fn user_thread_start(&self) -> Option<UserThreadStart> {
         self.storage.user_thread_start()
     }

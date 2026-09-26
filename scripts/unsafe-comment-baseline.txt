@@ -21,3 +21,4 @@ host                         644
 x86_64-unknown-none          708
 aarch64-unknown-none         499
 riscv64gc-unknown-none-elf   428
+aarch64-unknown-linux-gnu    517

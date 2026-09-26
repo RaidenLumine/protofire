@@ -15,12 +15,15 @@ pub mod heap;
 pub(crate) mod manager;
 // What the kernel maps, derived once and published.  The two architectures
 // that consume it are x86_64 and aarch64; riscv64 derives its own mapping and
-// has no reader yet, so the module is compiled where something reads it — the
-// two bare-metal targets that do, and the host tests that exercise it.  When
-// riscv64 grows a reader, its name joins them.
+// has no reader yet, so the module is compiled where something reads it.  That
+// is *any* aarch64 build — aarch64's MMU module is host-safe by design and
+// reads these facts on every target — the bare-metal x86_64 build, whose page
+// table runtime reads them, and the host tests that exercise them.  Gating
+// this on `target_os = "none"` for aarch64 is what left that architecture's
+// host build unable to find the module its own MMU named.
 #[cfg(any(
+    target_arch = "aarch64",
     all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none"),
     test
 ))]
 pub(crate) mod map_facts;

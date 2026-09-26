@@ -102,6 +102,7 @@ impl Thread {
     /// The child resumes with the parent's saved register state rather than at
     /// a fresh user start; which context that is, and how it is handed over, is
     /// the architecture's business — see [`UserForkContext`].
+    #[cfg_attr(not(target_os = "none"), allow(dead_code))] // bare-metal fork path only
     pub(crate) fn new_user_fork<C: UserForkContext>(
         process: Arc<Process>,
         context: C,
