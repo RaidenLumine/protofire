@@ -1,9 +1,22 @@
-//! src/user/program/loader/arch/x86_64.rs
+//! src/arch/x86_64/user_loader.rs
 //!
 //! The x86_64 half of loading a program image: building its address space,
 //! its stack, and the auxv a dynamically linked program would read.
 
-use super::*;
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use crate::arch::user_loader::build_initial_user_stack;
+use crate::arch::user_loader::PreparedInitialUserStack;
+use crate::kernel::process::ProcessUserAddressSpace;
+use crate::memory::paging::MappingKind;
+use crate::memory::paging::PagePermissions;
+use crate::user::program::UserImageLoadPlan;
+use crate::user::program::USER_PAGE_SIZE;
+use crate::user::program::X86_64_AUXV_AT_ENTRY;
+use crate::user::program::X86_64_AUXV_AT_PAGESZ;
+use crate::Error;
+use crate::Result;
 
 pub(crate) fn prepare_arch_user_address_space(
     image_layout: Option<&UserImageLoadPlan>,
@@ -104,10 +117,7 @@ pub(crate) fn build_x86_64_initial_user_stack(
 
 pub(crate) fn x86_64_initial_auxv_entries(entry_point: usize) -> [(u64, u64); 2] {
     [
-        (
-            constants::X86_64_AUXV_AT_PAGESZ,
-            constants::USER_PAGE_SIZE as u64,
-        ),
-        (constants::X86_64_AUXV_AT_ENTRY, entry_point as u64),
+        (X86_64_AUXV_AT_PAGESZ, USER_PAGE_SIZE as u64),
+        (X86_64_AUXV_AT_ENTRY, entry_point as u64),
     ]
 }

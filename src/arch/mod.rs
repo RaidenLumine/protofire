@@ -20,6 +20,7 @@ pub mod thread;
 pub mod timer;
 pub mod tlb;
 pub mod trap;
+pub mod user_loader;
 
 #[cfg(target_arch = "aarch64")]
 pub mod aarch64;

@@ -1,72 +1,87 @@
-//! src/user/program/loader/arch/mod.rs
+//! src/arch/user_loader.rs
 //!
 //! Loading a program image onto a target: the address space it needs, the
 //! stack it starts on, and the registers its first instruction reads.
 //!
-//! The *shape* of that is the same everywhere and lives here — the stack
-//! layout, the string and pointer pushing, the segment planning and the
-//! permissions each segment gets.  What is not the same is what a target's
-//! entry takes: x86_64 is handed a stack pointer, aarch64 an entry and a
-//! stack, riscv64 a stack pointer and two argument registers, and each builds
-//! its address space through its own MMU.  That half is one file per
-//! architecture below, and this file names no architecture except in the
-//! picker that chooses one.
-
-use super::*;
+//! What is the same everywhere lives in the kernel's loader — planning an ELF
+//! image into segments, building the initial stack, walking the argument
+//! vectors.  What is not the same is what a target's entry takes: x86_64 is
+//! handed a stack pointer, aarch64 an entry and a stack, riscv64 a stack
+//! pointer and two argument registers, and each builds its address space
+//! through its own MMU.  That half is one file per architecture under
+//! `src/arch/<arch>/user_loader.rs`, and this file names no architecture
+//! outside the picker below.
+//!
+//! A new architecture adds its own half, one `#[path]` line here, and one
+//! `pub(crate) use`: the loader that calls these entry points does not change.
 
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+// Only the "no architecture here" address space and the shared thread-start
+// adjustments name it; the halves that do define their own bring it in
+// themselves.
+#[cfg(not(any(
+    all(target_arch = "aarch64", target_os = "none"),
+    all(target_arch = "riscv64", target_os = "none")
+)))]
 use crate::kernel::process::ProcessUserAddressSpace;
 use crate::kernel::process::UserThreadStart;
-#[cfg(any(
-    target_arch = "x86_64",
-    all(target_arch = "aarch64", target_os = "none")
-))]
-use crate::memory::paging::MappingKind;
-use crate::memory::paging::PagePermissions;
+use crate::user::program::align_down;
+use crate::user::program::UserImageLoadPlan;
+use crate::user::program::AUXV_AT_NULL;
 use crate::Error;
 use crate::Result;
-
-use super::super::constants;
-use crate::user::elf::ElfLoadSegment;
-use crate::user::elf::ElfSegmentFlags;
 
 // ── Per-architecture halves ────────────────────────────────────────────
 //
 // Each module defines the same entry points, so the picker below re-exports
-// whichever pair this target has: a call site names what it wants, not which
-// architecture it is.
+// whichever half this target has: a call site names what it wants, not which
+// architecture it is.  The `#[path]` is deliberate — the files live in the
+// architecture's own directory, beside everything else that touches its
+// registers, while the gate that selects one is written once, here, next to
+// the others.
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-mod aarch64;
+#[path = "aarch64/user_loader.rs"]
+mod aarch64_loader;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-mod riscv64;
+#[path = "riscv64/user_loader.rs"]
+mod riscv64_loader;
 #[cfg(target_arch = "x86_64")]
-mod x86_64;
+#[path = "x86_64/user_loader.rs"]
+mod x86_64_loader;
 
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub(crate) use aarch64_loader::*;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub(crate) use riscv64_loader::*;
+#[cfg(target_arch = "x86_64")]
+pub(crate) use x86_64_loader::*;
+
+/// A target this kernel cannot build a user process for: there is no address
+/// space to prepare, and the loader above gets `None` rather than a
+/// half-built one.
 #[cfg(not(any(
     target_arch = "x86_64",
     all(target_arch = "aarch64", target_os = "none"),
     all(target_arch = "riscv64", target_os = "none")
 )))]
-mod absent;
+pub(crate) fn prepare_arch_user_address_space(
+    _image_layout: Option<&UserImageLoadPlan>,
+    _image: &[u8],
+    _arguments: &[String],
+    _environment: &[String],
+) -> Result<Option<ProcessUserAddressSpace>> {
+    Ok(None)
+}
 
-#[cfg(all(target_arch = "aarch64", target_os = "none"))]
-pub(crate) use aarch64::*;
-#[cfg(all(target_arch = "riscv64", target_os = "none"))]
-pub(crate) use riscv64::*;
-#[cfg(target_arch = "x86_64")]
-pub(crate) use x86_64::*;
-
-#[cfg(not(any(
-    target_arch = "x86_64",
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-)))]
-pub(crate) use absent::*;
-
+/// Ask the target to adjust the thread's start descriptor, if its entry reads
+/// anything the generic one cannot fill in.
+///
+/// The architectures whose entry takes argument registers define this
+/// themselves; the rest have nothing to add, so the shared answer stands.
 #[cfg(not(any(
     all(target_arch = "aarch64", target_os = "none"),
     all(target_arch = "riscv64", target_os = "none")
@@ -92,6 +107,11 @@ pub(crate) fn prepare_arch_user_thread_start(
     Ok(None)
 }
 
+/// The start descriptor for a freshly loaded image, built from the plan.
+///
+/// x86_64's entry reads its arguments off the stack it is handed, so the
+/// stack is built here; the architectures that pass them in registers leave
+/// the descriptor to their own half.
 pub(crate) fn build_initial_user_thread_start(
     instruction_pointer: usize,
     image_layout: Option<&UserImageLoadPlan>,
@@ -125,6 +145,24 @@ pub(crate) fn build_initial_user_thread_start(
     }
 }
 
+// ── the initial stack ──────────────────────────────────────────────────
+//
+// The stack a user program starts on, built the way a C runtime reads it: the
+// argument and environment strings pushed downwards from the top, then
+// `argc`, the argument vector, `envp`, the auxiliary vector, and `AT_NULL`.
+// Every architecture gets it in the same shape; what differs is which
+// registers the entry reads the pointers out of, and that is the half above.
+
+/// The stack a target just built for a user program: where its top ended up,
+/// and the bytes to write there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PreparedInitialUserStack {
+    pub(crate) stack_pointer: usize,
+    pub(crate) bytes: Vec<u8>,
+}
+
+// The aarch64 host compiles no half of the loader — it has no user address
+// space to build — so on that one target the shared stack shape is unused.
 #[cfg_attr(
     all(target_arch = "aarch64", not(target_os = "none")),
     allow(dead_code)
@@ -156,7 +194,7 @@ pub(crate) fn build_initial_user_stack(
         .checked_mul(core::mem::size_of::<u64>())
         .ok_or(Error::OutOfMemory)?;
     // Keep the final SP 16-byte aligned before first user instructions run.
-    let final_stack_pointer = constants::align_down(
+    let final_stack_pointer = align_down(
         stack_pointer
             .checked_sub(metadata_size)
             .ok_or(Error::OutOfMemory)?,
@@ -181,7 +219,7 @@ pub(crate) fn build_initial_user_stack(
         write_u64_stack_entry(&mut writes, &mut cursor, *key)?;
         write_u64_stack_entry(&mut writes, &mut cursor, *value)?;
     }
-    write_u64_stack_entry(&mut writes, &mut cursor, constants::AUXV_AT_NULL)?;
+    write_u64_stack_entry(&mut writes, &mut cursor, AUXV_AT_NULL)?;
     write_u64_stack_entry(&mut writes, &mut cursor, 0)?;
 
     let total_len = stack_top
@@ -209,7 +247,7 @@ pub(crate) fn build_initial_user_stack(
     all(target_arch = "aarch64", not(target_os = "none")),
     allow(dead_code)
 )]
-pub(crate) fn push_c_strings(
+fn push_c_strings(
     stack_pointer: &mut usize,
     values: &[String],
     writes: &mut Vec<(usize, Vec<u8>)>,
@@ -236,7 +274,7 @@ pub(crate) fn push_c_strings(
     all(target_arch = "aarch64", not(target_os = "none")),
     allow(dead_code)
 )]
-pub(crate) fn write_u64_stack_entry(
+fn write_u64_stack_entry(
     writes: &mut Vec<(usize, Vec<u8>)>,
     cursor: &mut usize,
     value: u64,
@@ -246,62 +284,4 @@ pub(crate) fn write_u64_stack_entry(
         .checked_add(core::mem::size_of::<u64>())
         .ok_or(Error::OutOfMemory)?;
     Ok(())
-}
-
-pub(crate) fn plan_user_image_segment(segment: ElfLoadSegment) -> Result<UserImageSegmentPlan> {
-    if segment.memory_size == 0 {
-        return Err(Error::InvalidArgument);
-    }
-
-    // File offset and virtual address must agree modulo alignment so the mapped
-    // page image can be reconstructed correctly.
-    if segment.alignment != 0
-        && (segment.virtual_address & (segment.alignment - 1))
-            != (segment.file_offset & (segment.alignment - 1))
-    {
-        return Err(Error::InvalidArgument);
-    }
-
-    let virtual_end = segment
-        .virtual_address
-        .checked_add(segment.memory_size)
-        .ok_or(Error::InvalidArgument)?;
-    let zero_start = segment
-        .virtual_address
-        .checked_add(segment.file_size)
-        .ok_or(Error::InvalidArgument)?;
-    let page_start = constants::align_down(segment.virtual_address, constants::USER_PAGE_SIZE);
-    let page_end = constants::align_up(virtual_end, constants::USER_PAGE_SIZE)
-        .ok_or(Error::InvalidArgument)?;
-
-    if page_start < constants::USER_PAGE_SIZE || page_end <= page_start {
-        return Err(Error::InvalidArgument);
-    }
-
-    Ok(UserImageSegmentPlan {
-        virtual_start: segment.virtual_address,
-        virtual_end,
-        page_start,
-        page_end,
-        file_offset: segment.file_offset,
-        file_size: segment.file_size,
-        zero_start,
-        zero_end: virtual_end,
-        permissions: page_permissions_from_segment_flags(segment.flags)?,
-    })
-}
-
-pub(crate) fn page_permissions_from_segment_flags(
-    flags: ElfSegmentFlags,
-) -> Result<PagePermissions> {
-    if !flags.readable() && !flags.writable() && !flags.executable() {
-        return Err(Error::InvalidArgument);
-    }
-
-    Ok(match (flags.writable(), flags.executable()) {
-        (false, false) => PagePermissions::READ,
-        (true, false) => PagePermissions::READ_WRITE,
-        (false, true) => PagePermissions::READ_EXECUTE,
-        (true, true) => PagePermissions::READ_WRITE_EXECUTE,
-    })
 }

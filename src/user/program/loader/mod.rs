@@ -217,12 +217,6 @@ impl UserImageLoadPlan {
 
 // ── internal runtime-preparation types ────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PreparedInitialUserStack {
-    pub(crate) stack_pointer: usize,
-    pub(crate) bytes: Vec<u8>,
-}
-
 pub(crate) struct PreparedLoadedProgramRuntime {
     machine: u16,
     entry_point: usize,
@@ -676,14 +670,17 @@ fn load_from_catalog_with_appended_arguments_at_depth(
 
 // ── submodules ────────────────────────────────────────────────────
 
-pub(crate) mod arch;
 pub(crate) mod plan;
 
 // ── re-exports ──────────────────────────────────────────────────────
 
-pub(crate) use arch::*;
 pub use plan::plan_user_image_load;
 pub(crate) use plan::*;
+
+// The half of loading that belongs to a target.  It lives in `src/arch/`
+// because that is where the picker's gates are, and it comes back here so the
+// loader reads as one module: `crate::user::program::loader::<entry point>`.
+pub(crate) use crate::arch::user_loader::*;
 
 // ── catalog-program validation (depends on loader types) ──────────────
 

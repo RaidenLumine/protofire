@@ -16,6 +16,8 @@ use super::super::constants;
 use super::super::metadata::validate_launch_metadata_budget;
 use crate::user::elf::parse_elf64;
 use crate::user::elf::ElfImage;
+use crate::user::elf::ElfLoadSegment;
+use crate::user::elf::ElfSegmentFlags;
 
 // ── ELF → UserImageLoadPlan ──────────────────────────────────────────
 
@@ -153,5 +155,76 @@ pub(crate) fn prepare_loaded_program_runtime(
             .as_ref()
             .and_then(ProcessUserAddressSpace::process_summary),
         prepared_user_address_space,
+    })
+}
+
+// ── one segment ───────────────────────────────────────────────────────
+
+/// Turn one ELF load segment into the page-aligned plan the loader maps.
+///
+/// The checks here are the ones the addressing requires: a segment with no
+/// memory has nothing to map, and a file offset that disagrees with its
+/// virtual address modulo the segment's own alignment cannot be reconstructed
+/// from the file image.
+pub(crate) fn plan_user_image_segment(segment: ElfLoadSegment) -> Result<UserImageSegmentPlan> {
+    if segment.memory_size == 0 {
+        return Err(Error::InvalidArgument);
+    }
+
+    // File offset and virtual address must agree modulo alignment so the mapped
+    // page image can be reconstructed correctly.
+    if segment.alignment != 0
+        && (segment.virtual_address & (segment.alignment - 1))
+            != (segment.file_offset & (segment.alignment - 1))
+    {
+        return Err(Error::InvalidArgument);
+    }
+
+    let virtual_end = segment
+        .virtual_address
+        .checked_add(segment.memory_size)
+        .ok_or(Error::InvalidArgument)?;
+    let zero_start = segment
+        .virtual_address
+        .checked_add(segment.file_size)
+        .ok_or(Error::InvalidArgument)?;
+    let page_start = constants::align_down(segment.virtual_address, constants::USER_PAGE_SIZE);
+    let page_end = constants::align_up(virtual_end, constants::USER_PAGE_SIZE)
+        .ok_or(Error::InvalidArgument)?;
+
+    if page_start < constants::USER_PAGE_SIZE || page_end <= page_start {
+        return Err(Error::InvalidArgument);
+    }
+
+    Ok(UserImageSegmentPlan {
+        virtual_start: segment.virtual_address,
+        virtual_end,
+        page_start,
+        page_end,
+        file_offset: segment.file_offset,
+        file_size: segment.file_size,
+        zero_start,
+        zero_end: virtual_end,
+        permissions: page_permissions_from_segment_flags(segment.flags)?,
+    })
+}
+
+/// The page permissions an ELF segment's flags ask for.
+///
+/// A segment that can do none of read, write, or execute is not a segment
+/// this kernel can honour; the loader rejects it rather than mapping it
+/// inaccessible and faulting on the first instruction.
+pub(crate) fn page_permissions_from_segment_flags(
+    flags: ElfSegmentFlags,
+) -> Result<PagePermissions> {
+    if !flags.readable() && !flags.writable() && !flags.executable() {
+        return Err(Error::InvalidArgument);
+    }
+
+    Ok(match (flags.writable(), flags.executable()) {
+        (false, false) => PagePermissions::READ,
+        (true, false) => PagePermissions::READ_WRITE,
+        (false, true) => PagePermissions::READ_EXECUTE,
+        (true, true) => PagePermissions::READ_WRITE_EXECUTE,
     })
 }
