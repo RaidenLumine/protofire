@@ -30,7 +30,6 @@ use crate::kernel::process::ProcessUserAddressSpace;
 use crate::kernel::process::UserThreadStart;
 use crate::user::program::align_down;
 use crate::user::program::UserImageLoadPlan;
-use crate::user::program::AUXV_AT_NULL;
 use crate::Error;
 use crate::Result;
 
@@ -144,6 +143,28 @@ pub(crate) fn build_initial_user_thread_start(
         )))
     }
 }
+
+// ── auxiliary vector keys ──────────────────────────────────────────────
+//
+// What a user program finds on its initial stack: the ELF standard's `AT_*`
+// keys, put there by the architecture's own half below, which is why they
+// live beside the stack that carries them rather than in the loader's
+// constant table.
+
+/// The end of the auxiliary vector.
+pub(crate) const AUXV_AT_NULL: u64 = 0;
+/// The system page size.
+#[cfg_attr(
+    all(target_arch = "aarch64", not(target_os = "none")),
+    allow(dead_code)
+)]
+pub(crate) const AUXV_AT_PAGESZ: u64 = 6;
+/// The entry point of the program.
+#[cfg_attr(
+    all(target_arch = "aarch64", not(target_os = "none")),
+    allow(dead_code)
+)]
+pub(crate) const AUXV_AT_ENTRY: u64 = 9;
 
 // ── the initial stack ──────────────────────────────────────────────────
 //

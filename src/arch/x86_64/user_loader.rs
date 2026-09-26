@@ -8,13 +8,13 @@ use alloc::vec::Vec;
 
 use crate::arch::user_loader::build_initial_user_stack;
 use crate::arch::user_loader::PreparedInitialUserStack;
+use crate::arch::user_loader::AUXV_AT_ENTRY;
+use crate::arch::user_loader::AUXV_AT_PAGESZ;
 use crate::kernel::process::ProcessUserAddressSpace;
 use crate::memory::paging::MappingKind;
 use crate::memory::paging::PagePermissions;
 use crate::user::program::UserImageLoadPlan;
 use crate::user::program::USER_PAGE_SIZE;
-use crate::user::program::X86_64_AUXV_AT_ENTRY;
-use crate::user::program::X86_64_AUXV_AT_PAGESZ;
 use crate::Error;
 use crate::Result;
 
@@ -117,7 +117,7 @@ pub(crate) fn build_x86_64_initial_user_stack(
 
 pub(crate) fn x86_64_initial_auxv_entries(entry_point: usize) -> [(u64, u64); 2] {
     [
-        (X86_64_AUXV_AT_PAGESZ, USER_PAGE_SIZE as u64),
-        (X86_64_AUXV_AT_ENTRY, entry_point as u64),
+        (AUXV_AT_PAGESZ, USER_PAGE_SIZE as u64),
+        (AUXV_AT_ENTRY, entry_point as u64),
     ]
 }

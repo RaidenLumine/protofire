@@ -18,6 +18,8 @@
 
 # 62 files, 528 occurrences outside src/arch
 
+# 61 files, 511 occurrences outside src/arch
+
 abi/ptrace.rs                                        2
 drivers/framebuffer.rs                               4
 drivers/hda.rs                                       8
@@ -72,7 +74,6 @@ user/demo/demo_program_x86_64_rust.rs                1
 user/demo/mod.rs                                     3
 user/exception.rs                                    5
 user/mod.rs                                          8
-user/program/constants.rs                            17
 user/program/loader/mod.rs                           5
 user/shared/abi/ptrace.rs                            2
 user/shared/commands/system.rs                       7

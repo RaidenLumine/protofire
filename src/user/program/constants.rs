@@ -134,8 +134,11 @@ pub(crate) const MAX_CATALOG_REDIRECT_DEPTH: usize = 8;
 // bare-metal combined process root can map it without colliding with the
 // runtime kernel address space.
 pub const DEMO_PROGRAM_ENTRY: usize = 0x0000_0001_0000_1000;
-pub const DEMO_PROGRAM_FORMAT: &str = current_program_format();
-pub const DEMO_PROGRAM_MACHINE: u16 = current_machine();
+// The target's answer to "which machine is this", kept here as the names the
+// loader and the launch metadata already use.  The values themselves are the
+// architecture's, and live in `arch::user_abi`.
+pub const DEMO_PROGRAM_FORMAT: &str = crate::arch::user_abi::PROGRAM_FORMAT;
+pub const DEMO_PROGRAM_MACHINE: u16 = crate::arch::user_abi::ELF_MACHINE;
 pub const USER_PAGE_SIZE: usize = 4096;
 pub const USER_STACK_GUARD_SIZE: usize = USER_PAGE_SIZE;
 pub const USER_STACK_SIZE: usize = 256 * 1024;
@@ -157,81 +160,7 @@ pub const ASLR_ELF_SLIDE_MAX: usize = 256 * USER_PAGE_SIZE; // 1 MiB
 /// 256 KiB = 64 pages of entropy.
 pub const ASLR_STACK_SLIDE_MAX: usize = 64 * USER_PAGE_SIZE; // 256 KiB
 
-// ── auxiliary vector constants ────────────────────────────────────────
-
-#[cfg_attr(
-    all(target_arch = "aarch64", not(target_os = "none")),
-    allow(dead_code)
-)]
-pub(crate) const AUXV_AT_NULL: u64 = 0;
-#[cfg_attr(
-    all(target_arch = "aarch64", not(target_os = "none")),
-    allow(dead_code)
-)]
-pub(crate) const AUXV_AT_PAGESZ: u64 = 6;
-#[cfg_attr(
-    all(target_arch = "aarch64", not(target_os = "none")),
-    allow(dead_code)
-)]
-pub(crate) const AUXV_AT_ENTRY: u64 = 9;
-#[cfg(target_arch = "x86_64")]
-pub(crate) const X86_64_AUXV_AT_PAGESZ: u64 = AUXV_AT_PAGESZ;
-#[cfg(target_arch = "x86_64")]
-pub(crate) const X86_64_AUXV_AT_ENTRY: u64 = AUXV_AT_ENTRY;
-
 // ── const fns ─────────────────────────────────────────────────────────
-
-pub(crate) const fn current_machine() -> u16 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        0x3E
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        0xB7
-    }
-
-    #[cfg(target_arch = "riscv64")]
-    {
-        0xF3 // EM_RISCV
-    }
-
-    #[cfg(not(any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "riscv64"
-    )))]
-    {
-        0
-    }
-}
-
-pub(crate) const fn current_program_format() -> &'static str {
-    #[cfg(target_arch = "x86_64")]
-    {
-        "elf64-x86_64-user"
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        "elf64-aarch64-user"
-    }
-
-    #[cfg(target_arch = "riscv64")]
-    {
-        "elf64-riscv64-user"
-    }
-
-    #[cfg(not(any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "riscv64"
-    )))]
-    {
-        "elf64-user"
-    }
-}
 
 pub(crate) const fn default_user_stack_top() -> usize {
     X86_64_USER_STACK_TOP
