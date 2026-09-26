@@ -176,40 +176,11 @@ impl Kernel {
         // ACPI tables at arbitrary physical addresses are readable.
         // Also save the boot CR3 before we switch page tables — the AP
         // trampoline needs the bootstrap identity map (first 1 GiB).
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        {
-            crate::arch::x86_64::smp::save_boot_cr3();
-            let handoff = crate::arch::boot::handoff_address();
-            let aps = crate::arch::x86_64::acpi::discover_aps(handoff);
-            crate::arch::x86_64::acpi::store_early_aps(aps);
-            // Discover NUMA topology from ACPI SRAT/SLIT (before page-table
-            // switch, while the identity map still covers physical memory).
-            crate::arch::x86_64::acpi::discover_numa(handoff);
-        }
-        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-        {
-            // Save the boot MMU configuration (TTBR0/TTBR1/TCR/MAIR/SCTLR)
-            // and VBAR before we switch to runtime kernel page tables.
-            // AP secondary CPUs will restore this exact configuration.
-            crate::arch::aarch64::smp::save_boot_mmu_config();
-            crate::arch::aarch64::smp::save_vbar_addr();
-            println!("[init  ] aarch64: saved boot MMU config and VBAR");
-        }
-
-        // ── Device-tree handoff (AArch64 / RISC-V) ──
-        // Parse the DTB passed by the bootloader before the runtime page
-        // tables replace the bootstrap mapping, so the platform info (PCIe
-        // ECAM base, IMSIC base, clock rates, ...) is available to
-        // enumeration and driver init.  A null or malformed blob leaves the
-        // hardcoded QEMU `virt` fallbacks in place.
-        #[cfg(any(
-            all(target_arch = "aarch64", target_os = "none"),
-            all(target_arch = "riscv64", target_os = "none")
-        ))]
-        {
-            let blob = crate::arch::boot::handoff_address();
-            crate::arch::fdt::boot_parse_fdt(blob);
-        }
+        // ── Platform state the kernel needs before it switches tables ──
+        // What has to be saved, and what the machine describes about itself,
+        // are the machine's answers; the order they are asked in is here.
+        crate::arch::platform::capture_early_state();
+        crate::arch::platform::describe_platform();
 
         self.prepare_arch_paging();
 
@@ -254,25 +225,7 @@ impl Kernel {
         self.maybe_init_swap();
 
         // ── PCI/PCIe enumeration ──
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        {
-            use crate::arch::x86_64::pci;
-            crate::println!("[init  ] PCI/PCIe enumeration...");
-            let devices = pci::pci_enumerate_buses();
-            pci::log_pci_devices(&devices);
-        }
-        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-        {
-            // PCIe enumeration on aarch64 discovers and maps the ECAM region
-            // through a low-VA alias and logs attached devices.  Per-driver
-            // probing (virtio-net) scans the same bus during driver init;
-            // running the generic enumeration here is idempotent because
-            // re-mapping the region is a no-op and re-enumeration only
-            // re-reads config space.
-            use crate::arch::aarch64::pci;
-            crate::println!("[init  ] AArch64 PCIe enumeration...");
-            let _ = pci::probe_and_enumerate();
-        }
+        crate::arch::platform::enumerate_buses();
 
         // Initialize the bare-metal network stack if a VirtIO network device
         // was discovered during driver probing.  Start with a placeholder IP
@@ -406,101 +359,12 @@ impl Kernel {
         // ── NUMA topology initialisation ──
         self.init_numa();
 
-        // ── Per-CPU data initialisation (x86_64 SMP) ──
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        {
-            let lapic_id = crate::arch::x86_64::apic::lapic_id();
-            // LAPIC IDs fit in a byte on current hardware; the SMP layer and
-            // percpu tables store them as u8.
-            let lapic_id = lapic_id as u8;
-            crate::arch::x86_64::smp::save_bsp_lapic_id(lapic_id);
-            // SAFETY: the BSP's per-CPU block is a static, the GS base already
-            // points at it, and this runs once during boot.
-            unsafe {
-                crate::arch::x86_64::percpu::init_bsp_data(
-                    &self.scheduler as *const Scheduler as *mut Scheduler,
-                    lapic_id,
-                    crate::arch::x86_64::gdt::bsp_tss_ptr() as *mut u8,
-                );
-            }
-            // Register the BSP scheduler in the static percpu-scheduler table
-            // so cross-CPU operations can find it.
-            unsafe {
-                crate::kernel::process::scheduler::registry::register(
-                    0,
-                    &self.scheduler as *const Scheduler as *mut Scheduler,
-                );
-            }
-            println!("[init  ] percpu BSP cpu_id=0 lapic_id={}", lapic_id);
-        }
-
-        // ── Per-CPU data initialisation (AArch64 SMP) ──
-        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-        {
-            use alloc::boxed::Box;
-            // Allocate PerCpuData for the BSP and point TPIDR_EL1 at it.
-            // This enables per-CPU access paths on AArch64.
-            let percpu = Box::new(crate::kernel::percpu::PerCpuData::zeroed());
-            let percpu_ptr = Box::into_raw(percpu);
-            unsafe {
-                (*percpu_ptr).cpu_id = 0; // BSP
-                (*percpu_ptr).scheduler = &self.scheduler as *const Scheduler as *mut Scheduler;
-            }
-            // SAFETY: `percpu_ptr` is the BSP's freshly allocated block, and it
-            // outlives every access (it is never freed).
-            unsafe {
-                crate::arch::percpu::set_base(percpu_ptr as u64);
-            }
-            // Register the BSP scheduler in the per-CPU table so cross-CPU
-            // operations (wake, reschedule IPI) can find it.
-            // SAFETY: `self.scheduler` lives as long as the kernel does.
-            unsafe {
-                crate::kernel::process::scheduler::registry::register(
-                    0,
-                    &self.scheduler as *const Scheduler as *mut Scheduler,
-                );
-            }
-            println!("[init  ] aarch64: BSP percpu cpu_id=0 TPIDR_EL1 set");
-        }
-
-        // ── Per-CPU data initialisation (RISC-V SMP) ──
-        #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-        {
-            use alloc::boxed::Box;
-            // Allocate PerCpuData for the BSP and point tp (x4) at it.
-            //
-            // The BSP is the hart the boot protocol named, which is not always
-            // hart 0 — QEMU hands the reset to whichever hart it likes — and
-            // the ID is what the PLIC context is derived from and what the
-            // registry files this CPU under.  Calling the BSP "0" on a machine
-            // that booted on hart 2 would have it claim and complete
-            // interrupts in hart 0's PLIC context.
-            let cpu_id = crate::arch::riscv64::smp::boot_hart_id().unwrap_or(0) as u32;
-            let percpu = Box::new(crate::kernel::percpu::PerCpuData::zeroed());
-            let percpu_ptr = Box::into_raw(percpu);
-            unsafe {
-                (*percpu_ptr).cpu_id = cpu_id;
-                (*percpu_ptr).scheduler = &self.scheduler as *const Scheduler as *mut Scheduler;
-            }
-            // SAFETY: `percpu_ptr` is the BSP's freshly allocated block, and it
-            // outlives every access (it is never freed).  `set_base` writes
-            // both `tp` and this hart's per-CPU slot, which is what the trap
-            // entry reloads `tp` from.
-            unsafe {
-                crate::arch::percpu::set_base(percpu_ptr as u64);
-            }
-
-            // Register the BSP scheduler in the per-CPU table so cross-CPU
-            // operations (wake, reschedule IPI) can find it.
-            // SAFETY: `self.scheduler` lives as long as the kernel does.
-            unsafe {
-                crate::kernel::process::scheduler::registry::register(
-                    cpu_id,
-                    &self.scheduler as *const Scheduler as *mut Scheduler,
-                );
-            }
-            println!("[init  ] riscv64: BSP percpu cpu_id={} tp set", cpu_id);
-        }
+        // ── Per-CPU data initialisation ──
+        // The machine installs the BSP's block and says which logical CPU
+        // this is; riscv64's answer is the hart the boot protocol named.
+        let bsp_cpu_id =
+            crate::arch::percpu::install_bsp(&self.scheduler as *const Scheduler as *mut Scheduler);
+        debug_assert_eq!(bsp_cpu_id, crate::kernel::percpu::get_mut().cpu_id);
 
         // ── Set NUMA node ID on the BSP per-CPU data ──
         if let Some(topo) = topology::global() {
@@ -513,28 +377,8 @@ impl Kernel {
             println!("[init  ] BSP numa_node_id={}", node_id);
         }
 
-        // ── SMP AP bring-up (x86_64) ──
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        {
-            if let Some(aps) = crate::arch::x86_64::acpi::take_early_aps() {
-                if !aps.is_empty() {
-                    println!("[init  ] SMP: bringing up {} AP(s)...", aps.len());
-                    crate::arch::x86_64::smp::bring_up_aps(&aps);
-                }
-            }
-        }
-
-        // ── SMP AP bring-up (AArch64) ──
-        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-        {
-            crate::arch::aarch64::smp::bring_up_aps();
-        }
-
-        // ── SMP AP bring-up (RISC-V) ──
-        #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-        {
-            crate::arch::riscv64::smp::bring_up_aps();
-        }
+        // ── SMP AP bring-up ──
+        crate::arch::platform::bring_up_secondary_cpus();
 
         // ── Power management (CPU frequency scaling) ──
         // Probe the architecture frequency driver and install the default
@@ -619,49 +463,24 @@ impl Kernel {
         println!("protofire kernel initialized");
     }
 
-    /// Initialize the NUMA topology from ACPI SRAT/SLIT (x86_64) or FDT
-    /// (AArch64/RISC-V), falling back to a single-node configuration when
-    /// no NUMA tables are available.
+    /// Initialize the NUMA topology from the table this machine keeps its
+    /// NUMA description in, falling back to a single-node configuration when
+    /// it has none.
     ///
     /// Must be called after the heap allocator is available (memory init) and
     /// before per-CPU data is queried for node affinity.
     fn init_numa(&self) {
-        // ── x86_64: use ACPI SRAT/SLIT data discovered pre-page-table-switch
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        if let Some(numa) = crate::arch::x86_64::acpi::take_early_numa() {
-            let topo = Self::build_numa_topology_from_srat(&numa);
-            let node_count = topo.nodes.len();
+        if let Some(topo) = crate::arch::platform::numa_topology() {
             crate::kernel::topology::init(topo);
-            if node_count > 1 {
-                crate::println!("[init  ] NUMA: {} nodes from ACPI SRAT/SLIT", node_count);
-            } else {
-                crate::println!("[init  ] NUMA: single node from ACPI SRAT");
-            }
-            return;
-        }
-
-        // ── AArch64 / RISC-V: use FDT NUMA data
-        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-        if let Some(topo) = crate::arch::fdt::build_fdt_numa_topology() {
-            let node_count = topo.nodes.len();
-            crate::kernel::topology::init(topo);
-            if node_count > 1 {
-                crate::println!("[init  ] NUMA: {} nodes from FDT", node_count);
-            } else {
-                crate::println!("[init  ] NUMA: single node from FDT");
-            }
             return;
         }
 
         // ── Fallback: single-node configuration
         //
         // online_cpu_count() returns 1 before AP bring-up, so on x86_64
-        // without ACPI SRAT we will only see the BSP.  On AArch64 and
-        // RISC-V we can fall back to the FDT CPU count instead.
-        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-        let cpu_count = crate::arch::fdt::cpu_count().max(1);
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
-        let cpu_count = crate::kernel::smp::online_cpu_count().max(1);
+        // without ACPI SRAT we will only see the BSP; the device-tree machines
+        // count their `/cpus` nodes instead.
+        let cpu_count = crate::arch::platform::reported_cpu_count();
         let cpu_ids: alloc::vec::Vec<u32> = (0..cpu_count).collect();
         let cpu_to_node: alloc::vec::Vec<crate::kernel::topology::NodeId> =
             alloc::vec![0u8; cpu_count as usize];
@@ -680,113 +499,6 @@ impl Kernel {
             "[init  ] NUMA: single-node topology (node 0, {} CPU(s))",
             cpu_count
         );
-    }
-
-    /// Build a [`Topology`] from ACPI SRAT/SLIT data.
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    fn build_numa_topology_from_srat(
-        numa: &crate::arch::x86_64::acpi::EarlyNumaData,
-    ) -> crate::kernel::topology::Topology {
-        use crate::kernel::topology::NodeId;
-        use crate::kernel::topology::NumaNode;
-        use crate::kernel::topology::MAX_NUMA_NODES;
-        use crate::kernel::topology::NUMA_NODE_NONE;
-
-        // ── Build cpu_to_node mapping ──
-        let cpu_count = numa.cpu_apic_ids.len();
-        let mut cpu_to_node: alloc::vec::Vec<NodeId> = alloc::vec![0u8; cpu_count];
-
-        for &(logical_id, apic_id) in &numa.cpu_apic_ids {
-            let idx = logical_id as usize;
-            if idx >= cpu_count {
-                continue;
-            }
-            let mut node_id: NodeId = 0;
-            // Search LAPIC affinities first.
-            for aff in &numa.cpu_affinities {
-                if aff.enabled && aff.apic_id == apic_id {
-                    node_id = aff.node_id;
-                    break;
-                }
-            }
-            // Fall back to x2APIC affinities.
-            if node_id == 0 && !numa.x2apic_affinities.is_empty() {
-                for aff in &numa.x2apic_affinities {
-                    if aff.enabled && aff.x2apic_id == apic_id as u32 {
-                        node_id = aff.node_id as u8;
-                        break;
-                    }
-                }
-            }
-            cpu_to_node[idx] = node_id;
-        }
-
-        // ── Collect unique node IDs ──
-        let mut node_ids: [NodeId; MAX_NUMA_NODES] = [NUMA_NODE_NONE; MAX_NUMA_NODES];
-        let mut unique_count = 0usize;
-        for &nid in &cpu_to_node {
-            let mut found = false;
-            for &existing in node_ids.iter().take(unique_count) {
-                if existing == nid {
-                    found = true;
-                    break;
-                }
-            }
-            if !found && unique_count < MAX_NUMA_NODES {
-                node_ids[unique_count] = nid;
-                unique_count += 1;
-            }
-        }
-
-        // ── Build NumaNode list ──
-        let mut nodes: alloc::vec::Vec<NumaNode> = alloc::vec::Vec::with_capacity(unique_count);
-        for nid in node_ids.iter().take(unique_count) {
-            let nid = *nid;
-            let mut cpus: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
-            for (logical_id, _apic_id) in &numa.cpu_apic_ids {
-                if *logical_id < cpu_count as u32 && cpu_to_node[*logical_id as usize] == nid {
-                    cpus.push(*logical_id);
-                }
-            }
-            nodes.push(NumaNode {
-                id: nid,
-                cpu_ids: cpus,
-                memory_ranges: alloc::vec::Vec::new(),
-            });
-        }
-
-        // ── Add memory ranges from SRAT ──
-        for aff in &numa.memory_affinities {
-            if !aff.enabled {
-                continue;
-            }
-            let mem_node_id = aff.node_id as u8;
-            let mut found = false;
-            for node in &mut nodes {
-                if node.id == mem_node_id {
-                    node.memory_ranges
-                        .push((aff.base_addr, aff.base_addr + aff.length));
-                    found = true;
-                    break;
-                }
-            }
-            if !found && nodes.len() < MAX_NUMA_NODES {
-                nodes.push(NumaNode {
-                    id: mem_node_id,
-                    cpu_ids: alloc::vec::Vec::new(),
-                    memory_ranges: alloc::vec![(aff.base_addr, aff.base_addr + aff.length)],
-                });
-            }
-        }
-
-        // ── Distance matrix from SLIT ──
-        let distance_matrix = numa.slit_matrix.clone().unwrap_or_default();
-
-        crate::kernel::topology::Topology {
-            nodes,
-            cpu_to_node,
-            distance_matrix,
-        }
     }
 
     /// Scan registered block devices for a swap area and initialise the

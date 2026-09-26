@@ -93,13 +93,11 @@ mod                          drivers                      1
 mod                          fs                           15
 mod                          memory                       6
 mod                          network                      3
-mod                          percpu                       3
+mod                          percpu                       2
 mod                          power                        1
-mod                          process                      3
 mod                          procfs                       1
-mod                          smp                          1
 mod                          syscall                      4
-mod                          topology                     12
+mod                          topology                     5
 network                      crypto                       30
 network                      fs                           5
 network                      ipc                          1
