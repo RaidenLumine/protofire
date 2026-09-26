@@ -336,6 +336,10 @@ impl Drop for VirtQueue {
             // Free the region (whole pages).
             let len = self.queue_region_len.max(4096);
             let layout = core::alloc::Layout::from_size_align(len, 4096).unwrap();
+            // SAFETY: the region was allocated with this layout in `new_pci`
+            // (`region_len`, rounded up to whole pages), and `Drop` runs once
+            // for this queue, so this is the pointer/layout pair its `alloc`
+            // was given.
             unsafe { alloc::alloc::dealloc(page, layout) };
         }
     }
@@ -412,8 +416,16 @@ impl VirtQueue {
 
         // Region allocation (one or more contiguous pages).
         let layout = core::alloc::Layout::from_size_align(region_len, 4096).unwrap();
+        // SAFETY: `layout` is a whole number of 4 KiB pages, which the page
+        // allocator takes; the result is checked for null on the next line.
+        // The region is page-allocated rather than heap-allocated because the
+        // legacy PCI QueuePFN mechanism needs page granularity.
         let page: *mut u8 = unsafe { alloc::alloc::alloc(layout) };
         assert!(!page.is_null(), "VirtQueue PCI region alloc failed");
+        // SAFETY: the allocation above is `region_len` bytes and nothing else
+        // refers to it yet, so zeroing the whole span is the initialisation the
+        // rings need: a device may read any descriptor before the driver writes
+        // it.
         unsafe { core::ptr::write_bytes(page, 0u8, region_len) };
 
         // Build slices that borrow from the page.
@@ -421,26 +433,54 @@ impl VirtQueue {
         // deallocated individually — only the page is freed on Drop.
         let desc_ptr = page as *mut VirtqDesc;
         for i in 0..qsz {
+            // SAFETY: `desc_ptr` is the region's first page, sized by the
+            // layout above for `qsz` descriptors, so entry `i` is inside the
+            // allocation.  The write builds the free-descriptor chain the
+            // driver walks.
             unsafe {
                 (*desc_ptr.add(i)).next = if i + 1 < qsz { (i + 1) as u16 } else { 0 };
             }
         }
+        // SAFETY: the descriptor table is `qsz` entries of the region just
+        // allocated and zeroed, so pointer, length, and capacity describe one
+        // allocation.  This `Vec` must never be dropped on its own: `Drop`
+        // forgets all three rings and frees the region as a whole.
         let descriptors = unsafe { alloc::vec::Vec::from_raw_parts(desc_ptr, qsz, qsz) };
 
+        // SAFETY: `desc_sz` bytes of the region hold the descriptor table, so
+        // the available ring starts exactly there — inside the allocation, and
+        // 2-byte aligned because `desc_sz` is a multiple of 16.
         let avail_ptr = unsafe { page.add(desc_sz) } as *mut u16;
+        // SAFETY: the available ring's `flags` and `idx` are the fields the
+        // device reads from its own ring page, so they are written with
+        // `write_volatile`: a plain store could be folded away and the device
+        // would never see the reset.
         unsafe {
             core::ptr::write_volatile(avail_ptr, 0u16); // flags
             core::ptr::write_volatile(avail_ptr.add(1), 0u16); // idx
         }
+        // SAFETY: as the descriptor table: these are the `qsz` `u16` entries
+        // that follow the ring's 4-byte prefix inside the allocated region, and
+        // this `Vec` is forgotten rather than freed.
         let avail_ring = unsafe { alloc::vec::Vec::from_raw_parts(avail_ptr.add(2), qsz, qsz) };
 
         let used_offset = region_len - used_sz;
+        // SAFETY: the used ring starts at `region_len - used_sz`, which the
+        // size computation reserved inside the region, so its prefix is inside
+        // the allocation and 4-byte aligned.
         let used_prefix = unsafe { page.add(used_offset) } as *mut u16;
+        // SAFETY: as the available ring's prefix: these are the device-visible
+        // fields of the used ring, written with `write_volatile` so the
+        // initialisation is one access the device cannot miss.
         unsafe {
             core::ptr::write_volatile(used_prefix, 0u16); // flags
             core::ptr::write_volatile(used_prefix.add(1), 0u16); // idx
         }
+        // SAFETY: the used ring's elements follow its 4-byte prefix inside the
+        // same reservation, so this pointer is inside the allocation.
         let used_ptr = unsafe { (page.add(used_offset)).add(used_hdr) } as *mut VirtqUsedElem;
+        // SAFETY: as the other two rings: the elements are `qsz` entries of the
+        // allocated region, and this `Vec` is forgotten rather than freed.
         let used_ring = unsafe { alloc::vec::Vec::from_raw_parts(used_ptr, qsz, qsz) };
 
         Self {
@@ -557,6 +597,12 @@ impl VirtQueue {
         // Layout: [0] flags (2 B), [2] idx (2 B), [4] ring entries.
         // The avail_ring Vec starts at the entries; the prefix is before it.
         if let Some(base) = self.pci_avail_base {
+            // SAFETY: `pci_avail_base` is the address the available ring was
+            // built at (`new_pci`), and offset 1 in that structure is its `idx`
+            // field — the one the device reads to learn an entry was published.
+            // It is written with `write_volatile` for that reason; the ring
+            // slot itself is the `avail_ring` store above, which is the same
+            // memory.
             unsafe {
                 core::ptr::write_volatile((base as *mut u16).add(1), self.driver_avail_idx);
             }
@@ -697,6 +743,13 @@ pub fn process_block_virtqueue(queue: &mut VirtQueue, storage: &mut [u8]) -> Res
                 // First device-readable descriptor → block request header
                 if desc.len as usize >= core::mem::size_of::<VirtioBlkReqHeader>() {
                     let hdr: VirtioBlkReqHeader =
+                        // SAFETY: the descriptor's `addr` is the kernel address
+                        // of a request header built by this kernel's block path
+                        // — this function stands in for the device, so
+                        // descriptors carry kernel pointers rather than device
+                        // addresses — and `desc.len` was just checked to cover
+                        // a whole header.  `read_unaligned` because a
+                        // descriptor promises no alignment for it.
                         unsafe { core::ptr::read_unaligned(ptr as *const VirtioBlkReqHeader) };
                     header = Some(hdr);
                 }
@@ -725,6 +778,12 @@ pub fn process_block_virtqueue(queue: &mut VirtQueue, storage: &mut [u8]) -> Res
                     match hdr.blk_type {
                         VIRTIO_BLK_T_IN => {
                             // Read: copy from storage to data buffer
+                            // SAFETY: the bounds check above put
+                            // `storage[sector_offset .. sector_offset +
+                            // data_len]` inside the slice, and `data_ptr` is
+                            // the request's own data buffer — a different
+                            // allocation, because the submitter built it that
+                            // way.
                             unsafe {
                                 core::ptr::copy_nonoverlapping(
                                     storage.as_ptr().add(sector_offset),
@@ -736,6 +795,10 @@ pub fn process_block_virtqueue(queue: &mut VirtQueue, storage: &mut [u8]) -> Res
                         }
                         VIRTIO_BLK_T_OUT => {
                             // Write: copy from data buffer to storage
+                            // SAFETY: as the read above, with the roles
+                            // exchanged: the destination is inside `storage` by
+                            // the same check and the source is the request's
+                            // buffer.
                             unsafe {
                                 core::ptr::copy_nonoverlapping(
                                     data_ptr,
@@ -757,6 +820,10 @@ pub fn process_block_virtqueue(queue: &mut VirtQueue, storage: &mut [u8]) -> Res
 
         // Write status byte
         if let Some(status_ptr) = status_buf {
+            // SAFETY: `status_ptr` is the descriptor the chain walk identified
+            // as the single-byte status buffer, and writing a completion status
+            // there is what a device does.  `write_unaligned` because a
+            // descriptor carries no alignment promise.
             unsafe {
                 core::ptr::write_unaligned(status_ptr, status_val);
             }

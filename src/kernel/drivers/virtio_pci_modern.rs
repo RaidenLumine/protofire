@@ -116,6 +116,13 @@ pub struct PciModernRegion {
     notify_offs: [core::cell::Cell<u16>; MAX_QUEUES],
 }
 
+// SAFETY: the region is a BAR address plus the caches of fields the device
+// owns (the selected queue and each queue's notify offset).  Those cells are
+// only ever touched by the driver that owns the transport, under its own lock,
+// and the address itself is a constant; so moving the transport to another
+// thread moves everything it names, and sharing it is what the driver's lock
+// is for.  The type cannot say that by itself, which is why the impls are
+// unsafe.
 unsafe impl Send for PciModernRegion {}
 unsafe impl Sync for PciModernRegion {}
 
@@ -143,13 +150,26 @@ impl PciModernRegion {
 
     // ── Low-level MMIO helpers ──────────────────────────────────
 
-    unsafe fn mmio_read32(&self, offset: u64) -> u32 {
+    /// Read a 32-bit register of the BAR.
+    ///
+    /// Safe to call from this module: every offset here is one of its own
+    /// `CFG_*` constants or a device-specific offset inside the same BAR, and
+    /// the constructor's contract is that `bar_base` is a mapped BAR of this
+    /// device.
+    fn mmio_read32(&self, offset: u64) -> u32 {
+        // SAFETY: `bar_base` is the transport's mapped BAR and `offset` names a
+        // register inside it, so the address is inside that mapping and aligned
+        // for the access.  It is volatile because the device, not the kernel,
+        // owns the value: a plain load could be folded with a neighbouring one.
         unsafe {
             core::ptr::read_volatile((self.bar_base as *const u8).add(offset as usize) as *const u32)
         }
     }
 
-    unsafe fn mmio_write32(&self, offset: u64, value: u32) {
+    /// Write a 32-bit register of the BAR.
+    fn mmio_write32(&self, offset: u64, value: u32) {
+        // SAFETY: as `mmio_read32`: a mapped BAR, an offset this module chose,
+        // and a volatile store so the device sees exactly one write.
         unsafe {
             core::ptr::write_volatile(
                 (self.bar_base as *mut u8).add(offset as usize) as *mut u32,
@@ -159,23 +179,28 @@ impl PciModernRegion {
     }
 
     /// Read a 16-bit little-endian field with an access that *starts* at the
-    /// field's own byte offset.
-    ///
-    /// The VirtIO PCI common-config structure is a byte-addressable register
-    /// block whose write semantics are dispatched on the access start
-    /// address (e.g. offset 0x14 = `device_status`, 0x16 = `queue_select`,
-    /// 0x1c = `queue_enable`).  A driver must therefore present each access
-    /// at the field's natural offset with its natural width.  Doing a
-    /// 4-byte read-modify-write against the *aligned* base (0x14 for a
+    /// field's own byte offset. The VirtIO PCI common-config structure is a
+    /// byte-addressable register block whose write semantics are dispatched on
+    /// the access start address (e.g. offset 0x14 = `device_status`, 0x16 =
+    /// `queue_select`, 0x1c = `queue_enable`).  A driver must therefore present
+    /// each access at the field's natural offset with its natural width.  Doing
+    /// a 4-byte read-modify-write against the *aligned* base (0x14 for a
     /// `queue_select` at 0x16) silently drops the field: the device sees a
     /// write starting at 0x14 and treats it as a `device_status` write only.
-    unsafe fn cfg_read16(&self, offset: u64) -> u16 {
+    /// Read a 16-bit field of the common-config structure.
+    fn cfg_read16(&self, offset: u64) -> u16 {
+        // SAFETY: as `mmio_read32`.  The width is part of the device's contract
+        // here: the common config dispatches on the access start address *and*
+        // width (see the note above), so a 16-bit field is read with a 16-bit
+        // access.
         unsafe {
             core::ptr::read_volatile((self.bar_base as *const u8).add(offset as usize) as *const u16)
         }
     }
 
-    unsafe fn cfg_write16(&self, offset: u64, value: u16) {
+    /// Write a 16-bit field of the common-config structure.
+    fn cfg_write16(&self, offset: u64, value: u16) {
+        // SAFETY: as `cfg_read16`, for a store.
         unsafe {
             core::ptr::write_volatile(
                 (self.bar_base as *mut u8).add(offset as usize) as *mut u16,
@@ -184,18 +209,22 @@ impl PciModernRegion {
         }
     }
 
-    unsafe fn cfg_read8(&self, offset: u64) -> u8 {
+    /// Read an 8-bit field of the common-config structure.
+    fn cfg_read8(&self, offset: u64) -> u8 {
+        // SAFETY: as `mmio_read32`, at the common config's byte-wide fields.
         unsafe { core::ptr::read_volatile((self.bar_base as *const u8).add(offset as usize)) }
     }
 
-    unsafe fn cfg_write8(&self, offset: u64, value: u8) {
+    /// Write an 8-bit field of the common-config structure.
+    fn cfg_write8(&self, offset: u64, value: u8) {
+        // SAFETY: as `cfg_read8`, for a store.
         unsafe {
             core::ptr::write_volatile((self.bar_base as *mut u8).add(offset as usize), value);
         }
     }
 
-    /// Compute the notification address and kick the given queue.
-    unsafe fn notify(&self, queue_index: u16) {
+    /// Compute the notification address and ring that queue's doorbell.
+    fn notify(&self, queue_index: u16) {
         let qi = queue_index as usize;
         let off = if qi < MAX_QUEUES {
             self.notify_offs[qi].get()
@@ -208,6 +237,13 @@ impl PciModernRegion {
             return;
         };
         let addr = self.bar_base as u64 + NOTIFY_OFFSET + (off as u64) * NOTIFY_OFF_MULTIPLIER;
+        // SAFETY: `NOTIFY_OFFSET` and the multiplier are this platform's
+        // capability values and `off` is the offset the device reported for
+        // this queue, so the address is that device's doorbell register inside
+        // the BAR this transport was built on.  It is the one address in this
+        // module the *device* contributes: a device that reported nonsense
+        // would be aimed at its own register window, which is the trust a
+        // VirtIO driver extends to its device.
         unsafe {
             core::ptr::write_volatile(addr as *mut u32, queue_index as u32);
         }
@@ -228,7 +264,7 @@ impl MmioRegion for PciModernRegion {
                 // feature_sel was written by REG_DEVICE_FEATURES_SEL handler.
                 // Read the selected page's features.
                 let cfg_off = COMMON_CFG_OFFSET + CFG_DEVICE_FEATURE;
-                unsafe { self.mmio_read32(cfg_off) }
+                self.mmio_read32(cfg_off)
             }
 
             // DeviceFeaturesSel — no-op read (selection is tracked by device).
@@ -238,25 +274,25 @@ impl MmioRegion for PciModernRegion {
             REG_QUEUE_NUM_MAX => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_QUEUE_SIZE;
                 // queue_size returns the maximum when no size has been written.
-                unsafe { self.cfg_read16(cfg_off) as u32 }
+                self.cfg_read16(cfg_off) as u32
             }
 
             // Status: 8-bit device_status field.
             REG_STATUS => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_DEVICE_STATUS;
-                unsafe { self.cfg_read8(cfg_off) as u32 }
+                self.cfg_read8(cfg_off) as u32
             }
 
             // ConfigGeneration.
             REG_CONFIG_GENERATION => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_CONFIG_GENERATION;
-                unsafe { self.cfg_read8(cfg_off) as u32 }
+                self.cfg_read8(cfg_off) as u32
             }
 
             // Device-specific config space (offset ≥ 0x100).
             _ if offset >= 0x100 => {
                 let cfg_off = DEVICE_CFG_OFFSET + (offset - 0x100);
-                unsafe { self.mmio_read32(cfg_off) }
+                self.mmio_read32(cfg_off)
             }
 
             // Unknown offset.
@@ -269,45 +305,45 @@ impl MmioRegion for PciModernRegion {
             // DeviceFeaturesSel: select which 32-bit page of device features.
             REG_DEVICE_FEATURES_SEL => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_DEVICE_FEATURE_SELECT;
-                unsafe { self.mmio_write32(cfg_off, value) };
+                self.mmio_write32(cfg_off, value);
             }
 
             // DriverFeaturesSel: select page, then write feature bits.
             REG_DRIVER_FEATURES_SEL => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_DRIVER_FEATURE_SELECT;
-                unsafe { self.mmio_write32(cfg_off, value) };
+                self.mmio_write32(cfg_off, value);
             }
 
             // DriverFeatures: write after selecting the page.
             REG_DRIVER_FEATURES => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_DRIVER_FEATURE;
-                unsafe { self.mmio_write32(cfg_off, value) };
+                self.mmio_write32(cfg_off, value);
             }
 
             // QueueSel: select which queue to configure.
             REG_QUEUE_SEL => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_QUEUE_SELECT;
-                unsafe { self.cfg_write16(cfg_off, value as u16) };
+                self.cfg_write16(cfg_off, value as u16);
                 self.selected_queue.set(value as u16);
             }
 
             // QueueNum: set the queue size for the selected queue.
             REG_QUEUE_NUM => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_QUEUE_SIZE;
-                unsafe { self.cfg_write16(cfg_off, value as u16) };
+                self.cfg_write16(cfg_off, value as u16);
             }
 
             // QueueReady → enable the queue and cache its notify offset.
             REG_QUEUE_READY => {
                 // Write queue_enable (1 = enable).
                 let enable_off = COMMON_CFG_OFFSET + CFG_QUEUE_ENABLE;
-                unsafe { self.cfg_write16(enable_off, if value != 0 { 1 } else { 0 }) };
+                self.cfg_write16(enable_off, if value != 0 { 1 } else { 0 });
 
                 if value != 0 {
                     // Cache the queue_notify_off of the currently selected
                     // queue so later kicks use that queue's doorbell offset.
                     let notify_off_off = COMMON_CFG_OFFSET + CFG_QUEUE_NOTIFY_OFF;
-                    let nf = unsafe { self.cfg_read16(notify_off_off) };
+                    let nf = self.cfg_read16(notify_off_off);
                     let q = self.selected_queue.get() as usize;
                     if q < MAX_QUEUES {
                         self.notify_offs[q].set(nf);
@@ -317,42 +353,42 @@ impl MmioRegion for PciModernRegion {
 
             // QueueNotify: kick the device.
             REG_QUEUE_NOTIFY => {
-                unsafe { self.notify(value as u16) };
+                self.notify(value as u16);
             }
 
             // Status: 8-bit device_status field.
             REG_STATUS => {
                 let cfg_off = COMMON_CFG_OFFSET + CFG_DEVICE_STATUS;
-                unsafe { self.cfg_write8(cfg_off, value as u8) };
+                self.cfg_write8(cfg_off, value as u8);
             }
 
             // Queue descriptor address (64-bit).  The device accumulates
             // the full 64-bit value across the low/high writes, so each half
             // is written directly (mirrors the queue driver/device handlers).
-            REG_QUEUE_DESC_LOW => unsafe {
+            REG_QUEUE_DESC_LOW => {
                 self.mmio_write32(COMMON_CFG_OFFSET + CFG_QUEUE_DESC, value);
-            },
-            REG_QUEUE_DESC_HIGH => unsafe {
+            }
+            REG_QUEUE_DESC_HIGH => {
                 self.mmio_write32(COMMON_CFG_OFFSET + CFG_QUEUE_DESC + 4, value);
-            },
+            }
 
             // Queue driver (avail) address (64-bit).  The device accumulates
             // the full 64-bit value across the low/high writes, so each half
             // is written directly (mirrors the queue device handlers below).
-            REG_QUEUE_DRIVER_LOW => unsafe {
+            REG_QUEUE_DRIVER_LOW => {
                 self.mmio_write32(COMMON_CFG_OFFSET + CFG_QUEUE_DRIVER, value);
-            },
-            REG_QUEUE_DRIVER_HIGH => unsafe {
+            }
+            REG_QUEUE_DRIVER_HIGH => {
                 self.mmio_write32(COMMON_CFG_OFFSET + CFG_QUEUE_DRIVER + 4, value);
-            },
+            }
 
             // Queue device (used) address (64-bit).
-            REG_QUEUE_DEVICE_LOW => unsafe {
+            REG_QUEUE_DEVICE_LOW => {
                 self.mmio_write32(COMMON_CFG_OFFSET + CFG_QUEUE_DEVICE, value);
-            },
-            REG_QUEUE_DEVICE_HIGH => unsafe {
+            }
+            REG_QUEUE_DEVICE_HIGH => {
                 self.mmio_write32(COMMON_CFG_OFFSET + CFG_QUEUE_DEVICE + 4, value);
-            },
+            }
 
             // Config space writes: silently ignored.
             _ if offset >= 0x100 => {}
