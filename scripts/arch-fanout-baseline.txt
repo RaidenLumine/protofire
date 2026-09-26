@@ -28,7 +28,8 @@
 
 
 
-# 54 files, 273 occurrences outside src/arch
+
+# 53 files, 260 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/framebuffer.rs                               4
@@ -62,7 +63,6 @@ kernel/process/thread/types.rs                       3
 kernel/process/thread/user_runtime.rs                2
 kernel/random.rs                                     2
 kernel/smp/tlb.rs                                    2
-main.rs                                              13
 memory/diagnostics.rs                                3
 memory/dma.rs                                        2
 memory/global.rs                                     3

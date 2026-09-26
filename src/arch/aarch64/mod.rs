@@ -588,3 +588,8 @@ pub mod timer {
 pub extern "C" fn aarch64_store_handoff(blob: usize) {
     crate::arch::boot::store_handoff_address(blob);
 }
+
+// The aarch64 boot protocol: what the firmware leaves in the registers, and
+// how `_start` turns that into a call to the kernel.
+#[cfg(target_os = "none")]
+core::arch::global_asm!(include_str!("boot.S"));

@@ -10,6 +10,9 @@ use crate::kernel::process::Context;
 pub mod ata;
 pub mod boot;
 pub mod dispatch;
+/// What the bootloader calls.  A host has no bootloader and no entry symbol.
+#[cfg(target_os = "none")]
+pub mod entry;
 pub mod exception_recoverability;
 pub mod interrupt_controller;
 pub mod ipi;

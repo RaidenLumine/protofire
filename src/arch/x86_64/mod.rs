@@ -94,3 +94,11 @@ impl Arch for X86_64 {
         }
     }
 }
+
+// The two halves of the x86_64 boot protocol: the multiboot2 header and the
+// long-mode entry, and the trampoline the APs are started through.  They are
+// assembled only into the kernel image, not into a host build.
+#[cfg(target_os = "none")]
+core::arch::global_asm!(include_str!("boot.asm"));
+#[cfg(target_os = "none")]
+core::arch::global_asm!(include_str!("ap_trampoline.asm"));

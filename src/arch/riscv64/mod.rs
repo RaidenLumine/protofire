@@ -588,3 +588,8 @@ pub mod timer {
         }
     }
 }
+
+// The RISC-V boot protocol: what the firmware leaves in the registers, and
+// how `_start` turns that into a call to the kernel.
+#[cfg(target_os = "none")]
+core::arch::global_asm!(include_str!("boot.S"));
