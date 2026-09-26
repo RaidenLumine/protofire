@@ -14,26 +14,8 @@ use alloc::sync::Arc;
 use crate::kernel::process::scheduler::TIME_SLICE_TICKS;
 use crate::kernel::process::wait::Event;
 use crate::kernel::sync::Mutex;
-// Only the "neither x86_64 nor aarch64" arm below uses it, and that arm is the
-// one riscv64 takes; the riscv64 methods that used to need it now live in
-// `arch_riscv64.rs`.
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-use crate::Error;
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    test
-))]
 use crate::Result;
 
-// One import for every architecture's names; `arch.rs` holds the gates.
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64",
-    test
-))]
 use super::super::Context;
 use super::super::ContextCell;
 use super::super::Process;
@@ -652,10 +634,10 @@ impl Thread {
         true
     }
 
-    #[cfg_attr(
-        not(any(target_arch = "x86_64", target_arch = "aarch64")),
-        allow(unused_variables)
-    )]
+    /// Install a user-exception handler for this thread.
+    ///
+    /// The machine's half of this is its own — a handler table where it has
+    /// one, a refusal where it does not — and lives in `crate::arch::thread`.
     pub(crate) fn install_user_exception_handler(
         &self,
         vector: u8,
@@ -663,18 +645,13 @@ impl Thread {
         stack_pointer: usize,
         flags: usize,
     ) -> Result<()> {
-        #[cfg(target_arch = "x86_64")]
-        let result =
-            self.install_x86_64_exception_handler_with(vector, handler, stack_pointer, flags);
-
-        #[cfg(target_arch = "aarch64")]
-        let result =
-            self.install_aarch64_exception_handler_with(vector, handler, stack_pointer, flags);
-
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let result = Err(Error::Unsupported);
-
-        result
+        crate::arch::thread::install_user_exception_handler(
+            self,
+            vector,
+            handler,
+            stack_pointer,
+            flags,
+        )
     }
 }
 

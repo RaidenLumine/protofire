@@ -316,3 +316,32 @@ pub(crate) fn activate_for_exec(process: &crate::kernel::process::Process) -> Re
 
     Ok(())
 }
+
+/// Install a user-exception handler for a thread, where the machine has one.
+///
+/// x86_64 and aarch64 keep a handler table per thread; riscv64's prototype has
+/// no such table yet, so it refuses the request rather than pretending the
+/// handler is installed.
+pub(crate) fn install_user_exception_handler(
+    thread: &Thread,
+    vector: u8,
+    handler: usize,
+    stack_pointer: usize,
+    flags: usize,
+) -> Result<()> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        thread.install_x86_64_exception_handler_with(vector, handler, stack_pointer, flags)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        thread.install_aarch64_exception_handler_with(vector, handler, stack_pointer, flags)
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        let _ = (thread, vector, handler, stack_pointer, flags);
+        Err(crate::Error::Unsupported)
+    }
+}
