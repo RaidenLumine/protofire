@@ -579,7 +579,6 @@ fn advance_past_idle_wfi(frame: &mut TrapFrame) {
 fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
     use crate::kernel::process::Process;
     use crate::kernel::process::Scheduler;
-    use crate::syscall::table::user_memory;
 
     const RISCV64_SIGNAL_FRAME_SIZE: u64 = 32; // 4 × u64
 
@@ -636,7 +635,7 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
         return;
     }
 
-    let validation_ok = user_memory::validate_user_mapping(
+    let validation_ok = crate::arch::user_access::validate_user_mapping(
         process,
         signal_frame_base as usize,
         total_len,

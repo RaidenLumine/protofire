@@ -128,7 +128,7 @@ process                      shm                          1
 process                      smp                          15
 process                      softirq                      1
 process                      sync                         20
-process                      syscall                      3
+process                      syscall                      1
 process                      user                         2
 procfs                       fs                           10
 procfs                       process                      18
@@ -156,11 +156,11 @@ syscall                      ipc                          6
 syscall                      irq_balance                  3
 syscall                      irq_stats                    1
 syscall                      kernel_log                   4
-syscall                      memory                       20
+syscall                      memory                       18
 syscall                      network                      18
 syscall                      percpu                       1
 syscall                      power                        1
-syscall                      process                      177
+syscall                      process                      175
 syscall                      random                       1
 syscall                      sync                         8
 syscall                      user                         2

@@ -406,7 +406,7 @@ fn try_async_signal_delivery(context: &mut InterruptContext) {
         return;
     }
 
-    let validation_ok = user_memory::validate_user_mapping(
+    let validation_ok = crate::arch::user_access::validate_user_mapping(
         process,
         signal_frame_base as usize,
         total_len,
@@ -433,8 +433,8 @@ fn try_async_signal_delivery(context: &mut InterruptContext) {
 
     // SAFETY: both addresses have been validated as writable user pages above.
     unsafe {
-        user_memory::write_user_value_untracked(signal_frame_base, &frame);
-        user_memory::write_user_value_untracked(trampoline_ret_addr, &trampoline_addr);
+        crate::arch::user_access::write_user_value_untracked(signal_frame_base, &frame);
+        crate::arch::user_access::write_user_value_untracked(trampoline_ret_addr, &trampoline_addr);
     }
 
     // ── Rewrite InterruptContext for handler entry ──────────────────

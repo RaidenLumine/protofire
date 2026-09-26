@@ -936,7 +936,6 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
     use crate::abi::process::AARCH64_SIGNAL_FRAME_SIZE;
     use crate::kernel::process::Process;
     use crate::kernel::process::Scheduler;
-    use crate::syscall::table::user_memory;
 
     let scheduler = match Scheduler::global() {
         Some(s) => s,
@@ -991,7 +990,7 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
         return;
     }
 
-    let validation_ok = user_memory::validate_user_mapping(
+    let validation_ok = crate::arch::user_access::validate_user_mapping(
         process,
         signal_frame_base as usize,
         total_len,

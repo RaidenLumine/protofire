@@ -27,42 +27,10 @@ use core::marker::PhantomData;
 use crate::Error;
 use crate::Result;
 
-/// Execute a closure inside a SMAP user-access window on bare-metal
-/// architectures that support it (x86_64 SMAP, aarch64 PAN-equivalent,
-/// riscv64 SUM).
-///
-/// On host test targets this is a no-op.
-#[cfg(any(
-    all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-))]
-#[inline]
-pub(super) fn with_user_access_guard<T>(f: impl FnOnce() -> T) -> T {
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    unsafe {
-        crate::arch::x86_64::user_access::with_user_access(f)
-    }
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    unsafe {
-        crate::arch::aarch64::user_access::with_user_access(f)
-    }
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    unsafe {
-        crate::arch::riscv64::user_access::with_user_access(f)
-    }
-}
-
-/// Execute a closure as-is (no-op for host test targets).
-#[cfg(not(any(
-    all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-)))]
-#[inline]
-pub(super) fn with_user_access_guard<T>(f: impl FnOnce() -> T) -> T {
-    f()
-}
+// The access window itself is the architecture's: which register has to be
+// opened, and what that costs.  It is re-exported under the name every access
+// helper in this module already calls.
+pub(super) use crate::arch::user_access::with_user_access_guard;
 
 pub(super) struct FixedOutputBuffer<T: PaddingFree> {
     buffer_ptr: *mut u8,
@@ -411,26 +379,6 @@ pub(super) fn read_user_value<T: Copy>(
     }))
 }
 
-/// Write `value` to user memory at `addr`, with SMAP guarding.
-///
-/// The caller must have already validated that the range `[addr, addr +
-/// size_of::<T>())` is mapped writable in the current process's address
-/// space.  This is used by the async signal delivery path in the interrupt
-/// dispatcher.
-///
-/// # Safety
-///
-/// `addr` must point to writable user memory of at least `size_of::<T>()`
-/// bytes.  The caller must have already validated the address range.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub(crate) unsafe fn write_user_value_untracked<T: Copy>(addr: u64, value: &T) {
-    unsafe {
-        with_user_access_guard(|| {
-            (addr as *mut T).write_unaligned(*value);
-        })
-    }
-}
-
 pub(super) fn user_string(ptr: *const u8, len: usize) -> Result<String> {
     if len == 0 {
         return Ok(String::new());
@@ -452,11 +400,10 @@ pub(super) fn validate_current_process_user_input_buffer(
 ) -> Result<()> {
     validate_user_input_buffer(buffer_ptr, length, required_length)?;
 
-    #[cfg(all(
-        any(target_arch = "x86_64", target_arch = "aarch64"),
-        target_os = "none"
-    ))]
-    {
+    // The architecture answers whether there is anything to check; on the
+    // targets that do not, asking would look up a current thread that may not
+    // exist yet.
+    if crate::arch::user_access::VALIDATES_USER_MAPPINGS {
         validate_current_process_user_mapping(
             buffer_ptr as usize,
             required_length,
@@ -474,120 +421,38 @@ pub(super) fn validate_current_process_user_output_buffer(
 ) -> Result<()> {
     validate_user_output_buffer(buffer_ptr, length, required_length)?;
 
-    #[cfg(all(
-        any(target_arch = "x86_64", target_arch = "aarch64"),
-        target_os = "none"
-    ))]
-    {
-        if length != 0 {
-            validate_current_process_user_mapping(
-                buffer_ptr as usize,
-                required_length,
-                crate::memory::paging::PagePermissions::WRITE,
-            )?;
-        }
+    if crate::arch::user_access::VALIDATES_USER_MAPPINGS && length != 0 {
+        validate_current_process_user_mapping(
+            buffer_ptr as usize,
+            required_length,
+            crate::memory::paging::PagePermissions::WRITE,
+        )?;
     }
 
     Ok(())
 }
 
-#[cfg(all(
-    any(target_arch = "x86_64", target_arch = "aarch64"),
-    target_os = "none"
-))]
+/// Check the range against the current process's user page table, if this
+/// thread has a user half to check at all.
 fn validate_current_process_user_mapping(
     start: usize,
     length: usize,
     required_permissions: crate::memory::paging::PagePermissions,
 ) -> Result<()> {
-    if current_thread_requires_user_memory_validation()? {
+    if super::runtime::with_current_thread(
+        crate::arch::user_access::thread_requires_user_memory_validation,
+    )? {
         super::runtime::with_current_process(|process| {
-            validate_user_mapping(process, start, length, required_permissions)
+            crate::arch::user_access::validate_user_mapping(
+                process,
+                start,
+                length,
+                required_permissions,
+            )
         })?;
     }
 
     Ok(())
-}
-
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-fn current_thread_requires_user_memory_validation() -> Result<bool> {
-    super::runtime::with_current_thread(|thread| Ok(thread.x86_64_user_context().is_some()))
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "none"))]
-fn current_thread_requires_user_memory_validation() -> Result<bool> {
-    super::runtime::with_current_thread(|thread| {
-        thread
-            .validated_aarch64_user_context()
-            .map(|context| context.is_some())
-    })
-}
-
-#[cfg(any(
-    all(target_arch = "x86_64", any(test, target_os = "none")),
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-))]
-const USER_MAPPING_VALIDATION_PAGE_SIZE: usize = 4096;
-
-#[cfg(any(
-    all(target_arch = "x86_64", any(test, target_os = "none")),
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-))]
-pub(crate) fn validate_user_mapping(
-    process: &crate::kernel::process::Process,
-    start: usize,
-    length: usize,
-    required_permissions: crate::memory::paging::PagePermissions,
-) -> Result<()> {
-    if length == 0 {
-        return Ok(());
-    }
-
-    let end = start.checked_add(length).ok_or(Error::InvalidArgument)?;
-    let mut address = start;
-    // Walk page-by-page to ensure every covered page has required permissions.
-    while address < end {
-        let translation = process
-            .translate_user_address(address)
-            .ok_or(Error::InvalidArgument)?;
-        if !translation.permissions.contains(required_permissions) {
-            return Err(Error::PermissionDenied);
-        }
-
-        address = next_user_mapping_validation_address(address, end);
-    }
-
-    Ok(())
-}
-
-#[cfg(any(
-    all(target_arch = "x86_64", not(target_os = "none"), not(test)),
-    all(target_arch = "aarch64", not(target_os = "none")),
-    all(target_arch = "riscv64", not(target_os = "none"))
-))]
-pub(crate) fn validate_user_mapping(
-    _process: &crate::kernel::process::Process,
-    _start: usize,
-    _length: usize,
-    _required_permissions: crate::memory::paging::PagePermissions,
-) -> Result<()> {
-    // Host builds have no user page tables to walk; ptrace operates directly on
-    // host-visible memory, so the mapping check is a no-op.
-    Ok(())
-}
-
-#[cfg(any(
-    all(target_arch = "x86_64", any(test, target_os = "none")),
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-))]
-fn next_user_mapping_validation_address(address: usize, end: usize) -> usize {
-    let next_page = (address | (USER_MAPPING_VALIDATION_PAGE_SIZE - 1))
-        .checked_add(1)
-        .unwrap_or(end);
-    core::cmp::min(next_page, end)
 }
 
 fn validate_user_slice_length(length: usize) -> Result<()> {

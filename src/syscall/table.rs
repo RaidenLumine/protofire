@@ -1210,14 +1210,14 @@ mod tests {
     use crate::Error;
 
     use super::user_memory::copy_user_bytes;
-    #[cfg(target_arch = "x86_64")]
-    use super::user_memory::validate_user_mapping;
     use super::validate_known_flags;
     use super::validate_zeroed_args;
     use super::SyscallContext;
     use super::SyscallNumber;
     use super::Table;
     use super::PUBLIC_SYSCALL_COUNT;
+    #[cfg(target_arch = "x86_64")]
+    use crate::arch::user_access::validate_user_mapping;
 
     // The pointer-validation fixture materializes a real user address space,
     // which only the x86_64 host build can do in-process.

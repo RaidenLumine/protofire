@@ -17,10 +17,9 @@ pub use table::SyscallContext;
 pub use table::SyscallDispatch;
 pub use table::SyscallNumber;
 pub use table::Table;
-// `user_memory` is declared inside `table` (via `#[path = "memory/user.rs"]`);
-// re-export it here so sibling syscall modules can reach it as
-// `super::user_memory` / `crate::syscall::user_memory`.
-pub(crate) use table::user_memory;
+// `user_memory` is declared inside `table` (via `#[path = "memory/user.rs"]`),
+// which is where its callers live: the handlers are all `#[path]`-declared
+// inside `table` too, so they reach it as `super::user_memory`.
 // Table-internal helpers that sibling code reaches through the `syscall::`
 // path (`runtime`, `validate_zeroed_args`).  The remaining table helpers
 // (`validate_known_flags`, launch-flag masks, ...) are reached directly via
