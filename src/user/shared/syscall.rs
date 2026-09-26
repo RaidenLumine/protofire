@@ -33,14 +33,24 @@ pub use crate::user::shared::abi::syscall::*;
 // declarations in both host tests and bare-metal builds (the extern
 // declarations are kept unconditional so host-side unit tests can resolve the
 // bare `__shell_syscallN` names against the `#[no_mangle]` bridge).
-
-extern "Rust" {
-    fn __shell_syscall0(number: usize) -> isize;
-    fn __shell_syscall1(number: usize, a0: usize) -> isize;
-    fn __shell_syscall2(number: usize, a0: usize, a1: usize) -> isize;
-    fn __shell_syscall3(number: usize, a0: usize, a1: usize, a2: usize) -> isize;
-    fn __shell_syscall4(number: usize, a0: usize, a1: usize, a2: usize, a3: usize) -> isize;
-    fn __shell_syscall5(
+//
+// They are declared `safe` on purpose, and this is where that argument lives
+// rather than on each of the hundred and fifty calls below it.  A syscall is
+// an operation with an erring return, not an unchecked memory operation: the
+// bridge hands the words to the kernel's dispatcher, the kernel validates
+// every address it is given before it touches it (see
+// `kernel::syscall::memory::user`), and a refused address comes back as an
+// error status.  The wrappers below can only reach these calls with pointers
+// derived from a live borrow, so the caller has nothing left to get wrong:
+// what remains dangerous is inside the kernel, at the first dereference of
+// caller-owned memory, and that is where the `unsafe` and its argument stay.
+unsafe extern "Rust" {
+    safe fn __shell_syscall0(number: usize) -> isize;
+    safe fn __shell_syscall1(number: usize, a0: usize) -> isize;
+    safe fn __shell_syscall2(number: usize, a0: usize, a1: usize) -> isize;
+    safe fn __shell_syscall3(number: usize, a0: usize, a1: usize, a2: usize) -> isize;
+    safe fn __shell_syscall4(number: usize, a0: usize, a1: usize, a2: usize, a3: usize) -> isize;
+    safe fn __shell_syscall5(
         number: usize,
         a0: usize,
         a1: usize,
@@ -48,7 +58,7 @@ extern "Rust" {
         a3: usize,
         a4: usize,
     ) -> isize;
-    fn __shell_syscall6(
+    safe fn __shell_syscall6(
         number: usize,
         a0: usize,
         a1: usize,
@@ -81,154 +91,140 @@ fn decode(status: isize) -> Result<usize, isize> {
 
 /// Open a file by path.  Returns fd on success.
 pub fn sys_open(path: &str, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_OPEN, path.as_ptr() as usize, path.len(), flags) };
+    let rc = __shell_syscall3(SYS_OPEN, path.as_ptr() as usize, path.len(), flags);
     decode(rc)
 }
 
 /// Read from a file descriptor into `buf`.  Returns bytes read (0 = EOF).
 pub fn sys_read(fd: usize, buf: &mut [u8], timeout_ticks: u64) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_READ,
-            fd,
-            buf.as_mut_ptr() as usize,
-            buf.len(),
-            timeout_ticks as usize,
-            0,
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_READ,
+        fd,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+        timeout_ticks as usize,
+        0,
+    );
     decode(rc)
 }
 
 /// Write `data` to a file descriptor.  Returns bytes written.
 pub fn sys_write(fd: usize, data: &[u8]) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_WRITE, fd, data.as_ptr() as usize, data.len()) };
+    let rc = __shell_syscall3(SYS_WRITE, fd, data.as_ptr() as usize, data.len());
     decode(rc)
 }
 
 /// Close a file descriptor.
 pub fn sys_close(fd: usize) -> Result<(), isize> {
-    let rc = unsafe { __shell_syscall1(SYS_CLOSE, fd) };
+    let rc = __shell_syscall1(SYS_CLOSE, fd);
     decode(rc).map(|_| ())
 }
 
 /// Stat a file by path, filling the provided `FileStat` record.
 pub fn sys_stat(path: &str, record: &mut [u8]) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_STAT,
-            path.as_ptr() as usize,
-            path.len(),
-            record.as_mut_ptr() as usize,
-            record.len(),
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_STAT,
+        path.as_ptr() as usize,
+        path.len(),
+        record.as_mut_ptr() as usize,
+        record.len(),
+    );
     decode(rc).map(|_| ())
 }
 
 /// Stat a file by fd, filling the provided `FileStat` record.
 pub fn sys_stat_fd(fd: usize, record: &mut [u8]) -> Result<(), isize> {
-    let rc =
-        unsafe { __shell_syscall3(SYS_STAT_FD, fd, record.as_mut_ptr() as usize, record.len()) };
+    let rc = __shell_syscall3(SYS_STAT_FD, fd, record.as_mut_ptr() as usize, record.len());
     decode(rc).map(|_| ())
 }
 
 /// Read a directory entry at `index`.  The entry is written into `buf`.
 pub fn sys_read_dir(path: &str, index: usize, buf: &mut [u8]) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_READ_DIR,
-            path.as_ptr() as usize,
-            path.len(),
-            index,
-            buf.as_mut_ptr() as usize,
-            buf.len(),
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_READ_DIR,
+        path.as_ptr() as usize,
+        path.len(),
+        index,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+    );
     decode(rc).map(|_| ())
 }
 
 /// Read a directory entry by fd at `index`.
 pub fn sys_read_dir_fd(fd: usize, index: usize, buf: &mut [u8]) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_READ_DIR_FD,
-            fd,
-            index,
-            buf.as_mut_ptr() as usize,
-            buf.len(),
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_READ_DIR_FD,
+        fd,
+        index,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+    );
     decode(rc).map(|_| ())
 }
 
 /// Get the current working directory.  Returns bytes written to `buf`.
 pub fn sys_current_dir(buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_CURRENT_DIR, buf.as_mut_ptr() as usize, buf.len()) };
+    let rc = __shell_syscall2(SYS_CURRENT_DIR, buf.as_mut_ptr() as usize, buf.len());
     decode(rc)
 }
 
 /// Set the current working directory.
 pub fn sys_set_current_dir(path: &str) -> Result<(), isize> {
-    let rc = unsafe { __shell_syscall2(SYS_SET_CURRENT_DIR, path.as_ptr() as usize, path.len()) };
+    let rc = __shell_syscall2(SYS_SET_CURRENT_DIR, path.as_ptr() as usize, path.len());
     decode(rc).map(|_| ())
 }
 
 /// Create a directory.
 pub fn sys_make_dir(path: &str) -> Result<(), isize> {
-    let rc = unsafe { __shell_syscall2(SYS_CREATE_DIR, path.as_ptr() as usize, path.len()) };
+    let rc = __shell_syscall2(SYS_CREATE_DIR, path.as_ptr() as usize, path.len());
     decode(rc).map(|_| ())
 }
 
 /// Remove a file or empty directory.
 pub fn sys_remove_path(path: &str) -> Result<(), isize> {
-    let rc = unsafe { __shell_syscall2(SYS_REMOVE_PATH, path.as_ptr() as usize, path.len()) };
+    let rc = __shell_syscall2(SYS_REMOVE_PATH, path.as_ptr() as usize, path.len());
     decode(rc).map(|_| ())
 }
 
 /// Rename a file or directory.
 pub fn sys_rename(old_path: &str, new_path: &str) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_RENAME,
-            old_path.as_ptr() as usize,
-            old_path.len(),
-            new_path.as_ptr() as usize,
-            new_path.len(),
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_RENAME,
+        old_path.as_ptr() as usize,
+        old_path.len(),
+        new_path.as_ptr() as usize,
+        new_path.len(),
+    );
     decode(rc).map(|_| ())
 }
 
 /// Truncate a file to `len` bytes.
 pub fn sys_set_len(fd: usize, len: usize) -> Result<(), isize> {
-    let rc = unsafe { __shell_syscall2(SYS_SET_LENGTH, fd, len) };
+    let rc = __shell_syscall2(SYS_SET_LENGTH, fd, len);
     decode(rc).map(|_| ())
 }
 
 /// List processes into `buf`.  Returns bytes written.
 pub fn sys_list_processes(buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_LIST_PROCESSES, buf.as_mut_ptr() as usize, buf.len()) };
+    let rc = __shell_syscall2(SYS_LIST_PROCESSES, buf.as_mut_ptr() as usize, buf.len());
     decode(rc)
 }
 
 /// List threads for a process.  Returns bytes written.
 pub fn sys_list_threads(pid: usize, buf: &mut [u8]) -> Result<usize, isize> {
-    let rc =
-        unsafe { __shell_syscall3(SYS_LIST_THREADS, pid, buf.as_mut_ptr() as usize, buf.len()) };
+    let rc = __shell_syscall3(SYS_LIST_THREADS, pid, buf.as_mut_ptr() as usize, buf.len());
     decode(rc)
 }
 
 /// Query system information.  Returns bytes written to `buf`.
 pub fn sys_system_info(selector: u64, buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_SYSTEM_INFO,
-            selector as usize,
-            buf.as_mut_ptr() as usize,
-            buf.len(),
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_SYSTEM_INFO,
+        selector as usize,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+    );
     decode(rc)
 }
 
@@ -243,66 +239,62 @@ pub fn sys_irq_profiler(buf: &mut [u8]) -> Result<usize, isize> {
 
 /// Read kernel log.  Returns bytes written to `buf`.
 pub fn sys_kernel_log(buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_KERNEL_LOG, 0, buf.as_mut_ptr() as usize, buf.len()) };
+    let rc = __shell_syscall3(SYS_KERNEL_LOG, 0, buf.as_mut_ptr() as usize, buf.len());
     decode(rc)
 }
 
 /// Probe kernel log size without copying data.  Returns total byte count.
 pub fn sys_kernel_log_probe() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_KERNEL_LOG, 0, 0, 0) };
+    let rc = __shell_syscall3(SYS_KERNEL_LOG, 0, 0, 0);
     decode(rc)
 }
 
 /// Get current process ID.
 pub fn sys_getpid() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall0(SYS_GETPID) };
+    let rc = __shell_syscall0(SYS_GETPID);
     decode(rc)
 }
 
 /// Get current user ID.
 pub fn sys_getuid() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall0(SYS_GETUID) };
+    let rc = __shell_syscall0(SYS_GETUID);
     decode(rc)
 }
 
 /// Return the current process's group ID.
 /// Returns the primary GID as a `usize`, or a negative error code on failure.
 pub fn sys_getgid() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall0(SYS_GETGID) };
+    let rc = __shell_syscall0(SYS_GETGID);
     decode(rc)
 }
 
 /// Send a signal to a process.
 pub fn sys_send_signal(pid: usize, signal: usize, payload: usize) -> Result<(), isize> {
-    let rc = unsafe { __shell_syscall4(SYS_SEND_SIGNAL, pid, signal, payload, 0) };
+    let rc = __shell_syscall4(SYS_SEND_SIGNAL, pid, signal, payload, 0);
     decode(rc).map(|_| ())
 }
 
 /// Wait for a signal.  Fills `record` buffer.
 pub fn sys_wait_signal(timeout_ticks: u64, record: &mut [u8]) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_WAIT_SIGNAL,
-            timeout_ticks as usize,
-            record.as_mut_ptr() as usize,
-            record.len(),
-            0,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_WAIT_SIGNAL,
+        timeout_ticks as usize,
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+    );
     decode(rc).map(|_| ())
 }
 
 /// Wait for a child process to terminate.  Fills `record` buffer.
 pub fn sys_wait_process(pid: usize, timeout_ticks: u64, record: &mut [u8]) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_WAIT_PROCESS,
-            pid,
-            timeout_ticks as usize,
-            record.as_mut_ptr() as usize,
-            record.len(),
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_WAIT_PROCESS,
+        pid,
+        timeout_ticks as usize,
+        record.as_mut_ptr() as usize,
+        record.len(),
+    );
     decode(rc).map(|_| ())
 }
 
@@ -312,63 +304,56 @@ pub fn sys_spawn_process(
     options_ptr: usize,
     options_len: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_SPAWN_PROCESS,
-            path.as_ptr() as usize,
-            path.len(),
-            options_ptr,
-            options_len,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_SPAWN_PROCESS,
+        path.as_ptr() as usize,
+        path.len(),
+        options_ptr,
+        options_len,
+    );
     decode(rc)
 }
 
 /// Query access permissions for a path.
 pub fn sys_access_query(path: &str, required_access: u16, record: &mut [u8]) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_ACCESS_QUERY,
-            path.as_ptr() as usize,
-            path.len(),
-            required_access as usize,
-            record.as_mut_ptr() as usize,
-            record.len(),
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_ACCESS_QUERY,
+        path.as_ptr() as usize,
+        path.len(),
+        required_access as usize,
+        record.as_mut_ptr() as usize,
+        record.len(),
+    );
     decode(rc).map(|_| ())
 }
 
 /// Query permission metadata for a path.
 pub fn sys_permission_metadata(path: &str, record: &mut [u8]) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_PERMISSION_METADATA,
-            path.as_ptr() as usize,
-            path.len(),
-            record.as_mut_ptr() as usize,
-            record.len(),
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_PERMISSION_METADATA,
+        path.as_ptr() as usize,
+        path.len(),
+        record.as_mut_ptr() as usize,
+        record.len(),
+    );
     decode(rc).map(|_| ())
 }
 
 /// Sleep for `seconds` (converted to scheduler ticks internally).
 pub fn sys_sleep(seconds: u64) -> Result<(), isize> {
-    let rc = unsafe { __shell_syscall1(SYS_SLEEP, seconds as usize) };
+    let rc = __shell_syscall1(SYS_SLEEP, seconds as usize);
     decode(rc).map(|_| ())
 }
 
 /// List mount points.  Returns bytes written to `buf`.
 pub fn sys_list_mounts(buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_LIST_MOUNTS, buf.as_mut_ptr() as usize, buf.len()) };
+    let rc = __shell_syscall2(SYS_LIST_MOUNTS, buf.as_mut_ptr() as usize, buf.len());
     decode(rc)
 }
 
 /// List block devices.  Returns bytes written to `buf`.
 pub fn sys_list_block_devices(buf: &mut [u8]) -> Result<usize, isize> {
-    let rc =
-        unsafe { __shell_syscall2(SYS_LIST_BLOCK_DEVICES, buf.as_mut_ptr() as usize, buf.len()) };
+    let rc = __shell_syscall2(SYS_LIST_BLOCK_DEVICES, buf.as_mut_ptr() as usize, buf.len());
     decode(rc)
 }
 
@@ -401,15 +386,13 @@ impl VolumeRepairReport {
 /// bytes written (always `core::mem::size_of::<VolumeRepairReport>()` on
 /// success).
 pub fn sys_repair_volume(path: &str, buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_REPAIR_VOLUME,
-            path.as_ptr() as usize,
-            path.len(),
-            buf.as_mut_ptr() as usize,
-            buf.len(),
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_REPAIR_VOLUME,
+        path.as_ptr() as usize,
+        path.len(),
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+    );
     decode(rc)
 }
 
@@ -421,17 +404,15 @@ pub fn sys_set_security_descriptor(
     uid: u32,
     gid: u32,
 ) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall6(
-            SYS_SET_SECURITY_DESCRIPTOR,
-            path.as_ptr() as usize,
-            path.len(),
-            flags as usize,
-            mode as usize,
-            uid as usize,
-            gid as usize,
-        )
-    };
+    let rc = __shell_syscall6(
+        SYS_SET_SECURITY_DESCRIPTOR,
+        path.as_ptr() as usize,
+        path.len(),
+        flags as usize,
+        mode as usize,
+        uid as usize,
+        gid as usize,
+    );
     decode(rc).map(|_| ())
 }
 
@@ -440,17 +421,15 @@ pub fn sys_set_security_descriptor(
 /// On success the user record is persisted to `/data/etc/passwd` and a home
 /// directory skeleton is created.  Returns an error if the user already exists.
 pub fn sys_add_user(username: &str, uid: u32, gid: u32, home: &str) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall6(
-            SYS_ADD_USER,
-            username.as_ptr() as usize,
-            username.len(),
-            uid as usize,
-            gid as usize,
-            home.as_ptr() as usize,
-            home.len(),
-        )
-    };
+    let rc = __shell_syscall6(
+        SYS_ADD_USER,
+        username.as_ptr() as usize,
+        username.len(),
+        uid as usize,
+        gid as usize,
+        home.as_ptr() as usize,
+        home.len(),
+    );
     decode(rc).map(|_| ())
 }
 
@@ -459,7 +438,7 @@ pub fn sys_add_user(username: &str, uid: u32, gid: u32, home: &str) -> Result<()
 /// Refuses to remove the root user (uid 0).  On success the user record is
 /// removed from the passwd database and persisted.
 pub fn sys_remove_user(uid: u32) -> Result<(), isize> {
-    let rc = unsafe { __shell_syscall2(SYS_REMOVE_USER, uid as usize, 0) };
+    let rc = __shell_syscall2(SYS_REMOVE_USER, uid as usize, 0);
     decode(rc).map(|_| ())
 }
 
@@ -468,29 +447,30 @@ pub fn sys_remove_user(uid: u32) -> Result<(), isize> {
 /// The password is hashed with a random salt and stored in the shadow database
 /// (`/data/etc/shadow`).
 pub fn sys_set_user_password(username: &str, password: &str) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_SET_USER_PASSWORD,
-            username.as_ptr() as usize,
-            username.len(),
-            password.as_ptr() as usize,
-            password.len(),
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_SET_USER_PASSWORD,
+        username.as_ptr() as usize,
+        username.len(),
+        password.as_ptr() as usize,
+        password.len(),
+    );
     decode(rc).map(|_| ())
 }
 
 /// Exit the current process.  Does not return.
 pub fn sys_exit(code: usize) -> ! {
-    unsafe {
-        __shell_syscall1(SYS_EXIT, code);
-    }
+    __shell_syscall1(SYS_EXIT, code);
     loop {
         // Compiler barrier — unreachable.
+        // SAFETY: the halt is what keeps a returned-from `exit` from running
+        // on; it has no memory side effects and this arm is never reached by
+        // a well-behaved kernel.
         #[cfg(target_arch = "x86_64")]
         unsafe {
             core::arch::asm!("hlt", options(nomem, nostack))
         };
+        // SAFETY: as the x86_64 arm above — a wait-for-interrupt with no
+        // memory side effects.
         #[cfg(target_arch = "aarch64")]
         unsafe {
             core::arch::asm!("wfi", options(nomem, nostack))
@@ -507,7 +487,7 @@ pub fn sys_exit(code: usize) -> ! {
 ///
 /// On bare-metal builds where no network stack is available this returns 0.
 pub fn sys_network_status() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall0(SYS_NETWORK_STATUS) };
+    let rc = __shell_syscall0(SYS_NETWORK_STATUS);
     decode(rc)
 }
 
@@ -516,7 +496,7 @@ pub fn sys_network_status() -> Result<usize, isize> {
 /// Returns the 4-byte IPv4 address in network byte order (e.g. `[127, 0, 0,
 /// 1]`), or a negative error code on failure.
 pub fn sys_resolve_hostname(host: &str) -> Result<[u8; 4], isize> {
-    let rc = unsafe { __shell_syscall2(SYS_RESOLVE_HOSTNAME, host.as_ptr() as usize, host.len()) };
+    let rc = __shell_syscall2(SYS_RESOLVE_HOSTNAME, host.as_ptr() as usize, host.len());
     match decode(rc) {
         Ok(addr) => Ok(u32::to_be_bytes(addr as u32)),
         Err(e) => Err(e),
@@ -531,15 +511,13 @@ pub fn sys_resolve_hostname(host: &str) -> Result<[u8; 4], isize> {
 ///
 /// `flags` must be 0 (reserved for future use).
 pub fn sys_connect_tcp(host: &str, port: u16, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_CONNECT_TCP,
-            host.as_ptr() as usize,
-            host.len(),
-            port as usize,
-            flags,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_CONNECT_TCP,
+        host.as_ptr() as usize,
+        host.len(),
+        port as usize,
+        flags,
+    );
     decode(rc)
 }
 
@@ -549,7 +527,7 @@ pub fn sys_connect_tcp(host: &str, port: u16, flags: usize) -> Result<usize, isi
 /// `backlog` specifies the maximum number of pending connections (typically
 /// 4–128).  Use [`sys_close`] to release the listener.
 pub fn sys_listen_tcp(port: u16, backlog: u16, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_LISTEN_TCP, port as usize, backlog as usize, flags) };
+    let rc = __shell_syscall3(SYS_LISTEN_TCP, port as usize, backlog as usize, flags);
     decode(rc)
 }
 
@@ -558,7 +536,7 @@ pub fn sys_listen_tcp(port: u16, backlog: u16, flags: usize) -> Result<usize, is
 /// Blocks until a client connects, then returns a new fd for the connection.
 /// The returned fd supports [`sys_read`], [`sys_write`], and [`sys_close`].
 pub fn sys_accept_tcp(listener_fd: usize, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_ACCEPT_TCP, listener_fd, flags) };
+    let rc = __shell_syscall2(SYS_ACCEPT_TCP, listener_fd, flags);
     decode(rc)
 }
 
@@ -567,7 +545,7 @@ pub fn sys_accept_tcp(listener_fd: usize, flags: usize) -> Result<usize, isize> 
 /// Returns a fd that can be used with [`sys_send_to_udp`] and
 /// [`sys_recv_from_udp`].  Use [`sys_close`] to release the socket.
 pub fn sys_bind_udp(port: u16, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_BIND_UDP, port as usize, flags) };
+    let rc = __shell_syscall2(SYS_BIND_UDP, port as usize, flags);
     decode(rc)
 }
 
@@ -593,17 +571,15 @@ pub fn sys_send_to_udp(
             | ((dest_ip[2] as usize) << 8)
             | (dest_ip[3] as usize)
     };
-    let rc = unsafe {
-        __shell_syscall6(
-            SYS_SENDTO_UDP,
-            fd,
-            ip_arg,
-            dest_port as usize,
-            data.as_ptr() as usize,
-            data.len(),
-            flags,
-        )
-    };
+    let rc = __shell_syscall6(
+        SYS_SENDTO_UDP,
+        fd,
+        ip_arg,
+        dest_port as usize,
+        data.as_ptr() as usize,
+        data.len(),
+        flags,
+    );
     decode(rc)
 }
 
@@ -619,16 +595,14 @@ pub fn sys_recv_from_udp(
     src_addr_out: &mut [u8],
     flags: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_RECVFROM_UDP,
-            fd,
-            buf.as_mut_ptr() as usize,
-            buf.len(),
-            src_addr_out.as_mut_ptr() as usize,
-            flags,
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_RECVFROM_UDP,
+        fd,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+        src_addr_out.as_mut_ptr() as usize,
+        flags,
+    );
     decode(rc)
 }
 
@@ -636,7 +610,7 @@ pub fn sys_recv_from_udp(
 ///
 /// Returns the number of bytes written (not including any NUL terminator).
 pub fn sys_gethostname(buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_GETHOSTNAME, buf.as_mut_ptr() as usize, buf.len()) };
+    let rc = __shell_syscall2(SYS_GETHOSTNAME, buf.as_mut_ptr() as usize, buf.len());
     decode(rc)
 }
 
@@ -644,7 +618,7 @@ pub fn sys_gethostname(buf: &mut [u8]) -> Result<usize, isize> {
 ///
 /// Returns 0 on success.
 pub fn sys_sethostname(name: &[u8]) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_SETHOSTNAME, name.as_ptr() as usize, name.len()) };
+    let rc = __shell_syscall2(SYS_SETHOSTNAME, name.as_ptr() as usize, name.len());
     decode(rc)
 }
 
@@ -653,7 +627,7 @@ pub fn sys_sethostname(name: &[u8]) -> Result<usize, isize> {
 /// Writes a 16-byte `sockaddr_in` struct to `buf`.
 /// Returns the number of bytes written (16).
 pub fn sys_getsockname(fd: usize, buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_GETSOCKNAME, fd, buf.as_mut_ptr() as usize, buf.len()) };
+    let rc = __shell_syscall3(SYS_GETSOCKNAME, fd, buf.as_mut_ptr() as usize, buf.len());
     decode(rc)
 }
 
@@ -663,7 +637,7 @@ pub fn sys_getsockname(fd: usize, buf: &mut [u8]) -> Result<usize, isize> {
 /// Returns the number of bytes written (16).
 /// Only works for TCP connections; UDP sockets return an error.
 pub fn sys_getpeername(fd: usize, buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_GETPEERNAME, fd, buf.as_mut_ptr() as usize, buf.len()) };
+    let rc = __shell_syscall3(SYS_GETPEERNAME, fd, buf.as_mut_ptr() as usize, buf.len());
     decode(rc)
 }
 
@@ -673,7 +647,7 @@ pub fn sys_getpeername(fd: usize, buf: &mut [u8]) -> Result<usize, isize> {
 /// Returns a fd that can be used with [`sys_send_raw_packet`] and
 /// [`sys_recv_raw_packet`].  Use [`sys_close`] to release the socket.
 pub fn sys_create_raw_socket(protocol: u8, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_CREATE_RAW_SOCKET, protocol as usize, flags) };
+    let rc = __shell_syscall2(SYS_CREATE_RAW_SOCKET, protocol as usize, flags);
     decode(rc)
 }
 
@@ -688,17 +662,15 @@ pub fn sys_send_raw_packet(
     data: &[u8],
     flags: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall6(
-            SYS_SEND_RAW_PACKET,
-            fd,
-            dest_ip.as_ptr() as usize,
-            dest_ip.len(),
-            data.as_ptr() as usize,
-            data.len(),
-            flags,
-        )
-    };
+    let rc = __shell_syscall6(
+        SYS_SEND_RAW_PACKET,
+        fd,
+        dest_ip.as_ptr() as usize,
+        dest_ip.len(),
+        data.as_ptr() as usize,
+        data.len(),
+        flags,
+    );
     decode(rc)
 }
 
@@ -714,16 +686,14 @@ pub fn sys_recv_raw_packet(
     src_addr_out: &mut [u8],
     flags: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_RECV_RAW_PACKET,
-            fd,
-            buf.as_mut_ptr() as usize,
-            buf.len(),
-            src_addr_out.as_mut_ptr() as usize,
-            flags,
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_RECV_RAW_PACKET,
+        fd,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+        src_addr_out.as_mut_ptr() as usize,
+        flags,
+    );
     decode(rc)
 }
 
@@ -733,16 +703,14 @@ pub fn sys_recv_raw_packet(
 /// (e.g. `SO_KEEPALIVE`, `TCP_NODELAY`).  `val` is the option value
 /// (up to 64 bytes).  Returns 0 on success.
 pub fn sys_setsockopt(fd: usize, level: u32, name: u32, val: &[u8]) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_SETSOCKOPT,
-            fd,
-            level as usize,
-            name as usize,
-            val.as_ptr() as usize,
-            val.len(),
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_SETSOCKOPT,
+        fd,
+        level as usize,
+        name as usize,
+        val.as_ptr() as usize,
+        val.len(),
+    );
     decode(rc)
 }
 
@@ -751,16 +719,14 @@ pub fn sys_setsockopt(fd: usize, level: u32, name: u32, val: &[u8]) -> Result<us
 /// `level` is `SOL_SOCKET` or `IPPROTO_TCP`.  `name` is the option name.
 /// Writes the option value to `buf`.  Returns the number of bytes written.
 pub fn sys_getsockopt(fd: usize, level: u32, name: u32, buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_GETSOCKOPT,
-            fd,
-            level as usize,
-            name as usize,
-            buf.as_mut_ptr() as usize,
-            buf.len(),
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_GETSOCKOPT,
+        fd,
+        level as usize,
+        name as usize,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+    );
     decode(rc)
 }
 
@@ -797,7 +763,7 @@ pub const NETWORK_RECVFROM_UDP_FLAG_IPV6: usize = 1 << 0;
 /// `mask` is a 64-bit bitmask where bit N blocks signal N.
 /// Returns the previous signal mask value.
 pub fn sys_set_signal_mask(mask: u64) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_SET_SIGNAL_MASK, mask as usize) };
+    let rc = __shell_syscall1(SYS_SET_SIGNAL_MASK, mask as usize);
     decode(rc)
 }
 
@@ -818,16 +784,14 @@ pub fn sys_set_signal_handler(
     trampoline_addr: usize,
     sa_flags: u32,
 ) -> Result<(), isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_SET_SIGNAL_HANDLER,
-            signal,
-            action as usize,
-            user_handler_addr,
-            trampoline_addr,
-            sa_flags as usize,
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_SET_SIGNAL_HANDLER,
+        signal,
+        action as usize,
+        user_handler_addr,
+        trampoline_addr,
+        sa_flags as usize,
+    );
     decode(rc).map(|_| ())
 }
 
@@ -866,14 +830,12 @@ pub fn sys_poll(fds: &mut [PollFd], _timeout_ticks: u64) -> Result<usize, isize>
     if fds.is_empty() {
         return Ok(0);
     }
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_POLL,
-            fds.as_mut_ptr() as usize,
-            fds.len(),
-            _timeout_ticks as usize,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_POLL,
+        fds.as_mut_ptr() as usize,
+        fds.len(),
+        _timeout_ticks as usize,
+    );
     decode(rc)
 }
 
@@ -896,7 +858,7 @@ pub const POLLOUT: u16 = 0x004;
 /// Returns a file descriptor for the listening socket.
 /// Other processes can connect to this socket via `sys_connect_local`.
 pub fn sys_bind_local(path: &str, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_BIND_LOCAL, path.as_ptr() as usize, path.len(), flags) };
+    let rc = __shell_syscall3(SYS_BIND_LOCAL, path.as_ptr() as usize, path.len(), flags);
     decode(rc)
 }
 
@@ -904,8 +866,7 @@ pub fn sys_bind_local(path: &str, flags: usize) -> Result<usize, isize> {
 ///
 /// Returns a file descriptor for the connected bidirectional stream.
 pub fn sys_connect_local(path: &str, flags: usize) -> Result<usize, isize> {
-    let rc =
-        unsafe { __shell_syscall3(SYS_CONNECT_LOCAL, path.as_ptr() as usize, path.len(), flags) };
+    let rc = __shell_syscall3(SYS_CONNECT_LOCAL, path.as_ptr() as usize, path.len(), flags);
     decode(rc)
 }
 
@@ -914,7 +875,7 @@ pub fn sys_connect_local(path: &str, flags: usize) -> Result<usize, isize> {
 /// `listener_fd` is the file descriptor returned by `sys_bind_local`.
 /// Returns a file descriptor for the accepted stream.
 pub fn sys_accept_local(listener_fd: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_ACCEPT_LOCAL, listener_fd) };
+    let rc = __shell_syscall1(SYS_ACCEPT_LOCAL, listener_fd);
     decode(rc)
 }
 
@@ -928,7 +889,7 @@ pub fn sys_accept_local(listener_fd: usize) -> Result<usize, isize> {
 ///
 /// Returns the shared memory ID (shmid) on success.
 pub fn sys_shmget(key: usize, size: usize, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_SHMGET, key, size, flags) };
+    let rc = __shell_syscall3(SYS_SHMGET, key, size, flags);
     decode(rc)
 }
 
@@ -938,7 +899,7 @@ pub fn sys_shmget(key: usize, size: usize, flags: usize) -> Result<usize, isize>
 /// `addr_hint` is a preferred virtual address (use 0 to let the kernel pick).
 /// Returns the virtual address where the segment was attached.
 pub fn sys_shmat(shmid: usize, addr_hint: usize, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_SHMAT, shmid, addr_hint, flags) };
+    let rc = __shell_syscall3(SYS_SHMAT, shmid, addr_hint, flags);
     decode(rc)
 }
 
@@ -946,7 +907,7 @@ pub fn sys_shmat(shmid: usize, addr_hint: usize, flags: usize) -> Result<usize, 
 ///
 /// `shmid` is the ID returned by `sys_shmget`.
 pub fn sys_shmdt(shmid: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_SHMDT, shmid) };
+    let rc = __shell_syscall1(SYS_SHMDT, shmid);
     decode(rc)
 }
 
@@ -955,7 +916,7 @@ pub fn sys_shmdt(shmid: usize) -> Result<usize, isize> {
 /// `shmid` is the ID returned by `sys_shmget`.
 /// `cmd` is one of `IPC_RMID`, `IPC_STAT`, `IPC_SET`.
 pub fn sys_shmctl(shmid: usize, cmd: usize, buf: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_SHMCTL, shmid, cmd, buf) };
+    let rc = __shell_syscall3(SYS_SHMCTL, shmid, cmd, buf);
     decode(rc)
 }
 
@@ -977,7 +938,7 @@ pub fn network_supports_tcp_stream_transport(flags: u32) -> bool {
 /// Probe read_dir to discover the required buffer size for a directory.
 /// Returns the total byte count needed, or an error.
 pub fn sys_read_dir_probe(path: &str) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall5(SYS_READ_DIR, path.as_ptr() as usize, path.len(), 0, 0, 0) };
+    let rc = __shell_syscall5(SYS_READ_DIR, path.as_ptr() as usize, path.len(), 0, 0, 0);
     decode(rc)
 }
 
@@ -993,17 +954,15 @@ pub fn sys_read_dir_probe(path: &str) -> Result<usize, isize> {
 /// The daemon reads requests from `req_fd` and writes responses to `resp_fd`.
 pub fn sys_fuse_mount(mount_path: &str, fs_name: &str) -> Result<(usize, usize), isize> {
     let mut fds = [0usize; 2];
-    let rc = unsafe {
-        __shell_syscall6(
-            SYS_FUSE_MOUNT,
-            mount_path.as_ptr() as usize,
-            mount_path.len(),
-            fs_name.as_ptr() as usize,
-            fs_name.len(),
-            fds.as_mut_ptr() as usize,
-            core::mem::size_of::<[usize; 2]>(),
-        )
-    };
+    let rc = __shell_syscall6(
+        SYS_FUSE_MOUNT,
+        mount_path.as_ptr() as usize,
+        mount_path.len(),
+        fs_name.as_ptr() as usize,
+        fs_name.len(),
+        fds.as_mut_ptr() as usize,
+        core::mem::size_of::<[usize; 2]>(),
+    );
     if rc < 0 {
         Err(rc)
     } else {
@@ -1027,17 +986,15 @@ pub fn sys_futex(
     val: u32,
     timeout_ticks: u64,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall6(
-            SYS_FUTEX,
-            uaddr as usize,
-            op,
-            val as usize,
-            timeout_ticks as usize,
-            0,
-            0,
-        )
-    };
+    let rc = __shell_syscall6(
+        SYS_FUTEX,
+        uaddr as usize,
+        op,
+        val as usize,
+        timeout_ticks as usize,
+        0,
+        0,
+    );
     decode(rc)
 }
 
@@ -1058,7 +1015,7 @@ pub const EFD_CLOEXEC: u32 = 4;
 ///
 /// Returns a file descriptor on success.
 pub fn sys_eventfd(initval: u32, flags: u32) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_EVENTFD, initval as usize, flags as usize) };
+    let rc = __shell_syscall2(SYS_EVENTFD, initval as usize, flags as usize);
     decode(rc)
 }
 
@@ -1072,7 +1029,7 @@ pub fn sys_eventfd(initval: u32, flags: u32) -> Result<usize, isize> {
 /// Returns a file descriptor on success.  Read from the fd to receive
 /// [`ProcessSignalRecord`] values for pending matching signals.
 pub fn sys_signalfd(sigset: u64, flags: u32) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_SIGNALFD, sigset as usize, flags as usize) };
+    let rc = __shell_syscall2(SYS_SIGNALFD, sigset as usize, flags as usize);
     decode(rc)
 }
 
@@ -1086,14 +1043,12 @@ pub fn sys_signalfd(sigset: u64, flags: u32) -> Result<usize, isize> {
 /// Returns a file descriptor on success.  Read from the fd to receive a
 /// `u64` count of expirations since the last read.
 pub fn sys_timerfd(expiry_delta: u64, interval_ticks: u64, flags: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_TIMERFD,
-            expiry_delta as usize,
-            interval_ticks as usize,
-            flags as usize,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_TIMERFD,
+        expiry_delta as usize,
+        interval_ticks as usize,
+        flags as usize,
+    );
     decode(rc)
 }
 
@@ -1104,7 +1059,7 @@ pub fn sys_timerfd(expiry_delta: u64, interval_ticks: u64, flags: u32) -> Result
 /// `cpu_mask` is a bitmask of allowed CPUs (bit N = 1 allows CPU N).
 /// Returns 0 on success or a negative error code.
 pub fn sys_sched_setaffinity(cpu_mask: u32) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_SCHED_SETAFFINITY, cpu_mask as usize) };
+    let rc = __shell_syscall1(SYS_SCHED_SETAFFINITY, cpu_mask as usize);
     decode(rc)
 }
 
@@ -1112,7 +1067,7 @@ pub fn sys_sched_setaffinity(cpu_mask: u32) -> Result<usize, isize> {
 ///
 /// Returns a bitmask of allowed CPUs.
 pub fn sys_sched_getaffinity() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall0(SYS_SCHED_GETAFFINITY) };
+    let rc = __shell_syscall0(SYS_SCHED_GETAFFINITY);
     decode(rc)
 }
 
@@ -1122,55 +1077,51 @@ pub fn sys_sched_getaffinity() -> Result<usize, isize> {
 ///
 /// Returns a file descriptor on success.
 pub fn sys_mq_open(name: &str, oflags: u32, max_msg: u32, msg_size: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_MQOPEN,
-            name.as_ptr() as usize,
-            name.len(),
-            oflags as usize,
-            max_msg as usize,
-            msg_size as usize,
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_MQOPEN,
+        name.as_ptr() as usize,
+        name.len(),
+        oflags as usize,
+        max_msg as usize,
+        msg_size as usize,
+    );
     decode(rc)
 }
 
 /// Close a message queue file descriptor.
 pub fn sys_mq_close(fd: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_MQCLOSE, fd) };
+    let rc = __shell_syscall1(SYS_MQCLOSE, fd);
     decode(rc)
 }
 
 /// Send a message to a queue.
 pub fn sys_mq_send(fd: usize, buf: &[u8], priority: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_MQSEND,
-            fd,
-            buf.as_ptr() as usize,
-            buf.len(),
-            priority as usize,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_MQSEND,
+        fd,
+        buf.as_ptr() as usize,
+        buf.len(),
+        priority as usize,
+    );
     decode(rc)
 }
 
 /// Receive a message from a queue. Returns the number of bytes received.
 pub fn sys_mq_receive(fd: usize, buf: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_MQRECEIVE, fd, buf.as_mut_ptr() as usize, buf.len()) };
+    let rc = __shell_syscall3(SYS_MQRECEIVE, fd, buf.as_mut_ptr() as usize, buf.len());
     decode(rc)
 }
 
 /// Register for signal notification when a message arrives on the queue.
 /// Pass `signo = 0` to deregister.
 pub fn sys_mq_notify(fd: usize, signo: u32) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_MQNOTIFY, fd, signo as usize) };
+    let rc = __shell_syscall2(SYS_MQNOTIFY, fd, signo as usize);
     decode(rc)
 }
 
 /// Remove a named message queue.
 pub fn sys_mq_unlink(name: &str) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_MQUNLINK, name.as_ptr() as usize, name.len()) };
+    let rc = __shell_syscall2(SYS_MQUNLINK, name.as_ptr() as usize, name.len());
     decode(rc)
 }
 
@@ -1189,7 +1140,7 @@ pub const EPOLLHUP: u32 = 0x010;
 
 /// Create an epoll instance. Returns an epoll fd.
 pub fn sys_epoll_create(flags: u32) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_EPOLL_CREATE, flags as usize) };
+    let rc = __shell_syscall1(SYS_EPOLL_CREATE, flags as usize);
     decode(rc)
 }
 
@@ -1200,31 +1151,27 @@ pub fn sys_epoll_ctl(
     fd: usize,
     event: &[u8], // 12-byte epoll_event
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_EPOLL_CTL,
-            epfd,
-            op as usize,
-            fd,
-            event.as_ptr() as usize,
-            event.len(),
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_EPOLL_CTL,
+        epfd,
+        op as usize,
+        fd,
+        event.as_ptr() as usize,
+        event.len(),
+    );
     decode(rc)
 }
 
 /// Wait for events on monitored fds.
 /// Returns the number of ready events.
 pub fn sys_epoll_wait(epfd: usize, events: &mut [u8], timeout_ticks: u64) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_EPOLL_WAIT,
-            epfd,
-            events.as_mut_ptr() as usize,
-            events.len(),
-            timeout_ticks as usize,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_EPOLL_WAIT,
+        epfd,
+        events.as_mut_ptr() as usize,
+        events.len(),
+        timeout_ticks as usize,
+    );
     decode(rc)
 }
 
@@ -1235,22 +1182,20 @@ pub fn sys_epoll_wait(epfd: usize, events: &mut [u8], timeout_ticks: u64) -> Res
 /// `fstype` is a filesystem driver name (e.g. "simplefs", "tmpfs", "ext4").
 /// `flags` is a bitmask of MOUNT_* flags (MOUNT_READ_ONLY = 1, etc.).
 pub fn sys_mount(target: &str, fstype: &str, flags: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_MOUNT,
-            target.as_ptr() as usize,
-            target.len(),
-            fstype.as_ptr() as usize,
-            fstype.len(),
-            flags as usize,
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_MOUNT,
+        target.as_ptr() as usize,
+        target.len(),
+        fstype.as_ptr() as usize,
+        fstype.len(),
+        flags as usize,
+    );
     decode(rc)
 }
 
 /// Unmount a filesystem at the given path.
 pub fn sys_umount(target: &str) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_UMOUNT, target.as_ptr() as usize, target.len()) };
+    let rc = __shell_syscall2(SYS_UMOUNT, target.as_ptr() as usize, target.len());
     decode(rc)
 }
 
@@ -1265,15 +1210,13 @@ pub fn sys_umount(target: &str) -> Result<usize, isize> {
 ///
 /// `flags` must be 0 (reserved for future use).
 pub fn sys_tls_connect(host: &str, port: u16, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_TLS_CONNECT,
-            host.as_ptr() as usize,
-            host.len(),
-            port as usize,
-            flags,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_TLS_CONNECT,
+        host.as_ptr() as usize,
+        host.len(),
+        port as usize,
+        flags,
+    );
     decode(rc)
 }
 
@@ -1281,25 +1224,25 @@ pub fn sys_tls_connect(host: &str, port: u16, flags: usize) -> Result<usize, isi
 
 /// Add a packet filter rule (syscall 122).
 pub fn sys_filter_add_rule(def: *const u8, def_len: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_FILTER_ADD_RULE, def as usize, def_len, 0) };
+    let rc = __shell_syscall3(SYS_FILTER_ADD_RULE, def as usize, def_len, 0);
     decode(rc)
 }
 
 /// Remove a packet filter rule by id (syscall 123).
 pub fn sys_filter_remove_rule(rule_id: u64) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_FILTER_REMOVE_RULE, rule_id as usize, 0) };
+    let rc = __shell_syscall2(SYS_FILTER_REMOVE_RULE, rule_id as usize, 0);
     decode(rc)
 }
 
 /// Set the default filter action (syscall 124).
 pub fn sys_filter_set_default_action(action: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_FILTER_SET_DEFAULT_ACTION, action, 0) };
+    let rc = __shell_syscall2(SYS_FILTER_SET_DEFAULT_ACTION, action, 0);
     decode(rc)
 }
 
 /// Get filter statistics (syscall 125).
 pub fn sys_filter_get_stats(stats: *mut u8, stats_len: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_FILTER_GET_STATS, stats as usize, stats_len, 0) };
+    let rc = __shell_syscall3(SYS_FILTER_GET_STATS, stats as usize, stats_len, 0);
     decode(rc)
 }
 
@@ -1312,7 +1255,7 @@ pub fn sys_filter_get_stats(stats: *mut u8, stats_len: usize) -> Result<usize, i
 ///
 /// Returns a file descriptor on success.
 pub fn sys_io_uring_setup(entries: u32, flags: u32) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_IO_URING_SETUP, entries as usize, flags as usize) };
+    let rc = __shell_syscall2(SYS_IO_URING_SETUP, entries as usize, flags as usize);
     decode(rc)
 }
 
@@ -1347,7 +1290,7 @@ pub fn sys_io_uring_enter(
     let arg3 = (sqes_len as usize) | ((cqes_capacity as usize) << 32);
     let arg4 = cqes_ptr as usize;
     let arg5 = flags as usize;
-    let rc = unsafe { __shell_syscall6(SYS_IO_URING_ENTER, arg0, arg1, arg2, arg3, arg4, arg5) };
+    let rc = __shell_syscall6(SYS_IO_URING_ENTER, arg0, arg1, arg2, arg3, arg4, arg5);
     decode(rc)
 }
 
@@ -1361,16 +1304,14 @@ pub fn sys_ptrace(
     data: *const u8,
     data_len: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_PTRACE,
-            request as usize,
-            pid as usize,
-            addr,
-            data as usize,
-            data_len,
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_PTRACE,
+        request as usize,
+        pid as usize,
+        addr,
+        data as usize,
+        data_len,
+    );
     decode(rc)
 }
 
@@ -1378,7 +1319,7 @@ pub fn sys_ptrace(
 pub const SIGRTMIN: usize = 32;
 pub const SIGRTMAX: usize = 42;
 pub fn sys_sigreturn(frame_ptr: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_SIGRETURN, frame_ptr) };
+    let rc = __shell_syscall1(SYS_SIGRETURN, frame_ptr);
     decode(rc)
 }
 
@@ -1388,7 +1329,7 @@ pub fn sys_sigreturn(frame_ptr: usize) -> Result<usize, isize> {
 /// `new_mask` is the 64-bit signal mask to apply during the suspension.
 /// Returns 0 on success (a signal was delivered), or a negative errno.
 pub fn sys_sigsuspend(new_mask: u64) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_SIGSUSPEND, new_mask as usize) };
+    let rc = __shell_syscall1(SYS_SIGSUSPEND, new_mask as usize);
     decode(rc)
 }
 
@@ -1400,25 +1341,25 @@ pub fn sys_prctl(
     arg4: usize,
     arg5: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall5(SYS_PRCTL, option as usize, arg2, arg3, arg4, arg5) };
+    let rc = __shell_syscall5(SYS_PRCTL, option as usize, arg2, arg3, arg4, arg5);
     decode(rc)
 }
 
 /// mlock — lock memory pages (syscall 131).
 pub fn sys_mlock(addr: usize, len: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_MLOCK, addr, len) };
+    let rc = __shell_syscall2(SYS_MLOCK, addr, len);
     decode(rc)
 }
 
 /// munlock — unlock memory pages (syscall 132).
 pub fn sys_munlock(addr: usize, len: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_MUNLOCK, addr, len) };
+    let rc = __shell_syscall2(SYS_MUNLOCK, addr, len);
     decode(rc)
 }
 
 /// madvise — give advice about memory use (syscall 133).
 pub fn sys_madvise(addr: usize, len: usize, advice: i32) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_MADVISE, addr, len, advice as usize) };
+    let rc = __shell_syscall3(SYS_MADVISE, addr, len, advice as usize);
     decode(rc)
 }
 
@@ -1429,15 +1370,13 @@ pub fn sys_seccomp(
     data: *const u8,
     data_len: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_SECCOMP,
-            operation as usize,
-            flags as usize,
-            data as usize,
-            data_len,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_SECCOMP,
+        operation as usize,
+        flags as usize,
+        data as usize,
+        data_len,
+    );
     decode(rc)
 }
 
@@ -1445,7 +1384,7 @@ pub fn sys_seccomp(
 
 /// timer_create(clock_id, sevp) → timer_id
 pub fn sys_timer_create(clock_id: u32, _sevp: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_TIMER_CREATE, clock_id as usize, _sevp) };
+    let rc = __shell_syscall2(SYS_TIMER_CREATE, clock_id as usize, _sevp);
     decode(rc)
 }
 
@@ -1456,27 +1395,25 @@ pub fn sys_timer_settime(
     new_value: *const u8,
     _old_value: *mut u8,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_TIMER_SETTIME,
-            timer_id as usize,
-            flags as usize,
-            new_value as usize,
-            _old_value as usize,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_TIMER_SETTIME,
+        timer_id as usize,
+        flags as usize,
+        new_value as usize,
+        _old_value as usize,
+    );
     decode(rc)
 }
 
 /// timer_gettime(timer_id, value) → 0 or error
 pub fn sys_timer_gettime(timer_id: u32, value: *mut u8) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_TIMER_GETTIME, timer_id as usize, value as usize) };
+    let rc = __shell_syscall2(SYS_TIMER_GETTIME, timer_id as usize, value as usize);
     decode(rc)
 }
 
 /// timer_delete(timer_id) → 0 or error
 pub fn sys_timer_delete(timer_id: u32) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_TIMER_DELETE, timer_id as usize) };
+    let rc = __shell_syscall1(SYS_TIMER_DELETE, timer_id as usize);
     decode(rc)
 }
 
@@ -1502,7 +1439,7 @@ pub const AUDIT_ENABLE_ALL: u64 = AUDIT_ENABLE_SYSCALL
 /// `mask` is a bitmask of `AUDIT_ENABLE_*` values. Pass 0 to disable all
 /// auditing. Returns the previous enable mask.
 pub fn sys_audit_set_enable(mask: u64) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_AUDIT_SET_ENABLE, mask as usize) };
+    let rc = __shell_syscall1(SYS_AUDIT_SET_ENABLE, mask as usize);
     decode(rc)
 }
 
@@ -1519,14 +1456,12 @@ pub fn sys_audit_read_log(buf: &mut [u8]) -> Result<usize, isize> {
     if max_records == 0 {
         return Ok(0);
     }
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_AUDIT_READ_LOG,
-            buf.as_mut_ptr() as usize,
-            max_records,
-            AUDIT_RECORD_SIZE,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_AUDIT_READ_LOG,
+        buf.as_mut_ptr() as usize,
+        max_records,
+        AUDIT_RECORD_SIZE,
+    );
     decode(rc)
 }
 
@@ -1541,32 +1476,32 @@ pub const GOVERNOR_USERSPACE: usize = 4;
 
 /// Get the current CPU frequency in KHz.
 pub fn sys_cpufreq_get() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall0(SYS_CPUFREQ_GET) };
+    let rc = __shell_syscall0(SYS_CPUFREQ_GET);
     decode(rc)
 }
 
 /// Request a CPU frequency in KHz.
 pub fn sys_cpufreq_set(freq_khz: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_CPUFREQ_SET, freq_khz) };
+    let rc = __shell_syscall1(SYS_CPUFREQ_SET, freq_khz);
     decode(rc)
 }
 
 /// Get the (min, max) CPU frequency range in KHz, packed as
 /// `max << 32 | min`.
 pub fn sys_cpufreq_get_range() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall0(SYS_CPUFREQ_GET_RANGE) };
+    let rc = __shell_syscall0(SYS_CPUFREQ_GET_RANGE);
     decode(rc)
 }
 
 /// Select a frequency-scaling governor.
 pub fn sys_cpufreq_set_governor(gov: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_CPUFREQ_SET_GOVERNOR, gov) };
+    let rc = __shell_syscall1(SYS_CPUFREQ_SET_GOVERNOR, gov);
     decode(rc)
 }
 
 /// Get the current CPU temperature in millidegrees Celsius.
 pub fn sys_cpufreq_get_temp() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall0(SYS_CPUFREQ_GET_TEMP) };
+    let rc = __shell_syscall0(SYS_CPUFREQ_GET_TEMP);
     decode(rc)
 }
 
@@ -1574,7 +1509,7 @@ pub fn sys_cpufreq_get_temp() -> Result<usize, isize> {
 /// physical frame pool's free ranges coalesce.  Returns the number of frames
 /// moved.
 pub fn sys_compact_memory() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall0(SYS_COMPACT_MEMORY) };
+    let rc = __shell_syscall0(SYS_COMPACT_MEMORY);
     decode(rc)
 }
 
@@ -1582,83 +1517,73 @@ pub fn sys_compact_memory() -> Result<usize, isize> {
 
 /// Set an extended attribute on a file/directory.
 pub fn sys_set_xattr(path: &str, name: &[u8], value: &[u8]) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall6(
-            SYS_SET_XATTR,
-            path.as_ptr() as usize,
-            path.len(),
-            name.as_ptr() as usize,
-            name.len(),
-            value.as_ptr() as usize,
-            value.len(),
-        )
-    };
+    let rc = __shell_syscall6(
+        SYS_SET_XATTR,
+        path.as_ptr() as usize,
+        path.len(),
+        name.as_ptr() as usize,
+        name.len(),
+        value.as_ptr() as usize,
+        value.len(),
+    );
     decode(rc)
 }
 
 /// Read an extended attribute value.  `out` must be large enough; pass an
 /// empty slice to probe the required size.
 pub fn sys_get_xattr(path: &str, name: &[u8], out: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall6(
-            SYS_GET_XATTR,
-            path.as_ptr() as usize,
-            path.len(),
-            name.as_ptr() as usize,
-            name.len(),
-            out.as_mut_ptr() as usize,
-            out.len(),
-        )
-    };
+    let rc = __shell_syscall6(
+        SYS_GET_XATTR,
+        path.as_ptr() as usize,
+        path.len(),
+        name.as_ptr() as usize,
+        name.len(),
+        out.as_mut_ptr() as usize,
+        out.len(),
+    );
     decode(rc)
 }
 
 /// List extended attribute names as NUL-terminated byte strings (Linux
 /// `listxattr` format).  Returns the total byte length.
 pub fn sys_list_xattr(path: &str, out: &mut [u8]) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_LIST_XATTR,
-            path.as_ptr() as usize,
-            path.len(),
-            out.as_mut_ptr() as usize,
-            out.len(),
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_LIST_XATTR,
+        path.as_ptr() as usize,
+        path.len(),
+        out.as_mut_ptr() as usize,
+        out.len(),
+    );
     decode(rc)
 }
 
 /// Remove an extended attribute.
 pub fn sys_remove_xattr(path: &str, name: &[u8]) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_REMOVE_XATTR,
-            path.as_ptr() as usize,
-            path.len(),
-            name.as_ptr() as usize,
-            name.len(),
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_REMOVE_XATTR,
+        path.as_ptr() as usize,
+        path.len(),
+        name.as_ptr() as usize,
+        name.len(),
+    );
     decode(rc)
 }
 
 /// Toggle per-file data-reduction flags (e.g. `FILE_FLAG_COMPRESSED`).
 pub fn sys_set_file_flags(path: &str, set: u32, clear: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_SET_FILE_FLAGS,
-            path.as_ptr() as usize,
-            path.len(),
-            set as usize,
-            clear as usize,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_SET_FILE_FLAGS,
+        path.as_ptr() as usize,
+        path.len(),
+        set as usize,
+        clear as usize,
+    );
     decode(rc)
 }
 
 /// Read the per-file data-reduction flags (`FILE_FLAG_*` bitmask).
 pub fn sys_get_file_flags(path: &str) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_GET_FILE_FLAGS, path.as_ptr() as usize, path.len()) };
+    let rc = __shell_syscall2(SYS_GET_FILE_FLAGS, path.as_ptr() as usize, path.len());
     decode(rc)
 }
 
@@ -1669,8 +1594,7 @@ pub const NETWORK_DCCP_FLAG_IPV6: usize = 1 << 0;
 
 /// Bind a DCCP socket to a local port.
 pub fn sys_dccp_bind(port: u16, service_code: u32, flags: usize) -> Result<usize, isize> {
-    let rc =
-        unsafe { __shell_syscall3(SYS_DCCP_BIND, port as usize, service_code as usize, flags) };
+    let rc = __shell_syscall3(SYS_DCCP_BIND, port as usize, service_code as usize, flags);
     decode(rc)
 }
 
@@ -1681,15 +1605,13 @@ pub fn sys_dccp_listen(
     service_code: u32,
     flags: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_DCCP_LISTEN,
-            port as usize,
-            backlog as usize,
-            service_code as usize,
-            flags,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_DCCP_LISTEN,
+        port as usize,
+        backlog as usize,
+        service_code as usize,
+        flags,
+    );
     decode(rc)
 }
 
@@ -1711,28 +1633,25 @@ pub fn sys_dccp_connect(
             | ((dest_ip[2] as usize) << 8)
             | (dest_ip[3] as usize)
     };
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_DCCP_CONNECT,
-            ip_arg,
-            dest_port as usize,
-            service_code as usize,
-            flags,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_DCCP_CONNECT,
+        ip_arg,
+        dest_port as usize,
+        service_code as usize,
+        flags,
+    );
     decode(rc)
 }
 
 /// Accept the next pending DCCP connection on the listener `fd`.
 pub fn sys_dccp_accept(fd: usize, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_DCCP_ACCEPT, fd, flags) };
+    let rc = __shell_syscall2(SYS_DCCP_ACCEPT, fd, flags);
     decode(rc)
 }
 
 /// Send one DCCP datagram on the connected socket `fd`.
 pub fn sys_dccp_send(fd: usize, data: &[u8], flags: usize) -> Result<usize, isize> {
-    let rc =
-        unsafe { __shell_syscall4(SYS_DCCP_SEND, fd, data.as_ptr() as usize, data.len(), flags) };
+    let rc = __shell_syscall4(SYS_DCCP_SEND, fd, data.as_ptr() as usize, data.len(), flags);
     decode(rc)
 }
 
@@ -1746,22 +1665,20 @@ pub fn sys_dccp_recv(
     src_addr_out: &mut [u8],
     flags: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall5(
-            SYS_DCCP_RECV,
-            fd,
-            buf.as_mut_ptr() as usize,
-            buf.len(),
-            src_addr_out.as_mut_ptr() as usize,
-            flags,
-        )
-    };
+    let rc = __shell_syscall5(
+        SYS_DCCP_RECV,
+        fd,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+        src_addr_out.as_mut_ptr() as usize,
+        flags,
+    );
     decode(rc)
 }
 
 /// Close a DCCP socket.
 pub fn sys_dccp_close(fd: usize, flags: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_DCCP_CLOSE, fd, flags) };
+    let rc = __shell_syscall2(SYS_DCCP_CLOSE, fd, flags);
     decode(rc)
 }
 
@@ -1769,39 +1686,35 @@ pub fn sys_dccp_close(fd: usize, flags: usize) -> Result<usize, isize> {
 
 /// Add an IPsec security-policy entry.  Returns the policy id.
 pub fn sys_ipsec_add_sp(sp: &crate::user::shared::abi::ipsec::IpsecSpDef) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_IPSEC_ADD_SP,
-            sp as *const _ as usize,
-            core::mem::size_of::<crate::user::shared::abi::ipsec::IpsecSpDef>(),
-            0,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_IPSEC_ADD_SP,
+        sp as *const _ as usize,
+        core::mem::size_of::<crate::user::shared::abi::ipsec::IpsecSpDef>(),
+        0,
+    );
     decode(rc)
 }
 
 /// Remove an IPsec security-policy entry by id.
 pub fn sys_ipsec_del_sp(sp_id: u64) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_IPSEC_DEL_SP, sp_id as usize, 0) };
+    let rc = __shell_syscall2(SYS_IPSEC_DEL_SP, sp_id as usize, 0);
     decode(rc)
 }
 
 /// Add an IPsec security association.  Returns the SA id.
 pub fn sys_ipsec_add_sa(sa: &crate::user::shared::abi::ipsec::IpsecSaDef) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_IPSEC_ADD_SA,
-            sa as *const _ as usize,
-            core::mem::size_of::<crate::user::shared::abi::ipsec::IpsecSaDef>(),
-            0,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_IPSEC_ADD_SA,
+        sa as *const _ as usize,
+        core::mem::size_of::<crate::user::shared::abi::ipsec::IpsecSaDef>(),
+        0,
+    );
     decode(rc)
 }
 
 /// Remove an IPsec security association by SPI.
 pub fn sys_ipsec_del_sa(spi: u32) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_IPSEC_DEL_SA, spi as usize, 0) };
+    let rc = __shell_syscall2(SYS_IPSEC_DEL_SA, spi as usize, 0);
     decode(rc)
 }
 
@@ -1809,14 +1722,12 @@ pub fn sys_ipsec_del_sa(spi: u32) -> Result<usize, isize> {
 pub fn sys_ipsec_get_stats(
     stats: &mut crate::user::shared::abi::ipsec::IpsecStats,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_IPSEC_GET_STATS,
-            stats as *mut _ as usize,
-            core::mem::size_of::<crate::user::shared::abi::ipsec::IpsecStats>(),
-            0,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_IPSEC_GET_STATS,
+        stats as *mut _ as usize,
+        core::mem::size_of::<crate::user::shared::abi::ipsec::IpsecStats>(),
+        0,
+    );
     decode(rc)
 }
 
@@ -1824,45 +1735,41 @@ pub fn sys_ipsec_get_stats(
 
 /// Enable multicast routing.
 pub fn sys_mrt_init() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_MRT_INIT, 0) };
+    let rc = __shell_syscall1(SYS_MRT_INIT, 0);
     decode(rc)
 }
 
 /// Disable multicast routing.
 pub fn sys_mrt_done() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall1(SYS_MRT_DONE, 0) };
+    let rc = __shell_syscall1(SYS_MRT_DONE, 0);
     decode(rc)
 }
 
 /// Add a multicast virtual interface.  Returns the VIF index.
 pub fn sys_mrt_add_vif(vif: &crate::user::shared::abi::mrt::MrtVifDef) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_MRT_ADD_VIF,
-            vif as *const _ as usize,
-            core::mem::size_of::<crate::user::shared::abi::mrt::MrtVifDef>(),
-            0,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_MRT_ADD_VIF,
+        vif as *const _ as usize,
+        core::mem::size_of::<crate::user::shared::abi::mrt::MrtVifDef>(),
+        0,
+    );
     decode(rc)
 }
 
 /// Remove a multicast virtual interface.
 pub fn sys_mrt_del_vif(vif_index: u32) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall2(SYS_MRT_DEL_VIF, vif_index as usize, 0) };
+    let rc = __shell_syscall2(SYS_MRT_DEL_VIF, vif_index as usize, 0);
     decode(rc)
 }
 
 /// Add a multicast forwarding-cache entry.
 pub fn sys_mrt_add_mfc(mfc: &crate::user::shared::abi::mrt::MrtMfcDef) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_MRT_ADD_MFC,
-            mfc as *const _ as usize,
-            core::mem::size_of::<crate::user::shared::abi::mrt::MrtMfcDef>(),
-            0,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_MRT_ADD_MFC,
+        mfc as *const _ as usize,
+        core::mem::size_of::<crate::user::shared::abi::mrt::MrtMfcDef>(),
+        0,
+    );
     decode(rc)
 }
 
@@ -1876,7 +1783,7 @@ pub fn sys_mrt_del_mfc(source: [u8; 4], group: [u8; 4]) -> Result<usize, isize> 
         | ((group[1] as usize) << 16)
         | ((group[2] as usize) << 8)
         | (group[3] as usize);
-    let rc = unsafe { __shell_syscall3(SYS_MRT_DEL_MFC, src, grp, 0) };
+    let rc = __shell_syscall3(SYS_MRT_DEL_MFC, src, grp, 0);
     decode(rc)
 }
 
@@ -1885,41 +1792,35 @@ pub fn sys_mrt_del_mfc(source: [u8; 4], group: [u8; 4]) -> Result<usize, isize> 
 /// Enable/disable MAC enforcement and set the default-deny mode.  Returns the
 /// previous `enabled` value.
 pub fn sys_mac_set_mode(enabled: u32, default_deny: u32, flags: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_MAC_SET_MODE,
-            enabled as usize,
-            default_deny as usize,
-            flags as usize,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_MAC_SET_MODE,
+        enabled as usize,
+        default_deny as usize,
+        flags as usize,
+    );
     decode(rc)
 }
 
 /// Add a MAC allow rule.
 pub fn sys_mac_add_rule(rule: &crate::user::shared::abi::mac::MacRule) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_MAC_ADD_RULE,
-            rule as *const _ as usize,
-            core::mem::size_of::<crate::user::shared::abi::mac::MacRule>(),
-            0,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_MAC_ADD_RULE,
+        rule as *const _ as usize,
+        core::mem::size_of::<crate::user::shared::abi::mac::MacRule>(),
+        0,
+    );
     decode(rc)
 }
 
 /// Set an object-type override for a path.
 pub fn sys_mac_set_path_type(path: &str, mac_type: u32, flags: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            SYS_MAC_SET_PATH_TYPE,
-            path.as_ptr() as usize,
-            path.len(),
-            mac_type as usize,
-            flags as usize,
-        )
-    };
+    let rc = __shell_syscall4(
+        SYS_MAC_SET_PATH_TYPE,
+        path.as_ptr() as usize,
+        path.len(),
+        mac_type as usize,
+        flags as usize,
+    );
     decode(rc)
 }
 
@@ -1927,14 +1828,12 @@ pub fn sys_mac_set_path_type(path: &str, mac_type: u32, flags: u32) -> Result<us
 pub fn sys_mac_get_status(
     status: &mut crate::user::shared::abi::mac::MacStatus,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            SYS_MAC_GET_STATUS,
-            status as *mut _ as usize,
-            core::mem::size_of::<crate::user::shared::abi::mac::MacStatus>(),
-            0,
-        )
-    };
+    let rc = __shell_syscall3(
+        SYS_MAC_GET_STATUS,
+        status as *mut _ as usize,
+        core::mem::size_of::<crate::user::shared::abi::mac::MacStatus>(),
+        0,
+    );
     decode(rc)
 }
 
@@ -1943,7 +1842,7 @@ pub fn sys_mac_get_status(
 /// Generic descriptor control.  `cmd` is one of the `F_*` constants from
 /// `crate::user::shared::abi::fs`.  Returns the command's result value.
 pub fn sys_fcntl(fd: usize, cmd: usize, arg: usize) -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall3(SYS_FCNTL, fd, cmd, arg) };
+    let rc = __shell_syscall3(SYS_FCNTL, fd, cmd, arg);
     decode(rc)
 }
 
@@ -1961,7 +1860,7 @@ pub fn sys_fcntl_set_pipe_sz(fd: usize, size: usize) -> Result<usize, isize> {
 
 /// Flush all mounted filesystems' dirty data to persistent storage.
 pub fn sys_sync() -> Result<usize, isize> {
-    let rc = unsafe { __shell_syscall0(SYS_SYNC) };
+    let rc = __shell_syscall0(SYS_SYNC);
     decode(rc)
 }
 
@@ -1969,23 +1868,19 @@ pub fn sys_sync() -> Result<usize, isize> {
 
 /// Create a VIRGL rendering context.  Returns the context id.
 pub fn sys_gpu_ctx_create(ctx_id: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall1(
-            crate::user::shared::abi::gpu::SYS_GPU_CTX_CREATE,
-            ctx_id as usize,
-        )
-    };
+    let rc = __shell_syscall1(
+        crate::user::shared::abi::gpu::SYS_GPU_CTX_CREATE,
+        ctx_id as usize,
+    );
     decode(rc)
 }
 
 /// Destroy a VIRGL rendering context.
 pub fn sys_gpu_ctx_destroy(ctx_id: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall1(
-            crate::user::shared::abi::gpu::SYS_GPU_CTX_DESTROY,
-            ctx_id as usize,
-        )
-    };
+    let rc = __shell_syscall1(
+        crate::user::shared::abi::gpu::SYS_GPU_CTX_DESTROY,
+        ctx_id as usize,
+    );
     decode(rc)
 }
 
@@ -1996,24 +1891,20 @@ pub fn sys_gpu_res_create_3d(
     desc_ptr: *const crate::user::shared::abi::gpu::GpuResCreate3dDesc,
     desc_len: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall2(
-            crate::user::shared::abi::gpu::SYS_GPU_RES_CREATE_3D,
-            desc_ptr as usize,
-            desc_len,
-        )
-    };
+    let rc = __shell_syscall2(
+        crate::user::shared::abi::gpu::SYS_GPU_RES_CREATE_3D,
+        desc_ptr as usize,
+        desc_len,
+    );
     decode(rc)
 }
 
 /// Destroy a 3D resource and release its backing.
 pub fn sys_gpu_res_unref(resource_id: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall1(
-            crate::user::shared::abi::gpu::SYS_GPU_RES_UNREF,
-            resource_id as usize,
-        )
-    };
+    let rc = __shell_syscall1(
+        crate::user::shared::abi::gpu::SYS_GPU_RES_UNREF,
+        resource_id as usize,
+    );
     decode(rc)
 }
 
@@ -2026,15 +1917,13 @@ pub fn sys_gpu_transfer_to_host_3d(
     data_ptr: *const u8,
     data_len: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            crate::user::shared::abi::gpu::SYS_GPU_TRANSFER_TO_HOST_3D,
-            desc_ptr as usize,
-            desc_len,
-            data_ptr as usize,
-            data_len,
-        )
-    };
+    let rc = __shell_syscall4(
+        crate::user::shared::abi::gpu::SYS_GPU_TRANSFER_TO_HOST_3D,
+        desc_ptr as usize,
+        desc_len,
+        data_ptr as usize,
+        data_len,
+    );
     decode(rc)
 }
 
@@ -2045,41 +1934,35 @@ pub fn sys_gpu_transfer_from_host_3d(
     data_ptr: *mut u8,
     data_len: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall4(
-            crate::user::shared::abi::gpu::SYS_GPU_TRANSFER_FROM_HOST_3D,
-            desc_ptr as usize,
-            desc_len,
-            data_ptr as usize,
-            data_len,
-        )
-    };
+    let rc = __shell_syscall4(
+        crate::user::shared::abi::gpu::SYS_GPU_TRANSFER_FROM_HOST_3D,
+        desc_ptr as usize,
+        desc_len,
+        data_ptr as usize,
+        data_len,
+    );
     decode(rc)
 }
 
 /// Submit a VIRGL command stream to a context for rendering.
 pub fn sys_gpu_submit_3d(ctx_id: u32, cmd_ptr: *const u8, cmd_len: usize) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            crate::user::shared::abi::gpu::SYS_GPU_SUBMIT_3D,
-            ctx_id as usize,
-            cmd_ptr as usize,
-            cmd_len,
-        )
-    };
+    let rc = __shell_syscall3(
+        crate::user::shared::abi::gpu::SYS_GPU_SUBMIT_3D,
+        ctx_id as usize,
+        cmd_ptr as usize,
+        cmd_len,
+    );
     decode(rc)
 }
 
 /// Present a resource on the display.
 pub fn sys_gpu_set_scanout(resource_id: u32, width: u32, height: u32) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall3(
-            crate::user::shared::abi::gpu::SYS_GPU_SET_SCANOUT,
-            resource_id as usize,
-            width as usize,
-            height as usize,
-        )
-    };
+    let rc = __shell_syscall3(
+        crate::user::shared::abi::gpu::SYS_GPU_SET_SCANOUT,
+        resource_id as usize,
+        width as usize,
+        height as usize,
+    );
     decode(rc)
 }
 
@@ -2089,12 +1972,10 @@ pub fn sys_gpu_device_info(
     info_ptr: *mut crate::user::shared::abi::gpu::GpuDeviceInfo,
     info_len: usize,
 ) -> Result<usize, isize> {
-    let rc = unsafe {
-        __shell_syscall2(
-            crate::user::shared::abi::gpu::SYS_GPU_DEVICE_INFO,
-            info_ptr as usize,
-            info_len,
-        )
-    };
+    let rc = __shell_syscall2(
+        crate::user::shared::abi::gpu::SYS_GPU_DEVICE_INFO,
+        info_ptr as usize,
+        info_len,
+    );
     decode(rc)
 }
