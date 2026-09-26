@@ -369,3 +369,78 @@ pub fn report_kernel_map_coverage() {
 /// Nothing to check where this build has no kernel page-table plan.
 #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
 pub fn report_kernel_map_coverage() {}
+
+/// Prepare, activate and check the runtime kernel page tables, saying what
+/// happened in each step.
+///
+/// The three machines do the same three things in the same order — prepare
+/// tables that describe the kernel, switch to them, then check that the CPU is
+/// standing on what the tables claim — and differ only in which tables those
+/// are, which is what the calls below already resolve.  The log names the
+/// machine because the machine knows its own name.
+#[cfg(any(
+    all(target_arch = "x86_64", target_os = "none"),
+    all(target_arch = "aarch64", target_os = "none"),
+    all(target_arch = "riscv64", target_os = "none")
+))]
+pub(crate) fn install_runtime_kernel_page_tables(heap_bounds: (usize, usize)) {
+    let arch = crate::arch::boot::current_architecture();
+
+    let Some(summary) = prepare_runtime_kernel_page_tables(heap_bounds) else {
+        crate::println!("[mem   ] failed to prepare {} kernel page tables", arch);
+        return;
+    };
+    crate::println!(
+        "[mem   ] prepared {} kernel page tables root={:#018x} windows={} pages={}",
+        arch,
+        summary.root_table_address,
+        summary.window_count,
+        summary.mapped_page_count
+    );
+
+    let Some(active) = activate_prepared_runtime_kernel_page_tables() else {
+        crate::println!("[mem   ] failed to activate {} kernel page tables", arch);
+        return;
+    };
+    crate::println!(
+        "[mem   ] activated {} kernel page tables old={:#018x} new={:#018x} already_active={} windows={} pages={}",
+        arch,
+        active.previous_root_table_address,
+        active.active_root_table_address,
+        active.already_active,
+        active.window_count,
+        active.mapped_page_count
+    );
+
+    match active_runtime_kernel_page_table_check(heap_bounds) {
+        Some(check) => {
+            crate::println!(
+                "[mem   ] active paging check root={:#018x} rip={:#018x}/{}:{} rsp={:#018x}/{}:{} heap={:#018x}/{}:{}",
+                check.root_table_address,
+                check.instruction_pointer.virtual_address,
+                check.instruction_pointer.kind.as_str(),
+                check.instruction_pointer.permissions.as_rwx(),
+                check.stack_pointer.virtual_address,
+                check.stack_pointer.kind.as_str(),
+                check.stack_pointer.permissions.as_rwx(),
+                check.heap_pointer.virtual_address,
+                check.heap_pointer.kind.as_str(),
+                check.heap_pointer.permissions.as_rwx()
+            );
+        }
+        None => {
+            #[cfg(target_arch = "x86_64")]
+            crate::println!("[mem   ] active paging self-check failed");
+            #[cfg(not(target_arch = "x86_64"))]
+            crate::println!("[mem   ] active {} paging self-check unavailable", arch);
+        }
+    }
+}
+
+/// A host has no runtime kernel page tables of its own to switch to.
+#[cfg(not(any(
+    all(target_arch = "x86_64", target_os = "none"),
+    all(target_arch = "aarch64", target_os = "none"),
+    all(target_arch = "riscv64", target_os = "none")
+)))]
+pub(crate) fn install_runtime_kernel_page_tables(_heap_bounds: (usize, usize)) {}

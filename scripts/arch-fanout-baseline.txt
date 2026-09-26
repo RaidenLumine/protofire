@@ -25,7 +25,8 @@
 
 
 
-# 56 files, 309 occurrences outside src/arch
+
+# 55 files, 297 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/framebuffer.rs                               4
@@ -40,7 +41,6 @@ drivers/virtio_net.rs                                4
 drivers/xhci.rs                                      10
 fs/demo/absent.rs                                    6
 fs/demo/mod.rs                                       6
-kernel/mod.rs                                        12
 kernel/power/clock.rs                                2
 kernel/power/mod.rs                                  3
 kernel/process/context.rs                            4

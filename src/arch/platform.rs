@@ -271,3 +271,109 @@ fn topology_from_srat(numa: &crate::arch::x86_64::acpi::EarlyNumaData) -> Topolo
         distance_matrix,
     }
 }
+
+// Both of these describe the demo distribution, which only exists on a bare
+// metal build that asked for it (`demo-disk`) or in the test build that builds
+// the same thing; everywhere else the kernel spawns no embedded user programs
+// and neither of these is compiled.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+/// Describe the user slots this machine prepared, where it prepares any.
+///
+/// The device-tree machines preallocate fixed slots for their EL0/U-mode
+/// prototypes and say so here; x86_64 builds an address space per process and
+/// has nothing to describe.
+pub(crate) fn describe_user_slots() {
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        use crate::arch::mmu;
+        if let Some(region) = mmu::demo_user_slot_layout(0) {
+            crate::println!(
+                "[user  ] prepared aarch64 EL0 demo slots={} entry={:#018x} stack={:#018x} exception-stack={:#018x} region={:#018x}..{:#018x}",
+                mmu::demo_user_slot_count(),
+                region.entry_point,
+                region.stack_top,
+                region.exception_stack_top,
+                region.region_start,
+                region.region_start + region.region_length
+            );
+        }
+    }
+
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        use crate::arch::mmu;
+        if let Some(region) = mmu::demo_user_slot_layout(0) {
+            crate::println!(
+                "[user  ] prepared riscv64 U-mode demo slots={} entry={:#018x} stack={:#018x} exception-stack={:#018x} region={:#018x}..{:#018x}",
+                mmu::demo_user_slot_count(),
+                region.entry_point,
+                region.stack_top,
+                region.exception_stack_top,
+                region.region_start,
+                region.region_start + region.region_length
+            );
+        }
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "riscv64"
+    )))]
+    {
+        crate::println!("[user  ] demo user programs are unavailable on this architecture");
+    }
+}
+
+// Both of these describe the demo distribution, which only exists on a bare
+// metal build that asked for it (`demo-disk`) or in the test build that builds
+// the same thing; everywhere else the kernel spawns no embedded user programs
+// and neither of these is compiled.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+/// The embedded user programs this machine's prototype can run, and which of
+/// them the supervisor should restart.
+///
+/// The list is the machine's because the user-mode prototypes are: x86_64 runs
+/// the whole demo set, aarch64 its EL0 pair, riscv64 a single U-mode program.
+/// Exactly one entry asks to be restarted, which is what keeps the supervision
+/// loop — detect, restart, exhaust the budget, abandon — on the path every
+/// stock boot takes.
+pub(crate) fn demo_user_programs() -> &'static [(&'static str, bool)] {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use crate::user::program;
+        &[
+            (program::DEMO_RUST_IO_CURRENT_PATH, false),
+            (program::DEMO_CURRENT_PATH, false),
+            (program::DEMO_FAULT_CURRENT_PATH, true),
+            (program::DEMO_INVALID_OPCODE_CURRENT_PATH, false),
+            (program::DEMO_GENERAL_PROTECTION_CURRENT_PATH, false),
+            (program::DEMO_ONE_SHOT_PAGE_FAULT_CURRENT_PATH, false),
+            (program::DEMO_NESTED_PAGE_FAULT_CURRENT_PATH, false),
+        ]
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use crate::user::program;
+        &[
+            (program::DEMO_CURRENT_PATH, false),
+            (program::DEMO_RUST_CURRENT_PATH, false),
+        ]
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    {
+        use crate::user::program;
+        &[(program::DEMO_CURRENT_PATH, false)]
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "riscv64"
+    )))]
+    {
+        &[]
+    }
+}
