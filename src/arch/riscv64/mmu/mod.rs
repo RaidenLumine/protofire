@@ -34,6 +34,9 @@ use crate::kernel::process::UserThreadStart;
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
 mod asid;
+mod process_address_space;
+
+pub use process_address_space::ProcessAddressSpace;
 
 use asid::allocate_asid;
 use asid::free_asid;

@@ -63,8 +63,8 @@ pub(crate) fn prepare_arch_user_address_space(
         );
     }
 
-    Ok(Some(ProcessUserAddressSpace::from_prepared_process(
-        prepared,
+    Ok(Some(ProcessUserAddressSpace::from_prepared(
+        crate::arch::mmu::ProcessAddressSpace::from_prepared_process(prepared),
     )))
 }
 
@@ -74,7 +74,8 @@ pub(crate) fn prepare_loaded_user_thread_start(
     _image: &[u8],
     arguments: &[String],
 ) -> Result<Option<UserThreadStart>> {
-    let Some(start) = prepared_user_address_space.map(ProcessUserAddressSpace::user_thread_start)
+    let Some(start) =
+        prepared_user_address_space.and_then(ProcessUserAddressSpace::user_thread_start)
     else {
         return Ok(None);
     };

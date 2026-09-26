@@ -1274,7 +1274,9 @@ mod tests {
         let prepared =
             materialize_user_address_space(&plan, &image).expect("materialize user address space");
         let process = Process::new(7, "validation-user");
-        process.install_user_address_space(ProcessUserAddressSpace::from_prepared_user(prepared));
+        process.install_user_address_space(ProcessUserAddressSpace::from_prepared(
+            crate::arch::mmu::ProcessAddressSpace::from_prepared_user(prepared),
+        ));
 
         ValidationFixture {
             process,

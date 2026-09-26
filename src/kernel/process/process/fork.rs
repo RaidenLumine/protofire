@@ -315,8 +315,9 @@ impl Process {
         memory.register_user_pages(&child_cow_entries);
 
         // ── 5. Install child address space ───────────────────────────
-        let child_user_addr_space =
-            ProcessUserAddressSpace::from_prepared_process(child_addr_space);
+        let child_user_addr_space = ProcessUserAddressSpace::from_prepared(
+            crate::arch::mmu::ProcessAddressSpace::from_prepared_process(child_addr_space),
+        );
         child.install_user_address_space(child_user_addr_space);
 
         Ok(child)

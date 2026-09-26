@@ -456,27 +456,24 @@ impl LoadedProgram {
             if self.entry_point != start.instruction_pointer {
                 return Err(Error::InternalError);
             }
-            #[cfg(any(
-                all(target_arch = "aarch64", target_os = "none"),
-                all(target_arch = "riscv64", target_os = "none")
-            ))]
-            if let Some(prepared) = self.prepared_user_address_space.as_ref() {
-                // The demo-slot loader intentionally rebases the ELF image
-                // into a fixed runtime window, so install validation must
-                // follow the prepared slot layout rather than the original
-                // ELF virtual addresses recorded in `image_layout`.
-                if !prepared.matches_prepared_user_thread_start(start) {
-                    return Err(Error::InternalError);
+            // An architecture whose loader rebases the image into a fixed
+            // runtime window — the demo-slot loaders — checks the start
+            // against that prepared layout rather than against the ELF virtual
+            // addresses in `image_layout`.  An architecture whose preparation
+            // does not pin a start says so, and the image layout is the
+            // authority there.
+            let checked_against_preparation = self
+                .prepared_user_address_space
+                .as_ref()
+                .and_then(|prepared| prepared.matches_prepared_user_thread_start(start));
+            match checked_against_preparation {
+                Some(true) => {}
+                Some(false) => return Err(Error::InternalError),
+                None => {
+                    if let Some(image_layout) = self.image_layout.as_ref() {
+                        image_layout.validate_thread_start(start)?;
+                    }
                 }
-            } else if let Some(image_layout) = self.image_layout.as_ref() {
-                image_layout.validate_thread_start(start)?;
-            }
-            #[cfg(not(any(
-                all(target_arch = "aarch64", target_os = "none"),
-                all(target_arch = "riscv64", target_os = "none")
-            )))]
-            if let Some(image_layout) = self.image_layout.as_ref() {
-                image_layout.validate_thread_start(start)?;
             }
         }
 

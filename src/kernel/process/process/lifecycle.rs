@@ -1483,8 +1483,8 @@ mod tests {
             assert!(!parent_entries.is_empty());
 
             let process = Process::new(1043, "fork-parent");
-            process.install_user_address_space(ProcessUserAddressSpace::from_prepared_process(
-                prepared,
+            process.install_user_address_space(ProcessUserAddressSpace::from_prepared(
+                crate::arch::mmu::ProcessAddressSpace::from_prepared_process(prepared),
             ));
             let _thread = Thread::new_user(
                 process.clone(),

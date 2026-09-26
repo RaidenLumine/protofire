@@ -9,6 +9,24 @@
 //! same answer a missing window would give — so that kernel code can ask once
 //! instead of writing the same `#[cfg]` ladder for each architecture.
 
+use crate::kernel::memory::paging::PagePermissions;
+
+/// One translated user page, as much of it as the kernel acts on.
+///
+/// The kernel asks two questions of a user mapping — where does it land, and
+/// may this access use it — and every architecture can answer both.  What an
+/// architecture's own translation type carries beyond that stays in the
+/// architecture: x86_64 also knows whether the page came from the image or the
+/// stack, and nothing above the architecture reads it.
+///
+/// This is the shape [`ProcessAddressSpace::translate_user`] answers in, so the
+/// process layer has one type to name rather than one per architecture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserTranslation {
+    pub physical_address: usize,
+    pub permissions: PagePermissions,
+}
+
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use super::aarch64::mmu::*;
 
@@ -41,6 +59,93 @@ impl PreparedProcessAddressSpace {
     pub fn remove_user_page_frame(&mut self, _virtual_address: usize) -> Option<usize> {
         None
     }
+}
+
+/// The address space a process holds, as the architecture prepared it.
+///
+/// A bare-metal architecture owns this type: it is what a loader hands over and
+/// what the process layer keeps for the life of a process, and what it must
+/// answer is the same question on every architecture — the summaries, the user
+/// range, the thread start, a translation, an activation, and the mutable
+/// handle fork needs.  Each architecture defines it beside its own prepared
+/// hierarchy and exports it through this module, so the process layer names one
+/// type rather than one per architecture.
+///
+/// Nothing can construct the placeholder below: a host that is not x86_64 does
+/// not emulate a user address space, and every accessor reports that absence.
+#[cfg(all(
+    any(target_arch = "aarch64", target_arch = "riscv64"),
+    not(target_os = "none")
+))]
+#[derive(Debug, Default)]
+pub struct ProcessAddressSpace;
+
+#[cfg(all(
+    any(target_arch = "aarch64", target_arch = "riscv64"),
+    not(target_os = "none")
+))]
+impl ProcessAddressSpace {
+    /// A host never prepared a hierarchy, so there is nothing to hold.
+    pub fn from_prepared_process(_prepared: PreparedProcessAddressSpace) -> Self {
+        Self
+    }
+
+    pub fn user_summary(&self) -> crate::kernel::process::UserAddressSpaceSummary {
+        crate::kernel::process::UserAddressSpaceSummary {
+            root_table_address: 0,
+            mapped_page_count: 0,
+            image_page_count: 0,
+            stack_page_count: 0,
+            table_page_count: 0,
+            pml4_entry_count: 0,
+            pdpt_count: 0,
+            page_directory_count: 0,
+            page_table_count: 0,
+        }
+    }
+
+    pub fn process_summary(&self) -> Option<crate::kernel::process::ProcessAddressSpaceSummary> {
+        None
+    }
+
+    pub fn user_page_va_range(&self) -> Option<(usize, usize)> {
+        None
+    }
+
+    pub fn user_thread_start(&self) -> Option<crate::kernel::process::UserThreadStart> {
+        None
+    }
+
+    pub fn matches_user_thread_start(
+        &self,
+        _start: crate::kernel::process::UserThreadStart,
+    ) -> Option<bool> {
+        None
+    }
+
+    pub fn translate_user(&self, _address: usize) -> Option<UserTranslation> {
+        None
+    }
+
+    pub fn activate(&self) -> bool {
+        false
+    }
+
+    pub fn process_mut(&mut self) -> Option<&mut PreparedProcessAddressSpace> {
+        None
+    }
+}
+
+/// A host has no runtime kernel page tables to switch to.
+///
+/// The caller only asks whether the switch happened, so the shape of the
+/// details a bare-metal architecture would return does not have to exist here.
+#[cfg(all(
+    any(target_arch = "aarch64", target_arch = "riscv64"),
+    not(target_os = "none")
+))]
+pub fn activate_prepared_runtime_kernel_page_tables() -> Option<()> {
+    None
 }
 
 /// What a fork clone hands back: the child hierarchy plus the copy-on-write

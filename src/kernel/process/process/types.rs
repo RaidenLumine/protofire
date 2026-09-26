@@ -10,24 +10,8 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use crate::abi::process::ProcessTerminationRecord;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use crate::arch::mmu::ActivatedProcessAddressSpace;
-use crate::arch::mmu::PreparedProcessAddressSpace;
-#[cfg(target_arch = "x86_64")]
-use crate::arch::mmu::PreparedProcessAddressSpaceSummary;
-#[cfg(all(target_arch = "x86_64", test))]
-use crate::arch::mmu::PreparedProcessTranslation;
-#[cfg(any(
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-))]
-use crate::arch::mmu::PreparedTranslation;
-#[cfg(target_arch = "x86_64")]
-use crate::arch::mmu::PreparedUserAddressSpace;
-#[cfg(target_arch = "x86_64")]
-use crate::arch::mmu::PreparedUserAddressSpaceSummary;
-#[cfg(all(target_arch = "x86_64", any(test, target_os = "none")))]
-use crate::arch::mmu::PreparedUserTranslation;
+use crate::arch::mmu::ProcessAddressSpace;
+use crate::arch::mmu::UserTranslation;
 use crate::kernel::fs::vfs::MetadataAccessQueryContext;
 use crate::kernel::fs::vfs::PermissionMetadataRecord;
 use crate::kernel::fs::FileHandle as FsFileHandle;
@@ -41,7 +25,6 @@ use crate::Result;
 
 pub use super::super::thread::ThreadId;
 use super::super::thread::ThreadPriority;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 use super::super::thread::UserThreadStart;
 
 // Re-export the x86_64 user-thread register context so ptrace helpers can
@@ -582,23 +565,6 @@ pub struct UserAddressSpaceSummary {
     pub page_table_count: usize,
 }
 
-#[cfg(target_arch = "x86_64")]
-impl From<PreparedUserAddressSpaceSummary> for UserAddressSpaceSummary {
-    fn from(summary: PreparedUserAddressSpaceSummary) -> Self {
-        Self {
-            root_table_address: summary.root_table_address,
-            mapped_page_count: summary.mapped_page_count,
-            image_page_count: summary.image_page_count,
-            stack_page_count: summary.stack_page_count,
-            table_page_count: summary.table_page_count,
-            pml4_entry_count: summary.pml4_entry_count,
-            pdpt_count: summary.pdpt_count,
-            page_directory_count: summary.page_directory_count,
-            page_table_count: summary.page_table_count,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessAddressSpaceSummary {
     pub root_table_address: usize,
@@ -612,348 +578,78 @@ pub struct ProcessAddressSpaceSummary {
     pub page_table_count: usize,
 }
 
-#[cfg(target_arch = "x86_64")]
-impl From<PreparedProcessAddressSpaceSummary> for ProcessAddressSpaceSummary {
-    fn from(summary: PreparedProcessAddressSpaceSummary) -> Self {
-        Self {
-            root_table_address: summary.root_table_address,
-            mapped_page_count: summary.mapped_page_count,
-            kernel_page_count: summary.kernel_page_count,
-            user_page_count: summary.user_page_count,
-            table_page_count: summary.table_page_count,
-            pml4_entry_count: summary.pml4_entry_count,
-            pdpt_count: summary.pdpt_count,
-            page_directory_count: summary.page_directory_count,
-            page_table_count: summary.page_table_count,
-        }
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[allow(dead_code)]
-pub(crate) enum ProcessAddressSpaceStorage {
-    // Host-side/unit-test execution can keep only the user mapping when a full
-    // process root is unnecessary.
-    UserOnly(PreparedUserAddressSpace),
-    // Bare-metal execution and deeper tests keep one combined kernel+user root
-    // that can be activated directly for the running thread.
-    Combined(PreparedProcessAddressSpace),
-}
-
+/// The address space a process holds, wrapped for the process layer.
+///
+/// What is *inside* is the architecture's: x86_64 has two shapes of prepared
+/// hierarchy and the other two have one, and that difference is theirs to keep.
+/// The questions the process layer asks are the same everywhere — the
+/// summaries, the user range, the thread start, a translation, an activation,
+/// and the mutable handle fork needs — so they are asked here once, of a type
+/// the architecture defines, rather than through a `#[cfg]` ladder per method.
+///
+/// The summaries are derived on demand rather than cached: the hierarchy can be
+/// edited (fork marks pages, a new page is mapped), and a cached copy would be
+/// a second answer that can disagree with the first.
 pub(crate) struct ProcessUserAddressSpace {
-    summary: UserAddressSpaceSummary,
-    process_summary: Option<ProcessAddressSpaceSummary>,
-    // Only bare-metal AArch64/RISC-V keep a prepared translation hierarchy
-    // here; a host of either architecture has none to hold.
-    #[cfg(all(
-        any(target_arch = "aarch64", target_arch = "riscv64"),
-        target_os = "none"
-    ))]
-    storage: PreparedProcessAddressSpace,
-    // The prepared hierarchy is only consumed on bare-metal or unit-test builds.
-    #[cfg_attr(not(any(test, target_os = "none")), allow(dead_code))]
-    #[cfg(target_arch = "x86_64")]
-    storage: ProcessAddressSpaceStorage,
+    storage: ProcessAddressSpace,
 }
 
 impl ProcessUserAddressSpace {
-    #[cfg(target_arch = "x86_64")]
-    pub(crate) fn from_prepared_user(prepared: PreparedUserAddressSpace) -> Self {
-        let summary = UserAddressSpaceSummary::from(prepared.summary());
-        Self {
-            summary,
-            process_summary: None,
-            storage: ProcessAddressSpaceStorage::UserOnly(prepared),
-        }
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub(crate) fn from_prepared_process(prepared: PreparedProcessAddressSpace) -> Self {
-        let summary = UserAddressSpaceSummary::from(prepared.user_address_space_summary());
-        let process_summary = Some(ProcessAddressSpaceSummary::from(prepared.summary()));
-        Self {
-            summary,
-            process_summary,
-            #[cfg(target_arch = "aarch64")]
-            slot: unreachable!("aarch64 slot should not be constructed on x86_64"),
-            storage: ProcessAddressSpaceStorage::Combined(prepared),
-        }
-    }
-
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    pub(crate) fn from_prepared_process(prepared: PreparedProcessAddressSpace) -> Self {
-        let summary = UserAddressSpaceSummary {
-            root_table_address: prepared.root_table_address(),
-            mapped_page_count: prepared.user_page_count(),
-            image_page_count: prepared.image_page_count(),
-            stack_page_count: prepared.stack_page_count(),
-            table_page_count: prepared.table_page_count(),
-            pml4_entry_count: prepared.root_entry_count(),
-            pdpt_count: prepared.second_level_entry_count(),
-            page_directory_count: 0,
-            page_table_count: prepared.leaf_table_count(),
-        };
-        let process_summary = Some(ProcessAddressSpaceSummary {
-            root_table_address: prepared.root_table_address(),
-            mapped_page_count: prepared.mapped_page_count(),
-            kernel_page_count: prepared.kernel_page_count(),
-            user_page_count: prepared.user_page_count(),
-            table_page_count: prepared.table_page_count(),
-            pml4_entry_count: prepared.root_entry_count(),
-            pdpt_count: prepared.second_level_entry_count(),
-            page_directory_count: 0,
-            page_table_count: prepared.leaf_table_count(),
-        });
-        Self {
-            summary,
-            process_summary,
-            storage: prepared,
-        }
-    }
-
-    /// Build an address-space handle on a host that never prepares one.
-    ///
-    /// AArch64 hosts do not emulate a user address space, so the handle is
-    /// summary-only; [`Self::prepared_process_address_space_mut`] reports that
-    /// there is nothing to hand out.
-    #[cfg(all(target_arch = "aarch64", not(target_os = "none")))]
-    pub(crate) fn from_prepared_process(_prepared: PreparedProcessAddressSpace) -> Self {
-        Self {
-            summary: UserAddressSpaceSummary {
-                root_table_address: 0,
-                mapped_page_count: 0,
-                image_page_count: 0,
-                stack_page_count: 0,
-                table_page_count: 0,
-                pml4_entry_count: 0,
-                pdpt_count: 0,
-                page_directory_count: 0,
-                page_table_count: 0,
-            },
-            process_summary: None,
-        }
-    }
-
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    pub(crate) fn from_prepared_process(prepared: PreparedProcessAddressSpace) -> Self {
-        let summary = UserAddressSpaceSummary {
-            root_table_address: prepared.root_table_address(),
-            mapped_page_count: prepared.user_page_count(),
-            image_page_count: prepared.image_page_count(),
-            stack_page_count: prepared.stack_page_count(),
-            table_page_count: prepared.table_page_count(),
-            pml4_entry_count: 1, // Sv39: one PGD entry for kernel RAM
-            pdpt_count: 1,       // Sv39: one PMD
-            page_directory_count: 0,
-            page_table_count: prepared.leaf_table_count(),
-        };
-        let process_summary = Some(ProcessAddressSpaceSummary {
-            root_table_address: prepared.root_table_address(),
-            mapped_page_count: prepared.mapped_page_count(),
-            kernel_page_count: prepared.kernel_page_count(),
-            user_page_count: prepared.user_page_count(),
-            table_page_count: prepared.table_page_count(),
-            pml4_entry_count: 1,
-            pdpt_count: 1,
-            page_directory_count: 0,
-            page_table_count: prepared.leaf_table_count(),
-        });
-        Self {
-            summary,
-            process_summary,
-            storage: prepared,
-        }
+    /// Wrap a prepared hierarchy.
+    pub(crate) fn from_prepared(storage: ProcessAddressSpace) -> Self {
+        Self { storage }
     }
 
     pub(crate) fn summary(&self) -> UserAddressSpaceSummary {
-        self.summary
+        self.storage.user_summary()
     }
 
     pub(crate) fn process_summary(&self) -> Option<ProcessAddressSpaceSummary> {
-        self.process_summary
+        self.storage.process_summary()
     }
 
     /// Return the virtual address range `(start, end_exclusive)` covering all
     /// user pages, or `None` when there are no user pages.
-    #[cfg(target_arch = "x86_64")]
-    pub(crate) fn user_page_va_range(&self) -> Option<(usize, usize)> {
-        match &self.storage {
-            ProcessAddressSpaceStorage::UserOnly(prepared) => prepared.user_page_va_range(),
-            ProcessAddressSpaceStorage::Combined(prepared) => prepared.user_page_va_range(),
-        }
-    }
-
-    /// Return the virtual address range covering the prepared process
-    /// hierarchy.
-    #[cfg(all(
-        any(target_arch = "aarch64", target_arch = "riscv64"),
-        target_os = "none"
-    ))]
     pub(crate) fn user_page_va_range(&self) -> Option<(usize, usize)> {
         self.storage.user_page_va_range()
     }
 
-    /// Report that an AArch64/RISC-V host has no user address space to range.
-    #[cfg(all(
-        any(target_arch = "aarch64", target_arch = "riscv64"),
-        not(target_os = "none")
-    ))]
-    pub(crate) fn user_page_va_range(&self) -> Option<(usize, usize)> {
-        None
-    }
-
-    #[cfg(all(
-        any(target_arch = "aarch64", target_arch = "riscv64"),
-        target_os = "none"
-    ))]
-    pub(crate) fn user_thread_start(&self) -> UserThreadStart {
+    /// The user entry point and stack pointer this hierarchy pins, if it pins
+    /// them.  The loaders of the two architectures that do read it; x86_64
+    /// applies them to the thread's context at install time instead.
+    #[cfg_attr(target_arch = "x86_64", allow(dead_code))] // x86_64's loaders do not ask
+    pub(crate) fn user_thread_start(&self) -> Option<UserThreadStart> {
         self.storage.user_thread_start()
     }
 
-    /// Report the placeholder thread start an AArch64/RISC-V host has.
+    /// Does the prepared hierarchy agree with this thread start?
     ///
-    /// Host builds never prepare a user address space, so nothing reads this
-    /// value; it exists so the thread-creation paths keep compiling.
-    #[cfg_attr(
-        all(
-            any(target_arch = "aarch64", target_arch = "riscv64"),
-            not(target_os = "none")
-        ),
-        allow(dead_code)
-    )]
-    #[cfg(all(
-        any(target_arch = "aarch64", target_arch = "riscv64"),
-        not(target_os = "none")
-    ))]
-    pub(crate) fn user_thread_start(&self) -> UserThreadStart {
-        UserThreadStart::new(0, 0, None)
-    }
-
-    #[cfg(any(
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "riscv64", target_os = "none")
-    ))]
-    pub(crate) fn matches_prepared_user_thread_start(&self, start: UserThreadStart) -> bool {
-        let prepared = self.storage.user_thread_start();
-        start.instruction_pointer == prepared.instruction_pointer
-            && start.stack_pointer == prepared.stack_pointer
-            && start.exception_stack_pointer == prepared.exception_stack_pointer
-    }
-
-    // The x86_64 test introspection helpers below are the mirror of the
-    // `Process`-level wrappers in `process/address_space.rs`; those wrappers
-    // are currently unexercised (no live caller), so the underlying
-    // accessors are kept for the test-only address-space API without a
-    // dead-code warning.
-    #[cfg(all(target_arch = "x86_64", test))]
-    #[allow(dead_code)]
-    pub(crate) fn user_root_table_address(&self) -> usize {
-        match &self.storage {
-            ProcessAddressSpaceStorage::UserOnly(prepared) => prepared.root_table_address(),
-            ProcessAddressSpaceStorage::Combined(prepared) => prepared.user_root_table_address(),
-        }
-    }
-
-    #[cfg(all(target_arch = "x86_64", test))]
-    #[allow(dead_code)]
-    pub(crate) fn process_root_table_address(&self) -> Option<usize> {
-        match &self.storage {
-            ProcessAddressSpaceStorage::UserOnly(_) => None,
-            ProcessAddressSpaceStorage::Combined(prepared) => Some(prepared.root_table_address()),
-        }
-    }
-
-    #[cfg(all(target_arch = "x86_64", any(test, target_os = "none")))]
-    pub(crate) fn translate(&self, address: usize) -> Option<PreparedUserTranslation> {
-        match &self.storage {
-            ProcessAddressSpaceStorage::UserOnly(prepared) => prepared.translate(address),
-            ProcessAddressSpaceStorage::Combined(prepared) => prepared.translate_user(address),
-        }
-    }
-
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    pub(crate) fn translate(&self, address: usize) -> Option<PreparedTranslation> {
-        self.storage.translate_user(address)
-    }
-
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    pub(crate) fn translate(&self, address: usize) -> Option<PreparedTranslation> {
-        self.storage.translate_user(address)
-    }
-
-    #[cfg(all(target_arch = "x86_64", test))]
-    #[allow(dead_code)]
-    pub(crate) fn translate_process_address(
+    /// `None` when the architecture's preparation does not pin one, which is
+    /// what tells the caller to check the image layout instead.
+    pub(crate) fn matches_prepared_user_thread_start(
         &self,
-        address: usize,
-    ) -> Option<PreparedProcessTranslation> {
-        match &self.storage {
-            ProcessAddressSpaceStorage::UserOnly(_) => None,
-            ProcessAddressSpaceStorage::Combined(prepared) => prepared.translate(address),
-        }
+        start: UserThreadStart,
+    ) -> Option<bool> {
+        self.storage.matches_user_thread_start(start)
     }
 
-    #[cfg(all(target_arch = "x86_64", test))]
-    #[allow(dead_code)]
-    pub(crate) fn read_byte(&self, address: usize) -> Option<u8> {
-        match &self.storage {
-            ProcessAddressSpaceStorage::UserOnly(prepared) => prepared.read_byte(address),
-            ProcessAddressSpaceStorage::Combined(prepared) => prepared.read_byte(address),
-        }
+    /// Translate one user address into the page the kernel would reach.
+    #[cfg_attr(not(target_os = "none"), allow(dead_code))] // bare-metal callers only
+    pub(crate) fn translate(&self, address: usize) -> Option<UserTranslation> {
+        self.storage.translate_user(address)
     }
 
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    pub(crate) fn activate_process_root(&self) -> Option<ActivatedProcessAddressSpace> {
-        match &self.storage {
-            ProcessAddressSpaceStorage::UserOnly(_) => None,
-            ProcessAddressSpaceStorage::Combined(prepared) => prepared.activate(),
-        }
-    }
-
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    /// Make this address space the active one, and say whether it worked.
+    #[cfg_attr(not(target_os = "none"), allow(dead_code))] // bare-metal callers only
     pub(crate) fn activate_process_root(&self) -> bool {
-        self.storage.activate().is_some()
+        self.storage.activate()
     }
 
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    #[cfg_attr(target_arch = "riscv64", allow(dead_code))]
-    pub(crate) fn activate_process_root(&self) -> bool {
-        self.storage.activate().is_some()
-    }
-
-    /// Return a mutable reference to the underlying
-    /// [`PreparedProcessAddressSpace`] for fork operations.
-    #[cfg(target_arch = "x86_64")]
+    /// The mutable prepared hierarchy, for fork.
     pub(crate) fn prepared_process_address_space_mut(
         &mut self,
     ) -> Option<&mut crate::arch::mmu::PreparedProcessAddressSpace> {
-        match &mut self.storage {
-            ProcessAddressSpaceStorage::Combined(prepared) => Some(prepared),
-            ProcessAddressSpaceStorage::UserOnly(_) => None,
-        }
-    }
-
-    /// Return a mutable reference to the underlying
-    /// [`PreparedProcessAddressSpace`] for fork operations.
-    #[cfg(all(
-        any(target_arch = "aarch64", target_arch = "riscv64"),
-        target_os = "none"
-    ))]
-    pub(crate) fn prepared_process_address_space_mut(
-        &mut self,
-    ) -> Option<&mut crate::arch::mmu::PreparedProcessAddressSpace> {
-        Some(&mut self.storage)
-    }
-
-    /// Report that a host AArch64/RISC-V build has no prepared hierarchy.
-    #[cfg(all(
-        any(target_arch = "aarch64", target_arch = "riscv64"),
-        not(target_os = "none")
-    ))]
-    pub(crate) fn prepared_process_address_space_mut(
-        &mut self,
-    ) -> Option<&mut crate::arch::mmu::PreparedProcessAddressSpace> {
-        None
+        self.storage.process_mut()
     }
 }
 

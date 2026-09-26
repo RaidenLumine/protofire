@@ -960,3 +960,143 @@ pub(crate) fn align_up(value: usize, align: usize) -> Option<usize> {
         .checked_add(align - 1)
         .map(|aligned| align_down(aligned, align))
 }
+
+// ── The address space a process holds ────────────────────────────────────
+
+/// The address space a process holds, in whichever of the two shapes x86_64
+/// prepared it.
+///
+/// A *user-only* root is what host-side work needs: the user mapping with no
+/// kernel half to merge against.  A *combined* root carries the kernel as well
+/// and is the one a running process is activated with.  Which of the two a
+/// caller has is a fact about x86_64's preparation, so the choice lives here;
+/// the process layer asks the uniform questions below and never sees it.
+pub enum ProcessAddressSpace {
+    UserOnly(PreparedUserAddressSpace),
+    Combined(PreparedProcessAddressSpace),
+}
+
+impl ProcessAddressSpace {
+    /// Wrap a user-only hierarchy.
+    pub fn from_prepared_user(prepared: PreparedUserAddressSpace) -> Self {
+        Self::UserOnly(prepared)
+    }
+
+    /// Wrap a hierarchy that carries the kernel half too.
+    pub fn from_prepared_process(prepared: PreparedProcessAddressSpace) -> Self {
+        Self::Combined(prepared)
+    }
+
+    /// The user half's summary, in the shape the kernel reports.
+    pub fn user_summary(&self) -> crate::kernel::process::UserAddressSpaceSummary {
+        match self {
+            Self::UserOnly(prepared) => prepared.summary().into(),
+            Self::Combined(prepared) => prepared.user_address_space_summary().into(),
+        }
+    }
+
+    /// The whole hierarchy's summary, for a root that has a kernel half.
+    pub fn process_summary(&self) -> Option<crate::kernel::process::ProcessAddressSpaceSummary> {
+        match self {
+            Self::UserOnly(_) => None,
+            Self::Combined(prepared) => Some(prepared.summary().into()),
+        }
+    }
+
+    /// The virtual range `(start, end_exclusive)` covering the user pages.
+    pub fn user_page_va_range(&self) -> Option<(usize, usize)> {
+        match self {
+            Self::UserOnly(prepared) => prepared.user_page_va_range(),
+            Self::Combined(prepared) => prepared.user_page_va_range(),
+        }
+    }
+
+    /// No prepared start to name.
+    ///
+    /// The other two architectures bake the user entry point and stack pointer
+    /// into the hierarchy they prepare, so the address space can hand them
+    /// back; x86_64 applies them to the thread's context at install time and
+    /// never stores them here.  `None` says exactly that, rather than a
+    /// placeholder a caller might read as an answer.
+    pub fn user_thread_start(&self) -> Option<crate::kernel::process::UserThreadStart> {
+        None
+    }
+
+    /// Nothing to check: the prepared hierarchy does not pin a start.
+    pub fn matches_user_thread_start(
+        &self,
+        _start: crate::kernel::process::UserThreadStart,
+    ) -> Option<bool> {
+        None
+    }
+
+    /// Translate one user address into the page the kernel would reach.
+    pub fn translate_user(&self, address: usize) -> Option<crate::arch::mmu::UserTranslation> {
+        match self {
+            Self::UserOnly(prepared) => prepared.translate(address).map(Into::into),
+            Self::Combined(prepared) => prepared.translate_user(address).map(Into::into),
+        }
+    }
+
+    /// Make this hierarchy the active one, and say whether it worked.
+    pub fn activate(&self) -> bool {
+        match self {
+            // A root with no kernel half is not something a CPU can run on.
+            Self::UserOnly(_) => false,
+            Self::Combined(prepared) => prepared.activate().is_some(),
+        }
+    }
+
+    /// The mutable hierarchy, for the operations that edit it (fork).
+    pub fn process_mut(&mut self) -> Option<&mut PreparedProcessAddressSpace> {
+        match self {
+            Self::UserOnly(_) => None,
+            Self::Combined(prepared) => Some(prepared),
+        }
+    }
+}
+
+impl From<PreparedUserAddressSpaceSummary> for crate::kernel::process::UserAddressSpaceSummary {
+    fn from(summary: PreparedUserAddressSpaceSummary) -> Self {
+        Self {
+            root_table_address: summary.root_table_address,
+            mapped_page_count: summary.mapped_page_count,
+            image_page_count: summary.image_page_count,
+            stack_page_count: summary.stack_page_count,
+            table_page_count: summary.table_page_count,
+            pml4_entry_count: summary.pml4_entry_count,
+            pdpt_count: summary.pdpt_count,
+            page_directory_count: summary.page_directory_count,
+            page_table_count: summary.page_table_count,
+        }
+    }
+}
+
+impl From<PreparedProcessAddressSpaceSummary>
+    for crate::kernel::process::ProcessAddressSpaceSummary
+{
+    fn from(summary: PreparedProcessAddressSpaceSummary) -> Self {
+        Self {
+            root_table_address: summary.root_table_address,
+            mapped_page_count: summary.mapped_page_count,
+            kernel_page_count: summary.kernel_page_count,
+            user_page_count: summary.user_page_count,
+            table_page_count: summary.table_page_count,
+            pml4_entry_count: summary.pml4_entry_count,
+            pdpt_count: summary.pdpt_count,
+            page_directory_count: summary.page_directory_count,
+            page_table_count: summary.page_table_count,
+        }
+    }
+}
+
+impl From<PreparedUserTranslation> for crate::arch::mmu::UserTranslation {
+    fn from(translation: PreparedUserTranslation) -> Self {
+        // `kind` — whether the page came from the image or the stack — stays in
+        // this architecture: nothing above it reads that.
+        Self {
+            physical_address: translation.physical_address,
+            permissions: translation.permissions,
+        }
+    }
+}

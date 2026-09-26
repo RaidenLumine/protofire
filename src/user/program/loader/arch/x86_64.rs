@@ -68,8 +68,8 @@ pub(crate) fn prepare_arch_user_address_space(
                 );
             }
 
-            return Ok(Some(ProcessUserAddressSpace::from_prepared_process(
-                prepared,
+            return Ok(Some(ProcessUserAddressSpace::from_prepared(
+                crate::arch::mmu::ProcessAddressSpace::from_prepared_process(prepared),
             )));
         }
 
@@ -83,7 +83,9 @@ pub(crate) fn prepare_arch_user_address_space(
     prepared
         .write_bytes(initial_stack.stack_pointer, &initial_stack.bytes)
         .ok_or(Error::InvalidArgument)?;
-    Ok(Some(ProcessUserAddressSpace::from_prepared_user(prepared)))
+    Ok(Some(ProcessUserAddressSpace::from_prepared(
+        crate::arch::mmu::ProcessAddressSpace::from_prepared_user(prepared),
+    )))
 }
 
 pub(crate) fn build_x86_64_initial_user_stack(
