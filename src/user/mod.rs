@@ -17,57 +17,9 @@ pub mod program;
 pub mod shared;
 pub mod syscall;
 
-// Re-export demo modules as `pub` so the in-repo demo-disk builder and tests
-// can import them via `protofire::user::demo::*`.  Each re-export requires
-// both the demo-disk module gate AND the arch/test gate of the underlying item.
-#[cfg(all(
-    any(feature = "demo-disk", test, not(target_os = "none")),
-    any(target_arch = "aarch64", test)
-))]
-#[allow(unused_imports)]
-pub use self::demo::demo_program_aarch64;
-#[cfg(all(
-    any(feature = "demo-disk", test, not(target_os = "none")),
-    any(target_arch = "aarch64", test)
-))]
-#[allow(unused_imports)]
-pub use self::demo::demo_program_aarch64_elf;
-#[cfg(all(
-    any(feature = "demo-disk", test, not(target_os = "none")),
-    any(target_arch = "aarch64", test)
-))]
-#[allow(unused_imports)]
-pub use self::demo::demo_program_aarch64_fault;
-#[cfg(all(
-    any(feature = "demo-disk", test, not(target_os = "none")),
-    any(target_arch = "aarch64", test)
-))]
-#[allow(unused_imports)]
-pub use self::demo::demo_program_aarch64_rust;
-#[cfg(all(
-    any(feature = "demo-disk", test, not(target_os = "none")),
-    any(target_arch = "x86_64", test)
-))]
-#[allow(unused_imports)]
-pub use self::demo::demo_program_x86_64;
-#[cfg(all(
-    any(feature = "demo-disk", test, not(target_os = "none")),
-    any(target_arch = "x86_64", test)
-))]
-#[allow(unused_imports)]
-pub use self::demo::demo_program_x86_64_elf;
-#[cfg(all(
-    any(feature = "demo-disk", test, not(target_os = "none")),
-    any(target_arch = "x86_64", test)
-))]
-#[allow(unused_imports)]
-pub use self::demo::demo_program_x86_64_rust;
-#[cfg(all(
-    any(feature = "demo-disk", test, not(target_os = "none")),
-    any(target_arch = "x86_64", test)
-))]
-#[allow(unused_imports)]
-pub use self::demo::demo_program_x86_64_rust_io;
+// The demo programs are reached through `protofire::user::demo::*`, which is
+// what the `pub mod demo` above provides; nothing named them through the
+// shorter `protofire::user::*` path.
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use self::demo::payload_test_support;

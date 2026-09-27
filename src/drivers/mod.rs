@@ -6,6 +6,16 @@
 
 pub mod framebuffer;
 pub mod framebuffer_console;
+/// Intel HDA audio driver: PCI discovery, CORB/RIRB, and PCM playback.
+///
+/// The register map is in `hda_protocol` and is compiled everywhere; the
+/// controller is compiled where the machine has one, and every other machine
+/// compiles a file that answers under the same module name.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[path = "hda.rs"]
+pub mod hda;
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+#[path = "hda_absent.rs"]
 pub mod hda;
 pub mod keyboard;
 pub mod mouse;
@@ -44,6 +54,9 @@ pub mod xhci;
 pub mod xhci;
 /// The xHCI register map and the USB structures its rings carry.
 pub mod xhci_protocol;
+
+/// The Intel HDA register map and codec protocol.
+pub mod hda_protocol;
 
 /// PC speaker driver (PIT channel 2 tone generation).
 ///

@@ -33,18 +33,14 @@ use crate::kernel::process::thread::types::UserThreadStart;
 use crate::kernel::process::thread::Thread;
 
 #[cfg(target_arch = "aarch64")]
-use crate::kernel::process::thread::exception::aarch64_user_exception_handler_allows_nested;
 #[cfg(target_arch = "aarch64")]
-use crate::kernel::process::thread::exception::aarch64_user_exception_handler_is_one_shot;
 #[cfg(target_arch = "aarch64")]
-use crate::kernel::process::thread::exception::aarch64_user_exception_handler_requires_exception_stack;
 #[cfg(target_arch = "aarch64")]
 #[cfg(target_arch = "aarch64")]
 use crate::kernel::process::thread::exception::finish_user_exception_delivery;
 #[cfg(target_arch = "aarch64")]
 use crate::kernel::process::thread::exception::install_user_exception_handler_registration;
 #[cfg(target_arch = "aarch64")]
-use crate::kernel::process::thread::exception::is_supported_aarch64_user_exception_vector;
 #[cfg(target_arch = "aarch64")]
 use crate::kernel::process::thread::exception::plan_user_exception_delivery;
 #[cfg(target_arch = "aarch64")]
@@ -878,4 +874,29 @@ impl crate::kernel::process::thread::types::UserForkContext for AArch64UserThrea
     fn install(&self, thread: &Thread) {
         thread.set_aarch64_user_context(*self);
     }
+}
+
+// ── Exception vectors and handler flags ─────────────────────────────────
+
+#[cfg(target_arch = "aarch64")]
+fn is_supported_aarch64_user_exception_vector(vector: u8) -> bool {
+    matches!(
+        vector,
+        AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR | AARCH64_EXCEPTION_DATA_ABORT_VECTOR
+    )
+}
+
+#[cfg(target_arch = "aarch64")]
+fn aarch64_user_exception_handler_is_one_shot(flags: usize) -> bool {
+    flags & AARCH64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT != 0
+}
+
+#[cfg(target_arch = "aarch64")]
+fn aarch64_user_exception_handler_requires_exception_stack(flags: usize) -> bool {
+    flags & AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK != 0
+}
+
+#[cfg(target_arch = "aarch64")]
+fn aarch64_user_exception_handler_allows_nested(flags: usize) -> bool {
+    flags & AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED != 0
 }

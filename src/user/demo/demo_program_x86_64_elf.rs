@@ -57,8 +57,8 @@ pub fn build_shell_program_artifact() -> DemoProgramArtifact {
 
 #[cfg(test)]
 mod tests {
-    use crate::user::demo_program_x86_64_rust;
-    use crate::user::demo_program_x86_64_rust_io;
+    use crate::user::demo::demo_program_x86_64_rust;
+    use crate::user::demo::demo_program_x86_64_rust_io;
     use crate::user::elf::parse_elf64;
     use crate::user::program::DEMO_PROGRAM_ENTRY;
     use crate::user::program::DEMO_PROGRAM_MACHINE;
@@ -177,7 +177,7 @@ mod tests {
     fn demo_program_artifact_is_loadable_and_contains_runtime_strings() {
         // A host that cannot carry the payload sections builds a metadata-only
         // artifact, so there is no payload to inspect here.
-        if crate::user::demo_program_x86_64::payload_bytes().is_empty() {
+        if crate::user::demo::demo_program_x86_64::payload_bytes().is_empty() {
             return;
         }
 

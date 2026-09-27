@@ -7,7 +7,6 @@
 // already chosen which of them exist on this target, so the gate that used to
 // sit on each of these lines lives there instead.
 use super::types::is_canonical_user_address;
-use crate::arch::thread::*;
 use crate::Error;
 use crate::Result;
 
@@ -317,54 +316,4 @@ pub(crate) fn pop_pending_user_exception_frame<const CAPACITY: usize>(
     };
 
     Ok(Some(pending.is_empty()))
-}
-
-// ── Arch vector / flag helper const fns ─────────────────────────────────
-
-#[cfg(target_arch = "aarch64")]
-pub(crate) const fn is_supported_aarch64_user_exception_vector(vector: u8) -> bool {
-    matches!(
-        vector,
-        AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR | AARCH64_EXCEPTION_DATA_ABORT_VECTOR
-    )
-}
-
-#[cfg(target_arch = "aarch64")]
-pub(crate) const fn aarch64_user_exception_handler_is_one_shot(flags: usize) -> bool {
-    flags & AARCH64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT != 0
-}
-
-#[cfg(target_arch = "aarch64")]
-pub(crate) const fn aarch64_user_exception_handler_requires_exception_stack(flags: usize) -> bool {
-    flags & AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK != 0
-}
-
-#[cfg(target_arch = "aarch64")]
-pub(crate) const fn aarch64_user_exception_handler_allows_nested(flags: usize) -> bool {
-    flags & AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED != 0
-}
-
-#[cfg(target_arch = "x86_64")]
-pub(crate) const fn is_supported_x86_64_user_exception_vector(vector: u8) -> bool {
-    matches!(
-        vector,
-        X86_64_EXCEPTION_INVALID_OPCODE_VECTOR
-            | X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR
-            | X86_64_EXCEPTION_PAGE_FAULT_VECTOR
-    )
-}
-
-#[cfg(target_arch = "x86_64")]
-pub(crate) const fn x86_64_user_exception_handler_is_one_shot(flags: usize) -> bool {
-    flags & X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT != 0
-}
-
-#[cfg(target_arch = "x86_64")]
-pub(crate) const fn x86_64_user_exception_handler_requires_exception_stack(flags: usize) -> bool {
-    flags & X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK != 0
-}
-
-#[cfg(target_arch = "x86_64")]
-pub(crate) const fn x86_64_user_exception_handler_allows_nested(flags: usize) -> bool {
-    flags & X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED != 0
 }

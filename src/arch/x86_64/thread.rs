@@ -21,12 +21,8 @@ use crate::Result;
 use crate::kernel::process::thread::exception::build_user_exception_delivery;
 use crate::kernel::process::thread::exception::finish_user_exception_delivery;
 use crate::kernel::process::thread::exception::install_user_exception_handler_registration;
-use crate::kernel::process::thread::exception::is_supported_x86_64_user_exception_vector;
 use crate::kernel::process::thread::exception::plan_user_exception_delivery;
 use crate::kernel::process::thread::exception::pop_pending_user_exception_frame;
-use crate::kernel::process::thread::exception::x86_64_user_exception_handler_allows_nested;
-use crate::kernel::process::thread::exception::x86_64_user_exception_handler_is_one_shot;
-use crate::kernel::process::thread::exception::x86_64_user_exception_handler_requires_exception_stack;
 use crate::kernel::process::thread::exception::PendingExceptionFrameStack;
 use crate::kernel::process::thread::exception::UserExceptionDeliveryBuildSpec;
 use crate::kernel::process::thread::exception::UserExceptionDeliverySelection;
@@ -697,4 +693,25 @@ impl crate::kernel::process::thread::types::UserForkContext for X86_64UserThread
     fn install(&self, thread: &Thread) {
         *thread.arch.x86_64.user_context.lock() = Some(*self);
     }
+}
+
+fn is_supported_x86_64_user_exception_vector(vector: u8) -> bool {
+    matches!(
+        vector,
+        X86_64_EXCEPTION_INVALID_OPCODE_VECTOR
+            | X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR
+            | X86_64_EXCEPTION_PAGE_FAULT_VECTOR
+    )
+}
+
+fn x86_64_user_exception_handler_is_one_shot(flags: usize) -> bool {
+    flags & X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT != 0
+}
+
+fn x86_64_user_exception_handler_requires_exception_stack(flags: usize) -> bool {
+    flags & X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK != 0
+}
+
+fn x86_64_user_exception_handler_allows_nested(flags: usize) -> bool {
+    flags & X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED != 0
 }
