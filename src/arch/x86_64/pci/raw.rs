@@ -26,35 +26,40 @@ const CONFIG_DATA: u16 = 0x0CFC;
 // PCI configuration space offsets (standardised header, first 64 bytes)
 // ---------------------------------------------------------------------------
 
+// The offsets are the specification's and are listed once, in
+// `crate::arch::pci::reg`; these are the same numbers in the byte width this
+// port-I/O API addresses with, so a register the specification moves moves in
+// one place.
+
 /// Vendor ID (16-bit, read-only).
-pub const VENDOR_ID: u8 = 0x00;
+pub const VENDOR_ID: u8 = crate::arch::pci::reg::VENDOR_ID as u8;
 /// Device ID (16-bit, read-only).
-pub const DEVICE_ID: u8 = 0x02;
+pub const DEVICE_ID: u8 = crate::arch::pci::reg::DEVICE_ID as u8;
 /// Command register (16-bit).
-pub const COMMAND: u8 = 0x04;
+pub const COMMAND: u8 = crate::arch::pci::reg::COMMAND as u8;
 /// Status register (16-bit, read-only for most bits).
-pub const STATUS: u8 = 0x06;
+pub const STATUS: u8 = crate::arch::pci::reg::STATUS as u8;
 /// Revision ID (8-bit, read-only).
-pub const REVISION_ID: u8 = 0x08;
+pub const REVISION_ID: u8 = crate::arch::pci::reg::REVISION_ID as u8;
 /// Class code / subclass / prog-if (24-bit: 0x0B class, 0x0A subclass, 0x09
 /// prog-if).
-pub const CLASS: u8 = 0x0B;
+pub const CLASS: u8 = crate::arch::pci::reg::CLASS as u8;
 /// Header type (8-bit, bit 7 = multi-function).
-pub const HEADER_TYPE: u8 = 0x0E;
+pub const HEADER_TYPE: u8 = crate::arch::pci::reg::HEADER_TYPE as u8;
 /// Base Address Register 0–5 (32-bit each, at offsets 0x10–0x27).
-pub const BAR0: u8 = 0x10;
-pub const BAR1: u8 = 0x14;
-pub const BAR2: u8 = 0x18;
-pub const BAR3: u8 = 0x1C;
-pub const BAR4: u8 = 0x20;
-pub const BAR5: u8 = 0x24;
+pub const BAR0: u8 = crate::arch::pci::reg::BAR0 as u8;
+pub const BAR1: u8 = crate::arch::pci::reg::BAR1 as u8;
+pub const BAR2: u8 = crate::arch::pci::reg::BAR2 as u8;
+pub const BAR3: u8 = crate::arch::pci::reg::BAR3 as u8;
+pub const BAR4: u8 = crate::arch::pci::reg::BAR4 as u8;
+pub const BAR5: u8 = crate::arch::pci::reg::BAR5 as u8;
 /// Capabilities pointer (8-bit, valid if Status bit 4 is set).
-pub const CAP_PTR: u8 = 0x34;
+pub const CAP_PTR: u8 = crate::arch::pci::reg::CAP_PTR as u8;
 /// Interrupt line (8-bit).
-pub const INTERRUPT_LINE: u8 = 0x3C;
+pub const INTERRUPT_LINE: u8 = crate::arch::pci::reg::INTERRUPT_LINE as u8;
 
 /// Vendor ID sentinel: returned for absent devices.
-pub const VENDOR_ID_NONE: u16 = 0xFFFF;
+pub const VENDOR_ID_NONE: u16 = crate::arch::pci::reg::VENDOR_ID_NONE;
 
 // ---------------------------------------------------------------------------
 // Typed PCI address
@@ -240,6 +245,71 @@ pub fn pci_device_exists(addr: PciAddress) -> bool {
     // bus/device/function triple, so the read is valid even where no device
     // answers — that is exactly what it detects.
     unsafe { pci_config_read_u16(addr, VENDOR_ID) != VENDOR_ID_NONE }
+}
+
+// ---------------------------------------------------------------------------
+// The port pair as a configuration space
+// ---------------------------------------------------------------------------
+
+/// The legacy port pair, as the walk's [`ConfigSpace`].
+///
+/// There is nothing to discover and nothing to map on this mechanism: the pair
+/// is fixed by the architecture and present on every machine that has it, so
+/// the unit value *is* the configuration space.  That is why this backend
+/// needs no argument where [`crate::arch::pci::EcamRegion`] carries the address
+/// of its window.
+///
+/// It reaches only the 256-byte head of configuration space, because the
+/// address register holds a six-bit dword offset.  An offset past `0xFF` is
+/// therefore masked to that head — the mechanism's own limit, stated here —
+/// rather than made to address a register it cannot name.  The extended PCIe
+/// registers beyond it are reachable only through ECAM.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LegacyConfig;
+
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+impl crate::arch::pci::ConfigSpace for LegacyConfig {
+    unsafe fn read_u8(&self, bus: u8, device: u8, function: u8, offset: u16) -> u8 {
+        let addr = PciAddress::new(bus, device, function);
+        // SAFETY: the caller's contract covers the address and the register;
+        // the mask below is the mechanism's six-bit dword offset, and the
+        // primitive's own contract is the caller's.
+        unsafe { pci_config_read_u8(addr, (offset & 0xFF) as u8) }
+    }
+
+    unsafe fn read_u16(&self, bus: u8, device: u8, function: u8, offset: u16) -> u16 {
+        let addr = PciAddress::new(bus, device, function);
+        // SAFETY: as the byte read above, one width up.
+        unsafe { pci_config_read_u16(addr, (offset & 0xFF) as u8) }
+    }
+
+    unsafe fn read_u32(&self, bus: u8, device: u8, function: u8, offset: u16) -> u32 {
+        let addr = PciAddress::new(bus, device, function);
+        // SAFETY: as the byte read above, at the dword width the primitive
+        // requires.
+        unsafe { pci_config_read_u32(addr, (offset & 0xFF) as u8) }
+    }
+
+    unsafe fn write_u8(&self, bus: u8, device: u8, function: u8, offset: u16, value: u8) {
+        let addr = PciAddress::new(bus, device, function);
+        // SAFETY: the caller's contract covers the address, the register and
+        // what the register holds — a write is not undone by a read.
+        unsafe { pci_config_write_u8(addr, (offset & 0xFF) as u8, value) }
+    }
+
+    unsafe fn write_u16(&self, bus: u8, device: u8, function: u8, offset: u16, value: u16) {
+        let addr = PciAddress::new(bus, device, function);
+        // SAFETY: as the byte write above, one width up.
+        unsafe { pci_config_write_u16(addr, (offset & 0xFF) as u8, value) }
+    }
+
+    unsafe fn write_u32(&self, bus: u8, device: u8, function: u8, offset: u16, value: u32) {
+        let addr = PciAddress::new(bus, device, function);
+        // SAFETY: as the byte write above, at the dword width the primitive
+        // requires.
+        unsafe { pci_config_write_u32(addr, (offset & 0xFF) as u8, value) }
+    }
 }
 
 // ---------------------------------------------------------------------------
