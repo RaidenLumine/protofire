@@ -34,7 +34,8 @@
 
 
 
-# 45 files, 167 occurrences outside src/arch
+
+# 41 files, 138 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/framebuffer.rs                               4
@@ -49,13 +50,12 @@ kernel/power/clock.rs                                2
 kernel/power/mod.rs                                  3
 kernel/process/context.rs                            4
 kernel/process/process/fork.rs                       3
-kernel/process/process/lifecycle.rs                  6
+kernel/process/process/lifecycle.rs                  1
 kernel/process/process/types.rs                      3
 kernel/process/scheduler/api.rs                      3
 kernel/process/scheduler/mod.rs                      3
 kernel/process/scheduler/spawn.rs                    4
 kernel/process/thread/entry.rs                       5
-kernel/process/thread/kernel_stack.rs                6
 kernel/process/thread/mod.rs                         2
 kernel/process/thread/types.rs                       3
 kernel/process/thread/user_runtime.rs                2
@@ -64,11 +64,8 @@ kernel/smp/tlb.rs                                    2
 memory/diagnostics.rs                                3
 memory/dma.rs                                        2
 memory/global.rs                                     3
-memory/manager/compact.rs                            6
 memory/map_facts.rs                                  3
 memory/mod.rs                                        4
-syscall/diagnostic.rs                                6
-syscall/exception_control.rs                         6
 syscall/process/signal.rs                            2
 user/demo/demo_program_x86_64_rust_io.rs             1
 user/demo/demo_program_x86_64_rust.rs                1

@@ -269,7 +269,7 @@ fn system_info_system_health(
 }
 
 fn system_info_real_time(buffer_ptr: *mut u8, buffer_len: usize) -> Result<super::SyscallDispatch> {
-    let timestamp: u64 = rtc_now_unix();
+    let timestamp: u64 = crate::arch::timer::rtc_now_unix().unwrap_or(0);
 
     super::user_memory::copy_user_value(&timestamp, buffer_ptr, buffer_len)
         .map(super::SyscallDispatch::complete)
@@ -367,31 +367,6 @@ fn system_info_irq_profiler(
     record.online_cpus = crate::arch::cpu_count() as u64;
     super::user_memory::copy_user_value(&record, buffer_ptr, buffer_len)
         .map(super::SyscallDispatch::complete)
-}
-
-/// Read the current Unix timestamp from the platform RTC.
-/// Returns 0 on platforms without an RTC or when the RTC is not readable.
-fn rtc_now_unix() -> u64 {
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        crate::arch::x86_64::rtc::rtc_now_unix().unwrap_or(0)
-    }
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    {
-        crate::arch::aarch64::rtc::rtc_now_unix().unwrap_or(0)
-    }
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    {
-        crate::arch::riscv64::rtc::rtc_now_unix().unwrap_or(0)
-    }
-    #[cfg(not(any(
-        all(target_arch = "x86_64", target_os = "none"),
-        all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "riscv64", target_os = "none")
-    )))]
-    {
-        0
-    }
 }
 
 // ── ListProcessFaults (slot 61) ───────────────────────────────────────────

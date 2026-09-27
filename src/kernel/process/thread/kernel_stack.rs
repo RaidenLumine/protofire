@@ -23,67 +23,6 @@ use crate::memory::frame::FRAME_SIZE;
 
 use super::stack_window::StackLayout;
 
-/// Clear the present/valid bit on every guard page, and report whether every
-/// one of them was actually cleared.
-///
-/// The result is returned rather than discarded because a guard that silently
-/// did not get installed is indistinguishable from one that did: the same boot
-/// either way, and the difference only shows up much later as a stack overflow
-/// that corrupts memory instead of faulting.  `unmap_page` refuses to act on a
-/// page inside a large mapping, which it has no way to split, so a missing
-/// guard is a real outcome here rather than a theoretical one.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
-    let page_size = crate::memory::frame::FRAME_SIZE;
-    let mut enforced = true;
-    for offset in (0..guard_size).step_by(page_size) {
-        let cleared = unsafe { crate::arch::x86_64::paging::unmap_page(base.add(offset) as usize) };
-        enforced &= cleared;
-    }
-    enforced
-}
-
-/// aarch64 counterpart; see the x86_64 version for why the result is returned.
-///
-/// Only the frame-backed fallback reaches this now: a window-backed stack's
-/// guard is not installed by anyone, so there is nothing here to install.  For
-/// the fallback the answer is still that the guard is not there — its frames
-/// sit at their own addresses, which this walk cannot derive, and clearing the
-/// wrong page took the machine down inside the exception entry the last time
-/// it was tried.  The caller reports that, which is the honest answer for a
-/// shape this architecture cannot guarantee.
-#[cfg(all(target_arch = "aarch64", target_os = "none"))]
-fn enforce_guard_pages(base: *mut u8, guard_size: usize) -> bool {
-    let _ = (base, guard_size);
-    false
-}
-
-/// riscv64's window is where its guards come from; this is the exhausted-window
-/// fallback, and for that one there is no guard to install.  Say so rather than
-/// claiming one.
-///
-/// The frame-backed fallback's guard is a hole in the kernel's own identity
-/// mapping, and clearing it means splitting the block that covers it — the same
-/// walk that faulted on aarch64 the first time (`split_l2_block` carries that
-/// story).  The answer here is therefore the aarch64 one: the caller reports
-/// that the guard is not enforced, which is true of this shape.  The window
-/// itself does not come here: a guard inside it is a leaf nobody maps, so an
-/// overflow faults on the first byte.
-#[cfg(all(target_arch = "riscv64", target_os = "none"))]
-fn enforce_guard_pages(_base: *mut u8, _guard_size: usize) -> bool {
-    false
-}
-
-/// Host and other targets have no hardware guard pages to enforce.
-#[cfg(not(any(
-    all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-)))]
-fn enforce_guard_pages(_base: *mut u8, _guard_size: usize) -> bool {
-    true
-}
-
 /// Say once that the overflow hazard the guard exists for is not covered here.
 ///
 /// Once is enough: the answer depends on where the frames landed, so every
@@ -258,7 +197,8 @@ impl KernelStack {
                     // identity map or a prepared coarse-grained entry.  Clear
                     // the present/valid bit for each guard page so an overflow
                     // faults instead of corrupting memory silently.
-                    let guard_not_enforced = !enforce_guard_pages(base, guard_size);
+                    let guard_not_enforced =
+                        !crate::arch::mmu::enforce_stack_guard(base, guard_size);
 
                     // Report outside the critical section: this prints, and
                     // printing can allocate.

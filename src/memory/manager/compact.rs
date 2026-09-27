@@ -23,20 +23,12 @@ use crate::memory::paging::{self};
 
 use super::MemoryManager;
 
-/// True on bare-metal kernel targets, where the arch MMU helpers actually
-/// touch live hardware page tables (as opposed to host-side stubs).
-#[cfg(any(
-    all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-))]
-const BARE_METAL: bool = true;
-#[cfg(not(any(
-    all(target_arch = "x86_64", target_os = "none"),
-    all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
-)))]
-const BARE_METAL: bool = false;
+/// True on bare-metal kernel targets, where the arch MMU helpers touch live
+/// hardware page tables rather than host-side stubs.
+///
+/// It is the arch inventory's own answer, so a machine that changes what
+/// "bare metal" means does not have to be found here a second time.
+const BARE_METAL: bool = crate::arch::ArchitectureCapabilityInventory::current().bare_metal;
 
 impl MemoryManager {
     /// Compact the physical frame pool on every NUMA node.

@@ -927,8 +927,6 @@ mod tests {
     use alloc::boxed::Box;
     use alloc::sync::Arc;
     use alloc::vec;
-    #[cfg(target_arch = "x86_64")]
-    use alloc::vec::Vec;
 
     use crate::abi::process::SA_RESTART;
     use crate::abi::process::SIGNAL_SA_FLAGS_KNOWN;
@@ -937,8 +935,6 @@ mod tests {
     use crate::kernel::process::Scheduler;
     use crate::kernel::process::TerminationReason;
     use crate::kernel::process::Thread;
-    #[cfg(target_arch = "x86_64")]
-    use crate::kernel::process::UserThreadStart;
     use crate::memory::MemoryManager;
     use crate::Error;
 
@@ -1358,11 +1354,9 @@ mod tests {
 
     // ── Fork ────────────────────────────────────────────────────────────
 
-    #[cfg(any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "riscv64"
-    ))]
+    /// The fork tests run wherever `Process::fork` exists, which is every
+    /// machine the kernel builds for; the one test that reaches into x86_64's
+    /// paging carries its own gate.
     mod fork_tests {
         use super::*;
 
@@ -1402,10 +1396,13 @@ mod tests {
         #[test]
         #[cfg(target_arch = "x86_64")]
         fn fork_creates_independent_address_space_with_cow() {
+            use alloc::vec::Vec;
+
             use crate::arch::x86_64::paging::prepare_process_address_space;
             use crate::arch::x86_64::paging::KernelPagePlan;
             use crate::arch::x86_64::paging::KernelPageTableSpec;
             use crate::kernel::process::ProcessUserAddressSpace;
+            use crate::kernel::process::UserThreadStart;
             use crate::memory::paging::MappingKind;
             use crate::memory::paging::PagePermissions;
             use crate::user::program::UserImageLoadPlan;

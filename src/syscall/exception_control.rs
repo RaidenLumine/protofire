@@ -71,36 +71,15 @@ fn validate_return_from_exception_frame_pointer_shape(
     Ok(())
 }
 
-// Used only by the x86_64 / aarch64 frame helpers; the riscv64 fallback
-// reports `Unsupported`, so the generic helper is dead there.
-#[cfg_attr(
-    not(any(target_arch = "x86_64", target_arch = "aarch64")),
-    allow(dead_code)
-)]
-fn user_exception_frame_layout<T>() -> UserExceptionFrameLayout {
-    UserExceptionFrameLayout {
-        len: core::mem::size_of::<T>(),
-        align: core::mem::align_of::<T>(),
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
+/// The frame this machine delivers, as the syscall layer needs it: the size
+/// and alignment a user pointer to one is validated against.
+///
+/// Which frame that is — and whether there is one at all — is the machine's
+/// answer, from `crate::arch::thread`.
 fn current_arch_user_exception_frame_layout() -> Result<UserExceptionFrameLayout> {
-    Ok(user_exception_frame_layout::<
-        crate::user::exception::X86_64UserExceptionFrame,
-    >())
-}
-
-#[cfg(target_arch = "aarch64")]
-fn current_arch_user_exception_frame_layout() -> Result<UserExceptionFrameLayout> {
-    Ok(user_exception_frame_layout::<
-        crate::user::exception::AArch64UserExceptionFrame,
-    >())
-}
-
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn current_arch_user_exception_frame_layout() -> Result<UserExceptionFrameLayout> {
-    Err(Error::Unsupported)
+    let (len, align) =
+        crate::arch::thread::user_exception_frame_layout().ok_or(Error::Unsupported)?;
+    Ok(UserExceptionFrameLayout { len, align })
 }
 
 #[cfg(test)]

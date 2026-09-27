@@ -444,3 +444,66 @@ pub(crate) fn install_runtime_kernel_page_tables(heap_bounds: (usize, usize)) {
     all(target_arch = "riscv64", target_os = "none")
 )))]
 pub(crate) fn install_runtime_kernel_page_tables(_heap_bounds: (usize, usize)) {}
+
+/// Clear the present/valid bit on every guard page below a stack, and report
+/// whether every one of them was actually cleared.
+///
+/// The result is returned rather than discarded because a guard that silently
+/// did not get installed is indistinguishable from one that did: the same boot
+/// either way, and the difference only shows up much later as a stack overflow
+/// that corrupts memory instead of faulting.  `unmap_page` refuses to act on a
+/// page inside a large mapping, which it has no way to split, so a missing
+/// guard is a real outcome rather than a theoretical one.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub(crate) fn enforce_stack_guard(base: *mut u8, guard_size: usize) -> bool {
+    let page_size = crate::memory::frame::FRAME_SIZE;
+    let mut enforced = true;
+    for offset in (0..guard_size).step_by(page_size) {
+        // SAFETY: the range is the guard region of a kernel stack this kernel
+        // allocated, so each address is mapped and owned here; `unmap_page`
+        // answers whether the entry could be cleared.
+        let cleared = unsafe { super::x86_64::paging::unmap_page(base.add(offset) as usize) };
+        enforced &= cleared;
+    }
+    enforced
+}
+
+/// Only the frame-backed fallback reaches this now: a window-backed stack's
+/// guard is not installed by anyone, so there is nothing here to install.
+///
+/// For the fallback the answer is still that the guard is not there — its
+/// frames sit at their own addresses, which this walk cannot derive, and
+/// clearing the wrong page took the machine down inside the exception entry
+/// the last time it was tried.  The kernel reports that, which is the honest
+/// answer for a shape this architecture cannot guarantee.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub(crate) fn enforce_stack_guard(_base: *mut u8, _guard_size: usize) -> bool {
+    false
+}
+
+/// riscv64's window is where its guards come from; this is the exhausted-window
+/// fallback, and for that one there is no guard to install.  Say so rather than
+/// claiming one.
+///
+/// The frame-backed fallback's guard is a hole in the kernel's own identity
+/// mapping, and clearing it means splitting the block that covers it — the same
+/// walk that faulted on aarch64 the first time (`split_l2_block` carries that
+/// story).  The answer here is therefore the aarch64 one: the kernel reports
+/// that the guard is not enforced, which is true of this shape.  The window
+/// itself does not come here: a guard inside it is a leaf nobody maps, so an
+/// overflow faults on the first byte.
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub(crate) fn enforce_stack_guard(_base: *mut u8, _guard_size: usize) -> bool {
+    false
+}
+
+/// A bare-metal machine of another shape has no hardware guard of the kind
+/// this walks, and nothing to enforce.
+#[cfg(not(any(
+    all(target_arch = "x86_64", target_os = "none"),
+    all(target_arch = "aarch64", target_os = "none"),
+    all(target_arch = "riscv64", target_os = "none")
+)))]
+pub(crate) fn enforce_stack_guard(_base: *mut u8, _guard_size: usize) -> bool {
+    true
+}

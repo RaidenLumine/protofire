@@ -345,3 +345,31 @@ pub(crate) fn install_user_exception_handler(
         Err(crate::Error::Unsupported)
     }
 }
+
+/// The layout of the user exception frame this machine delivers.
+///
+/// The frame is the ABI's — it is what a handler reads when it returns — and
+/// each machine has its own size and alignment.  A machine whose prototype
+/// does not deliver user exceptions has no frame to describe, and says so.
+pub(crate) fn user_exception_frame_layout() -> Option<(usize, usize)> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        Some((
+            core::mem::size_of::<crate::abi::exception::X86_64UserExceptionFrame>(),
+            core::mem::align_of::<crate::abi::exception::X86_64UserExceptionFrame>(),
+        ))
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        Some((
+            core::mem::size_of::<crate::abi::exception::AArch64UserExceptionFrame>(),
+            core::mem::align_of::<crate::abi::exception::AArch64UserExceptionFrame>(),
+        ))
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        None
+    }
+}

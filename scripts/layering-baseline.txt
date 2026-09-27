@@ -117,7 +117,7 @@ process                      fs                           15
 process                      handle_rights                2
 process                      irq_balance                  2
 process                      maintenance                  2
-process                      memory                       25
+process                      memory                       24
 process                      network                      16
 process                      percpu                       12
 process                      power                        1
