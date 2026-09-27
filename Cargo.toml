@@ -134,6 +134,11 @@ demo-disk = []
 # src/user/shared/runtime.rs). Off in the kernel build: the kernel provides its
 # own bridge in src/user/program/shell/syscall_bridge.rs.
 runtime = []
+# Ships the byte-for-byte payload frozen on 2026-09-27 instead of the one this
+# build compiles, so the boot runs a program that was not rebuilt.  This is what
+# makes "we do not break userspace" a testable claim; see
+# `src/user/demo/demo_program_x86_64_rust_io.rs`.
+abi_frozen_payload = []
 fs_profiler = []
 fs_lock_timing = []
 heap_audit = []

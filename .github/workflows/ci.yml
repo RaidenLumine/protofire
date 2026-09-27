@@ -120,6 +120,14 @@ jobs:
 
       - name: Boot on four CPUs
         run: make check-smp-runtime SMP=4
+
+      # The one gate that runs a program that was not rebuilt with the kernel:
+      # the payload frozen on 2026-09-27 is shipped instead of the compiled one,
+      # and the boot has to produce the same user output.  Without it, "we do
+      # not break userspace" cannot be false — a payload rebuilt with the kernel
+      # would hide an ABI change by construction.
+      - name: Boot the frozen payload
+        run: make check-abi-frozen-payload
         env:
           CARGO: cargo
           SMP_RUNTIME_LOG: smp-runtime.log

@@ -22,6 +22,8 @@ unsafe extern "C" {
 }
 
 pub fn payload_bytes() -> &'static [u8] {
+    // SAFETY: as the other payload sections — the linker's markers bound the
+    // slice, and the section it names lives as long as the image does.
     unsafe {
         let start = core::ptr::addr_of!(protofire_demo_program_riscv64_payload_start);
         let end = core::ptr::addr_of!(protofire_demo_program_riscv64_payload_end);

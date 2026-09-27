@@ -294,6 +294,17 @@ check-payload-relocations:
 	$(MAKE) build-x8664-demo
 	sh ./scripts/check-payload-relocations.sh
 
+# Run a payload that was **not** rebuilt with the kernel: the bytes frozen on
+# 2026-09-27 are shipped instead of the ones this build compiles, and the boot
+# has to produce the same user output.  This is the only configuration in which
+# "we do not break userspace" can be false — with a payload that is rebuilt
+# whenever the kernel is, an ABI change would be invisible by construction.
+check-abi-frozen-payload:
+	FEATURES="demo-disk abi_frozen_payload" \
+		PAYLOAD_SOURCE=frozen \
+		X8664_RUNTIME_LOG="$${X8664_RUNTIME_LOG:-}" \
+		sh ./scripts/check-x8664-runtime.sh
+
 # Boot the kernel on a single emulated CPU with the demo disk and assert that
 # the user programs actually run.  The SMP smoke cannot see a defect that
 # takes one CPU down at a time, and a single CPU is what `make run` gives a
@@ -448,7 +459,15 @@ clippy:
 # configurations, so both take `--all-targets`.  Neither check is a substitute
 # for the runner — a Windows-only `cfg` would still slip through — but between
 # them they cover every configuration a test file can fail to compile in.
+#
+# The three machine targets are also linted with the features the runtime gates
+# build, because those are what ships: `demo-disk` decides which of
+# `spawn_from_global`'s two `#[cfg]` arms is compiled, and a clippy lint that
+# fires only in that arm (`needless_return`, here) went unnoticed until the ABI
+# gate asked for the frozen payload.
 CLIPPY_TARGETS = x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf aarch64-unknown-linux-gnu x86_64-apple-darwin
+CLIPPY_BARE_METAL_TARGETS = x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf
+CLIPPY_BARE_METAL_FEATURES = demo-disk abi_frozen_payload
 
 clippy-targets:
 	@for target in $(CLIPPY_TARGETS); do \
@@ -458,6 +477,12 @@ clippy-targets:
 			*) extra="" ;; \
 		esac; \
 		$(CARGO) clippy $(CARGO_FLAGS) $$extra --target $$target -- \
+			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
+	done
+	@for target in $(CLIPPY_BARE_METAL_TARGETS); do \
+		echo "==> clippy $$target ($(CLIPPY_BARE_METAL_FEATURES))"; \
+		$(CARGO) clippy $(CARGO_FLAGS) --target $$target \
+			--features "$(CLIPPY_BARE_METAL_FEATURES)" -- \
 			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
 	done
 

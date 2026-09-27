@@ -148,6 +148,10 @@ run_p3() {
     run_make_step "make check-payload-relocations" check-payload-relocations
     if [ "$RUN_X86_64_RUNTIME" = "1" ]; then
         run_make_step "make check-x8664-runtime" check-x8664-runtime
+        # The same boot with a payload that was frozen on 2026-09-27 rather
+        # than compiled with the kernel: the only configuration in which an ABI
+        # change can break a program that is not rebuilt alongside it.
+        run_make_step "make check-abi-frozen-payload" check-abi-frozen-payload
     else
         printf '==> verify[%s]: skipping x86_64 runtime smoke (set RUN_X86_64_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"

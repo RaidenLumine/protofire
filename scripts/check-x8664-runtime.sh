@@ -34,6 +34,11 @@ X8664_RUNTIME_LOG="${X8664_RUNTIME_LOG:-}"
 # Features the kernel is built with: the demo disk carries the shell, the
 # launcher programs and the services whose output is asserted below.
 FEATURES="${FEATURES:-demo-disk}"
+# Which copy of `demo-launcher-rust-io`'s payload the boot must report: the one
+# this build compiled (the default), or the one frozen on disk when the caller
+# asked for the ABI gate.  Asserting it here is what keeps a gate that means to
+# run an old program from passing on a new one.
+PAYLOAD_SOURCE="${PAYLOAD_SOURCE:-compiled}"
 
 KERNEL_BIN="${TARGET_DIR}/x86_64-unknown-none/${PROFILE}/${CRATE}"
 
@@ -202,6 +207,7 @@ require_log_line "protofire shell (user)"
 # hand-off, which is what makes them the assertion that this boot ran.
 require_log_line "[user  ] app-id: demo-launcher-fault"
 require_log_line "[user  ] rust app-id: demo-launcher-rust-io"
+require_log_line "[abi   ] demo-launcher-rust-io payload: $PAYLOAD_SOURCE "
 require_log_line "[demo  ] worker-a done"
 require_log_line "[demo  ] worker-b done"
 require_log_line "[service] abandoning demo-launcher-fault after its restart budget"

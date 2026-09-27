@@ -32,6 +32,12 @@ macro_rules! payload_or_stub {
             pub fn payload_entry_offset() -> usize {
                 0
             }
+
+            /// A host that cannot carry this payload ships none of it, which is
+            /// neither the compiled copy nor the frozen one.
+            pub const fn payload_source() -> &'static str {
+                "absent"
+            }
         }
     };
 }

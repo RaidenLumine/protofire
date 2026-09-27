@@ -245,6 +245,43 @@ adastra_demo_program_rust_io_entry:
     main = sym adastra_demo_program_rust_io_main_from_stack,
 );
 
+/// The payload's machine code as it was on 2026-09-27.
+///
+/// With the `abi_frozen_payload` feature the ELF builder ships these bytes
+/// instead of the section this build just compiled, so the boot runs a program
+/// that was *not* rebuilt — which is the only way "we do not break userspace"
+/// has something that can be broken.  The bytes come out of the x86_64 kernel
+/// image:
+///
+/// ```text
+/// cargo build --target x86_64-unknown-none --features demo-disk
+/// llvm-objcopy -O binary --only-section=adastra_demo_program_rust_io \
+///     target/x86_64-unknown-none/debug/protofire \
+///     src/user/demo/fixtures/rust_io_payload_x86_64.bin
+/// ```
+///
+/// Re-freezing is a deliberate act, not a build step: the payload carries the
+/// ABI of the day it was built, and that is what makes the gate mean something.
+#[cfg(feature = "abi_frozen_payload")]
+const FROZEN_PAYLOAD: &[u8] = include_bytes!("fixtures/rust_io_payload_x86_64.bin");
+
+/// Where the frozen payload's entry point sits inside those bytes.
+#[cfg(feature = "abi_frozen_payload")]
+const FROZEN_PAYLOAD_ENTRY_OFFSET: usize = 0;
+
+/// Which copy of the payload this build ships: `frozen` or `compiled`.
+///
+/// The runtime check asserts the boot line that quotes this, so a run of the ABI
+/// gate cannot pass while quietly testing a freshly built payload.
+pub const fn payload_source() -> &'static str {
+    if cfg!(feature = "abi_frozen_payload") {
+        "frozen"
+    } else {
+        "compiled"
+    }
+}
+
+#[cfg(not(feature = "abi_frozen_payload"))]
 pub fn payload_bytes() -> &'static [u8] {
     // SAFETY: as the other payload sections — the linker's markers bound it.
     unsafe {
@@ -259,13 +296,23 @@ pub fn payload_bytes() -> &'static [u8] {
     }
 }
 
+#[cfg(feature = "abi_frozen_payload")]
+pub fn payload_bytes() -> &'static [u8] {
+    FROZEN_PAYLOAD
+}
 
+#[cfg(not(feature = "abi_frozen_payload"))]
 pub fn payload_entry_offset() -> usize {
     let entry = core::ptr::addr_of!(adastra_demo_program_rust_io_entry) as usize;
     let start = core::ptr::addr_of!(ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_START) as usize;
     entry
         .checked_sub(start)
         .expect("rust io demo payload entry must follow section start")
+}
+
+#[cfg(feature = "abi_frozen_payload")]
+pub fn payload_entry_offset() -> usize {
+    FROZEN_PAYLOAD_ENTRY_OFFSET
 }
 
 // Hosts that cannot carry the ELF payload sections (e.g. a Windows host, whose

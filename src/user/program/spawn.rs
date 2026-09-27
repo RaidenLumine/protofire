@@ -251,12 +251,12 @@ where
             loaded.host_proxy.as_deref().ok_or(Error::NotFound)?,
             loaded.machine,
         )?;
-        return Ok(scheduler.spawn_kernel_named_with_security_token_and_setup(
+        Ok(scheduler.spawn_kernel_named_with_security_token_and_setup(
             &loaded.name,
             security_token,
             entry,
             setup,
-        ));
+        ))
     }
 
     // Without demo-disk, metadata-only payloads cannot be launched —
