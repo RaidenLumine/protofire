@@ -97,7 +97,7 @@ fn boot_kernel(boot_info: arch::boot::BootInfo) -> ! {
 
 fn print_banner() {
     println!(
-        "{} v{} [{} | {}]",
+        "{} v{} [{} | {}] {}",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
         arch::boot::current_architecture(),
@@ -105,7 +105,8 @@ fn print_banner() {
             "debug"
         } else {
             "release"
-        }
+        },
+        env!("PROTOFIRE_BUILD_ID"),
     );
     println!("Protofire kernel prototype starting");
 }

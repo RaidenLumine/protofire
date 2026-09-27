@@ -50,6 +50,7 @@ endif
 		check-aarch64-host \
 		check-riscv64 \
 		check-unsafe-comments \
+		check-repo-integrity \
 		check-layering \
 		check-x8664-runtime \
 		check-x8664-churn \
@@ -91,6 +92,7 @@ help:
 		'  make check-aarch64-host - type-check aarch64-unknown-linux-gnu, where the arch modules also build' \
 		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
 		'  make check-unsafe-comments - fail if any configuration gained an undocumented `unsafe` block' \
+		'  make check-repo-integrity  - fail if a ref or the index names a missing git object' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
@@ -132,6 +134,14 @@ help:
 
 doctor:
 	sh ./scripts/doctor.sh
+
+# A `git commit` that is interrupted while it writes objects can leave a ref or
+# the index naming something that is not there, and the first symptom is a
+# later command failing with an error about an object it cannot read.  This
+# names that state directly; it runs in well under a second, so it sits in the
+# P0 tier where a broken working copy is caught before anything is built on it.
+check-repo-integrity:
+	sh ./scripts/check-repo-integrity.sh
 
 # The co-located runtime and demo crates live inside the kernel crate
 # (src/user/shared/, src/user/demo/).  No symlinks needed.
