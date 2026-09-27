@@ -103,7 +103,7 @@ network                      fs                           5
 network                      ipc                          1
 network                      process                      3
 network                      random                       5
-network                      sync                         41
+network                      sync                         16
 nmi                          sync                         1
 oom                          memory                       2
 oom                          process                      3

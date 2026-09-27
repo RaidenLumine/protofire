@@ -11,6 +11,7 @@ use core::sync::atomic::AtomicPtr;
 #[cfg(not(test))]
 use core::sync::atomic::Ordering;
 
+use crate::kernel::sync::Mutex;
 use crate::network::internet::fragments::FragmentCache;
 use crate::network::internet::fragments::Ipv6FragmentCache;
 use crate::network::internet::igmp::IgmpState;
@@ -88,67 +89,53 @@ impl NetworkStack {
             dns_server: crate::util::sync_unsafe_cell::SyncUnsafeCell::new([10, 0, 2, 3]),
             subnet_mask: crate::util::sync_unsafe_cell::SyncUnsafeCell::new([255, 255, 255, 0]),
             gateway: crate::util::sync_unsafe_cell::SyncUnsafeCell::new([10, 0, 2, 2]),
-            arp_cache: crate::kernel::sync::Mutex::new(
-                crate::network::internet::arp::ArpCache::new(),
-            ),
-            tcp_table: crate::kernel::sync::Mutex::new(
-                crate::network::tcp::TcpConnectionTable::new(),
-            ),
-            udp_table: crate::kernel::sync::Mutex::new(crate::network::udp::UdpSocketTable::new()),
-            dccp_table: crate::kernel::sync::Mutex::new(
-                crate::network::dccp::DccpConnectionTable::new(),
-            ),
-            ipsec_spd: crate::kernel::sync::Mutex::new(crate::network::ipsec::IpsecSpd::new()),
-            ipsec_sad: crate::kernel::sync::Mutex::new(crate::network::ipsec::IpsecSad::new()),
-            mrt: crate::kernel::sync::Mutex::new(crate::network::mrouting::MrtState::new()),
+            arp_cache: Mutex::new(crate::network::internet::arp::ArpCache::new()),
+            tcp_table: Mutex::new(crate::network::tcp::TcpConnectionTable::new()),
+            udp_table: Mutex::new(crate::network::udp::UdpSocketTable::new()),
+            dccp_table: Mutex::new(crate::network::dccp::DccpConnectionTable::new()),
+            ipsec_spd: Mutex::new(crate::network::ipsec::IpsecSpd::new()),
+            ipsec_sad: Mutex::new(crate::network::ipsec::IpsecSad::new()),
+            mrt: Mutex::new(crate::network::mrouting::MrtState::new()),
             ticks: core::sync::atomic::AtomicU64::new(0),
             #[cfg(target_os = "none")]
-            dhcp_lease: crate::kernel::sync::Mutex::new(None),
+            dhcp_lease: Mutex::new(None),
             #[cfg(target_os = "none")]
-            dhcp_lease_started_at: crate::kernel::sync::Mutex::new(0),
+            dhcp_lease_started_at: Mutex::new(0),
             #[cfg(target_os = "none")]
-            dhcp_renew_state: crate::kernel::sync::Mutex::new(
-                crate::network::dhcp::LeaseState::Bound,
-            ),
+            dhcp_renew_state: Mutex::new(crate::network::dhcp::LeaseState::Bound),
             profiler: NetProfiler::default(),
             // IPv6 fields
             local_ip_v6: link_local_v6,
-            global_ip_v6: crate::kernel::sync::Mutex::new(None),
-            neighbor_cache_v6: crate::kernel::sync::Mutex::new(
-                crate::network::internet::icmpv6::NeighborCache::new(),
-            ),
+            global_ip_v6: Mutex::new(None),
+            neighbor_cache_v6: Mutex::new(crate::network::internet::icmpv6::NeighborCache::new()),
             router_lifetime_v6: core::sync::atomic::AtomicU64::new(0),
             reachable_time_v6: core::sync::atomic::AtomicU64::new(0),
             retrans_timer_v6: core::sync::atomic::AtomicU64::new(0),
-            router_mac_v6: crate::kernel::sync::Mutex::new(None),
+            router_mac_v6: Mutex::new(None),
             dad_conflict: core::sync::atomic::AtomicBool::new(false),
-            slaac: crate::kernel::sync::Mutex::new(super::slaac::SlaacState::new()),
-            pmtu_cache_v6: crate::kernel::sync::Mutex::new(
-                crate::network::internet::pmtu::PmtuCache::new(),
-            ),
+            slaac: Mutex::new(super::slaac::SlaacState::new()),
+            pmtu_cache_v6: Mutex::new(crate::network::internet::pmtu::PmtuCache::new()),
             link_mtu_v6: core::sync::atomic::AtomicU64::new(device_mtu),
             // IPv6 fields
             // Phase 4 fields
-            fragment_cache: crate::kernel::sync::Mutex::new(FragmentCache::new()),
-            routing_table: crate::kernel::sync::Mutex::new(RoutingTable::new()),
-            igmp_state: crate::kernel::sync::Mutex::new(IgmpState::new()),
-            mld_state: crate::kernel::sync::Mutex::new(MldState::new()),
-            raw_sockets: crate::kernel::sync::Mutex::new(BTreeMap::new()),
+            fragment_cache: Mutex::new(FragmentCache::new()),
+            routing_table: Mutex::new(RoutingTable::new()),
+            igmp_state: Mutex::new(IgmpState::new()),
+            mld_state: Mutex::new(MldState::new()),
+            raw_sockets: Mutex::new(BTreeMap::new()),
             next_raw_socket_id: core::sync::atomic::AtomicU64::new(1),
-            nat_table: crate::kernel::sync::Mutex::new(NatTable::new()),
-            ipv6_fragment_cache: crate::kernel::sync::Mutex::new(Ipv6FragmentCache::new()),
-            ntp_client: crate::kernel::sync::Mutex::new(NtpClient::new(
+            nat_table: Mutex::new(NatTable::new()),
+            ipv6_fragment_cache: Mutex::new(Ipv6FragmentCache::new()),
+            ntp_client: Mutex::new(NtpClient::new(
                 "pool.ntp.org",
                 crate::network::dhcp::TICKS_PER_SECOND,
             )),
             last_ntp_poll: core::sync::atomic::AtomicU64::new(0),
-            mdns_responder: crate::kernel::sync::Mutex::new(MdnsResponder::new("adastra")),
-            ppp_state: crate::kernel::sync::Mutex::new(PppState::new()),
-            pppoe: crate::kernel::sync::Mutex::new(crate::network::pppoe::PppoeSession::new()),
+            mdns_responder: Mutex::new(MdnsResponder::new("adastra")),
+            ppp_state: Mutex::new(PppState::new()),
+            pppoe: Mutex::new(crate::network::pppoe::PppoeSession::new()),
             pppoe_enabled: core::sync::atomic::AtomicBool::new(false),
-            filter_table: crate::kernel::sync::Mutex::new(
-                crate::network::filter::PacketFilter::new(),
-            ),
+            filter_table: Mutex::new(crate::network::filter::PacketFilter::new()),
         });
 
         let ptr = Box::into_raw(stack);
