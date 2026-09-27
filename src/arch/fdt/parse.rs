@@ -68,6 +68,9 @@ const COMPAT_FIXED_FACTOR_CLOCK: &str = "fixed-factor-clock";
 /// `base` must point to a valid FDT blob of at least `offset + 4` bytes.
 /// The read is unaligned — FDT fields may be at any offset.
 unsafe fn read_u32_be(base: *const u8, offset: usize) -> u32 {
+    // SAFETY: the caller's contract says `base` points to a valid blob with at
+    // least `offset + 4` bytes, and the unaligned copy is what the FDT's
+    // arbitrary field offsets need.
     let raw = unsafe { read_unaligned((base.add(offset)) as *const u32) };
     u32::from_be(raw)
 }
@@ -89,10 +92,16 @@ unsafe fn read_str(
         return None;
     }
 
+    // SAFETY: the check above keeps `offset` inside the strings block the
+    // caller vouched for.
     let ptr = unsafe { strings_base.add(offset) };
     let remaining = strings_size - offset;
+    // SAFETY: `i` is below `remaining`, so this walks only the block's own
+    // bytes until it finds the terminator.
     let len = (0..remaining).find(|&i| unsafe { *ptr.add(i) } == 0)?;
 
+    // SAFETY: `len` was found inside that same block, so the slice covers bytes
+    // the block owns.
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     core::str::from_utf8(slice).ok()
 }
@@ -298,9 +307,9 @@ impl StructWalk {
         let value = if len == 0 || value_start.wrapping_add(len) > self.blob.struct_end {
             None
         } else {
-            // SAFETY: the check above holds the whole property inside the
-            // structure block, so these are bytes of the blob.
             Some(Value {
+                // SAFETY: the check above holds the whole property inside the
+                // structure block, so these are bytes of the blob.
                 bytes: unsafe { core::slice::from_raw_parts(value_start, len) },
             })
         };

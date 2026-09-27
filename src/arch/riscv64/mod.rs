@@ -39,6 +39,8 @@ impl Arch for RiscV64 {
     }
 
     fn halt() {
+        // SAFETY: `wfi` parks this hart until an interrupt and touches no
+        // memory; supervisor mode may execute it unconditionally.
         unsafe {
             asm!("wfi", options(nomem, nostack, preserves_flags));
         }
@@ -59,6 +61,8 @@ pub mod interrupts {
 
     pub fn are_enabled() -> bool {
         let sstatus: u64;
+        // SAFETY: reading sstatus is a supervisor-CSR read with no memory side
+        // effects.
         unsafe {
             asm!("csrr {sstatus}, sstatus", sstatus = out(reg) sstatus, options(nomem, nostack, preserves_flags));
         }
@@ -67,6 +71,9 @@ pub mod interrupts {
     }
 
     pub fn enable() {
+        // SAFETY: setting SIE is a supervisor operation on this hart's own
+        // status register; the caller is responsible for being ready to take an
+        // interrupt.
         unsafe {
             // SIE (Supervisor Interrupt Enable) is bit 1 of sstatus.
             // Bit 0 is UIE — setting/clearing it would not gate interrupts.
@@ -75,6 +82,8 @@ pub mod interrupts {
     }
 
     pub fn disable() {
+        // SAFETY: as `enable` — clearing SIE, which the caller pairs with a
+        // later enable.
         unsafe {
             // SIE is bit 1 of sstatus (see `enable` above).
             asm!("csrci sstatus, 2", options(nomem, nostack, preserves_flags));
@@ -156,10 +165,14 @@ pub mod interrupt_controller {
     }
 
     fn plic_read(offset: usize) -> u32 {
+        // SAFETY: `offset` is a PLIC register address — the helpers above add
+        // the platform's base to a register's own offset — and the PLIC sits in
+        // the mapped device window.
         unsafe { read_volatile(plic_register(offset)) }
     }
 
     fn plic_write(offset: usize, value: u32) {
+        // SAFETY: as `plic_read` — the same register block, on the write side.
         unsafe {
             write_volatile(plic_register(offset), value);
         }
@@ -309,10 +322,13 @@ pub mod serial {
         }
 
         fn read_u8(&self, offset: usize) -> u8 {
+            // SAFETY: the NS16550A's register at `offset` from the base the
+            // platform reported, inside the mapped device window.
             unsafe { read_volatile(self.register(offset)) }
         }
 
         fn write_u8(&self, offset: usize, value: u8) {
+            // SAFETY: as `read_u8` — the same register, on the write side.
             unsafe {
                 write_volatile(self.register(offset), value);
             }
@@ -405,6 +421,8 @@ pub mod serial {
     /// Used as a fallback when the NS16550A UART is not responding.
     /// a7 = 1 (sbi_putchar), a0 = character.
     fn sbi_putchar(c: u8) {
+        // SAFETY: an SBI call with a documented extension and function ID,
+        // passing one character in a0; no memory operand is involved.
         unsafe {
             core::arch::asm!(
                 "ecall",
@@ -488,6 +506,8 @@ pub mod timer {
         // sie bit 5 (STIE) — an immediate of 5 sets bits 0 and 2 instead,
         // silently leaving the timer masked.  Load the bitmask into a
         // register and use the register form `csrs`.
+        // SAFETY: setting the supervisor timer-interrupt bit of this hart's own
+        // `sie`; the value is the register-form mask the comment above explains.
         unsafe {
             asm!(
                 "csrs sie, {t}",
@@ -518,6 +538,8 @@ pub mod timer {
 
     fn timer_interrupt_pending() -> bool {
         let sip: u64;
+        // SAFETY: a supervisor-CSR read of the pending-interrupt register; no
+        // memory side effects.
         unsafe {
             asm!("csrr {sip}, sip", sip = out(reg) sip, options(nomem, nostack, preserves_flags));
         }
@@ -534,6 +556,8 @@ pub mod timer {
 
     fn read_time() -> u64 {
         let time: u64;
+        // SAFETY: `time` is the platform's read-only counter, readable from
+        // supervisor mode at any time.
         unsafe {
             asm!("csrr {time}, time", time = out(reg) time, options(nomem, nostack, preserves_flags));
         }
@@ -567,6 +591,8 @@ pub mod timer {
     }
 
     fn sbi_set_timer(stime_value: u64) {
+        // SAFETY: as `sbi_putchar` — a documented SBI call, here with the
+        // absolute time the next tick is due in a0.
         unsafe {
             asm!(
                 "ecall",

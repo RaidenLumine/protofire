@@ -65,6 +65,9 @@ impl SerialPort {
     }
 
     pub fn init(&mut self) {
+        // SAFETY: the six ports are the 16550's register offsets from the base
+        // this driver was constructed with, and the sequence below is the
+        // standard initialisation of those registers.
         unsafe {
             self.interrupt_enable.write(0x00);
             self.line_control.write(0x80);
@@ -79,10 +82,13 @@ impl SerialPort {
     }
 
     fn can_transmit(&mut self) -> bool {
+        // SAFETY: the line-status register of the same UART, read for the
+        // transmit-ready bit.
         unsafe { self.line_status.read() & 0x20 != 0 }
     }
 
     fn can_receive(&mut self) -> bool {
+        // SAFETY: as above — the data-ready bit of the same register.
         unsafe { self.line_status.read() & 0x01 != 0 }
     }
 
@@ -103,6 +109,8 @@ impl SerialPort {
             core::hint::spin_loop();
         }
 
+        // SAFETY: the data register of the UART whose transmit-ready bit was
+        // just polled.
         unsafe {
             self.data.write(byte);
         }
@@ -117,6 +125,8 @@ impl SerialPort {
             return None;
         }
 
+        // SAFETY: the same register, read because the data-ready bit said a
+        // byte had arrived.
         Some(unsafe { self.data.read() })
     }
 }

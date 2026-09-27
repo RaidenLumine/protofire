@@ -78,6 +78,8 @@ pub fn init() {
         | (((tss_base >> 24) & 0xFF) << 56);
     let tss_high = tss_base >> 32;
 
+    // SAFETY: the descriptor table is this module's own static and slots 5 and
+    // 6 are its TSS entry; the descriptor words were built just above.
     unsafe {
         (*GDT.get())[5] = tss_low;
         (*GDT.get())[6] = tss_high;
@@ -88,6 +90,9 @@ pub fn init() {
         base: GDT.get() as u64,
     };
 
+    // SAFETY: `gdtr` points at that same static and the selectors name entries
+    // inside it, so `lgdt` and the segment reload install the table this
+    // function just built; the CPU's limit field is the table's own size.
     unsafe {
         asm!("lgdt [{}]", in(reg) &gdtr, options(readonly, nostack, preserves_flags));
         asm!(
@@ -155,6 +160,8 @@ pub fn init_ap(tss: *mut TaskStateSegment) {
         | (((tss_base >> 24) & 0xFF) << 56);
     let tss_high = tss_base >> 32;
 
+    // SAFETY: as the BSP path above — the same static, the same two TSS slots,
+    // rewritten for this CPU's own descriptor.
     unsafe {
         (*GDT.get())[5] = tss_low;
         (*GDT.get())[6] = tss_high;
@@ -165,6 +172,7 @@ pub fn init_ap(tss: *mut TaskStateSegment) {
         base: GDT.get() as u64,
     };
 
+    // SAFETY: as the BSP path above — loading this CPU's own copy of the table.
     unsafe {
         asm!("lgdt [{}]", in(reg) &gdtr, options(readonly, nostack, preserves_flags));
         asm!(
@@ -202,6 +210,9 @@ pub fn set_kernel_stack_top(stack_top: usize) {
             TSS.get()
         }
     };
+    // SAFETY: `tss_ptr` is either this CPU's per-CPU TSS or the BSP's static,
+    // and `stack_top` is the stack the caller is switching to; the privilege
+    // stack table slot is the TSS field for exactly that.
     unsafe {
         (*tss_ptr).privilege_stack_table[0] = stack_top as u64;
     }

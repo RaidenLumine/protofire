@@ -40,12 +40,17 @@ pub const VIRTIO_QUEUE_VECTOR: u8 = 47;
 pub(crate) static VIRTIO_IRQ_FIRED: AtomicBool = AtomicBool::new(false);
 
 pub fn enable() {
+    // SAFETY: setting the interrupt flag is a privileged, memory-free
+    // instruction; the caller is responsible for being in a state where taking
+    // an interrupt is correct.
     unsafe {
         asm!("sti", options(nomem, nostack, preserves_flags));
     }
 }
 
 pub fn disable() {
+    // SAFETY: as `enable` — clearing the flag, which the caller pairs with a
+    // later enable.
     unsafe {
         asm!("cli", options(nomem, nostack, preserves_flags));
     }
@@ -55,6 +60,9 @@ pub fn disable() {
 /// This ensures a pending interrupt is serviced immediately rather than
 /// just waking the CPU from HLT with IF still clear.
 pub fn enable_and_halt() {
+    // SAFETY: a single instruction window that sets the interrupt flag and
+    // halts, so a pending interrupt is taken rather than merely waking the CPU;
+    // neither instruction touches memory.
     unsafe {
         asm!("sti; hlt", options(nomem, nostack, preserves_flags));
     }
@@ -62,6 +70,9 @@ pub fn enable_and_halt() {
 
 pub fn are_enabled() -> bool {
     let rflags: u64;
+    // SAFETY: `pushfq`/`pop` move the flags register through the stack without
+    // reading or writing any memory the kernel cares about, and `nostack` is
+    // not claimed because the sequence does use the stack it is already on.
     unsafe {
         asm!("pushfq", "pop {}", out(reg) rflags, options(nomem, preserves_flags));
     }
@@ -98,5 +109,7 @@ pub(crate) fn handle_irq(vector: u8, _allow_preemption: bool) {
 
 fn read_keyboard_scancode() -> u8 {
     let mut data = Port::<u8>::new(0x60);
+    // SAFETY: port 0x60 is the PS/2 data port on this machine, read inside the
+    // keyboard handler that the PIC vector dispatched.
     unsafe { data.read() }
 }
