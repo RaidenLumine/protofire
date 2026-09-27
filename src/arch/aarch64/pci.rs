@@ -95,6 +95,10 @@ unsafe fn ecam_read_u32(
     offset: u16,
 ) -> u32 {
     let addr = region.address(bus, device, function, offset);
+    // SAFETY: `region` describes a live ECAM window — one the probe mapped
+    // before enumerating — and `addr` composes bus/device/function/offset into
+    // it; every call site passes a dword-aligned offset, so this reads a dword
+    // of a function's own 4 KiB config space.
     unsafe { ptr::read_volatile(addr as *const u32) }
 }
 
@@ -106,6 +110,8 @@ unsafe fn ecam_read_u16(
     offset: u16,
 ) -> u16 {
     let dword_aligned = offset & 0xFFFC;
+    // SAFETY: as `ecam_read_u32` — a 16-bit config-space read has to fetch the
+    // dword containing it.
     let dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     let shift = (offset & 0x02) * 8;
     ((dword >> shift) & 0xFFFF) as u16
@@ -113,6 +119,8 @@ unsafe fn ecam_read_u16(
 
 unsafe fn ecam_read_u8(region: &EcamRegion, bus: u8, device: u8, function: u8, offset: u16) -> u8 {
     let dword_aligned = offset & 0xFFFC;
+    // SAFETY: as `ecam_read_u32` — a byte read has to fetch the dword
+    // containing it.
     let dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     let shift = (offset & 0x03) * 8;
     ((dword >> shift) & 0xFF) as u8
@@ -127,6 +135,8 @@ unsafe fn ecam_write_u32(
     value: u32,
 ) {
     let addr = region.address(bus, device, function, offset);
+    // SAFETY: as `ecam_read_u32`, on the write side, with the same dword
+    // alignment requirement met by every call site.
     unsafe { ptr::write_volatile(addr as *mut u32, value) };
 }
 
@@ -139,10 +149,13 @@ unsafe fn ecam_write_u16(
     value: u16,
 ) {
     let dword_aligned = offset & 0xFFFC;
+    // SAFETY: as `ecam_read_u32` — the dword containing the 16-bit field, read
+    // so the neighbouring field can be written back untouched.
     let mut dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     let shift = (offset & 0x02) * 8;
     dword &= !(0xFFFF << shift);
     dword |= (value as u32) << shift;
+    // SAFETY: as `ecam_write_u32` — writing that same dword back.
     unsafe { ecam_write_u32(region, bus, device, function, dword_aligned, dword) };
 }
 
@@ -158,14 +171,18 @@ unsafe fn ecam_write_u8(
     value: u8,
 ) {
     let dword_aligned = offset & 0xFFFC;
+    // SAFETY: as `ecam_read_u32` — the dword containing the byte.
     let mut dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     let shift = (offset & 0x03) * 8;
     dword &= !(0xFF << shift);
     dword |= (value as u32) << shift;
+    // SAFETY: as `ecam_write_u32` — writing that same dword back.
     unsafe { ecam_write_u32(region, bus, device, function, dword_aligned, dword) };
 }
 
 fn pci_device_exists(region: &EcamRegion, bus: u8, device: u8, function: u8) -> bool {
+    // SAFETY: the vendor ID of a candidate function; the address is the first
+    // dword of its config space inside the region's mapped window.
     let vendor = unsafe { ecam_read_u16(region, bus, device, function, VENDOR_ID) };
     vendor != VENDOR_ID_NONE
 }
@@ -186,9 +203,13 @@ const PCI_COMMAND_BUS_MASTER: u16 = 1 << 2;
 /// suppressed.  This is required before reading VirtIO registers through
 /// a memory BAR on the legacy transitional interface.
 pub fn pci_enable_memory_and_bus_master(region: &EcamRegion, bus: u8, device: u8, function: u8) {
+    // SAFETY: the command register of the function being brought up, inside the
+    // window this region describes.
     let command = unsafe { ecam_read_u16(region, bus, device, function, COMMAND) };
     let new_command = command | PCI_COMMAND_MEMORY | PCI_COMMAND_BUS_MASTER;
     if new_command != command {
+        // SAFETY: as above — the write that turns on memory space and bus
+        // mastering, leaving the register's other bits as they were found.
         unsafe {
             ecam_write_u16(region, bus, device, function, COMMAND, new_command);
         }
@@ -209,6 +230,8 @@ pub fn pci_program_bar_64(
 ) {
     let lo = (phys_addr & 0xFFFF_FFF0) as u32;
     let hi = ((phys_addr >> 32) & 0xFFFF_FFFF) as u32;
+    // SAFETY: both halves of the 64-bit BAR belong to the function named by
+    // bus/device/function, and both offsets lie inside its config space.
     unsafe {
         ecam_write_u32(region, bus, device, function, bar_offset, lo);
         ecam_write_u32(region, bus, device, function, bar_offset + 4, hi);
@@ -224,7 +247,10 @@ pub fn pci_read_bar_64(
     function: u8,
     bar_offset: u16,
 ) -> u64 {
+    // SAFETY: the low dword of the BAR, read from the function's own config
+    // space inside the region's window.
     let lo = unsafe { ecam_read_u32(region, bus, device, function, bar_offset) } as u64;
+    // SAFETY: as above — the high dword of the same 64-bit BAR.
     let hi = unsafe { ecam_read_u32(region, bus, device, function, bar_offset + 4) } as u64;
     (hi << 32) | (lo & 0xFFFF_FFF0)
 }
@@ -252,20 +278,26 @@ pub fn pci_capability_find(
     function: u8,
     cap_id: u8,
 ) -> Option<u8> {
+    // SAFETY: the status register of the function being walked, inside the
+    // region's mapped window.
     let status = unsafe { ecam_read_u16(region, bus, device, function, STATUS) };
     if status & 0x0010 == 0 {
         // Capabilities list bit not set.
         return None;
     }
 
+    // SAFETY: the capabilities-pointer byte of the same function's header.
     let mut ptr: u8 = unsafe { ecam_read_u8(region, bus, device, function, CAP_PTR) };
     // Capability pointers must be dword-aligned in the lower 256 bytes.
     let mut safety = 0;
     while ptr >= 0x40 && safety < 48 {
+        // SAFETY: `ptr` is a byte the walk keeps above 0x40, and every byte
+        // offset fits in the function's 4 KiB config space.
         let this_id = unsafe { ecam_read_u8(region, bus, device, function, ptr as u16) };
         if this_id == cap_id {
             return Some(ptr);
         }
+        // SAFETY: as above — the next-capability byte of the same header.
         let next = unsafe { ecam_read_u8(region, bus, device, function, ptr as u16 + 1) };
         if next < 0x40 {
             break;
@@ -289,13 +321,19 @@ pub unsafe fn pci_capability_msi(
     offset: u8,
 ) -> MsiCapability {
     let off = offset as u16;
+    // SAFETY: the caller's contract says `offset` names a valid MSI capability,
+    // which the walk only ever returns for this function; the message-control
+    // half of it is therefore inside that function's config space.
     let message_control = unsafe { ecam_read_u16(region, bus, device, function, off + 2) };
     let is_64bit = (message_control & 0x0080) != 0;
     let per_vector_mask = (message_control & 0x0100) != 0;
 
+    // SAFETY: as above — the message-address dword of the same capability.
     let message_address = unsafe { ecam_read_u32(region, bus, device, function, off + 4) };
     let (message_upper_address, data_offset) = if is_64bit {
         (
+            // SAFETY: as above — the upper address dword, present only because
+            // the capability reports the 64-bit layout.
             Some(unsafe { ecam_read_u32(region, bus, device, function, off + 8) }),
             off + 12,
         )
@@ -303,13 +341,18 @@ pub unsafe fn pci_capability_msi(
         (None, off + 8)
     };
 
+    // SAFETY: as above — the message-data half, at the offset the layout puts
+    // it for the width this capability reports.
     let message_data = unsafe { ecam_read_u16(region, bus, device, function, data_offset) };
 
     let (mask_bits, pending_bits) = if per_vector_mask {
         let mask_off = data_offset + 2;
         let pend_off = data_offset + 6;
         (
+            // SAFETY: as above — the per-vector mask dword, present only when
+            // the capability reports per-vector masking.
             Some(unsafe { ecam_read_u32(region, bus, device, function, mask_off) }),
+            // SAFETY: as above — the pending-bits dword that follows it.
             Some(unsafe { ecam_read_u32(region, bus, device, function, pend_off) }),
         )
     } else {
@@ -340,8 +383,13 @@ pub unsafe fn pci_capability_msix(
     offset: u8,
 ) -> MsixCapability {
     let off = offset as u16;
+    // SAFETY: the caller's contract says `offset` names a valid MSI-X
+    // capability of this function, so the message-control half is inside its
+    // config space.
     let message_control = unsafe { ecam_read_u16(region, bus, device, function, off + 2) };
+    // SAFETY: as above — the table's BIR and offset dword.
     let table_bir_and_offset = unsafe { ecam_read_u32(region, bus, device, function, off + 4) };
+    // SAFETY: as above — the PBA's BIR and offset dword.
     let pba_bir_and_offset = unsafe { ecam_read_u32(region, bus, device, function, off + 8) };
 
     MsixCapability {
@@ -365,10 +413,18 @@ pub unsafe fn pci_capability_pcie(
     offset: u8,
 ) -> PcieCapability {
     let off = offset as u16;
+    // SAFETY: the caller's contract says `offset` names a valid PCIe
+    // capability of this function, so the capability-register half is inside
+    // its config space.
     let pcie_caps = unsafe { ecam_read_u16(region, bus, device, function, off + 2) };
+    // SAFETY: as above — the device-capabilities dword.
     let device_caps = unsafe { ecam_read_u32(region, bus, device, function, off + 4) };
+    // SAFETY: as above — the device-control half.
     let device_control = unsafe { ecam_read_u16(region, bus, device, function, off + 8) };
+    // SAFETY: as above — the link-capabilities dword.
     let link_caps = unsafe { ecam_read_u32(region, bus, device, function, off + 12) };
+    // SAFETY: as above — the link-status half that closes the layout this
+    // function reads.
     let link_status = unsafe { ecam_read_u16(region, bus, device, function, off + 18) };
 
     PcieCapability {
@@ -393,13 +449,20 @@ pub fn probe_bar_size(
     function: u8,
     bar_offset: u16,
 ) -> u64 {
+    // SAFETY: the BAR the caller asked about, read from that function's own
+    // config space inside the region's mapped window.
     let bar_raw = unsafe { ecam_read_u32(region, bus, device, function, bar_offset) };
     let is_mmio = (bar_raw & 0x01) == 0;
 
+    // SAFETY: the deliberate all-ones write the size probe is defined in terms
+    // of, to the same register just read.
     unsafe {
         ecam_write_u32(region, bus, device, function, bar_offset, 0xFFFF_FFFF);
     }
+    // SAFETY: as above — reading back the size mask the device answers with.
     let size_mask = unsafe { ecam_read_u32(region, bus, device, function, bar_offset) };
+    // SAFETY: restoring the value read at entry, so the probe leaves the device
+    // as it found it.
     unsafe {
         ecam_write_u32(region, bus, device, function, bar_offset, bar_raw);
     }
@@ -546,20 +609,34 @@ fn read_device_info(
     device: u8,
     function: u8,
 ) -> Option<PciDeviceInfo> {
+    // SAFETY: the vendor ID that decides whether this function exists; the
+    // address is the first dword of its config space inside the ECAM window.
     let vendor_id = unsafe { ecam_read_u16(region, bus, device, function, VENDOR_ID) };
     if vendor_id == VENDOR_ID_NONE {
         return None;
     }
 
+    // SAFETY: the device ID of the function just identified, in the standard
+    // header it shares with the vendor ID.
     let device_id = unsafe { ecam_read_u16(region, bus, device, function, DEVICE_ID) };
+    // SAFETY: the class-code byte of that same header.
     let class_hi = unsafe { ecam_read_u8(region, bus, device, function, CLASS) };
+    // SAFETY: the subclass byte, the next byte of the class code.
     let subclass = unsafe { ecam_read_u8(region, bus, device, function, CLASS - 1) };
+    // SAFETY: the programming-interface byte that completes the class code.
     let prog_if = unsafe { ecam_read_u8(region, bus, device, function, CLASS - 2) };
+    // SAFETY: the header-type byte, which says how the rest of the header is
+    // laid out.
     let header_type = unsafe { ecam_read_u8(region, bus, device, function, HEADER_TYPE) };
+    // SAFETY: the revision byte of the same header.
     let revision_id = unsafe { ecam_read_u8(region, bus, device, function, REVISION_ID) };
+    // SAFETY: the interrupt-line byte of the same header.
     let interrupt_line = unsafe { ecam_read_u8(region, bus, device, function, INTERRUPT_LINE) };
+    // SAFETY: the interrupt-pin byte that follows it.
     let interrupt_pin = unsafe { ecam_read_u8(region, bus, device, function, INTERRUPT_LINE + 1) };
 
+    // SAFETY: the capabilities-pointer byte of the same header, read even
+    // though the status bit that gates the walk lives in another register.
     let cap_ptr_raw = unsafe { ecam_read_u8(region, bus, device, function, CAP_PTR) };
     let capability_ptr = (cap_ptr_raw >= 0x40).then_some(cap_ptr_raw);
 
@@ -576,6 +653,8 @@ fn read_device_info(
     let mut bar_index = 0;
     while bar_index < 6 {
         let offset = bar_offsets[bar_index];
+        // SAFETY: the low dword of BAR `bar_index` of the function being read,
+        // inside its own config space.
         let bar_lo = unsafe { ecam_read_u32(region, bus, device, function, offset) };
         if bar_lo == 0 {
             bar_index += 1;
@@ -593,6 +672,8 @@ fn read_device_info(
         };
 
         if is_64bit && bar_index + 1 < 6 {
+            // SAFETY: as above — the high dword of the same 64-bit BAR, which
+            // the index bound keeps inside the six-BAR table.
             let bar_hi =
                 unsafe { ecam_read_u32(region, bus, device, function, bar_offsets[bar_index + 1]) };
             base_address |= (bar_hi as u64) << 32;
@@ -643,6 +724,8 @@ pub fn pci_enumerate_buses(region: &EcamRegion) -> Vec<PciDeviceInfo> {
             }
             bus_has_devices = true;
 
+            // SAFETY: the header-type byte of a function the vendor-ID probe
+            // just found, inside the same config space that probe read.
             let header_type = unsafe { ecam_read_u8(region, bus, device, 0, HEADER_TYPE) };
             let is_multifunction = (header_type & 0x80) != 0;
             let max_function: u8 = if is_multifunction { 8 } else { 1 };
@@ -722,6 +805,8 @@ pub fn probe_and_enumerate() -> Option<EcamProbe> {
     const ECAM_VA: usize = 0x2_0000_0000; // 8 GiB, L1 index 8 (unused)
     const ECAM_MAP_SIZE: usize = 2 * 1024 * 1024; // 2 MiB covers bus 0
 
+    // SAFETY: the FDT named this range as the platform's ECAM region, a live
+    // MMIO range, and `ECAM_VA` is a fixed address reserved for device windows.
     unsafe { map_device_mmio_at(ECAM_VA, ecam_pa, ECAM_MAP_SIZE)? };
 
     crate::println!(
