@@ -45,6 +45,8 @@ const RUST_PAYLOAD_UNMAPPED_ADDRESS: usize = 0xfeed_beef_0000;
 macro_rules! rip_relative_address {
     ($symbol:path) => {{
         let address: usize;
+        // SAFETY: `lea` with a RIP-relative reference to a symbol in this same
+        // payload; the instruction computes an address and touches no memory.
         unsafe {
             asm!(
                 "lea {address}, [rip + {symbol}]",
@@ -121,6 +123,7 @@ adastra_demo_program_rust_entry:
 );
 
 pub fn payload_bytes() -> &'static [u8] {
+    // SAFETY: as the other payload sections — the linker's markers bound it.
     unsafe {
         let start = core::ptr::addr_of!(ADASTRA_DEMO_PROGRAM_RUST_SECTION_START);
         let end = core::ptr::addr_of!(ADASTRA_DEMO_PROGRAM_RUST_SECTION_END);
@@ -147,6 +150,8 @@ pub fn payload_entry_offset() -> usize {
 // builder facades still link.
 
 extern "C" fn rust_payload_recover_page_fault(frame: *mut X86_64UserExceptionFrame) -> ! {
+    // SAFETY: `frame` is the exception frame the kernel built for this vector and
+    // the handler is registered for it, so the pointer is live for this call.
     unsafe {
         let frame_ref = &mut *frame;
         frame_ref.instruction_pointer += RUST_PAYLOAD_PAGE_FAULT_INSTRUCTION_SKIP;
@@ -160,6 +165,7 @@ extern "C" fn rust_payload_recover_page_fault(frame: *mut X86_64UserExceptionFra
 }
 
 extern "C" fn rust_payload_recover_invalid_opcode(frame: *mut X86_64UserExceptionFrame) -> ! {
+    // SAFETY: as the page-fault handler above — the frame of this vector.
     unsafe {
         let frame_ref = &mut *frame;
         frame_ref.instruction_pointer += RUST_PAYLOAD_INVALID_OPCODE_INSTRUCTION_SKIP;
@@ -168,6 +174,7 @@ extern "C" fn rust_payload_recover_invalid_opcode(frame: *mut X86_64UserExceptio
 }
 
 extern "C" fn rust_payload_recover_general_protection(frame: *mut X86_64UserExceptionFrame) -> ! {
+    // SAFETY: as above — the frame of this vector.
     unsafe {
         let frame_ref = &mut *frame;
         frame_ref.instruction_pointer += RUST_PAYLOAD_GENERAL_PROTECTION_INSTRUCTION_SKIP;
@@ -176,6 +183,8 @@ extern "C" fn rust_payload_recover_general_protection(frame: *mut X86_64UserExce
 }
 
 unsafe fn trigger_page_fault_once() {
+    // SAFETY: a deliberate fault — the load is from an address this payload knows
+    // is unmapped, and the recovery handler skips exactly its bytes.
     unsafe {
         // A single 3-byte load from an unmapped address.  The recovery handler
         // skips exactly these three bytes to resume after the faulting access.
@@ -188,6 +197,7 @@ unsafe fn trigger_page_fault_once() {
 }
 
 unsafe fn trigger_invalid_opcode_once() {
+    // SAFETY: as above — a deliberate `ud2`, resumed by its handler.
     unsafe {
         // `ud2` is exactly two bytes; the recovery handler skips them.
         core::arch::asm!("ud2", options(nostack));
@@ -195,6 +205,7 @@ unsafe fn trigger_invalid_opcode_once() {
 }
 
 unsafe fn trigger_general_protection_once() {
+    // SAFETY: as above — a deliberate privileged instruction in ring 3.
     unsafe {
         // `hlt` is a 1-byte privileged instruction that raises #GP in ring 3.
         core::arch::asm!("hlt", options(nostack));
@@ -233,6 +244,8 @@ extern "C" fn adastra_demo_program_rust_main_from_stack(_initial_stack: usize) -
         rip_relative_address!(RUST_PAYLOAD_TRIGGER_PAGE_FAULT_MESSAGE),
         RUST_PAYLOAD_TRIGGER_PAGE_FAULT_MESSAGE.len(),
     );
+    // SAFETY: the deliberate fault below is the one this message describes; the
+    // handler registered for that vector resumes after it.
     unsafe {
         trigger_page_fault_once();
     }
@@ -245,6 +258,7 @@ extern "C" fn adastra_demo_program_rust_main_from_stack(_initial_stack: usize) -
         rip_relative_address!(RUST_PAYLOAD_TRIGGER_INVALID_OPCODE_MESSAGE),
         RUST_PAYLOAD_TRIGGER_INVALID_OPCODE_MESSAGE.len(),
     );
+    // SAFETY: as above — the invalid-opcode probe and its message.
     unsafe {
         trigger_invalid_opcode_once();
     }
@@ -257,6 +271,7 @@ extern "C" fn adastra_demo_program_rust_main_from_stack(_initial_stack: usize) -
         rip_relative_address!(RUST_PAYLOAD_TRIGGER_GENERAL_PROTECTION_MESSAGE),
         RUST_PAYLOAD_TRIGGER_GENERAL_PROTECTION_MESSAGE.len(),
     );
+    // SAFETY: as above — the general-protection probe and its message.
     unsafe {
         trigger_general_protection_once();
     }

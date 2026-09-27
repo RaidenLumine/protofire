@@ -15,6 +15,9 @@ unsafe extern "C" {
 }
 
 pub fn payload_bytes() -> &'static [u8] {
+    // SAFETY: the two symbols are the linker's own markers around this payload's
+    // section, so the range between them is the whole section and it lives as long
+    // as the image does.
     unsafe {
         let start = core::ptr::addr_of!(protofire_demo_program_aarch64_payload_start);
         let end = core::ptr::addr_of!(protofire_demo_program_aarch64_payload_end);

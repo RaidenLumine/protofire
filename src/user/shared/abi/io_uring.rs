@@ -151,21 +151,11 @@ mod tests {
 
     #[test]
     fn io_uring_sqe_opcode_field_offset() {
-        // Verify that the opcode is at offset 0 (important for fast dispatch).
-        let sqe = IoUringSqe {
-            opcode: 42,
-            flags: 0,
-            ioprio: 0,
-            fd: 0,
-            addr: [0u8; 8],
-            len: 0,
-            poll_events: 0,
-            timeout_ticks: 0,
-            user_data: 0,
-            reserved: 0,
-        };
-        let bytes: &[u8; IO_URING_SQE_SIZE] =
-            unsafe { &*(&sqe as *const IoUringSqe as *const [u8; IO_URING_SQE_SIZE]) };
-        assert_eq!(bytes[0], 42, "opcode must be at byte offset 0");
+        // The opcode has to be the first byte for fast dispatch.  Asking the
+        // compiler for the offset tests the layout directly; reading a
+        // struct's bytes would read the padding a struct literal leaves
+        // uninitialised.
+        assert_eq!(core::mem::offset_of!(IoUringSqe, opcode), 0);
+        assert_eq!(core::mem::size_of::<IoUringSqe>(), IO_URING_SQE_SIZE);
     }
 }

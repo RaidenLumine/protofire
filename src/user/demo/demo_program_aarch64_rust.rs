@@ -57,6 +57,8 @@ macro_rules! adr_relative_address {
         // only thing keeping the assembly legal (which the lint cannot see
         // from inside one expansion).
         #[allow(unused_unsafe)]
+        // SAFETY: `adr` against a symbol in this same payload, computed at assembly
+        // time; the instruction touches no memory.
         unsafe {
             core::arch::asm!(
                 "adr {address}, {symbol}",
@@ -233,6 +235,8 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
         adr_relative_address!(RUST_PAYLOAD_TRIGGER_LOCAL_FAULT_MESSAGE),
         RUST_PAYLOAD_TRIGGER_LOCAL_FAULT_MESSAGE.len(),
     );
+    // SAFETY: a deliberate fault: the payload asks the kernel to deliver the write
+    // fault that the recovery handler above resumes from.
     unsafe {
         trigger_local_code_write_fault_once();
     }
@@ -240,6 +244,7 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
         adr_relative_address!(RUST_PAYLOAD_RESUMED_LOCAL_FAULT_MESSAGE),
         RUST_PAYLOAD_RESUMED_LOCAL_FAULT_MESSAGE.len(),
     );
+    // SAFETY: as above — a deliberate stack-execute fault, resumed by its handler.
     unsafe {
         trigger_local_stack_exec_fault_once();
     }
@@ -251,6 +256,7 @@ extern "C" fn protofire_demo_program_aarch64_rust_entry(
         adr_relative_address!(RUST_PAYLOAD_TRIGGER_NESTED_LOCAL_FAULT_MESSAGE),
         RUST_PAYLOAD_TRIGGER_NESTED_LOCAL_FAULT_MESSAGE.len(),
     );
+    // SAFETY: as above — a deliberate fault from the nested handler.
     unsafe {
         trigger_nested_local_code_write_fault_once();
     }
@@ -454,6 +460,8 @@ extern "C" fn protofire_demo_program_aarch64_rust_exception_handler(
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 unsafe fn trigger_local_code_write_fault_once() {
+    // SAFETY: a deliberate write to the payload's own text, which the kernel
+    // delivers as a fault for the registered handler to resume.
     unsafe {
         let probe = adr_relative_address!(RUST_PAYLOAD_CODE_WRITE_PROBE);
         core::arch::asm!(
@@ -475,6 +483,8 @@ unsafe fn trigger_local_code_write_fault_once() {
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 unsafe fn trigger_local_stack_exec_fault_once() {
+    // SAFETY: as above — a deliberate branch into the stack, which the kernel
+    // refuses and the handler resumes.
     unsafe {
         core::arch::asm!(
             "sub sp, sp, #16",
@@ -502,6 +512,7 @@ unsafe fn trigger_local_stack_exec_fault_once() {
 #[inline(never)]
 #[link_section = "protofire_demo_program_aarch64_rust"]
 unsafe fn trigger_nested_local_code_write_fault_once() {
+    // SAFETY: as above — the same probe, reached from the nested handler.
     unsafe {
         let probe = adr_relative_address!(RUST_PAYLOAD_CODE_WRITE_PROBE);
         core::arch::asm!(
@@ -527,6 +538,8 @@ fn write_prefixed_hex(prefix: usize, prefix_len: usize, value: usize) {
 }
 
 pub fn payload_bytes() -> &'static [u8] {
+    // SAFETY: the linker's markers around this payload's section bound the slice,
+    // which is live for the life of the image.
     unsafe {
         let start = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_AARCH64_RUST_SECTION_START);
         let end = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_AARCH64_RUST_SECTION_END);

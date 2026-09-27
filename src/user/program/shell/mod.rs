@@ -21,6 +21,25 @@
 
 // ── sub-modules ───────────────────────────────────────────────────────
 
+/// Copy the directory-entry header a successful `sys_read_dir` wrote at the
+/// start of `buf`.
+///
+/// The buffer is a byte vector, which promises the header no alignment, so the
+/// header is copied out rather than borrowed.  A buffer too short to hold one
+/// is a kernel contract the callers cannot break — they size their buffers for
+/// a header plus a name — so this reports the empty header rather than
+/// panicking.
+pub(crate) fn read_dir_entry(buf: &[u8]) -> crate::user::shared::abi::fs::DirectoryEntryRecord {
+    use crate::user::shared::abi::fs::DirectoryEntryRecord;
+    use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_SIZE;
+    if buf.len() < DIRECTORY_ENTRY_RECORD_SIZE {
+        return DirectoryEntryRecord::new(0, 0, 0);
+    }
+    // SAFETY: the length check above keeps the read inside `buf`, and the copy
+    // is what keeps it independent of the buffer's alignment.
+    unsafe { (buf.as_ptr() as *const DirectoryEntryRecord).read_unaligned() }
+}
+
 pub(crate) mod commands;
 pub(crate) mod control_flow;
 pub(crate) mod dispatch;

@@ -217,12 +217,14 @@ mod tests {
         let mut buf = vec![0u8; size];
 
         // Write the record into the buffer as the kernel would.
-        unsafe {
-            core::ptr::write(buf.as_mut_ptr().cast(), original);
-        }
+        // SAFETY: the buffer is exactly the record's size, and the unaligned
+        // form is what a byte vector can promise.
+        unsafe { core::ptr::write_unaligned(buf.as_mut_ptr().cast(), original) };
 
         // Read it back as wait_signal does.
-        let restored: ProcessSignalRecord = unsafe { core::ptr::read(buf.as_ptr().cast()) };
+        // SAFETY: as above — the same record, read back out of the buffer.
+        let restored: ProcessSignalRecord =
+            unsafe { core::ptr::read_unaligned(buf.as_ptr().cast()) };
         assert_eq!(restored, original);
     }
 

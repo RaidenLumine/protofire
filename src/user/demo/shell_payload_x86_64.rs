@@ -18,6 +18,7 @@ unsafe extern "C" {
 }
 
 pub fn payload_bytes() -> &'static [u8] {
+    // SAFETY: as the other payload sections — the linker's markers bound it.
     unsafe {
         let start = core::ptr::addr_of!(adastra_shell_payload_start);
         let end = core::ptr::addr_of!(adastra_shell_payload_end);

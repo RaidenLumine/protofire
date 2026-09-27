@@ -40,6 +40,9 @@ macro_rules! define_aarch64_payload_runtime {
             // instruction has no memory side effects of its own; what it asks
             // the kernel to do with the words is the kernel's to validate.
             let status: usize;
+            // SAFETY: the `svc` below is this architecture's syscall ABI — number in x8,
+            // arguments in the registers it names — and the kernel is the side that
+            // validates what they point at.
             unsafe {
             core::arch::asm!(
                 "svc #0",
@@ -73,6 +76,8 @@ macro_rules! define_aarch64_payload_runtime {
             stack_pointer: usize,
             flags: usize,
         ) -> usize {
+            // SAFETY: the arguments are forwarded unchanged to the ABI's handler-install
+            // entry, under the contract this wrapper's doc states.
             unsafe {
                 $crate::user::exception::AArch64UserException::install_handler_from_user_mode_with(
                     vector,
@@ -146,6 +151,8 @@ macro_rules! define_aarch64_payload_runtime {
         fn payload_runtime_write_hex(value: usize) {
             let mut hex_buffer =
                 core::mem::MaybeUninit::<[u8; PAYLOAD_RUNTIME_HEX_CAPACITY]>::uninit();
+            // SAFETY: the pointer comes from a fresh `MaybeUninit` of exactly this array
+            // type, and the writes below stay inside it.
             let hex_buffer = unsafe { &mut *hex_buffer.as_mut_ptr() };
             hex_buffer[0] = b'0';
             hex_buffer[1] = b'x';
@@ -178,6 +185,8 @@ macro_rules! define_aarch64_payload_runtime {
         #[link_section = $section]
         unsafe fn return_from_exception(
             frame: *const $crate::user::exception::AArch64UserExceptionFrame,
+        // SAFETY: the frame is the one this runtime's exception entry produced, and
+        // the resume request hands it back to the kernel.
         ) -> ! { unsafe {
             let _ = $crate::user::exception::AArch64UserException::return_from_frame_from_user_mode(
                 frame,
@@ -190,6 +199,8 @@ macro_rules! define_aarch64_payload_runtime {
         #[allow(dead_code)]
         #[link_section = $section]
         fn exit_with_code(code: usize) -> ! {
+            // SAFETY: the exit request is the ABI's and the payload never returns from
+            // it; the trap is the kernel's to service.
             unsafe {
                 let _ = payload_runtime_invoke_raw_status(
                     $crate::syscall::SyscallNumber::Exit as usize,

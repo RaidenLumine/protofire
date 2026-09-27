@@ -15,6 +15,8 @@ unsafe extern "C" {
 }
 
 pub fn payload_bytes() -> &'static [u8] {
+    // SAFETY: as the other payload sections — the linker's start/end markers bound
+    // the section this image carries.
     unsafe {
         let start = core::ptr::addr_of!(protofire_demo_program_aarch64_fault_payload_start);
         let end = core::ptr::addr_of!(protofire_demo_program_aarch64_fault_payload_end);

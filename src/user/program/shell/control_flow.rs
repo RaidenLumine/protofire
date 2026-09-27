@@ -13,7 +13,6 @@ use super::expand::set_env;
 use super::glob::glob_match;
 use super::glob::has_glob_chars;
 use super::*;
-use crate::user::shared::abi::fs::DirectoryEntryRecord;
 use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_SIZE;
 use crate::user::shared::syscall;
 
@@ -304,8 +303,9 @@ fn glob_directory_items(cwd: &str, pattern: &str) -> Vec<String> {
     let mut name_buf = vec![0u8; DIRECTORY_ENTRY_RECORD_SIZE + 256];
     let mut index = 0;
     while let Ok(()) = syscall::sys_read_dir(&dir, index, &mut name_buf) {
-        let record: &DirectoryEntryRecord =
-            unsafe { &*(name_buf.as_ptr() as *const DirectoryEntryRecord) };
+        // The header is copied out rather than borrowed: `name_buf` is a byte
+        // vector, which promises the record no alignment.
+        let record = super::read_dir_entry(&name_buf);
         let name = core::str::from_utf8(
             &name_buf[record.name_offset..record.name_offset + record.name_len],
         )
@@ -325,8 +325,8 @@ fn list_directory_items(cwd: &str) -> Vec<String> {
     let mut name_buf = vec![0u8; DIRECTORY_ENTRY_RECORD_SIZE + 256];
     let mut index = 0;
     while let Ok(()) = syscall::sys_read_dir(cwd, index, &mut name_buf) {
-        let record: &DirectoryEntryRecord =
-            unsafe { &*(name_buf.as_ptr() as *const DirectoryEntryRecord) };
+        // As above — a copy of the header the syscall wrote.
+        let record = super::read_dir_entry(&name_buf);
         let name = core::str::from_utf8(
             &name_buf[record.name_offset..record.name_offset + record.name_len],
         )

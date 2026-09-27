@@ -18,6 +18,8 @@ unsafe extern "C" {
 }
 
 pub fn payload_bytes() -> &'static [u8] {
+    // SAFETY: the linker's own markers around this payload's section bound the
+    // slice, which is live for the life of the image.
     unsafe {
         let start = core::ptr::addr_of!(adastra_demo_program_payload_start);
         let end = core::ptr::addr_of!(adastra_demo_program_payload_end);

@@ -30,6 +30,8 @@ const RUST_IO_PAYLOAD_READ_BUFFER_CAPACITY: usize = 256;
 macro_rules! rip_relative_address {
     ($symbol:path) => {{
         let address: usize;
+        // SAFETY: as the other payload's address macro — a RIP-relative `lea`, no
+        // memory operand.
         unsafe {
             core::arch::asm!(
                 "lea {address}, [rip + {symbol}]",
@@ -244,6 +246,7 @@ adastra_demo_program_rust_io_entry:
 );
 
 pub fn payload_bytes() -> &'static [u8] {
+    // SAFETY: as the other payload sections — the linker's markers bound it.
     unsafe {
         let start = core::ptr::addr_of!(ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_START);
         let end = core::ptr::addr_of!(ASTRA_DEMO_PROGRAM_RUST_IO_SECTION_END);

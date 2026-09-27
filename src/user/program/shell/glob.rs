@@ -3,7 +3,6 @@
 //! Glob pattern matching (`*`, `?`, `[...]` character classes).
 
 use super::*;
-use crate::user::shared::abi::fs::DirectoryEntryRecord;
 use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_SIZE;
 use crate::user::shared::syscall;
 
@@ -152,8 +151,9 @@ pub(crate) fn expand_globs_in_tokens(tokens: &[String], cwd: &str) -> Vec<String
             let mut name_buf: Vec<u8> = alloc::vec![0u8; name_buf_len];
             let mut index = 0;
             while let Ok(()) = syscall::sys_read_dir(&dir, index, &mut name_buf) {
-                let record: &DirectoryEntryRecord =
-                    unsafe { &*(name_buf.as_ptr() as *const DirectoryEntryRecord) };
+                // Copied out rather than borrowed: the buffer is a byte vector,
+                // which promises the header no alignment.
+                let record = super::read_dir_entry(&name_buf);
                 let name = core::str::from_utf8(
                     &name_buf[record.name_offset..record.name_offset + record.name_len],
                 )
