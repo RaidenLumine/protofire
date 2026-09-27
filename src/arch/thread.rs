@@ -373,3 +373,36 @@ pub(crate) fn user_exception_frame_layout() -> Option<(usize, usize)> {
         None
     }
 }
+
+/// Where a thread's kernel stack starts, given the top of the region.
+///
+/// The first frame is the architecture's: x86_64 leaves one zeroed slot for
+/// the trampoline's return address, and aarch64 leaves room for the exception
+/// frame its vector stub saves on the way in — `stack_top` is exclusive, so
+/// returning it as-is would put the upper slots of that frame past the mapped
+/// end.  riscv64's entry needs neither.
+pub(crate) fn initial_kernel_stack_pointer(stack_top: usize) -> usize {
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    {
+        let initial = (stack_top & !0xF).saturating_sub(core::mem::size_of::<usize>());
+        // SAFETY: the slot is inside the stack region the kernel just
+        // allocated, and zeroing it is what the trampoline expects to pop.
+        unsafe {
+            *(initial as *mut usize) = 0;
+        }
+        initial
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        (stack_top & !0xF).saturating_sub(crate::arch::aarch64::trap::EXCEPTION_FRAME_BYTES)
+    }
+
+    #[cfg(not(any(
+        all(target_arch = "x86_64", target_os = "none"),
+        all(target_arch = "aarch64", target_os = "none")
+    )))]
+    {
+        stack_top & !0xF
+    }
+}

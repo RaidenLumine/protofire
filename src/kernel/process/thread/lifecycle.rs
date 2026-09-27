@@ -104,11 +104,7 @@ impl Thread {
         // entry.
         let kernel_stack = KernelStack::new(KERNEL_STACK_GUARD_SIZE, DEFAULT_KERNEL_STACK_SIZE);
         let stack_top = kernel_stack.stack_top();
-        let initial_stack_pointer = initialize_frame_kernel_stack(
-            kernel_stack.stack_ptr(),
-            kernel_stack.stack_len(),
-            stack_top,
-        );
+        let initial_stack_pointer = initial_kernel_stack_pointer(stack_top);
 
         let mut context = Context::new(initial_instruction_pointer(entry_point, user_start));
         context.set_stack_pointer(initial_stack_pointer);
@@ -656,4 +652,4 @@ impl Thread {
 }
 
 use super::entry::initial_instruction_pointer;
-use super::entry::initialize_frame_kernel_stack;
+use super::entry::initial_kernel_stack_pointer;
