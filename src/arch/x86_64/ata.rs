@@ -366,6 +366,8 @@ impl AtaDisk {
         program_read_sector(ports, self.target, transfer_mode)?;
 
         for word in sector.as_chunks_mut::<2>().0 {
+            // SAFETY: the port block was claimed by the probe that brought this channel up;
+            // reading the data register takes the next word of the sector.
             let value = unsafe { ports.data.read() };
             word.copy_from_slice(&value.to_le_bytes());
         }
@@ -394,9 +396,11 @@ impl AtaDisk {
 
         for word in sector.as_chunks::<2>().0 {
             let value = u16::from_le_bytes([word[0], word[1]]);
+            // SAFETY: as above — the write side of the same port pair.
             unsafe { ports.data.write(value) };
         }
 
+        // SAFETY: as above — the command block belongs to this channel.
         unsafe {
             ports
                 .status_command
@@ -489,6 +493,8 @@ impl BlockDevice for AtaDisk {
             ATA_CMD_CACHE_FLUSH
         };
 
+        // SAFETY: the channel's ports were claimed by the probe; the identify command
+        // is written to its own registers.
         unsafe {
             ports.status_command.write(flush_cmd);
         }
@@ -537,6 +543,8 @@ fn discover_bmide_base() -> Option<u16> {
     let candidates: &[(u8, u8, u8)] = &[(0, 1, 1), (0, 31, 1)];
     for &(bus, dev, func) in candidates {
         let addr = raw::PciAddress::new(bus, dev, func);
+        // SAFETY: the address is a bus/device/function triple the scan enumerated; the
+        // vendor/device dword answers for every triple.
         let vendor_device = unsafe { raw::pci_config_read_u32(addr, 0) };
         if vendor_device == 0xFFFF_FFFF {
             continue;
@@ -545,6 +553,7 @@ fn discover_bmide_base() -> Option<u16> {
         // At offset CLASS (0x0B), the u32 contains:
         //   bits 31:24 = class, bits 23:16 = subclass,
         //   bits 15:8  = prog-if, bits 7:0 = revision.
+        // SAFETY: the class-code dword of the same function's standard header.
         let cc = unsafe { raw::pci_config_read_u32(addr, raw::CLASS) };
         let class = (cc >> 24) as u8;
         let subclass = (cc >> 16) as u8;
@@ -553,6 +562,7 @@ fn discover_bmide_base() -> Option<u16> {
             continue;
         }
         // BAR4 holds the BMIDE base address (I/O space).
+        // SAFETY: BAR4 of the same function — the BMIDE base the driver is looking for.
         let bar4 = unsafe { raw::pci_config_read_u32(addr, raw::BAR4) };
         if bar4 == 0 || bar4 == 0xFFFF_FFFF {
             continue;
@@ -570,6 +580,7 @@ fn discover_bmide_base() -> Option<u16> {
 fn probe_target(target: AtaProbeTarget, bmide_base: Option<u16>) -> Option<Arc<AtaDisk>> {
     let mut ports = AtaPorts::new(target.io_base, target.control_base);
 
+    // SAFETY: the BMIDE I/O block at the BAR just read; the probe owns the channel.
     unsafe {
         ports.control.write(CTRL_SRST);
         io_wait(&mut ports);
@@ -578,6 +589,7 @@ fn probe_target(target: AtaProbeTarget, bmide_base: Option<u16>) -> Option<Arc<A
 
     wait_for_status_presence(&mut ports)?;
 
+    // SAFETY: as above — the same block.
     unsafe {
         ports.drive_head.write(target.identify_drive_head);
         io_wait(&mut ports);
@@ -595,7 +607,10 @@ fn probe_target(target: AtaProbeTarget, bmide_base: Option<u16>) -> Option<Arc<A
         return None;
     }
 
+    // SAFETY: the LBA-mid register of the channel the probe claimed.
     let signature_mid = unsafe { ports.lba_mid.read() };
+    // SAFETY: as above — the LBA-high register, which carries the rest of the
+    // signature.
     let signature_high = unsafe { ports.lba_high.read() };
     if signature_mid != 0 || signature_high != 0 {
         return None;
@@ -607,6 +622,8 @@ fn probe_target(target: AtaProbeTarget, bmide_base: Option<u16>) -> Option<Arc<A
 
     let mut identify = [0_u16; IDENTIFY_WORD_COUNT];
     for word in &mut identify {
+        // SAFETY: reading the 256-word identify buffer from the channel's data port,
+        // one word per iteration.
         *word = unsafe { ports.data.read() };
     }
 
@@ -704,6 +721,8 @@ fn program_sector_io(
 ) -> KernelResult<()> {
     wait_for_not_busy(ports)?;
 
+    // SAFETY: the channel was probed and its ports claimed; this writes the command
+    // block for its own device.
     unsafe {
         match lba {
             AtaTransferMode::Lba28(lba) => {
@@ -761,6 +780,8 @@ fn try_dma_read_sector(
     let data_phys = dma_buf.phys_addr();
 
     // Build a single-entry PRDT: one 512-byte region, end-of-table.
+    // SAFETY: the DMA descriptor table is the buffer this driver allocated for the
+    // channel, and the PRDT is written inside it.
     unsafe {
         core::ptr::write_volatile(prdt_buf.as_ptr() as *mut u32, data_phys as u32);
         core::ptr::write_volatile(
@@ -773,6 +794,8 @@ fn try_dma_read_sector(
     program_dma_sector(ports, disk.target, transfer_mode, true)?;
 
     // Set PRDT pointer and clear status.
+    // SAFETY: the BMIDE registers belong to this channel, as does the descriptor
+    // table they are pointed at.
     unsafe {
         bmide.prdt_ptr.write(prdt_phys as u32);
         bmide.status.write(BM_STATUS_INTERRUPT | BM_STATUS_ERROR);
@@ -810,6 +833,7 @@ fn try_dma_write_sector(
     dma_buf.as_mut_slice()[..BLOCK_SIZE].copy_from_slice(sector);
 
     // Build PRDT.
+    // SAFETY: as above — a second PRDT entry in the same table.
     unsafe {
         core::ptr::write_volatile(prdt_buf.as_ptr() as *mut u32, data_phys as u32);
         core::ptr::write_volatile(
@@ -821,6 +845,7 @@ fn try_dma_write_sector(
     // Program ATA DMA write command.
     program_dma_sector(ports, disk.target, transfer_mode, false)?;
 
+    // SAFETY: as above — arming the engine with the table just built.
     unsafe {
         bmide.prdt_ptr.write(prdt_phys as u32);
         bmide.status.write(BM_STATUS_INTERRUPT | BM_STATUS_ERROR);
@@ -854,19 +879,24 @@ fn program_dma_sector(
 #[cfg(target_os = "none")]
 fn wait_bmide_done(bmide: &mut BmideRegs) -> KernelResult<()> {
     for _ in 0..POLL_LIMIT {
+        // SAFETY: polling the BMIDE status register of this channel.
         let status = unsafe { bmide.status.read() };
         if status & BM_STATUS_ERROR != 0 {
             // Stop the DMA engine on error.
+            // SAFETY: stopping the engine this driver started, on its own channel.
             unsafe { bmide.command.write(0) };
             return Err(Error::DeviceError);
         }
         if status & BM_STATUS_ACTIVE == 0 {
             // Transfer complete — stop the engine.
+            // SAFETY: as above — the transfer finished and the engine must not keep
+            // running.
             unsafe { bmide.command.write(0) };
             return Ok(());
         }
     }
     // Timeout — stop DMA.
+    // SAFETY: as above — the timeout path stops the same engine.
     unsafe { bmide.command.write(0) };
     Err(Error::Busy)
 }
@@ -898,6 +928,7 @@ fn cache_flush_command_for_mode(mode: AtaTransferMode) -> u8 {
 #[cfg(target_os = "none")]
 fn wait_for_not_busy(ports: &mut AtaPorts) -> KernelResult<u8> {
     for _ in 0..POLL_LIMIT {
+        // SAFETY: polling the channel's status/command register.
         let status = unsafe { ports.status_command.read() };
         match classify_ata_status(status) {
             AtaStatusDecision::DeviceMissing => return Err(Error::DeviceError),
@@ -912,6 +943,7 @@ fn wait_for_not_busy(ports: &mut AtaPorts) -> KernelResult<u8> {
 #[cfg(target_os = "none")]
 fn wait_for_status_presence(ports: &mut AtaPorts) -> Option<u8> {
     for _ in 0..POLL_LIMIT {
+        // SAFETY: as above.
         let status = unsafe { ports.status_command.read() };
         if status == STATUS_FLOATING_BUS {
             return None;
@@ -947,6 +979,8 @@ fn wait_for_data_request(ports: &mut AtaPorts) -> KernelResult<()> {
 #[cfg(target_os = "none")]
 fn io_wait(ports: &mut AtaPorts) {
     for _ in 0..IO_WAIT_READS {
+        // SAFETY: the alternate-status read is the 400 ns delay the specification asks
+        // for after a command is issued.
         let _ = unsafe { ports.alt_status.read() };
     }
 }
