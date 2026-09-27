@@ -28,6 +28,8 @@ impl Arch for AArch64 {
     }
 
     fn halt() {
+        // SAFETY: `wfi` parks this core until an interrupt and touches no
+        // memory; EL1 may execute it unconditionally.
         unsafe {
             asm!("wfi", options(nomem, nostack, preserves_flags));
         }
@@ -43,6 +45,9 @@ const CPACR_EL1_FPEN_EL0_EL1: u64 = 0b11 << 20;
 fn enable_fp_simd() {
     let mut cpacr_el1: u64;
 
+    // SAFETY: CPACR_EL1 is an EL1 system register and the FP/SIMD trap bits it
+    // holds are the kernel's to set during bring-up; no memory operand is
+    // involved.
     unsafe {
         // User payloads and compiler-generated code may rely on FP/SIMD state, so
         // enable access early during EL1 bring-up instead of faulting lazily.
@@ -67,6 +72,8 @@ pub mod interrupts {
     pub fn are_enabled() -> bool {
         let daif: u64;
 
+        // SAFETY: reading DAIF is an EL1 system-register read with no memory
+        // side effects; the mask bits are what this asks about.
         unsafe {
             asm!("mrs {daif}, DAIF", daif = out(reg) daif, options(nomem, nostack, preserves_flags));
         }
@@ -75,6 +82,9 @@ pub mod interrupts {
     }
 
     pub fn enable() {
+        // SAFETY: clearing the DAIF masks is an EL1 operation; it has no memory
+        // operand, and the caller is responsible for being in a state where
+        // taking an interrupt is correct.
         unsafe {
             asm!(
                 "msr DAIFClr, #0xf",
@@ -84,6 +94,8 @@ pub mod interrupts {
     }
 
     pub fn disable() {
+        // SAFETY: as `enable` — setting the DAIF masks, which the caller pairs
+        // with a later enable.
         unsafe {
             asm!(
                 "msr DAIFSet, #0xf",
@@ -162,20 +174,28 @@ pub mod interrupt_controller {
     }
 
     fn distributor_read(offset: usize) -> u32 {
+        // SAFETY: the GIC distributor is device MMIO inside the low window the
+        // runtime tables map as device memory, and `offset` names one of its
+        // registers.
         unsafe { read_volatile(distributor_register(offset)) }
     }
 
     fn distributor_write(offset: usize, value: u32) {
+        // SAFETY: as `distributor_read` — the same register block, on the write
+        // side.
         unsafe {
             write_volatile(distributor_register(offset), value);
         }
     }
 
     fn cpu_interface_read(offset: usize) -> u32 {
+        // SAFETY: the CPU interface is device MMIO in the same mapped window,
+        // and `offset` names one of its registers.
         unsafe { read_volatile(cpu_interface_register(offset)) }
     }
 
     fn cpu_interface_write(offset: usize, value: u32) {
+        // SAFETY: as `cpu_interface_read` — the same block, on the write side.
         unsafe {
             write_volatile(cpu_interface_register(offset), value);
         }
@@ -262,6 +282,8 @@ pub mod interrupt_controller {
         }
 
         fn set_priority(&self, interrupt_id: u32, priority: u8) {
+            // SAFETY: a byte of the distributor's priority array — the register
+            // the GIC architecture puts at this offset, in the mapped window.
             unsafe {
                 write_volatile(priority_register(interrupt_id), priority);
             }
@@ -301,6 +323,8 @@ pub mod interrupt_controller {
         }
         let mask = 1_u8 << (cpu_id % 8);
         let register = (gicd_base() + GICD_ITARGETSR + interrupt_id as usize) as *mut u8;
+        // SAFETY: the per-interrupt target byte of the distributor's own
+        // register block, in the low window the tables map as device memory.
         unsafe {
             write_volatile(register, mask);
         }
@@ -373,10 +397,13 @@ pub mod serial {
         }
 
         fn read(&self, offset: usize) -> u32 {
+            // SAFETY: the redistributor's own register block, whose base the
+            // platform described, inside the mapped device window.
             unsafe { read_volatile(self.register(offset)) }
         }
 
         fn write(&self, offset: usize, value: u32) {
+            // SAFETY: as `read` — the same block, on the write side.
             unsafe {
                 write_volatile(self.register(offset), value);
             }
@@ -532,6 +559,8 @@ pub mod timer {
     fn read_counter_frequency() -> u64 {
         let counter_frequency: u64;
 
+        // SAFETY: CNTFRQ_EL0 is a read-only EL0-visible counter register that
+        // EL1 may read; the instruction touches no memory.
         unsafe {
             asm!(
                 "mrs {counter_frequency}, CNTFRQ_EL0",
@@ -546,6 +575,8 @@ pub mod timer {
     fn timer_interrupt_pending() -> bool {
         let control: u64;
 
+        // SAFETY: as above — CNTP_CTL_EL0 read, one of the timer's own control
+        // registers.
         unsafe {
             asm!(
                 "mrs {control}, CNTP_CTL_EL0",
@@ -565,6 +596,9 @@ pub mod timer {
     }
 
     fn program_next_tick(interval: u64) {
+        // SAFETY: the two timer registers this core owns — the interval reload
+        // and the control word — written from EL1; the `isb` orders the write
+        // before the next instruction, and no memory operand is involved.
         unsafe {
             asm!(
                 "msr CNTP_TVAL_EL0, {interval}",

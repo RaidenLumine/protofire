@@ -150,6 +150,8 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
     // entry point's register carries the stack top now, and `MPIDR_EL1` is the
     // authority on identity either way.
     let mpidr: u64;
+    // SAFETY: MPIDR_EL1 is the core's own identity register and is readable
+    // from EL1 at any time; the instruction touches no memory.
     unsafe { core::arch::asm!("mrs {}, mpidr_el1", out(reg) mpidr) };
     let cpu_id32 = (mpidr & 0xff) as u32;
     let cpu_id = cpu_id32 as u64;
@@ -173,6 +175,8 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
     crate::arch::aarch64::timer::init_ap();
 
     // Fetch pre-created scheduler.
+    // SAFETY: `percpu` is this AP's own block, published by `bring_up_one`
+    // before PSCI started the core, so nothing else touches it yet.
     let sched_ptr = unsafe { (*percpu).scheduler };
     if sched_ptr.is_null() {
         crate::println!("[smp   ] FATAL: AP cpu_id={} has no scheduler", cpu_id);
@@ -197,10 +201,14 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
     // ── Enter scheduler dispatch loop ──
     crate::arch::interrupts::enable();
     loop {
+        // SAFETY: `sched_ptr` is this core's own scheduler, handed to it by the
+        // core that started it and never shared with another core.
         unsafe {
             (*sched_ptr).process_deferred_dying();
         }
         crate::arch::interrupts::disable();
+        // SAFETY: as above — the same per-core scheduler, entered with
+        // interrupts masked so this core's own accounting stays consistent.
         unsafe {
             (*sched_ptr).schedule();
         }
@@ -252,11 +260,15 @@ pub(crate) fn bring_up_aps() {
 fn bring_up_one(cpu_id: u32, idx: usize) {
     crate::println!("[smp   ] bring_up_one: cpu={}", cpu_id);
 
+    // SAFETY: `idx` is below `MAX_APS` (the caller's bound) and the stack pool
+    // is a kernel static this function is the only writer of.
     let stack = unsafe { &raw mut (*AP_STACKS.get())[idx].0[0] };
     // Same margin the thread entry leaves: an AP that takes an exception
     // before it has pushed anything needs a trap frame below the mapped end
     // of its stack, and `stack_top` is exclusive.
     let stack_top =
+        // SAFETY: as above — the top is inside the same pool page, one
+        // exception frame below its end.
         unsafe { stack.add(AP_STACK_SIZE - crate::arch::aarch64::trap::EXCEPTION_FRAME_BYTES) };
 
     // Pre-create scheduler + idle process.
@@ -269,6 +281,8 @@ fn bring_up_one(cpu_id: u32, idx: usize) {
 
     allocate_ap_percpu(cpu_id, sched_ptr);
 
+    // SAFETY: the scheduler was just allocated for this core and has not been
+    // handed to it yet, so this is the only reference to it.
     unsafe {
         (*sched_ptr).start_idle_process();
     }
@@ -277,6 +291,9 @@ fn bring_up_one(cpu_id: u32, idx: usize) {
     let entry = aarch64_ap_startup as *const () as u64;
     // Start it through PSCI, with the stack top as the context the entry reads
     // from `x0`.  The status comes back here instead of being waited for.
+    // SAFETY: `cpu_id` names a core the platform's count says exists, `entry`
+    // is this module's own AP entry, and `stack_top` is the top of the stack
+    // just published for that core.
     match unsafe { crate::arch::aarch64::psci::cpu_on(cpu_id as u64, entry, stack_top as u64) } {
         Ok(()) => {
             crate::println!("  [smp   ] cpu={} started", cpu_id);
@@ -330,6 +347,8 @@ fn discover_aps() -> Vec<(u32, u64)> {
 /// unmapped distributor looks like; a count taken from that would invent
 /// cores.
 fn gicd_cpu_count() -> Option<u32> {
+    // SAFETY: the `GICD_TYPER` register of the distributor the platform
+    // described, inside the low device window the runtime tables map.
     let typer = unsafe { core::ptr::read_volatile((gicd_base() + 0x004) as *const u32) };
     if typer == u32::MAX {
         return None;
@@ -353,6 +372,8 @@ fn send_sgi(sgi_id: u8, cpu_mask: u8) {
     }
     let reg = (gicd_base() + GICD_SGIR) as *mut u32;
     // Target List Filter = 0 (use CPU target list bits)
+    // SAFETY: the distributor's software-generated-interrupt register, in the
+    // mapped device window; the bad-id check above keeps the id in range.
     unsafe {
         core::ptr::write_volatile(reg, ((cpu_mask as u32) << 16) | sgi_id as u32);
     }
@@ -384,6 +405,8 @@ pub fn send_reschedule_ipi(cpu_id: u32) {
 pub(crate) fn send_tlb_shootdown_all() {
     let reg = (gicd_base() + GICD_SGIR) as *mut u32;
     // Filter = 1 (All Except Self)
+    // SAFETY: as `send_sgi` — the same register, with the "all except self"
+    // filter the broadcast wants.
     unsafe {
         core::ptr::write_volatile(reg, (1u32 << 24) | SGI_TLB_SHOOTDOWN as u32);
     }
@@ -437,6 +460,9 @@ fn allocate_ap_percpu(cpu_id: u32, sched_ptr: *mut crate::kernel::process::Sched
     let mut b = alloc::boxed::Box::new(PerCpuData::zeroed());
     b.cpu_id = cpu_id;
     b.scheduler = sched_ptr;
+    // SAFETY: `idx` is below `MAX_APS` (checked at entry) and this core's slot
+    // is written before the core itself is started, so no other writer is in
+    // flight against the table.
     unsafe {
         (*AP_PERCPU.get())[idx] = alloc::boxed::Box::into_raw(b);
     }
@@ -447,6 +473,8 @@ fn ap_percpu_data(cpu_id: u32) -> *mut PerCpuData {
     if idx >= MAX_APS {
         return core::ptr::null_mut();
     }
+    // SAFETY: as `allocate_ap_percpu` — the index is bounded, and a slot that
+    // has not been filled yet reads as the null pointer the caller checks.
     unsafe { (*AP_PERCPU.get())[idx] }
 }
 
@@ -454,6 +482,8 @@ fn ap_percpu_data(cpu_id: u32) -> *mut PerCpuData {
 
 pub(crate) fn save_boot_mmu_config() {
     let (ttbr0, ttbr1, tcr, mair, sctlr): (u64, u64, u64, u64, u64);
+    // SAFETY: five EL1 system-register reads performed once during bring-up;
+    // none of them touches memory, and each register is one this kernel set.
     unsafe {
         core::arch::asm!(
             "mrs {0}, ttbr0_el1", "mrs {1}, ttbr1_el1",
@@ -473,6 +503,8 @@ pub(crate) fn save_boot_mmu_config() {
 
 pub(crate) fn save_vbar_addr() {
     let vbar: u64;
+    // SAFETY: as `save_boot_mmu_config` — a read of the vector-base register
+    // this kernel installed.
     unsafe {
         core::arch::asm!("mrs {}, vbar_el1", out(reg) vbar, options(nostack, preserves_flags));
     }

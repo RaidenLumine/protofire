@@ -1046,6 +1046,9 @@ impl WgDevice {
 
     /// Get the device's public key.
     pub fn public_key(&self) -> [u8; 32] {
+        // SAFETY: the cell's contract is that no write is in flight; the key is
+        // written once by the constructors and never afterwards, and a
+        // `WgDevice` is owned by one caller rather than shared between tasks.
         unsafe { self.public_key.read() }
     }
 
@@ -1061,6 +1064,9 @@ impl WgDevice {
 
     /// Set the interface IP address.
     pub fn set_interface_ip(&self, ip: [u8; 4]) {
+        // SAFETY: as `public_key` — the interface state is only ever touched
+        // through a `WgDevice` this caller owns, so no other access is in
+        // flight against the cell.
         unsafe {
             self.interface_ip.write(ip);
         }
@@ -1068,11 +1074,14 @@ impl WgDevice {
 
     /// Get the interface IP address.
     pub fn interface_ip(&self) -> [u8; 4] {
+        // SAFETY: as above — a read of state nothing else is writing.
         unsafe { self.interface_ip.read() }
     }
 
     /// Bring the interface up.
     pub fn up(&self) {
+        // SAFETY: as above — the up/down flag is written only from the owning
+        // caller's control path.
         unsafe {
             self.is_up.write(true);
         }
@@ -1080,6 +1089,7 @@ impl WgDevice {
 
     /// Bring the interface down.
     pub fn down(&self) {
+        // SAFETY: as above — the same flag, from the same single owner.
         unsafe {
             self.is_up.write(false);
         }
@@ -1087,6 +1097,7 @@ impl WgDevice {
 
     /// Check if the interface is up.
     pub fn is_up(&self) -> bool {
+        // SAFETY: as above — a read of the flag the two writes above set.
         unsafe { self.is_up.read() }
     }
 
@@ -1128,6 +1139,8 @@ impl WgDevice {
     pub fn initiate_handshake(&self, peer_idx: u32, local_idx: u32) -> Result<Vec<u8>> {
         let mut sessions = self.sessions.lock();
         let session = sessions.get_mut(peer_idx).ok_or(Error::NotFound)?;
+        // SAFETY: the static key is written once by the constructor and read
+        // here while the session lock is held, so no write races the read.
         let private = unsafe { self.private_key.read() };
         let mut initiator = InitiatorHandshake::new(
             private,
@@ -1154,6 +1167,8 @@ impl WgDevice {
         if !verify_mac1(&init.to_bytes(), 120) {
             return Err(Error::PermissionDenied);
         }
+        // SAFETY: as `initiate_handshake` — a copy of the static key, written
+        // only by the constructor.
         let private = unsafe { self.private_key.read() };
         // Resolve the responder's session index to its configured preshared
         // key.  The responder handshake must mix in the *same* PSK the

@@ -35,6 +35,8 @@ const PSCI_0_2_FN64_CPU_ON: u64 = 0xC400_0003;
 /// core as started that never moved.
 #[allow(dead_code)] // the AP wiring calls this next
 pub fn version() -> Option<u32> {
+    // SAFETY: the only function ID this asks about is PSCI_VERSION, with no
+    // arguments, so nothing here can be malformed.
     let result = unsafe { psci_call(PSCI_0_2_FN_PSCI_VERSION, 0, 0, 0) };
     (result >= 0).then_some(result as u32)
 }
@@ -50,6 +52,9 @@ pub fn version() -> Option<u32> {
 /// entry expects to receive.
 #[allow(dead_code)] // the AP wiring calls this next
 pub unsafe fn cpu_on(target_cpu: u64, entry: u64, context: u64) -> Result<(), i64> {
+    // SAFETY: the caller's contract is that `entry` is a valid kernel entry
+    // point and `context` what it expects; `target_cpu` is passed through to
+    // firmware, which rejects a core it does not have with a negative status.
     let result = unsafe { psci_call(PSCI_0_2_FN64_CPU_ON, target_cpu, entry, context) };
     if result == 0 {
         Ok(())
@@ -79,6 +84,7 @@ static CONDUIT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new
 /// a fallback when it does not.
 pub fn init_conduit_from_platform() -> bool {
     let pfr0: u64;
+    // SAFETY: an EL1 read of the processor-feature register; no memory operand.
     unsafe {
         asm!("mrs {}, id_aa64pfr0_el1", out(reg) pfr0, options(nomem, nostack));
     }
@@ -105,6 +111,9 @@ pub fn init_conduit_from_platform() -> bool {
 /// The function IDs and arguments must be valid PSCI values.  A malformed
 /// call may trap to EL3/EL2.
 unsafe fn psci_call(fnid: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
+    // SAFETY: the function's contract is that the ID and arguments are valid
+    // PSCI values, which is what the callers above pass; the instruction takes
+    // them in registers and writes only x0.
     unsafe {
         let mut result: i64;
         match CONDUIT.load(core::sync::atomic::Ordering::Relaxed) {
@@ -139,6 +148,8 @@ unsafe fn psci_call(fnid: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
 /// (for firmware that only implements the v1.1 entry point), and falls back
 /// to an infinite halt loop if PSCI is unavailable or errors.
 pub fn system_reset() -> ! {
+    // SAFETY: SYSTEM_RESET and its v1.1 replacement take no arguments, so the
+    // only input to the call is the function ID constant above.
     unsafe {
         let status = psci_call(PSCI_0_2_FN64_SYSTEM_RESET, 0, 0, 0);
         if status < 0 {
@@ -153,6 +164,7 @@ pub fn system_reset() -> ! {
 /// Power off the machine.  Falls back to an infinite halt loop if PSCI is
 /// unavailable or errors.
 pub fn system_off() -> ! {
+    // SAFETY: as `system_reset` — SYSTEM_OFF takes no arguments.
     unsafe {
         let _ = psci_call(PSCI_0_2_FN_SYSTEM_OFF, 0, 0, 0);
     }

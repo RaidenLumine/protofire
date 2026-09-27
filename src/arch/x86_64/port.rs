@@ -38,6 +38,8 @@ impl<T: PortValue> Port<T> {
     ///
     /// The caller must ensure the wrapped port can be read as `T`.
     pub unsafe fn read(&mut self) -> T {
+        // SAFETY: this method's contract is exactly the contract of
+        // `PortValue::read`, which the forwarding call lands in.
         unsafe { T::read(self.port) }
     }
 
@@ -45,6 +47,7 @@ impl<T: PortValue> Port<T> {
     ///
     /// The caller must ensure the wrapped port can be written as `T`.
     pub unsafe fn write(&mut self, value: T) {
+        // SAFETY: as `read` — the same contract, forwarded to the writing side.
         unsafe {
             T::write(self.port, value);
         }
@@ -53,6 +56,9 @@ impl<T: PortValue> Port<T> {
 
 impl PortValue for u8 {
     unsafe fn read(port: u16) -> Self {
+        // SAFETY: an `in` of one byte from the port the caller named is what
+        // this trait method promises; the instruction touches no memory, so the
+        // only effects are the device's, which the contract accepts.
         unsafe {
             let value: u8;
             asm!("in al, dx", out("al") value, in("dx") port, options(nomem, nostack, preserves_flags));
@@ -61,6 +67,7 @@ impl PortValue for u8 {
     }
 
     unsafe fn write(port: u16, value: Self) {
+        // SAFETY: as above — the byte-wide `out` the caller asked for.
         unsafe {
             asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
         }
@@ -69,6 +76,7 @@ impl PortValue for u8 {
 
 impl PortValue for u16 {
     unsafe fn read(port: u16) -> Self {
+        // SAFETY: as `u8::read`, at the width of a 16-bit port.
         unsafe {
             let value: u16;
             asm!("in ax, dx", out("ax") value, in("dx") port, options(nomem, nostack, preserves_flags));
@@ -77,6 +85,7 @@ impl PortValue for u16 {
     }
 
     unsafe fn write(port: u16, value: Self) {
+        // SAFETY: as above — the 16-bit `out`.
         unsafe {
             asm!("out dx, ax", in("dx") port, in("ax") value, options(nomem, nostack, preserves_flags));
         }
@@ -85,6 +94,7 @@ impl PortValue for u16 {
 
 impl PortValue for u32 {
     unsafe fn read(port: u16) -> Self {
+        // SAFETY: as `u8::read`, at the width of a 32-bit port.
         unsafe {
             let value: u32;
             asm!("in eax, dx", out("eax") value, in("dx") port, options(nomem, nostack, preserves_flags));
@@ -93,6 +103,7 @@ impl PortValue for u32 {
     }
 
     unsafe fn write(port: u16, value: Self) {
+        // SAFETY: as above — the 32-bit `out`.
         unsafe {
             asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack, preserves_flags));
         }
