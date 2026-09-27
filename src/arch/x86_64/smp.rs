@@ -73,6 +73,9 @@ struct TrampolineData {
 impl TrampolineData {
     unsafe fn write_to(self) {
         let dst = TRAMPOLINE_DATA_BASE as *mut TrampolineData;
+        // SAFETY: the trampoline data page is the kernel's own low-memory page, mapped
+        // for exactly this handoff; the AP reads it before it has any mapping
+        // of its own.
         unsafe { core::ptr::write_volatile(dst, self) };
     }
 }
@@ -155,10 +158,13 @@ pub(crate) fn send_ipi(apic_id: u8, icr_low: u32) {
     // poll rather than spinning forever.
     const ICR_DELIVERY_STATUS: u32 = 1 << 12;
     let mut spins: u64 = 0;
+    // SAFETY: reading the local APIC's ICR through the APIC module's own accessor,
+    // on this CPU's LAPIC.
     while unsafe { apic::lapic_read(apic::LAPIC_ICR_LOW as u32) } & ICR_DELIVERY_STATUS != 0 {
         core::hint::spin_loop();
         spins += 1;
         if spins >= 1_000_000 {
+            // SAFETY: as above — the same register, read to report why the wait gave up.
             let icr_val = unsafe { apic::lapic_read(apic::LAPIC_ICR_LOW as u32) };
             crate::println!(
                 "[WARN ] send_ipi(cpu{}): ICR Delivery Status stuck after {} spins (level-triggered IPI may keep it set), proceeding anyway, ICR_LOW={:#x}",
@@ -179,6 +185,8 @@ pub(crate) fn send_ipi(apic_id: u8, icr_low: u32) {
 
     // Write ICR high (destination) first, then ICR low (triggers send).
     let icr_high = (apic_id as u32) << 24;
+    // SAFETY: writing the ICR is how one CPU starts another; the registers are this
+    // CPU's LAPIC and the value is the INIT/SIPI sequence.
     unsafe {
         apic::lapic_write(apic::LAPIC_ICR_HIGH as u32, icr_high);
         apic::lapic_write(apic::LAPIC_ICR_LOW as u32, icr_low);
@@ -187,10 +195,12 @@ pub(crate) fn send_ipi(apic_id: u8, icr_low: u32) {
     // Poll Delivery Status until the IPI has been accepted by the
     // destination LAPIC, then verify it cleared.
     spins = 0;
+    // SAFETY: as above — polling the delivery-status bit.
     while unsafe { apic::lapic_read(apic::LAPIC_ICR_LOW as u32) } & ICR_DELIVERY_STATUS != 0 {
         core::hint::spin_loop();
         spins += 1;
         if spins >= 1_000_000 {
+            // SAFETY: as above.
             let icr_val = unsafe { apic::lapic_read(apic::LAPIC_ICR_LOW as u32) };
             crate::println!(
                 "[WARN ] send_ipi(cpu{}): Delivery Status NOT clearing after send, ICR_LOW={:#x}, dst={}, vector={:#x}",
@@ -212,6 +222,7 @@ pub(crate) fn send_ipi(apic_id: u8, icr_low: u32) {
 #[allow(dead_code)]
 fn wait_icr_ready() {
     for _ in 0..100_000 {
+        // SAFETY: as above — the same delivery-status poll before the SIPI.
         let icr_low = unsafe { apic::lapic_read(apic::LAPIC_ICR_LOW as u32) };
         if icr_low & apic::ICR_STATUS_PENDING == 0 {
             return;
@@ -239,12 +250,17 @@ unsafe fn install_trampoline() {
     assert!(len <= 4096, "AP trampoline must fit in one page");
 
     let dst = TRAMPOLINE_BASE as *mut u8;
+    // SAFETY: the trampoline page is the kernel's own low-memory copy destination;
+    // the copy is what the AP will execute.
     unsafe {
         core::ptr::copy_nonoverlapping(start, dst, len);
     }
 
     // Verify the copy by reading back the first instruction bytes.
+    // SAFETY: reading back the first byte of the copy, in the same page just
+    // written.
     let first_byte = unsafe { core::ptr::read_volatile(dst) };
+    // SAFETY: and the byte it was copied from, in the kernel's trampoline image.
     let expected_first_byte = unsafe { core::ptr::read_volatile(start) };
     crate::println!(
         "[smp   ] trampoline installed at {:#010x} len={} first_byte={:#x} expected={:#x}",
@@ -276,8 +292,12 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
     // identity-mapped trampoline data page.  We must do this HERE under the
     // runtime page tables — the trampoline's 16-bit / 32-bit phases cannot
     // dereference a kernel virtual address.
+    // SAFETY: 0x9030 is the trampoline's fixed "started" flag slot in low memory,
+    // which the data page the AP reads sets up.
     let started_ptr = unsafe { core::ptr::read_volatile(0x9030 as *const u64) } as *mut AtomicBool;
     if !started_ptr.is_null() {
+        // SAFETY: the started flag is a Box the prepare path published for this AP; the
+        // AP sets it once it is running.
         unsafe {
             (*started_ptr).store(true, Ordering::Release);
         }
@@ -285,6 +305,8 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
 
     // Reuse the PerCpuData already allocated by bring_up_single_ap (its
     // virtual address is in the trampoline data page at offset 0x28).
+    // SAFETY: 0x9028 is the trampoline's fixed per-CPU pointer slot, in the same
+    // low page the AP was handed.
     let percpu_ptr = unsafe { core::ptr::read_volatile(0x9028 as *const u64) }
         as *mut crate::kernel::percpu::PerCpuData;
 
@@ -292,6 +314,8 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
     crate::arch::x86_64::idt::init_ap();
 
     // Load the shared kernel GDT with this CPU's private TSS.
+    // SAFETY: the per-CPU pointer the AP published points at its own block, which
+    // outlives every access.
     let ap_tss = unsafe { (*percpu_ptr).tss as *mut crate::arch::x86_64::gdt::TaskStateSegment };
     crate::arch::x86_64::gdt::init_ap(ap_tss);
 
@@ -311,6 +335,7 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
     // INIT-SIPI-SIPI (see bring_up_single_ap).  Read the scheduler pointer
     // from PerCpuData and enter the dispatch loop directly — no heap
     // allocations needed here, avoiding lock contention with the BSP.
+    // SAFETY: as above — the scheduler pointer in the same per-CPU block.
     let scheduler_ptr = unsafe { (*percpu_ptr).scheduler };
 
     crate::println!("[smp   ] AP cpu_id={} lapic_id={} online", cpu_id, lapic_id);
@@ -325,11 +350,15 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
         // This happens with interrupts enabled so that KernelStack::drop
         // can safely acquire the memory-manager spinlock without deadlocking
         // with a cross-CPU TLB shootdown that requires our IPI ack.
+        // SAFETY: the AP is being released here; the writes touch its own per-CPU state
+        // and the migration it performs is the one the release path documents.
         unsafe {
             (*scheduler_ptr).process_deferred_dying();
         }
 
         crate::arch::interrupts::disable();
+        // SAFETY: disabling interrupts on this CPU is the sequence's own requirement,
+        // and the block touches only CPU state.
         unsafe {
             (*scheduler_ptr).schedule();
         }
@@ -352,6 +381,8 @@ pub fn bring_up_aps(aps: &[(u32, u8)]) {
         return;
     }
 
+    // SAFETY: loading the trampoline's absolute addresses happens once, before any
+    // AP starts, from the kernel image.
     unsafe { install_trampoline() };
 
     for &(cpu_id, lapic_id) in aps {
@@ -389,7 +420,10 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     // guaranteed to be mapped by the runtime page tables.  The AP trampoline
     // now enables EFER.NXE (bit 11) so that the NX bit (bit 63) in BSS/data
     // PTEs is not treated as a reserved bit.
+    // SAFETY: `idx` is the AP index the caller reserved, and the AP stacks are a
+    // static array this kernel owns.
     let stack = unsafe { &raw mut (*AP_STACKS.get())[idx].0[0] };
+    // SAFETY: as above — the same static stack, taken with a raw pointer.
     let stack_top = unsafe { stack.add(AP_STACK_SIZE) };
 
     // Allocate per-CPU data and a private TSS for this AP.
@@ -407,6 +441,8 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     crate::println!("[smp   ]   prepare: ap task state segment");
     let ap_tss = Box::new(crate::arch::x86_64::gdt::TaskStateSegment::new());
     let ap_tss_ptr = Box::into_raw(ap_tss);
+    // SAFETY: the TSS was just boxed and its pointer is stored in the per-CPU block
+    // below; the Box is never freed, so the reference outlives the AP.
     unsafe {
         (*percpu_ptr).cpu_id = cpu_id;
         (*percpu_ptr).lapic_id = lapic_id;
@@ -424,10 +460,13 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     // places other threads starts from it.
     ap_scheduler.bind_to_cpu(cpu_id);
     let ap_scheduler_ptr = Box::into_raw(ap_scheduler);
+    // SAFETY: as above, for the AP's scheduler block.
     unsafe {
         (*percpu_ptr).scheduler = ap_scheduler_ptr;
     }
     crate::println!("[smp   ]   prepare: ap scheduler registered");
+    // SAFETY: as above — the per-CPU block the AP will read is written once here,
+    // before the AP starts.
     unsafe {
         (*ap_scheduler_ptr).start_idle_process();
     }
@@ -446,6 +485,8 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     // can switch to it before calling ap_entry.  ap_entry accesses LAPIC
     // MMIO (0xFEE0_0000), which is only mapped in the runtime page tables.
     let runtime_cr3: u64;
+    // SAFETY: the AP's runtime CR3 is built from the kernel's own tables, and the
+    // write publishes it into the trampoline data page the AP reads.
     unsafe {
         core::arch::asm!("mov {}, cr3", out(reg) runtime_cr3, options(nostack, preserves_flags));
     }
@@ -462,6 +503,8 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
         ap_started_flag: started_ptr as u64,
         runtime_cr3,
     };
+    // SAFETY: as above — the trampoline data page was filled in immediately before,
+    // and the AP is not running yet.
     unsafe { tdata.write_to() };
     crate::println!("[smp   ] trampoline data written, sending INIT assert...");
 
@@ -512,6 +555,8 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     // Wait for the AP to signal that it has started.
     let mut started_ok = false;
     for _ in 0..50000 {
+        // SAFETY: the started flag is the Box published for this AP; polling it is how
+        // the BSP waits for the AP's first breath.
         if unsafe { (*started_ptr).load(Ordering::Acquire) } {
             started_ok = true;
             break;
@@ -537,6 +582,8 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
             register(cpu_id, ap_scheduler_ptr);
         }
         // Leak the started flag — the AP is running and we may need it later.
+        // SAFETY: the flag was published for this AP and is never freed — leaking it is
+        // deliberate, because the AP may still touch it.
         core::mem::forget(unsafe { Box::from_raw(started_ptr) });
     } else {
         crate::println!(
@@ -545,6 +592,8 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
             lapic_id
         );
         // Clean up the started flag.
+        // SAFETY: the other path's opposite: the AP failed to start, so this takes the
+        // flag back and drops it.
         drop(unsafe { Box::from_raw(started_ptr) });
         // The AP's scheduler was created but is never registered, so this CPU
         // is not schedulable and no other CPU will place work on it.
