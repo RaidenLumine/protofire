@@ -116,6 +116,8 @@ impl PciAddress {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 unsafe fn select_config_address(addr: PciAddress, offset: u8) {
     let config_addr = addr.to_config_address(offset);
+    // SAFETY: 0xCF8 is the configuration-address port on every PC; the value is
+    // the address word the caller's contract describes.
     unsafe {
         Port::<u32>::new(CONFIG_ADDRESS).write(config_addr);
     }
@@ -130,6 +132,9 @@ unsafe fn select_config_address(addr: PciAddress, offset: u8) {
 /// low 2 bits clear).
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn pci_config_read_u32(addr: PciAddress, offset: u8) -> u32 {
+    // SAFETY: the caller's contract says the device at `addr` exists and
+    // `offset` is a dword-aligned register; the address port is selected first
+    // and the data port then reads that register.
     unsafe {
         select_config_address(addr, offset);
         Port::<u32>::new(CONFIG_DATA).read()
@@ -144,6 +149,8 @@ pub unsafe fn pci_config_read_u32(addr: PciAddress, offset: u8) -> u32 {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn pci_config_read_u16(addr: PciAddress, offset: u8) -> u16 {
     let aligned = offset & 0xFC;
+    // SAFETY: `aligned` is the dword containing `offset`, which the caller's
+    // contract covers; the half-word is extracted below.
     let dword = unsafe { pci_config_read_u32(addr, aligned) };
     let shift = (offset & 0x02) * 8;
     ((dword >> shift) & 0xFFFF) as u16
@@ -157,6 +164,7 @@ pub unsafe fn pci_config_read_u16(addr: PciAddress, offset: u8) -> u16 {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn pci_config_read_u8(addr: PciAddress, offset: u8) -> u8 {
     let aligned = offset & 0xFC;
+    // SAFETY: as for the 16-bit read — the dword containing `offset`.
     let dword = unsafe { pci_config_read_u32(addr, aligned) };
     let shift = (offset & 0x03) * 8;
     ((dword >> shift) & 0xFF) as u8
@@ -171,6 +179,8 @@ pub unsafe fn pci_config_read_u8(addr: PciAddress, offset: u8) -> u8 {
 /// the device's programming model.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn pci_config_write_u32(addr: PciAddress, offset: u8, value: u32) {
+    // SAFETY: the caller's contract covers the device, the offset and the
+    // value's meaning; the two port writes are the legacy mechanism's.
     unsafe {
         select_config_address(addr, offset);
         Port::<u32>::new(CONFIG_DATA).write(value);
@@ -186,10 +196,14 @@ pub unsafe fn pci_config_write_u32(addr: PciAddress, offset: u8, value: u32) {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn pci_config_write_u16(addr: PciAddress, offset: u8, value: u16) {
     let aligned = offset & 0xFC;
+    // SAFETY: the read half of the read-modify-write, on the dword the
+    // caller's offset lies in.
     let dword = unsafe { pci_config_read_u32(addr, aligned) };
     let shift = (offset & 0x02) * 8;
     let mask = 0xFFFFu32 << shift;
     let new_dword = (dword & !mask) | ((value as u32) << shift);
+    // SAFETY: the write half — same dword, with only the caller's 16 bits
+    // replaced.
     unsafe { pci_config_write_u32(addr, aligned, new_dword) };
 }
 
@@ -202,10 +216,14 @@ pub unsafe fn pci_config_write_u16(addr: PciAddress, offset: u8, value: u16) {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn pci_config_write_u8(addr: PciAddress, offset: u8, value: u8) {
     let aligned = offset & 0xFC;
+    // SAFETY: the read half of the read-modify-write, on the dword the
+    // caller's offset lies in.
     let dword = unsafe { pci_config_read_u32(addr, aligned) };
     let shift = (offset & 0x03) * 8;
     let mask = 0xFFu32 << shift;
     let new_dword = (dword & !mask) | ((value as u32) << shift);
+    // SAFETY: the write half — same dword, with only the caller's 8 bits
+    // replaced.
     unsafe { pci_config_write_u32(addr, aligned, new_dword) };
 }
 
@@ -218,6 +236,9 @@ pub unsafe fn pci_config_write_u8(addr: PciAddress, offset: u8, value: u8) {
 /// A device is considered present when its Vendor ID is not 0xFFFF.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn pci_device_exists(addr: PciAddress) -> bool {
+    // SAFETY: the vendor-ID register is defined for every function of every
+    // bus/device/function triple, so the read is valid even where no device
+    // answers — that is exactly what it detects.
     unsafe { pci_config_read_u16(addr, VENDOR_ID) != VENDOR_ID_NONE }
 }
 
