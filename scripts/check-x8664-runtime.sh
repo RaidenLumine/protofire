@@ -67,6 +67,13 @@ if [ ! -f "$KERNEL_BIN" ]; then
     exit 1
 fi
 
+# The payloads this boot is about to run were copied out of the image, so their
+# references have to be relative to themselves.  The image is built, the
+# relocation table is right there, and a payload that refers to the kernel's
+# copy of something would run the wrong instruction — cheap to check here,
+# expensive to see in a log.
+sh ./scripts/check-payload-relocations.sh "$KERNEL_BIN"
+
 remove_log_on_exit=0
 if [ -n "$X8664_RUNTIME_LOG" ]; then
     mkdir -p "$(dirname "$X8664_RUNTIME_LOG")"

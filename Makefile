@@ -51,6 +51,7 @@ endif
 		check-riscv64 \
 		check-unsafe-comments \
 		check-repo-integrity \
+		check-payload-relocations \
 		check-layering \
 		check-x8664-runtime \
 		check-x8664-churn \
@@ -93,6 +94,7 @@ help:
 		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
 		'  make check-unsafe-comments - fail if any configuration gained an undocumented `unsafe` block' \
 		'  make check-repo-integrity  - fail if a ref or the index names a missing git object' \
+		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
@@ -281,6 +283,16 @@ check-layering:
 # only gets shorter.  See §14 of docs/fmts/code-style.md.
 check-arch-fanout:
 	sh ./scripts/check-arch-fanout.sh
+
+# A demo payload is copied out of its linker section and run at another
+# address, so every reference it makes has to be relative to itself.  This
+# reads the built image's relocation table and requires each payload section's
+# entries to name that section — the check at the level where the defect
+# actually appears (three exception handlers were addressed absolutely, from
+# outside the section, and the disassembly-based tests could not see it).
+check-payload-relocations:
+	$(MAKE) build-x8664-demo
+	sh ./scripts/check-payload-relocations.sh
 
 # Boot the kernel on a single emulated CPU with the demo disk and assert that
 # the user programs actually run.  The SMP smoke cannot see a defect that

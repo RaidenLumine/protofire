@@ -48,6 +48,8 @@ jobs:
             command: make check-layering
           - name: arch-fanout
             command: make check-arch-fanout
+          - name: payload-relocations
+            command: make check-payload-relocations
           # `git fsck` in a shallow clone (what `actions/checkout` makes by
           # default) reports nothing and exits zero, so this runs as it does in
           # a full checkout here.

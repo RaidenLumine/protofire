@@ -149,35 +149,60 @@ pub fn payload_entry_offset() -> usize {
 // objects are COFF) get an empty payload and a zero entry offset so the ELF
 // builder facades still link.
 
+#[inline(never)]
+#[link_section = "adastra_demo_program_rust"]
 extern "C" fn rust_payload_recover_page_fault(frame: *mut X86_64UserExceptionFrame) -> ! {
     // SAFETY: `frame` is the exception frame the kernel built for this vector and
     // the handler is registered for it, so the pointer is live for this call.
+    //
+    // The fields are reached through raw pointers rather than a `&mut`: taking a
+    // reference to the frame compiles the null and alignment checks, and their
+    // cold arms call `core::panicking`, which is outside the payload section —
+    // a payload that refers to it is not one that can be copied elsewhere.
     unsafe {
-        let frame_ref = &mut *frame;
-        frame_ref.instruction_pointer += RUST_PAYLOAD_PAGE_FAULT_INSTRUCTION_SKIP;
+        let instruction_pointer = core::ptr::addr_of_mut!((*frame).instruction_pointer);
+        core::ptr::write(
+            instruction_pointer,
+            core::ptr::read(instruction_pointer).wrapping_add(RUST_PAYLOAD_PAGE_FAULT_INSTRUCTION_SKIP),
+        );
         // Move the user stack past the faulting frame so the resumed payload
         // continues with the same recovery area the handler received.
-        frame_ref.stack_pointer = frame_ref
-            .stack_pointer
-            .wrapping_add(RUST_PAYLOAD_PAGE_FAULT_RECOVERY_STACK_DELTA);
+        let stack_pointer = core::ptr::addr_of_mut!((*frame).stack_pointer);
+        core::ptr::write(
+            stack_pointer,
+            core::ptr::read(stack_pointer).wrapping_add(RUST_PAYLOAD_PAGE_FAULT_RECOVERY_STACK_DELTA),
+        );
         return_from_exception(frame);
     }
 }
 
+#[inline(never)]
+#[link_section = "adastra_demo_program_rust"]
 extern "C" fn rust_payload_recover_invalid_opcode(frame: *mut X86_64UserExceptionFrame) -> ! {
-    // SAFETY: as the page-fault handler above — the frame of this vector.
+    // SAFETY: as the page-fault handler above — the frame of this vector,
+    // reached the same way.
     unsafe {
-        let frame_ref = &mut *frame;
-        frame_ref.instruction_pointer += RUST_PAYLOAD_INVALID_OPCODE_INSTRUCTION_SKIP;
+        let instruction_pointer = core::ptr::addr_of_mut!((*frame).instruction_pointer);
+        core::ptr::write(
+            instruction_pointer,
+            core::ptr::read(instruction_pointer)
+                .wrapping_add(RUST_PAYLOAD_INVALID_OPCODE_INSTRUCTION_SKIP),
+        );
         return_from_exception(frame);
     }
 }
 
+#[inline(never)]
+#[link_section = "adastra_demo_program_rust"]
 extern "C" fn rust_payload_recover_general_protection(frame: *mut X86_64UserExceptionFrame) -> ! {
-    // SAFETY: as above — the frame of this vector.
+    // SAFETY: as above — the frame of this vector, reached the same way.
     unsafe {
-        let frame_ref = &mut *frame;
-        frame_ref.instruction_pointer += RUST_PAYLOAD_GENERAL_PROTECTION_INSTRUCTION_SKIP;
+        let instruction_pointer = core::ptr::addr_of_mut!((*frame).instruction_pointer);
+        core::ptr::write(
+            instruction_pointer,
+            core::ptr::read(instruction_pointer)
+                .wrapping_add(RUST_PAYLOAD_GENERAL_PROTECTION_INSTRUCTION_SKIP),
+        );
         return_from_exception(frame);
     }
 }
@@ -221,21 +246,28 @@ extern "C" fn adastra_demo_program_rust_main_from_stack(_initial_stack: usize) -
     );
 
     // Install recovery handlers for each fault the payload triggers below.
+    //
+    // The address is taken with `rip_relative_address!` rather than by casting
+    // the function pointer: a cast is an *absolute* address, and this payload is
+    // copied out of the kernel image and run at another address, where an
+    // absolute one still names the kernel's copy.  The handlers carry the
+    // payload's `link_section` for the same reason — the reference has to land
+    // inside the blob.
     install_exception_handler(
         X86_64_EXCEPTION_PAGE_FAULT_VECTOR,
-        rust_payload_recover_page_fault as *const () as usize,
+        rip_relative_address!(rust_payload_recover_page_fault),
         0,
         X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK,
     );
     install_exception_handler(
         X86_64_EXCEPTION_INVALID_OPCODE_VECTOR,
-        rust_payload_recover_invalid_opcode as *const () as usize,
+        rip_relative_address!(rust_payload_recover_invalid_opcode),
         0,
         X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK,
     );
     install_exception_handler(
         X86_64_EXCEPTION_GENERAL_PROTECTION_VECTOR,
-        rust_payload_recover_general_protection as *const () as usize,
+        rip_relative_address!(rust_payload_recover_general_protection),
         0,
         X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK,
     );
