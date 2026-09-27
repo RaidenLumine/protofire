@@ -39,7 +39,8 @@
 
 
 
-# 35 files, 114 occurrences outside src/arch
+
+# 36 files, 115 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/mod.rs                                       12
@@ -69,6 +70,7 @@ syscall/process/signal.rs                            2
 user/demo/demo_program_x86_64_rust_io.rs             1
 user/demo/demo_program_x86_64_rust.rs                1
 user/demo/mod.rs                                     3
+user/demo/payload_test_support.rs                    1
 user/exception.rs                                    5
 user/shared/abi/ptrace.rs                            2
 user/shared/abi/runtime.rs                           6

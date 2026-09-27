@@ -23,6 +23,12 @@
 //
 // The one configuration where every helper has a caller is therefore Linux on
 // x86_64, and that is the only one this allowance leaves the lint watching.
+//
+// This names the *host* architecture, not a machine the kernel could run on: a
+// new architecture would not have to touch this file, since the condition is
+// true for any host that is neither that pair.  The architecture fan-out
+// ratchet does not know the difference and counts it, so it was recorded
+// deliberately rather than hidden.
 #![cfg_attr(
     not(all(target_os = "linux", target_arch = "x86_64")),
     allow(dead_code)

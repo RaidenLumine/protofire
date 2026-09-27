@@ -33,6 +33,26 @@ jobs:
             command: make verify-p0
           - name: clippy
             command: make clippy
+          # The rest of the gates `make verify-p3` runs locally.  They were not
+          # in any CI job, which left the machine weaker than the developer's
+          # own `make verify`: the layering, architecture-fanout and
+          # unsafe-comment ratchets are what catch a change that moves a
+          # dependency or a number rather than breaking a build, and clippy on
+          # the four non-host configurations is what caught the fifteen missing
+          # `# Safety` sections nobody had looked for.
+          - name: clippy-targets
+            command: make clippy-targets
+          - name: unsafe-comments
+            command: make check-unsafe-comments
+          - name: layering
+            command: make check-layering
+          - name: arch-fanout
+            command: make check-arch-fanout
+          # `git fsck` in a shallow clone (what `actions/checkout` makes by
+          # default) reports nothing and exits zero, so this runs as it does in
+          # a full checkout here.
+          - name: repo-integrity
+            command: make check-repo-integrity
 
     steps:
       - name: Checkout
@@ -46,7 +66,11 @@ jobs:
           # aarch64-unknown-linux-gnu is the host configuration `make check`
           # type-checks; without it that step cannot find `core` for the
           # target and every job that runs it fails.
-          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf, aarch64-unknown-linux-gnu
+          #
+          # x86_64-apple-darwin is what `make clippy-targets` lints to stand in
+          # for the macOS and Windows jobs, whose `target_os` is the difference
+          # that matters.  No linker is needed: the check stops at clippy.
+          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf, aarch64-unknown-linux-gnu, x86_64-apple-darwin
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
