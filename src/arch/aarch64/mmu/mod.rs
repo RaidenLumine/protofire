@@ -450,6 +450,9 @@ fn range_within(start: usize, end: usize, region_start: usize, region_end: usize
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub(crate) fn current_root_table_address() -> usize {
     let ttbr0: u64;
+    // SAFETY: reading a system register the kernel owns at EL1; `mrs` has no
+    // memory side effects, and TTBR0_EL1 always holds a root-table address
+    // (valid or zero) rather than a pointer this code dereferences.
     unsafe {
         asm!(
             "mrs {ttbr0}, TTBR0_EL1",
@@ -469,6 +472,8 @@ pub(crate) fn current_root_table_address() -> usize {
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 fn mmu_enabled() -> bool {
     let sctlr: u64;
+    // SAFETY: as `current_root_table_address` — SCTLR_EL1 is an EL1 system
+    // register read with no memory side effects.
     unsafe {
         asm!(
             "mrs {sctlr}, SCTLR_EL1",
@@ -487,6 +492,9 @@ fn mmu_enabled() -> bool {
 /// Switch TTBR0_EL1 to a new root table (used when the MMU is already on).
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 fn install_active_root_table_address(ttbr0: u64) {
+    // SAFETY: the caller hands over a root table this module built, which maps
+    // the code performing the switch and the stack it uses; the `isb` keeps the
+    // switch from taking effect after the next fetch.
     unsafe {
         asm!(
             "msr TTBR0_EL1, {ttbr0}",
@@ -510,6 +518,9 @@ fn install_active_root_table_address(_ttbr0: u64) {}
 /// Program TCR_EL1 / MAIR_EL1 / TTBR0_EL1 and enable the MMU (cold start).
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 fn install_translation_configuration(ttbr0: u64) {
+    // SAFETY: the cold-start path is the only caller, before any address
+    // translation is relied on; each system register is written with the one
+    // value this module derives for it.
     unsafe {
         asm!(
             "msr TCR_EL1, {tcr}",
@@ -559,6 +570,10 @@ fn install_translation_configuration(_ttbr0: u64) {}
 /// Invalidate cached translations for one virtual address (all ASIDs).
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 fn flush_tlb_page(virtual_address: usize) {
+    // SAFETY: invalidating the cached translations of one address is allowed
+    // from EL1 whatever the tables say, and the address is only a value here —
+    // nothing is dereferenced; the barriers order the invalidation against the
+    // table writes that prompted it.
     unsafe {
         asm!(
             "tlbi vaale1is, {va}",
@@ -603,6 +618,9 @@ fn allocate_runtime_pt_page() -> Option<usize> {
             .is_ok()
         {
             let store = RUNTIME_PT_POOL_STORE.get();
+            // SAFETY: the CAS above won this page, so no other CPU can hold it
+            // as a table yet; the page is plain kernel memory inside the pool's
+            // own static, and `page_index` is the index the snapshot bounded.
             let page = unsafe { &mut (*store)[page_index] };
             page.0 = [0; TABLE_ENTRY_COUNT];
             return Some(page as *mut RuntimePtPoolPage as usize);
@@ -625,10 +643,16 @@ fn split_l1_block(l1: *mut u64, l1_index: usize, l1_entry: u64, l2_table: usize)
     let l2 = l2_table as *mut u64;
     for block_index in 0..TABLE_ENTRY_COUNT {
         let address = block_index as u64 * L2_BLOCK_SIZE as u64;
+        // SAFETY: `l2_table` is a page the pool just allocated for this split
+        // and `block_index` is bounded by the table's entry count, so every
+        // write lands in the new table; volatile because the MMU reads it.
         unsafe {
             ptr::write_volatile(l2.add(block_index), block_template + address);
         }
     }
+    // SAFETY: `l1` is the live first-level table and `l1_index` the slot being
+    // split; publishing the table descriptor is what makes the new table
+    // reachable, and nothing reads the old block entry afterwards.
     unsafe {
         ptr::write_volatile(l1.add(l1_index), table_entry(l2_table));
     }
@@ -652,10 +676,16 @@ fn split_l2_block(l2: *mut u64, l2_index: usize, l2_entry: u64, l3_table: usize)
     let l3 = l3_table as *mut u64;
     for page_index in 0..TABLE_ENTRY_COUNT {
         let page = page_template + page_index as u64 * TRANSLATION_GRANULE_SIZE as u64;
+        // SAFETY: as `split_l1_block` one level down — `l3_table` is a page
+        // the pool just allocated for this split and `page_index` is bounded by
+        // the table's entry count, so every fill lands in the new table.
         unsafe {
             ptr::write_volatile(l3.add(page_index), page);
         }
     }
+    // SAFETY: `l2` is the live second-level table and `l2_index` the slot being
+    // split; the descriptor written is the new table's address, produced by the
+    // page-aligned pool.
     unsafe {
         ptr::write_volatile(l2.add(l2_index), table_entry(l3_table));
     }
@@ -668,30 +698,45 @@ unsafe fn resolve_l3_table(root: usize, virtual_address: usize) -> Option<*mut u
     let l2_index = (virtual_address >> 21) & 0x1FF;
 
     let l1 = root as *mut u64;
+    // SAFETY: `root` is a live root table the caller named and `l1_index` is
+    // masked to the nine bits an L1 entry index occupies, so the read stays
+    // inside that table.
     let mut l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
     if l1_entry & 0x1 == 0 {
         let l2_table = allocate_runtime_pt_page()?;
+        // SAFETY: as above — installing the freshly allocated, zeroed L2 table
+        // into the slot just read.
         unsafe {
             ptr::write_volatile(l1.add(l1_index), table_entry(l2_table));
         }
+        // SAFETY: as above — the read-back of the entry just written, so the
+        // walk continues from the installed value.
         l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
     } else if l1_entry & 0x3 == DESCRIPTOR_BLOCK {
         let l2_table = allocate_runtime_pt_page()?;
         split_l1_block(l1, l1_index, l1_entry, l2_table);
+        // SAFETY: as above — the entry re-read after the split replaced the
+        // block with a table descriptor.
         l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
     }
 
     let l2 = (l1_entry & 0x0000_FFFF_FFFF_F000) as *mut u64;
+    // SAFETY: `l2` is the table address the L1 entry names and `l2_index` is
+    // masked to nine bits, so the read stays inside that table.
     let mut l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
     if l2_entry & 0x1 == 0 {
         let l3_table = allocate_runtime_pt_page()?;
+        // SAFETY: as above — installing the freshly allocated L3 table into the
+        // slot just read.
         unsafe {
             ptr::write_volatile(l2.add(l2_index), table_entry(l3_table));
         }
+        // SAFETY: as above — the read-back of the entry just written.
         l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
     } else if l2_entry & 0x3 == DESCRIPTOR_BLOCK {
         let l3_table = allocate_runtime_pt_page()?;
         split_l2_block(l2, l2_index, l2_entry, l3_table);
+        // SAFETY: as above — the entry re-read after the split.
         l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
     }
 
@@ -715,8 +760,12 @@ pub unsafe fn install_user_page(
     if root == 0 {
         return None;
     }
+    // SAFETY: `root` is the address TTBR0_EL1 currently holds and the caller
+    // owns the frame being mapped, so the walk may build tables under it.
     let l3 = unsafe { resolve_l3_table(root, virtual_address)? };
     let l3_index = (virtual_address >> 12) & 0x1FF;
+    // SAFETY: `l3` is the leaf table the walk just returned and `l3_index` is
+    // masked to nine bits, so the write lands on this address's own entry.
     unsafe {
         ptr::write_volatile(
             l3.add(l3_index),
@@ -742,6 +791,8 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
     let l3_index = (virtual_address >> 12) & 0x1FF;
 
     let l1 = root as *mut u64;
+    // SAFETY: `root` is the live root table and `l1_index` is masked to nine
+    // bits, so the read stays inside that table's first level.
     let l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
     if l1_entry & 0x1 == 0 {
         return false;
@@ -752,12 +803,16 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
             return false;
         };
         split_l1_block(l1, l1_index, l1_entry, l2_table);
+        // SAFETY: as above — the entry re-read after the split, which is now
+        // the table descriptor this walk needs.
         let updated = unsafe { ptr::read_volatile(l1.add(l1_index)) };
         (updated & 0x0000_FFFF_FFFF_F000) as *mut u64
     } else {
         (l1_entry & 0x0000_FFFF_FFFF_F000) as *mut u64
     };
 
+    // SAFETY: `l2` is the table address the L1 entry names and `l2_index` is
+    // masked to nine bits, so the read stays inside that table.
     let l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
     if l2_entry & 0x1 == 0 {
         return false;
@@ -768,15 +823,20 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
             return false;
         };
         split_l2_block(l2, l2_index, l2_entry, l3_table);
+        // SAFETY: as above — the entry re-read after the L2 split.
         let updated = unsafe { ptr::read_volatile(l2.add(l2_index)) };
         (updated & 0x0000_FFFF_FFFF_F000) as *mut u64
     } else {
         (l2_entry & 0x0000_FFFF_FFFF_F000) as *mut u64
     };
 
+    // SAFETY: `l3` is the leaf table the walk reached and `l3_index` is masked
+    // to nine bits, so this reads the entry for the address being unmapped.
     if unsafe { ptr::read_volatile(l3.add(l3_index)) } & 0x1 == 0 {
         return false;
     }
+    // SAFETY: as above — clearing that entry, which the caller has guaranteed
+    // no other mapping uses.
     unsafe {
         ptr::write_volatile(l3.add(l3_index), 0);
     }
@@ -796,6 +856,8 @@ fn leaf_descriptor(virtual_address: usize) -> Option<*mut u64> {
     let l3_index = (virtual_address >> 12) & 0x1FF;
 
     let l1 = root as *mut u64;
+    // SAFETY: `root` is the live root table and `l1_index` is masked to nine
+    // bits, so the read stays inside that table's first level.
     let l1_entry = unsafe { ptr::read_volatile(l1.add(l1_index)) };
     if l1_entry & 0x1 == 0 {
         return None;
@@ -803,12 +865,16 @@ fn leaf_descriptor(virtual_address: usize) -> Option<*mut u64> {
     let l2 = if l1_entry & 0x3 == DESCRIPTOR_BLOCK {
         let table = allocate_runtime_pt_page()?;
         split_l1_block(l1, l1_index, l1_entry, table);
+        // SAFETY: as above — the entry re-read after the split, which is now
+        // the table descriptor this walk needs.
         let updated = unsafe { ptr::read_volatile(l1.add(l1_index)) };
         (updated & 0x0000_FFFF_FFFF_F000) as *mut u64
     } else {
         (l1_entry & 0x0000_FFFF_FFFF_F000) as *mut u64
     };
 
+    // SAFETY: `l2` is the table address the L1 entry names and `l2_index` is
+    // masked to nine bits, so the read stays inside that table.
     let l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
     if l2_entry & 0x1 == 0 {
         return None;
@@ -816,12 +882,15 @@ fn leaf_descriptor(virtual_address: usize) -> Option<*mut u64> {
     let l3 = if l2_entry & 0x3 == DESCRIPTOR_BLOCK {
         let table = allocate_runtime_pt_page()?;
         split_l2_block(l2, l2_index, l2_entry, table);
+        // SAFETY: as above — the entry re-read after the L2 split.
         let updated = unsafe { ptr::read_volatile(l2.add(l2_index)) };
         (updated & 0x0000_FFFF_FFFF_F000) as *mut u64
     } else {
         (l2_entry & 0x0000_FFFF_FFFF_F000) as *mut u64
     };
 
+    // SAFETY: `l3` is the leaf table the walk reached and `l3_index` is masked
+    // to nine bits, so the pointer names an entry inside that table.
     Some(unsafe { l3.add(l3_index) })
 }
 
@@ -842,10 +911,14 @@ pub unsafe fn invalidate_page(virtual_address: usize) -> bool {
     let Some(leaf) = leaf_descriptor(virtual_address) else {
         return false;
     };
+    // SAFETY: `leaf` is the entry [`leaf_descriptor`] located for this address
+    // and the caller owns the mapping, so reading it touches only that entry.
     let entry = unsafe { ptr::read_volatile(leaf) };
     if entry & 0x1 == 0 {
         return false; // already invalid
     }
+    // SAFETY: as above — clearing the valid bit of the same entry, which is
+    // what makes the next access fault without discarding the address.
     unsafe { ptr::write_volatile(leaf, entry & !0x1) };
     flush_tlb_page(virtual_address);
     true
@@ -861,10 +934,13 @@ pub unsafe fn restore_page(virtual_address: usize) -> bool {
     let Some(leaf) = leaf_descriptor(virtual_address) else {
         return false;
     };
+    // SAFETY: as [`invalidate_page`] — the same entry, read to recover the
+    // descriptor the invalidation preserved.
     let entry = unsafe { ptr::read_volatile(leaf) };
     if entry == 0 || entry & 0x1 != 0 {
         return false; // never mapped, or already valid
     }
+    // SAFETY: as above — setting the valid bit back on that entry.
     unsafe { ptr::write_volatile(leaf, entry | 0x1) };
     flush_tlb_page(virtual_address);
     true
@@ -892,8 +968,12 @@ pub unsafe fn map_device_mmio_at(
     for page_index in 0..page_count {
         let va = virtual_address.checked_add(page_index * TRANSLATION_GRANULE_SIZE)?;
         let pa = physical_address.checked_add((page_index * TRANSLATION_GRANULE_SIZE) as u64)?;
+        // SAFETY: `root` is the live root table and the caller reserved `va`
+        // for device mappings, so the walk may build tables under it.
         let l3 = unsafe { resolve_l3_table(root, va)? };
         let l3_index = (va >> 12) & 0x1FF;
+        // SAFETY: `l3` is the leaf table the walk reached and `l3_index` is
+        // masked to nine bits, so the write lands on this page's own entry.
         unsafe {
             ptr::write_volatile(l3.add(l3_index), device_page_entry(pa as usize));
         }
@@ -915,6 +995,8 @@ pub unsafe fn map_device_mmio(phys: u64, size: usize) -> Option<*mut u8> {
     } else {
         // High-payload device (e.g. PCI ECAM): map it above the RAM window.
         const HIGH_DEVICE_VA_BASE: usize = 0x2_0000_0000;
+        // SAFETY: the caller's contract says `phys` is live MMIO and the base
+        // is the fixed address reserved for high device windows.
         unsafe { map_device_mmio_at(HIGH_DEVICE_VA_BASE, phys, size) }
     }
 }
@@ -942,12 +1024,17 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     let l2_ptr = KERNEL_L2_TABLE.get();
     let stack_window_l2_ptr = KERNEL_STACK_WINDOW_L2_TABLE.get();
 
+    // SAFETY: the three pointers are the kernel's own table statics and this
+    // function is the only writer of them, running once during bring-up before
+    // the tables are installed.
     unsafe {
         *l1_ptr = TranslationTable::zeroed();
         *l2_ptr = TranslationTable::zeroed();
         *stack_window_l2_ptr = TranslationTable::zeroed();
     }
 
+    // SAFETY: as above — `l1_ptr` names the kernel's first-level table, which
+    // the zeroing above has already made exclusively ours.
     let l1 = unsafe { &mut *l1_ptr };
     // L1[0]: device / MMIO window [0, 1 GiB) as a single 1 GiB block.
     l1.0[0] = device_l1_block_entry(DEVICE_MMIO_BASE);
@@ -957,6 +1044,8 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     // address space derived from this root shares it.
     l1.0[STACK_WINDOW_L1_INDEX] = table_entry(stack_window_l2_ptr as usize);
 
+    // SAFETY: as above — `l2_ptr` names the kernel's second-level table, whose
+    // address was just published into L1[1].
     let l2 = unsafe { &mut *l2_ptr };
     // L2: cover the full RAM window with 2 MiB kernel RWX blocks so the
     // kernel image, stack, and heap are all reachable after the switch.
@@ -1020,6 +1109,8 @@ pub fn prepare_runtime_kernel_page_tables(
 ) -> Option<PreparedRuntimeKernelPageTables> {
     validate_runtime_layout(heap_bounds)?;
 
+    // SAFETY: the heap bounds have been checked against the runtime memory map,
+    // which is the precondition that makes the table build meaningful.
     let prepared = unsafe { install_runtime_kernel_page_tables()? };
     PREPARED_ROOT_TABLE.store(prepared.root_table_address, Ordering::SeqCst);
     PREPARED_WINDOW_COUNT.store(prepared.window_count, Ordering::SeqCst);
@@ -1080,6 +1171,8 @@ fn stack_window_l3(virtual_address: usize) -> Option<*mut u64> {
     if root == 0 {
         return None;
     }
+    // SAFETY: `root` is the live root table and STACK_WINDOW_L1_INDEX is a
+    // constant slot inside its first level.
     let l1_entry = unsafe { ptr::read_volatile((root as *const u64).add(STACK_WINDOW_L1_INDEX)) };
     if l1_entry & 0x1 == 0 || l1_entry & 0x3 == DESCRIPTOR_BLOCK {
         // Either the kernel's tables have not been built — the window's slot
@@ -1090,16 +1183,24 @@ fn stack_window_l3(virtual_address: usize) -> Option<*mut u64> {
     }
     let l2 = (l1_entry & 0x0000_FFFF_FFFF_F000) as *mut u64;
     let l2_index = (virtual_address >> 21) & 0x1FF;
+    // SAFETY: `l2` is the stack window's own table, the one the kernel root
+    // shares with every address space derived from it.
     let mut l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
     if l2_entry & 0x1 == 0 {
         let table = allocate_runtime_pt_page()?;
+        // SAFETY: as above — installing the fresh L3 table into the slot just
+        // read; the window's root is shared, so this is the only walk that may
+        // build it.
         unsafe { ptr::write_volatile(l2.add(l2_index), table_entry(table)) };
+        // SAFETY: as above — the read-back of the entry just written.
         l2_entry = unsafe { ptr::read_volatile(l2.add(l2_index)) };
     }
     if l2_entry & 0x3 == DESCRIPTOR_BLOCK {
         return None;
     }
     let l3 = (l2_entry & 0x0000_FFFF_FFFF_F000) as *mut u64;
+    // SAFETY: `l3` is the leaf table the L2 entry names and the index is masked
+    // to nine bits, so the pointer names an entry inside that table.
     Some(unsafe { l3.add((virtual_address >> 12) & 0x1FF) })
 }
 
@@ -1120,6 +1221,8 @@ pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: us
     let Some(leaf) = stack_window_l3(virtual_address) else {
         return false;
     };
+    // SAFETY: `leaf` is the stack window entry for this address and the
+    // caller's contract says the page is theirs, so the write touches only it.
     unsafe {
         ptr::write_volatile(
             leaf,
@@ -1152,9 +1255,13 @@ pub(crate) unsafe fn unmap_stack_page(virtual_address: usize) -> bool {
     let Some(leaf) = stack_window_l3(virtual_address) else {
         return false;
     };
+    // SAFETY: as `map_stack_page` — the same entry, read to see whether it is
+    // still mapped.
     if unsafe { ptr::read_volatile(leaf) } & 0x1 == 0 {
         return false;
     }
+    // SAFETY: as above — clearing that entry, which belongs to this stack
+    // alone by the window's construction.
     unsafe { ptr::write_volatile(leaf, 0) };
     flush_tlb_page(virtual_address);
     true
@@ -1239,6 +1346,8 @@ fn leaf_is_present(virtual_address: usize) -> bool {
     if root == 0 {
         return false;
     }
+    // SAFETY: `root` is the live root table and the index is masked to nine
+    // bits, so the read stays inside its first level.
     let l1_entry =
         unsafe { ptr::read_volatile((root as *const u64).add((virtual_address >> 30) & 0x1FF)) };
     if l1_entry & 0x1 == 0 {
@@ -1248,6 +1357,8 @@ fn leaf_is_present(virtual_address: usize) -> bool {
         return true; // a 1 GiB block covers it
     }
     let l2 = (l1_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
+    // SAFETY: `l2` is the table address the L1 entry names and the index is
+    // masked to nine bits.
     let l2_entry = unsafe { ptr::read_volatile(l2.add((virtual_address >> 21) & 0x1FF)) };
     if l2_entry & 0x1 == 0 {
         return false;
@@ -1256,6 +1367,8 @@ fn leaf_is_present(virtual_address: usize) -> bool {
         return true; // a 2 MiB block covers it
     }
     let l3 = (l2_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
+    // SAFETY: `l3` is the leaf table the L2 entry names and the index is masked
+    // to nine bits; the walk is read-only, so it changes nothing.
     unsafe { ptr::read_volatile(l3.add((virtual_address >> 12) & 0x1FF)) & 0x1 != 0 }
 }
 
@@ -1388,6 +1501,8 @@ fn current_instruction_pointer() -> usize {
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 fn current_stack_pointer() -> usize {
     let sp: u64;
+    // SAFETY: reading SP is a register move with no memory access; the value is
+    // returned as an address, never dereferenced by this function.
     unsafe {
         asm!(
             "mov {sp}, sp",
@@ -1471,6 +1586,10 @@ fn synchronize_user_code(entry_point: usize, payload_len: usize) {
     // matching I-cache lines so the payload is visible to fetch.
     let start = align_down(entry_point, 64);
     let end = align_up(entry_point + payload_len, 64).unwrap_or(entry_point + payload_len);
+    // SAFETY: the caller passes a range inside the demo slot's own image, which
+    // this module mapped; cache maintenance by address is permitted from EL1
+    // for memory the kernel has mapped, and counter increments cannot leave the
+    // range.
     unsafe {
         let mut address = start;
         while address < end {
@@ -1596,6 +1715,9 @@ pub fn allocate_demo_user_slot(
         }
     };
 
+    // SAFETY: `region` is the slot's own demo region, `USER_DEMO_REGION_SIZE`
+    // bytes of it, and `layout.entry_point` was checked above to leave room for
+    // `payload`, so both the zeroing and the copy stay inside the slot.
     unsafe {
         // Zero the full slot so guard pages and unused stack bytes start from a
         // deterministic state before the payload is copied in.
@@ -1634,6 +1756,10 @@ pub fn prepare_runtime_process_address_space(
     let mut l2 = Box::new(TranslationTable::zeroed());
     let mut user_l3 = Box::new(TranslationTable::zeroed());
 
+    // SAFETY: `PREPARED_ROOT_TABLE` was checked non-zero above, and it only
+    // ever holds the root the kernel's own tables were installed at — so both
+    // reads touch tables this module built, which stay alive for the kernel's
+    // lifetime.
     unsafe {
         // Start from the kernel layout the CPU is actually running on, then
         // splice one user L3 table into the slot's 2 MiB window.
@@ -1862,6 +1988,9 @@ impl PreparedDemoUserSlot {
             return None;
         }
 
+        // SAFETY: the range check above proved `[address, end)` lies inside one
+        // of this slot's two stacks, and `bytes` is a live slice, so the copy
+        // stays inside the slot's own region.
         unsafe {
             ptr::copy_nonoverlapping(bytes.as_ptr(), address as *mut u8, bytes.len());
         }
@@ -1967,6 +2096,8 @@ impl PreparedProcessAddressSpace {
             return None; // invalid or a block mapping — not a leaf page
         }
         let l3_table = (l2_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
+        // SAFETY: `l3_table` is the address the L2 entry names and `l3_index`
+        // is masked to nine bits, so the read stays inside that table.
         let l3_entry = unsafe { ptr::read_volatile(l3_table.add(l3_index)) };
         if l3_entry & 0x1 == 0 {
             return None;

@@ -19,6 +19,6 @@
 # config                       count
 host                         362
 x86_64-unknown-none          246
-aarch64-unknown-none         287
+aarch64-unknown-none         228
 riscv64gc-unknown-none-elf   217
-aarch64-unknown-linux-gnu    300
+aarch64-unknown-linux-gnu    248
