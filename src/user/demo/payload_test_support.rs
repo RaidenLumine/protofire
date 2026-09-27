@@ -314,15 +314,34 @@ pub fn target_symbol_range(
 /// Return a payload section plus the function symbols that live inside it.
 ///
 /// The bytes come back as *one* range, from the section's start to its end,
-/// because that is what the demo disk builder writes into the image.  It
-/// follows that the payload is only correct while nothing else is placed
-/// inside that range: a change elsewhere in the kernel that shifts what the
-/// linker pads between these symbols grows the blob, and the payload — which
-/// addresses its own data with PC-relative instructions — then jumps somewhere
-/// that is not in it.  That is not hypothetical: a purely cosmetic module move
-/// (the virtio-input driver, 2026-09-27) changed the blob from 6172 to 6180
-/// bytes and made both aarch64 payloads die on an execute-permission fault,
-/// which the aarch64 runtime check catches and the compile-time checks cannot.
+/// because that is what the demo disk builder writes into the image: the
+/// payload addresses its own data with PC-relative instructions, so it only
+/// works as a copy of the bytes the linker laid out, at the offsets it laid
+/// them out at.
+///
+/// That makes the payload sensitive to link layout in a way the rest of the
+/// tree is not — and not hypothetical.  A purely cosmetic module move (the
+/// virtio-input driver, 2026-09-27) changed the extracted blob from 6172 to
+/// 6180 bytes, shifted the entry offset by the same 8, and made both aarch64
+/// payloads die on an execute-permission fault at a wild address; reverting
+/// the move restored the old size and the old behaviour, three runs each way.
+/// The aarch64 runtime check is what caught it, and it is the only check that
+/// can today: the tests here read the *same* shifted symbol table the runtime
+/// reads, so a symbol span that grew with the blob still satisfies
+/// `payload.len() == payload_span`.
+///
+/// # What the next probe should settle
+///
+/// The evidence points at the padding landing *inside* the range the payload
+/// addresses across — between the code and a label it reaches with `adr` — so
+/// that a displacement the payload treats as fixed no longer matches the
+/// linked image.  Confirming that is cheap and does not need a boot: dump the
+/// bytes and the entry offset under both layouts and diff them, then decode
+/// the `adr` instructions and check each target against the symbol table.
+/// A check of that shape — every `adr` target is a symbol the payload declares,
+/// the way [`assert_aarch64_direct_branches_stay_within`] checks branches —
+/// would turn "the payload is silently corrupt" into a host test failure, and
+/// is the fix this helper should grow.
 pub fn target_payload_section(target: &str, section_name: &str) -> Option<PayloadSection> {
     let path = artifact_for(target)?;
     let image = std::fs::read(path).ok()?;
