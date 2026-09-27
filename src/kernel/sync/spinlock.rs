@@ -168,12 +168,16 @@ impl<T> Deref for SpinLockGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
+        // SAFETY: the guard exists only while the lock is held, so no other
+        // caller can be reading or writing the value it points at.
         unsafe { &*self.lock.value.get() }
     }
 }
 
 impl<T> DerefMut for SpinLockGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: as `deref`, and the `&mut self` borrow keeps two mutable
+        // guards over one value from coexisting.
         unsafe { &mut *self.lock.value.get() }
     }
 }

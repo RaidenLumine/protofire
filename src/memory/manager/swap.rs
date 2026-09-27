@@ -125,6 +125,9 @@ impl MemoryManager {
 
             // Save page content before unmapping.
             let mut content = alloc::vec![0u8; paging::PAGE_SIZE];
+            // SAFETY: `phys` names the frame this page-table entry was just
+            // translated to, and a page frame is `PAGE_SIZE` bytes — the length
+            // the destination vector was sized to.
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     phys as *const u8,
@@ -292,6 +295,10 @@ impl MemoryManager {
                 // The frame was originally a Box<RawPageFrame> that was
                 // leaked via into_raw.  Reconstruct and drop to free
                 // the heap allocation.
+                // SAFETY: `phys` records the address of a `Box` that was
+                // released with `into_raw`, so this rebuilds that same
+                // allocation; the refcount check above says nothing else holds
+                // it.
                 unsafe {
                     let _ = Box::from_raw(phys as *mut u8);
                 }

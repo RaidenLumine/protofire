@@ -55,6 +55,8 @@ static GLOBAL_TOPOLOGY: SyncUnsafeCell<core::mem::MaybeUninit<Topology>> =
     SyncUnsafeCell::new(core::mem::MaybeUninit::uninit());
 
 pub fn init(topology: Topology) {
+    // SAFETY: the cell is written exactly once, here, before the flag below
+    // publishes it; no reader can be looking at it yet.
     unsafe {
         *GLOBAL_TOPOLOGY.get() = core::mem::MaybeUninit::new(topology);
     }
@@ -63,6 +65,9 @@ pub fn init(topology: Topology) {
 
 pub fn global() -> Option<&'static Topology> {
     if TOPOLOGY_INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {
+        // SAFETY: the acquire load above observed the release store that
+        // followed the initialisation, so the value is initialised and stays
+        // put for the life of the kernel.
         Some(unsafe { (*GLOBAL_TOPOLOGY.get()).assume_init_ref() })
     } else {
         None

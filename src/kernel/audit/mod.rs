@@ -46,6 +46,9 @@ pub fn try_install(buffer: Box<AuditBuffer>) -> bool {
         Ok(_) => true,
         Err(existing) => {
             // Another thread installed a buffer already — drop ours.
+            // SAFETY: `raw` came from the `Box::into_raw` above, so this
+            // rebuilds exactly the allocation that box owned and nothing else
+            // holds a reference to it.
             drop(unsafe { Box::from_raw(raw) });
             // Only race if called concurrently; use the existing pointer.
             let _ = existing;
@@ -57,6 +60,9 @@ pub fn try_install(buffer: Box<AuditBuffer>) -> bool {
 /// Return a reference to the global audit buffer, or `None` if not installed.
 pub fn global() -> Option<&'static AuditBuffer> {
     let ptr = GLOBAL_AUDIT_BUFFER.load(Ordering::SeqCst);
+    // SAFETY: the pointer is either null or the address of a buffer that was
+    // published through that atomic and never freed, so a non-null one names a
+    // live allocation for the life of the kernel.
     unsafe { ptr.as_ref() }
 }
 

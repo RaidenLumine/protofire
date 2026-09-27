@@ -27,6 +27,9 @@ pub fn read_pvd(device: &Arc<dyn BlockDevice>) -> Result<Pvd, Error> {
     read_exact(device, offset, &mut buf)?;
 
     // The PVD is a packed struct — transmute requires the same size.
+    // SAFETY: `Pvd` is `#[repr(C, packed)]`, so it needs no alignment the byte
+    // buffer cannot give, and a sector is wider than the descriptor it starts
+    // with.
     let pvd_ref: &Pvd = unsafe { &*buf.as_ptr().cast::<Pvd>() };
 
     if !pvd_ref.is_valid() {
@@ -34,6 +37,8 @@ pub fn read_pvd(device: &Arc<dyn BlockDevice>) -> Result<Pvd, Error> {
     }
 
     // Read the bytes into a new Pvd safely.
+    // SAFETY: as above — the descriptor the validated sector holds, copied out
+    // rather than borrowed.
     let pvd = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Pvd) };
     Ok(pvd)
 }
@@ -49,6 +54,8 @@ pub fn read_svd(device: &Arc<dyn BlockDevice>) -> Option<Pvd> {
     read_exact(device, offset, &mut buf).ok()?;
 
     // Validate the descriptor header and the Joliet escape sequence.
+    // SAFETY: as `read_pvd` — a packed descriptor at the start of a full
+    // sector buffer.
     let pvd_ref: &Pvd = unsafe { &*buf.as_ptr().cast::<Pvd>() };
     if pvd_ref.desc_type != 0x02
         || &pvd_ref.std_identifier != b"CD001"
@@ -60,6 +67,7 @@ pub fn read_svd(device: &Arc<dyn BlockDevice>) -> Option<Pvd> {
         return None;
     }
 
+    // SAFETY: as above — the sector's own descriptor, copied out.
     Some(unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Pvd) })
 }
 

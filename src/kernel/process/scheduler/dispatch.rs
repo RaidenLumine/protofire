@@ -149,6 +149,9 @@ impl Scheduler {
             // Clear the reschedule flag now that we've dispatched a thread.
             self.need_resched.store(false, Ordering::Relaxed);
 
+            // SAFETY: `next_thread`'s context was just saved and stays alive
+            // because the thread itself moved into the current slot, and the
+            // dispatcher's own context is a field of this scheduler.
             unsafe {
                 arch::switch_context(self.dispatch_context.as_mut_ptr(), ctx_ptr);
             }
@@ -295,6 +298,9 @@ impl Scheduler {
         }
 
         self.restore_kernel_address_space();
+        // SAFETY: `ctx` belongs to the thread being put down — it is in the
+        // ready queue or on its way out, either way still allocated — and the
+        // dispatcher's context is this scheduler's own field.
         unsafe {
             arch::switch_context(ctx_ptr, self.dispatch_context.as_ptr());
         }
@@ -357,6 +363,9 @@ impl Scheduler {
         // cannot observe the old thread after it has been queued as ready.
         arch::interrupts::disable();
         self.restore_kernel_address_space();
+        // SAFETY: as the voluntary path above — the preempted thread's context
+        // is live and the dispatcher's is its own field; interrupts are masked
+        // so nothing else can observe the half-finished switch.
         unsafe {
             arch::switch_context(ctx_ptr, self.dispatch_context.as_ptr());
         }

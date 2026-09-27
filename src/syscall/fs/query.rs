@@ -35,6 +35,9 @@ pub(super) fn list_mounts(context: &mut SyscallContext) -> Result<SyscallDispatc
         .map(|m| {
             // Zero-init the record so `#[repr(C)]` padding bytes are not
             // leaked to user space when the record is serialized.
+            // SAFETY: every field of the record is a plain integer or byte
+            // array, so an all-zero bit pattern is a valid value of it, and the
+            // fields are filled in below.
             let mut record: MountInfoRecord = unsafe { core::mem::zeroed() };
 
             fill_fixed_str(&mut record.path, &m.path);
@@ -69,6 +72,8 @@ pub(super) fn list_block_devices(context: &mut SyscallContext) -> Result<Syscall
         .map(|d| {
             // Zero-init the record so `#[repr(C)]` padding bytes are not
             // leaked to user space when the record is serialized.
+            // SAFETY: as the mount record above — a record of plain integers
+            // and byte arrays, for which zero is a valid value.
             let mut record: BlockDeviceInfoRecord = unsafe { core::mem::zeroed() };
 
             fill_fixed_str(&mut record.name, &d.name);
@@ -184,6 +189,8 @@ pub(super) fn repair_volume(context: &mut SyscallContext) -> Result<SyscallDispa
     let raw = VolumeRepairReportRaw::from(report);
 
     // Write the report to user memory.
+    // SAFETY: `raw` is a live local of `report_size` bytes and the slice is
+    // exactly that span; it is used only for the copy that follows.
     let raw_bytes: &[u8] = unsafe {
         core::slice::from_raw_parts(
             &raw as *const VolumeRepairReportRaw as *const u8,
@@ -237,6 +244,9 @@ fn write_record_slice_to_user<T>(
         .zip(records[..count].iter())
     {
         let ptr = (record as *const T).cast::<u8>();
+        // SAFETY: `record_size` is `size_of::<T>()`, the records were
+        // zero-initialised before their fields were filled, so every byte of
+        // each one — padding included — is initialised and readable.
         let slice = unsafe { core::slice::from_raw_parts(ptr, record_size) };
         slot.copy_from_slice(slice);
     }

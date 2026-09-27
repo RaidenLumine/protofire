@@ -543,7 +543,7 @@ pub fn write_device_bytes(
 ) -> Result<(), Error> {
     let mut offset = byte_offset;
     let mut remaining = data.len();
-    let mut data_ptr = data.as_ptr();
+    let mut written = 0usize;
 
     while remaining > 0 {
         let block_offset = offset % BLOCK_SIZE as u64;
@@ -560,16 +560,14 @@ pub fn write_device_bytes(
         // Copy new data into the block
         let start_pos = block_offset as usize;
         block_data[start_pos..start_pos + block_bytes]
-            .copy_from_slice(unsafe { core::slice::from_raw_parts(data_ptr, block_bytes) });
+            .copy_from_slice(&data[written..written + block_bytes]);
 
         // Write the modified block back
         write_device_block(device, block_lba, &block_data)?;
 
         offset += block_bytes as u64;
         remaining -= block_bytes;
-        unsafe {
-            data_ptr = data_ptr.add(block_bytes);
-        }
+        written += block_bytes;
     }
 
     Ok(())
