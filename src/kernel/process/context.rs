@@ -95,21 +95,6 @@ impl Context {
     pub fn instruction_pointer(&self) -> usize {
         self.instruction_pointer
     }
-
-    /// Byte offset of the SIMD register save area.
-    ///
-    /// x86_64 and aarch64 store SIMD state at offset 160; other targets (e.g.
-    /// riscv64) have no SIMD save area and report 0.
-    pub fn simd_offset(&self) -> usize {
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        {
-            160
-        }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            0
-        }
-    }
 }
 
 pub struct ContextCell {

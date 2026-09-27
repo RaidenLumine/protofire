@@ -4,6 +4,17 @@
 //! Driver manager that initializes hardware drivers and exposes boot-time
 //! devices.
 
+/// bochs-display driver: the linear framebuffer and its VBE register block.
+///
+/// The register map and the display record are in `framebuffer_protocol` and
+/// are compiled everywhere; the probe is compiled where the device exists, and
+/// every other machine compiles a file that answers under the same module
+/// name.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[path = "framebuffer.rs"]
+pub mod framebuffer;
+#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+#[path = "framebuffer_absent.rs"]
 pub mod framebuffer;
 pub mod framebuffer_console;
 /// Intel HDA audio driver: PCI discovery, CORB/RIRB, and PCM playback.
@@ -57,6 +68,9 @@ pub mod xhci_protocol;
 
 /// The Intel HDA register map and codec protocol.
 pub mod hda_protocol;
+
+/// The bochs-display register map and the record its consumers share.
+pub mod framebuffer_protocol;
 
 /// PC speaker driver (PIT channel 2 tone generation).
 ///

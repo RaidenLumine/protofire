@@ -1,108 +1,13 @@
 //! src/drivers/framebuffer.rs
 //!
-//! Framebuffer management and drawing primitives.
-//! Framebuffer driver for QEMU bochs-display (PCI vendor 0x1234, device
-//! 0x1111).
+//! The bochs-display driver, on the machines that have one.
 //!
-//! The device provides:
-//! - BAR0: Linear framebuffer (MMIO, default 16 MiB at high address)
-//! - BAR2: VBE_DISPI MMIO registers
-//!
-//! Two register layouts exist in practice (see `VbeLayout`):
-//! - QEMU std VGA maps the bochs dispi registers *flat*: 16-bit register `i` at
-//!   BAR2 + 0x500 + 2*i, with no index/data handshake.
-//! - A discrete bochs-display uses a classic index/data port pair at BAR2 + 0x0
-//!   / BAR2 + 0x4.
-//!
-//! ## Activation
-//!
-//! Requires the kernel page tables to support high-MMIO addresses (>1 GiB)
-//! for BAR0 access.  This module compiles and passes tests; runtime
-//! activation is deferred until the paging infrastructure is extended.
-
-// ---------------------------------------------------------------------------
-// PCI identifiers
-// ---------------------------------------------------------------------------
-
-/// Bochs/QEMU VGA vendor ID.
-pub const BOCHS_VENDOR_ID: u16 = 0x1234;
-/// Bochs/QEMU display device ID.
-pub const BOCHS_DEVICE_ID: u16 = 0x1111;
-
-// ---------------------------------------------------------------------------
-// VBE_DISPI register indices (written to VBE_DISPI_INDEX at BAR2+0x500)
-// ---------------------------------------------------------------------------
-
-pub const VBE_DISPI_INDEX_ID: u16 = 0;
-pub const VBE_DISPI_INDEX_XRES: u16 = 1;
-pub const VBE_DISPI_INDEX_YRES: u16 = 2;
-pub const VBE_DISPI_INDEX_BPP: u16 = 3;
-pub const VBE_DISPI_INDEX_ENABLE: u16 = 4;
-pub const VBE_DISPI_INDEX_BANK: u16 = 5;
-pub const VBE_DISPI_INDEX_VIRT_WIDTH: u16 = 6;
-pub const VBE_DISPI_INDEX_VIRT_HEIGHT: u16 = 7;
-pub const VBE_DISPI_INDEX_X_OFFSET: u16 = 8;
-pub const VBE_DISPI_INDEX_Y_OFFSET: u16 = 9;
-
-// VBE_DISPI_INDEX_ID response values.
-pub const VBE_DISPI_ID0: u16 = 0xB0C0;
-pub const VBE_DISPI_ID1: u16 = 0xB0C1;
-pub const VBE_DISPI_ID2: u16 = 0xB0C2;
-pub const VBE_DISPI_ID3: u16 = 0xB0C3;
-pub const VBE_DISPI_ID4: u16 = 0xB0C4;
-pub const VBE_DISPI_ID5: u16 = 0xB0C5;
-
-// VBE_DISPI_ENABLE flags.
-pub const VBE_DISPI_ENABLED: u16 = 1 << 0;
-pub const VBE_DISPI_LFB_ENABLED: u16 = 1 << 6; // Use linear framebuffer
-pub const VBE_DISPI_NOCLEARMEM: u16 = 1 << 7; // Don't clear on mode switch
-
-// BAR2 register offsets.
-//
-// QEMU std VGA exposes the bochs dispi registers *flat* inside the MMIO BAR:
-// 16-bit register `i` lives at BAR2 + VBE_DISPI_FLAT_BASE + 2*i, with no
-// index/data handshake.  A discrete bochs-display instead provides a classic
-// index/data port pair at BAR2 + VBE_DISPI_IO_INDEX / VBE_DISPI_IO_DATA.
-pub const VBE_DISPI_FLAT_BASE: usize = 0x500;
-pub const VBE_DISPI_IO_INDEX: usize = 0x0;
-pub const VBE_DISPI_IO_DATA: usize = 0x4;
-
-// ---------------------------------------------------------------------------
-// Framebuffer info
-// ---------------------------------------------------------------------------
-
-/// Framebuffer descriptor returned after successful initialization.
-#[derive(Debug, Clone, Copy)]
-pub struct FramebufferInfo {
-    /// Physical base address of the linear framebuffer (BAR0).
-    pub physical_address: usize,
-    /// Framebuffer size in bytes.
-    pub size: usize,
-    /// Horizontal resolution in pixels.
-    pub width: u16,
-    /// Vertical resolution in pixels.
-    pub height: u16,
-    /// Bits per pixel.
-    pub bpp: u16,
-    /// Bytes per scanline (pitch).
-    pub pitch: u32,
-}
-
-impl FramebufferInfo {
-    /// Compute the pixel format from BPP.
-    pub fn pixel_bytes(&self) -> usize {
-        (self.bpp as usize) / 8
-    }
-
-    /// Offset into framebuffer for pixel (x, y).
-    pub fn pixel_offset(&self, x: u16, y: u16) -> usize {
-        (y as usize) * (self.pitch as usize) + (x as usize) * self.pixel_bytes()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Driver integration
-// ---------------------------------------------------------------------------
+//! The device is found on PCI (vendor 0x1234, device 0x1111), its linear
+//! framebuffer and its VBE register block are mapped, a mode is set, and the
+//! framebuffer console is installed.  The register map and the record its
+//! consumers share are in [`super::framebuffer_protocol`]; this file is the
+//! machine's half, so it is compiled where that device exists, and a machine
+//! without one answers under the same module name from `framebuffer_absent.rs`.
 
 use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
@@ -111,61 +16,13 @@ use alloc::sync::Arc;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
 
-/// How the bochs VBE_DISPI registers are exposed by the device.
-///
-/// QEMU's std VGA maps them *flat* into the MMIO BAR: 16-bit register `i`
-/// lives at `BAR2 + VBE_DISPI_FLAT_BASE + 2*i`, with no index/data
-/// handshake.  A discrete bochs-display instead uses the classic index/data
-/// port pair (`index` at `BAR2 + 0x0`, `data` at `BAR2 + 0x4`).  Probe both
-/// during init, preferring the flat layout.
-///
-/// Only used by the bare-metal `probe_and_init` path; the host build has no
-/// real VBE device to talk to.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-enum VbeLayout {
-    Flat,
-    IndexData,
-}
+pub use super::framebuffer_protocol::*;
 
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-impl VbeLayout {
-    /// 16-bit read of VBE register `index`.
-    unsafe fn read_reg(&self, base: usize, index: u16) -> u16 {
-        unsafe {
-            match self {
-                VbeLayout::Flat => core::ptr::read_volatile(
-                    (base + VBE_DISPI_FLAT_BASE + (index as usize) * 2) as *const u16,
-                ),
-                VbeLayout::IndexData => {
-                    core::ptr::write_volatile(
-                        (base as *mut u16).add(VBE_DISPI_IO_INDEX / 2),
-                        index,
-                    );
-                    core::ptr::read_volatile((base as *const u16).add(VBE_DISPI_IO_DATA / 2))
-                }
-            }
-        }
-    }
+// ---------------------------------------------------------------------------
+// PCI identifiers
+// ---------------------------------------------------------------------------
 
-    /// 16-bit write of VBE register `index`.
-    unsafe fn write_reg(&self, base: usize, index: u16, val: u16) {
-        unsafe {
-            match self {
-                VbeLayout::Flat => core::ptr::write_volatile(
-                    (base + VBE_DISPI_FLAT_BASE + (index as usize) * 2) as *mut u16,
-                    val,
-                ),
-                VbeLayout::IndexData => {
-                    core::ptr::write_volatile(
-                        (base as *mut u16).add(VBE_DISPI_IO_INDEX / 2),
-                        index,
-                    );
-                    core::ptr::write_volatile((base as *mut u16).add(VBE_DISPI_IO_DATA / 2), val);
-                }
-            }
-        }
-    }
-}
+/// Bochs/QEMU VGA vendor ID.
 
 static FB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static FB_INFO: SpinLock<Option<FramebufferInfo>> = SpinLock::new(None);
@@ -201,7 +58,6 @@ pub fn driver() -> Arc<dyn Driver> {
 
 /// Find the bochs-display PCI device, map BARs, and initialize the
 /// framebuffer mode.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn probe_and_init() -> Option<()> {
     use crate::arch::mmu::map_device_mmio;
     use crate::arch::x86_64::pci::pci_enumerate_buses;
@@ -321,40 +177,6 @@ fn probe_and_init() -> Option<()> {
     Some(())
 }
 
-/// Host-side / non-x86_64 stub: framebuffer not available.
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-fn probe_and_init() -> Option<()> {
-    None
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn framebuffer_pixel_offset_32bpp() {
-        let info = FramebufferInfo {
-            physical_address: 0xFD00_0000,
-            size: 1024 * 768 * 4,
-            width: 1024,
-            height: 768,
-            bpp: 32,
-            pitch: 1024 * 4,
-        };
-        assert_eq!(info.pixel_bytes(), 4);
-        assert_eq!(info.pixel_offset(0, 0), 0);
-        assert_eq!(info.pixel_offset(1, 0), 4);
-        assert_eq!(info.pixel_offset(0, 1), 4096);
-        assert_eq!(info.pixel_offset(512, 384), 384 * 4096 + 512 * 4);
-    }
-
-    #[test]
-    fn vbe_dispi_constants() {
-        assert_eq!(VBE_DISPI_ID0, 0xB0C0);
-        assert_ne!(VBE_DISPI_ENABLED, VBE_DISPI_LFB_ENABLED);
-    }
-}
