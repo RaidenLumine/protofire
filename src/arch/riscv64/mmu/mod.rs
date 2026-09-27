@@ -1459,11 +1459,15 @@ fn activate_prepared_process_address_space_impl(
         // SAFETY: `satp` names the root table `address_space` was built from,
         // which maps the code performing the switch; the fence that follows is
         // issued by the caller's path.
+        //
+        // `nomem` is deliberately absent: switching `satp` changes which memory
+        // every later access reaches, so the compiler must not move accesses
+        // across it.  The other `satp` writes in this file omit it too.
         unsafe {
             asm!(
                 "csrw satp, {satp}",
                 satp = in(reg) satp,
-                options(nomem, nostack, preserves_flags)
+                options(nostack, preserves_flags)
             );
         }
         #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]

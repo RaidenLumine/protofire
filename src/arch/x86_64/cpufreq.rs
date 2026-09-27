@@ -74,13 +74,19 @@ fn rdmsr(msr: u32) -> u64 {
 fn wrmsr(msr: u32, value: u64) {
     // SAFETY: as above, on the write side — the value is the one this driver
     // derived. Only the boot path calls it.
+    //
+    // `nomem` is deliberately absent here even though today's callers write
+    // performance registers: the function takes the MSR number as an argument,
+    // so the claim would have to hold for any MSR — including the ones that
+    // change memory behaviour (PAT, MTRR, EFER).  A read of an MSR may claim
+    // it; a write cannot.
     unsafe {
         core::arch::asm!(
             "wrmsr",
             in("ecx") msr,
             in("eax") value as u32,
             in("edx") (value >> 32) as u32,
-            options(nomem, nostack)
+            options(nostack)
         );
     }
 }

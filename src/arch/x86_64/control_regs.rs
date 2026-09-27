@@ -45,9 +45,14 @@ pub fn read_cr0() -> u64 {
 #[inline]
 pub unsafe fn write_cr0(value: u64) {
     // SAFETY: the value's bits are the caller's contract, stated above; this
-    // block only performs the move, and `nomem`/`nostack` say so.
+    // block only performs the move, and `nostack` says so.
+    //
+    // `nomem` is deliberately absent, for the reason `stac`/`clac` give: the
+    // function is generic over CR0's bits, and several of them (TS, EM, WP, PG)
+    // change what a memory access *means*.  Claiming `nomem` would tell the
+    // compiler it may move loads and stores across the write.
     unsafe {
-        asm!("mov cr0, {}", in(reg) value, options(nomem, nostack));
+        asm!("mov cr0, {}", in(reg) value, options(nostack, preserves_flags));
     }
 }
 
@@ -85,8 +90,14 @@ pub fn read_cr3() -> u64 {
 pub unsafe fn write_cr3(value: u64) {
     // SAFETY: the root's validity and mapping are the caller's contract,
     // stated above; the move itself can do nothing else.
+    //
+    // `nomem` is deliberately absent: the switch changes which memory every
+    // later access reaches — that is what it is for — so the compiler must not
+    // hoist a load above it or sink a store below.  Same reasoning as
+    // `stac`/`clac`, and the same choice the loader's own CR3 writes make
+    // (`paging::runtime`, `paging::pcid`).
     unsafe {
-        asm!("mov cr3, {}", in(reg) value, options(nomem, nostack));
+        asm!("mov cr3, {}", in(reg) value, options(nostack, preserves_flags));
     }
 }
 
@@ -117,8 +128,12 @@ pub unsafe fn read_cr4() -> u64 {
 pub unsafe fn write_cr4(value: u64) {
     // SAFETY: the contract above covers the bits — a reserved bit raises #GP,
     // which is the caller's to gate on CPUID — and nothing else is touched.
+    //
+    // `nomem` is deliberately absent: SMAP and SMEP are CR4 bits that decide
+    // whether a supervisor access to a user page is allowed at all, so an
+    // access must not be reordered across this write.
     unsafe {
-        asm!("mov cr4, {}", in(reg) value, options(nomem, nostack));
+        asm!("mov cr4, {}", in(reg) value, options(nostack, preserves_flags));
     }
 }
 

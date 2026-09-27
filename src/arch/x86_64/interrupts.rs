@@ -70,11 +70,15 @@ pub fn enable_and_halt() {
 
 pub fn are_enabled() -> bool {
     let rflags: u64;
-    // SAFETY: `pushfq`/`pop` move the flags register through the stack without
-    // reading or writing any memory the kernel cares about, and `nostack` is
-    // not claimed because the sequence does use the stack it is already on.
+    // SAFETY: `pushfq`/`pop` move the flags register through the stack and give
+    // back every byte they take: the flags come out unchanged, which is what
+    // `preserves_flags` claims.
+    //
+    // Neither `nostack` nor `nomem` is claimed, because the sequence does use
+    // the stack it is already on — it writes there.  Claiming `nomem` would let
+    // the compiler move other accesses across a block that touches memory.
     unsafe {
-        asm!("pushfq", "pop {}", out(reg) rflags, options(nomem, preserves_flags));
+        asm!("pushfq", "pop {}", out(reg) rflags, options(preserves_flags));
     }
 
     rflags & (1 << 9) != 0

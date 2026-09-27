@@ -162,6 +162,30 @@ Two consequences are worth knowing:
   is right; `let v = unsafe { read() } + unsafe { read() };` is two windows where
   one would do.
 
+### `options(...)` in inline assembly
+
+An `asm!` block's `options` are a claim about its effects, and a claim has to
+hold for **every value the function can be called with** — not just today's
+callers. The one that bites is `nomem`, which is the promise "this block does
+not read or write memory"; it lets the compiler move loads and stores across
+the block. That promise is true of a `mov` *from* a control register and false
+of a `mov` *into* one: the write changes what every later access means, which
+is what it is for.
+
+`stac`/`clac` state the argument for EFLAGS.AC, and the rule generalises:
+
+- **Instructions that change memory semantics omit `nomem`** — control-register
+  writes (`cr0`, `cr3`, `cr4`), `wrmsr` when the register number is an argument
+  (PAT, MTRR and EFER are memory-behaviour MSRs even though today's callers
+  write performance ones), `invlpg`, `invpcid`, `stac`/`clac`.
+- **Reads may claim it** — `mov` from a control register, `rdmsr`, `rdtsc`.
+- **When in doubt leave it out.** Omitting `nomem` costs scheduling freedom
+  around one instruction; claiming it wrongly costs correctness, and the
+  failure shows up as an access that lands in the wrong address space.
+
+The comment says which case the block is, because "no `nomem` here" looks like
+an oversight until it is written down.
+
 ---
 
 ## 5. `unsafe impl Send` / `Sync`
