@@ -25,25 +25,32 @@ const CODEC_WAIT_SPINS: u32 = 10_000_000;
 
 /// MMIO helpers for 32-bit, 16-bit, and 8-bit register access.
 unsafe fn reg_read32(base: *mut u8, offset: usize) -> u32 {
+    // SAFETY: the caller passes this controller's mapped register block and an
+    // offset the HDA specification defines; the read is volatile.
     unsafe { read_volatile(base.add(offset) as *const u32) }
 }
 unsafe fn reg_write32(base: *mut u8, offset: usize, val: u32) {
+    // SAFETY: as `reg_read32` — the same block, on the write side.
     unsafe {
         write_volatile(base.add(offset) as *mut u32, val);
     }
 }
 unsafe fn reg_read16(base: *mut u8, offset: usize) -> u16 {
+    // SAFETY: as `reg_read32`, for a 16-bit register.
     unsafe { read_volatile(base.add(offset) as *const u16) }
 }
 unsafe fn reg_write16(base: *mut u8, offset: usize, val: u16) {
+    // SAFETY: as `reg_write32`, for a 16-bit register.
     unsafe {
         write_volatile(base.add(offset) as *mut u16, val);
     }
 }
 unsafe fn reg_read8(base: *mut u8, offset: usize) -> u8 {
+    // SAFETY: as `reg_read32`, for a byte-wide register.
     unsafe { read_volatile(base.add(offset) as *const u8) }
 }
 unsafe fn reg_write8(base: *mut u8, offset: usize, val: u8) {
+    // SAFETY: as `reg_write32`, for a byte-wide register.
     unsafe {
         write_volatile(base.add(offset), val);
     }
@@ -100,6 +107,8 @@ impl HdaController {
     /// `bar0_phys` is the physical base address of BAR0, `bar0_size`
     /// the length of the MMIO region.
     pub unsafe fn new(bar0_phys: u64, bar0_size: usize) -> Option<Self> {
+        // SAFETY: the caller passes a BAR address and size PCI enumeration produced;
+        // mapping it is what makes every later register access sound.
         unsafe {
             let mmio = map_device_mmio(bar0_phys, bar0_size)?;
             let regs = mmio;
@@ -207,6 +216,8 @@ impl HdaController {
 
     /// Reset the controller (GCTL.CRST toggle).
     unsafe fn reset(&mut self) -> Result<()> {
+        // SAFETY: the controller is constructed and its registers mapped; the reset
+        // touches only its own block.
         unsafe {
             // Clear stale codec wake flags before running the reset (W1C),
             // mirroring Linux's azx_reset ordering: the codec re-asserts
@@ -254,6 +265,8 @@ impl HdaController {
 
     /// Initialise the CORB engine.
     unsafe fn init_corb(&mut self) -> Result<()> {
+        // SAFETY: as `reset` — the CORB is allocated here and registered in the
+        // controller's own registers.
         unsafe {
             // Reset CORB: set CORBRP = 0 (this triggers a reset).
             reg_write16(self.regs, HDA_CORBRP, 0);
@@ -319,6 +332,7 @@ impl HdaController {
 
     /// Initialise the RIRB engine.
     unsafe fn init_rirb(&mut self) -> Result<()> {
+        // SAFETY: as above — the RIRB, likewise.
         unsafe {
             // Set RIRB size to 256 entries if programmable.
             let rirbsize = reg_read8(self.regs, HDA_RIRBSIZE);
@@ -374,6 +388,8 @@ impl HdaController {
     ///
     /// Returns `true` if at least one codec is detected.
     unsafe fn detect_codecs(&mut self) -> bool {
+        // SAFETY: codec detection reads the controller's own state-change register and
+        // talks to codecs on its own link.
         unsafe {
             for _ in 0..CODEC_WAIT_SPINS {
                 let statests = reg_read16(self.regs, HDA_STATESTS);
@@ -403,6 +419,8 @@ impl HdaController {
     /// advanced.  The function then polls the RIRB write pointer for a
     /// response.
     unsafe fn send_verb(&mut self, verb: u32) -> Result<u32> {
+        // SAFETY: a verb goes out through this controller's CORB and its answer comes
+        // back through the RIRB, both owned by `self`.
         unsafe {
             // Write the verb at CORBWP + 1, then advance CORBWP to it. The
             // controller reads from CORBRP + 1, so the first verb lands at
@@ -461,6 +479,7 @@ impl HdaController {
 
     /// Read a codec parameter (e.g. VENDOR_ID) via GET_PARAMETER.
     pub unsafe fn read_codec_param(&mut self, cad: u8, nid: u8, param: u8) -> Result<u32> {
+        // SAFETY: as `send_verb` — the parameter read is a verb on the same link.
         unsafe {
             let verb = get_param(cad, nid, param);
             self.send_verb(verb)
@@ -473,6 +492,7 @@ impl HdaController {
 
     /// Read the subordinate node list of `nid`: (start node, count).
     unsafe fn subordinate_node_count(&mut self, cad: u8, nid: u8) -> Result<(u8, u16)> {
+        // SAFETY: as above — one more verb to the same codec.
         unsafe {
             let v = self.read_codec_param(cad, nid, param_id::SUBORDINATE_NODE_COUNT)?;
             let start = (v & 0xFF) as u8;
@@ -487,6 +507,8 @@ impl HdaController {
     /// the first widget whose AW_CAPABILITIES type (bits 20:24) is 0
     /// (audio output converter).
     unsafe fn find_output_converter(&mut self, cad: u8) -> Result<u8> {
+        // SAFETY: as above — the converter search issues verbs on this controller's
+        // link.
         unsafe {
             let (afg, _count) = self.subordinate_node_count(cad, 0)?;
             // Audio function groups report type 0x1 in FUNCTION_GROUP_TYPE.
@@ -512,11 +534,14 @@ impl HdaController {
 
     /// Read the stream's link position in buffer (SDLPIB).
     unsafe fn stream_link_position(&self) -> u32 {
+        // SAFETY: reading this controller's own stream-link position register.
         unsafe { reg_read32(self.regs, HDA_SD_BASE + HDA_SDLPIB) }
     }
 
     /// Stop the playback stream by clearing SDCTL.SRUN (two-step).
     unsafe fn stop_playback_stream(&mut self) {
+        // SAFETY: stopping a stream means touching the controller's stream registers,
+        // which it owns.
         unsafe {
             let sd = HDA_SD_BASE;
             let ctl = reg_read32(self.regs, sd + HDA_SDCTL);
@@ -536,6 +561,7 @@ impl HdaController {
     /// Program the stream descriptor for playback at `format` and start
     /// the DMA engine (stream 0, output direction).
     unsafe fn setup_playback_stream(&mut self, format: u16) -> Result<()> {
+        // SAFETY: as above — the stream descriptor belongs to this controller.
         unsafe {
             let sd = HDA_SD_BASE;
             self.stop_playback_stream();
@@ -566,6 +592,7 @@ impl HdaController {
     /// Route the playback stream into the output converter and power it
     /// to D0.
     unsafe fn setup_codec_playback(&mut self, cad: u8) -> Result<()> {
+        // SAFETY: the codec verbs for playback go out through the same CORB/RIRB pair.
         unsafe {
             let converter = self.converter_nid;
             if converter == 0 {
@@ -599,6 +626,8 @@ impl HdaController {
     /// The caller must hold the only reference to this controller; the
     /// method touches its MMIO mapping and DMA buffers exclusively.
     pub unsafe fn write_pcm(&mut self, rate: u32, samples: &[u8]) -> Result<()> {
+        // SAFETY: the caller's contract says the controller is up; the write goes into
+        // this controller's stream DMA buffer and ring.
         unsafe {
             if self.converter_nid == 0 {
                 return Err(crate::Error::Unsupported);
@@ -715,7 +744,11 @@ fn probe_hda_pci() -> crate::Result<()> {
         // DMA engines can access guest RAM (QEMU keeps the device's DMA
         // address space empty until the BUS_MASTER bit is set).
         let pci_addr = PciAddress::new(info.bus, info.device, info.function);
+        // SAFETY: the address is a function the PCI scan enumerated; the command
+        // register is part of its standard header.
         let cmd = unsafe { pci_config_read_u16(pci_addr, COMMAND) };
+        // SAFETY: writing the command register of that same function to enable memory
+        // space and bus mastering.
         unsafe {
             pci_config_write_u16(
                 pci_addr,
@@ -736,6 +769,8 @@ fn probe_hda_pci() -> crate::Result<()> {
             bar0.size / 1024
         );
 
+        // SAFETY: `HdaController::new` takes the BAR address and size PCI enumeration
+        // produced.
         let ctrl = match unsafe { HdaController::new(bar0.base_address, bar0.size as usize) } {
             Some(c) => c,
             None => {
