@@ -105,6 +105,9 @@ pub(super) fn prctl(context: &mut super::SyscallContext) -> Result<super::Syscal
                 super::user_memory::copy_user_bytes(name.as_bytes(), buf_ptr, copy_len)?;
             }
             // Write null terminator.
+            // SAFETY: the output buffer was validated for `buf_len` bytes above
+            // and `copy_len` is at most `buf_len - 1`, so this byte is inside
+            // the validated range; the guard is what makes the store legal.
             super::user_memory::with_user_access_guard(|| unsafe {
                 buf_ptr.add(copy_len).write(0u8);
             });
@@ -122,6 +125,9 @@ pub(super) fn prctl(context: &mut super::SyscallContext) -> Result<super::Syscal
             )?;
             let name_bytes = super::user_memory::with_user_access_guard(|| {
                 let mut buf = [0u8; PR_MAX_NAME_LEN];
+                // SAFETY: the input range was validated for `buf_len` bytes
+                // above, `i` stays below it, and `buf` is `PR_MAX_NAME_LEN`
+                // wide with `buf_len` bounded by that.
                 #[allow(clippy::needless_range_loop)]
                 for i in 0..buf_len {
                     buf[i] = unsafe { buf_ptr.add(i).read() };

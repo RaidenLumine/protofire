@@ -14,6 +14,7 @@ use crate::abi::seccomp::SECCOMP_SET_MODE_FILTER;
 use crate::kernel::process::seccomp as seccomp_core;
 use crate::Error;
 use crate::Result;
+use alloc::vec::Vec;
 
 use super::runtime;
 use super::user_memory;
@@ -70,19 +71,33 @@ pub(super) fn seccomp(context: &mut SyscallContext) -> Result<SyscallDispatch> {
                 return Err(Error::InvalidArgument);
             }
 
-            // Read the rules from user space via the validated input-slice API.
+            // Read the rules from user space via the validated input-slice
+            // API.  The offsets are arithmetic on the user pointer; the buffer
+            // itself is only touched through the slice the guard hands over.
+            // SAFETY: adding the header size stays inside the range the
+            // `data_len` check above bounded, and the addition is done on the
+            // pointer value only.
             let rules_ptr = unsafe { data_ptr.add(SECCOMP_RULE_HEADER_SIZE) };
             user_memory::with_optional_input_slice(rules_ptr, rules_byte_len, |bytes| {
                 if bytes.len() != rules_byte_len {
                     return Err(Error::InvalidArgument);
                 }
-                let rules = unsafe {
-                    core::slice::from_raw_parts(
-                        bytes.as_ptr() as *const SeccompFilterRule,
-                        rule_count,
-                    )
-                };
-                seccomp_core::install_filter(&process, &header, rules)
+                // The rules are copied out one by one rather than viewed in
+                // place: the header is twelve bytes wide, so the array starts
+                // at whatever alignment the caller's pointer had, and a
+                // `&[SeccompFilterRule]` would demand four.
+                let mut rules = Vec::with_capacity(rule_count);
+                for chunk in bytes.as_chunks::<SECCOMP_FILTER_RULE_SIZE>().0 {
+                    // SAFETY: the chunk is exactly one rule wide and was
+                    // validated as readable user memory before the guard ran;
+                    // `read_unaligned` copies it without an alignment demand,
+                    // and every field of the rule is a `u32`, so any byte
+                    // pattern is a valid value.
+                    rules.push(unsafe {
+                        core::ptr::read_unaligned(chunk.as_ptr() as *const SeccompFilterRule)
+                    });
+                }
+                seccomp_core::install_filter(&process, &header, &rules)
             })?;
 
             Ok(SyscallDispatch::complete(0))

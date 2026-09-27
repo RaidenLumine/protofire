@@ -420,9 +420,14 @@ fn read_string_list_with_limits(
         let byte_offset = index
             .checked_mul(process_abi::PROCESS_SPAWN_STRING_REF_SIZE)
             .ok_or(Error::InvalidArgument)?;
+        // SAFETY: the array was validated for `entries_len` bytes above and
+        // `byte_offset` is below it, so the pointer names one element; only its
+        // value is taken.
         let entry_ptr = unsafe { entries_ptr.add(byte_offset).cast::<ProcessSpawnStringRef>() };
         // Read the spawn-string descriptor from user memory inside a SMAP
         // guard so the hardware allows supervisor access to user pages.
+        // SAFETY: `entry_ptr` is inside the validated array, and the copy is
+        // what keeps the read independent of the buffer's alignment.
         let entry = super::super::user_memory::with_user_access_guard(|| unsafe {
             core::ptr::read_unaligned(entry_ptr)
         });

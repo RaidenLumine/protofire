@@ -147,7 +147,7 @@ pub(super) fn copy_user_bytes(bytes: &[u8], buffer_ptr: *mut u8, length: usize) 
 /// - Rust default-layout structs (compiler may insert arbitrary padding).
 /// - `#[repr(C)]` structs mixing field sizes (e.g. `u8` then `u64`).
 /// - Types containing `bool`, `enum` discriminants, or zero-sized fields.
-pub(super) unsafe trait PaddingFree: Sized {}
+pub(crate) unsafe trait PaddingFree: Sized {}
 
 // SAFETY: Rust guarantees integer types have no padding bytes.
 unsafe impl PaddingFree for u8 {}
@@ -232,6 +232,19 @@ unsafe impl PaddingFree for crate::abi::diagnostic::PerCpuRecord {}
 // supported by this kernel, `usize` has the same size as its alignment
 // (8 bytes on 64-bit), so arrays have no inter-element gaps.
 unsafe impl<const N: usize> PaddingFree for [usize; N] {}
+
+// SAFETY: `ProcessInfoRecord` is `#[repr(C)]` with `u64, u64, [u8; 32]` and
+// five more `u64`s — every field is eight-byte aligned and the name array is a
+// multiple of eight bytes wide, so there is no inter-field or trailing padding.
+unsafe impl PaddingFree for crate::abi::diagnostic::ProcessInfoRecord {}
+
+// SAFETY: `ThreadInfoRecord` is `#[repr(C)]` with four `u64` fields —
+// homogeneous, no padding.
+unsafe impl PaddingFree for crate::abi::diagnostic::ThreadInfoRecord {}
+
+// SAFETY: `FaultRecordAbi` is `#[repr(C)]` with five `u64` fields —
+// homogeneous, no padding.
+unsafe impl PaddingFree for crate::abi::diagnostic::FaultRecordAbi {}
 
 pub(super) fn copy_user_value<T: PaddingFree>(
     value: &T,

@@ -80,6 +80,9 @@ pub(super) fn shmctl(context: &mut SyscallContext) -> Result<SyscallDispatch> {
         }
         abi::IPC_STAT => {
             user_memory::validate_current_process_user_output_buffer(buf_ptr, ds_size, ds_size)?;
+            // SAFETY: `ShmidDs` is a `#[repr(C)]` record of plain integers for
+            // which an all-zero bit pattern is a valid value, and the fields
+            // are filled by the call below before any of it is copied out.
             let mut ds: abi::ShmidDs = unsafe { core::mem::zeroed() };
             shm::shmctl(shmid, cmd, Some(&mut ds))?;
             // `ds` was zeroed first, so every byte including padding is

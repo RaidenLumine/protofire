@@ -56,6 +56,9 @@ impl Drop for Table {
 
 pub fn global() -> Option<&'static Table> {
     let table = GLOBAL_TABLE.load(Ordering::SeqCst);
+    // SAFETY: the pointer is either null or one that was published through
+    // that atomic by `install_global`, which requires a `'static` table and
+    // clears the slot in `Table::drop`, so a non-null one names a live table.
     unsafe { table.as_ref() }
 }
 

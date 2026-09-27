@@ -146,9 +146,12 @@ pub(super) fn io_uring_enter(context: &mut SyscallContext) -> Result<SyscallDisp
                 for i in 0..sqe_count {
                     let offset = i * IO_URING_SQE_SIZE;
                     let sqe_bytes = &bytes[offset..offset + IO_URING_SQE_SIZE];
-                    // Safe: IoUringSqe is repr(C) and PaddingFree.
-                    let sqe: IoUringSqe =
-                        unsafe { core::ptr::read(sqe_bytes.as_ptr() as *const IoUringSqe) };
+                    // SAFETY: the slice is exactly one SQE wide, and the copy
+                    // is what keeps the read sound for a user buffer, whose
+                    // alignment is whatever the caller chose.
+                    let sqe: IoUringSqe = unsafe {
+                        core::ptr::read_unaligned(sqe_bytes.as_ptr() as *const IoUringSqe)
+                    };
                     if let Some(cqe) = execute_sqe(&sqe, &process, &state)? {
                         state.completion_queue.lock().push_back(cqe);
                         completed_this_round += 1;

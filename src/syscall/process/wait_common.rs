@@ -291,6 +291,9 @@ mod tests {
             result,
             Ok(super::super::SyscallDispatch::complete(buffer.len()))
         );
+        // SAFETY: the syscall just reported writing `buffer.len()` bytes into
+        // this buffer, and the copy is what keeps the read independent of the
+        // byte buffer's alignment.
         let copied = unsafe { core::ptr::read_unaligned(buffer.as_ptr().cast::<TestRecord>()) };
         assert_eq!(
             copied,
@@ -321,6 +324,8 @@ mod tests {
             Ok(super::super::SyscallDispatch::complete(buffer.len()))
         );
         assert_eq!(
+            // SAFETY: as above — the value the syscall wrote, copied out of the
+            // byte buffer.
             unsafe { core::ptr::read_unaligned(buffer.as_ptr().cast::<u32>()) },
             0x1234_5678
         );
@@ -331,6 +336,8 @@ mod tests {
         let scheduler = crate::kernel::process::Scheduler::new();
         let waits = Cell::new(0);
 
+        // SAFETY: a test process, so the scheduler is installed here and lives
+        // for the rest of the run.
         unsafe {
             scheduler.install_global_unchecked();
         }
@@ -355,6 +362,8 @@ mod tests {
         let waits = Cell::new(0);
         let probes = Cell::new(0);
 
+        // SAFETY: a test process, so the scheduler is installed here and lives
+        // for the rest of the run.
         unsafe {
             scheduler.install_global_unchecked();
         }
@@ -382,6 +391,8 @@ mod tests {
         let scheduler = crate::kernel::process::Scheduler::new();
         let waits = Cell::new(0);
 
+        // SAFETY: a test process, so the scheduler is installed here and lives
+        // for the rest of the run.
         unsafe {
             scheduler.install_global_unchecked();
         }

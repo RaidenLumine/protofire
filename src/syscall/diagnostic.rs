@@ -489,7 +489,10 @@ fn write_record_slice_to_user<T>(
     records: &[T],
     buffer_ptr: *mut u8,
     buffer_len: usize,
-) -> Result<super::SyscallDispatch> {
+) -> Result<super::SyscallDispatch>
+where
+    T: super::user_memory::PaddingFree,
+{
     let record_size = core::mem::size_of::<T>();
 
     // Probe mode: return required buffer size.
@@ -513,6 +516,10 @@ fn write_record_slice_to_user<T>(
         .iter()
         .flat_map(|r| {
             let ptr = (r as *const T).cast::<u8>();
+            // SAFETY: `PaddingFree` on `T` is the promise that every byte of a
+            // record — padding included — is initialised, so reading the record
+            // as bytes cannot expose uninitialised memory; `record_size` is the
+            // size of the same type.
             let slice = unsafe { core::slice::from_raw_parts(ptr, record_size) };
             slice.iter().copied()
         })
