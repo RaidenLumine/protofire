@@ -15,9 +15,12 @@ pub(super) const SYSCALL_VECTOR: u8 = syscall_abi::X86_64_INTERRUPT_VECTOR;
 /// IPI vector: reschedule (wake up another CPU's scheduler).
 pub const IPI_RESCHEDULE_VECTOR: u8 = 0x30; // 48
 
+// `.text` rather than `.section .text`: the latter is the ELF spelling, and
+// the Mach-O assembler rejects it (`unexpected token in '.section' directive`)
+// while both accept this one.
 core::arch::global_asm!(
     r#"
-.section .text
+.text
 
 .macro PUSH_REGS
     push r15

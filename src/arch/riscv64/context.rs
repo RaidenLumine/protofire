@@ -18,9 +18,12 @@ use crate::kernel::process::Context;
 //
 // RISC-V callee-saved: s0-s11 (x8-x9, x18-x27), ra (x1), sp (x2)
 
+// `.text` rather than `.section .text`: the latter is the ELF spelling,
+// and the Mach-O assembler rejects it (`unexpected token in '.section'
+// directive`) while both accept this one.
 core::arch::global_asm!(
     r#"
-.section .text
+.text
 .global riscv64_context_switch
 riscv64_context_switch:
     /* a0 = *mut current Context, a1 = *const next Context */

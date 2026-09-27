@@ -72,9 +72,12 @@ pub(crate) static AARCH64_VBAR_ADDR: AtomicU64 = AtomicU64::new(0);
 
 // ── AP startup assembly ─────────────────────────────────────────────────
 
+// `.text` rather than `.section .text`: the latter is the ELF spelling,
+// and the Mach-O assembler rejects it (`unexpected token in '.section'
+// directive`) while both accept this one.
 core::arch::global_asm!(
     r#"
-.section .text
+.text
 .global aarch64_ap_startup
 aarch64_ap_startup:
     // Called from boot.S spin table: x0 = cpu_id, MMU off.

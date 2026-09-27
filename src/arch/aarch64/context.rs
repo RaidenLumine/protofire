@@ -8,9 +8,12 @@ use core::mem::offset_of;
 use crate::kernel::process::thread::AArch64UserThreadContext;
 use crate::kernel::process::Context;
 
+// `.text` rather than `.section .text`: the latter is the ELF spelling,
+// and the Mach-O assembler rejects it (`unexpected token in '.section'
+// directive`) while both accept this one.
 core::arch::global_asm!(
     r#"
-.section .text
+.text
 .global aarch64_context_switch
 aarch64_context_switch:
     stp x19, x20, [x0, #24]
