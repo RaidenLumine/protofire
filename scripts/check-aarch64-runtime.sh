@@ -48,7 +48,9 @@ esac
 # The Image, not the ELF: only the arm64 Image boot path is handed a device
 # tree, and a kernel that boots without one silently falls back to hardcoded
 # platform constants.  See scripts/build-aarch64-image.sh.
-FEATURES="demo-disk" PROFILE="$PROFILE" CRATE="$CRATE" TARGET_DIR="$TARGET_DIR" \
+# Overridable so the ABI gate can ask for the frozen payload instead of the
+# one this build compiled.
+FEATURES="${FEATURES:-demo-disk}" PROFILE="$PROFILE" CRATE="$CRATE" TARGET_DIR="$TARGET_DIR" \
     sh ./scripts/build-aarch64-image.sh
 
 if [ ! -f "$KERNEL_BIN" ]; then
@@ -293,6 +295,7 @@ EOF
 # Twice each, because the payload runs twice: once as the launcher and once as
 # the image that launcher starts.  The counts are the assertion that the two
 # runs both got all the way through their faults and both came back.
+require_log_line "[abi   ] demo-launcher payload: ${PAYLOAD_SOURCE:-compiled} "
 require_log_line_count "[user  ] hello from aarch64 rust payload" 2
 require_log_line_count "[user  ] aarch64-rust resumed after local code-write fault" 2
 require_log_line_count "[user  ] aarch64-rust resumed after local stack-exec fault" 2

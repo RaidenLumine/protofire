@@ -133,6 +133,9 @@ jobs:
 
       - name: Boot the frozen riscv64 payload
         run: make check-abi-frozen-payload-riscv64
+
+      - name: Boot the frozen aarch64 payload
+        run: make check-abi-frozen-payload-aarch64
         env:
           CARGO: cargo
           SMP_RUNTIME_LOG: smp-runtime.log

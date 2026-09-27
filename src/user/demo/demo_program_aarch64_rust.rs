@@ -537,6 +537,36 @@ fn write_prefixed_hex(prefix: usize, prefix_len: usize, value: usize) {
     );
 }
 
+/// The payload's machine code as it was on 2026-09-27.
+///
+/// With the `abi_frozen_payload` feature the ELF builder ships these bytes
+/// instead of the section this build compiled, so the boot runs an aarch64
+/// program that was *not* rebuilt — the third architecture the ABI gate covers,
+/// and the one whose entry point is not at the start of its payload (this
+/// payload's entry sits at offset 404, after the code the linker placed first).
+/// The bytes come out of the aarch64 kernel image, between the
+/// `__start_`/`__stop_protofire_demo_program_aarch64_rust` symbols.
+///
+/// Re-freezing is a deliberate act, not a build step.
+#[cfg(feature = "abi_frozen_payload")]
+const FROZEN_PAYLOAD: &[u8] = include_bytes!("fixtures/demo_payload_aarch64_rust.bin");
+
+/// Where the frozen payload's entry point sits inside those bytes.
+#[cfg(feature = "abi_frozen_payload")]
+const FROZEN_PAYLOAD_ENTRY_OFFSET: usize = 404;
+
+/// Which copy of the payload this build ships: `frozen` or `compiled`.
+///
+/// The runtime check asserts the boot line that quotes this.
+pub const fn payload_source() -> &'static str {
+    if cfg!(feature = "abi_frozen_payload") {
+        "frozen"
+    } else {
+        "compiled"
+    }
+}
+
+#[cfg(not(feature = "abi_frozen_payload"))]
 pub fn payload_bytes() -> &'static [u8] {
     // SAFETY: the linker's markers around this payload's section bound the slice,
     // which is live for the life of the image.
@@ -552,12 +582,23 @@ pub fn payload_bytes() -> &'static [u8] {
     }
 }
 
+#[cfg(feature = "abi_frozen_payload")]
+pub fn payload_bytes() -> &'static [u8] {
+    FROZEN_PAYLOAD
+}
 
+
+#[cfg(not(feature = "abi_frozen_payload"))]
 pub fn payload_entry_offset() -> usize {
     let entry = protofire_demo_program_aarch64_rust_entry as *const () as usize;
     let start = core::ptr::addr_of!(PROTOFIRE_DEMO_PROGRAM_AARCH64_RUST_SECTION_START) as usize;
     entry
         .checked_sub(start)
         .expect("aarch64 rust demo payload entry must follow section start")
+}
+
+#[cfg(feature = "abi_frozen_payload")]
+pub fn payload_entry_offset() -> usize {
+    FROZEN_PAYLOAD_ENTRY_OFFSET
 }
 

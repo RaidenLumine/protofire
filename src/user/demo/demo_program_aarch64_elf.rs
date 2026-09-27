@@ -23,8 +23,17 @@ const AARCH64_DEMO_PROGRAM_MACHINE: u16 = 0xB7;
 /// AArch64 and both must resolve to a payload that exists and links; the
 /// Rust-authored section is the only such AArch64 payload in the tree.
 pub fn build_demo_program_artifact() -> DemoProgramArtifact {
+    // Say which copy of the payload went on the disk, as the other architectures'
+    // builders do: the ABI gate asserts this line.
+    let payload = super::demo_program_aarch64_rust::payload_bytes();
+    crate::println!(
+        "[abi   ] demo-launcher payload: {} ({} bytes)",
+        super::demo_program_aarch64_rust::payload_source(),
+        payload.len()
+    );
+
     build_artifact_or_metadata_only(
-        super::demo_program_aarch64_rust::payload_bytes(),
+        payload,
         super::demo_program_aarch64_rust::payload_entry_offset(),
         DEMO_PROGRAM_ENTRY as u64,
         AARCH64_DEMO_PROGRAM_MACHINE,

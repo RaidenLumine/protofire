@@ -158,6 +158,9 @@ run_p3() {
     fi
     if [ "$RUN_AARCH64_RUNTIME" = "1" ]; then
         run_make_step "make check-aarch64-runtime" check-aarch64-runtime
+        # The same boot with the payload frozen rather than compiled, on the
+        # architecture whose payload's entry point is not at its start.
+        run_make_step "make check-abi-frozen-payload-aarch64" check-abi-frozen-payload-aarch64
     else
         printf '==> verify[%s]: skipping aarch64 runtime smoke (set RUN_AARCH64_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"

@@ -314,6 +314,14 @@ check-abi-frozen-payload-riscv64:
 		RISCV64_RUNTIME_LOG="$${RISCV64_RUNTIME_LOG:-}" \
 		sh ./scripts/check-riscv64-runtime.sh
 
+# And on aarch64, whose payload is a Rust section and whose entry point is not
+# at its start — the third shape the ABI has to keep working.
+check-abi-frozen-payload-aarch64:
+	FEATURES="demo-disk abi_frozen_payload" \
+		PAYLOAD_SOURCE=frozen \
+		AARCH64_RUNTIME_LOG="$${AARCH64_RUNTIME_LOG:-}" \
+		sh ./scripts/check-aarch64-runtime.sh
+
 # Boot the kernel on a single emulated CPU with the demo disk and assert that
 # the user programs actually run.  The SMP smoke cannot see a defect that
 # takes one CPU down at a time, and a single CPU is what `make run` gives a
