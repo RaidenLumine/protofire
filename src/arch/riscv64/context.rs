@@ -69,6 +69,8 @@ unsafe extern "C" {
 /// Both `current` and `next` must point to valid [`Context`] structures.
 /// Interrupts must be disabled before calling this function.
 pub unsafe fn switch(current: *mut Context, next: *const Context) {
+    // SAFETY: the caller's contract is the one above — both contexts are live and
+    // interrupts are masked — and this forwards to the assembly switch.
     unsafe {
         riscv64_context_switch(current, next);
     }
@@ -81,6 +83,8 @@ pub unsafe fn switch(current: *mut Context, next: *const Context) {
 /// The caller must ensure the context represents a valid user-mode
 /// execution state.  This function does not return.
 pub unsafe fn enter_user_mode_with_context(context: &RiscV64UserThreadContext) -> ! {
+    // SAFETY: the caller's contract is the one above: the context carries a U-mode
+    // entry point and stack, and the assembly below moves into them.
     unsafe {
         asm!(
             // Save current kernel sp to sscratch so that the trap entry

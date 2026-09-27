@@ -48,11 +48,14 @@ pub(crate) fn with_user_access_guard<T>(f: impl FnOnce() -> T) -> T {
     }
 
     #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    // SAFETY: forwarding to the aarch64 guard under the same contract the caller
+    // met; this is the architecture-neutral entry point.
     unsafe {
         crate::arch::aarch64::user_access::with_user_access(f)
     }
 
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    // SAFETY: as the aarch64 arm above — the riscv64 guard.
     unsafe {
         crate::arch::riscv64::user_access::with_user_access(f)
     }
@@ -81,6 +84,8 @@ pub(crate) fn with_user_access_guard<T>(f: impl FnOnce() -> T) -> T {
 /// bytes.  The caller must have already validated the address range.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn write_user_value_untracked<T: Copy>(addr: u64, value: &T) {
+    // SAFETY: the caller's contract says `addr` is writable user memory for
+    // `T`, and the guard is what lets the store happen while SMAP is on.
     unsafe {
         with_user_access_guard(|| {
             (addr as *mut T).write_unaligned(*value);

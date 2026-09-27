@@ -237,6 +237,8 @@ pub(crate) fn install(facts: KernelMapFacts) -> bool {
     if INSTALLED.swap(true, core::sync::atomic::Ordering::AcqRel) {
         return false;
     }
+    // SAFETY: the swap above is the once-only guard, so this is the single write to
+    // the static; nothing can be reading it yet.
     unsafe {
         *FACTS.get() = facts;
     }
@@ -252,6 +254,8 @@ pub(crate) fn install(facts: KernelMapFacts) -> bool {
 pub(crate) fn get() -> Option<&'static KernelMapFacts> {
     INSTALLED
         .load(core::sync::atomic::Ordering::Acquire)
+        // SAFETY: the acquire load observed that write and the facts are never changed
+        // afterwards, so the reference is to a live, installed value.
         .then(|| unsafe { &*FACTS.get() })
 }
 

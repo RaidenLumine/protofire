@@ -92,6 +92,8 @@ pub fn init() {
         return;
     }
 
+    // SAFETY: writing VBAR_EL1 with the address of this kernel's own vector table,
+    // with the barrier sequence the comment above describes.
     unsafe {
         let vector_base = &raw const __aarch64_exception_vectors;
         asm!(
@@ -1047,6 +1049,8 @@ fn advance_past_idle_wfi(frame: &mut TrapFrame) {
         return;
     }
 
+    // SAFETY: `frame.elr` is the faulting instruction's address in the image the
+    // kernel is running, so the read is of a mapped instruction word.
     let instruction = unsafe { read_volatile(frame.elr as *const u32) };
     frame.elr = exception::advanced_elr_after_idle_wfi(false, frame.elr, instruction);
 }

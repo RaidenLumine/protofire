@@ -293,10 +293,14 @@ impl UserPageTableWindowSpec {
         // Allocate the 4 KiB entries array on the heap to avoid stack
         // overflow in deep call chains (kernel stack is only 32 KiB).
         let layout = Layout::new::<[u64; PAGE_TABLE_ENTRY_COUNT]>();
+        // SAFETY: `alloc_zeroed` with the layout of the array this struct owns; the
+        // null check below turns failure into `None`.
         let ptr = unsafe { alloc::alloc::alloc_zeroed(layout) };
         if ptr.is_null() {
             return None;
         }
+        // SAFETY: `ptr` came from that allocation, so it is a heap block of exactly
+        // this array type and no other owner exists.
         let entries = unsafe { Box::from_raw(ptr as *mut [u64; PAGE_TABLE_ENTRY_COUNT]) };
         Some(Self {
             pml4_index: pml4_index(base_address),

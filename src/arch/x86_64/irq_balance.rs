@@ -33,6 +33,8 @@ static CPU_LAPIC_IDS: SyncUnsafeCell<[u8; MAX_CPUS]> = SyncUnsafeCell::new([0; M
 /// intentionally unused (dead-code allowed).
 #[cfg_attr(not(all(target_arch = "x86_64", target_os = "none")), allow(dead_code))]
 pub(crate) fn register_cpu(cpu_id: u32, lapic_id: u8) {
+    // SAFETY: the table is a kernel static written only during CPU registration,
+    // which happens once per CPU before it takes interrupts.
     if let Some(slot) = (unsafe { &mut *CPU_LAPIC_IDS.get() }).get_mut(cpu_id as usize) {
         *slot = lapic_id;
     }
@@ -68,6 +70,8 @@ pub fn set_destination(vector: u32, cpu_id: u32) -> crate::Result<()> {
         Some(slot) if slot.load(Ordering::Acquire) >= 0 => slot.load(Ordering::Acquire) as u8,
         _ => return Err(crate::Error::NotFound),
     };
+    // SAFETY: reading that same table, whose entry for this CPU `register_cpu`
+    // wrote.
     let lapic_id = match (unsafe { &*CPU_LAPIC_IDS.get() }).get(cpu_id as usize) {
         Some(id) => *id,
         None => return Err(crate::Error::InvalidArgument),

@@ -17,6 +17,8 @@ pub fn init() {
     let mut command = super::port::Port::<u8>::new(PIT_COMMAND);
     let mut channel0 = super::port::Port::<u8>::new(PIT_CHANNEL0);
 
+    // SAFETY: the PIT's command port and channel-0 data port at their fixed
+    // addresses, in the sequence that programs the tick rate.
     unsafe {
         command.write(0x36);
         channel0.write((divisor & 0x00FF) as u8);

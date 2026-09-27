@@ -246,6 +246,9 @@ impl X86_64UserExceptionFrame {
 /// memory and no guard is needed.
 #[cfg(target_os = "none")]
 unsafe fn write_x86_64_user_exception_frame(frame_pointer: usize, frame: X86_64UserExceptionFrame) {
+    // SAFETY: the caller's contract says `frame_pointer` addresses the user stack
+    // slot the frame is written to, and the guard is what makes the store
+    // legal.
     unsafe {
         crate::arch::x86_64::user_access::with_user_access(|| {
             (frame_pointer as *mut X86_64UserExceptionFrame).write(frame);
@@ -264,6 +267,8 @@ unsafe fn write_x86_64_user_exception_frame(frame_pointer: usize, frame: X86_64U
 /// `frame_pointer` (SMAP-guarded on bare metal, plain on host).
 #[cfg(target_os = "none")]
 unsafe fn read_x86_64_user_exception_frame(frame_pointer: usize) -> X86_64UserExceptionFrame {
+    // SAFETY: as the write above, in the other direction — the same slot, under the
+    // same guard.
     unsafe {
         crate::arch::x86_64::user_access::with_user_access(|| {
             (frame_pointer as *const X86_64UserExceptionFrame).read()
@@ -449,6 +454,8 @@ impl Thread {
             registration.handler,
         )?;
 
+        // SAFETY: `frame_pointer` is the user stack address this path just validated as
+        // writable.
         unsafe {
             write_x86_64_user_exception_frame(frame_pointer, frame);
         }
@@ -482,6 +489,7 @@ impl Thread {
             }
         }
 
+        // SAFETY: as above — the frame read back from the same validated slot.
         let frame = unsafe { read_x86_64_user_exception_frame(frame_pointer) };
         let restored = frame.into_user_context().validate_runtime_state()?;
 
@@ -547,6 +555,8 @@ impl Thread {
             let Some(context) = user_context else {
                 return;
             };
+            // SAFETY: `user_context` is present because the check above said so, and the
+            // context was validated before this point.
             unsafe {
                 crate::arch::x86_64::context::enter_user_mode_with_context(&context);
             }

@@ -298,6 +298,8 @@ impl VfsFileSystem for F2fsVolume {
         };
 
         // Write the target path inline into i_addr as raw bytes.
+        // SAFETY: as the read side — the same `u32` array, viewed mutably for the
+        // length it actually has.
         let addr_bytes: &mut [u8] = unsafe {
             core::slice::from_raw_parts_mut(
                 sym_inode.i_addr.as_mut_ptr() as *mut u8,

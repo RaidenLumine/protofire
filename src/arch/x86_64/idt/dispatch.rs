@@ -50,6 +50,8 @@ pub fn init() {
         return;
     }
 
+    // SAFETY: the IDT static is this module's own table, and the flag above keeps
+    // its fill from running twice.
     unsafe {
         let idt = IDT.get();
         let gates = &mut (*idt).gates;
@@ -83,11 +85,15 @@ pub fn init() {
 /// interrupts — including IPIs — are delivered correctly.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn init_ap() {
+    // SAFETY: a read-only view of that same table, which the BSP filled before any
+    // AP was started.
     let idt = unsafe { &*IDT.get() };
     let idtr = DescriptorTablePointer {
         limit: (core::mem::size_of::<InterruptDescriptorTable>() - 1) as u16,
         base: idt as *const InterruptDescriptorTable as u64,
     };
+    // SAFETY: `idtr` describes the table the kernel installed, so this loads it for
+    // the calling CPU.
     unsafe {
         asm!("lidt [{}]", in(reg) &idtr, options(readonly, nostack, preserves_flags));
     }

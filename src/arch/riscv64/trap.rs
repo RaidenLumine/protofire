@@ -561,6 +561,8 @@ fn advance_past_idle_wfi(frame: &mut TrapFrame) {
     if frame.sepc & 0x3 != 0 {
         return;
     }
+    // SAFETY: `frame.sepc` is the faulting instruction's address, checked for
+    // alignment above, in an image the kernel is running.
     let instruction = unsafe { read_volatile(frame.sepc as *const u32) };
     if instruction == 0x10500073 {
         // Advance past the WFI.

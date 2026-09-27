@@ -115,6 +115,8 @@ impl ContextCell {
     }
 
     pub fn get(&self) -> Context {
+        // SAFETY: the cell is read while its owner holds the thread's context slot, and
+        // `Context` is a plain `Copy` record.
         unsafe { *self.inner.get() }
     }
 

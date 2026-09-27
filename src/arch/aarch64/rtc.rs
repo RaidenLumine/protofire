@@ -37,11 +37,15 @@ static RTC_BASE: crate::util::sync_unsafe_cell::SyncUnsafeCell<Option<usize>> =
 /// Store the PL031 base address for later reads.  Called during boot after
 /// FDT parsing (or with the QEMU `virt` hardcoded fallback).
 pub fn init_rtc(base: usize) {
+    // SAFETY: the PL031 base slot is a kernel static written once here, during
+    // boot, before any reader can exist.
     unsafe { RTC_BASE.write(Some(base)) };
 }
 
 /// Return the base address of the PL031, if initialised.
 fn rtc_base() -> Option<usize> {
+    // SAFETY: reading that slot after the boot write; the value is a base address
+    // and the read is a `Copy` of an `Option<usize>`.
     unsafe { RTC_BASE.read() }
 }
 

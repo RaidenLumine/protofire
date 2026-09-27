@@ -130,6 +130,8 @@ pub(super) fn prctl(context: &mut super::SyscallContext) -> Result<super::Syscal
                 // wide with `buf_len` bounded by that.
                 #[allow(clippy::needless_range_loop)]
                 for i in 0..buf_len {
+                    // SAFETY: the input range was validated for `buf_len` bytes above, `i` stays
+                    // below it, and `buf` is `PR_MAX_NAME_LEN` wide with `buf_len` bounded by that.
                     buf[i] = unsafe { buf_ptr.add(i).read() };
                 }
                 buf

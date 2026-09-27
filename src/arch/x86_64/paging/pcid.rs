@@ -113,6 +113,8 @@ fn bitmap_word(word_idx: usize) -> &'static core::sync::atomic::AtomicU64 {
 /// privileged instruction.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 unsafe fn invpcid(desc: &InvpcidDesc, typ: u64) {
+    // SAFETY: the caller's contract says the CPU has INVPCID and the descriptor is
+    // valid; the instruction invalidates what the descriptor names.
     unsafe {
         asm!(
             "invpcid {typ}, [{desc}]",
@@ -159,6 +161,8 @@ fn invpcid_flush_pcid(pcid: u64) {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn reload_cr3() {
     let cr3: u64;
+    // SAFETY: reading CR3 has no memory operand, and writing the value back is the
+    // reload this flush is defined by; the caller has established PCIDE is clear.
     unsafe {
         asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags));
         asm!("mov cr3, {}", in(reg) cr3, options(nostack, preserves_flags));
@@ -306,6 +310,8 @@ pub(crate) fn flush_all_tlb() {
         invpcid_flush_all_non_global();
         return;
     }
+    // SAFETY: toggling CR4.PCIDE on this CPU so that the CR3 reload flushes; the
+    // sequence is the architectural one and this path runs on one CPU.
     unsafe {
         write_cr4(read_cr4() & !CR4_PCIDE);
         reload_cr3();

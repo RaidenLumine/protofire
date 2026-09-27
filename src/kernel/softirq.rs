@@ -66,6 +66,8 @@ pub fn process_softirqs() {
     #[allow(clippy::needless_range_loop)]
     for nr in 0..SOFTIRQ_MAX {
         if pending & (1u32 << nr) != 0 {
+            // SAFETY: the table is written once during bring-up and read afterwards, so a
+            // load of one slot is a read of an initialised `Option`.
             let handler = unsafe { SOFTIRQ_HANDLERS[nr] };
             if let Some(h) = handler {
                 h(nr as u32);

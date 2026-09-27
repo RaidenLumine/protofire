@@ -163,6 +163,8 @@ pub(crate) fn satp_with_asid(ppn: u64, asid: u64) -> u64 {
 /// `asid`, leaving entries for other ASIDs intact.
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub(crate) fn sfence_asid(asid: u64) {
+    // SAFETY: an ASID-scoped `sfence.vma`, permitted from supervisor mode whatever
+    // the tables say, with the address space number the caller chose.
     unsafe {
         asm!(
             "sfence.vma zero, {asid}",

@@ -133,6 +133,8 @@ pub fn oom_kill() -> bool {
     if sched_ptr.is_null() {
         return false;
     }
+    // SAFETY: the per-CPU scheduler pointer is non-null (checked above) and lives
+    // as long as the CPU is up.
     let scheduler = unsafe { &*sched_ptr };
     scheduler.send_signal(0, pid, 9, 0).is_ok()
 }

@@ -190,11 +190,18 @@ pub fn rtc_read_time() -> Option<RtcTime> {
     // rtc_wait_while_updating() so the register values are consistent.
     // CMOS port access is single-threaded during this function.
     let mut second = unsafe { cmos_read(RTC_SECONDS) };
+    // SAFETY: a CMOS register read for the minute field, during the update window
+    // this
     let mut minute = unsafe { cmos_read(RTC_MINUTES) };
+    // SAFETY: as above — the hour field.
     let mut hour = unsafe { cmos_read(RTC_HOURS) };
+    // SAFETY: as above — the day-of-month field.
     let day = unsafe { cmos_read(RTC_DAY_OF_MONTH) };
+    // SAFETY: as above — the month field.
     let mut month = unsafe { cmos_read(RTC_MONTH) };
+    // SAFETY: as above — the year field.
     let mut year = unsafe { cmos_read(RTC_YEAR) } as u16;
+    // SAFETY: as above — the century field.
     let century = unsafe { cmos_read(RTC_CENTURY) };
 
     if bcd {

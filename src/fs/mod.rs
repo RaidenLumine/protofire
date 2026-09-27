@@ -183,6 +183,8 @@ pub fn uninstall_global(fs: &Mutex<FileSystem>) {
 
 pub fn global() -> Option<&'static Mutex<FileSystem>> {
     let fs = GLOBAL_FS.load(Ordering::SeqCst);
+    // SAFETY: the pointer is either null or one published through that atomic by
+    // `install_global`, which keeps it for the life of the kernel.
     unsafe { fs.as_ref() }
 }
 

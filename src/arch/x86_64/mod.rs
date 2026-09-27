@@ -53,6 +53,8 @@ use crate::arch::Arch;
 /// Requires QEMU's `-debugcon` flag to capture output.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn debugcon_write(byte: u8) {
+    // SAFETY: port 0xE9 is QEMU's debug console, an output-only ISA port; the
+    // instruction touches no memory.
     unsafe {
         asm!("out dx, al", in("dx") 0xe9u16, in("al") byte, options(nomem, nostack));
     }
@@ -77,6 +79,7 @@ impl Arch for X86_64 {
     }
 
     fn halt() {
+        // SAFETY: `hlt` parks the CPU until an interrupt and has no memory operand.
         unsafe {
             asm!("hlt", options(nomem, nostack));
         }
@@ -85,6 +88,8 @@ impl Arch for X86_64 {
     fn reboot() -> ! {
         let mut command = port::Port::<u8>::new(0x64);
 
+        // SAFETY: port 0x64 is the keyboard controller's command port and 0xFE is the
+        // reset command this path sends through it.
         unsafe {
             command.write(0xFE);
         }

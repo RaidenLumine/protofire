@@ -17,8 +17,8 @@
 # library and its binaries.
 #
 # config                       count
-host                         146
-x86_64-unknown-none          95
-aarch64-unknown-none         44
-riscv64gc-unknown-none-elf   35
-aarch64-unknown-linux-gnu    76
+host                         108
+x86_64-unknown-none          0
+aarch64-unknown-none         3
+riscv64gc-unknown-none-elf   0
+aarch64-unknown-linux-gnu    49

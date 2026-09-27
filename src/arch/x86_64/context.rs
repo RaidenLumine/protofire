@@ -92,6 +92,8 @@ unsafe extern "C" {
 /// `current` must be the currently running context and `next` must be a context
 /// that is ready to resume (its stack and instruction pointer must be valid).
 pub unsafe fn switch(current: *mut Context, next: *const Context) {
+    // SAFETY: this function's contract is `switch`'s — both contexts are live and
+    // properly initialised — and the call below is the assembly that performs it.
     unsafe {
         x86_64_context_switch(current, next);
     }
@@ -106,6 +108,8 @@ pub unsafe fn switch(current: *mut Context, next: *const Context) {
 /// segments), a valid user-mode stack pointer, and a valid user-mode
 /// instruction pointer.  The kernel stack used before this call is discarded.
 pub unsafe fn enter_user_mode_with_context(context: &X86_64UserThreadContext) -> ! {
+    // SAFETY: the caller's contract is the one documented above: the context
+    // carries user selectors, a user stack and a user instruction pointer.
     unsafe {
         asm!(
             // Load user-mode data segment selectors (DS, ES, FS).

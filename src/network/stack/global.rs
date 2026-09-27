@@ -162,6 +162,8 @@ impl NetworkStack {
         // Failure is non-fatal: the stack works even without GARP.
         #[cfg(not(test))]
         {
+            // SAFETY: the pointer was allocated on the line above and published only after
+            // this use, so the reference is live for the duration.
             let stack_ref = unsafe { ptr.as_ref().expect("just allocated") };
             let _ = crate::network::internet::arp::send_gratuitous_arp(stack_ref);
         }

@@ -557,6 +557,8 @@ impl F2fsFs {
         let mut target = Vec::with_capacity(addr_bytes);
 
         // Read target bytes from i_addr[..] interpreted as raw bytes.
+        // SAFETY: `i_addr` is an array of `u32`s — no padding, and the byte length is
+        // exactly the number of elements the array holds.
         let raw_addr: &[u8] = unsafe {
             core::slice::from_raw_parts(
                 inode.i_addr.as_ptr() as *const u8,

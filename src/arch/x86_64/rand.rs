@@ -21,6 +21,8 @@ pub fn rdrand_u64() -> Option<u64> {
         let mut value: u64;
         let success: u8;
 
+        // SAFETY: `rdrand` writes one register and reports success in CF; no memory
+        // operand, and a failure is handled below.
         unsafe {
             core::arch::asm!(
                 "rdrand {value}",
@@ -36,6 +38,8 @@ pub fn rdrand_u64() -> Option<u64> {
         }
 
         // Intel recommends a PAUSE in the retry loop on hot paths.
+        // SAFETY: `pause` is a hint with no operands, used as the architecture
+        // recommends between retries.
         unsafe {
             core::arch::asm!("pause", options(nomem, nostack));
         }
@@ -56,6 +60,7 @@ pub fn rdseed_u64() -> Option<u64> {
         let mut value: u64;
         let success: u8;
 
+        // SAFETY: as the `rdrand` loop above — `rdseed`, same shape, failure handled.
         unsafe {
             core::arch::asm!(
                 "rdseed {value}",
@@ -70,6 +75,7 @@ pub fn rdseed_u64() -> Option<u64> {
             return Some(value);
         }
 
+        // SAFETY: as above — the retry hint.
         unsafe {
             core::arch::asm!("pause", options(nomem, nostack));
         }

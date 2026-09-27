@@ -313,6 +313,8 @@ impl AppendGuard {
 
 impl Drop for AppendGuard {
     fn drop(&mut self) {
+        // SAFETY: `self.lock` points at the guard's own flag, which this guard set and
+        // is the only writer of until it clears it here.
         unsafe { (*self.lock).store(false, Ordering::Release) };
         crate::arch::interrupts::restore(self.interrupts_were_enabled);
     }

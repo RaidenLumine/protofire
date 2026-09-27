@@ -161,6 +161,8 @@ pub fn multiboot2_memory_map() -> Option<usize> {
             if entry_size < 24 {
                 break;
             }
+            // SAFETY: the loop the comment above describes has already bounded the entry,
+            // so this reads the entry's version word inside the tag.
             let _entry_version = unsafe { *((addr + offset + 12) as *const u32) };
             // SAFETY: the entry loop's condition keeps a whole
             // `entry_size`-byte entry inside the tag, and entry sizes below the
@@ -174,8 +176,12 @@ pub fn multiboot2_memory_map() -> Option<usize> {
 
             let mut entry_off = entries_start;
             while entry_off + entry_size <= entries_end {
+                // SAFETY: `entry_off + entry_size` is still inside the tag (the loop
+                // condition), so the entry's first word is a byte of the blob.
                 let _base = unsafe { *((addr + entry_off) as *const u64) };
+                // SAFETY: as above — the length word of the same entry.
                 let length = unsafe { *((addr + entry_off + 8) as *const u64) };
+                // SAFETY: as above — the type word of the same entry.
                 let entry_type = unsafe { *((addr + entry_off + 16) as *const u32) };
 
                 if entry_type == MULTIBOOT2_MMAP_AVAILABLE {

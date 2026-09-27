@@ -434,6 +434,8 @@ impl RawPageTable {
     /// stack when several page‑table levels are materialised in a single call
     /// chain.
     pub(crate) fn new_boxed_zeroed() -> Box<Self> {
+        // SAFETY: `Layout::new::<Self>()` describes the type being allocated, and the
+        // block only becomes a `Box` after the null check below.
         unsafe {
             let layout = core::alloc::Layout::new::<Self>();
             let ptr = alloc::alloc::alloc(layout);
@@ -461,6 +463,7 @@ impl RawPageFrame {
     /// Allocate a zeroed `RawPageFrame` directly on the heap, avoiding a
     /// 4096‑byte stack temporary.  See [`RawPageTable::new_boxed_zeroed`].
     pub(crate) fn new_boxed_zeroed() -> Box<Self> {
+        // SAFETY: as above — the same layout, the same construction.
         unsafe {
             let layout = core::alloc::Layout::new::<Self>();
             let ptr = alloc::alloc::alloc(layout);

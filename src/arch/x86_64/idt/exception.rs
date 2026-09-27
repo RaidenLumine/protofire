@@ -810,6 +810,8 @@ fn handle_ptrace_singlestop(context: &mut InterruptContext) -> bool {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn page_fault_address() -> u64 {
     let address: u64;
+    // SAFETY: reading CR2 reports the page fault's address; the instruction has no
+    // memory operand and only this handler runs on it.
     unsafe {
         asm!("mov {}, cr2", out(reg) address, options(nomem, nostack, preserves_flags));
     }
@@ -826,6 +828,8 @@ pub(crate) fn sync_user_iret_stack(context: &mut InterruptContext) {
         return;
     }
 
+    // SAFETY: the context is the frame the trap entry built, and the fields written
+    // here are the tail `iretq` consumes from that same frame.
     unsafe {
         // `InterruptContext` stores the saved user rsp/ss in explicit fields,
         // but `iretq` still consumes them from the hardware frame tail.

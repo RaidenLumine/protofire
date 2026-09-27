@@ -253,6 +253,9 @@ impl NetworkStack {
         #[cfg(test)]
         let mut rx_storage = [0u8; RX_BUFFER_SIZE];
         #[cfg(not(test))]
+        // SAFETY: on a bare-metal build this static is the only RX buffer, and the
+        // receive path is serialised by the stack's own lock; the test build stacks the
+        // buffer instead.
         let buffer = unsafe { &mut *RX_BUFFER.get() };
         #[cfg(test)]
         let buffer = &mut rx_storage;

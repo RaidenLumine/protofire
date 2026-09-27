@@ -123,6 +123,9 @@ pub(crate) fn allocate_asid() -> u64 {
                 // the inner-shareable domain and invalidates every entry;
                 // the `dsb ish; isb` makes the invalidation visible before
                 // the reused ASID is programmed into TTBR0.
+                // SAFETY: invalidating every EL1 translation is permitted from EL1 whatever the
+                // tables say, and the barriers order it against the reload the comment above
+                // describes.
                 unsafe {
                     asm!("tlbi vmalle1is", options(nostack, preserves_flags));
                     asm!("dsb ish", "isb", options(nostack, preserves_flags));
@@ -179,6 +182,8 @@ pub(crate) fn ttbr0_with_asid(root_table_address: usize, asid: u64) -> u64 {
 /// whose ASID matches `asid`, leaving entries for other ASIDs intact.
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub(crate) fn tlbi_asid(asid: u64) {
+    // SAFETY: as above — an ASID-scoped invalidation, which the caller chose
+    // because only that ASID's entries are stale.
     unsafe {
         asm!(
             "tlbi aside1is, {asid}",

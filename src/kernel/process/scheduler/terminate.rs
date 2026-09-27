@@ -339,6 +339,8 @@ impl Scheduler {
             // safely back on the scheduler's own stack.
             let context_ptr = current_thread.context_ptr();
             *self.dying_thread.lock() = Some(current_thread);
+            // SAFETY: the dying thread's context is still allocated (the Arc is held in
+            // `dying_thread` above) and the dispatcher's is its own field.
             unsafe {
                 arch::switch_context(context_ptr, self.dispatch_context.as_ptr());
             }

@@ -26,6 +26,8 @@ const RNDR_MAX_RETRIES: u32 = 10;
 pub fn has_rndr() -> bool {
     let isar0: u64;
 
+    // SAFETY: ID_AA64ISAR0_EL1 is readable from EL1 and the instruction touches no
+    // memory.
     unsafe {
         asm!(
             "mrs {isar0}, ID_AA64ISAR0_EL1",
@@ -48,6 +50,8 @@ pub fn rndr_u64() -> Option<u64> {
         let value: u64;
         let success: u64;
 
+        // SAFETY: `RNDR` writes one register and reports success in PSTATE, which the
+        // `cset` captures; no memory operand.
         unsafe {
             // RNDR writes to the destination register and updates PSTATE,
             // setting Z=1 when a valid random number was produced.  CSET EQ
@@ -79,6 +83,7 @@ pub fn rndrrs_u64() -> Option<u64> {
         let value: u64;
         let success: u64;
 
+        // SAFETY: as the `RNDR` loop above — `RNDRRS`, same shape.
         unsafe {
             asm!(
                 "mrs {value}, RNDRRS",

@@ -358,6 +358,8 @@ fn bot_transfer(cdb: &[u8], data: Option<BotData<'_>>) -> Result<()> {
 
     // Send CBW on bulk OUT.
     let ep_out = dev.endpoints.ep_out_addr;
+    // SAFETY: the endpoint belongs to a slot this controller configured, and the
+    // CBW is a local array `bulk_send` copies into its own buffer.
     with_controller(|ctrl| unsafe { ctrl.bulk_send(ep_out, &cbw_bytes) })
         .ok_or(Error::DeviceError)??;
 
@@ -386,6 +388,8 @@ fn bot_transfer(cdb: &[u8], data: Option<BotData<'_>>) -> Result<()> {
 
     // Receive CSW on bulk IN.
     let mut csw_bytes = [0u8; 13];
+    // SAFETY: as above, on the IN endpoint — the buffer is this function's own
+    // and outlives the transfer.
     with_controller(|ctrl| unsafe { ctrl.bulk_recv(dev.endpoints.ep_in_addr, &mut csw_bytes) })
         .ok_or(Error::DeviceError)??;
 

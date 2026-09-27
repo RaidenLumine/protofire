@@ -335,6 +335,8 @@ unsafe impl Sync for AhciPort {}
 #[inline]
 #[cfg(target_os = "none")]
 fn port_reg(hba: *mut u8, port: u8, reg: usize) -> *mut u8 {
+    // SAFETY: pointer arithmetic inside the HBA mapping the driver was given, at
+    // the port and register offsets the AHCI specification fixes.
     unsafe { hba.add(PORT_BASE + (port as usize) * PORT_STRIDE + reg) }
 }
 
@@ -347,6 +349,9 @@ impl AhciPort {
     /// `bar5_phys` must be the physical base address of an AHCI controller's
     /// PCI BAR5, and the port must be implemented and have a device attached.
     unsafe fn init(bar5_phys: u64, port: u8) -> crate::Result<Self> {
+        // SAFETY: the caller's contract is that `bar5_phys` is this controller's BAR5,
+        // so the mapping below is live MMIO; every register this body touches
+        // is one the specification puts inside that window.
         unsafe {
             use crate::arch::mmu::map_device_mmio;
             use core::ptr::read_volatile;
@@ -496,6 +501,8 @@ impl AhciPort {
     /// Send IDENTIFY DEVICE to the attached SATA device and parse the
     /// response into `block_count` and `model`.
     unsafe fn identify_device(&mut self) -> crate::Result<()> {
+        // SAFETY: the controller was initialised and owns its port registers, and the
+        // identify buffer is the DMA buffer this driver allocated for it.
         unsafe {
             use core::ptr::read_volatile;
             use core::ptr::write_volatile;
@@ -651,6 +658,9 @@ impl AhciPort {
         is_write: bool,
         buf_phys: u64,
     ) -> crate::Result<()> {
+        // SAFETY: the transfer registers belong to this controller and `buf_phys` is
+        // the physical address of a buffer the caller owns for the length it
+        // asked for.
         unsafe {
             use core::ptr::read_volatile;
             use core::ptr::write_volatile;

@@ -61,6 +61,8 @@ impl SharedMemorySegment {
         for _ in 0..frame_count {
             let ptr = memory.allocate_frames(1).ok_or(Error::OutOfMemory)?;
             // Zero the frame.
+            // SAFETY: `ptr` is a frame the allocator just handed over, one `FRAME_SIZE`
+            // long, which is exactly what is zeroed.
             unsafe { core::ptr::write_bytes(ptr, 0, FRAME_SIZE) }
             frames.push(ptr as usize);
         }

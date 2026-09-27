@@ -233,6 +233,8 @@ impl VfsTrait for ExfatVolume {
             let flatten_entries = |entries: &[[u8; DIR_ENTRY_SIZE]]| -> &[u8] {
                 let ptr = entries.as_ptr() as *const u8;
                 let len = entries.len() * DIR_ENTRY_SIZE;
+                // SAFETY: `[u8; DIR_ENTRY_SIZE]` has no padding and alignment 1, so an array of
+                // them is already a byte slice of `len * DIR_ENTRY_SIZE` bytes.
                 unsafe { core::slice::from_raw_parts(ptr, len) }
             };
 

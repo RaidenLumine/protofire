@@ -401,6 +401,8 @@ pub fn cpu_count() -> u32 {
 pub unsafe fn switch_context(current: *mut Context, next: *const Context) {
     #[cfg(all(target_arch = "aarch64", target_os = "none"))]
     {
+        // SAFETY: the caller's contract is `switch_context`'s — both contexts are live
+        // — and this forwards to the architecture's own switch.
         unsafe {
             aarch64::context::switch(current, next);
         }
@@ -408,6 +410,7 @@ pub unsafe fn switch_context(current: *mut Context, next: *const Context) {
 
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
     {
+        // SAFETY: as the aarch64 arm above — the same contract, the riscv64 switch.
         unsafe {
             riscv64::context::switch(current, next);
         }
@@ -415,6 +418,8 @@ pub unsafe fn switch_context(current: *mut Context, next: *const Context) {
 
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
     {
+        // SAFETY: the caller's contract is `switch_context`'s — both contexts are live
+        // — and this forwards to the architecture's own switch.
         unsafe {
             x86_64::context::switch(current, next);
         }
@@ -447,6 +452,8 @@ pub mod instructions {
     /// issues a plain `wfi`.
     pub fn idle() {
         #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+        // SAFETY: the idle loop unmasks interrupts, waits and masks them again in one
+        // window; none of the instructions touches memory.
         unsafe {
             core::arch::asm!(
                 "msr DAIFClr, #0xf",
@@ -457,6 +464,8 @@ pub mod instructions {
         }
 
         #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+        // SAFETY: as the aarch64 arm above — the riscv64 idle sequence, which the
+        // comment beside it explains.
         unsafe {
             // Enable supervisor interrupts around `wfi` (mirroring x86_64's
             // `sti; hlt; cli`) so a pending timer IRQ is actually taken while
@@ -477,6 +486,8 @@ pub mod instructions {
         }
 
         #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+        // SAFETY: the idle loop enables interrupts, halts and masks them again in one
+        // window; none of the three instructions touches memory.
         unsafe {
             core::arch::asm!("sti", "hlt", "cli", options(nomem, nostack));
         }

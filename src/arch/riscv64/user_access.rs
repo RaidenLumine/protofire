@@ -28,6 +28,8 @@ const SSTATUS_SUM: u64 = 1 << 18;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 #[inline]
 unsafe fn allow_user_access() {
+    // SAFETY: setting SUM is a supervisor system-register write; the comment above
+    // explains why the register form is used and why `nomem` is not claimed.
     unsafe {
         // SUM = 1 << 18 does not fit in the 5-bit `csrsi` immediate, and the
         // immediate form is silently dropped on some toolchains — use the
@@ -49,6 +51,7 @@ unsafe fn allow_user_access() {
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 #[inline]
 unsafe fn deny_user_access() {
+    // SAFETY: as `allow_user_access` — clearing SUM, same reasoning.
     unsafe {
         // Register form — see `allow_user_access`; `nomem` deliberately absent.
         asm!("csrc sstatus, {sum}", sum = in(reg) SSTATUS_SUM, options(nostack, preserves_flags));
@@ -80,6 +83,8 @@ impl UserAccessGuard {
     /// kernel code that assumes SUM protection is active.
     #[inline]
     pub unsafe fn new() -> Self {
+        // SAFETY: the guard's own contract, which its doc above states; `Drop` below
+        // pairs with it.
         unsafe { allow_user_access() };
         Self(())
     }
@@ -89,6 +94,7 @@ impl UserAccessGuard {
 impl Drop for UserAccessGuard {
     #[inline]
     fn drop(&mut self) {
+        // SAFETY: as above — restoring SUM when the guard goes away.
         unsafe { deny_user_access() };
     }
 }
@@ -101,6 +107,7 @@ impl Drop for UserAccessGuard {
 /// arguments and runs with SUM set.
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub unsafe fn with_user_access<T>(f: impl FnOnce() -> T) -> T {
+    // SAFETY: forwarding to `UserAccessGuard::new`, whose contract the caller met.
     let _guard = unsafe { UserAccessGuard::new() };
     f()
 }

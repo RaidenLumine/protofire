@@ -233,6 +233,9 @@ pub fn check_expired_timers(ticks: u64) {
             // Deliver signal via the global scheduler.
             if timer.signo > 0 {
                 if let Some(sched) =
+                    // SAFETY: the current CPU's scheduler pointer is the one its own per-CPU
+                    // block holds and is valid for as long as the kernel
+                    // runs.
                     unsafe { crate::kernel::percpu::current_scheduler_ptr().as_ref() }
                 {
                     // Use pid 0 as sender (kernel).

@@ -40,6 +40,8 @@ use core::arch::asm;
 #[inline]
 unsafe fn allow_user_access() {
     if super::mmu::SPAN_ENABLED {
+        // SAFETY: clearing PAN is an EL1 system-register write; the comment above
+        // explains why no `nomem` is claimed.
         unsafe {
             // `nomem` is deliberately absent (matching the x86 `stac`/`clac`
             // helpers): the compiler must not reorder user-memory loads/stores
@@ -66,6 +68,7 @@ unsafe fn allow_user_access() {
 #[inline]
 unsafe fn deny_user_access() {
     if super::mmu::SPAN_ENABLED {
+        // SAFETY: as `allow_user_access` — setting PAN, same reasoning.
         unsafe {
             // `nomem` deliberately absent — see `allow_user_access`.
             asm!("msr PAN, #1", options(nostack, preserves_flags));
@@ -98,6 +101,8 @@ impl UserAccessGuard {
     /// kernel code that assumes PAN protection is active.
     #[inline]
     pub unsafe fn new() -> Self {
+        // SAFETY: the guard's own contract, which its doc above states; `Drop` below
+        // pairs with it.
         unsafe { allow_user_access() };
         Self(())
     }
@@ -107,6 +112,7 @@ impl UserAccessGuard {
 impl Drop for UserAccessGuard {
     #[inline]
     fn drop(&mut self) {
+        // SAFETY: as above — restoring PAN when the guard goes away.
         unsafe { deny_user_access() };
     }
 }
@@ -119,6 +125,7 @@ impl Drop for UserAccessGuard {
 /// arguments and runs with PAN cleared.
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub unsafe fn with_user_access<T>(f: impl FnOnce() -> T) -> T {
+    // SAFETY: forwarding to `UserAccessGuard::new`, whose contract the caller met.
     let _guard = unsafe { UserAccessGuard::new() };
     f()
 }

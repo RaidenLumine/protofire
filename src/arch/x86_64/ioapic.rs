@@ -95,6 +95,8 @@ static MAX_REDIRECTION_ENTRY: core::sync::atomic::AtomicU8 = core::sync::atomic:
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 unsafe fn ioapic_read(reg: u8) -> u32 {
     let base = IOAPIC_BASE.load(Ordering::Relaxed);
+    // SAFETY: the IO-APIC's own register window: IOREGSEL selects the register and
+    // IOWIN is its data port, both inside the mapping made during `init_ioapic`.
     unsafe {
         ptr::write_volatile((base + IOREGSEL) as *mut u32, reg as u32);
         ptr::read_volatile((base + IOWIN) as *const u32)
@@ -105,6 +107,7 @@ unsafe fn ioapic_read(reg: u8) -> u32 {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 unsafe fn ioapic_write(reg: u8, value: u32) {
     let base = IOAPIC_BASE.load(Ordering::Relaxed);
+    // SAFETY: as `ioapic_read` — the same pair of registers, on the write side.
     unsafe {
         ptr::write_volatile((base + IOREGSEL) as *mut u32, reg as u32);
         ptr::write_volatile((base + IOWIN) as *mut u32, value);
@@ -118,6 +121,7 @@ unsafe fn ioapic_write(reg: u8, value: u32) {
 fn read_redirection_entry(index: u8) -> (u32, u32) {
     let lo_reg = REDIRECTION_TABLE_BASE + 2 * index;
     let hi_reg = lo_reg + 1;
+    // SAFETY: reading the two halves of one redirection entry of that controller.
     unsafe {
         let lo = ioapic_read(lo_reg);
         let hi = ioapic_read(hi_reg);
@@ -130,6 +134,7 @@ fn read_redirection_entry(index: u8) -> (u32, u32) {
 fn write_redirection_entry(index: u8, lo: u32, hi: u32) {
     let lo_reg = REDIRECTION_TABLE_BASE + 2 * index;
     let hi_reg = lo_reg + 1;
+    // SAFETY: as above — writing the same entry.
     unsafe {
         ioapic_write(lo_reg, lo);
         ioapic_write(hi_reg, hi);
@@ -149,9 +154,13 @@ pub fn init_ioapic() {
     }
 
     // Map the IOAPIC MMIO page into the active kernel page tables.
+    // SAFETY: the IO-APIC page is device MMIO and this runs on the boot path with
+    // the runtime tables active, which is the contract `map_device_mmio_page`
+    // states.
     unsafe { super::apic::map_device_mmio_page(IOAPIC_MMIO_BASE_DEFAULT) };
 
     // Read version register.
+    // SAFETY: reading the version register of the window just mapped.
     let version = unsafe { ioapic_read(IOAPIC_VER) };
     let max_entry = ((version >> 16) & 0xFF) as u8;
     MAX_REDIRECTION_ENTRY.store(max_entry, Ordering::Release);
@@ -162,6 +171,7 @@ pub fn init_ioapic() {
     );
 
     // Set IOAPIC ID to 0.
+    // SAFETY: writing the ID register of that same window.
     unsafe { ioapic_write(IOAPIC_ID, 0) };
 
     // Mask all redirection entries.
@@ -219,6 +229,8 @@ pub fn ioapic_set_irq_destination(pin: u8, lapic_id: u8) {
     let hi_reg = REDIRECTION_TABLE_BASE + 2 * pin + 1;
     let base = IOAPIC_BASE.load(Ordering::Relaxed);
 
+    // SAFETY: the high half of a redirection entry, in the IO-APIC window this
+    // driver mapped and which the index was checked against.
     unsafe {
         // Destination field is bits 56–63 of the 64-bit entry, i.e. bits
         // 24–31 of the high 32-bit half.  Preserve the reserved low bits.

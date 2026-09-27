@@ -103,12 +103,15 @@ fn current_file_base(layout: &ImsicLayout) -> usize {
 /// Read the `eip`/`eie` 64-bit word covering `irq` on the current hart.
 fn read_bitset(layout: &ImsicLayout, base_offset: usize, irq: u32) -> u64 {
     let addr = current_file_base(layout) + base_offset + (irq as usize / 64) * 8;
+    // SAFETY: the IMSIC file's `eip`/`eie` word for this hart, in the window the
+    // layout describes and the platform mapped.
     unsafe { read_volatile(addr as *const u64) }
 }
 
 /// Write the `eip`/`eie` 64-bit word covering `irq` on the current hart.
 fn write_bitset(layout: &ImsicLayout, base_offset: usize, irq: u32, value: u64) {
     let addr = current_file_base(layout) + base_offset + (irq as usize / 64) * 8;
+    // SAFETY: as `read_bitset` — the same word, on the write side.
     unsafe { write_volatile(addr as *mut u64, value) }
 }
 
@@ -184,6 +187,8 @@ pub fn handle_pending_external() -> u32 {
         None => return 0,
     };
     let ih_addr = current_file_base(&layout) + IMSIC_IH_OFFSET;
+    // SAFETY: claiming an interrupt reads this hart's IMSIC identity register, in
+    // the same mapped window.
     let claimed = unsafe { read_volatile(ih_addr as *const u32) };
     if claimed == 0 || claimed > IMSIC_MAX_IRQ {
         // No pending interrupt (or an identity outside the table): nothing
@@ -204,6 +209,8 @@ pub fn handle_pending_external() -> u32 {
     }
 
     // Complete the interrupt (EOI).
+    // SAFETY: as above — completing the claim writes the identity back to the same
+    // register.
     unsafe { write_volatile(ih_addr as *mut u32, claimed) };
     claimed
 }
@@ -274,6 +281,9 @@ pub fn configure_msix(
     let table = table_phys as usize as *mut u8;
     for i in 0..count {
         let entry = compose_msix_entry(target_cpu, base_irq + i);
+        // SAFETY: `table` is the identity-mapped MSI-X table the caller reserved and
+        // `i` is bounded by the entry count it passed, so the pointer names one
+        // entry.
         let p = unsafe { table.add(i as usize * core::mem::size_of::<MsixTableEntry>()) };
         // SAFETY: the table is identity-mapped device MMIO and each entry is
         // written as four 32-bit stores to keep the volatile accesses word

@@ -109,6 +109,8 @@ pub unsafe fn init_ap_gs_bases(percpu: *const PerCpuData) {
 ///
 /// Called once, on the BSP, after [`init_bsp_gs_bases`].
 pub unsafe fn init_bsp_data(scheduler: *mut Scheduler, lapic_id: u8, tss: *mut u8) {
+    // SAFETY: the BSP's per-CPU block is a kernel static and this runs once, before
+    // any other CPU exists — the contract the doc above states.
     let percpu = unsafe { &mut *BSP_PERCPU.get() };
     percpu.cpu_id = 0;
     percpu.lapic_id = lapic_id;

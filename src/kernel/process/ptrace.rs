@@ -201,6 +201,8 @@ pub fn ptrace_poke_data(
             | crate::memory::paging::PagePermissions::WRITE,
     )?;
 
+    // SAFETY: the mapping check above proved the tracee's range is writable user
+    // memory of `len` bytes, which is what the copy writes.
     unsafe {
         core::ptr::copy_nonoverlapping(data.as_ptr(), addr as *mut u8, len);
     }

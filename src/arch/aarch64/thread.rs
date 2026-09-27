@@ -597,6 +597,9 @@ impl Thread {
         // Write the exception frame to the user stack.  When SPAN is
         // enabled, PSTATE.PAN blocks kernel access to user pages — use
         // with_user_access to temporarily grant access.
+        // SAFETY: the caller's contract says `frame_pointer` addresses the user stack
+        // slot the frame is written to, and the guard is what makes the store
+        // legal under PAN.
         unsafe {
             #[cfg(target_arch = "aarch64")]
             {
@@ -639,6 +642,8 @@ impl Thread {
         // Read the exception frame from the user stack.  When SPAN is
         // enabled, PSTATE.PAN blocks kernel access to user pages — use
         // with_user_access to temporarily grant access.
+        // SAFETY: as the write above, in the other direction — the same slot, under the
+        // same guard.
         let exception_frame = unsafe {
             #[cfg(target_arch = "aarch64")]
             {
@@ -718,6 +723,8 @@ impl Thread {
             let Some(context) = user_context else {
                 return;
             };
+            // SAFETY: `user_context` is present because the check above said so, and the
+            // context was validated before this point.
             unsafe {
                 crate::arch::aarch64::context::enter_user_mode_with_context(&context);
             }

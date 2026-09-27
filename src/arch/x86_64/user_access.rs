@@ -48,6 +48,8 @@ pub(crate) unsafe fn set_smap_active() {
 #[inline]
 pub unsafe fn stac() {
     if SMAP_ACTIVE.load(Ordering::Acquire) {
+        // SAFETY: `stac` sets EFLAGS.AC on a CPU with SMAP; it touches no memory
+        // itself, and the comment above explains why no `nomem` is claimed.
         unsafe {
             // `nomem` is deliberately absent: the compiler must not reorder
             // user-memory loads/stores across the AC-setting instruction,
@@ -72,6 +74,7 @@ pub unsafe fn stac() {
 #[inline]
 pub unsafe fn clac() {
     if SMAP_ACTIVE.load(Ordering::Acquire) {
+        // SAFETY: as `stac` — `clac`, same reasoning.
         unsafe {
             // `nomem` is deliberately absent — see `stac`.
             asm!("clac", options(nostack));
@@ -105,6 +108,8 @@ impl UserAccessGuard {
     /// any kernel code that assumes SMAP is active.
     #[inline]
     pub unsafe fn new() -> Self {
+        // SAFETY: the guard's own contract, which its doc above states; `Drop` below
+        // pairs with it.
         unsafe { stac() };
         Self(())
     }
@@ -114,6 +119,7 @@ impl UserAccessGuard {
 impl Drop for UserAccessGuard {
     #[inline]
     fn drop(&mut self) {
+        // SAFETY: as above — clearing the flag when the guard goes away.
         unsafe { clac() };
     }
 }
@@ -126,6 +132,7 @@ impl Drop for UserAccessGuard {
 /// arguments and runs with AC set.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn with_user_access<T>(f: impl FnOnce() -> T) -> T {
+    // SAFETY: forwarding to `UserAccessGuard::new`, whose contract the caller met.
     let _guard = unsafe { UserAccessGuard::new() };
     f()
 }

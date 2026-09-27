@@ -54,6 +54,8 @@ const IA32_PLATFORM_INFO: u32 = 0xCE;
 fn rdmsr(msr: u32) -> u64 {
     let hi: u32;
     let lo: u32;
+    // SAFETY: an MSR read of the leaf the caller names in ECX; the instruction
+    // writes only EDX:EAX and touches no memory.
     unsafe {
         core::arch::asm!(
             "rdmsr",
@@ -70,6 +72,8 @@ fn rdmsr(msr: u32) -> u64 {
 #[cfg(target_os = "none")]
 #[inline]
 fn wrmsr(msr: u32, value: u64) {
+    // SAFETY: as above, on the write side — the value is the one this driver
+    // derived. Only the boot path calls it.
     unsafe {
         core::arch::asm!(
             "wrmsr",
@@ -96,6 +100,7 @@ fn wrmsr(_msr: u32, _value: u64) {}
 #[cfg(target_os = "none")]
 #[inline]
 fn has_dts() -> bool {
+    // SAFETY: CPUID leaf 6 with a zero subleaf, fixed here; no memory operand.
     unsafe { (crate::arch::x86_64::cpuid::cpuid(6, 0).eax & 1) != 0 }
 }
 
@@ -111,6 +116,7 @@ fn has_dts() -> bool {
 #[cfg(target_os = "none")]
 #[inline]
 fn hwp_supported_cpu() -> bool {
+    // SAFETY: as above — the same leaf, read for its HWP capability bit.
     unsafe { (crate::arch::x86_64::cpuid::cpuid(6, 0).ecx & (1 << 7)) != 0 }
 }
 
@@ -142,6 +148,7 @@ impl X86FreqDriver {
         #[cfg(target_os = "none")]
         {
             let vendor = {
+                // SAFETY: as above — CPUID leaf 0, the vendor string.
                 let res = unsafe { crate::arch::x86_64::cpuid::cpuid(0, 0) };
                 let mut v = [0u8; 12];
                 v[..4].copy_from_slice(&res.ebx.to_le_bytes());
@@ -154,6 +161,7 @@ impl X86FreqDriver {
             let hwp = hwp_supported_cpu();
 
             // CPUID leaf 0x16 (Processor Frequency Information, Skylake+).
+            // SAFETY: as above — the processor-frequency leaf, which this machine supports.
             let freq_info = unsafe { crate::arch::x86_64::cpuid::cpuid(0x16, 0) };
             let has_freq_info = (freq_info.eax & (1 << 31)) != 0;
             let base_mhz = freq_info.eax & 0xFFFF;

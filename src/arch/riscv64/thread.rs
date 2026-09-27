@@ -373,6 +373,8 @@ impl Thread {
             let Some(context) = user_context else {
                 return;
             };
+            // SAFETY: `user_context` is present because the check above said so, and the
+            // context was validated before this point.
             unsafe {
                 crate::arch::riscv64::context::enter_user_mode_with_context(&context);
             }

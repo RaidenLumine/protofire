@@ -45,6 +45,8 @@ impl Scheduler {
 
         if arch::supports_context_switch() {
             self.restore_kernel_address_space();
+            // SAFETY: the blocked thread's context is live — the caller holds the thread —
+            // and the dispatcher's context is this scheduler's own field.
             unsafe {
                 arch::switch_context(current_thread.context_ptr(), self.dispatch_context.as_ptr());
             }

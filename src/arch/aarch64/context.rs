@@ -63,6 +63,8 @@ unsafe extern "C" {
 /// `next` must contain the saved state of the thread to resume.
 /// Interrupts must be disabled before calling this function.
 pub unsafe fn switch(current: *mut Context, next: *const Context) {
+    // SAFETY: the caller's contract is the one above — both contexts are live and
+    // interrupts are masked — and this forwards to the assembly switch.
     unsafe {
         aarch64_context_switch(current, next);
     }
@@ -77,6 +79,8 @@ pub unsafe fn switch(current: *mut Context, next: *const Context) {
 /// The kernel stack must be correctly set up before calling this function
 /// as it irreversibly transfers control to EL0.
 pub unsafe fn enter_user_mode_with_context(context: &AArch64UserThreadContext) -> ! {
+    // SAFETY: the caller's contract is the one above: the context carries an EL0
+    // entry point and stack, and the assembly below moves into them.
     unsafe {
         asm!(
             "mov x15, x0",

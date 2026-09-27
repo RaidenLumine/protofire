@@ -73,6 +73,8 @@ pub unsafe fn ecam_read_u32(
     offset: u16,
 ) -> u32 {
     let addr = region.address(bus, device, function, offset);
+    // SAFETY: `region` describes a live ECAM window and `addr` composes the
+    // bus/device/function/offset into it at the dword alignment the caller passes.
     unsafe { ptr::read_volatile(addr as *const u32) }
 }
 
@@ -90,6 +92,7 @@ pub unsafe fn ecam_read_u16(
     offset: u16,
 ) -> u16 {
     let dword_aligned = offset & 0xFFFC;
+    // SAFETY: as `ecam_read_u32` — a 16-bit read has to fetch the containing dword.
     let dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     let shift = (offset & 0x02) * 8;
     ((dword >> shift) & 0xFFFF) as u16
@@ -109,6 +112,7 @@ pub unsafe fn ecam_read_u8(
     offset: u16,
 ) -> u8 {
     let dword_aligned = offset & 0xFFFC;
+    // SAFETY: as `ecam_read_u32` — a byte read has to fetch the containing dword.
     let dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     let shift = (offset & 0x03) * 8;
     ((dword >> shift) & 0xFF) as u8
@@ -132,6 +136,7 @@ pub unsafe fn ecam_write_u32(
     value: u32,
 ) {
     let addr = region.address(bus, device, function, offset);
+    // SAFETY: as `ecam_read_u32`, on the write side.
     unsafe { ptr::write_volatile(addr as *mut u32, value) };
 }
 
@@ -152,8 +157,11 @@ pub unsafe fn ecam_write_u16(
 ) {
     let dword_aligned = offset & 0xFFFC;
     let shift = (offset & 0x02) * 8;
+    // SAFETY: the dword containing the 16-bit field, read so its neighbour can be
+    // written back untouched.
     let mut dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     dword = (dword & !(0xFFFF << shift)) | ((value as u32) << shift);
+    // SAFETY: writing that same dword back.
     unsafe { ecam_write_u32(region, bus, device, function, dword_aligned, dword) };
 }
 
@@ -174,7 +182,9 @@ pub unsafe fn ecam_write_u8(
 ) {
     let dword_aligned = offset & 0xFFFC;
     let shift = (offset & 0x03) * 8;
+    // SAFETY: the dword containing the byte.
     let mut dword = unsafe { ecam_read_u32(region, bus, device, function, dword_aligned) };
     dword = (dword & !(0xFF << shift)) | ((value as u32) << shift);
+    // SAFETY: writing that same dword back.
     unsafe { ecam_write_u32(region, bus, device, function, dword_aligned, dword) };
 }

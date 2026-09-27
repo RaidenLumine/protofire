@@ -176,6 +176,8 @@ impl KernelStack {
             let total_size = guard_size + stack_size;
             let total_frames = total_size.div_ceil(crate::memory::frame::FRAME_SIZE);
             if let Some(base) = mm.allocate_frames(total_frames) {
+                // SAFETY: `base` is the first of the frames just allocated and `guard_size` is
+                // inside that allocation, so the usable stack starts inside it.
                 let stack_ptr = unsafe { base.add(guard_size) };
                 // Map only the usable stack region; the guard page stays
                 // unmapped so any access faults.
