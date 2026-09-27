@@ -219,8 +219,11 @@ fn scsi_read_10(lba: u64, buffer: &mut [u8]) -> Result<()> {
             length: (chunk as u16).to_be(),
             control: 0,
         };
+        // SAFETY: `ScsiRw10Cdb` is `repr(C, packed)` and ten bytes wide, so the
+        // transmute to the wire form is the same ten bytes; the compiler checks
+        // the sizes agree.
         let cdb_bytes = unsafe { core::mem::transmute::<ScsiRw10Cdb, [u8; 10]>(cdb) };
-        bot_transfer(&cdb_bytes, Some(chunk_buf), CBW_DIR_IN)?;
+        bot_transfer(&cdb_bytes, Some(BotData::In(chunk_buf)))?;
         done += chunk;
     }
     Ok(())
@@ -242,15 +245,9 @@ fn scsi_write_10(lba: u64, data: &[u8]) -> Result<()> {
             length: (chunk as u16).to_be(),
             control: 0,
         };
+        // SAFETY: as `scsi_read_10` — the same ten-byte packed descriptor.
         let cdb_bytes = unsafe { core::mem::transmute::<ScsiRw10Cdb, [u8; 10]>(cdb) };
-        // BOT write: data is immutable from BlockDevice but bot_transfer
-        // needs a mutable slice.  For the OUT direction it only hands the
-        // data to bulk_send, which reads it into a DMA buffer — it never
-        // modifies it.
-        let chunk_mut = unsafe {
-            core::slice::from_raw_parts_mut(chunk_data.as_ptr() as *mut u8, chunk_data.len())
-        };
-        bot_transfer(&cdb_bytes, Some(chunk_mut), CBW_DIR_OUT)?;
+        bot_transfer(&cdb_bytes, Some(BotData::Out(chunk_data)))?;
         done += chunk;
     }
     Ok(())
@@ -259,14 +256,17 @@ fn scsi_write_10(lba: u64, data: &[u8]) -> Result<()> {
 fn scsi_test_unit_ready() -> Result<()> {
     let cdb = [SCSI_TEST_UNIT_READY, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let mut dummy = [0u8; 1];
-    bot_transfer(&cdb, Some(&mut dummy), CBW_DIR_IN)
+    bot_transfer(&cdb, Some(BotData::In(&mut dummy)))
 }
 
 fn scsi_read_capacity() -> Result<(u64, usize)> {
     let cdb = [SCSI_READ_CAPACITY_10, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let mut resp = [0u8; 8];
-    bot_transfer(&cdb, Some(&mut resp), CBW_DIR_IN)?;
+    bot_transfer(&cdb, Some(BotData::In(&mut resp)))?;
     // Response is big-endian.
+    // SAFETY: the device wrote the 8 bytes of a READ CAPACITY response into
+    // `resp`, the buffer `bot_transfer` filled; the copy is what keeps the read
+    // independent of the record's alignment.
     let cap = unsafe { core::ptr::read_unaligned(resp.as_ptr() as *const ScsiReadCapacity10) };
     let lba = u32::from_be(cap.returned_lba);
     let block_len = u32::from_be(cap.block_length);
@@ -280,7 +280,7 @@ fn scsi_read_capacity() -> Result<(u64, usize)> {
 fn scsi_inquiry() -> Result<[u8; 36]> {
     let cdb = [SCSI_INQUIRY, 0, 0, 0, 0, 36, 0, 0, 0, 0]; // allocation length = 36
     let mut resp = [0u8; 36];
-    bot_transfer(&cdb, Some(&mut resp), CBW_DIR_IN)?;
+    bot_transfer(&cdb, Some(BotData::In(&mut resp)))?;
     Ok(resp)
 }
 
@@ -290,7 +290,7 @@ fn scsi_inquiry() -> Result<[u8; 36]> {
 fn scsi_request_sense() -> Result<u8> {
     let cdb = [SCSI_REQUEST_SENSE, 0, 0, 0, 0, 18, 0, 0, 0, 0]; // allocation length = 18
     let mut resp = [0u8; 18];
-    bot_transfer(&cdb, Some(&mut resp), CBW_DIR_IN)?;
+    bot_transfer(&cdb, Some(BotData::In(&mut resp)))?;
     Ok(resp[2] & 0x0F)
 }
 
@@ -316,10 +316,26 @@ pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
 // ── BOT protocol ─────────────────────────────────────────────────────────
 
 /// Perform a BOT transfer: send CBW, transfer data, receive CSW.
-fn bot_transfer(cdb: &[u8], data: Option<&mut [u8]>, direction: u8) -> Result<()> {
+///
+/// The data stage's direction is carried by the value rather than by a separate
+/// flag, so the CBW's direction byte and the transfer cannot disagree — and an
+/// OUT transfer never has to invent a mutable view of the block device's
+/// immutable buffer.
+enum BotData<'a> {
+    /// The device writes into this buffer (CBW flags = IN).
+    In(&'a mut [u8]),
+    /// The device reads from this buffer (CBW flags = OUT).
+    Out(&'a [u8]),
+}
+
+fn bot_transfer(cdb: &[u8], data: Option<BotData<'_>>) -> Result<()> {
     let mut device = MSD_DEVICE.lock();
     let dev = device.as_mut().ok_or(Error::InvalidArgument)?;
-    let data_len = data.as_ref().map(|d| d.len() as u32).unwrap_or(0);
+    let (data_len, direction) = match &data {
+        Some(BotData::In(buf)) => (buf.len() as u32, CBW_DIR_IN),
+        Some(BotData::Out(buf)) => (buf.len() as u32, CBW_DIR_OUT),
+        None => (0, CBW_DIR_OUT),
+    };
 
     dev.tag = dev.tag.wrapping_add(1);
 
@@ -336,6 +352,8 @@ fn bot_transfer(cdb: &[u8], data: Option<&mut [u8]>, direction: u8) -> Result<()
         command_length: cmd_len,
         command,
     };
+    // SAFETY: `Cbw` is `repr(C, packed)` with fixed byte fields, and the
+    // compiler checks that its size is the 31 bytes the wire form needs.
     let cbw_bytes = unsafe { core::mem::transmute::<Cbw, [u8; 31]>(cbw) };
 
     // Send CBW on bulk OUT.
@@ -345,20 +363,25 @@ fn bot_transfer(cdb: &[u8], data: Option<&mut [u8]>, direction: u8) -> Result<()
 
     // Transfer data if any, chunking so no single bulk transfer exceeds the
     // xHCI TRB transfer-length ceiling (17 bits).
-    if let Some(buf) = data {
-        let mut offset = 0usize;
-        while offset < buf.len() {
-            let chunk_len = core::cmp::min(MAX_BOT_DATA_CHUNK, buf.len() - offset);
-            let chunk = &mut buf[offset..offset + chunk_len];
-            if direction == CBW_DIR_IN {
+    match data {
+        Some(BotData::In(buf)) => {
+            for chunk in buf.chunks_mut(MAX_BOT_DATA_CHUNK) {
+                // SAFETY: the endpoint is one this controller's device
+                // configured for bulk IN, and the chunk is part of the caller's
+                // buffer, which outlives the transfer.
                 with_controller(|ctrl| unsafe { ctrl.bulk_recv(dev.endpoints.ep_in_addr, chunk) })
                     .ok_or(Error::DeviceError)??;
-            } else {
+            }
+        }
+        Some(BotData::Out(buf)) => {
+            for chunk in buf.chunks(MAX_BOT_DATA_CHUNK) {
+                // SAFETY: as above, on the OUT endpoint — `bulk_send` copies the
+                // chunk into its own DMA buffer and keeps no reference.
                 with_controller(|ctrl| unsafe { ctrl.bulk_send(ep_out, chunk) })
                     .ok_or(Error::DeviceError)??;
             }
-            offset += chunk_len;
         }
+        None => {}
     }
 
     // Receive CSW on bulk IN.
@@ -366,7 +389,10 @@ fn bot_transfer(cdb: &[u8], data: Option<&mut [u8]>, direction: u8) -> Result<()
     with_controller(|ctrl| unsafe { ctrl.bulk_recv(dev.endpoints.ep_in_addr, &mut csw_bytes) })
         .ok_or(Error::DeviceError)??;
 
-    let csw = unsafe { core::ptr::read(csw_bytes.as_ptr() as *const Csw) };
+    // SAFETY: the device wrote exactly the 13 bytes of a CSW into the buffer
+    // `bulk_recv` filled, and the copy is what keeps the read independent of
+    // the record's alignment.
+    let csw = unsafe { core::ptr::read_unaligned(csw_bytes.as_ptr() as *const Csw) };
     if csw.signature.to_le() != CSW_SIGNATURE {
         return Err(Error::DeviceError);
     }

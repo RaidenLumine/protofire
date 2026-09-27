@@ -135,6 +135,10 @@ impl NvmeController {
     /// `bar0_phys` must be the physical base address of the NVMe controller's
     /// PCI BAR0, obtained from PCI enumeration.
     unsafe fn init(bar0_phys: u64) -> crate::Result<Self> {
+        // SAFETY: the caller's contract is that `bar0_phys` is the controller's
+        // BAR0 as PCI enumeration reported it, so the range is live MMIO; every
+        // register this body touches is one the NVMe specification puts inside
+        // those 8 KiB and within the mapping that follows.
         unsafe {
             use crate::arch::mmu::map_device_mmio;
             use core::ptr::read_volatile;
@@ -481,6 +485,9 @@ impl NvmeController {
     /// must still be valid.
     #[allow(dead_code)] // Wired when shutdown path is integrated.
     unsafe fn shutdown(&mut self) {
+        // SAFETY: the caller's contract is that the controller is initialised
+        // and its BAR0 mapping still valid, which is what the register writes
+        // below address through `self.bar0`.
         unsafe {
             // Delete I/O Submission Queue (qid=1).
             let mut sqe = NvmeSqe::zeroed();

@@ -106,6 +106,12 @@ impl HdaController {
     ///
     /// `bar0_phys` is the physical base address of BAR0, `bar0_size`
     /// the length of the MMIO region.
+    ///
+    /// # Safety
+    ///
+    /// `bar0_phys` and `bar0_size` must describe the controller's BAR0 as PCI
+    /// enumeration reported it, so that the range is live MMIO; the mapping
+    /// this builds is what makes every later register access sound.
     pub unsafe fn new(bar0_phys: u64, bar0_size: usize) -> Option<Self> {
         // SAFETY: the caller passes a BAR address and size PCI enumeration produced;
         // mapping it is what makes every later register access sound.
@@ -478,6 +484,11 @@ impl HdaController {
     }
 
     /// Read a codec parameter (e.g. VENDOR_ID) via GET_PARAMETER.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::send_verb`]: the controller must be initialised, because the
+    /// verb leaves through its own CORB/RIRB pair.
     pub unsafe fn read_codec_param(&mut self, cad: u8, nid: u8, param: u8) -> Result<u32> {
         // SAFETY: as `send_verb` — the parameter read is a verb on the same link.
         unsafe {

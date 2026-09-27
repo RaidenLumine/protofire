@@ -22,8 +22,6 @@ pub use super::framebuffer_protocol::*;
 // PCI identifiers
 // ---------------------------------------------------------------------------
 
-/// Bochs/QEMU VGA vendor ID.
-
 static FB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static FB_INFO: SpinLock<Option<FramebufferInfo>> = SpinLock::new(None);
 
@@ -86,6 +84,8 @@ fn probe_and_init() -> Option<()> {
         println!("[fb    ] BAR0 is not a valid MMIO region");
         return None;
     }
+    // SAFETY: BAR0 was just checked to be an MMIO BAR the enumeration sized,
+    // which is the live range `map_device_mmio` asks for.
     let fb_ptr = unsafe { map_device_mmio(bar0.base_address, bar0.size as usize)? };
     println!(
         "[fb    ] BAR0 mapped: phys={:#018x} size={} MiB",
@@ -99,9 +99,13 @@ fn probe_and_init() -> Option<()> {
         println!("[fb    ] BAR2 is not a valid MMIO region");
         return None;
     }
+    // SAFETY: as BAR0 above — the second BAR of the same enumerated function.
     let vbe_ptr = unsafe { map_device_mmio(bar2.base_address, bar2.size as usize)? };
     let vbe_base = vbe_ptr as usize;
 
+    // SAFETY: every access below is a VBE_DISPI register inside the BAR2
+    // window just mapped, at offsets the two layouts' constants fix, and the
+    // framebuffer clear stays within `bar0.size` bytes of the BAR0 mapping.
     unsafe {
         // Probe the VBE_DISPI ID register in both layouts.  QEMU std VGA
         // maps the dispi registers flat at BAR2+0x500 (16-bit register `i`
@@ -165,6 +169,9 @@ fn probe_and_init() -> Option<()> {
     *FB_INFO.lock() = Some(fb_info);
 
     // Wire the framebuffer console so println!/print! output renders on screen.
+    // SAFETY: the console's contract asks for a linear framebuffer matching
+    // `fb_info` that stays mapped for the kernel's lifetime, which is the BAR0
+    // mapping above — its size is what `fb_info.size` reports.
     unsafe {
         crate::drivers::framebuffer_console::install_console(fb_ptr, fb_info);
     }

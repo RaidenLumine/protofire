@@ -42,7 +42,11 @@ pub(super) fn and_init() -> Option<()> {
     let pci_addr = PciAddress::new(device.bus, device.device, device.function);
 
     // Enable IO Space, Memory Space, and Bus Master.
+    // SAFETY: the command register of a function the PCI scan enumerated,
+    // inside its own config space.
     let cmd = unsafe { pci_config_read_u16(pci_addr, COMMAND) };
+    // SAFETY: as above — writing that register to enable the spaces and bus
+    // mastering the transport needs.
     unsafe {
         pci_config_write_u16(
             pci_addr,
@@ -63,6 +67,8 @@ pub(super) fn and_init() -> Option<()> {
         );
 
         // Map the MMIO BAR into kernel page tables (identity-mapped).
+        // SAFETY: `mmio_bar` is a BAR the enumeration decoded, so the range is
+        // live MMIO; the BAR size is what the device answered.
         let mapping = unsafe { map_device_mmio(mmio_bar.base_address, mmio_bar.size as usize) };
         if mapping.is_none() {
             println!("[virtio-gpu] failed to map MMIO BAR");

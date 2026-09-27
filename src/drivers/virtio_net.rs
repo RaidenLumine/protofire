@@ -434,6 +434,9 @@ impl VirtIoNet {
 
         // Copy data out of the device-writable buffer while the descriptor
         // is still valid.
+        // SAFETY: `data_addr` and `total_len` come from a used-ring element for
+        // a descriptor this driver published and the device wrote, and
+        // `copy_len` is bounded by both that element and `buffer`.
         unsafe {
             core::ptr::copy_nonoverlapping(data_addr as *const u8, buffer.as_mut_ptr(), copy_len);
         }
@@ -487,6 +490,8 @@ impl VirtIoNet {
                 }
                 // Track raw used-ring idx for diagnostics (quiet).
                 if let Some(base) = tx.pci_used_base_addr() {
+                    // SAFETY: the used-ring index of the queue being polled —
+                    // the device writes it and the driver reads it back.
                     let raw_idx = unsafe { core::ptr::read_volatile((base as *const u16).add(1)) };
                     if raw_idx != last_idx && raw_idx != 0 {
                         last_idx = raw_idx;
@@ -499,6 +504,8 @@ impl VirtIoNet {
         {
             let tx = self.tx_queue.lock();
             if let Some(base) = tx.pci_used_base_addr() {
+                // SAFETY: as above — the same field, read for the timeout
+                // message.
                 let raw_idx = unsafe { core::ptr::read_volatile((base as *const u16).add(1)) };
                 crate::println!(
                     "[virtio-net] TX poll timed out after {} spins, used_idx={} (driver_used={})",
@@ -744,6 +751,8 @@ pub fn probe_boot_net() -> Option<Arc<dyn NetworkDevice>> {
         described.as_ref().map_or(0, |slots| slots.len())
     );
     for addr in window {
+        // SAFETY: `addr` is one of the MMIO slot addresses the window
+        // enumeration produced, each mapped for the kernel's lifetime.
         let region = unsafe { BareMmioRegion::new(addr) };
         let transport = VirtIoMmio::new(Box::new(region));
         if let Some(net) = try_virtio_net_device(transport) {
@@ -807,7 +816,11 @@ fn probe_pci_net_x86_64() -> Option<Arc<dyn NetworkDevice>> {
         let pci_addr = PciAddress::new(device.bus, device.device, device.function);
 
         // Enable IO Space, Memory Space, and Bus Master.
+        // SAFETY: the command register of a function this scan enumerated,
+        // inside its own config space.
         let cmd = unsafe { pci_config_read_u16(pci_addr, COMMAND) };
+        // SAFETY: as above — writing that register to enable the three spaces
+        // the transport needs.
         unsafe {
             pci_config_write_u16(
                 pci_addr,
@@ -838,6 +851,8 @@ fn probe_pci_net_x86_64() -> Option<Arc<dyn NetworkDevice>> {
             );
 
             // Map the MMIO BAR into kernel page tables.
+            // SAFETY: `mmio_bar` is a BAR the enumeration decoded, so the range
+            // is live MMIO.
             let _mapping = unsafe {
                 crate::arch::mmu::map_device_mmio(mmio_bar.base_address, mmio_bar.size as usize)
             };
@@ -934,12 +949,17 @@ fn probe_pci_net() -> Option<Arc<dyn NetworkDevice>> {
             // Map the MMIO BAR through a second VA alias.  The legacy
             // VirtIO MMIO interface occupies at most 0x200 bytes.
             const BAR_VA: usize = 0x2_0040_0000; // 8 GiB + 4 MiB
+                                                 // SAFETY: the BAR is a live MMIO range and `BAR_VA` is the fixed
+                                                 // address this platform reserves for such windows.
             let _bar_mapped = unsafe { map_device_mmio_at(BAR_VA, bar.base_address, 0x200)? };
 
             // Enable bus-mastering and memory-space access on the PCI
             // device so it responds to MMIO reads/writes.
             pci::pci_enable_memory_and_bus_master(&probe.region, dev.bus, dev.device, dev.function);
 
+            // SAFETY: `BAR_VA` is the alias just mapped over the device's BAR,
+            // so it names a VirtIO MMIO register region for the kernel's
+            // lifetime.
             let region = unsafe { BareMmioRegion::new(BAR_VA) };
             let transport = VirtIoMmio::new(Box::new(region));
             if let Some(net) = try_virtio_net_device(transport) {

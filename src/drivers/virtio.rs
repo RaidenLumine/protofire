@@ -634,7 +634,12 @@ impl VirtQueue {
     pub(crate) fn sync_device_used_idx(&mut self) {
         // PCI mode: the idx is a le16 at offset 2 from the used-ring base.
         if let Some(base) = self.pci_used_base {
+            // SAFETY: `pci_used_base` is the used-ring base this transport
+            // registered in the device, and the index is the second halfword of
+            // that ring — inside the queue memory the driver allocated.
             let idx_ptr = unsafe { (base as *const u16).add(1) };
+            // SAFETY: as above — the device writes that field, so the read is
+            // volatile.
             let idx = unsafe { core::ptr::read_volatile(idx_ptr) };
             self.device_used_idx = idx;
         }
@@ -1184,6 +1189,8 @@ pub fn probe_boot_disk() -> Option<alloc::sync::Arc<dyn BlockDevice>> {
 /// Returns `None` if no valid block device is present.
 #[cfg(target_os = "none")]
 fn try_virtio_block_at(base: usize) -> Option<alloc::sync::Arc<dyn BlockDevice>> {
+    // SAFETY: `base` is a slot address the MMIO window enumeration produced,
+    // which names a mapped VirtIO MMIO region for the kernel's lifetime.
     let region = unsafe { BareMmioRegion::new(base) };
     let mut transport = VirtIoMmio::new(alloc::boxed::Box::new(region));
 
@@ -1259,10 +1266,14 @@ unsafe impl Sync for BareMmioRegion {}
 #[cfg(target_os = "none")]
 impl MmioRegion for BareMmioRegion {
     fn read32(&self, offset: u64) -> u32 {
+        // SAFETY: the region was built for a mapped VirtIO MMIO slot and
+        // `offset` is a register the specification defines inside it.
         unsafe { core::ptr::read_volatile(self.base.add(offset as usize) as *const u32) }
     }
 
     fn write32(&self, offset: u64, value: u32) {
+        // SAFETY: as `read32` — the same region and register set, on the write
+        // side.
         unsafe {
             core::ptr::write_volatile(self.base.add(offset as usize) as *mut u32, value);
         }

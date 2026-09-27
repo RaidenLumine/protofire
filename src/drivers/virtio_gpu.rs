@@ -1390,6 +1390,9 @@ fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
     let pixel_count = (fb_width * fb_height) as usize;
     let fb_u32 = fb_ptr as *mut u32;
     for i in 0..pixel_count {
+        // SAFETY: the framebuffer holds `fb_width * fb_height` 32-bit pixels,
+        // which is exactly this loop's bound; volatile because the device may
+        // be scanning the surface out.
         unsafe {
             ptr::write_volatile(fb_u32.add(i), 0x00_00_00_80_u32); // dark blue (BGRx)
         }
@@ -1407,6 +1410,9 @@ fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
 
     *FB_INFO.lock() = Some(fb_info);
 
+    // SAFETY: the console's contract asks for a linear framebuffer matching
+    // `fb_info` that stays mapped for the kernel's lifetime, which is what the
+    // GPU resource installed above is.
     unsafe {
         framebuffer_console::install_console(fb_ptr, fb_info);
     }
