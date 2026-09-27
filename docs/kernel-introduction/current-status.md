@@ -1,6 +1,8 @@
 # Current Status
 
-> **Last updated:** 2026-09-26 **Codebase:** 625 Rust files, ~225,400 lines of Rust in `src/` **Targets:** x86_64 (full), AArch64 (full), RISC-V 64 (partial)
+> **Last updated:** 2026-09-27 **Codebase:** 651 Rust files, ~228,000 lines of
+> Rust in `src/` (677 files and ~239,900 lines counting `tests/`)
+> **Targets:** x86_64 (full), AArch64 (full), RISC-V 64 (partial)
 
 ---
 
