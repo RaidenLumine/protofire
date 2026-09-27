@@ -466,12 +466,26 @@ The network stack is the second-largest subsystem at **40,809 lines across 81 fi
 | virtio-gpu layout tests | 10+ | Struct size/layout + command wire-format (mock device) verification |
 | CI workflow | ✅ | GitHub Actions: fmt, check, build, clippy |
 | Verification gates | P0–P3 | Multi-tier: fmt → test → cross-build → clippy |
+| ABI number snapshot | 190 rows | [`tests/syscall/abi_golden.rs`](../../tests/syscall/abi_golden.rs): any change to a number's name fails, and a change in the experimental range has to bump the ABI minor in the same commit |
 
 **2026-08-20 update:** the `demo-disk` feature was verified end-to-end on all
 three targets under QEMU — interactive shell (≈40 builtins), demo payload
 (app-id/image/cwd/argv0/resume-1/resume-2, exit code 42), 0 FATAL. The RISC-V 64
 user ABI and demo shell are confirmed working. Host-side tests: **3,056 passed /
 0 failed**.
+
+### Userspace compatibility (the iron rule)
+
+`docs/fmts/syscall-abi.md` states the compatibility contract — numbers assigned
+once and never renumbered, records whose layout is asserted at compile time,
+`0..=120` frozen and `121..=189` experimental. Three things make that contract
+*testable* rather than merely written down, and they are at different stages:
+
+| Item | State | Where |
+|------|-------|-------|
+| The number table is frozen | **done** | `tests/syscall/abi_golden.rs`: a snapshot of all 190 number→name rows. A change in the frozen range fails outright; a change in the experimental range fails unless the ABI minor version moves with it. Before this, swapping two stable syscalls left every test green. |
+| Userspace can learn which ABI it is on | **already present** | the `abi_info` syscall (#39) returns `syscall_abi_major`, `syscall_abi_minor` and `syscall_count` alongside the record's own `major`/`minor`/`record_size` ([`src/user/shared/abi/runtime.rs`](../../src/user/shared/abi/runtime.rs)) |
+| A program that was not rebuilt | **not built** | every ring-3 program is compiled from this tree and extracted from the kernel's own image, so kernel and userspace always change together — and a compatibility rule with no out-of-tree program to break is untested, not satisfied. The plan is to check in one prebuilt ELF, pin its hash, and have a boot smoke load *that* binary: the first version of "yesterday's program still runs" with a subject. |
 
 ### Build & Development
 
@@ -489,6 +503,11 @@ user ABI and demo shell are confirmed working. Host-side tests: **3,056 passed /
 - **Thin userspace ecosystem**: the ring3 programs on the demo disk (shell, demo-launcher, init.elf) are inlined `exit(0)` placeholder ELF stubs — no real applications or toolchain yet.
 - **Single maintainer**: bus factor = 1; every module is currently held by one maintainer.
 - **Experimental syscalls are unfrozen**: slots 121–189 are classified Experimental.
+- **“We do not break userspace” is untested**: no ring-3 program exists that
+  was not rebuilt with the kernel, so a compatibility break would be invisible
+  by construction. The number table is frozen now and the ABI version is
+  queryable; the missing half is a prebuilt payload a boot smoke can run — see
+  *Userspace compatibility* above.
 - **No fuzzing yet**: the ELF loader, filesystem image parsers, network packet parsers, and the LUKS2 header have no fuzz targets.
 - **No reproducible releases**: no tagged releases with reproducible ISO/disk images and signed artifacts.
 
