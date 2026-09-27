@@ -256,6 +256,12 @@ impl XhciController {
     /// Initialise a new xHCI controller given BAR0 physical address and
     /// size. Returns `None` if MMIO mapping fails or the controller
     /// is not usable.
+    ///
+    /// # Safety
+    ///
+    /// `bar0_phys` and `bar0_size` must describe the controller's BAR0 as PCI
+    /// enumeration reported it, so that the range is live MMIO; the mapping
+    /// this builds is what makes every later register access sound.
     pub unsafe fn new(bar0_phys: u64, bar0_size: usize) -> Option<Self> {
         // SAFETY: the caller passes a BAR address PCI enumeration produced; the mapping
         // this block performs is what makes every later register access sound.
@@ -480,6 +486,11 @@ impl XhciController {
 
     /// Enable a device slot on a root hub port. Returns the slot ID
     /// (1-based).
+    ///
+    /// # Safety
+    ///
+    /// The controller must be one [`Self::new`] returned and still have its BAR
+    /// mapped: the command is posted to that controller's own rings.
     pub unsafe fn enable_slot(&mut self, root_port: u8) -> Result<u8> {
         // SAFETY: as `send_command` — the enable-slot command is posted to the same
         // rings.
@@ -500,6 +511,11 @@ impl XhciController {
     }
 
     /// Allocate device context and EP0 transfer ring for a slot.
+    ///
+    /// # Safety
+    ///
+    /// `slot_id` must name a slot this controller enabled, and the controller
+    /// must still own its rings and doorbells.
     pub unsafe fn alloc_slot_resources(&mut self, slot_id: u8) -> Result<()> {
         // SAFETY: as above — the slot's contexts are written through this controller's
         // rings and doorbells.
@@ -605,6 +621,11 @@ impl XhciController {
     /// Send Address Device command (BSR=0, issues SET_ADDRESS).
     /// After this, the device is at the assigned address and EP0 is ready.
     /// Uses the EP0 ring stored in self.ep0_transfer_rings.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::alloc_slot_resources`]: the slot must be one this controller
+    /// enabled, and its resources allocated.
     pub unsafe fn address_device(&mut self, slot_id: u8, root_port: u8) -> Result<()> {
         // SAFETY: the address-device command goes through this controller's command
         // ring, with the input context above as its payload.
@@ -638,6 +659,11 @@ impl XhciController {
 
     /// Submit a control transfer on EP0 of the given slot.
     /// Returns the number of bytes transferred (data stage length).
+    ///
+    /// # Safety
+    ///
+    /// The slot must be addressed and its EP0 ring live; `buffer` must be the
+    /// transfer's own staging buffer, since the device writes into it.
     pub unsafe fn control_transfer(
         &mut self,
         slot_id: u8,
@@ -829,6 +855,11 @@ impl XhciController {
     /// Note: For USB 3.0 ports, the device descriptor request is
     /// usually dispatched by the controller itself during Address Device
     /// when BSR=0.  This function is provided for explicit re-read.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::control_transfer`] — the request goes through this
+    /// controller's rings for a slot it enabled.
     pub unsafe fn get_device_descriptor(&mut self, slot_id: u8) -> Result<UsbDeviceDescriptor> {
         // SAFETY: the descriptor request goes through this controller's rings for a
         // slot it enabled.
@@ -846,6 +877,11 @@ impl XhciController {
     /// Configure a HID interrupt IN endpoint for a slot.
     /// We need the device to be addressed first.
     /// `ep_info` describes the HID interrupt IN endpoint.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::address_device`] — the slot must be addressed, and `ep_info`
+    /// must describe an endpoint of that device.
     pub unsafe fn configure_hid_endpoint(
         &mut self,
         slot_id: u8,
@@ -981,6 +1017,11 @@ impl XhciController {
     /// Probe a mass storage device at the given slot: read config
     /// descriptor, find bulk endpoints, configure them, and
     /// initialise the MSC driver.
+    ///
+    /// # Safety
+    ///
+    /// As above — the controller is the one whose slot was just addressed, and
+    /// it registers the endpoints it finds with the global MSD registry.
     pub unsafe fn init_msd(&mut self, slot_id: u8) -> crate::Result<()> {
         // SAFETY: the MSD initialisation talks to the same controller whose slot was
         // just addressed.
@@ -1096,6 +1137,10 @@ impl XhciController {
 
     /// Configure a bulk endpoint for a USB device (second part).
     /// `direction_in`: true for IN, false for OUT.
+    ///
+    /// # Safety
+    ///
+    /// As above — the endpoint belongs to a slot this controller configured.
     pub unsafe fn configure_bulk_endpoint(
         &mut self,
         slot_id: u8,
@@ -1262,6 +1307,12 @@ impl XhciController {
     }
 
     /// Send data on a bulk OUT endpoint.
+    ///
+    /// # Safety
+    ///
+    /// The controller must have a mass-storage slot configured, and `ep_addr`
+    /// must name one of its bulk OUT endpoints; `data` is copied into the
+    /// controller's own transfer buffer and not retained.
     pub unsafe fn bulk_send(&mut self, ep_addr: u8, data: &[u8]) -> Result<()> {
         // SAFETY: the bulk endpoint belongs to a slot this controller configured, and
         // the data is a caller slice it does not retain.
@@ -1283,6 +1334,12 @@ impl XhciController {
     }
 
     /// Receive data on a bulk IN endpoint.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::bulk_send`] — the endpoint belongs to a slot this controller
+    /// configured, and `buffer` is the caller's own staging space, which the
+    /// device writes into.
     pub unsafe fn bulk_recv(&mut self, ep_addr: u8, buffer: &mut [u8]) -> Result<()> {
         // SAFETY: as `bulk_send` — the receive buffer is the caller's and outlives the
         // transfer.
@@ -1430,6 +1487,11 @@ impl XhciController {
     /// Poll the event ring for any pending events.
     /// Called from the timer tick to check for HID reports.
     /// Returns true if a HID transfer event was processed.
+    ///
+    /// # Safety
+    ///
+    /// The controller must be the one `new` returned with its BAR still mapped;
+    /// the poll touches that controller's own event ring and doorbells.
     pub unsafe fn poll_events(&mut self) -> bool {
         // SAFETY: polling touches this controller's own event ring and doorbells.
         unsafe {

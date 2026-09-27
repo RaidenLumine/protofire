@@ -115,14 +115,11 @@ pub fn rndr_fill(buf: &mut [u8]) -> usize {
     }
 
     if filled < buf.len() {
-        match rndr_u64() {
-            Some(value) => {
-                let bytes = value.to_ne_bytes();
-                let remaining = buf.len() - filled;
-                buf[filled..].copy_from_slice(&bytes[..remaining]);
-                filled += remaining;
-            }
-            None => {}
+        if let Some(value) = rndr_u64() {
+            let bytes = value.to_ne_bytes();
+            let remaining = buf.len() - filled;
+            buf[filled..].copy_from_slice(&bytes[..remaining]);
+            filled += remaining;
         }
     }
 

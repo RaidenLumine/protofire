@@ -400,6 +400,22 @@ build: build-x8664
 clippy:
 	$(CARGO) clippy $(CARGO_FLAGS) --all-targets -- -D warnings
 
+# `clippy` above runs over the host target, and the machine-specific files —
+# the drivers, the interrupt controllers, each architecture's page tables — are
+# compiled only for a bare-metal target.  So those files were never linted with
+# `-D warnings` at all: the tree carried fifteen missing-`# Safety` docs, two
+# collapsible conditions and a handful of useless casts on the three bare-metal
+# targets for as long as nobody asked.  This is the check that asks.  The
+# aarch64 *host* configuration is included because every architecture module is
+# written to compile there as well.
+CLIPPY_TARGETS = x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf aarch64-unknown-linux-gnu
+
+clippy-targets:
+	@for target in $(CLIPPY_TARGETS); do \
+		echo "==> clippy $$target"; \
+		$(CARGO) clippy $(CARGO_FLAGS) --target $$target -- -D warnings || exit 1; \
+	done
+
 # Run targets are pure serial-terminal sessions: QEMU opens no window and no
 # display/input device is attached, so the demo ring-3 shell is fully
 # interactive over -serial stdio (iteration and CI never need a display).  The

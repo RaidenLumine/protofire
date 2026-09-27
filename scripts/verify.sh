@@ -140,6 +140,7 @@ run_p3() {
     # un-booted.  They stay opt-in because they are slow and need QEMU.
     run_p2
     run_make_step "make clippy" clippy
+    run_make_step "make clippy-targets" clippy-targets
     run_make_step "make check-unsafe-comments" check-unsafe-comments
     run_make_step "make check-layering" check-layering
     run_make_step "make check-arch-fanout" check-arch-fanout

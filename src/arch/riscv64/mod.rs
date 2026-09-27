@@ -232,8 +232,8 @@ pub mod interrupt_controller {
         }
         let cpu_count = crate::arch::fdt::cpu_count().max(1);
         for cpu in 0..cpu_count {
-            let target = cpu as u32 == cpu_id;
-            let ctx = plic_context_for_cpu(cpu as u32);
+            let target = cpu == cpu_id;
+            let ctx = plic_context_for_cpu(cpu);
             let enable_offset = plic_enable_addr(ctx) + (interrupt_id as usize / 32) * 4;
             let bit = 1_u32 << (interrupt_id % 32);
             let current = plic_read(enable_offset);

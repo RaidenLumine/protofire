@@ -82,13 +82,13 @@ pub(crate) fn allocate_asid() -> u64 {
             let bit = word.trailing_zeros() as usize;
             let asid = word_idx * 64 + bit;
             let mask = 1u64 << bit;
-            if asid > 0 && (asid as u64) <= ASID_MAX {
-                if bitmap_word(word_idx)
+            if asid > 0
+                && (asid as u64) <= ASID_MAX
+                && bitmap_word(word_idx)
                     .compare_exchange(word, word & !mask, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
-                {
-                    return asid as u64;
-                }
+            {
+                return asid as u64;
             }
             // CAS failed or ASID out of range — refresh and retry.
             word = bitmap_word(word_idx).load(Ordering::Acquire);

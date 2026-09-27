@@ -252,6 +252,14 @@ pub struct PreparedDemoUserSlot {
     forked: bool,
 }
 
+/// What [`PreparedProcessAddressSpace::fork_clone`] hands back: the child
+/// hierarchy plus the copy-on-write and non-shared page triples.
+pub type ForkClonedAddressSpace = (
+    PreparedProcessAddressSpace,
+    Vec<(usize, usize, PagePermissions)>,
+    Vec<(usize, usize, PagePermissions)>,
+);
+
 pub struct PreparedProcessAddressSpace {
     pgd: Box<PageTable>,
     pmd: Box<PageTable>,
@@ -550,9 +558,7 @@ fn allocate_runtime_pt_page() -> Option<usize> {
                 break;
             }
         }
-        let Some((page_index, mask)) = found else {
-            return None;
-        };
+        let (page_index, mask) = found?;
         if RUNTIME_PT_POOL_BITMAP
             .compare_exchange(taken, taken | mask, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
@@ -881,10 +887,10 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     pgd.0[0] = device_pgd_block_entry(DEVICE_MMIO_BASE);
     pgd.0[1] = device_pgd_block_entry(DEVICE_MMIO_BASE + (1 << 30));
     // PGD[2]: RAM window [0x8000_0000, 0xC000_0000) → PMD table.
-    pgd.0[2] = table_entry(pmd_ptr as *mut PageTable as usize);
+    pgd.0[2] = table_entry(pmd_ptr as usize);
     // PGD[3]: the stack window's own table.  Nothing else is described by it,
     // which is the property the window exists for.
-    pgd.0[STACK_WINDOW_PGD_INDEX] = table_entry(stack_pmd_ptr as *mut PageTable as usize);
+    pgd.0[STACK_WINDOW_PGD_INDEX] = table_entry(stack_pmd_ptr as usize);
 
     // SAFETY: as above — `pmd_ptr` names the kernel's second-level table, whose
     // address was just published into the RAM window's PGD slot.
@@ -905,7 +911,7 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
         ((DEVICE_MMIO_END - DEVICE_MMIO_BASE) + KERNEL_RAM_LENGTH) / TRANSLATION_GRANULE_SIZE;
 
     Some(PreparedRuntimeKernelPageTables {
-        root_table_address: pgd_ptr as *mut PageTable as usize,
+        root_table_address: pgd_ptr as usize,
         window_count,
         mapped_page_count,
     })
@@ -1206,9 +1212,7 @@ fn allocate_demo_user_slot_index() -> Option<usize> {
                 break;
             }
         }
-        let Some((slot_index, mask)) = found else {
-            return None;
-        };
+        let (slot_index, mask) = found?;
         if DEMO_SLOT_TAKEN
             .compare_exchange(taken, taken | mask, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
@@ -1721,13 +1725,7 @@ impl PreparedProcessAddressSpace {
 
     /// Clone the address space for `fork`, returning the child plus the
     /// shared (copy-on-write) and child page lists.
-    pub fn fork_clone(
-        &mut self,
-    ) -> Option<(
-        PreparedProcessAddressSpace,
-        Vec<(usize, usize, PagePermissions)>,
-        Vec<(usize, usize, PagePermissions)>,
-    )> {
+    pub fn fork_clone(&mut self) -> Option<ForkClonedAddressSpace> {
         // Clone the full table hierarchy.
         let mut child_pgd = Box::new(PageTable::zeroed());
         let mut child_pmd = Box::new(PageTable::zeroed());
