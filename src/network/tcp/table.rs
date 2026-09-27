@@ -98,6 +98,31 @@ impl TcpConnectionTable {
         self.connections.get(&key).cloned()
     }
 
+    /// Abort a connection that is still shaking hands, for a 4-tuple an ICMP
+    /// error named.
+    ///
+    /// Returns whether anything was aborted.  Only `SynSent` qualifies: the
+    /// error means the SYN went nowhere, and removing the entry is what makes
+    /// `ops::connect`'s wait end with a failure instead of running its timeout
+    /// to the end.  A connection that has been established is left alone — an
+    /// ICMP error is a soft signal there, and this stack has no retransmit
+    /// policy that would know what to do with it.
+    pub fn abort_handshake(
+        &mut self,
+        local_port: u16,
+        remote_ip: impl Into<IpAddress>,
+        remote_port: u16,
+    ) -> bool {
+        let remote_ip = remote_ip.into();
+        let Some(connection) = self.lookup(local_port, remote_ip, remote_port) else {
+            return false;
+        };
+        if connection.lock().state != TcpState::SynSent {
+            return false;
+        }
+        self.remove(local_port, remote_ip, remote_port).is_some()
+    }
+
     /// Insert a connection state, keyed by its own 4-tuple.
     pub fn insert(&mut self, state: TcpConnectionState) -> Result<()> {
         let key = (state.local_port, state.remote_ip, state.remote_port);

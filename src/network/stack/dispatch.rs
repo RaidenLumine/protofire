@@ -58,6 +58,47 @@ const RX_BUFFER_SIZE: usize = 2048;
 static RX_BUFFER: SyncUnsafeCell<[u8; RX_BUFFER_SIZE]> = SyncUnsafeCell::new([0u8; RX_BUFFER_SIZE]);
 
 impl NetworkStack {
+    /// Act on the original datagram an ICMP error carries.
+    ///
+    /// An ICMP Destination Unreachable quotes the packet that could not be
+    /// delivered, which is the one this host sent; its source port is therefore
+    /// the local port of the connection the error is about and its destination
+    /// is the peer.
+    ///
+    /// **TCP**: the 4-tuple names one connection in the table.  A connection
+    /// still in SYN-SENT is one whose SYN went nowhere, so it is removed —
+    /// which is what makes `tcp::ops::connect` stop waiting and report the
+    /// failure instead of running its handshake timeout to the end.  A
+    /// connection that has already been established is *not* touched: an ICMP
+    /// error is a soft signal there (RFC 1122 §4.2.3.9), and this stack has no
+    /// retransmit-policy machinery that would know what to do with it, which is
+    /// a decision rather than an oversight.
+    ///
+    /// **UDP**: nothing, and the reason is a precondition rather than an
+    /// oversight — this ABI has no `connect` for UDP (`SYS_CONNECT_TCP` is the
+    /// only connect), so a socket here is keyed by local port alone and has no
+    /// peer to match an error against.  Recording it on the port would hand the
+    /// error to a socket that may be talking to somebody else.  UDP gets its
+    /// POSIX pending-error behaviour when it gets a connected-socket notion.
+    fn react_to_icmp_error(
+        &self,
+        protocol: u8,
+        local_port: u16,
+        remote_ip: IpAddress,
+        remote_port: u16,
+    ) {
+        /// IP protocol number for TCP (IANA).
+        const IP_PROTOCOL_TCP: u8 = 6;
+
+        if protocol != IP_PROTOCOL_TCP {
+            return;
+        }
+
+        let _ = self
+            .tcp_table()
+            .lock()
+            .abort_handshake(local_port, remote_ip, remote_port);
+    }
     /// Return a point-in-time snapshot of the network stack profiler
     /// counters.  When the `net_profiler` feature is disabled this
     /// returns all zeros.
@@ -89,6 +130,11 @@ impl NetworkStack {
         for (dst_ip, seg) in pending {
             let _ = crate::network::tcp::send_tcp_segment(self, dst_ip, &seg);
         }
+
+        // ── SLAAC ───────────────────────────────────────────────────
+        // One step per tick: solicitations while there is no address, then the
+        // DAD window for whatever an advertisement forms.
+        self.drive_slaac(tick);
 
         // ── Fragment reassembly eviction ────────────────────────────
         {
@@ -404,11 +450,16 @@ impl NetworkStack {
                             }
                             // Extract embedded packet info from ICMP error
                             // messages and update profiling counters.
-                            if let Some(_err) = icmp::parse_icmp_error_info(&ip_packet.payload) {
+                            if let Some(error) = icmp::parse_icmp_error_info(&ip_packet.payload) {
                                 self.profiler.inc_icmp_unreachable();
-                                // TODO: notify the affected TCP/UDP connection
-                                // using _err.original_{src,dst,protocol,
-                                // src_port,dst_port}.
+                                // The quoted packet is the one this host sent,
+                                // so its source port is the local one.
+                                self.react_to_icmp_error(
+                                    error.original_protocol,
+                                    error.original_src_port,
+                                    IpAddress::V4(error.original_dst),
+                                    error.original_dst_port,
+                                );
                             }
                         } else if ip_packet.header.protocol == ipv4::IpProtocol::Igmp {
                             let mut igmp_state = self.igmp_state.lock();
@@ -646,11 +697,16 @@ impl NetworkStack {
                             }
                             // Extract embedded packet info from ICMPv6 error
                             // messages and update profiling counters.
-                            if let Some(_err) = icmpv6::parse_icmpv6_error_info(&ipv6_payload) {
+                            if let Some(error) = icmpv6::parse_icmpv6_error_info(&ipv6_payload) {
                                 self.profiler.inc_icmp_unreachable();
-                                // TODO: notify the affected TCP/UDP connection
-                                // using _err.original_{src,dst,next_header,
-                                // src_port,dst_port}.
+                                // As the IPv4 arm above: the quoted packet is
+                                // ours, so its source port is the local one.
+                                self.react_to_icmp_error(
+                                    error.next_header,
+                                    error.src_port,
+                                    IpAddress::V6(error.original_dst),
+                                    error.dst_port,
+                                );
                             }
                         } else if ipv6_next_header == Ipv6NextHeader::Unknown(pim::PIM_PROTOCOL) {
                             // ── PIM dispatch (IPv6 next header 103) ───────────

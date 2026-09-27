@@ -122,6 +122,7 @@ impl NetworkStack {
             retrans_timer_v6: core::sync::atomic::AtomicU64::new(0),
             router_mac_v6: crate::kernel::sync::Mutex::new(None),
             dad_conflict: core::sync::atomic::AtomicBool::new(false),
+            slaac: crate::kernel::sync::Mutex::new(super::slaac::SlaacState::new()),
             pmtu_cache_v6: crate::kernel::sync::Mutex::new(
                 crate::network::internet::pmtu::PmtuCache::new(),
             ),

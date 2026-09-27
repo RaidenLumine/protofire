@@ -217,6 +217,13 @@ impl NetworkStack {
         self.dad_conflict.store(false, Ordering::Relaxed);
     }
 
+    /// Record that a Neighbor Advertisement claimed an address this host
+    /// holds.  Called by [`crate::network::internet::icmpv6`] when it sees one,
+    /// and read by the SLAAC step that is watching the address.
+    pub fn set_dad_conflict(&self) {
+        self.dad_conflict.store(true, Ordering::Relaxed);
+    }
+
     // ─── Protocol tables and Phase-4 state ─────────────────────────
 
     /// Return a reference to the DCCP connection table.

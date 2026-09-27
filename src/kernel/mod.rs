@@ -285,13 +285,15 @@ impl Kernel {
                     );
                 }
 
-                // ── IPv6 SLAAC (skip during early boot) ──
-                // SLAAC depends on system ticks advancing, which only
-                // happens after the timer interrupt is configured later
-                // in the boot sequence.  Running SLAAC here would hang.
-                // TODO: defer SLAAC to post-timer-init or make it
-                // non-blocking during early boot.
-                crate::println!("[kernel] IPv6 SLAAC: skipped (pre-timer boot)");
+                // ── IPv6 SLAAC ──
+                // Armed here, driven by the tick path: the timer is configured
+                // later in the boot than the network, so a routine that *waited*
+                // on ticks would hang — which is why the blocking version was
+                // skipped and left a TODO.  `start_slaac` only marks the
+                // attempt; `advance_tick` sends the solicitations and watches
+                // the address an advertisement forms.
+                stack.start_slaac();
+                crate::println!("[net   ] IPv6 SLAAC: armed (solicitation is tick-driven)");
             }
         }
 

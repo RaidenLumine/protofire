@@ -374,6 +374,13 @@ fn process_neighbor_advertisement(
     // Extract target link-layer address option.
     let target_mac = extract_ll_addr_option(data, NDP_NA_BASE_SIZE, NDP_OPT_TARGET_LL_ADDR);
 
+    // An advertisement claiming an address this host holds is the duplicate
+    // signal DAD waits for.  Nothing set this flag before, so DAD could only
+    // ever answer "no conflict"; this is where that answer comes from.
+    if stack.global_ip_v6() == Some(target) {
+        stack.set_dad_conflict();
+    }
+
     if let Some(mac) = target_mac {
         // Cache the target's MAC (used for both solicited and unsolicited NAs).
         let mut cache = stack.neighbor_cache_v6().lock();
@@ -592,8 +599,16 @@ fn process_router_advertisement(stack: &NetworkStack, data: &[u8]) {
 ///
 /// This should be called after configuring a new IPv6 address (link-local
 /// or global).
-pub fn perform_dad(stack: &NetworkStack, addr: Ipv6Addr) -> bool {
-    // Build DAD NS: target = addr, source = ::, no source LL addr option.
+/// Send the DAD probe for `addr`: a Neighbor Solicitation from the
+/// unspecified address for the address being configured (RFC 4862 §5.4.2).
+///
+/// The window that follows the probe is *not* here: a duplicate is signalled by
+/// a Neighbor Advertisement claiming the address, which
+/// [`process_neighbor_advertisement`] now flags, and the stack's tick path
+/// watches for it.  The blocking version this replaces polled for a second and
+/// read a flag nothing ever set, so it always concluded "no conflict".
+pub fn send_dad_probe(stack: &NetworkStack, addr: Ipv6Addr) {
+    // Build DAD NS: target = addr, source = ::, no source LL address option.
     let mut body = Vec::with_capacity(24);
     body.extend_from_slice(&[0u8; 4]); // reserved
     body.extend_from_slice(&addr); // target
@@ -617,25 +632,6 @@ pub fn perform_dad(stack: &NetworkStack, addr: Ipv6Addr) -> bool {
     };
 
     let _ = send_ipv6_frame(stack, &ip_header, &msg);
-
-    // Wait for a response — if any NA comes back for this address, it's a
-    // duplicate.  We poll for a short period (DAD_TIMEOUT_TICKS).
-    let start = stack.current_tick();
-    const DAD_TIMEOUT_TICKS: u64 = 100; // 1 second
-
-    loop {
-        let _ = stack.poll();
-        // Yield the CPU on host/test builds while waiting for DAD to complete.
-        core::hint::spin_loop();
-        if stack.current_tick().wrapping_sub(start) >= DAD_TIMEOUT_TICKS {
-            return true; // no conflict detected
-        }
-        // Check the DAD conflict flag on the stack.
-        if stack.dad_conflict_detected() {
-            stack.clear_dad_conflict();
-            return false;
-        }
-    }
 }
 
 // ─── Neighbor Cache ─────────────────────────────────────────────────────
@@ -878,52 +874,6 @@ pub fn send_router_solicitation(stack: &NetworkStack) -> Result<()> {
     };
 
     send_ipv6_frame(stack, &ip_header, &msg)
-}
-
-/// Run SLAAC: send Router Solicitations and wait for a Router Advertisement
-/// that provides a global prefix.  After receiving an RA, perform DAD on
-/// the newly formed global address.
-///
-/// Returns the global address on success, or `Err(Error::TimedOut)` if no
-/// RA is received within the timeout.
-#[cfg(target_os = "none")]
-pub fn run_slaac(stack: &NetworkStack) -> Result<Ipv6Addr> {
-    const SLAAC_TIMEOUT_TICKS: u64 = 300; // 3 seconds
-    const SLAAC_MAX_RS: u32 = 3;
-
-    let start = stack.current_tick();
-    let mut rs_count = 0u32;
-    let mut last_rs_tick = start.wrapping_sub(RETRANS_TIMER_TICKS);
-
-    loop {
-        let tick = stack.current_tick();
-
-        if tick.wrapping_sub(start) >= SLAAC_TIMEOUT_TICKS {
-            return Err(Error::TimedOut);
-        }
-
-        // Send RS periodically.
-        if tick.wrapping_sub(last_rs_tick) >= RETRANS_TIMER_TICKS && rs_count < SLAAC_MAX_RS {
-            let _ = send_router_solicitation(stack);
-            last_rs_tick = tick;
-            rs_count += 1;
-        }
-
-        // Poll to receive RA.
-        let _ = stack.poll();
-        // Yield the CPU on host/test builds while waiting for the RA.
-        core::hint::spin_loop();
-
-        // Check if a global address was configured.
-        if let Some(global) = stack.global_ip_v6() {
-            // Perform DAD on the new global address.
-            if perform_dad(stack, global) {
-                return Ok(global);
-            }
-            // DAD failed — clear the address and try again with a new RS.
-            stack.clear_global_ip_v6();
-        }
-    }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────

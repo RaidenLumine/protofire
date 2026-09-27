@@ -164,6 +164,12 @@ pub fn connect(
             let table = stack.tcp_table().lock();
             let conn = match table.lookup(local_port, remote_ip, remote_port) {
                 Some(c) => c,
+                // The entry was inserted above, and two things remove one from
+                // this table: the handshake timeout, which returns before this
+                // lookup, and `react_to_icmp_error` acting on a Destination
+                // Unreachable for this 4-tuple.  So a missing entry here means
+                // the SYN was answered by an ICMP error, and the caller should
+                // hear about it now rather than after the timeout.
                 None => return Err(Error::NotFound),
             };
             let current_state = conn.lock().state;

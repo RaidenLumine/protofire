@@ -39,6 +39,7 @@ use crate::network::ppp::PppState;
 use crate::network::pppoe::PppoeSession;
 use crate::network::raw::RawSocket;
 use crate::network::stack::routing::RoutingTable;
+use crate::network::stack::slaac::SlaacState;
 use crate::network::tcp::TcpConnectionTable;
 use crate::network::udp::UdpSocketTable;
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
@@ -56,6 +57,7 @@ pub(crate) mod global;
 pub(crate) mod ppp;
 pub(crate) mod routing;
 pub(crate) mod send;
+pub(crate) mod slaac;
 #[cfg(test)]
 mod tests;
 
@@ -128,6 +130,8 @@ pub struct NetworkStack {
     /// DAD conflict flag — set when a Neighbor Advertisement contests
     /// an address we're trying to configure.
     dad_conflict: AtomicBool,
+    /// The one SLAAC attempt a boot makes, driven by the tick path.
+    slaac: Mutex<SlaacState>,
     // ── Transport / security / multicast routing tables ─────────────
     /// DCCP connection table (keyed by local port).
     dccp_table: Mutex<DccpConnectionTable>,

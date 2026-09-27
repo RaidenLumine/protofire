@@ -8,6 +8,7 @@ use alloc::sync::Arc;
 
 use crate::network::internet::icmp::IcmpHeader;
 use crate::network::internet::icmp::{self};
+use crate::network::internet::icmpv6;
 use crate::network::internet::ipv4::IpProtocol;
 use crate::network::internet::ipv4::Ipv4Addr;
 use crate::network::internet::ipv4::Ipv4Header;
@@ -183,4 +184,80 @@ fn poll_icmp_echo_request_generates_echo_reply() {
     assert_eq!(reply_icmp.rest_of_header, rest);
     // Echo Reply echoes the request payload.
     assert_eq!(&reply_ip.payload[icmp::ICMP_HEADER_SIZE..], payload);
+}
+
+/// Every ICMPv6 type in the frames the mock device was given.
+///
+/// The offset is fixed by the encapsulation this stack builds: 14 bytes of
+/// Ethernet, 40 of IPv6, then the ICMPv6 header.
+fn take_icmpv6_types(mock: &MockNetworkDevice) -> alloc::vec::Vec<u8> {
+    mock.drain_tx()
+        .into_iter()
+        .filter(|frame| frame.len() >= 55 && frame[12..14] == [0x86, 0xdd])
+        .map(|frame| frame[54])
+        .collect()
+}
+
+#[test]
+fn slaac_solicits_from_the_tick_path_and_checks_a_formed_address() {
+    let (mock, stack) = make_stack();
+    stack.start_slaac();
+
+    // Armed, not blocking: the first Router Solicitation goes out on the next
+    // tick, and the boot that armed it has already moved on.
+    stack.advance_tick();
+    assert_eq!(
+        take_icmpv6_types(&mock),
+        alloc::vec![icmpv6::NDP_ROUTER_SOLICITATION]
+    );
+
+    // Not again until the interval has passed — a deadline in the future is a
+    // deadline, not an elapsed gap.
+    for _ in 0..(crate::network::stack::slaac::TEST_SOLICIT_INTERVAL_TICKS - 1) {
+        stack.advance_tick();
+    }
+    assert!(take_icmpv6_types(&mock).is_empty());
+    stack.advance_tick();
+    assert_eq!(
+        take_icmpv6_types(&mock),
+        alloc::vec![icmpv6::NDP_ROUTER_SOLICITATION]
+    );
+
+    // The last of the budget arrives on schedule, and then a host with no
+    // router goes quiet rather than asking forever.
+    for _ in 0..(crate::network::stack::slaac::TEST_SOLICIT_INTERVAL_TICKS
+        * (crate::network::stack::slaac::TEST_MAX_SOLICITS as u64 - 1))
+    {
+        stack.advance_tick();
+    }
+    assert_eq!(
+        take_icmpv6_types(&mock),
+        alloc::vec![icmpv6::NDP_ROUTER_SOLICITATION],
+        "the last solicitation of the budget"
+    );
+    for _ in 0..(crate::network::stack::slaac::TEST_SOLICIT_INTERVAL_TICKS
+        * (crate::network::stack::slaac::TEST_MAX_SOLICITS as u64))
+    {
+        stack.advance_tick();
+    }
+    assert!(
+        take_icmpv6_types(&mock).is_empty(),
+        "the budget is spent; silence from here"
+    );
+
+    // An advertisement forms an address; the next tick probes for a duplicate.
+    let global = [
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0x52, 0x54, 0, 0x12, 0x34, 0x56, 0, 1,
+    ];
+    stack.set_global_ip_v6(global, 3600, 1800);
+    stack.advance_tick();
+    assert_eq!(
+        take_icmpv6_types(&mock),
+        alloc::vec![icmpv6::NDP_NEIGHBOR_SOLICITATION]
+    );
+
+    // Somebody else claims it: the address goes back.
+    stack.set_dad_conflict();
+    stack.advance_tick();
+    assert!(stack.global_ip_v6().is_none());
 }

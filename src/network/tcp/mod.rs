@@ -49,6 +49,31 @@ pub use types::TCP_MIN_HEADER_SIZE;
 mod tests {
     use super::types::*;
     use super::*;
+
+    #[test]
+    fn an_icmp_error_aborts_only_a_handshake() {
+        let mut table = TcpConnectionTable::new();
+        let remote = [10, 0, 2, 2];
+
+        // Still shaking hands: the 4-tuple the error named is one whose SYN went
+        // nowhere, so it is aborted.
+        table
+            .insert(TcpConnectionState::new(40000, remote, 80, 1, 0))
+            .expect("insert");
+        assert!(table.abort_handshake(40000, remote, 80));
+        assert!(table.lookup(40000, remote, 80).is_none());
+
+        // Established: an ICMP error is a soft signal, and this stack has no
+        // retransmit policy that would know what to do with it.
+        let mut established = TcpConnectionState::new(40001, remote, 80, 1, 0);
+        established.state = TcpState::Established;
+        table.insert(established).expect("insert");
+        assert!(!table.abort_handshake(40001, remote, 80));
+        assert!(table.lookup(40001, remote, 80).is_some());
+
+        // A 4-tuple nobody knows is not an error.
+        assert!(!table.abort_handshake(40002, remote, 80));
+    }
     use crate::network::internet::ip::IpAddress;
     use crate::network::internet::ipv4::Ipv4Addr;
     use crate::network::internet::ipv4::{self};
