@@ -40,6 +40,8 @@ static RUNTIME_PT_ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// before pool depletion causes driver failures.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn alloc_runtime_pt_page() -> Option<usize> {
+    // SAFETY: the frame allocator is initialised by the time paging asks for a
+    // table page, and it hands back a frame this kernel owns.
     unsafe {
         let index = RUNTIME_PT_ALLOC_COUNT.fetch_add(1, Ordering::AcqRel);
         if index >= RUNTIME_PT_POOL_SIZE {
@@ -106,6 +108,8 @@ pub(crate) fn overlaps_kernel(phys: usize, size: usize) -> bool {
 /// data, bss).  This function is only available on bare-metal x86_64.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn map_device_mmio(phys: u64, size: usize) -> Option<*mut u8> {
+    // SAFETY: the caller passes a device BAR address and size from enumeration; the
+    // block walks the live kernel tables, which this CPU owns while it runs.
     unsafe {
         // 4-level paging supports up to 48-bit physical addresses.  Reject
         // addresses beyond this limit (no current PCI BAR exceeds 48 bits).
@@ -153,6 +157,9 @@ pub unsafe fn map_device_mmio(phys: u64, size: usize) -> Option<*mut u8> {
 /// Map a single 2 MiB device-MMIO large page.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn map_device_large_page(pml4: *mut u64, phys: usize) -> Option<()> {
+    // SAFETY: the caller passes the runtime PML4 and a frame it allocated; the
+    // index is derived from the physical address, which is inside the direct
+    // map.
     unsafe {
         let pml4_idx = pml4_index(phys);
         let pdpt_idx = page_directory_pointer_index(phys);
@@ -179,6 +186,8 @@ pub(crate) unsafe fn map_device_large_page(pml4: *mut u64, phys: usize) -> Optio
 /// Map a single 4 KiB device-MMIO page.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn map_device_4k_page(pml4: *mut u64, phys: usize) -> Option<()> {
+    // SAFETY: as `map_device_large_page` — the same PML4 and a frame the caller
+    // owns.
     unsafe {
         let pml4_idx = pml4_index(phys);
         let pdpt_idx = page_directory_pointer_index(phys);
@@ -212,6 +221,8 @@ pub(crate) unsafe fn map_device_4k_page(pml4: *mut u64, phys: usize) -> Option<(
 /// Ensure a PML4 entry exists for the given index, allocating a PDPT if needed.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn ensure_runtime_pdpt(pml4: *mut u64, pml4_idx: usize) -> Option<()> {
+    // SAFETY: the caller passes the runtime PML4 it is building; the table it reads
+    // or creates belongs to the kernel's direct map.
     unsafe {
         let entry = core::ptr::read_volatile(pml4.add(pml4_idx));
         if entry & PAGE_ENTRY_PRESENT == 0 {
@@ -228,6 +239,7 @@ pub(crate) unsafe fn ensure_runtime_pdpt(pml4: *mut u64, pml4_idx: usize) -> Opt
 /// Read the physical address of a PDPT from its PML4 entry.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn read_runtime_pdpt(pml4: *mut u64, pml4_idx: usize) -> Option<*mut u64> {
+    // SAFETY: as above — a read of the same table.
     unsafe {
         let entry = core::ptr::read_volatile(pml4.add(pml4_idx));
         if entry & PAGE_ENTRY_PRESENT == 0 {
@@ -240,6 +252,7 @@ pub(crate) unsafe fn read_runtime_pdpt(pml4: *mut u64, pml4_idx: usize) -> Optio
 /// Ensure a PD exists for the given PDPT index, allocating one if needed.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn ensure_runtime_pd(pdpt: *mut u64, pdpt_idx: usize) -> Option<*mut u64> {
+    // SAFETY: as above — one level down, in a table this walk created.
     unsafe {
         let entry = core::ptr::read_volatile(pdpt.add(pdpt_idx));
         if entry & PAGE_ENTRY_PRESENT == 0 {
@@ -257,6 +270,7 @@ pub(crate) unsafe fn ensure_runtime_pd(pdpt: *mut u64, pdpt_idx: usize) -> Optio
 /// Ensure a PT exists for the given PD index, allocating one if needed.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn ensure_runtime_pt(pd: *mut u64, pd_idx: usize) -> Option<*mut u64> {
+    // SAFETY: as above — the leaf table, which this walk created if it was absent.
     unsafe {
         let entry = core::ptr::read_volatile(pd.add(pd_idx));
         if entry & PAGE_ENTRY_PRESENT == 0 {
@@ -289,6 +303,8 @@ pub(crate) unsafe fn invalidate_tlb(virtual_address: usize) {
 /// has to happen, because until then the mapping is still in use.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 unsafe fn invalidate_tlb_local(virtual_address: usize) {
+    // SAFETY: `invlpg` on an address this CPU has mapped; it only drops this CPU's
+    // translation and has no other effect.
     unsafe {
         core::arch::asm!("invlpg [{}]", in(reg) virtual_address, options(nostack));
     }
@@ -315,6 +331,8 @@ pub unsafe fn install_user_page(
     physical_address: usize,
     permissions: PagePermissions,
 ) -> Option<()> {
+    // SAFETY: the caller passes heap bounds and the runtime tables this kernel
+    // built; the switch reads and writes only those.
     unsafe {
         if virtual_address >= X86_64_USER_CANONICAL_END {
             return None;
@@ -461,10 +479,14 @@ pub(crate) fn cached_kernel_page_table_spec(
     let spec = Box::new(KernelPageTableSpec::from_plan(&plan)?);
     // Leak the Box so the reference stays valid for the kernel's lifetime.
     let ptr: *const KernelPageTableSpec = Box::into_raw(spec);
+    // SAFETY: the spec was just boxed and its pointer handed to the cache below;
+    // the Box is never freed, which is what makes the shared reference sound.
     unsafe {
         SPEC_PTR = ptr;
     }
     CACHED.store(true, core::sync::atomic::Ordering::Release);
+    // SAFETY: as above — the cache holds the only pointer to a Box that is never
+    // dropped, so the reference outlives every use.
     Some(unsafe { &*ptr })
 }
 
@@ -572,6 +594,8 @@ pub(crate) fn prepare_runtime_kernel_page_tables_impl(
     heap_bounds: (usize, usize),
 ) -> Option<PreparedRuntimeKernelPageTables> {
     let spec = runtime_kernel_page_table_spec(heap_bounds)?;
+    // SAFETY: `spec` comes from the builder above, which allocated it for exactly
+    // this call.
     Some(unsafe { install_runtime_kernel_page_tables(&spec) })
 }
 
@@ -696,6 +720,7 @@ pub(crate) fn kernel_stack_window_entry(page_directory_index: usize) -> Option<u
     {
         return None;
     }
+    // SAFETY: the entry is read from a table of the runtime tree this CPU owns.
     let entry = unsafe {
         core::ptr::read_volatile((*KERNEL_PD.get()).0.as_ptr().add(page_directory_index))
     };
@@ -728,6 +753,8 @@ unsafe fn stack_window_leaf(virtual_address: usize) -> Option<*mut u64> {
     let directory_index = (virtual_address >> 21) & 0x1ff;
     let entry = kernel_stack_window_entry(directory_index)?;
     let table = (entry & PAGE_ENTRY_ADDRESS_MASK) as *mut u64;
+    // SAFETY: the table comes from a present entry of the same tree; the index is a
+    // page-table index (masked to nine bits).
     Some(unsafe { table.add((virtual_address >> 12) & 0x1ff) })
 }
 
@@ -739,9 +766,12 @@ unsafe fn stack_window_leaf(virtual_address: usize) -> Option<*mut u64> {
 /// is the only thing that hands those out.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: usize) -> bool {
+    // SAFETY: the address is inside the stack window, which is what the leaf lookup
+    // expects.
     let Some(leaf) = (unsafe { stack_window_leaf(virtual_address) }) else {
         return false;
     };
+    // SAFETY: the leaf is a page-table entry of the stack window this kernel built.
     unsafe {
         core::ptr::write_volatile(
             leaf,
@@ -753,6 +783,8 @@ pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: us
     // A fresh mapping needs no remote request: an address is only ever handed
     // out again after [`crate::kernel::smp::all_cpus_flushed`] has said that no
     // CPU still holds it, so no CPU can be looking at the old leaf.
+    // SAFETY: as above — the entry that was just written, on an address this CPU
+    // maps.
     unsafe { invalidate_tlb_local(virtual_address) };
     true
 }
@@ -768,13 +800,20 @@ pub(crate) unsafe fn map_stack_page(virtual_address: usize, physical_address: us
 /// As [`map_stack_page`]: the address must be one the caller owns.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) unsafe fn unmap_stack_page(virtual_address: usize) -> bool {
+    // SAFETY: the address is inside the stack window, which is what the leaf lookup
+    // expects.
     let Some(leaf) = (unsafe { stack_window_leaf(virtual_address) }) else {
         return false;
     };
+    // SAFETY: the leaf is a page-table entry of the stack window; reading it is
+    // what decides whether there is anything to clear.
     if unsafe { core::ptr::read_volatile(leaf) } & PAGE_ENTRY_PRESENT == 0 {
         return false;
     }
+    // SAFETY: as above — clearing the leaf's present bit.
     unsafe { core::ptr::write_volatile(leaf, 0) };
+    // SAFETY: as above — dropping this CPU's translation of the address just
+    // unmapped.
     unsafe { invalidate_tlb_local(virtual_address) };
     true
 }
@@ -783,6 +822,8 @@ pub(crate) unsafe fn unmap_stack_page(virtual_address: usize) -> bool {
 pub(crate) unsafe fn install_runtime_kernel_page_tables(
     spec: &KernelPageTableSpec,
 ) -> PreparedRuntimeKernelPageTables {
+    // SAFETY: the caller passes the kernel's heap bounds; the tables built here are
+    // the kernel's own direct map.
     unsafe {
         let pml4 = KERNEL_PML4.get();
         let pdpt = KERNEL_PDPT.get();
@@ -941,6 +982,8 @@ fn linker_symbol_range(start: *const u8, end: *const u8) -> (usize, usize) {
 pub(crate) fn install_active_root_table_address_impl(root_table_address: usize) -> Option<()> {
     // The kernel root is tagged with PCID 0 (its low 12 bits are zero), so
     // the value written to CR3 is unchanged whether or not PCID is active.
+    // SAFETY: the CR3 write is the switch itself; the tables it names were built
+    // above and are mapped.
     unsafe {
         asm!(
             "mov cr3, {}",
@@ -983,6 +1026,7 @@ pub(crate) fn install_active_process_root_table_address_impl(
     pcid: u64,
 ) -> Option<()> {
     let cr3 = super::pcid::cr3_with_pcid(root_table_address, pcid) as u64;
+    // SAFETY: as above — the same switch, with the PCID the caller reserved.
     unsafe {
         asm!(
             "mov cr3, {}",
@@ -1016,6 +1060,7 @@ pub(crate) fn install_active_process_root_table_address_impl(
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn current_root_table_address_impl() -> Option<usize> {
     let root_table_address: u64;
+    // SAFETY: reading CR3 to report the active root; no side effects.
     unsafe {
         asm!(
             "mov {}, cr3",
@@ -1045,6 +1090,7 @@ pub(crate) fn current_root_table_address_impl() -> Option<usize> {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn current_instruction_pointer_impl() -> Option<usize> {
     let instruction_pointer: usize;
+    // SAFETY: reading the instruction pointer for the self-check's report.
     unsafe {
         asm!(
             "lea {}, [rip + 0]",
@@ -1059,6 +1105,7 @@ fn current_instruction_pointer_impl() -> Option<usize> {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn current_stack_pointer_impl() -> Option<usize> {
     let stack_pointer: usize;
+    // SAFETY: reading the stack pointer for the same report.
     unsafe {
         asm!(
             "mov {}, rsp",
@@ -1084,6 +1131,8 @@ fn current_stack_pointer_impl() -> Option<usize> {
 /// page-table page is available.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 unsafe fn split_pd_large_page(pd: *const u64, pd_index: usize, entry: u64) -> Option<u64> {
+    // SAFETY: the PD and index come from the walk that decided this entry is a
+    // large page it must split; the new table page belongs to the kernel.
     unsafe {
         let table = alloc_runtime_pt_page()?;
 
@@ -1117,6 +1166,8 @@ unsafe fn split_pd_large_page(pd: *const u64, pd_index: usize, entry: u64) -> Op
 /// `virtual_address` — the page becomes inaccessible immediately.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn unmap_page(virtual_address: usize) -> bool {
+    // SAFETY: the address is one the kernel's runtime tables cover; the walk and
+    // the TLB drop are this CPU's own.
     unsafe {
         let va = virtual_address;
 
@@ -1212,6 +1263,8 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
 /// same physical frame to the kernel again.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn restore_page(virtual_address: usize) -> bool {
+    // SAFETY: as `unmap_page` — the address is one the caller unmapped, and this
+    // restores the entry it recorded.
     unsafe {
         let va = virtual_address;
 
@@ -1285,6 +1338,8 @@ fn leaf_is_present(virtual_address: usize) -> bool {
         ((virtual_address >> 21) & 0x1ff, 21),
         ((virtual_address >> 12) & 0x1ff, 12),
     ] {
+        // SAFETY: the table is a page-table page this kernel allocated and the index is
+        // masked to nine bits by the caller.
         let entry = unsafe { core::ptr::read_volatile(table.add(index)) };
         if entry & PAGE_ENTRY_PRESENT == 0 {
             return false;
