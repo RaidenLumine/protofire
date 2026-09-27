@@ -31,11 +31,23 @@ pub fn timer_create(ctx: &mut SyscallContext) -> Result<SyscallDispatch> {
     Ok(SyscallDispatch::complete(timer_id as usize))
 }
 
+/// Pack the four fields into the `itimerspec` image the ABI uses: the interval
+/// first, then the value, each as a pair of native-endian `i64`s.
+fn pack_spec(val_sec: i64, val_nsec: i64, int_sec: i64, int_nsec: i64) -> [u8; ITIMERSPEC_SIZE] {
+    let mut spec = [0u8; ITIMERSPEC_SIZE];
+    spec[0..8].copy_from_slice(&int_sec.to_ne_bytes());
+    spec[8..16].copy_from_slice(&int_nsec.to_ne_bytes());
+    spec[16..24].copy_from_slice(&val_sec.to_ne_bytes());
+    spec[24..32].copy_from_slice(&val_nsec.to_ne_bytes());
+    spec
+}
+
 /// timer_settime(timer_id, flags, new_value, old_value) → 0 or error
 pub fn timer_settime(ctx: &mut SyscallContext) -> Result<SyscallDispatch> {
     let timer_id = ctx.arg(0) as posix_timer::TimerId;
     let flags = ctx.arg(1) as u32;
     let new_value_ptr = ctx.arg(2) as *const u8;
+    let old_value_ptr = ctx.arg(3) as *mut u8;
 
     // Parse itimerspec from user memory (3 u64s: value_sec, value_nsec,
     // interval_sec, interval_nsec). Layout: it_interval.tv_sec,
@@ -55,6 +67,27 @@ pub fn timer_settime(ctx: &mut SyscallContext) -> Result<SyscallDispatch> {
     let value_sec = spec_value(&spec, 16);
     let value_nsec = spec_value(&spec, 24);
 
+    // `old_value` is an output the ABI has always documented and this handler
+    // used to ignore: a caller that asked for the previous state was told the
+    // call succeeded and given nothing.
+    //
+    // The buffer is validated before the timer is touched, so a bad pointer is
+    // an error rather than a timer that changed and a report that failed.  The
+    // state is read immediately before the set rather than swapped out of the
+    // timer in one step — a concurrent caller of the same timer can interleave —
+    // which is the most a syscall can promise without the timer manager growing
+    // a read-and-replace operation.
+    let previous = if old_value_ptr.is_null() {
+        None
+    } else {
+        super::user_memory::validate_current_process_user_output_buffer(
+            old_value_ptr,
+            ITIMERSPEC_SIZE,
+            ITIMERSPEC_SIZE,
+        )?;
+        Some(posix_timer::timer_gettime(timer_id)?)
+    };
+
     posix_timer::timer_settime(
         timer_id,
         flags,
@@ -64,7 +97,11 @@ pub fn timer_settime(ctx: &mut SyscallContext) -> Result<SyscallDispatch> {
         interval_nsec,
     )?;
 
-    // TODO: if old_value is non-null, write the previous timer state.
+    if let Some((val_sec, val_nsec, int_sec, int_nsec)) = previous {
+        let previous_spec = pack_spec(val_sec, val_nsec, int_sec, int_nsec);
+        super::user_memory::copy_user_bytes(&previous_spec, old_value_ptr, ITIMERSPEC_SIZE)?;
+    }
+
     Ok(SyscallDispatch::complete(0))
 }
 
@@ -82,11 +119,7 @@ pub fn timer_gettime(ctx: &mut SyscallContext) -> Result<SyscallDispatch> {
     // As `timer_settime`, in the other direction: the write goes through the
     // validated user-output path, so where it lands is checked before it
     // happens.
-    let mut spec = [0u8; ITIMERSPEC_SIZE];
-    spec[0..8].copy_from_slice(&int_sec.to_ne_bytes());
-    spec[8..16].copy_from_slice(&int_nsec.to_ne_bytes());
-    spec[16..24].copy_from_slice(&val_sec.to_ne_bytes());
-    spec[24..32].copy_from_slice(&val_nsec.to_ne_bytes());
+    let spec = pack_spec(val_sec, val_nsec, int_sec, int_nsec);
     super::user_memory::copy_user_bytes(&spec, value_ptr, ITIMERSPEC_SIZE)?;
 
     Ok(SyscallDispatch::complete(0))
@@ -97,4 +130,23 @@ pub fn timer_delete(ctx: &mut SyscallContext) -> Result<SyscallDispatch> {
     let timer_id = ctx.arg(0) as posix_timer::TimerId;
     posix_timer::timer_delete(timer_id)?;
     Ok(SyscallDispatch::complete(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pack_spec;
+    use super::ITIMERSPEC_SIZE;
+
+    #[test]
+    fn itimerspec_is_interval_then_value() {
+        // POSIX puts `it_interval` first; a caller that reads the two fields the
+        // other way round gets a plausible-looking wrong answer, which is why
+        // the layout is asserted rather than described.
+        let spec = pack_spec(1, 2, 3, 4);
+        assert_eq!(spec.len(), ITIMERSPEC_SIZE);
+        assert_eq!(i64::from_ne_bytes(spec[0..8].try_into().unwrap()), 3); // it_interval.tv_sec
+        assert_eq!(i64::from_ne_bytes(spec[8..16].try_into().unwrap()), 4); // it_interval.tv_nsec
+        assert_eq!(i64::from_ne_bytes(spec[16..24].try_into().unwrap()), 1); // it_value.tv_sec
+        assert_eq!(i64::from_ne_bytes(spec[24..32].try_into().unwrap()), 2); // it_value.tv_nsec
+    }
 }
