@@ -406,6 +406,9 @@ fn range_within(start: usize, end: usize, region_start: usize, region_end: usize
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub(crate) fn current_root_table_address() -> usize {
     let satp: u64;
+    // SAFETY: reading a CSR the supervisor owns; `csrr` has no memory side
+    // effects, and satp always holds a mode-plus-root-table value rather than a
+    // pointer this code dereferences.
     unsafe {
         asm!(
             "csrr {satp}, satp",
@@ -426,6 +429,8 @@ pub(crate) fn current_root_table_address() -> usize {
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 fn mmu_enabled() -> bool {
     let satp: u64;
+    // SAFETY: as `current_root_table_address` — a supervisor CSR read with no
+    // memory side effects.
     unsafe {
         asm!(
             "csrr {satp}, satp",
@@ -444,6 +449,9 @@ fn mmu_enabled() -> bool {
 /// Invalidate all cached translations (used after a satp root switch).
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 fn sfence_vma_all() {
+    // SAFETY: discarding every cached translation is permitted from
+    // supervisor mode whatever the tables say, and the instruction takes no
+    // memory operand; the caller uses it after the root register changes.
     unsafe {
         asm!("sfence.vma", options(nostack, preserves_flags));
     }
@@ -455,6 +463,9 @@ fn sfence_vma_all() {}
 /// Switch satp to a new root table (used when the MMU is already on).
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 fn install_active_root_table_address(satp: u64) {
+    // SAFETY: the caller hands over a root table this module built, which maps
+    // the code performing the switch; the fence that must follow is the
+    // caller's, and this function only retires the register write.
     unsafe {
         asm!(
             "csrw satp, {satp}",
@@ -472,6 +483,9 @@ fn install_active_root_table_address(_satp: u64) {}
 /// Program satp and enable the MMU (cold start).
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 fn install_translation_configuration(satp: u64) {
+    // SAFETY: the cold-start path is the only caller, before any translation is
+    // relied on, and `satp` is the mode-plus-root value this module built for
+    // the tables it just installed.
     unsafe {
         asm!(
             "csrw satp, {satp}",
@@ -496,6 +510,9 @@ fn install_translation_configuration(_satp: u64) {}
 /// `sfence.vma zero, {asid}` for an ASID-scoped flush.
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 fn flush_tlb_page(virtual_address: usize) {
+    // SAFETY: `sfence.vma {va}, zero` invalidates one virtual address across
+    // every ASID, which is allowed from supervisor mode unconditionally; the
+    // address is only an operand.
     unsafe {
         asm!(
             "sfence.vma {va}, zero",
@@ -541,6 +558,9 @@ fn allocate_runtime_pt_page() -> Option<usize> {
             .is_ok()
         {
             let store = RUNTIME_PT_POOL_STORE.get();
+            // SAFETY: the CAS above won this page, so no other hart can hold it
+            // as a table yet; it is plain kernel memory inside the pool's own
+            // static and `page_index` is the index the snapshot bounded.
             let page = unsafe { &mut (*store)[page_index] };
             page.0 = [0; TABLE_ENTRY_COUNT];
             return Some(page as *mut RuntimePtPoolPage as usize);
@@ -555,10 +575,16 @@ fn split_pgd_block(pgd: *mut u64, pgd_index: usize, pgd_entry: u64, pmd_table: u
     let pmd = pmd_table as *mut u64;
     for block_index in 0..TABLE_ENTRY_COUNT {
         let address = block_base + block_index * USER_DEMO_REGION_SIZE;
+        // SAFETY: `pmd_table` is a page the pool just allocated for this split
+        // and `block_index` is bounded by the table's entry count, so every
+        // write lands in the new table; volatile because the MMU reads it.
         unsafe {
             ptr::write_volatile(pmd.add(block_index), normal_pmd_block_entry(address));
         }
     }
+    // SAFETY: `pgd` is the live root table and `pgd_index` the slot being
+    // split; publishing the table descriptor is what makes the new table
+    // reachable, and nothing reads the old block entry afterwards.
     unsafe {
         ptr::write_volatile(pgd.add(pgd_index), table_entry(pmd_table));
     }
@@ -570,10 +596,16 @@ fn split_pmd_block(pmd: *mut u64, pmd_index: usize, pmd_entry: u64, pte_table: u
     let pte = pte_table as *mut u64;
     for page_index in 0..TABLE_ENTRY_COUNT {
         let address = block_base + page_index * TRANSLATION_GRANULE_SIZE;
+        // SAFETY: as `split_pgd_block` one level down — `pte_table` is a page
+        // the pool just allocated for this split and `page_index` is bounded by
+        // the table's entry count.
         unsafe {
             ptr::write_volatile(pte.add(page_index), normal_pte_page_entry(address));
         }
     }
+    // SAFETY: `pmd` is the live second-level table and `pmd_index` the slot
+    // being split; the descriptor written is the new table's page-aligned
+    // address.
     unsafe {
         ptr::write_volatile(pmd.add(pmd_index), table_entry(pte_table));
     }
@@ -586,32 +618,47 @@ unsafe fn resolve_pte_table(root: usize, virtual_address: usize) -> Option<*mut 
     let pmd_entry_index = pmd_index(virtual_address);
 
     let pgd = root as *mut u64;
+    // SAFETY: `root` is a live root table the caller named and `pgd_index`
+    // masks the address to the nine bits an Sv39 PGD index occupies, so the
+    // read stays inside that table.
     let mut pgd_entry = unsafe { ptr::read_volatile(pgd.add(pgd_entry_index)) };
     if pgd_entry & PTE_VALID == 0 {
         let pmd_table = allocate_runtime_pt_page()?;
+        // SAFETY: as above — installing the freshly allocated, zeroed PMD table
+        // into the slot just read.
         unsafe {
             ptr::write_volatile(pgd.add(pgd_entry_index), table_entry(pmd_table));
         }
+        // SAFETY: as above — the read-back of the entry just written, so the
+        // walk continues from the installed value.
         pgd_entry = unsafe { ptr::read_volatile(pgd.add(pgd_entry_index)) };
     } else if pgd_entry & (PTE_READ | PTE_WRITE | PTE_EXECUTE) != 0 {
         // 1 GiB block at PGD — split it before resolving a page inside it.
         let pmd_table = allocate_runtime_pt_page()?;
         split_pgd_block(pgd, pgd_entry_index, pgd_entry, pmd_table);
+        // SAFETY: as above — the entry re-read after the split replaced the
+        // block with a table descriptor.
         pgd_entry = unsafe { ptr::read_volatile(pgd.add(pgd_entry_index)) };
     }
 
     let pmd = page_base_address(pgd_entry) as *mut u64;
+    // SAFETY: `pmd` is the table address the PGD entry names and `pmd_index` is
+    // masked to nine bits, so the read stays inside that table.
     let mut pmd_entry = unsafe { ptr::read_volatile(pmd.add(pmd_entry_index)) };
     if pmd_entry & PTE_VALID == 0 {
         let pte_table = allocate_runtime_pt_page()?;
+        // SAFETY: as above — installing the freshly allocated PTE table into
+        // the slot just read.
         unsafe {
             ptr::write_volatile(pmd.add(pmd_entry_index), table_entry(pte_table));
         }
+        // SAFETY: as above — the read-back of the entry just written.
         pmd_entry = unsafe { ptr::read_volatile(pmd.add(pmd_entry_index)) };
     } else if pmd_entry & (PTE_READ | PTE_WRITE | PTE_EXECUTE) != 0 {
         // 2 MiB block at PMD — split it before resolving a page inside it.
         let pte_table = allocate_runtime_pt_page()?;
         split_pmd_block(pmd, pmd_entry_index, pmd_entry, pte_table);
+        // SAFETY: as above — the entry re-read after the PMD split.
         pmd_entry = unsafe { ptr::read_volatile(pmd.add(pmd_entry_index)) };
     }
 
@@ -635,8 +682,12 @@ pub unsafe fn install_user_page(
     if root == 0 {
         return None;
     }
+    // SAFETY: `root` is the address satp currently holds and the caller owns
+    // the frame being mapped, so the walk may build tables under it.
     let pte = unsafe { resolve_pte_table(root, virtual_address)? };
     let pte_entry_index = pte_index(virtual_address);
+    // SAFETY: `pte` is the leaf table the walk just returned and `pte_index`
+    // is masked to nine bits, so the write lands on this address's own entry.
     unsafe {
         ptr::write_volatile(
             pte.add(pte_entry_index),
@@ -662,6 +713,8 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
     let pte_entry_index = pte_index(virtual_address);
 
     let pgd = root as *mut u64;
+    // SAFETY: `root` is the live root table and `pgd_index` is masked to nine
+    // bits, so the read stays inside that table's first level.
     let pgd_entry = unsafe { ptr::read_volatile(pgd.add(pgd_entry_index)) };
     if pgd_entry & PTE_VALID == 0 {
         return false;
@@ -672,12 +725,16 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
             return false;
         };
         split_pgd_block(pgd, pgd_entry_index, pgd_entry, pmd_table);
+        // SAFETY: as above — the entry re-read after the split, which is now
+        // the table descriptor this walk needs.
         let updated = unsafe { ptr::read_volatile(pgd.add(pgd_entry_index)) };
         page_base_address(updated) as *mut u64
     } else {
         page_base_address(pgd_entry) as *mut u64
     };
 
+    // SAFETY: `pmd` is the table address the PGD entry names and `pmd_index` is
+    // masked to nine bits, so the read stays inside that table.
     let pmd_entry = unsafe { ptr::read_volatile(pmd.add(pmd_entry_index)) };
     if pmd_entry & PTE_VALID == 0 {
         return false;
@@ -688,15 +745,21 @@ pub unsafe fn unmap_page(virtual_address: usize) -> bool {
             return false;
         };
         split_pmd_block(pmd, pmd_entry_index, pmd_entry, pte_table);
+        // SAFETY: as above — the entry re-read after the PMD split.
         let updated = unsafe { ptr::read_volatile(pmd.add(pmd_entry_index)) };
         page_base_address(updated) as *mut u64
     } else {
         page_base_address(pmd_entry) as *mut u64
     };
 
+    // SAFETY: `pte` is the leaf table the walk reached and `pte_index` is
+    // masked to nine bits, so this reads the entry for the address being
+    // unmapped.
     if unsafe { ptr::read_volatile(pte.add(pte_entry_index)) } & PTE_VALID == 0 {
         return false;
     }
+    // SAFETY: as above — clearing that entry, which the caller has guaranteed
+    // no other mapping uses.
     unsafe {
         ptr::write_volatile(pte.add(pte_entry_index), 0);
     }
@@ -726,8 +789,12 @@ pub unsafe fn map_device_mmio_at(
     for page_index in 0..page_count {
         let va = virtual_address.checked_add(page_index * TRANSLATION_GRANULE_SIZE)?;
         let pa = physical_address.checked_add((page_index * TRANSLATION_GRANULE_SIZE) as u64)?;
+        // SAFETY: `root` is the live root table and the caller reserved `va`
+        // for device mappings, so the walk may build tables under it.
         let pte = unsafe { resolve_pte_table(root, va)? };
         let pte_entry_index = pte_index(va);
+        // SAFETY: `pte` is the leaf table the walk reached and `pte_entry_index`
+        // is masked to nine bits, so the write lands on this page's own entry.
         unsafe {
             ptr::write_volatile(pte.add(pte_entry_index), device_page_entry(pa as usize));
         }
@@ -769,6 +836,8 @@ pub unsafe fn map_device_mmio(phys: u64, size: usize) -> Option<*mut u8> {
     } else {
         // High-payload device (e.g. PCI ECAM): map it above the RAM window.
         const HIGH_DEVICE_VA_BASE: usize = 0x2_0000_0000;
+        // SAFETY: the caller's contract says `phys` is live MMIO and the base
+        // is the fixed address reserved for high device windows.
         unsafe { map_device_mmio_at(HIGH_DEVICE_VA_BASE, phys, size) }
     }
 }
@@ -796,12 +865,17 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     let pmd_ptr = KERNEL_PMD.get();
     let stack_pmd_ptr = KERNEL_STACK_WINDOW_PMD.get();
 
+    // SAFETY: the three pointers are the kernel's own table statics and this
+    // function is the only writer of them, running once during bring-up before
+    // the tables are installed.
     unsafe {
         *pgd_ptr = PageTable::zeroed();
         *pmd_ptr = PageTable::zeroed();
         *stack_pmd_ptr = PageTable::zeroed();
     }
 
+    // SAFETY: as above — `pgd_ptr` names the kernel's root table, which the
+    // zeroing above has already made exclusively ours.
     let pgd = unsafe { &mut *pgd_ptr };
     // PGD[0..1]: device / MMIO window [0, 2 GiB) as two 1 GiB blocks.
     pgd.0[0] = device_pgd_block_entry(DEVICE_MMIO_BASE);
@@ -812,6 +886,8 @@ unsafe fn install_runtime_kernel_page_tables() -> Option<PreparedRuntimeKernelPa
     // which is the property the window exists for.
     pgd.0[STACK_WINDOW_PGD_INDEX] = table_entry(stack_pmd_ptr as *mut PageTable as usize);
 
+    // SAFETY: as above — `pmd_ptr` names the kernel's second-level table, whose
+    // address was just published into the RAM window's PGD slot.
     let pmd = unsafe { &mut *pmd_ptr };
     // PMD: cover the full RAM window with 2 MiB kernel RWX blocks so the
     // kernel image, stack, and heap are all reachable after the switch.
@@ -965,6 +1041,8 @@ pub fn prepare_runtime_kernel_page_tables(
 ) -> Option<PreparedRuntimeKernelPageTables> {
     validate_runtime_layout(heap_bounds)?;
 
+    // SAFETY: the heap bounds have been checked against the runtime memory map,
+    // which is the precondition that makes the table build meaningful.
     let prepared = unsafe { install_runtime_kernel_page_tables()? };
     PREPARED_ROOT_TABLE.store(prepared.root_table_address, Ordering::SeqCst);
     PREPARED_WINDOW_COUNT.store(prepared.window_count, Ordering::SeqCst);
@@ -1068,6 +1146,8 @@ fn current_instruction_pointer() -> usize {
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 fn current_stack_pointer() -> usize {
     let sp: usize;
+    // SAFETY: reading sp is a register move with no memory access; the value is
+    // returned as an address, never dereferenced by this function.
     unsafe {
         asm!(
             "mv {sp}, sp",
@@ -1151,6 +1231,9 @@ fn release_demo_user_slot(slot_index: usize) {
 fn synchronize_user_code(_entry_point: usize, _payload_len: usize) {
     // RISC-V requires an explicit instruction-fence to make stores visible
     // to instruction fetch; sfence.vma covers any stale TLB entries.
+    // SAFETY: both instructions take no memory operand and are permitted from
+    // supervisor mode unconditionally; the payload has already been written by
+    // the caller, and neither fence can read or write anything itself.
     unsafe {
         asm!("fence.i", options(nostack, preserves_flags));
         asm!("sfence.vma", options(nostack, preserves_flags));
@@ -1221,6 +1304,9 @@ pub fn allocate_demo_user_slot(
         }
     };
 
+    // SAFETY: `region` is the slot's own demo region, `USER_DEMO_REGION_SIZE`
+    // bytes of it, and the payload was checked above to fit inside the same
+    // slot, so both the zeroing and the copy stay inside it.
     unsafe {
         ptr::write_bytes(region.cast::<u8>(), 0, USER_DEMO_REGION_SIZE);
         ptr::copy_nonoverlapping(
@@ -1257,6 +1343,10 @@ pub fn prepare_runtime_process_address_space(
     let mut pmd = Box::new(PageTable::zeroed());
     let mut user_pte = Box::new(PageTable::zeroed());
 
+    // SAFETY: `PREPARED_ROOT_TABLE` was checked non-zero above, and it only
+    // ever holds the root the kernel's own tables were installed at — so both
+    // reads touch tables this module built, which stay alive for the kernel's
+    // lifetime.
     unsafe {
         *pgd = *KERNEL_PGD.get();
         *pmd = *KERNEL_PMD.get();
@@ -1362,6 +1452,9 @@ fn activate_prepared_process_address_space_impl(
             address_space.asid,
         );
         #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+        // SAFETY: `satp` names the root table `address_space` was built from,
+        // which maps the code performing the switch; the fence that follows is
+        // issued by the caller's path.
         unsafe {
             asm!(
                 "csrw satp, {satp}",
@@ -1466,6 +1559,9 @@ impl PreparedDemoUserSlot {
             return None;
         }
 
+        // SAFETY: the range check above proved `[address, end)` lies inside one
+        // of this slot's two stacks, and `bytes` is a live slice, so the copy
+        // stays inside the slot's own region.
         unsafe {
             ptr::copy_nonoverlapping(bytes.as_ptr(), address as *mut u8, bytes.len());
         }
@@ -1582,6 +1678,8 @@ impl PreparedProcessAddressSpace {
             return None;
         }
         let pte_table = page_base_address(pmd_entry) as *const u64;
+        // SAFETY: `pte_table` is the address the PMD entry names and `pte_index`
+        // is masked to nine bits, so the read stays inside that table.
         let pte_entry = unsafe { ptr::read_volatile(pte_table.add(pte_index(address))) };
         if pte_entry & PTE_VALID == 0 {
             return None;

@@ -20,5 +20,5 @@
 host                         362
 x86_64-unknown-none          246
 aarch64-unknown-none         178
-riscv64gc-unknown-none-elf   217
+riscv64gc-unknown-none-elf   140
 aarch64-unknown-linux-gnu    198
