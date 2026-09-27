@@ -37,6 +37,11 @@ QEMU_RAM="${QEMU_RAM:-2G}"
 QEMU_RISCV64="${QEMU_RISCV64:-qemu-system-riscv64}"
 RISCV64_RUNTIME_LOG="${RISCV64_RUNTIME_LOG:-}"
 FEATURES="${FEATURES:-demo-disk}"
+# Which copy of the demo payload the boot must report: the one this build
+# assembled (the default) or the one frozen on disk, when the caller asked for
+# the ABI gate.  Asserting it is what keeps a gate that means to run an old
+# program from passing on a new one.
+PAYLOAD_SOURCE="${PAYLOAD_SOURCE:-compiled}"
 
 KERNEL_BIN="${TARGET_DIR}/riscv64gc-unknown-none-elf/${PROFILE}/${CRATE}"
 
@@ -209,6 +214,7 @@ require_log_line "protofire shell (user)"
 # at the hand-off still has all of them.
 require_log_line "[user  ] riscv64 payload start"
 require_log_line "[user  ] riscv64 app-id: demo-launcher"
+require_log_line "[abi   ] demo-launcher payload: $PAYLOAD_SOURCE "
 require_log_line "[user  ] riscv64 payload resume-1"
 require_log_line "[user  ] riscv64 payload resume-2"
 require_log_line "[user  ] exit pid="

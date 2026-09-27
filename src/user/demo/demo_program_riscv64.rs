@@ -16,11 +16,45 @@ const PAYLOAD_END_SYMBOL: &str = "protofire_demo_program_riscv64_payload_end";
 // host cannot assemble it; those builds take the empty fallback below.
 core::arch::global_asm!(include_str!("demo_program_riscv64_payload.S"));
 
+// The bytes this build assembled are only read when they are the payload; with
+// `abi_frozen_payload` the fixture is, and these symbols have no reader — which
+// is why they are compiled out rather than left to warn.
+#[cfg(not(feature = "abi_frozen_payload"))]
 unsafe extern "C" {
     static protofire_demo_program_riscv64_payload_start: u8;
     static protofire_demo_program_riscv64_payload_end: u8;
 }
 
+/// The payload's machine code as it was on 2026-09-27.
+///
+/// With the `abi_frozen_payload` feature the ELF builder ships these bytes
+/// instead of the ones this build assembled, so the boot runs a RISC-V program
+/// that was *not* rebuilt — the second architecture the ABI gate covers, and
+/// the one whose payload is hand-written assembly rather than a Rust section.
+/// The bytes come out of the riscv64 kernel image, between the two symbols that
+/// bound the payload inside `.text`:
+///
+/// ```text
+/// cargo build --target riscv64gc-unknown-none-elf --features demo-disk
+/// # file offset = .text file offset + (symbol address - .text address)
+/// ```
+///
+/// Re-freezing is a deliberate act, not a build step.
+#[cfg(feature = "abi_frozen_payload")]
+const FROZEN_PAYLOAD: &[u8] = include_bytes!("fixtures/demo_payload_riscv64.bin");
+
+/// Which copy of the payload this build ships: `frozen` or `compiled`.
+///
+/// The runtime check asserts the boot line that quotes this.
+pub const fn payload_source() -> &'static str {
+    if cfg!(feature = "abi_frozen_payload") {
+        "frozen"
+    } else {
+        "compiled"
+    }
+}
+
+#[cfg(not(feature = "abi_frozen_payload"))]
 pub fn payload_bytes() -> &'static [u8] {
     // SAFETY: as the other payload sections — the linker's markers bound the
     // slice, and the section it names lives as long as the image does.
@@ -35,6 +69,11 @@ pub fn payload_bytes() -> &'static [u8] {
 
         core::slice::from_raw_parts(start, len)
     }
+}
+
+#[cfg(feature = "abi_frozen_payload")]
+pub fn payload_bytes() -> &'static [u8] {
+    FROZEN_PAYLOAD
 }
 
 

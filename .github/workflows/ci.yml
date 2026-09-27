@@ -116,7 +116,9 @@ jobs:
       - name: Install QEMU
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          # `qemu-system-misc` carries the riscv64 and aarch64 system emulators,
+          # which the frozen-payload gate needs for the second architecture.
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-system-misc
 
       - name: Boot on four CPUs
         run: make check-smp-runtime SMP=4
@@ -128,6 +130,9 @@ jobs:
       # would hide an ABI change by construction.
       - name: Boot the frozen payload
         run: make check-abi-frozen-payload
+
+      - name: Boot the frozen riscv64 payload
+        run: make check-abi-frozen-payload-riscv64
         env:
           CARGO: cargo
           SMP_RUNTIME_LOG: smp-runtime.log

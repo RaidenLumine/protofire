@@ -15,8 +15,18 @@ use crate::user::program::DEMO_PROGRAM_ENTRY;
 const RISCV64_DEMO_PROGRAM_MACHINE: u16 = 0xF3; // EM_RISCV
 
 pub fn build_demo_program_artifact() -> DemoProgramArtifact {
+    // Say which copy of the payload went on the disk, as the x86_64 builder
+    // does: the ABI gate asserts this line, so it cannot pass by quietly
+    // testing a payload that was assembled with the kernel.
+    let payload = super::demo_program_riscv64::payload_bytes();
+    crate::println!(
+        "[abi   ] demo-launcher payload: {} ({} bytes)",
+        super::demo_program_riscv64::payload_source(),
+        payload.len()
+    );
+
     build_artifact_or_metadata_only(
-        super::demo_program_riscv64::payload_bytes(),
+        payload,
         0,
         DEMO_PROGRAM_ENTRY as u64,
         RISCV64_DEMO_PROGRAM_MACHINE,

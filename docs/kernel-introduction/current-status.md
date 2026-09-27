@@ -485,7 +485,7 @@ once and never renumbered, records whose layout is asserted at compile time,
 |------|-------|-------|
 | The number table is frozen | **done** | `tests/syscall/abi_golden.rs`: a snapshot of all 190 number→name rows. A change in the frozen range fails outright; a change in the experimental range fails unless the ABI minor version moves with it. Before this, swapping two stable syscalls left every test green. |
 | Userspace can learn which ABI it is on | **already present** | the `abi_info` syscall (#39) returns `syscall_abi_major`, `syscall_abi_minor` and `syscall_count` alongside the record's own `major`/`minor`/`record_size` ([`src/user/shared/abi/runtime.rs`](../../src/user/shared/abi/runtime.rs)) |
-| A program that was not rebuilt | **done** | `src/user/demo/fixtures/rust_io_payload_x86_64.bin` is `demo-launcher-rust-io`'s machine code as it was on 2026-09-27. `make check-abi-frozen-payload` builds with `abi_frozen_payload`, so the demo disk carries *those* bytes instead of the freshly compiled section, boots, and requires the same user output — plus a boot line, `[abi   ] demo-launcher-rust-io payload: frozen (5036 bytes)`, so the gate cannot pass while quietly testing a new payload. This is the first configuration in which an ABI change can break a program, which is what makes the rule above testable. |
+| A program that was not rebuilt | **done, two of them** | `src/user/demo/fixtures/` holds two payloads frozen on 2026-09-27: `rust_io_payload_x86_64.bin` (5036 bytes, `demo-launcher-rust-io`, a Rust section) and `demo_payload_riscv64.bin` (676 bytes, `demo-launcher`, hand-written RISC-V assembly). `make check-abi-frozen-payload` and `make check-abi-frozen-payload-riscv64` build with `abi_frozen_payload`, so the demo disk carries *those* bytes instead of the freshly compiled ones, boot, and require the same user output — plus a boot line naming the source, `[abi   ] … payload: frozen (…)`, so a gate cannot pass while quietly testing a new payload. These are the configurations in which an ABI change can break a program, which is what makes the rule above testable. |
 
 ### Build & Development
 
@@ -503,11 +503,11 @@ once and never renumbered, records whose layout is asserted at compile time,
 - **Thin userspace ecosystem**: the ring3 programs on the demo disk (shell, demo-launcher, init.elf) are inlined `exit(0)` placeholder ELF stubs — no real applications or toolchain yet.
 - **Single maintainer**: bus factor = 1; every module is currently held by one maintainer.
 - **Experimental syscalls are unfrozen**: slots 121–189 are classified Experimental.
-- **“We do not break userspace” has one subject, not a population**: the
-  frozen payload makes the rule testable for one program on one architecture.
-  Extending it is cheap (freeze another payload the same way) but each freeze
-  is a deliberate act, and today's set covers `demo-launcher-rust-io` on
-  x86_64 — not the shell, not the aarch64 or riscv64 payloads.
+- **“We do not break userspace” has two subjects, not a population**: the
+  frozen payloads make the rule testable for `demo-launcher-rust-io` on x86_64
+  and `demo-launcher` on riscv64. Extending it is cheap (freeze another payload
+  the same way) but each freeze is a deliberate act; the shell is a host proxy
+  rather than ring-3 code, and the aarch64 payloads are not frozen yet.
 - **No fuzzing yet**: the ELF loader, filesystem image parsers, network packet parsers, and the LUKS2 header have no fuzz targets.
 - **No reproducible releases**: no tagged releases with reproducible ISO/disk images and signed artifacts.
 

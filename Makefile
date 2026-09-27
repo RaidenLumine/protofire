@@ -305,6 +305,15 @@ check-abi-frozen-payload:
 		X8664_RUNTIME_LOG="$${X8664_RUNTIME_LOG:-}" \
 		sh ./scripts/check-x8664-runtime.sh
 
+# The same gate on the second architecture: its payload is hand-written RISC-V
+# assembly rather than a Rust section, which is the other shape the ABI has to
+# keep working for a program that is not rebuilt.
+check-abi-frozen-payload-riscv64:
+	FEATURES="demo-disk abi_frozen_payload" \
+		PAYLOAD_SOURCE=frozen \
+		RISCV64_RUNTIME_LOG="$${RISCV64_RUNTIME_LOG:-}" \
+		sh ./scripts/check-riscv64-runtime.sh
+
 # Boot the kernel on a single emulated CPU with the demo disk and assert that
 # the user programs actually run.  The SMP smoke cannot see a defect that
 # takes one CPU down at a time, and a single CPU is what `make run` gives a

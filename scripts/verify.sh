@@ -164,6 +164,9 @@ run_p3() {
     fi
     if [ "$RUN_RISCV64_RUNTIME" = "1" ]; then
         run_make_step "make check-riscv64-runtime" check-riscv64-runtime
+        # And the same boot with the payload frozen rather than assembled, on
+        # the architecture whose payload is hand-written assembly.
+        run_make_step "make check-abi-frozen-payload-riscv64" check-abi-frozen-payload-riscv64
     else
         printf '==> verify[%s]: skipping riscv64 runtime smoke (set RUN_RISCV64_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"
