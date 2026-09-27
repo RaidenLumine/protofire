@@ -59,6 +59,8 @@ impl UserSyscall {
         number: crate::syscall::SyscallNumber,
         args: [usize; crate::abi::syscall::ARG_COUNT],
     ) -> crate::Result<usize> {
+        // SAFETY: the method's contract is the raw ABI's, and the forwarding
+        // call below is the raw entry under that same contract.
         unsafe { Self::invoke_raw_from_user_mode(number as usize, args) }
     }
 
@@ -73,6 +75,9 @@ impl UserSyscall {
         number: usize,
         args: [usize; crate::abi::syscall::ARG_COUNT],
     ) -> crate::Result<usize> {
+        // SAFETY: as above — the number and the six arguments are passed
+        // through unchanged, so the contract the caller met still holds; the
+        // status word that comes back is decoded by the ABI's own helper.
         unsafe {
             // The raw trap returns the shared encoded syscall status word; decode it
             // here so higher layers can work with `Result<usize>` directly.
@@ -104,6 +109,7 @@ impl UserSyscall {
         arg4: usize,
         arg5: usize,
     ) -> usize {
+        // SAFETY: as above — the scalar raw path, forwarded unchanged.
         unsafe { invoke::raw_status(number, arg0, arg1, arg2, arg3, arg4, arg5) }
     }
 }

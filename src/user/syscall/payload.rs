@@ -308,7 +308,12 @@ macro_rules! define_x86_64_payload_runtime {
             arg3: usize,
             arg4: usize,
             arg5: usize,
-        ) -> usize { unsafe {
+        ) -> usize {
+            // SAFETY: the `asm!` below is the syscall ABI itself — the number
+            // in `rax`, the arguments in the registers the ABI names, and the
+            // trap that enters the kernel, which is the side that validates
+            // everything the arguments point at.
+            unsafe {
             let status: usize;
             core::arch::asm!(
                 "int {vector}",
@@ -738,6 +743,9 @@ macro_rules! define_x86_64_payload_runtime {
             let start = c_string as *const u8;
             let mut cursor = start;
             let mut scanned = 0usize;
+            // SAFETY: the scan walks a C string the payload was handed and
+            // stops at its NUL or at `PAYLOAD_RUNTIME_MAX_C_STRING_BYTES`,
+            // whichever comes first, so it reads at most that many bytes.
             unsafe {
                 // Use volatile reads so the linker-extracted payload keeps a
                 // straightforward byte scan with no libc dependency.
@@ -758,6 +766,9 @@ macro_rules! define_x86_64_payload_runtime {
             let mut hex_buffer =
                 core::mem::MaybeUninit::<[u8; PAYLOAD_RUNTIME_HEX_CAPACITY]>::uninit();
             let buffer = hex_buffer.as_mut_ptr() as *mut u8;
+            // SAFETY: `buffer` names a fresh `PAYLOAD_RUNTIME_HEX_CAPACITY`-byte
+            // slot, and the longest write below is the two-character prefix plus
+            // `2 * size_of::<usize>()` digits, which is what that capacity is for.
             unsafe {
                 core::ptr::write(buffer, b'0');
                 core::ptr::write(buffer.add(1), b'x');
@@ -795,6 +806,8 @@ macro_rules! define_x86_64_payload_runtime {
         #[allow(dead_code)]
         #[link_section = $section]
         fn payload_runtime_read_word(address: usize) -> usize {
+            // SAFETY: the caller passes a word-sized slot of the initial user
+            // stack the loader laid out, as the two wrappers below document.
             unsafe { core::ptr::read(address as *const usize) }
         }
 
@@ -812,6 +825,8 @@ macro_rules! define_x86_64_payload_runtime {
         #[link_section = $section]
         fn payload_runtime_stack_argv_value(initial_stack: usize, index: usize) -> usize {
             // argv pointers start immediately after argc on the initial stack.
+            // SAFETY: as `payload_runtime_read_word` — an entry of that argv
+            // table, which the kernel filled in.
             unsafe { core::ptr::read((initial_stack as *const usize).add(index.wrapping_add(1))) }
         }
 
@@ -821,6 +836,8 @@ macro_rules! define_x86_64_payload_runtime {
         fn payload_runtime_stack_envp_start(initial_stack: usize) -> usize {
             let argc = payload_runtime_stack_argc(initial_stack);
             // envp starts after `argc`, `argv[argc]`, and the trailing NULL.
+            // SAFETY: as above — the address is the same initial-stack block,
+            // computed past the argv table and its terminator.
             unsafe { (initial_stack as *const usize).add(argc.wrapping_add(2)) as usize }
         }
 
@@ -830,6 +847,8 @@ macro_rules! define_x86_64_payload_runtime {
         fn payload_runtime_stack_env_value(initial_stack: usize, index: usize) -> usize {
             // envp is another NULL-terminated pointer table that begins after
             // argv and its terminator.
+            // SAFETY: the base is the envp table of the same stack, and the
+            // index is the caller's entry in it.
             unsafe {
                 core::ptr::read((payload_runtime_stack_envp_start(initial_stack) as *const usize).add(index))
             }
@@ -840,6 +859,9 @@ macro_rules! define_x86_64_payload_runtime {
         #[link_section = $section]
         fn payload_runtime_stack_auxv_start(initial_stack: usize) -> usize {
             let mut cursor = payload_runtime_stack_envp_start(initial_stack) as *const usize;
+            // SAFETY: walking the envp table of the initial stack, which the
+            // loader terminated with a NULL, so the walk stops at the end of
+            // what the kernel wrote.
             unsafe {
                 // Walk envp until its terminating NULL, then the auxv pairs begin
                 // immediately afterwards.
@@ -858,13 +880,18 @@ macro_rules! define_x86_64_payload_runtime {
             // The auxv list is tiny, so a linear scan keeps the payload runtime
             // small and self-contained.
             loop {
+                // SAFETY: the auxv pairs the kernel appended to the initial
+                // stack, scanned until the AT_NULL terminator.
                 let entry_key = unsafe { core::ptr::read(cursor) };
                 if entry_key == PAYLOAD_RUNTIME_X86_64_AUXV_AT_NULL {
                     return 0;
                 }
                 if entry_key == key {
+                    // SAFETY: the value half of the pair whose key just matched.
                     return unsafe { core::ptr::read(cursor.add(1)) };
                 }
+                // SAFETY: advancing to the next key/value pair, still inside the
+                // list the kernel wrote.
                 cursor = unsafe { cursor.add(2) };
             }
         }
@@ -874,7 +901,11 @@ macro_rules! define_x86_64_payload_runtime {
         #[link_section = $section]
         unsafe fn return_from_exception(
             frame: *const $crate::user::exception::X86_64UserExceptionFrame,
-        ) -> ! { unsafe {
+        ) -> ! {
+            // SAFETY: the frame is the one the runtime's own exception entry
+            // produced and the resume request is the ABI's, so the kernel is
+            // handed back exactly what it handed over.
+            unsafe {
             let _ = payload_runtime_invoke_raw_status(
                 $crate::syscall::SyscallNumber::ReturnFromException as usize,
                 frame as usize,
@@ -892,6 +923,8 @@ macro_rules! define_x86_64_payload_runtime {
         #[allow(dead_code)]
         #[link_section = $section]
         fn exit_with_code(code: usize) -> ! {
+            // SAFETY: the exit request is the ABI's, and the payload never
+            // returns from it; the trap is the kernel's to service.
             unsafe {
                 let _ = payload_runtime_invoke_raw_status(
                     $crate::syscall::SyscallNumber::Exit as usize,

@@ -214,6 +214,9 @@ impl X86_64UserException {
     /// current process image. Supplying an invalid address will fault when the
     /// kernel later dispatches the exception back to user mode.
     pub unsafe fn install_handler_from_user_mode(vector: u8, handler: usize) -> usize {
+        // SAFETY: this method's contract is the one below, and the forwarding
+        // call keeps every argument — only the optional stack and flags get the
+        // defaults the shorter form implies.
         unsafe {
             Self::install_handler_from_user_mode_with(
                 vector,
@@ -238,6 +241,8 @@ impl X86_64UserException {
         stack_pointer: usize,
         flags: usize,
     ) -> usize {
+        // SAFETY: the contract above is met by the caller, and the arguments go
+        // to the raw syscall entry unchanged.
         unsafe {
             UserSyscall::invoke_raw_status_from_user_mode(
                 SyscallNumber::InstallExceptionHandler as usize,
@@ -261,6 +266,9 @@ impl X86_64UserException {
     pub unsafe fn return_from_frame_from_user_mode(
         frame: *const X86_64UserExceptionFrame,
     ) -> usize {
+        // SAFETY: `frame` is the live user exception frame the caller's
+        // contract names, and it is passed as a value — the kernel validates it
+        // before trusting it.
         unsafe {
             UserSyscall::invoke_raw_status_from_user_mode(
                 SyscallNumber::ReturnFromException as usize,
