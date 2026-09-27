@@ -18,6 +18,7 @@
 // reachable, so the remaining helpers are legitimately unused there.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
+use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -516,6 +517,114 @@ pub fn assert_aarch64_direct_branches_stay_within(range: &SymbolRange) {
             );
         }
     }
+}
+
+/// Assert that every `adr` in an AArch64 payload names a symbol the payload
+/// declares, and that the payload has no `adrp` at all.
+///
+/// The payload is copied out of its section as one range and relocated, so its
+/// correctness rests on the displacements the linker baked into its `adr`
+/// instructions still describing the bytes around them.  A change elsewhere in
+/// the kernel that shifts what the linker pads *inside* the section leaves
+/// those displacements pointing at the wrong byte — silently, until the
+/// payload runs, and only the aarch64 runtime smoke notices then.  This is the
+/// check that notices first: a target that is not the start of a declared
+/// symbol is a displacement that no longer means what it meant.
+///
+/// Words inside embedded data are skipped, since a string can look like an
+/// `adr`; the payload's data regions are exactly the object symbols inside the
+/// section, the same regions the x86_64 disassembler skips.
+pub fn assert_aarch64_adr_targets_are_symbols(target: &str, section_name: &str) {
+    let Some(path) = artifact_for(target) else {
+        return;
+    };
+    let Ok(image) = std::fs::read(path) else {
+        return;
+    };
+    let Some((sections, symbols)) = parse_elf_sections_and_symbols(&image) else {
+        return;
+    };
+    let Some(section) = sections.iter().find(|s| s.name == section_name) else {
+        return;
+    };
+    let sec_start = section.addr;
+    let sec_end = section.addr + section.size;
+    let data_regions = data_regions_in_section(&symbols, sec_start, sec_end);
+
+    // Every address a declared symbol starts at, for the comparison below.
+    let mut names: Vec<(u64, &str)> = symbols
+        .iter()
+        .filter(|s| s.value >= sec_start && s.value < sec_end)
+        .map(|s| (s.value, s.name.as_str()))
+        .collect();
+    names.sort_unstable();
+
+    let base = section.offset as usize;
+    let end = base + section.size as usize;
+    if end > image.len() {
+        return;
+    }
+    let code = &image[base..end];
+
+    let mut offset = 0usize;
+    while offset + 4 <= code.len() {
+        if let Some(&(_, data_end)) = data_regions
+            .iter()
+            .find(|&&(start, end)| offset >= start && offset < end)
+        {
+            offset = data_end;
+            continue;
+        }
+        let word = u32::from_le_bytes([
+            code[offset],
+            code[offset + 1],
+            code[offset + 2],
+            code[offset + 3],
+        ]);
+        let address = sec_start as usize + offset;
+
+        // ADRP is the instruction that would let the payload reach a page
+        // rather than a label; a relocated payload must not use one.
+        assert!(
+            word & 0x9f00_0000 != 0x9000_0000,
+            "aarch64 payload {section_name} has an adrp at symbol offset {:#x}: a relocated payload must reach its data with adr",
+            offset
+        );
+
+        // ADR: 0 immlo[30:29] 10000 immhi[23:5] Rd[4:0], target = pc +
+        // signext(immhi:immlo, 21).
+        if word & 0x9f00_0000 == 0x1000_0000 {
+            let imm21 = (((word >> 5) & 0x7_ffff) << 2) | ((word >> 29) & 0x3);
+            let target_addr = (address as i64) + sign_extend(imm21 as i64, 21);
+            if target_addr >= sec_start as i64 && target_addr < sec_end as i64 {
+                let named = names.iter().any(|(value, _)| *value == target_addr as u64);
+                let nearest = names
+                    .iter()
+                    .rev()
+                    .find(|(value, _)| *value <= target_addr as u64)
+                    .map(|(value, name)| format!("{name}+{:#x}", target_addr as u64 - value))
+                    .unwrap_or_else(|| "<none>".to_string());
+                assert!(
+                    named,
+                    "aarch64 payload {section_name}: adr at symbol offset {:#x} targets {:#x}, which is not a declared symbol (nearest is {nearest})",
+                    offset, target_addr
+                );
+            } else {
+                panic!(
+                    "aarch64 payload {section_name}: adr at symbol offset {:#x} targets {:#x}, outside [{:#x}, {:#x})",
+                    offset, target_addr, sec_start, sec_end
+                );
+            }
+        }
+
+        offset += 4;
+    }
+}
+
+/// Sign-extend the low `bits` of `value`.
+fn sign_extend(value: i64, bits: u32) -> i64 {
+    let shift = 64 - bits;
+    (value << shift) >> shift
 }
 
 // ── x86-64 length decoding ───────────────────────────────────────────

@@ -364,4 +364,17 @@ mod tests {
         assert!(!range.bytes.is_empty());
         crate::user::payload_test_support::assert_aarch64_direct_branches_stay_within(&range);
     }
+
+    /// The Rust payload is relocated as a copy of its section, so every `adr`
+    /// in it has to name a symbol *in that copy*: a displacement that the
+    /// linker padded away from what it names is a payload that runs off the
+    /// end of itself.  The aarch64 runtime smoke is the only other check that
+    /// notices, and only by booting.
+    #[test]
+    fn rust_payload_pc_relative_addresses_name_declared_symbols() {
+        crate::user::payload_test_support::assert_aarch64_adr_targets_are_symbols(
+            AARCH64_TARGET,
+            RUST_SECTION_NAME,
+        );
+    }
 }
