@@ -243,10 +243,9 @@ pub fn cmd_sysinfo() -> CmdResult {
     // ── System section ──
     out.push_str("─── System ───\n");
     out.push_str("OS:      adAstra 2026.6.1\n");
-    #[cfg(target_arch = "x86_64")]
-    out.push_str("Arch:    x86_64\n");
-    #[cfg(target_arch = "aarch64")]
-    out.push_str("Arch:    aarch64\n");
+    out.push_str("Arch:    ");
+    out.push_str(crate::abi::runtime::TARGET_ARCH);
+    out.push('\n');
 
     // Query scheduler info via SystemInfo syscall.
     let mut sched_buf = [0u8; diagnostic::SYSTEM_INFO_RECORD_SIZE];
@@ -571,13 +570,7 @@ fn level_to_log_prefix(level: &str) -> &str {
 pub fn cmd_uname(argv: &[String]) -> CmdResult {
     let all = argv.len() > 1 && argv[1] == "-a";
 
-    #[cfg(target_arch = "x86_64")]
-    let arch = "x86_64";
-    #[cfg(not(target_arch = "x86_64"))]
-    #[cfg(target_arch = "aarch64")]
-    let arch = "aarch64";
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let arch = "unknown";
+    let arch = crate::abi::runtime::TARGET_ARCH;
 
     let output = if all {
         format!("adAstra 2026.6.1 {arch} kernel\n")

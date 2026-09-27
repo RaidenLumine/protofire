@@ -312,6 +312,17 @@ pub fn target_symbol_range(
 }
 
 /// Return a payload section plus the function symbols that live inside it.
+///
+/// The bytes come back as *one* range, from the section's start to its end,
+/// because that is what the demo disk builder writes into the image.  It
+/// follows that the payload is only correct while nothing else is placed
+/// inside that range: a change elsewhere in the kernel that shifts what the
+/// linker pads between these symbols grows the blob, and the payload — which
+/// addresses its own data with PC-relative instructions — then jumps somewhere
+/// that is not in it.  That is not hypothetical: a purely cosmetic module move
+/// (the virtio-input driver, 2026-09-27) changed the blob from 6172 to 6180
+/// bytes and made both aarch64 payloads die on an execute-permission fault,
+/// which the aarch64 runtime check catches and the compile-time checks cannot.
 pub fn target_payload_section(target: &str, section_name: &str) -> Option<PayloadSection> {
     let path = artifact_for(target)?;
     let image = std::fs::read(path).ok()?;
