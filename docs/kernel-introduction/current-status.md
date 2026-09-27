@@ -501,7 +501,14 @@ once and never renumbered, records whose layout is asserted at compile time,
 ## Weaknesses & Known Gaps
 
 - **Emulation-first verification**: apart from x86_64, AArch64 and RISC-V are verified under QEMU; there is no bare-metal bring-up yet (see the roadmap's "Real-hardware bring-up" milestone).
-- **RISC-V 64 is still partial**: no MSI/MSI-X (AIA), PCIe is basic probing only, and there is no architectural NMI source.
+- **RISC-V 64 is still partial**: PCIe is basic probing only, and there is no
+  architectural NMI source.  MSI/MSI-X *programming* exists for the AIA IMSIC
+  (`arch/riscv64/pci.rs::pci_enable_msix` plus `aia_imsic::configure_msix`), but
+  nothing calls it — and it could not work if something did: the AIA driver is
+  written against a direct-MMIO view of the IMSIC file that QEMU does not
+  implement, so booting with `aia=aplic-imsic` takes an access fault on the
+  first register access.  The module note in `src/arch/riscv64/aia_imsic.rs`
+  records the evidence and what finishing it needs.
 - **Thin userspace ecosystem**: the ring3 programs on the demo disk (shell, demo-launcher, init.elf) are inlined `exit(0)` placeholder ELF stubs — no real applications or toolchain yet.
 - **Single maintainer**: bus factor = 1; every module is currently held by one maintainer.
 - **Experimental syscalls are unfrozen**: slots 121–189 are classified Experimental.

@@ -3,12 +3,32 @@
 //! RISC-V AIA IMSIC (Incoming Message-Signalled Interrupt Controller)
 //! driver for MSI / MSI-X delivery.
 //!
-//! The IMSIC is the AIA interrupt file that receives MSIs: a device delivers
-//! an MSI by storing `(1 << 31) | irq` to the target hart's IMSIC file MMIO
-//! address, which sets the pending bit for `irq` in that file's `eip`
-//! register.  The hart claims the highest-priority pending interrupt by
-//! reading the file's `ih` register and completes it (EOI) by writing the
-//! claimed id back.
+//! The IMSIC is the AIA interrupt file that receives MSIs.  This driver was
+//! written against the AIA specification's *direct MMIO* view of that file —
+//! registers at fixed offsets inside its page, and an MSI data word of
+//! `(1 << 31) | irq`.  QEMU `virt` (8.2, `-machine virt,aia=aplic-imsic`)
+//! implements something else, and the difference is not academic:
+//!
+//! - Its MMIO region is only the MSI-write page: a 4-byte store of the **bare
+//!   identity** at page offset 0 sets that interrupt pending.  A data word with
+//!   bit 31 set reads as "an identity larger than any interrupt" and is
+//!   dropped.
+//! - The register file (`eidelivery`, `eithreshold`, `eip`, `eie`) is not MMIO
+//!   at all: the AIA reaches it indirectly, through the `siselect`/`sireg` CSRs
+//!   that supervisor mode gains with the Smaia extension (which this machine
+//!   advertises).  Nothing in this crate touches those CSRs.
+//!
+//! So the AIA path is not dormant, it is unfinished.  Booting with AIA enabled
+//! reaches [`AiaImsicController::init`], whose first act is a 32-bit store to
+//! `base + 0x20`, and the machine takes an access fault there
+//! (`scause = 7, stval = 0x2400_0020`) because the device exposes no register
+//! at that offset.  Booting without AIA — what every gate does today, and what
+//! the PLIC path serves — never reaches this file's register accesses at all.
+//!
+//! Finishing it means the `siselect`/`sireg` accessors for the register file
+//! (claim and complete included), the bare-identity MSI encoding, and a runtime
+//! gate that boots with `aia=aplic-imsic`; `pci_enable_msix` in
+//! [`super::pci`] is already written to call the MSI-X half.
 //!
 //! This driver:
 //! - manages one IMSIC file per hart ([`init_aia_imsic`] /
@@ -68,7 +88,12 @@ const IMSIC_ITH_OFFSET: usize = 0x0020;
 /// Interrupt-claim/complete register (`ih`), 32-bit.
 const IMSIC_IH_OFFSET: usize = 0x0030;
 
-/// An MSI is a 32-bit store of `(1 << 31) | irq` to the file address.
+/// Set in the MSI data word alongside the identity.
+///
+/// This is what the AIA specification's `setip` form looks like, and **not**
+/// what QEMU `virt` accepts: its IMSIC compares the whole data word against the
+/// identity range, so a word with bit 31 set is discarded as out of range.  The
+/// module note above has the evidence.
 const IMSIC_MSI_PENDING_BIT: u32 = 1 << 31;
 
 /// `sie` bit 9 — Supervisor External Interrupt Enable.
@@ -149,10 +174,11 @@ pub fn init_aia_imsic(base: usize) {
 /// Initialise the IMSIC from the platform's device tree, when the AIA node
 /// has been parsed.
 ///
-/// The boot path does not yet feed the device-tree blob to `parse_fdt`, so
-/// on current builds `platform_info().imsic_base` is `None` and this is a
-/// no-op — the PLIC remains the active controller and AIA delivery is armed
-/// but dormant.  Wiring FDT parsing (a boot-time fix) activates it.
+/// The boot path does feed the blob to `parse_fdt`, and QEMU `virt` with
+/// `aia=aplic-imsic` does describe the node: booting that machine prints
+/// `AIA IMSIC: 1 hart file(s), base=0x24000000`.  What fails is the first
+/// register access — see the module note.  On the default machine (no IMSIC
+/// in the tree) this stays a no-op and the PLIC remains the controller.
 pub fn init_from_fdt() {
     if let Some(base) = crate::arch::fdt::platform_info().imsic_base {
         init_aia_imsic(base);
@@ -236,10 +262,14 @@ pub struct MsixTableEntry {
 /// soon as the device writes it.
 pub fn compose_msix_entry(target_cpu: u32, irq: u32) -> MsixTableEntry {
     let layout = IMSIC_LAYOUT.lock();
-    let base = layout
-        .as_ref()
-        .map(|l| imsic_file_base(l, target_cpu) as u64)
-        .unwrap_or(IMSIC_QEMU_VIRT_BASE as u64);
+    // Before `init_aia_imsic` the platform's layout is unknown; the QEMU
+    // `virt` one is the fallback, and it names the *target hart's* file rather
+    // than hart 0's — a message addressed to the wrong file is delivered to a
+    // hart that has no handler for it, silently.
+    let base = match layout.as_ref() {
+        Some(l) => imsic_file_base(l, target_cpu) as u64,
+        None => (IMSIC_QEMU_VIRT_BASE + target_cpu as usize * IMSIC_QEMU_VIRT_STRIDE) as u64,
+    };
     MsixTableEntry {
         msg_addr_low: base as u32,
         msg_addr_high: (base >> 32) as u32,
