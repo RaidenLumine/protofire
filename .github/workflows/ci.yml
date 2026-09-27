@@ -43,7 +43,10 @@ jobs:
         with:
           toolchain: "nightly-2026-08-24"
           components: rustfmt, clippy, llvm-tools-preview
-          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf
+          # aarch64-unknown-linux-gnu is the host configuration `make check`
+          # type-checks; without it that step cannot find `core` for the
+          # target and every job that runs it fails.
+          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf, aarch64-unknown-linux-gnu
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -76,7 +79,10 @@ jobs:
         with:
           toolchain: "nightly-2026-08-24"
           components: rustfmt, clippy, llvm-tools-preview
-          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf
+          # aarch64-unknown-linux-gnu is the host configuration `make check`
+          # type-checks; without it that step cannot find `core` for the
+          # target and every job that runs it fails.
+          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf, aarch64-unknown-linux-gnu
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -134,7 +140,10 @@ jobs:
         with:
           toolchain: "nightly-2026-08-24"
           components: rustfmt, clippy, llvm-tools-preview
-          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf
+          # aarch64-unknown-linux-gnu is the host configuration `make check`
+          # type-checks; without it that step cannot find `core` for the
+          # target and every job that runs it fails.
+          targets: x86_64-unknown-none, aarch64-unknown-none, riscv64gc-unknown-none-elf, aarch64-unknown-linux-gnu
 
       - name: Install GNU make and a POSIX shell (Windows)
         if: runner.os == 'Windows'

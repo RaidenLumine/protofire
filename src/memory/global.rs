@@ -80,9 +80,11 @@ impl LockOwner {
 
     /// Whether the lock is held by the CPU running this code.
     ///
-    /// Only the x86_64 page-fault handler asks; other targets have no caller,
-    /// so the method is compiled out rather than left dead.
-    #[cfg(target_arch = "x86_64")]
+    /// Only the x86_64 page-fault handler asks in production, so on the other
+    /// machine targets the method is compiled out rather than left dead — but
+    /// the tests exercise it wherever they run, which is why `test` is in the
+    /// gate: a host that is not x86_64 compiles this file too.
+    #[cfg(any(target_arch = "x86_64", test))]
     pub(crate) fn held_by_current_cpu(&self) -> bool {
         self.owner.load(Ordering::Relaxed) == current_cpu()
     }
@@ -119,8 +121,9 @@ static MEMORY_MANAGER_LOCK_OWNER: LockOwner = LockOwner::new();
 ///
 /// The one caller that needs this is the x86_64 page-fault handler: it cannot
 /// resolve a fault until it holds the memory manager, and the fault may well
-/// have been raised *by* the critical section it would have to wait for.
-#[cfg(target_arch = "x86_64")]
+/// have been raised *by* the critical section it would have to wait for.  The
+/// tests ask too, on whatever host they run on — hence the `test` arm.
+#[cfg(any(target_arch = "x86_64", test))]
 pub(crate) fn held_by_current_cpu() -> bool {
     MEMORY_MANAGER_LOCK_OWNER.held_by_current_cpu()
 }
@@ -271,7 +274,9 @@ pub(crate) fn global_mut() -> Option<MemoryManagerGuard> {
 ///
 /// Returns `None` when the lock is held, by this CPU or another, and when no
 /// memory manager is installed.
-#[cfg(target_arch = "x86_64")]
+///
+/// Compiled for the tests on every host, as `held_by_current_cpu` is.
+#[cfg(any(target_arch = "x86_64", test))]
 pub(crate) fn try_global_mut() -> Option<MemoryManagerGuard> {
     // Mask first, then make the one attempt, so a holder here is never
     // preemptible — the same discipline as `global_mut`, just without a loop.

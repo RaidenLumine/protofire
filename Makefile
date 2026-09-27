@@ -423,13 +423,23 @@ clippy:
 # collapsible conditions and a handful of useless casts on the three bare-metal
 # targets for as long as nobody asked.  This is the check that asks.  The
 # aarch64 *host* configuration is included because every architecture module is
-# written to compile there as well.
+# written to compile there as well — and it is the one that takes
+# `--all-targets`: the bare-metal targets have no test harness to build, the
+# x86_64 host is what `make clippy` already covers, and the aarch64 host is
+# where a test file that only compiles off x86_64 shows up.  A defect of
+# exactly that shape (`src/memory/tests.rs` calling a lock-owner query that was
+# compiled out when the host was not x86_64) reached an aarch64 CI runner
+# because this loop did not build that configuration's tests.
 CLIPPY_TARGETS = x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf aarch64-unknown-linux-gnu
 
 clippy-targets:
 	@for target in $(CLIPPY_TARGETS); do \
 		echo "==> clippy $$target"; \
-		$(CARGO) clippy $(CARGO_FLAGS) --target $$target -- \
+		case "$$target" in \
+			aarch64-unknown-linux-gnu) extra="--all-targets" ;; \
+			*) extra="" ;; \
+		esac; \
+		$(CARGO) clippy $(CARGO_FLAGS) $$extra --target $$target -- \
 			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
 	done
 

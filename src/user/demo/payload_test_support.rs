@@ -13,10 +13,14 @@
 //! example when the cross target has not been built), in which case the
 //! calling test silently skips.
 
-// The Linux host drives the x86_64 disassembler and the AArch64/RISC-V branch
-// checks directly; on any other host only the symbol-range lookups are
-// reachable, so the remaining helpers are legitimately unused there.
-#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// A helper here is reached by the payload tests of the architecture it
+// describes: the x86_64 disassembler by the x86_64 payload tests, the branch
+// checkers by the aarch64 and riscv64 ones.  A test binary of another
+// architecture therefore compiles functions it cannot call — which is the one
+// configuration this allowance covers.  Gating on the OS instead (as this
+// attribute used to) both missed the Linux aarch64 host and silenced the lint
+// on the hosts where every helper does have a caller.
+#![cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 
 use alloc::format;
 use alloc::string::String;
