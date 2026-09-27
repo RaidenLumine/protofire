@@ -111,6 +111,10 @@ fn console_waiter_wakes_only_when_a_line_is_committed() {
     let first = scheduler.spawn_named("tty-reader", 0x1000);
     let second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -147,6 +151,10 @@ fn console_waiter_times_out_without_newline() {
     let first = scheduler.spawn_named("tty-reader", 0x1000);
     let second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -181,6 +189,10 @@ fn console_zero_timeout_is_non_blocking_probe() {
     let first = scheduler.spawn_named("tty-reader", 0x1000);
     let _second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -205,6 +217,10 @@ fn console_immediate_timeout_reads_mark_completion_when_input_is_already_buffere
     let scheduler = Scheduler::new();
     let first = scheduler.spawn_named("tty-reader", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -237,6 +253,10 @@ fn console_immediate_read_marks_completion_when_input_is_already_buffered() {
     let scheduler = Scheduler::new();
     let first = scheduler.spawn_named("tty-reader", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -264,6 +284,10 @@ fn console_wait_stats_track_waiter_peak_and_wake_count() {
     let second = scheduler.spawn_named("tty-reader-b", 0x2000);
     let third = scheduler.spawn_named("producer", 0x3000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -298,6 +322,10 @@ fn console_wait_stats_track_timeout_count() {
     let first = scheduler.spawn_named("tty-reader", 0x1000);
     let _second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -333,6 +361,10 @@ fn console_read_timeout_probes_count_once_without_registering_waiters() {
     let first = scheduler.spawn_named("tty-reader", 0x1000);
     let _second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }

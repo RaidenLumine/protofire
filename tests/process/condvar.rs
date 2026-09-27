@@ -27,6 +27,10 @@ fn condvar_wait_releases_mutex_for_notifier() {
     let first = scheduler.spawn_named("waiter", 0x1000);
     let second = scheduler.spawn_named("notifier", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -65,6 +69,10 @@ fn condvar_notify_all_wakes_multiple_waiters() {
     let second = scheduler.spawn_named("waiter-b", 0x2000);
     let third = scheduler.spawn_named("notifier", 0x3000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -106,6 +114,10 @@ fn condvar_timeout_relocks_mutex_after_wake() {
     let first = scheduler.spawn_named("waiter", 0x1000);
     let second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -141,6 +153,10 @@ fn condvar_notify_before_deadline_prevents_timeout_outcome() {
     let first = scheduler.spawn_named("waiter", 0x1000);
     let second = scheduler.spawn_named("notifier", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -179,6 +195,10 @@ fn condvar_zero_timeout_with_scheduler_is_non_blocking_and_timed_out() {
     let shared = Mutex::new(31usize);
     let first = scheduler.spawn_named("waiter", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -236,6 +256,10 @@ fn condvar_notify_one_after_timeout_does_not_wake_stale_waiter() {
     let waiter = scheduler.spawn_named("waiter", 0x1000);
     let worker = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }

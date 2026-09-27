@@ -234,6 +234,10 @@ fn waiting_reader_wakes_when_scancode_arrives() {
     let first = scheduler.spawn_named("reader", 0x1000);
     let second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -264,6 +268,10 @@ fn waiting_event_reader_wakes_when_key_arrives() {
     let first = scheduler.spawn_named("event-reader", 0x1000);
     let second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -301,6 +309,10 @@ fn waiting_reader_times_out_without_input() {
     let first = scheduler.spawn_named("reader", 0x1000);
     let second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -329,6 +341,10 @@ fn waiting_char_reader_times_out_without_input() {
     let first = scheduler.spawn_named("char-reader", 0x1000);
     let second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -360,6 +376,10 @@ fn keyboard_wait_stats_track_peaks_and_wakes_per_queue() {
     let third = scheduler.spawn_named("char-reader", 0x3000);
     let fourth = scheduler.spawn_named("producer", 0x4000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -399,6 +419,10 @@ fn keyboard_wait_stats_track_timeout_counts() {
     let first = scheduler.spawn_named("reader", 0x1000);
     let _second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -435,6 +459,10 @@ fn keyboard_read_timeout_probes_count_once_per_queue() {
     let first = scheduler.spawn_named("reader", 0x1000);
     let _second = scheduler.spawn_named("worker", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }

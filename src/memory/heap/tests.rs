@@ -76,6 +76,9 @@ mod tests {
     /// size S must sit in `free_lists[list_index(mapping(S))]` — never in a
     /// smaller or larger class.
     unsafe fn verify_size_class_placement(state: &AllocatorState) {
+        // SAFETY: the caller reaches `AllocatorState` through `with_state`, which
+        // holds the model's lock for as long as the reference lives, so walking its
+        // free lists cannot race another test.
         unsafe {
             for fl in FL_MIN..=FL_MAX {
                 for sl in 0..SL_COUNT {
@@ -128,6 +131,12 @@ mod tests {
         let mut aligned: *mut u8 = core::ptr::null_mut();
         let mut follower: *mut u8 = core::ptr::null_mut();
 
+        // SAFETY: `with_state` holds the model's own lock while this closure
+        // runs and hands out `&mut AllocatorState`, which is exactly the
+        // exclusive access the `*_locked` entry points require.
+        // SAFETY: `with_state` holds the model's own lock while this closure runs
+        // and hands out `&mut AllocatorState`, which is exactly the exclusive
+        // access the `*_locked` entry points require.
         HOST_HEAP_MODEL.with_state(|state| unsafe {
             aligned = KernelGlobalAllocator::allocate_locked(state, aligned_layout, &profiler);
             assert!(!aligned.is_null());
@@ -164,6 +173,9 @@ mod tests {
         let layout = Layout::from_size_align(64, 16).unwrap();
         let mut pointer: *mut u8 = core::ptr::null_mut();
 
+        // SAFETY: `with_state` holds the model's own lock while this closure runs
+        // and hands out `&mut AllocatorState`, which is exactly the exclusive
+        // access the `*_locked` entry points require.
         HOST_HEAP_MODEL.with_state(|state| unsafe {
             pointer = KernelGlobalAllocator::allocate_locked(state, layout, &profiler);
             assert!(!pointer.is_null());
@@ -207,6 +219,9 @@ mod tests {
         let sizes = [16_usize, 64, 256, 4096, 17];
         let mut pointers = Vec::new();
 
+        // SAFETY: `with_state` holds the model's own lock while this closure runs
+        // and hands out `&mut AllocatorState`, which is exactly the exclusive
+        // access the `*_locked` entry points require.
         HOST_HEAP_MODEL.with_state(|state| unsafe {
             for size in sizes {
                 let layout = Layout::from_size_align(size, 16).unwrap();
@@ -217,6 +232,9 @@ mod tests {
             }
         });
 
+        // SAFETY: `with_state` holds the model's own lock while this closure runs
+        // and hands out `&mut AllocatorState`, which is exactly the exclusive
+        // access the `*_locked` entry points require.
         HOST_HEAP_MODEL.with_state(|state| unsafe {
             for (pointer, _layout) in pointers.iter().rev() {
                 assert!(KernelGlobalAllocator::deallocate_locked(
@@ -245,12 +263,18 @@ mod tests {
         let layout = Layout::from_size_align(128, 16).unwrap();
         let mut pointer: *mut u8 = core::ptr::null_mut();
 
+        // SAFETY: `with_state` holds the model's own lock while this closure runs
+        // and hands out `&mut AllocatorState`, which is exactly the exclusive
+        // access the `*_locked` entry points require.
         HOST_HEAP_MODEL.with_state(|state| unsafe {
             pointer = KernelGlobalAllocator::allocate_locked(state, layout, &profiler);
             assert!(!pointer.is_null());
             assert_eq!(check_invariants(state), Ok(()));
         });
 
+        // SAFETY: `with_state` holds the model's own lock while this closure runs
+        // and hands out `&mut AllocatorState`, which is exactly the exclusive
+        // access the `*_locked` entry points require.
         HOST_HEAP_MODEL.with_state(|state| unsafe {
             // The header sits immediately before the payload.
             let block = pointer as usize - HEADER_SIZE;
@@ -327,6 +351,9 @@ mod tests {
 
         // A freshly initialised heap must already satisfy every structural
         // invariant; if this fails the checker itself is wrong.
+        // SAFETY: `with_state` holds the model's own lock while this closure runs
+        // and hands out `&mut AllocatorState`, which is exactly the exclusive
+        // access the `*_locked` entry points require.
         HOST_HEAP_MODEL.with_state(|state| unsafe {
             assert_eq!(check_invariants(state), Ok(()));
         });
@@ -346,9 +373,12 @@ mod tests {
         assert!((start..end).contains(&(ptr as usize)));
 
         // The payload must be writable and readable.
+        // SAFETY: `ptr` came from the allocation above with this layout, so the
+        // payload is the allocator's own block and is writable for `size` bytes.
         unsafe {
             ptr.write_bytes(0xAB, layout.size());
         }
+        // SAFETY: as the write above — the same allocation, read back.
         assert_eq!(unsafe { ptr.read() }, 0xAB);
 
         let mut freed = false;
@@ -418,6 +448,8 @@ mod tests {
 
         // Write a distinct pattern into every block.
         for (idx, &(ptr, len)) in ptrs.iter().enumerate() {
+            // SAFETY: each pointer came from the allocation loop above with the length
+            // stored beside it, so the slice is that allocation's own payload.
             unsafe {
                 core::slice::from_raw_parts_mut(ptr, len).fill(idx as u8 + 1);
             }
@@ -503,6 +535,9 @@ mod tests {
             // together.  Walking the chain is what catches a leaked hole or a
             // stale `prev_phys`, and it is checked here after every step so a
             // regression names the step that caused it.
+            // SAFETY: `with_state` holds the model's own lock while this closure runs
+            // and hands out `&mut AllocatorState`, which is exactly the exclusive
+            // access the `*_locked` entry points require.
             HOST_HEAP_MODEL.with_state(|state| unsafe {
                 assert_eq!(
                     check_invariants(state),
@@ -582,6 +617,9 @@ mod tests {
 
             if step % 256 == 0 {
                 HOST_HEAP_MODEL.verify_heap_integrity();
+                // SAFETY: `with_state` holds the model's own lock while this closure runs
+                // and hands out `&mut AllocatorState`, which is exactly the exclusive
+                // access the `*_locked` entry points require.
                 HOST_HEAP_MODEL.with_state(|state| unsafe {
                     verify_size_class_placement(state);
                 });
@@ -608,6 +646,9 @@ mod tests {
             assert!(freed, "final free of a live pointer failed");
         }
         HOST_HEAP_MODEL.verify_heap_integrity();
+        // SAFETY: `with_state` holds the model's own lock while this closure runs
+        // and hands out `&mut AllocatorState`, which is exactly the exclusive
+        // access the `*_locked` entry points require.
         HOST_HEAP_MODEL.with_state(|state| unsafe {
             verify_size_class_placement(state);
         });

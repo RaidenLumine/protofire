@@ -656,6 +656,10 @@ fn stdio_device_paths_open_as_explicit_aliases() {
 
     let scheduler = Scheduler::new();
     let thread = scheduler.spawn_named("stdio-aliases", 0x1000);
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -742,6 +746,10 @@ fn keyboard_device_path_reads_decoded_chars_without_waiting_for_newline() {
 
     let scheduler = Scheduler::new();
     let thread = scheduler.spawn_named("keyboard-chars", 0x1000);
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -786,6 +794,10 @@ fn keyboard_raw_device_path_reads_scancode_bytes() {
 
     let scheduler = Scheduler::new();
     let thread = scheduler.spawn_named("keyboard-raw", 0x1000);
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }

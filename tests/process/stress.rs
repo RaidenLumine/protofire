@@ -40,6 +40,10 @@ fn stress_spawn_many_threads_and_schedule_all() {
     assert_eq!(scheduler.process_count(), count);
     assert_eq!(scheduler.ready_count(), count);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -64,6 +68,10 @@ fn stress_rapid_semaphore_try_acquire_release() {
     let semaphore = Semaphore::new(1);
     let main = scheduler.spawn_named("main", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -84,6 +92,10 @@ fn stress_semaphore_timeout_returns_without_panic() {
     let semaphore = Semaphore::new(0);
     let main = scheduler.spawn_named("main", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -103,6 +115,10 @@ fn stress_event_signal_reset_does_not_panic() {
     let event_auto = Event::auto_reset(false);
     let main = scheduler.spawn_named("main", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -133,6 +149,10 @@ fn stress_rapid_thread_spawn_and_schedule() {
         let scheduler = Scheduler::new();
         let main = scheduler.spawn_named("main", 0x1000);
 
+        // SAFETY: the test lock serialises every test that shares the
+        // global scheduler slot, and each of them installs its own before
+        // touching it, so the pointer is only read while this test's
+        // scheduler is still alive.
         unsafe {
             scheduler.install_global_unchecked();
         }
@@ -159,6 +179,10 @@ fn stress_sleep_and_timer_preemption() {
     let first = scheduler.spawn_named("first", 0x1000);
     let second = scheduler.spawn_named("second", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -187,6 +211,10 @@ fn stress_many_sleepers_timer_wake() {
         .map(|i| scheduler.spawn_named("sleeper", 0x2000 + i * 0x10))
         .collect();
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -225,6 +253,10 @@ fn stress_semaphore_multi_release_does_not_panic() {
     let semaphore = Semaphore::new(0);
     let main = scheduler.spawn_named("main", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }

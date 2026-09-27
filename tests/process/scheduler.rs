@@ -84,6 +84,10 @@ fn sleeping_threads_block_and_wake_on_timer_tick() {
     let first = scheduler.spawn_named("first", 0x1000);
     let second = scheduler.spawn_named("second", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -110,6 +114,10 @@ fn timer_tick_preempts_current_thread_on_host() {
     let first = scheduler.spawn_named("first", 0x1000);
     let second = scheduler.spawn_named("second", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -131,6 +139,10 @@ fn scheduler_hotspot_stats_track_sleep_timeout_and_preemption_flow() {
     let first = scheduler.spawn_named("first", 0x1000);
     let second = scheduler.spawn_named("second", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -171,6 +183,10 @@ fn manual_reset_event_wakes_all_waiters() {
     let second = scheduler.spawn_named("second", 0x2000);
     let third = scheduler.spawn_named("third", 0x3000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -203,6 +219,10 @@ fn manual_reset_event_reset_clears_sticky_signal_for_zero_timeout_probe() {
     let event = Event::manual_reset(false);
     let first = scheduler.spawn_named("first", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -230,6 +250,10 @@ fn auto_reset_event_keeps_sticky_signal_until_wait() {
     let event = Event::auto_reset(false);
     let first = scheduler.spawn_named("first", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -254,6 +278,10 @@ fn scheduler_hotspot_stats_track_signal_wakes_and_reset() {
     let first = scheduler.spawn_named("first", 0x1000);
     let second = scheduler.spawn_named("second", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -287,6 +315,10 @@ fn auto_reset_event_wakes_one_waiter_per_signal() {
     let second = scheduler.spawn_named("second", 0x2000);
     let third = scheduler.spawn_named("third", 0x3000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -320,6 +352,10 @@ fn event_timeout_marks_thread_and_removes_waiter() {
     let first = scheduler.spawn_named("first", 0x1000);
     let second = scheduler.spawn_named("second", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -350,6 +386,10 @@ fn event_signal_before_deadline_prevents_timeout_outcome() {
     let first = scheduler.spawn_named("first", 0x1000);
     let second = scheduler.spawn_named("second", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -383,6 +423,10 @@ fn auto_reset_event_skips_waiters_from_terminated_processes() {
     let live = scheduler.spawn_named("live", 0x2000);
     let notifier = scheduler.spawn_named("notifier", 0x3000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -412,6 +456,10 @@ fn event_zero_timeout_behaves_as_non_blocking_probe() {
     let event = Event::auto_reset(false);
     let first = scheduler.spawn_named("first", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -440,6 +488,10 @@ fn semaphore_release_wakes_waiter_and_keeps_extra_permits() {
     let first = scheduler.spawn_named("first", 0x1000);
     let second = scheduler.spawn_named("second", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -467,6 +519,10 @@ fn semaphore_timeout_marks_thread_as_timed_out() {
     let first = scheduler.spawn_named("first", 0x1000);
     let second = scheduler.spawn_named("second", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -491,6 +547,10 @@ fn semaphore_release_after_timeout_restores_permit_without_waking_stale_waiter()
     let first = scheduler.spawn_named("first", 0x1000);
     let second = scheduler.spawn_named("second", 0x2000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
@@ -519,6 +579,10 @@ fn semaphore_zero_timeout_behaves_as_non_blocking_probe() {
     let semaphore = Semaphore::new(0);
     let first = scheduler.spawn_named("first", 0x1000);
 
+    // SAFETY: the test lock serialises every test that shares the
+    // global scheduler slot, and each of them installs its own before
+    // touching it, so the pointer is only read while this test's
+    // scheduler is still alive.
     unsafe {
         scheduler.install_global_unchecked();
     }
