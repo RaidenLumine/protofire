@@ -120,7 +120,7 @@ pub fn cmd_cd(cwd: &mut String, argv: &[String], home_dir: Option<&str>) -> CmdR
     let mut cd_stat_buf = [0u8; FILE_STAT_SIZE];
     match syscall::sys_stat(&resolved, &mut cd_stat_buf) {
         Ok(()) => {
-            let cd_stat: &FileStat = unsafe { &*(cd_stat_buf.as_ptr() as *const FileStat) };
+            let cd_stat = stat_record(&cd_stat_buf);
             if cd_stat.kind == FILE_KIND_DIRECTORY {
                 *cwd = resolved;
                 CmdResult::empty()
@@ -168,7 +168,7 @@ pub fn cmd_ls(cwd: &str, argv: &[String]) -> CmdResult {
             );
         }
         Ok(()) => {
-            let ls_stat: &FileStat = unsafe { &*(ls_stat_buf.as_ptr() as *const FileStat) };
+            let ls_stat = stat_record(&ls_stat_buf);
             if ls_stat.kind != FILE_KIND_DIRECTORY {
                 return CmdResult::error(1, format!("ls: `{target}` is not a directory\n"));
             }
@@ -185,8 +185,9 @@ pub fn cmd_ls(cwd: &str, argv: &[String]) -> CmdResult {
     loop {
         match syscall::sys_read_dir(&target, index, &mut name_buf) {
             Ok(()) => {
-                let record: &DirectoryEntryRecord =
-                    unsafe { &*(name_buf.as_ptr() as *const DirectoryEntryRecord) };
+                let Some(record) = dir_entry_record(&name_buf) else {
+                    break;
+                };
                 let name = core::str::from_utf8(
                     &name_buf[record.name_offset..record.name_offset + record.name_len],
                 )
@@ -338,8 +339,7 @@ fn cmd_mkdir_parents(path_str: &str, full_path: &str) -> CmdResult {
         let mut mkdir_stat_buf = [0u8; FILE_STAT_SIZE];
         match syscall::sys_stat(&partial, &mut mkdir_stat_buf) {
             Ok(()) => {
-                let mkdir_stat: &FileStat =
-                    unsafe { &*(mkdir_stat_buf.as_ptr() as *const FileStat) };
+                let mkdir_stat = stat_record(&mkdir_stat_buf);
                 if mkdir_stat.kind == FILE_KIND_DIRECTORY {
                     // Already exists — ok.
                     continue;
@@ -392,7 +392,7 @@ pub fn cmd_rm(cwd: &str, argv: &[String]) -> CmdResult {
     // Check if target is a directory — if so, require -r.
     let mut rm_stat_buf = [0u8; FILE_STAT_SIZE];
     if syscall::sys_stat(&path, &mut rm_stat_buf).is_ok() {
-        let rm_stat: &FileStat = unsafe { &*(rm_stat_buf.as_ptr() as *const FileStat) };
+        let rm_stat = stat_record(&rm_stat_buf);
         if rm_stat.kind == FILE_KIND_DIRECTORY && !recursive {
             return CmdResult::error(
                 1,
@@ -430,8 +430,9 @@ fn remove_recursive(path: &str) -> Result<(), isize> {
     loop {
         match syscall::sys_read_dir(path, index, &mut name_buf) {
             Ok(()) => {
-                let record: &DirectoryEntryRecord =
-                    unsafe { &*(name_buf.as_ptr() as *const DirectoryEntryRecord) };
+                let Some(record) = dir_entry_record(&name_buf) else {
+                    break;
+                };
                 let name = core::str::from_utf8(
                     &name_buf[record.name_offset..record.name_offset + record.name_len],
                 )
@@ -525,7 +526,7 @@ pub fn cmd_cp(cwd: &str, argv: &[String]) -> CmdResult {
             ),
         ),
         Ok(()) => {
-            let cp_stat: &FileStat = unsafe { &*(cp_stat_buf.as_ptr() as *const FileStat) };
+            let cp_stat = stat_record(&cp_stat_buf);
             if cp_stat.kind == FILE_KIND_DIRECTORY {
                 if !recursive {
                     CmdResult::error(
@@ -616,8 +617,9 @@ fn copy_recursive(src_dir: &str, dst_dir: &str, dst_str: &str) -> CmdResult {
     loop {
         match syscall::sys_read_dir(src_dir, index, &mut name_buf) {
             Ok(()) => {
-                let record: &DirectoryEntryRecord =
-                    unsafe { &*(name_buf.as_ptr() as *const DirectoryEntryRecord) };
+                let Some(record) = dir_entry_record(&name_buf) else {
+                    break;
+                };
                 let name = core::str::from_utf8(
                     &name_buf[record.name_offset..record.name_offset + record.name_len],
                 )
@@ -709,6 +711,33 @@ fn read_entry_name<'a>(name_buf: &'a [u8], record: &DirectoryEntryRecord) -> &'a
     core::str::from_utf8(&name_buf[start..end]).unwrap_or("")
 }
 
+/// Copy the stat record a successful `sys_stat` wrote into `buf`.
+///
+/// The parameter's type carries the length, so the read cannot run past the
+/// buffer; the copy is what frees the caller from the buffer's alignment.
+fn stat_record(buf: &[u8; FILE_STAT_SIZE]) -> FileStat {
+    // SAFETY: the array is exactly `FILE_STAT_SIZE` bytes and the kernel wrote
+    // a `FileStat` into them; `read_unaligned` copies the plain `#[repr(C)]`
+    // record out without requiring the byte array to be aligned for it, which
+    // a `[u8; N]` does not promise.
+    unsafe { (buf.as_ptr() as *const FileStat).read_unaligned() }
+}
+
+/// Copy the directory-entry header a successful `sys_read_dir` wrote at the
+/// start of `buf`.
+///
+/// `None` means the buffer is too short to hold a header — something the
+/// kernel does not do, but this side cannot prove.
+fn dir_entry_record(buf: &[u8]) -> Option<DirectoryEntryRecord> {
+    if buf.len() < DIRECTORY_ENTRY_RECORD_SIZE {
+        return None;
+    }
+    // SAFETY: the length check above keeps the read inside `buf`, and
+    // `read_unaligned` copies the plain `#[repr(C)]` header out without
+    // requiring the byte array to be aligned for it.
+    Some(unsafe { (buf.as_ptr() as *const DirectoryEntryRecord).read_unaligned() })
+}
+
 /// Read a NUL-terminated fixed-size string field.
 fn cstr_field(field: &[u8]) -> &str {
     let end = field.iter().position(|&b| b == 0).unwrap_or(field.len());
@@ -785,9 +814,10 @@ fn chmod_recursive(dir_path: &str, mode: u16) {
     loop {
         match syscall::sys_read_dir(dir_path, index, &mut name_buf) {
             Ok(()) => {
-                let record: &DirectoryEntryRecord =
-                    unsafe { &*(name_buf.as_ptr() as *const DirectoryEntryRecord) };
-                let name = read_entry_name(&name_buf, record);
+                let Some(record) = dir_entry_record(&name_buf) else {
+                    break;
+                };
+                let name = read_entry_name(&name_buf, &record);
                 if name != "." && name != ".." {
                     let child = if dir_path.ends_with('/') {
                         format!("{dir_path}{name}")
@@ -819,6 +849,10 @@ pub fn cmd_df(_argv: &[String]) -> CmdResult {
 
     let mut out = String::from("Device         Size  Used  Avail Use% Mounted on\n");
     for i in 0..count {
+        // SAFETY: the count came from the byte count the kernel reported, so
+        // record `i` lies inside `buf`; the mount record is a plain
+        // `#[repr(C)]` struct, and `read_unaligned` copies it out without
+        // requiring the byte buffer to be aligned for it.
         let rec = unsafe {
             (buf.as_ptr().add(i * record_size) as *const MountInfoRecord).read_unaligned()
         };
@@ -867,7 +901,7 @@ pub fn cmd_du(cwd: &str, argv: &[String]) -> CmdResult {
 fn du_impl(path: &str) -> core::result::Result<usize, isize> {
     let mut stat_buf = [0u8; FILE_STAT_SIZE];
     syscall::sys_stat(path, &mut stat_buf)?;
-    let stat = unsafe { &*(stat_buf.as_ptr() as *const FileStat) };
+    let stat = stat_record(&stat_buf);
     let mut total = stat.size;
     if stat.kind == FILE_KIND_DIRECTORY {
         let name_buf_len = DIRECTORY_ENTRY_RECORD_SIZE + 256;
@@ -877,9 +911,10 @@ fn du_impl(path: &str) -> core::result::Result<usize, isize> {
         loop {
             match syscall::sys_read_dir(path, index, &mut name_buf) {
                 Ok(()) => {
-                    let record: &DirectoryEntryRecord =
-                        unsafe { &*(name_buf.as_ptr() as *const DirectoryEntryRecord) };
-                    let name = read_entry_name(&name_buf, record);
+                    let Some(record) = dir_entry_record(&name_buf) else {
+                        break;
+                    };
+                    let name = read_entry_name(&name_buf, &record);
                     if name != "." && name != ".." {
                         let child = if path.ends_with('/') {
                             format!("{path}{name}")

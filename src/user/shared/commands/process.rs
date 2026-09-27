@@ -8,6 +8,7 @@
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
+use alloc::vec::Vec;
 
 use crate::user::shared::abi::diagnostic;
 use crate::user::shared::syscall;
@@ -158,13 +159,24 @@ pub fn cmd_ps(argv: &[String]) -> CmdResult {
         return CmdResult::from_output(String::from("(no processes)\n"));
     }
 
-    let records: &[diagnostic::ProcessInfoRecord] = unsafe {
-        core::slice::from_raw_parts(buf.as_ptr() as *const diagnostic::ProcessInfoRecord, count)
-    };
+    // The count is however many records the kernel says it wrote; taking at
+    // most the capacity this buffer was sized for keeps the reads inside it.
+    let records: Vec<diagnostic::ProcessInfoRecord> = (0..count.min(max_records))
+        .map(|i| {
+            // SAFETY: `i` is below the capacity `buf` was allocated with, so
+            // the record lies inside it; copying with `read_unaligned` keeps
+            // the read sound for a byte buffer, which promises the record no
+            // alignment.
+            unsafe {
+                (buf.as_ptr().add(i * record_size) as *const diagnostic::ProcessInfoRecord)
+                    .read_unaligned()
+            }
+        })
+        .collect();
 
     if long {
         let mut out = String::from("PID  PPID PRI    CPU  STATE     NAME\n");
-        for r in records {
+        for r in &records {
             let ppid = if r.ppid == 0 {
                 String::from("   -")
             } else {
@@ -185,7 +197,7 @@ pub fn cmd_ps(argv: &[String]) -> CmdResult {
         CmdResult::from_output(out)
     } else {
         let mut out = String::from("PID  PPID STATE     THR NAME\n");
-        for r in records {
+        for r in &records {
             let ppid = if r.ppid == 0 {
                 String::from("   -")
             } else {
@@ -221,12 +233,21 @@ fn cmd_ps_threads(pid: u32) -> CmdResult {
         let mut probe_buf = vec![0u8; diagnostic::PROCESS_INFO_RECORD_SIZE * 64];
         match syscall::sys_list_processes(&mut probe_buf) {
             Ok(pcount) if pcount > 0 => {
-                let precords: &[diagnostic::ProcessInfoRecord] = unsafe {
-                    core::slice::from_raw_parts(
-                        probe_buf.as_ptr() as *const diagnostic::ProcessInfoRecord,
-                        pcount,
-                    )
-                };
+                let probe_records = probe_buf.len() / diagnostic::PROCESS_INFO_RECORD_SIZE;
+                let precords: Vec<diagnostic::ProcessInfoRecord> = (0..pcount.min(probe_records))
+                    .map(|i| {
+                        // SAFETY: as above — the index is below the count
+                        // the buffer can hold, and the copy avoids any
+                        // alignment requirement on the byte buffer.
+                        unsafe {
+                            (probe_buf
+                                .as_ptr()
+                                .add(i * diagnostic::PROCESS_INFO_RECORD_SIZE)
+                                as *const diagnostic::ProcessInfoRecord)
+                                .read_unaligned()
+                        }
+                    })
+                    .collect();
                 let found = precords.iter().any(|r| r.pid == pid as u64);
                 if !found {
                     return CmdResult::error(1, format!("ps: no process with pid {pid}\n"));
@@ -237,13 +258,21 @@ fn cmd_ps_threads(pid: u32) -> CmdResult {
         return CmdResult::error(1, format!("ps: process {pid} has no live threads\n"));
     }
 
-    let records: &[diagnostic::ThreadInfoRecord] = unsafe {
-        core::slice::from_raw_parts(buf.as_ptr() as *const diagnostic::ThreadInfoRecord, count)
-    };
+    let records: Vec<diagnostic::ThreadInfoRecord> = (0..count.min(max_records))
+        .map(|i| {
+            // SAFETY: as above — the index is below the capacity this buffer
+            // was sized for, and the copy avoids any alignment requirement on
+            // the byte buffer.
+            unsafe {
+                (buf.as_ptr().add(i * record_size) as *const diagnostic::ThreadInfoRecord)
+                    .read_unaligned()
+            }
+        })
+        .collect();
 
     let mut out = format!("Threads of process {pid}:\n");
     out.push_str("TID  PRI    CPU  STATE\n");
-    for t in records {
+    for t in &records {
         out.push_str(&format!(
             "{:>4} {:<4} {:>5}  {}\n",
             t.tid,

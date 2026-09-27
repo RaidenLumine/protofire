@@ -193,8 +193,12 @@ fn find_recursive(dir: &str, pattern: &str, out: &mut String) {
     loop {
         match syscall::sys_read_dir(dir, index, &mut name_buf) {
             Ok(()) => {
-                let record: &DirectoryEntryRecord =
-                    unsafe { &*(name_buf.as_ptr() as *const DirectoryEntryRecord) };
+                // SAFETY: `name_buf` is sized to hold a directory-entry header
+                // plus a name and the kernel wrote one there; copying with
+                // `read_unaligned` keeps the read sound for a byte array, which
+                // promises the header no alignment.
+                let record =
+                    unsafe { (name_buf.as_ptr() as *const DirectoryEntryRecord).read_unaligned() };
                 let name = core::str::from_utf8(
                     &name_buf[record.name_offset..record.name_offset + record.name_len],
                 )

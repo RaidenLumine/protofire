@@ -210,7 +210,11 @@ fn test_file_kind(cwd: &str, path_str: &str, expected: usize) -> i32 {
     let mut stat_buf = [0u8; FILE_STAT_SIZE];
     match syscall::sys_stat(&path, &mut stat_buf) {
         Ok(()) => {
-            let stat: &FileStat = unsafe { &*(stat_buf.as_ptr() as *const FileStat) };
+            // SAFETY: `stat_buf` is exactly `FILE_STAT_SIZE` bytes and the
+            // kernel wrote a `FileStat` into them; copying with
+            // `read_unaligned` keeps the read sound for a byte array, which
+            // promises the record no alignment.
+            let stat = unsafe { (stat_buf.as_ptr() as *const FileStat).read_unaligned() };
             if stat.kind == expected {
                 0
             } else {
@@ -251,8 +255,12 @@ pub fn cmd_sysinfo() -> CmdResult {
     let mut sched_buf = [0u8; diagnostic::SYSTEM_INFO_RECORD_SIZE];
     match syscall::sys_system_info(diagnostic::SYSTEM_INFO_SCHEDULER, &mut sched_buf) {
         Ok(_) => {
-            let info: &diagnostic::SystemInfoRecord =
-                unsafe { &*(sched_buf.as_ptr() as *const diagnostic::SystemInfoRecord) };
+            // SAFETY: as the stat read above — the buffer is exactly the
+            // record's size, the kernel wrote it, and the copy avoids any
+            // alignment requirement on the byte array.
+            let info = unsafe {
+                (sched_buf.as_ptr() as *const diagnostic::SystemInfoRecord).read_unaligned()
+            };
             let ticks = info.uptime_ticks;
             let seconds = ticks / 100;
             let hours = seconds / 3600;
@@ -289,8 +297,12 @@ pub fn cmd_sysinfo() -> CmdResult {
         let mut alloc_buf = [0u8; diagnostic::ALLOC_PROFILER_RECORD_SIZE];
         match syscall::sys_system_info(diagnostic::SYSTEM_INFO_ALLOC_PROFILER, &mut alloc_buf) {
             Ok(_) => {
-                let snap: &diagnostic::AllocProfilerRecord =
-                    unsafe { &*(alloc_buf.as_ptr() as *const diagnostic::AllocProfilerRecord) };
+                // SAFETY: as above — a record-sized byte buffer the kernel
+                // filled, copied out so the byte array's alignment does not
+                // have to satisfy the record's.
+                let snap = unsafe {
+                    (alloc_buf.as_ptr() as *const diagnostic::AllocProfilerRecord).read_unaligned()
+                };
                 out.push_str(&format!("heap_allocs:        {}\n", snap.heap_allocs));
                 out.push_str(&format!("heap_frees:         {}\n", snap.heap_frees));
                 out.push_str(&format!(
@@ -321,8 +333,12 @@ pub fn cmd_sysinfo() -> CmdResult {
         let mut fault_buf = [0u8; diagnostic::FAULT_PROFILER_RECORD_SIZE];
         match syscall::sys_system_info(diagnostic::SYSTEM_INFO_FAULT_PROFILER, &mut fault_buf) {
             Ok(_) => {
-                let snap: &diagnostic::FaultProfilerRecord =
-                    unsafe { &*(fault_buf.as_ptr() as *const diagnostic::FaultProfilerRecord) };
+                // SAFETY: as above — a record-sized byte buffer the kernel
+                // filled, copied out so the byte array's alignment does not
+                // have to satisfy the record's.
+                let snap = unsafe {
+                    (fault_buf.as_ptr() as *const diagnostic::FaultProfilerRecord).read_unaligned()
+                };
                 out.push_str(&format!("faults_total:          {}\n", snap.faults_total));
                 out.push_str(&format!(
                     "page_faults:           {}\n",
@@ -420,9 +436,20 @@ pub fn cmd_top(argv: &[String]) -> CmdResult {
         return CmdResult::from_output(String::from("top: no processes\n"));
     }
 
-    let records: &[diagnostic::ProcessInfoRecord] = unsafe {
-        core::slice::from_raw_parts(buf.as_ptr() as *const diagnostic::ProcessInfoRecord, total)
-    };
+    // The count is however many records the kernel says it wrote; taking at
+    // most the capacity this buffer was sized for keeps the reads inside it.
+    let records: Vec<diagnostic::ProcessInfoRecord> = (0..total.min(max_records))
+        .map(|i| {
+            // SAFETY: `i` is below the capacity `buf` was allocated with, so
+            // the record lies inside it; copying with `read_unaligned` keeps
+            // the read sound for a byte buffer, which promises the record no
+            // alignment.
+            unsafe {
+                (buf.as_ptr().add(i * record_size) as *const diagnostic::ProcessInfoRecord)
+                    .read_unaligned()
+            }
+        })
+        .collect();
 
     // Collect indices and sort by cpu_ticks descending.
     let mut indices: Vec<usize> = (0..total).collect();
@@ -600,8 +627,12 @@ pub fn cmd_uptime() -> CmdResult {
     let mut sched_buf = [0u8; diagnostic::SYSTEM_INFO_RECORD_SIZE];
     match syscall::sys_system_info(diagnostic::SYSTEM_INFO_SCHEDULER, &mut sched_buf) {
         Ok(_) => {
-            let info: &diagnostic::SystemInfoRecord =
-                unsafe { &*(sched_buf.as_ptr() as *const diagnostic::SystemInfoRecord) };
+            // SAFETY: as above — a record-sized byte buffer the kernel filled,
+            // copied out so the byte array's alignment does not have to satisfy
+            // the record's.
+            let info = unsafe {
+                (sched_buf.as_ptr() as *const diagnostic::SystemInfoRecord).read_unaligned()
+            };
             CmdResult::from_output(format!(
                 "uptime: system running — {} processes ({} ready, {} waiting)\n",
                 info.process_count, info.ready_count, info.waiting_count,
