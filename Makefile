@@ -52,6 +52,7 @@ endif
 		check-unsafe-comments \
 		check-repo-integrity \
 		check-payload-relocations \
+		check-dead-code-allows \
 		check-layering \
 		check-x8664-runtime \
 		check-x8664-churn \
@@ -95,6 +96,7 @@ help:
 		'  make check-unsafe-comments - fail if any configuration gained an undocumented `unsafe` block' \
 		'  make check-repo-integrity  - fail if a ref or the index names a missing git object' \
 		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
+		'  make check-dead-code-allows  - fail if a file-level allow(dead_code) has no reason' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
@@ -293,6 +295,13 @@ check-arch-fanout:
 check-payload-relocations:
 	$(MAKE) build-x8664-demo
 	sh ./scripts/check-payload-relocations.sh
+
+# A file-level `allow(dead_code)` is the one annotation the compiler cannot
+# argue with, so the tree's convention is that it carries a reason and an exit
+# condition.  This is the check that keeps the convention from eroding; two
+# allows in this tree outlived their reasons before it existed.
+check-dead-code-allows:
+	sh ./scripts/check-dead-code-allows.sh
 
 # Run a payload that was **not** rebuilt with the kernel: the bytes frozen on
 # 2026-09-27 are shipped instead of the ones this build compiles, and the boot

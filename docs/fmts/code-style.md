@@ -164,6 +164,27 @@ implementation lives in submodules. If a `pub use` exists to make a sibling
 module's imports read better, say so in a comment — a bare re-export with no
 consumer is hard to justify later.
 
+### File-level `allow(dead_code)`
+
+An item-level `#[allow(dead_code)]` silences one item; the next unused item in
+the same file still reports, which is the signal that keeps a file honest. A
+**file-level** `#![allow(dead_code)]` turns the lint off for everything, so it
+needs a reason and an exit condition written next to it:
+
+```rust
+// Why: a field the parser does not read yet is still part of the format's
+// description, and the description is what the parser is written against.
+// When to remove: when every field here is read by the parser.
+#![allow(dead_code)]
+```
+
+`scripts/check-dead-code-allows.sh` fails a change that adds one without both
+lines. The two that motivated the check had outlived their reasons: a skeleton
+whose comment still said "step 1b wires the consumers" after step 1b had been
+done, and accessors described as having "no callers in the kernel" that had
+four. Disk-format type tables and host-coverage modules are the legitimate
+uses; "the compiler was complaining" is not.
+
 ---
 
 ## 5. Imports

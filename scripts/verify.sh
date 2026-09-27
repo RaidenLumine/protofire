@@ -146,6 +146,7 @@ run_p3() {
     run_make_step "make check-layering" check-layering
     run_make_step "make check-arch-fanout" check-arch-fanout
     run_make_step "make check-payload-relocations" check-payload-relocations
+    run_make_step "make check-dead-code-allows" check-dead-code-allows
     if [ "$RUN_X86_64_RUNTIME" = "1" ]; then
         run_make_step "make check-x8664-runtime" check-x8664-runtime
         # The same boot with a payload that was frozen on 2026-09-27 rather

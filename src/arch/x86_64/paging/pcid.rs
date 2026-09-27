@@ -22,11 +22,12 @@
 //! exactly as the pre-PCID path does; INVPCID itself is a per-CPU
 //! instruction, so remote CPUs flush on their next kernel entry.
 //!
-//! This module is a bare-metal feature.  It is compiled on host builds purely
-//! for compile coverage, where its allocator and flush paths are dead code;
-//! the annotation below documents that rather than hiding a real unused path.
-//! When it goes: when the host build stops compiling the module.
+//! This module is a bare-metal feature, compiled on host builds purely for
+//! compile coverage — see the annotation's reason below.
 
+// Why: PCID is a bare-metal feature compiled on host builds for compile
+// coverage only, where its allocator and INVPCID flush paths have no caller.
+// When to remove: when the host build stops compiling the module.
 #![allow(dead_code)]
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]

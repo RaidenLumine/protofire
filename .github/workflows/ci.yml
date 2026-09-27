@@ -50,6 +50,8 @@ jobs:
             command: make check-arch-fanout
           - name: payload-relocations
             command: make check-payload-relocations
+          - name: dead-code-allows
+            command: make check-dead-code-allows
           # `git fsck` in a shallow clone (what `actions/checkout` makes by
           # default) reports nothing and exits zero, so this runs as it does in
           # a full checkout here.
