@@ -263,6 +263,19 @@ pub fn write_fmt(args: fmt::Arguments<'_>) -> fmt::Result {
 // metal.
 
 /// Current core frequency in KHz (0 when no driver is present).
+/// Probe this machine's CPU-frequency driver.
+///
+/// The governor above it is the kernel's; what a frequency change looks like,
+/// and whether the machine can do one at all, is the architecture's.
+pub fn cpufreq_init() {
+    #[cfg(target_arch = "x86_64")]
+    x86_64::cpufreq::init();
+    #[cfg(target_arch = "aarch64")]
+    aarch64::cpufreq::init();
+    #[cfg(target_arch = "riscv64")]
+    riscv64::cpufreq::init();
+}
+
 pub fn arch_get_freq() -> u32 {
     #[cfg(target_arch = "x86_64")]
     {

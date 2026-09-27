@@ -37,7 +37,8 @@
 
 
 
-# 40 files, 132 occurrences outside src/arch
+
+# 37 files, 120 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/framebuffer.rs                               4
@@ -49,14 +50,12 @@ drivers/virtio_net.rs                                4
 fs/demo/absent.rs                                    6
 fs/demo/mod.rs                                       6
 kernel/power/clock.rs                                2
-kernel/power/mod.rs                                  3
 kernel/process/context.rs                            4
 kernel/process/process/fork.rs                       3
 kernel/process/process/lifecycle.rs                  1
 kernel/process/process/types.rs                      3
 kernel/process/scheduler/api.rs                      3
 kernel/process/scheduler/mod.rs                      3
-kernel/process/scheduler/spawn.rs                    4
 kernel/process/thread/mod.rs                         2
 kernel/process/thread/types.rs                       3
 kernel/process/thread/user_runtime.rs                2
@@ -72,7 +71,6 @@ user/demo/demo_program_x86_64_rust_io.rs             1
 user/demo/demo_program_x86_64_rust.rs                1
 user/demo/mod.rs                                     3
 user/exception.rs                                    5
-user/program/loader/mod.rs                           5
 user/shared/abi/ptrace.rs                            2
 user/shared/abi/runtime.rs                           6
 user/shared/syscall.rs                               2

@@ -30,18 +30,7 @@ static CURRENT_GOVERNOR: Mutex<Option<governors::GovernorType>> = Mutex::new(Non
 /// governor by default. On platforms with no discoverable frequency range
 /// (QEMU, host tests) the whole subsystem stays inert.
 pub fn init() {
-    #[cfg(target_arch = "x86_64")]
-    {
-        crate::arch::x86_64::cpufreq::init();
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        crate::arch::aarch64::cpufreq::init();
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-        crate::arch::riscv64::cpufreq::init();
-    }
+    crate::arch::cpufreq_init();
 
     let freq = arch::arch_get_freq();
     CURRENT_FREQ_KHZ.store(freq, Ordering::Relaxed);

@@ -368,10 +368,6 @@ pub(crate) struct LoadedProgramInstallState {
 }
 
 impl LoadedProgramInstallState {
-    #[cfg_attr(
-        all(target_arch = "aarch64", not(target_os = "none")),
-        allow(dead_code)
-    )]
     pub(crate) fn user_thread_start(&self) -> Option<UserThreadStart> {
         self.user_thread_start
     }
@@ -497,8 +493,11 @@ impl LoadedProgram {
         }
     }
 
+    /// Install the loaded image into the calling thread.
+    ///
+    /// Which half of the thread gets replaced is the machine's; see
+    /// `crate::arch::thread::install_user_image`.
     #[allow(dead_code)]
-    #[cfg(target_arch = "x86_64")]
     pub(crate) fn install_into_current_thread(
         &mut self,
         process: &Process,
@@ -509,37 +508,7 @@ impl LoadedProgram {
             .user_thread_start()
             .ok_or(Error::Unsupported)?;
         install_state.install_into_process(process);
-        thread.replace_x86_64_user_image(start)?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-    pub(crate) fn install_into_current_thread(
-        &mut self,
-        process: &Process,
-        thread: &Thread,
-    ) -> Result<()> {
-        let install_state = self.take_install_state()?;
-        let start = install_state
-            .user_thread_start()
-            .ok_or(Error::Unsupported)?;
-        install_state.install_into_process(process);
-        thread.replace_aarch64_user_image(start)?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    #[cfg(all(
-        not(target_arch = "x86_64"),
-        not(all(target_arch = "aarch64", target_os = "none"))
-    ))]
-    pub(crate) fn install_into_current_thread(
-        &mut self,
-        _process: &Process,
-        _thread: &Thread,
-    ) -> Result<()> {
-        Err(Error::Unsupported)
+        crate::arch::thread::install_user_image(thread, start)
     }
 }
 

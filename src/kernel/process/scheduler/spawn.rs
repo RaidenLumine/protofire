@@ -609,8 +609,7 @@ impl Scheduler {
         security_token: SecurityToken,
         start: UserThreadStart,
     ) -> crate::Result<Arc<Thread>> {
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-        let start = start.validate()?;
+        let start = crate::arch::thread::validate_user_thread_start(start)?;
 
         Ok(
             self.spawn_ready_thread_with_security_token(name, security_token, |process| {
@@ -632,8 +631,7 @@ impl Scheduler {
     where
         F: FnOnce(&Arc<Process>),
     {
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", test))]
-        let start = start.validate()?;
+        let start = crate::arch::thread::validate_user_thread_start(start)?;
 
         Ok(self.spawn_ready_thread_with_security_token_and_setup(
             name,
