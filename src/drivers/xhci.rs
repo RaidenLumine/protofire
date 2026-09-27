@@ -115,16 +115,23 @@ unsafe impl Send for XhciController {}
 // -----------------------------------------------------------------------
 
 unsafe fn reg_read32(base: *const u32, offset: usize) -> u32 {
+    // SAFETY: the caller passes the controller's own register base and an offset
+    // the controller defines; the read is volatile so it is not reordered or
+    // elided.
     unsafe { read_volatile(base.add(offset / 4)) }
 }
 
 unsafe fn reg_write32(base: *mut u32, offset: usize, value: u32) {
+    // SAFETY: as `reg_read32` — the register block belongs to this controller and
+    // the offset is one it defines.
     unsafe {
         write_volatile(base.add(offset / 4), value);
     }
 }
 
 unsafe fn reg_write64_lo_hi(base: *mut u32, lo_off: usize, hi_off: usize, value: u64) {
+    // SAFETY: as `reg_read32` — two writes into the same register block, the low
+    // and high halves of one 64-bit register.
     unsafe {
         write_volatile(base.add(lo_off / 4), value as u32);
         write_volatile(base.add(hi_off / 4), (value >> 32) as u32);
@@ -137,6 +144,8 @@ unsafe fn reg_write64_lo_hi(base: *mut u32, lo_off: usize, hi_off: usize, value:
 
 /// Get a pointer to the n-th TRB in a ring buffer.
 unsafe fn ring_trb_ptr(ring: &DmaBuffer, index: u32) -> *mut Trb {
+    // SAFETY: the ring is this controller's DMA buffer and `index` is bounded by
+    // its entry count before every call site.
     unsafe {
         let base = ring.as_ptr() as *mut Trb;
         base.add(index as usize)
@@ -169,6 +178,8 @@ fn config_interface_class(config: &[u8]) -> Option<(u8, u8, u8)> {
 /// Write a command TRB to the command ring at the enqueue position,
 /// advance the enqueue index, and ring the doorbell.
 unsafe fn post_cmd_trb(ctrl: &mut XhciController, mut trb: Trb) {
+    // SAFETY: `ctrl` owns the command ring and its doorbell; the enqueue index is
+    // kept inside the ring by the wrap below.
     unsafe {
         let cycle = if ctrl.cmd_pcs { TRB_CYCLE_BIT } else { 0 };
         trb.control |= cycle;
@@ -194,6 +205,8 @@ unsafe fn post_cmd_trb(ctrl: &mut XhciController, mut trb: Trb) {
 /// Wait for a command completion event on the event ring.
 /// Returns the Command Completion Event TRB.
 unsafe fn await_cmd_completion(ctrl: &mut XhciController) -> Result<Trb> {
+    // SAFETY: as `post_cmd_trb` — the event ring and its dequeue index are the
+    // controller's own.
     unsafe {
         // Poll the event ring for a Command Completion Event.
         for _ in 0..10_000_000 {
@@ -244,6 +257,8 @@ impl XhciController {
     /// size. Returns `None` if MMIO mapping fails or the controller
     /// is not usable.
     pub unsafe fn new(bar0_phys: u64, bar0_size: usize) -> Option<Self> {
+        // SAFETY: the caller passes a BAR address PCI enumeration produced; the mapping
+        // this block performs is what makes every later register access sound.
         unsafe {
             let mmio = map_device_mmio(bar0_phys, bar0_size)?;
             let mmio_base = mmio;
@@ -325,6 +340,8 @@ impl XhciController {
 
     /// Reset the host controller.
     unsafe fn reset(&mut self) -> Result<()> {
+        // SAFETY: the controller is constructed and its register base mapped; reset
+        // touches only its own registers.
         unsafe {
             // Wait for CNR (Controller Not Ready) to clear.
             for _ in 0..100_000 {
@@ -356,6 +373,8 @@ impl XhciController {
 
     /// Allocate and program command ring, event ring, DCBAAP.
     unsafe fn init_rings(&mut self) -> Result<()> {
+        // SAFETY: as `reset` — the rings are allocated here and registered with the
+        // controller's own registers.
         unsafe {
             // --- Command ring ---
             // Set up the ring with a Link TRB at the end to loop back.
@@ -423,6 +442,8 @@ impl XhciController {
 
     /// Start the host controller (set Run/Stop = 1).
     unsafe fn start(&mut self) -> Result<()> {
+        // SAFETY: as `reset` — starting the controller writes its own operational
+        // registers.
         unsafe {
             let mut usbcmd = reg_read32(self.op_base, XHCI_OP_USBCMD);
             usbcmd |= USBCMD_RS;
@@ -445,6 +466,8 @@ impl XhciController {
 
     /// Send a command TRB and wait for its completion event.
     unsafe fn send_command(&mut self, trb: Trb) -> Result<Trb> {
+        // SAFETY: `send_command` operates on this controller's command and event rings,
+        // both owned by `self`.
         unsafe {
             post_cmd_trb(self, trb);
             await_cmd_completion(self)
@@ -458,6 +481,8 @@ impl XhciController {
     /// Enable a device slot on a root hub port. Returns the slot ID
     /// (1-based).
     pub unsafe fn enable_slot(&mut self, root_port: u8) -> Result<u8> {
+        // SAFETY: as `send_command` — the enable-slot command is posted to the same
+        // rings.
         unsafe {
             let trb = Trb::enable_slot(if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 }, root_port);
             let evt = self.send_command(trb)?;
@@ -476,6 +501,8 @@ impl XhciController {
 
     /// Allocate device context and EP0 transfer ring for a slot.
     pub unsafe fn alloc_slot_resources(&mut self, slot_id: u8) -> Result<()> {
+        // SAFETY: as above — the slot's contexts are written through this controller's
+        // rings and doorbells.
         unsafe {
             let idx = slot_id as usize - 1;
 
@@ -540,6 +567,8 @@ impl XhciController {
         let base = buf.as_ptr();
 
         // Input Control Context (ICC) at offset 0.
+        // SAFETY: the input context sits inside this controller's context DMA buffer,
+        // at the offset the buffer layout fixes.
         unsafe {
             let icc = base as *mut u32;
             write_volatile(icc, 0x0); // drop flags: nothing dropped
@@ -547,6 +576,7 @@ impl XhciController {
         }
 
         // Slot Context at offset ctx_size.
+        // SAFETY: the slot context is in the same buffer, one context size on.
         unsafe {
             let sc_base = base.add(ctx_size) as *mut u32;
             write_volatile(sc_base, 1 << 27); // context entries = 1
@@ -555,6 +585,7 @@ impl XhciController {
         }
 
         // Endpoint 0 Control Context at offset 2*ctx_size.
+        // SAFETY: the endpoint-0 context is in the same buffer, two context sizes on.
         unsafe {
             let ep0_ctrl = base.add(2 * ctx_size) as *mut u32;
             // TR Dequeue Pointer: physical address of EP0 ring | DCS=1
@@ -575,6 +606,8 @@ impl XhciController {
     /// After this, the device is at the assigned address and EP0 is ready.
     /// Uses the EP0 ring stored in self.ep0_transfer_rings.
     pub unsafe fn address_device(&mut self, slot_id: u8, root_port: u8) -> Result<()> {
+        // SAFETY: the address-device command goes through this controller's command
+        // ring, with the input context above as its payload.
         unsafe {
             let idx = slot_id as usize - 1;
             if self.ep0_transfer_rings[idx].is_none() {
@@ -612,6 +645,8 @@ impl XhciController {
         data_buf: &mut [u8],
         direction_in: bool,
     ) -> Result<usize> {
+        // SAFETY: as the commands above — the transfer goes through this controller's
+        // rings, and the slot's endpoint is one it configured.
         unsafe {
             let idx = slot_id as usize - 1;
             let ep0_ring = self.ep0_transfer_rings[idx]
@@ -741,6 +776,8 @@ impl XhciController {
     /// rather than dropped, so a bulk/data transfer never steals a HID
     /// report from the shared event ring.
     unsafe fn poll_transfer_event(&mut self, expected_slot: u8) -> Result<u32> {
+        // SAFETY: the event ring is this controller's, and the dequeue index is
+        // advanced in step with what the device wrote.
         unsafe {
             for _ in 0..10_000_000 {
                 let evt_ptr = ring_trb_ptr(&self.event_ring, self.evt_dequeue);
@@ -793,6 +830,8 @@ impl XhciController {
     /// usually dispatched by the controller itself during Address Device
     /// when BSR=0.  This function is provided for explicit re-read.
     pub unsafe fn get_device_descriptor(&mut self, slot_id: u8) -> Result<UsbDeviceDescriptor> {
+        // SAFETY: the descriptor request goes through this controller's rings for a
+        // slot it enabled.
         unsafe {
             let setup = SetupPacket::get_descriptor_device(18);
             let mut buf = [0u8; 18];
@@ -812,6 +851,7 @@ impl XhciController {
         slot_id: u8,
         ep_info: HidEndpointInfo,
     ) -> Result<()> {
+        // SAFETY: as above — the control transfer uses the same rings and slots.
         unsafe {
             let idx = slot_id as usize - 1;
             let dev_ctx = self.device_contexts[idx]
@@ -912,6 +952,8 @@ impl XhciController {
     /// Read the full configuration descriptor for a slot: the 9-byte
     /// header for `wTotalLength`, then the whole blob.
     unsafe fn read_config_descriptor(&mut self, slot_id: u8) -> crate::Result<alloc::vec::Vec<u8>> {
+        // SAFETY: as above — reading the configuration descriptor reuses the control
+        // transfer path.
         unsafe {
             let mut header_buf = [0u8; 9];
             let setup9 = SetupPacket::get_descriptor_configuration(9);
@@ -940,6 +982,8 @@ impl XhciController {
     /// descriptor, find bulk endpoints, configure them, and
     /// initialise the MSC driver.
     pub unsafe fn init_msd(&mut self, slot_id: u8) -> crate::Result<()> {
+        // SAFETY: the MSD initialisation talks to the same controller whose slot was
+        // just addressed.
         unsafe {
             use crate::drivers::usb_msd::MsdBulkEndpoints;
             use crate::drivers::usb_msd::USB_CLASS_MSC;
@@ -1059,6 +1103,8 @@ impl XhciController {
         max_packet_size: u16,
         direction_in: bool,
     ) -> Result<()> {
+        // SAFETY: as above — the transfer targets an endpoint of a slot this controller
+        // configured.
         unsafe {
             let idx = slot_id as usize - 1;
             let dev_ctx = self.device_contexts[idx]
@@ -1160,6 +1206,7 @@ impl XhciController {
         length: u32,
         direction_in: bool,
     ) -> Result<()> {
+        // SAFETY: as above.
         unsafe {
             let idx = slot_id as usize - 1;
             let ep_num = (ep_addr & 0x0F) as usize;
@@ -1216,6 +1263,8 @@ impl XhciController {
 
     /// Send data on a bulk OUT endpoint.
     pub unsafe fn bulk_send(&mut self, ep_addr: u8, data: &[u8]) -> Result<()> {
+        // SAFETY: the bulk endpoint belongs to a slot this controller configured, and
+        // the data is a caller slice it does not retain.
         unsafe {
             let slot_id = if self.msd_slot != 0 {
                 self.msd_slot
@@ -1235,6 +1284,8 @@ impl XhciController {
 
     /// Receive data on a bulk IN endpoint.
     pub unsafe fn bulk_recv(&mut self, ep_addr: u8, buffer: &mut [u8]) -> Result<()> {
+        // SAFETY: as `bulk_send` — the receive buffer is the caller's and outlives the
+        // transfer.
         unsafe {
             let slot_id = if self.msd_slot != 0 {
                 self.msd_slot
@@ -1266,6 +1317,7 @@ impl XhciController {
         report_len: usize,
         data_phys: u64,
     ) -> Result<()> {
+        // SAFETY: as above.
         unsafe {
             let idx = slot_id as usize - 1;
             let int_ring = self.int_transfer_rings[idx]
@@ -1297,6 +1349,8 @@ impl XhciController {
 
     /// Deliver a completed keyboard report and re-arm the next read.
     unsafe fn deliver_keyboard_report(&mut self, residual: u32) {
+        // SAFETY: the report came from this controller's event ring and is delivered to
+        // the arch-neutral keyboard layer.
         unsafe {
             if let Some(ep) = self.keyboard_ep {
                 if let Some(buf) = self.keyboard_report_buf.as_ref() {
@@ -1320,6 +1374,7 @@ impl XhciController {
 
     /// Deliver a completed mouse report and re-arm the next read.
     unsafe fn deliver_mouse_report(&mut self, residual: u32) {
+        // SAFETY: as above, for the mouse.
         unsafe {
             if let Some(ep) = self.mouse_ep {
                 if let Some(buf) = self.mouse_report_buf.as_ref() {
@@ -1348,6 +1403,8 @@ impl XhciController {
     /// The event is identified by (slot ID, DCI); unknown slots are
     /// ignored.
     unsafe fn dispatch_hid_transfer_event(&mut self, evt: &Trb) {
+        // SAFETY: the event is one this controller's event ring produced; the dispatch
+        // only reads it.
         unsafe {
             let slot = evt.slot_id();
             let dci = evt.endpoint_id();
@@ -1374,6 +1431,7 @@ impl XhciController {
     /// Called from the timer tick to check for HID reports.
     /// Returns true if a HID transfer event was processed.
     pub unsafe fn poll_events(&mut self) -> bool {
+        // SAFETY: polling touches this controller's own event ring and doorbells.
         unsafe {
             if self.keyboard_slot == 0 && self.mouse_slot == 0 {
                 return false;
@@ -1430,6 +1488,8 @@ impl XhciController {
     /// a slot, address the device, and classify it (HID vs MSC).
     /// Returns true if a device was configured.
     pub(crate) unsafe fn enumerate_port(&mut self, port: u8) -> bool {
+        // SAFETY: the port belongs to this controller's root hub (the loop that calls
+        // this stays inside `max_ports`).
         unsafe {
             let portsc_offset = XHCI_OP_PORTSC + (port as usize - 1) * 0x10;
 
@@ -1478,6 +1538,8 @@ impl XhciController {
     /// up: HID keyboard/mouse (real endpoint discovery + armed first read)
     /// or USB mass storage (bulk endpoints + MSC init).
     unsafe fn configure_slot_device(&mut self, slot_id: u8, desc: UsbDeviceDescriptor) -> bool {
+        // SAFETY: the slot was enabled by this controller and its contexts are its own
+        // DMA memory.
         unsafe {
             use crate::drivers::usb_hid::HidDeviceKind;
             use crate::drivers::usb_hid::{self};
@@ -1635,6 +1697,8 @@ where
 pub fn xhci_poll() -> bool {
     {
         if let Some(guard) = XHCI_CONTROLLER.lock().as_mut() {
+            // SAFETY: the global controller is published only after a successful probe, and
+            // the polling path is the only reader of its rings.
             unsafe {
                 return guard.poll_events();
             }
@@ -1702,6 +1766,8 @@ fn probe_xhci() -> crate::Result<()> {
         }
 
         // Initialise the controller.
+        // SAFETY: `XhciController::new` takes the BAR address and size PCI enumeration
+        // produced; mapping them is what makes the controller usable.
         let mut ctrl = match unsafe { XhciController::new(bar0.base_address, bar0.size as usize) } {
             Some(c) => c,
             None => {
@@ -1712,6 +1778,8 @@ fn probe_xhci() -> crate::Result<()> {
 
         // Scan every root hub port for a connected device.
         for port in 1..=ctrl.max_ports {
+            // SAFETY: `enumerate_port` operates on the controller just constructed above,
+            // for a port inside its own count.
             if unsafe { ctrl.enumerate_port(port) } {
                 println!("[xhci  ] enumerated port {}", port);
             }
