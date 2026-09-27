@@ -177,22 +177,29 @@ impl PciLegacyMmioRegion {
     // ── IO-port helpers ──────────────────────────────────────────────
 
     unsafe fn io_read32(&self, offset: u16) -> u32 {
+        // SAFETY: `io_base` is BAR0 of a PCI function the scan enumerated and
+        // `offset` is one the legacy VirtIO layout defines, so the read stays
+        // inside this device's own register block.
         unsafe { Port::<u32>::new(self.io_base + offset).read() }
     }
 
     unsafe fn io_write32(&self, offset: u16, value: u32) {
+        // SAFETY: as `io_read32` — the same BAR and offsets, on the write side.
         unsafe { Port::<u32>::new(self.io_base + offset).write(value) }
     }
 
     unsafe fn io_write16(&self, offset: u16, value: u16) {
+        // SAFETY: as `io_read32`, for the 16-bit registers of the layout.
         unsafe { Port::<u16>::new(self.io_base + offset).write(value) }
     }
 
     unsafe fn io_read8(&self, offset: u16) -> u8 {
+        // SAFETY: as `io_read32`, for its 8-bit registers.
         unsafe { Port::<u8>::new(self.io_base + offset).read() }
     }
 
     unsafe fn io_write8(&self, offset: u16, value: u8) {
+        // SAFETY: as `io_read32`, byte-wide and on the write side.
         unsafe { Port::<u8>::new(self.io_base + offset).write(value) }
     }
 
@@ -206,8 +213,12 @@ impl PciLegacyMmioRegion {
         // The QueuePFN register holds the page number of page N.
         // x86_64 uses identity mapping so VA == PA.
         let pfn = (desc >> 12) as u32;
+        // SAFETY: PCI offset 0x08 of this function's BAR0 — the QueuePFN
+        // register; this read records what the device held before the write.
         let pfn_before = unsafe { self.io_read32(PCI_QUEUE_PFN) };
+        // SAFETY: as above — the write that installs the queue's page number.
         unsafe { self.io_write32(PCI_QUEUE_PFN, pfn) };
+        // SAFETY: as above — the read-back reporting what the device kept.
         let pfn_after = unsafe { self.io_read32(PCI_QUEUE_PFN) };
         crate::println!(
             "[virtio-pci] commit_queue_pfn: desc=0x{:x} pfn=0x{:x}->0x{:x} (before=0x{:x})",
@@ -234,6 +245,8 @@ impl MmioRegion for PciLegacyMmioRegion {
             // (bit 5) because the legacy IO BAR cannot access device-
             // specific config space.
             REG_DEVICE_FEATURES => {
+                // SAFETY: this function's device-features dword at PCI offset
+                // 0x00, the offset the legacy layout fixes for it.
                 let raw = unsafe { self.io_read32(PCI_DEVICE_FEATURES) };
                 const VIRTIO_NET_F_MAC: u32 = 1 << 5;
                 raw & !VIRTIO_NET_F_MAC
@@ -244,6 +257,8 @@ impl MmioRegion for PciLegacyMmioRegion {
 
             // QueueNumMax: 16-bit at PCI offset 0x0C, bits [15:0].
             REG_QUEUE_NUM_MAX => {
+                // SAFETY: the size/select dword at PCI offset 0x0C of the same
+                // function.
                 let dword = unsafe { self.io_read32(PCI_QUEUE_SIZE) };
                 let val = dword & 0xFFFF;
                 crate::println!(
@@ -256,6 +271,8 @@ impl MmioRegion for PciLegacyMmioRegion {
             }
 
             // Status: 8-bit at PCI offset 0x12.
+            // SAFETY: the device-status byte at PCI offset 0x12 of the same
+            // function.
             REG_STATUS => unsafe { self.io_read8(PCI_DEVICE_STATUS) as u32 },
 
             // ConfigGeneration: not available.
@@ -276,8 +293,12 @@ impl MmioRegion for PciLegacyMmioRegion {
 
             // DriverFeatures (PCI offset 0x04).
             REG_DRIVER_FEATURES => {
+                // SAFETY: the driver-features dword at PCI offset 0x04 of this
+                // function.
                 unsafe { self.io_write32(PCI_DRIVER_FEATURES, value) }
                 // Read back to verify the write.
+                // SAFETY: as above — the read-back of the register just
+                // written.
                 let readback = unsafe { self.io_read32(PCI_DRIVER_FEATURES) };
                 crate::println!(
                     "[virtio-pci] write DriverFeatures=0x{:08x} readback=0x{:08x}",
@@ -290,6 +311,8 @@ impl MmioRegion for PciLegacyMmioRegion {
             REG_DRIVER_FEATURES_SEL => {}
 
             // QueueSel (PCI offset 0x0E, 16-bit).
+            // SAFETY: the queue-select register at PCI offset 0x0E, 16 bits
+            // wide as the layout specifies.
             REG_QUEUE_SEL => unsafe {
                 self.io_write16(PCI_QUEUE_SELECT, value as u16);
             },
@@ -310,6 +333,9 @@ impl MmioRegion for PciLegacyMmioRegion {
             // QueueReady → compute and write QueuePFN at PCI offset 0x08.
             REG_QUEUE_READY => {
                 if value != 0 {
+                    // SAFETY: the descriptor address cached by the preceding
+                    // DESC_* writes is a virtqueue this driver allocated for
+                    // the function whose BAR0 the probe claimed.
                     unsafe {
                         self.commit_queue_pfn();
                     }
@@ -321,12 +347,20 @@ impl MmioRegion for PciLegacyMmioRegion {
             // here would clobber the adjacent DeviceStatus and ISRStatus
             // registers on some implementations, so we write exactly 16.
             REG_QUEUE_NOTIFY => {
+                // SAFETY: the ISR-status byte at PCI offset 0x13 of this
+                // function.
                 let isr_before = unsafe { self.io_read8(PCI_ISR_STATUS) };
+                // SAFETY: as above — the device-status byte.
                 let status_before = unsafe { self.io_read8(PCI_DEVICE_STATUS) };
+                // SAFETY: the queue-notify port at PCI offset 0x10, written 16
+                // bits wide as the layout requires.
                 unsafe {
                     self.io_write16(PCI_QUEUE_NOTIFY, value as u16);
                 }
+                // SAFETY: as above — the ISR-status read showing what the kick
+                // cleared.
                 let isr_after = unsafe { self.io_read8(PCI_ISR_STATUS) };
+                // SAFETY: as above — the device-status read after the kick.
                 let status_after = unsafe { self.io_read8(PCI_DEVICE_STATUS) };
                 crate::println!(
                     "[virtio-pci] kick q{} IO=0x{:x} status=0x{:02x}->0x{:02x} isr=0x{:02x}->0x{:02x}",
@@ -341,9 +375,13 @@ impl MmioRegion for PciLegacyMmioRegion {
 
             // Status (PCI offset 0x12, 8-bit).
             REG_STATUS => {
+                // SAFETY: the device-status byte at PCI offset 0x12 of this
+                // function.
                 unsafe {
                     self.io_write8(PCI_DEVICE_STATUS, value as u8);
                 }
+                // SAFETY: as above — the read-back of the status register just
+                // written.
                 let readback = unsafe { self.io_read8(PCI_DEVICE_STATUS) };
                 crate::println!(
                     "[virtio-pci] write Status=0x{:02x} readback=0x{:02x}",
