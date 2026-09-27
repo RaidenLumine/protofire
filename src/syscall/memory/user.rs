@@ -284,6 +284,10 @@ fn copy_variable_user_payload(
 
     validate_current_process_user_output_buffer(buffer_ptr, buffer_len, required_len)?;
     with_user_access_guard(|| {
+        // SAFETY: the validation above proved the range lies inside the
+        // current process's user address space and is writable for
+        // `required_len` bytes, which is the slice this builds; the guard is
+        // what makes the access legal while it runs.
         let buffer = unsafe { core::slice::from_raw_parts_mut(buffer_ptr, required_len) };
         fill(buffer);
     });
@@ -327,6 +331,9 @@ pub(super) fn with_optional_input_slice<T>(
     // SMAP guard wraps the dereference and the closure so user-memory
     // reads happen while AC is set.
     with_user_access_guard(|| {
+        // SAFETY: as the output path — the validator checked this read range
+        // against the process's mappings and the guard holds the access
+        // permission for its duration.
         let buffer = unsafe { core::slice::from_raw_parts(ptr, length) };
         f(buffer)
     })
@@ -341,6 +348,8 @@ pub(super) fn optional_user_output_slice<'a>(
     }
 
     validate_current_process_user_output_buffer(ptr, length, length)?;
+    // SAFETY: the same validation, for a write; the slice it covers is exactly
+    // the range the validator accepted.
     Ok(Some(unsafe {
         core::slice::from_raw_parts_mut(ptr, length)
     }))
@@ -363,6 +372,8 @@ pub(super) fn with_optional_output_slice<T>(
     // SMAP guard wraps the dereference and the closure so user-memory
     // writes happen while AC is set.
     with_user_access_guard(|| {
+        // SAFETY: as above — a validated, writable user range handed to the
+        // closure while the guard is in force.
         let buffer = unsafe { core::slice::from_raw_parts_mut(ptr, length) };
         f(buffer)
     })
@@ -374,6 +385,10 @@ pub(super) fn read_user_value<T: Copy>(
     required_length: usize,
 ) -> Result<T> {
     validate_current_process_user_input_buffer(ptr, length, required_length)?;
+    // SAFETY: the validator proved `required_length` bytes starting at `ptr`
+    // are readable user memory, and every call site passes the size of the
+    // record it is about to read, so the read stays inside that range;
+    // `read_unaligned` deliberately does not require the value's alignment.
     Ok(with_user_access_guard(|| unsafe {
         core::ptr::read_unaligned(ptr.cast::<T>())
     }))

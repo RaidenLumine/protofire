@@ -56,6 +56,8 @@ impl DmaBuffer {
         let ptr = global_mut()?.allocate_frames(frame_count)?;
         let phys = phys_addr_of(ptr as usize)?;
         // Zero the buffer so stale data never reaches a device.
+        // SAFETY: the frame allocator returned `frame_count` contiguous frames
+        // starting at `ptr`, which is exactly the range this zeroes.
         unsafe {
             core::ptr::write_bytes(ptr, 0, frame_count * FRAME_SIZE);
         }
@@ -82,12 +84,17 @@ impl DmaBuffer {
     /// View the buffer as a byte slice.
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: the buffer owns `frame_count` frames from the frame allocator
+        // and `len()` is exactly their size, so the slice covers the allocation
+        // and no more; the borrow keeps readers out while it is alive.
         unsafe { core::slice::from_raw_parts(self.ptr as *const u8, self.len()) }
     }
 
     /// View the buffer as a mutable byte slice.
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: as `as_slice` — the same owned range, handed out through an
+        // exclusive borrow.
         unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len()) }
     }
 
