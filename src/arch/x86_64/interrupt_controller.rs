@@ -59,6 +59,9 @@ impl InterruptController for PicController {
         let mut pic1_command = Port::<u8>::new(PIC1_COMMAND);
         let mut pic2_command = Port::<u8>::new(PIC2_COMMAND);
 
+        // SAFETY: the 8259 pair's command ports are the fixed ISA addresses the
+        // constants above name, and an end-of-interrupt is what those ports
+        // take; the slave is told only when the vector came through it.
         unsafe {
             if vector as u8 >= SLAVE_VECTOR_OFFSET {
                 pic2_command.write(PIC_EOI);
@@ -95,9 +98,14 @@ fn remap_pic(master_offset: u8, slave_offset: u8) {
     let mut pic2_command = Port::<u8>::new(PIC2_COMMAND);
     let mut pic2_data = Port::<u8>::new(PIC2_DATA);
 
+    // SAFETY: the data port of the master PIC at its fixed address, read before
+    // the remap so the masks can be restored afterwards.
     let master_mask = unsafe { pic1_data.read() };
+    // SAFETY: as above — the slave's data port, the same fixed pair.
     let slave_mask = unsafe { pic2_data.read() };
 
+    // SAFETY: the initialisation control words go to the two PICs' own command
+    // and data ports, in the order the 8259 requires.
     unsafe {
         pic1_command.write(ICW1_INIT | ICW1_ICW4);
         io_wait();
@@ -128,6 +136,8 @@ fn mask_irqs(master_mask: u8, slave_mask: u8) {
     let mut pic1_data = Port::<u8>::new(PIC1_DATA);
     let mut pic2_data = Port::<u8>::new(PIC2_DATA);
 
+    // SAFETY: the masks saved by `remap_pic` are written back to the same two
+    // data ports.
     unsafe {
         pic1_data.write(master_mask);
         pic2_data.write(slave_mask);
@@ -135,6 +145,8 @@ fn mask_irqs(master_mask: u8, slave_mask: u8) {
 }
 
 unsafe fn io_wait() {
+    // SAFETY: a write to the unused port 0x80 is the ISA bus delay the PIC
+    // initialisation sequence asks for; nothing is behind it.
     unsafe {
         let mut port = Port::<u8>::new(0x80);
         port.write(0);
@@ -185,6 +197,9 @@ impl InterruptController for ApicInterruptController {
         // device MMIO identity map.  map_device_mmio_page() identity-maps both
         // the LAPIC and IOAPIC pages and is idempotent (the later call inside
         // init_ioapic() is a no-op).
+        // SAFETY: the caller of `register` is the boot path, which runs with the
+        // runtime PML4 active, interrupts off, and no other CPU up — the
+        // contract `map_device_mmio_page` states.
         unsafe { super::apic::map_device_mmio_page(super::apic::LAPIC_MMIO_BASE_DEFAULT) };
 
         // Initialize the Local APIC.
@@ -217,6 +232,8 @@ impl InterruptController for ApicInterruptController {
     fn set_priority(&self, _interrupt_id: u32, priority: u8) {
         let tpr_val = priority as u32 & 0xF0;
         let base = super::apic::LAPIC_MMIO_BASE_DEFAULT;
+        // SAFETY: the LAPIC page was mapped during `register` above, and the TPR
+        // is one of its registers.
         unsafe {
             core::ptr::write_volatile((base + super::apic::LAPIC_TPR) as *mut u32, tpr_val);
         }

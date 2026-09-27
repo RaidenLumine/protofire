@@ -475,9 +475,9 @@ pub fn sys_exit(code: usize) -> ! {
         unsafe {
             core::arch::asm!("wfi", options(nomem, nostack))
         };
-        // Other architectures have no wait instruction this ring can use, so
-        // the loop spins politely rather than issuing nothing at all.
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        // An architecture with no wait instruction of its own — riscv64 today —
+        // falls through to this hint, which also keeps the loop from being an
+        // empty spin.
         core::hint::spin_loop();
     }
 }

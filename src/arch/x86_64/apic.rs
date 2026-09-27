@@ -66,6 +66,9 @@ static mut HIGH_PTS: [PageTablePage; 2] = [PageTablePage::ZEROED; 2];
 /// interrupts disabled, and before any other CPU exists.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub unsafe fn map_device_mmio_page(_phys_addr: usize) {
+    // SAFETY: the contract above — the active PML4, interrupts off, one CPU —
+    // is what makes editing the live page tables sound; the guard below keeps
+    // the edit from happening twice.
     unsafe {
         static MAPPED: AtomicBool = AtomicBool::new(false);
         if MAPPED.swap(true, Ordering::Acquire) {
@@ -198,6 +201,8 @@ pub const ICR_TRIGGER_LEVEL: u32 = 1 << 15;
 /// [`map_device_mmio_page`]) and `offset` must be within the LAPIC register
 /// window.
 pub unsafe fn lapic_read(offset: u32) -> u32 {
+    // SAFETY: the contract above: the LAPIC pages are mapped and `offset` names
+    // a register inside them.
     unsafe { core::ptr::read_volatile((LAPIC_MMIO_BASE_DEFAULT + offset as usize) as *const u32) }
 }
 
@@ -207,6 +212,7 @@ pub unsafe fn lapic_read(offset: u32) -> u32 {
 ///
 /// Same requirements as [`lapic_read`].
 pub unsafe fn lapic_write(offset: u32, value: u32) {
+    // SAFETY: as `lapic_read` — the same mapped window, on the write side.
     unsafe {
         core::ptr::write_volatile(
             (LAPIC_MMIO_BASE_DEFAULT + offset as usize) as *mut u32,
@@ -217,6 +223,8 @@ pub unsafe fn lapic_write(offset: u32, value: u32) {
 
 /// Acknowledge the current interrupt by writing the LAPIC EOI register.
 pub fn lapic_eoi() {
+    // SAFETY: the EOI register is a LAPIC register and the LAPIC page is mapped
+    // by the time any interrupt handler runs.
     unsafe {
         lapic_write(LAPIC_EOI as u32, 0);
     }
@@ -224,6 +232,7 @@ pub fn lapic_eoi() {
 
 /// Read this CPU's LAPIC ID (upper 8 bits of the LAPIC ID register).
 pub fn lapic_id() -> u32 {
+    // SAFETY: as `lapic_eoi` — the ID register of the mapped LAPIC.
     unsafe { lapic_read(LAPIC_ID as u32) >> 24 }
 }
 
@@ -233,6 +242,8 @@ pub fn lapic_id() -> u32 {
 /// and mask the LVT entries that are not otherwise configured.
 pub fn init_lapic() {
     // Enable the LAPIC and point the spurious vector at a valid vector.
+    // SAFETY: the BSP's own LAPIC page, mapped by `map_device_mmio_page` before
+    // this runs; these are its SVR and TPR registers.
     unsafe {
         let svr = lapic_read(LAPIC_SVR as u32);
         lapic_write(LAPIC_SVR as u32, (svr | SVR_APIC_ENABLE) | SPURIOUS_VECTOR);
@@ -251,6 +262,8 @@ pub fn init_lapic() {
 /// than the BSP path: the LAPIC MMIO mapping is already in place and the
 /// timer/interrupt vectors are shared system-wide.
 pub fn init_lapic_ap() {
+    // SAFETY: as `init_lapic` — the mapping is in place before an AP runs this,
+    // which is what the note above records.
     unsafe {
         let svr = lapic_read(LAPIC_SVR as u32);
         lapic_write(LAPIC_SVR as u32, (svr | SVR_APIC_ENABLE) | SPURIOUS_VECTOR);
