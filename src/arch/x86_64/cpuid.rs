@@ -51,6 +51,10 @@ pub unsafe fn cpuid(leaf: u32, sub_leaf: u32) -> CpuidResult {
     // LLVM reserves rbx as the frame pointer / base register, so we cannot
     // bind it directly with `out("ebx")`.  Save it on the stack around the
     // CPUID instruction and capture the result in a scratch register.
+    // SAFETY: the caller's contract says this runs on bare metal, where CPUID
+    // is available.  The block preserves rbx around the instruction — the
+    // register LLVM keeps its frame pointer in — and clobbers only the four
+    // registers CPUID defines.
     unsafe {
         core::arch::asm!(
             "push rbx",
@@ -74,11 +78,15 @@ pub unsafe fn cpuid(leaf: u32, sub_leaf: u32) -> CpuidResult {
 pub fn has_smep() -> bool {
     // CPUID leaf 7 requires that the CPU supports leaf 7 at all.
     // Check the maximum supported leaf first.
+    // SAFETY: leaf 0 is defined on every x86_64 CPU; it is the query that says
+    // which leaves exist, so it cannot be conditioned on one.
     let max_leaf = unsafe { cpuid(0, 0) }.eax;
     if max_leaf < 7 {
         return false;
     }
 
+    // SAFETY: the `max_leaf < 7` check above says this leaf exists, and the
+    // instruction is read-only.
     let result = unsafe { cpuid(7, 0) };
     result.ebx & CPUID_LEAF_7_EBX_SMEP != 0
 }
@@ -88,11 +96,15 @@ pub fn has_smep() -> bool {
 /// Returns `true` if SMAP is available and it is safe to set CR4.SMAP.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn has_smap() -> bool {
+    // SAFETY: leaf 0 is defined on every x86_64 CPU; it is the query that says
+    // which leaves exist, so it cannot be conditioned on one.
     let max_leaf = unsafe { cpuid(0, 0) }.eax;
     if max_leaf < 7 {
         return false;
     }
 
+    // SAFETY: the `max_leaf < 7` check above says this leaf exists, and the
+    // instruction is read-only.
     let result = unsafe { cpuid(7, 0) };
     result.ebx & CPUID_LEAF_7_EBX_SMAP != 0
 }
@@ -100,6 +112,8 @@ pub fn has_smap() -> bool {
 /// Check whether the CPU advertises RDRAND support (CPUID leaf 1, ECX bit 30).
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn has_rdrand() -> bool {
+    // SAFETY: leaf 1 is defined on every x86_64 CPU (the family/model leaves
+    // predate any feature queried here), and the instruction is read-only.
     let result = unsafe { cpuid(1, 0) };
     result.ecx & CPUID_LEAF_1_ECX_RDRAND != 0
 }
@@ -107,11 +121,15 @@ pub fn has_rdrand() -> bool {
 /// Check whether the CPU advertises RDSEED support (CPUID leaf 7, EBX bit 18).
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn has_rdseed() -> bool {
+    // SAFETY: leaf 0 is defined on every x86_64 CPU; it is the query that says
+    // which leaves exist, so it cannot be conditioned on one.
     let max_leaf = unsafe { cpuid(0, 0) }.eax;
     if max_leaf < 7 {
         return false;
     }
 
+    // SAFETY: the `max_leaf < 7` check above says this leaf exists, and the
+    // instruction is read-only.
     let result = unsafe { cpuid(7, 0) };
     result.ebx & CPUID_LEAF_7_EBX_RDSEED != 0
 }
@@ -121,6 +139,8 @@ pub fn has_rdseed() -> bool {
 /// Returns `true` if it is safe to set CR4.PCIDE and tag CR3 with a PCID.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn has_pcid() -> bool {
+    // SAFETY: leaf 1 is defined on every x86_64 CPU (the family/model leaves
+    // predate any feature queried here), and the instruction is read-only.
     let result = unsafe { cpuid(1, 0) };
     result.ecx & CPUID_LEAF_1_ECX_PCID != 0
 }
@@ -128,11 +148,15 @@ pub fn has_pcid() -> bool {
 /// Check whether the CPU advertises INVPCID support (CPUID leaf 7, EBX bit 10).
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn has_invpcid() -> bool {
+    // SAFETY: leaf 0 is defined on every x86_64 CPU; it is the query that says
+    // which leaves exist, so it cannot be conditioned on one.
     let max_leaf = unsafe { cpuid(0, 0) }.eax;
     if max_leaf < 7 {
         return false;
     }
 
+    // SAFETY: the `max_leaf < 7` check above says this leaf exists, and the
+    // instruction is read-only.
     let result = unsafe { cpuid(7, 0) };
     result.ebx & CPUID_LEAF_7_EBX_INVPCID != 0
 }

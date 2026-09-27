@@ -28,6 +28,8 @@ pub const CR0_TS: u64 = 1 << 3;
 #[inline]
 pub fn read_cr0() -> u64 {
     let value: u64;
+    // SAFETY: a CR0 read at CPL 0 cannot fault and changes nothing; `nomem`
+    // and `nostack` keep the compiler from reordering around it.
     unsafe {
         asm!("mov {}, cr0", out(reg) value, options(nomem, nostack));
     }
@@ -42,6 +44,8 @@ pub fn read_cr0() -> u64 {
 /// protected-mode bits while the MMU is active is catastrophic.
 #[inline]
 pub unsafe fn write_cr0(value: u64) {
+    // SAFETY: the value's bits are the caller's contract, stated above; this
+    // block only performs the move, and `nomem`/`nostack` say so.
     unsafe {
         asm!("mov cr0, {}", in(reg) value, options(nomem, nostack));
     }
@@ -51,6 +55,8 @@ pub unsafe fn write_cr0(value: u64) {
 #[inline]
 pub fn read_cr2() -> u64 {
     let value: u64;
+    // SAFETY: CR2 holds the last page-fault address; reading it at CPL 0 has no
+    // side effects and cannot fault.
     unsafe {
         asm!("mov {}, cr2", out(reg) value, options(nomem, nostack));
     }
@@ -61,6 +67,8 @@ pub fn read_cr2() -> u64 {
 #[inline]
 pub fn read_cr3() -> u64 {
     let value: u64;
+    // SAFETY: reading the active page-table root has no side effects; it does
+    // not flush anything and cannot fault at CPL 0.
     unsafe {
         asm!("mov {}, cr3", out(reg) value, options(nomem, nostack));
     }
@@ -75,6 +83,8 @@ pub fn read_cr3() -> u64 {
 /// point of the switch, or the next instruction fetch faults.
 #[inline]
 pub unsafe fn write_cr3(value: u64) {
+    // SAFETY: the root's validity and mapping are the caller's contract,
+    // stated above; the move itself can do nothing else.
     unsafe {
         asm!("mov cr3, {}", in(reg) value, options(nomem, nostack));
     }
@@ -88,6 +98,8 @@ pub unsafe fn write_cr3(value: u64) {
 /// retained for symmetry with the write helpers.
 #[inline]
 pub unsafe fn read_cr4() -> u64 {
+    // SAFETY: as the doc says, this read cannot fault or change state at
+    // CPL 0; the marker is kept for symmetry with the write helper.
     unsafe {
         let value: u64;
         asm!("mov {}, cr4", out(reg) value, options(nomem, nostack));
@@ -103,6 +115,8 @@ pub unsafe fn read_cr4() -> u64 {
 /// raises a #GP fault, so callers must gate writes on CPUID checks.
 #[inline]
 pub unsafe fn write_cr4(value: u64) {
+    // SAFETY: the contract above covers the bits — a reserved bit raises #GP,
+    // which is the caller's to gate on CPUID — and nothing else is touched.
     unsafe {
         asm!("mov cr4, {}", in(reg) value, options(nomem, nostack));
     }
@@ -134,6 +148,9 @@ pub const CR4_PCIDE: u64 = 1 << 17;
 /// CR0.TS for lazy state switching.
 pub fn enable_fpu() {
     let cr0 = read_cr0();
+    // SAFETY: the value comes from a fresh CR0 read and only clears EM and TS
+    // and sets MP — the FPU-enable sequence the manual prescribes, with every
+    // other bit (including the protected-mode bits) left as it was.
     unsafe {
         write_cr0((cr0 | CR0_MP) & !(CR0_EM | CR0_TS));
     }
@@ -142,7 +159,10 @@ pub fn enable_fpu() {
 /// Enable SSE by advertising FXSAVE/FXRSTOR and unmasked-exception support
 /// in CR4.  Must run after `enable_fpu`, which clears CR0.EM.
 pub fn enable_sse() {
+    // SAFETY: the read is side-effect free, and the write sets only the two
+    // SSE-support bits on a CPU whose EM bit `enable_fpu` has just cleared.
     let new_cr4 = unsafe { read_cr4() } | CR4_OSFXSR | CR4_OSXMMEXCPT;
+    // SAFETY: as above — only OSFXSR and OSXMMEXCPT change.
     unsafe { write_cr4(new_cr4) };
 }
 
@@ -155,7 +175,10 @@ pub fn enable_smep() {
     if !super::cpuid::has_smep() {
         return;
     }
+    // SAFETY: the read is side-effect free.
     let cr4 = unsafe { read_cr4() };
+    // SAFETY: only CR4.SMEP changes, and the CPUID gate above is exactly the
+    // check its contract requires before the bit may be written.
     unsafe { write_cr4(cr4 | CR4_SMEP) };
 }
 
@@ -170,8 +193,13 @@ pub fn enable_smap() {
     if !super::cpuid::has_smap() {
         return;
     }
+    // SAFETY: the read is side-effect free.
     let cr4 = unsafe { read_cr4() };
+    // SAFETY: only CR4.SMAP changes, gated on the CPUID check its contract
+    // requires.
     unsafe { write_cr4(cr4 | CR4_SMAP) };
+    // SAFETY: `set_smap_active` must follow a successful CR4.SMAP write, which
+    // is exactly the line above.
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
     unsafe {
         super::user_access::set_smap_active();
@@ -189,6 +217,10 @@ pub fn enable_pcide() {
     if !super::cpuid::has_pcid() {
         return;
     }
+    // SAFETY: the read is side-effect free.
     let cr4 = unsafe { read_cr4() };
+    // SAFETY: only CR4.PCIDE changes, gated on the CPUID check its contract
+    // requires; the CR3-alignment precondition the doc names holds at this
+    // point in boot.
     unsafe { write_cr4(cr4 | CR4_PCIDE) };
 }
