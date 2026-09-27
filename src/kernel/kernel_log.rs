@@ -125,6 +125,8 @@ impl KernelLogRing {
 
 // SAFETY: the ring buffer is self-contained and only accessed under the Mutex.
 unsafe impl Send for KernelLogRing {}
+// SAFETY: as the `Send` impl above — the ring is accessed only under the
+// Mutex that owns it.
 unsafe impl Sync for KernelLogRing {}
 
 static KLOG: KernelLogRing = KernelLogRing::new();

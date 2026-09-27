@@ -349,6 +349,8 @@ impl Drop for VirtQueue {
 // practice.  The raw pointers inside the PCI variant are stable and
 // never shared across threads without synchronisation.
 unsafe impl Send for VirtQueue {}
+// SAFETY: the queue owns the descriptor rings it was built for, and the
+// transport that hands it out serialises access to them.
 unsafe impl Sync for VirtQueue {}
 
 impl VirtQueue {
@@ -1261,6 +1263,8 @@ impl BareMmioRegion {
 #[cfg(target_os = "none")]
 unsafe impl Send for BareMmioRegion {}
 #[cfg(target_os = "none")]
+// SAFETY: the region wraps a raw pointer to MMIO space that is never
+// deallocated, and the transport serialises the register accesses.
 unsafe impl Sync for BareMmioRegion {}
 
 #[cfg(target_os = "none")]

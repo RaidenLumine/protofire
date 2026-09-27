@@ -361,6 +361,8 @@ mod tests {
     use alloc::sync::Arc;
 
     fn make_test_stack() -> &'static NetworkStack {
+        // SAFETY: the caller's contract is that nothing is using the stack; this
+        // test helper calls it before installing the stack it goes on to use.
         unsafe {
             NetworkStack::uninstall_global();
         }

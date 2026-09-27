@@ -336,9 +336,9 @@ pub struct FramebufferConsole {
     cursor_visible: bool,
 }
 
-// The console is only ever used behind a global SpinLock, and the framebuffer
-// lives in a fixed physical mapping that outlives this struct, so (test)
-// builds where the struct is never constructed are still sound.
+// SAFETY: the console is only ever used behind a global SpinLock, and the
+// framebuffer lives in a fixed physical mapping that outlives this struct, so
+// (test) builds where the struct is never constructed are still sound.
 unsafe impl Send for FramebufferConsole {}
 
 impl FramebufferConsole {

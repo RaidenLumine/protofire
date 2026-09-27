@@ -111,6 +111,9 @@ struct NvmeController {
 // `Arc`).  The raw `bar0` pointer is an identity-mapped MMIO region that is
 // safe to access from any thread.
 unsafe impl Send for NvmeController {}
+// SAFETY: the controller owns its BAR0 mapping and its queue memory, which
+// live for the driver's lifetime, and the `Arc` that hands it out is what
+// serialises access.
 unsafe impl Sync for NvmeController {}
 
 /// Compute the byte offset of an SQ `y` Tail Doorbell from BAR0.

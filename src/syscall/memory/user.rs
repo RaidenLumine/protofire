@@ -151,10 +151,15 @@ pub(crate) unsafe trait PaddingFree: Sized {}
 
 // SAFETY: Rust guarantees integer types have no padding bytes.
 unsafe impl PaddingFree for u8 {}
+// SAFETY: as the integer impl above — `u16` has no padding.
 unsafe impl PaddingFree for u16 {}
+// SAFETY: as above — `u32` has no padding.
 unsafe impl PaddingFree for u32 {}
+// SAFETY: as above — `u64` has no padding.
 unsafe impl PaddingFree for u64 {}
+// SAFETY: as above — `u128` has no padding.
 unsafe impl PaddingFree for u128 {}
+// SAFETY: as above — `usize` has no padding.
 unsafe impl PaddingFree for usize {}
 
 // SAFETY: `[u8; N]` is N consecutive bytes — no padding possible.
@@ -164,8 +169,11 @@ unsafe impl<const N: usize> PaddingFree for [u8; N] {}
 // `usize` fields — verified by inspection: every field has the same alignment,
 // so the compiler inserts no inter-field or trailing padding.
 unsafe impl PaddingFree for crate::abi::diagnostic::SystemInfoRecord {}
+// SAFETY: as the record impl above — the same homogeneous-field argument.
 unsafe impl PaddingFree for crate::abi::diagnostic::AllocProfilerRecord {}
+// SAFETY: as above — the same homogeneous-field argument.
 unsafe impl PaddingFree for crate::abi::diagnostic::FaultProfilerRecord {}
+// SAFETY: as above — the same homogeneous-field argument.
 unsafe impl PaddingFree for crate::abi::fs::DirectoryEntryRecord {}
 
 // SAFETY: `FileStat` is `#[repr(C)]` with two `usize` fields — homogeneous,
@@ -181,6 +189,8 @@ unsafe impl PaddingFree for crate::abi::fs::AccessQueryRecord {}
 // — fields pack at offsets 0, 4, 8, 10 with total size 12 (multiple of
 // alignment 4). No padding.
 unsafe impl PaddingFree for crate::abi::fs::PermissionMetadataRecord {}
+// SAFETY: `FileFlagsRecord` is the same shape as the record above — `u32`,
+// `u32`, `u16`, `u16` packing to 12 bytes — so it has no padding either.
 unsafe impl PaddingFree for crate::abi::fs::FileFlagsRecord {}
 
 // SAFETY: `ProcessSignalRecord` is `#[repr(C)]` with three `usize` fields —

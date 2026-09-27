@@ -258,6 +258,8 @@ unsafe fn write_x86_64_user_exception_frame(frame_pointer: usize, frame: X86_64U
 
 #[cfg(not(target_os = "none"))]
 unsafe fn write_x86_64_user_exception_frame(frame_pointer: usize, frame: X86_64UserExceptionFrame) {
+    // SAFETY: on a host build the pointer addresses ordinary host memory the test
+    // owns — the doc above says so — and the frame is a `Copy` record.
     unsafe {
         (frame_pointer as *mut X86_64UserExceptionFrame).write(frame);
     }
@@ -278,6 +280,7 @@ unsafe fn read_x86_64_user_exception_frame(frame_pointer: usize) -> X86_64UserEx
 
 #[cfg(not(target_os = "none"))]
 unsafe fn read_x86_64_user_exception_frame(frame_pointer: usize) -> X86_64UserExceptionFrame {
+    // SAFETY: as the write above, in the other direction, on a host build.
     unsafe { (frame_pointer as *const X86_64UserExceptionFrame).read() }
 }
 impl Thread {

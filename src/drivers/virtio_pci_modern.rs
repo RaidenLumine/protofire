@@ -124,6 +124,8 @@ pub struct PciModernRegion {
 // is for.  The type cannot say that by itself, which is why the impls are
 // unsafe.
 unsafe impl Send for PciModernRegion {}
+// SAFETY: the adapter owns the MMIO mapping it was built over, which lives
+// for the driver's lifetime, and the driver serialises register access.
 unsafe impl Sync for PciModernRegion {}
 
 impl PciModernRegion {

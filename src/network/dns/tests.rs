@@ -281,6 +281,8 @@ fn resolve_hostname_round_trip_with_stack() {
     use crate::network::udp;
     use alloc::sync::Arc;
 
+    // SAFETY: the caller's contract is that nothing is using the stack; this
+    // test helper calls it before installing the stack it goes on to use.
     unsafe {
         NetworkStack::uninstall_global();
     }
@@ -372,6 +374,8 @@ fn resolve_hostname_round_trip_with_stack() {
     let addr = parse_a_record(&recv_buf[..len]).expect("should parse response");
     assert_eq!(addr, [192, 168, 1, 100]);
 
+    // SAFETY: the caller's contract is that nothing is using the stack; this
+    // test helper calls it before installing the stack it goes on to use.
     unsafe {
         NetworkStack::uninstall_global();
     }

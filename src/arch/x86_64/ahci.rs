@@ -329,6 +329,9 @@ struct AhciPort {
 #[cfg(target_os = "none")]
 unsafe impl Send for AhciPort {}
 #[cfg(target_os = "none")]
+// SAFETY: an `AhciPort` is a handle to the controller's own identity-mapped
+// MMIO window and the command buffers this driver allocated; the mapping is
+// fixed for the machine's lifetime and the driver serialises access to it.
 unsafe impl Sync for AhciPort {}
 
 /// Compute the MMIO address of a port register.

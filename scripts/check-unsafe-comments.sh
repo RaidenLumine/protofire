@@ -13,13 +13,16 @@
 # tree, and a new undocumented block turns the gate red for the change that
 # added it rather than for whoever merges next.
 #
-# The counts are `unsafe block missing a safety comment` diagnostics from
-# clippy's `undocumented_unsafe_blocks` lint.  It counts *diagnostics*, not
-# blocks: an `unsafe impl`, an `unsafe fn` body, and a block inside a macro are
-# reported differently, so a number is only comparable against a baseline
-# produced by the same toolchain (`rust-toolchain.toml`) and the same lint
-# message.  If this script suddenly reports a drop to zero everywhere, suspect
-# that message before believing the cleanup.
+# The counts are the `unsafe block missing a safety comment` and
+# `unsafe impl missing a safety comment` diagnostics from clippy's
+# `undocumented_unsafe_blocks` lint — both of them, because an `unsafe impl`
+# missing its argument is as undocumented as a block and the block-only match
+# this script used to apply left twenty-seven of them uncounted.  It counts
+# *diagnostics*, not source items: an `unsafe fn` body and a block inside a
+# macro are reported differently again, so a number is only comparable against
+# a baseline produced by the same toolchain (`rust-toolchain.toml`) and the
+# same lint messages.  If this script suddenly reports a drop to zero
+# everywhere, suspect those messages before believing the cleanup.
 #
 # The test build is counted with `--all-targets`, so `tests/` is covered.  The
 # three bare-metal targets are counted without it: a lib test target does not
@@ -45,7 +48,12 @@ BASELINE="${BASELINE:-scripts/unsafe-comment-baseline.txt}"
 # configuration no ratchet counts is where debt goes to hide.
 CONFIGS="host x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf aarch64-unknown-linux-gnu"
 
-LINT_MESSAGE="unsafe block missing a safety comment"
+# The lint reports unsafe *blocks* and unsafe *impls* under two messages, and
+# both are counted: the impls were invisible to an earlier version of this
+# script that matched only the block message, which is how twenty-seven of them
+# went without an argument while the baseline said the tree was clean.
+LINT_MESSAGE_BLOCK="unsafe block missing a safety comment"
+LINT_MESSAGE_IMPL="unsafe impl missing a safety comment"
 
 mode=check
 case "${1:-}" in
@@ -92,7 +100,10 @@ measure() {
         exit 1
     fi
 
-    count="$(grep -c -F "$LINT_MESSAGE" "$out" || true)"
+    # One pass over the log with both messages as patterns: `grep -c` counts
+    # the lines that match either, and prints `0` rather than failing when the
+    # tree is clean.
+    count="$(grep -c -F -e "$LINT_MESSAGE_BLOCK" -e "$LINT_MESSAGE_IMPL" "$out" || true)"
     printf '%s %s\n' "$config" "$count" >>"$work/measured.txt"
 }
 
@@ -163,10 +174,10 @@ for config in $CONFIGS; do
 
     count="$(measured_for "$config")"
     if [ "$count" -gt "$baseline" ]; then
-        printf 'unsafe comments: %s has %s undocumented blocks, baseline is %s\n' \
+        printf 'unsafe comments: %s has %s undocumented blocks or impls, baseline is %s\n' \
             "$config" "$count" "$baseline" >&2
-        printf '  a new `unsafe` block needs a `// SAFETY:` comment saying why the\n' >&2
-        printf '  invariants hold there (docs/fmts/unsafe-and-safety.md §3)\n' >&2
+        printf '  a new `unsafe` block or `impl` needs a `// SAFETY:` comment saying\n' >&2
+        printf '  why the invariants hold there (docs/fmts/unsafe-and-safety.md §3)\n' >&2
         failed=1
     elif [ "$count" -lt "$baseline" ]; then
         printf 'unsafe comments: %s dropped from %s to %s\n' \

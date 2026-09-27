@@ -148,6 +148,8 @@ pub struct PciLegacyMmioRegion {
 #[cfg(target_os = "none")]
 unsafe impl Send for PciLegacyMmioRegion {}
 #[cfg(target_os = "none")]
+// SAFETY: the adapter holds an IO-port base and a descriptor-address cache,
+// both of which the driver-level Mutex serialises access to.
 unsafe impl Sync for PciLegacyMmioRegion {}
 
 #[cfg(target_os = "none")]

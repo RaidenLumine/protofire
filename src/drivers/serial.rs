@@ -391,6 +391,8 @@ mod tests {
         let second = scheduler.spawn_named("serial-reader-b", 0x2000);
         let third = scheduler.spawn_named("serial-producer", 0x3000);
 
+        // SAFETY: the test lock serialises the tests that share the global
+        // scheduler slot, and each installs its own before touching it.
         unsafe {
             scheduler.install_global_unchecked();
         }
@@ -422,6 +424,7 @@ mod tests {
         let first = scheduler.spawn_named("serial-reader", 0x1000);
         let _second = scheduler.spawn_named("serial-worker", 0x2000);
 
+        // SAFETY: as above — the same test lock, this test's own scheduler.
         unsafe {
             scheduler.install_global_unchecked();
         }
@@ -458,6 +461,7 @@ mod tests {
         let scheduler = Scheduler::new();
         let first = scheduler.spawn_named("serial-reader", 0x1000);
 
+        // SAFETY: as above — the same test lock, this test's own scheduler.
         unsafe {
             scheduler.install_global_unchecked();
         }

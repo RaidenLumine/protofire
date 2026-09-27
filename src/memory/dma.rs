@@ -45,6 +45,8 @@ pub struct DmaBuffer {
 // when the kernel migrates to SMP.  Sync is likewise safe because the buffer
 // is not aliased.
 unsafe impl Send for DmaBuffer {}
+// SAFETY: a `DmaBuffer` owns its allocation and the physical address of it;
+// moving that between threads moves the only handle.
 unsafe impl Sync for DmaBuffer {}
 
 impl DmaBuffer {

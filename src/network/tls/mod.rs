@@ -567,7 +567,12 @@ impl core::fmt::Debug for TlsWrappedConnection {
 // Interior mutability via `Mutex`; the `Arc` in `KernelObject::TlsConnection`
 // provides shared ownership for clone semantics.
 #[allow(clippy::non_send_fields_in_send_ty)]
+// SAFETY: the wrapped handle is shared through an `Arc` and its interior is
+// behind a `Mutex`, so sending one between threads moves a share of an
+// already-synchronised value.
 unsafe impl Send for TlsWrappedConnection {}
+// SAFETY: as the `Send` impl above — parallel access goes through the same
+// `Mutex`.
 unsafe impl Sync for TlsWrappedConnection {}
 
 impl TlsWrappedConnection {

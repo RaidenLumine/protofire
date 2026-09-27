@@ -689,6 +689,8 @@ mod tests {
     use alloc::sync::Arc;
 
     fn make_stack() -> (&'static NetworkStack, Arc<MockNetworkDevice>) {
+        // SAFETY: the caller's contract is that nothing is using the stack; this
+        // test helper calls it before installing the stack it goes on to use.
         unsafe {
             NetworkStack::uninstall_global();
         }
@@ -722,6 +724,8 @@ mod tests {
         assert_eq!(seg.header.service_code, Some(0x1234));
 
         stack.dccp_table().lock().remove(&conn.key());
+        // SAFETY: the caller's contract is that nothing is using the stack; this
+        // test helper calls it before installing the stack it goes on to use.
         unsafe {
             NetworkStack::uninstall_global();
         }

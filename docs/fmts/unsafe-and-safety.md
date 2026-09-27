@@ -11,15 +11,17 @@ consequences. When a kernel dereferences a user-supplied address without
 checking it, the result is not a segfault in a sandboxed process; it is the
 machine.
 
-The tree contains roughly 1,500 `unsafe` blocks, 282 `unsafe fn` declarations,
-65 `unsafe impl`s, 195 inline-asm blocks, and 332 volatile accesses, across 179
-of the 624 `.rs` files in `src/` and `tests/`. Most of those blocks carry no
-safety argument yet — 870 of them in the x86_64 kernel build, 785 in the host
-build, as `clippy::undocumented_unsafe_blocks` counts them — and that number is
-held by a ratchet rather than a `deny`: a new undocumented block turns
-`make check-unsafe-comments` red, while writing the argument for an existing one
-is a debt paid down at whatever pace the work around it allows. What keeps the
-code sound is the convention below, applied consistently and reviewed
+The tree contains roughly 1,280 `unsafe` blocks, 289 `unsafe fn` declarations,
+66 `unsafe impl`s, 181 inline-asm blocks, and 332 volatile accesses, across 676
+`.rs` files in `src/` and `tests/`. Every one of them carries an argument:
+`clippy::undocumented_unsafe_blocks` reports zero in all five configurations,
+and `make clippy`, `make clippy-targets` and `make check-unsafe-comments` all
+deny a new one. That is a state the tree reached on 2026-09-27, from 549
+undocumented blocks in the x86_64 build and 378 in the host build, by writing
+the argument for each block rather than a comment-shaped placeholder — and the
+work found real defects along the way, because an argument that has to name the
+bound a read relies on is an argument that notices when there is none. What
+keeps the code sound is the convention below, applied consistently and reviewed
 carefully. This document is that convention.
 
 ---
@@ -106,23 +108,30 @@ precondition genuinely cannot be established at the call boundary (a layout the
 caller knows and the callee does not, an initialisation ordering the caller
 controls).
 
-### The ratchet
+### The ratchet, and the gate it became
 
-`clippy::undocumented_unsafe_blocks` is enabled for the four configurations the
-kernel is built in, but counted rather than denied.
+`clippy::undocumented_unsafe_blocks` is denied in every configuration the
+kernel is built in — the host, the three machine targets, and the aarch64 host,
+by `make clippy` and `make clippy-targets`. That is a hard gate on new work: an
+`unsafe` block or `unsafe impl` without an argument fails the build.
+
 [`scripts/check-unsafe-comments.sh`](../../scripts/check-unsafe-comments.sh)
-reads [`scripts/unsafe-comment-baseline.txt`](../../scripts/unsafe-comment-baseline.txt)
-and fails the gate when any configuration reports **more** undocumented blocks
-than the baseline records. A count that **falls** has to be re-recorded in the
+remains as the second, independent census. It reads
+[`scripts/unsafe-comment-baseline.txt`](../../scripts/unsafe-comment-baseline.txt)
+and fails when any configuration reports **more** undocumented blocks or impls
+than the baseline records; a count that **falls** has to be re-recorded in the
 same change (`sh scripts/check-unsafe-comments.sh --record`), so the baseline
-always tells the truth about the tree.
+always tells the truth about the tree. It counted only *blocks* until
+2026-09-27, which is how twenty-seven undocumented `unsafe impl`s sat in the
+tree while the baseline row said zero — both messages are counted now.
 
-The reason for a ratchet instead of `#![deny(...)]` is the state the tree is in:
-a deny fails almost three thousand times today, and the only way to make it pass
-in one change is to paste a comment onto every block — which is precisely the
-failure mode the paragraph above warns about. A `// SAFETY:` that restates the
-code teaches the next reader to skip them. The ratchet makes every *new* block
-pay for itself, and leaves the existing ones to be paid down deliberately.
+It held that line while the tree was being paid down, at 549 undocumented blocks
+in the x86_64 build and 378 in the host build, and it was the reason the work
+could be done one file at a time instead of in one change that pasted a comment
+onto every block. With the counts at zero the two jobs the ratchet did — "fail a
+new block" and "record the debt honestly" — are done by the deny and by empty
+rows respectively; what is left is the census, which would still catch a
+configuration no clippy target covers.
 
 Two consequences are worth knowing:
 

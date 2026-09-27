@@ -465,6 +465,8 @@ mod tests {
     #[test]
     fn pvd_valid() {
         let buf = build_pvd_bytes(0x01, b"CD001", 2048);
+        // SAFETY: `buf` is a test-built sector and `Pvd` is a packed descriptor that
+        // starts at its beginning, so the unaligned copy needs no alignment.
         let pvd = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Pvd) };
         assert!(pvd.is_valid());
     }
@@ -472,6 +474,7 @@ mod tests {
     #[test]
     fn pvd_block_size() {
         let buf = build_pvd_bytes(0x01, b"CD001", 2048);
+        // SAFETY: as above — the same test-built sector, read as a descriptor.
         let pvd = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Pvd) };
         assert_eq!(pvd.block_size(), 2048);
     }
@@ -479,6 +482,7 @@ mod tests {
     #[test]
     fn pvd_invalid_type() {
         let buf = build_pvd_bytes(0x02, b"CD001", 2048);
+        // SAFETY: as above — the same construction with a wrong type byte.
         let pvd = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Pvd) };
         assert!(!pvd.is_valid());
     }
@@ -486,6 +490,7 @@ mod tests {
     #[test]
     fn pvd_invalid_magic() {
         let buf = build_pvd_bytes(0x01, b"WRONG", 2048);
+        // SAFETY: as above — the same construction with a wrong identifier.
         let pvd = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Pvd) };
         assert!(!pvd.is_valid());
     }

@@ -397,8 +397,14 @@ build-riscv64-demo:
 
 build: build-x8664
 
+# `-D clippy::undocumented_unsafe_blocks` is spelled out because the lint is
+# allow-by-default: `-D warnings` alone does not turn it on.  The tree reached
+# zero undocumented blocks and impls on 2026-09-27, which is when the ratchet
+# that held the line could stop being the only thing watching for them; see
+# docs/fmts/unsafe-and-safety.md §3.
 clippy:
-	$(CARGO) clippy $(CARGO_FLAGS) --all-targets -- -D warnings
+	$(CARGO) clippy $(CARGO_FLAGS) --all-targets -- \
+		-D warnings -D clippy::undocumented_unsafe_blocks
 
 # `clippy` above runs over the host target, and the machine-specific files —
 # the drivers, the interrupt controllers, each architecture's page tables — are
@@ -413,7 +419,8 @@ CLIPPY_TARGETS = x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none
 clippy-targets:
 	@for target in $(CLIPPY_TARGETS); do \
 		echo "==> clippy $$target"; \
-		$(CARGO) clippy $(CARGO_FLAGS) --target $$target -- -D warnings || exit 1; \
+		$(CARGO) clippy $(CARGO_FLAGS) --target $$target -- \
+			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
 	done
 
 # Run targets are pure serial-terminal sessions: QEMU opens no window and no

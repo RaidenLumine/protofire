@@ -598,6 +598,8 @@ fn process_net_tx_virtqueue(
         // Copy the data into the mock TX buffer
         if let Some((ptr, len)) = data_buf {
             let mut packet = alloc::vec![0u8; len];
+            // SAFETY: the mock device handed over a buffer of `len` bytes at `ptr`, which
+            // is exactly what the copy moves into the packet.
             unsafe {
                 core::ptr::copy_nonoverlapping(ptr, packet.as_mut_ptr(), len);
             }
@@ -651,6 +653,8 @@ fn process_net_rx_virtqueue(queue: &mut VirtQueue, packet: &[u8]) -> Result<()> 
     let copy_len = packet.len().min(max_data);
 
     // Write the header (flags=0 → no checksum offload information).
+    // SAFETY: `header_addr` is the descriptor this driver published for the TX
+    // slot, and the header is written at its start.
     unsafe {
         core::ptr::write_volatile(
             header_addr,

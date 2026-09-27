@@ -229,6 +229,8 @@ mod tests {
         let ready_probes = Cell::new(0);
         let timeout_callbacks = Cell::new(0);
 
+        // SAFETY: the scheduler is a local that outlives every use of the global slot
+        // below, and the slot is only read through this test's own calls.
         unsafe {
             scheduler.install_global_unchecked();
         }
@@ -269,6 +271,7 @@ mod tests {
         let scheduler = Scheduler::new();
         let timeout_callbacks = Cell::new(0);
 
+        // SAFETY: as above — this test's own scheduler, alive for its duration.
         unsafe {
             scheduler.install_global_unchecked();
         }

@@ -44,6 +44,8 @@ pub struct KernelGlobalAllocator {
     pub profiler: AllocProfiler,
 }
 
+// SAFETY: the allocator's state sits behind an `UnsafeCell` that every access
+// takes the allocator's own lock around, which is what `&self` sharing needs.
 unsafe impl Sync for KernelGlobalAllocator {}
 
 impl Default for KernelGlobalAllocator {
@@ -547,6 +549,9 @@ impl KernelGlobalAllocator {
 
 // ─── GlobalAlloc impl ─────────────────────────────────────────────────────
 
+// SAFETY: the `GlobalAlloc` methods take `&self` and reach the state only
+// through `with_state`, which holds the allocator's lock for the duration of
+// each call.
 unsafe impl GlobalAlloc for KernelGlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         self.with_state(|state| {

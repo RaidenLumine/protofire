@@ -185,6 +185,9 @@ impl NetworkStack {
     /// Caller must ensure no concurrent access to the stack is in flight.
     #[cfg(test)]
     pub unsafe fn uninstall_global() {
+        // SAFETY: the caller's contract — no concurrent access in flight — is what
+        // makes swapping the global pointer safe, and the test helpers that call this
+        // do so before installing their own stack.
         unsafe {
             let ptr = swap_global_stack(core::ptr::null_mut());
             if !ptr.is_null() {
@@ -200,4 +203,6 @@ impl NetworkStack {
 // Host tests may use multiple threads but all mutable state is behind
 // Mutex or Atomic.
 unsafe impl Send for NetworkStack {}
+// SAFETY: the stack's mutable state is behind `Mutex` and atomics, so a
+// shared reference to it is what those synchronise.
 unsafe impl Sync for NetworkStack {}

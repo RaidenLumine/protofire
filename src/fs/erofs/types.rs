@@ -93,6 +93,8 @@ pub(crate) struct ErofsSuperblock {
 
 // SAFETY: the superblock is read from a byte buffer.
 unsafe impl Send for ErofsSuperblock {}
+// SAFETY: as the `Send` impl above — a plain `#[repr(C)]` superblock record
+// with no interior mutability.
 unsafe impl Sync for ErofsSuperblock {}
 
 impl ErofsSuperblock {

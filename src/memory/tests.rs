@@ -183,6 +183,8 @@ fn global_lock_refuses_reentry_and_clears_the_owner_on_release() {
     // rest of the unit-test binary sees the state it started with.
     let memory: &'static mut MemoryManager = Box::leak(Box::new(MemoryManager::new()));
     memory.init();
+    // SAFETY: the manager was leaked on the line above, so it lives for the rest
+    // of the test binary; this hook exists only for tests.
     unsafe { super::install_global_for_tests(memory) };
 
     let guard = super::global_mut().expect("manager installed");

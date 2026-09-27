@@ -18,7 +18,11 @@ pub struct SpinLock<T> {
     value: UnsafeCell<T>,
 }
 
+// SAFETY: a `SpinLock<T>` is a mutex over its `T`: sending it moves the only
+// handle, and sharing it is what the lock is for, given `T: Send`.
 unsafe impl<T: Send> Send for SpinLock<T> {}
+// SAFETY: as the `Send` impl above — the lock serialises every access to the
+// `UnsafeCell` inside, so `&SpinLock<T>` is safe to share.
 unsafe impl<T: Send> Sync for SpinLock<T> {}
 
 impl<T> SpinLock<T> {
