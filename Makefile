@@ -430,13 +430,19 @@ clippy:
 # exactly that shape (`src/memory/tests.rs` calling a lock-owner query that was
 # compiled out when the host was not x86_64) reached an aarch64 CI runner
 # because this loop did not build that configuration's tests.
-CLIPPY_TARGETS = x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf aarch64-unknown-linux-gnu
+# `aarch64-unknown-linux-gnu` stands in for the CI runner that is an aarch64
+# machine; `x86_64-apple-darwin` stands in for the macOS and Windows ones, whose
+# `target_os` is the one thing that differs from Linux here.  Both are host
+# configurations, so both take `--all-targets`.  Neither check is a substitute
+# for the runner — a Windows-only `cfg` would still slip through — but between
+# them they cover every configuration a test file can fail to compile in.
+CLIPPY_TARGETS = x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf aarch64-unknown-linux-gnu x86_64-apple-darwin
 
 clippy-targets:
 	@for target in $(CLIPPY_TARGETS); do \
 		echo "==> clippy $$target"; \
 		case "$$target" in \
-			aarch64-unknown-linux-gnu) extra="--all-targets" ;; \
+			aarch64-unknown-linux-gnu|x86_64-apple-darwin) extra="--all-targets" ;; \
 			*) extra="" ;; \
 		esac; \
 		$(CARGO) clippy $(CARGO_FLAGS) $$extra --target $$target -- \

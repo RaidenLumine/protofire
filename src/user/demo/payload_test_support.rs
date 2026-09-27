@@ -14,13 +14,19 @@
 //! calling test silently skips.
 
 // A helper here is reached by the payload tests of the architecture it
-// describes: the x86_64 disassembler by the x86_64 payload tests, the branch
-// checkers by the aarch64 and riscv64 ones.  A test binary of another
-// architecture therefore compiles functions it cannot call — which is the one
-// configuration this allowance covers.  Gating on the OS instead (as this
-// attribute used to) both missed the Linux aarch64 host and silenced the lint
-// on the hosts where every helper does have a caller.
-#![cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+// describes, and those tests only exist where the payload they inspect does:
+// the x86_64 disassembler parses the *running test binary*, so it has a caller
+// only on a Linux x86_64 host — a payload module is a stub everywhere else,
+// including the x86_64 macOS and Windows hosts, whose binaries are not ELF.
+// The branch checkers read a cross-compiled kernel image instead and so are
+// reached from any host.
+//
+// The one configuration where every helper has a caller is therefore Linux on
+// x86_64, and that is the only one this allowance leaves the lint watching.
+#![cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    allow(dead_code)
+)]
 
 use alloc::format;
 use alloc::string::String;

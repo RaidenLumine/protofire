@@ -9,9 +9,14 @@ components = ["clippy", "rustfmt", "llvm-tools-preview"]
 # configuration: every architecture module is written to compile on a host as
 # well, and `check-aarch64-host` is what asks.  It has to be installed for the
 # check to be able to run at all — on a machine that is not aarch64.
+#
+# `x86_64-apple-darwin` is here for `make clippy-targets`, which lints the
+# test suite the way the macOS and Windows CI jobs do (their `target_os` is the
+# difference that matters).  It needs no linker: the check stops at clippy.
 targets = [
     "x86_64-unknown-none",
     "aarch64-unknown-none",
     "riscv64gc-unknown-none-elf",
     "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
 ]
