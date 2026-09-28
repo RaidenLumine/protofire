@@ -51,6 +51,19 @@
 //! `spawn_process_with` and `wait_process_blocking`.  So the demo stops inside
 //! a launch, or in the return from that handler, and every service that should
 //! have been restarted is still waiting when the log ends.
+//!
+//! It has not been reproduced on demand since, and the amplifiers that would
+//! normally prise a race like this open have all been tried against it: sixty
+//! odd boots in a row; four guests at once; a host loaded with four busy
+//! cores; the churn build; a delay added to init, which is the recipe above; a
+//! widened window inside the launch syscall; and stopping and continuing the
+//! guest from the monitor every 120 ms for the whole boot.  Every one of them
+//! came back clean, which is worth knowing before anyone spends a day
+//! repeating them.  What is *not* known is where the guest is when it stops,
+//! and that is the first question: `scripts/probe-x8664-demo-stall.sh` boots
+//! this demo and, if it stops, asks the QEMU monitor for the guest's
+//! registers — the instruction pointer says whether the stall is in user code
+//! or in the kernel, which the log cannot say, because the log has stopped.
 
 /// How many stacks to ask for.
 ///
