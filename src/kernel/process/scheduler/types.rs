@@ -66,6 +66,16 @@ pub struct SchedulerHotspotStats {
     /// scheduler's view, and the placement watchdog can only see its
     /// consequence.
     pub dropped_current_count: u64,
+    /// A thread was terminated with no current thread on this CPU.
+    ///
+    /// The termination path runs for a thread and then hands the CPU to the
+    /// scheduler.  Reaching it with the current slot already empty is a bug
+    /// in whoever asked for the termination — and it used to end the machine
+    /// *silently*: the path parked the CPU with interrupts masked, so no
+    /// timer tick ever came again and the log simply stopped.  It says so
+    /// now, and waits wakeably, so the number is what turns this into a
+    /// finding rather than a hang with no evidence.
+    pub termination_without_thread_count: u64,
 }
 
 impl SchedulerHotspotStats {
@@ -115,6 +125,11 @@ impl SchedulerHotspotStats {
 
     pub(crate) fn observe_dropped_current(&mut self) {
         self.dropped_current_count = self.dropped_current_count.saturating_add(1);
+    }
+
+    pub(crate) fn observe_termination_without_thread(&mut self) {
+        self.termination_without_thread_count =
+            self.termination_without_thread_count.saturating_add(1);
     }
 }
 

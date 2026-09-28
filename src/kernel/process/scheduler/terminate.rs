@@ -318,9 +318,10 @@ impl Scheduler {
 
         let Some(current_thread) = self.finish_current_thread(reason) else {
             self.restore_kernel_address_space();
-            loop {
-                arch::instructions::hlt();
-            }
+            self.park_after_termination(
+                "a thread was terminated with no current thread on this CPU",
+                reason,
+            );
         };
 
         if !arch::supports_context_switch() {
@@ -346,8 +347,48 @@ impl Scheduler {
             }
         }
 
+        self.park_after_termination(
+            "a thread that had already been terminated was dispatched again",
+            None,
+        );
+    }
+
+    /// Say why the termination path stopped, then wait *wakeably*.
+    ///
+    /// What this replaces is the important part: both sites used to disable
+    /// interrupts and park the CPU in a bare `hlt` loop.  Masked interrupts
+    /// are never delivered to a halted CPU, so that machine never takes
+    /// another timer tick, never prints anything again, and never says why —
+    /// a serial log that simply ends, which is indistinguishable from a hung
+    /// device and is the worst possible way to stop.
+    ///
+    /// So it says so once, and then waits with interrupts enabled: the clock
+    /// keeps running, the machine can still be woken (and inspected), and the
+    /// log names the site rather than trailing off.
+    fn park_after_termination(&self, site: &'static str, reason: Option<TerminationReason>) -> ! {
+        self.record_termination_without_thread(site, reason);
+        arch::interrupts::enable();
         loop {
-            arch::instructions::hlt();
+            arch::instructions::idle();
+        }
+    }
+
+    /// Count a termination that found no thread to hand the CPU over from.
+    pub(crate) fn record_termination_without_thread(
+        &self,
+        site: &'static str,
+        reason: Option<TerminationReason>,
+    ) {
+        let mut stats = self.hotspot_stats.lock();
+        stats.observe_termination_without_thread();
+        let first = stats.termination_without_thread_count == 1;
+        drop(stats);
+        if first {
+            crate::println!(
+                "[sched ] {} (reason={:?}): parking with interrupts enabled",
+                site,
+                reason
+            );
         }
     }
 }

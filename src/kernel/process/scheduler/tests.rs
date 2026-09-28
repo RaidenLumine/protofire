@@ -564,6 +564,43 @@ mod tests {
     }
 
     #[test]
+    fn a_termination_with_no_current_thread_is_counted_once() {
+        // The termination path hands the CPU to the scheduler, and it used to
+        // do that from a CPU it had parked with interrupts masked when it
+        // found no current thread to hand over *from*.  Masked interrupts are
+        // never delivered to a halted CPU, so that machine never took another
+        // timer tick and never printed again — a log that stops with nothing
+        // in it to say why.  The counter is what makes the next one a finding,
+        // and the print is gated on its first increment so a machine that
+        // loops here cannot turn one bug into a serial flood.
+        let scheduler = Scheduler::new();
+        assert_eq!(
+            scheduler.hotspot_stats().termination_without_thread_count,
+            0
+        );
+
+        scheduler.record_termination_without_thread(
+            "a thread was terminated with no current thread on this CPU",
+            None,
+        );
+        assert_eq!(
+            scheduler.hotspot_stats().termination_without_thread_count,
+            1
+        );
+
+        // The site is carried through as text, so a second one from a
+        // different place still counts even though it does not print.
+        scheduler.record_termination_without_thread(
+            "a thread that had already been terminated was dispatched again",
+            None,
+        );
+        assert_eq!(
+            scheduler.hotspot_stats().termination_without_thread_count,
+            2
+        );
+    }
+
+    #[test]
     fn a_live_process_with_no_placed_thread_is_counted() {
         // A process the scheduler can no longer find in any queue is a
         // process it will never run again — but one look cannot say so.  Every
