@@ -159,7 +159,7 @@ pub(crate) fn has_dispatchable_ready_thread(
 /// queue for the priority it happens to have now.  Asking only that one queue
 /// is how the same thread ends up queued twice, and a thread queued twice can
 /// be dispatched twice.
-fn remove_queued_thread(
+pub(crate) fn remove_queued_thread(
     ready_queues: &mut [VecDeque<Arc<Thread>>; THREAD_PRIORITY_COUNT],
     thread: &Thread,
 ) -> bool {

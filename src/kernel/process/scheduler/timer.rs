@@ -355,13 +355,18 @@ impl Scheduler {
 
     pub(crate) fn boost_starved_threads(&self) {
         let mut ready_queues = self.ready_queues.lock();
-        let normal_queue = &mut ready_queues[ThreadPriority::Normal as usize];
         let boost_threshold = BOOST_THRESHOLD_TICKS;
         let boost_duration = BOOST_DURATION_TICKS;
+        // A boost only ever moves a thread from one queue to another.  The
+        // count is checked at the end of the pass, because the way this went
+        // wrong was a removal that took a thread out of every queue and never
+        // put it back — and a queue that silently loses an entry is a machine
+        // that stops one process later with nothing to show for it.
+        let queued_before = ready_queue_len(&ready_queues);
 
         // Increment waiting ticks for ready Normal threads and check for boost.
         let mut boosted = Vec::new();
-        for thread in normal_queue.iter() {
+        for thread in ready_queues[ThreadPriority::Normal as usize].iter() {
             let waiting = thread.inc_waiting_ticks();
             if waiting >= boost_threshold {
                 boosted.push(thread.clone());
@@ -369,36 +374,53 @@ impl Scheduler {
         }
 
         if !boosted.is_empty() {
-            // Retain non-boosted threads; remove boosted ones.
-            normal_queue.retain(|t| !boosted.iter().any(|b| b.tid() == t.tid()));
-            // Promote boosted threads to High priority.
-            let high_queue = &mut ready_queues[ThreadPriority::High as usize];
             for thread in &boosted {
                 thread.reset_waiting_ticks();
                 thread.set_time_slice_remaining(boost_duration);
                 thread.set_priority(ThreadPriority::High);
                 thread.set_boosted(true);
-                high_queue.push_back(thread.clone());
+            }
+            // Promote each thread by *moving* it: out of every queue by its
+            // identity, then back in at its new priority.  Matching the
+            // promotion on the tid took every thread that shared one out of
+            // the queue and put back only the promoted one — and every process
+            // numbers its threads from one, so a service and its neighbour are
+            // both tid 1.  The thread left behind was ready and in no queue,
+            // which is the scheduler's one unrecoverable state.
+            for thread in &boosted {
+                remove_queued_thread(&mut ready_queues, thread);
+            }
+            for thread in &boosted {
+                ready_queues[ThreadPriority::High as usize].push_back(thread.clone());
             }
         }
 
         // Demote boosted threads that have used up their boost time slice.
-        let high_queue = &mut ready_queues[ThreadPriority::High as usize];
         let mut demoted = Vec::new();
-        for thread in high_queue.iter() {
+        for thread in ready_queues[ThreadPriority::High as usize].iter() {
             if thread.is_boosted() && thread.time_slice_remaining() == 0 {
                 demoted.push(thread.clone());
             }
         }
         if !demoted.is_empty() {
-            high_queue.retain(|t| !demoted.iter().any(|d| d.tid() == t.tid()));
-            let normal_queue = &mut ready_queues[ThreadPriority::Normal as usize];
             for thread in &demoted {
                 thread.set_boosted(false);
                 thread.set_priority(ThreadPriority::Normal);
-                normal_queue.push_back(thread.clone());
+            }
+            // The same move, the other way, for the same reason.
+            for thread in &demoted {
+                remove_queued_thread(&mut ready_queues, thread);
+            }
+            for thread in &demoted {
+                ready_queues[ThreadPriority::Normal as usize].push_back(thread.clone());
             }
         }
+
+        debug_assert_eq!(
+            ready_queue_len(&ready_queues),
+            queued_before,
+            "the starvation boost moves threads between queues; it must not lose one"
+        );
     }
 
     /// Compute the CPU-busy ratio over the last second and push it into

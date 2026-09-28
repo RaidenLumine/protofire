@@ -362,6 +362,98 @@ mod tests {
     }
 
     #[test]
+    fn a_starvation_boost_leaves_a_tid_twin_queued() {
+        use super::super::BOOST_THRESHOLD_TICKS;
+
+        // Every process numbers its threads from one, so two of the demo
+        // services are both pid=N tid=1.  The starvation boost promotes a
+        // thread by *removing* it from the ready queues and putting it back at
+        // a higher priority; that removal has to name the thread, not the
+        // number it shares with another process's thread.
+        let scheduler = Scheduler::new();
+        let process_a = Process::new(71, "boost-a");
+        let process_b = Process::new(72, "boost-b");
+        let first = Thread::new_kernel(process_a.clone(), idle_entry);
+        let second = Thread::new_kernel(process_b.clone(), idle_entry);
+        assert_eq!(
+            first.tid(),
+            second.tid(),
+            "the test is only interesting when the two threads share a tid"
+        );
+
+        {
+            let mut queues = scheduler.ready_queues.lock();
+            assert!(enqueue_ready_thread(&mut queues, first.clone()).enqueued());
+        }
+        // Bring the first thread to the edge of the boost threshold, then let
+        // the second join the same queue behind it.  The pass that promotes
+        // the first must not take the second with it.
+        for _ in 0..BOOST_THRESHOLD_TICKS - 1 {
+            scheduler.boost_starved_threads();
+        }
+        {
+            let mut queues = scheduler.ready_queues.lock();
+            assert!(enqueue_ready_thread(&mut queues, second.clone()).enqueued());
+        }
+        scheduler.boost_starved_threads();
+
+        let queues = scheduler.ready_queues.lock();
+        let queued: usize = queues.iter().map(|queue| queue.len()).sum();
+        assert_eq!(
+            queued, 2,
+            "a starvation boost dropped a thread it did not promote: the \
+             thread is ready and in no queue, so nothing will run it again"
+        );
+        assert_eq!(queues[ThreadPriority::High as usize].len(), 1);
+        assert_eq!(queues[ThreadPriority::Normal as usize].len(), 1);
+    }
+
+    #[test]
+    fn a_boost_expiry_leaves_a_tid_twin_queued() {
+        use super::super::BOOST_THRESHOLD_TICKS;
+
+        // The same removal on the way back down: a boosted thread that has
+        // used up its slice returns to Normal, and the `retain` that takes it
+        // out of the High queue must not take the other tid-1 thread with it.
+        let scheduler = Scheduler::new();
+        let process_a = Process::new(73, "expire-a");
+        let process_b = Process::new(74, "expire-b");
+        let first = Thread::new_kernel(process_a.clone(), idle_entry);
+        let second = Thread::new_kernel(process_b.clone(), idle_entry);
+        assert_eq!(first.tid(), second.tid());
+
+        let enqueue = |thread: &Arc<Thread>| {
+            let mut queues = scheduler.ready_queues.lock();
+            assert!(enqueue_ready_thread(&mut queues, thread.clone()).enqueued());
+        };
+
+        enqueue(&first);
+        for _ in 0..BOOST_THRESHOLD_TICKS {
+            scheduler.boost_starved_threads();
+        }
+        assert!(first.is_boosted(), "the first thread should be boosted");
+        enqueue(&second);
+        for _ in 0..BOOST_THRESHOLD_TICKS {
+            scheduler.boost_starved_threads();
+        }
+        assert!(second.is_boosted(), "the second thread should be boosted");
+
+        // Spend the first thread's boost quantum; the pass that demotes it
+        // must leave the second where it is.
+        first.set_time_slice_remaining(0);
+        scheduler.boost_starved_threads();
+
+        let queues = scheduler.ready_queues.lock();
+        let queued: usize = queues.iter().map(|queue| queue.len()).sum();
+        assert_eq!(
+            queued, 2,
+            "a boost expiry dropped a thread it did not demote"
+        );
+        assert_eq!(queues[ThreadPriority::High as usize].len(), 1);
+        assert_eq!(queues[ThreadPriority::Normal as usize].len(), 1);
+    }
+
+    #[test]
     fn thread_has_dispatch_address_space_predicates() {
         let process = Process::new(13, "dispatch-space");
         // Kernel threads share the kernel address space: always dispatchable.
