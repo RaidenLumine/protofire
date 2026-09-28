@@ -1,27 +1,28 @@
 //! src/arch/riscv64/pci.rs
 //!
-//! RISC-V 64 PCIe: where the ECAM window is, and wiring MSI-X to the IMSIC.
+//! RISC-V 64 PCIe: the shared walk, and wiring MSI-X to the IMSIC.
 //!
 //! Configuration space itself is the shared walk in [`crate::arch::pci`] —
 //! the register offsets, the BAR probes, the capability chain, the bus scan —
-//! and it is the same code the other architectures run.  What is here is the
-//! platform's part:
+//! and it is the same code the other architectures run.  What is left for
+//! this platform to add is the enumeration: nothing here finds a window and
+//! walks it, so nothing here says where one is.  The device-tree node it
+//! would read is the same `pci-host-ecam-generic` one aarch64 reads, and QEMU
+//! `virt` places the window at `0x3000_0000`, inside the identity-mapped
+//! device window — a boot-time scan is the missing piece, and `ROADMAP.md`
+//! lists it as one.
 //!
-//! - **Discovery.**  The device tree describes the window with a `compatible =
-//!   "pci-host-ecam-generic"` node, and QEMU `virt` places it at `0x3000_0000`,
-//!   inside the identity-mapped device window, so the walk can read the
-//!   physical address directly.
-//! - **MSI-X to the IMSIC.**  [`pci_enable_msix`] is the RISC-V half of an
-//!   interrupt path with no callers yet; the module note in
-//!   [`super::aia_imsic`] records what finishing it needs, which is a
-//!   `siselect`/`sireg` rework of that controller rather than anything here.
+//! What *is* here is the interrupt half: [`pci_enable_msix`] finds a device's
+//! MSI-X capability and programs its table through the RISC-V AIA IMSIC.  It
+//! has no callers yet, and the module note in [`super::aia_imsic`] records why
+//! — the controller on the other side of it needs a `siselect`/`sireg` rework
+//! first, which is its work rather than this module's.
 //!
 //! ## References
 //!
 //! - PCI Firmware Specification, Revision 3.0, § 4.1 (ECAM)
 //! - `linux/Documentation/devicetree/bindings/pci/host-generic-pci.txt`
 
-use crate::arch::fdt;
 use crate::arch::pci::EcamRegion;
 
 // The walk, re-exported so a caller naming this platform finds the whole
@@ -48,36 +49,6 @@ pub use crate::arch::pci::PciBarInfo;
 pub use crate::arch::pci::PciDeviceInfo;
 pub use crate::arch::pci::PcieCapability;
 pub use crate::arch::pci::PcieSlotCapabilities;
-
-/// Hardcoded ECAM fallback for the QEMU `virt` machine without a device tree.
-///
-/// QEMU 8.x places the window at `0x3000_0000`, covering 256 buses.  The
-/// address is inside the identity-mapped device window
-/// (`0x0000_0000..0x4000_0000`), so no translation is needed.
-const ECAM_QEMU_VIRT_BASE: usize = 0x3000_0000;
-const ECAM_QEMU_VIRT_START_BUS: u8 = 0;
-const ECAM_QEMU_VIRT_END_BUS: u8 = 255;
-
-/// The window the device tree describes, if it describes one.
-pub fn discover_ecam() -> Option<EcamRegion> {
-    let info = fdt::platform_info();
-    info.ecam_base.map(|base| {
-        EcamRegion::new(
-            base,
-            info.ecam_start_bus.unwrap_or(0),
-            info.ecam_end_bus.unwrap_or(255),
-        )
-    })
-}
-
-/// The discovered window, or the address QEMU `virt` fixes it at.
-pub fn ecam_or_fallback() -> EcamRegion {
-    discover_ecam().unwrap_or(EcamRegion::new(
-        ECAM_QEMU_VIRT_BASE,
-        ECAM_QEMU_VIRT_START_BUS,
-        ECAM_QEMU_VIRT_END_BUS,
-    ))
-}
 
 /// Program MSI-X for a PCIe device, delivering into the RISC-V AIA IMSIC.
 ///

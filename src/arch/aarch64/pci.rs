@@ -51,21 +51,14 @@ pub use crate::arch::pci::PciDeviceInfo;
 pub use crate::arch::pci::PcieCapability;
 pub use crate::arch::pci::PcieSlotCapabilities;
 
-/// Hardcoded ECAM fallback for the QEMU `virt` machine without a device tree.
-///
-/// QEMU 8.x places the window at `0x4010_0000_0000`, covering 256 buses.  The
-/// address is sign-extended for the 39-bit virtual space the kernel maps with
-/// (`T0SZ=25`): bit 38 is set, so bits 63:39 must all be one, which is what
-/// [`ECAM_QEMU_VIRT_BASE_VA`] does.
-const ECAM_QEMU_VIRT_BASE_PA: u64 = 0x4010_0000_0000;
-const ECAM_QEMU_VIRT_BASE_VA: usize = 0xFFFF_FFC0_1000_0000;
-const ECAM_QEMU_VIRT_START_BUS: u8 = 0;
-const ECAM_QEMU_VIRT_END_BUS: u8 = 255;
-
-/// Size of the QEMU `virt` ECAM window: one MiB per bus, 256 buses.
-pub const ECAM_QEMU_VIRT_SIZE: usize = 256 * 1024 * 1024;
-
 /// The window the device tree describes, if it describes one.
+///
+/// There is deliberately no hardcoded fallback beside it.  The arm64 `Image`
+/// boot path is always handed a device tree, and this platform's window sits
+/// above the range the kernel maps — so a boot that fell back to a constant
+/// address would either fault or quietly enumerate nothing, which is exactly
+/// the failure the runtime check's "the device tree arrived and was used"
+/// assertion exists to catch.  A machine that describes no window has none.
 pub fn discover_ecam() -> Option<EcamRegion> {
     let info = fdt::platform_info();
     info.ecam_base.map(|base| {
@@ -75,27 +68,6 @@ pub fn discover_ecam() -> Option<EcamRegion> {
             info.ecam_end_bus.unwrap_or(255),
         )
     })
-}
-
-/// The discovered window, or the address QEMU `virt` fixes it at.
-pub fn ecam_or_fallback() -> EcamRegion {
-    discover_ecam().unwrap_or(EcamRegion::new(
-        ECAM_QEMU_VIRT_BASE_VA,
-        ECAM_QEMU_VIRT_START_BUS,
-        ECAM_QEMU_VIRT_END_BUS,
-    ))
-}
-
-/// Physical base of the QEMU `virt` window, for the MMU's sake.
-pub const fn ecam_phys_base() -> u64 {
-    ECAM_QEMU_VIRT_BASE_PA
-}
-
-/// The QEMU `virt` window at its physical address, which a 48-bit virtual
-/// space (`T0SZ=16`) can address directly.
-pub fn ecam_identity() -> EcamRegion {
-    // Only bus 0 is scanned where the devices are, as in `probe_and_enumerate`.
-    EcamRegion::new(ECAM_QEMU_VIRT_BASE_PA as usize, ECAM_QEMU_VIRT_START_BUS, 0)
 }
 
 /// A mapped window and the devices found on it.
