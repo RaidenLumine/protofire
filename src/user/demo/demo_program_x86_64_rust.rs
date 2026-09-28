@@ -31,7 +31,6 @@ const RUST_PAYLOAD_TRIGGER_GENERAL_PROTECTION_LEN: usize = 44;
 const RUST_PAYLOAD_RESUMED_AFTER_GENERAL_PROTECTION_LEN: usize = 55;
 const RUST_PAYLOAD_TRIGGER_UNHANDLED_PAGE_FAULT_LEN: usize = 46;
 const RUST_PAYLOAD_UNHANDLED_PAGE_FAULT_ARG_LEN: usize = 30;
-const RUST_PAYLOAD_PAGE_FAULT_RECOVERY_STACK_DELTA: u64 = 0x100;
 
 // The fault-trigger helpers use hand-written instructions of a fixed length so
 // the recovery handlers below can skip the exact faulting bytes and resume the
@@ -159,18 +158,22 @@ extern "C" fn rust_payload_recover_page_fault(frame: *mut X86_64UserExceptionFra
     // reference to the frame compiles the null and alignment checks, and their
     // cold arms call `core::panicking`, which is outside the payload section —
     // a payload that refers to it is not one that can be copied elsewhere.
+    //
+    // The stack pointer is deliberately left where the fault found it.  This
+    // handler used to add a fixed 0x100 bytes to it "to move past the frame",
+    // and that walks the user stack *up* on every recovery: a payload that
+    // takes a handful of faults walks itself out of its own stack, the kernel
+    // then refuses the resume (`resume-from-exception` reports an invalid
+    // argument), the refused syscall returns to a handler that is `-> !` and
+    // lands in `ud2`, and what the boot shows is an invalid-opcode storm and a
+    // process the kernel has to kill.  A recovery continues with the frame it
+    // had; the exception frame the kernel built is below that stack pointer
+    // and is already consumed by the time this returns.
     unsafe {
         let instruction_pointer = core::ptr::addr_of_mut!((*frame).instruction_pointer);
         core::ptr::write(
             instruction_pointer,
             core::ptr::read(instruction_pointer).wrapping_add(RUST_PAYLOAD_PAGE_FAULT_INSTRUCTION_SKIP),
-        );
-        // Move the user stack past the faulting frame so the resumed payload
-        // continues with the same recovery area the handler received.
-        let stack_pointer = core::ptr::addr_of_mut!((*frame).stack_pointer);
-        core::ptr::write(
-            stack_pointer,
-            core::ptr::read(stack_pointer).wrapping_add(RUST_PAYLOAD_PAGE_FAULT_RECOVERY_STACK_DELTA),
         );
         return_from_exception(frame);
     }
