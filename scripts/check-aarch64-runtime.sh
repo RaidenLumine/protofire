@@ -153,6 +153,62 @@ require_log_line_count() {
     fi
 }
 
+# Assert on the pieces of a `write_prefixed_hex` line rather than on the line
+# they usually form together.
+#
+# That payload prints such a line with three writes — the prefix, the number,
+# the newline — because it carries no formatter.  The console serialises each
+# *write*, not each line, so a kernel thread printing between two of them
+# splits the line, and the log then reads
+#
+#     [user  ] aarch64-rust wait-vector: [demo  ] worker-a step 1
+#     [demo  ] worker-b step 1
+#     0x0000000000000020
+#
+# which is a correct run.  Asserting the joined line made this check red in
+# two of four `make verify` runs with nothing behind it.  What the payload
+# does guarantee is that the prefix arrives whole — it is one write — and
+# that its number follows, on the same line when nothing interleaved and on a
+# later one when something did.  That is what this asserts, and it still pins
+# the number: a wrong syndrome fails here exactly as it did before.
+#
+# A payload that built the whole line in one buffer before writing it would
+# let these go back to a plain line match.  That changes the bytes of a frozen
+# fixture, so it is a deliberate re-freeze rather than a quiet tidy-up.
+require_log_fragments() {
+    prefix="$1"
+    value="$2"
+    expected_count="$3"
+    stats="$(
+        awk -v prefix="$prefix" -v value="$value" '
+            index($0, prefix) > 0 {
+                seen += 1
+                rest = substr($0, index($0, prefix))
+                if (index(rest, value) > 0) { matched += 1; pending = 0 }
+                else { pending = 1 }
+                next
+            }
+            pending && index($0, value) > 0 { matched += 1; pending = 0 }
+            END { print seen + 0, matched + 0 }
+        ' "$log_file"
+    )"
+    seen="${stats% *}"
+    matched="${stats#* }"
+    if [ "$seen" != "$expected_count" ] || [ "$matched" != "$expected_count" ]; then
+        printf 'unexpected aarch64 runtime log fragments: %s expected=%s seen=%s matched=%s\n' \
+            "$prefix" "$expected_count" "$seen" "$matched" >&2
+        preserved="${TMPDIR:-/tmp}/protofire-aarch64-runtime-failed.log"
+        if cp "$log_file" "$preserved" 2>/dev/null; then
+            printf '  full log preserved at: %s\n' "$preserved" >&2
+        fi
+        if [ "$remove_log_on_exit" = "0" ]; then
+            printf 'full aarch64 runtime log preserved at: %s\n' "$log_file" >&2
+        fi
+        cat "$log_file" >&2
+        exit 1
+    fi
+}
+
 first_log_line_number() {
     pattern="$1"
     awk -v needle="$pattern" '
@@ -275,11 +331,6 @@ protofire shell (user)
 [user  ] aarch64 child stack-exec fault
 [user] terminating pid=
 access=execute
-[user  ] aarch64-rust wait-vector: 0x0000000000000020
-[user  ] aarch64-rust wait-error: 0x000000000000000f
-[user  ] aarch64-rust wait-fsc: 0x000000000000000f
-[user  ] aarch64-rust wait-access: 0x0000000000000002
-[user  ] aarch64-rust wait-kind: 0x0000000000000002
 [demo  ] worker-a step 0
 [demo  ] worker-a done
 [demo  ] worker-b step 0
@@ -292,6 +343,14 @@ access=execute
 [service] demo-launcher-rust stopped
 EOF
 
+# The payload's syndrome lines are the three-write ones the helper above
+# exists for, so they are asserted as fragments rather than in the list.
+require_log_fragments "[user  ] aarch64-rust wait-vector:" "0x0000000000000020" 2
+require_log_fragments "[user  ] aarch64-rust wait-error:" "0x000000000000000f" 2
+require_log_fragments "[user  ] aarch64-rust wait-fsc:" "0x000000000000000f" 2
+require_log_fragments "[user  ] aarch64-rust wait-access:" "0x0000000000000002" 2
+require_log_fragments "[user  ] aarch64-rust wait-kind:" "0x0000000000000002" 2
+
 # Twice each, because the payload runs twice: once as the launcher and once as
 # the image that launcher starts.  The counts are the assertion that the two
 # runs both got all the way through their faults and both came back.
@@ -301,7 +360,6 @@ require_log_line_count "[user  ] aarch64-rust resumed after local code-write fau
 require_log_line_count "[user  ] aarch64-rust resumed after local stack-exec fault" 2
 require_log_line_count "[user  ] aarch64-rust resumed after nested local code-write fault" 2
 require_log_line_count "[user  ] aarch64 child stack-exec fault" 2
-require_log_line_count "[user  ] aarch64-rust wait-vector: 0x0000000000000020" 2
 # ── The device tree arrived and was used ──────────────────────────────
 #
 # QEMU hands a device tree over only on the arm64 `Image` boot path, and this
@@ -312,8 +370,6 @@ require_log_line_count "[user  ] aarch64-rust wait-vector: 0x0000000000000020" 2
 # guessed.
 require_log_absent_line "info=0x00000000"
 require_log_line "[drivers] probing"
-
-require_log_line_count "[user  ] aarch64-rust wait-fsc: 0x000000000000000f" 2
 
 # ── Network boot smoke tests ───────────────────────────────────────────
 # FIXME: Re-enable when aarch64 VirtIO networking is stable.
@@ -326,7 +382,7 @@ require_log_line_orders <<'EOF'
 [user  ] aarch64-rust resumed after local code-write fault|[user  ] aarch64-rust resumed after local stack-exec fault
 [user  ] aarch64-rust resumed after local stack-exec fault|[user  ] aarch64-rust triggering nested local code-write fault
 [user  ] aarch64-rust resumed after nested local code-write fault|[user  ] aarch64 child stack-exec fault
-[user  ] aarch64 child stack-exec fault|[user  ] aarch64-rust wait-vector: 0x0000000000000020
+[user  ] aarch64 child stack-exec fault|[user  ] aarch64-rust wait-vector:
 [init  ] starting idle process|protofire kernel running
 [service] kernel thread kworker-a started|[service] kworker-a stopped
 [demo  ] worker-a step 1|[demo  ] worker-a done
