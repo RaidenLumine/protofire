@@ -64,6 +64,22 @@
 //! this demo and, if it stops, asks the QEMU monitor for the guest's
 //! registers — the instruction pointer says whether the stall is in user code
 //! or in the kernel, which the log cannot say, because the log has stopped.
+//!
+//! Hunting it did turn up something in the same boot and the same code path:
+//! the x86_64 demo's fault-recovery payload was moving its user stack pointer
+//! 0x100 bytes on *every* recovery, so a child that took more than a dozen
+//! faults walked out of its own stack, had its resume refused — the kernel
+//! reported `invalid argument`, and it is right to — and fell into a `ud2`
+//! storm that ended when the kernel killed it.  That is a dozen faults and an
+//! invalid-opcode storm in place of the recovered round trip the payload's own
+//! messages describe; with the stack pointer left where the fault found it,
+//! the demo shows each of its three recoveries, two page faults and two
+//! invalid-opcode deliveries, and its log is a hundred lines shorter.
+//!
+//! Whether that storm is also what stalls the boot is not known: the stall is
+//! rare and cannot be scheduled, and one fault storm fewer is not proof.  It
+//! is, at the very least, the noise the stall was observed inside of, and the
+//! observer below is what will say so either way the next time it stops.
 
 /// How many stacks to ask for.
 ///
