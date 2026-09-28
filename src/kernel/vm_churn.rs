@@ -35,6 +35,22 @@
 //! pre-existing supervision/scheduling wedge.  The check that runs it
 //! therefore asserts the churn's own arithmetic and the boot reaching the
 //! shell, and leaves "the demo finishes" to the churn-free runtime check.
+//!
+//! One of the shapes in that family is understood and fixed: the starvation
+//! boost took threads out of the ready queues by tid, every process numbers
+//! its threads from one, and so promoting one service dropped its neighbour —
+//! which is the "one thread sits `Ready` that nothing schedules" above.  A
+//! second shape is still open, and this is the place to record it, because it
+//! will not reproduce on demand: a plain boot with no churn stops the same way
+//! in bursts (about one boot in ten in some windows, sixty consecutive clean
+//! boots in others) and prints **no** `[sched ]` line at all — the placement
+//! watchdog speaks only for a thread it cannot find in any queue, and this one
+//! is somewhere it can find.  The last line before the silence is a page fault
+//! delivered to the rust payload's handler; the line that never arrives is
+//! that payload's `rust wait-exception-pid:`, which it prints between
+//! `spawn_process_with` and `wait_process_blocking`.  So the demo stops inside
+//! a launch, or in the return from that handler, and every service that should
+//! have been restarted is still waiting when the log ends.
 
 /// How many stacks to ask for.
 ///
