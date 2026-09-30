@@ -263,7 +263,12 @@ impl FileSystem {
 
         let policy = self.permission_mutation_policy_for_normalized_path(normalized);
         let scope = policy.scope();
-        if security_token.is_system() {
+        // Only the kernel's own token gets to change a security descriptor
+        // unconditionally.  A token the kernel built for a service is subject
+        // to the same policy as everything else: changing ownership is the
+        // strongest primitive here, and it is not something a config file
+        // should be able to ask for.
+        if security_token.is_kernel_token() {
             return Ok(scope);
         }
 

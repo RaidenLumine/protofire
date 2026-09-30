@@ -132,7 +132,7 @@ impl Scheduler {
                     thread_count: process.thread_ids().len(),
                     priority: stats.map(|(pri, _)| *pri).unwrap_or_default(),
                     cpu_ticks: stats.map(|(_, ticks)| *ticks).unwrap_or(0),
-                    is_kernel: process.security_token().is_system(),
+                    is_kernel: process.security_token().is_kernel_token(),
                 }
             })
             .collect()

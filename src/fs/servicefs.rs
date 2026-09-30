@@ -438,6 +438,7 @@ mod tests {
             args: Vec::new(),
             auto_restart,
             security: ServiceSecurity::Guest,
+            account: None,
         }
     }
 

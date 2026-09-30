@@ -18,11 +18,23 @@ use alloc::vec::Vec;
 
 use crate::kernel::config::ConfigEntryLookup;
 use crate::kernel::config::{self};
+use crate::kernel::process::GroupId;
+use crate::kernel::process::IntegrityLevel;
 use crate::kernel::process::ProcessId;
+use crate::kernel::process::SecurityToken;
+use crate::kernel::process::UserId;
 use crate::kernel::sync::Mutex;
 
 /// The directory on the boot filesystem where service config TOML files live.
 pub const SERVICE_CONFIG_DIR: &str = "/system/rc.d";
+
+/// The account a privileged service runs as when its definition does not name
+/// one.
+///
+/// Requiring the account rather than assuming root is what makes a privileged
+/// declaration an authorization: the name has to resolve in the user database
+/// before the service runs at all.
+pub const DEFAULT_PRIVILEGED_ACCOUNT: &str = "root";
 
 // ── Service definition types ─────────────────────────────────────────────────
 
@@ -71,6 +83,40 @@ impl ServiceSecurity {
             Self::System => "system",
         }
     }
+
+    /// Return the token a user program declared at this level runs under.
+    ///
+    /// `account` is the `(uid, gid)` the caller resolved from the user
+    /// database.  The guest level has no account to carry; every level above
+    /// it does, and is refused without one rather than quietly handed the
+    /// guest token.  Neither token carries password authentication: the flag
+    /// that proves a login keeps the discretionary-permission bypass out of
+    /// reach here, and only [`SecurityToken::system`] — the kernel's own
+    /// threads — is above the discretionary checks.
+    pub const fn security_token(
+        &self,
+        account: Option<(UserId, GroupId)>,
+    ) -> crate::Result<SecurityToken> {
+        match self {
+            Self::Guest => Ok(SecurityToken::guest()),
+            Self::Admin => match account {
+                Some((uid, gid)) => Ok(SecurityToken::provisioned(uid, gid, IntegrityLevel::High)),
+                None => Err(crate::Error::PermissionDenied),
+            },
+            Self::System => match account {
+                Some((uid, gid)) => {
+                    Ok(SecurityToken::provisioned(uid, gid, IntegrityLevel::System))
+                }
+                None => Err(crate::Error::PermissionDenied),
+            },
+        }
+    }
+
+    /// Return true when this level needs an account resolved before the
+    /// service may run.
+    pub const fn requires_account(&self) -> bool {
+        !matches!(self, Self::Guest)
+    }
 }
 
 /// A parsed service definition from a config file.
@@ -88,6 +134,27 @@ pub struct ServiceDefinition {
     pub auto_restart: bool,
     /// Security token for UserProgram services.
     pub security: ServiceSecurity,
+    /// Account a privileged service runs as, resolved through the user
+    /// database at spawn time.  Only meaningful above
+    /// [`ServiceSecurity::Guest`], which is why the parser rejects the
+    /// combination rather than ignoring it.
+    pub account: Option<String>,
+}
+
+impl ServiceDefinition {
+    /// Return the account this definition claims, or `None` for a guest
+    /// service, which claims no privilege and therefore needs no identity.
+    pub fn account_name(&self) -> Option<&str> {
+        if !self.security.requires_account() {
+            return None;
+        }
+
+        Some(
+            self.account
+                .as_deref()
+                .unwrap_or(DEFAULT_PRIVILEGED_ACCOUNT),
+        )
+    }
 }
 
 // ── Loading from config files ────────────────────────────────────────────────
@@ -105,6 +172,13 @@ pub struct ServiceDefinition {
 /// args = ["--interactive"]
 /// auto_restart = false
 /// security = "guest"
+///
+/// [[service]]
+/// name = "netd"
+/// kind = "user_program"
+/// path = "/system/netd.elf"
+/// security = "admin"
+/// account = "root"        # required above "guest"; defaults to "root"
 ///
 /// [[service]]
 /// name = "kworker-a"
@@ -136,6 +210,17 @@ pub fn parse_service_config(text: &str) -> Result<Vec<ServiceDefinition>, String
         };
 
         let security = ServiceSecurity::parse(element.get_str_or("security", "guest"));
+        let account = element.get_str("account").ok().map(String::from);
+
+        // A guest service claims no privilege, so naming an account for one is
+        // a contradiction the author wants to hear about rather than a field
+        // to ignore: it reads like an escalation that silently did not happen.
+        if account.is_some() && !security.requires_account() {
+            return Err(alloc::format!(
+                "service {:?} declares `account` with `security = \"guest\"`",
+                element.get_str_or("name", "unnamed")
+            ));
+        }
 
         let svc = ServiceDefinition {
             name: element
@@ -148,6 +233,7 @@ pub fn parse_service_config(text: &str) -> Result<Vec<ServiceDefinition>, String
             args: element.get_string_list("args").unwrap_or_default(),
             auto_restart: element.get_bool_or("auto_restart", false),
             security,
+            account,
         };
 
         services.push(svc);
@@ -608,6 +694,7 @@ mod tests {
             args: Vec::new(),
             auto_restart,
             security: ServiceSecurity::Guest,
+            account: None,
         }
     }
 
@@ -1021,6 +1108,160 @@ security = \"admin\"
     #[test]
     fn rejects_missing_format() {
         let text = "[[service]]\nname = \"a\"\n";
+        assert!(parse_service_config(text).is_err());
+    }
+
+    // -- Declared level to token ------------------------------------------
+
+    #[test]
+    fn guest_service_runs_without_superuser_rights() {
+        let token = ServiceSecurity::Guest
+            .security_token(None)
+            .expect("a guest service needs no account");
+        assert!(!token.is_superuser());
+        assert!(!token.is_admin_mode());
+        assert!(!token.may_bypass_discretionary_permissions());
+    }
+
+    #[test]
+    fn admin_service_carries_its_account_and_is_elevated_but_unauthenticated() {
+        let token = ServiceSecurity::Admin
+            .security_token(Some((1000, 1000)))
+            .expect("account resolved");
+        assert_eq!(token.user_id, 1000);
+        assert_eq!(token.primary_group_id, 1000);
+        assert!(token.is_admin_mode());
+        // Kernel provisioning is not a password: the flag stays clear and the
+        // discretionary bypass stays out of reach.
+        assert!(!token.is_authenticated());
+        assert!(!token.may_bypass_discretionary_permissions());
+    }
+
+    #[test]
+    fn system_service_carries_its_account_and_is_not_the_kernel() {
+        let token = ServiceSecurity::System
+            .security_token(Some((0, 0)))
+            .expect("account resolved");
+        assert_eq!(token.user_id, 0);
+        // The declared level reaches the token: System integrity, the kernel's
+        // MAC subject, uid 0.
+        assert!(token.is_system());
+        // But a config file asks for the kernel's trust level, not its
+        // identity.  The shortcut callers use to mean "this is the kernel" —
+        // the discretionary bypass, unconditional descriptor changes, the
+        // `is_kernel` report — stays out of reach.
+        assert!(token.is_provisioned());
+        assert!(!token.is_kernel_token());
+        assert!(!token.may_bypass_discretionary_permissions());
+    }
+
+    #[test]
+    fn a_privileged_level_without_an_account_is_refused() {
+        // Refused, not downgraded: a service that asked for privilege and did
+        // not get it must not look like one that was authorised.
+        assert_eq!(
+            ServiceSecurity::Admin.security_token(None),
+            Err(crate::Error::PermissionDenied)
+        );
+        assert_eq!(
+            ServiceSecurity::System.security_token(None),
+            Err(crate::Error::PermissionDenied)
+        );
+    }
+
+    // -- The discretionary bypass is not a service privilege --------------
+
+    #[test]
+    fn no_service_declaration_reaches_the_discretionary_bypass() {
+        // The decision this pins: a definition is trusted for what it may
+        // *manage*, never for what it may *ignore*.  None of the three levels
+        // reaches the owner/group/other bypass, at any account — so no service
+        // reads another account's private files, and none of them can change a
+        // security descriptor unconditionally.
+        //
+        // The bypass has exactly two producers left: the kernel's own threads,
+        // and a login that verified a password.  Written down here rather than
+        // assumed, because the difference is one enum variant in this file.
+        for level in [
+            ServiceSecurity::Guest,
+            ServiceSecurity::Admin,
+            ServiceSecurity::System,
+        ] {
+            for account in [(0, 0), (500, 500)] {
+                let token = level
+                    .security_token(Some(account))
+                    .expect("an account was resolved");
+                assert!(
+                    !token.may_bypass_discretionary_permissions(),
+                    "{level:?} as {account:?} must not bypass"
+                );
+                assert!(!token.is_kernel_token(), "{level:?} is not the kernel");
+                // Nor may it be mistaken for a login: the kernel establishing
+                // an identity is not the same act as a password proving one.
+                assert!(!token.is_authenticated(), "{level:?} is not a login");
+            }
+        }
+    }
+
+    #[test]
+    fn the_kernel_bypasses_its_own_way_and_a_login_bypasses_its_own_way() {
+        // The two producers that keep the bypass, so a change here fails next
+        // to the test above rather than in the filesystem layer.
+        assert!(SecurityToken::system().may_bypass_discretionary_permissions());
+        assert!(SecurityToken::system().is_kernel_token());
+        assert!(!SecurityToken::system().is_authenticated());
+
+        let login = SecurityToken::root().with_authentication();
+        assert!(login.may_bypass_discretionary_permissions());
+        assert!(!login.is_kernel_token());
+    }
+
+    #[test]
+    fn declared_level_reaches_the_token() {
+        let text = "format = \"protofire-service-1\"\n\n[[service]]\nname = \"netd\"\nkind = \"user_program\"\npath = \"/system/netd.elf\"\nsecurity = \"system\"\n";
+        let services = parse_service_config(text).expect("parse");
+        let token = services[0]
+            .security
+            .security_token(Some((0, 0)))
+            .expect("account resolved");
+        // Asserted as behaviour rather than as an exact token: the provisioned
+        // shape carries no supplementary groups, which `SecurityToken::system`
+        // fills with root's own group.  What has to hold is that the declared
+        // level is the one the spawned process ends up at — trust level, not
+        // identity, which is why the kernel shortcut below stays false.
+        assert!(token.is_system());
+        assert_eq!(token.user_id, 0);
+        assert!(token.is_provisioned());
+        assert!(!token.is_kernel_token());
+    }
+
+    #[test]
+    fn privileged_service_defaults_to_the_root_account() {
+        let text = "format = \"protofire-service-1\"\n\n[[service]]\nname = \"netd\"\nkind = \"user_program\"\nsecurity = \"admin\"\n";
+        let services = parse_service_config(text).expect("parse");
+        assert_eq!(services[0].account_name(), Some("root"));
+    }
+
+    #[test]
+    fn privileged_service_can_name_its_own_account() {
+        let text = "format = \"protofire-service-1\"\n\n[[service]]\nname = \"netd\"\nkind = \"user_program\"\nsecurity = \"admin\"\naccount = \"netadmin\"\n";
+        let services = parse_service_config(text).expect("parse");
+        assert_eq!(services[0].account, Some(String::from("netadmin")));
+        assert_eq!(services[0].account_name(), Some("netadmin"));
+    }
+
+    #[test]
+    fn guest_service_claims_no_account() {
+        let text = "format = \"protofire-service-1\"\n\n[[service]]\nname = \"shell\"\nkind = \"user_program\"\n";
+        let services = parse_service_config(text).expect("parse");
+        assert_eq!(services[0].account_name(), None);
+    }
+
+    #[test]
+    fn guest_service_with_an_account_is_rejected() {
+        // The account key on a guest service reads like an escalation that
+        // silently did not happen, so the parser refuses it outright.
+        let text = "format = \"protofire-service-1\"\n\n[[service]]\nname = \"shell\"\nkind = \"user_program\"\nsecurity = \"guest\"\naccount = \"root\"\n";
         assert!(parse_service_config(text).is_err());
     }
 }

@@ -30,7 +30,26 @@ use super::loader::LoadedProgram;
 use super::loader::LoadedProgramInstallState;
 
 pub fn spawn_from_global(scheduler: &Scheduler, launch_reference: &str) -> Result<LaunchedProgram> {
-    spawn_from_launch_reference(scheduler, "/", launch_reference)
+    spawn_from_global_with_security_token(scheduler, launch_reference, SecurityToken::guest())
+}
+
+/// Spawn from the global catalog under an explicit security token.
+///
+/// The service registry uses this so a definition's declared `security` level
+/// reaches the process it starts; a launch with no declared level goes through
+/// [`spawn_from_global`] and keeps the guest token.
+pub fn spawn_from_global_with_security_token(
+    scheduler: &Scheduler,
+    launch_reference: &str,
+    security_token: SecurityToken,
+) -> Result<LaunchedProgram> {
+    spawn_from_launch_reference_with_overrides_and_security_token(
+        scheduler,
+        "/",
+        launch_reference,
+        SpawnProcessOverrides::default(),
+        security_token,
+    )
 }
 
 pub fn spawn_from_catalog_path(

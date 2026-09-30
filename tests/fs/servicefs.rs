@@ -78,6 +78,7 @@ fn definition(name: &str, auto_restart: bool) -> ServiceDefinition {
         args: Vec::new(),
         auto_restart,
         security: ServiceSecurity::Guest,
+        account: None,
     }
 }
 

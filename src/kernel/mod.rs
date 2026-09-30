@@ -397,6 +397,18 @@ impl Kernel {
         let t6 = tick();
         boot.record_subsystem("syscall-table", SUBSYSTEM_STATUS_OK, t5, t6);
 
+        // ── Audit subsystem ───────────────────────────────────────────
+        // The ring buffer has to exist before anything can produce a record:
+        // `emit_record` drops what it is handed until then, and the boot path
+        // is itself a producer — a privileged service declaration is audited
+        // below, in `service_security_token`.
+        println!("[init  ] audit subsystem init...");
+        crate::kernel::audit::init();
+        println!(
+            "[audit ] ring buffer installed ({} records)",
+            crate::kernel::audit::global().map_or(0, |buffer| buffer.capacity())
+        );
+
         // ── Init program ──────────────────────────────────────────────
         // Read the kernel command line to determine the init program path.
         // The distribution (protofire-os) passes `init=/system/init.elf` via
@@ -631,10 +643,16 @@ impl Kernel {
         now_tick: u64,
         restart: bool,
     ) -> Option<u32> {
-        spawn_service(&self.scheduler, svc, now_tick, restart, |path| {
-            self.spawn_demo_user_program(path)
-                .map(|launched| launched.process.pid())
-        })
+        spawn_service(
+            &self.scheduler,
+            svc,
+            now_tick,
+            restart,
+            |path, security_token| {
+                self.spawn_demo_user_program(path, security_token)
+                    .map(|launched| launched.process.pid())
+            },
+        )
     }
 
     /// Register and spawn one embedded default service.
@@ -661,6 +679,7 @@ impl Kernel {
             args: Vec::new(),
             auto_restart,
             security: service::ServiceSecurity::Guest,
+            account: None,
         };
 
         service::register(&definition, now_tick);
@@ -901,9 +920,17 @@ impl Kernel {
     }
 
     #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-    fn spawn_demo_user_program(&self, launch_reference: &str) -> Option<program::LaunchedProgram> {
+    fn spawn_demo_user_program(
+        &self,
+        launch_reference: &str,
+        security_token: SecurityToken,
+    ) -> Option<program::LaunchedProgram> {
         println!("[user  ] spawn_demo_user_program: {}", launch_reference);
-        match program::spawn_from_global(&self.scheduler, launch_reference) {
+        match program::spawn_from_global_with_security_token(
+            &self.scheduler,
+            launch_reference,
+            security_token,
+        ) {
             Ok(launched) => {
                 let loaded = &launched.loaded;
                 println!(
@@ -1156,7 +1183,7 @@ fn spawn_service(
     svc: &service::ServiceDefinition,
     now_tick: u64,
     restart: bool,
-    launch_user_program: impl FnOnce(&str) -> Option<u32>,
+    launch_user_program: impl FnOnce(&str, SecurityToken) -> Option<u32>,
 ) -> Option<u32> {
     if restart {
         service::note_restart_attempt(&svc.name, now_tick);
@@ -1178,16 +1205,30 @@ fn spawn_service(
             }
         }
         service::ServiceKind::UserProgram => match svc.path.as_deref() {
-            Some(path) => {
-                println!("[service] spawning user program {} ({})", svc.name, path);
-                match launch_user_program(path) {
-                    Some(pid) => Some(pid),
-                    None => {
-                        service::mark_failed(&svc.name, "user program failed to load", now_tick);
-                        None
+            Some(path) => match service_security_token(svc) {
+                Some(security_token) => {
+                    println!("[service] spawning user program {} ({})", svc.name, path);
+                    match launch_user_program(path, security_token) {
+                        Some(pid) => Some(pid),
+                        None => {
+                            service::mark_failed(
+                                &svc.name,
+                                "user program failed to load",
+                                now_tick,
+                            );
+                            None
+                        }
                     }
                 }
-            }
+                None => {
+                    service::mark_failed(
+                        &svc.name,
+                        "privileged declaration without a resolvable account",
+                        now_tick,
+                    );
+                    None
+                }
+            },
             None => {
                 println!("[service] {} declares no program path", svc.name);
                 service::mark_failed(&svc.name, "no program path declared", now_tick);
@@ -1200,6 +1241,88 @@ fn spawn_service(
         service::mark_running(&svc.name, Some(pid), now_tick);
     }
     pid
+}
+
+/// The token a user program service runs under, resolved through the account
+/// database.
+///
+/// A service that declares nothing above `guest` has no identity to prove and
+/// gets the guest token.  A privileged declaration names an account — `root`
+/// when it does not say — and that name has to resolve before the service may
+/// run: privilege is refused, never downgraded, because a service that asked
+/// for `admin` and quietly got `guest` looks exactly like one that was
+/// authorised, from the outside.
+///
+/// Both outcomes are audited.  This is the one place the kernel hands out
+/// privilege without a password, so it is also the one place that has to
+/// leave a trace where the audit log can see it.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+static SERVICE_AUDIT_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+fn service_security_token(svc: &service::ServiceDefinition) -> Option<SecurityToken> {
+    let Some(account_name) = svc.account_name() else {
+        return Some(SecurityToken::guest());
+    };
+
+    let account = user::find_account(account_name);
+    audit_service_privilege(svc, account_name, account.is_some());
+
+    let Some(record) = account else {
+        println!(
+            "[service] {} declares `security = \"{}\"` but account `{}` is not in the user database",
+            svc.name,
+            svc.security.as_str(),
+            account_name
+        );
+        return None;
+    };
+
+    // The only error this can produce is the missing account, which was
+    // rejected above; a resolution that got this far produces a token.
+    svc.security
+        .security_token(Some((record.uid, record.gid)))
+        .ok()
+}
+
+/// Record a privileged service declaration and whether it was honoured.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+fn audit_service_privilege(svc: &service::ServiceDefinition, account: &str, granted: bool) {
+    use crate::kernel::audit::types::AuditEventType;
+    use crate::kernel::audit::types::AuditRecord;
+
+    // "<name> <level> <account>": the three facts a reader needs, and a shape
+    // that stays legible in the hex the persistence layer writes.
+    let mut payload = [0_u8; 96];
+    let mut written = 0;
+    for field in [svc.name.as_str(), svc.security.as_str(), account] {
+        if written > 0 {
+            payload[written] = b' ';
+            written += 1;
+        }
+        let bytes = field.as_bytes();
+        let take = bytes.len().min(payload.len() - written);
+        payload[written..written + take].copy_from_slice(&bytes[..take]);
+        written += take;
+    }
+
+    let (pid, timestamp) = crate::kernel::audit::current_actor();
+    let uid = svc
+        .account_name()
+        .and_then(user::find_account)
+        .map_or(0, |record| record.uid);
+    let mut audit_record = AuditRecord::zeroed();
+    audit_record.fill(
+        SERVICE_AUDIT_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed),
+        0,
+        timestamp,
+        AuditEventType::AuthEvent,
+        pid,
+        uid,
+        if granted { 0 } else { -1 },
+        &payload[..written],
+    );
+    let _ = crate::kernel::audit::emit_record(audit_record);
 }
 
 /// The service supervisor.
@@ -1276,11 +1399,21 @@ fn service_supervisor_entry() {
                         step.name,
                         record.restarts.saturating_add(1)
                     );
-                    spawn_service(scheduler, &record.definition, now_tick, true, |path| {
-                        program::spawn_from_global(scheduler, path)
+                    spawn_service(
+                        scheduler,
+                        &record.definition,
+                        now_tick,
+                        true,
+                        |path, security_token| {
+                            program::spawn_from_global_with_security_token(
+                                scheduler,
+                                path,
+                                security_token,
+                            )
                             .ok()
                             .map(|launched| launched.process.pid())
-                    });
+                        },
+                    );
                 }
                 service::SupervisionAction::Abandon => {
                     println!(

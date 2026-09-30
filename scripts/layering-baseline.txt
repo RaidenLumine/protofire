@@ -88,6 +88,7 @@ memory                       oom                          2
 memory                       percpu                       4
 memory                       smp                          1
 memory                       topology                     1
+mod                          audit                        6
 mod                          block                        1
 mod                          drivers                      1
 mod                          fs                           15
@@ -138,7 +139,7 @@ security                     handle_rights                2
 security                     sync                         1
 service                      config                       2
 service                      fs                           3
-service                      process                      2
+service                      process                      6
 service                      sync                         2
 shm                          memory                       7
 shm                          process                      1
@@ -162,7 +163,7 @@ syscall                      process                      166
 syscall                      random                       1
 syscall                      sync                         7
 syscall                      user                         2
-user                         fs                           3
+user                         fs                           2
 user                         process                      7
 user                         sync                         1
 vm_churn                     memory                       1

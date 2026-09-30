@@ -89,6 +89,7 @@ pub use self::spawn::spawn_from_catalog_path_with_overrides;
 pub use self::spawn::spawn_from_catalog_reference;
 pub use self::spawn::spawn_from_catalog_reference_with_overrides;
 pub use self::spawn::spawn_from_global;
+pub use self::spawn::spawn_from_global_with_security_token;
 pub use self::spawn::spawn_from_launch_reference;
 pub use self::spawn::spawn_from_launch_reference_with_overrides;
 

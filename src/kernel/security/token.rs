@@ -50,6 +50,11 @@ pub struct SecurityToken {
     /// Set to `true` only after password-based authentication (login/su).
     /// Kernel-internal system tokens bypass this check.
     authenticated: bool,
+    /// Set to `true` when the kernel built this token from a definition it
+    /// trusts rather than from itself.  It is the difference between an
+    /// identity the kernel *is* and one it merely *resolved*: see
+    /// [`SecurityToken::is_kernel_token`].
+    provisioned: bool,
     /// MAC type-enforcement subject label.
     pub mac_type: MacType,
 }
@@ -68,6 +73,7 @@ impl SecurityToken {
             recovery: false,
             supplementary_group_ids: &[],
             authenticated: false,
+            provisioned: false,
             mac_type: MAC_TYPE_USER,
         }
     }
@@ -97,8 +103,50 @@ impl SecurityToken {
             recovery: false,
             supplementary_group_ids: &[ROOT_GROUP_ID],
             authenticated: false,
+            provisioned: false,
             mac_type: MAC_TYPE_SYSTEM,
         }
+    }
+
+    /// The token for a service the kernel started itself, from a definition it
+    /// trusts and an account it resolved.
+    ///
+    /// A service has nobody to ask for a password, so this is the kernel
+    /// establishing an identity rather than a secret proving one, and the two
+    /// flags that describe provenance both stay clear: `authenticated` because
+    /// no password was verified, and `provisioned` because the token is not the
+    /// kernel itself.  Between them they keep the discretionary bypass
+    /// reachable only from the two places allowed to have it.
+    pub const fn provisioned(uid: UserId, gid: GroupId, integrity: IntegrityLevel) -> Self {
+        Self::new(uid, gid, integrity)
+            .with_elevation()
+            .with_mac_type(MAC_TYPE_SYSTEM)
+            .with_provisioning()
+    }
+
+    /// Mark this token as built from a service definition rather than from the
+    /// kernel's own identity.
+    pub const fn with_provisioning(mut self) -> Self {
+        self.provisioned = true;
+        self
+    }
+
+    /// Return `true` when this token is the kernel speaking for itself.
+    ///
+    /// The raw [`SecurityToken::system`] token is, and a token built for a
+    /// service is not, however it was declared: a config file can ask for the
+    /// kernel's *trust level* but not for the kernel's *identity*.  Callers
+    /// that treat "is this the kernel" as a shortcut — the discretionary
+    /// bypass, unconditional security-descriptor changes, the per-process
+    /// `is_kernel` report — ask this, not [`SecurityToken::is_system`].
+    pub const fn is_kernel_token(self) -> bool {
+        self.is_system() && !self.provisioned
+    }
+
+    /// Return `true` when the kernel built this token from a service
+    /// definition rather than from itself.
+    pub const fn is_provisioned(self) -> bool {
+        self.provisioned
     }
 
     /// Return the MAC subject type.
@@ -125,8 +173,11 @@ impl SecurityToken {
     }
 
     /// Mark this token as having been obtained through password-based
-    /// authentication (login/su).  Only authenticated non-system tokens
-    /// receive full privilege.
+    /// authentication (login/su).
+    ///
+    /// This is the only flag that opens the discretionary bypass for a token
+    /// that is not the kernel's own, so a privilege arriving any other way — a
+    /// service definition, say — cannot set it by accident.
     pub const fn with_authentication(mut self) -> Self {
         self.authenticated = true;
         self
@@ -199,8 +250,11 @@ impl SecurityToken {
     }
 
     pub const fn may_bypass_discretionary_permissions(self) -> bool {
-        // Kernel-internal system threads always bypass, no auth required.
-        if self.is_system() {
+        // The kernel's own threads always bypass, no auth required.  A token
+        // built for a service is not one of them: it carries an identity the
+        // kernel resolved, so it faces the same standard as any other caller —
+        // a password, or nothing.
+        if self.is_kernel_token() {
             return true;
         }
         // User-facing admin/superuser tokens must be authenticated.
