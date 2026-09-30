@@ -26,14 +26,11 @@ The module exports the following public submodules:
 | `abi` | `abi/mod.rs` | `#[repr(C)]` ABI record types shared across the kernel/userspace boundary |
 | `commands` | `commands/mod.rs` | ~45 shell builtin command implementations |
 | `control_flow` | `control_flow.rs` | `if`/`for`/`while` parsing and execution |
-| `crypto` | `crypto.rs` | Cryptographic primitives (hash, random) |
 | `dispatch` | `dispatch.rs` | Command-name-to-function dispatch table |
 | `expand` | `expand.rs` | Environment variable expansion (`$VAR`, `${VAR}`) |
 | `glob` | `glob.rs` | Glob pattern matching (`*`, `?`, `[...]` character classes) |
 | `history` | `history.rs` | Command history: add, expand, common-prefix search |
 | `jobs` | `jobs.rs` | Background job tracking |
-| `version` | `version.rs` | Natural version-string comparison (`compare_natural_version_strings`) |
-| `net` | `net.rs` | HTTP/1.1 client (URL parsing, GET fetch), TCP server framework |
 | `passwd` | `passwd.rs` | Minimal `/data/etc/passwd` file parser |
 | `path_util` | `path_util.rs` | `resolve_path()` and `normalize_path_segments()` |
 | `pipeline` | `pipeline.rs` | `&&` / `||` conditional chaining, pipe splitting, redirect parsing |
@@ -107,7 +104,7 @@ pub const NETWORK_STATUS_FLAG_IPV6: u32 = 1 << 8;
 // ... and others
 ```
 
-The function `network_supports_tcp_stream_transport()` checks the minimum capability set for TCP-based HTTP downloads.
+The function `network_supports_tcp_stream_transport()` checks the minimum capability set a TCP download would need: the stack is up, a connection can be made, and the stream can be read with timeouts.
 
 ---
 
@@ -367,38 +364,17 @@ loop {
 
 ---
 
-## Network (`net.rs`)
+## Network
 
-File: `src/user/shared/net.rs`
+The shared runtime has no network module.  The HTTP/1.1 client and server that
+earlier revisions of this document described are not in this tree: there is no
+`net.rs`, no `fetch_http_url_bytes()`, and no `HttpServer`.  What remains is one
+capability probe, `network_supports_tcp_stream_transport()` in `syscall.rs`,
+which answers whether the kernel reports a usable TCP stream transport.
 
-### HTTP client
-
-`fetch_http_url_bytes(url)` and `fetch_http_url_text(url)` provide HTTP/1.1 GET:
-1. Parse URL via `parse_http_url()` (supports `http://` and `https://` — HTTPS is rejected at fetch time)
-2. Check `sys_network_status()` capabilities
-3. Connect via `sys_connect_tcp()`
-4. Send `GET` request
-5. Read response (handles `Content-Length` and chunked transfer-encoding)
-6. Close connection
-
-Limitations: HTTP only (no TLS), no redirect following, no persistent connections, no custom headers.
-
-### HTTP server
-
-`HttpServer` provides a single-threaded listener:
-
-```rust
-let mut server = HttpServer::new(8080)?;
-server.route("/api/v1/status", HttpMethod::GET, status_handler);
-server.set_server_data("/var/www");
-server.serve()?; // never returns
-```
-
-Route handlers are `fn(&HttpRequest, Option<&str>) -> HttpResponse` function pointers (no closures, for `no_std` compatibility).
-
-### URL support
-
-`fetch_url_bytes()` handles both `http://` and `file://` schemes. The `file://` path reads local files via syscalls with percent-decoding.
+The facility underneath it is real — `src/network/` carries a native TCP/IP
+stack with TLS 1.3 — so a userspace HTTP client is a missing program rather than
+a missing capability.  See [network.md](network.md) for the stack itself.
 
 ---
 

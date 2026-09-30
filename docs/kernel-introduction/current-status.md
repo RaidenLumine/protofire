@@ -1,14 +1,25 @@
 # Current Status
 
-> **Last updated:** 2026-09-27 **Codebase:** 651 Rust files, ~228,000 lines of
-> Rust in `src/` (677 files and ~239,900 lines counting `tests/`)
+> **Last updated:** 2026-09-30 **Codebase:** 653 Rust files, ~228,000 lines of
+> Rust in `src/` (681 files and ~240,200 lines counting `tests/`)
 > **Targets:** x86_64 (full), AArch64 (full), RISC-V 64 (partial)
 
 ---
 
 ## Subsystem Evaluation
 
-### 1. Device Drivers — ★★★★☆ (87%)
+> The number after each subsystem is that subsystem's own assessment of how
+> much of its intended behaviour is implemented.  It is not a measured pass
+> rate, and it says nothing about whether the behaviour has been demonstrated
+> on a booting machine.
+>
+> Other figures here are maintained by hand, and two of them are marked
+> unverified because the set they count is not defined anywhere: the "40 network
+> syscalls" in §7.3 and the per-architecture code sizes under Architecture
+> Support.  A count whose set is undefined cannot be rechecked, by a person or
+> by the `check-docs` gate.
+
+### 1. Device Drivers (87%)
 
 | Driver | Lines | Type | Status |
 |--------|-------|------|--------|
@@ -46,7 +57,7 @@
 
 ---
 
-### 2. I/O Subsystem — ★★★★☆ (82%)
+### 2. I/O Subsystem (82%)
 
 | Component | Lines | Status |
 |-----------|-------|--------|
@@ -70,7 +81,7 @@
 
 ---
 
-### 3. Virtual File System — ★★★★★ (91%)
+### 3. Virtual File System (91%)
 
 The VFS is the most substantial subsystem at **62,700+ lines across 118 files**.
 
@@ -140,7 +151,7 @@ The VFS is the most substantial subsystem at **62,700+ lines across 118 files**.
 
 ---
 
-### 4. CPU Scheduler — ★★★★★ (90%)
+### 4. CPU Scheduler (90%)
 
 | Component | Lines | Status |
 |-----------|-------|--------|
@@ -173,7 +184,7 @@ The VFS is the most substantial subsystem at **62,700+ lines across 118 files**.
 
 ---
 
-### 5. Memory Management — ★★★★★ (93%)
+### 5. Memory Management (93%)
 
 | Component | Lines | Status |
 |-----------|-------|--------|
@@ -206,7 +217,7 @@ The VFS is the most substantial subsystem at **62,700+ lines across 118 files**.
 
 ---
 
-### 6. Interrupt & Exception Handling — ★★★★★ (93%)
+### 6. Interrupt & Exception Handling (93%)
 
 | Component | Lines | Status |
 |-----------|-------|--------|
@@ -241,7 +252,7 @@ The VFS is the most substantial subsystem at **62,700+ lines across 118 files**.
 
 ---
 
-### 7. Network Stack — ★★★★★ (89%)
+### 7. Network Stack (89%)
 
 The network stack is the second-largest subsystem at **40,809 lines across 81 files** plus **TLS 1.3 (3,224 lines across 4 files)** with a ring3 userspace API (#121).
 
@@ -293,7 +304,7 @@ The network stack is the second-largest subsystem at **40,809 lines across 81 fi
 
 ---
 
-### 8. IPC / Synchronization — ★★★★★ (92%)
+### 8. IPC / Synchronization (92%)
 
 | Component | Lines | Status |
 |-----------|-------|--------|
@@ -327,12 +338,12 @@ The network stack is the second-largest subsystem at **40,809 lines across 81 fi
 
 ---
 
-### 9. Security & Access Control — ★★★★★ (92%)
+### 9. Security & Access Control (92%)
 
 | Component | Lines | Status |
 |-----------|-------|--------|
 | Biba integrity model | 200+ | System > High > Medium > Low |
-| Zone-aware DAC | 300+ | System (/system), Data (/data), User (/home) zones |
+| Zone-aware DAC | 300+ | System (/system), Apps (/apps), Data (/data) zones; credential store carved out of the guest-owned data zone |
 | Security descriptors | 200+ | Per-object security labels |
 | User/group database | 300+ | `/data/etc/passwd`, `/data/etc/shadow` |
 | Process security token | 165 | Per-thread credentials |
@@ -346,25 +357,58 @@ The network stack is the second-largest subsystem at **40,809 lines across 81 fi
 
 - **Biba integrity model**: a formal information-flow policy (System > High > Medium > Low).
 - **MAC type-enforcement engine** (SELinux/AppArmor equivalent): security types on subjects and objects, an allow-rule policy enforced at central VFS checkpoints, Process-class (ptrace/signal) and Network-class checks, exec domain transitions, management syscalls (#175-178), and MacDenial audit records on refusal.
-- **Zone-aware DAC**: segments the filesystem into regions with different trust levels (/system, /data, /home).
+- **Zone-aware DAC**: segments the filesystem into regions with different trust
+  levels (`/system` read-only, `/apps` read-only and executable, `/data`
+  writable).  User home directories live under `/data/users/<user>`, not in a
+  zone of their own.
 - **Persistent credentials**: `/data/etc/passwd` and `/data/etc/shadow` written back atomically, with the shadow file kept at 0600.
-- **Code integrity**: SHA-256 (launch manifest and payload); seccomp (#129) syscall filter for process sandboxing; PAN/SMAP prevents kernel speculative access to user memory.
+- **Service authorization**: a privileged rc.d declaration names an account that has to resolve in
+  the user database before the service runs, and the grant or refusal is audited; the token it runs
+  under carries that account's identity.
+- **Service security declarations**: a `security = "guest" | "admin" | "system"`
+  key in an rc.d service definition selects the token the started program runs
+  under (`ServiceSecurity::security_token()`); a definition that declares
+  nothing keeps the guest default.
+- **Code integrity**: SHA-256 over the launch manifest and payload, plus
+  optional detached Lamport-sha256 signatures verified against trusted public
+  keys under `/system/trusted-keys`; seccomp (#129) syscall filter for process
+  sandboxing; PAN/SMAP prevents kernel speculative access to user memory.
 - **Stack canary**: a random 64-bit canary per thread, verified by `check_stack_canary()` before each context switch back to the scheduler.
-- **Audit subsystem**: classified event types (Syscall, FileOp, Process, Network, Auth, MacDenial), a ring buffer for record storage, and dedicated syscalls (AuditSetEnable #143 / AuditReadLog #144).
+- **Audit subsystem**: classified event types (Syscall, FileOp, Process, Network, Auth, MacDenial), a ring buffer for record storage, and dedicated syscalls (AuditSetEnable #143 / AuditReadLog #144).  The ring buffer is installed during kernel initialisation, before anything can produce a record — the buffer has to exist or `emit_record` drops what it is handed — and a privileged service declaration is audited there.
 
 **Weaknesses:**
 
 - **Default allow**: until a MAC policy is loaded, the default is to allow; deny-by-default requires an explicit policy.
-- **Audit log is memory-only**: the 8192-entry ring buffer is not persisted — records are lost on reboot.
-- **Path-based installed-app trust boundary**: installed apps under `/apps/packages` are trusted by path containment and SHA-256 integrity checks; there is no program signature verification.
+- **Audit log is memory-only in practice**: the ring buffer is installed and
+  written, but the persistence path that would flush it to `/data/audit.log` is
+  off by default (`audit::persist::set_persistence`) and nothing calls it, so
+  records are lost on reboot.  The maintenance thread already drives the flush
+  every 200 ticks; only the switch is missing.
+- **Signature verification is opt-in**: a launch manifest or program image
+  carrying `manifest_signature`/`entry_signature` is verified against a trusted
+  key, but one that carries neither loads anyway, and nothing in the launch
+  chain requires a signature.  There is no key distribution or rotation policy,
+  so the guarantee is "a signed artifact cannot be swapped" rather than "only
+  signed artifacts run".
+- **Service privilege is provenance, not authentication**: a definition
+  declaring `security = "admin"` or `"system"` is trusted because
+  `/system/rc.d` lives on a read-only zone and because the account it names
+  exists.  No password is involved, so the token it receives is elevated but
+  unauthenticated, and no service level reaches the discretionary bypass: a
+  service manages what root owns but cannot read another account's private
+  files, and `system` carries the kernel's trust level without its identity.
+  The bypass has exactly two producers — the kernel's own threads and a
+  password-authenticated login — and a test in `kernel::service` pins both
+  halves so the policy cannot be changed by accident.  A service that needs to
+  reach across accounts needs a capability, not a wider level.
 
 ---
 
-### 10. Syscall Interface — ★★★★★ (93%)
+### 10. Syscall Interface (93%)
 
 | Component | Lines | Status |
 |-----------|-------|--------|
-| Syscall table | 1,300+ | 190 slots (0-189), all registered |
+| Syscall table | 1,300+ | 190 numbered slots (0-189); 188 carry a handler, 141-142 are reserved |
 | Dispatch engine | 500+ | Context-aware dispatch with action return |
 | User memory validation | 400+ | `validate_user_mapping()` + `copy_user_bytes()` |
 | Shared wrappers (`src/user/shared/syscall.rs`) | 2,000+ | 90+ typed wrappers, 7 raw entry points |
@@ -378,17 +422,17 @@ The network stack is the second-largest subsystem at **40,809 lines across 81 fi
 |----------|----------|-------|
 | Process/thread lifecycle | 15+ | `launch_metadata.rs`, `runtime.rs` |
 | Process control | 1 | `misc/prctl.rs` |
-| File/path operations | 15+ | `fs_path_ops.rs` |
+| File/path operations | 15+ | `fs/path_ops.rs` |
 | I/O (read/write) | 8+ | `io_fd.rs` |
 | Network | 22 | `network.rs` |
 | IPC & synchronization | 12+ | `futex.rs`, `event_fd.rs`, `signal_fd.rs`, `timer_fd.rs`, `mq.rs`, `epoll.rs` |
 | Memory management | 10+ | `memory/map.rs`, `memory/brk.rs`, `memory/shm_handlers.rs` |
-| Filesystem (mount/FUSE) | 10+ | `fs_path_ops.rs`, `fs/fuse_mount.rs` |
-| TLS encrypted connections | 1 | `tls_handler.rs` |
-| Packet filter / firewall | 4 | `filter_handler.rs` |
-| io_uring async I/O | 2 | `io_uring_handler.rs` |
+| Filesystem (mount/FUSE) | 10+ | `fs/path_ops.rs`, `fs/fuse_mount.rs` |
+| TLS encrypted connections | 1 | `tls.rs` |
+| Packet filter / firewall | 4 | `filter.rs` |
+| io_uring async I/O | 2 | `io_uring.rs` |
 | ptrace process tracing | 1 | `ptrace.rs` (syscall) + `process/ptrace.rs` (core) |
-| seccomp | 1 | `seccomp_handler.rs` |
+| seccomp | 1 | `seccomp.rs` |
 | Signal control | 4 | `signal.rs`, `signal_mask.rs`, `sigsuspend.rs`, `restart_syscall.rs` |
 | Exception control | 6 | `exception_control.rs` |
 | POSIX timers (#137-140) | 4 | `timer.rs` (timer_create/settime/gettime/delete) |
@@ -444,24 +488,30 @@ The network stack is the second-largest subsystem at **40,809 lines across 81 fi
 | `syscall.rs` | 2,000+ | 55+ typed syscall wrappers |
 | `dispatch.rs` | 1,500+ | ~40 shell builtins (cat, ls, cp, mv, grep, etc.) |
 | `commands/` | 2,000+ | Subcommand implementations |
-| `app/` | 400+ | Application management |
-| `version.rs` | 50+ | Natural version-string comparison |
-| `net.rs` | 519 | HTTP client, fetch helpers |
 | `signal.rs` | 150+ | Signal handling API (u64 mask, sigsuspend, SA_SIGINFO) |
-| `crypto.rs` | 150+ | Cryptographic helpers |
 | `passwd.rs` | 100+ | Password file parsing |
 | `jobs.rs` | 100+ | Job control logic |
 | `abi/` | 500+ | ABI type definitions |
 | `runtime.rs` | 550+ | Arch syscall wrappers, brk allocator, args |
 
-**Total:** 22 modules, ~14,000 lines, merged into the kernel crate.
+**Total:** 16 modules, 41 files, ~12,600 lines, merged into the kernel crate.
+
+The ABI records are the one thing here that exists twice: `src/abi/` holds them,
+and `src/user/shared/abi/` mirrors them, the mirror carrying `//! src/abi/<name>.rs`
+in its header to record where each file came from.  Nothing checks that the two
+stay in step, and they have not: `src/abi/process.rs` carries the `SA_*` restart
+flags and `src/abi/net.rs` a capability-accessor block that the shared copies
+lack, while `src/user/shared/abi/syscall.rs` carries `SYSCALL_ABI_VERSION_*`
+that the kernel copy lacks.  Every difference is small on its own; what is
+missing is the check, so "shared" is a convention held up by hand rather than a
+guarantee.
 
 ### Testing
 
 | Category | Count | Coverage |
 |----------|-------|----------|
-| Unit tests (in-module) | ~100+ | Varies by module |
-| Integration test files | 17 | 8,536 lines |
+| Unit tests (in-module) | ~300 modules (1,857 tests) | Varies by module |
+| Integration test files | 25 | 11,661 lines (277 tests) |
 | Fault injection tests | 1,245 lines | SimpleFs single-fault matrix |
 | Recovery tests | 1,163 lines | Crash + replay scenarios |
 | Concurrency tests | 700+ lines | Scheduler, condvar, console, keyboard |
@@ -509,7 +559,16 @@ once and never renumbered, records whose layout is asserted at compile time,
   implement, so booting with `aia=aplic-imsic` takes an access fault on the
   first register access.  The module note in `src/arch/riscv64/aia_imsic.rs`
   records the evidence and what finishing it needs.
-- **Thin userspace ecosystem**: the ring3 programs on the demo disk (shell, demo-launcher, init.elf) are inlined `exit(0)` placeholder ELF stubs — no real applications or toolchain yet.
+- **Thin userspace ecosystem**: there is no toolchain and no real applications.
+  What is there is more than it looks: the demo's ring3 payloads
+  (`demo-launcher`, its Rust and rust-io variants, and the four fault demos)
+  are real ELF images which run, make syscalls, read and write files under
+  `/data/users/guest/`, and install their own exception handlers — built inside
+  the kernel by `src/user/demo/`, not compiled by a toolchain.  What is missing
+  is the layer above them: the shell is metadata-only (`host_proxy = "shell"`
+  routes it to the in-kernel Rust shell, so the prompt is not ring3 code), the
+  `/init.elf` in the system zone is a placeholder stub, and nothing on the
+  volume is signed or verified unless its manifest asks for it.
 - **Single maintainer**: bus factor = 1; every module is currently held by one maintainer.
 - **Experimental syscalls are unfrozen**: slots 121–189 are classified Experimental.
 - **“We do not break userspace” has three subjects, not a population**: the
@@ -531,7 +590,7 @@ once and never renumbered, records whose layout is asserted at compile time,
 4. **Biba integrity model** — formal multi-level security policy in a hobby kernel is rare
 5. **Unicode 15.1 NFC/NFD normalization** + GB18030 codec — comprehensive internationalization
 6. **TLSF heap allocator** — O(1) bounded-time alloc/free, 640 free lists
-7. **`src/user/shared/`** — shared ABI library that kernel and userspace compile against, eliminating ABI drift
+7. **`src/user/shared/`** — the userspace runtime lives inside the kernel crate, so each syscall wrapper, shell builtin, and ABI record is compiled on both sides of the boundary rather than re-implemented per side
 8. **Preemptive multi-threading with guard pages** on all architectures
 9. **NUMA-aware frame allocation, scheduling, and SRAT/FDT discovery** — per-node frame allocators with CPU-to-node mapping, NUMA-aware work stealing, and automatic topology discovery via ACPI SRAT/SLIT (x86_64) and FDT numa-node-id (AArch64, RISC-V)
 10. **virtio-gpu accelerated display with VIRGL 3D protocol infrastructure** — VirtIO GPU driver providing 2D mode-setting and VIRGL 3D protocol support as an alternative to bochs-display

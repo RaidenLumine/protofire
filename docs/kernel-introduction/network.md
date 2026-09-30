@@ -6,7 +6,7 @@ The network stack is organised in the traditional TCP/IP layering model,
 implemented in `src/network/`:
 
 ```
- Application    TLS 1.3, DNS, DHCP, NTP, mDNS, HTTP (user space)
+ Application    TLS 1.3, DNS, DHCP, NTP, mDNS
  Transport      TCP         UDP       Raw Sockets
  Internet       IPv4        IPv6      ARP      ICMP(v6)
  Link           Ethernet    PPP       Device (NIC trait)

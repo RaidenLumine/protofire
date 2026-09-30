@@ -283,7 +283,7 @@ context, CWD, and home directory. Only single-threaded processes may fork.
 
 ---
 
-## Security Model (`src/kernel/process/process/security.rs`)
+## Security Model (`src/kernel/security/token.rs`)
 
 Each process carries a `SecurityToken`:
 
@@ -296,8 +296,15 @@ pub struct SecurityToken {
     pub recovery: bool,
     pub supplementary_group_ids: &'static [GroupId],
     authenticated: bool,
+    provisioned: bool,
 }
 ```
+
+The two private flags record provenance rather than privilege.  `authenticated`
+means a password was verified; `provisioned` means the kernel built the token
+from a definition it trusts — a service — rather than from itself.  A token can
+be neither, and most are: it is the combination that decides what the token may
+ignore.
 
 ### Integrity Levels
 
@@ -312,9 +319,16 @@ An integrity level *dominates* another if its numeric value is <= the other's.
 
 ### Key Queries
 
-- `may_bypass_discretionary_permissions()`: System tokens always bypass;
-  user tokens require both superuser/admin-mode and password-based
-  authentication (`is_authenticated()`).
+- `may_bypass_discretionary_permissions()`: The kernel's own tokens always
+  bypass; every other token needs both superuser/admin-mode and password-based
+  authentication (`is_authenticated()`).  A service token therefore never
+  bypasses, however it was declared — it can be told to manage what root owns,
+  not to ignore a file's owner/group/other bits.
+- `is_kernel_token()`: True for the kernel's own tokens only
+  (`is_system() && !is_provisioned()`).  Callers that use "is this the kernel"
+  as a shortcut ask this, not `is_system()`: the discretionary bypass,
+  unconditional security-descriptor changes, and the per-process `is_kernel`
+  report are all gated on it.
 - `may_manage_system_tree()`: Requires admin mode (elevated or system).
 - `is_admin_mode()`: True if `elevated` or `integrity == System`.
 - `may_bypass_read_only_mounts()`: Recovery mode only.
@@ -325,6 +339,10 @@ An integrity level *dominates* another if its numeric value is <= the other's.
 - `SecurityToken::system()`: Kernel-internal, always privileged, no auth flag.
 - `SecurityToken::root()`: High integrity, elevated, unauthenticated by default.
 - `SecurityToken::guest()`: Medium integrity, unprivileged.
+- `SecurityToken::provisioned(uid, gid, integrity)`: Built for a service from a
+  definition the kernel trusts and an account it resolved.  Elevated, carries
+  the account, and is not the kernel — `is_kernel_token()` is false whatever
+  the integrity level says.
 - `with_authentication()`: Called after password-based login; gates
   `may_bypass_discretionary_permissions()` for user-mode admin tokens.
 

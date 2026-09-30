@@ -8,7 +8,7 @@ Key design goals:
 - **Rust safety where possible**: the kernel uses `unsafe` only for MMIO, inline assembly, and pointer-level context-switch mechanics. Page table walks, filesystem operations, and network protocol parsing are safe Rust.
 - **Single-address-space ELF loader**: ring-3 (user) programs are self-contained ELF files loaded into per-process page tables. No dynamic linking, no shared libraries -- each program is a standalone binary.
 - **Cooperative threading**: the scheduler runs a simple round-robin of kernel and user threads. There is no preemption timer in the scheduler core; threads yield explicitly via `yield_current()` or blocking I/O. Timer interrupts increment a tick counter and drive scheduler timeslicing via `on_timer_tick_with_preemption`.
-- **File-oriented ABI**: the syscall interface is modelled on POSIX-like operations (open, read, write, close, ioctl, mmap, fork, exec, wait) with a flat 100-slot dispatch table.
+- **File-oriented ABI**: the syscall interface is modelled on POSIX-like operations (open, read, write, close, ioctl, mmap, fork, exec, wait) with a flat dispatch table numbered 0–189, of which 188 carry a handler.
 - **Minimal platform assumptions**: boot information is received via Multiboot2 (x86_64) or a flattened device tree FDT pointer (AArch64, RISC-V). PCI/ACPI table walks happen after early memory init.
 
 The kernel is approximately **210,000+ lines of Rust** across **460+ source files** in the `src/` tree.
@@ -114,7 +114,7 @@ src/                                 (the crate root: peers under one roof)
     │     └── fs::simplefs           (on-disk layout, two-phase commit)
     ├── drivers::DriverManager       (VirtIO block/net/input/gpu, PCI probe)
     │     └── device                 (console, keyboard, null, zero, serial)
-    ├── syscall::Table               (100-slot dispatch table)
+    ├── syscall::Table               (190 numbered slots, 0–189)
     │     ├── syscall::process_launch
     │     ├── syscall::process_management
     │     ├── syscall::fs
@@ -251,15 +251,15 @@ The `build.rs` script at the repository root selects the per-architecture linker
 | `aarch64-unknown-none` | `linker-aarch64.ld` |
 | `riscv64gc-unknown-none-elf` | `linker-riscv64.ld` |
 
-The demo system volume is constructed in-kernel by `src/fs/demo.rs`; the launch chain follows the `/apps/current → /apps/catalog → /apps/packages` layout, resolved by `crate::user::program::launch_reference`.
+The demo volumes are constructed in-kernel by `src/fs/demo/`; the launch chain follows the `/apps/current → /apps/catalog → /apps/packages` layout, resolved by `crate::user::program::launch_reference`.
 
-Ring-3 ELF payload construction is handled in-kernel by `src/user/demo/` (`elf_builder`); placeholder ELFs for the demo volume are inlined in `src/fs/demo.rs`.
+Ring-3 ELF payload construction is handled in-kernel by `src/user/demo/` (`elf_builder`): the demo's programs are built into images there and written into the apps zone by `src/fs/demo/`, so they are real ring3 code without a toolchain.  The one placeholder is the shell, whose catalog entry routes through `host_proxy` to the in-kernel Rust shell rather than to ring3 code; the bare `init.elf` stub in the system zone is a second.
 
 ### CI Verification Gates
 
 The `scripts/verify.sh` script runs tiered checks:
 
-- **P0**: format check + host/x86_64/AArch64 build checks + header coverage
+- **P0**: format check + host/x86_64/AArch64 build checks + header coverage + documentation citations
 - **P1**: P0 plus fast concurrency/path/I-O/ABI regression tests
 - **P2** (default): P1 plus storage/recovery/fault-matrix regression tests
 - **P3**: P2 plus clippy and optional AArch64 runtime smoke test (`make check-aarch64-runtime`)
@@ -268,7 +268,7 @@ The `scripts/verify.sh` script runs tiered checks:
 
 ## ABI Stability Policy
 
-- **Syscall numbers are stable**. The 100-slot dispatch table (`syscall::Table` in `src/syscall/table.rs`) assigns fixed numbers to operations (open, read, write, close, ioctl, mmap, fork, exec, wait, etc.). New syscalls must use previously unassigned slots.
+- **Syscall numbers are stable**. The dispatch table (`syscall::Table` in `src/syscall/table.rs`) numbers operations 0–189, of which 188 carry a handler and 141–142 are reserved. New syscalls must use previously unassigned slots.
 - **`src/user/shared/` is the ABI boundary**. This module defines the ABI record types (`FileStat`, `DirectoryEntryRecord`, `IoVec`, etc.) and syscall wrapper functions. Changes to its public types require coordination across all consumers.
 - The kernel is versioned as `2026.7.1` (calendar versioning). There is no stability guarantee across major versions; ring-3 ELFs are shipped with the demo disk and rebuilt together with the kernel.
 

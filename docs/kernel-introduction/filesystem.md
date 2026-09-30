@@ -67,6 +67,19 @@ Mount points are tracked in `FileSystem::mounted_fs` (`BTreeMap<String, MountPoi
 defined in `layout.rs`). `mount()` normalizes the target path, looks up the filesystem by name, and
 inserts the mount point. `unmount()` removes it.
 
+A path that resolves to the mount point itself names a directory that already exists, so
+`create_dir` on it reports `AlreadyExists` before the request reaches the volume underneath.  The
+volume cannot answer that case for itself — its own root is not a name it may create, so it would
+reject `/` as invalid instead.  Callers that build a path one component at a time depend on it:
+the `mkdir -p` loop that creates `/data/etc` at boot tries the mount point as its first component.
+
+The data zone is otherwise owned by the guest account, with `0775` directories and `0664` files, so
+that a user's own data is theirs to write.  `/data/etc` is the second boundary inside it: the
+credential store is carved out as root-owned `0700`/`0600`, because these are the files that decide
+who the guest is.  On a volume without persistent security descriptors that path rule is the only
+place the exception can live — there is nowhere on the volume to record a per-file descriptor — so
+it is stated once, in `filesystem::security_helpers::default_security_descriptor_for_path`.
+
 The built-in virtual mounts are:
 
 | Mount path | Device | Backend |
@@ -383,7 +396,7 @@ complexity.
 | `src/fs/simplefs/image_staging.rs` | `SimpleFs::build_image()`, `build_image_with_headroom()` |
 | `src/fs/simplefs/{vfs,file_io,dir_ops,inode_dirent}.rs` | SimpleFs VFS trait impl, data I/O, dirent manipulation, disk serialization |
 | `src/fs/fuse/mod.rs` | FUSE design doc, protocol types (`FuseOpcode`, `FuseHeader`) |
-| `src/fs/demo.rs` | Legacy demo disk builder (zone images, MBR layout) |
+| `src/fs/demo/` | Demo disk builder (per-zone images, in-kernel program artifacts) |
 | `src/fs/test_support.rs` | `build_test_zone_image()`, `build_minimal_test_zone_image()` |
 
 ---

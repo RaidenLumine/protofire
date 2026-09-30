@@ -165,6 +165,7 @@ Kernel::init()
   ├── Per-CPU data init (x86_64)                  # percpu::init_bsp()
   ├── SMP AP bring-up (x86_64)                    # smp::bring_up_aps()
   ├── self.syscall_table.init()                   # Syscall dispatch table
+  ├── audit::init()                               # Audit ring buffer, before any producer
   ├── spawn_init_program()                        # /system/init.elf
   ├── spawn_system_programs()                     # /system/rc.d/*.toml
   └── self.scheduler.start_idle_process()
@@ -194,7 +195,7 @@ permissions.
 
 ### 4.3 SMP AP Discovery and Bring-Up (x86_64)
 
-**Discovery** (`src/kernel/smp/discovery.rs`): Parses the ACPI MADT table
+**Discovery** (`src/arch/x86_64/acpi.rs`): Parses the ACPI MADT table
 (via the Multiboot2 RSDP tag) to enumerate LAPIC IDs.  The BSP records
 its own LAPIC ID, and discovered AP IDs are stored as "early APs".
 
@@ -274,7 +275,7 @@ path is always used.
 const DEFAULT_INIT_PATH: &str = "/system/init.elf";
 ```
 
-### 5.3 `spawn_init_program()` (`src/kernel/mod.rs:547`)
+### 5.3 `spawn_init_program()`
 
 ```
 spawn_init_program(init_path)
@@ -294,7 +295,7 @@ If the ELF is missing (no boot disk, or distribution not installed), the
 kernel prints a diagnostic and continues -- the system runs with only
 kernel worker threads and the idle process.
 
-### 5.4 `spawn_system_programs()` (`src/kernel/mod.rs:415`)
+### 5.4 `spawn_system_programs()`
 
 Service definitions are loaded from TOML files in `/system/rc.d/` via
 `service::load_services_from_fs()`.
@@ -305,6 +306,47 @@ Each `ServiceDefinition` has a `kind`:
   resolving the entry name in the `WORKER_REGISTRY` table.
 - `ServiceKind::UserProgram` -- an ELF binary loaded from a path and
   spawned as a user process.
+
+Each definition may also declare `security`, which selects the token the user
+program runs under and is the only input to that choice:
+
+| Declaration | Account needed | Token | Effect |
+|---|---|---|---|
+| `"guest"` (default) | no | `SecurityToken::guest()` | uid 1000, Medium integrity |
+| `"admin"` | yes | provisioned as the account | that uid, High integrity, elevated |
+| `"system"` | yes | provisioned as the account | that uid, System integrity, the kernel's MAC subject |
+
+A privileged level names an account with `account = "<name>"`, defaulting to
+`root`, and the name has to resolve in the user database before the service may
+run: a service that asked for `admin` and did not get it refuses to start
+rather than running as a guest, because the two are indistinguishable from
+`/service` afterwards.  Both the grant and the refusal are audited.
+
+Neither token carries password authentication.  A service has nobody to ask, so
+the kernel establishes the identity instead of proving it, and `authenticated`
+stays clear — which is what keeps the discretionary-permission bypass a
+password-derived token would have out of reach.  The trust boundary is the
+config file's location: `/system/rc.d` is on a read-only zone, so only the
+system image can raise a service's level.  A restart re-derives the token from
+the stored definition rather than from anything the exiting process left behind.
+
+Leaving the bypass out of reach is a policy, not an oversight.  No service
+level gets it: not `admin`, which is elevated and may manage what root
+owns — the system tree, the data zone's boundary directories, the syscalls
+gated on admin mode — but cannot read another account's private files; and not
+`system`, which carries the kernel's trust *level* but not its *identity*.  A
+config file cannot ask a program to be the kernel.
+
+The bypass has exactly two producers: the kernel's own threads, and a login
+that verified a password.  A service that needs to reach across accounts is
+asking for a capability neither level gives it, and widening a level is not the
+way to add one.  Until such a capability exists, the two answers are the ones
+already in the tree: state the access as a layout rule, so the path carries the
+right owner and mode (this is how `/data/etc` is protected), or do the work in a
+kernel thread, which is already the kernel.
+
+`account` on a `security = "guest"` service is a config error rather than a
+field to ignore: it reads like an escalation that silently did not happen.
 
 When no rc.d files are present (e.g. demo-disk configuration), an
 embedded fallback spawns demo kernel workers (`kworker-a`, `kworker-b`,
@@ -434,6 +476,7 @@ GRUB (Multiboot2)       or      QEMU -kernel (PVH ELF note)
               ├── percpu::init_bsp()               # GS base → PerCpuData
               ├── smp::bring_up_aps()              # INIT-SIPI-SIPI
               ├── syscall_table::init()
+              ├── audit::init()                    # Ring buffer, before any producer
               ├── spawn_init_program("/system/init.elf")
               ├── spawn_system_programs()          # rc.d/*.toml
               │
