@@ -32,7 +32,19 @@ impl FileSystem {
         self.with_authorized_namespace_mutation(
             normalized,
             security_token,
-            |mount, relative_path| mount.fs.create_dir(relative_path),
+            |mount, relative_path| {
+                // A path that resolves to the mount point itself already names a
+                // directory, which makes this the `mkdir` on an existing
+                // directory case: EEXIST, not a bad name.  The volume underneath
+                // cannot answer it — its own root is not a name it may create, so
+                // it rejects "/" as invalid — and that error would stop any
+                // caller that walks a path one component at a time, such as the
+                // mkdir-p loop in `kernel::user`.
+                if relative_path == "/" {
+                    return Err(crate::Error::AlreadyExists);
+                }
+                mount.fs.create_dir(relative_path)
+            },
         )
     }
 

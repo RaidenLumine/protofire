@@ -122,3 +122,30 @@ fn guest_security_token_can_rename_and_remove_within_guest_data_tree() {
         Err(Error::NotFound)
     ));
 }
+
+#[test]
+fn creating_a_directory_at_a_mount_point_reports_that_it_exists() {
+    let mut fs = FileSystem::new();
+    fs.init();
+
+    // `/data` is a mount point, so the directory already exists and `mkdir` on
+    // it is the ordinary EEXIST case.  It used to come back as
+    // `InvalidArgument`: the path resolves to the mount point itself, and the
+    // volume underneath rejects its own root as a name it cannot create.  Any
+    // caller that creates a path one component at a time stopped there.
+    assert_eq!(fs.create_dir("/data"), Err(Error::AlreadyExists));
+
+    // The same holds for every other zone mount, and for the system token the
+    // mkdir-p loop uses.
+    assert_eq!(
+        fs.create_dir_normalized_with_security_token("/tmp", SecurityToken::system()),
+        Err(Error::AlreadyExists)
+    );
+
+    // Creating a directory *below* a mount point is unaffected.
+    fs.create_dir("/data/etc/regression-accounts")
+        .expect("create a directory below the data mount");
+    assert!(fs
+        .stat_normalized_path("/data/etc/regression-accounts")
+        .is_ok());
+}
