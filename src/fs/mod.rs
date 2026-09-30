@@ -134,6 +134,12 @@ pub(crate) const TEMP_DIRECTORY_MODE: u16 = 0o777;
 pub(crate) const TEMP_FILE_MODE: u16 = 0o666;
 pub(crate) const DATA_ROOT_PATH: &str = "/data";
 pub(crate) const DATA_USERS_ROOT_PATH: &str = "/data/users";
+pub(crate) const DATA_CREDENTIAL_ROOT_PATH: &str = "/data/etc";
+/// Modes for the credential store, which is carved out of the guest-owned data
+/// zone in [`filesystem::security_helpers::default_security_descriptor_for_path`]:
+/// the directory is closed to everyone but root, and so are the records in it.
+pub(crate) const CREDENTIAL_DIRECTORY_MODE: u16 = 0o700;
+pub(crate) const CREDENTIAL_FILE_MODE: u16 = 0o600;
 pub(crate) const SYSTEM_DIRECTORY_MODE: u16 = 0o755;
 pub(crate) const SYSTEM_FILE_MODE: u16 = 0o644;
 pub(crate) const SYSTEM_DEVICE_MODE: u16 = 0o660;

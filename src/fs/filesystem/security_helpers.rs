@@ -11,6 +11,9 @@ use super::super::layout::StorageZone;
 use super::super::vfs::NodeKind;
 use super::super::vfs::SecurityDescriptor;
 use super::super::vfs::SecurityDescriptorUpdate;
+use super::super::CREDENTIAL_DIRECTORY_MODE;
+use super::super::CREDENTIAL_FILE_MODE;
+use super::super::DATA_CREDENTIAL_ROOT_PATH;
 use super::super::DATA_DIRECTORY_MODE;
 use super::super::DATA_FILE_MODE;
 use super::super::DATA_ROOT_PATH;
@@ -35,7 +38,10 @@ pub(crate) fn permission_mutation_scope_for_path(normalized: &str) -> Permission
         return PermissionMutationScope::SystemManaged;
     }
 
-    if normalized == DATA_ROOT_PATH || normalized == DATA_USERS_ROOT_PATH {
+    if normalized == DATA_ROOT_PATH
+        || normalized == DATA_USERS_ROOT_PATH
+        || path_is_exact_or_child_of(normalized, DATA_CREDENTIAL_ROOT_PATH)
+    {
         return PermissionMutationScope::DataBoundary;
     }
 
@@ -68,6 +74,20 @@ pub(crate) fn default_security_descriptor_for_path(
 ) -> SecurityDescriptor {
     if normalized == "/" || is_data_system_boundary_directory(normalized) {
         return system_directory_security_descriptor();
+    }
+
+    // The credential store sits inside the guest-owned data zone but must not
+    // be owned by the guest: these are the files that say who the guest is.
+    // `/data/etc` and everything under it are the second boundary inside the
+    // data zone, and on a volume without persistent descriptors this rule is
+    // the only thing that can say so — there is nowhere else to record it.
+    if path_is_exact_or_child_of(normalized, DATA_CREDENTIAL_ROOT_PATH) {
+        return match kind {
+            NodeKind::Directory => SecurityDescriptor::root(CREDENTIAL_DIRECTORY_MODE),
+            NodeKind::File | NodeKind::Device | NodeKind::Symlink => {
+                SecurityDescriptor::root(CREDENTIAL_FILE_MODE)
+            }
+        };
     }
 
     if kind == NodeKind::Device {

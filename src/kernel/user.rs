@@ -18,7 +18,6 @@ use core::fmt::Write as FmtWrite;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
 
-use crate::fs::vfs::SecurityDescriptorUpdate;
 use crate::fs::FileSystem;
 use crate::fs::OPEN_ALWAYS;
 use crate::kernel::crypto;
@@ -27,6 +26,7 @@ use crate::kernel::process::GroupId;
 use crate::kernel::process::UserId;
 use crate::kernel::process::HANDLE_RIGHT_READ;
 use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::kernel::process::ROOT_USER_ID;
 use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
@@ -357,12 +357,11 @@ impl ShadowDatabase {
     pub fn save(&self, fs: &FileSystem) -> Result<()> {
         let content = self.serialize();
         write_text_file_atomic(fs, SHADOW_PATH, content.as_bytes())?;
-        let _ = fs.update_persistent_security_descriptor_for_normalized_path(
-            SHADOW_PATH,
-            SecurityDescriptorUpdate::default().mode(0o600),
-            crate::kernel::process::SecurityToken::system(),
-        );
-        Ok(())
+        // The atomic replace above wrote a fresh file, which takes the
+        // descriptor the layout gives this path.  Check it rather than assume
+        // it: the promise a credential file makes is that only root can write
+        // it, and a promise nobody verifies is a claim.
+        credential_path_is_protected(fs, SHADOW_PATH)
     }
 
     /// Find a shadow entry by username.
@@ -488,6 +487,18 @@ pub fn authenticate_user(username: &str, password: &str) -> Option<UserRecord> {
     with_database(|db| db.find_by_name(username).cloned()).flatten()
 }
 
+/// Resolve an account by name, without asking for a password.
+///
+/// This is the identification half of [`authenticate_user`], for callers that
+/// have already established who they are some other way — a service started
+/// from a definition the kernel trusts, for instance, which has nobody to ask
+/// for a secret.  Returns `None` before the database is initialised and for
+/// unknown names alike, so a caller that needs an identity must treat both as
+/// "no account" and refuse rather than fall back to a default.
+pub fn find_account(username: &str) -> Option<UserRecord> {
+    with_database(|db| db.find_by_name(username).cloned()).flatten()
+}
+
 /// Set or change a user's password.  Requires filesystem access to persist
 /// the shadow file.
 pub fn set_user_password(username: &str, new_password: &str, fs: &FileSystem) -> Result<()> {
@@ -565,7 +576,13 @@ fn ensure_dir_all(fs: &FileSystem, normalized_path: &str) -> Result<()> {
         accumulated.push_str(segment);
         match fs.create_dir(&accumulated) {
             Ok(()) | Err(Error::AlreadyExists) => {}
-            Err(e) => return Err(e),
+            Err(e) => {
+                // Name the component, not the caller's whole path.  Once a
+                // prefix exists the two are different, and a message quoting
+                // only the full path points a reader at the wrong segment.
+                crate::println!("[userdb] mkdir {} failed: {}", accumulated, e.as_str());
+                return Err(e);
+            }
         }
     }
     Ok(())
@@ -577,6 +594,29 @@ fn write_text_file(fs: &FileSystem, normalized_path: &str, content: &[u8]) -> Re
     handle.set_len(0).map_err(|_| Error::InternalError)?;
     fs.write(&mut handle, content)?;
     Ok(())
+}
+
+/// Check that the credential store is somewhere its accounts cannot write.
+///
+/// The filesystem layout already says it is — `/data/etc` is carved out of the
+/// guest-owned data zone — but a layout is a claim about a volume, and this is
+/// the one place that can check the claim instead of trusting it.  The check
+/// is the invariant that matters, not a mode: the files must be owned by root
+/// and must not be writable by any other account.  A store that fails it is
+/// not loaded, because credentials that the accounts themselves could have
+/// written make every authentication after that meaningless.
+fn credential_path_is_protected(fs: &FileSystem, path: &str) -> Result<()> {
+    let security = fs.stat_normalized_path(path)?.security;
+    if security.owner_uid != ROOT_USER_ID || security.mode & 0o022 != 0 {
+        return Err(Error::PermissionDenied);
+    }
+    Ok(())
+}
+
+/// Check every file in the credential store.
+fn credential_store_is_protected(fs: &FileSystem) -> Result<()> {
+    credential_path_is_protected(fs, PASSWD_PATH)?;
+    credential_path_is_protected(fs, SHADOW_PATH)
 }
 
 /// Atomically replace `normalized_path` with `content`: write a sibling
@@ -642,9 +682,23 @@ pub fn create_home_skeleton(fs: &FileSystem, home_path: &str) -> Result<()> {
 /// host tests).  A pure kernel build never creates accounts or passwords.
 pub fn init_user_database(fs: &FileSystem) {
     // Ensure the directory tree exists.
-    if let Err(e) = ensure_dir_all(fs, "/data/etc") {
-        crate::println!("[userdb] failed to create /data/etc: {}", e.as_str());
+    if ensure_dir_all(fs, "/data/etc").is_err() {
+        crate::println!("[userdb] /data/etc is unusable; skipping account setup");
         return;
+    }
+
+    // An existing store is checked before it is read.  On a first boot there is
+    // nothing to check yet, and the files created below are described by the
+    // same layout rule, which the end of this function checks again.
+    match credential_store_is_protected(fs) {
+        Ok(()) | Err(Error::NotFound) => {}
+        Err(_) => {
+            crate::println!(
+                "[userdb] the account database is not root-owned and read-only \
+                 to everyone else; refusing to load it"
+            );
+            return;
+        }
     }
 
     // Load the database.  If none is present the demo distribution seeds one;
@@ -845,12 +899,15 @@ pub fn init_user_database(fs: &FileSystem) {
         }
     }
 
-    // Apply restrictive permissions to the shadow file.
-    let _ = fs.update_persistent_security_descriptor_for_normalized_path(
-        SHADOW_PATH,
-        SecurityDescriptorUpdate::default().mode(0o600),
-        crate::kernel::process::SecurityToken::system(),
-    );
+    // Check the store once it exists.  A first boot creates these files, and
+    // the check above cannot have covered them; this is where a layout rule
+    // that stopped protecting the store would show up instead of shipping.
+    if credential_store_is_protected(fs).is_err() {
+        crate::println!(
+            "[userdb] the account database is not root-owned and read-only to \
+             everyone else; a reboot would not trust it"
+        );
+    }
 
     // Ensure the skeleton template is present for useradd.  Distribution
     // policy — a pure build leaves the skel to the distribution's init.
@@ -871,6 +928,20 @@ pub fn init_user_database(fs: &FileSystem) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Reached through the parent's import list everywhere else in this file;
+    // the tests are the only remaining user of the type itself.
+    use crate::kernel::process::SecurityToken;
+
+    /// Serialises the tests that install the process-global account database.
+    ///
+    /// `init_user_database` writes both global slots and `find_account` reads
+    /// them.  The kernel's own boot path installs the same slots, and the tests
+    /// in `kernel::tests` do boot a kernel, so these tests never assert on the
+    /// state they did not set and never empty the slots on the way out:
+    /// removing a database another test is reading would be the larger
+    /// disturbance.  The lock keeps this module's own three tests, which do
+    /// share the slots, off each other.
+    static USER_DB_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parse_valid_passwd() {
@@ -1107,5 +1178,99 @@ guest:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5:e3b0c44298fc1c149afbf4c8996fb92427ae41e46
         });
         assert!(!db.verify_password("locked", ""));
         assert!(!db.verify_password("locked", "anything"));
+    }
+
+    // -- Boot-time account tree -------------------------------------------
+
+    /// The mkdir-p loop walks one component at a time, and its first component
+    /// is a mount point: `/data` cannot be created, because it is already
+    /// there.  Treating that as a failure stopped the loop before it reached
+    /// `etc`, which is what left the account tree absent on every boot.
+    #[test]
+    fn ensure_dir_all_creates_a_tree_below_a_mount_point() {
+        let mut fs = FileSystem::new();
+        fs.init();
+
+        ensure_dir_all(&fs, "/data/etc").expect("create the account tree");
+        assert!(fs.stat_normalized_path("/data/etc").is_ok());
+        assert!(fs.stat_normalized_path("/data").is_ok());
+    }
+
+    /// The boot entry point, end to end: the tree is built and the account
+    /// files are seeded onto a filesystem whose zones are mounts.
+    #[test]
+    fn init_user_database_seeds_the_account_tree_across_mount_points() {
+        let _guard = USER_DB_TEST_LOCK.lock();
+        let mut fs = FileSystem::new();
+        fs.init();
+
+        init_user_database(&fs);
+
+        let seeded_users = global_user_database()
+            .map(|slot| slot.lock().as_ref().map_or(0, |db| db.users.len()))
+            .unwrap_or(0);
+        assert!(fs.stat_normalized_path("/data/etc").is_ok(), "account dir");
+        assert!(fs.stat_normalized_path(PASSWD_PATH).is_ok(), "passwd file");
+        assert!(fs.stat_normalized_path(SKEL_PATH).is_ok(), "skeleton");
+        assert!(seeded_users > 0, "the database is loaded, not only seeded");
+    }
+
+    /// `find_account` is the identification half of authentication: it answers
+    /// "who is this" without a password, for callers that established identity
+    /// some other way.  An unknown name and an uninitialised database are the
+    /// same answer, so a caller cannot mistake either for an account.
+    #[test]
+    fn find_account_resolves_only_names_the_database_knows() {
+        let _guard = USER_DB_TEST_LOCK.lock();
+        let mut fs = FileSystem::new();
+        fs.init();
+
+        // A name no database defines has no account, whether or not one is
+        // loaded: there is no fallback to land on.
+        assert!(find_account("no-such-account").is_none());
+        init_user_database(&fs);
+        let root = find_account("root").expect("root is seeded");
+        assert_eq!(root.uid, 0);
+        assert!(find_account("no-such-account").is_none());
+    }
+
+    /// A privileged service is authorised against the account database, so the
+    /// database has to be out of reach of the accounts it describes.  If a
+    /// guest could rewrite its own entry, "the account exists" would be worth
+    /// nothing.
+    #[test]
+    fn a_guest_cannot_rewrite_the_account_database() {
+        let _guard = USER_DB_TEST_LOCK.lock();
+        let mut fs = FileSystem::new();
+        fs.init();
+        init_user_database(&fs);
+
+        // The ownership is the invariant.  SimpleFs hands a new file its
+        // parent's owner, and the data zone arrives with `/etc` owned by the
+        // guest account — so a mode says nothing until the owner is right.
+        for (path, mode) in [(PASSWD_PATH, 0o600), (SHADOW_PATH, 0o600)] {
+            let metadata = fs.stat_normalized_path(path).expect("credential file");
+            assert_eq!(metadata.security.owner_uid, ROOT_USER_ID, "{path} owner");
+            assert_eq!(metadata.security.mode, mode, "{path} mode");
+        }
+        assert_eq!(
+            fs.stat_normalized_path("/data/etc")
+                .expect("account directory")
+                .security
+                .owner_uid,
+            ROOT_USER_ID
+        );
+
+        for path in [PASSWD_PATH, SHADOW_PATH] {
+            assert_eq!(
+                fs.replace_file_contents_normalized_with_security_token(
+                    path,
+                    b"attacker:0:0:/root\n",
+                    SecurityToken::guest(),
+                ),
+                Err(Error::PermissionDenied),
+                "{path} must not be writable by a guest"
+            );
+        }
     }
 }
