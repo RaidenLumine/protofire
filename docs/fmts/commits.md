@@ -217,8 +217,12 @@ important to get right, because nothing will remind you:
   trailer policy and the fixed roles — people sign and co-author, tools assist.
 - **Whether `Assisted-by:` is present** when a tool was involved, or whether its
   `AGENT:MODEL [TOOLS]` shape is right.
-- **Trailer order.** Conventionally `Signed-off-by:` comes last, after
-  `Co-authored-by:` and `Assisted-by:`.
+- **Trailer order.** `Signed-off-by:` comes first, then `Co-authored-by:` and
+  `Assisted-by:` — the order the example in §6 uses, the order the trailer
+  table in [CONTRIBUTING.md](../../CONTRIBUTING.md#commit-message-guidelines)
+  lists, and the order every AI-assisted commit in this history carries.  The
+  Linux kernel puts its sign-off chain last; this repository does not, and the
+  hook cannot see either way.
 
 Attribution trailers are exempt from the 72-character body wrap. Keep each on a
 single line.
