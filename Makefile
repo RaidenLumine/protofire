@@ -51,6 +51,7 @@ endif
 		check-riscv64 \
 		check-unsafe-comments \
 		check-repo-integrity \
+		check-docs \
 		check-payload-relocations \
 		check-dead-code-allows \
 		check-layering \
@@ -95,6 +96,7 @@ help:
 		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
 		'  make check-unsafe-comments - fail if any configuration gained an undocumented `unsafe` block' \
 		'  make check-repo-integrity  - fail if a ref or the index names a missing git object' \
+		'  make check-docs     - fail if a document cites a file the tree does not have' \
 		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
 		'  make check-dead-code-allows  - fail if a file-level allow(dead_code) has no reason' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
@@ -146,6 +148,14 @@ doctor:
 # P0 tier where a broken working copy is caught before anything is built on it.
 check-repo-integrity:
 	sh ./scripts/check-repo-integrity.sh
+
+# Documentation cites the tree constantly — every `src/...` path and every
+# relative link is a claim that a file exists, and a citation of a file that
+# has moved or never existed reads exactly like one that has not.  The scan is
+# a filesystem walk, so it sits in the P0 tier beside the other checks that
+# catch a broken working copy before anything is built on it.
+check-docs:
+	sh ./scripts/check-docs.sh
 
 # The co-located runtime and demo crates live inside the kernel crate
 # (src/user/shared/, src/user/demo/).  No symlinks needed.

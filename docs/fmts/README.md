@@ -44,6 +44,7 @@ everything else is not.
 |------|-------------|---------------|
 | Formatting | `make fmt-check` (`cargo fmt --all --check`) | `verify-p0`, CI |
 | `.rs` file headers | `check_source_headers` in [`scripts/verify.sh`](../../scripts/verify.sh) | `verify-p0`, CI |
+| Every file a document cites | [`scripts/check-docs.sh`](../../scripts/check-docs.sh) — `make check-docs`: `src/...` paths and relative links must resolve, bare filenames must exist somewhere, line-number citations are refused | `verify-p0`, CI |
 | Commit hook installed | `check_commit_hooks` in the same script | `verify-p0` |
 | Commit message shape, `Signed-off-by:` | [`scripts/hooks/commit-msg`](../../scripts/hooks/commit-msg) — see [commits.md](commits.md) | Every `git commit` (`make install-hooks`), and every PR commit in CI |
 | Lints | `make clippy` (`-D warnings`, all targets) | CI, `verify-p3` |

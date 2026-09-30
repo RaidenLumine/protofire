@@ -151,7 +151,7 @@ least the full gate before it can be merged:
 
 | Gate | Contents |
 |------|----------|
-| `make verify-p0` | fmt-check + host/x86_64 checks + aarch64 check + x86_64/aarch64 build + source header coverage |
+| `make verify-p0` | repo integrity + documentation citations + fmt-check + host/x86_64 checks + aarch64 check + x86_64/aarch64 build + source header coverage |
 | `make verify-p1` | p0 + host unit tests (`test-lib`, concurrency, fast regressions) |
 | `make verify-p2` | p1 + storage/recovery/fault-matrix regressions (`test-storage`) |
 | `make verify-p3` | p2 + clippy (all targets) + optional AArch64 runtime smoke |
@@ -231,6 +231,14 @@ the review checklist — is in [`docs/fmts/syscall-abi.md`](docs/fmts/syscall-ab
 - Contributor specifications live under `docs/fmts/`; start at
   [`docs/fmts/README.md`](docs/fmts/README.md). If your change alters a
   convention, update the specification in the same PR.
+- What a document cites has to exist. A `src/...` path or a relative link must
+  resolve; a bare filename must exist somewhere under `src/`, `tests/`, or the
+  repository root; and a line-number citation (`<file>.rs:<line>`) is refused —
+  cite the file and name the symbol, because a number rots and a name does not.
+  [`scripts/check-docs.sh`](scripts/check-docs.sh) enforces this in `verify-p0`,
+  and it also covers the other direction: describe an absent module by name, not
+  by filename, since a document cannot cite a ghost without looking like it
+  meant to.
 - Code comments should be written in English.
 
 ---
