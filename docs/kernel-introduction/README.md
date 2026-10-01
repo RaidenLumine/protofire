@@ -253,7 +253,7 @@ The `build.rs` script at the repository root selects the per-architecture linker
 
 The demo volumes are constructed in-kernel by `src/fs/demo/`; the launch chain follows the `/apps/current → /apps/catalog → /apps/packages` layout, resolved by `crate::user::program::launch_reference`.
 
-Ring-3 ELF payload construction is handled in-kernel by `src/user/demo/` (`elf_builder`): the demo's programs are built into images there and written into the apps zone by `src/fs/demo/`, so they are real ring3 code without a toolchain.  The x86_64 shell is one of them (`shell_payload_x86_64`) and reads its commands from the console.  The one placeholder is the bare `init.elf` stub in the system zone; AArch64 and RISC-V additionally route their shell through `host_proxy` to the in-kernel Rust shell rather than to ring3 code, because neither has a shell payload yet.
+Ring-3 ELF payload construction is handled in-kernel by `src/user/demo/` (`elf_builder`): the demo's programs are built into images there and written into the apps zone by `src/fs/demo/`, so they are real ring3 code without a toolchain.  The shell is one of them on x86_64 and AArch64 (`shell_payload_x86_64`, `shell_payload_aarch64`, one program emitted by `shell_payload`), and it reads its commands from the console.  The one placeholder is the bare `init.elf` stub in the system zone; RISC-V additionally routes its shell through `host_proxy` to the in-kernel Rust shell rather than to ring3 code, because it has no shell payload yet.
 
 ### CI Verification Gates
 

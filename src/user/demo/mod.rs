@@ -45,11 +45,15 @@ macro_rules! payload_or_stub {
 payload_or_stub!("aarch64", demo_program_aarch64);
 payload_or_stub!("aarch64", demo_program_aarch64_fault);
 payload_or_stub!("aarch64", demo_program_aarch64_rust);
+payload_or_stub!("aarch64", shell_payload_aarch64);
 payload_or_stub!("riscv64", demo_program_riscv64);
 payload_or_stub!("x86_64", demo_program_x86_64);
 payload_or_stub!("x86_64", demo_program_x86_64_rust);
 payload_or_stub!("x86_64", demo_program_x86_64_rust_io);
 payload_or_stub!("x86_64", shell_payload_x86_64);
+
+/// The shell program itself, emitted once per architecture that runs one.
+pub mod shell_payload;
 
 #[cfg(any(target_arch = "aarch64", test))]
 pub mod demo_program_aarch64_elf;

@@ -75,26 +75,33 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Capture the guest's serial output with `-serial file:` rather than `-serial
-# stdio` plus a shell redirect.  The two are not equivalent: QEMU's stdio
-# back-end is qualified by the *terminal it inherits*, and with a tty on stdin
-# and a redirected stdout it sent nothing at all here — the log stayed at zero
-# bytes, the boot looked like a machine that never started, and the check went
-# red or green depending on how the caller had launched it.  The x86_64 check
-# was converted for the same reason; see it for the rest of the note.
+# The console is a two-way line on this machine too: the guest's serial output is
+# what this script reads, and the same line is where the shell gets its commands.
+# `-serial stdio` with the output redirected is therefore the configuration that
+# can type at the prompt at all, and typing is the half of the shell a boot by
+# itself never exercises.  What made an earlier attempt at this fail was not
+# stdio itself: QEMU's stdio back-end is qualified by the terminal it inherits,
+# and with a *tty* on stdin and a redirected stdout it wrote nothing here.  The
+# feeder pipes stdin, so there is no terminal in the picture, and the guest's
+# output lands in the log exactly as it does with `-serial file:`.
+shell_commands() {
+    sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
+        'help' 'echo ring3-shell-answered'
+}
+
 set +e
-timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
+shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -machine virt \
     -cpu max \
     -smp 1 \
     -m "$QEMU_RAM" \
     -kernel "$KERNEL_BIN" \
     -display none \
-    -serial "file:$log_file" \
+    -serial stdio \
     -no-reboot \
     -no-shutdown \
     -global virtio-mmio.force-legacy=false \
-    -netdev user,id=net0 -device virtio-net-device,netdev=net0 >/dev/null 2>>"$log_file"
+    -netdev user,id=net0 -device virtio-net-device,netdev=net0 >"$log_file" 2>>"$log_file"
 status=$?
 set -e
 
@@ -130,6 +137,16 @@ require_log_line() {
             printf 'full aarch64 runtime log preserved at: %s\n' "$log_file" >&2
         fi
         cat "$log_file" >&2
+        exit 1
+    fi
+}
+
+require_log_exact_line() {
+    line="$1"
+    if ! grep -F -x "$line" "$log_file" >/dev/null 2>&1; then
+        printf 'missing aarch64 runtime log line (whole line): %s\n' "$line" >&2
+        printf '  last lines of the log:\n' >&2
+        tail -n 12 "$log_file" >&2
         exit 1
     fi
 }
@@ -322,7 +339,7 @@ exception-stack=
 kernel=524288 user=
 [init  ] starting idle process
 protofire kernel running
-protofire shell (user)
+adastra ring3 shell
 [user  ] hello from aarch64 rust payload
 [user  ] aarch64-rust triggering local code-write fault
 [user  ] aarch64-rust resumed after local code-write fault
@@ -356,6 +373,26 @@ require_log_fragments "[user  ] aarch64-rust wait-kind:" "0x0000000000000002" 2
 # the image that launcher starts.  The counts are the assertion that the two
 # runs both got all the way through their faults and both came back.
 require_log_line "[abi   ] demo-launcher payload: ${PAYLOAD_SOURCE:-compiled} "
+
+# ── The shell is ring-3 code, and it answered what was typed at it ─────
+#
+# `adastra ring3 shell` above is the shell payload's own banner; the in-kernel
+# host proxy it replaced printed `protofire shell (user)`, so asserting the new
+# line is what keeps a boot from passing on the proxy after this changed.  The
+# prompt carries the directory the kernel says the process is in — the
+# manifest's `working_dir`, not something the shell remembered.
+#
+# Those lines are also printed by a shell that never reads a command, which is
+# how the recovered assembly shell this replaced passed for as long as nothing
+# typed at it: banner, prompt, and then a fault on the first line, because its
+# `read_line` kept the line at `[rsp]` — the return address — and `ret` jumped
+# to the command bytes.  A boot that is never typed at cannot tell those two
+# apart, so this check types; `scripts/feed-shell-console.sh` is what does it.
+require_log_line "[abi   ] shell payload: ${PAYLOAD_SOURCE:-compiled} "
+require_log_line "adastra:/apps/packages/shell\$ "
+require_log_line "adastra shell (ring 3) builtins:"
+require_log_exact_line "ring3-shell-answered"
+
 require_log_line_count "[user  ] hello from aarch64 rust payload" 2
 require_log_line_count "[user  ] aarch64-rust resumed after local code-write fault" 2
 require_log_line_count "[user  ] aarch64-rust resumed after local stack-exec fault" 2

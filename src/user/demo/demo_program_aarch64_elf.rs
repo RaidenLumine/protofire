@@ -7,7 +7,6 @@
 #![cfg_attr(test, allow(dead_code))]
 
 use crate::user::demo::elf_builder::build_artifact_or_metadata_only;
-use crate::user::demo::elf_builder::build_metadata_only_artifact;
 pub use crate::user::demo::elf_builder::DemoProgramArtifact;
 
 use crate::user::program::DEMO_PROGRAM_ENTRY;
@@ -58,13 +57,32 @@ pub fn build_rust_demo_program_artifact() -> DemoProgramArtifact {
     )
 }
 
-/// Build a metadata-only ELF64 artifact for the shell.
+/// Build the AArch64 shell artifact: a loadable ring-3 ELF, like the
+/// launchers'.
 ///
-/// The shell runs via the host-proxy path (`shell_user_main`) on all platforms.
-/// This ELF carries no PT_LOAD segments so the loader falls back to proxy
-/// execution.
+/// The payload behind it is `shell_payload_aarch64`, which is why this one is
+/// *not* metadata-only.  An artifact with no `PT_LOAD` segment is read by the
+/// loader as "no image here" and replaced with the `host_proxy = "shell"` entry
+/// — `shell_user_main()`, the in-kernel Rust shell — and a shell reached that
+/// way is not ring-3 code.  `scripts/check-aarch64-runtime.sh` types at the
+/// prompt this artifact puts on the disk, which is what tells the two apart.
 pub fn build_shell_program_artifact() -> DemoProgramArtifact {
-    build_metadata_only_artifact(AARCH64_DEMO_PROGRAM_MACHINE)
+    // Say which copy of the payload went on the disk, as the other builders do:
+    // a gate that reported "the payload ran" while the build had quietly shipped
+    // a metadata-only artifact would be testing the proxy.
+    let payload = super::shell_payload_aarch64::payload_bytes();
+    crate::println!(
+        "[abi   ] shell payload: {} ({} bytes)",
+        super::shell_payload_aarch64::payload_source(),
+        payload.len()
+    );
+
+    build_artifact_or_metadata_only(
+        payload,
+        super::shell_payload_aarch64::payload_entry_offset(),
+        DEMO_PROGRAM_ENTRY as u64,
+        AARCH64_DEMO_PROGRAM_MACHINE,
+    )
 }
 
 #[cfg(test)]

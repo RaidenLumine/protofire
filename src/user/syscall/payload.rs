@@ -220,6 +220,114 @@ macro_rules! define_aarch64_payload_runtime {
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
+        /// Read from one of the process's descriptors.
+        ///
+        /// `timeout_ticks` is the window a console read blocks for and is
+        /// ignored by a regular file.
+        fn read_fd(fd: usize, buffer: usize, length: usize, timeout_ticks: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Read as usize,
+            fd,
+            buffer,
+            length,
+            timeout_ticks,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn write_fd(fd: usize, buffer: usize, length: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Write as usize,
+            fd,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn open_path(path: usize, length: usize, flags: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Open as usize,
+            path,
+            length,
+            flags,
+            0,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn close_fd(fd: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Close as usize,
+            fd,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn current_dir(buffer: usize, length: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::CurrentDir as usize,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        /// Read one `read_dir` entry: the header record plus the entry's name
+        /// bytes.  Returns the number of bytes written, and fails with
+        /// `NotFound` past the last entry, which is how a listing ends.
+        ///
+        /// The argument order is the handler's — path, path length, entry
+        /// index, buffer, buffer length — so the stub reads like the syscall it
+        /// wraps: the index picks the entry, and the buffer is where that entry
+        /// is written.
+        fn read_dir(
+            path: usize,
+            path_length: usize,
+            index: usize,
+            buffer: usize,
+            buffer_length: usize,
+        ) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::ReadDir as usize,
+            path,
+            path_length,
+            index,
+            buffer,
+            buffer_length,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
         fn chdir(path: usize, length: usize) -> usize {
             payload_runtime_invoke_raw_status(
             $crate::syscall::SyscallNumber::SetCurrentDir as usize,

@@ -117,47 +117,20 @@ printf 'x86_64 runtime check: 1 cpu, timeout %ss, qemu %s\n' \
     "$TIMEOUT_SECONDS" "$QEMU"
 printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU $* -serial stdio >$log_file"
 
-# Type at the shell once it is up.
+# What is typed at the shell, and why these two:
 #
-# Both waits below are on the guest's own output rather than on fixed delays:
-# keystrokes that arrive before the ring-3 shell is reading are the guest's to
-# drop, and a delay that happens to be long enough on this machine is exactly
-# the kind of timing assumption that turns into a flake.
-#
-# `help` proves the command path end to end — read, split, dispatch, write —
-# and `echo` prints a line that the console's echo of the typed line cannot
-# imitate: the echo puts the command's own words on that line, so the gate
-# matches the answer as a whole line rather than as a substring.
-wait_for_log_line() {
-    waited=0
-    while [ "$waited" -lt "$TIMEOUT_SECONDS" ]; do
-        if grep -F "$1" "$log_file" >/dev/null 2>&1; then
-            return 0
-        fi
-        sleep 1
-        waited=$((waited + 1))
-    done
-    return 1
-}
-
-shell_feeder() {
-    wait_for_log_line "adastra ring3 shell" || true
-    sleep 1
-    printf 'help\r'
-    sleep 2
-    printf 'echo ring3-shell-answered\r'
-
-    # Stay connected for the rest of the boot.  The lines asserted further down
-    # are printed after the shell is up, and the console is the guest's only
-    # output: a console that closed behind the shell would take the rest of the
-    # demo with it on a QEMU that ends the machine at end of input.  The wait
-    # ends with the boot's own last line rather than with a delay that has to be
-    # long enough for every machine.
-    wait_for_log_line "[service] abandoning" || true
+# `help` proves the command path end to end — read, split, dispatch, write — and
+# `echo` prints a line that the console's echo of the typed line cannot imitate:
+# the echo puts the command's own words on that line, so the check below matches
+# the answer as a whole line rather than as a substring.  The feeder waits for
+# the shell's banner, not for a delay; see its own header for the rest.
+shell_commands() {
+    sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
+        'help' 'echo ring3-shell-answered'
 }
 
 set +e
-shell_feeder | timeout "${TIMEOUT_SECONDS}s" "$QEMU" "$@" -serial stdio \
+shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU" "$@" -serial stdio \
     >"$log_file" 2>>"$log_file"
 status=$?
 set -e

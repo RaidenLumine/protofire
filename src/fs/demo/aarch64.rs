@@ -24,6 +24,11 @@ const DEMO_EXEC_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher-exec\"\nversi
 
 const DEMO_FAULT_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher-fault\"\nversion = \"0.1.0\"\nformat = \"elf64-aarch64-user\"\nentry = \"/apps/packages/demo-launcher-fault/bin/demo.elf\"\nworking_dir = \"/apps/packages/demo-launcher-fault\"\nargv = [\"demo-launcher-fault\", \"--profile=demo\", \"--transport=serial\", \"--arch=aarch64\", \"--trigger-fault=code-write\"]\nenv = [\"ASTRA_APP_ID=demo-launcher-fault\", \"ASTRA_RUNTIME=ring3-aarch64-fault\", \"ASTRA_ZONE=/apps\"]\nhost_proxy = \"demo-launcher\"\n";
 
+/// Shell launch manifest.  On this architecture the entry beside it really is
+/// the shell: `crate::user::demo::shell_payload_aarch64` is a loadable ring-3
+/// program, so the loader runs it and never reaches `host_proxy = "shell"`.
+/// The entry stays because RISC-V has no ring-3 shell yet and its manifest does
+/// route through `shell_user_main()`.
 const SHELL_PROGRAM_MANIFEST: &[u8] = b"name = \"shell\"\nversion = \"0.1.0\"\nformat = \"elf64-aarch64-user\"\nentry = \"/apps/packages/shell/bin/shell.elf\"\nworking_dir = \"/apps/packages/shell\"\nargv = [\"shell\"]\nenv = [\"ASTRA_APP_ID=shell\", \"ASTRA_RUNTIME=ring3-prototype\"]\nhost_proxy = \"shell\"\n";
 
 pub(super) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
