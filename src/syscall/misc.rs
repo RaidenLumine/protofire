@@ -43,7 +43,11 @@ pub(super) fn read_console(context: &mut super::SyscallContext) -> Result<super:
         return Ok(super::SyscallDispatch::complete(0));
     }
 
-    let read = super::user_memory::with_optional_output_slice(buffer_ptr, length, |buffer| {
+    // This syscall blocks until a byte arrives (no timeout argument), so the
+    // read runs against kernel memory and the caller's buffer is filled
+    // afterwards; see `user_memory`'s module documentation for why the window
+    // must not be held across the wait.
+    let read = super::user_memory::with_staged_output(buffer_ptr, length, |buffer| {
         Ok(console::init_global()
             .read_bytes_timeout(buffer, u64::MAX)
             .unwrap_or(0))

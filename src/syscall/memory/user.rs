@@ -19,6 +19,23 @@
 //! function; callers that need longer-lived access should use the
 //! closure-based APIs (`with_optional_input_slice`,
 //! `with_optional_output_slice`) or copy the data immediately.
+//!
+//! ## The window brackets one copy, never a wait
+//!
+//! The guard's contract is that it protects a *copy*: the flag it opens is one
+//! bit per hart (x86_64's SMAP `AC`, aarch64's `PAN`, riscv64's `SUM`), so a
+//! window held across a blocking operation is at the mercy of every other
+//! thread that opens and closes its own in the meantime.  When one of them
+//! closes, the blocked thread's access goes with it, and the next store into
+//! the caller's buffer faults *in the kernel* — which is exactly how a ring-3
+//! console reader was killed on riscv64 (`scause=0xf` inside `console.rs`).
+//!
+//! An operation that can block therefore has to stage: it runs against kernel
+//! memory, and the caller's buffer is written or read afterwards, inside a
+//! window that exists for that copy alone.  [`with_staged_output`] and
+//! [`with_staged_input`] are that shape, and they are what a syscall handler
+//! should reach for whenever the operation underneath it is "read until
+//! something arrives" or "write until there is room".
 
 use alloc::string::String;
 use alloc::string::ToString;
@@ -400,6 +417,72 @@ pub(super) fn with_optional_output_slice<T>(
         let buffer = unsafe { core::slice::from_raw_parts_mut(ptr, length) };
         f(buffer)
     })
+}
+
+/// How much of a blocking operation's payload is staged in kernel memory.
+///
+/// The staging buffer is a kernel-stack array, so this is a fraction of a
+/// thread's 32 KiB stack rather than a page per call: a keystroke, a pipe write
+/// and a socket payload all fit, and every interface involved already permits a
+/// short read or a short write.  A caller that wants more loops, which the ABI
+/// asks of it anyway.
+pub(super) const STAGED_IO_CAPACITY: usize = 1024;
+
+/// Run a blocking operation whose output is the caller's buffer.
+///
+/// `f` runs against kernel memory and reports how many bytes it filled; those
+/// bytes are copied to the caller afterwards, inside the window that copy
+/// needs.  See the module documentation for why the window cannot be held
+/// across `f` — the short version is that it is a per-hart bit, and another
+/// thread closing its own window would take this one's access away mid-wait.
+pub(super) fn with_staged_output(
+    ptr: *mut u8,
+    length: usize,
+    f: impl FnOnce(&mut [u8]) -> Result<usize>,
+) -> Result<usize> {
+    if length == 0 {
+        // An empty read is the caller asking to be told nothing: it must not
+        // touch the source, and there is nothing to copy out.
+        return f(&mut []);
+    }
+
+    // Validate the destination before the operation runs, so that a bad
+    // pointer cannot consume a byte from the stream.
+    validate_current_process_user_output_buffer(ptr, length, length)?;
+
+    let capacity = length.min(STAGED_IO_CAPACITY);
+    let mut staging = [0_u8; STAGED_IO_CAPACITY];
+    let filled = f(&mut staging[..capacity])?.min(capacity);
+    if filled > 0 {
+        copy_user_bytes(&staging[..filled], ptr, filled)?;
+    }
+    Ok(filled)
+}
+
+/// Run a blocking operation whose input is the caller's buffer.
+///
+/// The caller's bytes come into kernel memory first, inside the window that
+/// copy needs, and `f` runs against that copy — so whatever waiting `f` does
+/// happens with no window open at all.
+pub(super) fn with_staged_input<T>(
+    ptr: *const u8,
+    length: usize,
+    f: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<T> {
+    if length == 0 {
+        return f(&[]);
+    }
+
+    let capacity = length.min(STAGED_IO_CAPACITY);
+    let mut staging = [0_u8; STAGED_IO_CAPACITY];
+    validate_current_process_user_input_buffer(ptr, length, capacity)?;
+    with_user_access_guard(|| {
+        // SAFETY: the validator accepted `capacity` readable bytes at `ptr`,
+        // and the guard is what makes the read legal while it runs.
+        let source = unsafe { core::slice::from_raw_parts(ptr, capacity) };
+        staging[..capacity].copy_from_slice(source);
+    });
+    f(&staging[..capacity])
 }
 
 pub(super) fn read_user_value<T: Copy>(

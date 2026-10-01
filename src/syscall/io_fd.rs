@@ -39,21 +39,6 @@ pub(super) fn set_length(context: &mut super::SyscallContext) -> Result<super::S
     complete_current_process_fd(fd, |process, fd| io::set_len(process, fd, length))
 }
 
-/// Largest read the syscall stages in kernel memory before copying out.
-///
-/// A stream read can block: the console waits for a keystroke and a pipe for
-/// the other end.  The user-access window such a read would need if it wrote
-/// straight into the caller's buffer must not be held across that wait — it is
-/// a per-hart flag (x86_64's SMAP `AC`, aarch64's `PAN`, riscv64's `SUM`), and
-/// one thread's window closing while another is blocked inside its own takes
-/// the blocked thread's access away: the copy then faults *in the kernel*.
-/// Reading into kernel memory and copying out under the window
-/// `copy_user_bytes` opens for the copy alone keeps the window as short as the
-/// guard's contract says it is.  A short read is the interface's own answer to
-/// "there was more than this", so the cap costs callers nothing they were
-/// promised.
-const READ_STAGING_CAPACITY: usize = 1024;
-
 pub(super) fn read(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let fd = context.arg(0);
     let buffer_ptr = context.arg(1) as *mut u8;
@@ -62,19 +47,16 @@ pub(super) fn read(context: &mut super::SyscallContext) -> Result<super::Syscall
 
     super::validate_zeroed_args(context, 4)?;
 
-    // Check the destination before anything is read, so a bad pointer cannot
-    // consume a byte from the stream; the copy below re-checks what it writes.
-    super::user_memory::validate_current_process_user_output_buffer(buffer_ptr, length, length)?;
-
-    let capacity = length.min(READ_STAGING_CAPACITY);
-    let mut staging = [0_u8; READ_STAGING_CAPACITY];
-    complete_current_process_fd(fd, |process, fd| -> Result<usize> {
-        let read = io::read(process, fd, &mut staging[..capacity], timeout_ticks)?;
-        if read > 0 {
-            super::user_memory::copy_user_bytes(&staging[..read], buffer_ptr, read)?;
-        }
-        Ok(read)
-    })
+    // A stream read can block — the console waits for a keystroke, a pipe for
+    // the other end — so it runs against kernel memory and the caller's buffer
+    // is written afterwards, under a window held for that copy alone; see
+    // `user_memory`'s module documentation.
+    let read = super::user_memory::with_staged_output(buffer_ptr, length, |staging| {
+        super::runtime::with_current_process(|process| {
+            io::read(process, fd, staging, timeout_ticks)
+        })
+    })?;
+    Ok(super::SyscallDispatch::complete(read))
 }
 
 pub(super) fn write(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
@@ -89,8 +71,15 @@ pub(super) fn write(context: &mut super::SyscallContext) -> Result<super::Syscal
     // 4th register (for example a hand-written ring3 shell that reuses the
     // read-timeout it loaded into rcx/arg3 for a preceding blocking read) is
     // not rejected with EINVAL.  Only the documented arguments are interpreted.
-    super::user_memory::with_optional_input_slice(buffer_ptr, length, |buffer| {
-        complete_current_process_fd(fd, |process, fd| io::write(process, fd, buffer))
+    // A write can block (a full pipe, a socket with no window), so the caller's
+    // bytes are staged into kernel memory before the descriptor sees them.  The
+    // descriptor is checked first, though: a write that cannot be attempted
+    // must fail without the kernel having read the caller's buffer at all.
+    complete_current_process_fd(fd, |process, fd| {
+        io::check_write_target(process, fd, length == 0)?;
+        super::user_memory::with_staged_input(buffer_ptr, length, |staged| {
+            io::write(process, fd, staged)
+        })
     })
 }
 

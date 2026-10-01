@@ -138,6 +138,25 @@ pub fn write(process: &Process, fd: FileDescriptor, buffer: &[u8]) -> Result<usi
     )
 }
 
+/// Check that a write of `length` bytes to `fd` would be attempted at all.
+///
+/// The write syscall copies the caller's payload into kernel memory before it
+/// writes — a blocking write must not hold the user-access window across the
+/// wait, so it stages — and a descriptor that cannot be written must fail
+/// *without* that copy: reading a buffer the caller only ever aimed at a bad
+/// descriptor is a fault the write never had to take (and the syscall fuzz
+/// harness says so, with garbage arguments).
+///
+/// This resolves exactly what `write` resolves, at the same point, so the
+/// cheap check cannot drift from the real one.
+pub fn check_write_target(
+    process: &Process,
+    fd: FileDescriptor,
+    payload_is_empty: bool,
+) -> Result<()> {
+    dispatch_stream_io(process, fd, HANDLE_RIGHT_WRITE, payload_is_empty, |_| Ok(0)).map(|_| ())
+}
+
 /// Check whether a file descriptor is ready for reading without blocking.
 ///
 /// Returns `Ok(true)` if the fd exists, has read rights, and has data
