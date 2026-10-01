@@ -23,8 +23,19 @@ pub fn build_demo_program_artifact() -> DemoProgramArtifact {
 pub fn build_rust_demo_program_artifact() -> DemoProgramArtifact {
     use super::demo_program_x86_64_rust;
 
+    // Say which copy of the payload went on the disk, as the other builders do:
+    // this one is frozen too, and the ABI gate asserts both lines — a gate that
+    // reported "the frozen payload ran" while the build had quietly shipped a
+    // freshly compiled one would be testing nothing.
+    let payload = demo_program_x86_64_rust::payload_bytes();
+    crate::println!(
+        "[abi   ] demo-launcher-rust payload: {} ({} bytes)",
+        demo_program_x86_64_rust::payload_source(),
+        payload.len()
+    );
+
     build_artifact_or_metadata_only(
-        demo_program_x86_64_rust::payload_bytes(),
+        payload,
         demo_program_x86_64_rust::payload_entry_offset(),
         DEMO_PROGRAM_ENTRY as u64,
         DEMO_PROGRAM_MACHINE,

@@ -208,6 +208,10 @@ require_log_line "protofire shell (user)"
 require_log_line "[user  ] app-id: demo-launcher-fault"
 require_log_line "[user  ] rust app-id: demo-launcher-rust-io"
 require_log_line "[abi   ] demo-launcher-rust-io payload: $PAYLOAD_SOURCE "
+# The second program the disk can freeze: the launcher's own child.  Both
+# lines are asserted, so a run with the frozen feature has to ship *both*
+# copies from disk — one program started by the other.
+require_log_line "[abi   ] demo-launcher-rust payload: $PAYLOAD_SOURCE "
 require_log_line "[demo  ] worker-a done"
 require_log_line "[demo  ] worker-b done"
 require_log_line "[service] abandoning demo-launcher-fault after its restart budget"
