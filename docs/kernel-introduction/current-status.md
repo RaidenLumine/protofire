@@ -526,13 +526,13 @@ yet a tree that could be lifted out of the crate on its own.
 
 | Category | Count | Coverage |
 |----------|-------|----------|
-| Unit tests (in-module) | ~300 modules (1,857 tests) | Varies by module |
+| Unit tests (in-module) | ~300 modules (1,858 tests) | Varies by module |
 | Integration test files | 25 | 11,661 lines (277 tests) |
 | Fault injection tests | 1,245 lines | SimpleFs single-fault matrix |
 | Recovery tests | 1,163 lines | Crash + replay scenarios |
 | Concurrency tests | 700+ lines | Scheduler, condvar, console, keyboard |
 | virtio-gpu layout tests | 10+ | Struct size/layout + command wire-format (mock device) verification |
-| CI workflow | ✅ | GitHub Actions: fmt, check, build, clippy |
+| CI workflow | ✅ | GitHub Actions: fmt, check, build, clippy, every static gate and ratchet, and the boots — x86_64 on four CPUs, AArch64 and RISC-V on four CPUs, the four frozen-payload runs, and both churn boots |
 | Verification gates | P0–P3 | Multi-tier: fmt → test → cross-build → clippy |
 | ABI number snapshot | 190 rows | [`tests/syscall/abi_golden.rs`](../../tests/syscall/abi_golden.rs): any change to a number's name fails, and a change in the experimental range has to bump the ABI minor in the same commit |
 

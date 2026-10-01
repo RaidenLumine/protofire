@@ -98,7 +98,7 @@ jobs:
     # /dev/kvm, and QEMU falls back to TCG, which is what this check wants
     # anyway — emulated timing interleaves vCPUs genuinely without depending
     # on the hardware underneath.
-    name: smp runtime (4 cpus)
+    name: runtime smokes
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -153,6 +153,25 @@ jobs:
           # currently stalls during AP bring-up on some machines, which is a
           # defect this job should not be mixed up with.
           FEATURES: demo-disk
+
+      # The other two architectures' cross-CPU paths.  `check-smp-runtime` is
+      # x86_64, and the single-CPU smokes above cannot reach a second CPU at
+      # all, so without these two the AArch64 and RISC-V AP bring-up is a code
+      # path no automated run takes.
+      - name: Boot four AArch64 CPUs
+        run: make check-aarch64-smp-runtime SMP=4
+
+      - name: Boot four RISC-V CPUs
+        run: make check-riscv64-smp-runtime SMP=4
+
+      # And the two boots that ask for more than the stack window and the
+      # invalidation log can hold.  They are the only way either fallback is
+      # reached, and they were the two gates that ran in no chain at all.
+      - name: Exhaust the stack window and the invalidation log
+        run: make check-x8664-churn
+
+      - name: Exhaust them on RISC-V too
+        run: make check-riscv64-churn
 
       - name: Upload the serial log
         if: always()

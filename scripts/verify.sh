@@ -155,6 +155,10 @@ run_p3() {
         # than compiled with the kernel: the only configuration in which an ABI
         # change can break a program that is not rebuilt alongside it.
         run_make_step "make check-abi-frozen-payload" check-abi-frozen-payload
+        # And the boot that asks for more than the stack window and the
+        # invalidation log can hold, which is the only one that reaches either
+        # fallback: a fallback nobody boots is a fallback nobody has tested.
+        run_make_step "make check-x8664-churn" check-x8664-churn
     else
         printf '==> verify[%s]: skipping x86_64 runtime smoke (set RUN_X86_64_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"
@@ -173,6 +177,8 @@ run_p3() {
         # And the same boot with the payload frozen rather than assembled, on
         # the architecture whose payload is hand-written assembly.
         run_make_step "make check-abi-frozen-payload-riscv64" check-abi-frozen-payload-riscv64
+        # The RISC-V half of the same two fallbacks.
+        run_make_step "make check-riscv64-churn" check-riscv64-churn
     else
         printf '==> verify[%s]: skipping riscv64 runtime smoke (set RUN_RISCV64_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"
@@ -183,6 +189,11 @@ run_p3() {
         # developer.  Asking for the smoke therefore asks for four CPUs;
         # VERIFY_SMP overrides it.
         run_make_step "make check-smp-runtime" check-smp-runtime "SMP=${VERIFY_SMP:-4}"
+        # The other two architectures' cross-CPU paths, which nothing else
+        # boots: `check-smp-runtime` is x86_64, and the single-CPU smokes above
+        # cannot reach a second CPU at all.
+        run_make_step "make check-aarch64-smp-runtime" check-aarch64-smp-runtime "SMP=${VERIFY_SMP:-4}"
+        run_make_step "make check-riscv64-smp-runtime" check-riscv64-smp-runtime "SMP=${VERIFY_SMP:-4}"
     else
         printf '==> verify[%s]: skipping SMP runtime smoke (set RUN_SMP_RUNTIME=1, and VERIFY_SMP for the CPU count, to enable)\n' \
             "$VERIFY_TIER"
