@@ -36,7 +36,7 @@
 | Framebuffer | 273 | Display | Linear framebuffer |
 | Framebuffer Console | 692 | Display | Text rendering |
 | HDA (Intel HD Audio) | 450+ | Audio | CORB/RIRB, codec discovery, stream descriptors |
-| PCIe ECAM | Arch-specific | Bus | x86_64: full; AArch64/RISC-V: window walked, BARs assigned |
+| PCIe ECAM | Arch-specific | Bus | x86_64: full; AArch64/RISC-V: walked, BARs assigned, virtio-net driven |
 
 **Strengths:** Driver coverage across storage, network, display, audio, and input, mostly verified under QEMU.
 
@@ -52,14 +52,17 @@
 
 - **USB not end-to-end**: xHCI and USB HID are only "driver present"; USB storage/keyboard is not fully usable yet.
 - **HDA not surfaced to userspace**: audio has only the controller-level interface; no usable userspace stream interface yet.
-- **PCIe devices are addressable but not yet driven** on the two device-tree
-  machines: the ECAM walk finds them, the kernel's own resource pass gives
-  their memory BARs addresses out of the window the host bridge's `ranges`
-  describes (no firmware ran one), and on riscv64 the MSI-X table inside one is
-  programmed through the IMSIC and read back at every boot.  What is missing is
-  the driver above that: the demo's networking is on virtio-*mmio*, and
-  `drivers/virtio_net.rs`'s PCI path is still AArch64-only.  AArch64's own MSI
-  side would need a GICv3 ITS, which this kernel does not implement.
+- **PCIe on the device-tree machines has one driver and no MSI**: the ECAM walk
+  finds devices, the kernel's own resource pass gives their memory BARs
+  addresses out of the window the host bridge's `ranges` describes (no firmware
+  ran one), and `drivers/virtio_net.rs` drives a `virtio-net-pci` through the
+  modern (1.0) transport — that is now the network device both gates boot with,
+  DHCP and SLAAC included, while riscv64's default gate keeps the virtio-mmio
+  path covered.  What is missing: a device's MSI has no handler to reach (the
+  MSI-X table is programmed and verified on riscv64, but nothing registers for
+  the identities it delivers), AArch64's MSI side would need a GICv3 ITS, and
+  every other PCIe device — NVMe, HDA — is still reached through its
+  architecture's own enumeration rather than this one.
 - **Verified under QEMU only**: no real-device validation on bare-metal hardware yet.
 
 ---
@@ -603,9 +606,12 @@ once and never renumbered, records whose layout is asserted at compile time,
   bridge's `ranges`, `assign_memory_bars` gives each unaddressed memory BAR an
   aligned address inside it and verifies that the device took it, so the boot
   log reads `BAR assigned ... 0x4000_0000`, `MSI-X enabled on 00:01.0 (4
-  entries)` and `4 entries read back` — which is device MMIO answering.
-  AArch64 is in the same state and runs the same pass, and its gate asserts its
-  two assignments.
+  entries)` and `4 entries read back` — which is device MMIO answering.  The
+  same machine's NIC runs over that bus: `make check-riscv64-pci-runtime` boots
+  with *only* a `virtio-net-pci` and asserts the modern transport coming up and
+  the network stack running on it.  AArch64 runs the same code with one
+  difference — its BAR is reached through a low alias, because its device
+  window is above the range the kernel maps — and its gate boots the same way.
 - **Thin userspace ecosystem**: there is no toolchain and no real applications.
   What is there is more than it looks: the demo's ring3 payloads
   (`demo-launcher`, its Rust and rust-io variants, and the four fault demos)

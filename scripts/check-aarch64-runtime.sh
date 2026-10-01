@@ -101,8 +101,7 @@ shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -no-reboot \
     -no-shutdown \
     -global virtio-mmio.force-legacy=false \
-    -netdev user,id=net0 -device virtio-net-device,netdev=net0 \
-    -netdev user,id=net1 -device virtio-net-pci,netdev=net1 >"$log_file" 2>>"$log_file"
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 >"$log_file" 2>>"$log_file"
 status=$?
 set -e
 
@@ -400,15 +399,18 @@ require_log_exact_line "ring3-shell-answered"
 # parser settled it when it read `reg` — a decision that cannot work, because
 # `compatible` comes after `reg` in every device tree QEMU writes.  The window
 # was never found, `probe_and_enumerate` returned None, and nothing said so,
-# because no gate had a PCIe device on the bus to look for.  These lines are
-# that gate: the ECAM is mapped and the virtio-net PCI function beside the MMIO
-# one is found.
+# because no gate had a PCIe device on the bus to look for.  This boot has its
+# network device *only* on that bus, so the lines below are also the end of the
+# chain: the ECAM is mapped, the BARs are assigned, and the driver drives the
+# device through the modern PCI transport.
 require_log_line "[pci   ] AArch64 PCIe ECAM mapped PA="
 require_log_line "[pci   ] AArch64 BARs: 2 assigned"
 require_log_line "[pci   ] PCI: 2 device(s) found"
 require_log_line "00:01.0 vend=1af4 dev=1000"
 require_log_line "00:01.0 BAR4 0x0000000010004000"
 require_log_line "caps: MSI-X"
+require_log_line "[drivers] no virtio-net device found in the MMIO window"
+require_log_line "[drivers] virtio-net device found (PCI modern)"
 
 require_log_line_count "[user  ] hello from aarch64 rust payload" 2
 require_log_line_count "[user  ] aarch64-rust resumed after local code-write fault" 2

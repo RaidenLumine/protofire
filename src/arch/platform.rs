@@ -106,6 +106,121 @@ pub(crate) fn program_device_msix() {
     }
 }
 
+/// A PCIe function's registers, as this platform can reach them.
+#[cfg(target_os = "none")]
+pub(crate) struct PciRegisterWindow {
+    /// Vendor and device of the function the window belongs to.
+    pub vendor_id: u16,
+    pub device_id: u16,
+    /// The address at which the kernel can read the BAR that holds the
+    /// function's modern (1.0) registers, and how large that BAR is.
+    pub bar_address: usize,
+    pub bar_size: u64,
+}
+
+/// Find the first PCIe function of a vendor/class, and the BAR its registers
+/// live in.
+///
+/// The device-tree machines differ in exactly one thing here: AArch64's device
+/// window sits above the range its page tables map, so a BAR has to be reached
+/// through an alias, and riscv64's is inside the identity map already.
+/// Everything else — walking the ECAM window, assigning BAR addresses, picking
+/// the largest prefetchable MMIO BAR — is the same work, and it belongs to the
+/// architecture rather than to each driver, which is why a driver asks for a
+/// *window* and does not care which machine it is on.
+///
+/// Returns `None` on a machine that describes no window, or has none of this
+/// vendor and class.
+#[cfg(target_os = "none")]
+pub(crate) fn pci_register_window(
+    vendor_id: u16,
+    class_code: u8,
+    subclass: u8,
+) -> Option<PciRegisterWindow> {
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        use crate::arch::aarch64::mmu::map_device_mmio_at;
+        use crate::arch::aarch64::pci;
+
+        let probe = pci::probe_and_enumerate()?;
+        let (dev, bar) = find_virtio_function(&probe.devices, vendor_id, class_code, subclass)?;
+        pci::pci_enable_memory_and_bus_master(&probe.region, dev.bus, dev.device, dev.function);
+
+        // The fixed address this platform reserves for device windows, above
+        // the ECAM alias so the two cannot overlap.
+        const BAR_VA: usize = 0x2_0040_0000;
+        // SAFETY: the BAR is a live MMIO range the enumeration decoded, and
+        // `BAR_VA` is that reserved address.
+        unsafe { map_device_mmio_at(BAR_VA, bar.base_address, bar.size as usize)? };
+        Some(PciRegisterWindow {
+            vendor_id: dev.vendor_id,
+            device_id: dev.device_id,
+            bar_address: BAR_VA,
+            bar_size: bar.size,
+        })
+    }
+
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        use crate::arch::riscv64::pci;
+
+        let probe = pci::probe_and_enumerate()?;
+        let (dev, bar) = find_virtio_function(&probe.devices, vendor_id, class_code, subclass)?;
+        pci::pci_enable_memory_and_bus_master(&probe.region, dev.bus, dev.device, dev.function);
+        Some(PciRegisterWindow {
+            vendor_id: dev.vendor_id,
+            device_id: dev.device_id,
+            // This machine's device window is identity-mapped, so the address
+            // the resource pass assigned is the address the kernel reads.
+            bar_address: bar.base_address as usize,
+            bar_size: bar.size,
+        })
+    }
+
+    #[cfg(not(any(
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "riscv64", target_os = "none")
+    )))]
+    {
+        let _ = (vendor_id, class_code, subclass);
+        None
+    }
+}
+
+/// The device and the largest prefetchable MMIO BAR of the first function that
+/// matches.
+///
+/// The modern transport spreads its register areas over the biggest BAR —
+/// BAR4 on QEMU's transitional `virtio-net-pci`, which also carries the smaller
+/// one the legacy layout used — so picking the largest prefetchable one is
+/// picking the modern interface's.
+#[cfg(any(
+    all(target_arch = "aarch64", target_os = "none"),
+    all(target_arch = "riscv64", target_os = "none")
+))]
+fn find_virtio_function(
+    devices: &[crate::arch::pci::PciDeviceInfo],
+    vendor_id: u16,
+    class_code: u8,
+    subclass: u8,
+) -> Option<(
+    &crate::arch::pci::PciDeviceInfo,
+    &crate::arch::pci::PciBarInfo,
+)> {
+    for dev in devices {
+        if dev.vendor_id != vendor_id || dev.class_code != class_code || dev.subclass != subclass {
+            continue;
+        }
+        let bar = dev
+            .bars
+            .iter()
+            .filter(|bar| bar.is_mmio && bar.base_address != 0)
+            .max_by_key(|bar| (bar.is_prefetchable, bar.size))?;
+        return Some((dev, bar));
+    }
+    None
+}
+
 /// Bring up every CPU the machine reported that is not already running.
 pub(crate) fn bring_up_secondary_cpus() {
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]

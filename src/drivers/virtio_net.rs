@@ -766,10 +766,10 @@ pub fn probe_boot_net() -> Option<Arc<dyn NetworkDevice>> {
     }
     crate::println!("[drivers] no virtio-net device found in the MMIO window");
 
-    // On aarch64, QEMU 8.x `virt` machine places virtio-net devices on the
-    // PCIe bus (virtio-net-pci) rather than the MMIO transport.  Probe PCIe
-    // after MMIO scans have been exhausted.
-    #[cfg(target_arch = "aarch64")]
+    // On the device-tree machines, QEMU `virt` can carry virtio-net on the
+    // PCIe bus instead of the virtio-mmio one.  Probe PCIe after the MMIO
+    // scans have been exhausted.
+    #[cfg(target_os = "none")]
     {
         if let Some(net) = probe_pci_net() {
             return Some(net);
@@ -908,75 +908,45 @@ fn probe_pci_net_x86_64() -> Option<Arc<dyn NetworkDevice>> {
     None
 }
 
-/// Probe PCIe for a VirtIO network device on AArch64.
+/// Probe PCIe for a VirtIO network device.
 ///
-/// On QEMU `virt` machines, virtio-net devices may be placed on the PCIe bus
-/// as `virtio-net-pci` transitional devices.  This function uses the generic
-/// ECAM probe ([`crate::arch::aarch64::pci::probe_and_enumerate`]) to
-/// discover and map the PCIe bus, then locates a VirtIO network controller,
-/// maps its MMIO BAR through a low VA alias, and initialises the device
-/// through its legacy MMIO interface.
-#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+/// On QEMU `virt` for the device-tree machines, virtio-net can be placed on the
+/// PCIe bus as a `virtio-net-pci` transitional device instead of on the
+/// virtio-mmio bus.  This asks the architecture for the device's register
+/// window — which is where those machines differ, and the only part that is
+/// theirs — and drives it through the *modern* (1.0) PCI transport, whose
+/// register set [`PciModernRegion`] reads out of that BAR.
+///
+/// The first version of this pointed the virtio-*mmio* register reader at a
+/// PCI BAR, which cannot work: a PCI BAR holds the capability-relative modern
+/// layout, not the MMIO transport's magic-and-offsets one.
+///
+/// [`PciModernRegion`]: crate::drivers::virtio_pci_modern::PciModernRegion
+#[cfg(target_os = "none")]
 fn probe_pci_net() -> Option<Arc<dyn NetworkDevice>> {
-    use crate::arch::aarch64::mmu::map_device_mmio_at;
-    use crate::arch::aarch64::pci;
-    use crate::drivers::virtio::BareMmioRegion;
+    use crate::drivers::virtio_pci_modern::PciModernRegion;
+    use alloc::boxed::Box;
 
-    // Discover, map, and enumerate the PCIe bus.  Returns `None` when no
-    // ECAM region is described or the low-VA alias mapping fails.
-    let probe = pci::probe_and_enumerate()?;
+    const VIRTIO_VENDOR: u16 = 0x1af4;
+    const NETWORK_CLASS: u8 = 0x02;
 
-    // VirtIO controllers share vendor ID 0x1AF4; the generic vendor/device
-    // matcher locates the first one, then we scan from it for an Ethernet
-    // controller (class 0x02, subclass 0x00).
-    let first_virtio = pci::find_device(&probe.devices, 0x1AF4, None)?;
-    let start = probe
-        .devices
-        .iter()
-        .position(|dev| core::ptr::eq(dev, first_virtio))
-        .unwrap_or(0);
+    let window = crate::arch::platform::pci_register_window(VIRTIO_VENDOR, NETWORK_CLASS, 0x00)?;
+    crate::println!(
+        "[drivers] virtio-net PCI: modern transport BAR at {:#018x} ({} bytes)",
+        window.bar_address,
+        window.bar_size
+    );
 
-    for dev in &probe.devices[start..] {
-        if dev.vendor_id != 0x1AF4 || dev.class_code != 0x02 || dev.subclass != 0x00 {
-            continue;
-        }
-        for bar in &dev.bars {
-            if !bar.is_mmio || bar.base_address == 0 {
-                continue;
-            }
-
-            crate::println!(
-                "[drivers] trying virtio-net at PCI BAR base={:#018x}",
-                bar.base_address
-            );
-
-            // Map the MMIO BAR through a second VA alias.  The legacy
-            // VirtIO MMIO interface occupies at most 0x200 bytes.
-            const BAR_VA: usize = 0x2_0040_0000; // 8 GiB + 4 MiB
-                                                 // SAFETY: the BAR is a live MMIO range and `BAR_VA` is the fixed
-                                                 // address this platform reserves for such windows.
-            let _bar_mapped = unsafe { map_device_mmio_at(BAR_VA, bar.base_address, 0x200)? };
-
-            // Enable bus-mastering and memory-space access on the PCI
-            // device so it responds to MMIO reads/writes.
-            pci::pci_enable_memory_and_bus_master(&probe.region, dev.bus, dev.device, dev.function);
-
-            // SAFETY: `BAR_VA` is the alias just mapped over the device's BAR,
-            // so it names a VirtIO MMIO register region for the kernel's
-            // lifetime.
-            let region = unsafe { BareMmioRegion::new(BAR_VA) };
-            let transport = VirtIoMmio::new(Box::new(region));
-            if let Some(net) = try_virtio_net_device(transport) {
-                crate::println!(
-                    "[drivers] virtio-net PCI device found at BAR base={:#018x}",
-                    bar.base_address
-                );
-                return Some(net);
-            }
-        }
+    let region = Box::new(PciModernRegion::new(
+        window.bar_address,
+        window.device_id,
+        window.vendor_id,
+    ));
+    if let Some(net) = try_virtio_net_device(VirtIoMmio::new(region)) {
+        crate::println!("[drivers] virtio-net device found (PCI modern)");
+        return Some(net);
     }
-
-    crate::println!("[drivers] no virtio-net PCI device found");
+    crate::println!("[drivers] virtio-net PCI: modern transport did not take");
     None
 }
 

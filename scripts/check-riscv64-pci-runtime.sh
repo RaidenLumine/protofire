@@ -119,8 +119,7 @@ timeout "${TIMEOUT_SECONDS}s" "$QEMU_RISCV64" \
     -no-reboot \
     -no-shutdown \
     -global virtio-mmio.force-legacy=false \
-    -netdev user,id=net0 -device virtio-net-device,netdev=net0 \
-    -netdev user,id=net1 -device virtio-net-pci,netdev=net1 >/dev/null 2>>"$log_file"
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 >/dev/null 2>>"$log_file"
 status=$?
 set -e
 
@@ -138,12 +137,18 @@ esac
 # the walk does.
 require_line "[pci   ] RISC-V PCIe ECAM at 0x0000000030000000, buses 0..=255"
 
-# Two devices: the host bridge itself, and the virtio-net PCI function beside
-# the MMIO one the demo's networking uses.
+# Two devices: the host bridge itself, and the virtio-net function the demo's
+# networking runs on — this boot has no virtio-mmio NIC, so the PCIe path is
+# the only way the machine gets a network device at all.
 require_line "[pci   ] PCI: 2 device(s) found"
 require_line "00:00.0 vend=1b36 dev=0008"
 require_line "00:01.0 vend=1af4 dev=1000"
 require_line "caps: MSI-X"
+
+require_line "[drivers] no virtio-net device found in the MMIO window"
+require_line "[drivers] virtio-net PCI: modern transport BAR at 0x0000000040004000"
+require_line "[drivers] virtio-net device found (PCI modern)"
+require_line "[kernel] network stack initialized"
 
 # The resource pass gave the device addresses out of the window the host
 # bridge's `ranges` describes; without it every BAR reads back as zero, which
@@ -163,4 +168,4 @@ require_absent "[FATAL]"
 if [ "$remove_log_on_exit" = "0" ]; then
     printf 'riscv64 PCI log saved to %s\n' "$log_file"
 fi
-printf 'riscv64 PCI check passed: ECAM walked, BARs assigned, MSI-X table programmed and read back\n'
+printf 'riscv64 PCI check passed: ECAM walked, BARs assigned, MSI-X programmed, NIC driven over PCIe\n'
