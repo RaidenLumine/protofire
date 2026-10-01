@@ -15,6 +15,7 @@ pub mod ipsec;
 pub mod mac;
 pub mod mrt;
 pub mod net;
+pub mod prctl;
 pub mod process;
 pub mod ptrace;
 pub mod runtime;

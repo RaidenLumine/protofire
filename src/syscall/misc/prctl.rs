@@ -8,27 +8,18 @@
 use crate::Error;
 use crate::Result;
 
-// ── prctl operation codes ──────────────────────────────────────────────
-
-/// Get the current process's dumpable flag.
-const PR_GET_DUMPABLE: i32 = 3;
-/// Set the current process's dumpable flag.
-const PR_SET_DUMPABLE: i32 = 4;
-/// Get the current process's keepcaps flag.
-const PR_GET_KEEPCAPS: i32 = 7;
-/// Set the current process's keepcaps flag.
-const PR_SET_KEEPCAPS: i32 = 8;
-/// Get the current process's no_new_privs flag.
-const PR_GET_NO_NEW_PRIVS: i32 = 38;
-/// Set the current process's no_new_privs flag.
-const PR_SET_NO_NEW_PRIVS: i32 = 39;
-/// Get the current process name.
-const PR_GET_NAME: i32 = 15;
-/// Set the current process name (max 16 bytes).
-const PR_SET_NAME: i32 = 16;
-
-/// Maximum process name length (matching Linux TASK_COMM_LEN).
-const PR_MAX_NAME_LEN: usize = 16;
+// The operation codes are the ABI's, not this file's: user space has to pass
+// the same numbers, and the mirror in `src/user/shared/abi/prctl.rs` is what
+// lets it name them instead of spelling them.
+use crate::abi::prctl::PR_GET_DUMPABLE;
+use crate::abi::prctl::PR_GET_KEEPCAPS;
+use crate::abi::prctl::PR_GET_NAME;
+use crate::abi::prctl::PR_GET_NO_NEW_PRIVS;
+use crate::abi::prctl::PR_MAX_NAME_LEN;
+use crate::abi::prctl::PR_SET_DUMPABLE;
+use crate::abi::prctl::PR_SET_KEEPCAPS;
+use crate::abi::prctl::PR_SET_NAME;
+use crate::abi::prctl::PR_SET_NO_NEW_PRIVS;
 
 pub(super) fn prctl(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let option = context.arg(0) as i32;

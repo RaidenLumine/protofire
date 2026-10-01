@@ -63,6 +63,15 @@ pub const fn is_valid_process_signal(signal: usize) -> bool {
     signal >= PROCESS_SIGNAL_MIN && signal <= PROCESS_SIGNAL_MAX
 }
 
+/// `sa_flags` bit: restart interrupted syscalls after the handler returns.
+/// Matches the Linux value (bit 28 of `sa_flags`).
+pub const SA_RESTART: u64 = 0x1000_0000;
+
+/// Mask of `SA_*` flags the kernel understands and will act on.  Only
+/// `SA_RESTART` is currently supported; `SetSignalHandler` rejects any other
+/// bit rather than silently ignoring it.
+pub const SIGNAL_SA_FLAGS_KNOWN: u64 = SA_RESTART;
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Fixed-size termination record written by `wait_process`.
