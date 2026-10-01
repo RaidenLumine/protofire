@@ -532,6 +532,35 @@ macro_rules! define_x86_64_payload_runtime {
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
+        /// Read one `read_dir` entry: the header record plus the entry's name
+        /// bytes.  Returns the number of bytes written, and fails with
+        /// `NotFound` past the last entry, which is how a listing ends.
+        ///
+        /// The argument order is the handler's — path, path length, entry
+        /// index, buffer, buffer length — so the stub reads like the syscall it
+        /// wraps: the index picks the entry, and the buffer is where that entry
+        /// is written.
+        fn read_dir(
+            path: usize,
+            path_length: usize,
+            index: usize,
+            buffer: usize,
+            buffer_length: usize,
+        ) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::ReadDir as usize,
+            path,
+            path_length,
+            index,
+            buffer,
+            buffer_length,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
         fn make_dir(path: usize, length: usize) -> usize {
             payload_runtime_invoke_raw_status(
             $crate::syscall::SyscallNumber::CreateDir as usize,

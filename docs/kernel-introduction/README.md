@@ -253,7 +253,7 @@ The `build.rs` script at the repository root selects the per-architecture linker
 
 The demo volumes are constructed in-kernel by `src/fs/demo/`; the launch chain follows the `/apps/current → /apps/catalog → /apps/packages` layout, resolved by `crate::user::program::launch_reference`.
 
-Ring-3 ELF payload construction is handled in-kernel by `src/user/demo/` (`elf_builder`): the demo's programs are built into images there and written into the apps zone by `src/fs/demo/`, so they are real ring3 code without a toolchain.  The one placeholder is the shell, whose catalog entry routes through `host_proxy` to the in-kernel Rust shell rather than to ring3 code; the bare `init.elf` stub in the system zone is a second.
+Ring-3 ELF payload construction is handled in-kernel by `src/user/demo/` (`elf_builder`): the demo's programs are built into images there and written into the apps zone by `src/fs/demo/`, so they are real ring3 code without a toolchain.  The x86_64 shell is one of them (`shell_payload_x86_64`) and reads its commands from the console.  The one placeholder is the bare `init.elf` stub in the system zone; AArch64 and RISC-V additionally route their shell through `host_proxy` to the in-kernel Rust shell rather than to ring3 code, because neither has a shell payload yet.
 
 ### CI Verification Gates
 
@@ -270,7 +270,7 @@ The `scripts/verify.sh` script runs tiered checks:
 
 - **Syscall numbers are stable**. The dispatch table (`syscall::Table` in `src/syscall/table.rs`) numbers operations 0–189, of which 188 carry a handler and 141–142 are reserved. New syscalls must use previously unassigned slots.
 - **`src/user/shared/` is the ABI boundary**. This module defines the ABI record types (`FileStat`, `DirectoryEntryRecord`, `IoVec`, etc.) and syscall wrapper functions. Changes to its public types require coordination across all consumers.
-- The kernel is versioned as `2026.7.1` (calendar versioning). There is no stability guarantee across major versions; ring-3 ELFs are shipped with the demo disk and rebuilt together with the kernel.
+- The kernel is versioned as `0.8.0`, which is not the ABI version: the syscall contract carries its own `SYSCALL_ABI_VERSION_MAJOR/MINOR`, reported to user space through `RuntimeAbiInfo`. Ring-3 ELFs are shipped with the demo disk and normally rebuilt together with the kernel; the frozen x86_64 payloads are the exception, and they are what gives "we do not break userspace" something to break (`make check-abi-frozen-payload`).
 
 ---
 

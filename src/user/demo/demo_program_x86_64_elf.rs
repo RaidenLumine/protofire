@@ -5,7 +5,6 @@
 //! `demo_payloads::elf_builder`.
 
 use crate::user::demo::elf_builder::build_artifact_or_metadata_only;
-use crate::user::demo::elf_builder::build_metadata_only_artifact;
 pub use crate::user::demo::elf_builder::DemoProgramArtifact;
 
 use crate::user::program::DEMO_PROGRAM_ENTRY;
@@ -65,17 +64,40 @@ pub fn build_rust_io_demo_program_artifact() -> DemoProgramArtifact {
     )
 }
 
-/// Build a metadata-only ELF64 artifact for the x86_64 shell.
+/// Build the x86_64 shell artifact: a loadable ring-3 ELF, like the launchers'.
 ///
-/// The shell ELF carries no PT_LOAD segments so the loader always falls back
-/// to the `host_proxy = "shell"` path, which maps to `shell_user_main()` — the
-/// same in-kernel Rust shell used on aarch64 and riscv64.  (The recovered
-/// assembly `adastra_shell_payload` previously shipped here as a real ring-3
-/// ELF, but its `read_line` routine overwrites its own saved return address
-/// with the typed line, so the first command jumped to the command bytes and
-/// faulted; the maintained host-proxy shell is used instead.)
+/// The payload behind it is `shell_payload_x86_64`, which is why this one is
+/// *not* metadata-only.  An artifact with no `PT_LOAD` segment is read by the
+/// loader as "no image here" and replaced with the `host_proxy = "shell"` entry
+/// — `shell_user_main()`, the in-kernel Rust shell that AArch64 and RISC-V
+/// still use — and a shell reached that way is not ring-3 code.  The prompt
+/// this artifact puts on the demo disk is; `scripts/check-x8664-runtime.sh`
+/// types at it, which is what tells the two apart.
 pub fn build_shell_program_artifact() -> DemoProgramArtifact {
-    build_metadata_only_artifact(DEMO_PROGRAM_MACHINE)
+    use super::shell_payload_x86_64;
+
+    // Say which copy of the payload went on the disk, as the other builders do:
+    // the ABI gate freezes this program too, and a gate that reported "the
+    // frozen payload ran" while the build had quietly shipped a freshly
+    // compiled one would be testing nothing.
+    let payload = shell_payload_x86_64::payload_bytes();
+    crate::println!(
+        "[abi   ] shell payload: {} ({} bytes)",
+        shell_payload_x86_64::payload_source(),
+        payload.len()
+    );
+
+    // `build_artifact_or_metadata_only` still has its metadata-only arm for the
+    // hosts that cannot carry a payload section, and the arm is a host-proxy
+    // artifact: an unloadable ELF means "run the kernel's shell instead".  A
+    // bare-metal build always takes the other arm, and the test below is what
+    // keeps it that way.
+    build_artifact_or_metadata_only(
+        payload,
+        shell_payload_x86_64::payload_entry_offset(),
+        DEMO_PROGRAM_ENTRY as u64,
+        DEMO_PROGRAM_MACHINE,
+    )
 }
 
 #[cfg(test)]
@@ -376,13 +398,25 @@ mod tests {
     }
 
     #[test]
-    fn shell_program_artifact_has_no_loadable_segments() {
+    fn shell_program_artifact_is_a_loadable_ring3_image() {
+        // The metadata-only artifact this used to build was not a program: the
+        // loader reads "no PT_LOAD segment" as "no image here" and runs the
+        // in-kernel host proxy instead, so the boot's prompt came from kernel
+        // code.  A shell payload that stopped producing a segment would put the
+        // proxy back without changing a line of shell source.
         let artifact = build_shell_program_artifact();
         let parsed = parse_elf64(&artifact.bytes).expect("parse shell elf");
         let segments = parsed.load_segments().expect("load shell segments");
 
         assert_eq!(parsed.machine, DEMO_PROGRAM_MACHINE);
-        assert!(segments.is_empty(), "shell ELF must have no load segments");
-        assert_eq!(artifact.bytes.len(), 64, "shell artifact is header-only");
+        assert_eq!(segments.len(), 1, "shell ELF must have one load segment");
+        assert!(
+            segments[0].contains(parsed.entry_point),
+            "shell ELF entry must point inside its load segment"
+        );
+        assert!(
+            artifact.bytes.len() > 64,
+            "shell artifact must carry the payload, not only a header"
+        );
     }
 }

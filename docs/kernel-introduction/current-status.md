@@ -592,20 +592,29 @@ once and never renumbered, records whose layout is asserted at compile time,
   (`demo-launcher`, its Rust and rust-io variants, and the four fault demos)
   are real ELF images which run, make syscalls, read and write files under
   `/data/users/guest/`, and install their own exception handlers — built inside
-  the kernel by `src/user/demo/`, not compiled by a toolchain.  What is missing
-  is the layer above them: the shell is metadata-only (`host_proxy = "shell"`
-  routes it to the in-kernel Rust shell, so the prompt is not ring3 code), the
-  `/init.elf` in the system zone is a placeholder stub, and nothing on the
-  volume is signed or verified unless its manifest asks for it.
+  the kernel by `src/user/demo/`, not compiled by a toolchain.  On x86_64 the
+  shell is ring-3 code too: `shell_payload_x86_64` is a real program with its
+  own banner, prompt, `ls`, `cat`, `cd` and `echo`, and the boot's prompt is
+  that program rather than the in-kernel Rust proxy it used to fall back to.
+  The difference is testable rather than nominal — `make check-x8664-runtime`
+  types a command at the prompt and asserts the answer, which is the only way
+  to tell a shell that reads a line from one that only prints a banner.  What
+  is still missing is the layer above *that*: AArch64 and RISC-V have no ring-3
+  shell payload, so their manifests still route `host_proxy = "shell"` to the
+  in-kernel proxy; the `/init.elf` in the system zone is a placeholder stub;
+  and nothing on the volume is signed or verified unless its manifest asks for
+  it.
 - **Single maintainer**: bus factor = 1; every module is currently held by one maintainer.
 - **Experimental syscalls are unfrozen**: slots 121–189 are classified Experimental.
-- **“We do not break userspace” has four subjects, not a population**: the
-  frozen payloads make the rule testable for two programs on x86_64 (one of
-  which the other starts) and one on each of the other architectures — and the
+- **“We do not break userspace” has five subjects, not a population**: the
+  frozen payloads make the rule testable for three programs on x86_64 — the
+  launcher, the child it starts, and the shell, which is the only one of the
+  five that waits for input — and one on each of the other architectures.  The
   other two have only one program to freeze, so extending this means *writing*
   another demo program rather than freezing one.  Each freeze is a deliberate
-  act; the shell is a host proxy rather than ring-3 code, and the remaining demo
-  programs (the fault variants, the assembly launchers) are not frozen.
+  act; the remaining demo programs (the fault variants and the assembly
+  launchers) are not frozen, and neither is the in-kernel proxy the other two
+  architectures still use for their shell.
 - **No coverage-guided fuzzing**: the four boundaries have deterministic
   harnesses instead — `tests/parsers/fuzz.rs`, run by `make test-parsers` and
   in CI, drives the ELF loader, the LUKS2 header and its scanners, twenty-four

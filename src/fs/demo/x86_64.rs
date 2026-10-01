@@ -43,9 +43,11 @@ const DEMO_NESTED_PAGE_FAULT_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher-
 
 const DEMO_VIRGL_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher-virgl\"\nversion = \"0.1.0\"\nformat = \"elf64-x86_64-user\"\nentry = \"/apps/packages/demo-launcher-virgl/bin/demo.elf\"\nworking_dir = \"/apps/packages/demo-launcher-virgl\"\nargv = [\"demo-launcher-virgl\", \"--profile=demo\", \"--transport=serial\", \"--runtime=virgl\"]\nenv = [\"ASTRA_APP_ID=demo-launcher-virgl\", \"ASTRA_RUNTIME=ring3-virgl-proxy\", \"ASTRA_ZONE=/apps\"]\nhost_proxy = \"demo-launcher-virgl\"\n";
 
-/// Shell launch manifest.  The shell ELF is metadata-only (no PT_LOAD segments)
-/// so the loader always falls back to the `host_proxy = "shell"` path, which
-/// maps to `shell_user_main()` on all platforms.
+/// Shell launch manifest.  On this architecture the entry beside it really is
+/// the shell: the payload in `crate::user::demo::shell_payload_x86_64` is a
+/// loadable ring-3 program, so the loader runs it and never reaches
+/// `host_proxy = "shell"`.  The entry stays because AArch64 and RISC-V have no
+/// ring-3 shell yet, and their manifests do route through `shell_user_main()`.
 const SHELL_PROGRAM_MANIFEST: &[u8] = b"name = \"shell\"\nversion = \"0.1.0\"\nformat = \"elf64-x86_64-user\"\nentry = \"/apps/packages/shell/bin/shell.elf\"\nworking_dir = \"/apps/packages/shell\"\nargv = [\"shell\"]\nenv = [\"ASTRA_APP_ID=shell\", \"ASTRA_RUNTIME=ring3-prototype\"]\nhost_proxy = \"shell\"\n";
 
 pub(super) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
@@ -76,10 +78,10 @@ pub(super) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
         h() / 1024
     );
 
-    // The shell artifact is metadata-only: the catalog entry routes it through
-    // `host_proxy = "shell"` to the in-kernel Rust shell (`shell_user_main`),
-    // matching aarch64/riscv64.  The placeholder ring3 ELF is used as /init.elf
-    // in the system zone instead.
+    // The shell is a ring-3 program here, so this is the payload package that
+    // `SHELL_PROGRAM_MANIFEST` launches — not a header the loader has to route
+    // to the in-kernel Rust shell.  The bare stub ELF is used as /init.elf in
+    // the system zone instead.
     let shell_program = build_shell_program_artifact();
     #[cfg(target_os = "none")]
     crate::println!(

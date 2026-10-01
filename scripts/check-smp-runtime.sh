@@ -238,7 +238,8 @@ fi
 # whichever one it reached, so requiring all three distinguishes "booted" from
 # "booted and then died quietly".
 require_log_line "kernel running"
-require_log_line "protofire shell (user)"
+# The ring-3 shell's own banner; see the note in `check-x8664-runtime.sh`.
+require_log_line "adastra ring3 shell"
 
 service_lines="$(count_log_line "[service]")"
 if [ "$service_lines" -eq 0 ]; then
@@ -309,7 +310,7 @@ done
 beats="$(count_log_line "[hb    ]")"
 if [ "$beats" -gt 0 ]; then
     last_beat="$(last_log_line "[hb    ]")"
-    shell_line="$(first_log_line "protofire shell (user)")"
+    shell_line="$(first_log_line "adastra ring3 shell")"
     if [ "$last_beat" -le "$shell_line" ]; then
         fail_with_log "the last heartbeat (line $last_beat) precedes the shell banner (line $shell_line): the machine stopped making progress"
     fi

@@ -96,9 +96,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Capture the guest's serial output with `-serial file:` rather than stdio
-# plus a shell redirect, so the check behaves the same however it was
-# launched; see the SMP check for the same reasoning.
+# The console is a two-way line on this machine: the guest's serial output is
+# what this script reads, and the same line is where the shell gets its
+# commands.  `-serial stdio` with the output redirected is therefore the
+# configuration that can type at the prompt at all — `-serial file:` can only
+# listen — and typing is the half of the shell that a boot by itself never
+# exercises.  See the SMP check for why the other checks stay one-way.
 set -- \
     -machine q35 \
     -cpu max \
@@ -112,11 +115,50 @@ set -- \
 
 printf 'x86_64 runtime check: 1 cpu, timeout %ss, qemu %s\n' \
     "$TIMEOUT_SECONDS" "$QEMU"
-printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU $* -serial file:$log_file"
+printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU $* -serial stdio >$log_file"
+
+# Type at the shell once it is up.
+#
+# Both waits below are on the guest's own output rather than on fixed delays:
+# keystrokes that arrive before the ring-3 shell is reading are the guest's to
+# drop, and a delay that happens to be long enough on this machine is exactly
+# the kind of timing assumption that turns into a flake.
+#
+# `help` proves the command path end to end — read, split, dispatch, write —
+# and `echo` prints a line that the console's echo of the typed line cannot
+# imitate: the echo puts the command's own words on that line, so the gate
+# matches the answer as a whole line rather than as a substring.
+wait_for_log_line() {
+    waited=0
+    while [ "$waited" -lt "$TIMEOUT_SECONDS" ]; do
+        if grep -F "$1" "$log_file" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    return 1
+}
+
+shell_feeder() {
+    wait_for_log_line "adastra ring3 shell" || true
+    sleep 1
+    printf 'help\r'
+    sleep 2
+    printf 'echo ring3-shell-answered\r'
+
+    # Stay connected for the rest of the boot.  The lines asserted further down
+    # are printed after the shell is up, and the console is the guest's only
+    # output: a console that closed behind the shell would take the rest of the
+    # demo with it on a QEMU that ends the machine at end of input.  The wait
+    # ends with the boot's own last line rather than with a delay that has to be
+    # long enough for every machine.
+    wait_for_log_line "[service] abandoning" || true
+}
 
 set +e
-timeout "${TIMEOUT_SECONDS}s" "$QEMU" "$@" -serial "file:$log_file" \
-    >/dev/null 2>>"$log_file"
+shell_feeder | timeout "${TIMEOUT_SECONDS}s" "$QEMU" "$@" -serial stdio \
+    >"$log_file" 2>>"$log_file"
 status=$?
 set -e
 
@@ -181,6 +223,13 @@ require_log_absent_line() {
     fi
 }
 
+require_log_exact_line() {
+    line="$1"
+    if ! grep -F -x "$line" "$log_file" >/dev/null 2>&1; then
+        fail_with_log "missing log line (whole line): $line"
+    fi
+}
+
 count_log_line() {
     awk -v needle="$1" '
         index($0, needle) { count += 1 }
@@ -196,7 +245,34 @@ count_log_line() {
 require_log_line "[mem   ] activated x86_64 kernel page tables"
 require_log_line "[init  ] starting idle process"
 require_log_line "protofire kernel running"
-require_log_line "protofire shell (user)"
+# The shell is ring-3 code on this architecture: the payload on the demo disk
+# prints its own banner and prompt, and the in-kernel host proxy it replaced
+# printed `protofire shell (user)` instead.  Asserting the new lines is what
+# keeps a boot from passing on the proxy after this changed.
+require_log_line "adastra ring3 shell"
+# Which copy of the shell went on the disk: the one this build compiled, or the
+# one frozen in `src/user/demo/fixtures/`.  The ABI gate runs this same script
+# with `PAYLOAD_SOURCE=frozen`, so the interactive assertions below are then
+# being made of a shell that was *not* rebuilt — which is the only shape in
+# which "we do not break userspace" has something to be false about.
+require_log_line "[abi   ] shell payload: $PAYLOAD_SOURCE "
+# The prompt is the payload's, and the directory in it is the one the kernel
+# says the process is in — the manifest's `working_dir`, not something the
+# shell remembered.  A shell that printed a stale or invented path would not
+# have this line.
+require_log_line "adastra:/apps/packages/shell\$ "
+
+# ── The shell answered what was typed at it ────────────────────────────
+#
+# The lines above come from the shell's own start-up.  They are also printed by
+# a shell that never reads a command, which is how the recovered assembly shell
+# this replaced passed for as long as nothing typed at it: it printed a banner
+# and a prompt and then faulted on the first line, because its `read_line` kept
+# the line at `[rsp]` — the return address — and `ret` jumped to the command
+# bytes.  A boot that is never typed at cannot tell those two apart, so this
+# check does type.
+require_log_line "adastra shell (ring 3) builtins:"
+require_log_exact_line "ring3-shell-answered"
 
 # ── The user programs ran to the end ───────────────────────────────────
 #

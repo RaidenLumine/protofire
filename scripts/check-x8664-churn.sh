@@ -133,7 +133,8 @@ require_log_line() {
 # The boot got far enough for the churn to have run, and the machine is not
 # reporting damage.
 require_log_line "[init  ] starting idle process"
-require_log_line "protofire shell (user)"
+# The ring-3 shell's own prompt; see the note in `check-x8664-runtime.sh`.
+require_log_line "adastra ring3 shell"
 if grep -F "FATAL" "$log_file" >/dev/null 2>&1; then
     fail_with_log "the kernel reported a fatal error during the churn"
 fi
