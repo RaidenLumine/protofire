@@ -62,6 +62,7 @@ endif
 		check-aarch64-runtime \
 		check-aarch64-smp-runtime \
 		check-riscv64-runtime \
+		check-riscv64-aia-runtime \
 		check-riscv64-smp-runtime \
 		build \
 		build-aarch64 \
@@ -107,6 +108,7 @@ help:
 		'  make check-riscv64-churn - the same churn on riscv64, whose window is one of the things it checks' \
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
 		'  make check-riscv64-runtime - run the headless QEMU virt riscv64 demo smoke check' \
+		'  make check-riscv64-aia-runtime - boot riscv64 on the AIA machine and check the IMSIC' \
 		'  make check-riscv64-smp-runtime - boot riscv64 on several harts and check they come up' \
 		'  make test           - run host-side unit and integration tests' \
 		'  make test-lib       - run library unit tests only' \
@@ -396,6 +398,17 @@ check-riscv64-runtime:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-riscv64-runtime.sh
+
+# The same kernel on the AIA machine, which is the only boot that reaches the
+# IMSIC.  The default machine serves external interrupts from a PLIC, so every
+# other gate — and every gate before this one — never touched the MSI path at
+# all: it spoke an interface its target does not implement, and the difference
+# showed up as an access fault the moment a boot asked for AIA.
+check-riscv64-aia-runtime:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-riscv64-aia-runtime.sh
 
 # Boot riscv64 on several harts and assert that the SBI HSM starts found them.
 # The hart IDs have to come from the device tree, and the hart the kernel is

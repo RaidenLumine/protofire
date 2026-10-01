@@ -62,10 +62,10 @@ pub use crate::arch::pci::PcieSlotCapabilities;
 /// handler with [`crate::arch::riscv64::aia_imsic::register_irq_handler`]
 /// before the device raises interrupts.
 ///
-/// Nothing calls this yet, and the module note in [`super::aia_imsic`] says
-/// why: the IMSIC controller on the other side of it is written against an
-/// interface its target does not have, so a device wired here would deliver
-/// messages nobody receives.
+/// Nothing calls this yet, and the reason is on this side rather than the
+/// IMSIC's: that half works and is booted (`make check-riscv64-aia-runtime`
+/// walks the message path on the AIA machine), but riscv64 has no PCIe
+/// enumeration wired up, so no device probe reaches a device to program.
 pub fn pci_enable_msix(
     region: &EcamRegion,
     bus: u8,

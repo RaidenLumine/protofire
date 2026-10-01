@@ -179,6 +179,9 @@ run_p3() {
         run_make_step "make check-abi-frozen-payload-riscv64" check-abi-frozen-payload-riscv64
         # The RISC-V half of the same two fallbacks.
         run_make_step "make check-riscv64-churn" check-riscv64-churn
+        # The AIA machine: the only boot that reaches the IMSIC, which is what
+        # receives MSIs.  The PLIC machine above never touches that path.
+        run_make_step "make check-riscv64-aia-runtime" check-riscv64-aia-runtime
     else
         printf '==> verify[%s]: skipping riscv64 runtime smoke (set RUN_RISCV64_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"

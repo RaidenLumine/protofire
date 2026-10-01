@@ -50,6 +50,14 @@ const COMPAT_VIRTIO_MMIO: &str = "virtio,mmio";
 const COMPAT_PL031: &str = "arm,pl031";
 // RISC-V platform devices.
 const COMPAT_RISCV_PLIC0: &str = "riscv,plic0";
+/// The AIA interrupt file that receives messages.  A machine can describe two
+/// of them — one for machine mode, one for supervisor mode — so the compatible
+/// alone does not say which one this kernel may use; the interrupt it is wired
+/// to does (see the `interrupts-extended` arm below).
+const COMPAT_RISCV_IMSICS: &str = "riscv,imsics";
+/// The interrupt cause that names the supervisor external interrupt — the one
+/// an IMSIC serving supervisor mode is wired to (RISC-V privileged spec).
+const RISCV_SUPERVISOR_EXTERNAL_CAUSE: u32 = 9;
 const COMPAT_NS16550A: &str = "ns16550a";
 const COMPAT_GOLDFISH_RTC: &str = "google,goldfish-rtc";
 const COMPAT_PCI_HOST_ECAM: &str = "pci-host-ecam-generic";
@@ -356,6 +364,16 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let mut virtio_mmio_idx: usize = 0;
     // Track whether the current node is a PCI host bridge (for ECAM discovery).
     let mut current_is_pci_host: bool = false;
+    // An IMSIC node's address, remembered from its `reg` until the property
+    // that says which mode it serves (`interrupts-extended`) is read.
+    let mut current_is_imsic: bool = false;
+    let mut current_is_plic: bool = false;
+    // A node's own address, and whether it is wired to the supervisor external
+    // interrupt.  Both are properties of the node, and properties arrive in
+    // whatever order the machine wrote them — `compatible` comes *after* `reg`
+    // on QEMU `virt` — so the decision waits for the end of the node.
+    let mut current_node_addr: Option<usize> = None;
+    let mut current_wired_to_supervisor_external: bool = false;
     let mut current_is_gicv3: bool = false;
     let mut current_is_its: bool = false;
     let mut current_is_memory_node: bool = false;
@@ -509,6 +527,23 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 let was_depth = current_depth;
                 current_depth = current_depth.saturating_sub(1);
                 current_is_pci_host = false;
+                // Settle the two nodes whose kind is a property of the node:
+                // an IMSIC only matters when it serves supervisor mode, and a
+                // PLIC is a PLIC (the APLIC at the same address is not one).
+                if current_is_imsic && current_wired_to_supervisor_external {
+                    if let Some(addr) = current_node_addr {
+                        info.imsic_base = Some(addr);
+                    }
+                }
+                if current_is_plic {
+                    if let Some(addr) = current_node_addr {
+                        info.plic_base = Some(addr);
+                    }
+                }
+                current_is_imsic = false;
+                current_is_plic = false;
+                current_node_addr = None;
+                current_wired_to_supervisor_external = false;
                 current_is_gicv3 = false;
                 current_is_its = false;
                 current_is_memory_node = false;
@@ -647,7 +682,15 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             // node's reg property.
                         } else if compatible.contains(COMPAT_RISCV_PLIC0) {
                             // PLIC reg will be parsed from the parent node's
-                            // reg property.
+                            // reg property; whether this node *is* a PLIC is
+                            // what decides it, and that is settled at the end
+                            // of the node (the property order is the machine's).
+                            current_is_plic = true;
+                        } else if compatible.contains(COMPAT_RISCV_IMSICS) {
+                            // Which of the machine's IMSIC files this is depends
+                            // on the interrupt it is wired to, which is a
+                            // property of this node too — read below.
+                            current_is_imsic = true;
                         } else if compatible.contains(COMPAT_PCI_HOST_ECAM) {
                             current_is_pci_host = true;
                         } else if compatible.contains("operating-points-v2") {
@@ -746,16 +789,15 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             if addr == 0x0901_0000 || addr == 0x0010_1000 {
                                 info.rtc_base = Some(addr as usize);
                             }
-                            // RISC-V PLIC: QEMU virt at 0x0C00_0000.
-                            if (0x0C00_0000..0x0D00_0000).contains(&addr) {
-                                info.plic_base = Some(addr as usize);
-                            }
-                            // RISC-V AIA IMSIC group: QEMU virt (AIA) places
-                            // hart 0's IMSIC file at 0x2400_0000.
-                            if info.imsic_base.is_none()
-                                && (0x2400_0000..0x2500_0000).contains(&addr)
-                            {
-                                info.imsic_base = Some(addr as usize);
+                            // This node's own address, for the two nodes whose
+                            // meaning is a property of the node rather than of
+                            // the address: a PLIC and an IMSIC.  QEMU `virt`
+                            // puts the PLIC and the AIA APLIC at the *same*
+                            // address (0x0C00_0000), so an address alone cannot
+                            // tell them apart — and writing PLIC registers to
+                            // an APLIC is an access fault.
+                            if current_node_addr.is_none() {
+                                current_node_addr = Some(addr as usize);
                             }
                             // PCIe ECAM: capture from pci-host-ecam-generic node.
                             if current_is_pci_host
@@ -773,6 +815,20 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             {
                                 virtio_mmio_bases[virtio_mmio_idx] = Some(addr as usize);
                                 virtio_mmio_idx += 1;
+                            }
+                        }
+                    }
+                    // Which interrupt an IMSIC is wired to says which mode it
+                    // serves: cause 9 is the supervisor external interrupt and
+                    // cause 11 the machine one.  The kernel can only use the
+                    // supervisor file, so that is the one whose address becomes
+                    // `imsic_base`; a machine-mode file is remembered by
+                    // neither the kernel nor the trap path.
+                    Some("interrupts-extended") if value_len >= 8 => {
+                        let pairs = value_len / 8;
+                        for pair in 0..pairs {
+                            if value.word(pair * 8 + 4) == Some(RISCV_SUPERVISOR_EXTERNAL_CAUSE) {
+                                current_wired_to_supervisor_external = true;
                             }
                         }
                     }
@@ -1602,26 +1658,84 @@ mod tests {
     }
 
     #[test]
-    fn parse_fdt_extracts_imsic_base() {
+    fn parse_fdt_takes_the_supervisor_imsic_and_not_the_machine_one() {
+        // The machine describes both files.  They are the same device with the
+        // same properties except for the interrupt each is wired to, and only
+        // the one wired to the supervisor external interrupt (cause 9) is
+        // reachable from S-mode — writing the machine-mode one takes an access
+        // fault, which is what made this the difference between a boot and a
+        // stop.
         let blob = build_small_fdt(|sblock, str_off| {
-            // `reg` = (0x2400_0000, 0x4000) under the root's 2/2 cell sizing.
+            let reg = |base: u32| {
+                let mut v = Vec::new();
+                v.extend_from_slice(&be32(0));
+                v.extend_from_slice(&be32(base));
+                v.extend_from_slice(&be32(0));
+                v.extend_from_slice(&be32(0x1000));
+                v
+            };
+            let wired_to = |cause: u32| {
+                let mut v = Vec::new();
+                v.extend_from_slice(&be32(2)); // the CPU's phandle
+                v.extend_from_slice(&be32(cause));
+                v
+            };
+            let compatible = b"qemu,imsics\0riscv,imsics\0";
+            emit_node(
+                sblock,
+                "interrupt-controller@24000000",
+                str_off,
+                &[
+                    ("compatible", compatible),
+                    ("reg", &reg(0x2400_0000)),
+                    ("interrupts-extended", &wired_to(11)),
+                ],
+            );
+            emit_node(
+                sblock,
+                "interrupt-controller@28000000",
+                str_off,
+                &[
+                    ("compatible", compatible),
+                    ("reg", &reg(0x2800_0000)),
+                    ("interrupts-extended", &wired_to(9)),
+                ],
+            );
+        });
+        let info = parse_fdt(blob.as_ptr() as usize);
+        assert_eq!(info.imsic_base, Some(0x2800_0000));
+    }
+
+    #[test]
+    fn parse_fdt_leaves_imsic_unset_when_only_the_machine_file_is_described() {
+        let blob = build_small_fdt(|sblock, str_off| {
             let reg = {
                 let mut v = Vec::new();
                 v.extend_from_slice(&be32(0));
                 v.extend_from_slice(&be32(0x2400_0000));
                 v.extend_from_slice(&be32(0));
-                v.extend_from_slice(&be32(0x4000));
+                v.extend_from_slice(&be32(0x1000));
                 v
             };
+            let mut wired = Vec::new();
+            wired.extend_from_slice(&be32(2));
+            wired.extend_from_slice(&be32(11));
             emit_node(
                 sblock,
-                "imsic@24000000",
+                "interrupt-controller@24000000",
                 str_off,
-                &[("compatible", b"riscv,imsic\0"), ("reg", &reg)],
+                &[
+                    ("compatible", b"riscv,imsics\0"),
+                    ("reg", &reg),
+                    ("interrupts-extended", &wired),
+                ],
             );
         });
         let info = parse_fdt(blob.as_ptr() as usize);
-        assert_eq!(info.imsic_base, Some(0x2400_0000));
+        assert_eq!(
+            info.imsic_base, None,
+            "a file S-mode cannot reach is not this kernel's to use"
+        );
     }
 
     // ── Small generic FDT builder for timer-frequency tests ──────────────

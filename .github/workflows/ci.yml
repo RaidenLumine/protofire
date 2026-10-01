@@ -173,6 +173,12 @@ jobs:
       - name: Exhaust them on RISC-V too
         run: make check-riscv64-churn
 
+      # And the same kernel on the AIA machine, where the IMSIC — the file that
+      # receives MSIs — is the external-interrupt controller.  No other boot
+      # reaches that path: the default machine serves interrupts from a PLIC.
+      - name: Boot RISC-V with the AIA interrupt controller
+        run: make check-riscv64-aia-runtime
+
       - name: Upload the serial log
         if: always()
         uses: actions/upload-artifact@v4

@@ -3,32 +3,27 @@
 //! RISC-V AIA IMSIC (Incoming Message-Signalled Interrupt Controller)
 //! driver for MSI / MSI-X delivery.
 //!
-//! The IMSIC is the AIA interrupt file that receives MSIs.  This driver was
-//! written against the AIA specification's *direct MMIO* view of that file —
-//! registers at fixed offsets inside its page, and an MSI data word of
-//! `(1 << 31) | irq`.  QEMU `virt` (8.2, `-machine virt,aia=aplic-imsic`)
-//! implements something else, and the difference is not academic:
+//! The IMSIC is the AIA interrupt file that receives MSIs.  Only its first
+//! page is memory — the MSI-write page, where a four-byte store of the **bare
+//! identity** sets that interrupt pending — and the register file
+//! (`eidelivery`, `eithreshold`, `eip`, `eie`) is reached *indirectly*,
+//! through the `siselect`/`sireg` CSRs that supervisor mode gains with Smaia.
+//! Claiming is `stopei`: reading it answers with the identity on top and
+//! writing zero claims it, which for an MSI is what clears the pending bit.
 //!
-//! - Its MMIO region is only the MSI-write page: a 4-byte store of the **bare
-//!   identity** at page offset 0 sets that interrupt pending.  A data word with
-//!   bit 31 set reads as "an identity larger than any interrupt" and is
-//!   dropped.
-//! - The register file (`eidelivery`, `eithreshold`, `eip`, `eie`) is not MMIO
-//!   at all: the AIA reaches it indirectly, through the `siselect`/`sireg` CSRs
-//!   that supervisor mode gains with the Smaia extension (which this machine
-//!   advertises).  Nothing in this crate touches those CSRs.
+//! This driver used to speak a different interface — registers at fixed MMIO
+//! offsets inside the page, an MSI data word of `(1 << 31) | irq`, and a claim
+//! through a register at `+0x30` that the device does not have.  On QEMU
+//! `virt` (8.2, `-machine virt,aia=aplic-imsic`) that was not dormant but
+//! broken: the boot took an access fault at `base + 0x20`
+//! (`scause = 7, stval = 0x2400_0020`), and a message it did send would have
+//! carried bit 31 and been dropped as out of range.  Both halves are the
+//! interface the machine actually implements now, which is what
+//! `scripts/check-riscv64-aia-runtime.sh` boots and checks.
 //!
-//! So the AIA path is not dormant, it is unfinished.  Booting with AIA enabled
-//! reaches [`AiaImsicController::init`], whose first act is a 32-bit store to
-//! `base + 0x20`, and the machine takes an access fault there
-//! (`scause = 7, stval = 0x2400_0020`) because the device exposes no register
-//! at that offset.  Booting without AIA — what every gate does today, and what
-//! the PLIC path serves — never reaches this file's register accesses at all.
-//!
-//! Finishing it means the `siselect`/`sireg` accessors for the register file
-//! (claim and complete included), the bare-identity MSI encoding, and a runtime
-//! gate that boots with `aia=aplic-imsic`; `pci_enable_msix` in
-//! [`super::pci`] is already written to call the MSI-X half.
+//! The default machine (no IMSIC in the device tree) never reaches any of
+//! this: [`init_from_fdt`] is a no-op there and the PLIC remains the external
+//! interrupt controller.
 //!
 //! This driver:
 //! - manages one IMSIC file per hart ([`init_aia_imsic`] /
@@ -40,6 +35,9 @@
 //!   ([`register_irq_handler`] / [`handle_pending_external`]),
 //! - programmes real 16-byte MSI-X table entries against a device BAR
 //!   ([`configure_msix`]), replacing the previous software-only table.
+//! - walks its own message path once at boot ([`self_test`]), because a machine
+//!   that describes an IMSIC would otherwise carry an untested delivery path
+//!   until a device happened to send something.
 //!
 //! Reference: RISC-V Advanced Interrupt Architecture (AIA) v1.0, chapter 3.
 
@@ -48,7 +46,6 @@ use core::arch::asm;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
 
-use super::read_volatile;
 use super::write_volatile;
 use crate::arch::interrupt_controller::InterruptController;
 use crate::kernel::percpu;
@@ -59,13 +56,14 @@ use crate::Error;
 
 // ── Platform geometry ──────────────────────────────────────────────────
 //
-// With `-machine virt,aia=aplic-imsic` QEMU places the first IMSIC group at
-// 0x2400_0000 with one 16 KiB file per hart.  These are the boot defaults;
-// the FDT `riscv,imsic` node (parsed by [`crate::arch::fdt`]) overrides the
-// base once the boot path calls `parse_fdt`.
+// With `-machine virt,aia=aplic-imsic` QEMU places two IMSIC groups: the
+// machine-mode file at 0x2400_0000 and the supervisor-mode one at
+// 0x2800_0000, each hart's file 16 KiB after the previous.  Only the
+// supervisor group is this kernel's to use, so that is the fallback here; the
+// device tree's own node overrides it (see [`init_from_fdt`]).
 
-/// Default IMSIC group base on QEMU `virt` with AIA.
-const IMSIC_QEMU_VIRT_BASE: usize = 0x2400_0000;
+/// Default supervisor IMSIC group base on QEMU `virt` with AIA.
+const IMSIC_QEMU_VIRT_BASE: usize = 0x2800_0000;
 /// MMIO stride between consecutive harts' IMSIC files on QEMU `virt`.
 const IMSIC_QEMU_VIRT_STRIDE: usize = 0x4000;
 /// Highest interrupt identity an IMSIC file can hold (2048 interrupts).
@@ -73,28 +71,124 @@ const IMSIC_MAX_IRQ: u32 = 2047;
 /// Number of entries in the per-IRQ handler table.
 const IRQ_TABLE_LEN: usize = 256;
 
-// ── IMSIC file register offsets (AIA v1.0 §3.2) ─────────────────────────
-
-/// Interrupt-pending registers (`eip`), one 64-bit word per 64 interrupts.
+/// The identity the boot's self-test uses, and which device allocation must
+/// leave alone.
 ///
-/// Claimed via `ih` rather than polled, so the pending bitmap is never read
-/// directly; kept for the register map.
-#[allow(dead_code)]
-const IMSIC_EIP_BASE: usize = 0x0000;
-/// Interrupt-enable registers (`eie`), one 64-bit word per 64 interrupts.
-const IMSIC_EIE_BASE: usize = 0x0080;
-/// Interrupt-threshold register (`ith`), 32-bit.
-const IMSIC_ITH_OFFSET: usize = 0x0020;
-/// Interrupt-claim/complete register (`ih`), 32-bit.
-const IMSIC_IH_OFFSET: usize = 0x0030;
+/// It has to be an identity the machine's file can hold — QEMU `virt` gives
+/// its guest IMSIC 256 of them, 0 through 255 — and one no device will be
+/// given, so a message this test leaves pending can never be mistaken for a
+/// device's.  Device identities therefore stop one below the table's end.
+const IMSIC_SELF_TEST_IRQ: u32 = (IRQ_TABLE_LEN - 1) as u32;
+/// Highest identity a device may be assigned.
+pub const IMSIC_MAX_DEVICE_IRQ: u32 = IMSIC_SELF_TEST_IRQ - 1;
 
-/// Set in the MSI data word alongside the identity.
+// ── The interrupt file's registers, reached indirectly (AIA v1.0 §5) ───
+//
+// The file's registers are *not* at fixed offsets in its page.  Supervisor
+// mode reaches them through the Smaia pair: write the register's number to
+// `siselect`, then read or write `sireg`.  The page itself is only the
+// MSI-write page, which is where a device's message goes.
+//
+// The CSR numbers are written numerically because the assembler only knows
+// their names with an extension directive, and the kernel should not have to
+// teach it one to touch a register the machine advertised.
+
+/// Selects the interrupt-file register that `sireg` then reads or writes.
+const CSR_SISELECT: u64 = 0x150;
+/// The register `siselect` selected.
+const CSR_SIREG: u64 = 0x151;
+/// Top external interrupt: read it for the identity, write it to claim.
+const CSR_STOPEI: u64 = 0x15C;
+/// Bits the identity sits above in a `stopei` value — the same shift Linux
+/// applies to `CSR_TOPEI`'s answer.
+const CSR_TOPEI_ID_SHIFT: u32 = 16;
+
+/// Select number of `eidelivery`.
+const IMSIC_EIDELIVERY: u64 = 0x70;
+/// Select number of `eithreshold`.
+const IMSIC_EITHRESHOLD: u64 = 0x72;
+/// First select number of the `eip` words (read-only; the claim is `stopei`).
+const IMSIC_EIP0: u64 = 0x80;
+/// First select number of the `eie` words.
+const IMSIC_EIE0: u64 = 0xC0;
+/// Delivery enabled (`eidelivery`).
+const IMSIC_EIDELIVERY_ENABLE: u64 = 1;
+/// A threshold of zero delivers every priority the file can hold.
+const IMSIC_EITHRESHOLD_ALL: u64 = 0;
+/// Select numbers step by two per 64-bit word: the specification gives each
+/// register an even/odd pair of 32-bit slots, and on RV64 the even one
+/// addresses the whole 64-bit register.  Linux does the same arithmetic
+/// (`isel = (id / BITS_PER_LONG) * (BITS_PER_LONG / 32)`).
+const IMSIC_SELECT_STRIDE: u64 = 2;
+
+/// The `siselect` value whose word holds `irq`, for the register starting at
+/// `base` (`IMSIC_EIE0` or `IMSIC_EIP0`).
+fn select_for(base: u64, irq: u32) -> u64 {
+    base + (irq as u64 / 64) * IMSIC_SELECT_STRIDE
+}
+
+/// Select a register, then write it.
+fn imsic_csr_write(reg: u64, value: u64) {
+    // SAFETY: `siselect` and `sireg` are the supervisor indirect-access CSRs
+    // this extension defines; the number is one of the file's registers, and
+    // the file belongs to the running hart.  Neither access touches memory.
+    unsafe {
+        asm!("csrw {select}, {reg}", select = const CSR_SISELECT, reg = in(reg) reg,
+             options(nomem, nostack));
+        asm!("csrw {data}, {value}", data = const CSR_SIREG, value = in(reg) value,
+             options(nomem, nostack));
+    }
+}
+
+/// Select a register, then read it.
+fn imsic_csr_read(reg: u64) -> u64 {
+    let value: u64;
+    // SAFETY: as `imsic_csr_write` — the same register pair, read instead.
+    unsafe {
+        asm!("csrw {select}, {reg}", select = const CSR_SISELECT, reg = in(reg) reg,
+             options(nomem, nostack));
+        asm!("csrr {value}, {data}", value = out(reg) value, data = const CSR_SIREG,
+             options(nomem, nostack));
+    }
+    value
+}
+
+/// Select a register, then set the bits in `mask` and return the old value.
+fn imsic_csr_set(reg: u64, mask: u64) -> u64 {
+    let old: u64;
+    // SAFETY: as `imsic_csr_write` — a read-modify-write of one indirect
+    // register, performed by the CSR instruction itself.
+    unsafe {
+        asm!("csrw {select}, {reg}", select = const CSR_SISELECT, reg = in(reg) reg,
+             options(nomem, nostack));
+        asm!("csrrs {old}, {data}, {mask}", old = out(reg) old, data = const CSR_SIREG,
+             mask = in(reg) mask, options(nomem, nostack));
+    }
+    old
+}
+
+/// Claim the highest-priority pending external interrupt, if any.
 ///
-/// This is what the AIA specification's `setip` form looks like, and **not**
-/// what QEMU `virt` accepts: its IMSIC compares the whole data word against the
-/// identity range, so a word with bit 31 set is discarded as out of range.  The
-/// module note above has the evidence.
-const IMSIC_MSI_PENDING_BIT: u32 = 1 << 31;
+/// Reading `stopei` answers with the identity; *writing* it claims that
+/// interrupt, which for an MSI is what clears its pending bit.  A write of
+/// zero claims whichever one is on top, so the read and the claim are one
+/// instruction pair here (`csrrw` with zero), which is what Linux does:
+/// `while ((local_id = csr_swap(CSR_TOPEI, 0)))`.
+///
+/// The value it answers with is not the identity itself: the identity sits
+/// sixteen bits up (`TOPEI_ID_SHIFT` in Linux, which shifts by the same
+/// amount), so a message for identity 255 reads back as 0x00ff00ff.
+fn claim_top_external() -> u32 {
+    let claimed: u64;
+    // SAFETY: `stopei` is the supervisor top-external-interrupt CSR; reading it
+    // reports the pending identity and writing zero claims that interrupt.  No
+    // memory is touched.
+    unsafe {
+        asm!("csrrw {claimed}, {topei}, {zero}", claimed = out(reg) claimed,
+             topei = const CSR_STOPEI, zero = in(reg) 0u64, options(nomem, nostack));
+    }
+    (claimed >> CSR_TOPEI_ID_SHIFT) as u32
+}
 
 /// `sie` bit 9 — Supervisor External Interrupt Enable.
 const SIE_SEIE: u64 = 1 << 9;
@@ -125,19 +219,18 @@ fn current_file_base(layout: &ImsicLayout) -> usize {
     imsic_file_base(layout, percpu::get().cpu_id)
 }
 
-/// Read the `eip`/`eie` 64-bit word covering `irq` on the current hart.
-fn read_bitset(layout: &ImsicLayout, base_offset: usize, irq: u32) -> u64 {
-    let addr = current_file_base(layout) + base_offset + (irq as usize / 64) * 8;
-    // SAFETY: the IMSIC file's `eip`/`eie` word for this hart, in the window the
-    // layout describes and the platform mapped.
-    unsafe { read_volatile(addr as *const u64) }
+/// Read the `eip`/`eie` word covering `irq` on the *current* hart.
+///
+/// The CSRs address the running hart's own file, so the layout is not needed
+/// here; it is what the MSI address in [`compose_msix_entry`] is built from.
+fn read_bitset(base: u64, irq: u32) -> u64 {
+    imsic_csr_read(select_for(base, irq))
 }
 
-/// Write the `eip`/`eie` 64-bit word covering `irq` on the current hart.
-fn write_bitset(layout: &ImsicLayout, base_offset: usize, irq: u32, value: u64) {
-    let addr = current_file_base(layout) + base_offset + (irq as usize / 64) * 8;
-    // SAFETY: as `read_bitset` — the same word, on the write side.
-    unsafe { write_volatile(addr as *mut u64, value) }
+/// Set the bit for `irq` in the `eip`/`eie` word covering it, and answer with
+/// the word as it was.
+fn set_bitset_bit(base: u64, irq: u32) -> u64 {
+    imsic_csr_set(select_for(base, irq), 1 << (irq % 64))
 }
 
 // ── Global state ───────────────────────────────────────────────────────
@@ -182,6 +275,19 @@ pub fn init_aia_imsic(base: usize) {
 pub fn init_from_fdt() {
     if let Some(base) = crate::arch::fdt::platform_info().imsic_base {
         init_aia_imsic(base);
+        // A machine that describes an IMSIC delivers every device's messages
+        // through it, and nothing boots a device that would prove the path
+        // works — so the boot walks it once itself.  See [`self_test`].
+        match self_test() {
+            Some(irq) => log(
+                LogLevel::Info,
+                &format!(
+                    "AIA IMSIC: self-test delivered and claimed identity {}",
+                    irq
+                ),
+            ),
+            None => log(LogLevel::Warn, "AIA IMSIC: self-test delivered nothing"),
+        }
     }
 }
 
@@ -208,14 +314,14 @@ pub fn register_irq_handler(irq: u32, handler: IrqHandler) -> Result<(), Error> 
 /// The EOI is performed before returning, so handlers must copy any state
 /// they need before this returns.
 pub fn handle_pending_external() -> u32 {
-    let layout = match IMSIC_LAYOUT.lock().as_ref().copied() {
-        Some(layout) => layout,
-        None => return 0,
-    };
-    let ih_addr = current_file_base(&layout) + IMSIC_IH_OFFSET;
-    // SAFETY: claiming an interrupt reads this hart's IMSIC identity register, in
-    // the same mapped window.
-    let claimed = unsafe { read_volatile(ih_addr as *const u32) };
+    if IMSIC_LAYOUT.lock().is_none() {
+        return 0;
+    }
+
+    // The claim is the read: `csrrw` of `stopei` with zero answers with the
+    // identity on top and claims it in the same instruction, which is what
+    // clears an MSI's pending bit.
+    let claimed = claim_top_external();
     if claimed == 0 || claimed > IMSIC_MAX_IRQ {
         // No pending interrupt (or an identity outside the table): nothing
         // to dispatch.  Do not complete the (non-)claim.
@@ -234,14 +340,54 @@ pub fn handle_pending_external() -> u32 {
         );
     }
 
-    // Complete the interrupt (EOI).
-    // SAFETY: as above — completing the claim writes the identity back to the same
-    // register.
-    unsafe { write_volatile(ih_addr as *mut u32, claimed) };
     claimed
 }
 
 // ── MSI-X table programming ────────────────────────────────────────────
+
+/// Walk the message path once, on this machine, at boot.
+///
+/// Nothing QEMU `virt` attaches sends an MSI, so the path a device would take
+/// is walked by the kernel itself: enable an identity, write the message a
+/// device would write into this hart's own MSI page, and read the identity
+/// back out of `stopei`.  That covers the page address, the bare-identity data
+/// word, the pending and enable bits, and the claim — everything between a
+/// device's MSI-X table entry and the trap the kernel would take for it.
+///
+/// The identity is one past the range device handlers use, so a message this
+/// test leaves behind can never be mistaken for a device's.
+pub fn self_test() -> Option<u32> {
+    let layout = IMSIC_LAYOUT.lock().as_ref().copied()?;
+
+    // Delivery on, nothing filtered: the same two writes `init` makes, because
+    // this runs before the controller is installed.
+    imsic_csr_write(IMSIC_EITHRESHOLD, IMSIC_EITHRESHOLD_ALL);
+    imsic_csr_write(IMSIC_EIDELIVERY, IMSIC_EIDELIVERY_ENABLE);
+
+    let irq = IMSIC_SELF_TEST_IRQ;
+    let _ = set_bitset_bit(IMSIC_EIE0, irq);
+
+    // The message: four bytes at the hart's MSI page, carrying the identity.
+    let msi_page = current_file_base(&layout);
+    // SAFETY: `msi_page` is the base of this hart's MSI-write page, which the
+    // platform mapped for the kernel's lifetime; a four-byte store there is
+    // exactly what a device's MSI-X table entry performs.
+    unsafe { write_volatile(msi_page as *mut u32, irq) };
+
+    let pending = read_bitset(IMSIC_EIP0, irq);
+    let claimed = claim_top_external();
+    if claimed != irq {
+        log(
+            LogLevel::Warn,
+            &format!(
+                "AIA IMSIC: self-test wrote identity {} (pending word {:#x}) and claimed {}",
+                irq, pending, claimed
+            ),
+        );
+        return None;
+    }
+    Some(irq)
+}
 
 /// A single 16-byte MSI-X table entry (PCI 3.0 §6.8.2.4).
 #[repr(C)]
@@ -273,7 +419,12 @@ pub fn compose_msix_entry(target_cpu: u32, irq: u32) -> MsixTableEntry {
     MsixTableEntry {
         msg_addr_low: base as u32,
         msg_addr_high: (base >> 32) as u32,
-        msg_data: IMSIC_MSI_PENDING_BIT | (irq & IMSIC_MAX_IRQ),
+        // The identity, bare.  The MSI-write page takes the identity as the
+        // whole data word: an address selects the file, and the word selects
+        // the interrupt in it.  The specification's older `setip` form put a
+        // bit above the identity to say "set pending", and this machine reads
+        // that bit as an identity outside its range and drops the message.
+        msg_data: irq & IMSIC_MAX_IRQ,
         vector_control: 0,
     }
 }
@@ -350,20 +501,19 @@ pub static IMSIC_CONTROLLER: AiaImsicController = AiaImsicController;
 
 impl InterruptController for AiaImsicController {
     fn init(&self) {
-        let layout = match IMSIC_LAYOUT.lock().as_ref().copied() {
-            Some(layout) => layout,
-            None => return,
-        };
+        if IMSIC_LAYOUT.lock().is_none() {
+            return;
+        }
 
         if !GLOBAL_INITIALIZED.swap(true, Ordering::Acquire) {
             super::interrupts::disable();
         }
 
-        // Per-CPU: accept every priority (threshold 0) and enable supervisor
-        // external interrupts in `sie` so the IMSIC can interrupt us.
-        let file = current_file_base(&layout);
-        // SAFETY: MMIO write to the current hart's IMSIC threshold register.
-        unsafe { write_volatile((file + IMSIC_ITH_OFFSET) as *mut u32, 0) };
+        // Per-CPU, and in this order: take the threshold down to zero so no
+        // identity is filtered, then switch delivery on, then let supervisor
+        // external interrupts reach the hart at all.
+        imsic_csr_write(IMSIC_EITHRESHOLD, IMSIC_EITHRESHOLD_ALL);
+        imsic_csr_write(IMSIC_EIDELIVERY, IMSIC_EIDELIVERY_ENABLE);
         // SAFETY: `sie` is a supervisor CSR; SEIE is bit 9.  `csrs` is the
         // register form (the 512-bit set mask exceeds `csrsi`'s 5-bit
         // immediate).
@@ -373,30 +523,20 @@ impl InterruptController for AiaImsicController {
     }
 
     fn end_of_interrupt(&self, vector: u32) {
-        let layout = match IMSIC_LAYOUT.lock().as_ref().copied() {
-            Some(layout) => layout,
-            None => return,
-        };
-        let ih_addr = current_file_base(&layout) + IMSIC_IH_OFFSET;
-        // SAFETY: writing the claimed id to `ih` completes it (EOI).
-        unsafe { write_volatile(ih_addr as *mut u32, vector) };
+        // Nothing to do: an IMSIC interrupt is claimed by the `stopei` read in
+        // [`handle_pending_external`], and claiming it *is* completing it.  The
+        // trait's EOI exists for controllers that acknowledge in two steps.
+        let _ = vector;
     }
 
     fn enable_interrupt(&self, interrupt_id: u32) {
-        let layout = match IMSIC_LAYOUT.lock().as_ref().copied() {
-            Some(layout) => layout,
-            None => return,
-        };
+        if IMSIC_LAYOUT.lock().is_none() {
+            return;
+        }
         if interrupt_id > IMSIC_MAX_IRQ {
             return;
         }
-        let word = read_bitset(&layout, IMSIC_EIE_BASE, interrupt_id);
-        write_bitset(
-            &layout,
-            IMSIC_EIE_BASE,
-            interrupt_id,
-            word | (1 << (interrupt_id % 64)),
-        );
+        let _ = set_bitset_bit(IMSIC_EIE0, interrupt_id);
     }
 
     fn set_priority(&self, _interrupt_id: u32, _priority: u8) {
