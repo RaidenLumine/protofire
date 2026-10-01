@@ -29,9 +29,6 @@ const DEMO_STUB_PAYLOAD_RISCV64: [u8; 16] = [
     0x6f, 0x00, 0x00, 0x00, // j . — spin if it returns
 ];
 
-/// EM_RISCV; the demo artifacts' machine field.
-const RISCV64_DEMO_PROGRAM_MACHINE: u16 = 0xF3;
-
 const DEMO_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher\"\nversion = \"0.1.0\"\nformat = \"elf64-riscv64-user\"\nentry = \"/apps/packages/demo-launcher/bin/demo.elf\"\nworking_dir = \"/apps/packages/demo-launcher\"\nargv = [\"demo-launcher\", \"--profile=demo\", \"--transport=serial\", \"--arch=riscv64\"]\nenv = [\"ASTRA_APP_ID=demo-launcher\", \"ASTRA_RUNTIME=ring3-riscv64-prototype\", \"ASTRA_ZONE=/apps\"]\nhost_proxy = \"demo-launcher\"\n";
 
 const SHELL_PROGRAM_MANIFEST: &[u8] = b"name = \"shell\"\nversion = \"0.1.0\"\nformat = \"elf64-riscv64-user\"\nentry = \"/apps/packages/shell/bin/shell.elf\"\nworking_dir = \"/apps/packages/shell\"\nargv = [\"shell\"]\nenv = [\"ASTRA_APP_ID=shell\", \"ASTRA_RUNTIME=ring3-prototype\"]\nhost_proxy = \"shell\"\n";
@@ -49,7 +46,7 @@ pub(super) fn system_zone_image() -> Result<Vec<u8>> {
         &DEMO_STUB_PAYLOAD_RISCV64,
         0,
         crate::user::program::DEMO_PROGRAM_ENTRY as u64,
-        RISCV64_DEMO_PROGRAM_MACHINE,
+        crate::user::program::DEMO_PROGRAM_MACHINE,
     );
     super::build_system_zone_from(&init.bytes)
 }
