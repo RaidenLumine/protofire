@@ -214,9 +214,13 @@ pub fn pci_enable_msix(
 
     let first_irq = aia_imsic::configure_msix(table_phys, table_size, target_cpu, base_irq)?;
 
-    // Enable MSI-X (bit 15) and clear the function mask (bit 14) so the device
-    // may raise interrupts.
-    let new_control = (msix.message_control | (1u16 << 15)) & !(1u16 << 14);
+    // Enable MSI-X (bit 15) and leave the *function mask* (bit 14) set: the
+    // table is programmed, but the device may not signal yet.  Whichever side
+    // owns the identities unmasks it — see [`msix_unmask`] — so a device's
+    // first interrupt can never arrive before something is registered to
+    // receive it, which is the difference between an interrupt the kernel can
+    // attribute and one it counts as spurious.
+    let new_control = msix.message_control | (1u16 << 15) | (1u16 << 14);
     // SAFETY: the message-control half of the MSI-X capability the walk found,
     // inside this function's configuration space.
     unsafe {
@@ -240,12 +244,56 @@ pub fn pci_enable_msix(
     })
 }
 
+/// Let a device raise the interrupts its MSI-X table was programmed for.
+///
+/// The other half of [`pci_enable_msix`], which leaves the function masked on
+/// purpose: the caller unmasks once every identity the table delivers has a
+/// handler ([`crate::arch::riscv64::aia_imsic::register_irq_handler`]), so an
+/// interrupt can never arrive before there is something to receive it.
+pub fn msix_unmask(
+    region: &EcamRegion,
+    bus: u8,
+    device: u8,
+    function: u8,
+) -> Result<(), crate::Error> {
+    let cap_off = pci_capability_find(region, bus, device, function, cap_id::MSI_X)
+        .ok_or(crate::Error::NotImplemented)?;
+    // SAFETY: `cap_off` is the offset of the MSI-X capability the walk just
+    // found on this function.
+    let msix = unsafe { pci_capability_msix(region, bus, device, function, cap_off) };
+    let unmasked = (msix.message_control | (1u16 << 15)) & !(1u16 << 14);
+    // SAFETY: as above — the message-control half of that same capability.
+    unsafe {
+        region.write_u16(bus, device, function, cap_off as u16 + 2, unmasked);
+    }
+    Ok(())
+}
+
 /// The identity a device probe takes.
 ///
 /// The IMSIC's identities are allocated by whoever registers a handler; a
 /// probe that leaves its function masked is not competing for one, so it takes
 /// the first identity that is not the boot self-test's.
 const PROBE_BASE_IRQ: u32 = 1;
+
+/// How many device MSIs have reached the probe's handler.
+///
+/// A device interrupt is otherwise invisible: the kernel claims it, finds no
+/// handler, and counts it as spurious — "something fired and nobody knows
+/// what".  This is what makes it say "the device fired".
+static PROBE_MSI_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Receive one of them.
+fn probe_msi_handler(irq: u32) {
+    let seen = PROBE_MSI_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+    if seen <= 2 {
+        crate::println!(
+            "[pci   ] RISC-V device MSI: irq {} claimed ({} since boot)",
+            irq,
+            seen
+        );
+    }
+}
 
 /// Exercise the MSI-X manager on the first device that has one.
 ///
@@ -317,32 +365,61 @@ pub fn probe_first_msix(region: &EcamRegion, devices: &[PciDeviceInfo]) -> Optio
         device.function
     );
 
-    // Mask the function again.  `pci_enable_msix` enabled it so a driver could
-    // use the entries immediately; a probe that leaves no handler behind has to
-    // put it back.
-    if let Some(cap_off) = pci_capability_find(
-        region,
+    // Every identity the table delivers gets an owner *before* the device is
+    // allowed to raise anything, and then it is allowed to.  Leaving the
+    // function masked instead would make the interrupt unreachable by
+    // construction: a device nobody listens for is not a quiet device, it is
+    // one whose interrupts the kernel would count as spurious if it signalled.
+    let mut owned = 0;
+    for offset in 0..programmed.table_size {
+        if aia_imsic::register_irq_handler(programmed.first_irq + offset, probe_msi_handler).is_ok()
+        {
+            owned += 1;
+        }
+    }
+    if owned != programmed.table_size {
+        crate::println!(
+            "[pci   ] RISC-V MSI-X on {:02x}:{:02x}.{}: {} of {} identities registered",
+            device.bus,
+            device.device,
+            device.function,
+            owned,
+            programmed.table_size
+        );
+        return None;
+    }
+    msix_unmask(region, device.bus, device.device, device.function).ok()?;
+    crate::println!(
+        "[pci   ] RISC-V MSI-X unmasked on {:02x}:{:02x}.{}: irq {}-{} have a handler",
         device.bus,
         device.device,
         device.function,
-        cap_id::MSI_X,
-    ) {
-        // SAFETY: `cap_off` is the offset of the MSI-X capability the walk just
-        // found on this function.
-        let msix = unsafe {
-            pci_capability_msix(region, device.bus, device.device, device.function, cap_off)
-        };
-        let masked = msix.message_control | (1u16 << 15) | (1u16 << 14);
-        // SAFETY: as above — the message-control half of that same capability.
-        unsafe {
-            region.write_u16(
-                device.bus,
-                device.device,
-                device.function,
-                cap_off as u16 + 2,
-                masked,
-            );
-        }
+        programmed.first_irq,
+        programmed.first_irq + programmed.table_size - 1
+    );
+
+    // Walk the receive side once, the way a device would: write the message
+    // into the hart's own MSI page, then let the dispatcher claim and hand it
+    // to the handler registered above.  Without this the dispatch table is
+    // exactly the code nobody runs — which is how it looked before this
+    // change: `register_irq_handler` had no callers, so every device interrupt
+    // would have been claimed, found handler-less, and counted as spurious.
+    let before = PROBE_MSI_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+    if aia_imsic::deliver_message(programmed.first_irq) {
+        let _ = aia_imsic::handle_pending_external();
+    }
+    let after = PROBE_MSI_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+    if after > before {
+        crate::println!(
+            "[pci   ] RISC-V MSI receive side: irq {} reached its handler",
+            programmed.first_irq
+        );
+    } else {
+        crate::println!(
+            "[pci   ] RISC-V MSI receive side: irq {} did not reach a handler",
+            programmed.first_irq
+        );
+        return None;
     }
 
     Some(programmed)

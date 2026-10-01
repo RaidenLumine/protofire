@@ -162,6 +162,16 @@ require_line "00:01.0 BAR1 0x0000000040000000"
 require_line "[pci   ] RISC-V MSI-X enabled on 00:01.0"
 require_line "[pci   ] RISC-V MSI-X probe: 4 entries read back on 00:01.0"
 
+# And the interrupts those entries would deliver have an owner: the identities
+# are registered *before* the function is unmasked, and the receive side is
+# walked once — the message a device writes into the hart's MSI page is claimed
+# and handed to that handler.  Before this, `register_irq_handler` had no
+# callers at all: every device interrupt would have been claimed, found
+# handler-less, and counted as spurious.
+require_line "[pci   ] RISC-V MSI-X unmasked on 00:01.0: irq 1-4 have a handler"
+require_line "[pci   ] RISC-V device MSI: irq 1 claimed"
+require_line "[pci   ] RISC-V MSI receive side: irq 1 reached its handler"
+
 # Reading a window the device tree named must not fault the machine.
 require_absent "[FATAL]"
 

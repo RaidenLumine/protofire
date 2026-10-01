@@ -52,16 +52,20 @@
 
 - **USB not end-to-end**: xHCI and USB HID are only "driver present"; USB storage/keyboard is not fully usable yet.
 - **HDA not surfaced to userspace**: audio has only the controller-level interface; no usable userspace stream interface yet.
-- **PCIe on the device-tree machines has one driver and no MSI**: the ECAM walk
-  finds devices, the kernel's own resource pass gives their memory BARs
-  addresses out of the window the host bridge's `ranges` describes (no firmware
-  ran one), and `drivers/virtio_net.rs` drives a `virtio-net-pci` through the
-  modern (1.0) transport — that is now the network device both gates boot with,
-  DHCP and SLAAC included, while riscv64's default gate keeps the virtio-mmio
-  path covered.  What is missing: a device's MSI has no handler to reach (the
-  MSI-X table is programmed and verified on riscv64, but nothing registers for
-  the identities it delivers), AArch64's MSI side would need a GICv3 ITS, and
-  every other PCIe device — NVMe, HDA — is still reached through its
+- **PCIe on the device-tree machines has one driver, and its interrupts are
+  received but unused**: the ECAM walk finds devices, the kernel's own resource
+  pass gives their memory BARs addresses out of the window the host bridge's
+  `ranges` describes (no firmware ran one), `drivers/virtio_net.rs` drives a
+  `virtio-net-pci` through the modern (1.0) transport — that is the network
+  device both gates boot with, DHCP and SLAAC included, while riscv64's default
+  gate keeps the virtio-mmio path covered — and on riscv64 the MSI-X table is
+  programmed, its identities registered *before* the function is unmasked, and
+  the receive side walked once so a delivered message is claimed and attributed
+  rather than counted spurious.  What is missing: nothing on the machine *sends*
+  one, because the driver polls its used ring and never asks the device for a
+  vector — an interrupt-driven completion path is the next step, not a gap in
+  the receive side.  AArch64's MSI would need a GICv3 ITS (this kernel has
+  none), and every other PCIe device — NVMe, HDA — is still reached through its
   architecture's own enumeration rather than this one.
 - **Verified under QEMU only**: no real-device validation on bare-metal hardware yet.
 
@@ -609,9 +613,14 @@ once and never renumbered, records whose layout is asserted at compile time,
   entries)` and `4 entries read back` — which is device MMIO answering.  The
   same machine's NIC runs over that bus: `make check-riscv64-pci-runtime` boots
   with *only* a `virtio-net-pci` and asserts the modern transport coming up and
-  the network stack running on it.  AArch64 runs the same code with one
-  difference — its BAR is reached through a low alias, because its device
-  window is above the range the kernel maps — and its gate boots the same way.
+  the network stack running on it.  The identities that table delivers are
+  registered before the function is unmasked, and the receive side is then
+  walked once — the message a device writes into the hart's MSI page is claimed
+  and handed to that handler — because the dispatch table had no callers at
+  all, and every device interrupt would have been counted as spurious.  AArch64
+  runs the same driver with one difference — its BAR is reached through a low
+  alias, because its device window is above the range the kernel maps — and its
+  gate boots the same way.
 - **Thin userspace ecosystem**: there is no toolchain and no real applications.
   What is there is more than it looks: the demo's ring3 payloads
   (`demo-launcher`, its Rust and rust-io variants, and the four fault demos)

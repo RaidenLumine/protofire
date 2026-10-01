@@ -389,6 +389,33 @@ pub fn self_test() -> Option<u32> {
     Some(irq)
 }
 
+/// Write the message a device's MSI-X table entry would write for `irq`.
+///
+/// The delivery half of the path, without the claim: the pending bit is set
+/// and left for whoever claims it — the external-interrupt trap in a running
+/// kernel, or [`handle_pending_external`] in a check that wants the dispatch
+/// itself rather than a claim.
+pub fn deliver_message(irq: u32) -> bool {
+    let Some(layout) = IMSIC_LAYOUT.lock().as_ref().copied() else {
+        return false;
+    };
+    if irq > IMSIC_MAX_IRQ {
+        return false;
+    }
+
+    // The identity must be enabled, or the file holds the message and never
+    // makes it pending.  `ie` is per-identity, so this is the enable a device's
+    // owner would have asked for.
+    let _ = set_bitset_bit(IMSIC_EIE0, irq);
+
+    let msi_page = current_file_base(&layout);
+    // SAFETY: `msi_page` is the base of this hart's MSI-write page, which the
+    // platform mapped for the kernel's lifetime; a four-byte store there is
+    // exactly what a device's MSI-X table entry performs.
+    unsafe { write_volatile(msi_page as *mut u32, irq) };
+    read_bitset(IMSIC_EIP0, irq) != 0
+}
+
 /// A single 16-byte MSI-X table entry (PCI 3.0 §6.8.2.4).
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
