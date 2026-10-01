@@ -93,6 +93,7 @@ timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -serial "file:$log_file" \
     -no-reboot \
     -no-shutdown \
+    -global virtio-mmio.force-legacy=false \
     -netdev user,id=net0 -device virtio-net-device,netdev=net0 >/dev/null 2>>"$log_file"
 status=$?
 set -e
@@ -372,9 +373,17 @@ require_log_absent_line "info=0x00000000"
 require_log_line "[drivers] probing"
 
 # ── Network boot smoke tests ───────────────────────────────────────────
-# FIXME: Re-enable when aarch64 VirtIO networking is stable.
-# require_log_line "[driver] detected boot network device"
-# require_log_line "[kernel] network stack initialized"
+#
+# These two were commented out with "re-enable when aarch64 VirtIO
+# networking is stable", and the reason they failed was not the driver:
+# this boot attached its virtio-mmio device without asking QEMU for the
+# modern interface, so the device answered as a legacy one (version 1)
+# and the probe — which drives the modern register layout — correctly
+# refused it.  The machine now passes `VIRT_FORCE_LEGACY`, the same option
+# the x86_64 and riscv64 smokes pass, and the two lines below are what the
+# network stack says when it really does come up.
+require_log_line "[driver] detected boot network device"
+require_log_line "[kernel] network stack initialized"
 
 require_log_line_orders <<'EOF'
 [user  ] hello from aarch64 rust payload|[user  ] aarch64-rust triggering local code-write fault
