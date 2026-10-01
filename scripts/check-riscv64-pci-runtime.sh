@@ -13,12 +13,14 @@
 # two lines that would have said so were only printed by the code that never
 # ran.
 #
-# So this check boots the AIA machine — the one interrunpt receiver this kernel
-# implements, which is what MSI-X would be programmed through — with a
-# virtio-net *PCI* device beside the usual MMIO one, and asserts that the walk
-# found the window and the device.  The MSI-X half is asserted only as "the
-# probe reported something": whether it can programme a table is what the BAR
-# assignment story decides, and this check is about the walk.
+# So this check boots the AIA machine — the one interrupt receiver this kernel
+# implements, which is what MSI-X is programmed through — with a virtio-net
+# *PCI* device beside the usual MMIO one, and asserts the whole chain: the walk
+# finds the window and the device, the kernel's own resource pass gives the
+# device's memory BARs addresses (no firmware ran one), and the MSI-X table
+# inside a BAR is programmed through the IMSIC and read back.  The read-back is
+# the part that says the BAR decodes MMIO: the words only come back if they
+# reached the device.
 #
 # Usage:
 #   sh scripts/check-riscv64-pci-runtime.sh
@@ -143,8 +145,17 @@ require_line "00:00.0 vend=1b36 dev=0008"
 require_line "00:01.0 vend=1af4 dev=1000"
 require_line "caps: MSI-X"
 
-# The interrupt half ran and said what it found — programmed, or not and why.
-require_line "RISC-V MSI-X"
+# The resource pass gave the device addresses out of the window the host
+# bridge's `ranges` describes; without it every BAR reads back as zero, which
+# is where this machine used to stop.
+require_line "[pci   ] RISC-V BARs: 2 assigned"
+require_line "00:01.0 BAR1 0x0000000040000000"
+
+# And the interrupt half then programs a real table through the IMSIC and reads
+# it back — the evidence that the BAR decodes MMIO, since the words only come
+# back if they reached the device.
+require_line "[pci   ] RISC-V MSI-X enabled on 00:01.0"
+require_line "[pci   ] RISC-V MSI-X probe: 4 entries read back on 00:01.0"
 
 # Reading a window the device tree named must not fault the machine.
 require_absent "[FATAL]"
@@ -152,4 +163,4 @@ require_absent "[FATAL]"
 if [ "$remove_log_on_exit" = "0" ]; then
     printf 'riscv64 PCI log saved to %s\n' "$log_file"
 fi
-printf 'riscv64 PCI check passed: ECAM walked, virtio-net PCI found, MSI-X probe reported\n'
+printf 'riscv64 PCI check passed: ECAM walked, BARs assigned, MSI-X table programmed and read back\n'

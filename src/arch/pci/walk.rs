@@ -214,10 +214,45 @@ pub fn probe_bar_size<C: ConfigSpace>(
     function: u8,
     bar_offset: u16,
 ) -> u64 {
+    probe_bar(cfg, bus, device, function, bar_offset).size
+}
+
+/// What a BAR is, asked the only way a BAR can be asked.
+#[derive(Debug, Clone, Copy)]
+struct BarProbe {
+    /// Size in bytes, zero when the BAR is unimplemented.
+    size: u64,
+    /// False for an I/O BAR.
+    is_mmio: bool,
+    /// True for a 64-bit memory BAR, which occupies two BAR slots.
+    is_64bit: bool,
+    /// True when a memory BAR is prefetchable (mask bit 3).
+    is_prefetchable: bool,
+}
+
+/// Write all-ones to a BAR, read the mask back, and restore the original.
+///
+/// The *type* of a BAR is in the bits that come back, which is the only way to
+/// ask: a BAR's low bit says memory (0) or I/O (1), and bits 1-2 say whether a
+/// memory BAR is 32- or 64-bit.  Reading the value first cannot answer it — an
+/// unassigned BAR reads back as zero, which looks exactly like a memory BAR.
+fn probe_bar<C: ConfigSpace>(
+    cfg: &C,
+    bus: u8,
+    device: u8,
+    function: u8,
+    bar_offset: u16,
+) -> BarProbe {
+    let unimplemented = BarProbe {
+        size: 0,
+        is_mmio: true,
+        is_64bit: false,
+        is_prefetchable: false,
+    };
+
     // SAFETY: the BAR register of the function the caller named, inside the
     // configuration space `cfg` describes.
     let bar_raw = unsafe { cfg.read_u32(bus, device, function, bar_offset) };
-    let is_mmio = (bar_raw & 0x01) == 0;
 
     // SAFETY: the all-ones write that BAR sizing is defined in terms of, to
     // the same register just read.
@@ -229,14 +264,147 @@ pub fn probe_bar_size<C: ConfigSpace>(
     unsafe { cfg.write_u32(bus, device, function, bar_offset, bar_raw) };
 
     if size_mask == 0 || size_mask == 0xFFFF_FFFF {
-        return 0;
+        return unimplemented;
     }
+    // The type bits are hardwired, and a real device answers the sizing write
+    // with them; a configuration space that models a BAR with a mask alone
+    // still carries them in the value the BAR holds, so both are consulted.
+    let type_bits = size_mask | (bar_raw & 0x0000_000F);
+    let is_mmio = (type_bits & 0x01) == 0;
+    let is_64bit = is_mmio && (type_bits & 0x0000_0006) == 0x0000_0004;
+    let is_prefetchable = is_mmio && (type_bits & 0x0000_0008) == 0x0000_0008;
     let raw_size = if is_mmio {
         size_mask & 0xFFFF_FFF0
     } else {
         size_mask & 0xFFFF_FFFC
     };
-    (!raw_size).wrapping_add(1) as u64
+    BarProbe {
+        size: (!raw_size).wrapping_add(1) as u64,
+        is_mmio,
+        is_64bit,
+        is_prefetchable,
+    }
+}
+
+/// What an address assignment did.
+#[derive(Debug, Clone, Copy)]
+pub struct BarAssignment {
+    /// How many BARs were given an address.
+    pub assigned: usize,
+    /// The end of the part of the window that was used.
+    pub used_end: u64,
+}
+
+/// Give an address to every memory BAR that does not have one.
+///
+/// Nothing else does this on the device-tree machines: the kernel is booted
+/// directly, with no firmware to run the resource pass a PC would run, so a
+/// device's memory BARs read back as zero and none of it is reachable — the
+/// registers, the queues, and the MSI-X table, which lives in a BAR.  `window`
+/// is the range the host bridge's `ranges` describes.
+///
+/// A BAR that already has an address is left alone: a machine whose firmware
+/// did assign one has a driver somewhere that may already be using it, and a
+/// second opinion about where a device lives is not this function's to give.
+/// What it did assign it verifies by reading back, because a BAR that does not
+/// take a written address is a device that would decode somebody else's window
+/// if the write were believed.
+pub fn assign_memory_bars<C: ConfigSpace>(
+    cfg: &C,
+    devices: &mut [PciDeviceInfo],
+    window_base: u64,
+    window_size: u64,
+) -> BarAssignment {
+    let window_end = window_base.saturating_add(window_size);
+    let mut cursor = window_base;
+    let mut assigned = 0usize;
+
+    for dev in devices.iter_mut() {
+        let mut bar_index = 0u16;
+        while bar_index < 6 {
+            let bar_offset = reg::BAR0 + bar_index * 4;
+            // What the BAR is comes from the probe, not from its current value:
+            // an unassigned BAR reads back as zero, which is indistinguishable
+            // from a memory BAR that nobody has addressed yet.
+            let probed = probe_bar(cfg, dev.bus, dev.device, dev.function, bar_offset);
+            let slots = if probed.is_64bit { 2 } else { 1 };
+
+            if !probed.is_mmio || probed.size == 0 {
+                // I/O space (this window is memory), or unimplemented.  The
+                // probe restored whatever the BAR held.
+                bar_index += slots;
+                continue;
+            }
+            let size = probed.size;
+
+            let current = pci_read_bar_64(cfg, dev.bus, dev.device, dev.function, bar_offset);
+            if current != 0 {
+                bar_index += slots;
+                continue;
+            }
+
+            let aligned = cursor.saturating_add(size - 1) & !(size - 1);
+            let fits = aligned
+                .checked_add(size)
+                .is_some_and(|end| end <= window_end);
+            let addressable = probed.is_64bit || aligned.saturating_add(size) <= 0x1_0000_0000;
+            if !fits || !addressable {
+                crate::println!(
+                    "[pci   ] no room in the BAR window for {:02x}:{:02x}.{} BAR{} ({} bytes)",
+                    dev.bus,
+                    dev.device,
+                    dev.function,
+                    bar_index,
+                    size
+                );
+                bar_index += slots;
+                continue;
+            }
+
+            pci_program_bar_64(cfg, dev.bus, dev.device, dev.function, bar_offset, aligned);
+            let read_back = pci_read_bar_64(cfg, dev.bus, dev.device, dev.function, bar_offset);
+            if read_back != aligned {
+                crate::println!(
+                    "[pci   ] {:02x}:{:02x}.{} BAR{} did not take {:#018x} (reads {:#018x})",
+                    dev.bus,
+                    dev.device,
+                    dev.function,
+                    bar_index,
+                    aligned,
+                    read_back
+                );
+                pci_program_bar_64(cfg, dev.bus, dev.device, dev.function, bar_offset, current);
+                bar_index += slots;
+                continue;
+            }
+
+            pci_enable_memory_and_bus_master(cfg, dev.bus, dev.device, dev.function);
+            // The device list was decoded before this pass, so the address has
+            // to be written back into it: a log that showed zeroes beside the
+            // assignment that just filled them would be telling two stories.
+            if let Some(bar) = dev.bars.get_mut(bar_index as usize) {
+                bar.base_address = aligned;
+                bar.size = size;
+            }
+            crate::println!(
+                "[pci   ] BAR assigned: {:02x}:{:02x}.{} BAR{} {:#018x} ({} bytes)",
+                dev.bus,
+                dev.device,
+                dev.function,
+                bar_index,
+                aligned,
+                size
+            );
+            assigned += 1;
+            cursor = aligned + size;
+            bar_index += slots;
+        }
+    }
+
+    BarAssignment {
+        assigned,
+        used_end: cursor,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -547,14 +715,21 @@ fn read_device_info<C: ConfigSpace>(
         // SAFETY: the low dword of BAR `index`, inside this function's own
         // configuration space.
         let bar_lo = unsafe { cfg.read_u32(bus, device, function, offset) };
-        if bar_lo == 0 {
+
+        // What the BAR is comes from the probe, not from the value in it: a
+        // BAR nobody has assigned an address reads back as zero, and that is
+        // exactly the state a device-tree machine boots in — skipping it here
+        // would report a device with no BARs, when what it has is BARs with no
+        // addresses.
+        let probed = probe_bar(cfg, bus, device, function, offset);
+        if probed.size == 0 {
             index += 1;
             continue;
         }
 
-        let is_mmio = (bar_lo & 0x01) == 0;
-        let is_64bit = is_mmio && ((bar_lo >> 1) & 0x03) == 0x02;
-        let is_prefetchable = is_mmio && ((bar_lo >> 3) & 0x01) == 1;
+        let is_mmio = probed.is_mmio;
+        let is_64bit = probed.is_64bit;
+        let is_prefetchable = probed.is_prefetchable;
 
         let mut base_address = if is_mmio {
             (bar_lo & 0xFFFF_FFF0) as u64
@@ -571,7 +746,7 @@ fn read_device_info<C: ConfigSpace>(
 
         bars[index] = PciBarInfo {
             base_address,
-            size: probe_bar_size(cfg, bus, device, function, offset),
+            size: probed.size,
             is_64bit,
             is_prefetchable,
             is_mmio,
@@ -735,8 +910,10 @@ mod tests {
     /// The lower half of a 64-bit MMIO BAR, and its upper half.
     const BAR2_VALUE: u32 = 0xC000_0004;
     const BAR2_HIGH: u32 = 0x0000_0001;
-    /// What a 4 KiB BAR answers to the all-ones sizing write.
+    /// What a 4 KiB 32-bit memory BAR answers to the all-ones sizing write.
     const BAR_MASK: u32 = 0xFFFF_F000;
+    /// The same, for a 64-bit one: the size plus the type bit that says so.
+    const BAR_MASK_64: u32 = 0xFFFF_F004;
     /// The MSI-X capability's offset in the chain.
     const MSIX_OFFSET: u8 = 0x40;
 
@@ -778,7 +955,7 @@ mod tests {
 
             Self {
                 words: RefCell::new(words),
-                bar_masks: [BAR_MASK, 0, BAR_MASK, 0, 0, 0],
+                bar_masks: [BAR_MASK, 0, BAR_MASK_64, 0, 0, 0],
             }
         }
 

@@ -36,7 +36,7 @@
 | Framebuffer | 273 | Display | Linear framebuffer |
 | Framebuffer Console | 692 | Display | Text rendering |
 | HDA (Intel HD Audio) | 450+ | Audio | CORB/RIRB, codec discovery, stream descriptors |
-| PCIe ECAM | Arch-specific | Bus | x86_64: full; AArch64/RISC-V: window walked, no BAR assignment yet |
+| PCIe ECAM | Arch-specific | Bus | x86_64: full; AArch64/RISC-V: window walked, BARs assigned |
 
 **Strengths:** Driver coverage across storage, network, display, audio, and input, mostly verified under QEMU.
 
@@ -52,11 +52,14 @@
 
 - **USB not end-to-end**: xHCI and USB HID are only "driver present"; USB storage/keyboard is not fully usable yet.
 - **HDA not surfaced to userspace**: audio has only the controller-level interface; no usable userspace stream interface yet.
-- **PCIe devices are enumerated but unaddressed** on the two device-tree
-  machines: the ECAM walk finds them and a gate asserts it, but nothing runs a
-  PCI resource pass — QEMU boots the kernel directly, with no firmware to do
-  it — so every memory BAR reads back as zero, and MSI-X programming stops
-  there because a device's table lives in a BAR.
+- **PCIe devices are addressable but not yet driven** on the two device-tree
+  machines: the ECAM walk finds them, the kernel's own resource pass gives
+  their memory BARs addresses out of the window the host bridge's `ranges`
+  describes (no firmware ran one), and on riscv64 the MSI-X table inside one is
+  programmed through the IMSIC and read back at every boot.  What is missing is
+  the driver above that: the demo's networking is on virtio-*mmio*, and
+  `drivers/virtio_net.rs`'s PCI path is still AArch64-only.  AArch64's own MSI
+  side would need a GICv3 ITS, which this kernel does not implement.
 - **Verified under QEMU only**: no real-device validation on bare-metal hardware yet.
 
 ---
@@ -593,15 +596,16 @@ once and never renumbered, records whose layout is asserted at compile time,
   device tree names was read and the device was found — and
   `arch/riscv64/pci.rs::probe_first_msix` calls `pci_enable_msix` on that
   device at every boot, which is how the next gap became visible rather than
-  silently skipped: **the machine assigns no BAR addresses.**  QEMU boots this
+  silently skipped: **the machine assigned no BAR addresses.**  QEMU boots this
   kernel directly, with no firmware to run a PCI resource pass, so every
-  memory BAR reads back as zero and an MSI-X table lives in a BAR.  The boot
-  says so on the console
-  (`RISC-V MSI-X on 00:01.0 not programmed: ... — a device whose BAR has no
-  assigned address has no table to write`), and the fix is a resource pass:
-  take the memory window from the host bridge's `ranges` and give each device's
-  BARs an address inside it.  AArch64's `virt` is in the same state, and its
-  gate now asserts the enumeration for the same reason.
+  memory BAR read back as zero — and an MSI-X table lives in a BAR.  The
+  kernel runs that pass itself now: the memory window comes from the host
+  bridge's `ranges`, `assign_memory_bars` gives each unaddressed memory BAR an
+  aligned address inside it and verifies that the device took it, so the boot
+  log reads `BAR assigned ... 0x4000_0000`, `MSI-X enabled on 00:01.0 (4
+  entries)` and `4 entries read back` — which is device MMIO answering.
+  AArch64 is in the same state and runs the same pass, and its gate asserts its
+  two assignments.
 - **Thin userspace ecosystem**: there is no toolchain and no real applications.
   What is there is more than it looks: the demo's ring3 payloads
   (`demo-launcher`, its Rust and rust-io variants, and the four fault demos)

@@ -105,7 +105,22 @@ pub fn probe_and_enumerate() -> Option<EcamProbe> {
     );
 
     let region = EcamRegion::new(ECAM_VA, 0, 0);
-    let devices = pci_enumerate_buses(&region, region.buses());
+    let mut devices = pci_enumerate_buses(&region, region.buses());
+    // The same resource pass the other device-tree machine needs, for the same
+    // reason: no firmware ran one, so a device's memory BARs are zero and
+    // nothing — including the MSI-X table inside one — is reachable.
+    let info = fdt::platform_info();
+    if let (Some(base), Some(size)) = (info.pcie_mmio_base, info.pcie_mmio_size) {
+        let assignment =
+            crate::arch::pci::assign_memory_bars(&region, &mut devices, base as u64, size as u64);
+        crate::println!(
+            "[pci   ] AArch64 BARs: {} assigned, window {:#018x}..{:#018x} of {:#018x}",
+            assignment.assigned,
+            base,
+            assignment.used_end,
+            (base as u64) + (size as u64)
+        );
+    }
     log_pci_devices(&region, &devices);
 
     Some(EcamProbe { region, devices })

@@ -348,6 +348,54 @@ impl StructWalk {
 // FDT parsing
 // ---------------------------------------------------------------------------
 
+/// Join big-endian 32-bit cells into one value.
+fn join_cells(cells: &[u8]) -> u64 {
+    let mut value = 0u64;
+    for cell in cells.as_chunks::<4>().0 {
+        value = (value << 32) | u32::from_be_bytes([cell[0], cell[1], cell[2], cell[3]]) as u64;
+    }
+    value
+}
+
+/// The memory window a PCI host bridge's `ranges` describes, if it describes
+/// one.
+///
+/// Each entry is `(child address, parent address, size)` with the cell counts
+/// the bindings give them: the child address and the size use the node's own
+/// `#address-cells`/`#size-cells`, the parent address uses the parent's.  Only
+/// memory entries are of interest — an IO window is not where a device's BARs
+/// go on these machines — and the child address' first cell carries the space
+/// flags in its top byte (`0x02` memory, `0x01` IO, `0x40` prefetchable) with
+/// the address itself in the cells that follow.
+fn memory_window_from_ranges(
+    raw: &[u8],
+    child_addr_cells: u32,
+    parent_addr_cells: u32,
+    size_cells: u32,
+) -> Option<(u64, u64)> {
+    let cells_per_entry = (child_addr_cells + parent_addr_cells + size_cells) as usize;
+    if child_addr_cells < 2 || size_cells == 0 || cells_per_entry == 0 {
+        return None;
+    }
+    let entry_bytes = cells_per_entry * 4;
+
+    for entry in raw.chunks_exact(entry_bytes) {
+        let flags = u32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]);
+        if flags & 0x0300_0000 != 0x0200_0000 {
+            // Not a memory space entry (IO space is 0x0100_0000).
+            continue;
+        }
+        let child_bytes = (child_addr_cells as usize) * 4;
+        let parent_bytes = (parent_addr_cells as usize) * 4;
+        let base = join_cells(&entry[4..child_bytes]);
+        let size = join_cells(&entry[child_bytes + parent_bytes..]);
+        if size != 0 {
+            return Some((base, size));
+        }
+    }
+    None
+}
+
 /// Parse the flattened device tree at `fdt_addr` and return discovered
 /// platform information.
 ///
@@ -371,6 +419,11 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let mut current_pci_reg: Option<usize> = None;
     // A PCI host node's `bus-range`, remembered for the same reason.
     let mut current_bus_range: Option<(u8, u8)> = None;
+    // A PCI host node's `ranges`, kept as bytes until the node ends: parsing it
+    // needs the node's `#address-cells`/`#size-cells`, which on QEMU `virt`
+    // come *after* `ranges` in the same node.
+    let mut current_ranges_raw = [0u8; 128];
+    let mut current_ranges_len: usize = 0;
     // An IMSIC node's address, remembered from its `reg` until the property
     // that says which mode it serves (`interrupts-extended`) is read.
     let mut current_is_imsic: bool = false;
@@ -544,10 +597,28 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         info.ecam_start_bus = Some(first_bus);
                         info.ecam_end_bus = Some(last_bus);
                     }
+                    // The node's ranges describe where its children's BARs go.
+                    // The node's own cells are known now, and the parent's are
+                    // the ones the address half of each entry is written in.
+                    let parent_addr_cells = if current_depth == 0 {
+                        root_ctx.address_cells
+                    } else {
+                        path[current_depth - 1].address_cells
+                    };
+                    if let Some((base, size)) = memory_window_from_ranges(
+                        &current_ranges_raw[..current_ranges_len],
+                        path[was_depth.min(path.len() - 1)].address_cells,
+                        parent_addr_cells,
+                        path[was_depth.min(path.len() - 1)].size_cells,
+                    ) {
+                        info.pcie_mmio_base = Some(base as usize);
+                        info.pcie_mmio_size = Some(size as usize);
+                    }
                 }
                 current_is_pci_host = false;
                 current_pci_reg = None;
                 current_bus_range = None;
+                current_ranges_len = 0;
                 // Settle the two nodes whose kind is a property of the node:
                 // an IMSIC only matters when it serves supervisor mode, and a
                 // PLIC is a PLIC (the APLIC at the same address is not one).
@@ -876,6 +947,16 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             // says whether this node is a host bridge at all —
                             // can still be ahead, and a node settles at its end.
                             current_bus_range = Some((first_bus as u8, last_bus as u8));
+                        }
+                    }
+                    Some("ranges") => {
+                        // Kept as bytes: the cell counts that say how to read
+                        // them are properties of this same node, and on QEMU
+                        // `virt` they follow `ranges`.
+                        if value_len <= current_ranges_raw.len() && value_len > 0 {
+                            let bytes = value.up_to(value_len);
+                            current_ranges_raw[..bytes.len()].copy_from_slice(bytes);
+                            current_ranges_len = bytes.len();
                         }
                     }
                     // RISC-V: the timer/counter rate is the CPU `timebase-frequency`
@@ -1368,6 +1449,7 @@ mod tests {
         let _off_arm_pl011 = str_off("arm,pl011"); // 110+1=111
         let _off_arm_gic400 = str_off("arm,gic-400"); // 120+1=121
         let off_bus_range = str_off("bus-range");
+        let off_ranges = str_off("ranges");
 
         // Use u32::from_be_bytes for embedded big-endian values.
         fn be32(v: u32) -> [u8; 4] {
@@ -1633,6 +1715,33 @@ mod tests {
         sblock.extend_from_slice(&be32(0x0000_0000));
         sblock.extend_from_slice(&be32(0x0000_00ff));
 
+        // ranges = <0x0200_0000 0x00 0x4000_0000 0x00 0x4000_0000 0x00
+        //           0x4000_0000>
+        //
+        // One memory-space entry: 3 child cells, 2 parent cells, 2 size cells
+        // — the counts this node declares *below* it, which is the whole point
+        // of settling the node at its end.
+        sblock.extend_from_slice(&be32(FDT_PROP));
+        sblock.extend_from_slice(&be32(28));
+        sblock.extend_from_slice(&off_ranges.to_be_bytes());
+        sblock.extend_from_slice(&be32(0x0200_0000)); // flags: memory space
+        sblock.extend_from_slice(&be32(0x0000_0000));
+        sblock.extend_from_slice(&be32(0x4000_0000));
+        sblock.extend_from_slice(&be32(0x0000_0000));
+        sblock.extend_from_slice(&be32(0x4000_0000));
+        sblock.extend_from_slice(&be32(0x0000_0000));
+        sblock.extend_from_slice(&be32(0x4000_0000));
+
+        // #address-cells = <3>, #size-cells = <2>
+        sblock.extend_from_slice(&be32(FDT_PROP));
+        sblock.extend_from_slice(&be32(4));
+        sblock.extend_from_slice(&off_addr_cells.to_be_bytes());
+        sblock.extend_from_slice(&be32(3));
+        sblock.extend_from_slice(&be32(FDT_PROP));
+        sblock.extend_from_slice(&be32(4));
+        sblock.extend_from_slice(&off_size_cells.to_be_bytes());
+        sblock.extend_from_slice(&be32(2));
+
         // compatible = "pci-host-ecam-generic"
         let compat_pci = "pci-host-ecam-generic";
         sblock.extend_from_slice(&be32(FDT_PROP));
@@ -1732,6 +1841,10 @@ mod tests {
         assert_eq!(info.ecam_base, Some(0x3000_0000));
         assert_eq!(info.ecam_start_bus, Some(0));
         assert_eq!(info.ecam_end_bus, Some(0xff));
+        // ...and its memory window, from a `ranges` whose cell counts are
+        // declared after it in the same node.
+        assert_eq!(info.pcie_mmio_base, Some(0x4000_0000));
+        assert_eq!(info.pcie_mmio_size, Some(0x4000_0000));
     }
 
     #[test]

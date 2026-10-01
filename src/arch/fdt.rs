@@ -62,6 +62,12 @@ pub struct PlatformInfo {
     /// PCIe ECAM (MMCONFIG) base address, discovered from
     /// `compatible = "pci-host-ecam-generic"`.
     pub ecam_base: Option<usize>,
+    /// The memory window a PCI host bridge's `ranges` describes: where a
+    /// device's BARs may be given addresses.  Zero-sized and absent when the
+    /// machine describes none.
+    pub pcie_mmio_base: Option<usize>,
+    /// How large that window is.
+    pub pcie_mmio_size: Option<usize>,
     /// First PCI bus covered by the ECAM region.
     pub ecam_start_bus: Option<u8>,
     /// Last PCI bus covered by the ECAM region (inclusive).
@@ -104,6 +110,8 @@ impl PlatformInfo {
             plic_base: None,
             imsic_base: None,
             ecam_base: None,
+            pcie_mmio_base: None,
+            pcie_mmio_size: None,
             ecam_start_bus: None,
             ecam_end_bus: None,
             has_sstc: false,

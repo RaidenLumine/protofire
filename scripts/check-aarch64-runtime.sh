@@ -404,8 +404,10 @@ require_log_exact_line "ring3-shell-answered"
 # that gate: the ECAM is mapped and the virtio-net PCI function beside the MMIO
 # one is found.
 require_log_line "[pci   ] AArch64 PCIe ECAM mapped PA="
+require_log_line "[pci   ] AArch64 BARs: 2 assigned"
 require_log_line "[pci   ] PCI: 2 device(s) found"
 require_log_line "00:01.0 vend=1af4 dev=1000"
+require_log_line "00:01.0 BAR4 0x0000000010004000"
 require_log_line "caps: MSI-X"
 
 require_log_line_count "[user  ] hello from aarch64 rust payload" 2

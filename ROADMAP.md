@@ -28,10 +28,11 @@ The authoritative picture of what exists today is
   demo payload are verified on RISC-V 64 under QEMU, and so is the AIA IMSIC —
   the kernel boots on `aia=aplic-imsic` and walks its own MSI path there.  The
   PCIe window is walked too, now that the device-tree parser settles it at the
-  end of the node instead of when it reads `reg`.  Remaining gaps: the PCI
-  resource pass (nothing assigns BAR addresses, so a device — and the MSI-X
-  table inside one — has no address to be reached at), MSI/MSI-X programming
-  once it does, and broader device-tree driver coverage.
+  end of the node instead of when it reads `reg`, the kernel's own resource
+  pass gives a device's BARs addresses, and an MSI-X table is programmed
+  through the IMSIC and read back at every boot.  Remaining gaps: a driver for
+  a PCIe device (the demo's networking is on virtio-mmio), and broader
+  device-tree driver coverage.
 - **AArch64 PCIe.** The ECAM window is found and its buses enumerated now (the
   same parser bug hid it, and its gate asserts the walk); what is left is the
   resource pass and the MSI side, which on this machine means a GICv3 ITS.

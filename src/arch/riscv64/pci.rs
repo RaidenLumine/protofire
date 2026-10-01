@@ -81,9 +81,36 @@ pub fn probe_and_enumerate() -> Option<EcamProbe> {
         region.buses().start(),
         region.buses().end()
     );
-    let devices = enumerate(&region);
+    let mut devices = enumerate(&region);
+    // Nothing on this machine assigns BAR addresses, and a device whose BARs
+    // are zero is not reachable — so the window the host bridge's `ranges`
+    // describes becomes the addresses, before anything reads them back.
+    assign_bars(&region, &mut devices);
     log_pci_devices(&region, &devices);
     Some(EcamProbe { region, devices })
+}
+
+/// Give the enumerated devices addresses out of the host bridge's memory
+/// window, and say what happened.
+///
+/// A machine that describes no window gets no assignment: there is nowhere to
+/// put a device, and inventing an address would be worse than leaving the BARs
+/// at zero where a reader can see that nothing assigned them.
+fn assign_bars(region: &EcamRegion, devices: &mut [PciDeviceInfo]) {
+    let info = fdt::platform_info();
+    let (Some(base), Some(size)) = (info.pcie_mmio_base, info.pcie_mmio_size) else {
+        crate::println!("[pci   ] RISC-V: no PCIe memory window in the device tree");
+        return;
+    };
+    let assignment =
+        crate::arch::pci::assign_memory_bars(region, devices, base as u64, size as u64);
+    crate::println!(
+        "[pci   ] RISC-V BARs: {} assigned, window {:#018x}..{:#018x} of {:#018x}",
+        assignment.assigned,
+        base,
+        assignment.used_end,
+        (base as u64) + (size as u64)
+    );
 }
 
 // The walk, re-exported so a caller naming this platform finds the whole

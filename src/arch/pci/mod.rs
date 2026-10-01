@@ -32,6 +32,7 @@ pub mod ecam;
 pub mod walk;
 
 pub use ecam::EcamRegion;
+pub use walk::assign_memory_bars;
 pub use walk::find_device;
 pub use walk::log_pci_devices;
 pub use walk::pci_capability_find;
@@ -46,6 +47,7 @@ pub use walk::pci_read_bar_64;
 pub use walk::pcie_check_hotplug_event;
 pub use walk::pcie_read_slot_status;
 pub use walk::probe_bar_size;
+pub use walk::BarAssignment;
 pub use walk::PciBarInfo;
 pub use walk::PciDeviceInfo;
 
