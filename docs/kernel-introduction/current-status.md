@@ -606,7 +606,15 @@ once and never renumbered, records whose layout is asserted at compile time,
   another demo program rather than freezing one.  Each freeze is a deliberate
   act; the shell is a host proxy rather than ring-3 code, and the remaining demo
   programs (the fault variants, the assembly launchers) are not frozen.
-- **No fuzzing yet**: the ELF loader, filesystem image parsers, network packet parsers, and the LUKS2 header have no fuzz targets.
+- **No coverage-guided fuzzing**: the four boundaries have deterministic
+  harnesses instead — `tests/parsers/fuzz.rs`, run by `make test-parsers` and
+  in CI, drives the ELF loader, the LUKS2 header and its scanners, twenty-four
+  network packet parsers, and every filesystem image opener the tree has
+  (including the MBR/GPT reader) with random bytes and structure-aware
+  mutations.  What is missing is the fuzzer that *searches*: these are
+  fixed-seed and bounded, so they catch the panics a seed happens to reach, not
+  the ones a mutation chain would.  `docs/fmts/testing.md` describes them the
+  same way.
 - **No reproducible releases**: no tagged releases with reproducible ISO/disk images and signed artifacts.
 
 ---

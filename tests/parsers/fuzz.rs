@@ -444,9 +444,16 @@ fn fuzz_dhcp_options_structure_aware() {
 fn fuzz_fs_volume_opens() {
     use protofire::fs::btrfs::BtrfsVolume;
     use protofire::fs::erofs::EroFsVolume;
+    use protofire::fs::exfat::ExfatVolume;
+    use protofire::fs::ext4::Ext4FsVolume;
+    use protofire::fs::f2fs::F2fsVolume;
+    use protofire::fs::fat32::FatVolume;
     use protofire::fs::iso9660::Iso9660Volume;
     use protofire::fs::ntfs::NtfsFs;
+    use protofire::fs::partition::read_mbr_partitions;
+    use protofire::fs::simplefs::SimpleFs;
     use protofire::fs::squashfs::SquashfsVolume;
+    use protofire::fs::xfs::XfsVolume;
 
     let mut rng = Lcg::new(0xF0F0_4050);
     for _ in 0..400 {
@@ -454,10 +461,24 @@ fn fuzz_fs_volume_opens() {
         let bytes = random_bytes(&mut rng, 256 * 1024);
         let dev = MemoryBlockDevice::new("fuzz-fs", bytes, true);
 
+        // Every image parser the tree has, not only the first five: a disk is
+        // the one input this kernel reads that it did not write, so each
+        // format's opener is a boundary — and the ones left out of this list
+        // are the ones nobody would notice a panic in until a machine
+        // attached a disk.
         let _ = BtrfsVolume::open(vec![dev.clone()]);
+        let _ = ExfatVolume::open(dev.clone());
+        let _ = Ext4FsVolume::open(dev.clone());
+        let _ = F2fsVolume::open(dev.clone());
+        let _ = FatVolume::open(dev.clone());
         let _ = EroFsVolume::open(dev.clone());
         let _ = NtfsFs::new(dev.clone());
         let _ = SquashfsVolume::open(dev.clone());
         let _ = Iso9660Volume::open(dev.clone());
+        let _ = SimpleFs::open(dev.clone(), false);
+        let _ = XfsVolume::open(dev.clone());
+        // The partition table is read before any of them: an MBR or GPT with
+        // nonsense in it is what a filesystem parser is handed.
+        let _ = read_mbr_partitions(dev.as_ref());
     }
 }
