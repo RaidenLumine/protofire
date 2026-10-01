@@ -101,7 +101,8 @@ shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -no-reboot \
     -no-shutdown \
     -global virtio-mmio.force-legacy=false \
-    -netdev user,id=net0 -device virtio-net-device,netdev=net0 >"$log_file" 2>>"$log_file"
+    -netdev user,id=net0 -device virtio-net-device,netdev=net0 \
+    -netdev user,id=net1 -device virtio-net-pci,netdev=net1 >"$log_file" 2>>"$log_file"
 status=$?
 set -e
 
@@ -392,6 +393,20 @@ require_log_line "[abi   ] shell payload: ${PAYLOAD_SOURCE:-compiled} "
 require_log_line "adastra:/apps/packages/shell\$ "
 require_log_line "adastra shell (ring 3) builtins:"
 require_log_exact_line "ring3-shell-answered"
+
+# ── The PCIe window the device tree describes was reached ──────────────
+#
+# This machine's host bridge is described the same way riscv64's is, and the
+# parser settled it when it read `reg` — a decision that cannot work, because
+# `compatible` comes after `reg` in every device tree QEMU writes.  The window
+# was never found, `probe_and_enumerate` returned None, and nothing said so,
+# because no gate had a PCIe device on the bus to look for.  These lines are
+# that gate: the ECAM is mapped and the virtio-net PCI function beside the MMIO
+# one is found.
+require_log_line "[pci   ] AArch64 PCIe ECAM mapped PA="
+require_log_line "[pci   ] PCI: 2 device(s) found"
+require_log_line "00:01.0 vend=1af4 dev=1000"
+require_log_line "caps: MSI-X"
 
 require_log_line_count "[user  ] hello from aarch64 rust payload" 2
 require_log_line_count "[user  ] aarch64-rust resumed after local code-write fault" 2

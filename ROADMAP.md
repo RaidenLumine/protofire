@@ -26,11 +26,15 @@ The authoritative picture of what exists today is
 
 - **RISC-V 64 → full target support.** The user ABI, interactive demo shell, and
   demo payload are verified on RISC-V 64 under QEMU, and so is the AIA IMSIC —
-  the kernel boots on `aia=aplic-imsic` and walks its own MSI path there.
-  Remaining gaps: PCIe ECAM probing (which is what would give a device MSI-X to
-  program), MSI/MSI-X on top of it, and broader device-tree driver coverage.
-- **AArch64 PCIe.** Move beyond basic probing to full ECAM support, matching
-  x86_64.
+  the kernel boots on `aia=aplic-imsic` and walks its own MSI path there.  The
+  PCIe window is walked too, now that the device-tree parser settles it at the
+  end of the node instead of when it reads `reg`.  Remaining gaps: the PCI
+  resource pass (nothing assigns BAR addresses, so a device — and the MSI-X
+  table inside one — has no address to be reached at), MSI/MSI-X programming
+  once it does, and broader device-tree driver coverage.
+- **AArch64 PCIe.** The ECAM window is found and its buses enumerated now (the
+  same parser bug hid it, and its gate asserts the walk); what is left is the
+  resource pass and the MSI side, which on this machine means a GICv3 ITS.
 - **USB host (xHCI) completion.** The driver is present; close the remaining
   feature gaps so USB storage and HID work end-to-end.
 - **HDA audio to userspace.** Expose the Intel HD Audio engine (currently CORB/

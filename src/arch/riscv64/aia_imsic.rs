@@ -391,7 +391,7 @@ pub fn self_test() -> Option<u32> {
 
 /// A single 16-byte MSI-X table entry (PCI 3.0 §6.8.2.4).
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct MsixTableEntry {
     /// Message Address — low 32 bits (the target IMSIC file's MMIO address).
     pub msg_addr_low: u32,
@@ -401,6 +401,26 @@ pub struct MsixTableEntry {
     pub msg_data: u32,
     /// Vector Control (bit 0 = masked).
     pub vector_control: u32,
+}
+
+/// Read one entry back from a programmed MSI-X table.
+///
+/// The twin of [`compose_msix_entry`], and the reason both exist: what a probe
+/// writes into a device's table is only known to have reached device MMIO if
+/// it can be read back from there.  The four words are read as four volatile
+/// loads, the way they are written.
+pub fn read_msix_entry(table_entry: usize) -> MsixTableEntry {
+    let base = table_entry as *const u32;
+    // SAFETY: `table_entry` names one 16-byte table entry in the identity-mapped
+    // device window, and the four loads cover exactly that entry.
+    unsafe {
+        MsixTableEntry {
+            msg_addr_low: core::ptr::read_volatile(base),
+            msg_addr_high: core::ptr::read_volatile(base.add(1)),
+            msg_data: core::ptr::read_volatile(base.add(2)),
+            vector_control: core::ptr::read_volatile(base.add(3)),
+        }
+    }
 }
 
 /// Compose an MSI-X table entry delivering `irq` to `target_cpu`'s IMSIC

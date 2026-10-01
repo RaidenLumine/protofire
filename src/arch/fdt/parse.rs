@@ -364,6 +364,13 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let mut virtio_mmio_idx: usize = 0;
     // Track whether the current node is a PCI host bridge (for ECAM discovery).
     let mut current_is_pci_host: bool = false;
+    // A PCI host node's `reg`, remembered from the property until the node
+    // ends.  `compatible` is what says the node *is* the host bridge, and on
+    // QEMU `virt` it comes after `reg` — the same property-order trap the
+    // IMSIC and the PLIC are settled around below.
+    let mut current_pci_reg: Option<usize> = None;
+    // A PCI host node's `bus-range`, remembered for the same reason.
+    let mut current_bus_range: Option<(u8, u8)> = None;
     // An IMSIC node's address, remembered from its `reg` until the property
     // that says which mode it serves (`interrupts-extended`) is read.
     let mut current_is_imsic: bool = false;
@@ -526,7 +533,21 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
             FDT_END_NODE => {
                 let was_depth = current_depth;
                 current_depth = current_depth.saturating_sub(1);
+                // Settle the PCI host bridge too: its `reg` is the ECAM window,
+                // and the property that says so (`compatible`) is read after it
+                // on the machines this kernel boots.
+                if current_is_pci_host {
+                    if info.ecam_base.is_none() {
+                        info.ecam_base = current_pci_reg;
+                    }
+                    if let Some((first_bus, last_bus)) = current_bus_range {
+                        info.ecam_start_bus = Some(first_bus);
+                        info.ecam_end_bus = Some(last_bus);
+                    }
+                }
                 current_is_pci_host = false;
+                current_pci_reg = None;
+                current_bus_range = None;
                 // Settle the two nodes whose kind is a property of the node:
                 // an IMSIC only matters when it serves supervisor mode, and a
                 // PLIC is a PLIC (the APLIC at the same address is not one).
@@ -799,14 +820,28 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             if current_node_addr.is_none() {
                                 current_node_addr = Some(addr as usize);
                             }
-                            // PCIe ECAM: capture from pci-host-ecam-generic node.
-                            if current_is_pci_host
-                                && info.ecam_base.is_none()
-                                && !(0x0A00_0000..0x0A20_0000).contains(&addr)
+                            // PCIe ECAM: a `pci-host-ecam-generic` node names
+                            // its window in `reg`.  Whether this node is that
+                            // one is not known yet — `compatible` follows `reg`
+                            // on QEMU `virt` — so the address is remembered
+                            // here and promoted at `FDT_END_NODE`, where the
+                            // node has been read whole.  The exclusions are the
+                            // addresses other nodes on these machines own: a
+                            // host bridge's `reg` is its ECAM window, and no
+                            // other node in the tree looks like one.
+                            if !(0x0A00_0000..0x0A20_0000).contains(&addr)
                                 && !(0x1000_1000..0x1001_0000).contains(&addr)
                                 && !(0x0C00_0000..0x0D00_0000).contains(&addr)
                             {
-                                info.ecam_base = Some(addr as usize);
+                                if current_is_pci_host && info.ecam_base.is_none() {
+                                    // A tree that put `compatible` first is
+                                    // settled here; one that did not is settled
+                                    // at the end of the node.
+                                    info.ecam_base = Some(addr as usize);
+                                }
+                                if current_pci_reg.is_none() {
+                                    current_pci_reg = Some(addr as usize);
+                                }
                             }
                             // VirtIO MMIO: aarch64 at 0x0A00_0000, riscv64 at 0x1000_1000.
                             if ((0x0A00_0000..0x0A20_0000).contains(&addr)
@@ -832,13 +867,15 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             }
                         }
                     }
-                    Some("bus-range") if value_len >= 8 && current_is_pci_host => {
+                    Some("bus-range") if value_len >= 8 => {
                         // bus-range is two u32 cells: first bus, last bus.
                         let first_bus = value.word(0).unwrap_or(0);
                         let last_bus = value.word(4).unwrap_or(0);
                         if first_bus <= last_bus && last_bus <= 255 {
-                            info.ecam_start_bus = Some(first_bus as u8);
-                            info.ecam_end_bus = Some(last_bus as u8);
+                            // Remembered, not published: `compatible` — which
+                            // says whether this node is a host bridge at all —
+                            // can still be ahead, and a node settles at its end.
+                            current_bus_range = Some((first_bus as u8, last_bus as u8));
                         }
                     }
                     // RISC-V: the timer/counter rate is the CPU `timebase-frequency`
@@ -1330,6 +1367,7 @@ mod tests {
         let _off_virtio_mmio_compat = str_off("virtio,mmio"); // 97+1=98
         let _off_arm_pl011 = str_off("arm,pl011"); // 110+1=111
         let _off_arm_gic400 = str_off("arm,gic-400"); // 120+1=121
+        let off_bus_range = str_off("bus-range");
 
         // Use u32::from_be_bytes for embedded big-endian values.
         fn be32(v: u32) -> [u8; 4] {
@@ -1568,6 +1606,45 @@ mod tests {
 
         sblock.extend_from_slice(&be32(FDT_END_NODE));
 
+        // -- pcie@30000000 node --
+        //
+        // `reg` first, `compatible` after it, which is the order QEMU's
+        // device trees write and the reason the ECAM window is settled at
+        // the end of the node rather than when the address is read.
+        let name_pci = b"pcie@30000000\0";
+        sblock.extend_from_slice(&be32(FDT_BEGIN_NODE));
+        sblock.extend_from_slice(name_pci);
+        let pad_pci = (4 - (name_pci.len() % 4)) % 4;
+        sblock.extend_from_slice(&[0u8; 4][..pad_pci]);
+
+        // reg = <0x0 0x3000_0000 0x0 0x1000_0000>
+        sblock.extend_from_slice(&be32(FDT_PROP));
+        sblock.extend_from_slice(&be32(16));
+        sblock.extend_from_slice(&off_reg.to_be_bytes());
+        sblock.extend_from_slice(&be32(0x0000_0000));
+        sblock.extend_from_slice(&be32(0x3000_0000));
+        sblock.extend_from_slice(&be32(0x0000_0000));
+        sblock.extend_from_slice(&be32(0x1000_0000));
+
+        // bus-range = <0x00 0xff>
+        sblock.extend_from_slice(&be32(FDT_PROP));
+        sblock.extend_from_slice(&be32(8));
+        sblock.extend_from_slice(&off_bus_range.to_be_bytes());
+        sblock.extend_from_slice(&be32(0x0000_0000));
+        sblock.extend_from_slice(&be32(0x0000_00ff));
+
+        // compatible = "pci-host-ecam-generic"
+        let compat_pci = "pci-host-ecam-generic";
+        sblock.extend_from_slice(&be32(FDT_PROP));
+        sblock.extend_from_slice(&be32(compat_pci.len() as u32));
+        sblock.extend_from_slice(&off_compatible.to_be_bytes());
+        sblock.extend_from_slice(compat_pci.as_bytes());
+        if !compat_pci.len().is_multiple_of(4) {
+            sblock.extend_from_slice(&[0u8; 4][..(4 - compat_pci.len() % 4)]);
+        }
+
+        sblock.extend_from_slice(&be32(FDT_END_NODE));
+
         // -- END root --
         sblock.extend_from_slice(&be32(FDT_END_NODE));
 
@@ -1648,6 +1725,13 @@ mod tests {
         assert_eq!(info.virtio_mmio_base, Some(0x0A00_0000));
         assert_eq!(info.virtio_mmio_stride, Some(0x200));
         assert_eq!(info.virtio_mmio_count, Some(2));
+        // The PCI host bridge's window, settled at the end of its node because
+        // `compatible` follows `reg` in the tree above — the same order the
+        // machines this kernel boots use, and the one a decision taken when
+        // `reg` is read cannot see.
+        assert_eq!(info.ecam_base, Some(0x3000_0000));
+        assert_eq!(info.ecam_start_bus, Some(0));
+        assert_eq!(info.ecam_end_bus, Some(0xff));
     }
 
     #[test]

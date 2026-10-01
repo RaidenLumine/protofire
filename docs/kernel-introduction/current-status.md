@@ -36,7 +36,7 @@
 | Framebuffer | 273 | Display | Linear framebuffer |
 | Framebuffer Console | 692 | Display | Text rendering |
 | HDA (Intel HD Audio) | 450+ | Audio | CORB/RIRB, codec discovery, stream descriptors |
-| PCIe ECAM | Arch-specific | Bus | x86_64: full; AArch64: basic probing |
+| PCIe ECAM | Arch-specific | Bus | x86_64: full; AArch64/RISC-V: window walked, no BAR assignment yet |
 
 **Strengths:** Driver coverage across storage, network, display, audio, and input, mostly verified under QEMU.
 
@@ -52,7 +52,11 @@
 
 - **USB not end-to-end**: xHCI and USB HID are only "driver present"; USB storage/keyboard is not fully usable yet.
 - **HDA not surfaced to userspace**: audio has only the controller-level interface; no usable userspace stream interface yet.
-- **AArch64 PCIe is basic probing only**: PCI devices (NVMe, virtio-pci) depend on device-tree MMIO on AArch64/RISC-V.
+- **PCIe devices are enumerated but unaddressed** on the two device-tree
+  machines: the ECAM walk finds them and a gate asserts it, but nothing runs a
+  PCI resource pass — QEMU boots the kernel directly, with no firmware to do
+  it — so every memory BAR reads back as zero, and MSI-X programming stops
+  there because a device's table lives in a BAR.
 - **Verified under QEMU only**: no real-device validation on bare-metal hardware yet.
 
 ---
@@ -576,17 +580,28 @@ once and never renumbered, records whose layout is asserted at compile time,
 ## Weaknesses & Known Gaps
 
 - **Emulation-first verification**: apart from x86_64, AArch64 and RISC-V are verified under QEMU; there is no bare-metal bring-up yet (see the roadmap's "Real-hardware bring-up" milestone).
-- **RISC-V 64 is still partial**: PCIe is basic probing only, and there is no
-  architectural NMI source.  The AIA IMSIC — the file that receives MSIs — is
-  implemented and *booted*: `make check-riscv64-aia-runtime` runs the kernel on
+- **RISC-V 64 is still partial**: there is no architectural NMI source, and
+  PCIe devices are enumerated but not yet usable — the resource pass is
+  missing.  The AIA IMSIC — the file that receives MSIs — is implemented and
+  *booted*: `make check-riscv64-aia-runtime` runs the kernel on
   `-machine virt,aia=aplic-imsic`, where the IMSIC is the external-interrupt
   controller, and the kernel walks its own message path at boot (enable an
   identity, write the message a device would write into its own MSI page, claim
-  it back) because nothing on that machine sends an MSI.  What has no caller
-  yet is the PCIe half above it: `arch/riscv64/pci.rs::pci_enable_msix` programs
-  a device's MSI-X table through `aia_imsic::configure_msix`, and no device
-  probe reaches it — riscv64 has no PCIe enumeration wired up at all (its
-  `discover_ecam` went with the rest of the unused fallbacks).
+  it back) because nothing on that machine sends an MSI.  The PCIe half above
+  it now walks too — `make check-riscv64-pci-runtime` boots with a
+  `virtio-net-pci` beside the MMIO device and asserts that the ECAM window the
+  device tree names was read and the device was found — and
+  `arch/riscv64/pci.rs::probe_first_msix` calls `pci_enable_msix` on that
+  device at every boot, which is how the next gap became visible rather than
+  silently skipped: **the machine assigns no BAR addresses.**  QEMU boots this
+  kernel directly, with no firmware to run a PCI resource pass, so every
+  memory BAR reads back as zero and an MSI-X table lives in a BAR.  The boot
+  says so on the console
+  (`RISC-V MSI-X on 00:01.0 not programmed: ... — a device whose BAR has no
+  assigned address has no table to write`), and the fix is a resource pass:
+  take the memory window from the host bridge's `ranges` and give each device's
+  BARs an address inside it.  AArch64's `virt` is in the same state, and its
+  gate now asserts the enumeration for the same reason.
 - **Thin userspace ecosystem**: there is no toolchain and no real applications.
   What is there is more than it looks: the demo's ring3 payloads
   (`demo-launcher`, its Rust and rust-io variants, and the four fault demos)

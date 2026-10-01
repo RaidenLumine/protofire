@@ -353,6 +353,10 @@ impl Kernel {
 
         println!("[init  ] interrupt controller init...");
         arch::interrupt_controller::init();
+        // Devices whose interrupts are delivered by that controller: on
+        // riscv64 the IMSIC programs the first MSI-X table it finds, which is
+        // the half of a driver's contract that can be checked without a driver.
+        crate::arch::platform::program_device_msix();
         println!("[init  ] timer init...");
         arch::timer::init();
         let t5 = tick();

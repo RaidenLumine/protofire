@@ -63,6 +63,7 @@ endif
 		check-aarch64-smp-runtime \
 		check-riscv64-runtime \
 		check-riscv64-aia-runtime \
+		check-riscv64-pci-runtime \
 		check-riscv64-smp-runtime \
 		build \
 		build-aarch64 \
@@ -109,6 +110,7 @@ help:
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
 		'  make check-riscv64-runtime - run the headless QEMU virt riscv64 demo smoke check' \
 		'  make check-riscv64-aia-runtime - boot riscv64 on the AIA machine and check the IMSIC' \
+		'  make check-riscv64-pci-runtime - boot riscv64 with a PCIe device and check the device-tree walk' \
 		'  make check-riscv64-smp-runtime - boot riscv64 on several harts and check they come up' \
 		'  make test           - run host-side unit and integration tests' \
 		'  make test-lib       - run library unit tests only' \
@@ -409,6 +411,16 @@ check-riscv64-aia-runtime:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-riscv64-aia-runtime.sh
+
+# Boot riscv64 with a PCIe device attached and check the device-tree walk.
+# The window the device tree describes was never reached — the parser settled
+# it when it read `reg`, and `compatible` comes after `reg` — and no gate had a
+# device on the bus to notice.  This one does.
+check-riscv64-pci-runtime:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-riscv64-pci-runtime.sh
 
 # Boot riscv64 on several harts and assert that the SBI HSM starts found them.
 # The hart IDs have to come from the device tree, and the hart the kernel is

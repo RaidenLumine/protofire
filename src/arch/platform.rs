@@ -84,6 +84,26 @@ pub(crate) fn enumerate_buses() {
         crate::println!("[init  ] AArch64 PCIe enumeration...");
         let _ = pci::probe_and_enumerate();
     }
+
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        use crate::arch::riscv64::pci;
+        crate::println!("[init  ] RISC-V PCIe enumeration...");
+        let _ = pci::probe_and_enumerate();
+    }
+}
+
+/// Hand the enumerated devices to the interrupt controller.
+///
+/// A device's MSI-X table is programmed *through* the controller, and the
+/// enumeration above runs before it is up, so this is the second half — see
+/// [`crate::arch::riscv64::pci::program_first_msix`] for what it does and why
+/// it re-walks rather than carrying the device list across the boot.
+pub(crate) fn program_device_msix() {
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        let _ = crate::arch::riscv64::pci::program_first_msix();
+    }
 }
 
 /// Bring up every CPU the machine reported that is not already running.

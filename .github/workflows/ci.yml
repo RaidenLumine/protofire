@@ -179,6 +179,12 @@ jobs:
       - name: Boot RISC-V with the AIA interrupt controller
         run: make check-riscv64-aia-runtime
 
+      # And with a PCIe device on the bus: the window the device tree
+      # describes is only reached if the walk runs, and nothing else boots a
+      # machine that has one.
+      - name: Boot RISC-V with a PCIe device
+        run: make check-riscv64-pci-runtime
+
       - name: Upload the serial log
         if: always()
         uses: actions/upload-artifact@v4

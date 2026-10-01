@@ -182,6 +182,10 @@ run_p3() {
         # The AIA machine: the only boot that reaches the IMSIC, which is what
         # receives MSIs.  The PLIC machine above never touches that path.
         run_make_step "make check-riscv64-aia-runtime" check-riscv64-aia-runtime
+        # And the machine's PCIe window, which the device-tree parser used to
+        # settle when it read `reg` — before `compatible` said the node *was* a
+        # host bridge.  No boot had a PCIe device on the bus to notice.
+        run_make_step "make check-riscv64-pci-runtime" check-riscv64-pci-runtime
     else
         printf '==> verify[%s]: skipping riscv64 runtime smoke (set RUN_RISCV64_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"
