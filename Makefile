@@ -54,6 +54,7 @@ endif
 		check-docs \
 		check-payload-relocations \
 		check-dead-code-allows \
+		check-abi-mirror \
 		check-layering \
 		check-x8664-runtime \
 		check-x8664-churn \
@@ -99,6 +100,7 @@ help:
 		'  make check-docs     - fail if a document cites a file the tree does not have' \
 		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
 		'  make check-dead-code-allows  - fail if a file-level allow(dead_code) has no reason' \
+		'  make check-abi-mirror  - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
@@ -312,6 +314,14 @@ check-payload-relocations:
 # allows in this tree outlived their reasons before it existed.
 check-dead-code-allows:
 	sh ./scripts/check-dead-code-allows.sh
+
+# The ABI records exist twice on purpose — `src/abi/` for the kernel and
+# `src/user/shared/abi/` for the vendored user tree — so the copy needs a check
+# rather than trust.  This one also fails a file in `src/abi/` that no `pub mod`
+# declares, because a file the compiler never reads is not code: three of them
+# sat there, one listing prctl codes that collided with the real ones.
+check-abi-mirror:
+	sh ./scripts/check-abi-mirror.sh
 
 # Run a payload that was **not** rebuilt with the kernel: the bytes frozen on
 # 2026-09-27 are shipped instead of the ones this build compiles, and the boot

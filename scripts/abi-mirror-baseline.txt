@@ -1,0 +1,22 @@
+# ABI mirror differences: the pairs `scripts/check-abi-mirror.sh` is told to
+# accept.
+#
+# The check compares `src/abi/<name>.rs` with `src/user/shared/abi/<name>.rs`
+# below the header, and only what is listed here may differ.  Each row is
+#
+#     <file> <differs|kernel-only>  # <why>
+#
+# `differs` is a pair whose bodies are deliberately not the same; `kernel-only`
+# is a record the shared tree does not carry.  A row whose difference has gone
+# away fails the check, so this list describes the tree and not a tree that
+# used to exist.
+#
+# Everything else has to be byte-identical below the header.  That is the point
+# of the mirror: the shared tree is vendored, so it is a copy rather than a
+# re-export, and a copy nobody compares is how the kernel's side came to hold
+# three blocks of user-facing API that the user's side never got.
+
+mod.rs        differs      # the shared tree carries no virgl record, so its module list is one line shorter
+runtime.rs    differs      # the kernel copy re-exports the shared one; the shared file is the definition
+syscall.rs    differs      # two subjects under one name: the kernel file encodes status words, the shared one names syscalls
+virgl.rs      kernel-only  # the shared tree has no virgl record to mirror

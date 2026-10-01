@@ -290,6 +290,15 @@ Pointer-validation changes are the highest-risk edits in the tree: a bug here is
 a kernel memory-safety bug reachable from ring 3. Test both the accepting and
 the rejecting side, including ranges that straddle the user/kernel boundary.
 
+The ABI records themselves are checked the same way, by a census rather than by
+a test: `make check-abi-mirror` requires every file in `src/abi/` to be declared
+by its module, every record to have a mirror in `src/user/shared/abi/` with an
+origin line in its header, and the two bodies to be identical below that
+header — with a recorded reason in `scripts/abi-mirror-baseline.txt` for the
+handful of pairs that are deliberately not mirrors.  The copy exists because
+the shared tree is vendored; the check is what keeps it a copy rather than a
+memory.
+
 ---
 
 ## 10. Review checklist
@@ -307,6 +316,8 @@ Before requesting review of a syscall change, confirm each line:
 - [ ] A typed `sys_*` wrapper exists and packs pointers itself.
 - [ ] The ABI version is bumped for a non-additive change, with the reason in
       the commit message.
+- [ ] `make check-abi-mirror` is green: a record added to `src/abi/` is
+      declared, mirrored, and identical to its mirror below the header.
 - [ ] `docs/kernel-introduction/syscall.md` is updated.
 - [ ] `make verify-p3` is green.
 

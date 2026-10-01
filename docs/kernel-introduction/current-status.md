@@ -498,13 +498,29 @@ The network stack is the second-largest subsystem at **40,809 lines across 81 fi
 
 The ABI records are the one thing here that exists twice: `src/abi/` holds them,
 and `src/user/shared/abi/` mirrors them, the mirror carrying `//! src/abi/<name>.rs`
-in its header to record where each file came from.  Nothing checks that the two
-stay in step, and they have not: `src/abi/process.rs` carries the `SA_*` restart
-flags and `src/abi/net.rs` a capability-accessor block that the shared copies
-lack, while `src/user/shared/abi/syscall.rs` carries `SYSCALL_ABI_VERSION_*`
-that the kernel copy lacks.  Every difference is small on its own; what is
-missing is the check, so "shared" is a convention held up by hand rather than a
-guarantee.
+in its header to record where each file came from.  `make check-abi-mirror`
+keeps the two in step: every record has to be declared by `src/abi/mod.rs`
+(a file the compiler never reads is not code), every mirror has to record its
+origin, and the two bodies have to be identical below the header — except for
+the four differences `scripts/abi-mirror-baseline.txt` records with a reason.
+
+That check exists because the copies had drifted the one way copies drift.  The
+kernel's side had grown three blocks of exactly the API user code needs — the
+`SA_*` restart flags, the architecture-neutral exception-handler flags and the
+`NetworkStatus` accessors — and the shared side had none of them, which is why
+user code was reaching back into `src/abi/` for them.  All sixteen mirrored
+records are byte-identical below the header now, and the four listed
+differences are the ones that are not mirrors at all: `runtime.rs` (the kernel
+re-exports the shared definition), `syscall.rs` (the kernel file encodes status
+words, the shared one names syscalls), `mod.rs` (the shared tree carries no
+`virgl` record) and `virgl.rs` itself.
+
+Three files that no module declared are gone with the same change: they were in
+`src/abi/`, invisible to the compiler and to every gate, and one of them listed
+prctl codes that collided with the implemented ones.  What is left of the job
+is the other direction: `src/user/` still imports the ABI through `crate::abi::`
+at 141 sites, so the shared tree is in step with the kernel's copy but is not
+yet a tree that could be lifted out of the crate on its own.
 
 ### Testing
 
