@@ -386,6 +386,230 @@ macro_rules! define_aarch64_payload_runtime {
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 pub(crate) use define_aarch64_payload_runtime;
 
+#[cfg(all(target_arch = "riscv64", any(target_os = "linux", target_os = "none")))]
+// This is the runtime for the one Rust-authored RISC-V payload the tree has:
+// the shell.  It carries exactly the stubs that program calls — a payload has to
+// stay self-contained, and a stub nothing calls is a function in the section
+// that is copied onto the disk and never run.
+//
+// The assembly payloads on this target (`demo_program_riscv64`) do not use it:
+// they are hand-written `.S`, and they issue their own `ecall`s.
+#[allow(unused_macros)]
+macro_rules! define_riscv64_payload_runtime {
+    ($section:literal) => {
+        #[inline(always)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        /// Invoke the payload's raw syscall trap.
+        ///
+        /// Safe to call from the payload: the trap is an operation with an
+        /// erring return — the kernel validates every address it is handed
+        /// before it touches it, and a refused address comes back as an error
+        /// status rather than as undefined behaviour in the caller.  The
+        /// `unsafe` the payload runtime still needs is the `asm!` below, which
+        /// is where the register contract lives.
+        fn payload_runtime_invoke_raw_status(
+            number: usize,
+            arg0: usize,
+            arg1: usize,
+            arg2: usize,
+            arg3: usize,
+            arg4: usize,
+            arg5: usize,
+        ) -> usize {
+            // SAFETY: the trap instruction is the payload ABI: `a7` carries the
+            // syscall number, `a0`-`a5` carry the six words, and `a0` carries
+            // the status back.  The instruction has no memory side effects of
+            // its own; what it asks the kernel to do with the words is the
+            // kernel's to validate.  Every other register is the caller's: the
+            // trap saves and restores the user context around the call.
+            let status: usize;
+            // SAFETY: the `ecall` below is this architecture's syscall ABI —
+            // number in `a7`, arguments in the registers it names, status back
+            // in `a0` — and the kernel is the side that validates what they
+            // point at.
+            unsafe {
+            core::arch::asm!(
+                "ecall",
+                in("a7") number,
+                inlateout("a0") arg0 => status,
+                in("a1") arg1,
+                in("a2") arg2,
+                in("a3") arg3,
+                in("a4") arg4,
+                in("a5") arg5,
+                options(nostack),
+            );
+            status
+        }}
+
+        #[inline(always)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn payload_runtime_status_is_error(status: usize) -> bool {
+            // The stripped payload only needs the numeric floor check, not the
+            // full host-side `Result` decoder.
+            status >= $crate::user::shared::abi::syscall::ERROR_STATUS_FLOOR
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        /// Write a fixed-length message to the process's stdout.
+        fn write_section_message(buffer: usize, length: usize) {
+            let _ = write_fd($crate::kernel::process::STDOUT_FD, buffer, length);
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        /// Read from one of the process's descriptors.
+        ///
+        /// `timeout_ticks` is the window a console read blocks for and is
+        /// ignored by a regular file.
+        fn read_fd(fd: usize, buffer: usize, length: usize, timeout_ticks: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Read as usize,
+            fd,
+            buffer,
+            length,
+            timeout_ticks,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn write_fd(fd: usize, buffer: usize, length: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Write as usize,
+            fd,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn open_path(path: usize, length: usize, flags: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Open as usize,
+            path,
+            length,
+            flags,
+            0,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn close_fd(fd: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::Close as usize,
+            fd,
+            0,
+            0,
+            0,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn current_dir(buffer: usize, length: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::CurrentDir as usize,
+            buffer,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        /// Read one `read_dir` entry: the header record plus the entry's name
+        /// bytes.  Returns the number of bytes written, and fails with
+        /// `NotFound` past the last entry, which is how a listing ends.
+        ///
+        /// The argument order is the handler's — path, path length, entry
+        /// index, buffer, buffer length — so the stub reads like the syscall it
+        /// wraps: the index picks the entry, and the buffer is where that entry
+        /// is written.
+        fn read_dir(
+            path: usize,
+            path_length: usize,
+            index: usize,
+            buffer: usize,
+            buffer_length: usize,
+        ) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::ReadDir as usize,
+            path,
+            path_length,
+            index,
+            buffer,
+            buffer_length,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn chdir(path: usize, length: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+            $crate::syscall::SyscallNumber::SetCurrentDir as usize,
+            path,
+            length,
+            0,
+            0,
+            0,
+            0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        fn exit_with_code(code: usize) -> ! {
+            // SAFETY: the exit request is the ABI's, and the payload never
+            // returns from it; the trap is the kernel's to service.
+            unsafe {
+                let _ = payload_runtime_invoke_raw_status(
+                    $crate::syscall::SyscallNumber::Exit as usize,
+                    code,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                );
+                // Falling through would mean the kernel unexpectedly returned
+                // from an exit request.
+                core::arch::asm!("unimp", options(noreturn));
+            }
+        }
+    };
+}
+
+#[cfg(all(target_arch = "riscv64", any(target_os = "linux", target_os = "none")))]
+pub(crate) use define_riscv64_payload_runtime;
+
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "none")))]
 // Payload runtimes live in extracted section blobs, so these helpers must stay
 // self-contained, allocation-free, and easy for the linker to keep together.

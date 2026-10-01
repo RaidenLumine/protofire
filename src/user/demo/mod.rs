@@ -47,6 +47,7 @@ payload_or_stub!("aarch64", demo_program_aarch64_fault);
 payload_or_stub!("aarch64", demo_program_aarch64_rust);
 payload_or_stub!("aarch64", shell_payload_aarch64);
 payload_or_stub!("riscv64", demo_program_riscv64);
+payload_or_stub!("riscv64", shell_payload_riscv64);
 payload_or_stub!("x86_64", demo_program_x86_64);
 payload_or_stub!("x86_64", demo_program_x86_64_rust);
 payload_or_stub!("x86_64", demo_program_x86_64_rust_io);

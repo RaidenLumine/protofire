@@ -104,13 +104,22 @@ set -- \
     -no-shutdown \
     -netdev user,id=net0 -device virtio-net-device,netdev=net0
 
+# The console is a two-way line on this machine too: what this script reads is
+# the guest's serial output, and the same line is where the shell gets its
+# commands.  `-serial stdio` with the output redirected is what can type at the
+# prompt, and typing is the half of the shell a boot by itself never exercises.
+shell_commands() {
+    sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
+        'help' 'echo ring3-shell-answered'
+}
+
 printf 'riscv64 runtime check: 1 cpu, timeout %ss, qemu %s\n' \
     "$TIMEOUT_SECONDS" "$QEMU_RISCV64"
-printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU_RISCV64 $* -serial file:$log_file"
+printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU_RISCV64 $* -serial stdio >$log_file"
 
 set +e
-timeout "${TIMEOUT_SECONDS}s" "$QEMU_RISCV64" "$@" -serial "file:$log_file" \
-    >/dev/null 2>>"$log_file"
+shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU_RISCV64" "$@" -serial stdio \
+    >"$log_file" 2>>"$log_file"
 status=$?
 set -e
 
@@ -150,6 +159,13 @@ require_log_line() {
     pattern="$1"
     if ! grep -a -F "$pattern" "$log_file" >/dev/null 2>&1; then
         fail_with_log "missing log line: $pattern"
+    fi
+}
+
+require_log_exact_line() {
+    line="$1"
+    if ! grep -a -F -x "$line" "$log_file" >/dev/null 2>&1; then
+        fail_with_log "missing log line (whole line): $line"
     fi
 }
 
@@ -205,7 +221,25 @@ require_log_line "[user  ] image-plan span="
 require_log_line "[user  ] process-root root=0x"
 require_log_line "[init  ] starting idle process"
 require_log_line "protofire kernel running"
-require_log_line "protofire shell (user)"
+
+# ── The shell is ring-3 code, and it answered what was typed at it ─────
+#
+# `adastra ring3 shell` is the shell payload's own banner; the in-kernel host
+# proxy it replaced printed `protofire shell (user)`, so asserting the new line
+# is what keeps a boot from passing on the proxy after this changed.  The prompt
+# carries the directory the kernel says the process is in — the manifest's
+# `working_dir`, not something the shell remembered.
+#
+# Those lines are also printed by a shell that never reads a command, which is
+# how the recovered assembly shell the other architectures replaced passed for
+# as long as nothing typed at it: banner, prompt, and then a fault on the first
+# line.  A boot that is never typed at cannot tell those two apart, so this
+# check types; `scripts/feed-shell-console.sh` is what does it.
+require_log_line "adastra ring3 shell"
+require_log_line "adastra:/apps/packages/shell\$ "
+require_log_line "[abi   ] shell payload: $PAYLOAD_SOURCE "
+require_log_line "adastra shell (ring 3) builtins:"
+require_log_exact_line "ring3-shell-answered"
 
 # ── The user program ran, and left ─────────────────────────────────────
 #

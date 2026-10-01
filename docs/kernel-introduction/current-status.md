@@ -592,31 +592,41 @@ once and never renumbered, records whose layout is asserted at compile time,
   (`demo-launcher`, its Rust and rust-io variants, and the four fault demos)
   are real ELF images which run, make syscalls, read and write files under
   `/data/users/guest/`, and install their own exception handlers — built inside
-  the kernel by `src/user/demo/`, not compiled by a toolchain.  On x86_64 and
-  AArch64 the shell is ring-3 code too: one program, written once in
+  the kernel by `src/user/demo/`, not compiled by a toolchain.  The shell is
+  ring-3 code on all three targets: one program, written once in
   `src/user/demo/shell_payload.rs` and emitted into a section per target
-  (`shell_payload_x86_64`, `shell_payload_aarch64`), with its own banner,
-  prompt, `ls`, `cat`, `cd` and `echo` — so the boot's prompt is that program
-  rather than the in-kernel Rust proxy it used to fall back to.  The difference
-  is testable rather than nominal: `make check-x8664-runtime` and
-  `make check-aarch64-runtime` type a command at the prompt and assert the
-  answer, which is the only way to tell a shell that reads a line from one that
-  only prints a banner.  What is still missing is the layer above *that*:
-  RISC-V has no ring-3 shell payload, so its manifest still routes `host_proxy =
-  "shell"` to the in-kernel proxy; the `/init.elf` in the system zone is a
-  placeholder stub; and nothing on the volume is signed or verified unless its
-  manifest asks for it.
+  (`shell_payload_x86_64`, `shell_payload_aarch64`, `shell_payload_riscv64`),
+  with its own banner, prompt, `ls`, `cat`, `cd` and `echo` — so the boot's
+  prompt is that program rather than the in-kernel Rust proxy it used to fall
+  back to on every machine.  The difference is testable rather than nominal: the
+  three runtime checks type a command at the prompt and assert the answer, which
+  is the only way to tell a shell that reads a line from one that only prints a
+  banner.  What is still missing is the layer above *that*: the manifests still
+  carry a `host_proxy` entry nothing reaches, the `/init.elf` in the system zone
+  is a stub that exits, and nothing on the volume is signed or verified unless
+  its manifest asks for it.
 - **Single maintainer**: bus factor = 1; every module is currently held by one maintainer.
 - **Experimental syscalls are unfrozen**: slots 121–189 are classified Experimental.
-- **“We do not break userspace” has six subjects, not a population**: the
+- **“We do not break userspace” has seven subjects, not a population**: the
   frozen payloads make the rule testable for three programs on x86_64 — the
-  launcher, the child it starts, and the shell — for two on AArch64 — the
-  launcher and the shell — and for one on RISC-V.  The two shells are the ones
+  launcher, the child it starts, and the shell — and for two on each of the
+  other targets — the launcher and the shell.  The three shells are the ones
   that wait for input, so those runs type at them; the other four announce what
   they are and exit.  Extending this means *writing* another demo program rather
-  than freezing one.  Each freeze is a deliberate act; the remaining demo
-  programs (the fault variants and the assembly launchers) are not frozen, and
-  neither is the in-kernel proxy RISC-V still uses for its shell.
+  than freezing one.  Each freeze is a deliberate act, and the remaining demo
+  programs (the fault variants and the assembly launchers) are not frozen.
+- **A user-access window is not a semaphore**: x86_64's `AC`, AArch64's `PAN` and
+  riscv64's `SUM` are per-hart bits, and the guard around a copy sets and then
+  clears them.  A window that is held *across a block* is therefore at the mercy
+  of any other thread that opens and closes its own window while the first is
+  waiting — the first thread's access is cleared under it, and the copy faults
+  in the kernel.  It took a ring-3 console reader to hit this (the read syscall
+  held the window across a wait for a keystroke, on the first machine where the
+  demo's own writes interleaved with it), and the read path now stages in kernel
+  memory and copies out under a window held only for the copy.  The write path
+  still holds its window for the duration of a blocking write, and the socket
+  paths have the same shape; the invariant the guards document is "scoped to a
+  single copy", and the remaining paths do not keep it.
 - **No coverage-guided fuzzing**: the four boundaries have deterministic
   harnesses instead — `tests/parsers/fuzz.rs`, run by `make test-parsers` and
   in CI, drives the ELF loader, the LUKS2 header and its scanners, twenty-four

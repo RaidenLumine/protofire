@@ -40,7 +40,8 @@
 
 
 
-# 36 files, 115 occurrences outside src/arch
+
+# 36 files, 118 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/mod.rs                                       12
@@ -75,6 +76,6 @@ user/exception.rs                                    5
 user/shared/abi/ptrace.rs                            2
 user/shared/abi/runtime.rs                           6
 user/shared/syscall.rs                               2
-user/syscall/mod.rs                                  6
-user/syscall/payload.rs                              4
+user/syscall/mod.rs                                  7
+user/syscall/payload.rs                              6
 util/debug.rs                                        1

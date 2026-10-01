@@ -148,7 +148,11 @@ require_log_absent_line "base=0x24000000"
 require_log_line "AIA IMSIC: self-test delivered and claimed identity "
 
 require_log_line "[init  ] starting idle process"
-require_log_line "protofire shell (user)"
+# The ring-3 shell's own banner: on this machine the boot reaches the shell the
+# same way the non-AIA one does, and the proxy it replaced printed
+# `protofire shell (user)`.  The FATAL assertion below is what makes this check
+# more than "the boot printed something".
+require_log_line "adastra ring3 shell"
 require_log_absent_line "[FATAL] riscv64 trap"
 require_log_absent_line "self-test delivered nothing"
 

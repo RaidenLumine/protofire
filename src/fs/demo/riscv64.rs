@@ -1,16 +1,36 @@
 //! src/fs/demo/riscv64.rs
 //!
 //! The demo volume's riscv64 contents: which payloads it ships, the manifests
-//! that describe them, and the init ELF the system zone carries — the assembly
-//! shell, since the ring3 shell is not built for this target.
+//! that describe them, and the init ELF the system zone carries.
 
 use super::*;
 
-// riscv64 keeps the assembly shell fallback since ring3-shell isn't yet
-// compiled for riscv64.
 use crate::user::demo::demo_program_riscv64_elf::build_demo_program_artifact;
 
 use crate::user::demo::demo_program_riscv64_elf::build_shell_program_artifact;
+
+/// The system zone's init program: `exit(0)`, and nothing else.
+///
+/// It used to be the shell artifact, back when that artifact was metadata-only:
+/// the loader then ran the in-kernel proxy, which is kernel code wearing the
+/// shell's name, so having it as init only printed a prompt nobody typed at.
+/// A ring-3 shell is not that — it reads the console — and an init copy of it
+/// raced the apps-zone copy for every keystroke, with only one of the two
+/// running on a stack the loader had set up for it.  The other two targets ship
+/// a stub here for the same reason: init is not where a shell belongs.
+/// The exit is followed by a spin, which is what this target's assembly
+/// payloads do too (`demo_program_riscv64`'s exit block ends in `j 3b`):
+/// falling off the end of a slot program is an illegal instruction, and the
+/// point of a stub is to say nothing at all.
+const DEMO_STUB_PAYLOAD_RISCV64: [u8; 16] = [
+    0x93, 0x08, 0x30, 0x00, // addi a7, zero, 3 — exit
+    0x13, 0x05, 0x00, 0x00, // addi a0, zero, 0 — with status 0
+    0x73, 0x00, 0x00, 0x00, // ecall
+    0x6f, 0x00, 0x00, 0x00, // j . — spin if it returns
+];
+
+/// EM_RISCV; the demo artifacts' machine field.
+const RISCV64_DEMO_PROGRAM_MACHINE: u16 = 0xF3;
 
 const DEMO_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher\"\nversion = \"0.1.0\"\nformat = \"elf64-riscv64-user\"\nentry = \"/apps/packages/demo-launcher/bin/demo.elf\"\nworking_dir = \"/apps/packages/demo-launcher\"\nargv = [\"demo-launcher\", \"--profile=demo\", \"--transport=serial\", \"--arch=riscv64\"]\nenv = [\"ASTRA_APP_ID=demo-launcher\", \"ASTRA_RUNTIME=ring3-riscv64-prototype\", \"ASTRA_ZONE=/apps\"]\nhost_proxy = \"demo-launcher\"\n";
 
@@ -23,11 +43,15 @@ pub(super) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
     SimpleFs::build_image(zone.volume_label(), &entries)
 }
 
-/// The system zone: the shared files plus the assembly shell as the init ELF
-/// (ring3-shell is not yet compiled for riscv64).
+/// The system zone: the shared files plus the stub init program.
 pub(super) fn system_zone_image() -> Result<Vec<u8>> {
-    let shell = build_shell_program_artifact();
-    super::build_system_zone_from(&shell.bytes)
+    let init = crate::user::demo::elf_builder::build_artifact_from_payload(
+        &DEMO_STUB_PAYLOAD_RISCV64,
+        0,
+        crate::user::program::DEMO_PROGRAM_ENTRY as u64,
+        RISCV64_DEMO_PROGRAM_MACHINE,
+    );
+    super::build_system_zone_from(&init.bytes)
 }
 
 fn apps_entries_riscv64<'a>(
