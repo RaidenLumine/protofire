@@ -14,6 +14,32 @@ pub const SYSCALL_ABI_VERSION_MINOR: u32 = 0;
 pub const SYSCALL_COUNT: usize = 190;
 pub const MAX_SYSCALLS: usize = 256;
 
+// ── Status encoding ──────────────────────────────────────────────────
+//
+// A syscall returns one word.  Success is the value itself; failure is
+// `usize::MAX - code` for a small code, which leaves the top of the range for
+// errors and keeps every ordinary value usable as a return.  Both sides need
+// these numbers — the kernel to encode, user space to decode — so they are
+// part of the ABI and live here with the rest of it.  The typed helpers that
+// turn a code into the kernel's `Error` stay on the kernel side, where that
+// type exists, and `src/abi/syscall.rs` asserts that the two agree.
+
+/// Arguments a syscall takes.
+pub const ARG_COUNT: usize = 6;
+
+/// The interrupt vector x86_64 user code uses to enter the kernel.
+pub const X86_64_INTERRUPT_VECTOR: u8 = 0x80;
+
+/// Largest error code the ABI assigns.
+///
+/// Pinned here rather than derived from the kernel's enum, because user space
+/// has to know it without the enum; `src/abi/syscall.rs` is what keeps the two
+/// in step.
+pub const ERROR_CODE_MAX: usize = 10;
+
+/// Every status at or above this is an error.
+pub const ERROR_STATUS_FLOOR: usize = usize::MAX - ERROR_CODE_MAX;
+
 // ── Syscall numbers (0-189) ──────────────────────────────────────────
 
 pub const SYS_YIELD: usize = 0;

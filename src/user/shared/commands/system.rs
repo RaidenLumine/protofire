@@ -248,7 +248,7 @@ pub fn cmd_sysinfo() -> CmdResult {
     out.push_str("─── System ───\n");
     out.push_str("OS:      adAstra 2026.6.1\n");
     out.push_str("Arch:    ");
-    out.push_str(crate::abi::runtime::TARGET_ARCH);
+    out.push_str(crate::user::shared::abi::runtime::TARGET_ARCH);
     out.push('\n');
 
     // Query scheduler info via SystemInfo syscall.
@@ -597,7 +597,7 @@ fn level_to_log_prefix(level: &str) -> &str {
 pub fn cmd_uname(argv: &[String]) -> CmdResult {
     let all = argv.len() > 1 && argv[1] == "-a";
 
-    let arch = crate::abi::runtime::TARGET_ARCH;
+    let arch = crate::user::shared::abi::runtime::TARGET_ARCH;
 
     let output = if all {
         format!("adAstra 2026.6.1 {arch} kernel\n")

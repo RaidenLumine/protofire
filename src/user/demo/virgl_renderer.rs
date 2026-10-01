@@ -18,9 +18,9 @@
 use alloc::format;
 use alloc::string::String;
 
-use crate::abi::gpu as gpu_abi;
-use crate::abi::virgl as virgl_abi;
 use crate::syscall;
+use crate::user::shared::abi::gpu as gpu_abi;
+use crate::user::shared::abi::virgl as virgl_abi;
 use crate::user::syscall::UserSyscall;
 use crate::Result;
 

@@ -1,5 +1,6 @@
-//! src/abi/virgl.rs
+//! src/user/shared/abi/virgl.rs
 //!
+//! src/abi/virgl.rs
 //! Minimal VIRGL command-stream framing used by the demo 3D renderer.
 //!
 //! The real VIRGL wire format is defined by the virglrenderer project and is

@@ -17,13 +17,13 @@
 
 use core::mem::MaybeUninit;
 
-use crate::abi::process::ProcessSpawnOptions;
-use crate::abi::process::ProcessSpawnStringRef;
-use crate::abi::process::ProcessTerminationRecord;
-use crate::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
-use crate::abi::process::PROCESS_TERMINATION_KIND_EXCEPTION;
-use crate::abi::process::PROCESS_TERMINATION_KIND_EXIT;
-use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
+use crate::user::shared::abi::process::ProcessSpawnOptions;
+use crate::user::shared::abi::process::ProcessSpawnStringRef;
+use crate::user::shared::abi::process::ProcessTerminationRecord;
+use crate::user::shared::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
+use crate::user::shared::abi::process::PROCESS_TERMINATION_KIND_EXCEPTION;
+use crate::user::shared::abi::process::PROCESS_TERMINATION_KIND_EXIT;
+use crate::user::shared::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
 
 const RUST_IO_PAYLOAD_READ_BUFFER_CAPACITY: usize = 256;
 
@@ -453,7 +453,7 @@ fn spawn_child_and_wait(
 #[inline(never)]
 #[link_section = "adastra_demo_program_rust_io"]
 extern "C" fn adastra_demo_program_rust_io_main_from_stack(initial_stack: usize) -> ! {
-    let read_write_create_flags = crate::abi::io::OPEN_FLAG_READ_WRITE_CREATE;
+    let read_write_create_flags = crate::user::shared::abi::io::OPEN_FLAG_READ_WRITE_CREATE;
 
     write_section_message(
         rip_relative_address!(RUST_IO_PAYLOAD_HELLO_MESSAGE),
@@ -598,7 +598,7 @@ extern "C" fn adastra_demo_program_rust_io_main_from_stack(initial_stack: usize)
         open_path(
             rip_relative_address!(RUST_IO_PAYLOAD_README_PATH),
             RUST_IO_PAYLOAD_README_PATH.len(),
-            crate::abi::io::OPEN_FLAG_READ,
+            crate::user::shared::abi::io::OPEN_FLAG_READ,
         ),
         10,
     );

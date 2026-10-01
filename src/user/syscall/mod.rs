@@ -13,10 +13,10 @@ pub struct UserSyscall;
 // runtime code can stay target-agnostic.  They live in the ABI module, where
 // the per-architecture names are, and where the assertion that their
 // numbering agrees is.
-pub use crate::abi::exception::USER_EXCEPTION_HANDLER_FLAGS_NONE;
-pub use crate::abi::exception::USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
-pub use crate::abi::exception::USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
-pub use crate::abi::exception::USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
+pub use crate::user::shared::abi::exception::USER_EXCEPTION_HANDLER_FLAGS_NONE;
+pub use crate::user::shared::abi::exception::USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+pub use crate::user::shared::abi::exception::USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
+pub use crate::user::shared::abi::exception::USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 
 // ── submodules ────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ impl UserSyscall {
     /// duration of the trap.
     pub unsafe fn invoke_from_user_mode(
         number: crate::syscall::SyscallNumber,
-        args: [usize; crate::abi::syscall::ARG_COUNT],
+        args: [usize; crate::user::shared::abi::syscall::ARG_COUNT],
     ) -> crate::Result<usize> {
         // SAFETY: the method's contract is the raw ABI's, and the forwarding
         // call below is the raw entry under that same contract.
@@ -73,7 +73,7 @@ impl UserSyscall {
     /// pointer visible to the kernel.
     pub unsafe fn invoke_raw_from_user_mode(
         number: usize,
-        args: [usize; crate::abi::syscall::ARG_COUNT],
+        args: [usize; crate::user::shared::abi::syscall::ARG_COUNT],
     ) -> crate::Result<usize> {
         // SAFETY: as above — the number and the six arguments are passed
         // through unchanged, so the contract the caller met still holds; the
@@ -84,6 +84,11 @@ impl UserSyscall {
             let status = Self::invoke_raw_status_from_user_mode(
                 number, args[0], args[1], args[2], args[3], args[4], args[5],
             );
+            // The one place in this tree that still names the kernel's ABI copy
+            // on purpose: decoding a status word into a `Result` needs the
+            // kernel's `Error` type, which the vendored ABI cannot name.  The
+            // numbers it decodes against come from the shared copy — that is
+            // where `ERROR_STATUS_FLOOR` lives now.
             crate::abi::syscall::decode_result(status)
         }
     }

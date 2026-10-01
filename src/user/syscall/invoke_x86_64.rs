@@ -8,7 +8,7 @@
 
 use core::arch::asm;
 
-use crate::abi::syscall as syscall_abi;
+use crate::user::shared::abi::syscall as syscall_abi;
 
 /// Invoke the kernel and return the encoded status word.
 ///

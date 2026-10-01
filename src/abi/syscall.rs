@@ -5,10 +5,20 @@
 use crate::Error;
 use crate::Result;
 
-pub const ARG_COUNT: usize = 6;
-pub const X86_64_INTERRUPT_VECTOR: u8 = 0x80;
-pub const ERROR_CODE_MAX: usize = Error::InternalError as usize;
-pub const ERROR_STATUS_FLOOR: usize = usize::MAX - ERROR_CODE_MAX;
+// The numbers are the ABI's, and the ABI's copy is the shared one — user space
+// has to encode and decode the same words without this crate's `Error` type.
+// What stays here is the typed half, and the assertion that pins it.
+pub use crate::user::shared::abi::syscall::ARG_COUNT;
+pub use crate::user::shared::abi::syscall::ERROR_CODE_MAX;
+pub use crate::user::shared::abi::syscall::ERROR_STATUS_FLOOR;
+pub use crate::user::shared::abi::syscall::X86_64_INTERRUPT_VECTOR;
+
+// The one thing the shared copy cannot state is where the codes end, because
+// that is a property of the kernel's own error type: `InternalError` is the
+// last of them.  So the enum is asserted against the pinned number here, and a
+// variant added without moving the pin fails at this line rather than
+// mis-encoding every error the kernel returns.
+const _: () = assert!(ERROR_CODE_MAX == Error::InternalError as usize);
 
 pub const fn encode_error(error: Error) -> usize {
     usize::MAX - error as usize

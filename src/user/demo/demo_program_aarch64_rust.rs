@@ -19,24 +19,24 @@
 
 #![cfg_attr(not(test), allow(dead_code))]
 
-use crate::abi::exception::AArch64AbortSyndrome;
-use crate::abi::exception::AArch64UserExceptionFrame;
-use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_EXECUTE;
-use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_READ;
-use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_UNKNOWN;
-use crate::abi::exception::AARCH64_ABORT_ACCESS_KIND_WRITE;
-use crate::abi::exception::AARCH64_EXCEPTION_DATA_ABORT_VECTOR;
-use crate::abi::exception::AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR;
-use crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
-use crate::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
+use crate::user::shared::abi::exception::AArch64AbortSyndrome;
+use crate::user::shared::abi::exception::AArch64UserExceptionFrame;
+use crate::user::shared::abi::exception::AARCH64_ABORT_ACCESS_KIND_EXECUTE;
+use crate::user::shared::abi::exception::AARCH64_ABORT_ACCESS_KIND_READ;
+use crate::user::shared::abi::exception::AARCH64_ABORT_ACCESS_KIND_UNKNOWN;
+use crate::user::shared::abi::exception::AARCH64_ABORT_ACCESS_KIND_WRITE;
+use crate::user::shared::abi::exception::AARCH64_EXCEPTION_DATA_ABORT_VECTOR;
+use crate::user::shared::abi::exception::AARCH64_EXCEPTION_INSTRUCTION_ABORT_VECTOR;
+use crate::user::shared::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED;
+use crate::user::shared::abi::exception::AARCH64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
 
-use crate::abi::process::ProcessSpawnOptions;
-use crate::abi::process::ProcessSpawnStringRef;
-use crate::abi::process::ProcessTerminationRecord;
-use crate::abi::process::PROCESS_SPAWN_FLAG_OVERRIDE_ARGUMENTS;
-use crate::abi::process::PROCESS_SPAWN_FLAG_OVERRIDE_ENVIRONMENT;
-use crate::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
-use crate::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
+use crate::user::shared::abi::process::ProcessSpawnOptions;
+use crate::user::shared::abi::process::ProcessSpawnStringRef;
+use crate::user::shared::abi::process::ProcessTerminationRecord;
+use crate::user::shared::abi::process::PROCESS_SPAWN_FLAG_OVERRIDE_ARGUMENTS;
+use crate::user::shared::abi::process::PROCESS_SPAWN_FLAG_OVERRIDE_ENVIRONMENT;
+use crate::user::shared::abi::process::PROCESS_SPAWN_OPTIONS_SIZE;
+use crate::user::shared::abi::process::PROCESS_TERMINATION_RECORD_SIZE;
 
 /// Compute the runtime address of a symbol inside this payload section using a
 /// single PC-relative `adr`.  The payload blob is copied verbatim from the

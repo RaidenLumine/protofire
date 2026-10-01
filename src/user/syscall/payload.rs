@@ -64,7 +64,7 @@ macro_rules! define_aarch64_payload_runtime {
         fn payload_runtime_status_is_error(status: usize) -> bool {
             // The stripped payload only needs the numeric floor check, not the
             // full host-side `Result` decoder.
-            status >= $crate::abi::syscall::ERROR_STATUS_FLOOR
+            status >= $crate::user::shared::abi::syscall::ERROR_STATUS_FLOOR
         }
 
         #[inline(never)]
@@ -115,7 +115,7 @@ macro_rules! define_aarch64_payload_runtime {
             payload_runtime_invoke_raw_status(
             $crate::syscall::SyscallNumber::WaitProcess as usize,
             pid,
-            $crate::abi::process::WAIT_PROCESS_BLOCK_INDEFINITELY_TICKS,
+            $crate::user::shared::abi::process::WAIT_PROCESS_BLOCK_INDEFINITELY_TICKS,
             record,
             record_length,
             0,
@@ -328,7 +328,7 @@ macro_rules! define_x86_64_payload_runtime {
             let status: usize;
             core::arch::asm!(
                 "int {vector}",
-                vector = const $crate::abi::syscall::X86_64_INTERRUPT_VECTOR,
+                vector = const $crate::user::shared::abi::syscall::X86_64_INTERRUPT_VECTOR,
                 inlateout("rax") number => status,
                 in("rdi") arg0,
                 in("rsi") arg1,
@@ -346,7 +346,7 @@ macro_rules! define_x86_64_payload_runtime {
         fn payload_runtime_status_is_error(status: usize) -> bool {
             // The stripped payload only needs the numeric floor check, not the
             // full host-side `Result` decoder.
-            status >= $crate::abi::syscall::ERROR_STATUS_FLOOR
+            status >= $crate::user::shared::abi::syscall::ERROR_STATUS_FLOOR
         }
 
         #[inline(never)]
@@ -667,7 +667,7 @@ macro_rules! define_x86_64_payload_runtime {
             // sentinel directly.
             wait_process(
                 pid,
-                $crate::abi::process::WAIT_PROCESS_BLOCK_INDEFINITELY_TICKS,
+                $crate::user::shared::abi::process::WAIT_PROCESS_BLOCK_INDEFINITELY_TICKS,
                 record,
                 record_length,
             )

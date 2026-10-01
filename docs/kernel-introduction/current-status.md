@@ -517,10 +517,19 @@ words, the shared one names syscalls), `mod.rs` (the shared tree carries no
 
 Three files that no module declared are gone with the same change: they were in
 `src/abi/`, invisible to the compiler and to every gate, and one of them listed
-prctl codes that collided with the implemented ones.  What is left of the job
-is the other direction: `src/user/` still imports the ABI through `crate::abi::`
-at 141 sites, so the shared tree is in step with the kernel's copy but is not
-yet a tree that could be lifted out of the crate on its own.
+prctl codes that collided with the implemented ones.
+
+The other direction is fixed too.  `src/user/` used to reach the ABI through
+`crate::abi::` at 141 sites, which meant the vendored tree was in step with the
+kernel's copy but could not have been lifted out of the crate: it named a path
+that would not exist on the other side.  The shared tree and the payload
+modules now go through `crate::user::shared::abi::` — zero uses of the kernel's
+path in either, which `make check-abi-mirror` enforces by deriving the payload
+list from the macro that gives those modules their linker sections.  Two places
+are deliberately still on the kernel's copy, and both are kernel code: the
+host-proxy demonstration runtime, the in-kernel shell's `env` builtin, and one
+`decode_result` call whose result is the kernel's own `Error` type.  The
+numbers it decodes against come from the shared copy.
 
 ### Testing
 

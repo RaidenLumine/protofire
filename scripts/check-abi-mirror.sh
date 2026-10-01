@@ -22,6 +22,11 @@
 #   3. the two bodies are identical below the header.  The mirror's header is
 #      the only place the two are allowed to differ, and it has to record where
 #      the file came from (`//! src/abi/<name>.rs`).
+#   4. the vendored tree and the payload modules reach the ABI through the
+#      shared copy.  `src/user/shared/` is the tree that has to be liftable out
+#      of this crate and the payload modules are the code that is copied into
+#      ring 3; `crate::abi::` is not something either can take with it, and 141
+#      sites used to name it.
 #
 # A pair that is meant to differ is listed in `scripts/abi-mirror-baseline.txt`
 # with its reason, and a stale row — one whose difference is gone — fails too,
@@ -176,11 +181,31 @@ for name in $baseline_names; do
     esac
 done
 
+# 4. The vendored tree and the payloads stand on their own.
+#
+# The payload modules are the ones `src/user/demo/mod.rs` gives a linker
+# section, so they are derived from that file rather than listed here: a
+# payload added tomorrow is covered by this check the day it is declared.
+payload_files="$(awk '/^payload_or_stub!\(/ { sub(/.*, /, ""); sub(/\);.*/, ""); print "src/user/demo/" $0 ".rs" }' src/user/demo/mod.rs)"
+standalone_files="$(find src/user/shared -name '*.rs' | sort)"
+for file in $standalone_files $payload_files; do
+    if [ ! -f "$file" ]; then
+        fail "abi: $file is named here but does not exist"
+        continue
+    fi
+    if grep -q 'crate::abi::' "$file"; then
+        fail "abi: $file names crate::abi::"
+        fail "  the vendored tree and the payloads reach the ABI through"
+        fail "  crate::user::shared::abi::, not the kernel's copy"
+    fi
+done
+
 if [ "$failed" -ne 0 ]; then
     printf 'ABI mirror check failed\n' >&2
     exit 1
 fi
 
-printf 'ABI mirror check passed: %s record(s), %s recorded difference(s)\n' \
+printf 'ABI mirror check passed: %s record(s), %s recorded difference(s), %s standalone file(s)\n' \
     "$(printf '%s\n' "$names" | wc -l | tr -d ' ')" \
-    "$(printf '%s\n' "$baseline_names" | grep -c . || true)"
+    "$(printf '%s\n' "$baseline_names" | grep -c . || true)" \
+    "$(printf '%s\n' $standalone_files $payload_files | grep -c . || true)"
