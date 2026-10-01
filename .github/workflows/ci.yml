@@ -120,9 +120,15 @@ jobs:
       - name: Install QEMU
         run: |
           sudo apt-get update
-          # `qemu-system-misc` carries the riscv64 and aarch64 system emulators,
-          # which the frozen-payload gate needs for the second architecture.
+          # `qemu-system-misc` carries the aarch64 and riscv64 system emulators
+          # the frozen-payload gates need, but the QEMU 10 packages split the
+          # riscv64 emulator out into `qemu-system-riscv`: ask for it when the
+          # binary is still missing afterwards, because a gate that cannot find
+          # its emulator is a red that says nothing about the kernel.
           sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-system-misc
+          if ! command -v qemu-system-riscv64 >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends qemu-system-riscv
+          fi
 
       - name: Boot on four CPUs
         run: make check-smp-runtime SMP=4
