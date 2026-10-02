@@ -93,16 +93,17 @@ pub(crate) fn enumerate_buses() {
     }
 }
 
-/// Hand the enumerated devices to the interrupt controller.
+/// Hand the claimed device interrupts to the interrupt controller.
 ///
-/// A device's MSI-X table is programmed *through* the controller, and the
-/// enumeration above runs before it is up, so this is the second half — see
-/// [`crate::arch::riscv64::pci::program_first_msix`] for what it does and why
+/// A device's MSI-X table is programmed *through* the controller, and drivers
+/// claim their devices' identities before it is up, so this is the step that
+/// connects the two: the claims taken at probe time are programmed here.  See
+/// [`crate::arch::riscv64::pci::program_device_msix`] for what it does and why
 /// it re-walks rather than carrying the device list across the boot.
 pub(crate) fn program_device_msix() {
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
     {
-        let _ = crate::arch::riscv64::pci::program_first_msix();
+        let _ = crate::arch::riscv64::pci::program_device_msix();
     }
 }
 
@@ -116,6 +117,26 @@ pub(crate) struct PciRegisterWindow {
     /// function's modern (1.0) registers, and how large that BAR is.
     pub bar_address: usize,
     pub bar_size: u64,
+    /// Where the function sits on its bus, which is what its interrupts are
+    /// claimed through: a driver claims them with [`pci_claim_msix`], and the
+    /// platform programs them onto this function later.
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    pub function: PciFunctionAddress,
+}
+
+/// A PCIe function, as the machine that enumerated it addresses it.
+///
+/// The window a driver reads its registers through says nothing about where the
+/// function is, and claiming its interrupts needs both: the identity range a
+/// claim takes is what the platform programs *into the function's* MSI-X table.
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+#[derive(Clone, Copy)]
+pub(crate) struct PciFunctionAddress {
+    /// The configuration-space window the function is reached through.
+    pub region: crate::arch::pci::EcamRegion,
+    pub bus: u8,
+    pub device: u8,
+    pub function: u8,
 }
 
 /// Find the first PCIe function of a vendor/class, and the BAR its registers
@@ -167,6 +188,7 @@ pub(crate) fn pci_register_window(
         let probe = pci::probe_and_enumerate()?;
         let (dev, bar) = find_virtio_function(&probe.devices, vendor_id, class_code, subclass)?;
         pci::pci_enable_memory_and_bus_master(&probe.region, dev.bus, dev.device, dev.function);
+
         Some(PciRegisterWindow {
             vendor_id: dev.vendor_id,
             device_id: dev.device_id,
@@ -174,6 +196,12 @@ pub(crate) fn pci_register_window(
             // the resource pass assigned is the address the kernel reads.
             bar_address: bar.base_address as usize,
             bar_size: bar.size,
+            function: PciFunctionAddress {
+                region: probe.region,
+                bus: dev.bus,
+                device: dev.device,
+                function: dev.function,
+            },
         })
     }
 
@@ -187,41 +215,88 @@ pub(crate) fn pci_register_window(
     }
 }
 
-/// How many device interrupts this platform has received.
+/// A driver's handle on the interrupts it claimed from a device.
 ///
-/// A waiter takes this count before it parks and compares it after: an
-/// interrupt that arrives between those two reads has to be visible, which is
-/// why the wait is ordered around a value rather than around a bare flag.
+/// It exists on every machine, because the completion path asks it the same
+/// question everywhere — "can this device signal yet?" — and the answer on a
+/// machine whose devices signal through a line nobody waits on is "no", which
+/// is the same answer as a claim the platform has not programmed yet.  That is
+/// what lets a driver keep one completion path instead of one per machine.
 #[cfg(target_os = "none")]
-pub(crate) fn pci_msi_count() -> usize {
+pub(crate) struct DeviceInterrupts {
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-    {
-        crate::arch::riscv64::pci::msi_count()
+    claim: crate::arch::riscv64::pci::MsixClaim,
+}
+
+#[cfg(target_os = "none")]
+impl DeviceInterrupts {
+    /// Whether the device's table has been programmed and let through.
+    pub fn is_armed(&self) -> bool {
+        #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+        {
+            self.claim.is_armed()
+        }
+        #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
+        {
+            false
+        }
     }
 
-    #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
-    {
-        0
+    /// The first interrupt identity the device's table delivers.
+    ///
+    /// Zero when the machine gave the device no identity at all — identity 0 is
+    /// not an interrupt, so it can stand for "none".
+    pub fn first_irq(&self) -> u32 {
+        #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+        {
+            self.claim.first_irq()
+        }
+        #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
+        {
+            0
+        }
     }
 }
 
-/// Wait for a device interrupt, up to `timeout_ticks`.
+/// Claim the window's device interrupts for `handler`.
 ///
-/// Answers `false` on a machine where device interrupts are not something a
-/// caller can wait for — the MMIO transports signal through a line nobody
-/// waits on yet — which is the caller's cue to keep polling rather than to
-/// treat this as a timeout.
+/// This is the driver's half of the contract: the identities the device's MSI-X
+/// table will deliver are allocated and `handler` is registered for each.  It
+/// works at probe time — before the interrupt controller is initialised —
+/// because a registration is a table entry, not a hardware access.  The
+/// platform keeps the claim and programs the table with those identities later,
+/// at [`program_device_msix`], which is also when the device is first allowed
+/// to signal.
+///
+/// Answers `None` when there is no unclaimed table to give: a machine with no
+/// MSI receiver, a device with no MSI-X, or one somebody has already taken.
 #[cfg(target_os = "none")]
-pub(crate) fn pci_msi_wait(seen: usize, timeout_ticks: u64) -> bool {
+pub(crate) fn pci_claim_msix(
+    window: &PciRegisterWindow,
+    handler: impl Fn(u32) + Send + Sync + 'static,
+) -> Option<DeviceInterrupts> {
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
     {
-        crate::arch::riscv64::pci::wait_for_msi(seen, timeout_ticks)
+        use alloc::sync::Arc;
+
+        let function = window.function;
+        let handler: crate::arch::riscv64::aia_imsic::IrqHandler = Arc::new(handler);
+        let claim = crate::arch::riscv64::pci::claim_msix(
+            &function.region,
+            function.bus,
+            function.device,
+            function.function,
+            handler,
+        )
+        .ok()?;
+        crate::arch::riscv64::pci::defer_msix_arming(claim.clone());
+        Some(DeviceInterrupts { claim })
     }
 
     #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
     {
-        let _ = (seen, timeout_ticks);
-        false
+        let _ = (window, handler);
+        None
     }
 }
 

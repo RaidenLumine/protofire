@@ -28,6 +28,12 @@
 # Since `sync` holds only a spinlock and the mutex wrapper over it, naming it
 # is naming the bottom layer.
 #
+# One occurrence of `drivers` naming `process` is argued rather than counted as
+# debt: `virtio_net` owns a wait queue for its own device's completion
+# interrupt, the same shape `serial`, `keyboard` and `mouse` already have for
+# theirs.  The wakeup belongs to the device whose identities were claimed, so
+# it cannot be folded into a platform-wide signal; see §13 of code-style.md.
+#
 # `fs` no longer names `process` either.  Its one edge was the anonymous
 # pipe's condition variable, and a pipe that parks a thread is not storage:
 # it is an IPC endpoint that borrows the `VNode` interface, so it moved to
@@ -60,7 +66,7 @@ device                       handle_rights                2
 drivers                      block                        10
 drivers                      memory                       3
 drivers                      network                      2
-drivers                      process                      12
+drivers                      process                      13
 drivers                      sync                         16
 fs                           compression                  2
 fs                           crypto                       9

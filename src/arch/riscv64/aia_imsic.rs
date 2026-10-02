@@ -32,7 +32,8 @@
 //!   interrupt sets its `eie` bit, and per-IRQ priority is a no-op (the IMSIC
 //!   has a single per-file threshold),
 //! - dispatches claimed interrupts through a per-IRQ handler table
-//!   ([`register_irq_handler`] / [`handle_pending_external`]),
+//!   ([`claim_device_irqs`] registers an owner; [`handle_pending_external`]
+//!   hands the message to it),
 //! - programmes real 16-byte MSI-X table entries against a device BAR
 //!   ([`configure_msix`]), replacing the previous software-only table.
 //! - walks its own message path once at boot ([`self_test`]), because a machine
@@ -193,8 +194,12 @@ fn claim_top_external() -> u32 {
 /// `sie` bit 9 — Supervisor External Interrupt Enable.
 const SIE_SEIE: u64 = 1 << 9;
 
-/// Registered device-interrupt handler signature.
-pub type IrqHandler = fn(irq: u32);
+/// Registered device-interrupt handler.
+///
+/// A handler carries state: the device it belongs to, the wait queue its
+/// completions are parked on, the counters its driver reports.  It is called
+/// from the external-interrupt path and must not block.
+pub type IrqHandler = alloc::sync::Arc<dyn Fn(u32) + Send + Sync>;
 
 // ── Per-hart IMSIC geometry ────────────────────────────────────────────
 
@@ -241,7 +246,7 @@ static GLOBAL_INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// The per-IRQ device handler table.  Indexed by the claimed interrupt
 /// identity; entries are registered at device-probe time.
 static IRQ_HANDLERS: SpinLock<[Option<IrqHandler>; IRQ_TABLE_LEN]> =
-    SpinLock::new([None; IRQ_TABLE_LEN]);
+    SpinLock::new([const { None }; IRQ_TABLE_LEN]);
 
 /// Initialise the IMSIC for this platform.
 ///
@@ -296,14 +301,50 @@ pub fn has_aia_imsic() -> bool {
     IMSIC_LAYOUT.lock().is_some()
 }
 
-/// Register `handler` for `irq`.  Subsequent claims of `irq` are dispatched
-/// to `handler` by [`handle_pending_external`].
-pub fn register_irq_handler(irq: u32, handler: IrqHandler) -> Result<(), Error> {
-    if irq as usize >= IRQ_TABLE_LEN {
+/// Whether any handler is registered for `irq`.
+pub fn irq_has_handler(irq: u32) -> bool {
+    let index = irq as usize;
+    index < IRQ_TABLE_LEN && IRQ_HANDLERS.lock()[index].is_some()
+}
+
+/// The first identity a device may be given.
+///
+/// Identity 0 is not an interrupt — [`handle_pending_external`] answers 0 for
+/// "nothing pending" — so a device's identities start here and stop at
+/// [`IMSIC_MAX_DEVICE_IRQ`], which leaves the boot self-test's identity alone.
+pub const FIRST_DEVICE_IRQ: u32 = 1;
+
+/// Claim `count` consecutive device identities for `handler`, and answer the
+/// first one.
+///
+/// The range is allocated first-fit from [`FIRST_DEVICE_IRQ`], and the claim is
+/// all-or-nothing: either every identity in the range gets `handler`, or
+/// nothing is written and the error says why.  That matters because the range
+/// is what the device's MSI-X table will be programmed with — a half-claimed
+/// range would move some of a device's messages to an identity nobody owns.
+///
+/// A registration is a table entry, not a hardware access, so a driver claims
+/// its identities at probe time and the table is programmed later, once the
+/// interrupt controller that carries the messages is up.
+pub fn claim_device_irqs(count: u32, handler: IrqHandler) -> Result<u32, Error> {
+    if count == 0 {
         return Err(Error::InvalidArgument);
     }
-    IRQ_HANDLERS.lock()[irq as usize] = Some(handler);
-    Ok(())
+    let mut handlers = IRQ_HANDLERS.lock();
+    let Some(last_first) = IMSIC_MAX_DEVICE_IRQ.checked_sub(count - 1) else {
+        return Err(Error::NoSpace);
+    };
+    let mut first = FIRST_DEVICE_IRQ;
+    while first <= last_first {
+        if (first..first + count).all(|irq| handlers[irq as usize].is_none()) {
+            for irq in first..first + count {
+                handlers[irq as usize] = Some(handler.clone());
+            }
+            return Ok(first);
+        }
+        first += 1;
+    }
+    Err(Error::NoSpace)
 }
 
 // ── External-interrupt dispatch ────────────────────────────────────────
@@ -329,7 +370,7 @@ pub fn handle_pending_external() -> u32 {
     }
 
     crate::kernel::irq_stats::record_irq(claimed);
-    let handler = IRQ_HANDLERS.lock()[claimed as usize % IRQ_TABLE_LEN];
+    let handler = IRQ_HANDLERS.lock()[claimed as usize % IRQ_TABLE_LEN].clone();
     if let Some(handler) = handler {
         handler(claimed);
     } else {

@@ -455,6 +455,11 @@ everyday code:
   fixed buffers and the `util::debug` helpers.
 - **Do not block in an interrupt context.** Allocating, taking a `Mutex`, or
   waiting on a `Condvar` from an ISR is a deadlock waiting for a quiet moment.
+  The path is easy to reach by accident: SLAAC sends its router solicitation
+  from the tick handler, so a driver's transmit path is an ISR path, and a
+  completion wait that parked there would hold the SLAAC lock across the park.
+  A wait that can be reached that way asks `arch::interrupts::are_enabled()`
+  first and polls instead of parking — the caller re-reads its ring either way.
 
 ---
 
@@ -515,6 +520,14 @@ come apart in cuts, and a cut is finished when its rows reach zero and the
 census is re-recorded (`sh scripts/check-layering.sh --record`) in the same
 change.  The rule for a new edge is the same as for any other budget here: it
 has to be argued for in the change that adds it, not discovered later.
+
+A driver naming `process` for a wait is not one of those cuts to make.  The
+parking primitive belongs to `process`, so a driver that blocks names it —
+`serial`, `keyboard` and `mouse` each own a wait queue for their device, and
+`virtio_net` owns one for its device's completion interrupt, because the wakeup
+belongs to the device whose identities were claimed.  Folding that into a
+platform-wide signal would put one device's wait behind another's counter,
+which is why per-device interrupts and per-device waits arrived together.
 
 ---
 

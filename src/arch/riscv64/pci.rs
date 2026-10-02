@@ -5,20 +5,21 @@
 //! Configuration space itself is the shared walk in [`crate::arch::pci`] —
 //! the register offsets, the BAR probes, the capability chain, the bus scan —
 //! and it is the same code the other architectures run.  What is left for
-//! this platform to add is the enumeration: nothing here finds a window and
-//! walks it, so nothing here says where one is.  The device-tree node it
-//! would read is the same `pci-host-ecam-generic` one aarch64 reads, and QEMU
-//! `virt` places the window at `0x3000_0000`, inside the identity-mapped
-//! device window — a boot-time scan is the missing piece, and `ROADMAP.md`
-//! lists it as one.
+//! this platform to add is the enumeration: [`discover_ecam`] reads the
+//! window the device tree describes — the same `pci-host-ecam-generic` node
+//! aarch64 reads, which QEMU `virt` places at `0x3000_0000`, inside the
+//! identity-mapped device window — [`probe_and_enumerate`] walks it and gives
+//! the devices the BAR addresses that no firmware ran a pass for.
 //!
 //! What *is* here is the interrupt half: [`pci_enable_msix`] finds a device's
-//! MSI-X capability and programs its table through the RISC-V AIA IMSIC.  It
-//! is called by [`probe_first_msix`], which the boot runs once the bus it
-//! found devices on: that is the half of a driver's contract which can be
-//! checked without a driver — capability found, table's BAR and offset
-//! decoded, entries written through the IMSIC and read back — and it leaves
-//! the function masked, because a device nobody drives must not signal.
+//! MSI-X capability and programs its table through the RISC-V AIA IMSIC, and
+//! [`MsixClaim`] is the ownership that goes with it: a driver claims the
+//! identities its device's table will deliver at probe time, and
+//! [`program_device_msix`] programs the table with exactly those identities
+//! once the controller is up.  A device nobody drives is claimed by the same
+//! step, so the receive side is exercised rather than left as code nobody
+//! runs — capability found, table's BAR and offset decoded, entries written
+//! through the IMSIC and read back.
 //!
 //! ## References
 //!
@@ -29,7 +30,6 @@ use alloc::vec::Vec;
 
 use crate::arch::fdt;
 use crate::arch::pci::EcamRegion;
-use crate::kernel::process::wait::Condvar;
 use crate::kernel::sync::Mutex;
 
 /// The window the device tree describes, if it describes one.
@@ -161,7 +161,7 @@ pub struct MsixProgramming {
 ///
 /// Returns where the entries went and which identity they deliver; the caller
 /// registers a handler with
-/// [`crate::arch::riscv64::aia_imsic::register_irq_handler`] before the device
+/// [`crate::arch::riscv64::aia_imsic::claim_device_irqs`] before the device
 /// raises interrupts.
 pub fn pci_enable_msix(
     region: &EcamRegion,
@@ -250,7 +250,7 @@ pub fn pci_enable_msix(
 ///
 /// The other half of [`pci_enable_msix`], which leaves the function masked on
 /// purpose: the caller unmasks once every identity the table delivers has a
-/// handler ([`crate::arch::riscv64::aia_imsic::register_irq_handler`]), so an
+/// handler ([`crate::arch::riscv64::aia_imsic::claim_device_irqs`]), so an
 /// interrupt can never arrive before there is something to receive it.
 pub fn msix_unmask(
     region: &EcamRegion,
@@ -271,13 +271,6 @@ pub fn msix_unmask(
     Ok(())
 }
 
-/// The identity a device probe takes.
-///
-/// The IMSIC's identities are allocated by whoever registers a handler; a
-/// probe that leaves its function masked is not competing for one, so it takes
-/// the first identity that is not the boot self-test's.
-const PROBE_BASE_IRQ: u32 = 1;
-
 /// How many device MSIs have reached the probe's handler.
 ///
 /// A device interrupt is otherwise invisible: the kernel claims it, finds no
@@ -288,13 +281,6 @@ static PROBE_MSI_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::At
 /// Receive one of them.
 fn probe_msi_handler(irq: u32) {
     let seen = PROBE_MSI_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
-    // Wake whoever is waiting for this device to move a ring.  The wait is a
-    // condition wait — the waiter re-reads the ring it cares about after this
-    // returns — so a wakeup that turns out not to be that queue's completion
-    // costs one loop, not a mistake.
-    if let Some(signal) = MSI_SIGNAL.lock().as_ref() {
-        signal.ready.notify_all();
-    }
     if seen <= 8 {
         crate::println!(
             "[pci   ] RISC-V device MSI: irq {} claimed ({} since boot)",
@@ -304,169 +290,269 @@ fn probe_msi_handler(irq: u32) {
     }
 }
 
-/// What a waiter parks on while it waits for a device to interrupt.
-struct MsiSignal {
-    /// Held across the wait, so an interrupt that lands between the count check
-    /// and the park cannot be lost.
-    lock: Mutex<()>,
-    ready: Condvar,
-}
-
-/// The signal, created when the first device's table is programmed.
-static MSI_SIGNAL: Mutex<Option<alloc::sync::Arc<MsiSignal>>> = Mutex::new(None);
-
-/// How many device interrupts this kernel has received.
-pub fn msi_count() -> usize {
-    PROBE_MSI_COUNT.load(core::sync::atomic::Ordering::Relaxed)
-}
-
-/// Wait until a device interrupts, or `timeout_ticks` pass.
+/// Write the message one of a device's table entries would write, and let the
+/// dispatcher claim and deliver it.
 ///
-/// `seen` is the count the caller took before it started waiting.  Answers
-/// `false` when no device has been given interrupts to raise, which is the
-/// caller's cue to keep polling — a machine whose device signals through a line
-/// nobody waits on is not a machine that is slow, it is one that has nothing to
-/// wait for.
-pub fn wait_for_msi(seen: usize, timeout_ticks: u64) -> bool {
-    let Some(signal) = MSI_SIGNAL.lock().clone() else {
-        return false;
-    };
-    let guard = signal.lock.lock();
-    if msi_count() != seen {
-        return true;
-    }
-    let wait = signal.ready.wait_timeout(guard, timeout_ticks);
-    !wait.timed_out() && msi_count() != seen
-}
-
-/// Exercise the MSI-X manager on the first device that has one.
-///
-/// This is not a driver: nothing here talks to the device.  It is the half of
-/// a driver's contract that can be checked without one — the capability is
-/// found, the table's BAR and offset are decoded, the entries are written
-/// through the IMSIC, and then read back, which is what proves the BAR decodes
-/// MMIO at all.  The function is masked again afterwards, so a device nobody
-/// drives cannot raise an interrupt into an identity no handler owns.
-///
-/// A driver will do the same thing with a handler registered for its
-/// identities, and then unmask.
-pub fn probe_first_msix(region: &EcamRegion, devices: &[PciDeviceInfo]) -> Option<MsixProgramming> {
+/// The receive-side check a claim's owner runs against its own wiring: the
+/// identity is made pending exactly as a device's table entry would make it,
+/// and then claimed and dispatched exactly as the external-interrupt trap
+/// would.  Answers whether the message reached a handler — an identity nobody
+/// owns reaches nothing, and the kernel counts that as spurious, which is what
+/// tells the two apart.
+pub fn deliver_and_dispatch(irq: u32) -> bool {
     use crate::arch::riscv64::aia_imsic;
 
-    let device = devices.iter().find(|d| {
-        pci_capability_find(region, d.bus, d.device, d.function, cap_id::MSI_X).is_some()
-    })?;
+    if !aia_imsic::irq_has_handler(irq) {
+        return false;
+    }
+    let spurious_before = crate::kernel::irq_stats::total_spurious();
+    if !aia_imsic::deliver_message(irq) {
+        return false;
+    }
+    let claimed = aia_imsic::handle_pending_external();
+    claimed == irq && crate::kernel::irq_stats::total_spurious() == spurious_before
+}
 
-    let programmed = pci_enable_msix(
-        region,
-        device.bus,
-        device.device,
-        device.function,
-        0,
-        PROBE_BASE_IRQ,
-    )
-    .map_err(|error| {
-        // Say why rather than returning nothing: the interesting case is a
-        // device whose MSI-X table has no address yet, because nothing assigned
-        // one.  QEMU boots this kernel directly, with no firmware to run a PCI
-        // resource pass, so a device's memory BARs read back as zero until
-        // something assigns them — and an MSI-X table lives in a BAR.
-        crate::println!(
-            "[pci   ] RISC-V MSI-X on {:02x}:{:02x}.{} not programmed: {} — a \
-             device whose BAR has no assigned address has no table to write",
-            device.bus,
-            device.device,
-            device.function,
-            error.as_str()
-        );
+/// The identities this device's MSI-X table will deliver, if it has one.
+///
+/// Each entry delivers one identity, so the count is what a driver sizes its
+/// claim by.  It comes from the capability alone — not from the controller the
+/// entries will point at — which is what lets a driver claim at probe time and
+/// leaves the *programming* to the step that runs once the IMSIC is up.
+pub fn msix_entry_count(region: &EcamRegion, bus: u8, device: u8, function: u8) -> Option<u32> {
+    let cap_off = pci_capability_find(region, bus, device, function, cap_id::MSI_X)?;
+    // SAFETY: `cap_off` is the offset of the MSI-X capability the walk just
+    // found on this function.
+    let msix = unsafe { pci_capability_msix(region, bus, device, function, cap_off) };
+    if msix.message_control & (1u16 << 15) != 0 {
+        // Already enabled: somebody owns it.
+        return None;
+    }
+    Some(((msix.message_control & 0x07FF) as u32) + 1)
+}
+
+/// Whether a function's MSI-X capability is enabled.
+///
+/// The enable bit is what says the table has been programmed *and* somebody
+/// took responsibility for it: a second claimant would move the identities out
+/// from under the first one's handlers, and its waits would stop being
+/// wakeable.
+pub fn msix_enabled(region: &EcamRegion, bus: u8, device: u8, function: u8) -> bool {
+    let Some(cap_off) = pci_capability_find(region, bus, device, function, cap_id::MSI_X) else {
+        return false;
+    };
+    // SAFETY: `cap_off` is the offset of the MSI-X capability the walk just
+    // found on this function.
+    let msix = unsafe { pci_capability_msix(region, bus, device, function, cap_off) };
+    msix.message_control & (1u16 << 15) != 0
+}
+
+/// A device's claim on the identities its MSI-X table will deliver.
+///
+/// The claim is taken at probe time, where the device is in hand, but the table
+/// itself can only be programmed once the interrupt controller that carries the
+/// messages is up — so the claim is what holds the two halves together.  It
+/// carries the identity range the owner's handler is registered under, and
+/// [`Self::arm`] writes that range into the device's table and lets the device
+/// signal.  [`Self::is_armed`] is how the owner tells the difference, so a
+/// completion path waits on the device only once the device can say something.
+///
+/// A claim is a handle: the owner keeps one, and the platform keeps another in
+/// [`PENDING_MSIX`] until the table is programmed, which is why `arm` and
+/// `is_armed` take `&self`.
+#[derive(Clone)]
+pub struct MsixClaim {
+    inner: alloc::sync::Arc<MsixClaimInner>,
+}
+
+struct MsixClaimInner {
+    first_irq: u32,
+    count: u32,
+    region: EcamRegion,
+    bus: u8,
+    device: u8,
+    function: u8,
+    armed: core::sync::atomic::AtomicBool,
+}
+
+impl MsixClaim {
+    /// The first identity this device's table delivers.
+    pub fn first_irq(&self) -> u32 {
+        self.inner.first_irq
+    }
+
+    /// How many identities this device's table delivers.
+    pub fn count(&self) -> u32 {
+        self.inner.count
+    }
+
+    /// The function this claim is on, as it prints in a log.
+    pub fn address(&self) -> (u8, u8, u8) {
+        (self.inner.bus, self.inner.device, self.inner.function)
+    }
+
+    /// Whether the table has been programmed and the device let through.
+    pub fn is_armed(&self) -> bool {
+        self.inner.armed.load(core::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Program this device's table with the claimed identities, read it back,
+    /// and only then let the device raise them.
+    ///
+    /// The function stays masked until the table has been read back, so an
+    /// interrupt cannot arrive on an identity whose table entry was never
+    /// written — a device nobody had a handler for is not a quiet device, it is
+    /// one whose interrupts the kernel would count as spurious.
+    pub fn arm(&self) -> Result<(), crate::Error> {
+        use crate::arch::riscv64::aia_imsic;
+
+        let inner = &self.inner;
+        let programmed = pci_enable_msix(
+            &inner.region,
+            inner.bus,
+            inner.device,
+            inner.function,
+            0,
+            inner.first_irq,
+        )?;
+
+        // Read the table back.  QEMU's devices decode their BAR, so the words
+        // that went in are the words that come out; a table nobody wrote would
+        // read as zeroes (or as a fault) and this is where that shows.
+        let entry_bytes = core::mem::size_of::<aia_imsic::MsixTableEntry>();
+        for index in 0..programmed.table_size {
+            let expected = aia_imsic::compose_msix_entry(0, inner.first_irq + index);
+            let entry = programmed.table_phys as usize + index as usize * entry_bytes;
+            if aia_imsic::read_msix_entry(entry) != expected {
+                return Err(crate::Error::DeviceError);
+            }
+        }
+
+        msix_unmask(&inner.region, inner.bus, inner.device, inner.function)?;
+        inner
+            .armed
+            .store(true, core::sync::atomic::Ordering::Release);
+        Ok(())
+    }
+}
+
+/// Claim the identities this device's MSI-X table will deliver for `handler`.
+///
+/// The identities are allocated in the interrupt controller's table, which is
+/// not the controller itself: this works at probe time, before the IMSIC is
+/// initialised, and the table that will carry those identities is programmed
+/// later by [`program_device_msix`].  Answers [`crate::Error::AlreadyExists`]
+/// when the function's MSI-X is already enabled — see [`msix_enabled`] — and
+/// [`crate::Error::NotImplemented`] when the function has no MSI-X at all.
+pub fn claim_msix(
+    region: &EcamRegion,
+    bus: u8,
+    device: u8,
+    function: u8,
+    handler: crate::arch::riscv64::aia_imsic::IrqHandler,
+) -> Result<MsixClaim, crate::Error> {
+    use crate::arch::riscv64::aia_imsic;
+
+    if msix_enabled(region, bus, device, function) {
+        return Err(crate::Error::AlreadyExists);
+    }
+    let count =
+        msix_entry_count(region, bus, device, function).ok_or(crate::Error::NotImplemented)?;
+    let first_irq = aia_imsic::claim_device_irqs(count, handler)?;
+
+    Ok(MsixClaim {
+        inner: alloc::sync::Arc::new(MsixClaimInner {
+            first_irq,
+            count,
+            region: *region,
+            bus,
+            device,
+            function,
+            armed: core::sync::atomic::AtomicBool::new(false),
+        }),
     })
-    .ok()?;
+}
 
-    // Read the table back.  QEMU's devices decode their BAR, so the four words
-    // that went in are the four words that come out; a table nobody wrote
-    // would read as zeroes (or as a fault) and this is where that shows.
-    let entry_bytes = core::mem::size_of::<aia_imsic::MsixTableEntry>();
-    for index in 0..programmed.table_size {
-        let expected = aia_imsic::compose_msix_entry(0, programmed.first_irq + index);
-        let entry = programmed.table_phys as usize + index as usize * entry_bytes;
-        let read = aia_imsic::read_msix_entry(entry);
-        if read != expected {
-            crate::println!(
-                "[pci   ] RISC-V MSI-X read-back mismatch on entry {} of {:02x}:{:02x}.{}",
-                index,
-                device.bus,
-                device.device,
-                device.function
-            );
-            return None;
+/// Claims taken before the interrupt controller was up, and the tables it owes.
+///
+/// A claim is registered here by the platform's hand-off to a driver
+/// ([`crate::arch::platform::pci_claim_msix`]) and drained by
+/// [`program_device_msix`], exactly once, when the controller can carry the
+/// device's messages.  What the list holds is the *programming* a driver could
+/// not do yet, not the ownership of the identities — that lives in the
+/// interrupt controller's handler table, where a second claimant is refused.
+static PENDING_MSIX: Mutex<Vec<MsixClaim>> = Mutex::new(Vec::new());
+
+/// Hold `claim` until the interrupt controller can program its table.
+pub fn defer_msix_arming(claim: MsixClaim) {
+    PENDING_MSIX.lock().push(claim);
+}
+
+/// Walk a claim's receive side once, and say whether it reached its owner.
+fn walk_receive_side(claim: &MsixClaim) -> bool {
+    let irq = claim.first_irq();
+    let reached = deliver_and_dispatch(irq);
+    crate::println!(
+        "[pci   ] RISC-V MSI receive side: irq {} {}",
+        irq,
+        if reached {
+            "reached its handler"
+        } else {
+            "did not reach a handler"
+        }
+    );
+    reached
+}
+
+/// Program and let through every MSI-X device that has an owner.
+///
+/// This runs once the interrupt controller is up, and it is what turns the
+/// claims drivers took at probe time into live interrupts: every claim in
+/// [`PENDING_MSIX`] gets its table programmed, is read back, and is unmasked,
+/// and the receive side is then walked so the owner's own handler is the one
+/// that runs.  A device nobody drives is claimed here too, by
+/// [`probe_unclaimed_msix`], so the path is exercised at least once instead of
+/// being code nobody runs.
+///
+/// Answers how many tables were armed.
+pub fn program_device_msix() -> usize {
+    let claims: Vec<MsixClaim> = PENDING_MSIX.lock().drain(..).collect();
+    let mut armed = 0;
+
+    for claim in &claims {
+        let (bus, device, function) = claim.address();
+        match claim.arm() {
+            Ok(()) => {
+                armed += 1;
+                crate::println!(
+                    "[pci   ] RISC-V MSI-X unmasked on {:02x}:{:02x}.{}: irq {}-{} belong to the driver that claimed them",
+                    bus,
+                    device,
+                    function,
+                    claim.first_irq(),
+                    claim.first_irq() + claim.count() - 1
+                );
+                walk_receive_side(claim);
+            }
+            Err(error) => {
+                // Say why: the interesting case is a device whose MSI-X table
+                // has no address yet, because nothing assigned one.  QEMU boots
+                // this kernel directly, with no firmware to run a PCI resource
+                // pass, so a device's memory BARs read back as zero until
+                // something assigns them — and an MSI-X table lives in a BAR.
+                crate::println!(
+                    "[pci   ] RISC-V MSI-X on {:02x}:{:02x}.{} not programmed: {} — a \
+                     device whose BAR has no assigned address has no table to write",
+                    bus,
+                    device,
+                    function,
+                    error.as_str()
+                );
+            }
         }
     }
-    crate::println!(
-        "[pci   ] RISC-V MSI-X probe: {} entries read back on {:02x}:{:02x}.{}",
-        programmed.table_size,
-        device.bus,
-        device.device,
-        device.function
-    );
 
-    // Every identity the table delivers gets an owner *before* the device is
-    // allowed to raise anything, and then it is allowed to.  Leaving the
-    // function masked instead would make the interrupt unreachable by
-    // construction: a device nobody listens for is not a quiet device, it is
-    // one whose interrupts the kernel would count as spurious if it signalled.
-    let mut owned = 0;
-    for offset in 0..programmed.table_size {
-        if aia_imsic::register_irq_handler(programmed.first_irq + offset, probe_msi_handler).is_ok()
-        {
-            owned += 1;
-        }
-    }
-    if owned != programmed.table_size {
-        crate::println!(
-            "[pci   ] RISC-V MSI-X on {:02x}:{:02x}.{}: {} of {} identities registered",
-            device.bus,
-            device.device,
-            device.function,
-            owned,
-            programmed.table_size
-        );
-        return None;
-    }
-    msix_unmask(region, device.bus, device.device, device.function).ok()?;
-    crate::println!(
-        "[pci   ] RISC-V MSI-X unmasked on {:02x}:{:02x}.{}: irq {}-{} have a handler",
-        device.bus,
-        device.device,
-        device.function,
-        programmed.first_irq,
-        programmed.first_irq + programmed.table_size - 1
-    );
-
-    // Walk the receive side once, the way a device would: write the message
-    // into the hart's own MSI page, then let the dispatcher claim and hand it
-    // to the handler registered above.  Without this the dispatch table is
-    // exactly the code nobody runs — which is how it looked before this
-    // change: `register_irq_handler` had no callers, so every device interrupt
-    // would have been claimed, found handler-less, and counted as spurious.
-    let before = PROBE_MSI_COUNT.load(core::sync::atomic::Ordering::Relaxed);
-    if aia_imsic::deliver_message(programmed.first_irq) {
-        let _ = aia_imsic::handle_pending_external();
-    }
-    let after = PROBE_MSI_COUNT.load(core::sync::atomic::Ordering::Relaxed);
-    if after > before {
-        crate::println!(
-            "[pci   ] RISC-V MSI receive side: irq {} reached its handler",
-            programmed.first_irq
-        );
-    } else {
-        crate::println!(
-            "[pci   ] RISC-V MSI receive side: irq {} did not reach a handler",
-            programmed.first_irq
-        );
-        return None;
-    }
-
-    Some(programmed)
+    armed + usize::from(probe_unclaimed_msix())
 }
 
 /// Program the first MSI-X-capable device, once the interrupt controller is up.
@@ -477,11 +563,66 @@ pub fn probe_first_msix(region: &EcamRegion, devices: &[PciDeviceInfo]) -> Optio
 /// wait for it.  Re-walking the bus here costs a handful of config-space reads
 /// and avoids threading the device list through the init sequence; the walk
 /// itself is silent, so the boot still logs the devices once.
-pub fn program_first_msix() -> Option<MsixProgramming> {
-    let region = discover_ecam()?;
+fn probe_unclaimed_msix() -> bool {
+    use alloc::sync::Arc;
+
+    let Some(region) = discover_ecam() else {
+        return false;
+    };
     let devices = enumerate(&region);
-    if devices.is_empty() {
-        return None;
+    let device = devices.iter().find(|d| {
+        pci_capability_find(&region, d.bus, d.device, d.function, cap_id::MSI_X).is_some()
+            && !msix_enabled(&region, d.bus, d.device, d.function)
+    });
+    let Some(device) = device else {
+        return false;
+    };
+
+    let claim = match claim_msix(
+        &region,
+        device.bus,
+        device.device,
+        device.function,
+        Arc::new(probe_msi_handler),
+    ) {
+        Ok(claim) => claim,
+        Err(error) => {
+            crate::println!(
+                "[pci   ] RISC-V MSI-X on {:02x}:{:02x}.{} not programmed: {} — a \
+                 device whose BAR has no assigned address has no table to write",
+                device.bus,
+                device.device,
+                device.function,
+                error.as_str()
+            );
+            return false;
+        }
+    };
+    if let Err(error) = claim.arm() {
+        crate::println!(
+            "[pci   ] RISC-V MSI-X on {:02x}:{:02x}.{} not programmed: {}",
+            device.bus,
+            device.device,
+            device.function,
+            error.as_str()
+        );
+        return false;
     }
-    probe_first_msix(&region, &devices)
+
+    crate::println!(
+        "[pci   ] RISC-V MSI-X probe: {} entries read back on {:02x}:{:02x}.{}",
+        claim.count(),
+        device.bus,
+        device.device,
+        device.function
+    );
+    crate::println!(
+        "[pci   ] RISC-V MSI-X unmasked on {:02x}:{:02x}.{}: irq {}-{} have a handler",
+        device.bus,
+        device.device,
+        device.function,
+        claim.first_irq(),
+        claim.first_irq() + claim.count() - 1
+    );
+    walk_receive_side(&claim)
 }

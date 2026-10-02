@@ -59,19 +59,23 @@
   `virtio-net-pci` through the modern (1.0) transport — that is the network
   device both gates boot with, DHCP and SLAAC included, while riscv64's default
   gate keeps the virtio-mmio path covered — and on riscv64 the MSI-X table is
-  programmed, its identities registered *before* the function is unmasked, the
-  receive side walked once so a delivered message is claimed and attributed
-  rather than counted spurious, and the driver routes its queues to those
-  identities so the device signals on its own.  A completion is looked for
-  first (the device is usually quicker than the round trip), waited for second
-  — the wait parks on the interrupt — and spun for only when neither answers,
-  which is the order a device that is faster than its driver deserves.  What is
-  still missing: the MSI belongs to the *platform* rather than to the driver,
-  so a second PCIe driver would have to share one counter and one wait queue
-  (per-device ownership is the next refinement); AArch64's MSI would need a
-  GICv3 ITS (this kernel has none); and every other PCIe device — NVMe, HDA —
-  is still reached through its architecture's own enumeration rather than this
-  one.
+  programmed and *owned per device*: the driver claims the identities its
+  device's table will deliver at probe time (a registration is a table entry,
+  not a hardware access, so this works before the interrupt controller is up),
+  the platform then programs the table with exactly those identities, reads it
+  back, unmasks the function, and walks the receive side once through the
+  driver's own handler so a delivered message is attributed rather than counted
+  spurious.  The identities themselves come from an allocator in the
+  controller, so two devices cannot be handed the same ones and a second
+  claimant is refused rather than silently replacing a handler somebody waits
+  on.  A completion is looked for first (the device is usually quicker than the
+  round trip), waited for second — the wait parks on the interrupt, and only
+  once the claim is live — and spun for only when neither answers, which is the
+  order a device that is faster than its driver deserves.  What is still
+  missing: AArch64's MSI would need a GICv3 ITS (this kernel has none), MSI-X is
+  claimed per device rather than per queue beyond the two the NIC uses, and
+  every other PCIe device — NVMe, HDA — is still reached through its
+  architecture's own enumeration rather than this one.
 - **Verified under QEMU only**: no real-device validation on bare-metal hardware yet.
 
 ---
@@ -265,7 +269,10 @@ The VFS is the most substantial subsystem at **62,700+ lines across 118 files**.
 
 **Weaknesses:**
 
-- **No MSI/MSI-X on RISC-V**: the AIA is not wired; interrupts still go through the PLIC.
+- **MSI-X on RISC-V is one driver deep**: the AIA IMSIC is wired and a device's
+  table is programmed, but only the virtio-net PCIe driver claims interrupts
+  through it; the default machine has no IMSIC at all, so the PLIC remains the
+  external-interrupt controller there.
 - **No architectural NMI source on RISC-V**: the S-mode dispatch entry stays dormant (needs an M-mode or `smnmi` path).
 - **GIC/PLIC verified under emulation only**: no real-hardware routing or latency testing.
 
@@ -595,9 +602,8 @@ once and never renumbered, records whose layout is asserted at compile time,
 ## Weaknesses & Known Gaps
 
 - **Emulation-first verification**: apart from x86_64, AArch64 and RISC-V are verified under QEMU; there is no bare-metal bring-up yet (see the roadmap's "Real-hardware bring-up" milestone).
-- **RISC-V 64 is still partial**: there is no architectural NMI source, and
-  PCIe devices are enumerated but not yet usable — the resource pass is
-  missing.  The AIA IMSIC — the file that receives MSIs — is implemented and
+- **RISC-V 64 is still partial**: there is no architectural NMI source.  The
+  AIA IMSIC — the file that receives MSIs — is implemented and
   *booted*: `make check-riscv64-aia-runtime` runs the kernel on
   `-machine virt,aia=aplic-imsic`, where the IMSIC is the external-interrupt
   controller, and the kernel walks its own message path at boot (enable an
@@ -606,8 +612,8 @@ once and never renumbered, records whose layout is asserted at compile time,
   it now walks too — `make check-riscv64-pci-runtime` boots with a
   `virtio-net-pci` beside the MMIO device and asserts that the ECAM window the
   device tree names was read and the device was found — and
-  `arch/riscv64/pci.rs::probe_first_msix` calls `pci_enable_msix` on that
-  device at every boot, which is how the next gap became visible rather than
+  `arch/riscv64/pci.rs` programs that device's MSI-X table at every boot, which
+  is how the next gap became visible rather than
   silently skipped: **the machine assigned no BAR addresses.**  QEMU boots this
   kernel directly, with no firmware to run a PCI resource pass, so every
   memory BAR read back as zero — and an MSI-X table lives in a BAR.  The
@@ -615,14 +621,16 @@ once and never renumbered, records whose layout is asserted at compile time,
   bridge's `ranges`, `assign_memory_bars` gives each unaddressed memory BAR an
   aligned address inside it and verifies that the device took it, so the boot
   log reads `BAR assigned ... 0x4000_0000`, `MSI-X enabled on 00:01.0 (4
-  entries)` and `4 entries read back` — which is device MMIO answering.  The
+  entries)` — which is device MMIO answering.  The
   same machine's NIC runs over that bus: `make check-riscv64-pci-runtime` boots
   with *only* a `virtio-net-pci` and asserts the modern transport coming up and
-  the network stack running on it.  The identities that table delivers are
-  registered before the function is unmasked, and the receive side is then
-  walked once — the message a device writes into the hart's MSI page is claimed
-  and handed to that handler — because the dispatch table had no callers at
-  all, and every device interrupt would have been counted as spurious.  AArch64
+  the network stack running on it.  The identities that table delivers belong to
+  that driver: it claims them at probe time, the platform programs them into the
+  table and unmasks the function once the IMSIC is up, and the receive side is
+  then walked once *through the driver's own handler* — the message a device
+  writes into the hart's MSI page is claimed and handed to it — because the
+  dispatch table had no callers at all, and every device interrupt would have
+  been counted as spurious.  AArch64
   runs the same driver with one difference — its BAR is reached through a low
   alias, because its device window is above the range the kernel maps — and its
   gate boots the same way.

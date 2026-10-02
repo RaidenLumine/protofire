@@ -32,12 +32,12 @@ The authoritative picture of what exists today is
   pass gives a device's BARs addresses, a `virtio-net-pci` is driven through
   the modern transport (that is the NIC the runtime check boots with), and an
   MSI-X table is programmed through the IMSIC, read back, its identities
-  registered before the device is allowed to signal, and the NIC's queues are
-  routed to them — so the device signals on its own and a completion waits on
-  that interrupt (checking the ring first, spinning last).  Remaining gaps:
-  per-device ownership of MSI-X rather than the platform's single receive
-  counter, a driver for any other PCIe device, and broader device-tree driver
-  coverage.
+  allocated by the controller and claimed by the driver that owns the device
+  before it is allowed to signal, and the NIC's queues are routed to them — so
+  the device signals on its own and a completion waits on that interrupt
+  (checking the ring first, spinning last).  Remaining gaps: MSI-X is claimed
+  per device rather than per queue, a driver for any other PCIe device, and
+  broader device-tree driver coverage.
 - **AArch64 PCIe.** The ECAM window is found, its buses enumerated, its BARs
   assigned, and its `virtio-net-pci` driven — the same code as riscv64 with a
   different way of reaching a BAR.  What is left is the MSI side, which on

@@ -25,6 +25,10 @@ use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
 use crate::kernel::block::DeviceHealth;
 use crate::kernel::sync::Mutex;
+// A blocking driver parks its own thread, and the wait is per device — the same
+// shape `serial`, `keyboard` and `mouse` have for their input queues.
+#[cfg(target_os = "none")]
+use crate::kernel::process::wait::Condvar;
 use crate::network::link::device::NetworkDevice;
 use crate::Error;
 use crate::Result;
@@ -110,6 +114,87 @@ const NET_POLL_LIMIT: u32 = 1_000_000;
 /// short enough that one which is not costs a tick rather than a stall.
 #[cfg(target_os = "none")]
 const NET_MSI_WAIT_TICKS: u64 = 2;
+
+/// The device this driver drives, and the signal its completions wait on.
+///
+/// The identities belong to the device, so the signal does too: the handler
+/// this driver claims them with is a closure over [`NetSignal`], and a second
+/// PCIe driver would have its own rather than sharing a counter.
+#[cfg(target_os = "none")]
+struct NetDevice {
+    /// The claim on the device's interrupts: the identity range its table will
+    /// deliver, and whether the platform has programmed it yet.
+    interrupts: crate::arch::platform::DeviceInterrupts,
+    /// What the handler bumps and the completion path parks on.
+    signal: alloc::sync::Arc<NetSignal>,
+}
+
+/// What the device's handler and the completion path share.
+#[cfg(target_os = "none")]
+struct NetSignal {
+    /// Held across the wait, so an interrupt that lands between the count check
+    /// and the park cannot be lost.
+    lock: Mutex<()>,
+    ready: Condvar,
+    /// Interrupts seen since the device's identities were claimed.
+    count: core::sync::atomic::AtomicUsize,
+}
+
+#[cfg(target_os = "none")]
+impl NetSignal {
+    fn new() -> Self {
+        Self {
+            lock: Mutex::new(()),
+            ready: Condvar::new(),
+            count: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Wait for the device to interrupt, up to `timeout_ticks`.
+    ///
+    /// Returns whether anything arrived; the caller re-reads its own used ring
+    /// either way, because a wakeup is a condition and not the answer.
+    fn wait(&self, timeout_ticks: u64) -> bool {
+        let guard = self.lock.lock();
+        let seen = self.count.load(core::sync::atomic::Ordering::Relaxed);
+        let wait = self.ready.wait_timeout(guard, timeout_ticks);
+        !wait.timed_out() || self.count.load(core::sync::atomic::Ordering::Relaxed) != seen
+    }
+}
+
+/// The device this driver drives, once its interrupts are its own.
+#[cfg(target_os = "none")]
+static NET_DEVICE: Mutex<Option<alloc::sync::Arc<NetDevice>>> = Mutex::new(None);
+
+/// Wait for the claimed device, when there is one that can signal yet.
+///
+/// A device whose MSI-X table the platform has not programmed is a polling
+/// device: there is nothing to wait for, and parking would only be a timeout.
+/// A machine with no MSI receiver answers the same way, which is why this needs
+/// no per-machine branch.
+///
+/// A caller that cannot park is a caller that polls, too.  Parking needs
+/// interrupts — the timeout is delivered by the timer, the wakeup by the device
+/// — and this transmit path is reachable from the tick handler, where SLAAC
+/// sends its router solicitation while holding the SLAAC lock.  Parking there
+/// suspends the interrupted thread with that lock held, and the next tick spins
+/// on it with interrupts disabled, so the timeout that would have released it
+/// can never arrive: §11 of `docs/fmts/code-style.md` calls this "a deadlock
+/// waiting for a quiet moment", and the ring is re-read either way, so polling
+/// is the honest answer for a context that cannot be woken.
+#[cfg(target_os = "none")]
+fn wait_for_device_interrupt(timeout_ticks: u64) -> bool {
+    if !crate::arch::interrupts::are_enabled() {
+        return false;
+    }
+    let Some(device) = NET_DEVICE.lock().clone() else {
+        return false;
+    };
+    if !device.interrupts.is_armed() {
+        return false;
+    }
+    device.signal.wait(timeout_ticks)
+}
 
 /// How many completion waits the device's interrupt has actually ended (the
 /// first one is logged), and how many ended with the ring still empty — a
@@ -528,8 +613,7 @@ impl VirtIoNet {
         // queue's; a machine whose device signals through a line nobody waits on
         // answers `false` here and falls through to the loop below, which is
         // what every transport did before this existed.
-        let seen = crate::arch::platform::pci_msi_count();
-        if crate::arch::platform::pci_msi_wait(seen, NET_MSI_WAIT_TICKS) {
+        if wait_for_device_interrupt(NET_MSI_WAIT_TICKS) {
             let mut tx = self.tx_queue.lock();
             tx.sync_device_used_idx();
             if tx.completed_count() > 0 {
@@ -1004,6 +1088,40 @@ fn probe_pci_net() -> Option<Arc<dyn NetworkDevice>> {
         window.bar_address,
         window.bar_size
     );
+
+    // Claim the device's interrupts before either queue is enabled: the vectors
+    // the queues latch are only useful if something is registered for the
+    // identities they deliver.  The registration is a table entry and needs no
+    // hardware, so claiming works here; the platform programs this device's
+    // table and lets it signal once the interrupt controller is up, and the
+    // completion path polls until then — which is what it did before.
+    let signal = alloc::sync::Arc::new(NetSignal::new());
+    let handler = {
+        let signal = signal.clone();
+        move |irq| {
+            let seen = signal
+                .count
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+                + 1;
+            if seen <= 4 {
+                crate::println!(
+                    "[virtio-net] device MSI: irq {} claimed ({} since boot)",
+                    irq,
+                    seen
+                );
+            }
+            signal.ready.notify_all();
+        }
+    };
+    let interrupts = crate::arch::platform::pci_claim_msix(&window, handler);
+    if let Some(interrupts) = interrupts {
+        crate::println!(
+            "[virtio-net] device interrupts claimed: irq {}+; completions wait on them once \
+             the controller programs the table",
+            interrupts.first_irq()
+        );
+        *NET_DEVICE.lock() = Some(alloc::sync::Arc::new(NetDevice { interrupts, signal }));
+    }
 
     let region = Box::new(PciModernRegion::new(
         window.bar_address,

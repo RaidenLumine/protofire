@@ -22,6 +22,12 @@
 # the part that says the BAR decodes MMIO: the words only come back if they
 # reached the device.
 #
+# The table belongs to the driver that claimed the device: the driver registers
+# a handler for the identities the table will deliver at probe time — which
+# costs no hardware — and the platform programs the table with those identities
+# and unmasks the function once the interrupt controller is up.  So the
+# receive-side walk below is the driver's own handler running, not a probe's.
+#
 # Usage:
 #   sh scripts/check-riscv64-pci-runtime.sh
 
@@ -156,31 +162,34 @@ require_line "[kernel] network stack initialized"
 require_line "[pci   ] RISC-V BARs: 2 assigned"
 require_line "00:01.0 BAR1 0x0000000040000000"
 
-# And the interrupt half then programs a real table through the IMSIC and reads
-# it back — the evidence that the BAR decodes MMIO, since the words only come
-# back if they reached the device.
-require_line "[pci   ] RISC-V MSI-X enabled on 00:01.0"
-require_line "[pci   ] RISC-V MSI-X probe: 4 entries read back on 00:01.0"
+# The driver claims the device's interrupts before either queue is enabled, and
+# it can, because a claim is a table entry rather than a hardware access.  The
+# identities are the driver's, so nothing else can be handed them, and no
+# platform-wide counter is shared between devices.
+require_line "[virtio-net] device interrupts claimed"
+require_line "[virtio-net] queue interrupts routed to MSI-X vectors 0 and 1"
 
-# And the interrupts those entries would deliver have an owner: the identities
-# are registered *before* the function is unmasked, and the receive side is
-# walked once — the message a device writes into the hart's MSI page is claimed
-# and handed to that handler.  Before this, `register_irq_handler` had no
-# callers at all: every device interrupt would have been claimed, found
-# handler-less, and counted as spurious.
-require_line "[pci   ] RISC-V MSI-X unmasked on 00:01.0: irq 1-4 have a handler"
-require_line "[pci   ] RISC-V device MSI: irq 1 claimed"
+# The interrupt controller is up only later, so the platform — not the driver —
+# programs the claim it was handed: it writes a real MSI-X table through the
+# IMSIC and reads it back (the evidence that the BAR decodes MMIO, since the
+# words only come back if they reached the device), then unmasks the function.
+require_line "[pci   ] RISC-V MSI-X enabled on 00:01.0"
+require_line "[pci   ] RISC-V MSI-X unmasked on 00:01.0: irq 1-4 belong to the driver that claimed them"
+
+# ...and the receive side is walked once through *that driver's* handler: the
+# message a device writes into the hart's MSI page is claimed and dispatched,
+# and the handler that runs is the one the driver registered.  Before this,
+# registration had no callers at all: every device interrupt would have been
+# claimed, found handler-less, and counted as spurious.
 require_line "[pci   ] RISC-V MSI receive side: irq 1 reached its handler"
 
-# The driver asks the device to raise its queues' interrupts through those
-# entries, so the path above is not only a self-check: the device signals on its
-# own during the boot's traffic (the first line above is the self-check's, so
-# three lines mean the device raised two), and the kernel claims and attributes
-# each one instead of counting it spurious.
-require_line "[virtio-net] queue interrupts routed to MSI-X vectors 0 and 1"
-device_msis="$(grep -a -c "RISC-V device MSI: irq" "$log_file" || true)"
-if [ "$device_msis" -lt 3 ]; then
-    printf 'riscv64 PCI check failed: the device raised %s interrupt(s); expected at least two of its own\n' \
+# The path above is not only a self-check: the device raises interrupts of its
+# own during the boot's traffic.  The first line is the walk's, so a second says
+# the device signalled by itself and the kernel attributed it to this driver's
+# handler instead of counting it spurious.
+device_msis="$(grep -a -c "\[virtio-net\] device MSI: irq" "$log_file" || true)"
+if [ "$device_msis" -lt 2 ]; then
+    printf 'riscv64 PCI check failed: the device interrupts reached the driver %s time(s); expected its own as well as the walk\n' \
         "$device_msis" >&2
     tail -n 12 "$log_file" | tr -d '\000' >&2
     exit 1
@@ -188,6 +197,14 @@ fi
 
 # ...and a completion is no longer only something the driver spins for.
 require_absent "TX poll timed out"
+
+# ...and the boot keeps running afterwards.  The transmit path is reachable
+# from the tick handler, where SLAAC sends its router solicitation while
+# holding the SLAAC lock, so a completion wait that parked there would suspend
+# the interrupted thread with that lock held and the machine would stop after
+# the first demo step.  This line is the one a hang after everything above
+# cannot print — which is exactly how that hang presented when it existed.
+require_line "[net   ] SLAAC: address confirmed"
 
 # Reading a window the device tree named must not fault the machine.
 require_absent "[FATAL]"
