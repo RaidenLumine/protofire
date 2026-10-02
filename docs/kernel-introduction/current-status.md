@@ -59,14 +59,19 @@
   `virtio-net-pci` through the modern (1.0) transport — that is the network
   device both gates boot with, DHCP and SLAAC included, while riscv64's default
   gate keeps the virtio-mmio path covered — and on riscv64 the MSI-X table is
-  programmed, its identities registered *before* the function is unmasked, and
-  the receive side walked once so a delivered message is claimed and attributed
-  rather than counted spurious.  What is missing: nothing on the machine *sends*
-  one, because the driver polls its used ring and never asks the device for a
-  vector — an interrupt-driven completion path is the next step, not a gap in
-  the receive side.  AArch64's MSI would need a GICv3 ITS (this kernel has
-  none), and every other PCIe device — NVMe, HDA — is still reached through its
-  architecture's own enumeration rather than this one.
+  programmed, its identities registered *before* the function is unmasked, the
+  receive side walked once so a delivered message is claimed and attributed
+  rather than counted spurious, and the driver routes its queues to those
+  identities so the device signals on its own.  A completion is looked for
+  first (the device is usually quicker than the round trip), waited for second
+  — the wait parks on the interrupt — and spun for only when neither answers,
+  which is the order a device that is faster than its driver deserves.  What is
+  still missing: the MSI belongs to the *platform* rather than to the driver,
+  so a second PCIe driver would have to share one counter and one wait queue
+  (per-device ownership is the next refinement); AArch64's MSI would need a
+  GICv3 ITS (this kernel has none); and every other PCIe device — NVMe, HDA —
+  is still reached through its architecture's own enumeration rather than this
+  one.
 - **Verified under QEMU only**: no real-device validation on bare-metal hardware yet.
 
 ---

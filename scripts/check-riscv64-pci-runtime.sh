@@ -172,6 +172,23 @@ require_line "[pci   ] RISC-V MSI-X unmasked on 00:01.0: irq 1-4 have a handler"
 require_line "[pci   ] RISC-V device MSI: irq 1 claimed"
 require_line "[pci   ] RISC-V MSI receive side: irq 1 reached its handler"
 
+# The driver asks the device to raise its queues' interrupts through those
+# entries, so the path above is not only a self-check: the device signals on its
+# own during the boot's traffic (the first line above is the self-check's, so
+# three lines mean the device raised two), and the kernel claims and attributes
+# each one instead of counting it spurious.
+require_line "[virtio-net] queue interrupts routed to MSI-X vectors 0 and 1"
+device_msis="$(grep -a -c "RISC-V device MSI: irq" "$log_file" || true)"
+if [ "$device_msis" -lt 3 ]; then
+    printf 'riscv64 PCI check failed: the device raised %s interrupt(s); expected at least two of its own\n' \
+        "$device_msis" >&2
+    tail -n 12 "$log_file" | tr -d '\000' >&2
+    exit 1
+fi
+
+# ...and a completion is no longer only something the driver spins for.
+require_absent "TX poll timed out"
+
 # Reading a window the device tree named must not fault the machine.
 require_absent "[FATAL]"
 

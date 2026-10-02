@@ -29,6 +29,8 @@ use alloc::vec::Vec;
 
 use crate::arch::fdt;
 use crate::arch::pci::EcamRegion;
+use crate::kernel::process::wait::Condvar;
+use crate::kernel::sync::Mutex;
 
 /// The window the device tree describes, if it describes one.
 ///
@@ -286,13 +288,55 @@ static PROBE_MSI_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::At
 /// Receive one of them.
 fn probe_msi_handler(irq: u32) {
     let seen = PROBE_MSI_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
-    if seen <= 2 {
+    // Wake whoever is waiting for this device to move a ring.  The wait is a
+    // condition wait — the waiter re-reads the ring it cares about after this
+    // returns — so a wakeup that turns out not to be that queue's completion
+    // costs one loop, not a mistake.
+    if let Some(signal) = MSI_SIGNAL.lock().as_ref() {
+        signal.ready.notify_all();
+    }
+    if seen <= 8 {
         crate::println!(
             "[pci   ] RISC-V device MSI: irq {} claimed ({} since boot)",
             irq,
             seen
         );
     }
+}
+
+/// What a waiter parks on while it waits for a device to interrupt.
+struct MsiSignal {
+    /// Held across the wait, so an interrupt that lands between the count check
+    /// and the park cannot be lost.
+    lock: Mutex<()>,
+    ready: Condvar,
+}
+
+/// The signal, created when the first device's table is programmed.
+static MSI_SIGNAL: Mutex<Option<alloc::sync::Arc<MsiSignal>>> = Mutex::new(None);
+
+/// How many device interrupts this kernel has received.
+pub fn msi_count() -> usize {
+    PROBE_MSI_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Wait until a device interrupts, or `timeout_ticks` pass.
+///
+/// `seen` is the count the caller took before it started waiting.  Answers
+/// `false` when no device has been given interrupts to raise, which is the
+/// caller's cue to keep polling — a machine whose device signals through a line
+/// nobody waits on is not a machine that is slow, it is one that has nothing to
+/// wait for.
+pub fn wait_for_msi(seen: usize, timeout_ticks: u64) -> bool {
+    let Some(signal) = MSI_SIGNAL.lock().clone() else {
+        return false;
+    };
+    let guard = signal.lock.lock();
+    if msi_count() != seen {
+        return true;
+    }
+    let wait = signal.ready.wait_timeout(guard, timeout_ticks);
+    !wait.timed_out() && msi_count() != seen
 }
 
 /// Exercise the MSI-X manager on the first device that has one.

@@ -66,6 +66,7 @@ const CFG_DEVICE_STATUS: u64 = 0x14; // u8
 const CFG_CONFIG_GENERATION: u64 = 0x15; // u8
 const CFG_QUEUE_SELECT: u64 = 0x16; // le16
 const CFG_QUEUE_SIZE: u64 = 0x18; // le16
+const CFG_QUEUE_MSIX_VECTOR: u64 = 0x1A; // le16
 const CFG_QUEUE_ENABLE: u64 = 0x1C; // le16
 const CFG_QUEUE_NOTIFY_OFF: u64 = 0x1E; // le16
 const CFG_QUEUE_DESC: u64 = 0x20; // le64
@@ -253,6 +254,24 @@ impl PciModernRegion {
 }
 
 impl MmioRegion for PciModernRegion {
+    /// Route a queue's interrupts to an MSI-X table entry.
+    ///
+    /// The modern transport keeps this in the queue's own config block, which
+    /// is where the device reads it when it decides how to signal: entry
+    /// `vector` of the table the platform programmed is the one whose identity
+    /// that queue will deliver.  The queue has to be told *before* it is
+    /// enabled, and the selection register is shared, so the previously
+    /// selected queue is put back.
+    fn set_queue_msix_vector(&self, queue: u16, vector: u16) -> bool {
+        let previous = self.selected_queue.get();
+        let select_off = COMMON_CFG_OFFSET + CFG_QUEUE_SELECT;
+        let vector_off = COMMON_CFG_OFFSET + CFG_QUEUE_MSIX_VECTOR;
+        self.cfg_write16(select_off, queue);
+        self.cfg_write16(vector_off, vector);
+        self.cfg_write16(select_off, previous);
+        true
+    }
+
     fn read32(&self, offset: u64) -> u32 {
         match offset {
             // Fabricated — modern PCI has no magic/version at fixed offsets.

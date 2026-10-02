@@ -187,6 +187,44 @@ pub(crate) fn pci_register_window(
     }
 }
 
+/// How many device interrupts this platform has received.
+///
+/// A waiter takes this count before it parks and compares it after: an
+/// interrupt that arrives between those two reads has to be visible, which is
+/// why the wait is ordered around a value rather than around a bare flag.
+#[cfg(target_os = "none")]
+pub(crate) fn pci_msi_count() -> usize {
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        crate::arch::riscv64::pci::msi_count()
+    }
+
+    #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
+    {
+        0
+    }
+}
+
+/// Wait for a device interrupt, up to `timeout_ticks`.
+///
+/// Answers `false` on a machine where device interrupts are not something a
+/// caller can wait for — the MMIO transports signal through a line nobody
+/// waits on yet — which is the caller's cue to keep polling rather than to
+/// treat this as a timeout.
+#[cfg(target_os = "none")]
+pub(crate) fn pci_msi_wait(seen: usize, timeout_ticks: u64) -> bool {
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        crate::arch::riscv64::pci::wait_for_msi(seen, timeout_ticks)
+    }
+
+    #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
+    {
+        let _ = (seen, timeout_ticks);
+        false
+    }
+}
+
 /// The device and the largest prefetchable MMIO BAR of the first function that
 /// matches.
 ///

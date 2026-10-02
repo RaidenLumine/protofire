@@ -101,6 +101,15 @@ const MOCK_REGION_SIZE: usize = 0x200;
 pub trait MmioRegion: Send + Sync {
     fn read32(&self, offset: u64) -> u32;
     fn write32(&self, offset: u64, value: u32);
+
+    /// Route this queue's interrupts to MSI-X table entry `vector`.
+    ///
+    /// A transport that cannot do it answers `false`, and the caller falls back
+    /// to whatever it did before — for the MMIO transports that is a physical
+    /// interrupt line the platform owns, not a vector the driver picks.
+    fn set_queue_msix_vector(&self, _queue: u16, _vector: u16) -> bool {
+        false
+    }
 }
 
 // ─── Transport layer ───
@@ -202,6 +211,17 @@ impl VirtIoMmio {
     /// Select a virtqueue for subsequent configuration.
     pub fn select_queue(&self, index: u16) {
         self.regs.write32(REG_QUEUE_SEL, index as u32);
+    }
+
+    /// Ask the device to raise this queue's interrupts through MSI-X table
+    /// entry `vector`.
+    ///
+    /// Answers `false` on a transport that has no vectors — the virtio-mmio
+    /// transports signal through a platform interrupt line instead, which the
+    /// driver neither picks nor owns.  Must be called before the queue is
+    /// enabled, because the device latches the vector at that point.
+    pub fn set_queue_msix_vector(&self, queue: u16, vector: u16) -> bool {
+        self.regs.set_queue_msix_vector(queue, vector)
     }
 
     /// Return the maximum number of entries for the currently selected queue.

@@ -104,6 +104,21 @@ const DEFAULT_MTU: usize = 1500;
 /// Spin-loop iteration limit for bare-metal completion polling.
 #[cfg(target_os = "none")]
 const NET_POLL_LIMIT: u32 = 1_000_000;
+
+/// How long a completion waits for the device's interrupt before falling back
+/// to polling.  Long enough that a device which is going to interrupt does,
+/// short enough that one which is not costs a tick rather than a stall.
+#[cfg(target_os = "none")]
+const NET_MSI_WAIT_TICKS: u64 = 2;
+
+/// How many completion waits the device's interrupt has actually ended (the
+/// first one is logged), and how many ended with the ring still empty — a
+/// wakeup that was not this queue's, which the loop above is written to absorb
+/// rather than to trust.
+#[cfg(target_os = "none")]
+static MSI_WOKEN_WAITS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+#[cfg(target_os = "none")]
+static MSI_IDLE_WAKEUPS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 // ─── VirtIO net driver ───
 
 /// A VirtIO network device driver.
@@ -208,6 +223,26 @@ impl VirtIoNet {
     /// Configure both virtqueues on the device.  Must be called after
     /// construction and before the first I/O request.
     pub fn configure_queues(&self) -> Result<()> {
+        // Ask for a vector per queue before either is enabled: the device
+        // latches `queue_msix_vector` when the queue goes ready, and an
+        // unrouted queue never raises the interrupt that says "your used ring
+        // moved".  The table itself may be programmed later — what is written
+        // here is the entry index, and the identity that entry delivers is the
+        // platform's to register.
+        let vectors = self
+            .transport
+            .set_queue_msix_vector(RECEIVE_QUEUE, RECEIVE_QUEUE)
+            && self
+                .transport
+                .set_queue_msix_vector(TRANSMIT_QUEUE, TRANSMIT_QUEUE);
+        if vectors {
+            crate::println!(
+                "[virtio-net] queue interrupts routed to MSI-X vectors {} and {}",
+                RECEIVE_QUEUE,
+                TRANSMIT_QUEUE
+            );
+        }
+
         // Configure receive queue (index 0)
         {
             let rx = self.rx_queue.lock();
@@ -476,6 +511,39 @@ impl VirtIoNet {
 
     #[cfg(target_os = "none")]
     fn poll_completion(&self, _queue_index: u16) -> Result<()> {
+        // Fast path first: the device is usually quicker than the round trip
+        // through this function, so the completion is often already in the ring
+        // and there is nothing to wait for.
+        {
+            let mut tx = self.tx_queue.lock();
+            tx.sync_device_used_idx();
+            if tx.completed_count() > 0 {
+                return Ok(());
+            }
+        }
+
+        // Then wait for the device to say the ring moved, when this machine has
+        // an interrupt to wait on.  The wait is a condition wait, so the ring is
+        // re-read afterwards rather than trusting the wakeup to have been this
+        // queue's; a machine whose device signals through a line nobody waits on
+        // answers `false` here and falls through to the loop below, which is
+        // what every transport did before this existed.
+        let seen = crate::arch::platform::pci_msi_count();
+        if crate::arch::platform::pci_msi_wait(seen, NET_MSI_WAIT_TICKS) {
+            let mut tx = self.tx_queue.lock();
+            tx.sync_device_used_idx();
+            if tx.completed_count() > 0 {
+                // Say it once: a completion that was waited for rather than
+                // spun on is the difference between a device interrupt the
+                // kernel receives and one it merely counts.
+                if MSI_WOKEN_WAITS.fetch_add(1, core::sync::atomic::Ordering::Relaxed) == 0 {
+                    crate::println!("[virtio-net] TX completion woke on the device's interrupt");
+                }
+                return Ok(());
+            }
+            MSI_IDLE_WAKEUPS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+
         // Poll the TX used ring until a completion appears or the limit
         // is exhausted.  The device writes the used-ring idx field in
         // guest RAM; we must sync it before checking.
