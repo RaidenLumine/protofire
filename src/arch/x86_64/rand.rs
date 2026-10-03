@@ -7,6 +7,39 @@
 //! Both instructions set CF=1 on success and return 0 / CF=0 when the
 //! hardware is temporarily exhausted (Intel recommends up to 10 retries).
 
+/// Collect this machine's hardware entropy: RDRAND, then RDSEED.
+///
+/// The bytes are raw material, not a seed: the caller mixes them with
+/// whatever else it has and hashes the result.  An empty return means the
+/// machine has neither instruction, which is every host build — the caller's
+/// own fallback is then the only entropy there is.
+#[must_use]
+pub fn hardware_entropy() -> alloc::vec::Vec<u8> {
+    use alloc::vec::Vec;
+
+    let mut material = Vec::new();
+
+    if crate::arch::x86_64::cpuid::has_rdrand() {
+        let mut buf = [0u8; 64];
+        let filled = rdrand_fill(&mut buf);
+        material.extend_from_slice(&buf[..filled]);
+    }
+
+    if crate::arch::x86_64::cpuid::has_rdseed() {
+        // Individual RDSEED reads draw straight from the entropy source
+        // rather than from the conditioned RDRAND stream.
+        let mut buf = [0u8; 32];
+        for chunk in buf.chunks_mut(8) {
+            if let Some(value) = rdseed_u64() {
+                chunk.copy_from_slice(&value.to_ne_bytes());
+            }
+        }
+        material.extend_from_slice(&buf);
+    }
+
+    material
+}
+
 /// Maximum retry count per Intel RNG software implementation guide (§4.2.1).
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 const RDRAND_MAX_RETRIES: u32 = 10;

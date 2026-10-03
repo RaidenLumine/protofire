@@ -12,6 +12,34 @@
 // entropy API but never calls them.
 #![cfg_attr(not(target_os = "none"), allow(dead_code))]
 
+/// Collect this machine's hardware entropy: RNDR, then RNDRRS.
+///
+/// The bytes are raw material, not a seed: the caller mixes them with
+/// whatever else it has and hashes the result.  An empty return means the CPU
+/// has no RNDR — a pre-ARMv8.5 part, or any host build — and the caller's own
+/// fallback is then the only entropy there is.
+#[must_use]
+pub fn hardware_entropy() -> alloc::vec::Vec<u8> {
+    use alloc::vec::Vec;
+
+    let mut material = Vec::new();
+
+    if has_rndr() {
+        let mut buf = [0u8; 64];
+        let filled = rndr_fill(&mut buf);
+        material.extend_from_slice(&buf[..filled]);
+        // RNDRRS reseeds the source before reading, so a few of them add
+        // what the RNDR stream cannot.
+        for _ in 0..4 {
+            if let Some(value) = rndrrs_u64() {
+                material.extend_from_slice(&value.to_ne_bytes());
+            }
+        }
+    }
+
+    material
+}
+
 #[cfg(target_os = "none")]
 use core::arch::asm;
 

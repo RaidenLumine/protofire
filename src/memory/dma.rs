@@ -8,26 +8,14 @@ use super::global::global_mut;
 
 /// Translate a virtual address to its physical address.
 ///
-/// On x86_64 the kernel is identity-mapped within the bootstrap region
-/// (0 – 1 GiB); the frame-allocator physical pool lives inside that range,
-/// so virtual address equals physical address.
-///
-/// Returns `None` when the address is outside known identity-mapped RAM.
+/// Whether the machine's mapping is the identity on an address is the
+/// machine's answer — see [`crate::arch::mmu::phys_addr_of`], which is where
+/// the range and the reason for it live.  `None` (from here or from there)
+/// means the address cannot be used for DMA, and every caller refuses rather
+/// than passing it on.
 #[must_use]
 pub fn phys_addr_of(va: usize) -> Option<usize> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        // The identity-map covers the first 1 GiB (see BOOTSTRAP_IDENTITY_MAP_END).
-        if va < 0x4000_0000 {
-            return Some(va);
-        }
-        None
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        let _ = va;
-        None
-    }
+    crate::arch::mmu::phys_addr_of(va)
 }
 
 /// A physically-contiguous, page-aligned buffer suitable for device DMA.

@@ -84,6 +84,16 @@ pub use riscv64::demo as machine_demo;
 ))]
 pub use x86_64::demo as machine_demo;
 
+// What hardware entropy this machine can offer the kernel's pool: RDRAND and
+// RDSEED, RNDR and RNDRRS, or nothing at all.  The pool asks every machine the
+// same question and mixes the answer with its own fallback.
+#[cfg(target_arch = "aarch64")]
+pub use aarch64::rand as hardware_rand;
+#[cfg(target_arch = "riscv64")]
+pub use riscv64::rand as hardware_rand;
+#[cfg(target_arch = "x86_64")]
+pub use x86_64::rand as hardware_rand;
+
 // The device-tree parser describes the platforms that hand a blob over, not
 // one architecture: aarch64 and riscv64 both parse it, and the host tests
 // parse synthetic blobs with it, so it lives at this level rather than inside

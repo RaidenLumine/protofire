@@ -928,133 +928,11 @@ pub fn probe_boot_net() -> Option<Arc<dyn NetworkDevice>> {
         }
     }
 
-    // On x86_64, virtio-net may also be a PCI device (virtio-net-pci).
-    // Probe the already-enumerated PCI bus for a matching device.
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        if let Some(net) = probe_pci_net_x86_64() {
-            return Some(net);
-        }
-    }
-
-    None
-}
-
-/// Probe PCI bus for a VirtIO network device on x86_64.
-///
-/// Uses PCI enumeration to find a device with VirtIO vendor (0x1af4)
-/// and network controller device ID (0x1000).  Tries the **modern**
-/// (1.0) PCI transport via the MMIO BAR (BAR4) first, falling back
-/// to the legacy IO-port BAR (BAR0) if no MMIO BAR is available.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-fn probe_pci_net_x86_64() -> Option<Arc<dyn NetworkDevice>> {
-    use crate::arch::x86_64::pci::pci_config_read_u16;
-    use crate::arch::x86_64::pci::pci_config_write_u16;
-    use crate::arch::x86_64::pci::pci_enumerate_buses;
-    use crate::arch::x86_64::pci::PciAddress;
-    use crate::arch::x86_64::pci::COMMAND;
-    use crate::arch::x86_64::virtio_pci::PciLegacyMmioRegion;
-    use crate::drivers::virtio_pci_modern::PciModernRegion;
-    use alloc::boxed::Box;
-
-    const VIRTIO_VENDOR: u16 = 0x1af4;
-    const VIRTIO_NET_DEVICE: u16 = 0x1000;
-    const CMD_IO_SPACE: u16 = 1 << 0;
-    const CMD_MEMORY_SPACE: u16 = 1 << 1;
-    const CMD_BUS_MASTER: u16 = 1 << 2;
-
-    let devices = pci_enumerate_buses();
-    for device in &devices {
-        if device.vendor_id != VIRTIO_VENDOR || device.device_id != VIRTIO_NET_DEVICE {
-            continue;
-        }
-
-        let pci_addr = PciAddress::new(device.bus, device.device, device.function);
-
-        // Enable IO Space, Memory Space, and Bus Master.
-        // SAFETY: the command register of a function this scan enumerated,
-        // inside its own config space.
-        let cmd = unsafe { pci_config_read_u16(pci_addr, COMMAND) };
-        // SAFETY: as above — writing that register to enable the three spaces
-        // the transport needs.
-        unsafe {
-            pci_config_write_u16(
-                pci_addr,
-                COMMAND,
-                cmd | CMD_IO_SPACE | CMD_MEMORY_SPACE | CMD_BUS_MASTER,
-            );
-        }
-
-        // ── Try modern PCI transport via the modern MMIO BAR ─────
-        // QEMU's transitional `virtio-net-pci` exposes two MMIO BARs: a
-        // legacy 0x1000 device region (BAR1) and the modern transport
-        // BAR (BAR4, 0x4000, 64-bit prefetchable) that holds the common
-        // config, device config and notification areas at the offsets
-        // `PciModernRegion` expects.  Selecting the *first* MMIO BAR
-        // picked the legacy region, so the notify write landed outside
-        // any mapped BAR and page-faulted.  Always prefer the modern BAR:
-        // it is the larger, prefetchable MMIO region.
-        if let Some(mmio_bar) = device
-            .bars
-            .iter()
-            .filter(|bar| bar.is_mmio && bar.base_address != 0)
-            .max_by_key(|bar| (bar.is_prefetchable, bar.size))
-        {
-            crate::println!(
-                "[drivers] virtio-net PCI: trying modern transport BAR base=0x{:x} size=0x{:x}",
-                mmio_bar.base_address,
-                mmio_bar.size
-            );
-
-            // Map the MMIO BAR into kernel page tables.
-            // SAFETY: `mmio_bar` is a BAR the enumeration decoded, so the range
-            // is live MMIO.
-            let _mapping = unsafe {
-                crate::arch::mmu::map_device_mmio(mmio_bar.base_address, mmio_bar.size as usize)
-            };
-            if _mapping.is_none() {
-                crate::println!(
-                    "[drivers] virtio-net PCI: failed to map MMIO BAR at 0x{:x}",
-                    mmio_bar.base_address
-                );
-            } else {
-                let region = Box::new(PciModernRegion::new(
-                    mmio_bar.base_address as usize,
-                    device.device_id,
-                    device.vendor_id,
-                ));
-                let transport = VirtIoMmio::new(region);
-                if let Some(net) = try_virtio_net_device(transport) {
-                    crate::println!("[drivers] virtio-net device found (PCI modern)");
-                    return Some(net);
-                }
-                crate::println!("[drivers] virtio-net PCI: modern transport failed, trying legacy");
-            }
-        }
-
-        // ── Fallback: legacy IO-port BAR ─────────────────────────
-        if let Some(io_bar) = device
-            .bars
-            .first()
-            .filter(|bar| !bar.is_mmio && bar.base_address != 0)
-        {
-            let io_base = io_bar.base_address as u16;
-            crate::println!(
-                "[drivers] virtio-net PCI: trying legacy IO BAR base=0x{:x}",
-                io_base
-            );
-
-            let region = Box::new(PciLegacyMmioRegion::new(
-                io_base,
-                device.device_id,
-                device.vendor_id,
-            ));
-            let transport = VirtIoMmio::new(region);
-            if let Some(net) = try_virtio_net_device(transport) {
-                crate::println!("[drivers] virtio-net device found (PCI legacy IO)");
-                return Some(net);
-            }
-        }
+    // The machine's own PCI bus may carry one too, and reaching it is the
+    // machine's business (see `src/arch/x86_64/virtio_net.rs`); a machine
+    // whose bus the generic probe above already covers answers `None`.
+    if let Some(net) = crate::arch::machine_devices::pci_net_device() {
+        return Some(net);
     }
 
     None
@@ -1137,7 +1015,7 @@ fn probe_pci_net() -> Option<Arc<dyn NetworkDevice>> {
 }
 
 #[cfg(target_os = "none")]
-fn try_virtio_net_device(mut transport: VirtIoMmio) -> Option<Arc<dyn NetworkDevice>> {
+pub(crate) fn try_virtio_net_device(mut transport: VirtIoMmio) -> Option<Arc<dyn NetworkDevice>> {
     if transport.discover().is_err() {
         return None;
     }

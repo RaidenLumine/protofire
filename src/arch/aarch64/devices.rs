@@ -56,6 +56,13 @@ pub(crate) mod virtio_gpu_probe;
 #[path = "../../drivers/virtio_gpu/probe_absent.rs"]
 pub(crate) mod virtio_gpu_probe;
 
+/// The generic platform probe already reaches this machine's PCIe devices
+/// (`arch::platform::pci_register_window`), so there is nothing extra to add.
+#[cfg(target_os = "none")]
+pub(crate) fn pci_net_device() -> Option<Arc<dyn crate::network::link::device::NetworkDevice>> {
+    None
+}
+
 /// This machine has no xHCI bus, so there is no USB boot disk to ask for.
 pub fn usb_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     None

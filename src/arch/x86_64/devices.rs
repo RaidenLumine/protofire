@@ -58,6 +58,12 @@ pub(crate) mod virtio_gpu_probe;
 #[path = "../../drivers/virtio_gpu/probe_absent.rs"]
 pub(crate) mod virtio_gpu_probe;
 
+/// Ask this machine's PCI bus for a virtio-net device the generic platform
+/// probe does not reach, which on this machine means the legacy IO-port
+/// fallback behind the modern BAR.
+#[cfg(target_os = "none")]
+pub(crate) use super::virtio_net::pci_net_device;
+
 /// Ask this machine's USB bus for a boot disk, if it has one.
 ///
 /// The mass-storage driver is bare-metal only, for the same reason the

@@ -63,41 +63,11 @@ fn seed_csprng(key: [u8; 32], nonce: [u8; 12]) {
 fn collect_entropy_seed() -> [u8; 32] {
     let mut material = Vec::with_capacity(128);
 
-    // ── x86_64: RDRAND / RDSEED ──
-    #[cfg(target_arch = "x86_64")]
-    {
-        if crate::arch::x86_64::cpuid::has_rdrand() {
-            let mut buf = [0u8; 64];
-            let filled = crate::arch::x86_64::rand::rdrand_fill(&mut buf);
-            material.extend_from_slice(&buf[..filled]);
-        }
-        if crate::arch::x86_64::cpuid::has_rdseed() {
-            let mut buf = [0u8; 32];
-            // Use individual RDSEED reads for high-quality entropy.
-            for chunk in buf.chunks_mut(8) {
-                if let Some(value) = crate::arch::x86_64::rand::rdseed_u64() {
-                    chunk.copy_from_slice(&value.to_ne_bytes());
-                }
-            }
-            material.extend_from_slice(&buf);
-        }
-    }
-
-    // ── AArch64: RNDR / RNDRRS ──
-    #[cfg(target_arch = "aarch64")]
-    {
-        if crate::arch::aarch64::rand::has_rndr() {
-            let mut buf = [0u8; 64];
-            let filled = crate::arch::aarch64::rand::rndr_fill(&mut buf);
-            material.extend_from_slice(&buf[..filled]);
-            // RNDRRS for additional entropy.
-            for _ in 0..4 {
-                if let Some(value) = crate::arch::aarch64::rand::rndrrs_u64() {
-                    material.extend_from_slice(&value.to_ne_bytes());
-                }
-            }
-        }
-    }
+    // ── The machine's own hardware entropy, where it has any ──
+    // RDRAND and RDSEED on x86_64, RNDR and RNDRRS on AArch64, nothing on
+    // RISC-V: which of those this machine offers is the architecture's answer,
+    // and an empty one simply leaves the fallback below as the only source.
+    material.extend_from_slice(&crate::arch::hardware_rand::hardware_entropy());
 
     // ── Fallback: RTC time + monotonic ticks ──
     // Always include these as an additional entropy source, even when

@@ -101,6 +101,7 @@ pub mod irq_balance;
 pub mod mmu;
 pub mod pci;
 pub mod percpu;
+pub mod rand;
 pub mod rtc;
 pub mod smp;
 pub mod tlb;

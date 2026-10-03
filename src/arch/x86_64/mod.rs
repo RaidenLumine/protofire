@@ -22,6 +22,10 @@ pub mod serial;
 pub mod timer;
 pub mod tlb;
 pub mod user_access;
+/// Finding this machine's own PCI devices, where the generic platform probe
+/// does not reach them.
+#[cfg(target_os = "none")]
+pub mod virtio_net;
 pub mod virtio_pci;
 
 // AP trampoline and bring-up: bare metal only, because the trampoline's

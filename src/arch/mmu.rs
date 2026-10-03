@@ -36,6 +36,42 @@ pub use super::riscv64::mmu::*;
 #[cfg(target_arch = "x86_64")]
 pub use super::x86_64::paging::*;
 
+/// Translate a kernel virtual address to the physical address it maps to,
+/// where the machine's own mapping is the identity on it.
+///
+/// This is the question a DMA buffer asks before it hands an address to a
+/// device, and the answer is a property of the machine's mapping rather than
+/// of the buffer: it belongs here, once, instead of in every caller that has
+/// a physical address to produce.
+///
+/// `None` means "not translatable", and every caller treats it as a refusal:
+/// an address that means something else in device space is worse than no
+/// buffer at all.
+#[must_use]
+pub fn phys_addr_of(virtual_address: usize) -> Option<usize> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // The kernel is identity-mapped inside the 0 – 1 GiB bootstrap
+        // region (see `BOOTSTRAP_IDENTITY_MAP_END`), and the frame
+        // allocator's pool lives inside it, so the two addresses are the
+        // same number.
+        if virtual_address < 0x4000_0000 {
+            return Some(virtual_address);
+        }
+        None
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // The device-tree machines reach their frames through a window of
+        // their own rather than the identity map, and this translation is not
+        // wired for them yet: the callers that need it fail rather than hand
+        // a device an address that means something else.
+        let _ = virtual_address;
+        None
+    }
+}
+
 // ── AArch64 hosts ───────────────────────────────────────────────────────
 //
 // Bare-metal AArch64 owns the real preparation machinery (above).  A host
