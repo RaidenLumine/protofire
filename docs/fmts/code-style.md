@@ -477,8 +477,9 @@ everyday code:
       and `# Safety` on the unchecked variant.
 - [ ] New feature flags are registered in `Cargo.toml`, `README.md`, and the
       Makefile.
-- [ ] New architecture gates outside `src/arch/` are argued for in §14, and
-      `make check-arch-fanout` is re-recorded if they move.
+- [ ] New architecture gates outside `src/arch/` carry the `fact:` or `gap:`
+      reason §14 requires, and `make check-arch-fanout` is re-recorded if they
+      move.
 - [ ] `make verify-p3` is green.
 
 ---
@@ -550,6 +551,24 @@ architecture, do it this way" is a question the architecture should be
 answering, so it moves behind a shim in `src/arch/` — `arch::thread`,
 `arch::mmu`, `arch::tlb`, and the rest — and the kernel-side code asks the
 question instead of naming an architecture.
+
+Not every row can go that way, and the baseline says which is which.  Each row
+carries a reason after the count, and it has to be one of two things:
+
+- **`fact:`** — the file names an architecture because the thing it carries
+  *is* that architecture's: an ABI record, a driver for its hardware, an
+  instruction, a test of its page tables, or a query only its own code asks.
+  A fourth architecture decides what it does here; there is no shim to write.
+- **`gap:`** — the file names an architecture only because a question has not
+  been moved behind `src/arch/` yet, and the reason says where it belongs.
+
+`make check-arch-fanout` refuses a row that gives neither, so a new gate
+outside the arch layer is either moved or argued for in that change.  A row
+whose count *grows* fails with its own reason printed, because a reason that
+covered the old count may not cover the new one — and a `--record` keeps every
+reason, so a re-record is a change in the tree rather than a change of mind
+about why the row exists.  The rows to drive down are the `gap:` ones; the
+`fact:` rows are the census telling the truth about what porting costs.
 
 `target_os` gates are not counted.  A new architecture is bare-metal too, so
 "is there a kernel here or a host" does not move when one is added.

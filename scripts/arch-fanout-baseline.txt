@@ -1,69 +1,52 @@
 # Architecture gates outside src/arch/: the census
 # scripts/check-arch-fanout.sh ratchets.
 #
-# Each row is `<file under src/> <occurrences>`: how many times that file names
-# `x86_64`, `aarch64`, or `riscv64` in a `target_arch` gate, with line comments
-# stripped first.  Porting the kernel to a fourth architecture should mean
-# writing that architecture's own directory; every row here is a file the
-# fourth architecture would have to edit as well.  The gate fails when a count
-# rises, when a row shrinks without the census being re-recorded, or when a
-# file the census found has no row — so a new gate outside the arch layer is
-# added here on purpose.
+# Each row is `<file under src/> <occurrences>  # <reason>`: how many times that
+# file names `x86_64`, `aarch64`, or `riscv64` in a `target_arch` gate (with
+# line comments stripped first), and why it names one at all.
+#
+# A row's reason is one of exactly two things, and the gate refuses a row that
+# gives neither:
+#
+#   * `fact:` — a fact about the machine.  An ABI record only one architecture
+#     has, a driver for hardware only one machine has.  A fourth architecture
+#     decides what it does here; there is nothing to move behind a shim.
+#   * `gap:` — a question the architecture should be answering.  The fix is to
+#     move it behind `src/arch/`, and the row is the record of the work left.
+#
+# The gate fails when a count rises (printing the row's own reason, because a
+# reason that covered the old count may not cover the new one), when a row
+# shrinks without the census being re-recorded, when a file the census found
+# has no row, and when a row has no reason.
 #
 # Re-record with `sh scripts/check-arch-fanout.sh --record` in every change
-# that moves a gate.  The number to drive down is the pair on the line below
-# this header: files first, then occurrences.
+# that moves a gate; a record keeps each row's reason.  The pair on the line
+# below this header is files first, then occurrences; the number to drive down
+# is the `gap:` rows, not the total.
 #
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 # 23 files, 61 occurrences outside src/arch
 
-abi/ptrace.rs                                        2
-drivers/usb_msd.rs                                   1
-kernel/power/clock.rs                                2
-kernel/process/process/lifecycle.rs                  1
-kernel/process/process/types.rs                      3
-kernel/process/thread/mod.rs                         2
-kernel/process/thread/user_runtime.rs                2
-kernel/smp/tlb.rs                                    2
-memory/diagnostics.rs                                3
-memory/global.rs                                     3
-memory/map_facts.rs                                  3
-memory/mod.rs                                        4
-syscall/process/signal.rs                            2
-user/demo/demo_program_x86_64_rust_io.rs             1
-user/demo/demo_program_x86_64_rust.rs                1
-user/demo/payload_test_support.rs                    1
-user/exception.rs                                    4
-user/shared/abi/ptrace.rs                            2
-user/shared/abi/runtime.rs                           6
-user/shared/syscall.rs                               2
-user/syscall/mod.rs                                  7
-user/syscall/payload.rs                              6
-util/debug.rs                                        1
+abi/ptrace.rs                                        2  # fact: the x86_64 PTRACE_GETREGS register file is a record only that architecture has
+drivers/usb_msd.rs                                   1  # fact: the USB storage controller driver is x86_64 bare-metal hardware
+kernel/power/clock.rs                                2  # gap: DtFreqDriver is device-tree code two machines share, and belongs beside arch::fdt
+kernel/process/process/lifecycle.rs                  1  # fact: an x86_64 test, because it prepares an x86_64 page plan
+kernel/process/process/types.rs                      3  # fact: the x86_64 register-context re-export, and lint gates for an accessor only the device-tree machines call
+kernel/process/thread/mod.rs                         2  # fact: user-exception delivery exists on x86_64 and aarch64; riscv64 has no such path
+kernel/process/thread/user_runtime.rs                2  # fact: replace_user_execution_state has no caller on riscv64 bare metal or on an aarch64 host
+kernel/smp/tlb.rs                                    2  # fact: PCID shootdown, and x86_64's page-table runtime is its only caller
+memory/diagnostics.rs                                3  # gap: arch::mmu should hand the report a neutral record instead of x86_64's plan types
+memory/global.rs                                     3  # fact: the lock-owner query, which only x86_64's page-fault path asks
+memory/map_facts.rs                                  3  # fact: classify/region, unused where the page-table plan answers the same question
+memory/mod.rs                                        4  # fact: the map_facts module and two re-exports, for the same callers
+syscall/process/signal.rs                            2  # gap: restoring a saved user frame is the machine's, and belongs behind arch::
+user/demo/demo_program_x86_64_rust_io.rs             1  # fact: x86_64 payload assembly behind a stub that keeps the interface on other machines
+user/demo/demo_program_x86_64_rust.rs                1  # fact: the same, for the Rust payload
+user/demo/payload_test_support.rs                    1  # fact: the helper builds x86_64 payloads for the host tests
+user/exception.rs                                    4  # fact: the two user-mode exception dispatchers, which exist only where a machine can enter the kernel from user mode
+user/shared/abi/ptrace.rs                            2  # fact: the user-space mirror of the x86_64 PTRACE_GETREGS record
+user/shared/abi/runtime.rs                           6  # gap: TARGET_ARCH is the build's own fact; say it once in build.rs or answer it from arch::
+user/shared/syscall.rs                               2  # fact: the never-returning halt is hlt on x86_64 and wfi on aarch64
+user/syscall/mod.rs                                  7  # fact: the trap that enters the kernel from user mode; one file per machine, and riscv64 has none
+user/syscall/payload.rs                              6  # fact: the per-machine payload-runtime macros, emitted into the payload sections
+util/debug.rs                                        1  # gap: the [cpuN] log prefix should exist on every SMP machine, with the two smokes taught to read it
