@@ -353,6 +353,14 @@ kernel worker threads and the idle process.
 Service definitions are loaded from TOML files in `/system/rc.d/` via
 `service::load_services_from_fs()`.
 
+The demo disk ships `/system/rc.d/defaults.toml`, written by the demo-disk
+builder from the same list the kernel falls back to when a disk declares
+nothing (`service::default_definitions()`).  One list, two renderings: the
+stock boot reads the declarations off the disk — the boot log says how many it
+found — and a disk without the directory runs the same services from the
+kernel's copy rather than a different set that has drifted from the shipped
+one.
+
 Each `ServiceDefinition` has a `kind`:
 
 - `ServiceKind::KernelThread` -- a kernel worker thread started by

@@ -520,10 +520,12 @@ fn topology_from_srat(numa: &crate::arch::x86_64::acpi::EarlyNumaData) -> Topolo
     }
 }
 
-// Both of these describe the demo distribution, which only exists on a bare
-// metal build that asked for it (`demo-disk`) or in the test build that builds
-// the same thing; everywhere else the kernel spawns no embedded user programs
-// and neither of these is compiled.
+// `describe_user_slots` describes a bare-metal machine's prepared slots, so it
+// is compiled where such slots exist.  `demo_user_programs` is the machine's
+// list of prototype programs, and it is compiled wherever the demo *tree* is
+// (`any(feature = "demo-disk", test, not(target_os = "none"))`): a host that
+// builds the demo disk writes the same list into `/system/rc.d` that the
+// machine reads back out of it, and the two have to be one list.
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 /// Describe the user slots this machine prepared, where it prepares any.
 ///
@@ -573,11 +575,6 @@ pub(crate) fn describe_user_slots() {
     }
 }
 
-// Both of these describe the demo distribution, which only exists on a bare
-// metal build that asked for it (`demo-disk`) or in the test build that builds
-// the same thing; everywhere else the kernel spawns no embedded user programs
-// and neither of these is compiled.
-#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 /// The embedded user programs this machine's prototype can run, and which of
 /// them the supervisor should restart.
 ///
@@ -586,6 +583,7 @@ pub(crate) fn describe_user_slots() {
 /// Exactly one entry asks to be restarted, which is what keeps the supervision
 /// loop — detect, restart, exhaust the budget, abandon — on the path every
 /// stock boot takes.
+#[cfg(any(feature = "demo-disk", test))]
 pub(crate) fn demo_user_programs() -> &'static [(&'static str, bool)] {
     #[cfg(target_arch = "x86_64")]
     {

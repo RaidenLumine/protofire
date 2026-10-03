@@ -217,6 +217,11 @@ count_log_line() {
 # boot stopped after the hand-off" rather than "the boot never started".
 require_log_line "[mem   ] activated x86_64 kernel page tables"
 require_log_line "[init  ] starting idle process"
+# The services this boot runs are the ones the disk declares, not the kernel's
+# built-in list: the demo disk is built with `/system/rc.d/defaults.toml`, and
+# this line is the boot saying it read them.  A disk without the directory
+# prints the other line, which is also a real path — but not this one.
+require_log_line "declaration(s) in /system/rc.d"
 require_log_line "protofire kernel running"
 # The shell is ring-3 code on this architecture: the payload on the demo disk
 # prints its own banner and prompt, and the in-kernel host proxy it replaced

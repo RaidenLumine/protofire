@@ -120,7 +120,7 @@ impl ServiceSecurity {
 }
 
 /// A parsed service definition from a config file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ServiceDefinition {
     pub name: String,
     pub kind: ServiceKind,
@@ -333,6 +333,168 @@ fn read_config_file(fs: &crate::fs::FileSystem, path: &str) -> Option<alloc::str
     core::str::from_utf8(&buf)
         .ok()
         .map(alloc::string::String::from)
+}
+
+// ── The default service set, and its written form ───────────────────────────
+
+/// The name a launch reference contributes to the service table.
+///
+/// The last path segment with its extension removed, so
+/// `/apps/current/demo-launcher.toml` is `demo-launcher`.  A leading dot names
+/// a hidden file rather than an extension, so `.profile` keeps its name.
+#[cfg(any(feature = "demo-disk", test))]
+fn default_service_name(launch_reference: &str) -> String {
+    let file = launch_reference
+        .rsplit('/')
+        .next()
+        .unwrap_or(launch_reference);
+    match file.rsplit_once('.') {
+        Some((stem, _extension)) if !stem.is_empty() => String::from(stem),
+        _ => String::from(file),
+    }
+}
+
+/// The service set a boot uses when its disk declares none, and the set the
+/// demo disk ships as `/system/rc.d/defaults.toml`.
+///
+/// One list, two renderings.  The failure this avoids is the one that hides:
+/// two copies that agree until somebody edits one, after which a boot disk
+/// works only because the kernel kept its own version of the configuration.
+/// The demo-disk builder writes [`render_config`] of this, and the boot path
+/// falls back to it, so a disk with `/system/rc.d` and a disk without run the
+/// same system.
+#[cfg(any(feature = "demo-disk", test))]
+pub fn default_definitions() -> Vec<ServiceDefinition> {
+    let mut services = Vec::new();
+
+    for (name, entry) in [
+        ("kworker-a", "demo_worker_a"),
+        ("kworker-b", "demo_worker_b"),
+        ("kworker-syscall-fs", "demo_syscall_fs_worker"),
+    ] {
+        services.push(ServiceDefinition {
+            name: String::from(name),
+            kind: ServiceKind::KernelThread,
+            path: None,
+            entry: Some(String::from(entry)),
+            args: Vec::new(),
+            after: Vec::new(),
+            auto_restart: false,
+            security: ServiceSecurity::Guest,
+            account: None,
+        });
+    }
+
+    let shell = crate::user::program::SHELL_CURRENT_PATH;
+    services.push(ServiceDefinition {
+        name: default_service_name(shell),
+        kind: ServiceKind::UserProgram,
+        path: Some(String::from(shell)),
+        entry: None,
+        args: Vec::new(),
+        after: Vec::new(),
+        auto_restart: false,
+        security: ServiceSecurity::Guest,
+        account: None,
+    });
+
+    for &(launch_reference, auto_restart) in crate::arch::platform::demo_user_programs() {
+        services.push(ServiceDefinition {
+            name: default_service_name(launch_reference),
+            kind: ServiceKind::UserProgram,
+            path: Some(String::from(launch_reference)),
+            entry: None,
+            args: Vec::new(),
+            after: Vec::new(),
+            auto_restart,
+            security: ServiceSecurity::Guest,
+            account: None,
+        });
+    }
+
+    services
+}
+
+/// Render definitions as the TOML [`parse_service_config`] reads.
+///
+/// The inverse is a property rather than a hope: a round-trip test parses what
+/// this writes and compares it with what went in, which is what lets the demo
+/// disk ship a configuration generated from the same list the kernel falls
+/// back to.
+///
+/// Keys are written where they differ from the parser's defaults — no
+/// `security = "guest"` or `auto_restart = false` on every entry — because the
+/// defaults are what the parser documents, and a generated file that spells
+/// each one out is harder to read than the list it came from.
+pub fn render_config(services: &[ServiceDefinition]) -> String {
+    let mut out = String::from("format = \"protofire-service-1\"\n");
+
+    for service in services {
+        out.push_str("\n[[service]]\n");
+        write_field(&mut out, "name", &service.name);
+        write_field(&mut out, "kind", service.kind.as_str());
+        if let Some(path) = &service.path {
+            write_field(&mut out, "path", path);
+        }
+        if let Some(entry) = &service.entry {
+            write_field(&mut out, "entry", entry);
+        }
+        if !service.args.is_empty() {
+            write_list(&mut out, "args", &service.args);
+        }
+        if !service.after.is_empty() {
+            write_list(&mut out, "after", &service.after);
+        }
+        if service.auto_restart {
+            out.push_str("auto_restart = true\n");
+        }
+        if service.security != ServiceSecurity::Guest {
+            write_field(&mut out, "security", service.security.as_str());
+        }
+        if let Some(account) = &service.account {
+            write_field(&mut out, "account", account);
+        }
+    }
+
+    out
+}
+
+/// Append `key = "value"`, escaping what the parser un-escapes.
+fn write_field(out: &mut String, key: &str, value: &str) {
+    out.push_str(key);
+    out.push_str(" = ");
+    write_quoted(out, value);
+    out.push('\n');
+}
+
+/// Append `key = ["a", "b"]`.
+fn write_list(out: &mut String, key: &str, values: &[String]) {
+    out.push_str(key);
+    out.push_str(" = [");
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        write_quoted(out, value);
+    }
+    out.push_str("]\n");
+}
+
+/// Append a quoted string, using the escapes the config parser reads back.
+fn write_quoted(out: &mut String, value: &str) {
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
 }
 
 // ── Runtime registry ─────────────────────────────────────────────────────────
@@ -1642,5 +1804,49 @@ security = \"admin\"
         // The supervisor only ever acts on a service it watched die, so a
         // blocked one stays blocked.
         assert!(plan_supervision(1_000, |_| false).is_empty());
+    }
+
+    #[test]
+    fn rendering_a_config_is_the_inverse_of_parsing_one() {
+        // Every field, in both kinds, so the writer cannot quietly drop one.
+        let mut thread = definition("kworker", false);
+        thread.kind = ServiceKind::KernelThread;
+        thread.path = None;
+        thread.entry = Some(String::from("demo_worker_a"));
+
+        let mut privileged = definition("netd", true);
+        privileged.security = ServiceSecurity::Admin;
+        privileged.account = Some(String::from("netadmin"));
+        privileged.args = vec![String::from("--listen"), String::from(":443")];
+        privileged.after = vec![String::from("logger")];
+
+        let services = vec![thread, privileged];
+        let text = render_config(&services);
+
+        assert_eq!(parse_service_config(&text).expect("parse"), services);
+    }
+
+    #[test]
+    fn the_default_set_round_trips_through_its_written_form() {
+        // The demo disk ships exactly this text, so the property that matters
+        // is that reading it back gives the list the kernel would have used.
+        let services = default_definitions();
+        let text = render_config(&services);
+        assert_eq!(parse_service_config(&text).expect("parse"), services);
+
+        let names: Vec<&str> = services.iter().map(|svc| svc.name.as_str()).collect();
+        for expected in ["kworker-a", "kworker-b", "kworker-syscall-fs", "shell"] {
+            assert!(names.contains(&expected), "{names:?} lacks {expected}");
+        }
+
+        // And the one restart in the set comes from the machine's list, not
+        // from a copy that could drift away from it.
+        assert_eq!(
+            services.iter().filter(|svc| svc.auto_restart).count(),
+            crate::arch::platform::demo_user_programs()
+                .iter()
+                .filter(|(_, restart)| *restart)
+                .count()
+        );
     }
 }

@@ -220,7 +220,8 @@ pub fn build_demo_disk_image_with_key(_key: &str) -> Vec<u8> {
     build_demo_disk_image()
 }
 
-/// Build the system zone from the shared files and one init ELF.
+/// Build the system zone from the shared files, one init ELF, and the
+/// distribution's service declarations.
 ///
 /// The caller passes the bytes rather than a name, because the two targets
 /// that share this differ only in where their placeholder came from: what the
@@ -228,6 +229,10 @@ pub fn build_demo_disk_image_with_key(_key: &str) -> Vec<u8> {
 ///
 /// The ELF lands at `/init.elf` so the kernel finds it at `/system/init.elf`,
 /// which is the default init path (`DEFAULT_INIT_PATH`).
+///
+/// `/rc.d/defaults.toml` is rendered from the same list the kernel falls back
+/// to when a disk has no declarations, so a stock boot exercises the declared
+/// path and a disk without one still runs the same system.
 pub(crate) fn build_system_zone_from(init_elf: &[u8]) -> Result<Vec<u8>> {
     let mut entries: alloc::vec::Vec<ImageEntry<'_>> = alloc::vec::Vec::new();
     for entry in SYSTEM_FILES {
@@ -237,5 +242,62 @@ pub(crate) fn build_system_zone_from(init_elf: &[u8]) -> Result<Vec<u8>> {
         path: "/init.elf",
         data: init_elf,
     });
+    // Written where the build has the demo at all: the declarations name the
+    // prototype programs, and a build without them packages none to name.
+    // The text outlives `entries`, which borrows it until the image is built.
+    #[cfg(any(feature = "demo-disk", test))]
+    let declarations =
+        crate::kernel::service::render_config(&crate::kernel::service::default_definitions());
+    #[cfg(any(feature = "demo-disk", test))]
+    entries.push(ImageEntry {
+        path: "/rc.d/defaults.toml",
+        data: declarations.as_bytes(),
+    });
     SimpleFs::build_image(StorageZone::System.volume_label(), &entries)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, any(feature = "demo-disk", test)))]
+mod tests {
+    use super::*;
+    use crate::fs::block::MemoryBlockDevice;
+    use crate::fs::simplefs::SimpleFsVolume;
+    use crate::fs::vfs::FileSystem as VfsFileSystem;
+    use crate::kernel::service;
+
+    /// Read a whole file out of a freshly built zone image.
+    fn read_from_zone(image: Vec<u8>, path: &str) -> Vec<u8> {
+        let device = MemoryBlockDevice::new("system", image, true);
+        let volume = SimpleFsVolume::new(SimpleFs::open(device, true).expect("open the zone"));
+        let node = volume.lookup(path).expect("the entry");
+        let mut buffer = alloc::vec![0u8; node.size()];
+        let read = node.read(0, &mut buffer).expect("read the entry");
+        buffer.truncate(read);
+        buffer
+    }
+
+    #[test]
+    fn the_system_zone_ships_the_declarations_the_kernel_falls_back_to() {
+        // The demo disk's `/system/rc.d` and the kernel's fallback are one
+        // list in two forms.  If they were two lists, a boot would still work
+        // — and would be running something the distribution never declared.
+        let image = build_system_zone_from(b"init").expect("build the system zone");
+        let text = read_from_zone(image, "/rc.d/defaults.toml");
+        let text = core::str::from_utf8(&text).expect("the declarations are UTF-8");
+
+        assert_eq!(
+            service::parse_service_config(text).expect("parse the shipped declarations"),
+            service::default_definitions()
+        );
+    }
+
+    #[test]
+    fn the_system_zone_still_carries_the_init_program_and_the_shared_files() {
+        let image = build_system_zone_from(b"init").expect("build the system zone");
+        assert_eq!(read_from_zone(image.clone(), "/init.elf"), b"init");
+        assert!(!read_from_zone(image, "/runtime/README.txt").is_empty());
+    }
 }

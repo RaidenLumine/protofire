@@ -47,14 +47,6 @@ pub mod user;
 #[cfg(target_os = "none")]
 pub mod vm_churn;
 
-// Only the demo-gated embedded-service helper builds a `ServiceDefinition`
-// by hand; the config-driven path takes ownership of already-allocated
-// strings from the parser.
-#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-use alloc::string::String;
-#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-use alloc::vec::Vec;
-
 use crate::arch;
 use crate::println;
 #[cfg(any(test, target_os = "none"))]
@@ -595,8 +587,9 @@ impl Kernel {
     /// filesystem. Falls back to an embedded configuration that matches the
     /// previous hard-coded behaviour when no config files are present.
     ///
-    /// TODO(init): The embedded fallback config will move to protofire-os once
-    /// the demo-disk builder also writes the rc.d config files.
+    /// The demo disk ships `/system/rc.d/defaults.toml`, written by the same
+    /// builder from the same list this falls back to, so a stock boot takes the
+    /// declaration path and only a disk without one uses the list directly.
     #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
     fn spawn_system_programs(&self) {
         // Start the supervisor before any service, so a service that dies
@@ -604,17 +597,32 @@ impl Kernel {
         self.scheduler
             .spawn_kernel_named(SERVICE_SUPERVISOR_NAME, service_supervisor_entry);
 
+        // What this machine prepared for its prototype programs, if anything.
+        crate::arch::platform::describe_user_slots();
+
         // Try loading service definitions from the boot filesystem.
         let fs = self.fs.lock();
         let services = service::load_services_from_fs(&fs, service::SERVICE_CONFIG_DIR);
         drop(fs);
 
         if services.is_empty() {
-            // Fall back to the embedded default configuration.
-            self.spawn_embedded_default_services();
-        } else {
-            self.spawn_service_list(&services);
+            // The disk declares nothing, so use the set it would have shipped.
+            // Same list, same order, same services — the difference is only
+            // where the declarations came from.
+            println!(
+                "[service] no declarations in {}; starting the built-in set",
+                service::SERVICE_CONFIG_DIR
+            );
+            self.spawn_service_list(&service::default_definitions());
+            return;
         }
+
+        println!(
+            "[service] {} declaration(s) in {}",
+            services.len(),
+            service::SERVICE_CONFIG_DIR
+        );
+        self.spawn_service_list(&services);
     }
 
     /// Spawn services from a parsed list of service definitions.
@@ -669,90 +677,6 @@ impl Kernel {
                     .map(|launched| launched.process.pid())
             },
         )
-    }
-
-    /// Register and spawn one embedded default service.
-    ///
-    /// The embedded defaults have no `/system/rc.d` declaration behind them, so
-    /// this synthesises one.  That keeps the record `/service` reports for them
-    /// the same shape as a config-driven service's, instead of the registry
-    /// having two kinds of entry.
-    #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-    fn spawn_embedded_service(
-        &self,
-        name: &str,
-        kind: service::ServiceKind,
-        target: &str,
-        auto_restart: bool,
-        now_tick: u64,
-    ) {
-        let is_user_program = matches!(kind, service::ServiceKind::UserProgram);
-        let definition = service::ServiceDefinition {
-            name: String::from(name),
-            kind,
-            path: is_user_program.then(|| String::from(target)),
-            entry: (!is_user_program).then(|| String::from(target)),
-            args: Vec::new(),
-            after: Vec::new(),
-            auto_restart,
-            security: service::ServiceSecurity::Guest,
-            account: None,
-        };
-
-        service::register(&definition, now_tick);
-        self.spawn_service(&definition, now_tick, false);
-    }
-
-    /// Embedded default services that match the previous hard-coded behaviour.
-    ///
-    /// This is transitional — the distribution should provide
-    /// `/system/rc.d/defaults.toml` instead.  Every service here is registered
-    /// with `auto_restart = false`, for two reasons: the demo programs are
-    /// one-shot by design — the fault demos exist to crash — and the shell must
-    /// stay down once the user exits it, or `exit` would mean "come back in two
-    /// seconds".  Restarting is additionally broken today; see
-    /// [`service_supervisor_entry`].
-    #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-    fn spawn_embedded_default_services(&self) {
-        let now_tick = self.scheduler.current_tick();
-
-        for (name, entry) in [
-            ("kworker-a", "demo_worker_a"),
-            ("kworker-b", "demo_worker_b"),
-            ("kworker-syscall-fs", "demo_syscall_fs_worker"),
-        ] {
-            self.spawn_embedded_service(
-                name,
-                service::ServiceKind::KernelThread,
-                entry,
-                false,
-                now_tick,
-            );
-        }
-
-        println!(
-            "[init  ] spawning shell ({})...",
-            program::SHELL_CURRENT_PATH
-        );
-        self.spawn_embedded_service(
-            "shell",
-            service::ServiceKind::UserProgram,
-            program::SHELL_CURRENT_PATH,
-            false,
-            now_tick,
-        );
-        println!("[init  ] shell spawn complete");
-
-        crate::arch::platform::describe_user_slots();
-        for (launch_reference, auto_restart) in crate::arch::platform::demo_user_programs() {
-            self.spawn_embedded_service(
-                &service_name_for_program(launch_reference),
-                service::ServiceKind::UserProgram,
-                launch_reference,
-                *auto_restart,
-                now_tick,
-            );
-        }
     }
 
     #[allow(dead_code)]
@@ -1145,25 +1069,6 @@ fn transaction_log_entry_kind_label(kind: crate::fs::NodeKind) -> &'static str {
 // Maps worker entry names (from service config files) to kernel thread
 // entry-point functions.  Extended by the distribution when it needs
 // additional kernel worker threads.
-
-/// Derive a service name from a program path.
-///
-/// `/system/demo-fault.elf` becomes `demo-fault` and
-/// `/apps/current/shell.toml` becomes `shell`.  A service name is one path
-/// component in `/service`, so it cannot contain a slash, and neither the
-/// directory nor the extension carries information the registry does not
-/// already hold — the full path is still in `/service/<name>/describe`.
-#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-fn service_name_for_program(path: &str) -> String {
-    let file = path.rsplit('/').next().unwrap_or(path);
-    let stem = match file.rsplit_once('.') {
-        // A leading dot names a hidden file rather than an extension, so
-        // `.profile` keeps its name.
-        Some((stem, _extension)) if !stem.is_empty() => stem,
-        _ => file,
-    };
-    String::from(stem)
-}
 
 /// How often the supervisor thread wakes up, in scheduler ticks.
 ///

@@ -569,6 +569,12 @@ control that are unusual in a hobby kernel.
   failing later for an unattributable one.  `after` says nothing about what the
   other service achieves — a daemon is not "done" when it is spawned — which is
   why the mechanism orders and attributes rather than waits.
+- **The disk declares, the kernel falls back**: the demo disk ships
+  `/system/rc.d/defaults.toml`, rendered by the demo-disk builder from
+  `service::default_definitions()` — the same list the kernel uses when a disk
+  declares nothing — so the two cannot drift into "the disk says one thing and
+  the boot runs another".  A stock boot reads the declarations off the disk and
+  says so in the log (`N declaration(s) in /system/rc.d`).
 - **Code integrity**: SHA-256 over the launch manifest and payload, plus
   optional detached signatures verified against trusted public keys under
   `/system/trusted-keys`; a seccomp (#129) syscall filter for process

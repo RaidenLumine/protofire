@@ -73,7 +73,7 @@ fs                           crypto                       9
 fs                           kernel_log                   1
 fs                           memory                       5
 fs                           security                     29
-fs                           service                      3
+fs                           service                      5
 fs                           sync                         34
 heartbeat                    process                      1
 io                           device                       10
