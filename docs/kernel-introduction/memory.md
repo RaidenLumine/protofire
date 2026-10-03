@@ -41,13 +41,13 @@ memory map and records the total physical RAM in a global atomic:
 static DETECTED_PHYSICAL_MEMORY: AtomicU64 = AtomicU64::new(0);
 ```
 
-- `store_detected_memory(size: usize)` (line 23) — called **once** during early
+- `store_detected_memory(size: usize)` — called **once** during early
   boot, before `MemoryManager::init()`.  Stores the value with `Release`
   ordering.
-- `detected_memory() -> Option<usize>` (line 31) — reads with `Acquire`
+- `detected_memory() -> Option<usize>` — reads with `Acquire`
   ordering; returns `None` if no detection has run (i.e. the atomic is still
   zero).
-- `detect_memory() -> usize` (line 123) — the internal fallback: if the atomic
+- `detect_memory() -> usize` — the internal fallback: if the atomic
   is non-zero it is returned, otherwise the caller gets
   `frame::physical_pool_size()` (32 MiB).
 
@@ -110,7 +110,7 @@ biasing the scheduler to steal from CPUs that share the same memory node.
 
 ### Allocation strategy
 
-`allocate(count)` (line 66) uses a **hybrid approach**:
+`allocate(count)` uses a **hybrid approach**:
 
 1. **Reuse from free ranges** — first-fit search over `free_ranges` (ascending
    address order via `BTreeMap` iteration).  If a hole of sufficient size is
@@ -119,7 +119,7 @@ biasing the scheduler to steal from CPUs that share the same memory node.
    (`next_frame`) is advanced.
 3. All returned frames are **zeroed** via `write_bytes`.
 
-`deallocate(ptr, count)` (line 98) inserts the freed range into `free_ranges`,
+`deallocate(ptr, count)` inserts the freed range into `free_ranges`,
 **coalescing adjacent ranges** both forward and backward.  If the freed range
 touches the bump tail, the tail is eagerly rewound so future allocations reuse
 the reclaimed region.
@@ -166,7 +166,7 @@ Key operations:
 | `lookup_mapping(va)` | As above, also returns `MappingKind` |
 
 Mappings **must not overlap** in the virtual address space — the `overlaps()`
-check (line 383) rejects conflicting ranges.  `unmap` handles partial overlap
+check rejects conflicting ranges.  `unmap` handles partial overlap
 by splitting the existing mapping into prefix and suffix fragments.
 
 ### MappingKind
@@ -186,7 +186,7 @@ pub enum MappingKind {
 
 ### PagePermissions
 
-A 3-bit bitfield (line 47):
+A 3-bit bitfield:
 
 ```rust
 pub struct PagePermissions(u8);
@@ -230,7 +230,7 @@ pub struct MemoryManager {
 
 ### Initialisation
 
-`MemoryManager::init()` (in `manager/init.rs`, line 28):
+`MemoryManager::init()` (in `manager/init.rs`):
 
 1. Calls `detect_memory()` to determine total physical RAM.
 2. Initialises the `FrameAllocator` with that size.
@@ -305,18 +305,18 @@ pub fn unregister_user_page_range(
 ) -> usize
 ```
 
-`register_user_pages` (line 156) iterates over a slice of `(va, pa, perms,
+`register_user_pages` iterates over a slice of `(va, pa, perms,
 kind)` tuples, skipping any that would conflict with kernel mappings
 (`KernelHeap`, `Identity`, `DeviceMemory`).  Existing user mappings at the same
 VA are silently replaced (unmapped first).
 
-`unregister_user_page_range` (line 210) removes user mappings (`Anonymous`,
+`unregister_user_page_range` removes user mappings (`Anonymous`,
 `DemandPaged`, `Cow`, `Shared`), decrements CoW frame refcounts, and frees any
 associated swap slots.
 
 ### Diagnostic Probes
 
-`page_fault_insight(va)` (line 91) assembles a layered diagnostic snapshot:
+`page_fault_insight(va)` assembles a layered diagnostic snapshot:
 
 - Current runtime translation (from `PageTable::lookup_mapping`).
 - Bootstrap translation (x86_64 identity mapping, via
@@ -370,7 +370,7 @@ pub(crate) struct AllocatorState {
 
 ### Allocation Algorithm
 
-`allocate_locked` (heap/allocator.rs, line 118):
+`allocate_locked` (in `heap/allocator.rs`):
 
 1. Compute `min_block_size` from the requested `Layout` (size + alignment
    padding + header).
@@ -387,7 +387,7 @@ block being found again via the same bitmap entry).
 
 ### Deallocation and Coalescing
 
-`deallocate_locked` (line 281):
+`deallocate_locked`:
 
 1. Validate the pointer: must be non-null, within `[start, end)`, and marked
    used.

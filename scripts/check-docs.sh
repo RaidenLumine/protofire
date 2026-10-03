@@ -24,20 +24,29 @@
 #    `testing.md` writes `manager.rs` and means `tests/memory/manager.rs`; the
 #    subject that makes a relative citation resolvable is prose, so the check
 #    is by name.
-# 3. A line-number citation (`foo.rs:123`) is a failure outright.  Line numbers
-#    rot: the two this tree carried had drifted by more than 170 lines before
-#    they were removed, and nothing can check one without parsing Rust.  Cite
-#    the file and name the symbol; the symbol is what a reader searches for.
+# 3. A line-number citation is a failure outright, in either the backticked
+#    form (`foo.rs:123`) or the prose form (`` `symbol` (line 123) ``).  Line
+#    numbers rot: the ones this tree carried had drifted before they were
+#    removed, and nothing can check one without parsing Rust.  Cite the file and
+#    name the symbol; the symbol is what a reader searches for.
 # 4. A relative Markdown link must resolve from the document that holds it.
 #    This one is exact, and it is the only check here that can be.
 #
 # What is not checked
 # -------------------
-# Numbers, and prose.  "40 network syscalls" and "10,824 lines of x86_64 code"
-# both need a definition of the set before a machine can count it, and neither
-# definition is written down; the status document records them as unverified
-# rather than guessing.  A sentence like "the ring buffer is installed" is a
-# claim about behaviour, and no document checker can settle it.
+# Prose, and the interface constants that the code itself owns.  A sentence
+# like "the ring buffer is installed" is a claim about behaviour, and no
+# document checker can settle it.  Hand-maintained counts are a different case:
+# they are not checked here because they are not allowed to exist at all — see
+# the next paragraph.
+#
+# Volatile figures are not checked because they are not supposed to be written
+# down.  Line counts, file counts, test counts, and completion percentages all
+# change with every commit; a number maintained by hand is a number that will
+# eventually be wrong, and a document full of them reads as authoritative while
+# it drifts.  Name the file or the constant instead — a constant the code owns
+# cannot disagree with the code.  The status document states this policy in its
+# own opening paragraph.
 #
 # One consequence of (1) and (2) is worth stating because it bites: a document
 # may not name an absent file *as a file*.  Write "there is no `net` module",
@@ -89,6 +98,7 @@ trap cleanup EXIT INT TERM
 
 : > "$work/citations"
 : > "$work/links"
+: > "$work/stale"
 
 # Every Markdown file in the tree, not just the ones under `docs/`: the root
 # documents cite the code as often as the reference pages do.  `target/` is
@@ -121,9 +131,17 @@ for doc in $(find . -name '*.md' -not -path './target/*' -not -path './.git/*' |
             }
         }
     ' "$doc" >> "$work/links"
+
+    # (3b): the prose form of a line-number citation.  Check (3) sees the
+    # backticked form only, because its pattern stops at the closing backtick;
+    # a document that writes `` `symbol` (line 123) `` rots exactly the same way
+    # and would otherwise pass.
+    grep -nE '\(line [0-9]+\)' "$doc" 2>/dev/null | while IFS=: read -r line text; do
+        printf '%s:%s: line-number citation `%s` — cite the file and name the symbol\n' \
+            "$doc" "$line" "$text" >> "$work/stale"
+    done
 done
 
-: > "$work/stale"
 citations=0
 links=0
 
