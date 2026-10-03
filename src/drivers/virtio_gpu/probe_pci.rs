@@ -88,7 +88,7 @@ pub(crate) fn and_init() -> Option<()> {
             return None;
         }
 
-        super::init_gpu_device(transport)
+        crate::drivers::virtio_gpu::init_gpu_device(transport)
     } else {
         // ── Fallback: legacy IO-port BAR ──
         let io_bar = device
@@ -111,7 +111,7 @@ pub(crate) fn and_init() -> Option<()> {
             return None;
         }
 
-        super::init_gpu_device(transport)
+        crate::drivers::virtio_gpu::init_gpu_device(transport)
     };
 
     let (_w, _h) = result?;

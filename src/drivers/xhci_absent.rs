@@ -9,10 +9,10 @@
 
 use alloc::sync::Arc;
 
-use super::Driver;
-use super::DriverCategory;
+use crate::drivers::Driver;
+use crate::drivers::DriverCategory;
 
-pub use super::xhci_protocol::*;
+pub use crate::drivers::xhci_protocol::*;
 
 struct XhciDriver;
 

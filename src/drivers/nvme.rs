@@ -2,10 +2,10 @@
 //!
 //! NVMe driver: the controller, on the machines that have one.
 //!
-//! The wire format lives in [`super::nvme_protocol`]; what this file adds is
-//! the machine's half — mapping the controller's BAR, bringing it up, driving
-//! its queues, and offering the result as a block device.  The probe is PCI,
-//! so this is compiled where that bus exists; a machine without it answers
+//! The wire format lives in [`crate::drivers::nvme_protocol`]; what this file
+//! adds is the machine's half — mapping the controller's BAR, bringing it up,
+//! driving its queues, and offering the result as a block device.  The probe is
+//! PCI, so this is compiled where that bus exists; a machine without it answers
 //! under the same module name from `nvme_absent.rs`.
 
 use crate::drivers::Driver;
@@ -17,7 +17,7 @@ use alloc::sync::Arc;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
 
-pub use super::nvme_protocol::*;
+pub use crate::drivers::nvme_protocol::*;
 
 // ─── MSI-X interrupt vectors ─────────────────────────────────────────
 

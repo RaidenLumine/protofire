@@ -13,20 +13,13 @@
 //! `drivers/mod.rs` name no architecture at all.
 //!
 //! The modules are compiled through `#[path]` because they belong to the
-//! driver framework rather than to this directory.  `super::` inside them
-//! therefore resolves to this module, which is why the names they expect are
-//! re-exported below.
+//! driver framework rather than to this directory.  Each one names its own
+//! dependencies absolutely, so what follows is the machine's device list and
+//! nothing else.
 
 use alloc::sync::Arc;
 
 use crate::kernel::block::BlockDevice;
-
-pub use crate::drivers::framebuffer_protocol;
-pub use crate::drivers::hda_protocol;
-pub use crate::drivers::nvme_protocol;
-pub use crate::drivers::xhci_protocol;
-pub use crate::drivers::Driver;
-pub use crate::drivers::DriverCategory;
 
 /// Whether this machine has a PC speaker (PIT channel 2).
 ///
@@ -44,10 +37,6 @@ pub(crate) mod protocol;
 /// stub that answers under the same name.
 #[path = "../../drivers/virtio_input/absent.rs"]
 pub(crate) mod virtio_input_mmio;
-
-/// The driver's own constructor, which the probe below hands its transport to.
-#[cfg(target_os = "none")]
-use crate::drivers::virtio_gpu::init_gpu_device;
 
 /// How this machine finds a virtio-gpu device: a PCI function whose BAR is
 /// mapped and driven through the transport abstraction.

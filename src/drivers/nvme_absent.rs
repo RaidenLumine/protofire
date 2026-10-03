@@ -7,12 +7,12 @@
 //! its probe answers.  Nothing else is compiled: there is no BAR to map and no
 //! queue to drive.
 
-pub use super::nvme_protocol::*;
+pub use crate::drivers::nvme_protocol::*;
 
 use alloc::sync::Arc;
 
-use super::Driver;
-use super::DriverCategory;
+use crate::drivers::Driver;
+use crate::drivers::DriverCategory;
 
 struct NvmeDriver;
 

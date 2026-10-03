@@ -5,12 +5,12 @@
 //! The controller is discovered via PCI (class 0x04, subclass 0x03), brought
 //! up through its CORB/RIRB engines, and driven from the bare-metal device
 //! node.  The register map and the codec protocol are in
-//! [`super::hda_protocol`]; this file is the machine's half, so it is compiled
-//! where that controller exists, and a machine without one answers under the
-//! same module name from `hda_absent.rs`.
+//! [`crate::drivers::hda_protocol`]; this file is the machine's half, so it is
+//! compiled where that controller exists, and a machine without one answers
+//! under the same module name from `hda_absent.rs`.
 
-use super::hda_protocol::*;
 use crate::arch::mmu::map_device_mmio;
+use crate::drivers::hda_protocol::*;
 use crate::memory::DmaBuffer;
 use crate::println;
 use crate::Result;

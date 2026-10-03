@@ -11,7 +11,7 @@ use alloc::sync::Arc;
 use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
 
-pub use super::framebuffer_protocol::*;
+pub use crate::drivers::framebuffer_protocol::*;
 
 struct FramebufferDriver;
 

@@ -17,12 +17,12 @@
 //! - MSI-X interrupt wiring: deferred (polled event ring via timer tick)
 //!
 //! The register map and the USB structures live in
-//! [`super::xhci_protocol`]; this file is the machine's half, which is why it
-//! is compiled where PCI and BAR0 mapping exist.  A machine without them
+//! [`crate::drivers::xhci_protocol`]; this file is the machine's half, which is
+//! why it is compiled where PCI and BAR0 mapping exist.  A machine without them
 //! answers under the same module name from `xhci_absent.rs`.
 
-use super::xhci_protocol::*;
 use crate::arch::mmu::map_device_mmio;
+use crate::drivers::xhci_protocol::*;
 use crate::memory::DmaBuffer;
 use crate::println;
 use crate::Result;

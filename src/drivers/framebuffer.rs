@@ -5,9 +5,10 @@
 //! The device is found on PCI (vendor 0x1234, device 0x1111), its linear
 //! framebuffer and its VBE register block are mapped, a mode is set, and the
 //! framebuffer console is installed.  The register map and the record its
-//! consumers share are in [`super::framebuffer_protocol`]; this file is the
-//! machine's half, so it is compiled where that device exists, and a machine
-//! without one answers under the same module name from `framebuffer_absent.rs`.
+//! consumers share are in [`crate::drivers::framebuffer_protocol`]; this file
+//! is the machine's half, so it is compiled where that device exists, and a
+//! machine without one answers under the same module name from
+//! `framebuffer_absent.rs`.
 
 use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
@@ -16,7 +17,7 @@ use alloc::sync::Arc;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
 
-pub use super::framebuffer_protocol::*;
+pub use crate::drivers::framebuffer_protocol::*;
 
 // ---------------------------------------------------------------------------
 // PCI identifiers

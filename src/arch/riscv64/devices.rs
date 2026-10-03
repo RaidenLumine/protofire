@@ -16,13 +16,6 @@ use alloc::sync::Arc;
 
 use crate::kernel::block::BlockDevice;
 
-pub use crate::drivers::framebuffer_protocol;
-pub use crate::drivers::hda_protocol;
-pub use crate::drivers::nvme_protocol;
-pub use crate::drivers::xhci_protocol;
-pub use crate::drivers::Driver;
-pub use crate::drivers::DriverCategory;
-
 /// This machine has no PC speaker.
 pub const HAS_PC_SPEAKER: bool = false;
 
@@ -40,10 +33,6 @@ pub(crate) mod virtio_input_mmio;
 #[cfg(not(target_os = "none"))]
 #[path = "../../drivers/virtio_input/absent.rs"]
 pub(crate) mod virtio_input_mmio;
-
-/// The driver's own constructor, which the probe below hands its transport to.
-#[cfg(target_os = "none")]
-use crate::drivers::virtio_gpu::init_gpu_device;
 
 /// How this machine finds a virtio-gpu device: on the VirtIO MMIO bus its
 /// device tree describes.

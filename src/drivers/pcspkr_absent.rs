@@ -10,8 +10,8 @@ use alloc::sync::Arc;
 
 use crate::Result;
 
-use super::Driver;
-use super::DriverCategory;
+use crate::drivers::Driver;
+use crate::drivers::DriverCategory;
 
 struct PcspkrDriver;
 
