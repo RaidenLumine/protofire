@@ -74,14 +74,12 @@ use super::super::TerminationReason;
 
 pub(crate) fn idle_entry() {}
 
-#[cfg(all(
-    any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "riscv64"
-    ),
-    target_os = "none"
-))]
+/// The entry a bare-metal context switch lands in for a new thread.
+///
+/// Compiled where there is a context switch to land here from; see the
+/// re-export in `scheduler/mod.rs` for why the condition is "bare metal"
+/// rather than a list of architectures.
+#[cfg(target_os = "none")]
 pub extern "C" fn thread_trampoline() -> ! {
     let thread = Scheduler::global().and_then(|scheduler| scheduler.current_thread());
 

@@ -40,12 +40,12 @@ impl UserThreadStart {
         }
     }
 
-    #[cfg(any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "riscv64",
-        test
-    ))]
+    /// Check the start's addresses before anything is built from them.
+    ///
+    /// Every configuration reaches this: each architecture's own thread
+    /// preparation validates through here (`src/arch/thread.rs` and the
+    /// per-architecture modules), so the list of architectures that used to
+    /// gate it was the list of targets this crate has, written out.
     pub(crate) fn validate(self) -> Result<Self> {
         if self.instruction_pointer == 0 || !is_canonical_user_address(self.instruction_pointer) {
             return Err(Error::InvalidArgument);

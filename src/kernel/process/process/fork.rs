@@ -185,11 +185,10 @@ impl Process {
     /// valid process identity and would corrupt the parent's child table and
     /// the fork return value), then create a child user thread and register
     /// the child process with the scheduler.
-    #[cfg(any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "riscv64"
-    ))]
+    /// Fork this process, on every target this crate builds for.
+    ///
+    /// The list of architectures that used to gate this was the list of
+    /// targets the crate has, written out; what it meant was "this kernel".
     pub fn fork(
         self: &Arc<Process>,
         memory: &mut crate::memory::MemoryManager,

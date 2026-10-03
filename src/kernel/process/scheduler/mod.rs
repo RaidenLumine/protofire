@@ -50,14 +50,12 @@ pub use api::on_timer_tick_with_preemption;
 pub use api::sleep_current;
 pub use api::terminate_current;
 pub use api::terminate_current_with_reason;
-#[cfg(all(
-    any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "riscv64"
-    ),
-    target_os = "none"
-))]
+// The trampoline is what a bare-metal context switch enters a new thread at;
+// a host runs its threads from the entry point the caller named.  The list of
+// architectures that used to be here was the list of targets this crate has,
+// written out — the condition it meant is "bare metal" (`thread/entry.rs`
+// makes the same substitution where it takes the trampoline's address).
+#[cfg(target_os = "none")]
 pub use api::thread_trampoline;
 pub use api::yield_current;
 pub(crate) use types::SchedulerHotspotStats;
