@@ -504,11 +504,18 @@ pub enum KernelObject {
     Network(TcpConnection),
     TcpListener(TcpListener),
     UdpSocket(UdpSocket),
+    DccpSocket(DccpSocket),
     RawSocket(RawSocketHandle),
     LocalSocket(Arc<LocalSocket>),
     TlsConnection(Arc<TlsWrappedConnection>),
     Process(ProcessId),
     Thread(ThreadId),
+    EventFd(Arc<EventFdState>),
+    SignalFd(Arc<SignalFdState>),
+    TimerFd(Arc<TimerFdState>),
+    Mqueue(Arc<Mutex<MqState>>),
+    Epoll(Arc<Mutex<EpollState>>),
+    IoUring(Arc<IoUringState>),
 }
 ```
 
@@ -521,14 +528,43 @@ pub struct HandleEntry {
 }
 ```
 
+### Object Shapes (`src/kernel/process/process/object_shape.rs`)
+
+An entry stores an object and the rights to it.  What a program can *do* with
+the object is its **shape**, and the shape is declared once, one row per kind,
+in the table `KernelObjectKind::shape`.  A kind belongs to one of three
+faces:
+
+| Face | Reached by | Examples |
+|------|------------|----------|
+| `File` | its path, and by handle | file, directory, device |
+| `Stream` | a handle only, read or written as a stream | TCP/TLS connection, eventfd, message queue |
+| `Control` | a handle only, driven by dedicated syscalls | process/thread, epoll, io_uring |
+
+A file- or stream-faced object asked for an operation outside its shape
+answers `InvalidArgument` (it has an interface, this is not part of it); a
+control-faced object answers `Unsupported` (it has no such interface).  Each
+row also records whether the object is path-reachable, directory-capable,
+readable or writable through the stream interface, pollable for readiness, and
+visible to `stat`.
+
+`KernelObject::kind` turns an object into its data-free `KernelObjectKind`, and
+that match is what keeps the table honest: adding a variant fails it, so a new
+object cannot join the kernel without declaring its shape.  The handle
+operations ask `KernelObject::shape` (or `HandleEntry::shape`) instead of
+deciding per variant, so a row and the behaviour built on it cannot drift
+apart.
+
 ### Handle Operations (`src/kernel/process/process/handle_entry.rs`)
 
 - `read_stream(buffer, timeout)`: Dispatches to `Device::read`,
-  `TcpConnection::read`, `OpenFile::read`, etc. based on `KernelObject` variant.
+  `TcpConnection::read`, `OpenFile::read`, etc. for the kinds whose shape is
+  readable; anything else answers its face's error.
 - `write_stream(buffer)`: Dispatches similarly for writes.
 - `is_readable()` / `is_writable()`: Returns readiness status without blocking.
   File and Device always report readable/writable; network objects delegate to
-  the underlying connection or socket.
+  the underlying connection or socket; a kind outside the poll shape answers
+  its face's error.
 - `public_file_stat_record()`: Produces an `fs_abi::FileStat` for stat-like
   queries.
 - `reopen_handle_in(process)` / `reopen_descriptor_in(process)`: Duplicates the

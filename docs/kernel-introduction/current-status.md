@@ -115,7 +115,7 @@ input, mostly verified under QEMU.
 | File descriptor table | Per-process table, dup/dup2/F_DUPFD, close-on-exec, inheritance across spawn | No descriptor passing between processes |
 | Pipe | VFS-backed anonymous pipe, fcntl-resizable buffer, per-end O_NONBLOCK | No splice/tee; no named-pipe filesystem entry |
 | Block cache | Fixed-size LRU, write-through for metadata and write-back for data, prefetch, dirty aging by the maintenance thread | Capacity is a fixed constant, so a large working set thrashes; no real-disk benchmark |
-| Handle table | `KernelObject` + `HandleEntry { rights }`, indexed by descriptor | Rights are only read and write, so a capability that needs anything finer has to be a syscall |
+| Handle table | `KernelObject` + `HandleEntry { rights }` with a per-kind shape table, indexed by descriptor | Rights are only read and write, so a capability that needs anything finer has to be a syscall |
 | Console I/O | One global console device, Ctrl-C handling, ring-3 reads through fd 0 | One console for the whole machine; no per-terminal isolation |
 
 **Strengths:** complete file-descriptor and pipe semantics with runtime pipe and

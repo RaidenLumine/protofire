@@ -32,24 +32,11 @@ pub fn home_dir_for_uid(uid: UserId) -> String {
 impl HandleEntry {
     pub(crate) fn is_directory_like(&self) -> bool {
         match &self.object {
-            KernelObject::Directory(_) => true,
+            // A file handle may have been opened on a directory, so the shape
+            // says the file face is directory-capable and the runtime kind
+            // decides whether this one is.
             KernelObject::File(file) => file.kind() == crate::fs::NodeKind::Directory,
-            KernelObject::Device(_)
-            | KernelObject::Network(_)
-            | KernelObject::TlsConnection(_)
-            | KernelObject::TcpListener(_)
-            | KernelObject::UdpSocket(_)
-            | KernelObject::DccpSocket(_)
-            | KernelObject::RawSocket(_)
-            | KernelObject::LocalSocket(_)
-            | KernelObject::Process(_)
-            | KernelObject::Thread(_)
-            | KernelObject::EventFd(_)
-            | KernelObject::SignalFd(_)
-            | KernelObject::TimerFd(_)
-            | KernelObject::Mqueue(_)
-            | KernelObject::Epoll(_)
-            | KernelObject::IoUring(_) => false,
+            other => other.shape().directory,
         }
     }
 
@@ -59,23 +46,10 @@ impl HandleEntry {
             KernelObject::File(file) if file.kind() == crate::fs::NodeKind::Directory => {
                 Ok(file.path())
             }
-            KernelObject::File(_)
-            | KernelObject::Device(_)
-            | KernelObject::Network(_)
-            | KernelObject::TlsConnection(_)
-            | KernelObject::TcpListener(_)
-            | KernelObject::UdpSocket(_)
-            | KernelObject::DccpSocket(_)
-            | KernelObject::RawSocket(_)
-            | KernelObject::LocalSocket(_) => Err(Error::InvalidArgument),
-            KernelObject::Process(_)
-            | KernelObject::Thread(_)
-            | KernelObject::EventFd(_)
-            | KernelObject::SignalFd(_)
-            | KernelObject::TimerFd(_)
-            | KernelObject::Mqueue(_)
-            | KernelObject::Epoll(_)
-            | KernelObject::IoUring(_) => Err(Error::Unsupported),
+            // Anything else answers what its face answers to an operation
+            // outside it: a file-faced object is an invalid argument, a
+            // control object is unsupported.
+            other => Err(other.shape().face.outside()),
         }
     }
 
@@ -83,22 +57,7 @@ impl HandleEntry {
         match &self.object {
             KernelObject::Directory(path) => Ok(path.as_str()),
             KernelObject::File(file) => Ok(file.path()),
-            KernelObject::Device(_)
-            | KernelObject::Network(_)
-            | KernelObject::TlsConnection(_)
-            | KernelObject::TcpListener(_)
-            | KernelObject::UdpSocket(_)
-            | KernelObject::DccpSocket(_)
-            | KernelObject::RawSocket(_)
-            | KernelObject::LocalSocket(_) => Err(Error::InvalidArgument),
-            KernelObject::Process(_)
-            | KernelObject::Thread(_)
-            | KernelObject::EventFd(_)
-            | KernelObject::SignalFd(_)
-            | KernelObject::TimerFd(_)
-            | KernelObject::Mqueue(_)
-            | KernelObject::Epoll(_)
-            | KernelObject::IoUring(_) => Err(Error::Unsupported),
+            other => Err(other.shape().face.outside()),
         }
     }
 
@@ -114,23 +73,12 @@ impl HandleEntry {
             KernelObject::Device(name) => Ok(device::device_metadata(name)
                 .map(|metadata| metadata.public_stat_record())
                 .unwrap_or_else(|| synthetic_public_file_stat_record(NodeKind::Device, 0))),
-            KernelObject::Network(_)
-            | KernelObject::TlsConnection(_)
-            | KernelObject::TcpListener(_)
-            | KernelObject::UdpSocket(_)
-            | KernelObject::DccpSocket(_)
-            | KernelObject::RawSocket(_)
-            | KernelObject::LocalSocket(_) => {
+            // Every other object with a stat face presents the synthetic
+            // device-shaped record; one without a stat face answers its face.
+            other if other.shape().stat_visible => {
                 Ok(synthetic_public_file_stat_record(NodeKind::Device, 0))
             }
-            KernelObject::Process(_)
-            | KernelObject::Thread(_)
-            | KernelObject::EventFd(_)
-            | KernelObject::SignalFd(_)
-            | KernelObject::TimerFd(_)
-            | KernelObject::Mqueue(_)
-            | KernelObject::Epoll(_)
-            | KernelObject::IoUring(_) => Err(Error::Unsupported),
+            other => Err(other.shape().face.outside()),
         }
     }
 
@@ -145,6 +93,12 @@ impl HandleEntry {
     }
 
     pub(crate) fn read_stream(self, buffer: &mut [u8], timeout_ticks: u64) -> Result<usize> {
+        // The shape says whether a read is part of this object at all; an
+        // object outside its shape answers with its face's error.
+        let shape = self.shape();
+        if !shape.stream_read {
+            return Err(shape.face.outside());
+        }
         match self.object {
             KernelObject::Device(name) => {
                 device::dispatch_device_read(&name, buffer, timeout_ticks)
@@ -155,8 +109,6 @@ impl HandleEntry {
             KernelObject::SignalFd(state) => signalfd_read(state, buffer, timeout_ticks),
             KernelObject::TimerFd(state) => timerfd_read(state, buffer, timeout_ticks),
             KernelObject::Mqueue(state) => mqueue_read(state, buffer, timeout_ticks),
-            KernelObject::Epoll(_) => Err(Error::Unsupported),
-            KernelObject::TcpListener(_) => Err(Error::InvalidArgument),
             KernelObject::UdpSocket(socket) => {
                 let _ = timeout_ticks;
                 match crate::network::recv_from_udp(&socket, buffer) {
@@ -174,38 +126,33 @@ impl HandleEntry {
                 }
             }
             KernelObject::File(file) => file.read(buffer),
-            KernelObject::Directory(_) => Err(Error::InvalidArgument),
-            KernelObject::RawSocket(_) => Err(Error::InvalidArgument),
-            KernelObject::LocalSocket(_) => Err(Error::InvalidArgument),
-            KernelObject::Process(_) | KernelObject::Thread(_) => Err(Error::Unsupported),
-            KernelObject::IoUring(_) => Err(Error::Unsupported),
+            // The kinds the shape does not send down a dispatch arm above.
+            other => Err(other.shape().face.outside()),
         }
     }
 
     pub(crate) fn write_stream(self, buffer: &[u8]) -> Result<usize> {
+        let shape = self.shape();
+        if !shape.stream_write {
+            return Err(shape.face.outside());
+        }
         match self.object {
             KernelObject::Device(name) => device::dispatch_device_write(&name, buffer),
             KernelObject::Network(connection) => connection.write(buffer),
             KernelObject::TlsConnection(connection) => connection.write(buffer),
             KernelObject::EventFd(state) => eventfd_write(state, buffer),
-            KernelObject::SignalFd(_) => Err(Error::InvalidArgument),
-            KernelObject::TimerFd(_) => Err(Error::InvalidArgument),
             KernelObject::Mqueue(state) => mqueue_write(state, buffer),
-            KernelObject::Epoll(_) => Err(Error::Unsupported),
-            KernelObject::TcpListener(_)
-            | KernelObject::UdpSocket(_)
-            | KernelObject::DccpSocket(_)
-            | KernelObject::RawSocket(_)
-            | KernelObject::LocalSocket(_) => Err(Error::InvalidArgument),
             KernelObject::File(file) => file.write(buffer),
-            KernelObject::Directory(_) => Err(Error::InvalidArgument),
-            KernelObject::Process(_) | KernelObject::Thread(_) => Err(Error::Unsupported),
-            KernelObject::IoUring(_) => Err(Error::Unsupported),
+            other => Err(other.shape().face.outside()),
         }
     }
 
     /// Check whether this handle has data available to read without blocking.
     pub(crate) fn is_readable(&self) -> Result<bool> {
+        let shape = self.shape();
+        if !shape.poll_read {
+            return Err(shape.face.outside());
+        }
         match &self.object {
             KernelObject::File(_) => Ok(true),
             KernelObject::Network(conn) => conn.is_readable(),
@@ -222,16 +169,17 @@ impl HandleEntry {
             KernelObject::Mqueue(state) => Ok(!state.lock().is_empty()),
             KernelObject::Epoll(_) => Ok(false),
             KernelObject::Device(_) => Ok(true),
-            KernelObject::Directory(_) => Err(Error::InvalidArgument),
-            KernelObject::RawSocket(_) | KernelObject::Process(_) | KernelObject::Thread(_) => {
-                Err(Error::Unsupported)
-            }
             KernelObject::IoUring(state) => Ok(!state.completion_queue.lock().is_empty()),
+            other => Err(other.shape().face.outside()),
         }
     }
 
     /// Check whether this handle can accept data for writing without blocking.
     pub(crate) fn is_writable(&self) -> Result<bool> {
+        let shape = self.shape();
+        if !shape.poll_write {
+            return Err(shape.face.outside());
+        }
         match &self.object {
             KernelObject::File(_) => Ok(true),
             KernelObject::Network(conn) => conn.is_writable(),
@@ -246,11 +194,8 @@ impl HandleEntry {
             KernelObject::Mqueue(state) => Ok(!state.lock().is_full()),
             KernelObject::Epoll(_) => Ok(false),
             KernelObject::Device(_) => Ok(true),
-            KernelObject::Directory(_) => Err(Error::InvalidArgument),
-            KernelObject::RawSocket(_) | KernelObject::Process(_) | KernelObject::Thread(_) => {
-                Err(Error::Unsupported)
-            }
             KernelObject::IoUring(_) => Ok(false),
+            other => Err(other.shape().face.outside()),
         }
     }
 
