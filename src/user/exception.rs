@@ -4,6 +4,7 @@
 //! syscalls.
 
 use super::syscall::UserSyscall;
+use crate::syscall::SyscallContext;
 pub use crate::user::shared::abi::exception::AArch64AbortSyndrome;
 pub use crate::user::shared::abi::exception::AArch64UserExceptionFrame;
 pub use crate::user::shared::abi::exception::X86_64PageFaultError;
@@ -85,11 +86,9 @@ pub use crate::user::shared::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_
 pub use crate::user::shared::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_NONE;
 pub use crate::user::shared::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_ONE_SHOT;
 pub use crate::user::shared::abi::exception::X86_64_USER_EXCEPTION_HANDLER_FLAG_REQUIRE_EXCEPTION_STACK;
-// `SyscallNumber` is only used from the x86_64/AArch64 dispatchers below, and
-// those exist for bare-metal and Linux-host builds only; RISC-V and any other
-// host (Windows, macOS) leave the import unused, so silence it there.
-#[cfg_attr(target_arch = "riscv64", allow(unused_imports))]
-use crate::syscall::SyscallContext;
+// Only the two user-mode dispatchers below name a syscall number, and they
+// exist for bare-metal and Linux-host builds; RISC-V and the other hosts have
+// no such entry point, so the import is unused there and says so.
 #[cfg_attr(
     not(all(
         any(target_arch = "x86_64", target_arch = "aarch64"),

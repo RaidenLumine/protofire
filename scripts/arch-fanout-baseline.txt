@@ -42,7 +42,7 @@
 
 
 
-# 23 files, 62 occurrences outside src/arch
+# 23 files, 61 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/usb_msd.rs                                   1
@@ -60,7 +60,7 @@ syscall/process/signal.rs                            2
 user/demo/demo_program_x86_64_rust_io.rs             1
 user/demo/demo_program_x86_64_rust.rs                1
 user/demo/payload_test_support.rs                    1
-user/exception.rs                                    5
+user/exception.rs                                    4
 user/shared/abi/ptrace.rs                            2
 user/shared/abi/runtime.rs                           6
 user/shared/syscall.rs                               2
