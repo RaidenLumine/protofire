@@ -1037,4 +1037,142 @@ mod tests {
             );
         }
     }
+
+    /// Where a thread the scheduler owns is: a ready queue, the current slot,
+    /// or the timed-waiter queue.
+    ///
+    /// Returned as names so a failure says which places held the thread
+    /// instead of leaving the reader to guess at a pair of booleans.
+    fn placement_of(scheduler: &Scheduler, thread: &Arc<Thread>) -> Vec<&'static str> {
+        let pointer = Arc::as_ptr(thread);
+        let mut places = Vec::new();
+
+        {
+            let queues = scheduler.ready_queues.lock();
+            if queues
+                .iter()
+                .any(|queue| queue.iter().any(|queued| Arc::as_ptr(queued) == pointer))
+            {
+                places.push("ready");
+            }
+        }
+        if scheduler
+            .current
+            .lock()
+            .as_ref()
+            .is_some_and(|current| Arc::as_ptr(current) == pointer)
+        {
+            places.push("current");
+        }
+        if scheduler
+            .waiting_queue
+            .lock()
+            .iter()
+            .any(|waiter| Arc::as_ptr(&waiter.thread) == pointer)
+        {
+            places.push("waiting");
+        }
+
+        places
+    }
+
+    /// The whole-scheduler placement invariant.
+    ///
+    /// A thread the scheduler owns lives in **exactly one** place: a ready
+    /// queue, the current slot, or the timed-waiter queue.  Two places is a
+    /// thread two dispatchers can run; no place is a thread no future tick
+    /// will ever reach — the wedge the placement watchdog exists to catch.
+    /// And the place has to agree with the thread's own state, because every
+    /// consumer reads one and acts on the other: the tick's sleeper sweep
+    /// trusts `Waiting`, the dispatcher trusts `Ready`, the preemption
+    /// predicate trusts `Running`.
+    ///
+    /// The operations are the scheduler's own host-callable ones — spawn,
+    /// simulated dispatch and preemption, the real sleep path
+    /// (`sleep_current_thread`), and the tick's sleeper sweep — so this drives
+    /// the code a boot runs rather than a reimplementation of it.
+    #[test]
+    fn scheduler_placement_invariant_holds_across_random_operations() {
+        const THREADS: usize = 12;
+        const STEPS: usize = 4000;
+
+        let scheduler = Scheduler::new();
+        let threads: Vec<Arc<Thread>> = (0..THREADS)
+            .map(|index| scheduler.spawn_named(&alloc::format!("placement-{index}"), 0x1000))
+            .collect();
+
+        let mut rng = Lcg::new(0xF0F0_5040);
+        let mut now: u64 = 0;
+        // The mix has to actually reach every place, or the invariant above
+        // would be checked over a run that never exercised sleep or dispatch.
+        let mut seen = [false; 3];
+
+        for step in 0..STEPS {
+            // Advance the simulated clock so deadlines can come due; the host
+            // scheduler measures time in this counter, not the hardware timer.
+            if rng.next_usize(4) == 0 {
+                now += 1 + rng.next_usize(8) as u64;
+                *scheduler.simulated_ticks.lock() = now;
+            }
+
+            match rng.next_usize(5) {
+                // Move a ready thread into the current slot.  Dispatch does
+                // not evict, so only ask when the slot is free.
+                0 | 1 => {
+                    if scheduler.current.lock().is_none() {
+                        let _ = scheduler.dispatch_next_simulated();
+                    }
+                }
+                // Preempt the current thread back to its ready queue.
+                2 => {
+                    let _ = scheduler.preempt_current_thread_simulated();
+                }
+                // Sleep the current thread down the real path: it parks on the
+                // timed-waiter queue and whoever is next runs.
+                3 => {
+                    if scheduler.current.lock().is_some() {
+                        scheduler.sleep_current_thread(1 + rng.next_usize(20) as u64);
+                    }
+                }
+                // The timer tick's sleeper sweep.
+                _ => {
+                    let _ = scheduler.wake_expired_sleepers(now);
+                }
+            }
+
+            for thread in &threads {
+                let places = placement_of(&scheduler, thread);
+                assert_eq!(
+                    places.len(),
+                    1,
+                    "step {step}: thread {} is in {places:?}; exactly one place is required",
+                    thread.tid(),
+                );
+                let expected = match places[0] {
+                    "ready" => ThreadState::Ready,
+                    "current" => ThreadState::Running,
+                    "waiting" => ThreadState::Waiting,
+                    other => panic!("step {step}: unknown place {other}"),
+                };
+                seen[match places[0] {
+                    "ready" => 0,
+                    "current" => 1,
+                    _ => 2,
+                }] = true;
+                assert_eq!(
+                    thread.state(),
+                    expected,
+                    "step {step}: thread {} is {:?} but placed in {}",
+                    thread.tid(),
+                    thread.state(),
+                    places[0],
+                );
+            }
+        }
+
+        assert_eq!(
+            seen, [true; 3],
+            "the random mix did not reach every place: {seen:?}",
+        );
+    }
 }
