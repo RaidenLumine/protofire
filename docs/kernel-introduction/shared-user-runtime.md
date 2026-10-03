@@ -33,7 +33,7 @@ The module exports the following public submodules:
 | `jobs` | `jobs.rs` | Background job tracking |
 | `passwd` | `passwd.rs` | Minimal `/data/etc/passwd` file parser |
 | `path_util` | `path_util.rs` | `resolve_path()` and `normalize_path_segments()` |
-| `pipeline` | `pipeline.rs` | `&&` / `||` conditional chaining, pipe splitting, redirect parsing |
+| `pipeline` | `pipeline.rs` | `&&` / `\|\|` conditional chaining, pipe splitting, redirect parsing |
 | `runtime` | `runtime.rs` | Architecture-dependent syscall bridge, `BrkAllocator`, argument parsing, panic handler |
 | `signal` | `signal.rs` | Cooperative signal handling: wait, send, mask (u64), sigsuspend, dispatch loop |
 | `syscall` | `syscall.rs` | `SYS_*` constants + `sys_*()` typed wrappers |
@@ -412,6 +412,22 @@ a missing capability.  See [network.md](network.md) for the stack itself.
 8. **Error-to-exit-code mapping** — The kernel's `Error` enum is encoded as negative `isize` values at the syscall boundary (-1 = InvalidArgument through -12 = InvalidCredential), which command implementations map to POSIX-style exit codes via `CmdResult`.
 
 ---
+
+## Status and Gaps
+
+The shared runtime is the ABI's user side and the shell's implementation: ABI
+records mirrored from `src/abi/`, typed syscall wrappers, builtins, expansion,
+globbing, history, pipelines and jobs. What is missing:
+
+- **No libc and no POSIX compatibility layer.** A program that wants this
+  behaviour links this module; there is no separate library to link against.
+- **Jobs are a userspace concept.** The shell tracks them, so a job is lost
+  when the shell is; the kernel has no process group to fall back on.
+- **The freestanding runtime is behind the `runtime` feature**; in a kernel
+  build the kernel's own bridge provides the symbols instead.
+- **Passwords only.** There is a passwd parser and no group file to parse.
+
+The per-module census lives in [current-status.md](current-status.md).
 
 ## See Also
 

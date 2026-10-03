@@ -16,6 +16,9 @@ Two words are used strictly below:
 - **implemented** means the code path exists and is reachable.
 - **verified** means a gate boots it or a test pins it.
 
+In the per-module tables, a dash in the *Missing* column means no gap is known
+and recorded here — not that the module has none.
+
 Where this document and the tree disagree, the tree is right and this document
 is the bug. `make check-docs` enforces the part of that a machine can check:
 every `src/…` or `tests/…` path named here has to exist, and a line-number
@@ -31,23 +34,23 @@ the syscall interface.
 
 ### 1. Device Drivers
 
-| Driver | Type | Status |
-|--------|------|--------|
-| AHCI (SATA) | Block | Full read/write (DMA, polling) |
-| ATA (PIO) | Block | Full read/write |
-| VirtIO (block) | Block | Full read/write |
-| VirtIO (net) | Network | Full RX/TX |
-| VirtIO (GPU) | Display | Full 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO), VIRGL 3D userspace interface (#181-189) |
-| NVMe | Block | Full read/write, MSI-X interrupt |
-| xHCI | USB host | Driver present |
-| USB HID | HID (keyboard) | Driver present |
-| USB MSD | Storage | Present; drives the bulk-only transport |
-| Serial (UART 16550) | Text I/O | Full duplex |
-| PS/2 Keyboard | Input | Full |
-| Framebuffer | Display | Linear framebuffer |
-| Framebuffer Console | Display | Text rendering |
-| HDA (Intel HD Audio) | Audio | CORB/RIRB, codec discovery, stream descriptors |
-| PCIe ECAM | Bus | x86_64: full; AArch64/RISC-V: walked, BARs assigned, virtio-net driven |
+| Driver | Type | Now | Missing |
+|--------|------|-----|---------|
+| AHCI (SATA) | Block | Full read/write (DMA, polling) | Polling only, no interrupt path; x86_64 only; QEMU only |
+| ATA (PIO) | Block | Full read/write | PIO only, no DMA; x86_64 only; QEMU only |
+| VirtIO (block) | Block | Full read/write | QEMU only; no per-queue MSI-X claim |
+| VirtIO (net) | Network | Full RX/TX, modern and legacy transports | MSI-X is claimed per device, not per queue; a transmit waits on the device's completion interrupt; no throughput baseline |
+| VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189) | No userspace renderer is shipped against the interface; QEMU only |
+| NVMe | Block | Full read/write, MSI-X interrupt, boot-disk probe | x86_64 only; QEMU only |
+| xHCI | USB host | Controller bring-up and port status | Not end-to-end: USB storage and keyboard input are not usable yet |
+| USB HID | HID (keyboard) | Report decoding and scancode injection | Not wired end-to-end until the xHCI path is complete |
+| USB MSD | Storage | Bulk-only transport and SCSI command blocks | Not reachable end-to-end until the xHCI path is complete |
+| Serial (UART 16550) | Text I/O | Full duplex | RISC-V falls back to the SBI console when it has no UART |
+| PS/2 Keyboard | Input | Scancode buffering, decoding, console TTY bridge | The PS/2 interrupt path is x86_64; other targets rely on VirtIO input |
+| Framebuffer | Display | Linear framebuffer the console draws on | No userspace graphics API beyond the VIRGL syscalls; QEMU only |
+| Framebuffer Console | Display | Text rendering from a built-in 8×16 ASCII glyph table | Fixed font: characters outside the table draw as a fallback glyph, and there is no font or resolution management |
+| HDA (Intel HD Audio) | Audio | CORB/RIRB, codec discovery, stream descriptors | No userspace stream interface, so audio is not usable from a program |
+| PCIe ECAM | Bus | x86_64: full ECAM; AArch64/RISC-V: window found, BARs assigned, one driver attached | One driver on the device-tree machines; AArch64 has no MSI path; every other PCIe device still uses its architecture's own enumeration |
 
 **Strengths:** driver coverage across storage, network, display, audio, and
 input, mostly verified under QEMU.
@@ -107,13 +110,13 @@ input, mostly verified under QEMU.
 
 ### 2. I/O Subsystem
 
-| Component | Status |
-|-----------|--------|
-| File descriptor table | Full (per-process fd table, dup, dup2, F_DUPFD, close-on-exec) |
-| Pipe | Full (anonymous pipe in VFS, fcntl dynamic buffer, O_NONBLOCK) |
-| Block cache | Fixed-size LRU, write-through/write-back, prefetch, dirty aging + background write-back |
-| Handle table | Generic handle/object framework |
-| Console I/O | Global console device, Ctrl-C handling |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| File descriptor table | Per-process table, dup/dup2/F_DUPFD, close-on-exec, inheritance across spawn | No descriptor passing between processes |
+| Pipe | VFS-backed anonymous pipe, fcntl-resizable buffer, per-end O_NONBLOCK | No splice/tee; no named-pipe filesystem entry |
+| Block cache | Fixed-size LRU, write-through for metadata and write-back for data, prefetch, dirty aging by the maintenance thread | Capacity is a fixed constant, so a large working set thrashes; no real-disk benchmark |
+| Handle table | `KernelObject` + `HandleEntry { rights }`, indexed by descriptor | Rights are only read and write, so a capability that needs anything finer has to be a syscall |
+| Console I/O | One global console device, Ctrl-C handling, ring-3 reads through fd 0 | One console for the whole machine; no per-terminal isolation |
 
 **Strengths:** complete file-descriptor and pipe semantics with runtime pipe and
 block-cache management.
@@ -147,40 +150,40 @@ below.
 
 #### 3.1 Native Filesystem
 
-| Component | Status |
-|-----------|--------|
-| SimpleFs core (V2/V3) | Full read/write, checksummed (CRC32C) |
-| TmpFs | In-memory, full read/write |
-| DevFs | Device node listing |
-| ProcFs | Process info, runtime state |
-| Unicode layer | Unicode 15.1 NFC/NFD, case folding, GB18030, OEM CP |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| SimpleFs core (V2/V3) | Full read/write, CRC32C-checked, two-phase commit, V3 persistent security descriptors | Recovery is exercised by the in-tree fault matrix rather than a searching fuzzer; no real-disk validation |
+| TmpFs | In-memory, full read/write, xattrs | Contents do not survive a reboot |
+| DevFs | Device nodes listed from the device registry | Read-only; node metadata is the registry's, not the filesystem's |
+| ProcFs | Process and runtime state as read-only files | Read-only view; process control stays in syscalls |
+| Unicode layer | Unicode 15.1 NFC/NFD, case folding, GB18030, OEM code pages | Tables are fixed at Unicode 15.1; there is no locale database |
 
 #### 3.2 External Filesystem Drivers
 
-| Driver | Mode | Features |
-|--------|------|----------|
-| ext4 | **Read/write** | Journaling (revoke replay, v3 checksum tags), extent tree, dir index |
-| F2FS | **Read/write** | Checkpoint (SIT persistence), orphan recovery, atomic CP+SB write |
-| XFS v5 | **Read/write with journal replay** | B+tree, CRC32C, v5 superblock, log replay (buffer/inode/dquot items) |
-| exFAT | Read/write | VFAT extension |
-| FAT32 | Read/write | LFN, OEM code pages, FSInfo accounting |
-| BtrFS | Read-only | B-tree traversal |
-| NTFS 3.1 | Read-only | MFT parsing, attribute resolution |
-| SquashFS 4.0 | Read-only | Multiple compression algorithms |
-| ISO 9660 | Read-only | Joliet, Rock Ridge |
-| EROFS v1 | Read-only | Compact inode format |
+| Driver | Now | Missing |
+|--------|-----|---------|
+| ext4 | Read/write; journaling (revoke replay, v3 checksum tags), extent tree, dir index | Journal replay is verified on emulated images; not exercised against real corruption |
+| F2FS | Read/write; checkpoint (SIT persistence), orphan recovery, atomic CP+SB write | Same emulation-only validation; no ageing or garbage-collection stress |
+| XFS v5 | Read/write with journal replay; B+tree, CRC32C, v5 superblock | Same emulation-only validation; no xattr exposure |
+| exFAT | Read/write; VFAT extension | No journal, so crash behaviour depends on the write order; QEMU only |
+| FAT32 | Read/write; LFN, OEM code pages, FSInfo accounting | No journal; QEMU only |
+| BtrFS | Read-only; B-tree traversal | Write support is the mid-term roadmap item |
+| NTFS 3.1 | Read-only; MFT parsing, attribute resolution | Read-only; compressed and encrypted streams are not covered |
+| SquashFS 4.0 | Read-only; several compression algorithms | Read-only |
+| ISO 9660 | Read-only; Joliet, Rock Ridge | Read-only |
+| EROFS v1 | Read-only; compact inode format | Read-only |
 
 #### 3.3 VFS Layer
 
-| Component | Status |
-|-----------|--------|
-| VFS core (mount, path resolution, ops) | Full |
-| Volume recovery | Transaction undo-log, crash resilience, crash-matrix tests |
-| Fault injection matrix | Single- and dual-fault / multi-cycle crash testing |
-| Extended-attribute (xattr) table | SimpleFs V4 persistent storage + tmpfs in-memory |
-| Transparent file compression | Per-file LZSS/raw chunked compression (reuses the memory codec) |
-| Cross-file deduplication | Content-hash shared extents, mount-time refcount rebuild |
-| Block backend abstraction | ATA, VirtIO, NVMe backends |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| VFS core (mount, path resolution, ops) | Full path resolution, mount and unmount, per-node operations | One mount table for the machine; no per-process mount namespace |
+| Volume recovery | Transaction undo-log replay and check-and-repair at boot | Boot-time only, under the filesystem lock; no online repair |
+| Fault injection matrix | Single- and dual-fault, multi-cycle crash testing | Deterministic and bounded, so it does not search for a failing sequence |
+| Extended-attribute (xattr) table | SimpleFs V4 persistent storage and tmpfs in-memory; the four xattr syscalls | The VNode default is `Unsupported`, so the other filesystems do not expose xattrs |
+| Transparent file compression | Per-file LZSS/raw chunked compression, reusing the memory codec | SimpleFs only; per-file toggle rather than a mount policy |
+| Cross-file deduplication | Content-hash shared extents with mount-time refcount rebuild and CoW unsharing | SimpleFs only; no background scanner that finds new duplicates |
+| Block backend abstraction | ATA, VirtIO and NVMe all implement one `BlockDevice` trait | No hot-remove or device-error recovery path |
 
 **Strengths:** filesystem drivers for ext4, F2FS, XFS, exFAT, FAT32, BtrFS,
 NTFS, SquashFS, ISO 9660, EROFS and the native SimpleFs; a crash-safe native
@@ -221,32 +224,32 @@ descriptors + `pending_commit` two-phase commit):
 
 #### 3.4 Encryption at Rest
 
-| Component | Status |
-|-----------|--------|
-| AES-256 + AES-XTS | Crypto engine |
-| PBKDF2 key derivation | Key stretching for disk encryption |
-| EncryptedBlockDevice | Block device encryption wrapper |
-| LUKS2 header parser | LUKS2 on-disk format parsing |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| AES-256 + AES-XTS | Crypto engine in the kernel | No hardware acceleration path |
+| PBKDF2 key derivation | Key stretching for disk encryption | One KDF; no Argon2 or keyring |
+| EncryptedBlockDevice | Transparent block-device wrapper under any filesystem | No rekey or key rotation; one key per device |
+| LUKS2 header parser | LUKS2 on-disk header parsing | Header only: no keyslot management or `cryptsetup`-style control surface |
 
 ---
 
 ### 4. CPU Scheduler
 
-| Component | Status |
-|-----------|--------|
-| Scheduler core | Preemptive round-robin with priority |
-| Thread lifecycle | Spawn, exit, terminate, detach |
-| Context switch | x86_64, AArch64, RISC-V (per-arch assembly) |
-| Process/thread types | States, priorities, credentials, scheduling policies |
-| Process groups | Job control, foreground/background |
-| SMP discovery | x86_64: ACPI MADT; AArch64: PSCI; RISC-V: FDT CPU nodes and SBI HSM |
-| Timer tick | Scheduler quantum management |
-| Waker | Thread wakeup notification |
-| Scheduler stats | Load average (sampled ring), per-thread CPU ticks, idle tracking, ProcFs integration |
-| Priority boosting | Starvation boost: Normal → High after an idle threshold, demote after a short run |
-| Work stealing | Cross-CPU load balancing, NUMA-aware victim selection |
-| Stack canary | Per-thread random canary, global guard on context switch |
-| Power management | CPU frequency scaling (x86_64 MSR P-state driver; aarch64/riscv64 DT OPP range discovery + target tracking), governors, scheduler-tick integration, DTS temperature reading |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| Scheduler core | Preemptive round-robin with priority classes | Round-robin and FIFO only; no fair-share or deadline class |
+| Thread lifecycle | Spawn, exit, terminate, detach | — |
+| Context switch | x86_64, AArch64, RISC-V (per-arch assembly) | — |
+| Process/thread types | States, priorities, credentials, scheduling policies | — |
+| Job control | The shell tracks jobs and signals the foreground pid | No kernel process group: no `setpgid`-style call, so terminal ownership is not modelled |
+| SMP discovery | x86_64: ACPI MADT; AArch64: PSCI; RISC-V: FDT CPU nodes and SBI HSM | — |
+| Timer tick | Scheduler quantum management | On x86_64 the PIT is routed to one LAPIC, so APs take no timer interrupt; a sleeping thread's expiry is swept by whichever CPU ticks |
+| Waker | Thread wakeup notification with a per-CPU reschedule flag | Cross-CPU wakeups set a flag or send an IPI; RISC-V waits for the target hart's next tick |
+| Scheduler stats | Load average (sampled ring), per-thread CPU ticks, idle tracking, ProcFs integration | — |
+| Priority boosting | Starvation boost: Normal → High after an idle threshold, demote after a short run | — |
+| Work stealing | Cross-CPU load balancing, NUMA-aware victim selection | Validated under QEMU only; no real-load validation |
+| Stack canary | Per-thread random canary, checked on context switch | Software check, not a hardware feature; it detects a smashed stack after the fact |
+| Power management | CPU frequency scaling (x86_64 MSR P-state driver; aarch64/riscv64 DT OPP range discovery + target tracking), governors, scheduler-tick integration, DTS temperature reading | AArch64 and RISC-V only track the requested target; no SCMI or CPPC interface is wired |
 
 **Strengths:** preemptive multi-threaded scheduling with NUMA-aware load
 balancing and runtime stack protection.
@@ -286,20 +289,20 @@ balancing and runtime stack protection.
 
 ### 5. Memory Management
 
-| Component | Status |
-|-----------|--------|
-| Physical frame allocator | Dynamic detection via Multiboot2/FDT, bump + free tracking |
-| NUMA frame allocators | Per-node allocators (`MAX_NODES`), `set_node_range()`, fallback to node 0 |
-| TLSF heap allocator | Bounded heap, fixed free-list table, O(1) alloc/free |
-| Page table management | Per-arch tables, identity map, user address spaces, 2 MiB + 1 GiB huge page support |
-| Copy-on-Write | Refcounted frames, fault-triggered copy |
-| Demand paging | Content store + swap-out (disk-backed) |
-| Swap area | Block-device-backed page slots, LIFO free list, magic-based boot-time detection |
-| Compressed page cache | Zswap-style zero/RLE/LZSS page compression on reclaim, with raw-store eviction |
-| Memory compaction | Frame-pool defragmentation: relocate movable user frames, coalesce free ranges |
-| ASID allocator | AArch64 bitmap + CAS, RISC-V bitmap + CAS |
-| User address space | Brk heap, ELF loading, guard pages |
-| Kernel stack guard | Unmapped page below each kernel stack |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| Physical frame allocator | Dynamic detection via Multiboot2/FDT, bump pointer plus recycled free ranges | The pool has a fixed ceiling; no memory hotplug or hot-remove |
+| NUMA frame allocators | Per-node allocators (`MAX_NODES`), `set_node_range()`, fallback to node 0 | Topology discovery is exercised under QEMU; no NUMA hardware validation |
+| TLSF heap allocator | Bounded heap, fixed free-list table, O(1) alloc/free | Fixed size: the heap is carved once and does not grow |
+| Page table management | Per-arch tables, identity map, user address spaces, 2 MiB and 1 GiB huge pages | x86_64 has no PCID, so a context switch invalidates translations |
+| Copy-on-Write | Refcounted frames, fault-triggered copy | — |
+| Demand paging | Content store plus swap-out | — |
+| Swap area | Block-device-backed page slots, LIFO free list, magic-based boot-time detection | Verified under emulation only; no real memory-pressure run |
+| Compressed page cache | Zswap-style zero/RLE/LZSS compression on reclaim, with raw-store eviction | Emulation only, and the budget is a fixed constant |
+| Memory compaction | Frame-pool defragmentation: relocate movable user frames, coalesce free ranges | Movable user frames only; an unmovable barrier stops a pass early |
+| ASID allocator | AArch64 and RISC-V bitmap allocators | — |
+| User address space | Brk heap, ELF loading, guard pages | — |
+| Kernel stack guard | Unmapped page below each kernel stack | — |
 
 **Strengths:** covers the major virtual-memory features, plus NUMA,
 disk-backed swap, compression, and defragmentation.
@@ -333,21 +336,21 @@ disk-backed swap, compression, and defragmentation.
 
 ### 6. Interrupt & Exception Handling
 
-| Component | Status |
-|-----------|--------|
-| x86_64 IDT + exceptions | Full: #PF, #GP, #UD, #DF, timer, IPI |
-| x86_64 APIC + IOAPIC | Full: SMP IPI, timer, I/O routing |
-| AArch64 exception vectors | EL1 sync/IRQ/FIQ/SError, EL0 sync |
-| AArch64 GIC | GICv2 register layout, detection from `GICD_PIDR2`, interrupt routing |
-| RISC-V trap handler | U-mode ecall, timer, external interrupts |
-| RISC-V PLIC | PLIC initialization from FDT |
-| Common interrupt abstraction | `InterruptController` trait |
-| Thread exception handling | Page fault recovery, signal delivery |
-| PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM |
-| MSI/MSI-X programming | Vector allocator and table programming on x86_64; AIA IMSIC on RISC-V |
-| NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry |
-| Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable |
-| Interrupt stats interface | Per-CPU/per-vector counters, NMI/IPI totals, balancer state (SystemInfo #9) |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| x86_64 IDT + exceptions | #PF, #GP, #UD, #DF, timer, IPI | — |
+| x86_64 APIC + IOAPIC | SMP IPI, timer, I/O routing | — |
+| AArch64 exception vectors | EL1 sync/IRQ/FIQ/SError, EL0 sync | — |
+| AArch64 GIC | GICv2 register layout, detection from `GICD_PIDR2`, interrupt routing | GICv2 only: a v3 is detected and refused, so there is no LPI and no ITS, and therefore no PCIe MSI path |
+| RISC-V trap handler | U-mode ecall, timer, external interrupts | — |
+| RISC-V PLIC | PLIC initialization from FDT | The default machine has no IMSIC, so the PLIC stays the external controller there |
+| Common interrupt abstraction | `InterruptController` trait | — |
+| Thread exception handling | Page fault recovery, signal delivery | — |
+| PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | A window held across a block can be closed under the holder; the socket send paths still do that |
+| MSI/MSI-X programming | Vector allocator and table programming on x86_64; AIA IMSIC with per-device claims on RISC-V | No AArch64 path; on RISC-V only the virtio-net PCIe driver claims identities |
+| NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry | No architectural NMI source on RISC-V, so that entry stays dormant |
+| Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable | Runs from the tick; no routing-latency measurement |
+| Interrupt stats interface | Per-CPU/per-vector counters, NMI/IPI totals, balancer state (SystemInfo #9) | — |
 
 **Strengths:** architecture-complete exception handling across all three
 targets, with PAN/SMAP emulation, MSI/MSI-X on the architectures that have an
@@ -397,30 +400,30 @@ multicast routing, and raw sockets.
 
 #### 7.1 Protocol Support
 
-| Layer | Protocols | Status |
-|-------|-----------|--------|
-| **Link** | Ethernet, ARP, device abstraction | Full |
-| **Internet** | IPv4, IPv6, ICMP, ICMPv6, IGMP, MLD, NAT, IP options | Full |
-| **Transport** | TCP (congestion control, ECN), UDP, SCTP (4-way handshake, CRC32C), DCCP (RFC 4340, CCID 2, full syscall API) | Full |
-| **Application** | DHCP, DNS (cache, resolve), mDNS, NTP, PPP | Full |
-| **Security** | TLS 1.3 (handshake, record, certificate), IPsec (ESP + AH, SAD/SPD, transport/tunnel) | Full (kernel-side) |
-| **VPN** | WireGuard (Noise_IKpsk2 handshake, ChaCha20-Poly1305 transport, key management) | Full |
-| **Multicast routing** | MFC/VIF forwarding engine (RPF + TTL gating), IGMPv2/MLDv1 router mode, MRT management API | Full |
-| **Raw** | Raw sockets, raw packet | Full |
-| **Educational¹** | CSMA/CD, CSMA/CA, STP, IPv4 Options, Mobile IP, RSVP, PIM-DM (flood-and-prune) | Gated |
+| Layer | Now | Missing |
+|-------|-----|---------|
+| **Link** | Ethernet, ARP, device abstraction | — |
+| **Internet** | IPv4, IPv6, ICMP, ICMPv6, IGMP, MLD, NAT, IP options | — |
+| **Transport** | TCP (congestion control, ECN), UDP, SCTP, DCCP | Congestion control is Tahoe/Reno only; no CUBIC or BBR |
+| **Application** | DHCP (discovery and renewal), DNS (cache and resolve), mDNS, NTP, PPP | IPv4 only: no DHCPv6 or prefix delegation; DNS has no DNSSEC validation |
+| **Security** | TLS 1.3 (handshake, record, certificate), IPsec (ESP + AH, SAD/SPD, transport/tunnel) | TLS has no trust-anchor management; IPsec SAD/SPD is manual |
+| **VPN** | WireGuard handshake, transport and session tables (Noise_IKpsk2, ChaCha20-Poly1305, key management) | Not wired up: nothing outside the module constructs a device, so a program cannot open a tunnel yet |
+| **Multicast routing** | MFC/VIF forwarding, IGMPv2/MLDv1 router mode, MRT API | PIM-DM only, and only under a feature flag; no PIM-SM |
+| **Raw** | Raw sockets, raw packet | Not every raw entry has a typed shared-library wrapper |
+| **Educational¹** | CSMA/CD, CSMA/CA, STP, IPv4 Options, Mobile IP, RSVP, PIM-DM | Compile-time gated, so it is outside the default build |
 
 ¹ Gated behind `feature = "educational_networking"`.
 
 #### 7.2 TCP Implementation
 
-| Component | Status |
-|-----------|--------|
-| Segment handling | Full (segmentation, reassembly, retransmit) |
-| Connection table | Full (hash table, state machine) |
-| Congestion control | Implemented |
-| ECN (Explicit Congestion Notification) | Implemented |
-| Timer management | Full (RTO, delayed ACK, keepalive) |
-| Window scaling | Included |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| Segment handling | Segmentation, reassembly, retransmit | — |
+| Connection table | Hash table and state machine | — |
+| Congestion control | Pluggable framework with Tahoe and Reno | No CUBIC or BBR; no throughput baseline |
+| ECN (Explicit Congestion Notification) | Negotiation and marking | — |
+| Timer management | RTO, delayed ACK, keepalive | — |
+| Window scaling | Window-scaling option | — |
 
 #### 7.3 Network Syscalls
 
@@ -462,23 +465,24 @@ extensions and in-kernel security protocols.
 
 ### 8. IPC / Synchronization
 
-| Component | Status |
-|-----------|--------|
-| Pipe | VFS-backed, anonymous, blocking read/write |
-| Signal | 43 slots (0-42), including 11 RT signals (32-42); u64 mask, install/enqueue/wait |
-| Signal mask | Per-process blocked signal tracking, u64 bitfield |
-| Async signal delivery | Signal frame on user stack, arch-specific trampoline, sigreturn; x86_64, AArch64, RISC-V |
-| SA_SIGINFO support | siginfo_t delivery (si_signo, si_code, si_pid, si_uid, si_addr, si_value) |
-| SA_RESTART support | Automatic syscall restart on signal return, RestartBlock per thread |
-| sigsuspend (#135) | Atomic mask swap + thread suspend until signal |
-| POSIX timers (#137-140) | timer_create/settime/gettime/delete, per-process timer management, signal delivery on expiry |
-| eventfd (#107) | Counter/semaphore mode, EFD_NONBLOCK/EFD_CLOEXEC, poll/epoll integration, write-overflow EAGAIN |
-| Event | Event flag synchronization |
-| Condition variable | Blocking wait/wake |
-| Mutex | Blocking mutex |
-| Semaphore | Counting semaphore |
-| Spinlock | IRQ-safe spinlock |
-| Shell pipeline | Command piping with process groups |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| Pipe | VFS-backed, anonymous, blocking read/write | No named pipe and no descriptor passing over a pipe |
+| Signal | 43 slots (0-42), including 11 RT signals (32-42); u64 mask, install/enqueue/wait | No signal-storm stress baseline |
+| Signal mask | Per-process blocked signal tracking, u64 bitfield | — |
+| Async signal delivery | Signal frame on user stack, arch-specific trampoline, sigreturn; all three architectures | — |
+| SA_SIGINFO support | siginfo_t delivery (si_signo, si_code, si_pid, si_uid, si_addr, si_value) | — |
+| SA_RESTART support | Automatic syscall restart on signal return, RestartBlock per thread | — |
+| sigsuspend (#135) | Atomic mask swap and thread suspend until a signal | — |
+| POSIX timers (#137-140) | timer_create/settime/gettime/delete, per-process management, signal on expiry | — |
+| eventfd (#107) | Counter/semaphore mode, EFD_NONBLOCK/EFD_CLOEXEC, poll/epoll integration, write-overflow EAGAIN | — |
+| Event | Event flag synchronization | — |
+| Condition variable | Blocking wait/wake | — |
+| Mutex | Blocking mutex | No lock-contention benchmark |
+| Semaphore | Counting semaphore | — |
+| Spinlock | IRQ-safe spinlock | — |
+| Shared memory | System V shm: shmget/shmat/shmdt/shmctl (#100-103) | Purpose-specific syscalls rather than a file- or handle-shaped IPC API; no POSIX `shm_open` |
+| Shell pipeline | Two commands piped together by the ring-3 shell | No kernel process group; the shell tracks jobs itself |
 
 **Strengths:** complete synchronization primitives and signal machinery,
 including the POSIX signal interaction model.
@@ -510,18 +514,20 @@ including the POSIX signal interaction model.
 
 ### 9. Security & Access Control
 
-| Component | Status |
-|-----------|--------|
-| Biba integrity model | System > High > Medium > Low |
-| Zone-aware DAC | System (/system), Apps (/apps), Data (/data) zones; credential store carved out of the guest-owned data zone |
-| Security descriptors | Per-object security labels |
-| User/group database | `/data/etc/passwd`, `/data/etc/shadow` |
-| Process security token | Per-thread credentials |
-| Access helpers | Permission checking on VFS ops |
-| SHA-256 integrity | Launch payload hash verification (manifest_sha256 / entry_sha256) |
-| PAN/SMAP | Kernel-user memory isolation |
-| Stack canary | Per-thread random canary, stack verification on context switch |
-| Audit subsystem | Audit event types (Syscall, FileOp, Process, Network, Auth), fixed-size ring buffer, syscall entry/exit hooks, AuditSetEnable (#143) and AuditReadLog (#144) syscalls |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| Biba integrity model | System > High > Medium > Low | — |
+| Zone-aware DAC | System (/system), Apps (/apps) and Data (/data) zones; the credential store is carved out of the guest-owned data zone | The zone set is a compile-time constant: no zone can be added or resized at boot |
+| Security descriptors | Per-object owner, group and mode | — |
+| User/group database | `/data/etc/passwd` and `/data/etc/shadow`, written back atomically | No group database; gids are numbers carried in the passwd records |
+| Process security token | Per-thread credentials and integrity level | — |
+| Access helpers | Central permission checking on VFS operations | — |
+| SHA-256 integrity | Launch manifest and payload hashes; optional detached signatures | Verification is opt-in: an artifact carrying no signature loads anyway, and there is no key distribution or rotation policy |
+| PAN/SMAP | Kernel-user memory isolation on all three architectures | See the interrupt section: a window held across a block can be closed under its holder |
+| Stack canary | Per-thread random canary, verified on context switch | Software check: it detects a smashed stack rather than preventing the write |
+| MAC type enforcement | Types on subjects and objects, allow rules, VFS/Process/Network hooks, exec transitions | Default is allow until a policy is loaded; deny-by-default needs an explicit policy |
+| Audit subsystem | Classified event types, ring buffer, syscall entry/exit hooks, AuditSetEnable (#143) and AuditReadLog (#144) | Memory-only in practice: the persistence path exists but nothing enables it, so records are lost on reboot |
+| Service authorization | A privileged rc.d declaration names an account that must resolve; the grant or refusal is audited | Provenance, not authentication: no password is involved, so the elevated token is unauthenticated |
 
 **Strengths:** a formal multi-level security policy and mandatory access
 control that are unusual in a hobby kernel.
@@ -590,15 +596,15 @@ control that are unusual in a hobby kernel.
 
 ### 10. Syscall Interface
 
-| Component | Status |
-|-----------|--------|
-| Syscall table | Numbered slots; the public count is derived from the highest enum discriminant, not written down in this document |
-| Dispatch engine | Context-aware dispatch with action return |
-| User memory validation | `validate_user_mapping()` + `copy_user_bytes()` |
-| Shared wrappers (`src/user/shared/syscall.rs`) | Typed wrappers plus raw entry points |
-| ABI types | Wire-format records, syscall encodings |
-| Per-category handler files | fs, network, process, diagnostic, tls, filter, io_uring, ptrace, etc. |
-| Syscall profiling | Per-syscall counters (optional feature) |
+| Component | Now | Missing |
+|-----------|-----|---------|
+| Syscall table | Numbered slots; the public count is derived from the highest enum discriminant, not written down in this document | The experimental range is not frozen, so it carries no cross-major stability guarantee |
+| Dispatch engine | Context-aware dispatch with action return | — |
+| User memory validation | `validate_user_mapping()` and `copy_user_bytes()`, driven by the central pointer-spec table | — |
+| Shared wrappers (`src/user/shared/syscall.rs`) | Typed wrappers plus raw entry points | Not every syscall has a typed wrapper |
+| ABI types | Wire-format records with compile-time layout assertions | — |
+| Per-category handler files | fs, network, process, diagnostic, tls, filter, io_uring, ptrace, and the rest | — |
+| Syscall profiling | Per-syscall counters behind an optional feature | Off by default, so a normal boot has no syscall profile |
 
 **Categories of syscall handlers:**
 
@@ -687,18 +693,29 @@ user-memory validation.
 | NUMA discovery | Full (ACPI SRAT/SLIT) | Full (FDT numa-node-id, distance-map) | Full (FDT numa-node-id, distance-map) |
 | CPU frequency scaling | Full (MSR P-state) | Full (DT OPP) | Full (DT OPP) |
 
+What each target still lacks:
+
+- **x86_64**: no PCID, so a context switch flushes translations; the PIT is
+  routed to one LAPIC, so APs take no timer interrupt.
+- **AArch64**: GICv2 only — a GICv3 is detected and refused, so there is no
+  ITS, no LPI and no PCIe MSI path.
+- **RISC-V 64**: the most partial of the three. No architectural NMI source,
+  a cross-hart wake waits for the target's next tick, and the default QEMU
+  machine has no IMSIC.
+- **All three**: verified under QEMU only; no bare-metal bring-up yet.
+
 ### Shared User Runtime (`src/user/shared/`)
 
-| Module | Purpose |
-|--------|---------|
-| `syscall.rs` | Typed syscall wrappers |
-| `dispatch.rs` | Shell builtin dispatch |
-| `commands/` | Subcommand implementations |
-| `signal.rs` | Signal handling API (u64 mask, sigsuspend, SA_SIGINFO) |
-| `passwd.rs` | Password file parsing |
-| `jobs.rs` | Job control logic |
-| `abi/` | ABI type definitions |
-| `runtime.rs` | Arch syscall wrappers, brk allocator, args |
+| Module | Now | Missing |
+|--------|-----|---------|
+| `syscall.rs` | Typed syscall wrappers plus raw entry points | Not every syscall has a wrapper |
+| `dispatch.rs` | Command-name to builtin dispatch | — |
+| `commands/` | The shell's builtin implementations | Builtins are shell commands, not a libc; a standalone program links this module to reuse them |
+| `signal.rs` | Signal API: u64 mask, sigsuspend, SA_SIGINFO | — |
+| `passwd.rs` | `/data/etc/passwd` parsing | No group file to parse |
+| `jobs.rs` | Job tracking for the shell | Jobs live in userspace, so they die with the shell |
+| `abi/` | ABI record types, mirrored from `src/abi/` | — |
+| `runtime.rs` | Architecture syscall bridge, brk allocator, argument parsing | Behind the `runtime` feature; the kernel build uses its own bridge instead |
 
 The ABI records are the one thing here that exists twice: `src/abi/` holds them,
 and `src/user/shared/abi/` mirrors them, the mirror carrying
@@ -737,18 +754,18 @@ numbers it decodes against come from the shared copy.
 
 ### Testing
 
-| Category | What it covers |
-|----------|----------------|
-| Unit tests (in-module) | Per-module behaviour, registered by feature |
-| Integration tests | Filesystem, I/O, memory, process, network, syscall areas |
-| Fault injection | SimpleFs single- and dual-fault matrix |
-| Recovery tests | Crash and replay scenarios |
-| Concurrency tests | Scheduler, condvar, console, keyboard |
-| Parser fuzz harnesses | Deterministic, in-tree, run by `make test-parsers` |
-| virtio-gpu layout tests | Struct size/layout + command wire-format (mock device) |
-| CI workflow | fmt, check, build, clippy on every configuration, every static gate and ratchet, and the boots |
-| Verification gates | P0-P3: fmt → test → cross-build → clippy, plus the optional QEMU smokes |
-| ABI number snapshot | `tests/syscall/abi_golden.rs`: any change to a number's name fails, and a change in the experimental range has to bump the ABI minor in the same commit |
+| Category | Now | Missing |
+|----------|-----|---------|
+| Unit tests (in-module) | Per-module behaviour, registered by feature | — |
+| Integration tests | Filesystem, I/O, memory, process, network and syscall areas | Host-side only; the bare-metal side is covered by the runtime smokes, not by these |
+| Fault injection | SimpleFs single- and dual-fault matrix | Deterministic and bounded; the other filesystems have no equivalent matrix |
+| Recovery tests | Crash and replay scenarios | — |
+| Concurrency tests | Scheduler, condvar, console, keyboard | — |
+| Parser fuzz harnesses | Deterministic, in-tree, run by `make test-parsers` | Fixed-seed: they do not search for a failing mutation chain |
+| virtio-gpu layout tests | Struct size and layout plus command wire format, against a mock device | Mock device only; no real GPU validation |
+| CI workflow | fmt, check, build, clippy on every configuration, every static gate and ratchet, and the boots | The gates run as separate steps rather than through `make verify-p3` |
+| Verification gates | P0-P3: fmt, tests, cross-builds, clippy, plus the QEMU smokes | The smokes are opt-in through environment variables, so a local `make verify-p3` without them does not boot anything |
+| ABI number snapshot | `tests/syscall/abi_golden.rs`: a number's name may not change, and an experimental change has to bump the ABI minor in the same commit | Pins numbering and record layouts, not the object shapes behind them |
 
 The demo disk was verified end-to-end on all three targets under QEMU:
 interactive shell, demo payload (app-id/image/cwd/argv0/resume/exit code), 0
@@ -780,7 +797,10 @@ things make that contract *testable* rather than merely written down:
 
 ---
 
-## Weaknesses & Known Gaps
+## Cross-Cutting Gaps
+
+Each module's own gaps are in the tables above. What follows is the set that
+spans modules and cannot be attributed to one of them.
 
 - **Emulation-first verification**: apart from x86_64, AArch64 and RISC-V are
   verified under QEMU; there is no bare-metal bring-up yet (see the roadmap's
@@ -833,8 +853,6 @@ things make that contract *testable* rather than merely written down:
   its manifest asks for it.
 - **Single maintainer**: bus factor = 1; every module is currently held by one
   maintainer.
-- **The experimental syscalls are unfrozen**: everything above the stable
-  boundary is classified Experimental.
 - **“We do not break userspace” has a handful of subjects, not a population**:
   the frozen payloads make the rule testable for the launcher and the shell on
   all three targets and for the launcher's child on x86_64. The three shells are
@@ -870,8 +888,8 @@ things make that contract *testable* rather than merely written down:
 
 1. **Many filesystem drivers** — FAT32, exFAT, ext4, F2FS, btrfs, XFS, NTFS,
    ISO 9660, EROFS, SquashFS, and the native SimpleFs.
-2. **A native TCP/IP stack** with TLS 1.3, SCTP, DCCP, IPsec, multicast
-   routing, and WireGuard VPN — not a port of lwIP/uIP, but a custom
+2. **A native TCP/IP stack** with TLS 1.3, SCTP, DCCP, IPsec, and multicast
+   routing — not a port of lwIP/uIP, but a custom
    implementation with TCP congestion control, DNS caching, and DHCP.
 3. **Three architecture targets** — x86_64, AArch64, RISC-V 64 — with PAN/SMAP
    on all three.
@@ -910,8 +928,9 @@ things make that contract *testable* rather than merely written down:
     timer management and signal delivery.
 19. **An HDA audio controller driver** — Intel HD Audio with CORB/RIRB, codec
     discovery, and stream descriptors.
-20. **WireGuard VPN** — Noise_IKpsk2 handshake state machine,
-    ChaCha20-Poly1305 transport encryption, session key management.
+20. **WireGuard** — Noise_IKpsk2 handshake state machine,
+    ChaCha20-Poly1305 transport encryption, and session key management. It is
+    not wired to an interface yet; see the network section's gaps.
 21. **CPU frequency scaling & power management** — x86_64 MSR P-state driver,
     aarch64/riscv64 device-tree OPP discovery, governors, scheduler-tick
     integration, and cpufreq syscalls.

@@ -589,6 +589,24 @@ original parent terminates before the child.
 
 ---
 
+## Status and Gaps
+
+The process and thread model is complete for what it claims: process
+construction, thread lifecycle, preemptive scheduling with priorities,
+signals with asynchronous delivery and `SA_RESTART`, handle tables, and
+security tokens. What is missing:
+
+- **No kernel process group.** Job control lives in the ring-3 shell, which
+  tracks jobs and signals the foreground pid itself, so terminal ownership is
+  not modelled by the kernel.
+- **One scheduling family**: round-robin and FIFO only, with priority boosting
+  for starvation; no fair-share or deadline class.
+- **Cross-CPU wakeups are not uniform**: RISC-V waits for the target hart's
+  next tick, and on x86_64 the timer is routed to one LAPIC, so APs take no
+  timer interrupt and expiries are swept by whichever CPU ticks.
+
+The per-module census lives in [current-status.md](current-status.md).
+
 ## See Also
 
 - [Documentation index](README.md) — complete document tree

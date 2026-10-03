@@ -299,7 +299,8 @@ impl DriverManager {
         // VirtIO GPU is probed before bochs-display so it takes precedence
         // when a virtio-gpu-pci device is present on the PCI bus.
         // MMIO BAR mapping is available via map_device_mmio.
-        // NVMe/xHCI full BlockDevice/ring activation is deferred.
+        // NVMe is a BlockDevice with its own boot-disk probe; xHCI's full ring
+        // activation is still deferred.
         self.register(nvme::driver());
         self.register(virtio_gpu::driver());
         self.register(framebuffer::driver());

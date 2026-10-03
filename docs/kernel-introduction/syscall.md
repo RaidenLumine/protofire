@@ -467,6 +467,23 @@ The full workflow spans four locations:
 
 ---
 
+## Status and Gaps
+
+The interface is numbered, versioned, dispatched through one table, and
+guarded by a pointer-spec table; the number→name table is pinned by
+`tests/syscall/abi_golden.rs`, and the ABI version is reported to user space.
+What is missing:
+
+- **The experimental range is not frozen**, so it carries no cross-major
+  stability guarantee above the stable boundary.
+- **Not every syscall has a typed wrapper** in the shared library.
+- **No external toolchain or conformance suite**: the ABI is self-consistent
+  within this crate, but no independent implementation exercises it.
+- **Syscall profiling is behind an optional feature**, so a normal boot
+  produces no per-syscall profile.
+
+The per-module census lives in [current-status.md](current-status.md).
+
 ## See Also
 
 - [Shared user runtime reference](shared-user-runtime.md) — syscall wrapper conventions, dual-environment dispatch

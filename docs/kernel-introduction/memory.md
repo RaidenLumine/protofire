@@ -619,6 +619,26 @@ discovered, the kernel falls back to in-memory `page_content` storage
 
 ---
 
+## Status and Gaps
+
+The major virtual-memory features are implemented: the frame allocator,
+the TLSF heap, per-architecture page tables, copy-on-write, demand paging,
+disk-backed swap, compressed reclaim, compaction, and NUMA-aware allocation
+and discovery. What is missing:
+
+- **Fixed ceilings.** The physical pool and the kernel heap are sized by
+  constants and do not grow; there is no memory hotplug.
+- **No PCID on x86_64**, so a context switch invalidates translations even
+  though AArch64 and RISC-V have ASID allocators.
+- **Swap, compression and compaction have only been exercised under QEMU**;
+  no real memory-pressure run exists.
+- **Compaction stops at the first unmovable barrier**, so a fragmented pool
+  with pinned frames may not fully coalesce.
+- **The prepared-translation diagnostic is x86_64 only** and answers `None`
+  elsewhere.
+
+The per-module census lives in [current-status.md](current-status.md).
+
 ## See Also
 
 - [Documentation index](README.md) — complete document tree

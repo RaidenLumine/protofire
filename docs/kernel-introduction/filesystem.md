@@ -407,6 +407,28 @@ sequential, which is what makes the pipe pair sufficient.
 
 ---
 
+## Status and Gaps
+
+The VFS, the native SimpleFs, the external drivers, boot-time recovery and
+FUSE are all reachable, and the native filesystem's data-reduction features
+(xattrs, per-file compression, cross-file dedup) are crash-safe under the V4
+two-phase commit. What is missing:
+
+- **Five drivers are read-only** (btrfs, NTFS, SquashFS, ISO 9660, EROFS);
+  write support is the mid-term roadmap item.
+- **Journal replay is verified on emulated images**, not against real
+  corruption.
+- **Extended attributes are SimpleFs and tmpfs only**: the VNode default
+  answers `Unsupported`, so the other filesystems do not expose them.
+- **One mount table for the machine**; there is no per-process mount
+  namespace.
+- **FUSE dispatch is sequential**, which is what makes the pipe pair
+  sufficient and also what bounds throughput.
+- **Recovery runs at boot under the filesystem lock**; there is no online
+  repair.
+
+The per-module census lives in [current-status.md](current-status.md).
+
 ## See Also
 
 - [Documentation index](README.md) — complete document tree

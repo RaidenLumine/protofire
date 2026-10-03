@@ -280,6 +280,26 @@ event loops to determine when I/O operations will not block.
 
 ---
 
+## Status and Gaps
+
+The stack is native rather than a port: link through application layers,
+TLS, IPsec, multicast routing, DCCP, SCTP and WireGuard are all in the tree,
+and DHCP with lease renewal and a DNS cache run at boot. What is missing:
+
+- **Congestion control is Tahoe and Reno only**; there is no CUBIC or BBR,
+  and no throughput baseline to compare against.
+- **IPv4 only for addressing**: no DHCPv6 or prefix delegation, and the DNS
+  client does not validate DNSSEC.
+- **WireGuard is not wired up**: the handshake, transport and session tables
+  exist, but nothing outside the module constructs a device, so no tunnel is
+  reachable from a program yet.
+- **PIM-DM only**, and only under `educational_networking`; there is no
+  PIM-SM.
+- **TLS has no trust-anchor management**, and IPsec SAD/SPD is manual.
+- **Not every network syscall has a typed wrapper** in the shared library.
+
+The per-module census lives in [current-status.md](current-status.md).
+
 ## See Also
 
 - [Documentation index](README.md) — complete document tree

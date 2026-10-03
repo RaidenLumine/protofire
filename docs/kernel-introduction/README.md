@@ -349,6 +349,14 @@ common case), a default single-node topology maps all CPUs to node 0.
 
 ## Related Documentation
 
+Every subsystem document ends with its own **Status and Gaps** section: what
+the module does now and what it does not do yet. `current-status.md` is the
+per-module census — one row per module, in the same shape — and it is the
+document to update when a module's state changes. None of these documents
+carries line counts, file counts, test counts, or completion percentages:
+figures like those change with every commit, and the tree is the authority for
+them.
+
 ### Subsystem Overviews (`docs/kernel-introduction/`)
 
 | Document | Description |

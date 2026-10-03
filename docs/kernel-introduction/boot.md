@@ -399,10 +399,10 @@ with interrupts enabled via the architecture-specific `idle()` function.
 
 | Make target | Triple | ELF output |
 |---|---|---|
-| `make build` | `x86_64-unknown-none` | `target/x86_64-unknown-none/debug|release/protofire` |
-| `make build-aarch64` | `aarch64-unknown-none` | `target/aarch64-unknown-none/debug|release/protofire` |
-| `make build-aarch64-image` | `aarch64-unknown-none` | `target/aarch64-unknown-none/debug|release/protofire.img` (bootable; plus the ELF) |
-| `make build-riscv64` | `riscv64gc-unknown-none-elf` | `target/riscv64gc-unknown-none-elf/debug|release/protofire` |
+| `make build` | `x86_64-unknown-none` | `target/x86_64-unknown-none/debug\|release/protofire` |
+| `make build-aarch64` | `aarch64-unknown-none` | `target/aarch64-unknown-none/debug\|release/protofire` |
+| `make build-aarch64-image` | `aarch64-unknown-none` | `target/aarch64-unknown-none/debug\|release/protofire.img` (bootable; plus the ELF) |
+| `make build-riscv64` | `riscv64gc-unknown-none-elf` | `target/riscv64gc-unknown-none-elf/debug\|release/protofire` |
 
 ### 7.2 QEMU Direct Boot
 
@@ -522,6 +522,24 @@ GRUB (Multiboot2)       or      QEMU -kernel (PVH ELF note)
 | `Makefile` | Build / run / check targets |
 
 ---
+
+## Status and Gaps
+
+The boot path is complete on all three targets: firmware handoff, FDT or
+Multiboot2 parsing, the ordered kernel initialisation pipeline, and secondary
+CPU bring-up. What is missing:
+
+- **No bare-metal validation.** Every boot this document describes has been
+  run under QEMU.
+- **AArch64 gets no device tree from a direct QEMU boot**, so the RAM-scan
+  fallback is the path that runs there; a machine whose controller is a GICv3
+  is detected and refused rather than driven.
+- **RISC-V wakeups are the coarsest**: a cross-hart wake waits for the target
+  hart's next tick, and the machine has no architectural NMI source.
+- **The init program is a stub** that exits, so the boot's own service
+  definitions are what start anything useful.
+
+The per-module census lives in [current-status.md](current-status.md).
 
 ## See Also
 
