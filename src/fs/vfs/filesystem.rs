@@ -172,6 +172,78 @@ pub trait FileSystem: Send + Sync {
     }
 }
 
+/// The read half of a filesystem that cannot be modified.
+///
+/// A synthetic filesystem — `/proc`, `/service` — is a view over kernel state,
+/// not storage: it answers lookups and directory listings and refuses every
+/// mutation.  Writing those refusals out by hand in each implementation is how
+/// one of them eventually forgets one, so they are written here once.
+/// Implement this trait and the blanket [`FileSystem`] implementation below
+/// supplies every mutation method as [`Error::PermissionDenied`]; a read-only
+/// filesystem therefore has nowhere to declare a mutation, let alone forget to
+/// refuse one.
+///
+/// The methods the blanket impl does not mention (`create_symlink`,
+/// `create_device`, `hard_link`, `update_security_descriptor`, the xattr
+/// setters and `set_file_flags`) keep their [`FileSystem`] defaults, which
+/// already refuse.
+pub trait ReadOnlyFileSystem: Send + Sync {
+    /// Return the human-readable name of this filesystem.
+    fn name(&self) -> &str;
+
+    /// Look up a path and return the corresponding VNode.
+    fn lookup(&self, path: &str) -> Result<Arc<dyn VNode>>;
+
+    /// Read directory entries from the directory at `path`.
+    fn read_dir(&self, path: &str, index: usize) -> Result<DirectoryEntry>;
+
+    /// Return the metadata for the node at `path`.
+    ///
+    /// The default is the same lookup-then-metadata the [`FileSystem`] default
+    /// performs, so the two agree by construction.  A synthetic filesystem
+    /// overrides it only to describe a root path its `lookup` does not model.
+    fn stat(&self, path: &str) -> Result<Metadata> {
+        let node = self.lookup(path)?;
+        Ok(Metadata::new(node.kind(), node.size()))
+    }
+}
+
+/// Every read-only filesystem is a filesystem, and its mutation half is fixed
+/// by what it is: a view can be looked up and listed, never changed.
+impl<T: ReadOnlyFileSystem> FileSystem for T {
+    fn name(&self) -> &str {
+        ReadOnlyFileSystem::name(self)
+    }
+
+    fn lookup(&self, path: &str) -> Result<Arc<dyn VNode>> {
+        ReadOnlyFileSystem::lookup(self, path)
+    }
+
+    fn stat(&self, path: &str) -> Result<Metadata> {
+        ReadOnlyFileSystem::stat(self, path)
+    }
+
+    fn read_dir(&self, path: &str, index: usize) -> Result<DirectoryEntry> {
+        ReadOnlyFileSystem::read_dir(self, path, index)
+    }
+
+    fn create_file(&self, _path: &str) -> Result<Arc<dyn VNode>> {
+        Err(Error::PermissionDenied)
+    }
+
+    fn create_dir(&self, _path: &str) -> Result<()> {
+        Err(Error::PermissionDenied)
+    }
+
+    fn rename(&self, _old_path: &str, _new_path: &str) -> Result<()> {
+        Err(Error::PermissionDenied)
+    }
+
+    fn remove_path(&self, _path: &str) -> Result<()> {
+        Err(Error::PermissionDenied)
+    }
+}
+
 pub struct StaticFileSystem {
     name: &'static str,
     nodes: BTreeMap<String, Arc<dyn VNode>>,

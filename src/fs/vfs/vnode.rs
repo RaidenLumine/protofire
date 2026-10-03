@@ -38,11 +38,18 @@ pub trait VNode: Send + Sync {
     fn read(&self, offset: u64, buffer: &mut [u8]) -> Result<usize>;
 
     /// Write `len` bytes from `buf` at offset `off`. Returns bytes written.
+    ///
+    /// The default implementation refuses with [`Error::PermissionDenied`]: a
+    /// node that does not override this is read-only, which is what all of a
+    /// synthetic filesystem's nodes are.
     fn write(&self, _offset: u64, _buffer: &[u8]) -> Result<usize> {
         Err(Error::PermissionDenied)
     }
 
     /// Truncate or extend this node to `len` bytes.
+    ///
+    /// The default implementation refuses with [`Error::PermissionDenied`],
+    /// for the same reason as [`Self::write`].
     fn set_len(&self, _length: u64) -> Result<()> {
         Err(Error::PermissionDenied)
     }

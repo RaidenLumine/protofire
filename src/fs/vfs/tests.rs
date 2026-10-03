@@ -3,6 +3,8 @@
 //! Regression tests for the pure VFS type layer: security descriptors,
 //! metadata records, directory entries, and volume-check reporting.
 
+use alloc::sync::Arc;
+
 use super::*;
 use crate::abi::fs::FILE_KIND_DIRECTORY;
 use crate::abi::fs::FILE_KIND_FILE;
@@ -184,4 +186,56 @@ fn mutation_support_capabilities() {
     assert!(SecurityDescriptorMutationSupport::Persistent.supports_persistent_updates());
     assert!(!SecurityDescriptorMutationSupport::LayoutDerivedOnly.supports_persistent_updates());
     assert!(!SecurityDescriptorMutationSupport::LayoutDerivedOnly.provides_persistent_metadata());
+}
+
+/// A view with nothing behind it: the smallest thing the read-only skeleton
+/// will accept, used to pin what the skeleton supplies.
+struct EmptyViewFs;
+
+impl ReadOnlyFileSystem for EmptyViewFs {
+    fn name(&self) -> &str {
+        "empty-view"
+    }
+
+    fn lookup(&self, _path: &str) -> crate::Result<Arc<dyn VNode>> {
+        Ok(Arc::new(StaticVNode::directory("empty-view")))
+    }
+
+    fn read_dir(&self, _path: &str, _index: usize) -> crate::Result<DirectoryEntry> {
+        Err(Error::NotFound)
+    }
+}
+
+#[test]
+fn the_read_only_skeleton_refuses_every_mutation() {
+    let view = EmptyViewFs;
+
+    // The mutation half comes from the blanket `FileSystem` impl, so a
+    // read-only filesystem cannot declare one — or forget to refuse one.
+    assert_eq!(
+        FileSystem::create_file(&view, "/new").err(),
+        Some(Error::PermissionDenied)
+    );
+    assert_eq!(
+        FileSystem::create_dir(&view, "/new").err(),
+        Some(Error::PermissionDenied)
+    );
+    assert_eq!(
+        FileSystem::rename(&view, "/a", "/b").err(),
+        Some(Error::PermissionDenied)
+    );
+    assert_eq!(
+        FileSystem::remove_path(&view, "/a").err(),
+        Some(Error::PermissionDenied)
+    );
+
+    // The read half still answers, so the refusals above are the skeleton's
+    // and not a filesystem that refuses everything.
+    assert_eq!(ReadOnlyFileSystem::name(&view), "empty-view");
+    assert!(ReadOnlyFileSystem::lookup(&view, "/").is_ok());
+    assert!(ReadOnlyFileSystem::stat(&view, "/").is_ok());
+    assert_eq!(
+        ReadOnlyFileSystem::read_dir(&view, "/", 0).err(),
+        Some(Error::NotFound)
+    );
 }

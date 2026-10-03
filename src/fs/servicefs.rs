@@ -28,14 +28,12 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::fs::vfs::DirectoryEntry;
-use crate::fs::vfs::FileSystem as VfsTrait;
 use crate::fs::vfs::Metadata;
 use crate::fs::vfs::NodeKind;
 use crate::fs::vfs::PermissionMode;
+use crate::fs::vfs::ReadOnlyFileSystem;
 use crate::fs::vfs::SecurityDescriptor;
-use crate::fs::vfs::SecurityDescriptorMutationSupport;
 use crate::fs::vfs::VNode;
-use crate::fs::vfs::VolumeCheckReport;
 use crate::kernel::service;
 use crate::Error;
 use crate::Result;
@@ -199,10 +197,6 @@ impl VNode for ServiceFileVNode {
         buffer[..n].copy_from_slice(&data[start..end]);
         Ok(n)
     }
-
-    fn write(&self, _offset: u64, _buffer: &[u8]) -> Result<usize> {
-        Err(Error::PermissionDenied)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -247,10 +241,6 @@ impl VNode for ServiceDirVNode {
     }
 
     fn read(&self, _offset: u64, _buffer: &mut [u8]) -> Result<usize> {
-        Err(Error::PermissionDenied)
-    }
-
-    fn write(&self, _offset: u64, _buffer: &[u8]) -> Result<usize> {
         Err(Error::PermissionDenied)
     }
 }
@@ -300,7 +290,7 @@ fn parse_servicefs_path(path: &str) -> ServicefsPath<'_> {
 
 pub struct ServiceFs;
 
-impl VfsTrait for ServiceFs {
+impl ReadOnlyFileSystem for ServiceFs {
     fn name(&self) -> &str {
         "servicefs"
     }
@@ -362,30 +352,6 @@ impl VfsTrait for ServiceFs {
 
             ServicefsPath::ServiceFile(..) => Err(Error::NotFound),
         }
-    }
-
-    fn create_file(&self, _path: &str) -> Result<Arc<dyn VNode>> {
-        Err(Error::PermissionDenied)
-    }
-
-    fn create_dir(&self, _path: &str) -> Result<()> {
-        Err(Error::PermissionDenied)
-    }
-
-    fn rename(&self, _old_path: &str, _new_path: &str) -> Result<()> {
-        Err(Error::PermissionDenied)
-    }
-
-    fn remove_path(&self, _path: &str) -> Result<()> {
-        Err(Error::PermissionDenied)
-    }
-
-    fn security_descriptor_mutation_support(&self) -> SecurityDescriptorMutationSupport {
-        SecurityDescriptorMutationSupport::LayoutDerivedOnly
-    }
-
-    fn check_and_repair(&self) -> Result<VolumeCheckReport> {
-        Err(Error::Unsupported)
     }
 }
 
@@ -635,10 +601,27 @@ mod tests {
         let _guard = exclusive_registry();
         service::register(&definition("alpha", true), 0);
 
-        assert!(ServiceFs.create_file("alpha/new").is_err());
-        assert!(ServiceFs.create_dir("new").is_err());
-        assert!(ServiceFs.rename("alpha", "beta").is_err());
-        assert!(ServiceFs.remove_path("alpha").is_err());
+        // The VFS read-only skeleton supplies the mutation half, so the exact
+        // refusal is part of the contract rather than this filesystem's
+        // choice.  The calls are fully qualified because this module names
+        // both traits' read methods and only the mutations come from
+        // `FileSystem`.
+        assert_eq!(
+            crate::fs::vfs::FileSystem::create_file(&ServiceFs, "alpha/new").err(),
+            Some(Error::PermissionDenied)
+        );
+        assert_eq!(
+            crate::fs::vfs::FileSystem::create_dir(&ServiceFs, "new").err(),
+            Some(Error::PermissionDenied)
+        );
+        assert_eq!(
+            crate::fs::vfs::FileSystem::rename(&ServiceFs, "alpha", "beta").err(),
+            Some(Error::PermissionDenied)
+        );
+        assert_eq!(
+            crate::fs::vfs::FileSystem::remove_path(&ServiceFs, "alpha").err(),
+            Some(Error::PermissionDenied)
+        );
 
         let vnode = ServiceFs.lookup("alpha/state").expect("state");
         assert_eq!(vnode.write(0, b"running\n"), Err(Error::PermissionDenied));

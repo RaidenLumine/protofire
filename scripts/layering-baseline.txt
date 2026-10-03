@@ -136,7 +136,7 @@ process                      softirq                      1
 process                      sync                         20
 process                      syscall                      1
 process                      user                         2
-procfs                       fs                           10
+procfs                       fs                           8
 procfs                       process                      18
 procfs                       smp                          1
 random                       crypto                       2

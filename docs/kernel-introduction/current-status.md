@@ -197,6 +197,10 @@ filesystem; and encryption at rest.
 - **Encryption at rest**: EncryptedBlockDevice provides AES-256 XTS disk
   encryption, LUKS2-compatible headers, PBKDF2 key derivation, and layers
   transparently under any filesystem.
+- **Read-only is structural**: the synthetic filesystems (`/proc`, `/service`)
+  implement the VFS `ReadOnlyFileSystem` half, and one blanket impl supplies
+  every mutation as `PermissionDenied` — a view cannot declare a mutation, so
+  it cannot forget to refuse one.
 
 **Weaknesses:**
 

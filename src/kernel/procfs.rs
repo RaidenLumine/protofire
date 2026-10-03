@@ -29,13 +29,11 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::fs::vfs::DirectoryEntry;
-use crate::fs::vfs::FileSystem as VfsTrait;
 use crate::fs::vfs::Metadata;
 use crate::fs::vfs::NodeKind;
+use crate::fs::vfs::ReadOnlyFileSystem;
 use crate::fs::vfs::SecurityDescriptor;
-use crate::fs::vfs::SecurityDescriptorMutationSupport;
 use crate::fs::vfs::VNode;
-use crate::fs::vfs::VolumeCheckReport;
 use crate::kernel::process::ProcessId;
 use crate::kernel::process::ProcessState;
 use crate::Error;
@@ -94,10 +92,6 @@ impl VNode for StaticDataVNode {
         let n = end - start;
         buffer[..n].copy_from_slice(&data[start..end]);
         Ok(n)
-    }
-
-    fn write(&self, _offset: u64, _buffer: &[u8]) -> Result<usize> {
-        Err(Error::PermissionDenied)
     }
 }
 
@@ -214,10 +208,6 @@ impl VNode for ProcessFileVNode {
         buffer[..n].copy_from_slice(&data[start..end]);
         Ok(n)
     }
-
-    fn write(&self, _offset: u64, _buffer: &[u8]) -> Result<usize> {
-        Err(Error::PermissionDenied)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -253,10 +243,6 @@ impl VNode for PidDirVNode {
     }
 
     fn read(&self, _offset: u64, _buffer: &mut [u8]) -> Result<usize> {
-        Err(Error::PermissionDenied)
-    }
-
-    fn write(&self, _offset: u64, _buffer: &[u8]) -> Result<usize> {
         Err(Error::PermissionDenied)
     }
 }
@@ -538,7 +524,7 @@ const ROOT_STATIC_ENTRIES: &[(&str, NodeKind)] = &[
 
 pub struct ProcFs;
 
-impl VfsTrait for ProcFs {
+impl ReadOnlyFileSystem for ProcFs {
     fn name(&self) -> &str {
         "procfs"
     }
@@ -645,30 +631,6 @@ impl VfsTrait for ProcFs {
             });
         }
         self.lookup(path).and_then(|v| v.metadata())
-    }
-
-    fn create_file(&self, _path: &str) -> Result<Arc<dyn VNode>> {
-        Err(Error::PermissionDenied)
-    }
-
-    fn create_dir(&self, _path: &str) -> Result<()> {
-        Err(Error::PermissionDenied)
-    }
-
-    fn rename(&self, _old_path: &str, _new_path: &str) -> Result<()> {
-        Err(Error::PermissionDenied)
-    }
-
-    fn remove_path(&self, _path: &str) -> Result<()> {
-        Err(Error::PermissionDenied)
-    }
-
-    fn security_descriptor_mutation_support(&self) -> SecurityDescriptorMutationSupport {
-        SecurityDescriptorMutationSupport::LayoutDerivedOnly
-    }
-
-    fn check_and_repair(&self) -> Result<VolumeCheckReport> {
-        Err(Error::Unsupported)
     }
 }
 
@@ -818,10 +780,17 @@ mod tests {
     #[test]
     fn procfs_is_read_only() {
         let p = ProcFs;
-        assert!(p.create_file("x").is_err());
-        assert!(p.create_dir("x").is_err());
-        assert!(p.rename("a", "b").is_err());
-        assert!(p.remove_path("a").is_err());
+        // The filesystem-level refusals are the VFS read-only skeleton's, and
+        // the skeleton's own test pins them (`fs/vfs`).  What this pins is
+        // procfs's half: the nodes a program actually reaches refuse the
+        // write and the truncate.
+        let file = p.lookup("version").expect("version node");
+        assert_eq!(file.write(0, b"nope"), Err(Error::PermissionDenied));
+        assert_eq!(file.set_len(0), Err(Error::PermissionDenied));
+
+        let directory = p.lookup("").expect("root node");
+        assert_eq!(directory.write(0, b"nope"), Err(Error::PermissionDenied));
+        assert_eq!(directory.set_len(0), Err(Error::PermissionDenied));
     }
 
     #[test]
