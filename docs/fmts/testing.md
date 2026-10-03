@@ -211,7 +211,7 @@ hit the null and bounds checks before any dereference. Keep to that rule.
 ```bash
 make test              # host unit + integration, with demo-disk
 make test-lib          # library unit tests only
-make test-fast         # path, I/O, syscall, user integration
+make test-fast         # path, I/O, dual-entry metadata consistency
 make test-concurrency  # scheduler, input, condvar
 make test-storage      # filesystem, recovery, fault injection
 make test-parsers      # deterministic parser fuzz harnesses

@@ -112,6 +112,10 @@ name = "syscall_abi_golden"
 path = "tests/syscall/abi_golden.rs"
 
 [[test]]
+name = "fs_entries"
+path = "tests/syscall/fs_entries.rs"
+
+[[test]]
 name = "usb_msd"
 path = "tests/drivers/usb_msd.rs"
 
