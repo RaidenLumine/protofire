@@ -115,14 +115,14 @@ pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
     result
 }
 
-/// The system zone's init program: `exit(0)`, and nothing else.
+/// The system zone's init program on a host that cannot carry the payload.
 ///
-/// A demo disk wants a program at `/system/init.elf` that does nothing — the
-/// services the demo cares about are started by the kernel's own init — and
-/// this is that program's machine code rather than a hand-written ELF around
-/// it: `elf_builder` wraps the bytes the way it wraps every other demo
-/// payload, so the header, the segment and the entry point come from one place
-/// instead of two.
+/// `exit(0)`, and nothing else.  It exists for the hosts whose object format
+/// has no ELF payload section — a Mach-O or COFF build, where the demo-disk
+/// builder still runs (`mkimage`, and the host tests) and a disk it builds
+/// still needs a program at `/system/init.elf`.  A target that can carry the
+/// payload ships the init program instead.
+#[cfg(not(any(target_os = "linux", target_os = "none")))]
 const DEMO_STUB_PAYLOAD_X86_64: [u8; 10] = [
     0xb8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3 — exit
     0x31, 0xff, // xor edi, edi — with status 0
@@ -354,11 +354,28 @@ fn apps_entries<'a>(
 /// The system zone: the shared files plus the stub init program at
 /// `/init.elf`.
 pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
+    // The init program is the demo's own code, emitted into its section and
+    // wrapped by the shared ELF builder — not a stub, and not a hand-written
+    // header around one: it reads `/system/rc.d` and asks for the services to
+    // be started, which is the distribution's half of the service manager.
+    let payload = super::init_payload_x86_64::payload_bytes();
+    let entry_offset = super::init_payload_x86_64::payload_entry_offset();
+    #[cfg(any(target_os = "linux", target_os = "none"))]
     let init = crate::user::demo::elf_builder::build_artifact_from_payload(
-        &DEMO_STUB_PAYLOAD_X86_64,
-        0,
+        payload,
+        entry_offset,
         crate::user::program::DEMO_PROGRAM_ENTRY as u64,
         crate::user::program::DEMO_PROGRAM_MACHINE,
     );
+    #[cfg(not(any(target_os = "linux", target_os = "none")))]
+    let init = {
+        let _ = (payload, entry_offset);
+        crate::user::demo::elf_builder::build_artifact_from_payload(
+            &DEMO_STUB_PAYLOAD_X86_64,
+            0,
+            crate::user::program::DEMO_PROGRAM_ENTRY as u64,
+            crate::user::program::DEMO_PROGRAM_MACHINE,
+        )
+    };
     super::build_system_zone_from(&init.bytes)
 }

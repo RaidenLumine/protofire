@@ -3,6 +3,53 @@
 //! Architecture-specific payload-runtime macros that emit compact syscall
 //! stubs into extracted section blobs for user-program payloads.
 
+/// The service stubs a payload's init program calls.
+///
+/// One definition, invoked by each payload runtime: the two syscalls are not
+/// per-architecture, but the section they land in is, and a payload function
+/// left outside its section would not travel with the blob that is copied onto
+/// the disk.
+#[allow(unused_macros)]
+macro_rules! define_payload_service_stubs {
+    ($section:literal) => {
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        /// Register the services one rc.d file's text declares.
+        fn service_declare(text: usize, length: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+                $crate::syscall::SyscallNumber::ServiceDeclare as usize,
+                text,
+                length,
+                0,
+                0,
+                0,
+                0,
+            )
+        }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        /// Start every declared service that has not started, in order.
+        fn service_start_all() -> usize {
+            payload_runtime_invoke_raw_status(
+                $crate::syscall::SyscallNumber::ServiceStartAll as usize,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        }
+    };
+}
+
+// Reachable by path inside the runtime macros below, which are themselves
+// expanded at the payload modules — where this macro's name is not in scope.
+pub(crate) use define_payload_service_stubs;
+
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 // Payload runtimes live in extracted section blobs, so these helpers must stay
 // self-contained, allocation-free, and easy for the linker to keep together.
@@ -11,6 +58,7 @@
 #[allow(unused_macros)]
 macro_rules! define_aarch64_payload_runtime {
     ($section:literal) => {
+
         #[allow(dead_code)]
         const PAYLOAD_RUNTIME_HEX_CAPACITY: usize = 2 + core::mem::size_of::<usize>() * 2;
 
@@ -397,6 +445,7 @@ pub(crate) use define_aarch64_payload_runtime;
 #[allow(unused_macros)]
 macro_rules! define_riscv64_payload_runtime {
     ($section:literal) => {
+
         #[inline(always)]
         #[allow(dead_code)]
         #[link_section = $section]
@@ -618,6 +667,7 @@ pub(crate) use define_riscv64_payload_runtime;
 #[allow(unused_macros)]
 macro_rules! define_x86_64_payload_runtime {
     ($section:literal) => {
+
         #[allow(dead_code)]
         const PAYLOAD_RUNTIME_HEX_CAPACITY: usize = 2 + core::mem::size_of::<usize>() * 2;
         #[allow(dead_code)]

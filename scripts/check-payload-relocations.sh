@@ -30,7 +30,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 IMAGE="${1:-target/x86_64-unknown-none/debug/protofire}"
-SECTIONS="adastra_demo_program_rust adastra_demo_program_rust_io adastra_demo_program_payload adastra_shell_payload"
+SECTIONS="adastra_demo_program_rust adastra_demo_program_rust_io adastra_demo_program_payload adastra_init_payload adastra_shell_payload"
 
 if [ ! -f "$IMAGE" ]; then
     printf 'payload relocations: no image at %s (build it first)\n' "$IMAGE" >&2

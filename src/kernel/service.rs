@@ -864,25 +864,40 @@ static SERVICE_REGISTRY: Mutex<ServiceRegistry> = Mutex::new(ServiceRegistry::ne
 
 /// Register a definition, leaving the service in [`ServiceState::Pending`].
 ///
-/// Re-registering a name replaces the previous record: the boot path may parse
-/// the same service name from two config files, and the last declaration wins.
+/// A declaration says what a service *is*; a service that has already run keeps
+/// what it *did*.  Re-declaring a name therefore replaces the definition and
+/// the start-order position — the boot path may parse the same service from two
+/// files, and the last declaration wins — but leaves the state, the pid, the
+/// restart count and the last error alone.  Otherwise an init program declaring
+/// a service the boot already started would report it as pending while it ran.
 pub fn register(definition: &ServiceDefinition, now_tick: u64) {
-    let record = ServiceRecord {
-        definition: definition.clone(),
-        state: ServiceState::Pending,
-        restarts: 0,
-        last_error: None,
-        state_since_tick: now_tick,
-        pid: None,
-    };
-
     // One lock for both halves: a reader that saw the declaration without the
     // record would be looking at a service that has no state to report.
     let mut registry = SERVICE_REGISTRY.lock();
     registry.declarations.push(definition.clone());
-    registry
-        .services
-        .insert(record.definition.name.clone(), record);
+    // A declaration says what a service *is*; a service that has already run
+    // keeps what it *did*.  Re-declaring a name replaces the definition and the
+    // start-order position — the last file to name a service wins — but leaves
+    // the state, the pid, the restart count and the last error alone.  An init
+    // program declares services the boot may already have started, and a
+    // declaration that reset a running service to pending would report it as
+    // down while it ran.
+    match registry.services.get_mut(&definition.name) {
+        Some(record) => record.definition = definition.clone(),
+        None => {
+            registry.services.insert(
+                definition.name.clone(),
+                ServiceRecord {
+                    definition: definition.clone(),
+                    state: ServiceState::Pending,
+                    restarts: 0,
+                    last_error: None,
+                    state_since_tick: now_tick,
+                    pid: None,
+                },
+            );
+        }
+    }
 }
 
 /// Mark a service as spawned for the first time.
@@ -1142,15 +1157,26 @@ mod tests {
     }
 
     #[test]
-    fn register_same_name_replaces_previous_declaration() {
+    fn register_same_name_replaces_the_definition_and_keeps_the_state() {
         let _guard = exclusive_registry();
         register(&definition("alpha", false), 10);
-        register(&definition("alpha", true), 20);
 
+        // The second declaration is the one that stands: the last file to name
+        // a service says what that service is.
+        register(&definition("alpha", true), 20);
         assert_eq!(service_count(), 1);
-        let record = record("alpha").expect("record");
-        assert!(record.auto_restart());
-        assert_eq!(record.state_since_tick, 20);
+        assert!(record("alpha").expect("alpha").auto_restart());
+
+        // What it *did* is not reset.  An init program declares services the
+        // boot may already have started, and a declaration that reset a running
+        // service to pending would report it as down while it ran — and the
+        // supervisor would lose the pid it watches.
+        mark_running("alpha", Some(7), 30);
+        register(&definition("alpha", true), 40);
+        let record = record("alpha").expect("alpha");
+        assert_eq!(record.state, ServiceState::Running);
+        assert_eq!(record.pid, Some(7));
+        assert_eq!(record.state_since_tick, 30);
     }
 
     #[test]

@@ -56,6 +56,13 @@ payload_or_stub!("x86_64", shell_payload_x86_64);
 /// The shell program itself, emitted once per architecture that runs one.
 pub mod shell_payload;
 
+/// The init program's shared body, emitted once per architecture that runs one.
+///
+/// The body is here with the other programs; which machine emits a copy of it
+/// is the machine's list, so its instantiations are declared by the arch demo
+/// modules beside the rest of that machine's demo content.
+pub mod init_payload;
+
 // The three payload builders compile everywhere: what makes one of them a
 // machine's own is the payload beneath it, which `payload_or_stub!` above has
 // already answered per architecture.  Gating the builders themselves meant

@@ -217,6 +217,12 @@ count_log_line() {
 # boot stopped after the hand-off" rather than "the boot never started".
 require_log_line "[mem   ] activated x86_64 kernel page tables"
 require_log_line "[init  ] starting idle process"
+# `/system/init.elf` is a program, not a stub: it reads the declarations off
+# the disk and asks for the services to be started.  These two lines are it
+# saying so, and they are the only evidence that the file the kernel spawned
+# did anything at all.
+require_log_line "adastra init (ring 3): reading /system/rc.d"
+require_log_line "adastra init: declared "
 # The services this boot runs are the ones the disk declares, not the kernel's
 # built-in list: the demo disk is built with `/system/rc.d/defaults.toml`, and
 # this line is the boot saying it read them.  A disk without the directory

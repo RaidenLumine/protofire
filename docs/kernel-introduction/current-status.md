@@ -575,6 +575,14 @@ control that are unusual in a hobby kernel.
   declares nothing — so the two cannot drift into "the disk says one thing and
   the boot runs another".  A stock boot reads the declarations off the disk and
   says so in the log (`N declaration(s) in /system/rc.d`).
+- **Init is a program**: `/system/init.elf` on the demo disk is a ring-3 init
+  payload that reads `/system/rc.d`, declares each file through
+  `service_declare` (#190) and asks for the services to be started by
+  `service_start_all` (#191).  The kernel keeps the mechanism — registry, start
+  order, supervision, `/service` — and the distribution keeps the declarations;
+  the two meet at those two syscalls.  `service_start_all` is idempotent, so
+  whichever of the boot path, init or the supervisor arrives first starts a
+  service and the others find nothing left to do.
 - **Code integrity**: SHA-256 over the launch manifest and payload, plus
   optional detached signatures verified against trusted public keys under
   `/system/trusted-keys`; a seccomp (#129) syscall filter for process

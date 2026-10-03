@@ -124,6 +124,8 @@ impl UserSyscall {
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "none")))]
 #[allow(unused_imports)]
 pub(crate) use payload::define_aarch64_payload_runtime;
+#[allow(unused_imports)]
+pub(crate) use payload::define_payload_service_stubs;
 #[cfg(all(target_arch = "riscv64", any(target_os = "linux", target_os = "none")))]
 #[allow(unused_imports)]
 pub(crate) use payload::define_riscv64_payload_runtime;
