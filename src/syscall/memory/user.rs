@@ -1212,6 +1212,10 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[],
     // 189 GpuDeviceInfo            — arg0=&GpuDeviceInfo (out), arg1=len
     &[SyscallPointerSpec::output(0, Some(1), None)],
+    // 190 ServiceDeclare           — arg0=declaration text (in), arg1=len
+    &[SyscallPointerSpec::input(0, Some(1), None)],
+    // 191 ServiceStartAll          — no pointers
+    &[],
 ];
 
 /// Pre-validate every user-memory pointer declared in the syscall's

@@ -9,9 +9,9 @@
 //! SYSCALL_COUNT).
 
 pub const SYSCALL_ABI_VERSION_MAJOR: u32 = 1;
-pub const SYSCALL_ABI_VERSION_MINOR: u32 = 0;
+pub const SYSCALL_ABI_VERSION_MINOR: u32 = 1;
 
-pub const SYSCALL_COUNT: usize = 190;
+pub const SYSCALL_COUNT: usize = 192;
 pub const MAX_SYSCALLS: usize = 256;
 
 // ── Status encoding ──────────────────────────────────────────────────
@@ -40,7 +40,7 @@ pub const ERROR_CODE_MAX: usize = 10;
 /// Every status at or above this is an error.
 pub const ERROR_STATUS_FLOOR: usize = usize::MAX - ERROR_CODE_MAX;
 
-// ── Syscall numbers (0-189) ──────────────────────────────────────────
+// ── Syscall numbers (0-191) ──────────────────────────────────────────
 
 pub const SYS_YIELD: usize = 0;
 pub const SYS_WRITE_DEBUG: usize = 1;
@@ -233,6 +233,21 @@ pub const SYS_GPU_SUBMIT_3D: usize = 187;
 pub const SYS_GPU_SET_SCANOUT: usize = 188;
 pub const SYS_GPU_DEVICE_INFO: usize = 189;
 
+/// `service_declare` — hand the kernel one rc.d file's text (§190).
+///
+/// The kernel parses it with the same parser both sides use and registers the
+/// services it declares.  Declaring does not start anything:
+/// `service_start_all` is what does, so a program can declare a whole directory
+/// before any of it runs.
+pub const SYS_SERVICE_DECLARE: usize = 190;
+
+/// `service_start_all` — start every declared service that has not started.
+///
+/// Idempotent, and in declaration order: a service already running, stopped,
+/// abandoned or blocked is left alone, so the boot path, an init program and
+/// the supervisor's recovery can all ask and the first to arrive does the work.
+pub const SYS_SERVICE_START_ALL: usize = 191;
+
 // ── Stability classification ────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,7 +256,7 @@ pub enum SyscallStability {
     Experimental,
 }
 
-/// Syscalls 0..=120 are stable ABI; 121..=189 are experimental and may
+/// Syscalls 0..=120 are stable ABI; 121..=191 are experimental and may
 /// still be adjusted on a minor bump.  Reserved slots (141/142) are treated
 /// as experimental until assigned.
 pub const fn syscall_stability(number: usize) -> SyscallStability {
@@ -448,6 +463,8 @@ pub const fn syscall_name(number: usize) -> Option<&'static str> {
         187 => Some("gpu_submit_3d"),
         188 => Some("gpu_set_scanout"),
         189 => Some("gpu_device_info"),
+        190 => Some("service_declare"),
+        191 => Some("service_start_all"),
         _ => None,
     }
 }
@@ -465,10 +482,12 @@ mod tests {
     use super::SYS_DUP2;
     use super::SYS_GPU_DEVICE_INFO;
     use super::SYS_OPEN;
+    use super::SYS_SERVICE_DECLARE;
+    use super::SYS_SERVICE_START_ALL;
     use super::SYS_WRITE;
 
     #[test]
-    fn syscall_numbers_are_dense_in_0_190() {
+    fn syscall_numbers_are_dense_in_0_192() {
         // Every number in [0, SYSCALL_COUNT) must have a name; SYSCALL_COUNT must not.
         for i in 0..SYSCALL_COUNT {
             assert!(syscall_name(i).is_some(), "syscall {i} missing name");
@@ -484,6 +503,11 @@ mod tests {
         assert_eq!(syscall_name(SYS_DUP2), Some("dup2"));
         assert_eq!(syscall_name(SYS_ABI_INFO), Some("abi_info"));
         assert_eq!(syscall_name(SYS_GPU_DEVICE_INFO), Some("gpu_device_info"));
+        assert_eq!(syscall_name(SYS_SERVICE_DECLARE), Some("service_declare"));
+        assert_eq!(
+            syscall_name(SYS_SERVICE_START_ALL),
+            Some("service_start_all")
+        );
     }
 
     #[test]
@@ -491,18 +515,20 @@ mod tests {
         assert_eq!(syscall_stability(0), SyscallStability::Stable);
         assert_eq!(syscall_stability(120), SyscallStability::Stable);
         assert_eq!(syscall_stability(121), SyscallStability::Experimental);
-        assert_eq!(syscall_stability(189), SyscallStability::Experimental);
+        assert_eq!(syscall_stability(191), SyscallStability::Experimental);
     }
 
     #[test]
-    fn abi_version_is_v1_initial() {
+    fn abi_version_is_recorded() {
         assert_eq!(SYSCALL_ABI_VERSION_MAJOR, 1);
-        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 0);
+        // Minor 1 added the service numbers at the end of the experimental
+        // range; the frozen range below 120 did not move.
+        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 1);
     }
 
     #[test]
     fn count_checks() {
-        assert_eq!(SYSCALL_COUNT, 190);
+        assert_eq!(SYSCALL_COUNT, 192);
         assert_eq!(MAX_SYSCALLS, 256);
     }
 }

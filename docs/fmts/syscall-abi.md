@@ -86,7 +86,7 @@ are already shipped on the demo disk.
 | Range | Class | Contract |
 |-------|-------|----------|
 | `0..=120` | **Stable** | Frozen. Semantics, argument order, and record layouts do not change. Additive *optional* behaviour is the only permitted change. |
-| `121..=189` | **Experimental** | May still be adjusted. Behaviour, arguments, and record layouts may change on a **minor** version bump. |
+| `121..=SYSCALL_COUNT - 1` | **Experimental** | May still be adjusted. Behaviour, arguments, and record layouts may change on a **minor** version bump. |
 
 New syscalls are always assigned in the Experimental range until they have
 matured and a maintainer graduates them. The classification is computed, not

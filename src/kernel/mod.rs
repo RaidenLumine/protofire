@@ -637,45 +637,10 @@ impl Kernel {
         for svc in services {
             service::register(svc, now_tick);
         }
-
-        // The order the declarations ask for, and what they do not place.  A
-        // blocked service is not spawned: starting it anyway would run it
-        // before the thing it was declared to follow.
-        let plan = service::plan_start_order(services);
-        for (svc, reason) in &plan.blocked {
-            println!("[service] not starting {}: {}", svc.name, reason);
-            service::mark_blocked(&svc.name, reason, now_tick);
-        }
-        for svc in &plan.start {
-            self.spawn_service(svc, now_tick, false);
-        }
-    }
-
-    /// Spawn one service and record the outcome in the registry.
-    ///
-    /// Delegates to [`spawn_service`], which the supervisor thread also uses,
-    /// so a boot-time spawn and a restart cannot drift apart in how they treat
-    /// the registry.  The difference is only in how a user program is started:
-    /// the boot path goes through [`Kernel::spawn_demo_user_program`], which
-    /// logs the loaded image, and the supervisor spawns quietly because the
-    /// image has already been described once.
-    #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-    fn spawn_service(
-        &self,
-        svc: &service::ServiceDefinition,
-        now_tick: u64,
-        restart: bool,
-    ) -> Option<u32> {
-        spawn_service(
-            &self.scheduler,
-            svc,
-            now_tick,
-            restart,
-            |path, security_token| {
-                self.spawn_demo_user_program(path, security_token)
-                    .map(|launched| launched.process.pid())
-            },
-        )
+        start_declared_services(now_tick, |path, security_token| {
+            self.spawn_demo_user_program(path, security_token)
+                .map(|launched| launched.process.pid())
+        });
     }
 
     #[allow(dead_code)]
@@ -1098,6 +1063,57 @@ const SERVICE_SUPERVISOR_NAME: &str = "service-supervisor";
 /// parameter rather than a call so that this function stays independent of
 /// `Kernel`, which is what lets the supervisor thread — a plain `fn()` with no
 /// access to the kernel object — share the implementation.
+/// Start every declared service that has not started yet, in declaration order.
+///
+/// Idempotent, and the one place a service is started from: the boot path, an
+/// init program asking through `service_start_all`, and the supervisor all call
+/// this, so whichever arrives first does the work and the others find nothing
+/// left to do.  A service the order cannot place is recorded as blocked with
+/// the reason; one that is already running, stopped, abandoned or blocked is
+/// left alone.
+///
+/// Returns how many services this call started.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+pub(crate) fn start_declared_services(
+    now_tick: u64,
+    launch_user_program: impl Fn(&str, SecurityToken) -> Option<u32>,
+) -> usize {
+    let Some(scheduler) = Scheduler::global() else {
+        return 0;
+    };
+
+    let plan = service::plan_declared();
+
+    for (svc, reason) in &plan.blocked {
+        if service::record(&svc.name).map(|record| record.state)
+            == Some(service::ServiceState::Pending)
+        {
+            println!("[service] not starting {}: {}", svc.name, reason);
+            service::mark_blocked(&svc.name, reason, now_tick);
+        }
+    }
+
+    let mut started = 0;
+    for svc in &plan.start {
+        // Only a service still pending is started: a second caller must find
+        // nothing to do, not a second copy of the service.
+        if service::record(&svc.name).map(|record| record.state)
+            != Some(service::ServiceState::Pending)
+        {
+            continue;
+        }
+        if spawn_service(scheduler, svc, now_tick, false, |path, token| {
+            launch_user_program(path, token)
+        })
+        .is_some()
+        {
+            started += 1;
+        }
+    }
+
+    started
+}
+
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 fn spawn_service(
     scheduler: &Scheduler,

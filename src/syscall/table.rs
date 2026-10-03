@@ -118,6 +118,10 @@ mod tls_handler;
 #[path = "filter.rs"]
 mod filter_handler;
 
+/// The service syscalls: what an init program declares, and what it starts.
+#[path = "service.rs"]
+mod service_handler;
+
 #[path = "ipsec.rs"]
 mod ipsec_handler;
 
@@ -458,9 +462,14 @@ pub enum SyscallNumber {
     GpuSetScanout = 188,
     /// gpu_device_info — report GPU presence and capabilities (#189).
     GpuDeviceInfo = 189,
+    /// service_declare — register the services one rc.d file declares (#190).
+    ServiceDeclare = 190,
+    /// service_start_all — start every declared service that has not started
+    /// (#191).
+    ServiceStartAll = 191,
 }
 
-pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::GpuDeviceInfo as u32 + 1;
+pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::ServiceStartAll as u32 + 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SyscallContext {
@@ -1043,6 +1052,14 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
         SyscallNumber::GpuDeviceInfo as usize,
         gpu_handler::gpu_device_info,
     ),
+    (
+        SyscallNumber::ServiceDeclare as usize,
+        service_handler::declare,
+    ),
+    (
+        SyscallNumber::ServiceStartAll as usize,
+        service_handler::start_all,
+    ),
 ];
 
 impl Default for Table {
@@ -1199,7 +1216,7 @@ mod tests {
 
         assert_eq!(
             PUBLIC_SYSCALL_COUNT,
-            SyscallNumber::GpuDeviceInfo as u32 + 1
+            SyscallNumber::ServiceStartAll as u32 + 1
         );
         assert!(table.entries[PUBLIC_SYSCALL_COUNT as usize].is_none());
     }

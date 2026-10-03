@@ -34,7 +34,7 @@ use protofire::user::shared::abi::syscall::SYSCALL_ABI_VERSION_MINOR;
 use protofire::user::shared::abi::syscall::SYSCALL_COUNT;
 
 /// The ABI version this table was recorded against.
-const GOLDEN_ABI_VERSION: (u32, u32) = (1, 0);
+const GOLDEN_ABI_VERSION: (u32, u32) = (1, 1);
 
 /// The last number in the frozen range: `syscall_stability` calls everything
 /// up to and including this one `Stable`, and everything above it
@@ -233,6 +233,8 @@ const GOLDEN: &[(usize, &str)] = &[
     (187, "gpu_submit_3d"),
     (188, "gpu_set_scanout"),
     (189, "gpu_device_info"),
+    (190, "service_declare"),
+    (191, "service_start_all"),
 ];
 
 #[test]

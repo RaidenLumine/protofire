@@ -167,6 +167,7 @@ syscall                      percpu                       1
 syscall                      power                        1
 syscall                      process                      166
 syscall                      random                       1
+syscall                      service                      1
 syscall                      sync                         7
 syscall                      user                         2
 user                         fs                           2

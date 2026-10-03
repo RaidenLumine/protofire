@@ -841,12 +841,20 @@ pub struct SupervisionStep {
 /// that reorders itself between two reads would duplicate or skip services.
 struct ServiceRegistry {
     services: BTreeMap<String, ServiceRecord>,
+    /// The declarations in the order they arrived.
+    ///
+    /// The registry itself is a map, so it cannot answer "what order were these
+    /// declared in" — which is exactly what the start order needs.  A repeated
+    /// name is kept here as well; [`plan_start_order`] keeps the last
+    /// declaration, the same way [`register`] does.
+    declarations: Vec<ServiceDefinition>,
 }
 
 impl ServiceRegistry {
     const fn new() -> Self {
         Self {
             services: BTreeMap::new(),
+            declarations: Vec::new(),
         }
     }
 }
@@ -867,8 +875,12 @@ pub fn register(definition: &ServiceDefinition, now_tick: u64) {
         state_since_tick: now_tick,
         pid: None,
     };
-    SERVICE_REGISTRY
-        .lock()
+
+    // One lock for both halves: a reader that saw the declaration without the
+    // record would be looking at a service that has no state to report.
+    let mut registry = SERVICE_REGISTRY.lock();
+    registry.declarations.push(definition.clone());
+    registry
         .services
         .insert(record.definition.name.clone(), record);
 }
@@ -972,7 +984,29 @@ pub fn service_count() -> usize {
 /// The registry is process-global, so a host test that leaves records behind
 /// changes what the next test observes.  Only tests should call this.
 pub fn reset_registry_for_tests() {
-    SERVICE_REGISTRY.lock().services.clear();
+    let mut registry = SERVICE_REGISTRY.lock();
+    registry.services.clear();
+    registry.declarations.clear();
+}
+
+/// Plan the start order from the declarations the registry holds.
+pub fn plan_declared() -> StartOrder {
+    let declarations = SERVICE_REGISTRY.lock().declarations.clone();
+    plan_start_order(&declarations)
+}
+
+/// Parse one rc.d file's text and declare every service in it.
+///
+/// The parser is the one both sides share (`user::shared::config`), so a file
+/// an init program read and handed over cannot mean one thing to it and another
+/// to the kernel.  Returns how many services were declared, or the parser's own
+/// message — which is what a caller needs to say *which* line was wrong.
+pub fn declare_from_text(text: &str, now_tick: u64) -> Result<usize, String> {
+    let services = parse_service_config(text)?;
+    for service in &services {
+        register(service, now_tick);
+    }
+    Ok(services.len())
 }
 
 /// Work out what the supervisor should do next, without doing any of it.
@@ -1848,5 +1882,59 @@ security = \"admin\"
                 .filter(|(_, restart)| *restart)
                 .count()
         );
+    }
+
+    #[test]
+    fn declaring_from_text_registers_what_the_file_says() {
+        let _guard = exclusive_registry();
+        let text = "format = \"protofire-service-1\"\n\n[[service]]\nname = \"logger\"\nkind = \"kernel_thread\"\nentry = \"demo_worker_a\"\n\n[[service]]\nname = \"httpd\"\nkind = \"user_program\"\npath = \"/system/httpd.elf\"\nafter = [\"logger\"]\n";
+
+        assert_eq!(declare_from_text(text, 0), Ok(2));
+        assert_eq!(service_count(), 2);
+        assert_eq!(record("httpd").expect("httpd").state, ServiceState::Pending);
+
+        // The plan comes from the declarations the registry holds, in the order
+        // they arrived — which is what an init program's `service_start_all`
+        // works from.
+        let order: Vec<String> = plan_declared()
+            .start
+            .iter()
+            .map(|svc| svc.name.clone())
+            .collect();
+        assert_eq!(order, vec![String::from("logger"), String::from("httpd")]);
+    }
+
+    #[test]
+    fn a_declaration_that_does_not_parse_registers_nothing() {
+        let _guard = exclusive_registry();
+        assert!(declare_from_text("[[service]\n", 0).is_err());
+        assert_eq!(service_count(), 0);
+    }
+
+    #[test]
+    fn a_service_declared_twice_is_started_once() {
+        // Two rc.d files may name the same service; the last declaration wins
+        // for both the record and the order, so a start cannot produce a second
+        // copy under one name.
+        let _guard = exclusive_registry();
+        assert_eq!(
+            declare_from_text(
+                "format = \"protofire-service-1\"\n\n[[service]]\nname = \"netd\"\nkind = \"user_program\"\npath = \"/system/netd.elf\"\nafter = [\"logger\"]\n",
+                0
+            ),
+            Ok(1)
+        );
+        assert_eq!(
+            declare_from_text(
+                "format = \"protofire-service-1\"\n\n[[service]]\nname = \"netd\"\nkind = \"user_program\"\npath = \"/system/netd.elf\"\n",
+                1
+            ),
+            Ok(1)
+        );
+
+        let plan = plan_declared();
+        let order: Vec<&str> = plan.start.iter().map(|svc| svc.name.as_str()).collect();
+        assert_eq!(order, vec!["netd"]);
+        assert!(plan.blocked.is_empty());
     }
 }

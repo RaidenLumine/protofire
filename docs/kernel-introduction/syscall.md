@@ -162,12 +162,14 @@ pub enum SyscallNumber {
 | 179    | fcntl                          |
 | 180    | sync                           |
 | 181-189| VIRGL 3D (context, resource, transfer, submit, scanout, device info) |
+| 190    | service_declare (register the services one rc.d file declares) |
+| 191    | service_start_all (start every declared service that has not started) |
 
 ### PUBLIC_SYSCALL_COUNT
 
 ```rust
 // src/syscall/table.rs
-pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::GpuDeviceInfo as u32 + 1;
+pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::ServiceStartAll as u32 + 1;
 ```
 
 This constant is derived from the highest enum discriminant, so it grows with
