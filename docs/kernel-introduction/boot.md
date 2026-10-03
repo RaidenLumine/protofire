@@ -352,8 +352,8 @@ On the demo disk that ELF is a program rather than a stub: the init payload
 (`src/user/demo/init_payload.rs`, emitted per machine) reads `/system/rc.d`,
 hands each declaration to the kernel through `service_declare`, and asks for
 the services to be started through `service_start_all`.  It reports what it
-did on the console, which is what lets the x86_64 runtime check assert that the
-file the kernel spawned did something.  Declaring is idempotent from the
+did on the console, which is what lets each target's runtime check assert that
+the file the kernel spawned did something.  Declaring is idempotent from the
 program's side — the boot may have started the services already — and a
 declaration never resets a service that has already run, so a re-declaration
 updates what the service *is* without losing what it *did*.

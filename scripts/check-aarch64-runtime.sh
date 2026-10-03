@@ -391,6 +391,10 @@ require_log_line "[abi   ] demo-launcher payload: ${PAYLOAD_SOURCE:-compiled} "
 require_log_line "[abi   ] shell payload: ${PAYLOAD_SOURCE:-compiled} "
 require_log_line "adastra:/apps/packages/shell\$ "
 require_log_line "adastra shell (ring 3) builtins:"
+# `/system/init.elf` is a program on this target too: it reads the declarations
+# off the disk and asks for the services to be started, and says so.
+require_log_line "adastra init (ring 3): reading /system/rc.d"
+require_log_line "adastra init: declared "
 require_log_exact_line "ring3-shell-answered"
 
 # ── The PCIe window the device tree describes was reached ──────────────

@@ -9,26 +9,6 @@ use crate::user::demo::demo_program_riscv64_elf::build_demo_program_artifact;
 
 use crate::user::demo::demo_program_riscv64_elf::build_shell_program_artifact;
 
-/// The system zone's init program: `exit(0)`, and nothing else.
-///
-/// It used to be the shell artifact, back when that artifact was metadata-only:
-/// the loader then ran the in-kernel proxy, which is kernel code wearing the
-/// shell's name, so having it as init only printed a prompt nobody typed at.
-/// A ring-3 shell is not that — it reads the console — and an init copy of it
-/// raced the apps-zone copy for every keystroke, with only one of the two
-/// running on a stack the loader had set up for it.  The other two targets ship
-/// a stub here for the same reason: init is not where a shell belongs.
-/// The exit is followed by a spin, which is what this target's assembly
-/// payloads do too (`demo_program_riscv64`'s exit block ends in `j 3b`):
-/// falling off the end of a slot program is an illegal instruction, and the
-/// point of a stub is to say nothing at all.
-const DEMO_STUB_PAYLOAD_RISCV64: [u8; 16] = [
-    0x93, 0x08, 0x30, 0x00, // addi a7, zero, 3 — exit
-    0x13, 0x05, 0x00, 0x00, // addi a0, zero, 0 — with status 0
-    0x73, 0x00, 0x00, 0x00, // ecall
-    0x6f, 0x00, 0x00, 0x00, // j . — spin if it returns
-];
-
 const DEMO_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher\"\nversion = \"0.1.0\"\nformat = \"elf64-riscv64-user\"\nentry = \"/apps/packages/demo-launcher/bin/demo.elf\"\nworking_dir = \"/apps/packages/demo-launcher\"\nargv = [\"demo-launcher\", \"--profile=demo\", \"--transport=serial\", \"--arch=riscv64\"]\nenv = [\"ASTRA_APP_ID=demo-launcher\", \"ASTRA_RUNTIME=ring3-riscv64-prototype\", \"ASTRA_ZONE=/apps\"]\nhost_proxy = \"demo-launcher\"\n";
 
 const SHELL_PROGRAM_MANIFEST: &[u8] = b"name = \"shell\"\nversion = \"0.1.0\"\nformat = \"elf64-riscv64-user\"\nentry = \"/apps/packages/shell/bin/shell.elf\"\nworking_dir = \"/apps/packages/shell\"\nargv = [\"shell\"]\nenv = [\"ASTRA_APP_ID=shell\", \"ASTRA_RUNTIME=ring3-prototype\"]\nhost_proxy = \"shell\"\n";
@@ -40,11 +20,23 @@ pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
     SimpleFs::build_image(zone.volume_label(), &entries)
 }
 
-/// The system zone: the shared files plus the stub init program.
+/// The system zone: the shared files plus the init program at `/init.elf`.
+///
+/// Init used to be the shell artifact, back when that artifact was
+/// metadata-only and the loader routed it to the in-kernel proxy: kernel code
+/// wearing the shell's name, printing a prompt nobody typed at.  A ring-3 shell
+/// is not that — it reads the console — and an init copy of it raced the
+/// apps-zone copy for every keystroke, with only one of the two running on a
+/// stack the loader had set up for it.  Init is not where a shell belongs, and
+/// it is not a stub any more either: it is the demo's own program, emitted into
+/// its section and wrapped by the shared ELF builder, which reads
+/// `/system/rc.d` and asks for the services to be started.
 pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
+    let payload = super::init_payload_riscv64::payload_bytes();
+    let entry_offset = super::init_payload_riscv64::payload_entry_offset();
     let init = crate::user::demo::elf_builder::build_artifact_from_payload(
-        &DEMO_STUB_PAYLOAD_RISCV64,
-        0,
+        payload,
+        entry_offset,
         crate::user::program::DEMO_PROGRAM_ENTRY as u64,
         crate::user::program::DEMO_PROGRAM_MACHINE,
     );

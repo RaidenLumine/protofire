@@ -60,9 +60,10 @@ pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
 // `svc`, otherwise the same truncation happens.
 /// The system zone's init program: `exit(0)`, and nothing else.
 ///
-/// The same shape the other two targets ship (see the x86_64 copy for why a
-/// stub belongs there): machine code, wrapped into an ELF by `elf_builder`
-/// rather than by a header written out by hand here.
+/// Shipped only where the build cannot carry an ELF payload section (see the
+/// x86_64 copy): machine code, wrapped into an ELF by `elf_builder` rather than
+/// by a header written out by hand here.
+#[cfg(not(any(target_os = "linux", target_os = "none")))]
 const DEMO_STUB_PAYLOAD_AARCH64: [u8; 32] = [
     0x68, 0x00, 0x80, 0xd2, // movz x8, #3 — exit
     0x00, 0x00, 0x80, 0xd2, // movz x0, #0 — with status 0
@@ -194,14 +195,31 @@ fn apps_entries_aarch64<'a>(
     ]
 }
 
-/// The system zone: the shared files plus the stub init program at
-/// `/init.elf`.
+/// The system zone: the shared files plus the init program at `/init.elf`.
+///
+/// The init program is the demo's own code, emitted into its section and
+/// wrapped by the shared ELF builder: it reads `/system/rc.d` and asks for the
+/// services to be started.  A host that cannot carry an ELF payload section
+/// gets the exit-only stub below instead (see the x86_64 copy).
 pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
+    let payload = super::init_payload_aarch64::payload_bytes();
+    let entry_offset = super::init_payload_aarch64::payload_entry_offset();
+    #[cfg(any(target_os = "linux", target_os = "none"))]
     let init = crate::user::demo::elf_builder::build_artifact_from_payload(
-        &DEMO_STUB_PAYLOAD_AARCH64,
-        0,
+        payload,
+        entry_offset,
         crate::user::program::DEMO_PROGRAM_ENTRY as u64,
         crate::user::program::DEMO_PROGRAM_MACHINE,
     );
+    #[cfg(not(any(target_os = "linux", target_os = "none")))]
+    let init = {
+        let _ = (payload, entry_offset);
+        crate::user::demo::elf_builder::build_artifact_from_payload(
+            &DEMO_STUB_PAYLOAD_AARCH64,
+            0,
+            crate::user::program::DEMO_PROGRAM_ENTRY as u64,
+            crate::user::program::DEMO_PROGRAM_MACHINE,
+        )
+    };
     super::build_system_zone_from(&init.bytes)
 }

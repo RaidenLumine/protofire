@@ -576,13 +576,15 @@ control that are unusual in a hobby kernel.
   the boot runs another".  A stock boot reads the declarations off the disk and
   says so in the log (`N declaration(s) in /system/rc.d`).
 - **Init is a program**: `/system/init.elf` on the demo disk is a ring-3 init
-  payload that reads `/system/rc.d`, declares each file through
-  `service_declare` (#190) and asks for the services to be started by
-  `service_start_all` (#191).  The kernel keeps the mechanism — registry, start
-  order, supervision, `/service` — and the distribution keeps the declarations;
-  the two meet at those two syscalls.  `service_start_all` is idempotent, so
-  whichever of the boot path, init or the supervisor arrives first starts a
-  service and the others find nothing left to do.
+  payload on every target the disk is built for — one program
+  (`src/user/demo/init_payload.rs`), emitted per architecture.  It reads
+  `/system/rc.d`, declares each file through `service_declare` (#190) and asks
+  for the services to be started by `service_start_all` (#191).  The kernel
+  keeps the mechanism — registry, start order, supervision, `/service` — and
+  the distribution keeps the declarations; the two meet at those two syscalls.
+  `service_start_all` is idempotent, so whichever of the boot path, init or the
+  supervisor arrives first starts a service and the others find nothing left to
+  do.
 - **Code integrity**: SHA-256 over the launch manifest and payload, plus
   optional detached signatures verified against trusted public keys under
   `/system/trusted-keys`; a seccomp (#129) syscall filter for process
@@ -879,10 +881,11 @@ spans modules and cannot be attributed to one of them.
   every machine. The difference is testable rather than nominal: the three
   runtime checks type a command at the prompt and assert the answer, which is
   the only way to tell a shell that reads a line from one that only prints a
-  banner. What is still missing is the layer above *that*: the manifests still
-  carry a `host_proxy` entry nothing reaches, the `/init.elf` in the system zone
-  is a stub that exits, and nothing on the volume is signed or verified unless
-  its manifest asks for it.
+  banner.  The init program is ring-3 code on all three targets too, and each
+  runtime check asserts the lines it prints as it declares what `/system/rc.d`
+  holds.  What is still missing is the layer above *that*: the manifests still
+  carry a `host_proxy` entry nothing reaches, and nothing on the volume is
+  signed or verified unless its manifest asks for it.
 - **Single maintainer**: bus factor = 1; every module is currently held by one
   maintainer.
 - **“We do not break userspace” has a handful of subjects, not a population**:

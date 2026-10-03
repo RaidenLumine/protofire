@@ -16,3 +16,16 @@ pub(crate) use alloc::vec::Vec;
 
 #[path = "../../fs/demo/riscv64.rs"]
 pub(crate) mod content;
+
+/// This machine's init program: the ring-3 program the demo disk ships as
+/// `/system/init.elf`.
+///
+/// The program lives in the user tree (`src/user/demo/init_payload_riscv64.rs`)
+/// because it is a user program; it is declared here because *which* programs a
+/// machine ships is its own list, and this module is where that list is.
+///
+/// The x86_64 and AArch64 copies answer with an absent payload on a host whose
+/// object format has no ELF payload section — the two Apple targets.  No such
+/// host exists for this architecture, so this is the program and nothing else.
+#[path = "../../user/demo/init_payload_riscv64.rs"]
+pub(crate) mod init_payload_riscv64;
