@@ -94,6 +94,7 @@ pub mod interrupts {
 pub mod aia_imsic;
 pub mod context;
 pub mod cpufreq;
+pub mod devices;
 pub mod irq_balance;
 pub mod mmu;
 pub mod pci;

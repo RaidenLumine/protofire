@@ -6,6 +6,7 @@
 pub mod context;
 pub mod control_regs;
 pub mod cpuid;
+pub mod devices;
 pub mod gdt;
 pub mod i8042;
 pub mod idt;

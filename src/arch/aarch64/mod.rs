@@ -107,6 +107,7 @@ pub mod interrupts {
 
 pub mod context;
 pub mod cpufreq;
+pub mod devices;
 pub(crate) mod exception;
 pub mod irq_balance;
 pub mod mmu;

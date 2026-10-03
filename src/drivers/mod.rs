@@ -10,24 +10,14 @@
 /// are compiled everywhere; the probe is compiled where the device exists, and
 /// every other machine compiles a file that answers under the same module
 /// name.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[path = "framebuffer.rs"]
-pub mod framebuffer;
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[path = "framebuffer_absent.rs"]
-pub mod framebuffer;
+pub use crate::arch::machine_devices::framebuffer;
 pub mod framebuffer_console;
 /// Intel HDA audio driver: PCI discovery, CORB/RIRB, and PCM playback.
 ///
 /// The register map is in `hda_protocol` and is compiled everywhere; the
 /// controller is compiled where the machine has one, and every other machine
 /// compiles a file that answers under the same module name.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[path = "hda.rs"]
-pub mod hda;
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[path = "hda_absent.rs"]
-pub mod hda;
+pub use crate::arch::machine_devices::hda;
 pub mod keyboard;
 pub mod mouse;
 
@@ -36,12 +26,7 @@ pub mod mouse;
 /// The wire format is in `nvme_protocol` and is compiled everywhere; the
 /// controller is compiled where the machine has one, and every other machine
 /// compiles a file that answers under the same module name.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[path = "nvme.rs"]
-pub mod nvme;
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[path = "nvme_absent.rs"]
-pub mod nvme;
+pub use crate::arch::machine_devices::nvme;
 /// The NVMe wire format and register map: a specification, not hardware.
 pub mod nvme_protocol;
 
@@ -57,12 +42,7 @@ pub mod virtio_pci_modern;
 /// The register map is in `xhci_protocol` and is compiled everywhere; the
 /// controller is compiled where the machine has one, and every other machine
 /// compiles a file that answers under the same module name.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[path = "xhci.rs"]
-pub mod xhci;
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[path = "xhci_absent.rs"]
-pub mod xhci;
+pub use crate::arch::machine_devices::xhci;
 /// The xHCI register map and the USB structures its rings carry.
 pub mod xhci_protocol;
 
@@ -77,12 +57,7 @@ pub mod framebuffer_protocol;
 /// The PIT and the speaker gate are PC hardware, so the machine that has them
 /// compiles the driver; every other machine compiles a file that answers under
 /// the same module name and reports that the hardware is not there.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[path = "pcspkr.rs"]
-pub mod pcspkr;
-#[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
-#[path = "pcspkr_absent.rs"]
-pub mod pcspkr;
+pub use crate::arch::machine_devices::pcspkr;
 
 /// USB mass storage class driver (BOT + SCSI).
 pub mod usb_msd;
@@ -312,8 +287,9 @@ impl DriverManager {
         // Actual device discovery is done by the xHCI controller driver.
         self.register(usb_hid::driver());
 
-        #[cfg(target_arch = "x86_64")]
-        self.register(pcspkr::driver());
+        if crate::arch::machine_devices::HAS_PC_SPEAKER {
+            self.register(pcspkr::driver());
+        }
 
         // Device-tree-driven probe: bind registered drivers to FDT nodes
         // (AArch64/RISC-V).  Runs before the init loop so a DT-bound device
@@ -362,9 +338,8 @@ impl DriverManager {
         if self.boot_disk.is_none() {
             self.boot_disk = nvme::probe_boot_disk();
         }
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
         if self.boot_disk.is_none() {
-            self.boot_disk = usb_msd::probe_boot_disk();
+            self.boot_disk = crate::arch::machine_devices::usb_boot_disk();
         }
         if let Some(disk) = &self.boot_disk {
             println!(
