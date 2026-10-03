@@ -16,14 +16,14 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::config::ConfigEntryLookup;
-use crate::kernel::config::{self};
 use crate::kernel::process::GroupId;
 use crate::kernel::process::IntegrityLevel;
 use crate::kernel::process::ProcessId;
 use crate::kernel::process::SecurityToken;
 use crate::kernel::process::UserId;
 use crate::kernel::sync::Mutex;
+use crate::user::shared::config::ConfigEntryLookup;
+use crate::user::shared::config::{self};
 
 /// The directory on the boot filesystem where service config TOML files live.
 pub const SERVICE_CONFIG_DIR: &str = "/system/rc.d";

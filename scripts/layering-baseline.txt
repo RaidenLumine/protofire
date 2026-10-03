@@ -144,7 +144,6 @@ random                       sync                         1
 security                     audit                        4
 security                     handle_rights                2
 security                     sync                         1
-service                      config                       2
 service                      fs                           3
 service                      process                      6
 service                      sync                         2

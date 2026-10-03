@@ -19,11 +19,13 @@
 //! - **expand**        — Environment variable expansion, get/set env
 //! - **history**       — Command history: add, expand, common_prefix
 //! - **control_flow**  — if/for/while parsing and execution
+//! - **config**        — The TOML-subset parser both sides read files with
 //!
 //! All submodules are `#![no_std]` compatible and only use `alloc` (no std).
 
 pub mod abi;
 pub mod commands;
+pub mod config;
 pub mod control_flow;
 pub mod dispatch;
 pub mod expand;

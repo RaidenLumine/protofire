@@ -7,7 +7,6 @@ pub mod audit;
 pub mod block;
 pub mod boot_report;
 pub mod compression;
-pub mod config;
 pub mod console;
 pub mod crypto;
 pub mod device;

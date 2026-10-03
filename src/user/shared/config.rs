@@ -1,6 +1,7 @@
-//! src/kernel/config.rs
+//! src/user/shared/config.rs
 //!
-//! Minimal TOML-subset parser for kernel configuration files.
+//! Minimal TOML-subset parser for configuration files on both sides of the
+//! syscall boundary.
 //!
 //! Supports the subset needed by service definitions and kernel config:
 //! - Top-level `key = "value"` pairs (string, integer, boolean)
@@ -11,6 +12,12 @@
 //!
 //! This is intentionally NOT a full TOML parser — it handles only the
 //! constructs used by kernel and distribution configuration files.
+//!
+//! It lives in the shared tree because both sides read the same files: the
+//! kernel loads `/system/rc.d` at boot, and a ring-3 program — the init
+//! program, or anything that reads `/apps/packages/*/manifest.toml` — reads
+//! the same format.  Two readers for one format is how the two sides end up
+//! disagreeing about what a file says.
 
 use alloc::string::String;
 use alloc::vec::Vec;
