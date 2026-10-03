@@ -76,6 +76,7 @@ fn definition(name: &str, auto_restart: bool) -> ServiceDefinition {
         path: Some(format!("/system/{name}.elf")),
         entry: None,
         args: Vec::new(),
+        after: Vec::new(),
         auto_restart,
         security: ServiceSecurity::Guest,
         account: None,
@@ -259,4 +260,46 @@ fn the_mount_is_recorded_under_its_own_filesystem_name() {
             .expect("service mount recorded");
         assert_eq!(service_mount.fs_name, "servicefs");
     });
+}
+
+#[test]
+fn a_service_directory_on_a_real_filesystem_declares_the_start_order() {
+    let _guard = test_lock();
+    let tree = ServiceTree::mount();
+
+    // A real directory on the real facade, so this walks the same path the
+    // boot takes when the distribution ships `/system/rc.d` instead of relying
+    // on the embedded defaults: read the directory, open each file, parse it.
+    //
+    // The declarations are deliberately not in dependency order, one file is
+    // not a `.toml`, and one is malformed — the loader skips the last two, and
+    // the order that comes out is the one the `after` lists ask for.
+    const LOGGER: &[u8] = b"format = \"protofire-service-1\"\n\n[[service]]\nname = \"logger\"\nkind = \"user_program\"\npath = \"/system/logger.elf\"\n";
+    const NETD: &[u8] = b"format = \"protofire-service-1\"\n\n[[service]]\nname = \"httpd\"\nkind = \"user_program\"\npath = \"/system/httpd.elf\"\nafter = [\"netd\"]\n\n[[service]]\nname = \"netd\"\nkind = \"user_program\"\npath = \"/system/netd.elf\"\nafter = [\"logger\"]\n";
+    const NOT_A_CONFIG: &[u8] = b"not a service config\n";
+    const MALFORMED: &[u8] = b"[[service]\n";
+
+    let services = {
+        let mut fs = tree.fs.lock();
+        let directory = protofire::fs::vfs::StaticFileSystem::with_entries(
+            "rc.d",
+            &[
+                ("/", NodeKind::Directory, &[]),
+                ("/00-netd.toml", NodeKind::File, NETD),
+                ("/10-logger.toml", NodeKind::File, LOGGER),
+                ("/README", NodeKind::File, NOT_A_CONFIG),
+                ("/20-broken.toml", NodeKind::File, MALFORMED),
+            ],
+        );
+        fs.register("rc.d", std::sync::Arc::new(directory));
+        fs.mount("/dev/rc.d", "/system/rc.d", "rc.d", 0)
+            .expect("mount the service directory");
+
+        service::load_services_from_fs(&fs, "/system/rc.d")
+    };
+
+    let plan = service::plan_start_order(&services);
+    let order: Vec<&str> = plan.start.iter().map(|svc| svc.name.as_str()).collect();
+    assert_eq!(order, vec!["logger", "netd", "httpd"]);
+    assert!(plan.blocked.is_empty());
 }

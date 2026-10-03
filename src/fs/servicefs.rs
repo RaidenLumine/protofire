@@ -140,6 +140,14 @@ fn describe_data(record: &service::ServiceRecord) -> Vec<u8> {
     field("Restarts", &format!("{}", record.restarts));
     field("AutoRestart", &format!("{}", record.auto_restart()));
     field("Security", record.definition.security.as_str());
+    field(
+        "After",
+        &if record.definition.after.is_empty() {
+            String::from("(none)")
+        } else {
+            record.definition.after.join(", ")
+        },
+    );
     field("StateSinceTick", &format!("{}", record.state_since_tick));
     field(
         "LastError",
@@ -402,6 +410,7 @@ mod tests {
             path: Some(format!("/system/{}.elf", name)),
             entry: None,
             args: Vec::new(),
+            after: Vec::new(),
             auto_restart,
             security: ServiceSecurity::Guest,
             account: None,
@@ -636,5 +645,26 @@ mod tests {
     #[test]
     fn name_is_servicefs() {
         assert_eq!(ServiceFs.name(), "servicefs");
+    }
+
+    #[test]
+    fn a_blocked_service_says_so_and_names_what_it_followed() {
+        let _guard = exclusive_registry();
+        let mut record = definition("httpd", false);
+        record.after = vec![String::from("netd")];
+        service::register(&record, 0);
+        service::mark_blocked("httpd", "after \"netd\", which is not declared", 0);
+
+        let state = ServiceFs.lookup("httpd/state").expect("state");
+        let mut buffer = [0_u8; 16];
+        let n = state.read(0, &mut buffer).expect("read state");
+        assert_eq!(&buffer[..n], b"blocked\n");
+
+        let describe = read_to_string(&ServiceFs.lookup("httpd/describe").expect("describe"));
+        assert!(describe.contains("After:\tnetd\n"), "{describe}");
+        assert!(
+            describe.contains("LastError:\tafter \"netd\", which is not declared\n"),
+            "{describe}"
+        );
     }
 }

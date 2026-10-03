@@ -620,14 +620,26 @@ impl Kernel {
     /// Spawn services from a parsed list of service definitions.
     ///
     /// Every service is registered before any of them runs, so a service that
-    /// fails to start still appears in `/service` next to the ones that did.
+    /// fails to start still appears in `/service` next to the ones that did —
+    /// including one the start order could not place, which is recorded as
+    /// blocked with the reason rather than left looking like a service nobody
+    /// got to.
     #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
     fn spawn_service_list(&self, services: &[service::ServiceDefinition]) {
         let now_tick = self.scheduler.current_tick();
         for svc in services {
             service::register(svc, now_tick);
         }
-        for svc in services {
+
+        // The order the declarations ask for, and what they do not place.  A
+        // blocked service is not spawned: starting it anyway would run it
+        // before the thing it was declared to follow.
+        let plan = service::plan_start_order(services);
+        for (svc, reason) in &plan.blocked {
+            println!("[service] not starting {}: {}", svc.name, reason);
+            service::mark_blocked(&svc.name, reason, now_tick);
+        }
+        for svc in &plan.start {
             self.spawn_service(svc, now_tick, false);
         }
     }
@@ -681,6 +693,7 @@ impl Kernel {
             path: is_user_program.then(|| String::from(target)),
             entry: (!is_user_program).then(|| String::from(target)),
             args: Vec::new(),
+            after: Vec::new(),
             auto_restart,
             security: service::ServiceSecurity::Guest,
             account: None,

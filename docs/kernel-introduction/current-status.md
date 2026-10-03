@@ -561,6 +561,14 @@ control that are unusual in a hobby kernel.
   key in an rc.d service definition selects the token the started program runs
   under (`ServiceSecurity::security_token()`); a definition that declares
   nothing keeps the guest default.
+- **Declared service start order**: `after = ["other", …]` in an rc.d
+  definition is ordering, and `service::plan_start_order()` turns the
+  declarations into the order the boot path follows.  A service whose
+  prerequisite is undeclared, itself blocked, or part of a cycle is recorded as
+  `blocked` in `/service` with the reason, instead of being started early or
+  failing later for an unattributable one.  `after` says nothing about what the
+  other service achieves — a daemon is not "done" when it is spawned — which is
+  why the mechanism orders and attributes rather than waits.
 - **Code integrity**: SHA-256 over the launch manifest and payload, plus
   optional detached signatures verified against trusted public keys under
   `/system/trusted-keys`; a seccomp (#129) syscall filter for process

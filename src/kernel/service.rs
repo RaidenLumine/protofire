@@ -130,6 +130,15 @@ pub struct ServiceDefinition {
     pub entry: Option<String>,
     /// Command-line arguments for UserProgram services.
     pub args: Vec<String>,
+    /// Services this one is started after.
+    ///
+    /// Ordering, not a promise about what those services achieve: a daemon
+    /// that binds a port is not "done" when it has been spawned, and a service
+    /// manager that waited for one would wait forever.  What the declaration
+    /// does buy is attribution — a service whose prerequisite never started is
+    /// reported as blocked, with the prerequisite named, instead of failing
+    /// later for a reason nobody can see from `/service`.
+    pub after: Vec<String>,
     /// If true, the service is restarted when it exits.
     pub auto_restart: bool,
     /// Security token for UserProgram services.
@@ -179,6 +188,17 @@ impl ServiceDefinition {
 /// path = "/system/netd.elf"
 /// security = "admin"
 /// account = "root"        # required above "guest"; defaults to "root"
+///
+/// [[service]]
+/// name = "netd"
+/// kind = "user_program"
+/// path = "/system/netd.elf"
+/// security = "admin"
+/// account = "root"        # required above "guest"; defaults to "root"
+///
+/// [[service]]
+/// name = "httpd"
+/// after = ["netd"]        # started after netd has been started
 ///
 /// [[service]]
 /// name = "kworker-a"
@@ -231,6 +251,7 @@ pub fn parse_service_config(text: &str) -> Result<Vec<ServiceDefinition>, String
             path: element.get_str("path").ok().map(String::from),
             entry: element.get_str("entry").ok().map(String::from),
             args: element.get_string_list("args").unwrap_or_default(),
+            after: element.get_string_list("after").unwrap_or_default(),
             auto_restart: element.get_bool_or("auto_restart", false),
             security,
             account,
@@ -316,6 +337,185 @@ fn read_config_file(fs: &crate::fs::FileSystem, path: &str) -> Option<alloc::str
 
 // ── Runtime registry ─────────────────────────────────────────────────────────
 
+/// What the boot path should start, and in what order.
+#[derive(Debug, Default)]
+pub struct StartOrder {
+    /// Services with a place in the order, earliest first.
+    pub start: Vec<ServiceDefinition>,
+    /// Declared services nothing will start, with the reason, by name.
+    pub blocked: Vec<(ServiceDefinition, String)>,
+}
+
+/// Work out the order to start `services` in, and what cannot start at all.
+///
+/// A definition's `after` names services it must be started after.  The order
+/// is a function of the declarations alone — services with nothing to wait for
+/// keep the order they were read in — so two boots of the same `rc.d` start the
+/// same things in the same order and a test can pin it.
+///
+/// A service with no place in the order is *blocked* rather than started
+/// anyway, and the reason says which of three things went wrong: a
+/// prerequisite that is not declared, a prerequisite that is itself blocked,
+/// or a cycle, named in full.  Blocking is transitive, which is the point — a
+/// chain of three services ending at a name nobody declared is one error that
+/// names all of them, not three failures that each look like their own.
+///
+/// A repeated name keeps its last declaration, matching [`register`].
+pub fn plan_start_order(services: &[ServiceDefinition]) -> StartOrder {
+    let mut declared: BTreeMap<&str, &ServiceDefinition> = BTreeMap::new();
+    let mut position: BTreeMap<&str, usize> = BTreeMap::new();
+    for (index, service) in services.iter().enumerate() {
+        declared.insert(service.name.as_str(), service);
+        // Last declaration wins here too: the position the order uses is the
+        // one that matches the definition the registry ends up holding.
+        position.insert(service.name.as_str(), index);
+    }
+
+    // 1. A prerequisite that is not declared — or that is the service itself —
+    //    leaves the service with no order to be in.
+    let mut blocked: BTreeMap<&str, String> = BTreeMap::new();
+    for (name, service) in &declared {
+        let missing = service
+            .after
+            .iter()
+            .find(|target| target.as_str() == *name || !declared.contains_key(target.as_str()));
+        if let Some(prerequisite) = missing {
+            blocked.insert(
+                name,
+                if prerequisite == *name {
+                    alloc::format!("after \"{name}\", which is itself")
+                } else {
+                    alloc::format!("after \"{prerequisite}\", which is not declared")
+                },
+            );
+        }
+    }
+
+    // 2. Kahn's algorithm over what is left, taking the frontier in the order the
+    //    declarations were read so the result is deterministic *and* a system whose
+    //    declarations say nothing keeps the order it had before the order was
+    //    computed at all.
+    let mut start_order: Vec<&str> = Vec::new();
+    let mut started: BTreeMap<&str, ()> = BTreeMap::new();
+    loop {
+        let mut ready: Vec<(&str, usize)> = declared
+            .iter()
+            .filter(|(name, service)| {
+                !started.contains_key(*name)
+                    && !blocked.contains_key(*name)
+                    && service
+                        .after
+                        .iter()
+                        .all(|target| started.contains_key(target.as_str()))
+            })
+            .map(|(name, _)| (*name, position[name]))
+            .collect();
+        if ready.is_empty() {
+            break;
+        }
+        ready.sort_by_key(|(_, index)| *index);
+        for (name, _) in ready {
+            started.insert(name, ());
+            start_order.push(name);
+        }
+    }
+
+    // 3. A service whose prerequisite is blocked is blocked for that reason,
+    //    transitively: repeated until nothing changes, because a chain can be as
+    //    long as the declarations.
+    loop {
+        let newly: Vec<(&str, String)> = declared
+            .iter()
+            .filter(|(name, _)| !started.contains_key(*name) && !blocked.contains_key(*name))
+            .filter_map(|(name, service)| {
+                service
+                    .after
+                    .iter()
+                    .find(|target| blocked.contains_key(target.as_str()))
+                    .map(|prerequisite| {
+                        (
+                            *name,
+                            alloc::format!("after \"{prerequisite}\", which is blocked"),
+                        )
+                    })
+            })
+            .collect();
+        if newly.is_empty() {
+            break;
+        }
+        for (name, reason) in newly {
+            blocked.insert(name, reason);
+        }
+    }
+
+    // 4. What is left has every prerequisite unstarted too, so following
+    //    prerequisites from any of them must revisit a service: each one is in, or
+    //    leads into, a cycle.  The walk is deterministic — name order, then the
+    //    first prerequisite — so the cycle a reason names is the same one every
+    //    boot.
+    let mut cycles: BTreeMap<&str, String> = BTreeMap::new();
+    for name in declared.keys() {
+        if started.contains_key(name) || blocked.contains_key(name) || cycles.contains_key(name) {
+            continue;
+        }
+
+        let mut path: Vec<&str> = Vec::new();
+        let mut position: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut cursor = *name;
+        let cycle = loop {
+            if let Some(&entered_at) = position.get(cursor) {
+                break Some(path[entered_at..].to_vec());
+            }
+            position.insert(cursor, path.len());
+            path.push(cursor);
+
+            let next = declared[cursor]
+                .after
+                .iter()
+                .map(String::as_str)
+                .filter(|target| {
+                    declared.contains_key(target)
+                        && !started.contains_key(target)
+                        && !blocked.contains_key(target)
+                })
+                .min();
+            match next {
+                Some(target) => cursor = target,
+                None => break None,
+            }
+        };
+
+        let reason = match &cycle {
+            Some(cycle) => {
+                alloc::format!("dependency cycle: {} -> {}", cycle.join(" -> "), cycle[0])
+            }
+            // Unreachable: a service whose every prerequisite is started or
+            // blocked would have been placed by step 2 or 3.  Saying so beats
+            // a panic in the boot path if that ever stops being true.
+            None => String::from("no place in the start order"),
+        };
+        for member in path {
+            cycles.insert(member, reason.clone());
+        }
+    }
+
+    StartOrder {
+        start: start_order
+            .iter()
+            .map(|name| (*declared[name]).clone())
+            .collect(),
+        blocked: declared
+            .iter()
+            .filter_map(|(name, service)| {
+                blocked
+                    .get(name)
+                    .or_else(|| cycles.get(name))
+                    .map(|reason| ((*service).clone(), reason.clone()))
+            })
+            .collect(),
+    }
+}
+
 /// Maximum number of automatic restarts before a service is abandoned.
 ///
 /// A service that fails this many times is treated as misconfigured rather
@@ -346,6 +546,9 @@ pub const SERVICE_RESTART_BACKOFF_TICKS: u64 = 200;
 /// - `Failed` → `Running`: the supervisor restarted it.
 /// - `Failed` → `Abandoned`: the restart budget ran out.
 /// - `Failed` → `Stopped`: the service asked for no restart.
+/// - `Pending` → `Blocked`: the boot path planned a start order and this
+///   service had no place in it (a prerequisite that is not declared, or a
+///   dependency cycle).  Nothing ran it, so nothing ever observed it die.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceState {
     /// Declared, but never spawned.
@@ -358,6 +561,9 @@ pub enum ServiceState {
     Failed,
     /// Exited and the supervisor gave up on it.
     Abandoned,
+    /// Declared, but nothing could start it: its place in the start order
+    /// could not be worked out.  `last_error` names the reason.
+    Blocked,
 }
 
 impl ServiceState {
@@ -369,6 +575,7 @@ impl ServiceState {
             Self::Stopped => "stopped",
             Self::Failed => "failed",
             Self::Abandoned => "abandoned",
+            Self::Blocked => "blocked",
         }
     }
 
@@ -379,7 +586,7 @@ impl ServiceState {
 
     /// Return true when the service will not move again without intervention.
     pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Stopped | Self::Abandoned)
+        matches!(self, Self::Stopped | Self::Abandoned | Self::Blocked)
     }
 }
 
@@ -560,6 +767,21 @@ pub fn mark_abandoned(name: &str, reason: &str, now_tick: u64) {
     });
 }
 
+/// Mark a service as never started, because its place in the start order
+/// could not be worked out.
+///
+/// Distinct from [`mark_failed`]: nothing observed this service die, because
+/// nothing ever ran it.  The supervisor leaves a blocked service alone — it is
+/// not a restart candidate, and retrying it would produce the same plan.
+pub fn mark_blocked(name: &str, reason: &str, now_tick: u64) {
+    update(name, |record| {
+        record.state = ServiceState::Blocked;
+        record.pid = None;
+        record.last_error = Some(String::from(reason));
+        record.state_since_tick = now_tick;
+    });
+}
+
 /// Apply `edit` to one record, if it exists.
 fn update(name: &str, edit: impl FnOnce(&mut ServiceRecord)) {
     let mut registry = SERVICE_REGISTRY.lock();
@@ -692,9 +914,18 @@ mod tests {
             path: Some(alloc::format!("/system/{}.elf", name)),
             entry: None,
             args: Vec::new(),
+            after: Vec::new(),
             auto_restart,
             security: ServiceSecurity::Guest,
             account: None,
+        }
+    }
+
+    /// Build a definition that follows `after`, for the ordering tests.
+    fn following(name: &str, after: &[&str]) -> ServiceDefinition {
+        ServiceDefinition {
+            after: after.iter().map(|name| String::from(*name)).collect(),
+            ..definition(name, false)
         }
     }
 
@@ -1263,5 +1494,153 @@ security = \"admin\"
         // silently did not happen, so the parser refuses it outright.
         let text = "format = \"protofire-service-1\"\n\n[[service]]\nname = \"shell\"\nkind = \"user_program\"\nsecurity = \"guest\"\naccount = \"root\"\n";
         assert!(parse_service_config(text).is_err());
+    }
+
+    #[test]
+    fn a_declaration_can_name_what_it_follows() {
+        let text = "format = \"protofire-service-1\"\n\n[[service]]\nname = \"httpd\"\nkind = \"user_program\"\npath = \"/system/httpd.elf\"\nafter = [\"netd\", \"logger\"]\n";
+        let services = parse_service_config(text).expect("parse");
+        assert_eq!(
+            services[0].after,
+            vec![String::from("netd"), String::from("logger")]
+        );
+    }
+
+    #[test]
+    fn the_start_order_follows_the_declarations() {
+        // Declared out of order on purpose: the plan is a function of the
+        // `after` lists, not of the order the files happened to be read in.
+        let services = vec![
+            following("httpd", &["netd"]),
+            following("logger", &[]),
+            following("netd", &["logger"]),
+        ];
+        let plan = plan_start_order(&services);
+
+        let order: Vec<&str> = plan.start.iter().map(|svc| svc.name.as_str()).collect();
+        assert_eq!(order, vec!["logger", "netd", "httpd"]);
+        assert!(plan.blocked.is_empty());
+    }
+
+    #[test]
+    fn services_with_no_declared_order_keep_the_order_they_were_read_in() {
+        // Determinism is the property that makes the plan testable: two boots
+        // of the same declarations cannot disagree about what starts first.
+        // Keeping the read order also means a system that declares nothing —
+        // the embedded defaults — starts exactly as it did before the order
+        // was computed at all.
+        let services = vec![
+            definition("zulu", false),
+            definition("alpha", false),
+            definition("mike", false),
+        ];
+        let order: Vec<String> = plan_start_order(&services)
+            .start
+            .iter()
+            .map(|svc| svc.name.clone())
+            .collect();
+        assert_eq!(order, vec!["zulu", "alpha", "mike"]);
+    }
+
+    #[test]
+    fn an_undeclared_prerequisite_blocks_its_dependents_transitively() {
+        let services = vec![
+            following("httpd", &["netd"]),
+            following("netd", &["dnsmasq"]),
+            definition("logger", false),
+        ];
+        let plan = plan_start_order(&services);
+
+        let order: Vec<&str> = plan.start.iter().map(|svc| svc.name.as_str()).collect();
+        assert_eq!(order, vec!["logger"]);
+
+        let blocked: Vec<(&str, &str)> = plan
+            .blocked
+            .iter()
+            .map(|(svc, reason)| (svc.name.as_str(), reason.as_str()))
+            .collect();
+        assert_eq!(
+            blocked,
+            vec![
+                ("httpd", "after \"netd\", which is blocked"),
+                ("netd", "after \"dnsmasq\", which is not declared"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_cycle_is_named_and_blocks_every_service_in_it() {
+        let services = vec![
+            following("alpha", &["beta"]),
+            following("beta", &["alpha"]),
+            definition("gamma", false),
+        ];
+        let plan = plan_start_order(&services);
+
+        let order: Vec<&str> = plan.start.iter().map(|svc| svc.name.as_str()).collect();
+        assert_eq!(order, vec!["gamma"]);
+
+        let blocked: Vec<(&str, String)> = plan
+            .blocked
+            .iter()
+            .map(|(svc, reason)| (svc.name.as_str(), reason.clone()))
+            .collect();
+        assert_eq!(
+            blocked,
+            vec![
+                (
+                    "alpha",
+                    String::from("dependency cycle: alpha -> beta -> alpha")
+                ),
+                (
+                    "beta",
+                    String::from("dependency cycle: alpha -> beta -> alpha")
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_service_cannot_follow_itself() {
+        let plan = plan_start_order(&[following("loop", &["loop"])]);
+        assert!(plan.start.is_empty());
+        assert_eq!(
+            plan.blocked[0].1,
+            String::from("after \"loop\", which is itself")
+        );
+    }
+
+    #[test]
+    fn a_repeated_name_keeps_its_last_declaration() {
+        // `register` lets the last declaration win; the order has to agree
+        // with the record that ends up in `/service`.
+        let first = following("httpd", &["netd"]);
+        let last = definition("httpd", false);
+        let services = vec![following("netd", &[]), first, last];
+
+        let plan = plan_start_order(&services);
+        let order: Vec<&str> = plan.start.iter().map(|svc| svc.name.as_str()).collect();
+        assert_eq!(order, vec!["netd", "httpd"]);
+        assert!(plan.blocked.is_empty());
+    }
+
+    #[test]
+    fn a_blocked_service_is_not_a_restart_candidate() {
+        let _guard = exclusive_registry();
+        register(&definition("netd", true), 0);
+        mark_blocked("netd", "after \"dnsmasq\", which is not declared", 0);
+
+        let record = record("netd").expect("netd");
+        assert_eq!(record.state, ServiceState::Blocked);
+        assert!(record.state.is_terminal());
+        assert_eq!(record.pid, None);
+        assert_eq!(
+            record.last_error.as_deref(),
+            Some("after \"dnsmasq\", which is not declared")
+        );
+
+        // The supervisor only ever acts on a service it watched die, so a
+        // blocked one stays blocked.
+        assert!(plan_supervision(1_000, |_| false).is_empty());
     }
 }

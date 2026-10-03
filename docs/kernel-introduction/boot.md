@@ -375,6 +375,31 @@ run: a service that asked for `admin` and did not get it refuses to start
 rather than running as a guest, because the two are indistinguishable from
 `/service` afterwards.  Both the grant and the refusal are audited.
 
+#### Declared start order
+
+A definition may also declare `after = ["other", …]`, naming services it must
+be started after.  `service::plan_start_order()` turns the declarations into
+the order the boot path follows and a list of services that have no place in
+it.  The order is a function of the declarations alone — a service with nothing
+to wait for keeps the position its declaration had — so two boots of the same
+`/system/rc.d` start the same things in the same order, and a test can pin it.
+That is also why a system that declares no order at all starts exactly as it
+did before the order was computed.
+
+`after` is ordering, not a promise about what the other service *achieves*: a
+daemon that binds a port is not "done" when it has been spawned, and a manager
+that waited for one would wait forever.  What the declaration buys is
+attribution.  A service whose prerequisite is not declared, or is itself
+blocked, or is part of a cycle, is not started at all: it is recorded as
+`blocked` in `/service` with the reason in `last_error`, and the reason names
+the service that could not start rather than leaving the reader to guess.  A
+cycle is reported whole (`dependency cycle: a -> b -> a`), so one misconfigured
+file reads as one error instead of several unrelated failures.
+
+Every declaration is registered before any of them runs, so a blocked service
+appears in `/service` next to the ones that started — `state` reads `blocked`,
+and `describe` lists both its `After` line and the reason.
+
 Neither token carries password authentication.  A service has nobody to ask, so
 the kernel establishes the identity instead of proving it, and `authenticated`
 stays clear — which is what keeps the discretionary-permission bypass a
