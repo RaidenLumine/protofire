@@ -88,6 +88,7 @@ kernel_log                   sync                         1
 maintenance                  audit                        1
 maintenance                  fs                           3
 maintenance                  heartbeat                    1
+maintenance                  network                      1
 maintenance                  process                      2
 memory                       fs                           4
 memory                       oom                          2
@@ -123,7 +124,7 @@ process                      drivers                      4
 process                      fs                           15
 process                      handle_rights                2
 process                      irq_balance                  2
-process                      maintenance                  2
+process                      maintenance                  3
 process                      memory                       24
 process                      network                      16
 process                      percpu                       12

@@ -450,6 +450,12 @@ extensions and in-kernel security protocols.
   overlapping-fragment discard (RFC 5722).
 - **TLS 1.3**: implemented as a kernel module — unusual, and potentially useful
   for secure bootstrapping.
+- **Deferred periodic work**: the scheduler tick advances the stack's clock
+  with a single atomic add; the pass that acts on it — ARP eviction, TCP
+  retransmit and TimeWait, DHCP renewal, SLAAC, IGMP/MLD, NTP, mDNS — runs on
+  the maintenance thread, so the transmits inside it wait for the device's
+  completion interrupt in thread context instead of inside the interrupt
+  handler that would have masked it.
 
 **Weaknesses:**
 

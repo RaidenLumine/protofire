@@ -2,21 +2,28 @@
 //!
 //! Deferred kernel maintenance.
 //!
-//! Two periodic jobs used to run straight from the timer tick: block-cache
-//! write-back and audit persistence.  Both do filesystem work — they take the
-//! global filesystem lock, walk the mount table, and write to a block device —
-//! so the kernel was issuing disk I/O from inside an interrupt handler, with
-//! interrupts masked for its whole duration.  The clock stopped on that CPU,
-//! preemption stopped with it, and any other CPU that wanted the filesystem
-//! lock spun for the length of a flush with its own interrupts masked too.
+//! Periodic jobs used to run straight from the timer tick: block-cache
+//! write-back and audit persistence, and the network stack's own periodic
+//! pass.  The filesystem jobs both take the global filesystem lock, walk the
+//! mount table, and write to a block device — so the kernel was issuing disk
+//! I/O from inside an interrupt handler, with interrupts masked for its whole
+//! duration.  The clock stopped on that CPU, preemption stopped with it, and
+//! any other CPU that wanted the filesystem lock spun for the length of a
+//! flush with its own interrupts masked too.  The network pass has the same
+//! shape for a different reason: a transmit waits on the device's completion
+//! interrupt, and an interrupt the tick itself has masked cannot arrive.
 //!
-//! The tick now does nothing but set a flag.  This module owns those flags and
-//! the sleeping thread that drains them, so the work happens in ordinary
-//! thread context where blocking, preemption and interrupts all still work.
+//! The tick now does nothing but set a flag (and, for the network, advance the
+//! clock by one atomic add).  This module owns those flags and the sleeping
+//! thread that drains them, so the work happens in ordinary thread context
+//! where blocking, preemption and interrupts all still work.
 //!
 //! The flags are deliberately latches rather than counters: if the thread is
-//! busy, several due periods collapse into one flush, which is what you want
-//! from a job whose only purpose is to stop dirty data accumulating.
+//! busy, several due periods collapse into one pass, which is what you want
+//! from a job whose only purpose is to keep a bounded amount of deferred work
+//! moving.  The network clock is the exception that proves the rule — it is a
+//! counter, advanced by the tick, because the protocol code reads *time* from
+//! it rather than *work pending*.
 
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
@@ -36,6 +43,9 @@ static BLOCK_CACHE_WRITE_BACK_DUE: AtomicBool = AtomicBool::new(false);
 /// Set by the timer tick when the audit ring buffer is due for persistence.
 static AUDIT_PERSIST_DUE: AtomicBool = AtomicBool::new(false);
 
+/// Set by the timer tick when the network stack's periodic pass is due.
+static NETWORK_MAINTENANCE_DUE: AtomicBool = AtomicBool::new(false);
+
 /// Ask for aged dirty blocks to be written back.
 ///
 /// Called from the timer interrupt, so this stays a single atomic store: no
@@ -50,6 +60,16 @@ pub(crate) fn request_block_cache_write_back() {
 /// [`request_block_cache_write_back`].
 pub(crate) fn request_audit_persist() {
     AUDIT_PERSIST_DUE.store(true, Ordering::Release);
+}
+
+/// Ask for one pass of the network stack's periodic maintenance.
+///
+/// Called from the timer interrupt, so this stays a single atomic store.  The
+/// pass itself can transmit, and a transmit waits on the device — the wait
+/// this deferral exists to move out of the interrupt handler.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+pub(crate) fn request_network_maintenance() {
+    NETWORK_MAINTENANCE_DUE.store(true, Ordering::Release);
 }
 
 /// Take the pending write-back request, clearing it.
@@ -69,6 +89,14 @@ pub(crate) fn take_audit_persist() -> bool {
     AUDIT_PERSIST_DUE.swap(false, Ordering::AcqRel)
 }
 
+/// Take the pending network-maintenance request, clearing it.
+///
+/// Same host-side reasoning as [`take_block_cache_write_back`].
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+pub(crate) fn take_network_maintenance() -> bool {
+    NETWORK_MAINTENANCE_DUE.swap(false, Ordering::AcqRel)
+}
+
 /// Forget every pending request.
 ///
 /// The latches are process-global, so a host test that sets one and does not
@@ -77,6 +105,7 @@ pub(crate) fn take_audit_persist() -> bool {
 pub(crate) fn reset_for_tests() {
     BLOCK_CACHE_WRITE_BACK_DUE.store(false, Ordering::Release);
     AUDIT_PERSIST_DUE.store(false, Ordering::Release);
+    NETWORK_MAINTENANCE_DUE.store(false, Ordering::Release);
 }
 
 /// The deferred-maintenance thread.
@@ -115,6 +144,12 @@ pub(crate) fn maintenance_entry() {
 
         if take_audit_persist() {
             crate::kernel::audit::persist::persist_to_file();
+        }
+
+        if take_network_maintenance() {
+            if let Some(stack) = crate::network::stack::NetworkStack::global() {
+                stack.run_maintenance();
+            }
         }
 
         // Opt-in, like the other profilers in this tree: the counters are
@@ -197,23 +232,32 @@ mod tests {
 
         request_audit_persist();
         assert!(!take_block_cache_write_back());
+        assert!(!take_network_maintenance());
         assert!(take_audit_persist());
         assert!(!take_audit_persist());
 
         request_block_cache_write_back();
         assert!(!take_audit_persist());
+        assert!(!take_network_maintenance());
         assert!(take_block_cache_write_back());
+
+        request_network_maintenance();
+        assert!(!take_audit_persist());
+        assert!(!take_block_cache_write_back());
+        assert!(take_network_maintenance());
     }
 
     #[test]
-    fn reset_clears_both_latches() {
+    fn reset_clears_every_latch() {
         reset_for_tests();
         request_block_cache_write_back();
         request_audit_persist();
+        request_network_maintenance();
 
         reset_for_tests();
 
         assert!(!take_block_cache_write_back());
         assert!(!take_audit_persist());
+        assert!(!take_network_maintenance());
     }
 }

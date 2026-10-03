@@ -203,11 +203,24 @@ impl Scheduler {
         crate::drivers::virtio_input::poll_hardware();
         crate::drivers::virtio_gpu::poll_flush();
 
-        // Drive the native network stack's periodic maintenance (ARP cache
-        // eviction, TCP retransmission timers, TimeWait cleanup) when a
-        // network device is present.
+        // Advance the network stack's clock (ARP cache eviction, TCP
+        // retransmission timers and TimeWait cleanup are all measured in it)
+        // and ask the maintenance thread for the pass that acts on it.
+        //
+        // The pass itself transmits on some ticks, and a transmit waits on the
+        // device's completion interrupt — an interrupt this handler has
+        // masked, so the wait could never finish here.  The clock is a single
+        // atomic add and stays; the work moves to the maintenance thread.
         #[cfg(any(target_os = "none", test))]
         if let Some(stack) = crate::network::stack::NetworkStack::global() {
+            #[cfg(target_os = "none")]
+            {
+                stack.advance_clock();
+                crate::kernel::maintenance::request_network_maintenance();
+            }
+            // The host build has no maintenance thread, so the tick does both
+            // halves there — which is also what the tests drive directly.
+            #[cfg(not(target_os = "none"))]
             stack.advance_tick();
         }
 

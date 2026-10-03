@@ -106,16 +106,42 @@ impl NetworkStack {
         self.profiler.snapshot()
     }
 
-    /// Advance the tick counter by one and run periodic protocol-layer
-    /// maintenance.  Called from the scheduler tick ISR (100 Hz).
+    /// Advance the network clock by one tick.
+    ///
+    /// This is the only part of the periodic work that belongs in the
+    /// scheduler's tick handler: a single atomic add, no lock and no device.
+    /// Everything that *acts* on the clock is
+    /// [`NetworkStack::run_maintenance`], which the deferred-maintenance
+    /// thread calls — because some of it transmits, and a transmit waits on
+    /// the device's completion interrupt, a wait that cannot finish inside
+    /// an interrupt handler.
+    pub fn advance_clock(&self) {
+        self.ticks.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Advance the clock and run one pass of periodic maintenance.
+    ///
+    /// The host build and the tests have no maintenance thread, so they drive
+    /// both halves through this entry point; a boot drives the halves
+    /// separately, the clock from the tick and the maintenance from the
+    /// maintenance thread.
+    pub fn advance_tick(&self) {
+        self.advance_clock();
+        self.run_maintenance();
+    }
+
+    /// Run one pass of the periodic protocol-layer maintenance.
+    ///
+    /// Called from the deferred-maintenance thread, never from the tick
+    /// handler: a pass can transmit, and transmitting blocks on the device.
     ///
     /// This drives:
     /// - ARP cache entry eviction (stale entries beyond 6 s TTL).
     /// - TCP retransmission checks and TimeWait→Closed expiry.
     /// - DHCP lease renewal state transitions
     ///   (Bound→Renewing→Rebinding→Expired).
-    pub fn advance_tick(&self) {
-        let tick = self.ticks.fetch_add(1, Ordering::Relaxed) + 1;
+    pub fn run_maintenance(&self) {
+        let tick = self.current_tick();
 
         // Evict stale ARP cache entries.
         self.arp_cache.lock().evict_expired(tick);
