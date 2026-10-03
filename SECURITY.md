@@ -11,7 +11,7 @@ research project — **do not run it with untrusted workloads in production**.
 | Version | Supported |
 |---------|-----------|
 | `main` (development) | Active fixes |
-| `1.0.x` (latest tagged release) | Security fixes & backports |
+| The latest tagged release | Security fixes & backports |
 | Older releases | Not supported |
 
 ## Reporting a Vulnerability

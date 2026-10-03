@@ -3,21 +3,21 @@
 # Purpose: Hold the line on undocumented `unsafe` blocks, configuration by
 #          configuration.
 #
-# The tree has far more `unsafe` blocks than it has written safety arguments,
-# and a lint switched on to `deny` over all of them at once would be answered
-# with boilerplate: a comment on every block, none of which argues anything.
-# This check holds the line where it is instead.  Every configuration listed in
-# `scripts/unsafe-comment-baseline.txt` may report *no more* undocumented
-# blocks than the number recorded there, and a count that falls has to be
-# recorded in the same change — so the baseline is always the truth about the
-# tree, and a new undocumented block turns the gate red for the change that
-# added it rather than for whoever merges next.
+# The tree has written a safety argument for every `unsafe` block and `unsafe
+# impl` it has, and the lint is denied outright in `make clippy` and
+# `make clippy-targets`.  This target is the second, independent census: every
+# configuration listed in `scripts/unsafe-comment-baseline.txt` may report *no
+# more* undocumented blocks than the number recorded there, and a count that
+# falls has to be recorded in the same change — so the baseline is always the
+# truth about the tree, a new undocumented block turns the gate red for the
+# change that added it rather than for whoever merges next, and a configuration
+# no clippy target builds for would still be caught here.
 #
 # The counts are the `unsafe block missing a safety comment` and
 # `unsafe impl missing a safety comment` diagnostics from clippy's
 # `undocumented_unsafe_blocks` lint — both of them, because an `unsafe impl`
 # missing its argument is as undocumented as a block and the block-only match
-# this script used to apply left twenty-seven of them uncounted.  It counts
+# this script used to apply left a set of them uncounted.  It counts
 # *diagnostics*, not source items: an `unsafe fn` body and a block inside a
 # macro are reported differently again, so a number is only comparable against
 # a baseline produced by the same toolchain (`rust-toolchain.toml`) and the

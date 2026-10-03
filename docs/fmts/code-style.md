@@ -3,11 +3,11 @@
 > **Status:** normative, except where a rule is marked *convention*.
 > **Applies to:** `src/`, `tests/`, `build.rs`.
 
-The repository is roughly 215,000 lines of Rust across 600+ files, written over
-time by more than one hand. Consistency is what keeps that readable: a
-contributor should be able to open an unfamiliar module — a filesystem driver, a
-network protocol, the scheduler — and recognise the shape of it without learning
-a new author's habits first.
+The repository is a large Rust tree written over time by more than one hand, and
+it keeps growing. Consistency is what keeps that readable: a contributor should
+be able to open an unfamiliar module — a filesystem driver, a network protocol,
+the scheduler — and recognise the shape of it without learning a new author's
+habits first.
 
 The rules below are the ones this codebase actually follows. Where a rule is
 mechanical it says so, and you should let the tool do the work; where it is a
@@ -237,8 +237,8 @@ code; do not take those files as the model.
 ## 6. Visibility
 
 **Start private, widen reluctantly.** The default for an internal helper is
-`pub(crate)`; the tree uses it over 2,400 times, and `pub(super)` — for items
-that exist only for the parent module, like syscall handlers — around 370 times.
+`pub(crate)`, and `pub(super)` is for items that exist only for the parent
+module, like syscall handlers.
 
 - **`pub(crate)`** — shared across the kernel but not part of any public
   surface. This is the normal choice for a helper that another subsystem needs.
@@ -304,9 +304,9 @@ invent a second encoding.
 
 ### When a panic is acceptable
 
-`panic!` appears about 30 times in the entire tree, and the rule that produces
-that number is: **panic only for a violated invariant that indicates the kernel
-is already corrupt or the build is wrong.** It is never a way to reject input.
+`panic!` is rare in this tree, and the rule that keeps it rare is: **panic only
+for a violated invariant that indicates the kernel is already corrupt or the
+build is wrong.** It is never a way to reject input.
 
 The legitimate cases, all of which are assertions about the code rather than
 about the data:

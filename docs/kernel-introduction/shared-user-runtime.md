@@ -24,7 +24,7 @@ The module exports the following public submodules:
 | Module | File | Responsibility |
 |---|---|---|
 | `abi` | `abi/mod.rs` | `#[repr(C)]` ABI record types shared across the kernel/userspace boundary |
-| `commands` | `commands/mod.rs` | ~45 shell builtin command implementations |
+| `commands` | `commands/mod.rs` | Shell builtin command implementations |
 | `control_flow` | `control_flow.rs` | `if`/`for`/`while` parsing and execution |
 | `dispatch` | `dispatch.rs` | Command-name-to-function dispatch table |
 | `expand` | `expand.rs` | Environment variable expansion (`$VAR`, `${VAR}`) |
@@ -36,7 +36,7 @@ The module exports the following public submodules:
 | `pipeline` | `pipeline.rs` | `&&` / `||` conditional chaining, pipe splitting, redirect parsing |
 | `runtime` | `runtime.rs` | Architecture-dependent syscall bridge, `BrkAllocator`, argument parsing, panic handler |
 | `signal` | `signal.rs` | Cooperative signal handling: wait, send, mask (u64), sigsuspend, dispatch loop |
-| `syscall` | `syscall.rs` | `SYS_*` constants (~80 syscall numbers) + `sys_*()` typed wrappers (~50 functions) |
+| `syscall` | `syscall.rs` | `SYS_*` constants + `sys_*()` typed wrappers |
 | `tokenizer` | `tokenizer.rs` | Shell word tokenizer (quotes, escapes, whitespace) |
 | `types` | `types.rs` | `CmdResult` — the structured return type for all shell commands |
 
@@ -112,7 +112,10 @@ The function `network_supports_tcp_stream_transport()` checks the minimum capabi
 
 File: `src/user/shared/abi/mod.rs`
 
-Five submodules, all `#[repr(C)]` — layouts must remain binary-stable across kernel revisions:
+The ABI is split into per-area submodules, all `#[repr(C)]` — layouts must
+remain binary-stable across kernel revisions. The areas most readers touch are
+described below; `src/user/shared/abi/` lists the rest, and
+`make check-abi-mirror` keeps every record in step with its `src/abi/` twin.
 
 ### `abi/fs.rs` — Filesystem ABI
 
@@ -159,7 +162,7 @@ Records for system introspection:
 - `SystemHealthRecord` — aggregated health counters
 - `FaultRecordAbi` — exception details for ring3
 
-State constants: `PROCESS_STATE_READY`, `PROCESS_STATE_RUNNING`, `PROCESS_STATE_WAITING`, `THREAD_STATE_*`, `THREAD_PRIORITY_*`. System info selectors: `SYSTEM_INFO_SCHEDULER` (0) through `SYSTEM_INFO_PER_CPU` (8).
+State constants: `PROCESS_STATE_READY`, `PROCESS_STATE_RUNNING`, `PROCESS_STATE_WAITING`, `THREAD_STATE_*`, `THREAD_PRIORITY_*`. System info selectors are numbered: `SYSTEM_INFO_SCHEDULER` (0), `SYSTEM_INFO_ALLOC_PROFILER` (1), `SYSTEM_INFO_FAULT_PROFILER` (2), `SYSTEM_INFO_BOOT_REPORT` (3), `SYSTEM_INFO_SYSTEM_HEALTH` (4), `SYSTEM_INFO_FS_PROFILER` (5), `SYSTEM_INFO_NET_PROFILER` (6), `SYSTEM_INFO_REAL_TIME` (7), `SYSTEM_INFO_PER_CPU` (8), `SYSTEM_INFO_IRQ_PROFILER` (9).
 
 ---
 
@@ -273,7 +276,7 @@ pub fn dispatch_single_command(
 
 File: `src/user/shared/commands/mod.rs`
 
-~45 builtin commands organized into submodules:
+Builtin commands organized into submodules:
 
 **`commands/fs.rs`** — Filesystem commands: `cmd_pwd`, `cmd_cd`, `cmd_ls`, `cmd_cat`, `cmd_mkdir`, `cmd_rm`, `cmd_touch`, `cmd_cp`, `cmd_mv`, `cmd_chmod`, `cmd_du`, `cmd_df`.
 
@@ -315,9 +318,21 @@ chain `/apps/current → /apps/catalog → /apps/packages → ELF`, implemented 
 
 File: `src/user/shared/signal.rs`
 
-### Cooperative signal model
+### Two ways to receive a signal
 
-The kernel delivers signals **cooperatively**: a process must explicitly call `wait_signal()` to receive the next pending signal. There is no asynchronous preemption.
+The kernel can deliver a signal **asynchronously**: when a process has a handler
+installed through `SetSignalHandler`, delivery builds a signal frame on the user
+stack and enters the handler through the architecture's trampoline; `sigreturn`
+restores the interrupted context, and `SA_RESTART` re-issues an interrupted
+blocking syscall. Handler flags such as `SA_SIGINFO` are passed through that
+same path.
+
+The shared library also offers an explicit **wait/poll** API
+(`wait_signal()`, `wait_signal_forever()`, `poll_signal()`), which is what a
+program uses when it would rather consume pending signals at a point of its own
+choosing — for example the shell's `signal_dispatch_loop`. Neither model
+preempts user code that never returns to the kernel; the difference is whether
+the *kernel* enters the handler on your behalf or hands you the record.
 
 ### Signal mask
 

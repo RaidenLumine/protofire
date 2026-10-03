@@ -144,7 +144,12 @@ make clippy
 ├── src/
 │   ├── abi/               # Shared ABI records (syscall encodings, process/file/network wire shapes)
 │   ├── arch/              # Architecture backends (x86_64, AArch64, RISC-V)
-│   ├── kernel/            # Kernel core (VFS, drivers, network, process, memory, syscall, sync)
+│   ├── drivers/           # Device drivers (block, network, display, input, audio, USB)
+│   ├── fs/                # VFS, the native filesystem, and every filesystem driver
+│   ├── kernel/            # Kernel core (boot, scheduler, process model, sync, IPC, security)
+│   ├── memory/            # Frame allocator, TLSF heap, page tables
+│   ├── network/           # The kernel's own TCP/IP stack and its protocols
+│   ├── syscall/           # Syscall dispatch table and per-category handlers
 │   ├── user/              # Userspace support (ELF loader, program mgmt, shell dispatch, demo payloads)
 │   │   ├── demo/          # Demo ELF artifact builder (elf_builder)
 │   │   └── shared/        # Shared shell/user runtime logic (ABI types, syscall wrappers, builtins)

@@ -77,8 +77,10 @@ on you, not on the gate:
 - Keeping the path accurate if a file moves. The check compares against the
   file's current location, so a stale path fails the gate — but a file that was
   copied rather than moved can carry a wrong path that still happens to match.
-- The single-header rule. `src/main.rs` currently carries two consecutive `//!`
-  blocks because only lines 1–2 are examined; do not take it as a model.
+- The single-header rule. The check looks at a file's opening only — line 1,
+  line 2, and the blank line before the first code — so it does not notice a
+  second `//!` block further down a file. Keep one header: a module's
+  description belongs at the top, not after its first declarations.
 
 ### Writing the description
 
@@ -231,7 +233,7 @@ checked. "SAFETY: this is fine" is not a comment, it is a hope.
 
 ### Capitalisation is not optional
 
-The mixed-case `// Safety:` form used to appear in around 30 blocks, mostly in
+The mixed-case `// Safety:` form used to appear in the tree, mostly in
 `src/arch/x86_64/i8042.rs` and the virtio drivers. Those have been migrated, and
 the tree now has no occurrences left: `// SAFETY:` is the only accepted spelling.
 A new `// Safety:` is a defect, not a style preference — it reads as a different
@@ -252,8 +254,8 @@ rather than to omit it — obviousness is what makes an invariant worth recordin
 ## 6. Section separators
 
 Long files are divided into labelled sections with a rule made of Unicode box
-drawing characters. This is the dominant style in the tree — around 285 files
-use it — and it is what new code should follow:
+drawing characters. This is the dominant style in the tree, and it is what new
+code should follow:
 
 ```rust
 // ── Syscall number ─────────────────────────────────────────────────────────
@@ -270,10 +272,9 @@ use it — and it is what new code should follow:
 - Section names are short and noun-like: `Constants`, `Public API`,
   `Tests`, `Request codes`.
 
-ASCII rules made of `=` or `-` characters survive in about 36 older files,
-mostly under `src/arch/` and `src/drivers/`. They are **legacy**: do not
-copy them into new code, and prefer the box-drawing form when you touch a file
-that mixes both.
+ASCII rules made of `=` or `-` characters survive in older files, mostly under
+`src/arch/` and `src/drivers/`. They are **legacy**: do not copy them into new
+code, and prefer the box-drawing form when you touch a file that mixes both.
 
 ---
 

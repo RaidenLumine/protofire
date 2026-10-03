@@ -52,11 +52,10 @@ not the same as either habit people arrive with:
 Read the subject as the completion of the sentence *"This commit will…"*. It
 will *drop* the ELR advance; it did not *drop* it, and it is not *dropping* it.
 
-This is the most common error in this repository's own history. Of the commits
-that use a type prefix, roughly 44 start lowercase and about 8 are capitalised
-past tense — two different ways of missing the same rule. The rule is not
-retroactive (published history stays as it is), but it applies to every new
-commit.
+This is the most common error in this repository's own history: a subject that
+starts lowercase, or one that uses the capitalised past tense, are two
+different ways of missing the same rule. The rule is not retroactive (published
+history stays as it is), but it applies to every new commit.
 
 Only the last two columns of the table are machine-checked; see §5.
 
@@ -77,9 +76,10 @@ Only the last two columns of the table are machine-checked; see §5.
 
 ## 2. Type prefixes
 
-Every commit carries a type. This is a rule, not a preference — 96% of the
-commits in this repository's history already comply, and a specification that
-described reality more loosely than the code would be the wrong way round.
+Every commit carries a type. This is a rule, not a preference: the history that
+predates the hook stays as it is, but every commit the hook sees has to comply,
+and a specification that described reality more loosely than the code would be
+the wrong way round.
 
 | Type | Use for |
 |------|---------|

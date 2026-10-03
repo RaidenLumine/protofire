@@ -63,8 +63,10 @@ and maps to the negative-errno convention at the ABI boundary.
 ## Syscall Numbering
 
 Every public syscall has a fixed number defined in the `SyscallNumber` enum in
-`src/syscall/table.rs`. Numbers are assigned sequentially with gaps
-reserved for Dup2 (69) and GetTimeOfDay (70).
+`src/syscall/table.rs`. Numbers are assigned once and never renumbered or
+reused; the enum's discriminants are the authority, and
+`tests/syscall/abi_golden.rs` pins the whole number→name table so a change in
+the frozen range fails the build.
 
 ```rust
 #[repr(usize)]
@@ -88,7 +90,7 @@ pub enum SyscallNumber {
 }
 ```
 
-### Current Allocations (0-150, 151 syscalls)
+### Current Allocations
 
 | Range  | Category                     |
 |--------|------------------------------|
@@ -135,7 +137,8 @@ pub enum SyscallNumber {
 | 110-111| sched_setaffinity, sched_getaffinity |
 | 112-117| POSIX message queues           |
 | 118-120| epoll (create, ctl, wait)      |
-| 121-125| (reserved for expansion)       |
+| 121    | tls_connect                    |
+| 122-125| Packet filter (add/remove rule, default action, stats) |
 | 126-127| io_uring (setup, submit_and_wait) |
 | 128    | ptrace                         |
 | 129    | seccomp                        |
@@ -150,17 +153,26 @@ pub enum SyscallNumber {
 | 143-144| Audit (audit_set_enable, audit_read_log) |
 | 145-149| CPU frequency scaling (cpufreq_get/set/get_range/set_governor/get_temp) |
 | 150    | Memory defragmentation (compact_memory) |
+| 151-154| Extended attributes (set/get/list/remove_xattr) |
+| 155-156| File flags (set/get_file_flags) |
+| 157-163| DCCP (bind/listen/connect/accept/send/recv/close) |
+| 164-168| IPsec (add/del SP, add/del SA, stats) |
+| 169-174| Multicast routing (init/done, add/del VIF, add/del MFC) |
+| 175-178| MAC (set mode, add rule, set path type, get status) |
+| 179    | fcntl                          |
+| 180    | sync                           |
+| 181-189| VIRGL 3D (context, resource, transfer, submit, scanout, device info) |
 
 ### PUBLIC_SYSCALL_COUNT
 
 ```rust
 // src/syscall/table.rs
-pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::CompactMemory as u32 + 1;
+pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::GpuDeviceInfo as u32 + 1;
 ```
 
-This constant is derived from the highest enum discriminant (`CompactMemory = 150`).
-It is used in tests to verify that every slot in the dispatch table is
-populated:
+This constant is derived from the highest enum discriminant, so it grows with
+the enum instead of being a number someone has to remember to update. It is used
+in tests to verify that every slot in the dispatch table is populated:
 
 ```rust
 #[test]
@@ -401,7 +413,7 @@ pub fn sys_read(fd: usize, buf: &mut [u8], timeout_ticks: u64) -> Result<usize, 
 pub fn sys_write(fd: usize, data: &[u8]) -> Result<usize, isize>;
 pub fn sys_close(fd: usize) -> Result<(), isize>;
 pub fn sys_exit(code: usize) -> !;
-// ... 40+ wrappers total
+// ... and the rest of the typed wrappers
 ```
 
 Each wrapper calls `decode()` on the raw `isize` return value, converting it

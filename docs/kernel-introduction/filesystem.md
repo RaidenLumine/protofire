@@ -196,7 +196,8 @@ Two concrete implementations:
 
 ### BlockCache
 
-`src/fs/block_cache.rs` provides a 128-slot LRU cache with:
+`src/fs/block_cache.rs` provides a fixed-size LRU cache (the capacity is the
+`CACHE_CAPACITY` constant in that file) with:
 
 - **Write-through** (metadata): `write_through()` persists to device and updates cache.
 - **Write-back** (file data): `write_back()` marks dirty; `flush()` writes to device.
@@ -352,21 +353,26 @@ Created via `pipe_channel()` (16 KiB default) or `pipe_channel_with_capacity(n)`
 
 ---
 
-## FUSE (Design / Deferred)
+## FUSE
 
-`src/fs/fuse/mod.rs` contains the design document and public type stubs for a minimal FUSE
-framework. Implementation submodules (not yet built):
+`src/fs/fuse/` implements a minimal FUSE filesystem. `FuseMount` (syscall #105)
+creates the request/response pipe pair, constructs the `FuseFileSystem`,
+registers it, and mounts it in one step, returning the two pipe descriptors to
+the caller — so a userspace server drives the filesystem over ordinary pipes.
 
-- `protocol.rs`: Wire format (`FuseHeader` + TLV payload)
-- `connection.rs`: `FuseConnection` — per-mount pipe pair + sequential dispatch
-- `filesystem.rs`: `FuseFileSystem` — implements `FileSystem` trait by forwarding through pipes
-- `vnode.rs`: `FuseVNode` — lightweight wrapper around a remote inode number
-- `error.rs`: `FuseError` to kernel `Error` mapping
+- `protocol.rs`: wire format (`FuseHeader` plus opcode-specific payloads) and
+  the opcode constants.
+- `connection.rs`: `FuseConnection` — the per-mount pipe pair and the
+  request/response round trip.
+- `filesystem.rs`: `FuseFileSystem` implements the `FileSystem` trait by
+  forwarding lookups, stats, directory reads, creates, renames, and removals
+  through the connection.
+- `vnode.rs`: `FuseVNode` — a wrapper around a remote inode number.
+- `error.rs`: `FuseError` to kernel `Error` mapping.
 
-**Protocol**: 24-byte header (`seq: u64`, `opcode: u32`, `ino: u64`, `payload_len: u32`) followed
-by opcode-specific payloads. Opcodes include LOOKUP, STAT, READ, WRITE, READDIR, CREATE, REMOVE,
-CREATE_DIR, RENAME, SET_LEN, FLUSH, ERROR. Sequential dispatch (phase 1) avoids threading
-complexity.
+**Protocol**: a 24-byte header (`seq: u64`, `opcode: u32`, `ino: u64`,
+`payload_len: u32`) followed by an opcode-specific payload. Dispatch is
+sequential, which is what makes the pipe pair sufficient.
 
 ---
 
@@ -385,7 +391,7 @@ complexity.
 | `src/fs/filesystem/profiler.rs` | `FsProfiler` — operation counters |
 | `src/fs/path.rs` | `normalize_path()` — canonical path normalization |
 | `src/kernel/block.rs` | `BlockDevice` trait, `MemoryBlockDevice`, `BlockSliceDevice`, `BLOCK_SIZE`, `publish_device()` |
-| `src/fs/block_cache.rs` | `BlockCache` — 128-slot LRU cache with write-through/back |
+| `src/fs/block_cache.rs` | `BlockCache` — fixed-size LRU cache with write-through/back |
 | `src/fs/partition.rs` | MBR partition table parsing/writing |
 | `src/fs/layout.rs` | `StorageZone` enum, mount flags, zone block ranges |
 | `src/fs/handle.rs` | `FileHandle` — open file descriptor |

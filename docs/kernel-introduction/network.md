@@ -29,10 +29,10 @@ protocol handler.
 
 The kernel supports two networking backends, selected at compile time:
 
-- **Native** (`target_os = "none"`, bare-metal): the kernel's own TCP/IP stack
-  implemented in approximately 58 source files under `src/network/`.
-  Provides the full set of protocol layers including TCP congestion control
-  (`tcp/congestion.rs`), ECN (`tcp/ecn.rs`), SACK, and window scaling.
+- **Native** (`target_os = "none"`, bare-metal): the kernel's own TCP/IP stack,
+  under `src/network/`. Provides the full set of protocol layers including TCP
+  congestion control (`tcp/congestion.rs`), ECN (`tcp/ecn.rs`), SACK, and
+  window scaling.
 
 - **HostRuntimeCompat** (host builds, e.g., `cargo test`): delegates TCP
   operations to `std::net::{TcpStream, TcpListener}`.  The kernel exposes the
@@ -221,9 +221,9 @@ entry.
 
 ## Network Syscalls
 
-The network API surface exposes 22 syscalls (numbered 37--80) to user space,
-with 17 corresponding wrappers in the shared user library (`src/user/shared/`).
-These cover:
+The network API surface is exposed to user space through numbered syscalls in
+`src/user/shared/abi/syscall.rs`, with typed wrappers in the shared user library
+(`src/user/shared/`) where they exist. These cover:
 
 - `SYS_SOCKET` / `SYS_CLOSE_SOCKET` — create and destroy socket handles
 - `SYS_BIND` — bind UDP port or listen TCP port

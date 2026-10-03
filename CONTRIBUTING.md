@@ -67,7 +67,7 @@ is still missing on your machine and fails when a required tool is absent.
 ```bash
 make check          # fast host-side type-check
 make verify-p3      # full gate: fmt + clippy + tests + cross-target build
-make run            # boot x86_64 under QEMU (demo shell with ~40 builtins)
+make run            # boot x86_64 under QEMU (drops into the demo shell)
 ```
 
 ---
@@ -90,7 +90,12 @@ Layout of the kernel crate:
 |------|---------|
 | `src/abi/` | Shared ABI records (syscall encodings, process/file/network wire shapes) |
 | `src/arch/` | Architecture backends (`x86_64/`, `aarch64/`, `riscv64/`) |
-| `src/kernel/` | Kernel core (VFS, drivers, network, process, memory, syscall, sync) |
+| `src/drivers/` | Device drivers (block, network, display, input, audio, USB) |
+| `src/fs/` | VFS, the native filesystem, and every filesystem driver |
+| `src/kernel/` | Kernel core (boot, scheduler, process model, sync, IPC, security) |
+| `src/memory/` | Frame allocator, TLSF heap, page tables |
+| `src/network/` | The kernel's own TCP/IP stack and its protocols |
+| `src/syscall/` | Syscall dispatch table and per-category handlers |
 | `src/user/` | Userspace support: `demo/` (ELF builders) and `shared/` (shell + ABI runtime) |
 | `src/user/shared/` | **Single source of truth for the syscall ABI** |
 | `src/util/` | Utility helpers |
@@ -108,7 +113,7 @@ Layout of the kernel crate:
 
 ## Code Style & Conventions
 
-The codebase is ~215,000 lines of Rust across 600+ files; consistency matters.
+The codebase is a large, long-lived Rust tree; consistency matters.
 
 - **Formatting:** run `cargo fmt`. The gate treats formatting as mandatory.
 - **File headers:** every `.rs` file opens with `//! <repo-relative-path>` on

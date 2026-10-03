@@ -9,12 +9,12 @@
 # the gate; an edge that shrinks also fails, with the command to re-record, so
 # the baseline always describes the tree instead of a tree that used to exist.
 #
-# Why a ratchet again: the kernel has real cycles today — `fs` and `process`
-# depend on each other, so do `process` and `smp`, `process` and `sync`,
-# `memory` and `fs` — and unwinding them is a sequence of careful cuts, not one
-# commit.  A gate that demanded zero would be switched off in a day; a census
-# that only ratchets down makes each cut finishable and each regression
-# attributable, and it says exactly how much is left.
+# Why a ratchet again: the kernel has real cycles — `fs` and `memory` depend on
+# each other, so do `process` and `memory`, and `process` and `network` — and
+# unwinding them is a sequence of careful cuts, not one commit.  A gate that
+# demanded zero would be switched off in a day; a census that only ratchets down
+# makes each cut finishable and each regression attributable, and it says
+# exactly how much is left.
 #
 # What is counted
 # ---------------

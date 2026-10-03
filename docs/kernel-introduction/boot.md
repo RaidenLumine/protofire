@@ -149,25 +149,31 @@ After `boot_kernel()` returns, each architecture calls `Arch::init_early()`:
 Kernel::init()
   ├── self.memory.init()                          # MMU + heap bootstrap
   ├── memory::install_global_unchecked()
-  ├── SMP AP discovery (x86_64)                   # ACPI MADT -> LAPIC IDs
+  ├── arch::platform::capture_early_state()       # what the machine said before the switch
+  ├── arch::platform::describe_platform()         # ACPI / FDT / DTB
   ├── prepare_arch_paging()                       # Runtime kernel page tables
-  ├── init_numa()                                 # NUMA topology detection
+  ├── memory::arch::check_kernel_map_coverage()   # The tables describe what they claim
   ├── console::init_global()                      # Print infrastructure
   ├── self.drivers.init()                         # Device discovery (includes virtio-gpu)
   ├── self.fs.lock().init_with_boot_disk()        # Root filesystem mount
   ├── maybe_init_swap()                           # Probe block devices for swap signature
-  ├── PCI enumeration (x86_64)                    # pci::pci_enumerate_buses()
-  ├── Network stack init                          # DHCP / IPv4
-  ├── Volume recovery                             # check_and_repair_volume()
+  ├── arch::platform::enumerate_buses()           # PCI/PCIe, all three architectures
+  ├── Network stack init                          # DHCP, IPv4; SLAAC armed, tick-driven
+  ├── fs global + block-device publisher + /proc mount
+  ├── Volume and install recovery                 # check_and_repair_volume()
   ├── user::init_user_database()
-  ├── arch::interrupt_controller::init()          # PIC / GIC init
+  ├── arch::interrupt_controller::init()          # APIC / GIC / PLIC init
+  ├── arch::platform::program_device_msix()       # The half of an MSI claim a controller can check
   ├── arch::timer::init()                         # Timer interrupt
-  ├── Per-CPU data init (x86_64)                  # percpu::init_bsp()
-  ├── SMP AP bring-up (x86_64)                    # smp::bring_up_aps()
+  ├── self.init_numa()                            # NUMA topology detection
+  ├── arch::percpu::install_bsp()                 # This CPU's per-CPU block
+  ├── arch::platform::bring_up_secondary_cpus()   # AP bring-up, per architecture
+  ├── power::init()                               # CPU frequency scaling
   ├── self.syscall_table.init()                   # Syscall dispatch table
   ├── audit::init()                               # Audit ring buffer, before any producer
   ├── spawn_init_program()                        # /system/init.elf
   ├── spawn_system_programs()                     # /system/rc.d/*.toml
+  ├── maintenance thread, plus the churn run when that feature is on
   └── self.scheduler.start_idle_process()
 ```
 
@@ -193,13 +199,19 @@ activation, a self-check (`active_runtime_kernel_page_table_check`)
 verifies that RIP, RSP, and heap are all mapped with the expected
 permissions.
 
-### 4.3 SMP AP Discovery and Bring-Up (x86_64)
+### 4.3 SMP AP Discovery and Bring-Up
 
-**Discovery** (`src/arch/x86_64/acpi.rs`): Parses the ACPI MADT table
-(via the Multiboot2 RSDP tag) to enumerate LAPIC IDs.  The BSP records
-its own LAPIC ID, and discovered AP IDs are stored as "early APs".
+All three targets start their secondary CPUs; each does it the way its platform
+describes.
 
-**Bring-up** (`src/kernel/smp/bringup.rs`):
+**Discovery.** On x86_64 (`src/arch/x86_64/acpi.rs`), the ACPI MADT is parsed
+via the Multiboot2 RSDP tag to enumerate LAPIC IDs: the BSP records its own LAPIC
+ID and the discovered AP IDs are stored as "early APs". AArch64 discovers its
+secondary cores through PSCI, and RISC-V through its device tree's CPU nodes and
+SBI HSM.
+
+**Bring-up.** On x86_64 (`src/kernel/smp/bringup.rs` and
+`src/arch/x86_64/ap_trampoline.asm`):
 
 ```
 bring_up_aps(aps)
@@ -217,6 +229,12 @@ The AP trampoline (`src/arch/x86_64/ap_trampoline.asm`) transitions the AP
 from 16-bit real mode through protected mode to 64-bit long mode, switches
 to the runtime CR3, and jumps to `ap_entry()` which sets GS base to the
 per-CPU data, configures the local APIC, and enters the idle loop.
+
+On AArch64, `PSCI CPU_ON` starts a core at an entry point the kernel chooses,
+and cross-core wakeups use GIC SGIs. On RISC-V, `SBI HSM` starts a hart and the
+kernel uses the per-hart software-interrupt register for wakeups; the timer and
+PLIC context are per-hart, and a cross-hart wake waits for the target's next
+tick.
 
 **A core counts as online when it registers its scheduler**
 (`register_percpu_scheduler`), which is the moment the kernel can dispatch a

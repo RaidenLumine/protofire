@@ -41,8 +41,8 @@ single source of truth. It defines:
 | Item | Meaning |
 |------|---------|
 | `SYSCALL_ABI_VERSION_MAJOR` / `SYSCALL_ABI_VERSION_MINOR` | ABI version, reported to userspace |
-| `SYSCALL_COUNT` | Number of defined public syscalls (currently `190`) |
-| `MAX_SYSCALLS` | Size of the kernel dispatch table (currently `256`) |
+| `SYSCALL_COUNT` | Number of defined public syscalls; the value lives in the file, not here |
+| `MAX_SYSCALLS` | Size of the kernel dispatch table; the value lives in the table, not here |
 | `SYS_*` constants | The number of each syscall, `0..SYSCALL_COUNT` |
 | `SyscallStability` + `syscall_stability(n)` | Stable / Experimental classification |
 | `syscall_name(n)` | Human-readable name, for audit trails and tests |

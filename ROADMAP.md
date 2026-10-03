@@ -54,8 +54,9 @@ The authoritative picture of what exists today is
   F2FS / XFS / exFAT / FAT32.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.
-- **Stabilise the syscall ABI.** Graduate Experimental syscalls (121–189) into
-  Stable as they mature; reserve room beyond slot 190 with the append-only rule.
+- **Stabilise the syscall ABI.** Graduate Experimental syscalls into Stable as
+  they mature, moving the frozen boundary up; the append-only rule already
+  reserves everything above the current highest slot.
 - **Userspace VIRGL 3D demo.** Ship a demo renderer driving the virtio-gpu VIRGL
   interface (#181–189) to scanout.
 - **Fuzzing & robustness.** Add cargo-fuzz-style targets for the ELF loader,

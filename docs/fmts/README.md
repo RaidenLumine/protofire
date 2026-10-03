@@ -37,8 +37,9 @@ Supporting context, if you have not read it yet:
 ## What is enforced, and what is not
 
 The single most useful thing to know before your first PR is which rules a
-machine will check for you. Formatting and file headers are gated; almost
-everything else is not.
+machine will check for you. Formatting, file headers, the documentation
+citations, and a set of ratchets over `unsafe`, layering, architecture fan-out,
+dead-code annotations, and the ABI mirror are all gated; the rest is review.
 
 | Rule | Enforced by | Where it runs |
 |------|-------------|---------------|
@@ -47,16 +48,22 @@ everything else is not.
 | Every file a document cites | [`scripts/check-docs.sh`](../../scripts/check-docs.sh) — `make check-docs`: `src/...` paths and relative links must resolve, bare filenames must exist somewhere, line-number citations are refused | `verify-p0`, CI |
 | Commit hook installed | `check_commit_hooks` in the same script | `verify-p0` |
 | Commit message shape, `Signed-off-by:` | [`scripts/hooks/commit-msg`](../../scripts/hooks/commit-msg) — see [commits.md](commits.md) | Every `git commit` (`make install-hooks`), and every PR commit in CI |
-| Lints | `make clippy` (`-D warnings`, all targets) | CI, `verify-p3` |
-| Compilation on all three targets | `make check`, `make check-aarch64`, `make build`, `make build-aarch64` | `verify-p0`, CI |
+| Lints | `make clippy` (`-D warnings`) and `make clippy-targets` (`-D warnings` for every target the tree builds for) | CI, `verify-p3` |
+| Undocumented `unsafe` | `make clippy`, `make clippy-targets` (the lint is denied), and `make check-unsafe-comments` as a per-configuration census | `verify-p3`, CI |
+| Syntax and types on every target | `make check` (host + x86_64 + the aarch64 host configuration), `make check-aarch64`, `make check-riscv64`, `make build`, `make build-aarch64` | `verify-p0` and `verify-p3`, CI |
+| Module dependency edges | `make check-layering` against `scripts/layering-baseline.txt` | `verify-p3`, CI |
+| Architecture `cfg` fan-out | `make check-arch-fanout` against `scripts/arch-fanout-baseline.txt` | `verify-p3`, CI |
+| File-level `allow(dead_code)` | `make check-dead-code-allows`: the annotation must carry a reason and an exit condition | `verify-p3`, CI |
+| ABI records against their user-space mirror | `make check-abi-mirror` against `scripts/abi-mirror-baseline.txt` | `verify-p3`, CI |
+| Repository object database | `make check-repo-integrity` (`git fsck`, with the benign notices filtered) | `verify-p0`, CI |
 | **Everything else in this directory** | **Review** | — |
 
-There is no lint for `unsafe` documentation, for naming, for doc-comment
-coverage, for panic discipline, or for the syscall numbering rules. Each of
-those is held up by reviewers and by the tests that pin the invariant — a
-missing pointer-spec entry fails the build, but a missing `// SAFETY:` does not.
-Treat the unenforced rules as *more* important to get right, not less: nothing
-will remind you.
+The rules in this directory that a machine does not check are the naming
+conventions, doc-comment coverage, panic discipline, and the parts of the
+syscall contract that are not a number or a record layout. Those are held up by
+reviewers and by the tests that pin an invariant — a missing pointer-spec entry
+fails the build, but a badly named function does not. Treat the unenforced rules
+as *more* important to get right, not less: nothing will remind you.
 
 ### The verification gate
 

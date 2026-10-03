@@ -11,18 +11,18 @@ consequences. When a kernel dereferences a user-supplied address without
 checking it, the result is not a segfault in a sandboxed process; it is the
 machine.
 
-The tree contains roughly 1,280 `unsafe` blocks, 289 `unsafe fn` declarations,
-66 `unsafe impl`s, 181 inline-asm blocks, and 332 volatile accesses, across 676
-`.rs` files in `src/` and `tests/`. Every one of them carries an argument:
-`clippy::undocumented_unsafe_blocks` reports zero in all five configurations,
-and `make clippy`, `make clippy-targets` and `make check-unsafe-comments` all
-deny a new one. That is a state the tree reached on 2026-09-27, from 549
-undocumented blocks in the x86_64 build and 378 in the host build, by writing
-the argument for each block rather than a comment-shaped placeholder — and the
-work found real defects along the way, because an argument that has to name the
-bound a read relies on is an argument that notices when there is none. What
-keeps the code sound is the convention below, applied consistently and reviewed
-carefully. This document is that convention.
+The tree uses `unsafe` for the things only `unsafe` can do: MMIO, inline
+assembly, pointer-level context-switch mechanics, and the boundary where the
+kernel reads or writes memory a user program owns. Every one of those sites
+carries an argument — `clippy::undocumented_unsafe_blocks` reports zero in
+every configuration the tree builds for, and `make clippy`,
+`make clippy-targets` and `make check-unsafe-comments` all deny a new one.
+The tree reached that state by writing the argument for each block rather than
+a comment-shaped placeholder, and the work found real defects along the way,
+because an argument that has to name the bound a read relies on is an argument
+that notices when there is none. What keeps the code sound is the convention
+below, applied consistently and reviewed carefully. This document is that
+convention.
 
 ---
 
@@ -122,15 +122,14 @@ and fails when any configuration reports **more** undocumented blocks or impls
 than the baseline records; a count that **falls** has to be re-recorded in the
 same change (`sh scripts/check-unsafe-comments.sh --record`), so the baseline
 always tells the truth about the tree. It counted only *blocks* until
-2026-09-27, which is how twenty-seven undocumented `unsafe impl`s sat in the
-tree while the baseline row said zero — both messages are counted now.
+2026-09-27, which is how a set of undocumented `unsafe impl`s sat in the tree
+while the baseline row said zero — both messages are counted now.
 
-It held that line while the tree was being paid down, at 549 undocumented blocks
-in the x86_64 build and 378 in the host build, and it was the reason the work
-could be done one file at a time instead of in one change that pasted a comment
-onto every block. With the counts at zero the two jobs the ratchet did — "fail a
-new block" and "record the debt honestly" — are done by the deny and by empty
-rows respectively; what is left is the census, which would still catch a
+It held that line while the tree was being paid down, and it was the reason the
+work could be done one file at a time instead of in one change that pasted a
+comment onto every block. With every row at zero the two jobs the ratchet did —
+"fail a new block" and "record the debt honestly" — are done by the deny and by
+empty rows respectively; what is left is the census, which would still catch a
 configuration no clippy target covers.
 
 Two consequences are worth knowing:

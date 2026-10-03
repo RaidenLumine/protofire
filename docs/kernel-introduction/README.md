@@ -7,11 +7,9 @@ This is a from-scratch hobby OS kernel written in Rust, targeting x86_64, AArch6
 Key design goals:
 - **Rust safety where possible**: the kernel uses `unsafe` only for MMIO, inline assembly, and pointer-level context-switch mechanics. Page table walks, filesystem operations, and network protocol parsing are safe Rust.
 - **Single-address-space ELF loader**: ring-3 (user) programs are self-contained ELF files loaded into per-process page tables. No dynamic linking, no shared libraries -- each program is a standalone binary.
-- **Cooperative threading**: the scheduler runs a simple round-robin of kernel and user threads. There is no preemption timer in the scheduler core; threads yield explicitly via `yield_current()` or blocking I/O. Timer interrupts increment a tick counter and drive scheduler timeslicing via `on_timer_tick_with_preemption`.
-- **File-oriented ABI**: the syscall interface is modelled on POSIX-like operations (open, read, write, close, ioctl, mmap, fork, exec, wait) with a flat dispatch table numbered 0–189, of which 188 carry a handler.
+- **Preemptive round-robin**: the scheduler runs kernel and user threads round-robin. Timer interrupts advance a tick counter and drive time-slice preemption through `on_timer_tick_with_preemption`; a thread may also yield explicitly via `yield_current()` or block on I/O. FIFO threads are exempt from time-slice preemption.
+- **File-oriented ABI**: the syscall interface is modelled on POSIX-like operations (open, read, write, close, ioctl, mmap, fork, exec, wait) over a flat dispatch table whose numbering is append-only and whose stable range is frozen. See [`../fmts/syscall-abi.md`](../fmts/syscall-abi.md) for the contract; the tree's own number→name table is the authority.
 - **Minimal platform assumptions**: boot information is received via Multiboot2 (x86_64) or a flattened device tree FDT pointer (AArch64, RISC-V). PCI/ACPI table walks happen after early memory init.
-
-The kernel is approximately **210,000+ lines of Rust** across **460+ source files** in the `src/` tree.
 
 ---
 
@@ -47,25 +45,27 @@ The kernel is approximately **210,000+ lines of Rust** across **460+ source file
        │ Kernel::init()  (src/kernel/mod.rs)                    │
        │                                                        │
        │   1. memory::init()           TLSF heap allocator      │
-       │   2. prepare_arch_paging()    Switch to kernel page    │
+       │   2. platform::describe()     ACPI / FDT / DTB         │
+       │   3. prepare_arch_paging()    Switch to kernel page    │
        │                               tables                   │
-       │   3. init_numa()              NUMA topology detection  │
        │   4. console::init_global()                            │
        │   5. drivers::init()          Probe VirtIO (block,     │
        │                               net, input, GPU)         │
        │   6. fs::init_with_boot_disk()  Build/mount boot VFS   │
        │   7. maybe_init_swap()        Disk-backed swap detect  │
-       │   8. PCI/PCIe enumeration     (x86_64 + AArch64)       │
-       │   7. Network stack init       DHCP address acquisition │
-       │   8. Volume recovery          Check-and-repair mounts  │
-       │   9. user::init_user_database()                        │
-       │  10. arch::interrupt_controller::init()                │
-       │  11. arch::timer::init()                               │
-       │  12. Per-CPU data + SMP AP bring-up  (x86_64)         │
-       │  13. syscall::Table::init()    Populate dispatch table │
-       │  14. spawn_init_program()     Load /system/init.elf    │
-       │  15. spawn_system_programs()  (demo-disk feature)      │
-       │  16. scheduler.start_idle_process()                    │
+       │   8. platform::enumerate_buses()  PCI/PCIe, all three  │
+       │   9. network stack init       DHCP; SLAAC armed        │
+       │  10. Volume recovery          Check-and-repair mounts  │
+       │  11. user::init_user_database()                        │
+       │  12. interrupt_controller::init()  APIC / GIC / PLIC   │
+       │  13. timer::init()                                     │
+       │  14. init_numa()              NUMA topology detection  │
+       │  15. Per-CPU data + SMP AP bring-up (all three)        │
+       │  16. syscall::Table::init()    Populate dispatch table │
+       │  17. audit::init()             Ring buffer first       │
+       │  18. spawn_init_program()     Load /system/init.elf    │
+       │  19. spawn_system_programs()  (demo-disk feature)      │
+       │  20. scheduler.start_idle_process()                    │
        └────────────────────────┬───────────────────────────────┘
                                 │
                                 ▼
@@ -95,7 +95,7 @@ On AArch64 and RISC-V the serial console is initialized before the banner; on x8
 ```
 src/                                 (the crate root: peers under one roof)
     ├── kernel::Kernel               (boot phases, global install, procfs)
-    │     ├── process::Scheduler     (cooperative round-robin, thread lifecycle)
+    │     ├── process::Scheduler     (preemptive round-robin, thread lifecycle)
     │     │     ├── process::Thread  (per-thread context, state machine)
     │     │     ├── process::Process (address space, fd table, security token)
     │     │     ├── process::wait    (WaitQueue, Event, Semaphore, Condvar)
@@ -114,7 +114,7 @@ src/                                 (the crate root: peers under one roof)
     │     └── fs::simplefs           (on-disk layout, two-phase commit)
     ├── drivers::DriverManager       (VirtIO block/net/input/gpu, PCI probe)
     │     └── device                 (console, keyboard, null, zero, serial)
-    ├── syscall::Table               (190 numbered slots, 0–189)
+    ├── syscall::Table               (numbered dispatch table; the ABI contract pins the numbering)
     │     ├── syscall::process_launch
     │     ├── syscall::process_management
     │     ├── syscall::fs
@@ -162,7 +162,7 @@ Each subsystem is installed into a global slot after initialization (e.g. `memor
 
 ### Physical Memory
 
-Physical memory is discovered via the Multiboot2 memory map (x86_64) or FDT `/memory` node (AArch64, RISC-V). The frame allocator (`memory::frame`) manages 4 KiB page frames using a bitmap allocator, with a separate TLSF heap for the kernel's own allocations.
+Physical memory is discovered via the Multiboot2 memory map (x86_64) or FDT `/memory` node (AArch64, RISC-V). The frame allocator (`memory::frame`) manages 4 KiB page frames as a bump pointer plus a `BTreeMap` of recycled free ranges, with a separate TLSF heap for the kernel's own allocations.
 
 ### Virtual Memory Layout (x86_64 example)
 
@@ -185,7 +185,7 @@ Physical memory is discovered via the Multiboot2 memory map (x86_64) or FDT `/me
                        │  [TLSF heap]          │
                        │  [page table pages]   │
                        │  [frame allocator     │
-                       │   bitmap]             │
+                       │   state]              │
 0xFFFF_FFFF_FFFF_FFFF  └──────────────────────┘
 ```
 
@@ -270,17 +270,23 @@ The `scripts/verify.sh` script runs tiered checks:
 
 - **Syscall numbers are stable**. The dispatch table (`syscall::Table` in `src/syscall/table.rs`) numbers operations 0–189, of which 188 carry a handler and 141–142 are reserved. New syscalls must use previously unassigned slots.
 - **`src/user/shared/` is the ABI boundary**. This module defines the ABI record types (`FileStat`, `DirectoryEntryRecord`, `IoVec`, etc.) and syscall wrapper functions. Changes to its public types require coordination across all consumers.
-- The kernel is versioned as `0.8.0`, which is not the ABI version: the syscall contract carries its own `SYSCALL_ABI_VERSION_MAJOR/MINOR`, reported to user space through `RuntimeAbiInfo`. Ring-3 ELFs are shipped with the demo disk and normally rebuilt together with the kernel; the frozen x86_64 payloads are the exception, and they are what gives "we do not break userspace" something to break (`make check-abi-frozen-payload`).
+- The kernel's own version lives in `Cargo.toml`, and it is not the ABI version: the syscall contract carries its own `SYSCALL_ABI_VERSION_MAJOR/MINOR`, reported to user space through `RuntimeAbiInfo`. Ring-3 ELFs are shipped with the demo disk and normally rebuilt together with the kernel; the frozen payloads are the exception, and they are what gives "we do not break userspace" something to break (`make check-abi-frozen-payload`).
 
 ---
 
 ## Key Architecture Decisions
 
-### Monolithic Kernel with Cooperative Threading
+### Monolithic Kernel with Preemptive Threading
 
 The entire kernel runs in a single privilege level (ring 0 / EL1 / S-mode) with a single virtual address space. There is no separate "kernel server" process. Drivers, the filesystem, the network stack, and the syscall dispatcher are all linked into the same binary and call each other directly.
 
-Thread scheduling is **cooperative** by default: `schedule()` is called explicitly from the main loop, from blocking I/O paths, and from `yield_current()`. The timer interrupt handler (`on_timer_tick_with_preemption`) can mark the current thread as preemptible, but the actual context switch still happens in the main loop's `schedule()` call. This design avoids re-entrancy issues in the scheduler and keeps the context-switch path deterministic.
+Thread scheduling is **preemptive**: the main loop calls `schedule()`,
+blocking I/O paths and `yield_current()` give the CPU up explicitly, and the
+timer tick can take the CPU away from a thread whose time slice has expired.
+The interrupt-side path (`preempt_current_thread_from_interrupt`) saves the
+thread's context, requeues it, and switches to the next one with interrupts
+masked, so a nested IRQ cannot observe the old thread after it has been queued
+as ready. FIFO threads are exempt from time-slice preemption.
 
 ### Ring-3 Programs as Self-Contained ELFs
 
@@ -312,7 +318,20 @@ On every boot the kernel runs `recover_volumes()` on each mounted volume (exclud
 
 ### SMP Support
 
-Currently **x86_64 only** (with AArch64 and RISC-V planned). The BSP discovers APs via ACPI MADT during early boot (before page table switch, while the identity map is still active), saves the boot CR3 for the AP trampoline, then brings up APs after per-CPU data initialization. Each CPU has its own scheduler instance tracked in the percpu-scheduler table. See `src/kernel/smp/` and `src/arch/x86_64/ap_trampoline.asm`.
+All three targets bring up secondary CPUs. Each CPU has its own scheduler
+instance tracked in the percpu-scheduler table, and the boot is only considered
+up on a core that actually reaches kernel code.
+
+- **x86_64** discovers APs via ACPI MADT during early boot (before the page
+  table switch, while the identity map is still active), saves the boot CR3 for
+  the AP trampoline, then releases the APs after per-CPU data initialization.
+  See `src/kernel/smp/` and `src/arch/x86_64/ap_trampoline.asm`.
+- **AArch64** uses PSCI CPU_ON and GIC SGIs for cross-core wakeups.
+- **RISC-V** uses SBI HSM to start harts and a per-hart software-interrupt
+  register for wakeups; the timer and PLIC context are per-hart.
+
+Cross-core wakeups on RISC-V wait for the target hart's next tick, which is the
+coarsest of the three and is recorded as a known limitation.
 
 ### NUMA Support
 

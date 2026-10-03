@@ -268,16 +268,15 @@ check-aarch64:
 check-riscv64:
 	$(CARGO) check $(CARGO_FLAGS) --target riscv64gc-unknown-none-elf
 
-# Hold the line on undocumented `unsafe` blocks.  The tree has far more
-# `unsafe` blocks than written safety arguments, so the lint cannot be a gate
-# on its own: switched to `deny` it fails with 2,867 diagnostics across the
-# four configurations today, and the honest answer to that is a comment on
-# every block that argues nothing.  This is a ratchet instead.  Each
-# configuration in
+# Hold the line on undocumented `unsafe` blocks.  Every configuration records
+# zero today and the lint is denied outright, so a new undocumented block fails
+# in `make clippy` and `make clippy-targets`.  This target is the second,
+# independent census: each configuration in
 # `scripts/unsafe-comment-baseline.txt` may report no more than the count
 # recorded there, and a count that *drops* has to be re-recorded in the same
 # change (`sh scripts/check-unsafe-comments.sh --record`) so the baseline keeps
-# telling the truth about the tree.  See docs/fmts/unsafe-and-safety.md §3.
+# telling the truth about the tree.  It is what would still catch a
+# configuration no clippy target covers.  See docs/fmts/unsafe-and-safety.md §3.
 check-unsafe-comments:
 	sh ./scripts/check-unsafe-comments.sh
 
@@ -285,18 +284,20 @@ check-unsafe-comments:
 # `scripts/layering-baseline.txt` records how often each module names every
 # other one; a count that grows, a row that shrinks without the census being
 # re-recorded, or an edge the census does not mention all fail.  The cycles it
-# still lists (`process` <-> `fs`, `memory` <-> `fs`, ...) are the layering
-# debt, and the counts are the finish line for each cut.  `sync` is the bottom
-# of the graph now, so naming it is not a dependency to argue about.
+# still lists (`fs` <-> `memory`, `process` <-> `memory`, `process` <->
+# `network`, ...) are the layering debt, and the counts are the finish line for
+# each cut; the baseline's own header argues the deliberate exceptions.  `sync`
+# is the bottom of the graph now, so naming it is not a dependency to argue
+# about.
 check-layering:
 	sh ./scripts/check-layering.sh
 
 # Count the architecture gates that live outside `src/arch/`.  Porting the
 # kernel to a fourth architecture should mean writing that architecture's own
 # directory, and today it also means finding every `#[cfg(target_arch = "…")]`
-# in the tree: 64 files and 554 occurrences of them, measured by
-# `scripts/arch-fanout-baseline.txt`.  This is a ratchet over that number — a
-# count that grows fails, and a count that drops has to be re-recorded in the
+# in the tree; `scripts/arch-fanout-baseline.txt` is the census, and the reader
+# who wants a number should read it there.  This is a ratchet over that census —
+# a count that grows fails, and a count that drops has to be re-recorded in the
 # same change — so the wall `more hardware` runs into is at least visible and
 # only gets shorter.  See §14 of docs/fmts/code-style.md.
 check-arch-fanout:

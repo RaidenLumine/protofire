@@ -35,8 +35,8 @@ writing your first test:
 | **Shared test helpers** | `tests/<area>/support/mod.rs`, or `src/**/test_support.rs` | `mod support;` in each consumer |
 | **Fuzz harnesses** | `tests/{net,syscall,parsers}/fuzz.rs` | A `[[test]]` block |
 
-There are around 300 `#[cfg(test)]` modules in `src/` and 25 integration test
-binaries in `tests/`. Both kinds are expected for a new subsystem.
+Unit tests live in `#[cfg(test)]` modules inside `src/`, and integration tests
+live in binaries under `tests/`. Both kinds are expected for a new subsystem.
 
 ### Registration is not automatic
 
@@ -88,10 +88,10 @@ Conventions:
   `validate_user_input_buffer_rejects_range_straddling_user_kernel_boundary`,
   `percpu_size_is_cache_line`, `select_victim_returns_none_when_no_processes`.
   A name like `test_read_2` tells a reader nothing when it fails in CI at 2 a.m.
-- **Import what you need explicitly, or `use super::*;`.** Both appear; roughly
-  170 modules use the glob. Reach for explicit imports when the module under
-  test has a large surface, and the glob when the test module exercises most of
-  it. What you should not do is `use crate::…` to reach past the parent.
+- **Import what you need explicitly, or `use super::*;`.** Both appear. Reach
+  for explicit imports when the module under test has a large surface, and the
+  glob when the test module exercises most of it. What you should not do is
+  `use crate::…` to reach past the parent.
 - **Test the boundaries and the rejections.** For anything taking a range, a
   length, or a pointer, the interesting cases are the edges: zero length, the
   last valid address, a range that straddles the user/kernel boundary, an
