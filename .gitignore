@@ -17,3 +17,8 @@ iso/boot/grub/*.mod
 *.log
 *.swp
 *.swo
+
+# cargo-fuzz output: corpora, crash artifacts and coverage reports
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/

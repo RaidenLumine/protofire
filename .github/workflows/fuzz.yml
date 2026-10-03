@@ -1,0 +1,65 @@
+# File: .github/workflows/fuzz.yml
+# Purpose: Scheduled coverage-guided fuzzing for the boundary parsers.
+#
+# The deterministic harnesses (`tests/parsers/fuzz.rs`, run by
+# `make test-parsers`) are the fast gate and stay on every change.  They are
+# fixed-seed and bounded, so they catch the panics a seed happens to reach.
+# These targets run libFuzzer's coverage-guided mutator, which is what finds a
+# crashing input a seed does not — and that is slow, so it runs nightly rather
+# than per pull request.
+#
+# See fuzz/README.md for the target list and how to run one locally.
+
+name: fuzz
+
+on:
+  schedule:
+    # 03:00 UTC daily.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  parsers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - elf_loader
+          - filesystem_images
+          - luks2
+          - packet_parsers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          # The kernel's own pinned nightly: the fuzz package inherits
+          # rust-toolchain.toml, and the target must be built by the same
+          # compiler the tree is verified with.
+          toolchain: "nightly-2026-08-24"
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "fuzz -> ../target/fuzz"
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: fuzz
+        run: >
+          cargo fuzz run ${{ matrix.target }} --features demo-disk --
+          -max_total_time=300 -timeout=10
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts
+          if-no-files-found: ignore

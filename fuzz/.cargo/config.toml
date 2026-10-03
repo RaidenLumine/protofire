@@ -1,0 +1,10 @@
+# File: fuzz/.cargo/config.toml
+# Purpose: Keep fuzz build output under the repository's ignored target tree.
+#
+# `scripts/verify.sh` checks that every `.rs` file in the tree opens with its
+# own path header, and it excludes only `./target/*`.  A `fuzz/target/` full
+# of build-script sources would fail that check, so the artifacts go beside the
+# root package's instead.
+
+[build]
+target-dir = "../target/fuzz"

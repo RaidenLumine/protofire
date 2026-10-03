@@ -193,6 +193,11 @@ conditions you meant to test.
 small local PRNG seeded per test so a failure is reproducible in CI without a
 corpus.
 
+They are the fast gate.  The fuzzer that *searches* is a separate package
+under `fuzz/`: coverage-guided cargo-fuzz targets for the same boundaries,
+run nightly by `.github/workflows/fuzz.yml` rather than on every change.
+See `fuzz/README.md`.  A change that adds a boundary belongs in both.
+
 The contract they assert is narrow and valuable: **malformed input produces a
 clean `Error`, never a panic, a hang, or undefined behaviour.** Feed the parser
 or handler random and edge-case arguments and assert the result is an `Err`.

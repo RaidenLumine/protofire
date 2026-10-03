@@ -771,7 +771,7 @@ numbers it decodes against come from the shared copy.
 | Fault injection | SimpleFs single- and dual-fault matrix | Deterministic and bounded; the other filesystems have no equivalent matrix |
 | Recovery tests | Crash and replay scenarios | — |
 | Concurrency tests | Scheduler, condvar, console, keyboard | — |
-| Parser fuzz harnesses | Deterministic, in-tree, run by `make test-parsers` | Fixed-seed: they do not search for a failing mutation chain |
+| Parser fuzz harnesses | Deterministic, in-tree, run by `make test-parsers`; coverage-guided targets in `fuzz/` run nightly | The gates are fixed-seed and bounded; the nightly corpora are not persisted across runs |
 | virtio-gpu layout tests | Struct size and layout plus command wire format, against a mock device | Mock device only; no real GPU validation |
 | CI workflow | fmt, check, build, clippy on every configuration, every static gate and ratchet, and the boots | The gates run as separate steps rather than through `make verify-p3` |
 | Verification gates | P0-P3: fmt, tests, cross-builds, clippy, plus the QEMU smokes | The smokes are opt-in through environment variables, so a local `make verify-p3` without them does not boot anything |
@@ -881,14 +881,17 @@ spans modules and cannot be attributed to one of them.
   stack, which can wait on the NIC's completion interrupt, so that is the
   remaining path where the window is held across a block; the invariant the
   guards document is "scoped to a single copy", and those paths do not keep it.
-- **No coverage-guided fuzzing**: the boundaries have deterministic harnesses
-  instead — `tests/parsers/fuzz.rs`, run by `make test-parsers` and in CI,
-  drives the ELF loader, the LUKS2 header and its scanners, the network packet
-  parsers, and every filesystem image opener the tree has (including the
-  MBR/GPT reader) with random bytes and structure-aware mutations. What is
-  missing is the fuzzer that *searches*: these are fixed-seed and bounded, so
-  they catch the panics a seed happens to reach, not the ones a mutation chain
-  would. `docs/fmts/testing.md` describes them the same way.
+- **Coverage-guided fuzzing runs nightly, not per change**: the boundaries have
+  deterministic harnesses as their gate — `tests/parsers/fuzz.rs`, run by
+  `make test-parsers` and in CI, drives the ELF loader, the LUKS2 header and
+  its scanners, the network packet parsers, and every filesystem image opener
+  the tree has (including the MBR/GPT reader) with random bytes and
+  structure-aware mutations. They are fixed-seed and bounded, so they catch
+  the panics a seed happens to reach; the fuzzer that *searches* is the
+  out-of-tree cargo-fuzz package in `fuzz/`, with a target per boundary,
+  driven by `.github/workflows/fuzz.yml`. What is still missing is a corpus
+  persisted across runs, so each nightly start is from the seedless mutator
+  rather than from everything the previous runs found.
 - **No reproducible releases**: no tagged releases with reproducible ISO/disk
   images and signed artifacts.
 

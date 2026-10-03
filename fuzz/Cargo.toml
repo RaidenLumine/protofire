@@ -1,0 +1,60 @@
+# File: fuzz/Cargo.toml
+# Purpose: Out-of-tree coverage-guided fuzz targets for the boundary parsers.
+#
+# This is a separate package on purpose: the kernel crate has no dependencies
+# and its tests run `--offline`, so libFuzzer is not something `cargo build`
+# at the root should ever see.  cargo-fuzz builds this package on its own,
+# against the pinned nightly, and only when asked.
+
+[package]
+name = "protofire-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.protofire]
+path = ".."
+
+[[bin]]
+name = "elf_loader"
+path = "fuzz_targets/elf_loader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filesystem_images"
+path = "fuzz_targets/filesystem_images.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "luks2"
+path = "fuzz_targets/luks2.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "packet_parsers"
+path = "fuzz_targets/packet_parsers.rs"
+test = false
+doc = false
+bench = false
+
+[features]
+# The demo disk is what the in-tree deterministic harnesses run with; keep the
+# two in step so a target can reuse the same corpus.
+demo-disk = ["protofire/demo-disk"]
+
+[workspace]
+
+[profile.release]
+debug = 1
