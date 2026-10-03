@@ -107,6 +107,8 @@ pub mod interrupts {
 
 pub mod context;
 pub mod cpufreq;
+#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
+pub mod demo;
 pub mod devices;
 pub(crate) mod exception;
 pub mod irq_balance;

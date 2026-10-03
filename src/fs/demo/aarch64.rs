@@ -31,7 +31,7 @@ const DEMO_FAULT_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher-fault\"\nver
 /// route through `shell_user_main()`.
 const SHELL_PROGRAM_MANIFEST: &[u8] = b"name = \"shell\"\nversion = \"0.1.0\"\nformat = \"elf64-aarch64-user\"\nentry = \"/apps/packages/shell/bin/shell.elf\"\nworking_dir = \"/apps/packages/shell\"\nargv = [\"shell\"]\nenv = [\"ASTRA_APP_ID=shell\", \"ASTRA_RUNTIME=ring3-prototype\"]\nhost_proxy = \"shell\"\n";
 
-pub(super) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
+pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
     let demo_program = build_demo_program_artifact();
     let rust_demo_program = build_rust_demo_program_artifact();
     let fault_program = build_fault_demo_program_artifact();
@@ -196,7 +196,7 @@ fn apps_entries_aarch64<'a>(
 
 /// The system zone: the shared files plus the stub init program at
 /// `/init.elf`.
-pub(super) fn system_zone_image() -> Result<Vec<u8>> {
+pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
     let init = crate::user::demo::elf_builder::build_artifact_from_payload(
         &DEMO_STUB_PAYLOAD_AARCH64,
         0,

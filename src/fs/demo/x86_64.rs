@@ -50,7 +50,7 @@ const DEMO_VIRGL_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher-virgl\"\nver
 /// ring-3 shell yet, and their manifests do route through `shell_user_main()`.
 const SHELL_PROGRAM_MANIFEST: &[u8] = b"name = \"shell\"\nversion = \"0.1.0\"\nformat = \"elf64-x86_64-user\"\nentry = \"/apps/packages/shell/bin/shell.elf\"\nworking_dir = \"/apps/packages/shell\"\nargv = [\"shell\"]\nenv = [\"ASTRA_APP_ID=shell\", \"ASTRA_RUNTIME=ring3-prototype\"]\nhost_proxy = \"shell\"\n";
 
-pub(super) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
+pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
     #[cfg(target_os = "none")]
     let h = || crate::memory::heap::heap_model().remaining();
 
@@ -353,7 +353,7 @@ fn apps_entries<'a>(
 
 /// The system zone: the shared files plus the stub init program at
 /// `/init.elf`.
-pub(super) fn system_zone_image() -> Result<Vec<u8>> {
+pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
     let init = crate::user::demo::elf_builder::build_artifact_from_payload(
         &DEMO_STUB_PAYLOAD_X86_64,
         0,

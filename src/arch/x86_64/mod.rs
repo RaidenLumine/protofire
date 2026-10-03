@@ -6,6 +6,8 @@
 pub mod context;
 pub mod control_regs;
 pub mod cpuid;
+#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
+pub mod demo;
 pub mod devices;
 pub mod gdt;
 pub mod i8042;

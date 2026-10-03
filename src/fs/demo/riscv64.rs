@@ -33,7 +33,7 @@ const DEMO_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher\"\nversion = \"0.1
 
 const SHELL_PROGRAM_MANIFEST: &[u8] = b"name = \"shell\"\nversion = \"0.1.0\"\nformat = \"elf64-riscv64-user\"\nentry = \"/apps/packages/shell/bin/shell.elf\"\nworking_dir = \"/apps/packages/shell\"\nargv = [\"shell\"]\nenv = [\"ASTRA_APP_ID=shell\", \"ASTRA_RUNTIME=ring3-prototype\"]\nhost_proxy = \"shell\"\n";
 
-pub(super) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
+pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
     let demo_program = build_demo_program_artifact();
     let shell_program = build_shell_program_artifact();
     let entries = apps_entries_riscv64(&demo_program.bytes, &shell_program.bytes);
@@ -41,7 +41,7 @@ pub(super) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
 }
 
 /// The system zone: the shared files plus the stub init program.
-pub(super) fn system_zone_image() -> Result<Vec<u8>> {
+pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
     let init = crate::user::demo::elf_builder::build_artifact_from_payload(
         &DEMO_STUB_PAYLOAD_RISCV64,
         0,

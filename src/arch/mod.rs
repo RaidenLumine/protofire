@@ -64,6 +64,26 @@ pub use riscv64::devices as machine_devices;
 #[cfg(target_arch = "x86_64")]
 pub use x86_64::devices as machine_devices;
 
+// Which payloads the demo volume ships, chosen the same way and for the same
+// reason: the contents are the machine's, and `fs/demo` names no architecture.
+// The feature gate is the same one `fs/demo` and `user::demo` carry — a
+// bare-metal build without the demo disk does not compile that half at all.
+#[cfg(all(
+    target_arch = "aarch64",
+    any(feature = "demo-disk", test, not(target_os = "none"))
+))]
+pub use aarch64::demo as machine_demo;
+#[cfg(all(
+    target_arch = "riscv64",
+    any(feature = "demo-disk", test, not(target_os = "none"))
+))]
+pub use riscv64::demo as machine_demo;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(feature = "demo-disk", test, not(target_os = "none"))
+))]
+pub use x86_64::demo as machine_demo;
+
 // The device-tree parser describes the platforms that hand a blob over, not
 // one architecture: aarch64 and riscv64 both parse it, and the host tests
 // parse synthetic blobs with it, so it lives at this level rather than inside

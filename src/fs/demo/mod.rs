@@ -5,10 +5,10 @@
 //! The packaging is the same everywhere — a zone is a `SimpleFs` image sized
 //! for a fixed partition range, and a failure degrades to a readable
 //! placeholder rather than to a disk the boot path cannot parse.  What differs
-//! is *content*: which payloads a target ships and what its manifests say, so
-//! that half lives one file per architecture (`x86_64.rs`, `aarch64.rs`,
-//! `riscv64.rs`) behind the small interface below, and this file names no
-//! architecture at all.
+//! is *content*: which payloads a target ships and what its manifests say.
+//! That half lives one file per architecture (`x86_64.rs`, `aarch64.rs`,
+//! `riscv64.rs`), and the machine's own directory — `arch/<arch>/demo.rs` —
+//! says which one this build gets, so this file names no architecture at all.
 //!
 //! ═══════════════════════════════════════════════════════════════════════════
 //! LEGACY MODULE — prefer alternatives for new code:
@@ -42,24 +42,9 @@ use crate::Result;
 // system zone.  Everything else — the layout, the fallback, the disk — is
 // here.
 
-// One module per machine, all named `content`: the gates select a file, and
-// nothing below has to know which one answered.
-#[cfg(target_arch = "aarch64")]
-#[path = "aarch64.rs"]
-mod content;
-#[cfg(target_arch = "riscv64")]
-#[path = "riscv64.rs"]
-mod content;
-#[cfg(target_arch = "x86_64")]
-#[path = "x86_64.rs"]
-mod content;
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64"
-)))]
-#[path = "absent.rs"]
-mod content;
+// The machine's own directory picks the file; from here down, nothing knows
+// which one answered.
+use crate::arch::machine_demo::content;
 
 const DATA_ZONE_EXTRA_INODES: usize = 64;
 
@@ -243,7 +228,7 @@ pub fn build_demo_disk_image_with_key(_key: &str) -> Vec<u8> {
 ///
 /// The ELF lands at `/init.elf` so the kernel finds it at `/system/init.elf`,
 /// which is the default init path (`DEFAULT_INIT_PATH`).
-pub(super) fn build_system_zone_from(init_elf: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn build_system_zone_from(init_elf: &[u8]) -> Result<Vec<u8>> {
     let mut entries: alloc::vec::Vec<ImageEntry<'_>> = alloc::vec::Vec::new();
     for entry in SYSTEM_FILES {
         entries.push(*entry);
