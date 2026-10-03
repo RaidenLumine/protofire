@@ -56,8 +56,7 @@ pub(super) fn start_all(context: &mut super::SyscallContext) -> Result<super::Sy
     let scheduler = super::runtime::global_scheduler()?;
     let now_tick = scheduler.current_tick();
     let started = crate::kernel::start_declared_services(now_tick, |path, security_token| {
-        crate::user::program::spawn_from_global_with_security_token(scheduler, path, security_token)
-            .ok()
+        crate::kernel::spawn_and_log_user_program(scheduler, path, security_token)
             .map(|launched| launched.process.pid())
     });
 

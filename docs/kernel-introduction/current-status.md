@@ -585,6 +585,13 @@ control that are unusual in a hobby kernel.
   `service_start_all` is idempotent, so whichever of the boot path, init or the
   supervisor arrives first starts a service and the others find nothing left to
   do.
+- **The boot hands the start to init**: when the disk ships an init program, the
+  kernel registers the declarations — `/service` and the supervisor need them
+  either way — and leaves the start to that program, so the distribution, not
+  the kernel, decides what the machine runs.  The wait has a five-second
+  deadline: a disk whose init never asks, or never runs, has its pending
+  services started by the supervisor instead, and a disk with no init program
+  at all is started by the boot directly.
 - **Code integrity**: SHA-256 over the launch manifest and payload, plus
   optional detached signatures verified against trusted public keys under
   `/system/trusted-keys`; a seccomp (#129) syscall filter for process

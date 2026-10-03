@@ -223,6 +223,10 @@ require_log_line "[init  ] starting idle process"
 # did anything at all.
 require_log_line "adastra init (ring 3): reading /system/rc.d"
 require_log_line "adastra init: declared "
+# The boot registered the declarations and left the start to that program
+# instead of starting them itself: this is the hand-off, and without it the
+# services below would be evidence of the kernel starting them, not of init.
+require_log_line "service(s) registered; leaving the start to init"
 # The services this boot runs are the ones the disk declares, not the kernel's
 # built-in list: the demo disk is built with `/system/rc.d/defaults.toml`, and
 # this line is the boot saying it read them.  A disk without the directory

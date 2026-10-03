@@ -353,10 +353,12 @@ On the demo disk that ELF is a program rather than a stub: the init payload
 hands each declaration to the kernel through `service_declare`, and asks for
 the services to be started through `service_start_all`.  It reports what it
 did on the console, which is what lets each target's runtime check assert that
-the file the kernel spawned did something.  Declaring is idempotent from the
-program's side — the boot may have started the services already — and a
-declaration never resets a service that has already run, so a re-declaration
-updates what the service *is* without losing what it *did*.
+the file the kernel spawned did something.  Whether it was launched is also
+what §5.4 asks before starting the declared services: with a program on the
+disk the boot leaves the start to it, and without one it starts them itself.
+Declaring is idempotent from the program's side, and a declaration never resets
+a service that has already run, so a re-declaration updates what the service
+*is* without losing what it *did*.
 
 ### 5.4 `spawn_system_programs()`
 
@@ -370,6 +372,16 @@ stock boot reads the declarations off the disk — the boot log says how many it
 found — and a disk without the directory runs the same services from the
 kernel's copy rather than a different set that has drifted from the shipped
 one.
+
+Who starts them depends on whether the disk ships an init program (see §5.3).
+When it does, the boot **registers** the declarations and stops there: starting
+them is the distribution's job, and `service_start_all` is how it asks.
+Registering is still the kernel's half, so `/service` and the supervisor see
+every service either way.  The wait has a deadline — five seconds — so a disk
+whose init never asks is not a way to boot with no services at all: the
+supervisor starts whatever is still pending when it passes, and the boot log
+says how many.  A disk with no init program at all takes the older path and is
+started by the boot directly.
 
 Each `ServiceDefinition` has a `kind`:
 

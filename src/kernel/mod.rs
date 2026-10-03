@@ -425,13 +425,17 @@ impl Kernel {
                 alloc::string::String::from(DEFAULT_INIT_PATH)
             }
         };
-        self.spawn_init_program(&init_path);
+        let disk_init_started = self.spawn_init_program(&init_path);
 
         #[cfg(any(feature = "demo-disk", test))]
         {
             println!("[init  ] spawning demo threads...");
-            self.spawn_system_programs();
+            self.spawn_system_programs(disk_init_started);
         }
+        // Only a build with a demo disk has services to leave to init; every
+        // other build spawns init and has nothing to ask the answer about.
+        #[cfg(not(any(feature = "demo-disk", test)))]
+        let _ = disk_init_started;
         // Deferred maintenance gets its own thread on every boot, not just the
         // demo one: the timer tick no longer performs the periodic write-back
         // itself, so something has to.
@@ -590,7 +594,7 @@ impl Kernel {
     /// builder from the same list this falls back to, so a stock boot takes the
     /// declaration path and only a disk without one uses the list directly.
     #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-    fn spawn_system_programs(&self) {
+    fn spawn_system_programs(&self, disk_init_started: bool) {
         // Start the supervisor before any service, so a service that dies
         // during boot is already someone's problem.
         self.scheduler
@@ -601,10 +605,10 @@ impl Kernel {
 
         // Try loading service definitions from the boot filesystem.
         let fs = self.fs.lock();
-        let services = service::load_services_from_fs(&fs, service::SERVICE_CONFIG_DIR);
+        let declared = service::load_services_from_fs(&fs, service::SERVICE_CONFIG_DIR);
         drop(fs);
 
-        if services.is_empty() {
+        let services = if declared.is_empty() {
             // The disk declares nothing, so use the set it would have shipped.
             // Same list, same order, same services — the difference is only
             // where the declarations came from.
@@ -612,19 +616,21 @@ impl Kernel {
                 "[service] no declarations in {}; starting the built-in set",
                 service::SERVICE_CONFIG_DIR
             );
-            self.spawn_service_list(&service::default_definitions());
-            return;
-        }
+            service::default_definitions()
+        } else {
+            println!(
+                "[service] {} declaration(s) in {}",
+                declared.len(),
+                service::SERVICE_CONFIG_DIR
+            );
+            declared
+        };
 
-        println!(
-            "[service] {} declaration(s) in {}",
-            services.len(),
-            service::SERVICE_CONFIG_DIR
-        );
-        self.spawn_service_list(&services);
+        self.register_service_list(&services);
+        self.start_service_list(&services, disk_init_started);
     }
 
-    /// Spawn services from a parsed list of service definitions.
+    /// Register every service in a parsed list of service definitions.
     ///
     /// Every service is registered before any of them runs, so a service that
     /// fails to start still appears in `/service` next to the ones that did —
@@ -632,20 +638,43 @@ impl Kernel {
     /// blocked with the reason rather than left looking like a service nobody
     /// got to.
     #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-    fn spawn_service_list(&self, services: &[service::ServiceDefinition]) {
+    fn register_service_list(&self, services: &[service::ServiceDefinition]) {
         let now_tick = self.scheduler.current_tick();
         for svc in services {
             service::register(svc, now_tick);
         }
+    }
+
+    /// Start the registered services, or leave the start to the disk's init.
+    ///
+    /// The distribution's half of the service manager is the init program on
+    /// the boot disk: it reads `/system/rc.d` and asks for the services to be
+    /// started.  When the boot has such a program, the kernel registers the
+    /// declarations — `/service` and the supervisor need them either way — and
+    /// leaves the start to it.  The deferral has a deadline, so a disk whose
+    /// init never starts anything still ends up with its services.
+    #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+    fn start_service_list(&self, services: &[service::ServiceDefinition], disk_init_started: bool) {
+        let now_tick = self.scheduler.current_tick();
+        if disk_init_started {
+            println!(
+                "[service] {} service(s) registered; leaving the start to init",
+                services.len()
+            );
+            service::defer_declared_start(
+                now_tick.wrapping_add(SERVICE_DEFERRED_START_GRACE_TICKS),
+            );
+            return;
+        }
         start_declared_services(now_tick, |path, security_token| {
-            self.spawn_demo_user_program(path, security_token)
+            spawn_and_log_user_program(&self.scheduler, path, security_token)
                 .map(|launched| launched.process.pid())
         });
     }
 
     #[allow(dead_code)]
     #[cfg(not(target_os = "none"))]
-    fn spawn_system_programs(&self) {}
+    fn spawn_system_programs(&self, _disk_init_started: bool) {}
 
     /// Spawn the init program from a filesystem path.
     ///
@@ -653,8 +682,12 @@ impl Kernel {
     /// launches it as a user process.  If the path does not exist (no boot
     /// disk attached, or distribution not installed) the kernel prints a
     /// diagnostic and continues.
+    ///
+    /// Returns whether an init program is now running.  The service start order
+    /// asks: a disk with one keeps the start for it, and a disk without one is
+    /// started by the kernel the way every disk was before init existed.
     #[cfg(target_os = "none")]
-    fn spawn_init_program(&self, init_path: &str) {
+    fn spawn_init_program(&self, init_path: &str) -> bool {
         // Hold the filesystem lock only for reading the image.  The second
         // phase calls `crate::memory::global_mut()`, and holding this lock across that
         // is the cross-CPU hazard the note on
@@ -678,9 +711,11 @@ impl Kernel {
                 ) {
                     Ok(launched) => {
                         println!("[init  ] init spawned pid={}", launched.process.pid());
+                        true
                     }
                     Err(error) => {
                         println!("[init  ] init spawn failed: {}", error.as_str());
+                        false
                     }
                 }
             }
@@ -689,12 +724,15 @@ impl Kernel {
                     "[init  ] No init program found at {} — is the boot disk attached?",
                     init_path
                 );
+                false
             }
         }
     }
 
     #[cfg(not(target_os = "none"))]
-    fn spawn_init_program(&self, _init_path: &str) {}
+    fn spawn_init_program(&self, _init_path: &str) -> bool {
+        false
+    }
 
     #[cfg(any(test, target_os = "none"))]
     fn recover_install_management_state(&self) -> (u64, u64) {
@@ -822,71 +860,6 @@ impl Kernel {
 
         install_volume_recovery_summary(summary);
         (volumes_checked, repairs_applied)
-    }
-
-    #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-    fn spawn_demo_user_program(
-        &self,
-        launch_reference: &str,
-        security_token: SecurityToken,
-    ) -> Option<program::LaunchedProgram> {
-        println!("[user  ] spawn_demo_user_program: {}", launch_reference);
-        match program::spawn_from_global_with_security_token(
-            &self.scheduler,
-            launch_reference,
-            security_token,
-        ) {
-            Ok(launched) => {
-                let loaded = &launched.loaded;
-                println!(
-                    "[user  ] loaded {} id={} version={} argc={} envc={} entry=0x{:x} machine=0x{:x} segments={} ({} bytes)",
-                    loaded.path,
-                    loaded.catalog_id,
-                    loaded.version,
-                    loaded.arguments.len(),
-                    loaded.environment.len(),
-                    loaded.entry_point,
-                    loaded.machine,
-                    loaded.load_segment_count(),
-                    loaded.image_len
-                );
-
-                if let Some(layout) = loaded.image_layout.as_ref() {
-                    println!(
-                        "[user  ] image-plan span={:#018x}..{:#018x} pages={} stack={:#018x}..{:#018x} guard={:#018x}..{:#018x}",
-                        layout.image_start,
-                        layout.image_end,
-                        layout.mapped_page_count(),
-                        layout.stack_bottom,
-                        layout.stack_top,
-                        layout.stack_guard_start,
-                        layout.stack_guard_end
-                    );
-                }
-
-                if let Some(summary) = loaded.process_address_space_summary() {
-                    println!(
-                        "[user  ] process-root root={:#018x} pages={} kernel={} user={} tables={}",
-                        summary.root_table_address,
-                        summary.mapped_page_count,
-                        summary.kernel_page_count,
-                        summary.user_page_count,
-                        summary.table_page_count
-                    );
-                }
-
-                Some(launched)
-            }
-            Err(error) => {
-                println!(
-                    "[user  ] load failed catalog={} error={}",
-                    launch_reference,
-                    error.as_str()
-                );
-
-                None
-            }
-        }
     }
 
     #[allow(dead_code)]
@@ -1043,6 +1016,18 @@ fn transaction_log_entry_kind_label(kind: crate::fs::NodeKind) -> &'static str {
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 const SERVICE_SUPERVISOR_POLL_TICKS: u64 = 25;
 
+/// How long the boot leaves the declared services to the disk's init program,
+/// in scheduler ticks.
+///
+/// The kernel registers the declarations and, when an init program came off the
+/// disk, leaves the start to it; this is when the supervisor stops waiting and
+/// starts whatever is still pending.  It only has to be long enough for init to
+/// read `/system/rc.d` and ask, and five seconds is far more than that on any
+/// machine this tree boots — while a disk with no working init still comes up
+/// with its services, five seconds late.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+const SERVICE_DEFERRED_START_GRACE_TICKS: u64 = 500;
+
 /// Name of the kernel thread that supervises services.
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 const SERVICE_SUPERVISOR_NAME: &str = "service-supervisor";
@@ -1078,6 +1063,11 @@ pub(crate) fn start_declared_services(
     now_tick: u64,
     launch_user_program: impl Fn(&str, SecurityToken) -> Option<u32>,
 ) -> usize {
+    // Whoever starts them ends the boot's wait for init: an init program that
+    // asks through `service_start_all` must not leave the supervisor planning
+    // the same start again at the deadline.
+    service::cancel_deferred_start();
+
     let Some(scheduler) = Scheduler::global() else {
         return 0;
     };
@@ -1112,6 +1102,79 @@ pub(crate) fn start_declared_services(
     }
 
     started
+}
+
+/// Load a user program from a launch reference and say what was loaded.
+///
+/// One launcher for the two callers that start a user-program service: the
+/// boot path and the disk's init program, which asks through
+/// `service_start_all`.  A service that init started therefore reports itself
+/// the same way one the kernel started does — same `[user ] loaded` line, same
+/// `[user ] image-plan` line, same failure line — which is what lets a runtime
+/// check read one boot log and not have to know which side did the spawning.
+#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
+pub(crate) fn spawn_and_log_user_program(
+    scheduler: &Scheduler,
+    launch_reference: &str,
+    security_token: SecurityToken,
+) -> Option<program::LaunchedProgram> {
+    println!("[user  ] spawn_demo_user_program: {}", launch_reference);
+    match program::spawn_from_global_with_security_token(
+        scheduler,
+        launch_reference,
+        security_token,
+    ) {
+        Ok(launched) => {
+            let loaded = &launched.loaded;
+            println!(
+                "[user  ] loaded {} id={} version={} argc={} envc={} entry=0x{:x} machine=0x{:x} segments={} ({} bytes)",
+                loaded.path,
+                loaded.catalog_id,
+                loaded.version,
+                loaded.arguments.len(),
+                loaded.environment.len(),
+                loaded.entry_point,
+                loaded.machine,
+                loaded.load_segment_count(),
+                loaded.image_len
+            );
+
+            if let Some(layout) = loaded.image_layout.as_ref() {
+                println!(
+                    "[user  ] image-plan span={:#018x}..{:#018x} pages={} stack={:#018x}..{:#018x} guard={:#018x}..{:#018x}",
+                    layout.image_start,
+                    layout.image_end,
+                    layout.mapped_page_count(),
+                    layout.stack_bottom,
+                    layout.stack_top,
+                    layout.stack_guard_start,
+                    layout.stack_guard_end
+                );
+            }
+
+            if let Some(summary) = loaded.process_address_space_summary() {
+                println!(
+                    "[user  ] process-root root={:#018x} pages={} kernel={} user={} tables={}",
+                    summary.root_table_address,
+                    summary.mapped_page_count,
+                    summary.kernel_page_count,
+                    summary.user_page_count,
+                    summary.table_page_count
+                );
+            }
+
+            Some(launched)
+        }
+        Err(error) => {
+            println!(
+                "[user  ] load failed catalog={} error={}",
+                launch_reference,
+                error.as_str()
+            );
+
+            None
+        }
+    }
 }
 
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
@@ -1314,6 +1377,22 @@ fn service_supervisor_entry() {
         // The second of two independent heartbeats; see
         // `kernel::heartbeat` for what the pair distinguishes.
         heartbeat::beat("supervisor", passes, now_tick);
+
+        // The boot may have left the declared services for the disk's init
+        // program to start.  If they are still pending when the grace runs out
+        // — no init came off the disk, or the one that did never asked — the
+        // supervisor starts them, the same way the boot path does when it knows
+        // there is no init program at all.  A boot that started them normally
+        // has nothing left to start here and says nothing.
+        if service::take_expired_deferral(now_tick) {
+            let started = start_declared_services(now_tick, |path, security_token| {
+                spawn_and_log_user_program(scheduler, path, security_token)
+                    .map(|launched| launched.process.pid())
+            });
+            if started > 0 {
+                println!("[service] started {} service(s) init left pending", started);
+            }
+        }
 
         // Compute the whole plan before acting on any of it: restarting
         // re-enters the scheduler and the filesystem, and doing that while

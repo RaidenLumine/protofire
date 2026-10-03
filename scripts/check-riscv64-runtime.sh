@@ -241,9 +241,13 @@ require_log_line "[abi   ] shell payload: $PAYLOAD_SOURCE "
 require_log_line "adastra shell (ring 3) builtins:"
 require_log_exact_line "ring3-shell-answered"
 # `/system/init.elf` is a program on this target too: it reads the declarations
-# off the disk and asks for the services to be started, and says so.
+# off the disk and asks for the services to be started, and says so.  The boot
+# left the start to it rather than starting them itself — that line is the
+# hand-off, and without it the services below would prove the kernel started
+# them, not init.
 require_log_line "adastra init (ring 3): reading /system/rc.d"
 require_log_line "adastra init: declared "
+require_log_line "service(s) registered; leaving the start to init"
 
 # ── The user program ran, and left ─────────────────────────────────────
 #

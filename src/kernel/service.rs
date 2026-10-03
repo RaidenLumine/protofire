@@ -848,6 +848,12 @@ struct ServiceRegistry {
     /// name is kept here as well; [`plan_start_order`] keeps the last
     /// declaration, the same way [`register`] does.
     declarations: Vec<ServiceDefinition>,
+    /// Tick by which someone must have started the declared services, if the
+    /// boot asked for the start to be left to the disk's init program.
+    ///
+    /// `None` means nobody is waiting: either the boot started them itself or
+    /// something has started them since.
+    deferred_start_deadline: Option<u64>,
 }
 
 impl ServiceRegistry {
@@ -855,6 +861,7 @@ impl ServiceRegistry {
         Self {
             services: BTreeMap::new(),
             declarations: Vec::new(),
+            deferred_start_deadline: None,
         }
     }
 }
@@ -1002,6 +1009,48 @@ pub fn reset_registry_for_tests() {
     let mut registry = SERVICE_REGISTRY.lock();
     registry.services.clear();
     registry.declarations.clear();
+    registry.deferred_start_deadline = None;
+}
+
+/// Leave the declared services for the disk's init program to start.
+///
+/// The distribution's half of the service manager is a program on the disk: it
+/// reads `/system/rc.d` and asks for the services to be started through
+/// the `service_start_all` syscall.  When the boot has such a program, it
+/// registers the declarations — `/service` and the supervisor need them either
+/// way — and leaves the start to it.
+///
+/// `deadline_tick` is what keeps that from becoming a way to boot with no
+/// services at all: a disk whose init never starts them is started by the
+/// supervisor past that tick, the same way the boot path starts them when
+/// there is no init program at all.
+pub fn defer_declared_start(deadline_tick: u64) {
+    SERVICE_REGISTRY.lock().deferred_start_deadline = Some(deadline_tick);
+}
+
+/// End a deferral: the declared services have been started.
+///
+/// Called wherever services are started, so that the caller which does the
+/// work is the one that ends the wait — a start that happened before the
+/// deadline must not leave the supervisor waiting to start them again.
+pub fn cancel_deferred_start() {
+    SERVICE_REGISTRY.lock().deferred_start_deadline = None;
+}
+
+/// Whether the deferral's deadline has arrived, consuming it.
+///
+/// True at most once per [`defer_declared_start`]: the caller this answers is
+/// the supervisor, and a deadline that answered twice would have it plan the
+/// same start again on every later pass.
+pub fn take_expired_deferral(now_tick: u64) -> bool {
+    let mut registry = SERVICE_REGISTRY.lock();
+    match registry.deferred_start_deadline {
+        Some(deadline) if now_tick >= deadline => {
+            registry.deferred_start_deadline = None;
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Plan the start order from the declarations the registry holds.
@@ -1188,6 +1237,44 @@ mod tests {
 
         let names: Vec<String> = snapshot().into_iter().map(|r| r.definition.name).collect();
         assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn a_deferred_start_answers_once_the_deadline_arrives() {
+        let _guard = exclusive_registry();
+        defer_declared_start(100);
+
+        // Before the deadline the boot is still waiting for init, and the
+        // supervisor must not start anything.
+        assert!(!take_expired_deferral(99));
+
+        // The deadline is the first tick that counts, and it only counts once:
+        // a deadline that answered twice would have the supervisor plan the
+        // same start on every later pass.
+        assert!(take_expired_deferral(100));
+        assert!(!take_expired_deferral(101));
+        assert!(!take_expired_deferral(u64::MAX));
+    }
+
+    #[test]
+    fn no_deferral_is_a_deadline_that_never_arrives() {
+        let _guard = exclusive_registry();
+
+        // Nothing deferred the start, so the supervisor has no fallback to run.
+        assert!(!take_expired_deferral(0));
+        assert!(!take_expired_deferral(u64::MAX));
+    }
+
+    #[test]
+    fn starting_the_services_ends_the_deferral() {
+        let _guard = exclusive_registry();
+        defer_declared_start(100);
+
+        // Whoever started the declared services ends the wait: init asking
+        // through `service_start_all` must not leave the supervisor planning
+        // the same start at the deadline.
+        cancel_deferred_start();
+        assert!(!take_expired_deferral(u64::MAX));
     }
 
     #[test]
