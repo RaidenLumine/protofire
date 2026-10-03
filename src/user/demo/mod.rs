@@ -56,11 +56,12 @@ payload_or_stub!("x86_64", shell_payload_x86_64);
 /// The shell program itself, emitted once per architecture that runs one.
 pub mod shell_payload;
 
-#[cfg(any(target_arch = "aarch64", test))]
+// The three payload builders compile everywhere: what makes one of them a
+// machine's own is the payload beneath it, which `payload_or_stub!` above has
+// already answered per architecture.  Gating the builders themselves meant
+// naming architectures here for a code-size saving that LTO makes anyway.
 pub mod demo_program_aarch64_elf;
-#[cfg(any(target_arch = "riscv64", test))]
 pub mod demo_program_riscv64_elf;
-#[cfg(any(target_arch = "x86_64", test))]
 pub mod demo_program_x86_64_elf;
 #[cfg(test)]
 pub(crate) mod payload_test_support;

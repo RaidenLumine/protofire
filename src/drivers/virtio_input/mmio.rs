@@ -6,7 +6,7 @@
 //!
 //! It is compiled only on the platforms that have such a device — aarch64 and
 //! riscv64 QEMU `virt` — and the gate for that is on this module's
-//! declaration in `mod.rs`, not on the items here.
+//! declaration in the architecture's `devices.rs`, not on the items here.
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -127,7 +127,7 @@ fn open_input(transport: VirtIoMmio) -> Option<VirtioInputDevice> {
 /// Scan the VirtIO MMIO bus for an input device and, on success, install it as
 /// the global [`INPUT_DEVICE`].  No-op when the platform has no virtio-input
 /// device (which is normal on x86, where PS/2 handles the keyboard).
-pub(super) fn probe_input() {
+pub(crate) fn probe_input() {
     use crate::drivers::virtio::BareMmioRegion;
 
     for addr in crate::drivers::virtio::mmio_slot_addresses() {

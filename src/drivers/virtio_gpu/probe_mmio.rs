@@ -10,7 +10,7 @@ use crate::println;
 
 /// Find a virtio-gpu MMIO device on the VirtIO MMIO bus, initialise it, and
 /// install the framebuffer console.  Returns `Some(())` on success.
-pub(super) fn and_init() -> Option<()> {
+pub(crate) fn and_init() -> Option<()> {
     use crate::drivers::virtio::BareMmioRegion;
 
     for addr in crate::drivers::virtio::mmio_slot_addresses() {

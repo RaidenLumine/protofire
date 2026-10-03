@@ -1347,7 +1347,7 @@ pub mod mock {
 ///
 /// Returns `(width, height)` on success.
 #[cfg(target_os = "none")]
-fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
+pub(crate) fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
     // 1. Negotiate features — request VIRTIO_GPU_F_VIRGL (bit 0) for 3D.
     let virgl_mask = 1u32 << VIRTIO_GPU_F_VIRGL;
     let negotiated = transport.init_device_with_features(virgl_mask).ok()?;
@@ -1438,21 +1438,10 @@ fn init_gpu_device(transport: VirtIoMmio) -> Option<(u32, u32)> {
 
 // A virtio-gpu device is found one of two ways: on x86_64 it is a PCI device
 // whose BAR is mapped and driven through the transport abstraction, and on the
-// device-tree machines it answers on the VirtIO MMIO bus.  One file per
-// machine holds that, and the driver above names none of them.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-#[path = "virtio_gpu/probe_pci.rs"]
-mod probe;
-#[cfg(all(
-    target_os = "none",
-    any(target_arch = "aarch64", target_arch = "riscv64")
-))]
-#[path = "virtio_gpu/probe_mmio.rs"]
-mod probe;
-/// A host has no bus to probe.
-#[cfg(not(target_os = "none"))]
-#[path = "virtio_gpu/probe_absent.rs"]
-mod probe;
+// device-tree machines it answers on the VirtIO MMIO bus.  Which of the two
+// this machine has is the machine's answer — see
+// `src/arch/<arch>/devices.rs` — and the driver above names none of them.
+pub(crate) use crate::arch::machine_devices::virtio_gpu_probe as probe;
 
 // ---------------------------------------------------------------------------
 // Tests

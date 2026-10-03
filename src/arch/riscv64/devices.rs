@@ -26,6 +26,34 @@ pub use crate::drivers::DriverCategory;
 /// This machine has no PC speaker.
 pub const HAS_PC_SPEAKER: bool = false;
 
+/// The VirtIO input wire format: the device half below translates its events
+/// into Set-1 scancodes, and the driver's host tests check the translation.
+#[cfg(any(test, target_os = "none"))]
+#[path = "../../drivers/virtio_input/protocol.rs"]
+pub(crate) mod protocol;
+
+/// The device half: a VirtIO MMIO input device on a bare-metal machine, and
+/// the stub that answers under the same name on a host.
+#[cfg(target_os = "none")]
+#[path = "../../drivers/virtio_input/mmio.rs"]
+pub(crate) mod virtio_input_mmio;
+#[cfg(not(target_os = "none"))]
+#[path = "../../drivers/virtio_input/absent.rs"]
+pub(crate) mod virtio_input_mmio;
+
+/// The driver's own constructor, which the probe below hands its transport to.
+#[cfg(target_os = "none")]
+use crate::drivers::virtio_gpu::init_gpu_device;
+
+/// How this machine finds a virtio-gpu device: on the VirtIO MMIO bus its
+/// device tree describes.
+#[cfg(target_os = "none")]
+#[path = "../../drivers/virtio_gpu/probe_mmio.rs"]
+pub(crate) mod virtio_gpu_probe;
+#[cfg(not(target_os = "none"))]
+#[path = "../../drivers/virtio_gpu/probe_absent.rs"]
+pub(crate) mod virtio_gpu_probe;
+
 /// This machine has no xHCI bus, so there is no USB boot disk to ask for.
 pub fn usb_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     None

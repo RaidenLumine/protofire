@@ -34,6 +34,30 @@ pub use crate::drivers::DriverCategory;
 /// speaker would be programmed through port I/O a host process cannot issue.
 pub const HAS_PC_SPEAKER: bool = cfg!(target_os = "none");
 
+/// The VirtIO input wire format, which this machine's driver half does not
+/// use — the keyboard here is PS/2 — but the driver's host tests check.
+#[cfg(test)]
+#[path = "../../drivers/virtio_input/protocol.rs"]
+pub(crate) mod protocol;
+
+/// The VirtIO input device half on a machine with no VirtIO MMIO bus: the
+/// stub that answers under the same name.
+#[path = "../../drivers/virtio_input/absent.rs"]
+pub(crate) mod virtio_input_mmio;
+
+/// The driver's own constructor, which the probe below hands its transport to.
+#[cfg(target_os = "none")]
+use crate::drivers::virtio_gpu::init_gpu_device;
+
+/// How this machine finds a virtio-gpu device: a PCI function whose BAR is
+/// mapped and driven through the transport abstraction.
+#[cfg(target_os = "none")]
+#[path = "../../drivers/virtio_gpu/probe_pci.rs"]
+pub(crate) mod virtio_gpu_probe;
+#[cfg(not(target_os = "none"))]
+#[path = "../../drivers/virtio_gpu/probe_absent.rs"]
+pub(crate) mod virtio_gpu_probe;
+
 /// Ask this machine's USB bus for a boot disk, if it has one.
 ///
 /// The mass-storage driver is bare-metal only, for the same reason the

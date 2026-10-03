@@ -15,7 +15,7 @@ const VIRTIO_GPU_PCI_DEVICE_ID: u16 = 0x1050;
 
 /// Find a virtio-gpu PCI device, initialise it, and install the framebuffer
 /// console.  Returns `Some(())` on success.
-pub(super) fn and_init() -> Option<()> {
+pub(crate) fn and_init() -> Option<()> {
     use crate::arch::mmu::map_device_mmio;
     use crate::arch::x86_64::pci::pci_config_read_u16;
     use crate::arch::x86_64::pci::pci_config_write_u16;

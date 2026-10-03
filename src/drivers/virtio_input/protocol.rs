@@ -5,31 +5,34 @@
 //!
 //! Nothing here touches a device, which is why it compiles wherever it is
 //! useful: under the host tests, which check the translation, and on the
-//! machines that have the device to feed it.
+//! machines that have the device to feed it.  Which machines those are is the
+//! architecture's answer, and so is where this module is declared — see
+//! `src/arch/<arch>/devices.rs`.  The items are `pub(crate)` because the two
+//! consumers are the device half beside them and the driver's tests.
 
 /// Each event is `type: le16` + `code: le16` + `value: le32` = 8 bytes
 /// (virtio spec §5.8.3).  Reading it as three `le32` mis-parses every event —
 /// the key code (e.g. `0x1E` for KEY_A) leaks into the high bytes of `type`.
-pub(super) const EVENT_BYTES: usize = 8;
+pub(crate) const EVENT_BYTES: usize = 8;
 
 /// EV_KEY event type.
-pub(super) const EV_KEY: u16 = 1;
+pub(crate) const EV_KEY: u16 = 1;
 
 /// PS/2 Set-1 break-code bit and the E0 extended prefix, mirrored from the
 /// keyboard driver (which keeps these private).
-pub(super) const SET1_BREAK_BIT: u8 = 0x80;
-pub(super) const SET1_EXTENDED_PREFIX: u8 = 0xE0;
+pub(crate) const SET1_BREAK_BIT: u8 = 0x80;
+pub(crate) const SET1_EXTENDED_PREFIX: u8 = 0xE0;
 
 /// A raw VirtIO input event: `type`/`code` are `le16`, `value` is `le32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct VirtioInputEvent {
-    pub(super) event_type: u16,
-    pub(super) code: u16,
-    pub(super) value: u32,
+pub(crate) struct VirtioInputEvent {
+    pub(crate) event_type: u16,
+    pub(crate) code: u16,
+    pub(crate) value: u32,
 }
 
 /// Read one event from a device-written event buffer.
-pub(super) fn read_event(buf: &[u8; EVENT_BYTES]) -> VirtioInputEvent {
+pub(crate) fn read_event(buf: &[u8; EVENT_BYTES]) -> VirtioInputEvent {
     VirtioInputEvent {
         event_type: u16::from_le_bytes([buf[0], buf[1]]),
         code: u16::from_le_bytes([buf[2], buf[3]]),
@@ -45,7 +48,7 @@ pub(super) fn read_event(buf: &[u8; EVENT_BYTES]) -> VirtioInputEvent {
 /// to themselves.  Keys above that range need the E0 prefix and are listed
 /// explicitly.  This table is for *evdev* codes — do not reuse the HID-usage
 /// numbering in `usb_hid.rs`.
-pub(super) fn evdev_to_set1(code: u32) -> Option<(u8, bool)> {
+pub(crate) fn evdev_to_set1(code: u32) -> Option<(u8, bool)> {
     match code {
         1..=88 => Some((code as u8, false)),
         // E0-extended keys.
@@ -74,7 +77,7 @@ pub(super) fn evdev_to_set1(code: u32) -> Option<(u8, bool)> {
 /// The first byte is either the make/break scancode (single-byte key) or the
 /// E0 prefix (extended key); when extended the second byte holds the actual
 /// make/break scancode, otherwise the array is sentinel-terminated with 0.
-pub(super) fn event_scancodes(event: &VirtioInputEvent) -> Option<[u8; 2]> {
+pub(crate) fn event_scancodes(event: &VirtioInputEvent) -> Option<[u8; 2]> {
     if event.event_type != EV_KEY {
         return None;
     }

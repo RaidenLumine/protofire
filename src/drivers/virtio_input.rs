@@ -19,11 +19,10 @@
 //! Like virtio-net/block on these platforms there is no device IRQ dispatch
 //! yet, so events are drained from a timer-tick poll ([`poll_hardware`]).
 //!
-//! The driver is two halves, and the gates that select them are here rather
-//! than on every item inside: [`protocol`] is the wire format and the
-//! translation, which the host tests check, and [`mmio`] is the device
-//! machinery, which exists only on the platforms that have such a device.
-//! Everything below the two module declarations is target-independent.
+//! The driver is two halves, and which of them this machine gets is the
+//! machine's answer rather than this file's: the wire format and the device
+//! machinery are declared in `src/arch/<arch>/devices.rs`, and the re-exports
+//! below are all this file needs to know about it.
 
 use alloc::sync::Arc;
 
@@ -31,35 +30,11 @@ use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
 use crate::Result;
 
-//
-// The driver is two halves.  `protocol` is the wire format and the
-// translation, which the host tests check and the device half uses; `mmio` is
-// the device machinery, or — on a machine that has no such device — the file
-// that says so under the same name.  The gates are here, once each, instead of
-// on every item inside.
-//
-#[cfg(any(
-    test,
-    all(
-        target_os = "none",
-        any(target_arch = "aarch64", target_arch = "riscv64")
-    )
-))]
-mod protocol;
-
-#[cfg(all(
-    target_os = "none",
-    any(target_arch = "aarch64", target_arch = "riscv64")
-))]
-mod mmio;
-#[cfg(not(all(
-    target_os = "none",
-    any(target_arch = "aarch64", target_arch = "riscv64")
-)))]
-#[path = "virtio_input/absent.rs"]
-mod mmio;
-
-pub use mmio::poll_hardware;
+// The machine picks the device half — the MMIO machinery where there is a
+// VirtIO MMIO bus, the stub that answers under the same name where there is
+// not — and the wire format that goes with it (see the arch `devices.rs`).
+pub(crate) use crate::arch::machine_devices::virtio_input_mmio as mmio;
+pub use crate::arch::machine_devices::virtio_input_mmio::poll_hardware;
 
 // ─── Driver registration ─────────────────────────────────────────────────
 
@@ -89,7 +64,7 @@ pub fn driver() -> Arc<dyn Driver> {
 
 #[cfg(test)]
 mod tests {
-    use super::protocol::*;
+    use crate::arch::machine_devices::protocol::*;
 
     #[test]
     fn identity_region_covers_letters_digits_and_symbols() {

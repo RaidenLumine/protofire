@@ -6,7 +6,7 @@
 //! has to ask which machine it is on.
 
 /// Nothing to probe.
-pub(super) fn probe_input() {}
+pub(crate) fn probe_input() {}
 
 /// Nothing to poll.
 pub fn poll_hardware() {}

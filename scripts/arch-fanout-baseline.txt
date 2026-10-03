@@ -42,12 +42,10 @@
 
 
 
-# 33 files, 92 occurrences outside src/arch
+# 30 files, 80 occurrences outside src/arch
 
 abi/ptrace.rs                                        2
 drivers/usb_msd.rs                                   1
-drivers/virtio_gpu.rs                                3
-drivers/virtio_input.rs                              6
 drivers/virtio_net.rs                                2
 kernel/power/clock.rs                                2
 kernel/process/process/fork.rs                       3
@@ -68,7 +66,6 @@ memory/mod.rs                                        4
 syscall/process/signal.rs                            2
 user/demo/demo_program_x86_64_rust_io.rs             1
 user/demo/demo_program_x86_64_rust.rs                1
-user/demo/mod.rs                                     3
 user/demo/payload_test_support.rs                    1
 user/exception.rs                                    5
 user/shared/abi/ptrace.rs                            2
