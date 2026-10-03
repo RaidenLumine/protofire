@@ -274,6 +274,41 @@ On x86_64 the per-CPU data is accessed via the GS segment base
 
 On AArch64, `TPIDR_EL1` serves the same role.
 
+### 4.5 Device interrupts: MSI where the machine has it
+
+A device that signals by writing a message rather than by pulling a wire needs
+three things: a controller that receives the message, a table on the device
+that says where to write, and a driver that owns the identities the table
+delivers.  The pipeline has the first as `arch::interrupt_controller::init()`
+and the second as `arch::platform::program_device_msix()`; the third is the
+driver's, claimed at probe time.
+
+The three targets answer differently, and on AArch64 the answer is a decision
+rather than a gap:
+
+- **x86_64** delivers MSI and MSI-X through the local APIC.  Vectors are
+  allocated from the kernel's pool and the device's table is programmed to
+  write them (`src/arch/x86_64/msi.rs`).
+- **RISC-V 64** delivers them through the AIA IMSIC.  The identities in a
+  device's MSI-X table are allocated by the controller and claimed by the
+  driver that owns the device before the function is unmasked, so a delivered
+  message is attributed rather than counted spurious; the `aia=aplic-imsic`
+  machine is the boot that covers this path.
+- **AArch64 provides no PCIe MSI path, and will not until it has a GICv3 and
+  an ITS.** The controller this kernel implements is GICv2:
+  `src/arch/aarch64/mod.rs` reads `GICD_PIDR2` and, on a revision other than
+  2, stops instead of programming a v2 register layout onto a v3.  An MSI on
+  AArch64 is an LPI, an LPI is delivered by the ITS, and the ITS is a GICv3
+  component — so there is nothing to program and nothing to claim.  The
+  AArch64 runtime check boots with a `virtio-net-pci` anyway: the device is
+  driven and its completions are polled, and no part of the boot pretends it
+  has an interrupt it does not have.
+
+Making AArch64 support it is therefore three pieces of work, not a flag: a
+GICv3 distributor and redistributor path, an ITS (device tables, command
+queue, and the LPI configuration and pending tables), and the AArch64 half of
+`program_device_msix` that ties a driver's claim to an LPI.
+
 ---
 
 ## 5. Init Program Spawning
@@ -533,7 +568,8 @@ CPU bring-up. What is missing:
   run under QEMU.
 - **AArch64 gets no device tree from a direct QEMU boot**, so the RAM-scan
   fallback is the path that runs there; a machine whose controller is a GICv3
-  is detected and refused rather than driven.
+  is detected and refused rather than driven, and the consequence — no PCIe
+  MSI path — is a decision rather than a pending task (section 4.5).
 - **RISC-V wakeups are the coarsest**: a cross-hart wake waits for the target
   hart's next tick, and the machine has no architectural NMI source.
 - **The init program is a stub** that exits, so the boot's own service
