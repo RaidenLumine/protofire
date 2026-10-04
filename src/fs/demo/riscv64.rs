@@ -31,7 +31,7 @@ pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
 /// it is not a stub any more either: it is the demo's own program, emitted into
 /// its section and wrapped by the shared ELF builder, which reads
 /// `/system/rc.d` and asks for the services to be started.
-pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
+pub(crate) fn system_zone_image(generation: u64) -> Result<Vec<u8>> {
     let payload = super::init_payload_riscv64::payload_bytes();
     let entry_offset = super::init_payload_riscv64::payload_entry_offset();
     let init = crate::user::demo::elf_builder::build_artifact_from_payload(
@@ -40,7 +40,7 @@ pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
         crate::user::program::DEMO_PROGRAM_ENTRY as u64,
         crate::user::program::DEMO_PROGRAM_MACHINE,
     );
-    super::build_system_zone_from(&init.bytes)
+    super::build_system_zone_from(&init.bytes, generation)
 }
 
 fn apps_entries_riscv64<'a>(

@@ -41,6 +41,8 @@ pub mod path;
 pub mod servicefs;
 pub mod simplefs;
 pub mod squashfs;
+/// The system volume's A/B pair: which slot a boot takes, and how it switches.
+pub mod system_image;
 #[cfg(any(test, feature = "demo-disk"))]
 pub(crate) mod test_support;
 pub mod tmpfs;

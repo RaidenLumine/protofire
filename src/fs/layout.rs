@@ -12,12 +12,34 @@ pub const DEFAULT_USER_ROOT: &str = "/data/users/guest";
 // demo software catalog can grow without silently overflowing the fixed image.
 pub const DEMO_DISK_SYSTEM_BLOCKS: u64 = 256;
 pub const DEMO_DISK_APPS_BLOCKS: u64 = 512;
-pub const DEMO_DISK_DATA_BLOCKS: u64 = 256;
+/// The data partition has to be larger than the image the builder writes for
+/// it, which carries `DATA_ZONE_EXTRA_DATA_BLOCKS` of headroom.  256 blocks was
+/// smaller than that image, so the disk path substituted its fallback zone and
+/// the demo's data files were only ever present on the in-memory layout.
+pub const DEMO_DISK_DATA_BLOCKS: u64 = 512;
 pub const DEMO_DISK_TEMP_BLOCKS: u64 = 128;
 pub const DEMO_DISK_SYSTEM_START_BLOCK: u64 = 2048;
 pub const DEMO_DISK_APPS_START_BLOCK: u64 = DEMO_DISK_SYSTEM_START_BLOCK + DEMO_DISK_SYSTEM_BLOCKS;
 pub const DEMO_DISK_DATA_START_BLOCK: u64 = DEMO_DISK_APPS_START_BLOCK + DEMO_DISK_APPS_BLOCKS;
 pub const DEMO_DISK_TOTAL_BLOCKS: u64 = DEMO_DISK_DATA_START_BLOCK + DEMO_DISK_DATA_BLOCKS;
+
+/// The second system slot, after the three zones so their offsets — and every
+/// disk built before the pair existed — stay where they were.
+pub const DEMO_DISK_SYSTEM_B_START_BLOCK: u64 = DEMO_DISK_DATA_START_BLOCK + DEMO_DISK_DATA_BLOCKS;
+pub const DEMO_DISK_SYSTEM_B_BLOCKS: u64 = DEMO_DISK_SYSTEM_BLOCKS;
+pub const DEMO_DISK_TOTAL_BLOCKS_WITH_SYSTEM_PAIR: u64 =
+    DEMO_DISK_SYSTEM_B_START_BLOCK + DEMO_DISK_SYSTEM_B_BLOCKS;
+
+/// The disk range of the second system slot, as `(start_block, block_count)`.
+pub const SYSTEM_SLOT_B_DISK_RANGE: (u64, u64) =
+    (DEMO_DISK_SYSTEM_B_START_BLOCK, DEMO_DISK_SYSTEM_B_BLOCKS);
+
+/// The builds the demo disk's two system slots are committed as.  B is newer,
+/// so a demo boot takes it: the pair is exercised where a machine boots, not
+/// only in tests.  Put back into the base total once the pair is everywhere:
+/// `DEMO_DISK_TOTAL_BLOCKS` stays the size of a single-slot disk.
+pub const DEMO_SYSTEM_SLOT_A_GENERATION: u64 = 1;
+pub const DEMO_SYSTEM_SLOT_B_GENERATION: u64 = 2;
 
 pub const DEMO_MBR_SYSTEM_PARTITION_TYPE: u8 = 0xa1;
 pub const DEMO_MBR_APPS_PARTITION_TYPE: u8 = 0xa2;

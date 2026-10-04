@@ -353,7 +353,7 @@ fn apps_entries<'a>(
 
 /// The system zone: the shared files plus the stub init program at
 /// `/init.elf`.
-pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
+pub(crate) fn system_zone_image(generation: u64) -> Result<Vec<u8>> {
     // The init program is the demo's own code, emitted into its section and
     // wrapped by the shared ELF builder — not a stub, and not a hand-written
     // header around one: it reads `/system/rc.d` and asks for the services to
@@ -377,5 +377,5 @@ pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
             crate::user::program::DEMO_PROGRAM_MACHINE,
         )
     };
-    super::build_system_zone_from(&init.bytes)
+    super::build_system_zone_from(&init.bytes, generation)
 }

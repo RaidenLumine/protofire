@@ -156,7 +156,8 @@ Kernel::init()
   ├── console::init_global()                      # Print infrastructure
   ├── self.drivers.init()                         # Device discovery (includes virtio-gpu);
   │                                               #   each binding is recorded for `/dev`
-  ├── self.fs.lock().init_with_boot_disk()        # Root filesystem mount
+  ├── self.fs.lock().init_with_boot_disk()        # Zone mounts; the system zone is the
+  │                                               #   newest committed slot of its pair
   ├── maybe_init_swap()                           # Probe block devices for swap signature
   ├── arch::platform::enumerate_buses()           # PCI/PCIe, all three architectures
   ├── Network stack init                          # DHCP, IPv4; SLAAC armed, tick-driven

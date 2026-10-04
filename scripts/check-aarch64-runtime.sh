@@ -407,6 +407,11 @@ require_log_line "adastra shell (ring 3) builtins:"
 # left the start to it rather than starting them itself — that line is the
 # hand-off, and without it the services below would prove the kernel started
 # them, not init.
+# The system volume is a pair: the demo disk commits slot B as the newer
+# build, so a boot that takes "the newest committed slot" has to say B.
+# A boot that fell back to the first slot would read the same files and
+# still pass everything below, which is why this line is asserted.
+require_log_line "system: slot b active (build 2)"
 require_log_line "adastra init (ring 3): reading /system/rc.d"
 require_log_line "adastra init: declared "
 require_log_line "service(s) registered; leaving the start to init"

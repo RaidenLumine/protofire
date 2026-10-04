@@ -6,29 +6,6 @@ use alloc::string::String;
 
 use crate::Result;
 
-#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
-use super::super::block::BlockDevice;
-#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
-use super::super::block::MemoryBlockDevice;
-#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
-use super::super::demo::build_zone_image;
-#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
-use super::super::layout::StorageZone;
-#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
-use alloc::sync::Arc;
-
-#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
-pub(crate) fn build_demo_memory_device(
-    zone: StorageZone,
-    name: &str,
-) -> (StorageZone, Arc<dyn BlockDevice>) {
-    let image = build_zone_image(zone);
-    (
-        zone,
-        MemoryBlockDevice::new(name, image, zone.device_read_only()),
-    )
-}
-
 pub(crate) fn matches_mount(path: &str, mount: &str) -> bool {
     if path == mount {
         return true;

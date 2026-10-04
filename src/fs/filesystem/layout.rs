@@ -26,8 +26,6 @@ use super::super::simplefs::SimpleFsVolume;
 use super::super::vfs::NodeKind;
 use super::super::vfs::StaticFileSystem;
 use super::super::FileSystem;
-#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
-use super::path_helpers::build_demo_memory_device;
 use super::types::BootDiskLayoutSource;
 use super::types::ZoneDeviceBindings;
 
@@ -162,13 +160,20 @@ impl FileSystem {
 
     #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
     pub(crate) fn install_demo_memory_layout(&mut self) -> Result<()> {
-        let demo_devices: Vec<(StorageZone, Arc<dyn BlockDevice>)> = vec![
-            build_demo_memory_device(StorageZone::System, "xiu-system0"),
-            build_demo_memory_device(StorageZone::Apps, "xiu-apps0"),
-            build_demo_memory_device(StorageZone::Data, "xiu-data0"),
-        ];
+        // The demo disk is a real MBR-partitioned image, so the in-memory demo
+        // mounts it the way a boot disk is mounted: the same partition walk and
+        // the same system-slot selection.  Two layouts would be two things to
+        // keep in step — and the A/B pair would be exercised by neither.
+        let disk: Arc<dyn BlockDevice> = crate::fs::block::MemoryBlockDevice::new(
+            "xiu-demo0",
+            crate::fs::demo::build_demo_disk_image(),
+            false,
+        );
 
-        self.install_zone_devices(demo_devices)
+        match self.boot_disk_zone_devices_from_mbr(disk)? {
+            Some(devices) => self.install_zone_devices(devices),
+            None => Err(crate::Error::InvalidArgument),
+        }
     }
 
     pub(crate) fn install_boot_disk_layout(
@@ -195,11 +200,39 @@ impl FileSystem {
             return Ok(None);
         };
 
+        // The system zone is a *pair* when the disk carries two system volumes:
+        // the boot takes the newest committed one, and falls back to the other
+        // when that one is torn or was withdrawn.  A disk with one system
+        // volume — every disk before the pair existed — is booted from it.
+        let slots = crate::fs::system_image::system_slots(&boot_disk, true)?;
+        let Some(system) = crate::fs::system_image::select_system_slot(&slots) else {
+            return Ok(None);
+        };
+        crate::println!(
+            "[fs    ] system: slot {} active{}",
+            if system.slot == crate::fs::system_image::SYSTEM_SLOT_A {
+                "a"
+            } else {
+                "b"
+            },
+            system
+                .build
+                .map_or_else(alloc::string::String::new, |build| alloc::format!(
+                    " (build {})",
+                    build.generation
+                ))
+        );
+
         // Require every expected zone partition to exist; a partial partition
         // table should fall back as a whole instead of mixing layouts.
         let mut zone_devices = Vec::with_capacity(DEFAULT_ZONES.len());
 
         for zone in DEFAULT_ZONES {
+            if zone == StorageZone::System {
+                zone_devices.push((zone, system.device.clone()));
+                continue;
+            }
+
             let Some(partition) = partitions[zone.partition_slot()] else {
                 return Ok(None);
             };

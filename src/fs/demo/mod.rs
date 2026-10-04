@@ -28,7 +28,11 @@ use alloc::vec::Vec;
 use super::block::BLOCK_SIZE;
 use super::layout::StorageZone;
 use super::layout::DEFAULT_ZONES;
-use super::layout::DEMO_DISK_TOTAL_BLOCKS;
+use super::layout::DEMO_DISK_TOTAL_BLOCKS_WITH_SYSTEM_PAIR;
+use super::layout::DEMO_MBR_SYSTEM_PARTITION_TYPE;
+use super::layout::DEMO_SYSTEM_SLOT_A_GENERATION;
+use super::layout::DEMO_SYSTEM_SLOT_B_GENERATION;
+use super::layout::SYSTEM_SLOT_B_DISK_RANGE;
 use super::partition::write_mbr_partitions;
 use super::partition::MbrPartitionEntry;
 use super::partition::MbrPartitionTable;
@@ -102,7 +106,7 @@ pub fn build_zone_image(zone: StorageZone) -> Vec<u8> {
     let heap_before = crate::memory::heap::heap_model().remaining();
 
     let image = match zone {
-        StorageZone::System => content::system_zone_image(),
+        StorageZone::System => content::system_zone_image(DEMO_SYSTEM_SLOT_A_GENERATION),
         StorageZone::Apps => content::apps_zone_image(zone),
         StorageZone::Data => SimpleFs::build_image_with_headroom(
             zone.volume_label(),
@@ -161,12 +165,36 @@ fn build_fallback_zone_image(zone: StorageZone) -> Vec<u8> {
 }
 
 pub fn build_demo_disk_image() -> Vec<u8> {
-    let mut disk = vec![0_u8; DEMO_DISK_TOTAL_BLOCKS as usize * BLOCK_SIZE];
+    let mut disk = vec![0_u8; DEMO_DISK_TOTAL_BLOCKS_WITH_SYSTEM_PAIR as usize * BLOCK_SIZE];
     let mut partitions: MbrPartitionTable = [None; 4];
 
     // The demo disk uses a fixed partition layout so boot code and tests can
     // discover the same zones through MBR parsing without depending on a host
     // filesystem.
+    // The second system slot: the same content, committed as a newer build, so
+    // a demo boot exercises the pair — the boot takes the *newest committed*
+    // slot, and this is what makes that a fact rather than a claim.
+    let (system_b_start, system_b_blocks) = SYSTEM_SLOT_B_DISK_RANGE;
+    let mut system_b =
+        content::system_zone_image(DEMO_SYSTEM_SLOT_B_GENERATION).unwrap_or_default();
+    let system_b_capacity = system_b_blocks as usize * BLOCK_SIZE;
+    if system_b.len() > system_b_capacity {
+        crate::println!(
+            "[fs    ] demo second system slot exceeds its range ({} > {}); leaving it empty",
+            system_b.len(),
+            system_b_capacity
+        );
+        system_b.clear();
+    }
+    let system_b_offset = system_b_start as usize * BLOCK_SIZE;
+    disk[system_b_offset..system_b_offset + system_b.len()].copy_from_slice(&system_b);
+    partitions[crate::fs::system_image::SYSTEM_SLOT_B] = Some(MbrPartitionEntry::new(
+        false,
+        DEMO_MBR_SYSTEM_PARTITION_TYPE,
+        system_b_start,
+        system_b_blocks,
+    ));
+
     for zone in DEFAULT_ZONES {
         let mut zone_image = build_zone_image(zone);
         let (start_block, block_count) = zone.disk_range();
@@ -233,7 +261,7 @@ pub fn build_demo_disk_image_with_key(_key: &str) -> Vec<u8> {
 /// `/rc.d/defaults.toml` is rendered from the same list the kernel falls back
 /// to when a disk has no declarations, so a stock boot exercises the declared
 /// path and a disk without one still runs the same system.
-pub(crate) fn build_system_zone_from(init_elf: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn build_system_zone_from(init_elf: &[u8], generation: u64) -> Result<Vec<u8>> {
     let mut entries: alloc::vec::Vec<ImageEntry<'_>> = alloc::vec::Vec::new();
     for entry in SYSTEM_FILES {
         entries.push(*entry);
@@ -241,6 +269,18 @@ pub(crate) fn build_system_zone_from(init_elf: &[u8]) -> Result<Vec<u8>> {
     entries.push(ImageEntry {
         path: "/init.elf",
         data: init_elf,
+    });
+    // The build marker is what makes this volume a *committed* system slot: a
+    // boot takes the committed slot with the highest generation, so the pair
+    // can be switched and rolled back without copying a payload — see
+    // `crate::fs::system_image`.
+    let marker =
+        crate::fs::system_image::render_build_marker(crate::fs::system_image::SystemBuild {
+            generation,
+        });
+    entries.push(ImageEntry {
+        path: crate::fs::system_image::SYSTEM_BUILD_MARKER_PATH,
+        data: marker.as_bytes(),
     });
     // Written where the build has the demo at all: the declarations name the
     // prototype programs, and a build without them packages none to name.
@@ -280,11 +320,70 @@ mod tests {
     }
 
     #[test]
+    fn the_demo_disk_carries_the_system_pair_with_the_newer_slot_committed() {
+        // The demo boots through its own MBR layout, so this is the disk a
+        // boot actually reads: both system slots present, and B committed as
+        // the newer build, which is what makes the boot take it.
+        let disk: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> =
+            crate::fs::block::MemoryBlockDevice::new("demo-disk", build_demo_disk_image(), true);
+
+        let slots = crate::fs::system_image::system_slots(&disk, true).expect("slots");
+        assert_eq!(slots.len(), 2, "{:?}", slots.len());
+
+        let active = crate::fs::system_image::select_system_slot(&slots).expect("active");
+        assert_eq!(active.slot, crate::fs::system_image::SYSTEM_SLOT_B);
+        assert_eq!(
+            active.build,
+            Some(crate::fs::system_image::SystemBuild {
+                generation: DEMO_SYSTEM_SLOT_B_GENERATION
+            })
+        );
+
+        // The other zones are the disk's business too: the data zone carries
+        // the file every writable-zone test opens.
+        let partitions = crate::fs::partition::read_mbr_partitions(disk.as_ref())
+            .expect("read the MBR")
+            .expect("an MBR");
+        let data = partitions[StorageZone::Data.partition_slot()].expect("a data partition");
+        let data_device: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> =
+            crate::fs::block::BlockSliceDevice::new(
+                "data",
+                disk.clone(),
+                data.start_block,
+                data.block_count,
+                false,
+            );
+        let volume = crate::fs::simplefs::SimpleFs::open(data_device, true).expect("open data");
+        let volume = crate::fs::simplefs::SimpleFsVolume::new(volume);
+        use crate::fs::vfs::FileSystem as _;
+        assert!(
+            volume.lookup("/etc/.directory").is_ok(),
+            "the data zone lost its directories"
+        );
+
+        // ...and the image the builder makes for that zone, on its own.
+        let image_device: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> =
+            crate::fs::block::MemoryBlockDevice::new(
+                "data-image",
+                build_zone_image(StorageZone::Data),
+                false,
+            );
+        let image_volume = crate::fs::simplefs::SimpleFsVolume::new(
+            crate::fs::simplefs::SimpleFs::open(image_device, true).expect("open image"),
+        );
+        assert!(
+            image_volume.lookup("/etc/.directory").is_ok(),
+            "the data zone image itself lost its directories"
+        );
+    }
+
+    #[test]
     fn the_system_zone_ships_the_declarations_the_kernel_falls_back_to() {
         // The demo disk's `/system/rc.d` and the kernel's fallback are one
         // list in two forms.  If they were two lists, a boot would still work
         // — and would be running something the distribution never declared.
-        let image = build_system_zone_from(b"init").expect("build the system zone");
+        let image = build_system_zone_from(b"init", DEMO_SYSTEM_SLOT_A_GENERATION)
+            .expect("build the system zone");
         let text = read_from_zone(image, "/rc.d/defaults.toml");
         let text = core::str::from_utf8(&text).expect("the declarations are UTF-8");
 
@@ -296,7 +395,8 @@ mod tests {
 
     #[test]
     fn the_system_zone_still_carries_the_init_program_and_the_shared_files() {
-        let image = build_system_zone_from(b"init").expect("build the system zone");
+        let image = build_system_zone_from(b"init", DEMO_SYSTEM_SLOT_A_GENERATION)
+            .expect("build the system zone");
         assert_eq!(read_from_zone(image.clone(), "/init.elf"), b"init");
         assert!(!read_from_zone(image, "/runtime/README.txt").is_empty());
     }

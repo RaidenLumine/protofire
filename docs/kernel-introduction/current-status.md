@@ -623,6 +623,15 @@ control that are unusual in a hobby kernel.
   `/system/trusted-keys`; a seccomp (#129) syscall filter for process
   sandboxing; PAN/SMAP prevents kernel access to user memory outside an
   explicit window.
+- **The system volume is a pair**: a disk carries two system slots, each volume
+  carries a build marker (`/etc/build`), and a boot takes the committed slot
+  with the highest generation — falling back to the other when that one does
+  not open.  An update writes a whole volume image into the inactive slot and
+  refuses anything that is not a newer, committed system volume; rollback
+  removes one file (the winner's marker) and the machine boots the other slot
+  again, with the withdrawn build's payload untouched.  The demo disk ships
+  both slots, B committed as the newer build, so every runtime check boots the
+  pair's selection rather than a single-volume disk.
 - **Install format and atomic switch**: a package is a directory named
   `<app-id>@<version>` holding a launch manifest (paths relative to itself) and
   the program it names.  `user::program::install` checks the manifest's digest

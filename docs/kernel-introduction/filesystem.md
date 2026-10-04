@@ -136,11 +136,11 @@ atomic metadata updates.
 A disk is divided into zones, each being a SimpleFs volume:
 
 ```
-+--------+--------+--------+--------+--------+
-| MBR    | System |  Apps  |  Data  | Temp   |
-| sector |  (256) | (1536) | (2048) | (128)  |
-+--------+--------+--------+--------+--------+
-0        2048     2304     3840     5888     6016  blocks
++--------+--------+--------+--------+----------+
+| MBR    | System |  Apps  |  Data  | System B |
+| sector |  (256) |  (512) |  (512) |   (256)  |
++--------+--------+--------+--------+----------+
+0        2048     2304     2816     3328       3584  blocks
 ```
 
 `StorageZone` enum maps each zone to its root path, filesystem name, device path, mount flags, and
@@ -151,6 +151,12 @@ MBR partition type:
 | System | `/system` | 0xa1 | Read-only | Yes |
 | Apps | `/apps` | 0xa2 | Executable | Yes |
 | Data | `/data` | 0xa3 | User data | No |
+| System B (slot 3) | — | 0xa1 | Read-only | Yes |
+
+The second system slot carries no root of its own: it is the other half of a
+pair, and a boot takes whichever of the two is committed as the newer build
+(`src/fs/system_image.rs`).  `/tmp` is a fifth, separate mount built from an
+empty volume every boot, so a reboot starts with a clean scratch space.
 
 ### Inode and directory entry
 
@@ -219,8 +225,26 @@ deferred data writes.
 reads block 0, validates the 0x55AA signature, parses four partition entries at offset 446
 (each `MbrPartitionEntry`: `bootable`, `partition_type`, `start_block`, `block_count`), checks
 for overlap, and returns `Option<MbrPartitionTable>`. LBA fields are 32-bit (~2 TiB max).
-Partition types 0xa1/0xa2/0xa3 identify protofire zones. `write_mbr_partitions()` serialises to a
+Partition types 0xa1/0xa2/0xa3 identify protofire zones; slot 0 and slot 3 are both `0xa1`,
+because they are the two halves of the system pair. `write_mbr_partitions()` serialises to a
 sector buffer.
+
+### The system pair
+
+`/system` is mounted read-only, so its content cannot be updated in place: the unit that
+switches is the *volume*.  Each system volume carries a build marker at `/etc/build`
+(`format = "protofire-system-build-1"`, `generation = N`), and a slot is **committed** when its
+volume opens and carries that marker.  A boot takes the committed slot with the highest
+generation; a slot whose volume does not open — a torn write, a half-written image — is not a
+candidate, and a disk with no marker anywhere is taken from the first slot, which is what every
+disk built before the pair looks like.
+
+`system_image::install_system_build()` writes a whole system volume image into the slot that is
+not active, and refuses an image that is not a system volume, carries no marker, or is not newer
+than the active build — so a half-written image cannot commit itself and an update cannot
+silently go backwards.  `system_image::withdraw_active_build()` removes one file, the winner's
+marker, and the machine boots the other slot again: the payload of the withdrawn build stays
+where it is, which is what makes rollback cheap.
 
 ---
 

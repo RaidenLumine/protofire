@@ -238,6 +238,11 @@ require_log_line "[init  ] starting idle process"
 # the disk and asks for the services to be started.  These two lines are it
 # saying so, and they are the only evidence that the file the kernel spawned
 # did anything at all.
+# The system volume is a pair: the demo disk commits slot B as the newer
+# build, so a boot that takes "the newest committed slot" has to say B.
+# A boot that fell back to the first slot would read the same files and
+# still pass everything below, which is why this line is asserted.
+require_log_line "system: slot b active (build 2)"
 require_log_line "adastra init (ring 3): reading /system/rc.d"
 require_log_line "adastra init: declared "
 # The boot registered the declarations and left the start to that program

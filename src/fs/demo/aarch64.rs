@@ -201,7 +201,7 @@ fn apps_entries_aarch64<'a>(
 /// wrapped by the shared ELF builder: it reads `/system/rc.d` and asks for the
 /// services to be started.  A host that cannot carry an ELF payload section
 /// gets the exit-only stub below instead (see the x86_64 copy).
-pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
+pub(crate) fn system_zone_image(generation: u64) -> Result<Vec<u8>> {
     let payload = super::init_payload_aarch64::payload_bytes();
     let entry_offset = super::init_payload_aarch64::payload_entry_offset();
     #[cfg(any(target_os = "linux", target_os = "none"))]
@@ -221,5 +221,5 @@ pub(crate) fn system_zone_image() -> Result<Vec<u8>> {
             crate::user::program::DEMO_PROGRAM_MACHINE,
         )
     };
-    super::build_system_zone_from(&init.bytes)
+    super::build_system_zone_from(&init.bytes, generation)
 }
