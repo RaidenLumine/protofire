@@ -32,6 +32,8 @@
 - [ ] `docs/kernel-introduction/` updated (where applicable)
 - [ ] `docs/kernel-introduction/current-status.md` reflects the change
 - [ ] `docs/fmts/` updated if the change alters a convention
+- [ ] Large feature: a design document under `docs/rfcs/` is accepted, and the
+      code links it
 
 ## Attribution
 

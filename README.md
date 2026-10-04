@@ -196,6 +196,8 @@ make clippy
 - [`docs/fmts/`](docs/fmts/README.md) — the contributor specifications: code
   style, comments, `unsafe` discipline, testing, the syscall ABI contract, and
   commit messages.
+- [`docs/rfcs/`](docs/rfcs/README.md) — design documents for changes too large
+  to argue in a pull request, and the process that produces them.
 
 ## Contributing
 

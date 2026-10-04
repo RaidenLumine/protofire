@@ -44,6 +44,8 @@ The authoritative picture of what exists today is
   GICv3, the LPIs and the ITS that translates a device's message into one are
   all there.  What is left is spreading them — every collection points at the
   boot CPU — and a second driver that claims identities through it.
+  [RFC 0001](docs/rfcs/0001-spread-message-signalled-interrupts.md) is the
+  design for the first half.
 - **USB host (xHCI) completion.** The driver is present; close the remaining
   feature gaps so USB storage and HID work end-to-end.
 - **HDA audio to userspace.** Expose the Intel HD Audio engine (currently CORB/
@@ -89,8 +91,10 @@ The authoritative picture of what exists today is
   them together — the gate, the signature, and the rebuild a user can check the
   signature against.  What remains is the release around them: tagged 1.x
   versions and the first published key records.
-- **Governance.** Grow the maintainer team, adopt RFC-style design docs for
-  large features, and formalise the review process in [MAINTAINERS.md](MAINTAINERS.md).
+- **Governance.** Design documents for large changes live under
+  [`docs/rfcs/`](docs/rfcs/README.md), with a lifecycle that ends in a record
+  of what was decided and why; [MAINTAINERS.md](MAINTAINERS.md) names who
+  accepts one.  What remains is growing the maintainer team beyond one person.
 
 ---
 

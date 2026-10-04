@@ -64,6 +64,9 @@ Maintainers are expected to:
 - Enforce the [Code of Conduct](CODE_OF_CONDUCT.md).
 - Own the **syscall ABI**: append-only numbering, stability classification, and
   version bumps.
+- Accept design documents: decide the RFCs under
+  [`docs/rfcs/`](docs/rfcs/README.md) for the subsystems a maintainer owns, and
+  keep the accepted set as the project's record of what was decided and why.
 - Keep `make verify-p3` green and gate releases on it.
 - Maintain [ROADMAP.md](ROADMAP.md) and keep
   [docs/kernel-introduction/current-status.md](docs/kernel-introduction/current-status.md)
@@ -74,6 +77,9 @@ Maintainers are expected to:
 
 - Protofire is currently a **single-maintainer** project: pull requests are
   reviewed and merged by lumine.
+- A change large enough to need a design document must have an accepted RFC
+  ([`docs/rfcs/`](docs/rfcs/README.md)) before its code is reviewed; when the
+  module maintainers disagree about the design, the core maintainer decides.
 - Substantial changes must pass the full verification gate (`make verify-p3`)
   or the equivalent CI run before merge.
 - One logical change per PR; the review checklist is in the

@@ -398,7 +398,8 @@ MSI controller, NMI handling, and load balancing.
   into an LPI, and every collection this kernel maps points at the boot CPU's
   redistributor — so every message-signalled interrupt lands on one core.
   Spreading them needs a collection and an LPI pending table per CPU, which is
-  the next step rather than a property of the design.
+  the next step rather than a property of the design; the design for that step
+  is [RFC 0001](../rfcs/0001-spread-message-signalled-interrupts.md).
 - **MSI-X on RISC-V is one driver deep**: the AIA IMSIC is wired and a device's
   table is programmed, but only the virtio-net PCIe driver claims interrupts
   through it; the default machine has no IMSIC at all, so the PLIC remains the

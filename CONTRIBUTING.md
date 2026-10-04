@@ -33,12 +33,13 @@ See [README.md](README.md) for the complete build/test matrix.
 3. [Communication & Discussion](#communication--discussion)
 4. [Code Style & Conventions](#code-style--conventions)
 5. [Verification Gate](#verification-gate)
-6. [Adding or Modifying a Syscall](#adding-or-modifying-a-syscall)
-7. [Documentation](#documentation)
-8. [Submitting Changes](#submitting-changes)
-9. [Commit Message Guidelines](#commit-message-guidelines)
-10. [PR Review Process](#pr-review-process)
-11. [Contributor Recognition](#contributor-recognition)
+6. [Design Documents (RFCs)](#design-documents-rfcs)
+7. [Adding or Modifying a Syscall](#adding-or-modifying-a-syscall)
+8. [Documentation](#documentation)
+9. [Submitting Changes](#submitting-changes)
+10. [Commit Message Guidelines](#commit-message-guidelines)
+11. [PR Review Process](#pr-review-process)
+12. [Contributor Recognition](#contributor-recognition)
 
 ---
 
@@ -206,6 +207,27 @@ cargo clean --target x86_64-unknown-none -p protofire
 `cargo clean -p protofire` without `--target` only clears the host's
 artefacts, so a large move still needs the per-target one.
 
+---
+
+## Design Documents (RFCs)
+
+A change that is too large to argue inside a pull request needs a design
+document first. That is a change which adds or changes an interface between
+subsystems, starts a new subsystem or a new machine or bus path, changes a
+format that outlives a boot, or moves a policy a document states as settled.
+The documents live under [`docs/rfcs/`](docs/rfcs/README.md), which also
+states the process and the lifecycle; each one is a numbered Markdown file
+copied from [`docs/rfcs/0000-template.md`](docs/rfcs/0000-template.md).
+
+The point is not ceremony. The part of a design a diff cannot carry is the
+reasoning: which options were really considered and why the others lost. An
+RFC is opened as a pull request like any other document, and once it is
+decided the code that implements it refers back to it. If you think your
+change needs one, read [`docs/rfcs/README.md`](docs/rfcs/README.md) first —
+and if you are not sure, open an issue and ask.
+
+---
+
 ## Releasing
 
 A release is the source, the artifacts, and the ability to check one against
@@ -267,6 +289,9 @@ the review checklist — is in [`docs/fmts/syscall-abi.md`](docs/fmts/syscall-ab
 - Contributor specifications live under `docs/fmts/`; start at
   [`docs/fmts/README.md`](docs/fmts/README.md). If your change alters a
   convention, update the specification in the same PR.
+- Design documents live under `docs/rfcs/`; a change large enough to need one
+  (see [Design Documents (RFCs)](#design-documents-rfcs)) links the accepted
+  RFC from the code it implements.
 - What a document cites has to exist. A `src/...` path or a relative link must
   resolve; a bare filename must exist somewhere under `src/`, `tests/`, or the
   repository root; and a line-number citation (`<file>.rs:<line>`) is refused —
@@ -364,11 +389,14 @@ in [`docs/fmts/commits.md`](docs/fmts/commits.md).
 
 ## PR Review Process
 
-1. **Automated checks**: CI will automatically run `make verify-p0` and `make clippy` — all must pass.
-2. **Human review**: at least **one module maintainer** approval is required (see [MAINTAINERS.md](MAINTAINERS.md)).
-3. **Review timeline**: maintainers will provide initial feedback within **1 week**; if overdue, feel free to ping a core maintainer by @mention in the PR.
-4. **Updates after review**: after addressing feedback, you may either `git commit --amend` or add fixup commits — the final merge will squash them.
-5. **Merge**: a core maintainer or module maintainer will merge the PR into the `main` branch.
+1. **Scope**: a change large enough to need a design document needs one
+   accepted before the code is reviewed — see
+   [Design Documents (RFCs)](#design-documents-rfcs).
+2. **Automated checks**: CI will automatically run `make verify-p0` and `make clippy` — all must pass.
+3. **Human review**: at least **one module maintainer** approval is required (see [MAINTAINERS.md](MAINTAINERS.md)).
+4. **Review timeline**: maintainers will provide initial feedback within **1 week**; if overdue, feel free to ping a core maintainer by @mention in the PR.
+5. **Updates after review**: after addressing feedback, you may either `git commit --amend` or add fixup commits — the final merge will squash them.
+6. **Merge**: a core maintainer or module maintainer will merge the PR into the `main` branch.
 
 ---
 

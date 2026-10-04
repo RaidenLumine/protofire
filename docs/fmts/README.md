@@ -31,6 +31,8 @@ Supporting context, if you have not read it yet:
   architecture overview and subsystem map
 - [docs/kernel-introduction/current-status.md](../kernel-introduction/current-status.md)
   — what is implemented, and the known gaps (a good source of work)
+- [docs/rfcs/](../rfcs/README.md) — how a change too large for a pull request
+  gets a design document, and the decisions those documents record
 
 ---
 
