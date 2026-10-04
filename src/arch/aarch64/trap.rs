@@ -755,6 +755,7 @@ fn handle_irq(frame: &mut TrapFrame) {
             } else if intid == crate::arch::aarch64::smp::SGI_TLB_SHOOTDOWN as u32 {
                 crate::arch::aarch64::smp::handle_tlb_shootdown_sgi();
             }
+            deliver_consumed_tick(frame, pending_tick);
             advance_past_idle_wfi(frame);
             return;
         }
@@ -774,6 +775,7 @@ fn handle_irq(frame: &mut TrapFrame) {
             if !super::its::dispatch_lpi(intid) {
                 crate::kernel::irq_stats::record_spurious();
             }
+            deliver_consumed_tick(frame, pending_tick);
             advance_past_idle_wfi(frame);
             return;
         }
@@ -799,8 +801,7 @@ fn handle_irq(frame: &mut TrapFrame) {
                 }
             }
 
-            let preempted = crate::kernel::process::on_timer_tick(ticks);
-            log_user_exception_handler_preempt_resume(frame, ticks, preempted);
+            deliver_consumed_tick(frame, Some(ticks));
             advance_past_idle_wfi(frame);
         }
         exception::IrqDisposition::WarnClaimedInterrupt { interrupt_id } => {
@@ -818,6 +819,24 @@ fn handle_irq(frame: &mut TrapFrame) {
             );
         }
     }
+}
+
+/// Run the scheduler's half of a tick that was already consumed.
+///
+/// The tick is consumed before an interrupt is classified: the timer has to be
+/// reprogrammed whether or not anything else arrived, and that is what
+/// `prepare_pending_interrupt` does.  The *delivery* is a separate thing, and a
+/// path that returns early without it drops a tick — an SGI and an LPI both
+/// have a higher priority than the timer, so both of the paths above can
+/// arrive here holding one.
+fn deliver_consumed_tick(frame: &mut TrapFrame, tick: Option<u64>) {
+    let Some(ticks) = tick else {
+        return;
+    };
+
+    crate::kernel::irq_stats::record_irq(super::timer::TIMER_INTERRUPT_ID);
+    let preempted = crate::kernel::process::on_timer_tick(ticks);
+    log_user_exception_handler_preempt_resume(frame, ticks, preempted);
 }
 
 fn log_user_exception_handler_preempt_resume(frame: &TrapFrame, ticks: u64, preempted: bool) {

@@ -689,7 +689,16 @@ pub(crate) fn init_lpis() -> bool {
         pending,
         id_bits,
     });
-    enable_lpis_for_current_cpu()
+
+    // The state and the hardware go together: until this CPU's redistributor
+    // is actually pointed at the tables, a claim that thinks an LPI is
+    // deliverable would arm a device that could never signal.  Leaving the
+    // state in place would be exactly that, so a failure takes it back out.
+    if !enable_lpis_for_current_cpu() {
+        *LPI_STATE.lock() = None;
+        return false;
+    }
+    true
 }
 
 /// Point this core's redistributor at the LPI tables and turn LPIs on.
@@ -733,14 +742,20 @@ pub(crate) fn set_lpi_enabled(lpi: u32, enabled: bool) -> bool {
     let Some(index) = lpi.checked_sub(LPI_BASE).map(|offset| offset as usize) else {
         return false;
     };
-    if index >= LPI_WINDOW {
-        return false;
-    }
 
     let state = LPI_STATE.lock();
     let Some(state) = state.as_ref() else {
         return false;
     };
+
+    // Two bounds, and both matter: the window is what this kernel hands out,
+    // and the table is what the byte is written into.  They agree today —
+    // the machine's LPI space is far larger than the window — and checking
+    // both is what keeps a machine that reports a smaller space from turning
+    // a claim into an out-of-bounds write.
+    if index >= LPI_WINDOW || index >= state.config.len() {
+        return false;
+    }
 
     let value = if enabled { LPI_CONFIG_ENABLED } else { 0 };
     // The byte is inside the configuration table `state` owns, whose

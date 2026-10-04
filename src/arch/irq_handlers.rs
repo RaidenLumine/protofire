@@ -79,7 +79,12 @@ pub fn claim(
     }
 
     let mut handlers = IRQ_HANDLERS.lock();
-    let last_first = last - (count - 1);
+    // The last identity a run of `count` could start at.  A count larger than
+    // the range itself is a request no window can honour, and the subtraction
+    // is where that shows: `last` is an identity, not a length.
+    let Some(last_first) = last.checked_sub(count - 1) else {
+        return Err(Error::NoSpace);
+    };
     let mut candidate = first;
     while candidate <= last_first {
         let free = (candidate..candidate + count)
@@ -159,6 +164,23 @@ mod tests {
         // Nothing was written by the failed claim: the next run still starts
         // straight after the last successful one.
         assert_eq!(claim(0, 120, 130, 1, handler).unwrap(), 123);
+    }
+
+    #[test]
+    fn a_run_longer_than_its_window_is_refused_not_wrapped() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let handler = counting_handler(&counter);
+
+        // `last` is an identity, so a run of ten from a window that ends at
+        // two is a request that cannot be honoured — and the arithmetic that
+        // decides it must say so rather than wrap around a `u32`.
+        assert!(claim(0, 1, 2, 10, handler.clone()).is_err());
+        // The same shape at the window's own end: `last` is what the window
+        // allows, not what the caller asked for.
+        assert!(claim(0, 250, 0xffff_ffff, 20, handler.clone()).is_err());
+        // Nothing was written by either refusal.
+        assert!(!is_registered(0, 1));
+        assert!(!is_registered(0, 250));
     }
 
     #[test]

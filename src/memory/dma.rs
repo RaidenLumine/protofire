@@ -92,7 +92,7 @@ impl DmaBuffer {
         let allocation = global_mut()?.allocate_frames(allocated_frames)?;
         let allocation_phys = phys_addr_of(allocation as usize)?;
 
-        let phys = (allocation_phys + alignment - 1) & !(alignment - 1);
+        let phys = aligned_start(allocation_phys, alignment);
         let ptr = (allocation as usize + (phys - allocation_phys)) as *mut u8;
 
         // Zero what the caller will see, so stale data never reaches a device.
@@ -167,6 +167,41 @@ impl Drop for DmaBuffer {
             if let Some(mut manager) = global_mut() {
                 manager.deallocate_frames(self.allocation, self.allocated_frames);
             }
+        }
+    }
+}
+
+/// The first address at or after `base` that `alignment` can name.
+///
+/// The alignment is a device's requirement, not a convenience: a register
+/// that holds only the high bits of an address can name one address per
+/// `alignment` bytes, and this is which of them a buffer starting at `base`
+/// is given.  `base` itself when it is already aligned, and `alignment` must
+/// be a power of two.
+fn aligned_start(base: usize, alignment: usize) -> usize {
+    base.div_ceil(alignment) * alignment
+}
+
+#[cfg(test)]
+mod tests {
+    use super::aligned_start;
+    use super::FRAME_SIZE;
+
+    #[test]
+    fn an_aligned_base_is_its_own_start() {
+        assert_eq!(aligned_start(0, FRAME_SIZE), 0);
+        assert_eq!(aligned_start(0x1_0000, 0x1_0000), 0x1_0000);
+    }
+
+    #[test]
+    fn an_unaligned_base_rounds_up_within_one_alignment() {
+        for offset in [1, 5, FRAME_SIZE - 1, 0x8000, 0xffff] {
+            let base = 0x1_0000 + offset;
+            assert_eq!(aligned_start(base, 0x1_0000), 0x2_0000);
+            // The skip a caller pays for is strictly less than one alignment,
+            // which is what makes the slack `allocate_aligned` reserves
+            // enough.
+            assert!(aligned_start(base, 0x1_0000) - base < 0x1_0000);
         }
     }
 }

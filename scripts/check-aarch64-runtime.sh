@@ -601,8 +601,17 @@ require_log_line "2 redistributor frame(s)"
 require_log_line "[irq   ] GICv3: LPIs 8192..8447 enabled on the boot CPU"
 require_log_line "[its   ] MSI-X on 00:01.0 delivers LPI "
 require_log_line "[virtio-net] device MSI: irq "
+# The boot walks the same path once by itself, before any driver depends on
+# it: an event the ITS translates for a DeviceID no device uses, delivered as
+# the LPI no device can be given.  It is what makes a quiet machine fail here
+# rather than in a driver that waits for an interrupt that never comes.
+require_log_line "[its   ] self-test delivered LPI 8192"
+require_log_absent_line "[its   ] self-test could not be set up"
 require_log_absent_line "no ITS on this machine"
 require_log_absent_line "not programmed"
+# An interrupt the trap claimed and did not recognise is the shape of a
+# delivery path that half works, which is worse than one that does not.
+require_log_absent_line "aarch64 irq intid="
 require_log_line "[smp   ] 2 CPUs total, 1 AP(s)"
 require_log_line "[smp   ] AP cpu_id=1 online"
 require_log_line "[pci   ] AArch64 PCIe ECAM mapped PA="

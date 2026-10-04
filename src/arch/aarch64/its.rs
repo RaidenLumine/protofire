@@ -122,6 +122,7 @@ const COMMAND_MAPC: u8 = 0x09;
 const COMMAND_MAPTI: u8 = 0x0a;
 const COMMAND_INV: u8 = 0x0c;
 const COMMAND_SYNC: u8 = 0x05;
+const COMMAND_INT: u8 = 0x03;
 
 /// Events one device's translation table holds.
 ///
@@ -184,6 +185,18 @@ fn command_sync(target: u64) -> Command {
     command
 }
 
+/// Ask the ITS to translate an event as if its device had written it.
+///
+/// The command exists for exactly this: software wants to raise a
+/// message-signalled interrupt without a device, and the ITS runs the same
+/// translation and the same delivery a real write would.
+fn command_int(device_id: u32, event_id: u32) -> Command {
+    let mut command = [0_u64; 4];
+    command[0] = COMMAND_INT as u64 | ((device_id as u64) << 32);
+    command[1] = event_id as u64;
+    command
+}
+
 /// The target field a `MAPC` — and the `SYNC` that waits for it — carries for
 /// one redistributor.
 ///
@@ -241,6 +254,19 @@ const COLLECTION_CPU: u32 = 0;
 /// would live if this machine needed one.
 const FIRST_DEVICE_LPI: u32 = gicv3::LPI_BASE + 1;
 const LAST_DEVICE_LPI: u32 = gicv3::LPI_LAST - 1;
+
+/// The LPI the boot's own delivery test uses.
+///
+/// It is the registry's first slot, and no device is ever given it — device
+/// identities start at [`FIRST_DEVICE_LPI`] — so the message this test leaves
+/// behind can never be mistaken for one a driver is waiting on.
+const SELF_TEST_LPI: u32 = gicv3::LPI_BASE;
+
+/// The DeviceID the self-test maps for itself.
+///
+/// PCIe bus 0, device 0, function 0 is the host bridge: it has no MSI-X and
+/// claims nothing, so the mapping cannot collide with a device's.
+const SELF_TEST_DEVICE_ID: u32 = 0;
 
 /// The frames a byte count needs, rounded up.
 fn frames_for(bytes: usize) -> usize {
@@ -437,7 +463,44 @@ fn build(base: usize) -> Result<ItsState, Error> {
     let target = gicv3::rd_base_for_cpu(COLLECTION_CPU).ok_or(Error::DeviceError)?;
     state.map_collection(target)?;
 
+    // Nothing has claimed an MSI yet, and a machine whose devices stay quiet
+    // would carry this path untested until one did — so the boot walks it
+    // once itself.
+    let collection = collection_target(state.base, target);
+    if !self_test(&mut state, collection) {
+        crate::println!("[its   ] self-test could not be set up");
+    }
+
     Ok(state)
+}
+
+/// Walk the message path once, through the ITS, at boot.
+///
+/// The kernel registers an identity no device can own, maps it to a DeviceID
+/// no device uses, and has the ITS translate an event for it — the same
+/// translation and delivery a device's write gets.  The LPI that arrives is
+/// taken by the trap later and answered by the handler here, so what the boot
+/// proves is the whole chain: table, translation, LPI, trap, handler.  The
+/// message is left pending on purpose: it is the trap's half that has to run.
+fn self_test(state: &mut ItsState, target: u64) -> bool {
+    let handler: IrqHandler = Arc::new(|identity| {
+        crate::println!("[its   ] self-test delivered LPI {}", identity);
+    });
+
+    if irq_handlers::claim(gicv3::LPI_BASE, SELF_TEST_LPI, SELF_TEST_LPI, 1, handler).is_err() {
+        return false;
+    }
+    if !gicv3::set_lpi_enabled(SELF_TEST_LPI, true) {
+        return false;
+    }
+    if state
+        .map_device(SELF_TEST_DEVICE_ID, SELF_TEST_LPI, 1, target)
+        .is_err()
+    {
+        return false;
+    }
+
+    state.submit(command_int(SELF_TEST_DEVICE_ID, 0)).is_ok() && state.sync(target).is_ok()
 }
 
 /// What a `GITS_BASER<n>` reports about the table it can hold.
