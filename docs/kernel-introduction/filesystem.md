@@ -85,7 +85,7 @@ The built-in virtual mounts are:
 | Mount path | Device | Backend |
 |---|---|---|
 | `/system` | `/dev/protofire-system` | SimpleFs (read-only) |
-| `/apps` | `/dev/protofire-apps` | SimpleFs (exec) |
+| `/apps` | `/dev/protofire-apps` | SimpleFs (exec; writable by its owner, which is what an install is) |
 | `/data` | `/dev/protofire-data` | SimpleFs (user data) |
 | `/tmp` | `/dev/protofire-temp` | SimpleFs (writable scratch) |
 | `/proc` | — | StaticFileSystem |
