@@ -58,6 +58,25 @@ fn guest_security_token_can_mutate_guest_data_but_not_system_tree() {
 }
 
 #[test]
+fn guest_security_token_cannot_write_the_app_zone() {
+    // The install syscall has no policy of its own: what stops a program from
+    // installing into `/apps` is the zone's rules, so those rules are the
+    // thing that has to say no.
+    let mut fs = FileSystem::new();
+    fs.init();
+    let guest = guest_security_token();
+
+    assert!(matches!(
+        fs.replace_file_contents_normalized_with_security_token(
+            "/apps/packages/logger/1.0.0/logger.elf",
+            b"payload",
+            guest,
+        ),
+        Err(Error::PermissionDenied)
+    ));
+}
+
+#[test]
 fn guest_security_token_can_rename_and_remove_within_guest_data_tree() {
     let mut fs = FileSystem::new();
     fs.init();

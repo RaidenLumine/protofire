@@ -142,3 +142,22 @@ impl StorageZone {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::StorageZone;
+
+    #[test]
+    fn only_the_data_zone_is_writable() {
+        // Where a machine writes is a property of the zone, and it is the one
+        // every zone device is cut with (see
+        // `crate::fs::filesystem::layout`): `/system` and `/apps` are read-only
+        // at the block device, so no token and no code path can write them at
+        // runtime — the install path writes its own zone through the
+        // *filesystem*, under the caller's token, and that is the exception
+        // the zone exists for.
+        assert!(StorageZone::System.device_read_only());
+        assert!(StorageZone::Apps.device_read_only());
+        assert!(!StorageZone::Data.device_read_only());
+    }
+}

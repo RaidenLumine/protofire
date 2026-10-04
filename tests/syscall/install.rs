@@ -35,18 +35,24 @@ fn test_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// A filesystem with a writable app zone and a staged package on the data zone.
-fn install_fixture() -> &'static KernelMutex<FileSystem> {
+/// A filesystem with the zones the install path uses and a staged package on
+/// the data zone.
+///
+/// `apps_read_only` is the mount the machine under test would have: the demo's
+/// app zone is a read-only device, and a test that wants the install to reach
+/// the app zone has to give it one it can write.
+fn fixture(apps_read_only: bool) -> &'static KernelMutex<FileSystem> {
     // Leaked deliberately: the global keeps the pointer for the life of the
     // test binary, so freeing it would leave the slot advertising storage that
     // no longer exists.
     let fs = Box::leak(Box::new(KernelMutex::new(FileSystem::new())));
     {
         let mut fs_guard = fs.lock();
-        for (name, path) in [("apps", "/apps"), ("data", "/data")] {
+        for (name, path, read_only) in [("apps", "/apps", apps_read_only), ("data", "/data", false)]
+        {
             let image = SimpleFs::build_image_with_headroom(name, &[], 64, 128, 512)
                 .expect("build a writable zone");
-            let device = MemoryBlockDevice::new(name, image, false);
+            let device = MemoryBlockDevice::new(name, image, read_only);
             let volume = SimpleFs::open(device, true).expect("open the zone");
             fs_guard.register(name, Arc::new(SimpleFsVolume::new(volume)));
             fs_guard
@@ -86,10 +92,13 @@ fn install_fixture() -> &'static KernelMutex<FileSystem> {
     fs
 }
 
-/// Dispatch the install syscall with `token` as the calling process's.
-fn install_as(token: SecurityToken, path: &str) -> Result<usize, Error> {
+/// Dispatch the install syscall with `token` as the caller's.
+///
+/// The fixture is built under the test lock, because building it replaces the
+/// global filesystem the syscall reaches through.
+fn install_on(apps_read_only: bool, token: SecurityToken, path: &str) -> Result<usize, Error> {
     let _guard = test_lock();
-    let fs = install_fixture();
+    let fs = fixture(apps_read_only);
 
     let scheduler = Box::new(Scheduler::new());
     let _thread = scheduler.spawn_named_with_security_token("install", token, 0x1000);
@@ -119,6 +128,11 @@ fn install_as(token: SecurityToken, path: &str) -> Result<usize, Error> {
     }
 
     result
+}
+
+/// The same, against a filesystem with a writable app zone.
+fn install_as(token: SecurityToken, path: &str) -> Result<usize, Error> {
+    install_on(false, token, path)
 }
 
 /// Read a whole file through the facade.
@@ -161,5 +175,17 @@ fn the_install_syscall_refuses_a_package_that_is_not_there() {
     assert_eq!(
         install_as(SecurityToken::system(), "/data/downloads/nothing@1.0.0"),
         Err(Error::NotFound)
+    );
+}
+
+#[test]
+fn an_install_into_a_read_only_app_zone_is_refused() {
+    // The zone is a block device that answers writes with a refusal, and the
+    // install path is no exception to it: what a machine can install into is
+    // what its app zone allows, and a read-only one allows nothing — not even
+    // the system token the install runs as.
+    assert_eq!(
+        install_on(true, SecurityToken::system(), SOURCE),
+        Err(Error::PermissionDenied)
     );
 }
