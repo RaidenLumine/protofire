@@ -111,7 +111,8 @@ set -- \
 shell_commands() {
     sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
         'help' 'echo ring3-shell-answered' \
-        'cat /service/shell/origin' 'cat /service/shell/sha256'
+        'cat /service/shell/origin' 'cat /service/shell/sha256' \
+        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category'
 }
 
 printf 'riscv64 runtime check: 1 cpu, timeout %ss, qemu %s\n' \
@@ -254,6 +255,12 @@ require_log_exact_line "ring3-shell-answered"
 # registry lost track of where its services came from cannot print them.
 require_log_exact_line "/system/rc.d/defaults.toml"
 require_log_matching '^[0-9a-f]{64}$'
+# The device ledger, read back the same way: the driver that owns the NIC and
+# what kind of device it is.  The boot line says the ledger recorded it; these
+# two say a ring-3 program can see it through `/dev`.
+require_log_line "owned by virtio-net (network)"
+require_log_exact_line "virtio-net"
+require_log_exact_line "network"
 # `/system/init.elf` is a program on this target too: it reads the declarations
 # off the disk and asks for the services to be started, and says so.  The boot
 # left the start to it rather than starting them itself — that line is the

@@ -4,6 +4,7 @@
 //! dispatch, and devfs visibility in one place.
 
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use crate::drivers::keyboard;
 use crate::drivers::serial;
@@ -13,6 +14,7 @@ use crate::fs::NodeKind;
 use crate::kernel::console;
 use crate::kernel::handle_rights::HANDLE_RIGHT_READ;
 use crate::kernel::handle_rights::HANDLE_RIGHT_WRITE;
+use crate::kernel::sync::Mutex;
 use crate::util::debug;
 use crate::Error;
 use crate::Result;
@@ -392,6 +394,116 @@ pub fn device_descriptor(name: &str) -> Option<&'static DeviceDescriptor> {
     DEVICE_DESCRIPTORS
         .iter()
         .find(|descriptor| descriptor.name == name)
+}
+
+// ── The ledger of devices a driver bound ────────────────────────────────────
+//
+// The descriptors above are the kernel's *own* devices: fixed names, handlers
+// known at compile time.  What a probe finds is a different thing — a device
+// the machine has, claimed by a driver — and there is nowhere compile-time to
+// put it.  This is the ledger for those, and `/dev` is its projection.
+
+/// A device a driver bound, as `/dev` reports it.
+///
+/// The record carries what the machine can say about the device today: who owns
+/// it, what kind it is, and where it was found.  A device with no I/O interface
+/// yet is *described* rather than served, which is why `/dev` shows it as a
+/// directory of facts rather than as a node a program can read from — the
+/// difference between the two is visible in the shape, not just in the docs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceRecord {
+    /// The name this record is reachable at under `/dev`.
+    ///
+    /// The device's own name, suffixed when a second device reports the same
+    /// one: a path has to be unique, and a device whose driver gives it no
+    /// distinct name has only that name to go on.
+    pub name: String,
+    /// The device's own name, as the driver or the firmware gave it.
+    pub device: String,
+    /// The driver that owns the device, when one bound.
+    pub driver: Option<String>,
+    /// What kind of device it is, from the driver's category.
+    pub category: &'static str,
+    /// The bus address the device was found at, when it has one.
+    pub bus: Option<usize>,
+}
+
+static DEVICE_RECORDS: Mutex<Vec<DeviceRecord>> = Mutex::new(Vec::new());
+
+/// Record a device a driver bound, returning the name it is reachable at.
+///
+/// Called by the driver manager where the binding happens — the device-tree
+/// probe and the boot-device probes — so the ledger is a record of what was
+/// actually claimed rather than of what was offered.
+pub fn record_device(
+    device: &str,
+    driver: Option<&str>,
+    category: &'static str,
+    bus: Option<usize>,
+) -> String {
+    let mut records = DEVICE_RECORDS.lock();
+
+    let mut name = String::from(device);
+    let mut suffix = records.len() + 1;
+    while records.iter().any(|record| record.name == name) {
+        name = alloc::format!("{}-{}", device, suffix);
+        suffix += 1;
+    }
+
+    records.push(DeviceRecord {
+        name: name.clone(),
+        device: String::from(device),
+        driver: driver.map(String::from),
+        category,
+        bus,
+    });
+
+    // One line per device, from the one place that knows them all: a boot says
+    // what it found and who owns it, and `/dev` says the same thing to a
+    // program.
+    crate::println!(
+        "[device] {} owned by {} ({})",
+        name,
+        driver.unwrap_or("(none)"),
+        category
+    );
+
+    name
+}
+
+/// Every device a driver has bound, in the order it was found.
+pub fn device_records() -> Vec<DeviceRecord> {
+    DEVICE_RECORDS.lock().clone()
+}
+
+/// Return one recorded device, by the name `/dev` reaches it at.
+pub fn device_record(name: &str) -> Option<DeviceRecord> {
+    DEVICE_RECORDS
+        .lock()
+        .iter()
+        .find(|record| record.name == name)
+        .cloned()
+}
+
+/// Forget every recorded device.
+///
+/// The ledger is process-global, so a host test that records devices changes
+/// what the next test sees.  Only tests should call this.
+pub fn reset_device_records_for_tests() {
+    DEVICE_RECORDS.lock().clear();
+}
+
+/// Serialise the tests that use the ledger, starting from an empty one.
+///
+/// The tests that *write* the ledger are the driver manager's and the ones
+/// that *read* it are devfs's, so both have to share one lock: a device
+/// recorded by one test is exactly what the other would see.
+#[cfg(test)]
+pub(crate) fn lock_device_records_for_tests() -> crate::kernel::sync::MutexGuard<'static, ()> {
+    static DEVICE_RECORD_TEST_LOCK: Mutex<()> = Mutex::new(());
+    let guard = DEVICE_RECORD_TEST_LOCK.lock();
+    reset_device_records_for_tests();
+    guard
 }
 
 /// Every device the kernel provides, in registry order.

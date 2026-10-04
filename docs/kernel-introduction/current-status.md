@@ -59,6 +59,13 @@ input, mostly verified under QEMU.
   backends; NVMe uses MSI-X for interrupt-driven completion.
 - **Network**: the VirtIO network driver is interrupt-driven and multi-queue
   ready.
+- **Device ledger**: every device a probe binds is recorded with the driver that
+  owns it, and `/dev` reports the same three facts to a program — `driver`,
+  `category`, `bus`, or all of them through `describe`.  The kernel's own
+  devices (`console`, `null`, `serial0`, …) stay nodes a program can open,
+  because they have handlers; a discovered device with no I/O interface yet is
+  a directory of facts instead, so the difference between "served" and
+  "described" is visible in the shape rather than only in the docs.
 - **Display**: VirtIO GPU provides accelerated 2D mode-setting on the VirtIO
   MMIO transport, integrated directly with the framebuffer console (no separate
   bochs-display device); the **VIRGL 3D userspace interface** (syscalls
@@ -154,7 +161,7 @@ below.
 |-----------|-----|---------|
 | SimpleFs core (V2/V3) | Full read/write, CRC32C-checked, two-phase commit, V3 persistent security descriptors | Recovery is exercised by the in-tree fault matrix rather than a searching fuzzer; no real-disk validation |
 | TmpFs | In-memory, full read/write, xattrs | Contents do not survive a reboot |
-| DevFs | Device nodes listed from the device registry | Read-only; node metadata is the registry's, not the filesystem's |
+| DevFs | The kernel's own devices as nodes, and every device a probe bound as a directory of facts (`driver`, `category`, `bus`) | Read-only; node metadata is the registry's, not the filesystem's; a discovered device has no I/O interface of its own yet |
 | ProcFs | Process and runtime state as read-only files | Read-only view; process control stays in syscalls |
 | Unicode layer | Unicode 15.1 NFC/NFD, case folding, GB18030, OEM code pages | Tables are fixed at Unicode 15.1; there is no locale database |
 

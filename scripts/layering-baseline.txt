@@ -58,6 +58,11 @@
 # rather than a new direction: the service manager has always read the
 # declarations it runs.
 #
+# `device` names `sync` because the device ledger is a registry, and the boot
+# names `device` because that is where the drivers' findings are published —
+# `drivers` does not name `device`, which would close a cycle with the
+# `device` -> `drivers` row the virtual devices' handlers come from.
+#
 # from                         to                           count
 audit                        fs                           6
 audit                        handle_rights                2
@@ -69,6 +74,7 @@ console                      sync                         1
 device                       drivers                      4
 device                       fs                           5
 device                       handle_rights                2
+device                       sync                         2
 drivers                      block                        10
 drivers                      memory                       3
 drivers                      network                      2
@@ -103,6 +109,7 @@ memory                       smp                          1
 memory                       topology                     1
 mod                          audit                        6
 mod                          block                        1
+mod                          device                       1
 mod                          drivers                      1
 mod                          fs                           15
 mod                          memory                       6

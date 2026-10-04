@@ -154,7 +154,8 @@ Kernel::init()
   ├── prepare_arch_paging()                       # Runtime kernel page tables
   ├── memory::arch::check_kernel_map_coverage()   # The tables describe what they claim
   ├── console::init_global()                      # Print infrastructure
-  ├── self.drivers.init()                         # Device discovery (includes virtio-gpu)
+  ├── self.drivers.init()                         # Device discovery (includes virtio-gpu);
+  │                                               #   each binding is recorded for `/dev`
   ├── self.fs.lock().init_with_boot_disk()        # Root filesystem mount
   ├── maybe_init_swap()                           # Probe block devices for swap signature
   ├── arch::platform::enumerate_buses()           # PCI/PCIe, all three architectures

@@ -62,6 +62,7 @@ pub use crate::arch::machine_devices::pcspkr;
 /// USB mass storage class driver (BOT + SCSI).
 pub mod usb_msd;
 
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
@@ -144,7 +145,10 @@ pub struct DeviceNode {
     /// Unique device identifier.
     pub device_id: usize,
     /// Human-readable name.
-    pub name: &'static str,
+    ///
+    /// Owned rather than borrowed: a device's name comes from the driver or the
+    /// firmware that found it, and neither is `'static`.
+    pub name: String,
     /// Driver category hint.
     pub category: DriverCategory,
     /// Name of the bound driver, if any.
@@ -176,7 +180,7 @@ impl DeviceManager {
     /// Register a newly discovered device and try to bind a driver to it.
     pub fn register_device(
         &mut self,
-        name: &'static str,
+        name: &str,
         category: DriverCategory,
         bus_data: Option<usize>,
         drivers: &[Arc<dyn Driver>],
@@ -194,9 +198,35 @@ impl DeviceManager {
 
         self.devices.push(DeviceNode {
             device_id,
-            name,
+            name: String::from(name),
             category,
             driver_name,
+            bus_data,
+        });
+        device_id
+    }
+
+    /// Record a device a probe bound, without probing again.
+    ///
+    /// [`register_device`](Self::register_device) is for the path where the
+    /// manager itself asks every driver; this is for the path where a probe has
+    /// already answered and the answer is a fact — a device-tree node bound to
+    /// its driver, or the disk the boot will run on.
+    pub fn record_bound(
+        &mut self,
+        name: &str,
+        category: DriverCategory,
+        bus_data: Option<usize>,
+        driver_name: &'static str,
+    ) -> usize {
+        let device_id = self.next_device_id;
+        self.next_device_id += 1;
+
+        self.devices.push(DeviceNode {
+            device_id,
+            name: String::from(name),
+            category,
+            driver_name: Some(driver_name),
             bus_data,
         });
         device_id
@@ -323,23 +353,22 @@ impl DriverManager {
         // Prefer ATA for boot-disk discovery; fall back to AHCI (real hardware
         // SATA), then VirtIO (QEMU virt machines), then NVMe (modern PCIe SSD),
         // then USB mass storage (usb-storage devices on an xHCI bus).
-        self.boot_disk = if ata_initialized {
-            crate::arch::ata::probe_boot_disk()
+        if ata_initialized {
+            self.note_boot_disk(crate::arch::ata::probe_boot_disk(), "ata");
         } else {
             println!("[driver] skipping ATA boot-disk probe because ATA init failed");
-            None
-        };
-        if self.boot_disk.is_none() {
-            self.boot_disk = crate::arch::ata::ahci_probe_boot_disk();
         }
         if self.boot_disk.is_none() {
-            self.boot_disk = virtio::probe_boot_disk();
+            self.note_boot_disk(crate::arch::ata::ahci_probe_boot_disk(), "ahci");
         }
         if self.boot_disk.is_none() {
-            self.boot_disk = nvme::probe_boot_disk();
+            self.note_boot_disk(virtio::probe_boot_disk(), "virtio");
         }
         if self.boot_disk.is_none() {
-            self.boot_disk = crate::arch::machine_devices::usb_boot_disk();
+            self.note_boot_disk(nvme::probe_boot_disk(), "nvme");
+        }
+        if self.boot_disk.is_none() {
+            self.note_boot_disk(crate::arch::machine_devices::usb_boot_disk(), "usb-msd");
         }
         if let Some(disk) = &self.boot_disk {
             println!(
@@ -354,8 +383,15 @@ impl DriverManager {
         // Probe for a VirtIO network device so the native network stack can
         // be brought up during the rest of kernel initialisation.
         self.boot_net_device = virtio_net::probe_boot_net();
-        if self.boot_net_device.is_some() {
+        if let Some(net) = &self.boot_net_device {
             println!("[driver] detected boot network device");
+            let device_name = String::from(net.name());
+            self.device_manager.record_bound(
+                &device_name,
+                DriverCategory::Network,
+                None,
+                "virtio-net",
+            );
         }
 
         self.initialized = true;
@@ -384,12 +420,26 @@ impl DriverManager {
     /// Register a discovered device and attempt driver binding.
     pub fn register_device(
         &mut self,
-        name: &'static str,
+        name: &str,
         category: DriverCategory,
         bus_data: Option<usize>,
     ) -> usize {
         self.device_manager
             .register_device(name, category, bus_data, &self.drivers)
+    }
+
+    /// Take one boot-disk probe's answer, recording the device it found.
+    ///
+    /// The probe is the only place that knows both facts at once — which disk
+    /// was found, and which driver found it — so the manager's list is written
+    /// here rather than recomputed later from what is running.  A probe that
+    /// found nothing records nothing, which is the same answer `/dev` gives.
+    fn note_boot_disk(&mut self, disk: Option<Arc<dyn BlockDevice>>, driver: &'static str) {
+        if let Some(found) = &disk {
+            self.device_manager
+                .record_bound(found.name(), DriverCategory::Storage, None, driver);
+        }
+        self.boot_disk = disk;
     }
 
     /// Remove a device (hot-unplug).
@@ -448,6 +498,16 @@ impl DriverManager {
                         drv.name(),
                         node.name_str(),
                         compatible
+                    );
+                    // A DT-bound device is a device the machine has and this
+                    // driver owns.  Recording it here keeps the manager's list
+                    // a record of what was claimed rather than of what was
+                    // offered.
+                    self.device_manager.record_bound(
+                        node.name_str(),
+                        drv.category(),
+                        node.mmio_base(),
+                        drv.name(),
                     );
                     break;
                 }
@@ -549,6 +609,15 @@ mod tests {
 
         // Only the enabled, matching node was probed.
         assert_eq!(driver.probed.lock().as_slice(), &[0x0A00_0000]);
+
+        // ...and the binding is what the manager records, which is what the
+        // boot publishes to the ledger `/dev` reports.
+        let devices = manager.device_manager().devices();
+        assert_eq!(devices.len(), 1, "{devices:?}");
+        assert_eq!(devices[0].name, "virtio");
+        assert_eq!(devices[0].driver_name, Some("test-dt"));
+        assert_eq!(devices[0].category.as_str(), "bus");
+        assert_eq!(devices[0].bus_data, Some(0x0A00_0000));
     }
 
     #[test]
@@ -571,5 +640,6 @@ mod tests {
         // An empty table must not panic and must not probe anything.
         manager.probe_dt_devices_from_table(&DtNodeTable::empty());
         assert_eq!(driver.probed.lock().as_slice(), &[]);
+        assert!(manager.device_manager().devices().is_empty());
     }
 }

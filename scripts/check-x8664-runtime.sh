@@ -130,7 +130,8 @@ printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU $* -serial stdio >$log_file"
 shell_commands() {
     sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
         'help' 'echo ring3-shell-answered' \
-        'cat /service/shell/origin' 'cat /service/shell/sha256'
+        'cat /service/shell/origin' 'cat /service/shell/sha256' \
+        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category'
 }
 
 set +e
@@ -278,6 +279,12 @@ require_log_exact_line "ring3-shell-answered"
 # registry lost track of where its services came from cannot print them.
 require_log_exact_line "/system/rc.d/defaults.toml"
 require_log_matching '^[0-9a-f]{64}$'
+# The device ledger, read back the same way: the driver that owns the NIC and
+# what kind of device it is.  The boot line says the ledger recorded it; these
+# two say a ring-3 program can see it through `/dev`.
+require_log_line "owned by virtio-net (network)"
+require_log_exact_line "virtio-net"
+require_log_exact_line "network"
 
 # ── The user programs ran to the end ───────────────────────────────────
 #
