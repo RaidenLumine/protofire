@@ -519,6 +519,11 @@ with interrupts enabled via the architecture-specific `idle()` function.
 | `make build-aarch64-image` | `aarch64-unknown-none` | `target/aarch64-unknown-none/debug\|release/protofire.img` (bootable; plus the ELF) |
 | `make build-riscv64` | `riscv64gc-unknown-none-elf` | `target/riscv64gc-unknown-none-elf/debug\|release/protofire` |
 
+The builds are reproducible: `make check-reproducible-build` builds all of the
+above (and `mkimage`'s demo disk) twice in two clean trees and requires the
+bytes to be identical, so a published artifact can be checked by rebuilding it
+rather than by trusting the machine that produced it.
+
 ### 7.2 QEMU Direct Boot
 
 The `make run` / `make run-aarch64` / `make run-riscv64` targets pass a kernel

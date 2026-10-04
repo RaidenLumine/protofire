@@ -78,8 +78,11 @@ The authoritative picture of what exists today is
   undo-log — the subsystems where a subtle bug hurts most.
 - **Security hardening pass.** Default-deny MAC policies, audit tooling, and a
   full attack-surface review.
-- **Reproducible releases.** Tagged 1.x releases with reproducible ISOs/disk
-  images and signed artifacts for all three architectures.
+- **Reproducible releases.** The artifacts are reproducible and gated:
+  `make check-reproducible-build` builds the three architectures and the demo
+  disk twice in clean trees and requires byte-identical output.  What remains
+  is the release around them — tagged 1.x releases, signed artifacts, and a
+  published way to check a signature against a rebuild.
 - **Governance.** Grow the maintainer team, adopt RFC-style design docs for
   large features, and formalise the review process in [MAINTAINERS.md](MAINTAINERS.md).
 

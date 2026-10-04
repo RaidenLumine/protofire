@@ -53,6 +53,7 @@ endif
 		check-repo-integrity \
 		check-docs \
 		check-payload-relocations \
+		check-reproducible-build \
 		check-dead-code-allows \
 		check-abi-mirror \
 		check-layering \
@@ -102,6 +103,7 @@ help:
 		'  make check-docs     - fail if a document cites a file the tree does not have' \
 		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
 		'  make check-dead-code-allows  - fail if a file-level allow(dead_code) has no reason' \
+		'  make check-reproducible-build - rebuild every artifact twice and compare bytes' \
 		'  make check-abi-mirror  - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
@@ -313,6 +315,16 @@ check-arch-fanout:
 check-payload-relocations:
 	$(MAKE) build-x8664-demo
 	sh ./scripts/check-payload-relocations.sh
+
+# A release is only worth signing if someone else can rebuild it and get the
+# same bytes, so the tree has to keep building the same bytes twice in a row.
+# This is the expensive check of the artifacts themselves: two clean trees,
+# all three architectures, and the demo disk, compared byte for byte.
+check-reproducible-build:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		CARGO="$(CARGO)" \
+		sh ./scripts/check-reproducible-build.sh
 
 # A file-level `allow(dead_code)` is the one annotation the compiler cannot
 # argue with, so the tree's convention is that it carries a reason and an exit

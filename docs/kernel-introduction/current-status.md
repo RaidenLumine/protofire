@@ -904,6 +904,13 @@ things make that contract *testable* rather than merely written down:
   carries so a boot can exercise a path the normal disk does not reach
 - **Release profile:** `panic = "abort"`, `opt-level = "s"`, `lto = true`,
   `codegen-units = 1`
+- **Reproducible artifacts:** the same source built twice in two clean trees
+  produces byte-identical artifacts for all three architectures — the two ELFs,
+  the aarch64 `Image` and the demo disk image — and
+  `make check-reproducible-build` is the gate that keeps it that way.  Nothing
+  is pinned to a hash: the check asserts determinism, which is the property a
+  verifiable release needs.  Signed artifacts and tagged releases are still
+  ahead (see the roadmap).
 
 ---
 

@@ -149,6 +149,11 @@ run_p3() {
     run_make_step "make check-payload-relocations" check-payload-relocations
     run_make_step "make check-dead-code-allows" check-dead-code-allows
     run_make_step "make check-abi-mirror" check-abi-mirror
+    # The release artifacts themselves: the same source built twice in two
+    # clean trees has to come out byte for byte the same, or a signature over
+    # one release certifies a build nobody can reproduce.  It is the slowest
+    # static gate here because it builds everything twice.
+    run_make_step "make check-reproducible-build" check-reproducible-build
     if [ "$RUN_X86_64_RUNTIME" = "1" ]; then
         run_make_step "make check-x8664-runtime" check-x8664-runtime
         # The other half of the boot hand-off: a disk whose init reads the
