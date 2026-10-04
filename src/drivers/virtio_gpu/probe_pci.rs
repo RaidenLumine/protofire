@@ -88,7 +88,16 @@ pub(crate) fn and_init() -> Option<()> {
             return None;
         }
 
-        crate::drivers::virtio_gpu::init_gpu_device(transport)
+        let initialised = crate::drivers::virtio_gpu::init_gpu_device(transport);
+        if initialised.is_some() {
+            crate::drivers::record_bound_device(
+                "virtio-gpu",
+                "virtio-gpu",
+                crate::drivers::DriverCategory::Console,
+                Some(mmio_bar.base_address as usize),
+            );
+        }
+        initialised
     } else {
         // ── Fallback: legacy IO-port BAR ──
         let io_bar = device
@@ -111,7 +120,16 @@ pub(crate) fn and_init() -> Option<()> {
             return None;
         }
 
-        crate::drivers::virtio_gpu::init_gpu_device(transport)
+        let initialised = crate::drivers::virtio_gpu::init_gpu_device(transport);
+        if initialised.is_some() {
+            crate::drivers::record_bound_device(
+                "virtio-gpu",
+                "virtio-gpu",
+                crate::drivers::DriverCategory::Console,
+                Some(io_base as usize),
+            );
+        }
+        initialised
     };
 
     let (_w, _h) = result?;

@@ -27,7 +27,16 @@ pub(crate) fn and_init() -> Option<()> {
             continue;
         }
         println!("[virtio-gpu] found virtio-gpu at 0x{:x}", addr);
-        return crate::drivers::virtio_gpu::init_gpu_device(transport).map(|_| ());
+        let initialised = crate::drivers::virtio_gpu::init_gpu_device(transport).map(|_| ());
+        if initialised.is_some() {
+            crate::drivers::record_bound_device(
+                "virtio-gpu",
+                "virtio-gpu",
+                crate::drivers::DriverCategory::Console,
+                Some(addr),
+            );
+        }
+        return initialised;
     }
     None
 }

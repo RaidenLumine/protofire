@@ -890,6 +890,12 @@ pub fn probe_boot_net() -> Option<Arc<dyn NetworkDevice>> {
             let transport = VirtIoMmio::new(Box::new(region));
             if let Some(net) = try_virtio_net_device(transport) {
                 crate::println!("[drivers] virtio-net device found at 0x{:x}", addr);
+                crate::drivers::record_bound_device(
+                    net.name(),
+                    "virtio-net",
+                    crate::drivers::DriverCategory::Network,
+                    Some(*addr),
+                );
                 return Some(net);
             }
         }
@@ -913,6 +919,12 @@ pub fn probe_boot_net() -> Option<Arc<dyn NetworkDevice>> {
         let transport = VirtIoMmio::new(Box::new(region));
         if let Some(net) = try_virtio_net_device(transport) {
             crate::println!("[drivers] virtio-net device found at 0x{:x}", addr);
+            crate::drivers::record_bound_device(
+                net.name(),
+                "virtio-net",
+                crate::drivers::DriverCategory::Network,
+                Some(addr),
+            );
             return Some(net);
         }
     }
@@ -1008,6 +1020,12 @@ fn probe_pci_net() -> Option<Arc<dyn NetworkDevice>> {
     ));
     if let Some(net) = try_virtio_net_device(VirtIoMmio::new(region)) {
         crate::println!("[drivers] virtio-net device found (PCI modern)");
+        crate::drivers::record_bound_device(
+            net.name(),
+            "virtio-net",
+            crate::drivers::DriverCategory::Network,
+            Some(window.bar_address),
+        );
         return Some(net);
     }
     crate::println!("[drivers] virtio-net PCI: modern transport did not take");

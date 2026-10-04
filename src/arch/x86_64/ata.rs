@@ -510,11 +510,23 @@ impl BlockDevice for AtaDisk {
 #[cfg(target_os = "none")]
 pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     let bmide_base = discover_bmide_base();
-    ATA_PROBE_ORDER
+    let disk = ATA_PROBE_ORDER
         .iter()
         .copied()
         .find_map(|target| probe_target(target, bmide_base))
-        .map(|disk| disk as Arc<dyn BlockDevice>)
+        .map(|disk| disk as Arc<dyn BlockDevice>);
+    if let Some(found) = &disk {
+        // The probe that found the disk records it: a fact known here and
+        // nowhere later.  ATA is programmed through task-file ports rather
+        // than a mapped window, so there is no address to record with it.
+        crate::drivers::record_bound_device(
+            found.name(),
+            "ata",
+            crate::drivers::DriverCategory::Storage,
+            None,
+        );
+    }
+    disk
 }
 
 /// A host build has no task-file registers to read, so there is no disk to

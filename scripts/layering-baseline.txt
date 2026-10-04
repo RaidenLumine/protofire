@@ -63,6 +63,12 @@
 # `drivers` does not name `device`, which would close a cycle with the
 # `device` -> `drivers` row the virtual devices' handlers come from.
 #
+# The same shape one level lower: `drivers` names `sync` for the registry the
+# probes record into (a `drivers` -> `sync` row the module already had), and
+# the boot names `drivers` to publish that registry, the way it names `device`
+# to publish the ledger.  Nothing here reaches a consumer: the probe writes,
+# the boot reads, and the filesystem's registry is written by the boot.
+#
 # from                         to                           count
 audit                        fs                           6
 audit                        handle_rights                2
@@ -79,7 +85,7 @@ drivers                      block                        10
 drivers                      memory                       3
 drivers                      network                      2
 drivers                      process                      13
-drivers                      sync                         16
+drivers                      sync                         18
 fs                           compression                  2
 fs                           crypto                       9
 fs                           kernel_log                   1
@@ -110,7 +116,7 @@ memory                       topology                     1
 mod                          audit                        6
 mod                          block                        1
 mod                          device                       1
-mod                          drivers                      1
+mod                          drivers                      2
 mod                          fs                           15
 mod                          memory                       6
 mod                          network                      3

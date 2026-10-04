@@ -67,6 +67,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::kernel::block::BlockDevice;
+use crate::kernel::sync::Mutex;
 use crate::network::link::device::NetworkDevice;
 use crate::println;
 use crate::Result;
@@ -157,6 +158,48 @@ pub struct DeviceNode {
     pub bus_data: Option<usize>,
 }
 
+/// The devices a probe or a driver has bound.
+///
+/// A registry rather than a field on the manager: what *finds* a device is the
+/// probe, wherever it is — a device-tree walk, a PCI scan, an MMIO window, a
+/// driver's own `init()` — and the manager is only one of its callers.  The
+/// boot publishes this list into the ledger `/dev` reports
+/// (`crate::kernel::device`), which is why what lives here is what the machine
+/// can say about a device and not what it can do with it.
+static BOUND_DEVICES: Mutex<DeviceManager> = Mutex::new(DeviceManager::new());
+
+/// Record a device a probe or a driver bound.
+///
+/// Recording the same device twice — a probe asked again, or a driver
+/// reporting what a probe already did — records it once: the identity is the
+/// name, the driver and the address together, and only a device that differs
+/// in one of those is a second device.
+pub fn record_bound_device(
+    name: &str,
+    driver: &'static str,
+    category: DriverCategory,
+    bus_data: Option<usize>,
+) -> String {
+    BOUND_DEVICES
+        .lock()
+        .record_bound(name, category, bus_data, driver)
+}
+
+/// Every device a probe or a driver has bound, in the order it was recorded.
+pub fn bound_devices() -> Vec<DeviceNode> {
+    BOUND_DEVICES.lock().devices().to_vec()
+}
+
+/// Forget every bound device.
+///
+/// The registry is process-global, so a test that records devices changes what
+/// the next test sees.  Only tests should call this.
+#[cfg(test)]
+pub(crate) fn reset_bound_devices_for_tests() {
+    let mut manager = BOUND_DEVICES.lock();
+    *manager = DeviceManager::new();
+}
+
 /// Manager for discovered hardware devices and their driver bindings.
 pub struct DeviceManager {
     devices: Vec<DeviceNode>,
@@ -170,7 +213,7 @@ impl Default for DeviceManager {
 }
 
 impl DeviceManager {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             devices: Vec::new(),
             next_device_id: 1,
@@ -211,25 +254,36 @@ impl DeviceManager {
     /// [`register_device`](Self::register_device) is for the path where the
     /// manager itself asks every driver; this is for the path where a probe has
     /// already answered and the answer is a fact — a device-tree node bound to
-    /// its driver, or the disk the boot will run on.
+    /// its driver, a disk a driver found, or a controller a driver brought up.
+    /// The answer is the name the device is known by, which is what `/dev` uses
+    /// and what the caller logs.
     pub fn record_bound(
         &mut self,
         name: &str,
         category: DriverCategory,
         bus_data: Option<usize>,
         driver_name: &'static str,
-    ) -> usize {
+    ) -> String {
+        let name = String::from(name);
+        if self.devices.iter().any(|device| {
+            device.name == name
+                && device.driver_name == Some(driver_name)
+                && device.bus_data == bus_data
+        }) {
+            return name;
+        }
+
         let device_id = self.next_device_id;
         self.next_device_id += 1;
 
         self.devices.push(DeviceNode {
             device_id,
-            name: String::from(name),
+            name: name.clone(),
             category,
             driver_name: Some(driver_name),
             bus_data,
         });
-        device_id
+        name
     }
 
     /// Remove a device (e.g. on hot-unplug).
@@ -240,7 +294,7 @@ impl DeviceManager {
         Ok(())
     }
 
-    /// Return a reference to all tracked devices.
+    /// Return every tracked device, in the order it was recorded.
     pub fn devices(&self) -> &[DeviceNode] {
         &self.devices
     }
@@ -248,7 +302,6 @@ impl DeviceManager {
 
 pub struct DriverManager {
     drivers: Vec<Arc<dyn Driver>>,
-    device_manager: DeviceManager,
     boot_disk: Option<Arc<dyn BlockDevice>>,
     boot_net_device: Option<Arc<dyn NetworkDevice>>,
     initialized: bool,
@@ -264,21 +317,10 @@ impl DriverManager {
     pub fn new() -> Self {
         Self {
             drivers: Vec::new(),
-            device_manager: DeviceManager::new(),
             boot_disk: None,
             boot_net_device: None,
             initialized: false,
         }
-    }
-
-    /// Access the device manager.
-    pub fn device_manager(&self) -> &DeviceManager {
-        &self.device_manager
-    }
-
-    /// Access the device manager mutably.
-    pub fn device_manager_mut(&mut self) -> &mut DeviceManager {
-        &mut self.device_manager
     }
 
     pub fn init(&mut self) {
@@ -354,21 +396,21 @@ impl DriverManager {
         // SATA), then VirtIO (QEMU virt machines), then NVMe (modern PCIe SSD),
         // then USB mass storage (usb-storage devices on an xHCI bus).
         if ata_initialized {
-            self.note_boot_disk(crate::arch::ata::probe_boot_disk(), "ata");
+            self.note_boot_disk(crate::arch::ata::probe_boot_disk());
         } else {
             println!("[driver] skipping ATA boot-disk probe because ATA init failed");
         }
         if self.boot_disk.is_none() {
-            self.note_boot_disk(crate::arch::ata::ahci_probe_boot_disk(), "ahci");
+            self.note_boot_disk(crate::arch::ata::ahci_probe_boot_disk());
         }
         if self.boot_disk.is_none() {
-            self.note_boot_disk(virtio::probe_boot_disk(), "virtio");
+            self.note_boot_disk(virtio::probe_boot_disk());
         }
         if self.boot_disk.is_none() {
-            self.note_boot_disk(nvme::probe_boot_disk(), "nvme");
+            self.note_boot_disk(nvme::probe_boot_disk());
         }
         if self.boot_disk.is_none() {
-            self.note_boot_disk(crate::arch::machine_devices::usb_boot_disk(), "usb-msd");
+            self.note_boot_disk(crate::arch::machine_devices::usb_boot_disk());
         }
         if let Some(disk) = &self.boot_disk {
             println!(
@@ -383,15 +425,8 @@ impl DriverManager {
         // Probe for a VirtIO network device so the native network stack can
         // be brought up during the rest of kernel initialisation.
         self.boot_net_device = virtio_net::probe_boot_net();
-        if let Some(net) = &self.boot_net_device {
+        if self.boot_net_device.is_some() {
             println!("[driver] detected boot network device");
-            let device_name = String::from(net.name());
-            self.device_manager.record_bound(
-                &device_name,
-                DriverCategory::Network,
-                None,
-                "virtio-net",
-            );
         }
 
         self.initialized = true;
@@ -424,7 +459,8 @@ impl DriverManager {
         category: DriverCategory,
         bus_data: Option<usize>,
     ) -> usize {
-        self.device_manager
+        BOUND_DEVICES
+            .lock()
             .register_device(name, category, bus_data, &self.drivers)
     }
 
@@ -434,25 +470,17 @@ impl DriverManager {
     /// was found, and which driver found it — so the manager's list is written
     /// here rather than recomputed later from what is running.  A probe that
     /// found nothing records nothing, which is the same answer `/dev` gives.
-    fn note_boot_disk(&mut self, disk: Option<Arc<dyn BlockDevice>>, driver: &'static str) {
-        if let Some(found) = &disk {
-            self.device_manager
-                .record_bound(found.name(), DriverCategory::Storage, None, driver);
-        }
+    fn note_boot_disk(&mut self, disk: Option<Arc<dyn BlockDevice>>) {
         self.boot_disk = disk;
     }
 
     /// Remove a device (hot-unplug).
     pub fn remove_device(&mut self, device_id: usize) -> Result<()> {
         // Notify the bound driver before removing the device node.
-        let driver_name = {
-            let devices = self.device_manager.devices();
-            devices
-                .iter()
-                .find(|d| d.device_id == device_id)
-                .and_then(|d| d.driver_name)
-                .map(|n| n as &str)
-        };
+        let driver_name = bound_devices()
+            .iter()
+            .find(|device| device.device_id == device_id)
+            .and_then(|device| device.driver_name);
         if let Some(name) = driver_name {
             for drv in &self.drivers {
                 if drv.name() == name {
@@ -461,7 +489,7 @@ impl DriverManager {
                 }
             }
         }
-        self.device_manager.remove_device(device_id)
+        BOUND_DEVICES.lock().remove_device(device_id)
     }
 
     /// Probe devices discovered in the device tree, binding each node to the
@@ -500,14 +528,14 @@ impl DriverManager {
                         compatible
                     );
                     // A DT-bound device is a device the machine has and this
-                    // driver owns.  Recording it here keeps the manager's list
-                    // a record of what was claimed rather than of what was
+                    // driver owns.  Recording it here keeps the registry a
+                    // record of what was claimed rather than of what was
                     // offered.
-                    self.device_manager.record_bound(
+                    let _ = record_bound_device(
                         node.name_str(),
+                        drv.name(),
                         drv.category(),
                         node.mmio_base(),
-                        drv.name(),
                     );
                     break;
                 }
@@ -585,8 +613,18 @@ mod tests {
         node
     }
 
+    /// Serialise the tests that record devices, starting from an empty
+    /// registry.
+    fn exclusive_devices() -> crate::kernel::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        let guard = LOCK.lock();
+        reset_bound_devices_for_tests();
+        guard
+    }
+
     #[test]
     fn probe_dt_devices_binds_matching_driver_and_skips_disabled() {
+        let _guard = exclusive_devices();
         let mut manager = DriverManager::new();
         let driver = Arc::new(TestDtDriver {
             probed: Mutex::new(alloc::vec::Vec::new()),
@@ -610,9 +648,9 @@ mod tests {
         // Only the enabled, matching node was probed.
         assert_eq!(driver.probed.lock().as_slice(), &[0x0A00_0000]);
 
-        // ...and the binding is what the manager records, which is what the
-        // boot publishes to the ledger `/dev` reports.
-        let devices = manager.device_manager().devices();
+        // ...and the binding is what the probe records, which is what the boot
+        // publishes to the ledger `/dev` reports.
+        let devices = bound_devices();
         assert_eq!(devices.len(), 1, "{devices:?}");
         assert_eq!(devices[0].name, "virtio");
         assert_eq!(devices[0].driver_name, Some("test-dt"));
@@ -622,6 +660,7 @@ mod tests {
 
     #[test]
     fn probe_dt_devices_ignores_unmatched_and_empty() {
+        let _guard = exclusive_devices();
         let mut manager = DriverManager::new();
         let driver = Arc::new(TestDtDriver {
             probed: Mutex::new(alloc::vec::Vec::new()),
@@ -640,6 +679,6 @@ mod tests {
         // An empty table must not panic and must not probe anything.
         manager.probe_dt_devices_from_table(&DtNodeTable::empty());
         assert_eq!(driver.probed.lock().as_slice(), &[]);
-        assert!(manager.device_manager().devices().is_empty());
+        assert!(bound_devices().is_empty());
     }
 }

@@ -1242,6 +1242,15 @@ fn try_virtio_block_at(base: usize) -> Option<alloc::sync::Arc<dyn BlockDevice>>
         return None;
     }
 
+    // The device is a fact now: the probe that found it records it, with the
+    // window it was found in.
+    crate::drivers::record_bound_device(
+        block.name(),
+        "virtio",
+        crate::drivers::DriverCategory::Storage,
+        Some(base),
+    );
+
     Some(alloc::sync::Arc::new(block))
 }
 

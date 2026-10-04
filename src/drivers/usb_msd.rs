@@ -510,6 +510,12 @@ pub fn probe_geometry() {
         alloc::sync::Arc::new(UsbMsdBlockDevice);
     if crate::kernel::block::publish_device("usb-msd", device) {
         println!("[usbmsd] Registered as block device 'usb-msd'");
+        crate::drivers::record_bound_device(
+            "usb-msd",
+            "usb-msd",
+            crate::drivers::DriverCategory::Storage,
+            None,
+        );
     } else {
         println!("[usbmsd] No block-device sink installed; 'usb-msd' was not registered");
     }

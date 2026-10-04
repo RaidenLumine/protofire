@@ -182,6 +182,15 @@ fn probe_and_init() -> Option<()> {
         fb_info.height / 16,
     );
 
+    // The display is a device the machine has, not just a console: record it
+    // so `/dev` can show what the machine's display is.
+    crate::drivers::record_bound_device(
+        "bochs-fb",
+        "bochs-fb",
+        crate::drivers::DriverCategory::Console,
+        Some(fb_info.physical_address),
+    );
+
     Some(())
 }
 

@@ -980,7 +980,14 @@ pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
         "[ahci  ] AHCI ready: {} blocks × {} bytes",
         controller.block_count, controller.block_size
     );
-    Some(Arc::new(controller))
+    let device = Arc::new(controller);
+    crate::drivers::record_bound_device(
+        device.name(),
+        "ahci",
+        crate::drivers::DriverCategory::Storage,
+        Some(bar5 as usize),
+    );
+    Some(device)
 }
 
 /// A host build discovers nothing, so there is nothing to hand back.

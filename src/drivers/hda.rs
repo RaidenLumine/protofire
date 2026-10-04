@@ -794,6 +794,12 @@ fn probe_hda_pci() -> crate::Result<()> {
 
         // Store the controller.
         *HDA_CONTROLLER.lock() = Some(ctrl);
+        crate::drivers::record_bound_device(
+            "hda",
+            "hda",
+            crate::drivers::DriverCategory::Audio,
+            Some(bar0.base_address as usize),
+        );
 
         // Only initialise the first HDA controller.
         break;

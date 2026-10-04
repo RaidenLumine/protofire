@@ -197,13 +197,12 @@ impl Kernel {
         );
 
         self.drivers.init();
-        // What the drivers bound becomes the device ledger `/dev` reports.
-        // The manager knows what each device is and who owns it; this is the
-        // one place that can name both halves, and the direction matters —
-        // the drivers do not reach up into the filesystem's registry, they
-        // hand their findings over here, the way a driver hands a block device
-        // to `kernel::block::publish_device`.
-        for node in self.drivers.device_manager().devices() {
+        // What the drivers found becomes the device ledger `/dev` reports.
+        // The probes record as they bind — they are the ones that know — and
+        // this publishes the result, the way a driver hands a block device to
+        // `kernel::block::publish_device`.  The direction matters: the drivers
+        // do not reach up into the filesystem's registry.
+        for node in crate::drivers::bound_devices() {
             crate::kernel::device::record_device(
                 &node.name,
                 node.driver_name,

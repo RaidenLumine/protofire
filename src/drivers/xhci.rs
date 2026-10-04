@@ -1849,6 +1849,12 @@ fn probe_xhci() -> crate::Result<()> {
 
         // Store the controller.
         *XHCI_CONTROLLER.lock() = Some(ctrl);
+        crate::drivers::record_bound_device(
+            "xhci",
+            "xhci",
+            crate::drivers::DriverCategory::Bus,
+            Some(bar0.base_address as usize),
+        );
 
         // The MSD SCSI geometry probe was deferred out of device
         // enumeration (bot_transfer reaches the controller through

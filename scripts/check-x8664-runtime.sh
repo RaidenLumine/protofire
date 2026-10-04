@@ -131,7 +131,8 @@ shell_commands() {
     sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
         'help' 'echo ring3-shell-answered' \
         'cat /service/shell/origin' 'cat /service/shell/sha256' \
-        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category'
+        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
+        'cat /dev/bochs-fb/driver'
 }
 
 set +e
@@ -285,6 +286,10 @@ require_log_matching '^[0-9a-f]{64}$'
 require_log_line "owned by virtio-net (network)"
 require_log_exact_line "virtio-net"
 require_log_exact_line "network"
+# And one a *driver* reported rather than a probe: the bochs-display this
+# machine has is found inside the driver's own init, and it says so itself.
+require_log_line "owned by bochs-fb (console)"
+require_log_exact_line "bochs-fb"
 
 # ── The user programs ran to the end ───────────────────────────────────
 #

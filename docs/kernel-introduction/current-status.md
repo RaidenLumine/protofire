@@ -59,10 +59,11 @@ input, mostly verified under QEMU.
   backends; NVMe uses MSI-X for interrupt-driven completion.
 - **Network**: the VirtIO network driver is interrupt-driven and multi-queue
   ready.
-- **Device ledger**: every device a probe binds is recorded with the driver that
-  owns it, and `/dev` reports the same three facts to a program — `driver`,
-  `category`, `bus`, or all of them through `describe`.  The kernel's own
-  devices (`console`, `null`, `serial0`, …) stay nodes a program can open,
+- **Device ledger**: the thing that finds a device records it, where it finds
+  it — a device-tree walk, a PCI scan, an MMIO window, or a driver's own
+  `init()` — and the boot publishes the result into the ledger `/dev` reports:
+  `driver`, `category`, `bus`, or all of them through `describe`.  The kernel's
+  own devices (`console`, `null`, `serial0`, …) stay nodes a program can open,
   because they have handlers; a discovered device with no I/O interface yet is
   a directory of facts instead, so the difference between "served" and
   "described" is visible in the shape rather than only in the docs.

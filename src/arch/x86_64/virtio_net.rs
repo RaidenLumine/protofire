@@ -99,6 +99,12 @@ pub(crate) fn pci_net_device() -> Option<Arc<dyn NetworkDevice>> {
                 let transport = VirtIoMmio::new(region);
                 if let Some(net) = try_virtio_net_device(transport) {
                     crate::println!("[drivers] virtio-net device found (PCI modern)");
+                    crate::drivers::record_bound_device(
+                        net.name(),
+                        "virtio-net",
+                        crate::drivers::DriverCategory::Network,
+                        Some(mmio_bar.base_address as usize),
+                    );
                     return Some(net);
                 }
                 crate::println!("[drivers] virtio-net PCI: modern transport failed, trying legacy");
@@ -125,6 +131,12 @@ pub(crate) fn pci_net_device() -> Option<Arc<dyn NetworkDevice>> {
             let transport = VirtIoMmio::new(region);
             if let Some(net) = try_virtio_net_device(transport) {
                 crate::println!("[drivers] virtio-net device found (PCI legacy IO)");
+                crate::drivers::record_bound_device(
+                    net.name(),
+                    "virtio-net",
+                    crate::drivers::DriverCategory::Network,
+                    Some(io_base as usize),
+                );
                 return Some(net);
             }
         }

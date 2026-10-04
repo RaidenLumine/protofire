@@ -723,7 +723,14 @@ pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
         "[nvme  ] NVMe ready: {} blocks × {} bytes",
         controller.block_count, controller.block_size
     );
-    Some(Arc::new(controller))
+    let device = Arc::new(controller);
+    crate::drivers::record_bound_device(
+        device.name(),
+        "nvme",
+        crate::drivers::DriverCategory::Storage,
+        Some(bar0 as usize),
+    );
+    Some(device)
 }
 
 // ---------------------------------------------------------------------------
