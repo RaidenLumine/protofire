@@ -637,7 +637,7 @@ pub(crate) mod package {
 
         write_transaction_stage(fs, &app_id, &version, STAGE_VERIFY)?;
 
-        if let Err(error) = commit_payload(fs, &app_id, &version, &paths) {
+        if let Err(error) = commit_payload(fs, &app_id, &version, &paths, &manifest) {
             // Nothing was installed: the staged tree is not a version, and the
             // transaction says so.  Take both away and leave the installed
             // versions — if there are any — exactly as they were.
@@ -681,8 +681,37 @@ pub(crate) mod package {
         manifest: &LaunchManifest,
     ) -> Result<()> {
         let image = read_program_image(fs, &paths.source, &paths.entry)?;
-        integrity::verify_optional_sha256(&image, manifest.entry_sha256.as_deref())?;
-        signature::verify_optional_signature(fs, &image, manifest.entry_signature.as_deref())
+        verify_program(&image, fs, manifest)
+    }
+
+    /// Check a program against the claims its manifest makes about it.
+    ///
+    /// The digest and the signature are the package's own claims, and this is
+    /// where they are held to: a mismatch is a refusal, because what would be
+    /// installed is not what the package says it is.
+    fn verify_program(image: &[u8], fs: &FileSystem, manifest: &LaunchManifest) -> Result<()> {
+        integrity::verify_optional_sha256(image, manifest.entry_sha256.as_deref())?;
+        signature::verify_optional_signature(fs, image, manifest.entry_signature.as_deref())
+    }
+
+    /// Check the installed program, at the path the loader will read.
+    ///
+    /// The stage check above is over the package's bytes; this one is over the
+    /// bytes that are now on the disk.  They have to be the same bytes, and
+    /// nothing but this says so: a copy that landed wrong is a program nobody
+    /// verified, and the version root is what a launch resolves to.
+    fn verify_installed_payload(
+        fs: &FileSystem,
+        paths: &InstallPaths,
+        manifest: &LaunchManifest,
+    ) -> Result<()> {
+        let relative = paths
+            .entry
+            .strip_prefix(&format!("{}/", paths.source))
+            .ok_or(Error::InvalidArgument)?;
+        let entry = format!("{}/{relative}", paths.version_root);
+        let image = read_program_image(fs, &paths.version_root, &entry)?;
+        verify_program(&image, fs, manifest)
     }
 
     /// The `app_id` and `version` a package directory names.
@@ -764,6 +793,7 @@ pub(crate) mod package {
         app_id: &str,
         version: &str,
         paths: &InstallPaths,
+        manifest: &LaunchManifest,
     ) -> Result<()> {
         let token = current_execution_security_token();
 
@@ -803,6 +833,14 @@ pub(crate) mod package {
             &paths.version_root,
             token,
         )?;
+
+        // What the package claimed has to be true of what is now installed,
+        // not only of what was read out of the package: the version root is
+        // what a launch resolves to, and it is read back here to prove it.
+        if let Err(error) = verify_installed_payload(fs, paths, manifest) {
+            let _ = remove_recursive(fs, &paths.version_root);
+            return Err(error);
+        }
 
         ensure_directory(fs, INSTALLED_CATALOG_ROOT)?;
         let manifest_path = format!("{}/{PACKAGE_MANIFEST_NAME}", paths.version_root);
@@ -920,6 +958,7 @@ mod tests {
     use crate::user::program::catalog::write_entire_text_file;
     use crate::user::program::integrity;
     use crate::user::program::launch_reference::installed_package_version_root;
+    use crate::user::program::metadata::parse_launch_manifest;
 
     /// A filesystem with the three zones the install path uses, each a writable
     /// SimpleFs volume of its own.
@@ -1246,7 +1285,12 @@ mod tests {
             entry: format!("{source}/bin/logger.elf"),
         };
         write_transaction_stage(&fs, "logger", "1.0.0", STAGE_VERIFY).expect("stage verify");
-        commit_payload(&fs, "logger", "1.0.0", &paths).expect("commit");
+        let manifest = parse_launch_manifest(
+            &read_text_file(&fs, &source, &format!("{source}/{PACKAGE_MANIFEST_NAME}"))
+                .expect("manifest"),
+        )
+        .expect("parse manifest");
+        commit_payload(&fs, "logger", "1.0.0", &paths, &manifest).expect("commit");
         write_transaction_stage(&fs, "logger", "1.0.0", STAGE_COMMIT).expect("stage commit");
 
         let report = recover_install_management_state(&fs).expect("recover");
