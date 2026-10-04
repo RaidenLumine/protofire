@@ -107,7 +107,7 @@ drivers                      network                      2
 drivers                      process                      13
 drivers                      sync                         19
 fs                           compression                  2
-fs                           crypto                       9
+fs                           crypto                       10
 fs                           drivers                      2
 fs                           kernel_log                   1
 fs                           memory                       5
@@ -193,7 +193,7 @@ shm                          process                      1
 shm                          scheduler                    3
 shm                          sync                         1
 smp                          memory                       5
-smp                          percpu                       2
+smp                          percpu                       3
 syscall                      audit                        9
 syscall                      boot_report                  2
 syscall                      drivers                      3
