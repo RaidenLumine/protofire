@@ -75,6 +75,21 @@ pub fn online_cpu_count() -> u32 {
     ONLINE_CPUS.load(Ordering::Acquire).count_ones().max(1)
 }
 
+/// Which CPU this core is, for the console's per-CPU prefix — but only when
+/// the machine runs more than one.
+///
+/// `None` on a single-CPU machine, because a `[cpu0]` in front of every line
+/// says nothing a reader wants to know and makes the log harder to scan.  The
+/// answer comes from the CPU's own per-CPU block, which every architecture
+/// installs during bring-up; the question is asked of it only once another CPU
+/// is online, so the block is always there to answer.
+pub fn log_cpu_index() -> Option<usize> {
+    if online_cpu_count() <= 1 {
+        return None;
+    }
+    Some(crate::kernel::percpu::get().cpu_id as usize)
+}
+
 /// Ask a CPU to look at its run queue again.
 ///
 /// The kernel sends this when it has just made a thread runnable on another

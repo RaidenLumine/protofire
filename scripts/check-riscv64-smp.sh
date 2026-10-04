@@ -95,18 +95,18 @@ fi
 
 # Every hart the kernel started came back and reported for itself.  "Started" is
 # what the BSP asked for; this is the hart saying it is running.
-running="$(grep -a -c -E '^\[smp\] riscv64 AP: hart [0-9]+ running' "$log_file" || true)"
+running="$(grep -a -c -E '\[smp\] riscv64 AP: hart [0-9]+ running' "$log_file" || true)"
 [ "$running" = "$expected_harts" ] ||
     fail "expected ${expected_harts} harts to report running, saw ${running}"
 
 # …and then became a CPU, which is the part a hart parked in `wfi` never does:
 # its own page table, its per-CPU identity, and its place in the registry the
 # scheduler dispatches from.
-paging="$(grep -a -c -E '^\[smp\] riscv64 AP: hart [0-9]+ paging on' "$log_file" || true)"
+paging="$(grep -a -c -E '\[smp\] riscv64 AP: hart [0-9]+ paging on' "$log_file" || true)"
 [ "$paging" = "$expected_harts" ] ||
     fail "expected ${expected_harts} harts to adopt the kernel page table, saw ${paging}"
 
-online="$(grep -a -c -E '^\[smp\] riscv64 AP: hart [0-9]+ online, cpu_id=[0-9]+, entering dispatch loop' "$log_file" || true)"
+online="$(grep -a -c -E '\[smp\] riscv64 AP: hart [0-9]+ online, cpu_id=[0-9]+, entering dispatch loop' "$log_file" || true)"
 [ "$online" = "$expected_harts" ] ||
     fail "expected ${expected_harts} harts online as CPUs, saw ${online}"
 

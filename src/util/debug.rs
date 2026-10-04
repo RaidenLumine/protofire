@@ -38,25 +38,24 @@ pub fn init() {
 static CONSOLE_LOCK: crate::kernel::sync::Mutex<()> = crate::kernel::sync::Mutex::new(());
 
 /// Per-CPU log prefix for SMP systems, e.g. `"[cpu0] "`.
-/// Returns an empty string on single-CPU / non-bare-metal targets.
+///
+/// Empty on a single-CPU machine, which is the machine's answer rather than
+/// this file's: see [`crate::kernel::smp::log_cpu_index`].  Which CPU is
+/// asking is a fact every architecture's per-CPU block carries, so every SMP
+/// machine gets the prefix and none of them has to be named here.
 fn cpu_log_prefix() -> &'static str {
-    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-    {
-        if crate::kernel::smp::online_cpu_count() > 1 {
-            return match crate::kernel::percpu::get().cpu_id {
-                0 => "[cpu0] ",
-                1 => "[cpu1] ",
-                2 => "[cpu2] ",
-                3 => "[cpu3] ",
-                4 => "[cpu4] ",
-                5 => "[cpu5] ",
-                6 => "[cpu6] ",
-                7 => "[cpu7] ",
-                _ => "[cpu?] ",
-            };
-        }
+    match crate::kernel::smp::log_cpu_index() {
+        Some(0) => "[cpu0] ",
+        Some(1) => "[cpu1] ",
+        Some(2) => "[cpu2] ",
+        Some(3) => "[cpu3] ",
+        Some(4) => "[cpu4] ",
+        Some(5) => "[cpu5] ",
+        Some(6) => "[cpu6] ",
+        Some(7) => "[cpu7] ",
+        Some(_) => "[cpu?] ",
+        None => "",
     }
-    ""
 }
 
 /// Announce, once, that the console dropped bytes.

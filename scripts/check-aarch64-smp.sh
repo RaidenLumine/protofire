@@ -72,9 +72,9 @@ fail() {
     exit 1
 }
 
-grep -q "^\[smp   \] PSCI version" "$log_file" ||
+grep -q -F "[smp   ] PSCI version" "$log_file" ||
     fail "the kernel never asked PSCI for its version"
-grep -q "^\[smp   \] ${SMP_CPUS} CPUs total, ${expected_aps} AP(s)" "$log_file" ||
+grep -q -F "[smp   ] ${SMP_CPUS} CPUs total, ${expected_aps} AP(s)" "$log_file" ||
     fail "expected ${expected_aps} AP(s) out of ${SMP_CPUS} CPUs"
 # The device tree has to have arrived: the CPU list AP discovery walks comes
 # from it, and this check is what says the boot is using it rather than the
@@ -85,10 +85,10 @@ grep -q "info=0x00000000" "$log_file" &&
 # "started" is what the boot CPU knows: PSCI returns as soon as it accepts the
 # request.  The cores report for themselves on the next line, and that count is
 # the one that has to match.
-grep -q "^\[smp   \] ${expected_aps} AP(s) started" "$log_file" ||
+grep -q -F "[smp   ] ${expected_aps} AP(s) started" "$log_file" ||
     fail "expected the boot CPU to start ${expected_aps} AP(s)"
 
-online="$(grep -c '^\[smp   \] AP cpu_id=.* online' "$log_file" || true)"
+online="$(grep -c '\[smp   \] AP cpu_id=.* online' "$log_file" || true)"
 [ "$online" = "$expected_aps" ] ||
     fail "expected ${expected_aps} APs to report themselves online, saw ${online}"
 
@@ -113,7 +113,7 @@ grep -q '\[demo  \] worker-a done' "$log_file" ||
     fail "the demo worker never finished: a thread parked on a core stopped waking"
 grep -q '\[service\] kworker-b stopped' "$log_file" ||
     fail "the demo boot never finished: services did not all stop"
-grep -q '^\[sched \]' "$log_file" &&
+grep -q -F '[sched ]' "$log_file" &&
     fail "the scheduler reported a process it cannot place"
 
 grep -q 'FATAL' "$log_file" && fail "the boot reported a fatal fault"

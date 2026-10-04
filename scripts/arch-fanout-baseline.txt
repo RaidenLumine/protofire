@@ -25,7 +25,7 @@
 # is the `gap:` rows, not the total.
 #
 
-# 23 files, 61 occurrences outside src/arch
+# 22 files, 60 occurrences outside src/arch
 
 abi/ptrace.rs                                        2  # fact: the x86_64 PTRACE_GETREGS register file is a record only that architecture has
 drivers/usb_msd.rs                                   1  # fact: the USB storage controller driver is x86_64 bare-metal hardware
@@ -49,4 +49,3 @@ user/shared/abi/runtime.rs                           6  # gap: TARGET_ARCH is th
 user/shared/syscall.rs                               2  # fact: the never-returning halt is hlt on x86_64 and wfi on aarch64
 user/syscall/mod.rs                                  7  # fact: the trap that enters the kernel from user mode; one file per machine, and riscv64 has none
 user/syscall/payload.rs                              6  # fact: the per-machine payload-runtime macros, emitted into the payload sections
-util/debug.rs                                        1  # gap: the [cpuN] log prefix should exist on every SMP machine, with the two smokes taught to read it
