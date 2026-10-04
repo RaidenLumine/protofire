@@ -68,8 +68,9 @@ pub(crate) fn join_normalized_child(parent: &str, child_name: &str) -> String {
     path
 }
 
-// Kept crash-recovery / security-token primitive; the install pipeline moved
-// out of the kernel and will consume this when re-added.
+// The install path (`user::program::install`) is the caller, and it is compiled
+// only with a demo disk or in tests: a plain kernel build has none, and the
+// primitive is still the filesystem's to offer.
 #[allow(dead_code)]
 pub(crate) fn probe_child_normalized_path(
     normalized_dir: &str,
@@ -86,8 +87,9 @@ pub(crate) fn single_path_component(component: &str) -> Option<&str> {
     (!component.is_empty() && !component.contains('/')).then_some(component)
 }
 
-// Kept crash-recovery / security-token primitive; the install pipeline moved
-// out of the kernel and will consume this when re-added.
+// The install path (`user::program::install`) is the caller, and it is compiled
+// only with a demo disk or in tests: a plain kernel build has none, and the
+// primitive is still the filesystem's to offer.
 #[allow(dead_code)]
 pub(crate) fn is_valid_child_name(name: &str) -> bool {
     matches!(single_path_component(name), Some(component) if component != "." && component != "..")

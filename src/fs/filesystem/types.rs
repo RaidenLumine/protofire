@@ -71,8 +71,9 @@ pub(crate) struct PlannedSecurityDescriptorUpdate {
 }
 
 impl PlannedSecurityDescriptorUpdate {
-    // Kept crash-recovery / security-token primitive; the install pipeline moved
-    // out of the kernel and will consume this when re-added.
+    // No caller today: the install path inherits a payload's security
+    // descriptor from the zone it lands in rather than setting one, so nothing
+    // asks whether an update would have to run in recovery mode.
     #[allow(dead_code)]
     pub(crate) const fn requires_recovery_mode(self) -> bool {
         PermissionMutationPolicy { scope: self.scope }.requires_recovery_mode()

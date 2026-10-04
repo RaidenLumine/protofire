@@ -306,11 +306,17 @@ pub struct CmdResult {
 Package management is not a kernel responsibility. The Linux kernel itself
 contains no package manager (apt/dnf/pacman all live in user space); the kernel
 only provides the exec primitive for loading programs from paths. protofire's
-package manager (install/uninstall/upgrade/rollback, remote repositories,
-transaction logs, file associations, signing keys, appctl/app-center) has
-therefore been removed from the kernel crate. The kernel retains the launch
-chain `/apps/current → /apps/catalog → /apps/packages → ELF`, implemented in
-`crate::user::program::launch_reference`.
+package manager in the wide sense (remote repositories, file associations,
+key distribution, app-center) is still out of the kernel crate, and the launch
+chain `/apps/current → /apps/catalog → /apps/packages → ELF` is what loading a
+program needs — it lives in `crate::user::program::launch_reference`.
+
+What the kernel does keep is the *format* an install has to obey and the two
+steps that cannot be done from outside it: `crate::user::program::install`
+verifies a package against its manifest, stages its payload and swaps the
+active record atomically, and `recover_install_management_state` reads the same
+transaction log back at boot.  A distribution's installer drives that format;
+the kernel is only the thing that has to agree with it.
 
 ---
 

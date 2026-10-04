@@ -134,6 +134,7 @@ pub(super) fn run_appctl_command(fs: &FileSystem, _cwd: &str, argv: &[String]) -
         Some("versions") => appctl_versions(fs, args.get(1)),
         Some("current") => appctl_current(fs, args.get(1)),
         Some("associations") => appctl_associations(fs),
+        Some("install") => appctl_install(fs, args.get(1)),
         Some("uninstall") => appctl_uninstall(fs, args.get(1), args.get(2)),
         Some("recover") => appctl_recover(fs),
         Some("cache-prune") => appctl_cache_prune(fs),
@@ -155,15 +156,37 @@ fn appctl_help(topic: Option<&str>) -> String {
         Some("list") => "usage: appctl list\nlists installed apps with their active versions\n".into(),
         Some("versions") => "usage: appctl versions <app-id>\nlists every published version for one app\n".into(),
         Some("current") => "usage: appctl current <app-id>\nshows the active version selected under /apps/current\n".into(),
+        Some("install") => "usage: appctl install <staged-package>\ninstalls a package directory named <app-id>@<version>\n".into(),
         Some("uninstall") => "usage: appctl uninstall <app-id> [version]\nremoves one installed version or an entire app\n".into(),
         Some("recover") => "usage: appctl recover\nreconciles unfinished install transactions and cleans download-cache state\n".into(),
         Some("cache-prune") => "usage: appctl cache-prune\nremoves invalid cached downloads\n".into(),
         _ => {
             "usage: appctl <command> [args]\n\
              commands: status, list, versions, current, associations,\n\
-             uninstall, recover, cache-prune, help\n"
+             install, uninstall, recover, cache-prune, help\n"
                 .into()
         }
+    }
+}
+
+/// Install the package staged in `source`.
+///
+/// The work is [`super::install::install_staged_package`]; what this adds is
+/// the surface a user reaches it through, and the line that says what happened.
+/// A package is a directory named `<app-id>@<version>` holding the launch
+/// manifest and the program it names — the shape a completed download leaves in
+/// `/data/downloads`.
+fn appctl_install(fs: &FileSystem, source: Option<&String>) -> String {
+    let Some(source) = source else {
+        return String::from("usage: appctl install <staged-package>\n");
+    };
+
+    match super::install::install_staged_package(fs, source) {
+        Ok(installed) => format!(
+            "appctl install\ninstalled {}@{}\n",
+            installed.app_id, installed.version
+        ),
+        Err(error) => format!("appctl install: {} failed: {}\n", source, error.as_str()),
     }
 }
 

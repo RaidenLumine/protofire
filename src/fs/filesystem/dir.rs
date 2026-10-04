@@ -74,8 +74,9 @@ impl FileSystem {
         )
     }
 
-    // Kept crash-recovery / security-token primitive; the install pipeline moved
-    // out of the kernel and will consume this when re-added.
+    // The install path (`user::program::install`) is the caller, and it is
+    // compiled only with a demo disk or in tests: a plain kernel build has
+    // none, and the primitive is still the filesystem's to offer.
     #[allow(dead_code)]
     pub(crate) fn remove_normalized_path_if_exists_with_security_token(
         &self,

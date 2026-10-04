@@ -52,6 +52,17 @@ pub trait FileSystem: Send + Sync {
     /// Rename `from` to `to`, replacing the target if it exists.
     fn rename(&self, old_path: &str, new_path: &str) -> Result<()>;
 
+    /// Exchange the two paths in one step.
+    ///
+    /// Neither name is ever absent while the exchange happens, which is what
+    /// version switching and rollback need: after the call `path_a` holds what
+    /// was at `path_b` and the other way round, and a crash cannot leave one of
+    /// them pointing at nothing.  A filesystem without the primitive refuses
+    /// it rather than approximating it with two renames.
+    fn swap_paths(&self, _path_a: &str, _path_b: &str) -> Result<()> {
+        Err(Error::Unsupported)
+    }
+
     /// Create a regular file at `path`.
     fn create_file(&self, path: &str) -> Result<Arc<dyn VNode>>;
 

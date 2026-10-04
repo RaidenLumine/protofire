@@ -623,6 +623,19 @@ control that are unusual in a hobby kernel.
   `/system/trusted-keys`; a seccomp (#129) syscall filter for process
   sandboxing; PAN/SMAP prevents kernel access to user memory outside an
   explicit window.
+- **Install format and atomic switch**: a package is a directory named
+  `<app-id>@<version>` holding a launch manifest (paths relative to itself) and
+  the program it names.  `user::program::install` checks the manifest's digest
+  and optional signature *before* committing anything, stages the payload
+  beside its version root and renames it in, writes the versioned catalog
+  record last — that record is what makes a version installed — and switches
+  `/apps/current/<app-id>.toml` to it with the filesystem's `swap_paths`, so the
+  active name always holds a complete record.  A failure before the record
+  leaves the machine as it was; a failure after it leaves a transaction the
+  boot reports as installed-but-not-activated, which is the rollback.  What is
+  missing is the caller: no boot reaches the path yet (the demo's app zone is
+  mounted read-only, which the install refuses before it starts), so today it is
+  driven by `appctl install` in host builds and by the tests.
 - **Stack canary**: a random 64-bit canary per thread, verified by
   `check_stack_canary()` before each context switch back to the scheduler.
 - **Audit subsystem**: classified event types (Syscall, FileOp, Process,

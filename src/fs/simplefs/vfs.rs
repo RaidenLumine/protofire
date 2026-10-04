@@ -77,6 +77,10 @@ impl VfsFileSystem for SimpleFsVolume {
         self.inner.rename(old_path, new_path)
     }
 
+    fn swap_paths(&self, path_a: &str, path_b: &str) -> Result<()> {
+        self.inner.swap_paths(path_a, path_b)
+    }
+
     fn create_dir(&self, path: &str) -> Result<()> {
         self.inner.create_dir(path)
     }

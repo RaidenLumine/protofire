@@ -394,8 +394,8 @@ pub fn normalize_path_pair_from_root(first: &str, second: &str) -> Result<(Strin
 
 // ── FS mutation helpers (used by the appctl/lumina CLI surface) ───────
 // These are user-facing complete-OS operations that belong out of the kernel;
-// they are reachable only through the demo disk / tests, so they are gated
-// with the app module that calls them.
+// they are reachable only through the demo disk / tests, and by the install
+// path (`user::program::install::package`), which is gated the same way.
 
 #[cfg(any(feature = "demo-disk", test))]
 pub fn create_dir_with_current_security(fs: &FileSystem, path: &str) -> Result<()> {

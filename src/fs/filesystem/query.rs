@@ -61,8 +61,9 @@ impl FileSystem {
         self.current_working_dir.lock().clone()
     }
 
-    // Kept storage-init status primitive; the install pipeline moved out of the
-    // kernel and will consume this when re-added.
+    // No caller today: the boot prints the storage-init report itself, and the
+    // install path (`user::program::install`) does not need it.  Kept because
+    // the report is the filesystem's own record of what the boot found.
     #[allow(dead_code)]
     pub(crate) fn storage_init_report(&self) -> Option<StorageInitReport> {
         *self.storage_init_report.lock()
