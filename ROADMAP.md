@@ -81,8 +81,10 @@ The authoritative picture of what exists today is
 - **Reproducible releases.** The artifacts are reproducible and gated
   (`make check-reproducible-build`), and one can be signed with a fresh
   one-time key (`cargo run -- sign-release …`, checked with `verify-signature`).
-  What remains is the release around them: tagged 1.x versions, published key
-  records, and the documented flow for checking a signature against a rebuild.
+  [CONTRIBUTING.md](CONTRIBUTING.md) carries the release checklist that ties
+  them together — the gate, the signature, and the rebuild a user can check the
+  signature against.  What remains is the release around them: tagged 1.x
+  versions and the first published key records.
 - **Governance.** Grow the maintainer team, adopt RFC-style design docs for
   large features, and formalise the review process in [MAINTAINERS.md](MAINTAINERS.md).
 

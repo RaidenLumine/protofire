@@ -198,6 +198,29 @@ cargo clean --target x86_64-unknown-none -p protofire
 `cargo clean -p protofire` without `--target` only clears the host's
 artefacts, so a large move still needs the per-target one.
 
+## Releasing
+
+A release is the source, the artifacts, and the ability to check one against
+the other.  The artifacts are reproducible by gate, and each one is signed
+with a key that has never signed anything else:
+
+```bash
+make verify-p3                                   # the release gate
+make check-reproducible-build                    # same source, same bytes
+cargo run -- sign-release <artifact> <key-id>    # a fresh one-time key each time
+cargo run -- verify-signature <artifact> <artifact>.sig <key-id>.public.toml
+```
+
+The signature and the key record go with the artifact in the release; the
+private half of a Lamport key must not, and must never sign a second artifact
+(the command generates a fresh key every time for exactly that reason).
+
+What that buys a user is the check no publisher can fake: rebuild the artifact
+from the tagged source, and verify the bytes you produced against the
+signature and the published key — the same string the kernel verifies in a
+launch manifest, so an installed program and a released image are checked the
+same way.
+
 ---
 
 ## Adding or Modifying a Syscall
