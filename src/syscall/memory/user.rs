@@ -485,7 +485,7 @@ pub(super) fn with_staged_input<T>(
     f(&staging[..capacity])
 }
 
-pub(super) fn read_user_value<T: Copy>(
+pub(crate) fn read_user_value<T: Copy>(
     ptr: *const u8,
     length: usize,
     required_length: usize,

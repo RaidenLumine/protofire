@@ -121,6 +121,7 @@ pub mod percpu;
 pub mod psci;
 pub mod rand;
 pub mod rtc;
+pub mod signal;
 pub mod trap;
 pub mod user_access;
 

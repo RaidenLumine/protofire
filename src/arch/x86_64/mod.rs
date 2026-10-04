@@ -46,6 +46,7 @@ pub mod irq_balance;
 pub mod msi;
 pub mod rand;
 pub mod rtc;
+pub mod signal;
 
 // KASLR boot-time self-relocation.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]

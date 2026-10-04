@@ -95,6 +95,16 @@ pub use riscv64::rand as hardware_rand;
 #[cfg(target_arch = "x86_64")]
 pub use x86_64::rand as hardware_rand;
 
+// Restoring the user context a signal frame recorded is the machine's: the
+// frame's shape, and what a return from a signal handler has to put back.
+// The syscall that asks is the same on every machine; the answer is not.
+#[cfg(target_arch = "aarch64")]
+pub use aarch64::signal::restore_signal_frame;
+#[cfg(target_arch = "riscv64")]
+pub use riscv64::signal::restore_signal_frame;
+#[cfg(target_arch = "x86_64")]
+pub use x86_64::signal::restore_signal_frame;
+
 // The device-tree parser describes the platforms that hand a blob over, not
 // one architecture: aarch64 and riscv64 both parse it, and the host tests
 // parse synthetic blobs with it, so it lives at this level rather than inside

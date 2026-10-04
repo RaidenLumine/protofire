@@ -59,48 +59,20 @@ pub(super) fn wait(context: &mut super::SyscallContext) -> Result<super::Syscall
 /// Handle `SYS_SIGRETURN` (#134).
 ///
 /// `arg0` = pointer to a `SignalFrame` on the user stack.
-/// Reads the frame and restores the saved RIP/RSP/RFLAGS by overwriting
-/// the current thread's user context.  The `handle_syscall` dispatch layer
-/// applies the restored context to the `InterruptContext` before `iretq`.
+/// The frame is the machine's — its shape, and what restoring it means — so
+/// this reads the pointer and hands it to the architecture, which overwrites
+/// the current thread's user context with what the frame recorded.  The
+/// `handle_syscall` dispatch layer applies the restored context to the
+/// interrupt frame on the way out.
 pub(super) fn sigreturn(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        use crate::abi::process::SignalFrame;
+    crate::arch::restore_signal_frame(context.arg(0))?;
 
-        let frame_ptr = context.arg(0) as *const u8;
-
-        // Read the SignalFrame from user memory.
-        let frame: SignalFrame = super::user_memory::read_user_value(
-            frame_ptr,
-            core::mem::size_of::<SignalFrame>(),
-            core::mem::size_of::<SignalFrame>(),
-        )?;
-
-        // Restore the thread's saved user context from the SignalFrame.
-        super::runtime::with_current_thread(|thread| {
-            let mut user_ctx = thread
-                .x86_64_user_context()
-                .ok_or(crate::Error::InternalError)?;
-            user_ctx.instruction_pointer = frame.orig_rip;
-            user_ctx.rflags = frame.orig_rflags;
-            user_ctx.stack_pointer = frame.orig_rsp;
-            thread.set_x86_64_user_context(user_ctx);
-            Ok(())
-        })?;
-
-        // Signal that the dispatch layer should apply the restored context
-        // to the InterruptContext before returning to user mode.
-        Ok(super::SyscallDispatch {
-            value: 0,
-            action: super::SyscallAction::SigReturn,
-        })
-    }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        let _ = context;
-        Err(crate::Error::NotImplemented)
-    }
+    // Signal that the dispatch layer should apply the restored context to the
+    // interrupt frame before returning to user mode.
+    Ok(super::SyscallDispatch {
+        value: 0,
+        action: super::SyscallAction::SigReturn,
+    })
 }
 
 /// A no-op proxy handler that prevents the kernel default action for a signal.

@@ -42,7 +42,7 @@ where
     current_process().and_then(|process| f(process.as_ref()))
 }
 
-pub(super) fn with_current_thread<F, T>(f: F) -> Result<T>
+pub(crate) fn with_current_thread<F, T>(f: F) -> Result<T>
 where
     F: FnOnce(&Thread) -> Result<T>,
 {

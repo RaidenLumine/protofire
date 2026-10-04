@@ -103,6 +103,7 @@ pub mod pci;
 pub mod percpu;
 pub mod rand;
 pub mod rtc;
+pub mod signal;
 pub mod smp;
 pub mod tlb;
 pub mod trap;
