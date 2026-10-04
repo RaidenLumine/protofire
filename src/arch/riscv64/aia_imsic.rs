@@ -69,8 +69,7 @@ const IMSIC_QEMU_VIRT_BASE: usize = 0x2800_0000;
 const IMSIC_QEMU_VIRT_STRIDE: usize = 0x4000;
 /// Highest interrupt identity an IMSIC file can hold (2048 interrupts).
 const IMSIC_MAX_IRQ: u32 = 2047;
-/// Number of entries in the per-IRQ handler table.
-const IRQ_TABLE_LEN: usize = 256;
+use crate::arch::irq_handlers::IRQ_TABLE_LEN;
 
 /// The identity the boot's self-test uses, and which device allocation must
 /// leave alone.
@@ -199,7 +198,7 @@ const SIE_SEIE: u64 = 1 << 9;
 /// A handler carries state: the device it belongs to, the wait queue its
 /// completions are parked on, the counters its driver reports.  It is called
 /// from the external-interrupt path and must not block.
-pub type IrqHandler = alloc::sync::Arc<dyn Fn(u32) + Send + Sync>;
+pub use crate::arch::irq_handlers::IrqHandler;
 
 // ── Per-hart IMSIC geometry ────────────────────────────────────────────
 
@@ -242,11 +241,6 @@ fn set_bitset_bit(base: u64, irq: u32) -> u64 {
 
 static IMSIC_LAYOUT: SpinLock<Option<ImsicLayout>> = SpinLock::new(None);
 static GLOBAL_INITIALIZED: AtomicBool = AtomicBool::new(false);
-
-/// The per-IRQ device handler table.  Indexed by the claimed interrupt
-/// identity; entries are registered at device-probe time.
-static IRQ_HANDLERS: SpinLock<[Option<IrqHandler>; IRQ_TABLE_LEN]> =
-    SpinLock::new([const { None }; IRQ_TABLE_LEN]);
 
 /// Initialise the IMSIC for this platform.
 ///
@@ -301,10 +295,13 @@ pub fn has_aia_imsic() -> bool {
     IMSIC_LAYOUT.lock().is_some()
 }
 
+/// The identity RISC-V indexes [`crate::arch::irq_handlers`] from: its
+/// identities start at zero, so an identity is its own slot.
+const IRQ_WINDOW_BASE: u32 = 0;
+
 /// Whether any handler is registered for `irq`.
 pub fn irq_has_handler(irq: u32) -> bool {
-    let index = irq as usize;
-    index < IRQ_TABLE_LEN && IRQ_HANDLERS.lock()[index].is_some()
+    crate::arch::irq_handlers::is_registered(IRQ_WINDOW_BASE, irq)
 }
 
 /// The first identity a device may be given.
@@ -317,34 +314,17 @@ pub const FIRST_DEVICE_IRQ: u32 = 1;
 /// Claim `count` consecutive device identities for `handler`, and answer the
 /// first one.
 ///
-/// The range is allocated first-fit from [`FIRST_DEVICE_IRQ`], and the claim is
-/// all-or-nothing: either every identity in the range gets `handler`, or
-/// nothing is written and the error says why.  That matters because the range
-/// is what the device's MSI-X table will be programmed with — a half-claimed
-/// range would move some of a device's messages to an identity nobody owns.
-///
-/// A registration is a table entry, not a hardware access, so a driver claims
-/// its identities at probe time and the table is programmed later, once the
-/// interrupt controller that carries the messages is up.
+/// The range is allocated first-fit from [`FIRST_DEVICE_IRQ`], with the
+/// registry in [`crate::arch::irq_handlers`] holding the table and the
+/// all-or-nothing rule.
 pub fn claim_device_irqs(count: u32, handler: IrqHandler) -> Result<u32, Error> {
-    if count == 0 {
-        return Err(Error::InvalidArgument);
-    }
-    let mut handlers = IRQ_HANDLERS.lock();
-    let Some(last_first) = IMSIC_MAX_DEVICE_IRQ.checked_sub(count - 1) else {
-        return Err(Error::NoSpace);
-    };
-    let mut first = FIRST_DEVICE_IRQ;
-    while first <= last_first {
-        if (first..first + count).all(|irq| handlers[irq as usize].is_none()) {
-            for irq in first..first + count {
-                handlers[irq as usize] = Some(handler.clone());
-            }
-            return Ok(first);
-        }
-        first += 1;
-    }
-    Err(Error::NoSpace)
+    crate::arch::irq_handlers::claim(
+        IRQ_WINDOW_BASE,
+        FIRST_DEVICE_IRQ,
+        IMSIC_MAX_DEVICE_IRQ,
+        count,
+        handler,
+    )
 }
 
 // ── External-interrupt dispatch ────────────────────────────────────────
@@ -370,10 +350,7 @@ pub fn handle_pending_external() -> u32 {
     }
 
     crate::kernel::irq_stats::record_irq(claimed);
-    let handler = IRQ_HANDLERS.lock()[claimed as usize % IRQ_TABLE_LEN].clone();
-    if let Some(handler) = handler {
-        handler(claimed);
-    } else {
+    if !crate::arch::irq_handlers::dispatch(IRQ_WINDOW_BASE, claimed) {
         crate::kernel::irq_stats::record_spurious();
         log(
             LogLevel::Debug,

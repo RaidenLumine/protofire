@@ -16,6 +16,7 @@ pub mod entry;
 pub mod exception_recoverability;
 pub mod interrupt_controller;
 pub mod ipi;
+pub mod irq_handlers;
 pub mod mmu;
 pub mod pci;
 pub mod percpu;
