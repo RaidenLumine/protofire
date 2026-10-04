@@ -28,15 +28,15 @@ use super::metadata::parse_string_field;
 const TRUSTED_SIGNATURE_KEY_ROOT: &str = "/system/trusted-keys";
 
 const LAMPORT_SIGNATURE_KIND: &str = "lamport-sha256";
-const LAMPORT_MESSAGE_BITS: usize = 256;
-const LAMPORT_ELEMENT_BYTES: usize = 32;
-const LAMPORT_SIGNATURE_BYTES: usize = LAMPORT_MESSAGE_BITS * LAMPORT_ELEMENT_BYTES;
-const LAMPORT_PUBLIC_KEY_BYTES: usize = LAMPORT_MESSAGE_BITS * 2 * LAMPORT_ELEMENT_BYTES;
+pub(crate) const LAMPORT_MESSAGE_BITS: usize = 256;
+pub(crate) const LAMPORT_ELEMENT_BYTES: usize = 32;
+pub(crate) const LAMPORT_SIGNATURE_BYTES: usize = LAMPORT_MESSAGE_BITS * LAMPORT_ELEMENT_BYTES;
+pub(crate) const LAMPORT_PUBLIC_KEY_BYTES: usize = LAMPORT_MESSAGE_BITS * 2 * LAMPORT_ELEMENT_BYTES;
 const MAX_SIGNATURE_KEY_ID_BYTES: usize = 128;
 
-struct ParsedDetachedSignature<'a> {
-    key_id: &'a str,
-    payload: Vec<u8>,
+pub(crate) struct ParsedDetachedSignature<'a> {
+    pub(crate) key_id: &'a str,
+    pub(crate) payload: Vec<u8>,
 }
 
 pub(crate) fn verify_optional_signature(
@@ -49,10 +49,45 @@ pub(crate) fn verify_optional_signature(
     };
 
     let signature = parse_detached_signature(signature_text)?;
-    verify_lamport_signature(fs, bytes, &signature)
+    let public_key = load_trusted_lamport_public_key(fs, signature.key_id)?;
+    verify_lamport_signature(bytes, &signature.payload, &public_key)
 }
 
-fn parse_detached_signature(value: &str) -> Result<ParsedDetachedSignature<'_>> {
+#[cfg(not(target_os = "none"))]
+/// The one place that knows what a detached signature looks like.
+///
+/// The signer and the verifier are on opposite sides of a trust boundary — one
+/// runs on a build host, the other in the kernel — and the format is what they
+/// have to agree on, so it is rendered here and parsed here.
+pub(crate) fn render_detached_signature(key_id: &str, payload: &[u8]) -> String {
+    format!("{LAMPORT_SIGNATURE_KIND}:{key_id}:{}", encode_hex(payload))
+}
+
+#[cfg(not(target_os = "none"))]
+/// Validate a key id, for a caller that is about to make one up.
+pub(crate) fn validate_key_id(key_id: &str) -> Result<()> {
+    validate_signature_key_id(key_id)
+}
+
+#[cfg(not(target_os = "none"))]
+/// Render the trusted-key record a verifier reads for `key_id`.
+///
+/// The reader is [`load_trusted_lamport_public_key`], and this is its other
+/// half, so a key a host tool writes is one the kernel can check — including
+/// the digest the record carries about itself, which the reader verifies when
+/// it is present.
+pub(crate) fn render_trusted_key_record(key_id: &str, public_key: &[u8]) -> String {
+    format!(
+        "kind = \"{LAMPORT_SIGNATURE_KIND}\"\n\
+         key_id = \"{key_id}\"\n\
+         public_key_hex = \"{}\"\n\
+         public_key_sha256 = \"{}\"\n",
+        encode_hex(public_key),
+        sha256_hex(public_key),
+    )
+}
+
+pub(crate) fn parse_detached_signature(value: &str) -> Result<ParsedDetachedSignature<'_>> {
     let Some(rest) = value.strip_prefix(LAMPORT_SIGNATURE_KIND) else {
         return Err(Error::Unsupported);
     };
@@ -84,12 +119,20 @@ fn validate_signature_key_id(key_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn verify_lamport_signature(
-    fs: &FileSystem,
+/// Check `payload` against `public_key` for the digest of `bytes`.
+///
+/// The public key is passed in rather than looked up, so the same check serves
+/// the kernel (whose key comes from `/system/trusted-keys`) and a host tool
+/// (whose key comes from a file beside the artifact).
+pub(crate) fn verify_lamport_signature(
     bytes: &[u8],
-    signature: &ParsedDetachedSignature<'_>,
+    payload: &[u8],
+    public_key: &[u8],
 ) -> Result<()> {
-    let public_key = load_trusted_lamport_public_key(fs, signature.key_id)?;
+    if payload.len() != LAMPORT_SIGNATURE_BYTES || public_key.len() != LAMPORT_PUBLIC_KEY_BYTES {
+        return Err(Error::InvalidArgument);
+    }
+
     let digest = sha256_digest(bytes);
 
     for bit_index in 0..LAMPORT_MESSAGE_BITS {
@@ -97,9 +140,8 @@ fn verify_lamport_signature(
         let signature_offset = bit_index * LAMPORT_ELEMENT_BYTES;
         let public_key_offset =
             bit_index * (LAMPORT_ELEMENT_BYTES * 2) + bit * LAMPORT_ELEMENT_BYTES;
-        let hashed_signature_element = sha256_digest(
-            &signature.payload[signature_offset..signature_offset + LAMPORT_ELEMENT_BYTES],
-        );
+        let hashed_signature_element =
+            sha256_digest(&payload[signature_offset..signature_offset + LAMPORT_ELEMENT_BYTES]);
         if hashed_signature_element.as_slice()
             != &public_key[public_key_offset..public_key_offset + LAMPORT_ELEMENT_BYTES]
         {
@@ -118,18 +160,28 @@ fn load_trusted_lamport_public_key(fs: &FileSystem, key_id: &str) -> Result<Vec<
         Err(error) => return Err(error),
     };
 
-    if parse_string_field(&text, "kind")? != LAMPORT_SIGNATURE_KIND {
+    parse_trusted_key_record(&text, key_id)
+}
+
+/// Read a trusted-key record's public key, checking what the record claims.
+///
+/// The kernel's key comes from `/system/trusted-keys` and a host tool's comes
+/// from a file beside the artifact; both are this format, so both are read
+/// here.  Keeping one reader is what stops a record the tool writes from being
+/// one the kernel cannot check.
+pub(crate) fn parse_trusted_key_record(text: &str, key_id: &str) -> Result<Vec<u8>> {
+    if parse_string_field(text, "kind")? != LAMPORT_SIGNATURE_KIND {
         return Err(Error::Unsupported);
     }
-    if let Some(record_key_id) = parse_optional_string_field(&text, "key_id")? {
+    if let Some(record_key_id) = parse_optional_string_field(text, "key_id")? {
         if record_key_id != key_id {
             return Err(Error::InvalidArgument);
         }
     }
 
-    let public_key_hex = parse_string_field(&text, "public_key_hex")?;
+    let public_key_hex = parse_string_field(text, "public_key_hex")?;
     let public_key = decode_hex_bytes(&public_key_hex, LAMPORT_PUBLIC_KEY_BYTES)?;
-    if let Some(public_key_sha256) = parse_optional_string_field(&text, "public_key_sha256")? {
+    if let Some(public_key_sha256) = parse_optional_string_field(text, "public_key_sha256")? {
         if sha256_hex(&public_key) != public_key_sha256 {
             return Err(Error::PermissionDenied);
         }
@@ -157,6 +209,18 @@ fn decode_hex_bytes(value: &str, expected_len: usize) -> Result<Vec<u8>> {
     }
 
     Ok(decoded)
+}
+
+#[cfg(not(target_os = "none"))]
+/// Render bytes as lower-case hex, the form the signature and key records use.
+pub(crate) fn encode_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(DIGITS[(byte >> 4) as usize] as char);
+        out.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn decode_hex_nibble(byte: u8) -> Result<u8> {

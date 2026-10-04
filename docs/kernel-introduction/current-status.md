@@ -909,8 +909,11 @@ things make that contract *testable* rather than merely written down:
   the aarch64 `Image` and the demo disk image — and
   `make check-reproducible-build` is the gate that keeps it that way.  Nothing
   is pinned to a hash: the check asserts determinism, which is the property a
-  verifiable release needs.  Signed artifacts and tagged releases are still
-  ahead (see the roadmap).
+  verifiable release needs.  One artifact can be signed with a fresh one-time
+  key (`cargo run -- sign-release …`, checked with `verify-signature`), using
+  the same `lamport-sha256` scheme the kernel verifies manifests with.  Tagged
+  releases, published key records and the documented verify-a-rebuild flow are
+  still ahead (see the roadmap).
 
 ---
 

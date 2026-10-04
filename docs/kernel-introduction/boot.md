@@ -524,6 +524,21 @@ above (and `mkimage`'s demo disk) twice in two clean trees and requires the
 bytes to be identical, so a published artifact can be checked by rebuilding it
 rather than by trusting the machine that produced it.
 
+An artifact can also be signed, one artifact at a time:
+`cargo run -- sign-release <artifact> <key-id>` writes `<artifact>.sig` and
+`<key-id>.public.toml` beside it, and
+`cargo run -- verify-signature <artifact> <sig> <key>` checks the pair.  The
+scheme is the kernel's own (`lamport-sha256`,
+`src/user/program/signature.rs`), so the same signature string can be carried
+in a launch manifest and checked in-kernel against a key record under
+`/system/trusted-keys`.  A key signs exactly one artifact — two signatures
+under one Lamport key reveal both preimages of every bit the two digests
+disagree on, which is enough to forge a third — so the command generates a
+fresh key every time and refuses to write over a signature that is already
+there.  Together with the reproducible build above, that is what makes a
+release checkable: rebuild the artifact, then verify the signature against the
+bytes you produced.
+
 ### 7.2 QEMU Direct Boot
 
 The `make run` / `make run-aarch64` / `make run-riscv64` targets pass a kernel

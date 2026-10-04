@@ -23,13 +23,13 @@ mod constants;
 pub mod demo_runtime;
 #[cfg(any(test, feature = "demo-disk", target_os = "none"))]
 mod install;
-mod integrity;
+pub(crate) mod integrity;
 mod launch_reference;
 mod loader;
-mod metadata;
+pub(crate) mod metadata;
 #[cfg(any(feature = "demo-disk", test))]
 mod shell;
-mod signature;
+pub(crate) mod signature;
 mod spawn;
 
 // ── re-export public types so external callers and the test suite see
