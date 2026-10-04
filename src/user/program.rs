@@ -52,6 +52,11 @@ pub use self::loader::load_from_catalog;
 // Bare-metal only: the boot path and the shell are the consumers.
 #[cfg(target_os = "none")]
 pub(crate) use self::loader::finish_loading_program;
+
+// The install path (`syscall::install`) hands a package to this; the module
+// itself stays private, so the one entry point is what a caller can name.
+#[cfg(any(feature = "demo-disk", test))]
+pub(crate) use self::install::install_staged_package;
 #[cfg(target_os = "none")]
 pub(crate) use self::loader::load_filesystem_image;
 pub use self::loader::load_from_catalog_with_overrides;

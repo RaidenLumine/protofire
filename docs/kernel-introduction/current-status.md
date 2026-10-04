@@ -650,10 +650,12 @@ control that are unusual in a hobby kernel.
   `/apps/current/<app-id>.toml` to it with the filesystem's `swap_paths`, so the
   active name always holds a complete record.  A failure before the record
   leaves the machine as it was; a failure after it leaves a transaction the
-  boot reports as installed-but-not-activated, which is the rollback.  What is
-  missing is the caller: no boot reaches the path yet (the demo's app zone is
-  mounted read-only, which the install refuses before it starts), so today it is
-  driven by `appctl install` in host builds and by the tests.
+  boot reports as installed-but-not-activated, which is the rollback.  A ring-3
+  program reaches it through `install_package` (#192), which adds no policy of
+  its own: every read and every write the install makes goes through the
+  filesystem under the *caller's* token, so a program installs exactly what it
+  can read and exactly where it can write — and the demo's app zone, mounted
+  read-only, refuses a guest before anything is written.
 - **Stack canary**: a random 64-bit canary per thread, verified by
   `check_stack_canary()` before each context switch back to the scheduler.
 - **Audit subsystem**: classified event types (Syscall, FileOp, Process,

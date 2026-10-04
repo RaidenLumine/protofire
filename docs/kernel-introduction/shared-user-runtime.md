@@ -315,8 +315,10 @@ What the kernel does keep is the *format* an install has to obey and the two
 steps that cannot be done from outside it: `crate::user::program::install`
 verifies a package against its manifest, stages its payload and swaps the
 active record atomically, and `recover_install_management_state` reads the same
-transaction log back at boot.  A distribution's installer drives that format;
-the kernel is only the thing that has to agree with it.
+transaction log back at boot.  A distribution's installer drives that format —
+from ring 3 through `install_package` (#192), which resolves the path and hands
+the work to the filesystem under the caller's own token — and the kernel is only
+the thing that has to agree with it.
 
 ---
 

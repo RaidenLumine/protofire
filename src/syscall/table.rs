@@ -122,6 +122,10 @@ mod filter_handler;
 #[path = "service.rs"]
 mod service_handler;
 
+/// The install syscall: handing the kernel a package to install.
+#[path = "install.rs"]
+mod install_handler;
+
 #[path = "ipsec.rs"]
 mod ipsec_handler;
 
@@ -467,9 +471,10 @@ pub enum SyscallNumber {
     /// service_start_all — start every declared service that has not started
     /// (#191).
     ServiceStartAll = 191,
+    InstallPackage = 192,
 }
 
-pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::ServiceStartAll as u32 + 1;
+pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::InstallPackage as u32 + 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SyscallContext {
@@ -1060,6 +1065,10 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
         SyscallNumber::ServiceStartAll as usize,
         service_handler::start_all,
     ),
+    (
+        SyscallNumber::InstallPackage as usize,
+        install_handler::install,
+    ),
 ];
 
 impl Default for Table {
@@ -1216,7 +1225,7 @@ mod tests {
 
         assert_eq!(
             PUBLIC_SYSCALL_COUNT,
-            SyscallNumber::ServiceStartAll as u32 + 1
+            SyscallNumber::InstallPackage as u32 + 1
         );
         assert!(table.entries[PUBLIC_SYSCALL_COUNT as usize].is_none());
     }

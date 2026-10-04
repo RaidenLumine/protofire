@@ -164,6 +164,7 @@ pub enum SyscallNumber {
 | 181-189| VIRGL 3D (context, resource, transfer, submit, scanout, device info) |
 | 190    | service_declare (read one declaration file and register its services) |
 | 191    | service_start_all (start every declared service that has not started) |
+| 192    | install_package (install the staged package at one path) |
 
 ### PUBLIC_SYSCALL_COUNT
 

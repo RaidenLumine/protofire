@@ -1216,6 +1216,8 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[SyscallPointerSpec::input(0, Some(1), None)],
     // 191 ServiceStartAll          — no pointers
     &[],
+    // 192 InstallPackage           — arg0=package path (in), arg1=len
+    &[SyscallPointerSpec::input(0, Some(1), None)],
 ];
 
 /// Pre-validate every user-memory pointer declared in the syscall's

@@ -84,6 +84,11 @@
 # times — the walk itself — in the direction it already had, since it reads the
 # declarations it runs.
 #
+# The install syscall names `fs` once more, to resolve the path it is handed
+# against the caller's working directory.  Everything else it does — reading the
+# package, writing `/apps` — it does through `user::program`, which is where the
+# install path lives; the syscall is the way in, not a second implementation.
+#
 # from                         to                           count
 audit                        fs                           6
 audit                        handle_rights                2
@@ -192,7 +197,7 @@ smp                          percpu                       2
 syscall                      audit                        9
 syscall                      boot_report                  2
 syscall                      drivers                      3
-syscall                      fs                           46
+syscall                      fs                           47
 syscall                      ipc                          6
 syscall                      irq_balance                  3
 syscall                      irq_stats                    1

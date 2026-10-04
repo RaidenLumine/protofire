@@ -513,10 +513,11 @@ fn installed_version_present(fs: &FileSystem, app_id: &str, version: &str) -> bo
 
 // ── the install path ──────────────────────────────────────────────────
 //
-// The gate is the caller's.  Today that is the appctl surface — `mod app` is
-// compiled with a demo disk or in tests — and a distribution's installer would
-// reach it through a syscall, which is the day this moves.  The recovery half
-// above runs on every boot and stays ungated.
+// The gate is the caller's: the `install_package` syscall
+// (`src/syscall/install.rs`) and the appctl surface, both compiled with a demo
+// disk or in tests.  A build without either has no install path at all, and the
+// syscall answers `Unsupported` there.  The recovery half above runs on every
+// boot and stays ungated.
 #[cfg(any(feature = "demo-disk", test))]
 pub(crate) mod package {
     use super::*;

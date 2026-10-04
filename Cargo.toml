@@ -36,6 +36,10 @@ name = "fs_maintenance"
 path = "tests/fs/maintenance.rs"
 
 [[test]]
+name = "install"
+path = "tests/syscall/install.rs"
+
+[[test]]
 name = "servicefs"
 path = "tests/fs/servicefs.rs"
 

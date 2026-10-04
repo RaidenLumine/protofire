@@ -9,9 +9,9 @@
 //! SYSCALL_COUNT).
 
 pub const SYSCALL_ABI_VERSION_MAJOR: u32 = 1;
-pub const SYSCALL_ABI_VERSION_MINOR: u32 = 2;
+pub const SYSCALL_ABI_VERSION_MINOR: u32 = 3;
 
-pub const SYSCALL_COUNT: usize = 192;
+pub const SYSCALL_COUNT: usize = 193;
 pub const MAX_SYSCALLS: usize = 256;
 
 // ── Status encoding ──────────────────────────────────────────────────
@@ -248,6 +248,16 @@ pub const SYS_SERVICE_DECLARE: usize = 190;
 /// the supervisor's recovery can all ask and the first to arrive does the work.
 pub const SYS_SERVICE_START_ALL: usize = 191;
 
+/// `install_package` — install the staged package at one path (§192).
+///
+/// The path names a directory `<app_id>@<version>` holding a launch manifest
+/// and the program it names — the shape a completed download leaves in
+/// `/data/downloads`.  The kernel verifies the package against its manifest,
+/// commits the payload and switches the active version; every read and every
+/// write it makes goes through the filesystem under the *caller's* token, so a
+/// program can install exactly what it can read and exactly where it can write.
+pub const SYS_INSTALL_PACKAGE: usize = 192;
+
 // ── Stability classification ────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -465,6 +475,7 @@ pub const fn syscall_name(number: usize) -> Option<&'static str> {
         189 => Some("gpu_device_info"),
         190 => Some("service_declare"),
         191 => Some("service_start_all"),
+        192 => Some("install_package"),
         _ => None,
     }
 }
@@ -481,6 +492,7 @@ mod tests {
     use super::SYS_ABI_INFO;
     use super::SYS_DUP2;
     use super::SYS_GPU_DEVICE_INFO;
+    use super::SYS_INSTALL_PACKAGE;
     use super::SYS_OPEN;
     use super::SYS_SERVICE_DECLARE;
     use super::SYS_SERVICE_START_ALL;
@@ -508,6 +520,7 @@ mod tests {
             syscall_name(SYS_SERVICE_START_ALL),
             Some("service_start_all")
         );
+        assert_eq!(syscall_name(SYS_INSTALL_PACKAGE), Some("install_package"));
     }
 
     #[test]
@@ -523,13 +536,14 @@ mod tests {
         assert_eq!(SYSCALL_ABI_VERSION_MAJOR, 1);
         // Minor 1 added the service numbers at the end of the experimental
         // range; minor 2 changed `service_declare` to take a declaration file's
-        // path rather than its text.  The frozen range below 120 did not move.
-        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 2);
+        // path rather than its text; minor 3 added `install_package`.  The
+        // frozen range below 120 did not move.
+        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 3);
     }
 
     #[test]
     fn count_checks() {
-        assert_eq!(SYSCALL_COUNT, 192);
+        assert_eq!(SYSCALL_COUNT, 193);
         assert_eq!(MAX_SYSCALLS, 256);
     }
 }

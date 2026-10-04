@@ -194,7 +194,7 @@ test-lib:
 	$(CARGO) test $(CARGO_FLAGS) --lib --features demo-disk
 
 test-fast:
-	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test io --test path --test fs_entries
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test io --test path --test fs_entries --test install
 
 test-concurrency:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test scheduler --test condvar --test console --test keyboard
