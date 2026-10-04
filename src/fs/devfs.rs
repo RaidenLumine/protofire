@@ -397,6 +397,7 @@ mod tests {
     use alloc::vec;
 
     use super::*;
+    use crate::drivers::DriverCategory;
 
     /// Collect a directory listing through the filesystem.
     fn list(fs: &DevFs, path: &str) -> Vec<String> {
@@ -420,21 +421,29 @@ mod tests {
 
     #[test]
     fn the_ledger_disambiguates_two_devices_that_report_one_name() {
-        let _guard = device::lock_device_records_for_tests();
+        let _guard = device::lock_device_view_for_tests();
 
-        assert_eq!(
-            device::record_device("virtio-blk", Some("virtio"), "storage", None),
-            "virtio-blk"
+        device::record_device_for_tests(
+            "virtio-blk",
+            "virtio",
+            DriverCategory::Storage,
+            Some(0x1000),
         );
-        // A second disk of the same kind: a path has to be unique, and the
-        // device's own name is all the driver gave it.
-        assert_eq!(
-            device::record_device("virtio-blk", Some("virtio"), "storage", None),
-            "virtio-blk-2"
+        // Two more disks of the same kind.  They differ in where they were
+        // found — the same device reported twice is one device, which is what
+        // the address is for — and their paths have to differ too, because the
+        // device's own name is all the driver gave them.
+        device::record_device_for_tests(
+            "virtio-blk",
+            "virtio",
+            DriverCategory::Storage,
+            Some(0x2000),
         );
-        assert_eq!(
-            device::record_device("virtio-blk", Some("virtio"), "storage", None),
-            "virtio-blk-3"
+        device::record_device_for_tests(
+            "virtio-blk",
+            "virtio",
+            DriverCategory::Storage,
+            Some(0x3000),
         );
 
         let names: Vec<String> = device::device_records()
@@ -446,8 +455,13 @@ mod tests {
 
     #[test]
     fn a_recorded_device_is_a_directory_of_the_facts_the_machine_has() {
-        let _guard = device::lock_device_records_for_tests();
-        device::record_device("nvme0", Some("nvme"), "storage", Some(0xE000_0000));
+        let _guard = device::lock_device_view_for_tests();
+        device::record_device_for_tests(
+            "nvme0",
+            "nvme",
+            DriverCategory::Storage,
+            Some(0xE000_0000),
+        );
 
         let fs = DevFs;
 
@@ -474,8 +488,12 @@ mod tests {
 
     #[test]
     fn a_device_nobody_owns_says_so_rather_than_nothing() {
-        let _guard = device::lock_device_records_for_tests();
-        device::record_device("mystery", None, "bus", None);
+        let _guard = device::lock_device_view_for_tests();
+
+        // A device the manager asked every driver about and nobody claimed:
+        // the ledger says so rather than leaving a blank.
+        let mut manager = crate::drivers::DriverManager::new();
+        manager.register_device("mystery", DriverCategory::Bus, None);
 
         let fs = DevFs;
 
@@ -484,8 +502,37 @@ mod tests {
     }
 
     #[test]
+    fn a_recorded_device_cannot_take_a_name_the_kernel_already_answers_to() {
+        let _guard = device::lock_device_view_for_tests();
+
+        // A probe's name for a device is its own word for it, and the kernel
+        // has devices of its own with handlers behind them: `/dev/console` is
+        // the console, and a discovered device called `console` gets a name of
+        // its own rather than shadowing a node a program can read from.
+        device::record_device_for_tests("console", "test", DriverCategory::Console, None);
+        let recorded = device::device_records()
+            .into_iter()
+            .map(|record| record.name)
+            .next()
+            .expect("recorded");
+        assert_ne!(recorded, "console");
+
+        let fs = DevFs;
+        assert_eq!(
+            fs.lookup("/console").expect("console").kind(),
+            NodeKind::Device
+        );
+        assert_eq!(
+            fs.lookup(&format!("/{}", recorded))
+                .expect("recorded device")
+                .kind(),
+            NodeKind::Directory
+        );
+    }
+
+    #[test]
     fn a_device_that_is_not_recorded_has_no_directory() {
-        let _guard = device::lock_device_records_for_tests();
+        let _guard = device::lock_device_view_for_tests();
 
         let fs = DevFs;
 

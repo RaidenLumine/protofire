@@ -341,6 +341,62 @@ pub fn parse_service_config(text: &str) -> Result<Vec<ServiceDefinition>, String
     Ok(services)
 }
 
+/// Whether `path` names a regular file through real directory entries.
+///
+/// The filesystem resolves *through* symlinks, so a path spelled `/system/…`
+/// can still deliver another volume's bytes: an image that ships `/system`,
+/// `/system/rc.d`, or a file inside it, as a link decides where the kernel
+/// reads from.  A declaration's origin is only worth recording while the chain
+/// is real, so every component has to be the entry it claims to be —
+/// directories down to the file, and the file itself a regular file — and
+/// nothing along the way a link.
+///
+/// Each step reads the *listing* rather than resolving the name: a `stat`
+/// follows the link, which is the thing this has to see.
+fn declaration_is_a_plain_file(fs: &crate::fs::FileSystem, path: &str) -> bool {
+    let components: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    if components.is_empty() {
+        return false;
+    }
+
+    let mut parent = String::from("/");
+    for (index, component) in components.iter().enumerate() {
+        let expected = if index + 1 == components.len() {
+            crate::fs::NodeKind::File
+        } else {
+            crate::fs::NodeKind::Directory
+        };
+        if directory_entry_kind(fs, &parent, component) != Some(expected) {
+            return false;
+        }
+
+        parent = if parent == "/" {
+            alloc::format!("/{}", component)
+        } else {
+            alloc::format!("{}/{}", parent, component)
+        };
+    }
+
+    true
+}
+
+/// The kind one directory records for `name`, or `None` when it has no such
+/// entry.
+fn directory_entry_kind(
+    fs: &crate::fs::FileSystem,
+    directory: &str,
+    name: &str,
+) -> Option<crate::fs::NodeKind> {
+    let mut index = 0;
+    while let Ok(entry) = fs.read_dir(directory, index) {
+        if entry.name == name {
+            return Some(entry.kind);
+        }
+        index += 1;
+    }
+    None
+}
+
 /// Read one declaration file and return the services it declares.
 ///
 /// The kernel reads the file itself, from its own filesystem: `service_declare`
@@ -359,6 +415,11 @@ pub fn read_declaration_file(
 ) -> crate::Result<Vec<ServiceDefinition>> {
     use crate::fs::OPEN_EXISTING;
     use crate::kernel::process::HANDLE_RIGHT_READ;
+
+    // A path, not a link: see `declaration_is_a_plain_file`.
+    if !declaration_is_a_plain_file(fs, path) {
+        return Err(crate::Error::PermissionDenied);
+    }
 
     let metadata = fs
         .stat_path(path)

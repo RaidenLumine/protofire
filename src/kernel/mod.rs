@@ -197,19 +197,11 @@ impl Kernel {
         );
 
         self.drivers.init();
-        // What the drivers found becomes the device ledger `/dev` reports.
-        // The probes record as they bind — they are the ones that know — and
-        // this publishes the result, the way a driver hands a block device to
-        // `kernel::block::publish_device`.  The direction matters: the drivers
-        // do not reach up into the filesystem's registry.
-        for node in crate::drivers::bound_devices() {
-            crate::kernel::device::record_device(
-                &node.name,
-                node.driver_name,
-                node.category.as_str(),
-                node.bus_data,
-            );
-        }
+        // What the probes bound, as `/dev` reports it.  The drivers recorded it
+        // where the binding happened — they are the ones that know — and the
+        // boot says what they found, the way it says what every other subsystem
+        // found.
+        crate::kernel::device::log_device_records();
         let boot_disk = self.drivers.boot_disk();
         self.fs.lock().init_with_boot_disk(boot_disk);
         let t3 = tick();

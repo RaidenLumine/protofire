@@ -81,8 +81,11 @@ input, mostly verified under QEMU.
   their DT node `reg`, making the GPU available on AArch64/RISC-V.
 - **Audio**: the Intel HDA driver provides controller initialization, the
   CORB/RIRB engine, codec discovery, and stream descriptor configuration.
-- **Hotplug**: PCIe slot status monitoring and xHCI port status change polling
-  via the DeviceManager lifecycle framework.
+- **Hotplug, half-built**: the PCIe slot-status and hotplug-event reads exist
+  (`arch::pci::pcie_read_slot_status`, `pcie_check_hotplug_event`) and the
+  device manager has a removal path, but nothing polls either: no boot
+  notices a slot change, and a removed device would stay in `/dev` until the
+  next publish.
 
 **Weaknesses:**
 
@@ -571,7 +574,12 @@ control that are unusual in a hobby kernel.
   registered is therefore the image's bytes and not text a caller assembled,
   and every definition carries where it came from: `/service/<name>/origin` and
   `/service/<name>/sha256` report the declaration file and the digest of its
-  bytes, which is what a privileged level rests on.
+  bytes, which is what a privileged level rests on.  The path is checked
+  component by component against its directories' own listings — directories
+  down to the file, and the file a regular file — because the filesystem
+  resolves through symlinks, and a link shipped in the image would otherwise
+  have the kernel read a declaration out of a writable zone while the record
+  said `/system`.
 - **Service security declarations**: a `security = "guest" | "admin" | "system"`
   key in an rc.d service definition selects the token the started program runs
   under (`ServiceSecurity::security_token()`); a definition that declares
@@ -606,7 +614,10 @@ control that are unusual in a hobby kernel.
   the kernel, decides what the machine runs.  The wait has a five-second
   deadline: a disk whose init never asks, or never runs, has its pending
   services started by the supervisor instead, and a disk with no init program
-  at all is started by the boot directly.
+  at all is started by the boot directly.  That fallback is exercised by a
+  boot of its own — `make check-x8664-init-no-start` builds a disk whose init
+  reads the declarations and asks for nothing — so it is not a path that only
+  runs when something else has already gone wrong.
 - **Code integrity**: SHA-256 over the launch manifest and payload, plus
   optional detached signatures verified against trusted public keys under
   `/system/trusted-keys`; a seccomp (#129) syscall filter for process
@@ -847,7 +858,9 @@ things make that contract *testable* rather than merely written down:
 - **Layout:** the shared user runtime and demo payloads live inside the kernel
   crate as `src/user/shared/` and `src/user/demo/`
 - **Optional features:** `demo-disk`, `fs_profiler`, `net_profiler`,
-  `alloc_profiler`, `fault_profiler`, `educational_networking`
+  `alloc_profiler`, `fault_profiler`, `educational_networking`, plus
+  `abi_frozen_payload` and `init_no_start`, which change what the demo disk
+  carries so a boot can exercise a path the normal disk does not reach
 - **Release profile:** `panic = "abort"`, `opt-level = "s"`, `lto = true`,
   `codegen-units = 1`
 
@@ -981,8 +994,9 @@ spans modules and cannot be attributed to one of them.
     a ring buffer, and dedicated audit syscalls.
 16. **SCTP** — a full transport layer with a 4-way handshake and CRC32C
     verification.
-17. **Hotplug support** — PCIe slot status monitoring and xHCI port status
-    change polling via the DeviceManager lifecycle.
+17. **Hotplug reads** — the PCIe slot-status and hotplug-event reads, and a
+    device-removal path in the device manager.  Nothing polls them yet, so a
+    slot change is not noticed by a running boot.
 18. **POSIX timers** — timer_create/settime/gettime/delete with per-process
     timer management and signal delivery.
 19. **An HDA audio controller driver** — Intel HD Audio with CORB/RIRB, codec

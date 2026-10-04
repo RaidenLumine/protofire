@@ -14,7 +14,6 @@ use crate::fs::NodeKind;
 use crate::kernel::console;
 use crate::kernel::handle_rights::HANDLE_RIGHT_READ;
 use crate::kernel::handle_rights::HANDLE_RIGHT_WRITE;
-use crate::kernel::sync::Mutex;
 use crate::util::debug;
 use crate::Error;
 use crate::Result;
@@ -396,12 +395,15 @@ pub fn device_descriptor(name: &str) -> Option<&'static DeviceDescriptor> {
         .find(|descriptor| descriptor.name == name)
 }
 
-// ── The ledger of devices a driver bound ────────────────────────────────────
+// ── The devices a driver bound, as `/dev` reports them ──────────────────────
 //
 // The descriptors above are the kernel's *own* devices: fixed names, handlers
 // known at compile time.  What a probe finds is a different thing — a device
 // the machine has, claimed by a driver — and there is nowhere compile-time to
-// put it.  This is the ledger for those, and `/dev` is its projection.
+// put it.  The drivers record those in their own registry as they bind them
+// (`crate::drivers::record_bound_device`), and this is the view `/dev` reads:
+// one source, asked each time, so a device that goes away stops being listed
+// rather than staying behind as a copy.
 
 /// A device a driver bound, as `/dev` reports it.
 ///
@@ -415,8 +417,11 @@ pub struct DeviceRecord {
     /// The name this record is reachable at under `/dev`.
     ///
     /// The device's own name, suffixed when a second device reports the same
-    /// one: a path has to be unique, and a device whose driver gives it no
-    /// distinct name has only that name to go on.
+    /// one — or when the name is one the kernel's own devices already answer
+    /// to, because `/dev/console` is the console and a probe's `console` must
+    /// not shadow a node with a handler behind it.  A path has to be unique,
+    /// and a device whose driver gives it no distinct name has only that name
+    /// to go on.
     pub name: String,
     /// The device's own name, as the driver or the firmware gave it.
     pub device: String,
@@ -428,82 +433,79 @@ pub struct DeviceRecord {
     pub bus: Option<usize>,
 }
 
-static DEVICE_RECORDS: Mutex<Vec<DeviceRecord>> = Mutex::new(Vec::new());
-
-/// Record a device a driver bound, returning the name it is reachable at.
+/// Every device a driver has bound, named the way `/dev` reaches it.
 ///
-/// Called by the driver manager where the binding happens — the device-tree
-/// probe and the boot-device probes — so the ledger is a record of what was
-/// actually claimed rather than of what was offered.
-pub fn record_device(
-    device: &str,
-    driver: Option<&str>,
-    category: &'static str,
-    bus: Option<usize>,
-) -> String {
-    let mut records = DEVICE_RECORDS.lock();
+/// Computed from the drivers' registry on each call rather than kept as a copy:
+/// the names are a function of the order the devices were bound in, which does
+/// not change under a running boot, so a lookup and a listing cannot disagree —
+/// and a device that is removed stops being named.
+pub fn device_records() -> Vec<DeviceRecord> {
+    let mut records: Vec<DeviceRecord> = Vec::new();
 
-    let mut name = String::from(device);
-    let mut suffix = records.len() + 1;
-    while records.iter().any(|record| record.name == name) {
-        name = alloc::format!("{}-{}", device, suffix);
-        suffix += 1;
+    for bound in crate::drivers::bound_devices() {
+        let mut name = bound.name.clone();
+        let mut suffix = records.len() + 1;
+        while device_descriptor(&name).is_some() || records.iter().any(|record| record.name == name)
+        {
+            name = alloc::format!("{}-{}", bound.name, suffix);
+            suffix += 1;
+        }
+
+        records.push(DeviceRecord {
+            name,
+            device: bound.name,
+            driver: bound.driver_name.map(String::from),
+            category: bound.category.as_str(),
+            bus: bound.bus_data,
+        });
     }
 
-    records.push(DeviceRecord {
-        name: name.clone(),
-        device: String::from(device),
-        driver: driver.map(String::from),
-        category,
-        bus,
-    });
-
-    // One line per device, from the one place that knows them all: a boot says
-    // what it found and who owns it, and `/dev` says the same thing to a
-    // program.
-    crate::println!(
-        "[device] {} owned by {} ({})",
-        name,
-        driver.unwrap_or("(none)"),
-        category
-    );
-
-    name
+    records
 }
 
-/// Every device a driver has bound, in the order it was found.
-pub fn device_records() -> Vec<DeviceRecord> {
-    DEVICE_RECORDS.lock().clone()
-}
-
-/// Return one recorded device, by the name `/dev` reaches it at.
+/// Return one bound device, by the name `/dev` reaches it at.
 pub fn device_record(name: &str) -> Option<DeviceRecord> {
-    DEVICE_RECORDS
-        .lock()
-        .iter()
+    device_records()
+        .into_iter()
         .find(|record| record.name == name)
-        .cloned()
 }
 
-/// Forget every recorded device.
+/// Record a device the way a probe would, for a test that reads this view.
 ///
-/// The ledger is process-global, so a host test that records devices changes
-/// what the next test sees.  Only tests should call this.
-pub fn reset_device_records_for_tests() {
-    DEVICE_RECORDS.lock().clear();
-}
-
-/// Serialise the tests that use the ledger, starting from an empty one.
-///
-/// The tests that *write* the ledger are the driver manager's and the ones
-/// that *read* it are devfs's, so both have to share one lock: a device
-/// recorded by one test is exactly what the other would see.
+/// Production records through `drivers::record_bound_device`, at the probe that
+/// found the device; this is the same call reached from the module that owns
+/// the view, so a filesystem test can populate `/dev` without naming the driver
+/// subsystem to do it.
 #[cfg(test)]
-pub(crate) fn lock_device_records_for_tests() -> crate::kernel::sync::MutexGuard<'static, ()> {
-    static DEVICE_RECORD_TEST_LOCK: Mutex<()> = Mutex::new(());
-    let guard = DEVICE_RECORD_TEST_LOCK.lock();
-    reset_device_records_for_tests();
-    guard
+pub(crate) fn record_device_for_tests(
+    name: &str,
+    driver: &'static str,
+    category: crate::drivers::DriverCategory,
+    bus: Option<usize>,
+) {
+    let _ = crate::drivers::record_bound_device(name, driver, category, bus);
+}
+
+/// Take the device registry's lock and start from an empty one, for tests that
+/// read this view.
+#[cfg(test)]
+pub(crate) fn lock_device_view_for_tests() -> crate::kernel::sync::MutexGuard<'static, ()> {
+    crate::drivers::lock_bound_devices_for_tests()
+}
+
+/// Say what the machine bound, once, on the boot path.
+///
+/// The same view `/dev` serves, printed: a boot that says which devices it has
+/// and who owns them is a boot whose `/dev` can be read without a shell.
+pub fn log_device_records() {
+    for record in device_records() {
+        crate::println!(
+            "[device] {} owned by {} ({})",
+            record.name,
+            record.driver.as_deref().unwrap_or("(none)"),
+            record.category
+        );
+    }
 }
 
 /// Every device the kernel provides, in registry order.

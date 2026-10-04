@@ -375,8 +375,13 @@ it was read from and the SHA-256 of that file's bytes (`ServiceOrigin`).  A
 program can only name a file *inside* `/system` for the kernel to read, which is
 what makes the origin worth recording: a declaration decides what runs and as
 whom, and the bytes behind it are the READ-ONLY image's rather than anything a
-caller assembled.  `/service/<name>/origin`, `/service/<name>/sha256` and the
-`describe` rendering report them, so the attribution is visible from user space.
+caller assembled.  The path also has to be a *path*: every component is checked
+against its directory's own listing — directories down to the file, and the file
+a regular file — because the filesystem resolves through symlinks, and a link
+shipped in the image could otherwise have the kernel read a declaration out of a
+writable zone while the record said `/system`.  `/service/<name>/origin`,
+`/service/<name>/sha256` and the `describe` rendering report the two facts, so
+the attribution is visible from user space.
 
 The demo disk ships `/system/rc.d/defaults.toml`, written by the demo-disk
 builder from the same list the kernel falls back to when a disk declares
@@ -394,7 +399,10 @@ every service either way.  The wait has a deadline — five seconds — so a dis
 whose init never asks is not a way to boot with no services at all: the
 supervisor starts whatever is still pending when it passes, and the boot log
 says how many.  A disk with no init program at all takes the older path and is
-started by the boot directly.
+started by the boot directly.  The fallback has a boot of its own —
+`make check-x8664-init-no-start`, whose disk carries an init program that reads
+the declarations and asks for nothing — so it is exercised rather than merely
+reasoned about.
 
 Each `ServiceDefinition` has a `kind`:
 

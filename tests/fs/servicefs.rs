@@ -84,6 +84,30 @@ fn definition(name: &str, auto_restart: bool) -> ServiceDefinition {
     }
 }
 
+/// Mount a directory of declaration files at `/system/rc.d`.
+///
+/// The `/system` above it is mounted too: a real disk has the zone as a
+/// directory, and a declaration's path is only a path if every directory in it
+/// is one.
+fn mount_declaration_directory(
+    tree: &ServiceTree,
+    entries: &'static [(&'static str, NodeKind, &'static [u8])],
+) {
+    let mut fs = tree.fs.lock();
+    let system = protofire::fs::vfs::StaticFileSystem::with_entries(
+        "system",
+        &[("/", NodeKind::Directory, &[])],
+    );
+    fs.register("system", std::sync::Arc::new(system));
+    fs.mount("/dev/system", "/system", "system", 0)
+        .expect("mount /system");
+
+    let directory = protofire::fs::vfs::StaticFileSystem::with_entries("rc.d", entries);
+    fs.register("rc.d", std::sync::Arc::new(directory));
+    fs.mount("/dev/rc.d", "/system/rc.d", "rc.d", 0)
+        .expect("mount the service directory");
+}
+
 /// Read a whole file through the facade.
 fn read_file(fs: &FileSystem, path: &str) -> String {
     let mut handle = fs.open(path, 0).expect("open");
@@ -325,23 +349,17 @@ fn a_service_directory_on_a_real_filesystem_declares_the_start_order() {
     const NETD: &[u8] = b"format = \"protofire-service-1\"\n\n[[service]]\nname = \"httpd\"\nkind = \"user_program\"\npath = \"/system/httpd.elf\"\nafter = [\"netd\"]\n\n[[service]]\nname = \"netd\"\nkind = \"user_program\"\npath = \"/system/netd.elf\"\nafter = [\"logger\"]\n";
     const NOT_A_CONFIG: &[u8] = b"not a service config\n";
     const MALFORMED: &[u8] = b"[[service]\n";
+    const DECLARATIONS: &[(&str, NodeKind, &[u8])] = &[
+        ("/", NodeKind::Directory, &[]),
+        ("/00-netd.toml", NodeKind::File, NETD),
+        ("/10-logger.toml", NodeKind::File, LOGGER),
+        ("/README", NodeKind::File, NOT_A_CONFIG),
+        ("/20-broken.toml", NodeKind::File, MALFORMED),
+    ];
 
     let services = {
-        let mut fs = tree.fs.lock();
-        let directory = protofire::fs::vfs::StaticFileSystem::with_entries(
-            "rc.d",
-            &[
-                ("/", NodeKind::Directory, &[]),
-                ("/00-netd.toml", NodeKind::File, NETD),
-                ("/10-logger.toml", NodeKind::File, LOGGER),
-                ("/README", NodeKind::File, NOT_A_CONFIG),
-                ("/20-broken.toml", NodeKind::File, MALFORMED),
-            ],
-        );
-        fs.register("rc.d", std::sync::Arc::new(directory));
-        fs.mount("/dev/rc.d", "/system/rc.d", "rc.d", 0)
-            .expect("mount the service directory");
-
+        mount_declaration_directory(&tree, DECLARATIONS);
+        let fs = tree.fs.lock();
         service::load_services_from_fs(&fs, "/system/rc.d")
     };
 
@@ -373,6 +391,17 @@ fn a_declaration_outside_the_system_zone_is_refused() {
     let _guard = test_lock();
     let tree = ServiceTree::mount();
 
+    const DEFAULTS: &[u8] =
+        b"format = \"protofire-service-1\"\n\n[[service]]\nname = \"logger\"\nkind = \"user_program\"\npath = \"/system/logger.elf\"\n";
+    mount_declaration_directory(
+        &tree,
+        &[
+            ("/", NodeKind::Directory, &[]),
+            ("/defaults.toml", NodeKind::File, DEFAULTS),
+            ("/other.toml", NodeKind::File, DEFAULTS),
+        ],
+    );
+
     // Where a declaration may live is the kernel's rule, not the disk's: a
     // declaration decides what runs and as whom, so the file it is read from
     // has to be one the machine's own image put in the read-only zone.
@@ -385,14 +414,54 @@ fn a_declaration_outside_the_system_zone_is_refused() {
             service::declare_file(fs, "/system", 0),
             Err(Error::PermissionDenied)
         );
+        assert_eq!(
+            service::declare_file(fs, "/system/rc.d/missing.toml", 0),
+            Err(Error::PermissionDenied)
+        );
 
         // The check is about where the file is, not how the path was spelled:
         // the path is resolved against the root, so a relative spelling of a
         // system file is not a way around the rule — and one spelled that way
         // is still read from `/system`.
         assert_eq!(
-            service::declare_file(fs, "system/rc.d/missing.toml", 0),
-            Err(Error::NotFound)
+            service::declare_file(fs, "system/rc.d/other.toml", 0),
+            Ok(1)
         );
     });
+}
+
+#[test]
+fn a_declaration_that_is_a_link_is_refused() {
+    let _guard = test_lock();
+    let tree = ServiceTree::mount();
+
+    // The filesystem resolves *through* a symlink, so a path spelled inside
+    // `/system` can still deliver another volume's bytes — and the writable
+    // zones are where a program can put those bytes after the boot.  A
+    // declaration has to be the file it claims to be.
+    mount_declaration_directory(
+        &tree,
+        &[
+            ("/", NodeKind::Directory, &[]),
+            (
+                "/defaults.toml",
+                NodeKind::Symlink,
+                b"/data/users/guest/defaults.toml",
+            ),
+        ],
+    );
+
+    let refused = {
+        let fs = tree.fs.lock();
+        (
+            service::declare_file(&fs, "/system/rc.d/defaults.toml", 0),
+            service::load_services_from_fs(&fs, "/system/rc.d"),
+        )
+    };
+
+    // The syscall's path is refused...
+    assert_eq!(refused.0, Err(Error::PermissionDenied));
+    // ...and the boot's own walk skips it, the way it skips a file that does
+    // not parse.
+    assert!(refused.1.is_empty(), "{:?}", refused.1);
 }

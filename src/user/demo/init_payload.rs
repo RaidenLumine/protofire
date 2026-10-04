@@ -67,10 +67,20 @@ macro_rules! define_init_payload {
         #[link_section = $section]
         static INIT_FILES_SUFFIX: [u8; b" declaration file(s)\n".len()] =
             *b" declaration file(s)\n";
+        #[cfg(not(feature = "init_no_start"))]
         #[link_section = $section]
         static INIT_STARTED: [u8; b"adastra init: started ".len()] = *b"adastra init: started ";
+        #[cfg(not(feature = "init_no_start"))]
         #[link_section = $section]
         static INIT_SERVICES_SUFFIX: [u8; b" service(s)\n".len()] = *b" service(s)\n";
+        /// What a build with `init_no_start` says instead of asking: the line
+        /// the fallback's boot asserts, and the honest report of what this
+        /// program did — it read the declarations and left the start to the
+        /// kernel.
+        #[cfg(feature = "init_no_start")]
+        #[link_section = $section]
+        static INIT_NO_START: [u8; b"adastra init: leaving the start to the kernel\n".len()] =
+            *b"adastra init: leaving the start to the kernel\n";
         #[link_section = $section]
         static INIT_DECLARE_FAILED: [u8; b"adastra init: cannot declare ".len()] =
             *b"adastra init: cannot declare ";
@@ -316,14 +326,24 @@ macro_rules! define_init_payload {
             init_write_number(files);
             init_message!(INIT_FILES_SUFFIX);
 
-            let started = service_start_all();
-            init_message!(INIT_STARTED);
-            if payload_runtime_status_is_error(started) {
-                init_write_number(0);
-            } else {
-                init_write_number(started);
+            // The distribution's other half: asking for the services to be
+            // started.  A build with `init_no_start` leaves that out so a boot
+            // exercises the *kernel's* fallback — the supervisor starting what
+            // is still pending when the hand-off's deadline passes — which is
+            // otherwise only ever the code nobody runs.
+            #[cfg(not(feature = "init_no_start"))]
+            {
+                let started = service_start_all();
+                init_message!(INIT_STARTED);
+                if payload_runtime_status_is_error(started) {
+                    init_write_number(0);
+                } else {
+                    init_write_number(started);
+                }
+                init_message!(INIT_SERVICES_SUFFIX);
             }
-            init_message!(INIT_SERVICES_SUFFIX);
+            #[cfg(feature = "init_no_start")]
+            init_message!(INIT_NO_START);
 
             exit_with_code(0);
         }

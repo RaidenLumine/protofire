@@ -69,6 +69,21 @@
 # to publish the ledger.  Nothing here reaches a consumer: the probe writes,
 # the boot reads, and the filesystem's registry is written by the boot.
 #
+# The device ledger is a *view* rather than a copy: `device` asks `drivers` for
+# what the probes bound — a direction it already had, for the virtual devices'
+# handlers — and names them for `/dev`.  So the boot no longer names `drivers`
+# to publish anything (`mod` -> `drivers` is back to one row) and `device` holds
+# no registry of its own (its `sync` row is the test lock alone).
+#
+# Two rows are *tests*, not layering: `fs` -> `drivers` is devfs's own tests
+# populating the registry their view reads, and `drivers` -> `sync` carries that
+# registry's test lock.
+#
+# A declaration is only read from a path whose components are the directory
+# entries they claim to be, so the service manager names `fs` a handful more
+# times — the walk itself — in the direction it already had, since it reads the
+# declarations it runs.
+#
 # from                         to                           count
 audit                        fs                           6
 audit                        handle_rights                2
@@ -77,17 +92,18 @@ block                        sync                         1
 boot_report                  sync                         1
 console                      process                      5
 console                      sync                         1
-device                       drivers                      4
+device                       drivers                      8
 device                       fs                           5
 device                       handle_rights                2
-device                       sync                         2
+device                       sync                         1
 drivers                      block                        10
 drivers                      memory                       3
 drivers                      network                      2
 drivers                      process                      13
-drivers                      sync                         18
+drivers                      sync                         19
 fs                           compression                  2
 fs                           crypto                       9
+fs                           drivers                      2
 fs                           kernel_log                   1
 fs                           memory                       5
 fs                           security                     29
@@ -116,7 +132,7 @@ memory                       topology                     1
 mod                          audit                        6
 mod                          block                        1
 mod                          device                       1
-mod                          drivers                      2
+mod                          drivers                      1
 mod                          fs                           15
 mod                          memory                       6
 mod                          network                      3
@@ -164,7 +180,7 @@ security                     audit                        4
 security                     handle_rights                2
 security                     sync                         1
 service                      crypto                       1
-service                      fs                           5
+service                      fs                           10
 service                      process                      6
 service                      sync                         2
 shm                          memory                       7

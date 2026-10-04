@@ -143,6 +143,11 @@ runtime = []
 # makes "we do not break userspace" a testable claim; see
 # `src/user/demo/demo_program_x86_64_rust_io.rs`.
 abi_frozen_payload = []
+# Ships an init program that reads the declarations and asks for nothing to be
+# started, so the boot's other half — the supervisor starting what is still
+# pending when the hand-off's deadline passes — is exercised by a boot rather
+# than merely reasoned about.  Used by `make check-x8664-init-no-start`.
+init_no_start = []
 fs_profiler = []
 fs_lock_timing = []
 heap_audit = []

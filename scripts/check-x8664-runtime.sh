@@ -39,6 +39,10 @@ FEATURES="${FEATURES:-demo-disk}"
 # asked for the ABI gate.  Asserting it here is what keeps a gate that means to
 # run an old program from passing on a new one.
 PAYLOAD_SOURCE="${PAYLOAD_SOURCE:-compiled}"
+# Set by `make check-x8664-init-no-start`: the init program on the disk reads
+# the declarations and asks for nothing to be started, so the boot's fallback
+# is what has to start the services, and the assertions below say so.
+INIT_NO_START="${INIT_NO_START:-0}"
 
 KERNEL_BIN="${TARGET_DIR}/x86_64-unknown-none/${PROFILE}/${CRATE}"
 
@@ -240,6 +244,13 @@ require_log_line "adastra init: declared "
 # instead of starting them itself: this is the hand-off, and without it the
 # services below would be evidence of the kernel starting them, not of init.
 require_log_line "service(s) registered; leaving the start to init"
+if [ "$INIT_NO_START" = "1" ]; then
+    # The other half of the hand-off, and the only boot that reaches it: an
+    # init program that never asks leaves the services pending, and the
+    # supervisor starts them when the deadline passes.
+    require_log_line "adastra init: leaving the start to the kernel"
+    require_log_line "init left pending"
+fi
 # The services this boot runs are the ones the disk declares, not the kernel's
 # built-in list: the demo disk is built with `/system/rc.d/defaults.toml`, and
 # this line is the boot saying it read them.  A disk without the directory

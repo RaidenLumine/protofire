@@ -151,6 +151,10 @@ run_p3() {
     run_make_step "make check-abi-mirror" check-abi-mirror
     if [ "$RUN_X86_64_RUNTIME" = "1" ]; then
         run_make_step "make check-x8664-runtime" check-x8664-runtime
+        # The other half of the boot hand-off: a disk whose init reads the
+        # declarations and asks for nothing, so the supervisor's fallback is
+        # what starts the services.
+        run_make_step "make check-x8664-init-no-start" check-x8664-init-no-start
         # The same boot with a payload that was frozen on 2026-09-27 rather
         # than compiled with the kernel: the only configuration in which an ABI
         # change can break a program that is not rebuilt alongside it.

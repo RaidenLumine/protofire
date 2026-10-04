@@ -200,6 +200,19 @@ pub(crate) fn reset_bound_devices_for_tests() {
     *manager = DeviceManager::new();
 }
 
+/// Serialise the tests that use the registry, starting from an empty one.
+///
+/// The tests that *write* the registry are the drivers' and the ones that
+/// *read* it are devfs's, so both have to share one lock: a device recorded by
+/// one test is exactly what the other would see.
+#[cfg(test)]
+pub(crate) fn lock_bound_devices_for_tests() -> crate::kernel::sync::MutexGuard<'static, ()> {
+    static BOUND_DEVICE_TEST_LOCK: Mutex<()> = Mutex::new(());
+    let guard = BOUND_DEVICE_TEST_LOCK.lock();
+    reset_bound_devices_for_tests();
+    guard
+}
+
 /// Manager for discovered hardware devices and their driver bindings.
 pub struct DeviceManager {
     devices: Vec<DeviceNode>,

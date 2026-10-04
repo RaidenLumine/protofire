@@ -105,6 +105,7 @@ help:
 		'  make check-abi-mirror  - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
+		'  make check-x8664-init-no-start - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-riscv64-churn - the same churn on riscv64, whose window is one of the things it checks' \
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
@@ -366,6 +367,19 @@ check-x8664-runtime:
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-runtime.sh
 
+# The other half of the boot hand-off, and the only boot that reaches it: the
+# disk's init program reads the declarations and asks for nothing to be
+# started, so the supervisor has to start what is still pending when the
+# hand-off's deadline passes.  Without this the fallback is code no boot runs —
+# see `init_no_start` in Cargo.toml for why the switch is a feature.
+check-x8664-init-no-start:
+	FEATURES="demo-disk init_no_start" \
+		INIT_NO_START=1 \
+		PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-runtime.sh
+
 # Boot with the stack-window churn: ask the window for more stacks than it has
 # and the invalidation log for more requests than it can hold, then check the
 # counts that come back.  A diagnostic rather than a gate — see the script.
@@ -540,6 +554,12 @@ clippy:
 CLIPPY_TARGETS = x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf aarch64-unknown-linux-gnu x86_64-apple-darwin
 CLIPPY_BARE_METAL_TARGETS = x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf
 CLIPPY_BARE_METAL_FEATURES = demo-disk abi_frozen_payload
+# The other disk-content switch a runtime gate builds: an init program that
+# asks for nothing, which is what reaches the hand-off's fallback
+# (`make check-x8664-init-no-start`).  One target is enough — the switch is in
+# the payload body every machine emits.
+CLIPPY_NO_START_TARGET = x86_64-unknown-none
+CLIPPY_NO_START_FEATURES = demo-disk init_no_start
 
 clippy-targets:
 	@for target in $(CLIPPY_TARGETS); do \
@@ -555,6 +575,12 @@ clippy-targets:
 		echo "==> clippy $$target ($(CLIPPY_BARE_METAL_FEATURES))"; \
 		$(CARGO) clippy $(CARGO_FLAGS) --target $$target \
 			--features "$(CLIPPY_BARE_METAL_FEATURES)" -- \
+			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
+	done
+	@for target in $(CLIPPY_NO_START_TARGET); do \
+		echo "==> clippy $$target ($(CLIPPY_NO_START_FEATURES))"; \
+		$(CARGO) clippy $(CARGO_FLAGS) --target $$target \
+			--features "$(CLIPPY_NO_START_FEATURES)" -- \
 			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
 	done
 
