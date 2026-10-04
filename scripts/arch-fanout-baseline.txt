@@ -25,11 +25,10 @@
 # is the `gap:` rows, not the total.
 #
 
-# 22 files, 60 occurrences outside src/arch
+# 21 files, 58 occurrences outside src/arch
 
 abi/ptrace.rs                                        2  # fact: the x86_64 PTRACE_GETREGS register file is a record only that architecture has
 drivers/usb_msd.rs                                   1  # fact: the USB storage controller driver is x86_64 bare-metal hardware
-kernel/power/clock.rs                                2  # gap: DtFreqDriver is device-tree code two machines share, and belongs beside arch::fdt
 kernel/process/process/lifecycle.rs                  1  # fact: an x86_64 test, because it prepares an x86_64 page plan
 kernel/process/process/types.rs                      3  # fact: the x86_64 register-context re-export, and lint gates for an accessor only the device-tree machines call
 kernel/process/thread/mod.rs                         2  # fact: user-exception delivery exists on x86_64 and aarch64; riscv64 has no such path

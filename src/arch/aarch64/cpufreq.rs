@@ -14,7 +14,7 @@
 //! the DTB ships no OPP table or CPU clock, so this driver stays inert (the
 //! same graceful path x86_64 takes on QEMU).
 
-use crate::kernel::power::clock::DtFreqDriver;
+use crate::arch::fdt::cpufreq::DtFreqDriver;
 use crate::kernel::power::cpufreq_driver::CpuFreqDriver;
 use crate::kernel::sync::Mutex;
 use crate::Error;

@@ -136,6 +136,9 @@ impl PlatformInfo {
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
 mod parse;
 
+/// The CPU frequency driver the device tree describes.
+pub mod cpufreq;
+
 // ---------------------------------------------------------------------------
 // Global platform-info singleton
 // ---------------------------------------------------------------------------
