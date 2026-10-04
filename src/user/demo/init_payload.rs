@@ -4,11 +4,13 @@
 //!
 //! The demo disk ships this program as `/system/init.elf`, and the kernel
 //! spawns it at boot.  Its job is the distribution's half of the service
-//! manager: read `/system/rc.d`, hand each declaration file to the kernel
+//! manager: list `/system/rc.d`, name each declaration file to the kernel
 //! through `service_declare`, and ask for the services to be started.  The
 //! kernel's half is the registry, the start order, the supervision and
-//! `/service` — this program decides *what* the system runs, not *how* a
-//! service is run, which is the split the two syscalls exist for.
+//! `/service` — this program decides *which files declare the system*, not
+//! *what they say*, which is the split the two syscalls exist for.  The kernel
+//! reads the files itself, so what runs is the image's bytes and every service
+//! is attributed to the file that declared it.
 //!
 //! Everything here is a syscall trap or a function in the same section: the
 //! blob is copied out of the kernel image and run at another address, so an
@@ -35,7 +37,6 @@ macro_rules! define_init_payload {
         use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_NAME_OFFSET_OFFSET;
         use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_SIZE;
         use crate::user::shared::abi::fs::FILE_KIND_FILE;
-        use crate::user::shared::abi::io::OPEN_FLAG_READ;
 
         // The literals are `static` arrays rather than `const` slices because the
         // address of one of them is taken with `init_address!`, which needs an item
@@ -50,12 +51,6 @@ macro_rules! define_init_payload {
         static INIT_DECLARATION_SUFFIX: [u8; b".toml".len()] = *b".toml";
         /// Buffer one `read_dir` entry and its name are unpacked into.
         const INIT_LISTING_CAPACITY: usize = 512;
-        /// Buffer one declaration file is read through.
-        ///
-        /// The kernel refuses a declaration longer than its own 64 KiB limit, so this
-        /// is not the only bound; it is the one a payload can afford.  A file that does
-        /// not fit is reported and skipped rather than half-declared.
-        const INIT_DECLARATION_CAPACITY: usize = 8192;
         /// Buffer one full path (`/system/rc.d/<name>`) is built in.
         const INIT_PATH_CAPACITY: usize = 160;
 
@@ -79,9 +74,6 @@ macro_rules! define_init_payload {
         #[link_section = $section]
         static INIT_DECLARE_FAILED: [u8; b"adastra init: cannot declare ".len()] =
             *b"adastra init: cannot declare ";
-        #[link_section = $section]
-        static INIT_TOO_LONG: [u8; b"adastra init: declaration too long, skipping ".len()] =
-            *b"adastra init: declaration too long, skipping ";
         #[link_section = $section]
         static INIT_NEWLINE: [u8; b"\n".len()] = *b"\n";
 
@@ -191,56 +183,6 @@ macro_rules! define_init_payload {
             index
         }
 
-        /// Read a whole file into `buffer`, returning its length.
-        ///
-        /// `Ok(length)` on success, `Err(())` when the file cannot be read or does not
-        /// fit — the caller reports which file and moves on, because one unreadable
-        /// declaration is not a reason to start nothing.
-        #[inline(never)]
-        #[link_section = $section]
-        unsafe fn init_read_file(
-            path: usize,
-            path_len: usize,
-            buffer: usize,
-            capacity: usize,
-        ) -> Result<usize, ()> {
-            let fd = open_path(path, path_len, OPEN_FLAG_READ);
-            if payload_runtime_status_is_error(fd) {
-                return Err(());
-            }
-
-            let mut filled = 0;
-            loop {
-                if filled == capacity {
-                    // Exactly full is not proof of truncation: probe one more byte, so
-                    // a file that fits exactly is not reported as too long.
-                    let probe = read_fd(fd, buffer, 0, 0);
-                    let _ = close_fd(fd);
-                    return if payload_runtime_status_is_error(probe) || probe == 0 {
-                        Ok(filled)
-                    } else {
-                        Err(())
-                    };
-                }
-                // A regular file ignores the timeout argument; end of file reads zero.
-                let read = read_fd(
-                    fd,
-                    buffer.wrapping_add(filled),
-                    capacity.wrapping_sub(filled),
-                    0,
-                );
-                if payload_runtime_status_is_error(read) {
-                    let _ = close_fd(fd);
-                    return Err(());
-                }
-                if read == 0 {
-                    let _ = close_fd(fd);
-                    return Ok(filled);
-                }
-                filled = filled.wrapping_add(read);
-            }
-        }
-
         /// Write a decimal number, without allocating.
         #[inline(never)]
         #[link_section = $section]
@@ -300,8 +242,6 @@ macro_rules! define_init_payload {
             let listing_ptr = listing.as_mut_ptr() as usize;
             let mut path = MaybeUninit::<[u8; INIT_PATH_CAPACITY]>::uninit();
             let path_ptr = path.as_mut_ptr() as usize;
-            let mut declaration = MaybeUninit::<[u8; INIT_DECLARATION_CAPACITY]>::uninit();
-            let declaration_ptr = declaration.as_mut_ptr() as usize;
 
             let mut files = 0usize;
             let mut index = 0usize;
@@ -347,47 +287,23 @@ macro_rules! define_init_payload {
                             init_join_path(path_ptr, INIT_PATH_CAPACITY, name, name_len)
                         };
                         if path_len != 0 {
-                            match unsafe {
-                                // SAFETY: `path_ptr`/`path_len` name the path
-                                // just built, and `declaration_ptr` names its
-                                // capacity.
-                                init_read_file(
-                                    path_ptr,
-                                    path_len,
-                                    declaration_ptr,
-                                    INIT_DECLARATION_CAPACITY,
-                                )
-                            } {
-                                Ok(length) => {
-                                    let declared = service_declare(declaration_ptr, length);
-                                    if payload_runtime_status_is_error(declared) {
-                                        let prefix = init_address!(INIT_DECLARE_FAILED);
-                                        // SAFETY: `name`/`name_len` bound the entry's
-                                        // name, as above.
-                                        unsafe {
-                                            init_report_file(
-                                                prefix,
-                                                INIT_DECLARE_FAILED.len(),
-                                                name,
-                                                name_len,
-                                            );
-                                        }
-                                    } else {
-                                        files = files.wrapping_add(1);
-                                    }
+                            // The kernel reads the file itself: this names it, and
+                            // what gets registered is the image's bytes.
+                            let declared = service_declare(path_ptr, path_len);
+                            if payload_runtime_status_is_error(declared) {
+                                let prefix = init_address!(INIT_DECLARE_FAILED);
+                                // SAFETY: `name`/`name_len` bound the entry's name,
+                                // as above.
+                                unsafe {
+                                    init_report_file(
+                                        prefix,
+                                        INIT_DECLARE_FAILED.len(),
+                                        name,
+                                        name_len,
+                                    );
                                 }
-                                Err(()) => {
-                                    let prefix = init_address!(INIT_TOO_LONG);
-                                    // SAFETY: as above — the name comes from the entry.
-                                    unsafe {
-                                        init_report_file(
-                                            prefix,
-                                            INIT_TOO_LONG.len(),
-                                            name,
-                                            name_len,
-                                        );
-                                    }
-                                }
+                            } else {
+                                files = files.wrapping_add(1);
                             }
                         }
                     }

@@ -73,6 +73,7 @@ fn definition(name: &str, auto_restart: bool) -> ServiceDefinition {
     ServiceDefinition {
         name: String::from(name),
         kind: ServiceKind::UserProgram,
+        origin: None,
         path: Some(format!("/system/{name}.elf")),
         entry: None,
         args: Vec::new(),
@@ -248,6 +249,52 @@ fn re_registering_a_service_replaces_its_declaration() {
 }
 
 #[test]
+fn service_files_report_where_the_declaration_came_from() {
+    let _guard = test_lock();
+    let tree = ServiceTree::mount();
+
+    let mut declared = definition("alpha", true);
+    declared.origin = Some(service::ServiceOrigin {
+        path: String::from("/system/rc.d/defaults.toml"),
+        sha256: String::from("2f8c1b0d"),
+    });
+    service::register(&declared, 0);
+
+    tree.with_fs(|fs| {
+        assert_eq!(
+            read_file(fs, "/service/alpha/origin"),
+            "/system/rc.d/defaults.toml\n"
+        );
+        assert_eq!(read_file(fs, "/service/alpha/sha256"), "2f8c1b0d\n");
+
+        // The same two facts in the record's own rendering, so a reader that
+        // reads one file sees them.
+        let describe = read_file(fs, "/service/alpha/describe");
+        assert!(
+            describe.contains("Origin:\t/system/rc.d/defaults.toml\n"),
+            "{describe}"
+        );
+        assert!(describe.contains("Sha256:\t2f8c1b0d\n"), "{describe}");
+    });
+}
+
+#[test]
+fn a_service_no_file_declared_reports_no_origin() {
+    let _guard = test_lock();
+    let tree = ServiceTree::mount();
+
+    // The built-in fallback the boot uses when a disk declares nothing has no
+    // file behind it, and saying so beats an empty file that reads as a path
+    // nobody can see.
+    service::register(&definition("alpha", true), 0);
+
+    tree.with_fs(|fs| {
+        assert_eq!(read_file(fs, "/service/alpha/origin"), "(none)\n");
+        assert_eq!(read_file(fs, "/service/alpha/sha256"), "(none)\n");
+    });
+}
+
+#[test]
 fn the_mount_is_recorded_under_its_own_filesystem_name() {
     let _guard = test_lock();
     let tree = ServiceTree::mount();
@@ -302,4 +349,50 @@ fn a_service_directory_on_a_real_filesystem_declares_the_start_order() {
     let order: Vec<&str> = plan.start.iter().map(|svc| svc.name.as_str()).collect();
     assert_eq!(order, vec!["logger", "netd", "httpd"]);
     assert!(plan.blocked.is_empty());
+
+    // Each definition carries the file it was read from: the origin is what a
+    // privileged level rests on, and it is part of the definition rather than
+    // something assembled from the text.
+    for service in &services {
+        let origin = service.origin.as_ref().expect("a file was read");
+        assert!(origin.path.starts_with("/system/rc.d/"), "{}", origin.path);
+        assert_eq!(origin.sha256.len(), 64, "{}", origin.sha256);
+    }
+    let netd = services
+        .iter()
+        .find(|service| service.name == "netd")
+        .expect("netd");
+    assert_eq!(
+        netd.origin.as_ref().expect("netd origin").sha256,
+        protofire::kernel::crypto::sha256_hex(NETD)
+    );
+}
+
+#[test]
+fn a_declaration_outside_the_system_zone_is_refused() {
+    let _guard = test_lock();
+    let tree = ServiceTree::mount();
+
+    // Where a declaration may live is the kernel's rule, not the disk's: a
+    // declaration decides what runs and as whom, so the file it is read from
+    // has to be one the machine's own image put in the read-only zone.
+    tree.with_fs(|fs| {
+        assert_eq!(
+            service::declare_file(fs, "/data/rc.d/evil.toml", 0),
+            Err(Error::PermissionDenied)
+        );
+        assert_eq!(
+            service::declare_file(fs, "/system", 0),
+            Err(Error::PermissionDenied)
+        );
+
+        // The check is about where the file is, not how the path was spelled:
+        // the path is resolved against the root, so a relative spelling of a
+        // system file is not a way around the rule — and one spelled that way
+        // is still read from `/system`.
+        assert_eq!(
+            service::declare_file(fs, "system/rc.d/missing.toml", 0),
+            Err(Error::NotFound)
+        );
+    });
 }

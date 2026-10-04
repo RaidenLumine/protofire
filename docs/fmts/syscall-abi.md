@@ -88,6 +88,12 @@ are already shipped on the demo disk.
 | `0..=120` | **Stable** | Frozen. Semantics, argument order, and record layouts do not change. Additive *optional* behaviour is the only permitted change. |
 | `121..=SYSCALL_COUNT - 1` | **Experimental** | May still be adjusted. Behaviour, arguments, and record layouts may change on a **minor** version bump. |
 
+The **Experimental** line is the one that lets an argument change without a
+major bump: a slot no program outside this tree is built against can be
+redefined, and `SYSCALL_ABI_VERSION_MINOR` is what says it was.  A version in
+the frozen range never moves that way — there the table above applies as
+written, and a redefinition is a major bump.
+
 New syscalls are always assigned in the Experimental range until they have
 matured and a maintainer graduates them. The classification is computed, not
 hand-maintained: `syscall_stability(n)` returns `Stable` for `n <= 120` and

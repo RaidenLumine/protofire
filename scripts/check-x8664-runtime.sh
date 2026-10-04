@@ -117,16 +117,20 @@ printf 'x86_64 runtime check: 1 cpu, timeout %ss, qemu %s\n' \
     "$TIMEOUT_SECONDS" "$QEMU"
 printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU $* -serial stdio >$log_file"
 
-# What is typed at the shell, and why these two:
+# What is typed at the shell, and why these:
 #
 # `help` proves the command path end to end — read, split, dispatch, write — and
 # `echo` prints a line that the console's echo of the typed line cannot imitate:
 # the echo puts the command's own words on that line, so the check below matches
-# the answer as a whole line rather than as a substring.  The feeder waits for
-# the shell's banner, not for a delay; see its own header for the rest.
+# the answer as a whole line rather than as a substring.  The last two read the
+# service manager's own record of where the shell's declaration came from: a
+# ring-3 program reading a kernel-served file, so the answer is the boot's
+# registry and not the payload's memory.  The feeder waits for the shell's
+# banner, not for a delay; see its own header for the rest.
 shell_commands() {
     sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
-        'help' 'echo ring3-shell-answered'
+        'help' 'echo ring3-shell-answered' \
+        'cat /service/shell/origin' 'cat /service/shell/sha256'
 }
 
 set +e
@@ -203,6 +207,13 @@ require_log_exact_line() {
     fi
 }
 
+require_log_matching() {
+    pattern="$1"
+    if ! grep -E "$pattern" "$log_file" >/dev/null 2>&1; then
+        fail_with_log "no log line matches: $pattern"
+    fi
+}
+
 count_log_line() {
     awk -v needle="$1" '
         index($0, needle) { count += 1 }
@@ -261,6 +272,12 @@ require_log_line "adastra:/apps/packages/shell\$ "
 # check does type.
 require_log_line "adastra shell (ring 3) builtins:"
 require_log_exact_line "ring3-shell-answered"
+# The service manager's provenance, read back by a ring-3 program: which
+# declaration file the kernel read the shell's definition from, and the SHA-256
+# of that file's bytes.  Both answers come from `/service`, so a boot whose
+# registry lost track of where its services came from cannot print them.
+require_log_exact_line "/system/rc.d/defaults.toml"
+require_log_matching '^[0-9a-f]{64}$'
 
 # ── The user programs ran to the end ───────────────────────────────────
 #

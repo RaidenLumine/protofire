@@ -557,6 +557,13 @@ control that are unusual in a hobby kernel.
 - **Service authorization**: a privileged rc.d declaration names an account that
   has to resolve in the user database before the service runs, and the grant or
   refusal is audited; the token it runs under carries that account's identity.
+- **Service provenance**: a declaration is a file, and the kernel reads it
+  itself — the boot walks `/system/rc.d`, and `service_declare` (#190) is handed
+  a *path*, which has to name a file in the read-only system zone.  What gets
+  registered is therefore the image's bytes and not text a caller assembled,
+  and every definition carries where it came from: `/service/<name>/origin` and
+  `/service/<name>/sha256` report the declaration file and the digest of its
+  bytes, which is what a privileged level rests on.
 - **Service security declarations**: a `security = "guest" | "admin" | "system"`
   key in an rc.d service definition selects the token the started program runs
   under (`ServiceSecurity::security_token()`); a definition that declares
@@ -577,14 +584,14 @@ control that are unusual in a hobby kernel.
   says so in the log (`N declaration(s) in /system/rc.d`).
 - **Init is a program**: `/system/init.elf` on the demo disk is a ring-3 init
   payload on every target the disk is built for — one program
-  (`src/user/demo/init_payload.rs`), emitted per architecture.  It reads
-  `/system/rc.d`, declares each file through `service_declare` (#190) and asks
-  for the services to be started by `service_start_all` (#191).  The kernel
-  keeps the mechanism — registry, start order, supervision, `/service` — and
-  the distribution keeps the declarations; the two meet at those two syscalls.
-  `service_start_all` is idempotent, so whichever of the boot path, init or the
-  supervisor arrives first starts a service and the others find nothing left to
-  do.
+  (`src/user/demo/init_payload.rs`), emitted per architecture.  It lists
+  `/system/rc.d`, names each declaration file through `service_declare` (#190)
+  and asks for the services to be started by `service_start_all` (#191).  The
+  kernel keeps the mechanism — registry, start order, supervision, `/service` —
+  and the distribution keeps the declarations; the two meet at those two
+  syscalls.  `service_start_all` is idempotent, so whichever of the boot path,
+  init or the supervisor arrives first starts a service and the others find
+  nothing left to do.
 - **The boot hands the start to init**: when the disk ships an init program, the
   kernel registers the declarations — `/service` and the supervisor need them
   either way — and leaves the start to that program, so the distribution, not

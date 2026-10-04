@@ -349,21 +349,33 @@ kernel prints a diagnostic and continues -- the system runs with only
 kernel worker threads and the idle process.
 
 On the demo disk that ELF is a program rather than a stub: the init payload
-(`src/user/demo/init_payload.rs`, emitted per machine) reads `/system/rc.d`,
-hands each declaration to the kernel through `service_declare`, and asks for
-the services to be started through `service_start_all`.  It reports what it
-did on the console, which is what lets each target's runtime check assert that
-the file the kernel spawned did something.  Whether it was launched is also
-what §5.4 asks before starting the declared services: with a program on the
-disk the boot leaves the start to it, and without one it starts them itself.
-Declaring is idempotent from the program's side, and a declaration never resets
-a service that has already run, so a re-declaration updates what the service
-*is* without losing what it *did*.
+(`src/user/demo/init_payload.rs`, emitted per machine) lists `/system/rc.d`,
+names each declaration file to the kernel through `service_declare`, and asks
+for the services to be started through `service_start_all`.  It names the files
+rather than handing over their text: the kernel reads them itself, so what it
+registers is the read-only image's bytes and every service can be attributed to
+the file that declared it (§5.4).  It reports what it did on the console, which
+is what lets each target's runtime check assert that the file the kernel
+spawned did something.  Whether it was launched is also what §5.4 asks before
+starting the declared services: with a program on the disk the boot leaves the
+start to it, and without one it starts them itself.  Declaring is idempotent
+from the program's side, and a declaration never resets a service that has
+already run, so a re-declaration updates what the service *is* without losing
+what it *did*.
 
 ### 5.4 `spawn_system_programs()`
 
 Service definitions are loaded from TOML files in `/system/rc.d/` via
 `service::load_services_from_fs()`.
+
+Both readers — the boot's walk of that directory and `service_declare` — go
+through `service::read_declaration_file()`, so every definition carries the file
+it was read from and the SHA-256 of that file's bytes (`ServiceOrigin`).  A
+program can only name a file *inside* `/system` for the kernel to read, which is
+what makes the origin worth recording: a declaration decides what runs and as
+whom, and the bytes behind it are the READ-ONLY image's rather than anything a
+caller assembled.  `/service/<name>/origin`, `/service/<name>/sha256` and the
+`describe` rendering report them, so the attribution is visible from user space.
 
 The demo disk ships `/system/rc.d/defaults.toml`, written by the demo-disk
 builder from the same list the kernel falls back to when a disk declares

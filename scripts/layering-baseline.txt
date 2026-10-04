@@ -52,6 +52,12 @@
 # and `smp` on purpose — its rows are the number of structures it drives, not
 # a layering direction.
 #
+# `service` names `fs` and `crypto` for one reason: a service declaration is a
+# file, and a service's origin is that file plus the digest of its bytes.  The
+# boot path and `service_declare` share one reader, so the pair is two rows
+# rather than a new direction: the service manager has always read the
+# declarations it runs.
+#
 # from                         to                           count
 audit                        fs                           6
 audit                        handle_rights                2
@@ -144,7 +150,8 @@ random                       sync                         1
 security                     audit                        4
 security                     handle_rights                2
 security                     sync                         1
-service                      fs                           3
+service                      crypto                       1
+service                      fs                           5
 service                      process                      6
 service                      sync                         2
 shm                          memory                       7

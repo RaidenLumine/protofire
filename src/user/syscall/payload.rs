@@ -15,12 +15,16 @@ macro_rules! define_payload_service_stubs {
         #[inline(never)]
         #[allow(dead_code)]
         #[link_section = $section]
-        /// Register the services one rc.d file's text declares.
-        fn service_declare(text: usize, length: usize) -> usize {
+        /// Register the services one declaration file declares.
+        ///
+        /// The arguments name the file's *path*: the kernel reads it itself, out
+        /// of the read-only system zone, so what is registered is the image's
+        /// bytes and every service is attributed to the file that declared it.
+        fn service_declare(path: usize, path_length: usize) -> usize {
             payload_runtime_invoke_raw_status(
                 $crate::syscall::SyscallNumber::ServiceDeclare as usize,
-                text,
-                length,
+                path,
+                path_length,
                 0,
                 0,
                 0,

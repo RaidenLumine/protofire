@@ -86,7 +86,8 @@ trap cleanup EXIT INT TERM
 # output lands in the log exactly as it does with `-serial file:`.
 shell_commands() {
     sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
-        'help' 'echo ring3-shell-answered'
+        'help' 'echo ring3-shell-answered' \
+        'cat /service/shell/origin' 'cat /service/shell/sha256'
 }
 
 set +e
@@ -146,6 +147,15 @@ require_log_exact_line() {
     if ! grep -F -x "$line" "$log_file" >/dev/null 2>&1; then
         printf 'missing aarch64 runtime log line (whole line): %s\n' "$line" >&2
         printf '  last lines of the log:\n' >&2
+        tail -n 12 "$log_file" >&2
+        exit 1
+    fi
+}
+
+require_log_matching() {
+    pattern="$1"
+    if ! grep -a -E "$pattern" "$log_file" >/dev/null 2>&1; then
+        printf 'no aarch64 runtime log line matches: %s\n' "$pattern" >&2
         tail -n 12 "$log_file" >&2
         exit 1
     fi
@@ -400,6 +410,12 @@ require_log_line "adastra init (ring 3): reading /system/rc.d"
 require_log_line "adastra init: declared "
 require_log_line "service(s) registered; leaving the start to init"
 require_log_exact_line "ring3-shell-answered"
+# The service manager's provenance, read back by a ring-3 program: which
+# declaration file the kernel read the shell's definition from, and the SHA-256
+# of that file's bytes.  Both answers come from `/service`, so a boot whose
+# registry lost track of where its services came from cannot print them.
+require_log_exact_line "/system/rc.d/defaults.toml"
+require_log_matching '^[0-9a-f]{64}$'
 
 # ── The PCIe window the device tree describes was reached ──────────────
 #

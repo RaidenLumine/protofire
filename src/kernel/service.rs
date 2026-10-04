@@ -28,6 +28,57 @@ use crate::user::shared::config::{self};
 /// The directory on the boot filesystem where service config TOML files live.
 pub const SERVICE_CONFIG_DIR: &str = "/system/rc.d";
 
+/// The zone a service declaration has to live in.
+///
+/// A declaration decides what runs and as whom, so the kernel only reads one
+/// out of the read-only system zone.  A program that hands over a path is
+/// naming a file the machine's own image put there; it cannot invent the bytes,
+/// which is what lets a privileged level rest on where its declaration came
+/// from.
+pub const SERVICE_DECLARATION_ROOT: &str = "/system";
+
+/// Longest declaration file the kernel reads.
+///
+/// A declaration is a handful of keys per service; this is far above any real
+/// one and far below a size that would hold the filesystem lock for long while
+/// it parses.  Both readers enforce it — the boot path and `service_declare` —
+/// so a disk cannot make the kernel allocate without bound.
+pub const MAX_DECLARATION_BYTES: usize = 64 * 1024;
+
+/// Whether a declaration may be read from `path`.
+///
+/// The kernel only reads a declaration out of the read-only system zone, which
+/// is what makes the origin worth recording: the file is part of the machine's
+/// own image, put there by the distribution, and a caller cannot write one.
+/// `path` is expected to be absolute and already normalized, so the check is a
+/// prefix and nothing more.
+fn is_declaration_path(path: &str) -> bool {
+    path.strip_prefix(SERVICE_DECLARATION_ROOT)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// Read one declaration file, register every service in it, and return how
+/// many.
+///
+/// This is the one way a program reaches the registry: `service_declare` hands
+/// over the path its init read, and everything that decides what may be
+/// declared happens here — the path is resolved against the root (so the answer
+/// cannot depend on the caller's working directory), it has to name a file in
+/// the read-only system zone, and the services come back stamped with the file
+/// they were read from.
+pub fn declare_file(fs: &crate::fs::FileSystem, path: &str, now_tick: u64) -> crate::Result<usize> {
+    let path = crate::fs::path::normalize_path(path, "/")?;
+    if !is_declaration_path(&path) {
+        return Err(crate::Error::PermissionDenied);
+    }
+
+    let services = read_declaration_file(fs, &path)?;
+    for service in &services {
+        register(service, now_tick);
+    }
+    Ok(services.len())
+}
+
 /// The account a privileged service runs as when its definition does not name
 /// one.
 ///
@@ -119,11 +170,35 @@ impl ServiceSecurity {
     }
 }
 
+/// Where a service's declaration came from.
+///
+/// A declaration is a file, and this says which one and which bytes of it.  It
+/// is what a reader needs to attribute a service — and, for a privileged one,
+/// to say what the privilege rests on: the file is in the read-only system
+/// zone, and the digest is the one the kernel computed from what it read, not
+/// one the declarer supplied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceOrigin {
+    /// The declaration file, as an absolute path.
+    pub path: String,
+    /// Lowercase hex SHA-256 of that file's bytes.
+    pub sha256: String,
+}
+
 /// A parsed service definition from a config file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServiceDefinition {
     pub name: String,
     pub kind: ServiceKind,
+    /// Which declaration file this definition was read from, and which bytes.
+    ///
+    /// The parser leaves it `None`: it holds the text, not the file.  Whoever
+    /// *read* the declaration fills it in — the boot path and the kernel half
+    /// of `service_declare` both go through [`read_declaration_file`] — so a
+    /// service can always be attributed to the file that declared it.  A
+    /// definition that no file produced (the built-in fallback, a test) has no
+    /// origin to report.
+    pub origin: Option<ServiceOrigin>,
     /// For UserProgram: path to the ELF binary (e.g. `/system/shell.elf`).
     pub path: Option<String>,
     /// For KernelThread: name of the entry function (e.g. `demo_worker_a`).
@@ -248,6 +323,9 @@ pub fn parse_service_config(text: &str) -> Result<Vec<ServiceDefinition>, String
                 .map(String::from)
                 .unwrap_or_else(|_| String::from("unnamed")),
             kind,
+            // The text does not know which file it came from; the reader that
+            // supplies it does.
+            origin: None,
             path: element.get_str("path").ok().map(String::from),
             entry: element.get_str("entry").ok().map(String::from),
             args: element.get_string_list("args").unwrap_or_default(),
@@ -263,10 +341,65 @@ pub fn parse_service_config(text: &str) -> Result<Vec<ServiceDefinition>, String
     Ok(services)
 }
 
+/// Read one declaration file and return the services it declares.
+///
+/// The kernel reads the file itself, from its own filesystem: `service_declare`
+/// is handed a *path*, and the boot path walks this directory itself.  A
+/// program therefore chooses *which* files are declarations without being able
+/// to say what they contain, and every definition comes back stamped with the
+/// file it came from ([`ServiceOrigin`]).
+///
+/// The read is bounded by [`MAX_DECLARATION_BYTES`] so a disk cannot make the
+/// kernel allocate without bound.  A file that cannot be read, or that does not
+/// parse, is an error rather than an empty list: the caller is the one that
+/// knows whether that is worth reporting.
+pub fn read_declaration_file(
+    fs: &crate::fs::FileSystem,
+    path: &str,
+) -> crate::Result<Vec<ServiceDefinition>> {
+    use crate::fs::OPEN_EXISTING;
+    use crate::kernel::process::HANDLE_RIGHT_READ;
+
+    let metadata = fs
+        .stat_path(path)
+        .map_err(|_error| crate::Error::NotFound)?;
+    if metadata.size > MAX_DECLARATION_BYTES {
+        return Err(crate::Error::InvalidArgument);
+    }
+
+    // Open the file for reading (existing files only).
+    let mut handle = fs
+        .create_file(path, HANDLE_RIGHT_READ, 0, OPEN_EXISTING)
+        .map_err(|_error| crate::Error::NotFound)?;
+
+    // Read the entire file.
+    let mut buf = alloc::vec![0u8; metadata.size];
+    let n = fs
+        .read(&mut handle, &mut buf)
+        .map_err(|_error| crate::Error::InternalError)?;
+    buf.truncate(n);
+
+    let text = core::str::from_utf8(&buf).map_err(|_error| crate::Error::InvalidArgument)?;
+    let mut services =
+        parse_service_config(text).map_err(|_error| crate::Error::InvalidArgument)?;
+
+    let origin = ServiceOrigin {
+        path: alloc::string::String::from(path),
+        sha256: crate::kernel::crypto::sha256_hex(&buf),
+    };
+    for service in &mut services {
+        service.origin = Some(origin.clone());
+    }
+
+    Ok(services)
+}
+
 /// Load service definitions from `/system/rc.d/*.toml` on the given filesystem.
 ///
-/// Reads all directory entries in `dir`, filters for `.toml` files, opens each
-/// one, reads its contents, and parses it with [`parse_service_config`].
+/// Reads all directory entries in `dir`, filters for `.toml` files, and hands
+/// each one to [`read_declaration_file`] — the same reader `service_declare`
+/// uses, so a service the boot found and one a program declared carry the same
+/// origin.
 ///
 /// Files that fail to open, read, or parse are silently skipped so a single
 /// malformed config file doesn't prevent the system from booting — the kernel
@@ -291,48 +424,12 @@ pub fn load_services_from_fs(fs: &crate::fs::FileSystem, dir: &str) -> Vec<Servi
         let dir_trimmed = dir.trim_end_matches('/');
         let path = alloc::format!("{}/{}", dir_trimmed, entry.name);
 
-        // Try to open and read the config file.
-        match read_config_file(fs, &path) {
-            Some(text) => match parse_service_config(&text) {
-                Ok(services) => all_services.extend(services),
-                Err(_e) => {
-                    // Malformed config — skip silently.
-                    let _ = _e;
-                }
-            },
-            None => {
-                // Couldn't open or read — skip silently.
-            }
+        if let Ok(services) = read_declaration_file(fs, &path) {
+            all_services.extend(services);
         }
     }
 
     all_services
-}
-
-/// Open `path` for reading, stat it to get the size, read the entire file
-/// into a `String`, and return it.  Returns `None` on any I/O error.
-fn read_config_file(fs: &crate::fs::FileSystem, path: &str) -> Option<alloc::string::String> {
-    use crate::fs::OPEN_EXISTING;
-    use crate::kernel::process::HANDLE_RIGHT_READ;
-
-    // Open the file for reading (existing files only).
-    let mut handle = fs
-        .create_file(path, HANDLE_RIGHT_READ, 0, OPEN_EXISTING)
-        .ok()?;
-
-    // Determine how many bytes to allocate.
-    let metadata = fs.stat_path(path).ok()?;
-    let len = metadata.size;
-    let mut buf = alloc::vec![0u8; len];
-
-    // Read the entire file.
-    let n = fs.read(&mut handle, &mut buf).ok()?;
-    buf.truncate(n);
-
-    // Convert to UTF-8.
-    core::str::from_utf8(&buf)
-        .ok()
-        .map(alloc::string::String::from)
 }
 
 // ── The default service set, and its written form ───────────────────────────
@@ -375,6 +472,7 @@ pub fn default_definitions() -> Vec<ServiceDefinition> {
         services.push(ServiceDefinition {
             name: String::from(name),
             kind: ServiceKind::KernelThread,
+            origin: None,
             path: None,
             entry: Some(String::from(entry)),
             args: Vec::new(),
@@ -389,6 +487,7 @@ pub fn default_definitions() -> Vec<ServiceDefinition> {
     services.push(ServiceDefinition {
         name: default_service_name(shell),
         kind: ServiceKind::UserProgram,
+        origin: None,
         path: Some(String::from(shell)),
         entry: None,
         args: Vec::new(),
@@ -402,6 +501,7 @@ pub fn default_definitions() -> Vec<ServiceDefinition> {
         services.push(ServiceDefinition {
             name: default_service_name(launch_reference),
             kind: ServiceKind::UserProgram,
+            origin: None,
             path: Some(String::from(launch_reference)),
             entry: None,
             args: Vec::new(),
@@ -1059,12 +1159,13 @@ pub fn plan_declared() -> StartOrder {
     plan_start_order(&declarations)
 }
 
-/// Parse one rc.d file's text and declare every service in it.
+/// Parse one declaration's text and register every service in it.
 ///
-/// The parser is the one both sides share (`user::shared::config`), so a file
-/// an init program read and handed over cannot mean one thing to it and another
-/// to the kernel.  Returns how many services were declared, or the parser's own
-/// message — which is what a caller needs to say *which* line was wrong.
+/// Test-only, and deliberately so: every declaration a boot sees comes from a
+/// *file*, through [`read_declaration_file`], which is what stamps the origin
+/// the privilege of a service rests on.  Text with no origin is something only
+/// a test has, so only a test can register one.
+#[cfg(test)]
 pub fn declare_from_text(text: &str, now_tick: u64) -> Result<usize, String> {
     let services = parse_service_config(text)?;
     for service in &services {
@@ -1171,6 +1272,7 @@ mod tests {
         ServiceDefinition {
             name: String::from(name),
             kind: ServiceKind::UserProgram,
+            origin: None,
             path: Some(alloc::format!("/system/{}.elf", name)),
             entry: None,
             args: Vec::new(),

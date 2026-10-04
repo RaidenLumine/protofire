@@ -9,7 +9,7 @@
 //! SYSCALL_COUNT).
 
 pub const SYSCALL_ABI_VERSION_MAJOR: u32 = 1;
-pub const SYSCALL_ABI_VERSION_MINOR: u32 = 1;
+pub const SYSCALL_ABI_VERSION_MINOR: u32 = 2;
 
 pub const SYSCALL_COUNT: usize = 192;
 pub const MAX_SYSCALLS: usize = 256;
@@ -522,8 +522,9 @@ mod tests {
     fn abi_version_is_recorded() {
         assert_eq!(SYSCALL_ABI_VERSION_MAJOR, 1);
         // Minor 1 added the service numbers at the end of the experimental
-        // range; the frozen range below 120 did not move.
-        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 1);
+        // range; minor 2 changed `service_declare` to take a declaration file's
+        // path rather than its text.  The frozen range below 120 did not move.
+        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 2);
     }
 
     #[test]

@@ -110,7 +110,8 @@ set -- \
 # prompt, and typing is the half of the shell a boot by itself never exercises.
 shell_commands() {
     sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
-        'help' 'echo ring3-shell-answered'
+        'help' 'echo ring3-shell-answered' \
+        'cat /service/shell/origin' 'cat /service/shell/sha256'
 }
 
 printf 'riscv64 runtime check: 1 cpu, timeout %ss, qemu %s\n' \
@@ -166,6 +167,13 @@ require_log_exact_line() {
     line="$1"
     if ! grep -a -F -x "$line" "$log_file" >/dev/null 2>&1; then
         fail_with_log "missing log line (whole line): $line"
+    fi
+}
+
+require_log_matching() {
+    pattern="$1"
+    if ! grep -a -E "$pattern" "$log_file" >/dev/null 2>&1; then
+        fail_with_log "no log line matches: $pattern"
     fi
 }
 
@@ -240,6 +248,12 @@ require_log_line "adastra:/apps/packages/shell\$ "
 require_log_line "[abi   ] shell payload: $PAYLOAD_SOURCE "
 require_log_line "adastra shell (ring 3) builtins:"
 require_log_exact_line "ring3-shell-answered"
+# The service manager's provenance, read back by a ring-3 program: which
+# declaration file the kernel read the shell's definition from, and the SHA-256
+# of that file's bytes.  Both answers come from `/service`, so a boot whose
+# registry lost track of where its services came from cannot print them.
+require_log_exact_line "/system/rc.d/defaults.toml"
+require_log_matching '^[0-9a-f]{64}$'
 # `/system/init.elf` is a program on this target too: it reads the declarations
 # off the disk and asks for the services to be started, and says so.  The boot
 # left the start to it rather than starting them itself — that line is the

@@ -12,35 +12,29 @@
 //! the supervisor could not restart what it cannot describe.
 
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-use crate::Error;
-#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 use crate::Result;
 
-/// Longest rc.d file the kernel accepts.
+/// Register the services one declaration file declares.
 ///
-/// A declaration file is a handful of keys per service; this is far above any
-/// real one and far below a size that would hold the kernel's lock for long
-/// while it parses.  `service_declare` reads at most this much.
-#[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
-const MAX_DECLARATION_BYTES: usize = 64 * 1024;
-
-/// Register the services one rc.d file declares.
-///
-/// `arg0`/`arg1` are the pointer and length of the file's text, exactly as it
-/// was read.  Parsing is the kernel's — with the parser both sides share — so a
-/// file cannot mean one thing to the program that read it and another to the
-/// kernel that runs what it declares.
+/// `arg0`/`arg1` are the pointer and length of the file's *path*.  The kernel
+/// reads the file itself, out of the read-only system zone: a program chooses
+/// which files hold declarations — the directory is the distribution's — but
+/// not what they say, so what gets registered is the image's bytes and every
+/// service can be attributed to the file that declared it
+/// (`/service/<name>/origin`).  Parsing is still the kernel's, with the parser
+/// both sides share.
 #[cfg(all(target_os = "none", any(feature = "demo-disk", test)))]
 pub(super) fn declare(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     super::validate_zeroed_args(context, 2)?;
 
-    let pointer = context.arg(0) as *const u8;
-    let length = context.arg(1);
-    let text = super::user_memory::user_bounded_str(pointer, length, MAX_DECLARATION_BYTES)?;
-
-    let now_tick = super::runtime::global_scheduler()?.current_tick();
-    let declared = crate::kernel::service::declare_from_text(&text, now_tick)
-        .map_err(|_message| Error::InvalidArgument)?;
+    let path = super::user_memory::user_path_arg(context, 0, 1)?;
+    let scheduler = super::runtime::global_scheduler()?;
+    let now_tick = scheduler.current_tick();
+    let declared = {
+        let fs = super::runtime::global_fs()?;
+        let fs = fs.lock();
+        crate::kernel::service::declare_file(&fs, &path, now_tick)?
+    };
 
     Ok(super::SyscallDispatch::complete(declared))
 }

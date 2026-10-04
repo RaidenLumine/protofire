@@ -17,6 +17,8 @@
 //! | `/service/<name>/restarts` | Times the supervisor has respawned the service |
 //! | `/service/<name>/auto_restart` | `true` or `false` |
 //! | `/service/<name>/security` | `guest`, `admin`, or `system` |
+//! | `/service/<name>/origin` | The declaration file the service came from |
+//! | `/service/<name>/sha256` | SHA-256 of that file's bytes |
 //! | `/service/<name>/describe` | All of the above, one `key: value` per line |
 //!
 //! All nodes are read-only.  Writes fail with `PermissionDenied` rather than
@@ -61,17 +63,21 @@ enum ServiceFileType {
     Restarts,
     AutoRestart,
     Security,
+    Origin,
+    Sha256,
     Describe,
 }
 
 impl ServiceFileType {
     /// Every file, in the order `ls /service/<name>` reports them.
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 8] = [
         Self::State,
         Self::Kind,
         Self::Restarts,
         Self::AutoRestart,
         Self::Security,
+        Self::Origin,
+        Self::Sha256,
         Self::Describe,
     ];
 
@@ -83,6 +89,8 @@ impl ServiceFileType {
             "restarts" => Some(Self::Restarts),
             "auto_restart" => Some(Self::AutoRestart),
             "security" => Some(Self::Security),
+            "origin" => Some(Self::Origin),
+            "sha256" => Some(Self::Sha256),
             "describe" => Some(Self::Describe),
             _ => None,
         }
@@ -96,6 +104,8 @@ impl ServiceFileType {
             Self::Restarts => "restarts",
             Self::AutoRestart => "auto_restart",
             Self::Security => "security",
+            Self::Origin => "origin",
+            Self::Sha256 => "sha256",
             Self::Describe => "describe",
         }
     }
@@ -111,9 +121,33 @@ impl ServiceFileType {
             Self::Restarts => format!("{}\n", record.restarts).into_bytes(),
             Self::AutoRestart => format!("{}\n", record.auto_restart()).into_bytes(),
             Self::Security => format!("{}\n", record.definition.security.as_str()).into_bytes(),
+            Self::Origin => format!("{}\n", origin_path(record)).into_bytes(),
+            Self::Sha256 => format!("{}\n", origin_sha256(record)).into_bytes(),
             Self::Describe => describe_data(record),
         }
     }
+}
+
+/// The declaration file a service came from, or `(none)`.
+///
+/// A definition with no origin is one no file produced — the built-in fallback
+/// the boot uses when the disk declares nothing.  Saying so beats an empty
+/// file, which would read as a path nobody can see.
+fn origin_path(record: &service::ServiceRecord) -> &str {
+    record
+        .definition
+        .origin
+        .as_ref()
+        .map_or("(none)", |origin| origin.path.as_str())
+}
+
+/// The SHA-256 of that file's bytes, or `(none)`.
+fn origin_sha256(record: &service::ServiceRecord) -> &str {
+    record
+        .definition
+        .origin
+        .as_ref()
+        .map_or("(none)", |origin| origin.sha256.as_str())
 }
 
 /// Render the full record as `key: value` lines.
@@ -140,6 +174,10 @@ fn describe_data(record: &service::ServiceRecord) -> Vec<u8> {
     field("Restarts", &format!("{}", record.restarts));
     field("AutoRestart", &format!("{}", record.auto_restart()));
     field("Security", record.definition.security.as_str());
+    // Where the declaration came from, and which bytes: the two facts a reader
+    // needs to attribute the service, and the ones a privileged level rests on.
+    field("Origin", origin_path(record));
+    field("Sha256", origin_sha256(record));
     field(
         "After",
         &if record.definition.after.is_empty() {
@@ -407,6 +445,7 @@ mod tests {
         ServiceDefinition {
             name: String::from(name),
             kind: ServiceKind::UserProgram,
+            origin: None,
             path: Some(format!("/system/{}.elf", name)),
             entry: None,
             args: Vec::new(),
@@ -484,6 +523,8 @@ mod tests {
                 "restarts",
                 "auto_restart",
                 "security",
+                "origin",
+                "sha256",
                 "describe"
             ]
         );
