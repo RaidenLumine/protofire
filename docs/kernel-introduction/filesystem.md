@@ -158,6 +158,23 @@ pair, and a boot takes whichever of the two is committed as the newer build
 (`src/fs/system_image.rs`).  `/tmp` is a fifth, separate mount built from an
 empty volume every boot, so a reboot starts with a clean scratch space.
 
+#### Where a running machine writes
+
+`/system` and `/apps` are read-only, so a program has exactly two places to
+write (`src/fs/write_locations.rs`):
+
+| What | Where | Survives |
+|------|-------|----------|
+| Scratch: temporary files, intermediate output | `/tmp` | nothing — the volume is built empty on every boot |
+| Persistent: user data, credentials, caches, logs | `/data` | a reboot *and* a system update |
+
+Persistent state lives on a zone of its own (`/data/users/<user>`, the
+credentials under `/data/etc`, the install download cache under
+`/data/downloads`, the audit log at `/data/audit.log`), and a system update
+writes a *system volume* rather than any file inside either root.  That is the
+reason an update cannot lose or mix runtime state, and `system_image`'s tests
+pin it: a switch and a rollback later, the data zone holds what it held.
+
 ### Inode and directory entry
 
 32-byte `OnDiskInode` (`types.rs`): `kind`, `deleted`, `entry_start` (dirent table start for

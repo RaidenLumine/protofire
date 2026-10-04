@@ -266,7 +266,10 @@ mod tests {
     const APPS_START: u64 = SLOT_B_START + ZONE_BLOCKS;
     const APPS_BLOCKS: u64 = 64;
     const DATA_START: u64 = APPS_START + APPS_BLOCKS;
-    const DATA_BLOCKS: u64 = 64;
+    /// The data volume below is built with 64 blocks of headroom, so its
+    /// partition has to be larger than the image — the same relationship the
+    /// demo disk's own layout has to keep.
+    const DATA_BLOCKS: u64 = 128;
     const TOTAL_BLOCKS: u64 = DATA_START + DATA_BLOCKS;
 
     /// A system volume image committed as `generation`.
@@ -311,12 +314,52 @@ mod tests {
         partitions[2] = Some(MbrPartitionEntry::new(false, 0xa3, DATA_START, DATA_BLOCKS));
         write_mbr_partitions(&mut bytes[..BLOCK_SIZE], &partitions).expect("write the MBR");
 
-        for (start, image) in [(SLOT_A_START, &slot_a), (SLOT_B_START, &slot_b)] {
+        let data = SimpleFs::build_image_with_headroom(
+            "simplefs:data",
+            &[ImageEntry {
+                path: "/users/guest/note.txt",
+                data: b"runtime state lives here\n",
+            }],
+            16,
+            32,
+            64,
+        )
+        .expect("build the data volume");
+
+        for (start, image) in [
+            (SLOT_A_START, &slot_a),
+            (SLOT_B_START, &slot_b),
+            (DATA_START, &data),
+        ] {
             let offset = start as usize * BLOCK_SIZE;
             bytes[offset..offset + image.len()].copy_from_slice(image);
         }
 
         MemoryBlockDevice::new("two-slot-disk", bytes, false)
+    }
+
+    /// The data zone of a test disk, as a volume.
+    fn data_volume(disk: &Arc<dyn BlockDevice>) -> SimpleFsVolume {
+        let partitions = read_mbr_partitions(disk.as_ref())
+            .expect("read the MBR")
+            .expect("an MBR");
+        let data = partitions[2].expect("a data partition");
+        let device: Arc<dyn BlockDevice> = BlockSliceDevice::new(
+            "data",
+            disk.clone(),
+            data.start_block,
+            data.block_count,
+            false,
+        );
+        SimpleFsVolume::new(SimpleFs::open(device, true).expect("open the data zone"))
+    }
+
+    /// Read a whole file through a volume.
+    fn read_file(volume: &SimpleFsVolume, path: &str) -> String {
+        let node = volume.lookup(path).expect("lookup");
+        let mut buffer = alloc::vec![0_u8; 256];
+        let count = node.read(0, &mut buffer).expect("read");
+        String::from_utf8(buffer[..count].to_vec()).expect("utf8")
     }
 
     #[test]
@@ -425,6 +468,36 @@ mod tests {
         assert_eq!(
             install_system_build(&disk, &garbage).map(|_| ()),
             Err(Error::InvalidArgument)
+        );
+    }
+
+    #[test]
+    fn a_system_switch_leaves_the_data_zone_alone() {
+        // What makes the pair useful: a system update replaces a *system
+        // volume*, so everything a running machine wrote under `/data` — user
+        // data, credentials, caches, logs — is exactly where it was, and the
+        // same holds for a rollback.
+        let disk = two_slot_disk(system_image(Some(1)), system_image(Some(2)));
+
+        let data = data_volume(&disk);
+        data.create_file("/users/guest/session.log")
+            .expect("create a runtime file");
+        let node = data.lookup("/users/guest/session.log").expect("lookup");
+        node.write(0, b"something the machine wrote\n")
+            .expect("write a runtime file");
+
+        install_system_build(&disk, &system_image(Some(3))).expect("install");
+        withdraw_active_build(&disk).expect("withdraw");
+
+        // Two system switches later, the data zone holds what it held.
+        let data = data_volume(&disk);
+        assert_eq!(
+            read_file(&data, "/users/guest/note.txt"),
+            "runtime state lives here\n"
+        );
+        assert_eq!(
+            read_file(&data, "/users/guest/session.log"),
+            "something the machine wrote\n"
         );
     }
 

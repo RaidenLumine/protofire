@@ -127,6 +127,9 @@ impl FileSystem {
         *self.storage_init_report.lock() = Some(report);
 
         self.install_default_layout();
+        // The mounts are up, so the write policy is a fact of the machine now:
+        // say it once, for the log a reader sees.
+        crate::fs::write_locations::log_write_locations();
         let _ = self.set_current_working_dir(DEFAULT_USER_ROOT);
     }
 }

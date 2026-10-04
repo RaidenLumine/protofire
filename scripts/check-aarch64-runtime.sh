@@ -412,6 +412,10 @@ require_log_line "adastra shell (ring 3) builtins:"
 # A boot that fell back to the first slot would read the same files and
 # still pass everything below, which is why this line is asserted.
 require_log_line "system: slot b active (build 2)"
+# And where a running machine writes: the boot says it once, so the
+# policy in `src/fs/write_locations.rs` is visible in a log rather than
+# only in the source.
+require_log_line "runtime writes: /tmp (volatile), /data (persistent)"
 require_log_line "adastra init (ring 3): reading /system/rc.d"
 require_log_line "adastra init: declared "
 require_log_line "service(s) registered; leaving the start to init"

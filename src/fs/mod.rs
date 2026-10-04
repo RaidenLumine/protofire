@@ -48,6 +48,8 @@ pub(crate) mod test_support;
 pub mod tmpfs;
 pub mod unicode;
 pub mod vfs;
+/// Where a running machine writes, and why each place is the right one.
+pub mod write_locations;
 pub mod xfs;
 
 // ── FileSystem implementation modules ──

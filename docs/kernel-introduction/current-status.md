@@ -632,6 +632,15 @@ control that are unusual in a hobby kernel.
   again, with the withdrawn build's payload untouched.  The demo disk ships
   both slots, B committed as the newer build, so every runtime check boots the
   pair's selection rather than a single-volume disk.
+- **Where a running machine writes**: `/system` and `/apps` are mounted
+  read-only, so a program has two places to write and the difference between
+  them is what a reboot means — `/tmp`, a volume built empty on every boot, for
+  scratch, and `/data`, its own zone, for user data, credentials, caches and
+  logs.  The policy is written down in `src/fs/write_locations.rs` and the boot
+  says it once, so a reader of a log can see what survives a reboot and what
+  does not.  A system update replaces a *system volume* and never names a file
+  inside either root, which is what makes it unable to lose runtime state — and
+  what a test pins: two system switches later, the data zone holds what it held.
 - **Install format and atomic switch**: a package is a directory named
   `<app-id>@<version>` holding a launch manifest (paths relative to itself) and
   the program it names.  `user::program::install` checks the manifest's digest
