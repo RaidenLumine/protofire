@@ -61,12 +61,30 @@ pub fn phys_addr_of(virtual_address: usize) -> Option<usize> {
         None
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        // The runtime tables map the RAM window identity — the kernel's link
+        // address and the address the frame allocator hands out are the same
+        // number — so an address inside it is its own physical address.  A
+        // device programmed with one sees the buffer the kernel wrote.
+        use super::aarch64::mmu::KERNEL_TEXT_BASE;
+        use super::aarch64::mmu::KERNEL_TEXT_END;
+
+        if (KERNEL_TEXT_BASE..KERNEL_TEXT_END).contains(&virtual_address) {
+            return Some(virtual_address);
+        }
+        None
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        all(target_arch = "aarch64", target_os = "none")
+    )))]
     {
         // The device-tree machines reach their frames through a window of
         // their own rather than the identity map, and this translation is not
-        // wired for them yet: the callers that need it fail rather than hand
-        // a device an address that means something else.
+        // wired for them yet: a caller that needs it fails rather than hand a
+        // device an address that means something else.
         let _ = virtual_address;
         None
     }

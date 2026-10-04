@@ -50,7 +50,7 @@ the syscall interface.
 | Framebuffer | Display | Linear framebuffer the console draws on | No userspace graphics API beyond the VIRGL syscalls; QEMU only |
 | Framebuffer Console | Display | Text rendering from a built-in 8×16 ASCII glyph table | Fixed font: characters outside the table draw as a fallback glyph, and there is no font or resolution management |
 | HDA (Intel HD Audio) | Audio | CORB/RIRB, codec discovery, stream descriptors | No userspace stream interface, so audio is not usable from a program |
-| PCIe ECAM | Bus | x86_64: full ECAM; AArch64/RISC-V: window found, BARs assigned, one driver attached | One driver on the device-tree machines; AArch64 has no MSI path; every other PCIe device still uses its architecture's own enumeration |
+| PCIe ECAM | Bus | x86_64: full ECAM; AArch64/RISC-V: window found, BARs assigned, one driver attached, MSI-X through the machine's own controller | One driver on the device-tree machines; every other PCIe device still uses its architecture's own enumeration |
 
 **Strengths:** driver coverage across storage, network, display, audio, and
 input, mostly verified under QEMU.
@@ -108,13 +108,14 @@ input, mostly verified under QEMU.
   attributed rather than counted spurious. The identities themselves come from
   an allocator in the controller, so two devices cannot be handed the same ones
   and a second claimant is refused rather than silently replacing a handler
-  somebody waits on. What is still missing: **AArch64's PCIe MSI would need a
-  GICv3 ITS, and this kernel has no ITS** — the GICv3 the ids arrive through is
-  implemented (`src/arch/aarch64/gicv3.rs`), but nothing translates a device's
-  message into an LPI yet; MSI-X is claimed per device rather than per queue
-  beyond the two the NIC uses; and every other PCIe device — NVMe, HDA — is
-  still reached through its architecture's own enumeration rather than this
-  one.
+  somebody waits on. AArch64 reaches the same place by its own road: the GICv3
+  controller (`src/arch/aarch64/gicv3.rs`) receives LPIs, and the ITS
+  (`src/arch/aarch64/its.rs`) translates the messages that become them. What is
+  still missing: MSI-X is claimed per device rather than per queue beyond the
+  two the NIC uses; every LPI is delivered to the boot CPU, so a device's
+  interrupt cannot be spread across cores; and every other PCIe device — NVMe,
+  HDA — is still reached through its architecture's own enumeration rather
+  than this one.
 - **Verified under QEMU only**: no real-device validation on bare-metal
   hardware yet.
 
@@ -357,13 +358,13 @@ disk-backed swap, compression, and defragmentation.
 | x86_64 IDT + exceptions | #PF, #GP, #UD, #DF, timer, IPI | — |
 | x86_64 APIC + IOAPIC | SMP IPI, timer, I/O routing | — |
 | AArch64 exception vectors | EL1 sync/IRQ/FIQ/SError, EL0 sync | — |
-| AArch64 GIC | GICv2 and GICv3 register layouts, chosen from `GICD_PIDR2` (`src/arch/aarch64/gicv3.rs`), interrupt routing | No LPI and no ITS, so a message-signalled interrupt has no path on this platform |
+| AArch64 GIC | GICv2 and GICv3 register layouts, chosen from `GICD_PIDR2` (`src/arch/aarch64/gicv3.rs`); LPIs; the ITS that translates a device's message into one (`src/arch/aarch64/its.rs`) | Every LPI goes to the boot CPU's redistributor; a machine whose device cannot carry a requester ID would need a window of its own in front of the ITS |
 | RISC-V trap handler | U-mode ecall, timer, external interrupts | — |
 | RISC-V PLIC | PLIC initialization from FDT | The default machine has no IMSIC, so the PLIC stays the external controller there |
 | Common interrupt abstraction | `InterruptController` trait | — |
 | Thread exception handling | Page fault recovery, signal delivery | — |
 | PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | A window held across a block can be closed under the holder; the socket send paths still do that |
-| MSI/MSI-X programming | Vector allocator and table programming on x86_64; AIA IMSIC with per-device claims on RISC-V | No AArch64 MSI: the GICv3 controller is there, the ITS that turns a message into an LPI is not; on RISC-V only the virtio-net PCIe driver claims identities |
+| MSI/MSI-X programming | Vector allocator and table programming on x86_64; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines only the virtio-net PCIe driver claims identities yet |
 | NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry | No architectural NMI source on RISC-V, so that entry stays dormant |
 | Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable | Runs from the tick; no routing-latency measurement |
 | Interrupt stats interface | Per-CPU/per-vector counters, NMI/IPI totals, balancer state (SystemInfo #9) | — |
@@ -392,11 +393,11 @@ MSI controller, NMI handling, and load balancing.
 
 **Weaknesses:**
 
-- **No MSI on AArch64.** The PCIe devices the device-tree machines enumerate
-  have MSI-X tables, and the GICv3 a modern machine delivers them through is
-  implemented — but routing an MSI on AArch64 means translating a device's
-  message into an LPI, and that is the ITS, which this kernel does not have.
-  So AArch64 PCIe devices that expect an MSI complete by polling.
+- **One LPI collection on AArch64.** The ITS translates a device's message
+  into an LPI, and every collection this kernel maps points at the boot CPU's
+  redistributor — so every message-signalled interrupt lands on one core.
+  Spreading them needs a collection and an LPI pending table per CPU, which is
+  the next step rather than a property of the design.
 - **MSI-X on RISC-V is one driver deep**: the AIA IMSIC is wired and a device's
   table is programmed, but only the virtio-net PCIe driver claims interrupts
   through it; the default machine has no IMSIC at all, so the PLIC remains the
@@ -785,7 +786,7 @@ user-memory validation.
 | SMP | Full (MADT + AP bringup; the tick is the boot CPU's) | Full (PSCI + GIC SGI) | Full (SBI HSM + per-hart vector, timer, and PLIC context; a cross-hart wake waits for the target's tick) |
 | Context switch | Full | Full | Full |
 | PAN/SMAP | SMAP (stac/clac) | PSTATE.PAN (set/clear) | SUM (sstatus) |
-| MSI/MSI-X | Full (vector allocator + table programming) | None: PCIe MSI would need an ITS, which this kernel does not have | AIA IMSIC; the PCIe virtio-net driver claims its device's identities |
+| MSI/MSI-X | Full (vector allocator + table programming) | GICv3 ITS and LPIs; the PCIe virtio-net driver claims its device's identities, which all arrive on the boot CPU | AIA IMSIC; the PCIe virtio-net driver claims its device's identities |
 | PCIe | Full ECAM | Basic probing | Basic probing |
 | ASID allocator | — | Full (bitmap + CAS) | Full (bitmap + CAS) |
 | FDT parsing | — | Full | Full |
@@ -798,9 +799,8 @@ What each target still lacks:
 
 - **x86_64**: no PCID, so a context switch flushes translations; the PIT is
   routed to one LAPIC, so APs take no timer interrupt.
-- **AArch64**: the GICv2 and GICv3 drivers are both there, but the ITS those
-  message-signalled interrupts would need is not, so there is no LPI and no
-  PCIe MSI path.
+- **AArch64**: MSI machinery is there — GICv3, LPIs, an ITS — but all of it
+  lands on the boot CPU, and only one driver claims identities through it.
 - **RISC-V 64**: the most partial of the three. No architectural NMI source,
   a cross-hart wake waits for the target's next tick, and the default QEMU
   machine has no IMSIC.
@@ -1017,8 +1017,8 @@ spans modules and cannot be attributed to one of them.
     bochs-display device.
 11. **MSI/MSI-X on the architectures that have an MSI controller** — vector
     allocation and table programming on x86_64, and the AIA IMSIC with
-    per-device identity claims on RISC-V. AArch64 has a GICv3 controller but no
-    ITS, so it has no PCIe MSI path.
+    per-device identity claims on RISC-V, and the GICv3 ITS with LPIs on
+    AArch64.
 12. **Per-thread stack canary** — software-implemented canary verification on
     context switch for runtime buffer-overrun detection.
 13. **Encryption at rest** — AES-256 XTS, PBKDF2 key derivation, LUKS2 header

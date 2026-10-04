@@ -35,8 +35,6 @@
 //!   `include/linux/irqchip/arm-gic-v3.h` — the bring-up order this follows.
 
 use core::arch::asm;
-use core::ptr::read_volatile;
-use core::ptr::write_volatile;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::AtomicUsize;
@@ -44,7 +42,16 @@ use core::sync::atomic::Ordering;
 
 use super::interrupt_controller::gicd_base;
 use super::interrupt_controller::gicr_base;
+use super::mmio::dsb_sy;
+use super::mmio::isb;
+use super::mmio::read_u32;
+use super::mmio::read_u64;
+use super::mmio::write_u32;
+use super::mmio::write_u64;
+use super::mmio::write_u8;
 use crate::arch::interrupt_controller::InterruptController;
+use crate::kernel::sync::SpinLock;
+use crate::memory::dma::DmaBuffer;
 
 // -- Distributor ----------------------------------------------------------
 
@@ -71,6 +78,9 @@ const GICD_CTLR_RWP: u32 = 1 << 31;
 
 const GICR_TYPER: usize = 0x0008;
 const GICR_WAKER: usize = 0x0014;
+const GICR_CTLR: usize = 0x0000;
+const GICR_PROPBASER: usize = 0x0070;
+const GICR_PENDBASER: usize = 0x0078;
 
 /// A redistributor is two 64 KiB frames: the RD frame at its base and the
 /// SGI/PPI frame `0x10000` above it.  Consecutive redistributors are one frame
@@ -84,6 +94,44 @@ const GICR_IPRIORITYR: usize = GICR_SGI_FRAME + 0x0400;
 const GICR_WAKER_PROCESSOR_SLEEP: u32 = 1 << 1;
 const GICR_WAKER_CHILDREN_ASLEEP: u32 = 1 << 2;
 const GICR_TYPER_LAST: u64 = 1 << 4;
+const GICR_CTLR_ENABLE_LPIS: u32 = 1 << 0;
+
+/// The first LPI, and the window of them this kernel hands out.
+///
+/// An LPI's number is this base plus an ID of [`LPI_ID_BITS`] bits, and eight
+/// bits is exactly the 256 identities [`crate::arch::irq_handlers`] can hold —
+/// so the LPI space enabled here is 8192..=8447, and every number in it has a
+/// slot in the registry.
+pub(crate) const LPI_BASE: u32 = 8192;
+/// LPIs this kernel hands out, which is what
+/// [`crate::arch::irq_handlers`] can hold — not the whole LPI space the
+/// machine implements, which is what the tables below are sized for.
+const LPI_WINDOW: usize = 256;
+
+/// The last LPI the tables this controller allocates cover.
+pub(crate) const LPI_LAST: u32 = LPI_BASE + LPI_WINDOW as u32 - 1;
+
+/// What an enabled LPI's configuration-table byte holds.
+///
+/// The byte is a priority in bits [7:2] with two flags under it: Group 1,
+/// which is the only group this kernel drives, and the enable bit the
+/// redistributor checks before it will deliver the interrupt at all.  The
+/// priority value is the one Linux gives an LPI by default.
+const LPI_CONFIG_ENABLED: u8 = 0xA0 | 0b11;
+
+/// The alignment `GICR_PENDBASER` can name.
+///
+/// Its address field starts at bit 16 — the low fifteen bits are not
+/// implemented — so a pending table that does not start on a 64 KiB boundary
+/// is not one the redistributor can be pointed at.
+const LPI_PENDING_ALIGNMENT: usize = 0x1_0000;
+
+/// Shareability and cacheability for the LPI tables, as the architecture
+/// encodes them: inner shareable, inner read/write-allocate.  The
+/// redistributor reads these tables, so they carry the attributes a shared
+/// table needs rather than the ones a private buffer would.
+const TABLE_INNER_SHAREABLE: u64 = 3 << 10;
+const TABLE_INNER_CACHEABLE: u64 = 7 << 59;
 
 /// Redistributor frames this controller will enumerate.
 ///
@@ -123,57 +171,6 @@ const ICC_SGI1R_INTID_SHIFT: u64 = 24;
 const ICC_SGI1R_AFFINITY_2_SHIFT: u64 = 32;
 const ICC_SGI1R_RS_SHIFT: u64 = 44;
 const ICC_SGI1R_AFFINITY_3_SHIFT: u64 = 48;
-
-// -- MMIO helpers ---------------------------------------------------------
-
-fn read_u32(address: usize) -> u32 {
-    // SAFETY: the distributor or a redistributor frame — device MMIO inside
-    // the low window the runtime tables map, at a register offset the caller
-    // named.
-    unsafe { read_volatile(address as *const u32) }
-}
-
-fn write_u32(address: usize, value: u32) {
-    // SAFETY: as `read_u32` — the same register block, on the write side.
-    unsafe {
-        write_volatile(address as *mut u32, value);
-    }
-}
-
-fn read_u64(address: usize) -> u64 {
-    // SAFETY: as `read_u32` — a register this module reads at its full width
-    // (`GICR_TYPER`).
-    unsafe { read_volatile(address as *const u64) }
-}
-
-fn write_u64(address: usize, value: u64) {
-    // SAFETY: as `read_u64`, on the write side (`GICD_IROUTER`).
-    unsafe {
-        write_volatile(address as *mut u64, value);
-    }
-}
-
-fn write_u8(address: usize, value: u8) {
-    // SAFETY: the byte-wide priority array of the distributor or of a
-    // redistributor's SGI frame, in the same mapped device window.
-    unsafe {
-        write_volatile(address as *mut u8, value);
-    }
-}
-
-/// Order the accesses that follow against the GIC's own registers.
-///
-/// The distributor and redistributors are behind the system bus rather than
-/// behind a cache, so a write that is only visible to the compiler's ordering
-/// is not visible to the controller; the specification asks for a `DSB` before
-/// an access is treated as complete.
-fn dsb_sy() {
-    // SAFETY: a barrier instruction with no memory operand; it accesses
-    // nothing, and its effect is the ordering that is the point.
-    unsafe {
-        asm!("dsb sy", options(nostack, preserves_flags));
-    }
-}
 
 // -- System-register CPU interface ----------------------------------------
 
@@ -375,13 +372,6 @@ fn write_icc_sgi1r(value: u64) {
     }
 }
 
-fn isb() {
-    // SAFETY: an instruction-synchronisation barrier has no memory operand.
-    unsafe {
-        asm!("isb", options(nomem, nostack, preserves_flags));
-    }
-}
-
 // -- Affinity -------------------------------------------------------------
 
 /// Turn `GICR_TYPER`'s affinity fields into an MPIDR-shaped value.
@@ -434,6 +424,24 @@ fn redistributor_for_cpu(cpu_id: u32) -> Option<usize> {
 
 fn redistributor_for_current_cpu() -> Option<usize> {
     redistributor_for_cpu(current_cpu_id())
+}
+
+/// The redistributor frame of `cpu_id`, for a caller that has to name it.
+///
+/// An ITS collection is the caller this exists for: a collection is where a
+/// message is sent, and the address it holds is a redistributor's.
+pub(crate) fn rd_base_for_cpu(cpu_id: u32) -> Option<usize> {
+    redistributor_for_cpu(cpu_id)
+}
+
+/// The linear processor number this redistributor reports.
+///
+/// `GICR_TYPER` carries it in bits [23:8].  An ITS whose `GITS_TYPER.PTA` is
+/// clear wants this number rather than the redistributor's address in a
+/// collection, and the controller's own report is the only place it comes
+/// from.
+pub(crate) fn processor_number(rd_base: usize) -> u32 {
+    ((read_u64(rd_base + GICR_TYPER) >> 8) & 0xffff) as u32
 }
 
 /// The affinity an SGI to `cpu_id` must name, or `None` when this controller
@@ -618,6 +626,132 @@ pub(crate) fn init_cpu() -> bool {
     true
 }
 
+// -- LPIs -----------------------------------------------------------------
+
+/// The tables a redistributor needs before it can deliver an LPI.
+struct LpiState {
+    /// One byte per LPI the machine implements, shared by every CPU that
+    /// delivers them: bit 0 enables the LPI, bit 1 puts it in Group 1, and
+    /// bits [7:2] are its priority.
+    config: DmaBuffer,
+    /// The boot CPU's pending table, a bit per LPI.  The redistributor sets
+    /// one when a message arrives.
+    pending: DmaBuffer,
+    /// The LPI bits the machine implements, as `GICR_PROPBASER` wants them:
+    /// one less than the number of bits in an LPI id, which is what sizes
+    /// both tables.
+    id_bits: u32,
+}
+
+static LPI_STATE: SpinLock<Option<LpiState>> = SpinLock::new(None);
+
+/// Wait for `GICD_TYPER` to report how many bits of LPI id this machine has.
+///
+/// The answer is in bits [23:19], one less than the count, and it is what
+/// sizes the configuration and pending tables: an LPI's number is the base
+/// plus an id of that many bits, so a machine with sixteen bits of id has an
+/// LPI space of 65536 and its tables are sized for all of it.
+fn lpi_id_bits() -> u32 {
+    let typer = read_u32(gicd_base() + 0x004);
+    (typer >> 19) & 0x1f
+}
+
+/// Allocate the LPI tables and enable LPIs on the CPU that runs this.
+///
+/// One CPU is the whole configuration on purpose: every ITS collection this
+/// kernel programs targets the boot CPU's redistributor (an MSI-X device's
+/// messages are delivered where its collection points, and the collection is
+/// chosen here), so there is exactly one pending table to keep alive and no
+/// per-CPU LPI state for a secondary core to bring up.  A machine whose
+/// interrupts should be spread across CPUs is a later problem, and it will
+/// need one pending table per CPU when it arrives.
+///
+/// Returns whether LPIs are enabled; a machine whose frame allocator is
+/// already empty leaves them off and the callers stay on the polling path.
+pub(crate) fn init_lpis() -> bool {
+    let id_bits = lpi_id_bits();
+    // One byte per LPI, and one bit per LPI in the pending table.
+    let lpi_count = 1_usize << (id_bits + 1);
+    let Some(config) = DmaBuffer::allocate(lpi_count.div_ceil(crate::memory::frame::FRAME_SIZE))
+    else {
+        return false;
+    };
+    let pending_bytes = lpi_count / 8;
+    let Some(pending) = DmaBuffer::allocate_aligned(
+        pending_bytes.div_ceil(crate::memory::frame::FRAME_SIZE),
+        LPI_PENDING_ALIGNMENT,
+    ) else {
+        return false;
+    };
+
+    *LPI_STATE.lock() = Some(LpiState {
+        config,
+        pending,
+        id_bits,
+    });
+    enable_lpis_for_current_cpu()
+}
+
+/// Point this core's redistributor at the LPI tables and turn LPIs on.
+///
+/// `GICR_PROPBASER` names the shared configuration table and how many LPI bits
+/// it holds; `GICR_PENDBASER` names this core's pending table.  Both are
+/// written before `GICR_CTLR.EnableLPIs`, because the redistributor is not
+/// allowed to be using them while they move.
+fn enable_lpis_for_current_cpu() -> bool {
+    let Some(frame) = redistributor_for_current_cpu() else {
+        return false;
+    };
+
+    let state = LPI_STATE.lock();
+    let Some(state) = state.as_ref() else {
+        return false;
+    };
+
+    let prop = state.config.phys_addr() as u64
+        | TABLE_INNER_CACHEABLE
+        | TABLE_INNER_SHAREABLE
+        | state.id_bits as u64;
+    write_u64(frame + GICR_PROPBASER, prop);
+
+    let pend = state.pending.phys_addr() as u64 | TABLE_INNER_CACHEABLE | TABLE_INNER_SHAREABLE;
+    write_u64(frame + GICR_PENDBASER, pend);
+    dsb_sy();
+
+    let ctlr = read_u32(frame + GICR_CTLR) | GICR_CTLR_ENABLE_LPIS;
+    write_u32(frame + GICR_CTLR, ctlr);
+    dsb_sy();
+    true
+}
+
+/// Enable or disable one LPI in the configuration table.
+///
+/// The redistributor reads this byte before it will deliver the interrupt, so
+/// a device's LPI is enabled here before its MSI-X table is allowed to signal.
+/// Answers whether the LPI is one this controller's tables cover.
+pub(crate) fn set_lpi_enabled(lpi: u32, enabled: bool) -> bool {
+    let Some(index) = lpi.checked_sub(LPI_BASE).map(|offset| offset as usize) else {
+        return false;
+    };
+    if index >= LPI_WINDOW {
+        return false;
+    }
+
+    let state = LPI_STATE.lock();
+    let Some(state) = state.as_ref() else {
+        return false;
+    };
+
+    let value = if enabled { LPI_CONFIG_ENABLED } else { 0 };
+    // The byte is inside the configuration table `state` owns, whose
+    // allocation is a page and whose length is the LPI space it was sized for.
+    write_u8(state.config.as_ptr() as usize + index, value);
+    // The redistributor reads the table behind the kernel's caches; the
+    // barrier is what makes the byte visible before the device is let go.
+    dsb_sy();
+    true
+}
+
 // -- Interrupt routing ----------------------------------------------------
 
 /// Assign one interrupt to Group 1.
@@ -705,12 +839,17 @@ pub(crate) fn interrupt_id(acknowledge: u32) -> u32 {
 
 pub(crate) fn claim() -> Option<u32> {
     let acknowledge = read_icc_iar1() as u32;
-    (interrupt_id(acknowledge) < SPURIOUS_INTERRUPT_ID_START).then_some(acknowledge)
+    let interrupt_id = interrupt_id(acknowledge);
+
+    // The ids between the last SPI and the first LPI are the architecture's
+    // special returns, and an LPI is a valid answer above them — the wire
+    // range is not the whole range any more.
+    (!(SPURIOUS_INTERRUPT_ID_START..LPI_BASE).contains(&interrupt_id)).then_some(acknowledge)
 }
 
 pub(crate) fn end_of_interrupt(vector: u32) {
     let interrupt_id = interrupt_id(vector);
-    if interrupt_id >= SPURIOUS_INTERRUPT_ID_START {
+    if (SPURIOUS_INTERRUPT_ID_START..LPI_BASE).contains(&interrupt_id) {
         return;
     }
     write_icc_eoir1(interrupt_id as u64);
@@ -796,6 +935,15 @@ impl InterruptController for GicV3Controller {
         init_distributor(gicd_base());
         if !init_cpu() {
             crate::println!("[irq   ] GICv3: the boot CPU has no redistributor of its own");
+        }
+        if init_lpis() {
+            crate::println!(
+                "[irq   ] GICv3: LPIs {}..{} enabled on the boot CPU",
+                LPI_BASE,
+                LPI_LAST
+            );
+        } else {
+            crate::println!("[irq   ] GICv3: no LPI tables; message-signalled interrupts stay off");
         }
     }
 

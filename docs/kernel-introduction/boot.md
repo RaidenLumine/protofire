@@ -295,21 +295,22 @@ The three targets answer differently:
   driver that owns the device before the function is unmasked, so a delivered
   message is attributed rather than counted spurious; the `aia=aplic-imsic`
   machine is the boot that covers this path.
-- **AArch64 has no MSI path, though it now has the controller one would run
-  on.** `src/arch/aarch64/mod.rs` reads `GICD_PIDR2` and picks the driver that
-  matches: GICv2, or the GICv3 in `src/arch/aarch64/gicv3.rs` — the
-  distributor, the per-PE redistributors, and the `ICC_*` CPU interface the v3
-  delivers through.  What is still missing is the other half of an MSI: the
-  message is an LPI, an LPI needs an ITS to translate it into an interrupt id,
-  and this kernel has no ITS.  The AArch64 runtime check boots a
-  `virtio-net-pci` on both controllers anyway: the device is driven and its
-  completions are polled, and no part of the boot pretends it has an interrupt
-  it does not have.
+- **AArch64 delivers them through the GICv3 ITS.** `src/arch/aarch64/mod.rs`
+  reads `GICD_PIDR2` and picks the driver that matches: GICv2, or the GICv3 in
+  `src/arch/aarch64/gicv3.rs` — the distributor, the per-PE redistributors, the
+  `ICC_*` CPU interface, and the LPI tables a redistributor reads.  The message
+  itself is translated by the ITS in `src/arch/aarch64/its.rs`: the kernel
+  hands it a device table, a command queue and a translation table per device,
+  maps the device's EventIDs to LPIs, and writes the same identities into the
+  device's MSI-X table.  A device write then becomes an interrupt with no
+  software in between.
 
-So delivering MSI on AArch64 is one remaining piece of work, not three: an ITS
-(device tables, command queue, and the LPI configuration and pending tables)
-plus the AArch64 half of `program_device_msix` that ties a driver's claim to
-an LPI.  The controller the ids arrive through is already there.
+  The limits are deliberate and written where they are implemented: every
+  collection points at the boot CPU, so every MSI arrives there, and a device
+  whose interconnect cannot carry a requester ID would need a window of its own
+  in front of the ITS.  On a GICv2 machine there is no ITS to program, so the
+  claim is refused, the table is never written, and the AArch64 runtime check's
+  first boot — the GICv2 one — is the boot that still proves the polling path.
 
 ---
 
@@ -643,11 +644,10 @@ CPU bring-up. What is missing:
 
 - **No bare-metal validation.** Every boot this document describes has been
   run under QEMU.
-- **AArch64 has no MSI path.** The GICv2 and GICv3 machines both boot, and the
-  GICv3 one brings up its own redistributors, timer PPI and SGI delivery — but
-  a device that signals by message has no interrupt to deliver, because the
-  ITS that would turn its message into an LPI is not written yet (section
-  4.5).
+- **AArch64 delivers every MSI to one CPU.** The GICv3 machine brings up its
+  redistributors, timer PPI, SGI delivery, LPIs and the ITS, and a PCIe
+  device's message reaches its driver — but the ITS collection this kernel
+  maps is the boot CPU's, so none of it is spread across cores (section 4.5).
 - **RISC-V wakeups are the coarsest**: a cross-hart wake waits for the target
   hart's next tick, and the machine has no architectural NMI source.
 - **The init program is a stub** that exits, so the boot's own service

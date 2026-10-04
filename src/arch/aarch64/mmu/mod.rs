@@ -62,8 +62,13 @@ const TABLE_ENTRY_COUNT: usize = 512;
 
 /// RAM window covered by the runtime tables (the kernel image and the demo
 /// user slots both live here).
-const KERNEL_TEXT_BASE: usize = 0x4000_0000;
-const KERNEL_TEXT_END: usize = 0x8000_0000;
+///
+/// The window is mapped identity, so an address inside it is also the
+/// physical address a device would be given — which is what
+/// [`crate::arch::mmu::phys_addr_of`] answers from, and what makes a
+/// [`crate::memory::dma::DmaBuffer`] usable on this machine.
+pub const KERNEL_TEXT_BASE: usize = 0x4000_0000;
+pub const KERNEL_TEXT_END: usize = 0x8000_0000;
 
 /// Low identity-mapped MMIO window (GIC, PL011, virtio, ...).
 const DEVICE_MMIO_BASE: usize = 0x0000_0000;

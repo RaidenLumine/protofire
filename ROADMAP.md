@@ -40,9 +40,10 @@ The authoritative picture of what exists today is
   broader device-tree driver coverage.
 - **AArch64 PCIe.** The ECAM window is found, its buses enumerated, its BARs
   assigned, and its `virtio-net-pci` driven — the same code as riscv64 with a
-  different way of reaching a BAR.  The GICv3 the machine's devices signal
-  through is implemented too, so what is left is the MSI side: on this machine
-  that means a GICv3 ITS and the LPIs it delivers.
+  different way of reaching a BAR.  Its devices signal by MSI too now: the
+  GICv3, the LPIs and the ITS that translates a device's message into one are
+  all there.  What is left is spreading them — every collection points at the
+  boot CPU — and a second driver that claims identities through it.
 - **USB host (xHCI) completion.** The driver is present; close the remaining
   feature gaps so USB storage and HID work end-to-end.
 - **HDA audio to userspace.** Expose the Intel HD Audio engine (currently CORB/

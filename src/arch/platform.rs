@@ -97,10 +97,17 @@ pub(crate) fn enumerate_buses() {
 ///
 /// A device's MSI-X table is programmed *through* the controller, and drivers
 /// claim their devices' identities before it is up, so this is the step that
-/// connects the two: the claims taken at probe time are programmed here.  See
-/// [`crate::arch::riscv64::pci::program_device_msix`] for what it does and why
-/// it re-walks rather than carrying the device list across the boot.
+/// connects the two: the claims taken at probe time are programmed here.  The
+/// machine's own half is what differs — RISC-V maps a device's table onto an
+/// IMSIC file, AArch64 maps it through an ITS — and what each of them does is
+/// documented where it lives
+/// ([`crate::arch::riscv64::pci::program_device_msix`],
+/// [`crate::arch::aarch64::its::program_device_msix`]).
 pub(crate) fn program_device_msix() {
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        let _ = crate::arch::aarch64::its::program_device_msix();
+    }
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
     {
         let _ = crate::arch::riscv64::pci::program_device_msix();
@@ -120,7 +127,10 @@ pub(crate) struct PciRegisterWindow {
     /// Where the function sits on its bus, which is what its interrupts are
     /// claimed through: a driver claims them with [`pci_claim_msix`], and the
     /// platform programs them onto this function later.
-    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    #[cfg(any(
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "riscv64", target_os = "none")
+    ))]
     pub function: PciFunctionAddress,
 }
 
@@ -129,7 +139,10 @@ pub(crate) struct PciRegisterWindow {
 /// The window a driver reads its registers through says nothing about where the
 /// function is, and claiming its interrupts needs both: the identity range a
 /// claim takes is what the platform programs *into the function's* MSI-X table.
-#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+#[cfg(any(
+    all(target_arch = "aarch64", target_os = "none"),
+    all(target_arch = "riscv64", target_os = "none")
+))]
 #[derive(Clone, Copy)]
 pub(crate) struct PciFunctionAddress {
     /// The configuration-space window the function is reached through.
@@ -178,6 +191,12 @@ pub(crate) fn pci_register_window(
             device_id: dev.device_id,
             bar_address: BAR_VA,
             bar_size: bar.size,
+            function: PciFunctionAddress {
+                region: probe.region,
+                bus: dev.bus,
+                device: dev.device,
+                function: dev.function,
+            },
         })
     }
 
@@ -226,6 +245,8 @@ pub(crate) fn pci_register_window(
 pub(crate) struct DeviceInterrupts {
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
     claim: crate::arch::riscv64::pci::MsixClaim,
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    claim: crate::arch::aarch64::its::MsixClaim,
 }
 
 #[cfg(target_os = "none")]
@@ -236,7 +257,14 @@ impl DeviceInterrupts {
         {
             self.claim.is_armed()
         }
-        #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
+        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+        {
+            self.claim.is_armed()
+        }
+        #[cfg(not(any(
+            all(target_arch = "riscv64", target_os = "none"),
+            all(target_arch = "aarch64", target_os = "none")
+        )))]
         {
             false
         }
@@ -251,7 +279,14 @@ impl DeviceInterrupts {
         {
             self.claim.first_irq()
         }
-        #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
+        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+        {
+            self.claim.first_irq()
+        }
+        #[cfg(not(any(
+            all(target_arch = "riscv64", target_os = "none"),
+            all(target_arch = "aarch64", target_os = "none")
+        )))]
         {
             0
         }
@@ -275,6 +310,24 @@ pub(crate) fn pci_claim_msix(
     window: &PciRegisterWindow,
     handler: impl Fn(u32) + Send + Sync + 'static,
 ) -> Option<DeviceInterrupts> {
+    #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+    {
+        use alloc::sync::Arc;
+
+        let function = window.function;
+        let handler: crate::arch::irq_handlers::IrqHandler = Arc::new(handler);
+        let claim = crate::arch::aarch64::its::claim_msix(
+            &function.region,
+            function.bus,
+            function.device,
+            function.function,
+            handler,
+        )
+        .ok()?;
+        crate::arch::aarch64::its::defer_msix_arming(claim.clone());
+        Some(DeviceInterrupts { claim })
+    }
+
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
     {
         use alloc::sync::Arc;
@@ -293,7 +346,10 @@ pub(crate) fn pci_claim_msix(
         Some(DeviceInterrupts { claim })
     }
 
-    #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
+    #[cfg(not(any(
+        all(target_arch = "riscv64", target_os = "none"),
+        all(target_arch = "aarch64", target_os = "none")
+    )))]
     {
         let _ = (window, handler);
         None

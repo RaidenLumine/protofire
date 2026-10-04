@@ -531,6 +531,12 @@ require_log_absent_line "[user  ] aarch64 exec-error: "
 require_log_absent_line "[user  ] aarch64 spawn-status: "
 require_log_absent_line "[user  ] aarch64-rust net-udp-send fail:"
 
+# This machine's controller is a GICv2, and a GICv2 has no ITS: the NIC's
+# MSI-X is claimed by nobody, its completions are polled, and nothing about
+# the interrupt controller's LPI half should appear at all.
+require_log_absent_line "[its   ]"
+require_log_absent_line "[irq   ] GICv3: LPIs"
+
 if [ "$remove_log_on_exit" = "0" ]; then
     printf 'aarch64 runtime log saved to %s\n' "$log_file"
 fi
@@ -558,6 +564,13 @@ fi
 # The refusal messages and the v2-interface fault stay asserted absent: they
 # are what a regression would look like, and a boot that fell back to the v2
 # driver would print or fault at exactly one of them.
+#
+# A device's MSI is asserted too, and it is the end of the whole chain: the
+# boot has to bring the ITS up, map the NIC's DeviceID to the LPIs its MSI-X
+# table will deliver, program that table, and then take the interrupt the
+# device itself raises when the network stack uses it.  The message is the
+# driver's handler running, so a boot that only programmed the table without
+# the LPI path behind it fails here.
 gicv3_log="$(mktemp)"
 set +e
 timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
@@ -585,6 +598,11 @@ require_log_absent_line "far=0x0000000008010000"
 require_log_line "[irq   ] GICv3 at "
 # The controller has one redistributor per PE, and this machine has two.
 require_log_line "2 redistributor frame(s)"
+require_log_line "[irq   ] GICv3: LPIs 8192..8447 enabled on the boot CPU"
+require_log_line "[its   ] MSI-X on 00:01.0 delivers LPI "
+require_log_line "[virtio-net] device MSI: irq "
+require_log_absent_line "no ITS on this machine"
+require_log_absent_line "not programmed"
 require_log_line "[smp   ] 2 CPUs total, 1 AP(s)"
 require_log_line "[smp   ] AP cpu_id=1 online"
 require_log_line "[pci   ] AArch64 PCIe ECAM mapped PA="

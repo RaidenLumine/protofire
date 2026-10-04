@@ -113,6 +113,8 @@ pub mod devices;
 pub(crate) mod exception;
 pub(crate) mod gicv3;
 pub mod irq_balance;
+pub(crate) mod its;
+pub(crate) mod mmio;
 pub mod mmu;
 pub mod pci;
 pub mod percpu;

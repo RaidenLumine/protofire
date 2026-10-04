@@ -760,6 +760,25 @@ fn handle_irq(frame: &mut TrapFrame) {
         }
     }
 
+    // ── LPI (message-signalled) dispatch ───────────────────────────
+    // A device signals by writing the address its MSI-X table entry names, and
+    // what arrives is an LPI: an identity above the wire-driven range whose
+    // handler was registered before the device was allowed to signal.  An
+    // identity with no handler is therefore a message nobody owns, not a
+    // reason to stop.
+    if let Some(acknowledge) = acknowledge.as_ref() {
+        let intid = super::interrupt_controller::interrupt_id(*acknowledge);
+        if super::its::is_lpi(intid) {
+            crate::kernel::irq_stats::record_irq(intid);
+            super::interrupt_controller::acknowledge(*acknowledge);
+            if !super::its::dispatch_lpi(intid) {
+                crate::kernel::irq_stats::record_spurious();
+            }
+            advance_past_idle_wfi(frame);
+            return;
+        }
+    }
+
     match exception::classify_irq_disposition(
         acknowledge.is_some(),
         pending_tick,

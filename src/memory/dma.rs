@@ -24,9 +24,15 @@ pub fn phys_addr_of(va: usize) -> Option<usize> {
 /// address is known, so it can be used as a PRP page, queue memory, or
 /// a bounce buffer for DMA I/O.
 pub struct DmaBuffer {
+    /// The frames the allocator handed over, which `Drop` returns whole.
+    allocation: *mut u8,
+    /// Frames the allocator gave this buffer; at least `frame_count`.
+    allocated_frames: usize,
+    /// The buffer's first byte, at the alignment the caller asked for.
     ptr: *mut u8,
-    phys: usize,
+    /// Frames the buffer itself covers, starting at `ptr`.
     frame_count: usize,
+    phys: usize,
 }
 
 // SAFETY: DmaBuffer owns the allocation; it is safe to Send across threads
@@ -52,6 +58,54 @@ impl DmaBuffer {
             core::ptr::write_bytes(ptr, 0, frame_count * FRAME_SIZE);
         }
         Some(Self {
+            allocation: ptr,
+            allocated_frames: frame_count,
+            ptr,
+            phys,
+            frame_count,
+        })
+    }
+
+    /// Allocate `frame_count` frames whose first byte is `alignment`-aligned.
+    ///
+    /// Some device registers do not hold a full address: the low bits are not
+    /// implemented at all, and a table a device is pointed at has to start
+    /// where the register can name it.  An AArch64 redistributor's LPI pending
+    /// table is the one this kernel needs — `GICR_PENDBASER` keeps only bits
+    /// [51:16] of the address, so a table that starts anywhere else is not the
+    /// table the redistributor will read.
+    ///
+    /// `alignment` must be a power of two and at least `FRAME_SIZE`.  The
+    /// frames in front of the aligned start belong to the buffer and are
+    /// released with it, so the allocation is honest about what it took.
+    #[must_use]
+    pub fn allocate_aligned(frame_count: usize, alignment: usize) -> Option<Self> {
+        if frame_count == 0 || !alignment.is_power_of_two() || alignment < FRAME_SIZE {
+            return None;
+        }
+
+        // Worst case the first aligned address is one frame short of the end
+        // of the extra run, so this much slack always leaves `frame_count`
+        // frames from the aligned start.
+        let slack_frames = alignment / FRAME_SIZE - 1;
+        let allocated_frames = frame_count.checked_add(slack_frames)?;
+        let allocation = global_mut()?.allocate_frames(allocated_frames)?;
+        let allocation_phys = phys_addr_of(allocation as usize)?;
+
+        let phys = (allocation_phys + alignment - 1) & !(alignment - 1);
+        let ptr = (allocation as usize + (phys - allocation_phys)) as *mut u8;
+
+        // Zero what the caller will see, so stale data never reaches a device.
+        // SAFETY: the frame allocator returned `allocated_frames` contiguous
+        // frames from `allocation`, and the aligned buffer plus its
+        // `frame_count` frames lies inside them.
+        unsafe {
+            core::ptr::write_bytes(ptr, 0, frame_count * FRAME_SIZE);
+        }
+
+        Some(Self {
+            allocation,
+            allocated_frames,
             ptr,
             phys,
             frame_count,
@@ -109,9 +163,9 @@ impl DmaBuffer {
 
 impl Drop for DmaBuffer {
     fn drop(&mut self) {
-        if !self.ptr.is_null() {
+        if !self.allocation.is_null() {
             if let Some(mut manager) = global_mut() {
-                manager.deallocate_frames(self.ptr, self.frame_count);
+                manager.deallocate_frames(self.allocation, self.allocated_frames);
             }
         }
     }
