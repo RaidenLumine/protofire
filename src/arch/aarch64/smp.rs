@@ -12,6 +12,10 @@ use core::sync::atomic::AtomicU32;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
 
+use crate::arch::aarch64::interrupt_controller::gicd_base;
+use crate::arch::aarch64::interrupt_controller::GICD_TYPER;
+use crate::arch::aarch64::interrupt_controller::GICV2_CPU_INTERFACES;
+
 // ── Constants ───────────────────────────────────────────────────────────
 
 pub(crate) const MAX_APS: usize = 16;
@@ -173,8 +177,17 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
         crate::arch::percpu::set_base(percpu as u64);
     }
 
-    // Initialise GIC CPU interface and timer (per-CPU).
-    crate::arch::aarch64::interrupt_controller::init_gicc();
+    // Initialise the interrupt controller's CPU interface and timer
+    // (per-CPU).  On a GICv3 the interface is this core's own redistributor,
+    // and a core whose redistributor was never found cannot be interrupted at
+    // all — better to say so here than to run as a CPU that never takes a
+    // tick.
+    if !crate::arch::aarch64::interrupt_controller::init_gicc() {
+        crate::println!("[smp   ] FATAL: AP cpu_id={} has no redistributor", cpu_id);
+        loop {
+            crate::arch::halt();
+        }
+    }
     crate::arch::aarch64::timer::init_ap();
 
     // Fetch pre-created scheduler.
@@ -309,22 +322,15 @@ fn bring_up_one(cpu_id: u32, idx: usize) {
 
 // ── AP discovery ───────────────────────────────────────────────────────
 
-/// How many cores a GICv2 distributor can be told to target.
-///
-/// An SGI names its destinations as bits in an eight-bit list on the
-/// distributor, so the controller simply cannot address more than eight of
-/// them.  See [`discover_aps`] for why that is the ceiling on which cores this
-/// kernel brings up.
-const GICV2_CPU_INTERFACES: u32 = 8;
-
 fn discover_aps() -> Vec<(u32, u64)> {
     // Two authorities with two different answers: the device tree says which
-    // cores exist, the distributor says which of them this kernel can address.
+    // cores exist, the interrupt controller says which of them this kernel can
+    // address.
     // A core beyond the second is a core that can be started and then never
     // woken — work would be placed on it with no IPI able to reach it — so the
     // smaller of the two is the number worth bringing up.
     let from_fdt = crate::arch::fdt::cpu_count();
-    let addressable = gicd_cpu_count().unwrap_or(GICV2_CPU_INTERFACES);
+    let addressable = addressable_cpu_count();
     let total = from_fdt.min(addressable);
     if total <= 1 {
         return Vec::new();
@@ -344,6 +350,20 @@ fn discover_aps() -> Vec<(u32, u64)> {
     aps
 }
 
+/// How many cores the interrupt controller can be told to target.
+///
+/// The answer is the controller's, not the machine's: a GICv2 distributor
+/// names its targets as bits in an eight-bit list, so eight is its ceiling; a
+/// GICv3 controller has one redistributor per PE and the frames it enumerated
+/// at bring-up are the count.
+fn addressable_cpu_count() -> u32 {
+    if crate::arch::aarch64::interrupt_controller::is_v3() {
+        return crate::arch::aarch64::interrupt_controller::redistributor_count();
+    }
+
+    gicd_cpu_count().unwrap_or(GICV2_CPU_INTERFACES)
+}
+
 /// Cores the distributor reports, `GICD_TYPER.CPUNumber` (bits [7:5]).
 ///
 /// `None` when the register reads as all ones, which is what an absent or
@@ -352,48 +372,27 @@ fn discover_aps() -> Vec<(u32, u64)> {
 fn gicd_cpu_count() -> Option<u32> {
     // SAFETY: the `GICD_TYPER` register of the distributor the platform
     // described, inside the low device window the runtime tables map.
-    let typer = unsafe { core::ptr::read_volatile((gicd_base() + 0x004) as *const u32) };
+    let typer = unsafe { core::ptr::read_volatile((gicd_base() + GICD_TYPER) as *const u32) };
     if typer == u32::MAX {
         return None;
     }
-    Some(((typer >> 5) & 0x7) + 1)
+    Some((((typer >> 5) & 0x7) + 1).min(GICV2_CPU_INTERFACES))
 }
 
 // ── GIC SGI (IPI) delivery ─────────────────────────────────────────────
 
-const GICD_SGIR: usize = 0xF00;
-
-fn gicd_base() -> usize {
-    crate::arch::fdt::platform_info()
-        .gicd_base
-        .unwrap_or(0x0800_0000)
-}
-
-fn send_sgi(sgi_id: u8, cpu_mask: u8) {
-    if sgi_id >= 16 {
-        return;
-    }
-    let reg = (gicd_base() + GICD_SGIR) as *mut u32;
-    // Target List Filter = 0 (use CPU target list bits)
-    // SAFETY: the distributor's software-generated-interrupt register, in the
-    // mapped device window; the bad-id check above keeps the id in range.
-    unsafe {
-        core::ptr::write_volatile(reg, ((cpu_mask as u32) << 16) | sgi_id as u32);
-    }
-}
-
 /// Ask one core to look at its run queue again, as a software-generated
 /// interrupt.
 ///
-/// The distributor addresses cores by [[GICV2_CPU_INTERFACES]|bit position] in
-/// the target list, and this kernel calls a core by that same number: the
-/// core's own id, from `MPIDR_EL1`.  A core the list cannot name — id 0 is the
-/// caller, and anything past the list's width — is not one this can reach.
+/// Delivery itself belongs to the controller — a GICv2 writes a target bit
+/// into the distributor, a GICv3 writes the target's affinity into
+/// `ICC_SGI1R_EL1` — and this kernel calls a core by its own id, from
+/// `MPIDR_EL1`.  Id 0 is the caller, so there is nothing to ask.
 pub fn send_reschedule_ipi(cpu_id: u32) {
-    if cpu_id == 0 || cpu_id >= GICV2_CPU_INTERFACES {
+    if cpu_id == 0 {
         return;
     }
-    send_sgi(SGI_RESCHEDULE, 1u8 << (cpu_id as u8));
+    crate::arch::aarch64::interrupt_controller::send_sgi_to_cpu(SGI_RESCHEDULE, cpu_id);
 }
 
 /// Broadcast a "drop your translations" request to the other cores.
@@ -406,13 +405,7 @@ pub fn send_reschedule_ipi(cpu_id: u32) {
 /// together.
 #[allow(dead_code)]
 pub(crate) fn send_tlb_shootdown_all() {
-    let reg = (gicd_base() + GICD_SGIR) as *mut u32;
-    // Filter = 1 (All Except Self)
-    // SAFETY: as `send_sgi` — the same register, with the "all except self"
-    // filter the broadcast wants.
-    unsafe {
-        core::ptr::write_volatile(reg, (1u32 << 24) | SGI_TLB_SHOOTDOWN as u32);
-    }
+    crate::arch::aarch64::interrupt_controller::send_sgi_all_except_self(SGI_TLB_SHOOTDOWN);
 }
 
 /// CPUs that have already said they were woken by a reschedule IPI.

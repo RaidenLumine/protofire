@@ -59,6 +59,7 @@ if [ ! -f "$KERNEL_BIN" ]; then
 fi
 
 remove_log_on_exit=0
+gicv3_log=""
 if [ -n "$AARCH64_RUNTIME_LOG" ]; then
     mkdir -p "$(dirname "$AARCH64_RUNTIME_LOG")"
     log_file="$AARCH64_RUNTIME_LOG"
@@ -71,6 +72,9 @@ fi
 cleanup() {
     if [ "$remove_log_on_exit" = "1" ]; then
         rm -f "$log_file"
+        # The GICv3 boot's log is a second temporary, and a failure inside the
+        # assertions that read it exits with `$log_file` pointing there.
+        [ -z "${gicv3_log:-}" ] || rm -f "$gicv3_log"
     fi
 }
 trap cleanup EXIT INT TERM
@@ -533,48 +537,61 @@ fi
 
 # ── The same kernel on a GICv3 machine ────────────────────────────────
 #
-# This driver implements GICv2 only, and the machine above is a GICv2 one
-# (`arm,cortex-a15-gic` in its device tree) — so every run of this check so far
-# has been a run on the controller the driver happens to understand.  A GICv3
-# is a different shape: the CPU interface is the `ICC_*` system registers
-# rather than a frame at `0x0801_0000`, and SGIs live with the redistributors.
-# Programming the v2 layout onto one used to end in a data abort at exactly that
-# address, inside interrupt-controller init.
+# The machine above is a GICv2 one (`arm,cortex-a15-gic` in its device tree),
+# so everything asserted so far was asserted against the controller the
+# original driver understood.  A GICv3 is a different shape: the CPU interface
+# is the `ICC_*` system registers rather than a frame at `0x0801_0000`, the
+# SGI/PPI bank lives in a per-PE redistributor rather than in the distributor,
+# and SGIs are sent by affinity.  Programming the v2 layout onto one used to
+# end in a data abort at exactly that CPU-interface address, inside
+# interrupt-controller init.
 #
-# What is asserted is the answer, not the mechanism: the kernel must say it
-# speaks GICv2 only and stop, rather than touch a controller it does not
-# understand.  The assertion is on the message and on the absence of the fault,
-# so it keeps holding as the driver grows a v3 path — at which point the boot
-# will simply go further and the message will disappear, which is a change
-# someone should make deliberately.
+# So this second boot is the same kernel on the other controller, and it has to
+# do more than start: with two CPUs, the AP is brought up through the same
+# per-CPU path a GICv3 needs — find this core's redistributor, wake it, enable
+# its own interface — and the timer tick that drives the rest of the boot is
+# delivered as a Group 1 PPI through that interface.  A boot that reached the
+# scheduler on a controller it had not really initialised is not a thing that
+# can happen here, which is why the assertions are the milestones themselves
+# and not just the absence of the old refusal.
+#
+# The refusal messages and the v2-interface fault stay asserted absent: they
+# are what a regression would look like, and a boot that fell back to the v2
+# driver would print or fault at exactly one of them.
 gicv3_log="$(mktemp)"
 set +e
-timeout 10s "$QEMU_AARCH64" \
+timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -machine virt,gic-version=3 \
     -cpu max \
-    -smp 1 \
+    -smp 2 \
     -m "$QEMU_RAM" \
     -kernel "$KERNEL_BIN" \
     -display none \
     -serial "file:$gicv3_log" \
     -no-reboot \
     -no-shutdown \
-    -netdev user,id=net0 -device virtio-net-device,netdev=net0 >/dev/null 2>&1
+    -global virtio-mmio.force-legacy=false \
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 >/dev/null 2>&1
 set -e
 
-if ! grep -F "aarch64 interrupt driver implements GICv2 only" "$gicv3_log" >/dev/null 2>&1; then
-    printf 'aarch64 runtime check failed: a GICv3 machine was not told what this driver speaks\n' >&2
-    printf '  last lines of that boot:\n' >&2
-    tail -n 12 "$gicv3_log" | tr -d '\000' >&2
-    rm -f "$gicv3_log"
-    exit 1
-fi
-if grep -F "far=0x0000000008010000" "$gicv3_log" >/dev/null 2>&1; then
-    printf 'aarch64 runtime check failed: the GICv3 boot faulted at the GICv2 CPU interface\n' >&2
-    tail -n 12 "$gicv3_log" | tr -d '\000' >&2
-    rm -f "$gicv3_log"
-    exit 1
-fi
+# The assertions below all read `$log_file`, so point it at this boot while
+# they run and put it back afterwards.
+main_log="$log_file"
+log_file="$gicv3_log"
+
+require_log_absent_line "aarch64 interrupt driver implements GICv2"
+require_log_absent_line "far=0x0000000008010000"
+
+require_log_line "[irq   ] GICv3 at "
+# The controller has one redistributor per PE, and this machine has two.
+require_log_line "2 redistributor frame(s)"
+require_log_line "[smp   ] 2 CPUs total, 1 AP(s)"
+require_log_line "[smp   ] AP cpu_id=1 online"
+require_log_line "[pci   ] AArch64 PCIe ECAM mapped PA="
+require_log_line "[kernel] network stack initialized"
+require_log_line "protofire kernel running"
+
+log_file="$main_log"
 rm -f "$gicv3_log"
 
 printf 'aarch64 runtime check passed at current metadata/fault/wait boundary\n'

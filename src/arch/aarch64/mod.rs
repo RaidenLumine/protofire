@@ -111,6 +111,7 @@ pub mod cpufreq;
 pub mod demo;
 pub mod devices;
 pub(crate) mod exception;
+pub(crate) mod gicv3;
 pub mod irq_balance;
 pub mod mmu;
 pub mod pci;
@@ -126,18 +127,36 @@ pub mod tlb;
 
 pub mod interrupt_controller {
     use core::sync::atomic::AtomicBool;
+    use core::sync::atomic::AtomicU8;
     use core::sync::atomic::Ordering;
 
+    use super::gicv3;
     use super::read_volatile;
     use super::write_volatile;
     use crate::arch::interrupt_controller::InterruptController;
 
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+    /// The controller revision this machine reports, once anything has asked.
+    ///
+    /// Zero is "not read yet"; 2 and 3 are the values the rest of the module
+    /// branches on.  The answer cannot change while the kernel runs, and the
+    /// question sits on the interrupt path, so it is read from the hardware
+    /// once and cached.
+    static VERSION: AtomicU8 = AtomicU8::new(0);
+
     const GICD_BASE_DEFAULT: usize = 0x0800_0000;
     const GICC_BASE_DEFAULT: usize = 0x0801_0000;
+    const GICR_BASE_DEFAULT: usize = 0x080A_0000;
 
-    fn gicd_base() -> usize {
+    /// Cores a GICv2 distributor can address.
+    ///
+    /// Its SGI target list is eight bits wide, so a ninth core could be
+    /// started and then never woken.  GICv3 does not have the limit: its
+    /// redistributors are per-PE and an SGI names an affinity.
+    pub(crate) const GICV2_CPU_INTERFACES: u32 = 8;
+
+    pub(crate) fn gicd_base() -> usize {
         crate::arch::fdt::platform_info()
             .gicd_base
             .unwrap_or(GICD_BASE_DEFAULT)
@@ -149,14 +168,32 @@ pub mod interrupt_controller {
             .unwrap_or(GICC_BASE_DEFAULT)
     }
 
+    /// The first redistributor frame, on a machine that has them.
+    pub(crate) fn gicr_base() -> usize {
+        crate::arch::fdt::platform_info()
+            .gicr_base
+            .unwrap_or(GICR_BASE_DEFAULT)
+    }
+
     const GICD_CTLR: usize = 0x000;
+    pub(crate) const GICD_TYPER: usize = 0x004;
     const GICD_IGROUPR0: usize = 0x080;
     const GICD_ISENABLER0: usize = 0x100;
     const GICD_ICPENDR0: usize = 0x280;
     const GICD_IPRIORITYR: usize = 0x400;
     const GICD_ITARGETSR: usize = 0x1800;
-    /// Peripheral ID 2: bits [7:4] report the architecture revision.
-    const GICD_PIDR2: usize = 0xFE8;
+    const GICD_SGIR: usize = 0xF00;
+
+    /// Peripheral ID 2 at the two addresses the two revisions put it at.
+    ///
+    /// Bits [7:4] report the architecture revision — 2 for GICv2, 3 for
+    /// GICv3, 4 for a GICv4 that keeps the v3 programming model.  A GICv2
+    /// distributor is a 4 KiB block and keeps its identification registers at
+    /// the end of it; GICv3 grew the block to 64 KiB and moved them to the top
+    /// of the new window, so a probe has to ask at the address the revision it
+    /// is looking for actually implements.
+    const GICD_PIDR2_V2: usize = 0x0FE8;
+    const GICD_PIDR2_V3: usize = 0xFFE8;
 
     const GICC_CTLR: usize = 0x0000;
     const GICC_PMR: usize = 0x0004;
@@ -208,6 +245,57 @@ pub mod interrupt_controller {
         (gicd_base() + GICD_IPRIORITYR + interrupt_id as usize) as *mut u8
     }
 
+    /// Ask the distributor which controller revision it is.
+    ///
+    /// The v2 address is probed first because a GICv2 only answers there, and
+    /// a GICv3 answers zero there — the offset is inside its window but is not
+    /// a register it implements.  The device tree's `arm,gic-v3` node is the
+    /// tiebreak for a machine whose identification registers read back as
+    /// nothing: it named its controller, and that name is a better answer than
+    /// refusing to boot the machine it described.
+    fn detect_version() -> Option<u8> {
+        let v2_revision = (distributor_read(GICD_PIDR2_V2) >> 4) & 0xF;
+        if v2_revision == 2 {
+            return Some(2);
+        }
+
+        let v3_revision = (distributor_read(GICD_PIDR2_V3) >> 4) & 0xF;
+        if v3_revision == 3 || v3_revision == 4 {
+            return Some(3);
+        }
+
+        if crate::arch::fdt::platform_info().gicv3_detected {
+            return Some(3);
+        }
+
+        None
+    }
+
+    fn version() -> Option<u8> {
+        let cached = VERSION.load(Ordering::Acquire);
+        if cached != 0 {
+            return Some(cached);
+        }
+
+        let detected = detect_version()?;
+        VERSION.store(detected, Ordering::Release);
+        Some(detected)
+    }
+
+    /// Whether the machine in front of the kernel is a GICv3 one.
+    ///
+    /// Asked by the CPU-discovery path, whose answer differs between the two
+    /// revisions: a GICv2 distributor caps how many cores can be woken, while
+    /// a GICv3 controller is asked how many redistributors it enumerated.
+    pub(crate) fn is_v3() -> bool {
+        version() == Some(3)
+    }
+
+    /// PEs a GICv3 controller has a redistributor frame for.
+    pub(crate) fn redistributor_count() -> u32 {
+        gicv3::redistributor_count() as u32
+    }
+
     /// Singleton GICv2 controller used by the arch-level dispatch.
     pub static GICV2_CONTROLLER: GicV2Controller = GicV2Controller;
 
@@ -220,38 +308,11 @@ pub mod interrupt_controller {
                 return;
             }
 
-            // Ask the controller what it is before programming it.  `GICD_PIDR2`
-            // reports the architecture revision in bits [7:4] — 2 for GICv2, 3
-            // for GICv3 — and unlike the device tree it answers on every boot
-            // path, including this kernel's: on aarch64 QEMU hands us no device
-            // tree at all (a bare-metal ELF gets `x0 = 0`), so a guard that
-            // waits to be told by the DT would never fire.
+            // Only reached when the distributor reported revision 2: the
+            // dispatch layer read that before choosing this controller, and a
+            // machine it does not recognise stops there rather than being
+            // programmed with the v2 layout.
             //
-            // This driver speaks GICv2: distributor register layout, a
-            // memory-mapped CPU interface at `0x0801_0000`, SGIs at
-            // `GICD_SGIR`.  A GICv3 has none of that in that shape — the CPU
-            // interface is the `ICC_*` system registers and SGIs live with the
-            // redistributors — so programming the v2 layout onto one writes
-            // into registers that mean something else.  Measured: that ends in
-            // a data abort at `far=0x0801_0000` inside this very function.
-            //
-            // Stopping here is the honest answer until the driver grows a v3
-            // path: a machine whose interrupt controller is not initialised
-            // cannot keep time, and saying so beats running without one.
-            let architecture_revision = (distributor_read(GICD_PIDR2) >> 4) & 0xF;
-            if architecture_revision != 2 {
-                crate::println!(
-                    "[irq   ] this kernel's aarch64 interrupt driver implements GICv2 only; \
-                     the controller at {:#x} reports architecture revision {} — stopping \
-                     instead of programming registers that mean something else",
-                    gicd_base(),
-                    architecture_revision
-                );
-                loop {
-                    crate::arch::halt();
-                }
-            }
-
             // Reprogram the distributor and CPU interface atomically with local IRQs
             // masked.
             super::interrupts::disable();
@@ -296,18 +357,54 @@ pub mod interrupt_controller {
     // -- GIC-specific helpers that are not part of the generic trait ---------
 
     /// Return the active interrupt controller singleton for this platform.
+    ///
+    /// Which one it is follows from what the distributor reports, and that is
+    /// read on the first call — which is bring-up, before any interrupt can
+    /// arrive.  A revision this kernel has no driver for stops here, with the
+    /// reason printed, rather than being programmed with a layout that means
+    /// something else.
     pub(crate) fn active_controller() -> &'static dyn InterruptController {
-        &GICV2_CONTROLLER
+        match version() {
+            Some(3) => &gicv3::GICV3_CONTROLLER,
+            Some(2) => &GICV2_CONTROLLER,
+            _ => {
+                crate::println!(
+                    "[irq   ] this kernel's aarch64 interrupt driver implements GICv2 and \
+                     GICv3; the controller at {:#x} reports neither — stopping instead of \
+                     programming registers that mean something else",
+                    gicd_base()
+                );
+                loop {
+                    crate::arch::halt();
+                }
+            }
+        }
     }
 
-    /// Per-CPU GIC CPU interface initialisation (called on each AP).
-    pub(crate) fn init_gicc() {
-        cpu_interface_write(GICC_PMR, 0xFF);
-        cpu_interface_write(GICC_BPR, 0);
-        cpu_interface_write(GICC_CTLR, GIC_ENABLE_GROUP0 | GIC_ENABLE_GROUP1);
+    /// Per-CPU interrupt-controller initialisation (called on each AP).
+    ///
+    /// Answers whether this core can be interrupted at all.  On a GICv3 that
+    /// is a real question — its redistributor is per-CPU state that has to be
+    /// found and woken, and the core asking is the only one that can do it.
+    pub(crate) fn init_gicc() -> bool {
+        match version() {
+            Some(3) => gicv3::init_cpu(),
+            _ => {
+                cpu_interface_write(GICC_PMR, 0xFF);
+                cpu_interface_write(GICC_BPR, 0);
+                cpu_interface_write(GICC_CTLR, GIC_ENABLE_GROUP0 | GIC_ENABLE_GROUP1);
+                true
+            }
+        }
     }
 
+    /// Put one interrupt into Group 1, the group this kernel drives.
     pub(crate) fn set_group1(interrupt_id: u32) {
+        if version() == Some(3) {
+            gicv3::set_group1(interrupt_id);
+            return;
+        }
+
         let register = GICD_IGROUPR0 + ((interrupt_id as usize / 32) * 4);
         let bit = 1_u32 << (interrupt_id % 32);
         let value = distributor_read(register) | bit;
@@ -316,14 +413,22 @@ pub mod interrupt_controller {
 
     /// Re-target an SPI (interrupt id >= 32) to a specific CPU.
     ///
-    /// GICv2 routes SPIs via the per-interrupt ITARGETSR byte (GICD base +
-    /// 0x1800 + id), whose low bits are a CPU bitmask.  SGIs and PPIs
-    /// (ids < 32) are per-CPU by design and cannot be re-targeted; the
-    /// caller (irq_balance) checks routability before invoking this.
+    /// The two revisions route in opposite ways: GICv2 writes a CPU bitmask
+    /// into the per-interrupt ITARGETSR byte (GICD base + 0x1800 + id), while
+    /// GICv3 writes the target PE's affinity into a 64-bit `GICD_IROUTER`.
+    /// SGIs and PPIs (ids < 32) are per-CPU by design and cannot be
+    /// re-targeted; the caller (irq_balance) checks routability before
+    /// invoking this.
     pub(crate) fn set_irq_affinity(interrupt_id: u32, cpu_id: u32) {
         if interrupt_id < 32 {
             return;
         }
+
+        if version() == Some(3) {
+            gicv3::set_affinity(interrupt_id, cpu_id);
+            return;
+        }
+
         let mask = 1_u8 << (cpu_id % 8);
         let register = (gicd_base() + GICD_ITARGETSR + interrupt_id as usize) as *mut u8;
         // SAFETY: the per-interrupt target byte of the distributor's own
@@ -334,20 +439,69 @@ pub mod interrupt_controller {
     }
 
     pub(crate) fn claim_interrupt() -> Option<u32> {
+        if version() == Some(3) {
+            return gicv3::claim();
+        }
+
         let acknowledge = cpu_interface_read(GICC_IAR);
         (interrupt_id(acknowledge) < SPURIOUS_INTERRUPT_ID_START).then_some(acknowledge)
     }
 
     pub(crate) fn interrupt_id(acknowledge: u32) -> u32 {
+        if version() == Some(3) {
+            return gicv3::interrupt_id(acknowledge);
+        }
+
         acknowledge & 0x03ff
     }
 
-    /// Legacy: write EOI to the GIC CPU interface.
-    ///
-    /// Prefer `InterruptController::end_of_interrupt` through the dispatch
-    /// layer.  This function remains for backward compatibility.
+    /// Write end-of-interrupt for an acknowledged interrupt.
     pub(crate) fn acknowledge(acknowledge: u32) {
+        if version() == Some(3) {
+            gicv3::end_of_interrupt(acknowledge);
+            return;
+        }
+
         GICV2_CONTROLLER.end_of_interrupt(acknowledge);
+    }
+
+    /// Send one SGI to the CPU the kernel calls `cpu_id`.
+    pub(crate) fn send_sgi_to_cpu(interrupt_id: u8, cpu_id: u32) {
+        if version() == Some(3) {
+            gicv3::send_sgi(interrupt_id, cpu_id);
+            return;
+        }
+
+        // A GICv2 distributor names its targets as bits in an eight-bit
+        // list, so a CPU the list cannot name is not one this can reach.
+        if interrupt_id >= 16 || cpu_id >= GICV2_CPU_INTERFACES {
+            return;
+        }
+        let register = (gicd_base() + GICD_SGIR) as *mut u32;
+        // SAFETY: the distributor's software-generated-interrupt register, in
+        // the mapped device window; the checks above keep the id in range and
+        // the target inside the list.
+        unsafe {
+            write_volatile(register, ((1_u32 << cpu_id) << 16) | interrupt_id as u32);
+        }
+    }
+
+    /// Send one SGI to every other CPU.
+    pub(crate) fn send_sgi_all_except_self(interrupt_id: u8) {
+        if version() == Some(3) {
+            gicv3::send_sgi_all_except_self(interrupt_id);
+            return;
+        }
+
+        if interrupt_id >= 16 {
+            return;
+        }
+        let register = (gicd_base() + GICD_SGIR) as *mut u32;
+        // SAFETY: as `send_sgi_to_cpu` — the same register, with the "all
+        // except self" target filter the broadcast wants.
+        unsafe {
+            write_volatile(register, (1_u32 << 24) | interrupt_id as u32);
+        }
     }
 }
 

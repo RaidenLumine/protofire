@@ -285,8 +285,7 @@ delivers.  The pipeline has the first as `arch::interrupt_controller::init()`
 and the second as `arch::platform::program_device_msix()`; the third is the
 driver's, claimed at probe time.
 
-The three targets answer differently, and on AArch64 the answer is a decision
-rather than a gap:
+The three targets answer differently:
 
 - **x86_64** delivers MSI and MSI-X through the local APIC.  Vectors are
   allocated from the kernel's pool and the device's table is programmed to
@@ -296,20 +295,21 @@ rather than a gap:
   driver that owns the device before the function is unmasked, so a delivered
   message is attributed rather than counted spurious; the `aia=aplic-imsic`
   machine is the boot that covers this path.
-- **AArch64 provides no PCIe MSI path, and will not until it has a GICv3 and
-  an ITS.** The controller this kernel implements is GICv2:
-  `src/arch/aarch64/mod.rs` reads `GICD_PIDR2` and, on a revision other than
-  2, stops instead of programming a v2 register layout onto a v3.  An MSI on
-  AArch64 is an LPI, an LPI is delivered by the ITS, and the ITS is a GICv3
-  component — so there is nothing to program and nothing to claim.  The
-  AArch64 runtime check boots with a `virtio-net-pci` anyway: the device is
-  driven and its completions are polled, and no part of the boot pretends it
-  has an interrupt it does not have.
+- **AArch64 has no MSI path, though it now has the controller one would run
+  on.** `src/arch/aarch64/mod.rs` reads `GICD_PIDR2` and picks the driver that
+  matches: GICv2, or the GICv3 in `src/arch/aarch64/gicv3.rs` — the
+  distributor, the per-PE redistributors, and the `ICC_*` CPU interface the v3
+  delivers through.  What is still missing is the other half of an MSI: the
+  message is an LPI, an LPI needs an ITS to translate it into an interrupt id,
+  and this kernel has no ITS.  The AArch64 runtime check boots a
+  `virtio-net-pci` on both controllers anyway: the device is driven and its
+  completions are polled, and no part of the boot pretends it has an interrupt
+  it does not have.
 
-Making AArch64 support it is therefore three pieces of work, not a flag: a
-GICv3 distributor and redistributor path, an ITS (device tables, command
-queue, and the LPI configuration and pending tables), and the AArch64 half of
-`program_device_msix` that ties a driver's claim to an LPI.
+So delivering MSI on AArch64 is one remaining piece of work, not three: an ITS
+(device tables, command queue, and the LPI configuration and pending tables)
+plus the AArch64 half of `program_device_msix` that ties a driver's claim to
+an LPI.  The controller the ids arrive through is already there.
 
 ---
 
@@ -643,10 +643,11 @@ CPU bring-up. What is missing:
 
 - **No bare-metal validation.** Every boot this document describes has been
   run under QEMU.
-- **AArch64 gets no device tree from a direct QEMU boot**, so the RAM-scan
-  fallback is the path that runs there; a machine whose controller is a GICv3
-  is detected and refused rather than driven, and the consequence — no PCIe
-  MSI path — is a decision rather than a pending task (section 4.5).
+- **AArch64 has no MSI path.** The GICv2 and GICv3 machines both boot, and the
+  GICv3 one brings up its own redistributors, timer PPI and SGI delivery — but
+  a device that signals by message has no interrupt to deliver, because the
+  ITS that would turn its message into an LPI is not written yet (section
+  4.5).
 - **RISC-V wakeups are the coarsest**: a cross-hart wake waits for the target
   hart's next tick, and the machine has no architectural NMI source.
 - **The init program is a stub** that exits, so the boot's own service
