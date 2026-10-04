@@ -99,7 +99,13 @@ impl StorageZone {
     pub const fn flags(self) -> u32 {
         match self {
             Self::System => MOUNT_READ_ONLY,
-            Self::Apps => MOUNT_READ_ONLY | MOUNT_EXECUTABLE,
+            // `/apps` is executable *and* writable: installing is writing it,
+            // and a read-only mount would refuse the installer along with
+            // everyone else — the only bypass this kernel has for one is a
+            // recovery token, which is narrower than an install.  What a
+            // program may do here is the zone's security descriptor's answer,
+            // not the mount's.
+            Self::Apps => MOUNT_EXECUTABLE,
             Self::Data => MOUNT_USER_DATA,
         }
     }
@@ -111,10 +117,18 @@ impl StorageZone {
         }
     }
 
+    /// Whether this zone's block device refuses writes.
+    ///
+    /// `/system` does: a running kernel cannot change the code it is running,
+    /// and a system update replaces a whole *slot* through its own writable
+    /// device rather than a file in this one.  `/apps` does not, because an
+    /// install is the operation that writes it; the rule that keeps the wrong
+    /// program from installing is the zone's security descriptor, which is a
+    /// statement about callers rather than about the medium.
     pub const fn device_read_only(self) -> bool {
         match self {
-            Self::System | Self::Apps => true,
-            Self::Data => false,
+            Self::System => true,
+            Self::Apps | Self::Data => false,
         }
     }
 
@@ -148,16 +162,20 @@ mod tests {
     use super::StorageZone;
 
     #[test]
-    fn only_the_data_zone_is_writable() {
+    fn only_the_system_zone_is_closed_to_writes() {
         // Where a machine writes is a property of the zone, and it is the one
-        // every zone device is cut with (see
-        // `crate::fs::filesystem::layout`): `/system` and `/apps` are read-only
-        // at the block device, so no token and no code path can write them at
-        // runtime — the install path writes its own zone through the
-        // *filesystem*, under the caller's token, and that is the exception
-        // the zone exists for.
+        // every zone device and mount is cut with (see
+        // `crate::fs::filesystem::layout`): `/system` is closed at the device,
+        // so no token and no code path can write the code the machine is
+        // running, while `/apps` is open and guarded by its security
+        // descriptor — an install has to be able to write it, and a guest has
+        // to not.
         assert!(StorageZone::System.device_read_only());
-        assert!(StorageZone::Apps.device_read_only());
+        assert!(!StorageZone::Apps.device_read_only());
         assert!(!StorageZone::Data.device_read_only());
+
+        assert_ne!(StorageZone::System.flags() & super::MOUNT_READ_ONLY, 0);
+        assert_eq!(StorageZone::Apps.flags() & super::MOUNT_READ_ONLY, 0);
+        assert_ne!(StorageZone::Apps.flags() & super::MOUNT_EXECUTABLE, 0);
     }
 }

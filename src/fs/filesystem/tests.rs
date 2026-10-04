@@ -58,22 +58,36 @@ fn guest_security_token_can_mutate_guest_data_but_not_system_tree() {
 }
 
 #[test]
-fn guest_security_token_cannot_write_the_app_zone() {
-    // The install syscall has no policy of its own: what stops a program from
-    // installing into `/apps` is the zone's rules, so those rules are the
-    // thing that has to say no.
+fn the_app_zone_is_writable_by_its_owner_and_not_by_a_guest() {
+    // `/apps` is writable at the device and the mount, because an install has
+    // to write it; what decides *who* may is the zone's security descriptor.
+    // Both halves matter: without the first the install could never run, and
+    // without the second any program could install one the machine would then
+    // launch.
     let mut fs = FileSystem::new();
     fs.init();
     let guest = guest_security_token();
+    let system = SecurityToken::system();
 
-    assert!(matches!(
+    fs.replace_file_contents_normalized_with_security_token(
+        "/apps/installed-by-the-owner.txt",
+        b"the zone's owner may write it",
+        system,
+    )
+    .expect("the owner of the app zone may install");
+
+    assert_eq!(
+        fs.create_dir_normalized_with_security_token("/apps/guest-dir", guest),
+        Err(Error::PermissionDenied)
+    );
+    assert_eq!(
         fs.replace_file_contents_normalized_with_security_token(
-            "/apps/packages/logger/1.0.0/logger.elf",
+            "/apps/guest-owned.txt",
             b"payload",
             guest,
         ),
         Err(Error::PermissionDenied)
-    ));
+    );
 }
 
 #[test]

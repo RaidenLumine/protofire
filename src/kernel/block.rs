@@ -344,11 +344,12 @@ mod tests {
 
     #[test]
     fn a_read_only_slice_refuses_writes_and_still_reads() {
-        // This is how the read-only zones are enforced: `/system` and `/apps`
-        // are a slice of the boot disk whose block device answers a write with
-        // a refusal, whatever security token asks.  A running machine cannot
-        // change the code it is running because it cannot write the blocks it
-        // lives on.
+        // This is how the read-only zone is enforced: `/system` is a slice of
+        // the boot disk whose block device answers a write with a refusal,
+        // whatever security token asks.  A running machine cannot change the
+        // code it is running because it cannot write the blocks it lives on;
+        // `/apps` is *not* cut this way, because installing writes it and the
+        // gate for that is the zone's security descriptor.
         let parent: alloc::sync::Arc<dyn BlockDevice> =
             MemoryBlockDevice::new("parent", vec![0x5a_u8; BLOCK_SIZE], false);
         let slice = BlockSliceDevice::new("slice", parent, 0, 1, true);

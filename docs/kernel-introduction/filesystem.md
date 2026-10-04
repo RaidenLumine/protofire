@@ -160,13 +160,19 @@ empty volume every boot, so a reboot starts with a clean scratch space.
 
 #### Where a running machine writes
 
-`/system` and `/apps` are read-only, so a program has exactly two places to
-write (`src/fs/write_locations.rs`):
+`/system` is read-only, and `/apps` is writable by its owner: installing *is*
+writing the app zone, and a program that may not install is refused by the
+zone's security descriptor rather than by the mount.  A program's own scratch
+and persistent state have exactly two places to go (`src/fs/write_locations.rs`):
 
 | What | Where | Survives |
 |------|-------|----------|
 | Scratch: temporary files, intermediate output | `/tmp` | nothing — the volume is built empty on every boot |
 | Persistent: user data, credentials, caches, logs | `/data` | a reboot *and* a system update |
+
+An install is the third writer: it adds a version under `/apps/packages`,
+points `/apps/current` at it, and leaves `/data` alone.  A system update
+touches neither — it replaces a whole system slot.
 
 Persistent state lives on a zone of its own (`/data/users/<user>`, the
 credentials under `/data/etc`, the install download cache under

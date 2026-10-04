@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use protofire::fs::block::MemoryBlockDevice;
+use protofire::fs::layout::StorageZone;
 use protofire::fs::simplefs::SimpleFs;
 use protofire::fs::simplefs::SimpleFsVolume;
 use protofire::fs::FileSystem;
@@ -48,15 +49,21 @@ fn fixture(apps_read_only: bool) -> &'static KernelMutex<FileSystem> {
     let fs = Box::leak(Box::new(KernelMutex::new(FileSystem::new())));
     {
         let mut fs_guard = fs.lock();
-        for (name, path, read_only) in [("apps", "/apps", apps_read_only), ("data", "/data", false)]
-        {
+        // The mount flags and the read-only property come from the zone
+        // itself, which is what the boot's `mount_zone` and its zone-device
+        // cut use: a fixture that made up its own would be testing its own
+        // opinion of the machine.
+        for (zone, name, path, read_only) in [
+            (StorageZone::Apps, "apps", "/apps", apps_read_only),
+            (StorageZone::Data, "data", "/data", false),
+        ] {
             let image = SimpleFs::build_image_with_headroom(name, &[], 64, 128, 512)
                 .expect("build a writable zone");
             let device = MemoryBlockDevice::new(name, image, read_only);
             let volume = SimpleFs::open(device, true).expect("open the zone");
             fs_guard.register(name, Arc::new(SimpleFsVolume::new(volume)));
             fs_guard
-                .mount(&format!("/dev/{name}"), path, name, 0)
+                .mount(&format!("/dev/{name}"), path, name, zone.flags())
                 .expect("mount the zone");
         }
     }
@@ -187,5 +194,21 @@ fn an_install_into_a_read_only_app_zone_is_refused() {
     assert_eq!(
         install_on(true, SecurityToken::system(), SOURCE),
         Err(Error::PermissionDenied)
+    );
+}
+
+#[test]
+fn the_app_zone_the_boot_mounts_accepts_an_install() {
+    // The test that answers "can this machine install an app?": both the
+    // device property and the mount flags come from `StorageZone::Apps`, which
+    // is what the boot uses, so a policy that closed the zone again would fail
+    // here rather than only in the field.
+    assert_eq!(
+        install_on(
+            StorageZone::Apps.device_read_only(),
+            SecurityToken::system(),
+            SOURCE,
+        ),
+        Ok(0)
     );
 }

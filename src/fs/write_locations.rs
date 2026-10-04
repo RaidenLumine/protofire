@@ -2,22 +2,26 @@
 //!
 //! Where a running machine writes, and why each place is the right one.
 //!
-//! `/system` and `/apps` are mounted read-only: a running kernel cannot change
-//! the code it is running, and neither a system update nor an install writes a
-//! *file* into a live zone.  That leaves two places a program writes at
-//! runtime, and the difference between them is what a reboot means:
+//! `/system` is read-only: a running kernel cannot change the code it is
+//! running, and a system update does not write a file into it — it replaces a
+//! whole system volume by writing the pair's inactive slot
+//! ([`crate::fs::system_image`]), which is a different device on purpose.
+//!
+//! `/apps` is writable, because installing *is* writing it.  Who may is the
+//! zone's security descriptor rather than the mount: an install runs under its
+//! caller's token, so a program installs exactly where it can write, and a
+//! guest reading the same paths is refused by the zone's own rules.
+//!
+//! Beyond those two, the places a program writes at runtime are these, and the
+//! difference between them is what a reboot means:
 //!
 //! | What | Where | Survives |
 //! |------|-------|----------|
 //! | Scratch — temporary files, a build's intermediate output | `/tmp` | nothing: the volume is built empty on every boot |
 //! | Persistent — user data, credentials, caches, logs | `/data` | a reboot *and* a system update |
 //!
-//! A system update replaces a whole *system volume* — it writes the pair's
-//! inactive slot (`crate::fs::system_image`) — so nothing under `/data` is
-//! touched by one: the two are different zones, and the switch never names a
-//! file inside either.  An install is the one operation that writes the app
-//! zone; it is allowed to because installing *is* writing `/apps`, and it is
-//! driven deliberately rather than happening behind a program's back.
+//! Nothing under `/data` is touched by a system update: the two are different
+//! zones, and the switch never names a file inside either.
 //!
 //! The paths themselves live where they are used — [`VOLATILE_ROOT`],
 //! [`PERSISTENT_ROOT`], [`crate::fs::layout::DEFAULT_USER_ROOT`],
@@ -33,11 +37,11 @@ pub const VOLATILE_ROOT: &str = crate::fs::TEMP_MOUNT_PATH;
 /// Persistent runtime state: user data, credentials, caches and logs.
 pub const PERSISTENT_ROOT: &str = crate::fs::layout::StorageZone::Data.zone_root();
 
-/// The zone roots a running machine does not write.
-pub const READ_ONLY_ROOTS: [&str; 2] = [
-    crate::fs::layout::StorageZone::System.zone_root(),
-    crate::fs::layout::StorageZone::Apps.zone_root(),
-];
+/// The zone an install writes: the one place a running machine adds programs.
+pub const INSTALL_ROOT: &str = crate::fs::layout::StorageZone::Apps.zone_root();
+
+/// The zone root a running machine does not write.
+pub const READ_ONLY_ROOT: &str = crate::fs::layout::StorageZone::System.zone_root();
 
 /// Say where a running machine writes, once, after the zone mounts are up.
 ///
@@ -47,11 +51,11 @@ pub const READ_ONLY_ROOTS: [&str; 2] = [
 /// state, since it replaces a system volume and nothing else.
 pub fn log_write_locations() {
     crate::println!(
-        "[fs    ] runtime writes: {} (volatile), {} (persistent); {} and {} are read-only",
+        "[fs    ] runtime writes: {} (volatile), {} (persistent), {} (installable); {} is read-only",
         VOLATILE_ROOT,
         PERSISTENT_ROOT,
-        READ_ONLY_ROOTS[0],
-        READ_ONLY_ROOTS[1]
+        INSTALL_ROOT,
+        READ_ONLY_ROOT
     );
 }
 
@@ -60,18 +64,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_two_roots_are_mounts_and_are_not_each_other() {
-        // The policy is only true if both roots exist as the zones they claim
-        // to be; the mounts are installed by `install_default_layout` and
+    fn every_root_is_a_mount_of_its_own() {
+        // The policy is only true if each root exists as the zone it claims to
+        // be; the mounts are installed by `install_default_layout` and
         // `install_temp_layout`.
         assert_eq!(VOLATILE_ROOT, "/tmp");
         assert_eq!(PERSISTENT_ROOT, "/data");
-        assert_ne!(VOLATILE_ROOT, PERSISTENT_ROOT);
+        assert_eq!(INSTALL_ROOT, "/apps");
+        assert_eq!(READ_ONLY_ROOT, "/system");
 
-        assert_eq!(READ_ONLY_ROOTS, ["/system", "/apps"]);
-        for root in READ_ONLY_ROOTS {
-            assert_ne!(root, VOLATILE_ROOT);
-            assert_ne!(root, PERSISTENT_ROOT);
+        for (index, root) in [VOLATILE_ROOT, PERSISTENT_ROOT, INSTALL_ROOT, READ_ONLY_ROOT]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(root.starts_with('/'), "{root}");
+            for other in [VOLATILE_ROOT, PERSISTENT_ROOT, INSTALL_ROOT, READ_ONLY_ROOT]
+                .into_iter()
+                .skip(index + 1)
+            {
+                assert_ne!(root, other, "{root} and {other} are the same mount");
+            }
         }
     }
 

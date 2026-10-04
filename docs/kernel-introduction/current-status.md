@@ -562,8 +562,9 @@ control that are unusual in a hobby kernel.
   (ptrace/signal) and Network-class checks, exec domain transitions, management
   syscalls (#175-178), and MacDenial audit records on refusal.
 - **Zone-aware DAC**: segments the filesystem into regions with different trust
-  levels (`/system` read-only, `/apps` read-only and executable, `/data`
-  writable). User home directories live under `/data/users/<user>`, not in a
+  levels (`/system` read-only, `/apps` executable and writable by the token
+  its descriptor allows — installing is writing it — and `/data` writable for
+  its users). User home directories live under `/data/users/<user>`, not in a
   zone of their own.
 - **Persistent credentials**: `/data/etc/passwd` and `/data/etc/shadow` written
   back atomically, with the shadow file kept at 0600.
