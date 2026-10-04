@@ -23,6 +23,9 @@ pub mod maintenance;
 pub mod nmi;
 pub mod oom;
 pub mod percpu;
+/// One line of measured boot work, behind `perf_baseline`.
+#[cfg(feature = "perf_baseline")]
+pub mod perf_baseline;
 pub mod power;
 pub mod process;
 pub mod procfs;

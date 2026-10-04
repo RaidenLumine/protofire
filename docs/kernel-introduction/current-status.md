@@ -150,8 +150,9 @@ block-cache management.
 
 - **Small block cache**: a fixed-size LRU with limited hit rate under large
   working sets.
-- **I/O paths verified under emulation only**: no latency/throughput testing on
-  real disks or SSDs.
+- **I/O paths verified under emulation only**: the blocks a boot reads and
+  writes are counted and gated (`make check-perf-baseline`), but no latency or
+  throughput under load has been measured on real disks or SSDs.
 
 ---
 
@@ -481,8 +482,10 @@ extensions and in-kernel security protocols.
   management is still minimal.
 - **Educational protocols are feature-gated**: CSMA/CD, STP, Mobile IP, RSVP,
   PIM-DM, etc. compile only under `educational_networking`.
-- **Performance not benchmarked**: throughput and concurrency baselines
-  (multi-core, load-balanced) have yet to be established.
+- **Throughput and concurrency not benchmarked**: the packets a boot sends and
+  receives are counted and gated (`make check-perf-baseline`), but no
+  throughput or load-balanced, multi-core concurrency baseline has been
+  established.
 
 ---
 
@@ -871,8 +874,9 @@ numbers it decodes against come from the shared copy.
 | Concurrency tests | Scheduler, condvar, console, keyboard | — |
 | Parser fuzz harnesses | Deterministic, in-tree, run by `make test-parsers`; coverage-guided targets in `fuzz/` run nightly | The gates are fixed-seed and bounded; the nightly corpora are not persisted across runs |
 | virtio-gpu layout tests | Struct size and layout plus command wire format, against a mock device | Mock device only; no real GPU validation |
+| Boot-work baseline | `make check-perf-baseline` boots with the profilers on and compares the counters one line reports (`src/kernel/perf_baseline.rs`) against `scripts/perf-baseline.txt`; the counters that had stopped when it sampled must not move at all | Counters, not seconds: it answers "did this do less work", not "was this faster", and throughput and latency under load are still unmeasured |
 | CI workflow | fmt, check, build, clippy on every configuration, every static gate and ratchet, and the boots | The gates run as separate steps rather than through `make verify-p3` |
-| Verification gates | P0-P3: fmt, tests, cross-builds, clippy, plus the QEMU smokes | The smokes are opt-in through environment variables, so a local `make verify-p3` without them does not boot anything |
+| Verification gates | P0-P3: fmt, tests, cross-builds, clippy, plus the QEMU smokes and the boot-work baseline | The smokes and the baseline are opt-in through environment variables, so a local `make verify-p3` without them does not boot anything |
 | ABI number snapshot | `tests/syscall/abi_golden.rs`: a number's name may not change, and an experimental change has to bump the ABI minor in the same commit | Pins numbering and record layouts, not the object shapes behind them |
 
 The demo disk was verified end-to-end on all three targets under QEMU:
@@ -899,8 +903,8 @@ things make that contract *testable* rather than merely written down:
 - **Layout:** the shared user runtime and demo payloads live inside the kernel
   crate as `src/user/shared/` and `src/user/demo/`
 - **Optional features:** `demo-disk`, `fs_profiler`, `net_profiler`,
-  `alloc_profiler`, `fault_profiler`, `educational_networking`, plus
-  `abi_frozen_payload` and `init_no_start`, which change what the demo disk
+  `alloc_profiler`, `fault_profiler`, `perf_baseline`, `educational_networking`,
+  plus `abi_frozen_payload` and `init_no_start`, which change what the demo disk
   carries so a boot can exercise a path the normal disk does not reach
 - **Release profile:** `panic = "abort"`, `opt-level = "s"`, `lto = true`,
   `codegen-units = 1`
@@ -914,6 +918,14 @@ things make that contract *testable* rather than merely written down:
   the same `lamport-sha256` scheme the kernel verifies manifests with.  Tagged
   releases, published key records and the documented verify-a-rebuild flow are
   still ahead (see the roadmap).
+- **Measured-work baseline:** a boot with the profilers on prints one line of
+  counters — frames taken, pages mapped, blocks read, packets answered — at a
+  fixed tick, and `make check-perf-baseline` compares that line against
+  `scripts/perf-baseline.txt`.  A performance change is judged by the work it
+  does: there are no seconds in the gate, the counters that had stopped when it
+  sampled must match exactly, and the few a schedule can still move carry a
+  recorded tolerance.  A counter the boot prints and the baseline does not
+  record fails as well, so the baseline cannot quietly stop covering the boot.
 
 ---
 

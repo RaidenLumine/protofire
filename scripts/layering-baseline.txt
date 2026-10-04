@@ -34,6 +34,13 @@
 # theirs.  The wakeup belongs to the device whose identities were claimed, so
 # it cannot be folded into a platform-wide signal; see §13 of code-style.md.
 #
+# `perf_baseline` names `fs`, `memory`, `network` and `irq_stats` on purpose:
+# it is the boot-work summary, and the counters it prints are kept by the
+# subsystems that do the work.  The edges point one way — the observer depends
+# on what it observes, and nothing depends on the observer but `maintenance`,
+# which calls it — so these rows are the shape of the check, not a cycle to
+# cut.
+#
 # `fs` no longer names `process` either.  Its one edge was the anonymous
 # pipe's condition variable, and a pipe that parks a thread is not storage:
 # it is an IPC endpoint that borrows the `VNode` interface, so it moved to
@@ -128,6 +135,7 @@ maintenance                  audit                        1
 maintenance                  fs                           3
 maintenance                  heartbeat                    1
 maintenance                  network                      1
+maintenance                  perf_baseline                1
 maintenance                  process                      2
 memory                       fs                           4
 memory                       oom                          2
@@ -157,6 +165,10 @@ oom                          memory                       2
 oom                          process                      3
 percpu                       process                      3
 percpu                       topology                     2
+perf_baseline                fs                           1
+perf_baseline                irq_stats                    3
+perf_baseline                memory                       2
+perf_baseline                network                      1
 power                        sync                         2
 process                      audit                        1
 process                      device                       7

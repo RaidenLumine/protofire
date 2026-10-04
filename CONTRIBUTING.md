@@ -159,7 +159,7 @@ least the full gate before it can be merged:
 | `make verify-p0` | repo integrity + documentation citations + fmt-check + host/x86_64 checks + aarch64 check + x86_64/aarch64 build + source header coverage |
 | `make verify-p1` | p0 + host unit tests (`test-lib`, concurrency, fast regressions) |
 | `make verify-p2` | p1 + storage/recovery/fault-matrix regressions (`test-storage`) |
-| `make verify-p3` | p2 + clippy (all targets) + optional AArch64 runtime smoke |
+| `make verify-p3` | p2 + clippy (all targets) + the optional QEMU smokes and the boot-work baseline |
 
 CI runs `make check`, `make verify-p0`, and `make clippy` on every push and
 pull request (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
@@ -172,6 +172,14 @@ cargo build --features demo-disk          # x86_64
 cargo build --features demo-disk --target aarch64-unknown-none
 cargo build --features demo-disk --target riscv64gc-unknown-none-elf
 ```
+
+For a change that touches a hot path, `make check-perf-baseline` boots the demo
+with the profilers on and compares the work that boot did against the counters
+recorded in `scripts/perf-baseline.txt` — frames, page-table maps, blocks read,
+packets answered.  The gate compares counters rather than seconds, so it says
+whether a change did more or less work and does not depend on how busy the host
+was.  If the change moves a counter on purpose, re-record it with
+`sh scripts/check-perf-baseline.sh --record`, which keeps each row's tolerance.
 
 ### Moving code between modules: clear the incremental cache first
 

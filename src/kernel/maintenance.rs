@@ -146,6 +146,11 @@ pub(crate) fn maintenance_entry() {
             crate::kernel::audit::persist::persist_to_file();
         }
 
+        // The boot-work baseline, when the build asks for it: one line, once,
+        // after the machine has done enough for the numbers to mean something.
+        #[cfg(feature = "perf_baseline")]
+        crate::kernel::perf_baseline::log_once(now_tick);
+
         if take_network_maintenance() {
             if let Some(stack) = crate::network::stack::NetworkStack::global() {
                 stack.run_maintenance();

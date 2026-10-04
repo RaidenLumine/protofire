@@ -1,0 +1,35 @@
+# Boot-work baseline for `make check-perf-baseline`.
+#
+# One row per counter the boot prints: `key baseline tolerance`.
+# Tolerance is absolute: the counters a boot is still moving when it
+# samples (the sample tick, heap, DHCP traffic) drift by scheduling
+# jitter, and the ones that stopped at boot do not drift at all.
+# Re-record with `sh scripts/check-perf-baseline.sh --record`, which
+# keeps every tolerance that is already written down.
+#
+# The maintenance pass wakes a few ticks after 500, so the sample point
+# and the tick-driven interrupt count beside it move with it.  Everything
+# else that had stopped by then carries a tolerance of zero on purpose:
+# for those, any movement is a change in work, not jitter.
+ticks 511 12
+irqs 512 12
+frames 23 0
+frame-frees 8 0
+frame-zero-bytes 610304 0
+heap-allocs 20834 256
+heap-bytes 25368544 262144
+pt-maps 1063 0
+pt-lookups 1066 0
+faults 8 0
+fs-lookups 359 0
+fs-reads 1424 0
+fs-writes 16 0
+fs-transactions 19 0
+# DHCP is a race with the sample, so a boot either answers the offer or
+# has not yet; four packets is room for one retry.
+ip4-rx 2 4
+ip4-tx 10 4
+ip6-rx 1 0
+ip6-tx 0 0
+ipis 0 0
+spurious 0 0

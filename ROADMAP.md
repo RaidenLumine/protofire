@@ -64,8 +64,12 @@ The authoritative picture of what exists today is
 - **Fuzzing & robustness.** Add cargo-fuzz-style targets for the ELF loader,
   filesystem image parsers, network packet parsers, and the LUKS2 header;
   extend the existing SimpleFs crash matrix.
-- **Performance validation.** SMP load-balancing under multi-core hosts,
-  NUMA-node stress tests, and network throughput benchmarks.
+- **Performance validation.** The work a boot does is counted and gated today:
+  `make check-perf-baseline` compares the counters a boot reports against a
+  recorded baseline, so a change that does more work fails without anyone
+  measuring seconds.  What remains is measurement under load — SMP
+  load-balancing on multi-core hosts, NUMA-node stress tests, and network
+  throughput benchmarks.
 
 ## Long Term (1–3 years)
 

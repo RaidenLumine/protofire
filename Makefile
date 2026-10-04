@@ -54,6 +54,7 @@ endif
 		check-docs \
 		check-payload-relocations \
 		check-reproducible-build \
+		check-perf-baseline \
 		check-dead-code-allows \
 		check-abi-mirror \
 		check-layering \
@@ -104,6 +105,7 @@ help:
 		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
 		'  make check-dead-code-allows  - fail if a file-level allow(dead_code) has no reason' \
 		'  make check-reproducible-build - rebuild every artifact twice and compare bytes' \
+		'  make check-perf-baseline - boot the demo and compare its measured work to the baseline' \
 		'  make check-abi-mirror  - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
@@ -325,6 +327,20 @@ check-reproducible-build:
 		CRATE="$(CRATE)" \
 		CARGO="$(CARGO)" \
 		sh ./scripts/check-reproducible-build.sh
+
+# A performance change should be judged by the work it does, not by how busy
+# the host was, so this gate compares counters rather than seconds: it boots
+# the demo with the profilers on and checks the single line
+# `src/kernel/perf_baseline.rs` prints against the recorded rows in
+# `scripts/perf-baseline.txt`.  It needs QEMU and a build with the profiler
+# features, which is why it is a target of its own and not part of
+# `make check`; a re-record is `sh scripts/check-perf-baseline.sh --record`.
+check-perf-baseline:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		CARGO="$(CARGO)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-perf-baseline.sh
 
 # A file-level `allow(dead_code)` is the one annotation the compiler cannot
 # argue with, so the tree's convention is that it carries a reason and an exit

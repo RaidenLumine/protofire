@@ -11,6 +11,7 @@ RUN_X86_64_RUNTIME="${RUN_X86_64_RUNTIME:-0}"
 RUN_AARCH64_RUNTIME="${RUN_AARCH64_RUNTIME:-0}"
 RUN_RISCV64_RUNTIME="${RUN_RISCV64_RUNTIME:-0}"
 RUN_SMP_RUNTIME="${RUN_SMP_RUNTIME:-0}"
+RUN_PERF_BASELINE="${RUN_PERF_BASELINE:-0}"
 VERIFY_TIER="${1:-${VERIFY_TIER:-p2}}"
 
 case "$PROFILE" in
@@ -154,6 +155,18 @@ run_p3() {
     # one release certifies a build nobody can reproduce.  It is the slowest
     # static gate here because it builds everything twice.
     run_make_step "make check-reproducible-build" check-reproducible-build
+    # The one gate that compares work rather than outcome: it boots the demo
+    # with the profilers on and checks the counters that boot reported against
+    # the recorded baseline.  Opt-in like the smokes because it needs QEMU and
+    # a build with the profiler features; unlike them it does not mind a busy
+    # host, because the rows a schedule can still move carry a tolerance
+    # rather than an assumption that the machine is idle.
+    if [ "$RUN_PERF_BASELINE" = "1" ]; then
+        run_make_step "make check-perf-baseline" check-perf-baseline
+    else
+        printf '==> verify[%s]: skipping the boot-work baseline (set RUN_PERF_BASELINE=1 to enable)\n' \
+            "$VERIFY_TIER"
+    fi
     if [ "$RUN_X86_64_RUNTIME" = "1" ]; then
         run_make_step "make check-x8664-runtime" check-x8664-runtime
         # The other half of the boot hand-off: a disk whose init reads the
