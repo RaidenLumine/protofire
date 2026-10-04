@@ -393,6 +393,45 @@ pub fn prepared_translation(
     None
 }
 
+// The x86_64 page-layout plan and the neutral report that describes it are
+// two vocabularies for the same facts.  The direction of the conversion is
+// the arch's business — the plan is x86_64's and the report is everyone's —
+// so the `From` impls live here, beside the functions that use them,
+// rather than in the report.
+#[cfg(target_arch = "x86_64")]
+impl From<PlannedRegionKind> for crate::memory::diagnostics::PlannedKernelRegionKind {
+    fn from(kind: PlannedRegionKind) -> Self {
+        use crate::memory::diagnostics::PlannedKernelRegionKind as Reported;
+        match kind {
+            PlannedRegionKind::KernelText => Reported::KernelText,
+            PlannedRegionKind::KernelRodata => Reported::KernelRodata,
+            PlannedRegionKind::KernelData => Reported::KernelData,
+            PlannedRegionKind::KernelBss => Reported::KernelBss,
+            PlannedRegionKind::KernelHeap => Reported::KernelHeap,
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl From<PlannedRegion> for crate::memory::diagnostics::PlannedKernelRegion {
+    fn from(region: PlannedRegion) -> Self {
+        Self {
+            permissions: region.permissions,
+            kind: region.kind.into(),
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl From<PreparedTranslation> for crate::memory::diagnostics::PreparedTranslation {
+    fn from(translation: PreparedTranslation) -> Self {
+        Self {
+            physical_address: translation.physical_address,
+            permissions: translation.permissions,
+        }
+    }
+}
+
 /// Which intended kernel page-layout region an address falls in, if any.
 #[cfg(target_arch = "x86_64")]
 pub fn planned_kernel_region(

@@ -25,7 +25,7 @@
 # is the `gap:` rows, not the total.
 #
 
-# 20 files, 56 occurrences outside src/arch
+# 18 files, 47 occurrences outside src/arch
 
 abi/ptrace.rs                                        2  # fact: the x86_64 PTRACE_GETREGS register file is a record only that architecture has
 drivers/usb_msd.rs                                   1  # fact: the USB storage controller driver is x86_64 bare-metal hardware
@@ -34,7 +34,6 @@ kernel/process/process/types.rs                      3  # fact: the x86_64 regis
 kernel/process/thread/mod.rs                         2  # fact: user-exception delivery exists on x86_64 and aarch64; riscv64 has no such path
 kernel/process/thread/user_runtime.rs                2  # fact: replace_user_execution_state has no caller on riscv64 bare metal or on an aarch64 host
 kernel/smp/tlb.rs                                    2  # fact: PCID shootdown, and x86_64's page-table runtime is its only caller
-memory/diagnostics.rs                                3  # gap: arch::mmu should hand the report a neutral record instead of x86_64's plan types
 memory/global.rs                                     3  # fact: the lock-owner query, which only x86_64's page-fault path asks
 memory/map_facts.rs                                  3  # fact: classify/region, unused where the page-table plan answers the same question
 memory/mod.rs                                        4  # fact: the map_facts module and two re-exports, for the same callers
@@ -43,7 +42,6 @@ user/demo/demo_program_x86_64_rust.rs                1  # fact: the same, for th
 user/demo/payload_test_support.rs                    1  # fact: the helper builds x86_64 payloads for the host tests
 user/exception.rs                                    4  # fact: the two user-mode exception dispatchers, which exist only where a machine can enter the kernel from user mode
 user/shared/abi/ptrace.rs                            2  # fact: the user-space mirror of the x86_64 PTRACE_GETREGS record
-user/shared/abi/runtime.rs                           6  # gap: TARGET_ARCH is the build's own fact; say it once in build.rs or answer it from arch::
 user/shared/syscall.rs                               2  # fact: the never-returning halt is hlt on x86_64 and wfi on aarch64
 user/syscall/mod.rs                                  7  # fact: the trap that enters the kernel from user mode; one file per machine, and riscv64 has none
 user/syscall/payload.rs                              6  # fact: the per-machine payload-runtime macros, emitted into the payload sections

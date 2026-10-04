@@ -95,6 +95,24 @@ pub use riscv64::rand as hardware_rand;
 #[cfg(target_arch = "x86_64")]
 pub use x86_64::rand as hardware_rand;
 
+/// The name of the machine this binary was built for, as `uname` reports it.
+///
+/// A build fact rather than a runtime one: the target the code was compiled
+/// for is what a program means by "what am I running on", and saying it here
+/// keeps the name in one place instead of one per mention.
+#[cfg(target_arch = "aarch64")]
+pub const TARGET_ARCH: &str = "aarch64";
+#[cfg(target_arch = "riscv64")]
+pub const TARGET_ARCH: &str = "riscv64";
+#[cfg(target_arch = "x86_64")]
+pub const TARGET_ARCH: &str = "x86_64";
+#[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "riscv64"
+)))]
+pub const TARGET_ARCH: &str = "unknown";
+
 // Restoring the user context a signal frame recorded is the machine's: the
 // frame's shape, and what a return from a signal handler has to put back.
 // The syscall that asks is the same on every machine; the answer is not.

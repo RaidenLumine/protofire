@@ -97,36 +97,3 @@ impl PageFaultInsight {
         }
     }
 }
-
-#[cfg(target_arch = "x86_64")]
-impl From<crate::arch::mmu::PlannedRegionKind> for PlannedKernelRegionKind {
-    fn from(kind: crate::arch::mmu::PlannedRegionKind) -> Self {
-        match kind {
-            crate::arch::mmu::PlannedRegionKind::KernelText => Self::KernelText,
-            crate::arch::mmu::PlannedRegionKind::KernelRodata => Self::KernelRodata,
-            crate::arch::mmu::PlannedRegionKind::KernelData => Self::KernelData,
-            crate::arch::mmu::PlannedRegionKind::KernelBss => Self::KernelBss,
-            crate::arch::mmu::PlannedRegionKind::KernelHeap => Self::KernelHeap,
-        }
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-impl From<crate::arch::mmu::PlannedRegion> for PlannedKernelRegion {
-    fn from(region: crate::arch::mmu::PlannedRegion) -> Self {
-        Self {
-            permissions: region.permissions,
-            kind: region.kind.into(),
-        }
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-impl From<crate::arch::mmu::PreparedTranslation> for PreparedTranslation {
-    fn from(translation: crate::arch::mmu::PreparedTranslation) -> Self {
-        Self {
-            physical_address: translation.physical_address,
-            permissions: translation.permissions,
-        }
-    }
-}

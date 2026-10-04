@@ -28,18 +28,12 @@ use core::mem::size_of;
 /// current_architecture`) reports a host build as `host`, because that is what
 /// it is; this one names the target the binary was compiled for, which is what
 /// a ring-3 program means by "uname".
-#[cfg(target_arch = "x86_64")]
-pub const TARGET_ARCH: &str = "x86_64";
-#[cfg(target_arch = "aarch64")]
-pub const TARGET_ARCH: &str = "aarch64";
-#[cfg(target_arch = "riscv64")]
-pub const TARGET_ARCH: &str = "riscv64";
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "riscv64"
-)))]
-pub const TARGET_ARCH: &str = "unknown";
+/// The name of the machine this binary was built for.
+///
+/// The build's answer, stated once ([`crate::arch::TARGET_ARCH`]) and read
+/// here so a program that asks what it is running on gets the same name
+/// wherever it asks.
+pub const TARGET_ARCH: &str = crate::arch::TARGET_ARCH;
 
 pub const RUNTIME_ABI_MAGIC: u32 = 0x4241_4958;
 pub const RUNTIME_ABI_MAJOR: u32 = 2;
