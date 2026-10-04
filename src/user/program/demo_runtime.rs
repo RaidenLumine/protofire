@@ -45,7 +45,16 @@ use super::DEMO_SESSION_DIR;
 use super::DEMO_SESSION_LOG_PATH;
 use super::DEMO_TEMP_PATH;
 
-pub(super) fn resolve_program_proxy(host_proxy: &str, machine: u16) -> Result<fn()> {
+/// The entry point that stands in for a program whose payload has no user
+/// image — a host, where the ELF payload sections cannot be assembled into the
+/// kernel image.
+///
+/// The program is named by its own identity, which is what the manifest's
+/// `name` is: which stand-in a program gets is a property of the program, not
+/// something the disk declares.  The fault demos are the demo launcher under
+/// other argv/env, so they share its stand-in, exactly as they share its
+/// payload.
+pub(super) fn resolve_program_proxy(program: &str, machine: u16) -> Result<fn()> {
     if machine != DEMO_PROGRAM_MACHINE {
         return Err(Error::Unsupported);
     }
@@ -53,25 +62,24 @@ pub(super) fn resolve_program_proxy(host_proxy: &str, machine: u16) -> Result<fn
     // Host proxies mirror the catalog-declared payload identity so host tests
     // can exercise the same launch metadata and syscall flows without running
     // the extracted bare-metal text blobs directly.
-    if host_proxy == "demo-launcher" {
-        Ok(demo_launcher_entry as fn())
-    } else if host_proxy == "appctl" {
-        Ok(appctl_entry as fn())
-    } else if host_proxy == "app-center" {
-        Ok(app_center_entry as fn())
-    } else if host_proxy == "lumina" {
-        Ok(lumina_entry as fn())
-    } else if host_proxy == "demo-launcher-rust" {
-        Ok(demo_rust_launcher_entry as fn())
-    } else if host_proxy == "demo-launcher-rust-io" {
-        Ok(demo_rust_io_launcher_entry as fn())
-    } else if host_proxy == "demo-launcher-virgl" {
-        Ok(demo_virgl_launcher_entry as fn())
-    } else if host_proxy == "shell" {
-        Ok(super::shell::shell_user_main as fn())
-    } else {
-        Err(Error::NotFound)
-    }
+    let entry: fn() = match program {
+        "demo-launcher"
+        | "demo-launcher-exec"
+        | "demo-launcher-fault"
+        | "demo-launcher-invalid-opcode"
+        | "demo-launcher-general-protection"
+        | "demo-launcher-one-shot-page-fault"
+        | "demo-launcher-nested-page-fault" => demo_launcher_entry,
+        "demo-launcher-rust" => demo_rust_launcher_entry,
+        "demo-launcher-rust-io" => demo_rust_io_launcher_entry,
+        "demo-launcher-virgl" => demo_virgl_launcher_entry,
+        "appctl" => appctl_entry,
+        "app-center" => app_center_entry,
+        "lumina" => lumina_entry,
+        "shell" => super::shell::shell_user_main,
+        _ => return Err(Error::NotFound),
+    };
+    Ok(entry)
 }
 
 fn demo_launcher_entry() {
@@ -822,4 +830,60 @@ fn write_stdout(bytes: &[u8]) -> Result<usize> {
     // real user payloads share the same visible write path.
     let mut ctx = UserSyscall::write(STDOUT_FD, bytes.as_ptr() as usize, bytes.len());
     syscall::dispatch(&mut ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_program_proxy;
+    use super::DEMO_PROGRAM_MACHINE;
+    use crate::Error;
+
+    #[test]
+    fn the_fault_demos_stand_in_for_the_launcher_they_share_a_payload_with() {
+        // The fault demos are the launcher under other argv/env and share its
+        // payload, so they share its stand-in too.  Nothing on the disk says
+        // so: the program's own name is what picks the entry.
+        for program in [
+            "demo-launcher",
+            "demo-launcher-exec",
+            "demo-launcher-fault",
+            "demo-launcher-invalid-opcode",
+            "demo-launcher-general-protection",
+            "demo-launcher-one-shot-page-fault",
+            "demo-launcher-nested-page-fault",
+        ] {
+            assert!(
+                resolve_program_proxy(program, DEMO_PROGRAM_MACHINE).is_ok(),
+                "{program} has no stand-in"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shell_stands_in_with_the_in_kernel_shell() {
+        // The one entry a reader would otherwise have to guess at, because the
+        // stand-in is not named after the file it stands for.
+        assert_eq!(
+            resolve_program_proxy("shell", DEMO_PROGRAM_MACHINE),
+            Ok(crate::user::program::shell::shell_user_main as fn())
+        );
+    }
+
+    #[test]
+    fn a_program_the_runtime_does_not_know_has_no_stand_in() {
+        assert_eq!(
+            resolve_program_proxy("not-a-demo", DEMO_PROGRAM_MACHINE),
+            Err(Error::NotFound)
+        );
+    }
+
+    #[test]
+    fn a_stand_in_is_resolved_for_the_demo_machine_only() {
+        // The machine word is the payload ABI's, so a name alone is not enough
+        // to say which image a stand-in is standing in for.
+        assert_eq!(
+            resolve_program_proxy("shell", DEMO_PROGRAM_MACHINE + 1),
+            Err(Error::Unsupported)
+        );
+    }
 }

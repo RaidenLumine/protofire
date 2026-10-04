@@ -11,9 +11,8 @@
 //! else — which is why `define_riscv64_payload_runtime!` arrived with it.
 //!
 //! `src/fs/demo/` writes the result into `/apps/packages/shell/bin/shell.elf`,
-//! so the prompt on this machine's console is ring-3 code and the
-//! `host_proxy = "shell"` entry in the manifest is no longer the path a boot
-//! takes.
+//! so the prompt on this machine's console is ring-3 code and the in-kernel Rust
+//! shell is no longer the path a boot takes.
 //!
 //! Everything in the section is either a syscall trap or a function in the same
 //! section, and on this target the interesting reference is the one that takes a

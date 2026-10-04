@@ -11,8 +11,8 @@
 //!
 //! `src/fs/demo/` writes the result into `/apps/packages/shell/bin/shell.elf`
 //! and the boot runs it, so the prompt on the console is this code in ring 3 and
-//! not the in-kernel Rust shell that RISC-V still reaches through its manifest's
-//! `host_proxy` entry.
+//! not the in-kernel Rust shell only a host without payload sections falls back
+//! to.
 //!
 //! Everything in the section is either a syscall trap or a function in the same
 //! section: the blob is copied out of the kernel image and run at another

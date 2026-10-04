@@ -240,7 +240,6 @@ pub(crate) struct LoadedProgramDescriptor {
     working_dir: String,
     arguments: Vec<String>,
     environment: Vec<String>,
-    host_proxy: Option<String>,
 }
 
 impl LoadedProgramDescriptor {
@@ -255,7 +254,6 @@ impl LoadedProgramDescriptor {
             working_dir: normalized_cwd,
             arguments: vec![normalized_path],
             environment: Vec::new(),
-            host_proxy: None,
         }
     }
 
@@ -272,7 +270,6 @@ impl LoadedProgramDescriptor {
             working_dir,
             arguments,
             environment,
-            host_proxy,
             image,
         } = resolved;
 
@@ -287,7 +284,6 @@ impl LoadedProgramDescriptor {
                 working_dir,
                 arguments,
                 environment,
-                host_proxy,
             },
             image,
         )
@@ -308,7 +304,6 @@ impl LoadedProgramDescriptor {
             working_dir,
             arguments,
             environment,
-            host_proxy,
         } = self;
 
         LoadedProgram {
@@ -325,7 +320,6 @@ impl LoadedProgramDescriptor {
             image_len: runtime.image_len,
             arguments,
             environment,
-            host_proxy,
             initial_user_thread_start: runtime.initial_user_thread_start,
             prepared_user_address_space: runtime.prepared_user_address_space,
             user_address_space_summary: runtime.user_address_space_summary,
@@ -350,11 +344,6 @@ pub struct LoadedProgram {
     pub image_len: usize,
     pub arguments: Vec<String>,
     pub environment: Vec<String>,
-    // Consumed by the demo/test host-proxy dispatch (spawn.rs
-    // `resolve_loaded_program_host_proxy_entry`), which is only compiled for
-    // the demo disk / tests, so the field stays but is allowed unused.
-    #[allow(dead_code)]
-    pub(crate) host_proxy: Option<String>,
     pub(crate) initial_user_thread_start: Option<UserThreadStart>,
     pub(crate) prepared_user_address_space: Option<ProcessUserAddressSpace>,
     pub(crate) user_address_space_summary: Option<UserAddressSpaceSummary>,
@@ -611,7 +600,7 @@ pub(crate) fn finish_loading_program(
 ) -> Result<LoadedProgram> {
     let runtime = descriptor.prepare_runtime(&image)?;
     validate_catalog_program(
-        descriptor.host_proxy.as_deref(),
+        &descriptor.name,
         runtime.machine,
         runtime.image_layout.as_ref(),
     )?;
@@ -654,7 +643,7 @@ pub(crate) use crate::arch::user_loader::*;
 // ── catalog-program validation (depends on loader types) ──────────────
 
 pub(crate) fn validate_catalog_program(
-    host_proxy: Option<&str>,
+    program: &str,
     machine: u16,
     _image_layout: Option<&UserImageLoadPlan>,
 ) -> Result<()> {
@@ -665,24 +654,24 @@ pub(crate) fn validate_catalog_program(
     #[cfg(target_os = "none")]
     {
         // Bare-metal builds can launch directly when the loader produced a real
-        // user image. A host proxy is required only for metadata-only payloads.
+        // user image. The stand-in below is only for a metadata-only payload.
         if _image_layout.is_some() {
             return Ok(());
         }
     }
 
-    let host_proxy = host_proxy.ok_or(Error::NotFound)?;
-    // Host-proxy resolution is distribution-specific and only available when
-    // the demo runtime is compiled; other builds have no proxy programs to
-    // resolve, so metadata-only payloads cannot launch.
+    // A payload with no user image is run by the host-side stand-in that shares
+    // its name — see `demo_runtime`.  Which stand-in a program gets is a
+    // property of the program, so the disk does not declare it and the manifest
+    // carries no field for it.
     #[cfg(any(feature = "demo-disk", test))]
     {
-        let _ = resolve_program_proxy(host_proxy, machine)?;
+        let _ = resolve_program_proxy(program, machine)?;
         Ok(())
     }
     #[cfg(not(any(feature = "demo-disk", test)))]
     {
-        let _ = host_proxy;
+        let _ = program;
         Err(Error::NotFound)
     }
 }

@@ -122,9 +122,9 @@ pub fn build_metadata_only_artifact(machine: u16) -> DemoProgramArtifact {
 /// A host that cannot carry the demo payload sections — anything assembling
 /// COFF or Mach-O objects — compiles the payload accessors down to an empty
 /// slice, and the demo disk still has to be buildable there.  Every demo
-/// manifest carries a `host_proxy` entry, so an artifact with no `PT_LOAD`
-/// segment is loaded through the in-kernel proxy instead of a ring-3 image:
-/// the same path the shell artifacts already take.
+/// artifact with no `PT_LOAD` segment is read by the loader as "no image here"
+/// and run by the host-side stand-in that shares the program's name instead of
+/// a ring-3 image — see `src/user/program/demo_runtime.rs`.
 pub fn build_artifact_or_metadata_only(
     payload: &[u8],
     entry_offset: usize,

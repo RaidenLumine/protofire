@@ -66,9 +66,13 @@ optional — no target builds a bootable ISO image yet.
 
 ### Host requirements
 
-The checks and the bare-metal builds are host-independent: where a host cannot
-assemble the ELF payload sections, the demo disk falls back to the `host_proxy`
-artifacts every demo manifest already names — the same path the shell takes.
+The checks and the bare-metal builds are host-independent: the demo disk is
+built by the kernel itself, out of the payload sections each target's
+cross-compilation assembles.  A *host* build cannot assemble those sections —
+`mkimage` is a Mach-O or COFF binary on two of the three host platforms — so a
+program whose image the disk does not carry is stood in for by the host-side
+runtime that shares its name (`src/user/program/demo_runtime.rs`); that is what
+keeps an `mkimage`-written demo disk bootable.
 
 What still pins a host down is the test suite. It drives x86_64 user-mode code
 (`ptrace`, user address space, exception frames) inside the test process, so

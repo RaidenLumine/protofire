@@ -54,7 +54,6 @@ pub struct LaunchManifest {
     pub working_dir: String,
     pub arguments: Vec<String>,
     pub environment: Vec<String>,
-    pub(crate) host_proxy: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -76,7 +75,6 @@ pub(crate) struct ResolvedCatalogLaunch {
     pub working_dir: String,
     pub arguments: Vec<String>,
     pub environment: Vec<String>,
-    pub host_proxy: Option<String>,
     pub image: Vec<u8>,
 }
 
@@ -93,7 +91,6 @@ struct ResolvedCatalogLaunchContent {
     working_dir: String,
     arguments: Vec<String>,
     environment: Vec<String>,
-    host_proxy: Option<String>,
 }
 
 struct ResolvedCatalogEntry {
@@ -223,7 +220,6 @@ impl ResolvedCatalogEntry {
             working_dir: content.working_dir,
             arguments: content.arguments,
             environment: content.environment,
-            host_proxy: content.host_proxy,
             image: artifacts.image,
         })
     }
@@ -281,7 +277,6 @@ impl ResolvedCatalogLaunchContent {
             version,
             arguments: manifest_arguments,
             environment: manifest_environment,
-            host_proxy,
             ..
         } = manifest;
         let SpawnProcessOverrides {
@@ -306,7 +301,6 @@ impl ResolvedCatalogLaunchContent {
             working_dir,
             arguments,
             environment,
-            host_proxy,
         })
     }
 }

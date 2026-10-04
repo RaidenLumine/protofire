@@ -8,8 +8,8 @@
 //! the same macro the x86_64 payload expands; what differs between the two is
 //! what is in this file.  `src/fs/demo/` writes the result into
 //! `/apps/packages/shell/bin/shell.elf`, so the prompt on this machine's console
-//! is ring-3 code as well, and the `host_proxy = "shell"` entry in the manifest
-//! is no longer the path a boot takes.
+//! is ring-3 code as well, and the in-kernel Rust shell is no longer the path a
+//! boot takes.
 //!
 //! Everything in the section is either a syscall trap or a function in the same
 //! section: the blob is copied out of the kernel image and run at another

@@ -890,9 +890,8 @@ spans modules and cannot be attributed to one of them.
   the only way to tell a shell that reads a line from one that only prints a
   banner.  The init program is ring-3 code on all three targets too, and each
   runtime check asserts the lines it prints as it declares what `/system/rc.d`
-  holds.  What is still missing is the layer above *that*: the manifests still
-  carry a `host_proxy` entry nothing reaches, and nothing on the volume is
-  signed or verified unless its manifest asks for it.
+  holds.  What is still missing is the layer above *that*: nothing on the
+  volume is signed or verified unless its manifest asks for it.
 - **Single maintainer**: bus factor = 1; every module is currently held by one
   maintainer.
 - **“We do not break userspace” has a handful of subjects, not a population**:

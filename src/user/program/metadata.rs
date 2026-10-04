@@ -97,7 +97,6 @@ pub(crate) fn parse_catalog_entry(text: &str) -> Result<CatalogEntry> {
 //   working_dir = "/apps/packages/shell"
 //   argv = ["shell", "-i"]         # optional
 //   env = ["TERM=vt100"]           # optional
-//   host_proxy = "shell"           # optional (host-resident proxy program)
 
 pub(crate) fn parse_launch_manifest(text: &str) -> Result<LaunchManifest> {
     let name = parse_string_field(text, "name")?;
@@ -109,7 +108,6 @@ pub(crate) fn parse_launch_manifest(text: &str) -> Result<LaunchManifest> {
     let working_dir = parse_string_field(text, "working_dir")?;
     let arguments = parse_string_list_field(text, "argv")?;
     let environment = parse_string_list_field(text, "env")?;
-    let host_proxy = parse_optional_string_field(text, "host_proxy")?;
 
     validate_optional_sha256_hex(entry_sha256.as_deref())?;
 
@@ -127,7 +125,6 @@ pub(crate) fn parse_launch_manifest(text: &str) -> Result<LaunchManifest> {
         working_dir,
         arguments,
         environment,
-        host_proxy,
     })
 }
 
@@ -451,7 +448,19 @@ mod tests {
         assert_eq!(manifest.working_dir, "/apps/packages/shell");
         assert_eq!(manifest.arguments, ["shell", "-i"]);
         assert_eq!(manifest.environment, ["TERM=vt100"]);
-        assert_eq!(manifest.host_proxy, None);
+    }
+
+    #[test]
+    fn a_manifest_that_still_declares_a_retired_key_parses() {
+        // `host_proxy` was a manifest key until the host stand-in stopped being
+        // the disk's business.  A disk written before that still carries it,
+        // and reading one has to keep working: the parser reads the fields it
+        // knows and has never rejected a line it does not.
+        let text = "name = \"x\"\nversion = \"1\"\nformat = \"elf64-x86_64-user\"\n\
+                    entry = \"/apps/packages/x/bin/x.elf\"\nworking_dir = \"/apps/packages/x\"\n\
+                    host_proxy = \"x\"\n";
+        let manifest = parse_launch_manifest(text).expect("a retired key is not an error");
+        assert_eq!(manifest.name, "x");
     }
 
     #[test]

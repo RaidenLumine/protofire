@@ -205,10 +205,7 @@ fn launch_host_loaded_program_with_security_token_and_setup(
 
 #[cfg(all(not(target_os = "none"), any(feature = "demo-disk", test)))]
 fn resolve_loaded_program_host_proxy_entry(loaded: &LoadedProgram) -> Result<fn()> {
-    resolve_program_proxy(
-        loaded.host_proxy.as_deref().ok_or(Error::NotFound)?,
-        loaded.machine,
-    )
+    resolve_program_proxy(&loaded.name, loaded.machine)
 }
 
 #[cfg(all(not(target_os = "none"), not(any(feature = "demo-disk", test))))]
@@ -266,10 +263,7 @@ where
     // demo-disk feature is enabled or during testing.
     #[cfg(any(feature = "demo-disk", test))]
     {
-        let entry = resolve_program_proxy(
-            loaded.host_proxy.as_deref().ok_or(Error::NotFound)?,
-            loaded.machine,
-        )?;
+        let entry = resolve_program_proxy(&loaded.name, loaded.machine)?;
         Ok(scheduler.spawn_kernel_named_with_security_token_and_setup(
             &loaded.name,
             security_token,

@@ -68,11 +68,11 @@ pub fn build_rust_io_demo_program_artifact() -> DemoProgramArtifact {
 ///
 /// The payload behind it is `shell_payload_x86_64`, which is why this one is
 /// *not* metadata-only.  An artifact with no `PT_LOAD` segment is read by the
-/// loader as "no image here" and replaced with the `host_proxy = "shell"` entry
-/// — `shell_user_main()`, the in-kernel Rust shell that AArch64 and RISC-V
-/// still use — and a shell reached that way is not ring-3 code.  The prompt
-/// this artifact puts on the demo disk is; `scripts/check-x8664-runtime.sh`
-/// types at it, which is what tells the two apart.
+/// loader as "no image here" and stood in for by `shell_user_main()`, the
+/// in-kernel Rust shell that shares its name — and a shell reached that way is
+/// not ring-3 code.  The prompt this artifact puts on the demo disk is;
+/// `scripts/check-x8664-runtime.sh` types at it, which is what tells the two
+/// apart.
 pub fn build_shell_program_artifact() -> DemoProgramArtifact {
     use super::shell_payload_x86_64;
 
