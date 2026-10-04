@@ -708,10 +708,17 @@ impl Kernel {
             .and_then(|(descriptor, image)| program::finish_loading_program(descriptor, image))
         {
             Ok(loaded) => {
+                // The distribution's first program runs with the system token.
+                // It is loaded from the read-only system zone, which no runtime
+                // write can reach, and bringing the machine up is the job it
+                // exists for — including installing the packages the disk left
+                // staged, which a guest token is refused by the app zone's own
+                // descriptor.  A machine whose init cannot install is a machine
+                // whose init cannot do its job.
                 match program::launch_loaded_program_with_security_token(
                     &self.scheduler,
                     loaded,
-                    SecurityToken::guest(),
+                    SecurityToken::system(),
                     false, // start_suspended
                 ) {
                     Ok(launched) => {
@@ -1491,6 +1498,7 @@ mod tests {
     use super::*;
     use crate::fs::NodeKind;
     use crate::Error;
+    use alloc::vec::Vec;
 
     fn ensure_dir(fs: &FileSystem, path: &str) {
         match fs.stat_path(path) {
@@ -1509,6 +1517,33 @@ mod tests {
             .write(&mut file, text.as_bytes())
             .expect("write test file");
         assert_eq!(written, text.len());
+    }
+
+    /// Remove a path and everything under it.
+    ///
+    /// The demo disk ships real contents now — a staged package in the download
+    /// cache, among others — so a test that wants to put something *in that
+    /// place* has to take what is there away first.  The children are collected
+    /// before any of them is removed, because removing one shifts the indices
+    /// the listing is walked by.
+    fn remove_tree(fs: &FileSystem, path: &str) {
+        let Ok(metadata) = fs.stat_path(path) else {
+            return;
+        };
+
+        if metadata.kind == NodeKind::Directory {
+            let mut children = Vec::new();
+            let mut index = 0;
+            while let Ok(entry) = fs.read_dir(path, index) {
+                children.push(entry.name);
+                index += 1;
+            }
+            for child in children {
+                remove_tree(fs, &alloc::format!("{path}/{child}"));
+            }
+        }
+
+        fs.remove_path(path).expect("remove test path");
     }
 
     #[test]
@@ -1558,6 +1593,10 @@ mod tests {
 
         {
             let fs = kernel.fs.lock();
+            // The disk ships a staged package in the cache, so the root exists
+            // as a directory and has to go before it can be the file this test
+            // is about.
+            remove_tree(&fs, "/data/downloads");
             write_text_file(
                 &fs,
                 "/data/downloads",

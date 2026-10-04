@@ -17,7 +17,21 @@ pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
     let demo_program = build_demo_program_artifact();
     let shell_program = build_shell_program_artifact();
     let entries = apps_entries_riscv64(&demo_program.bytes, &shell_program.bytes);
-    SimpleFs::build_image(zone.volume_label(), &entries)
+    // Headroom for what a running machine installs here: the zone is the one an
+    // install writes, and an image built with no room for one would fail the
+    // first install a fresh machine ever attempted.
+    SimpleFs::build_image_with_headroom(
+        zone.volume_label(),
+        &entries,
+        APPS_ZONE_EXTRA_INODES,
+        APPS_ZONE_EXTRA_DIRENTS,
+        APPS_ZONE_EXTRA_DATA_BLOCKS,
+    )
+}
+
+/// The data zone: the shared files plus the package the boot installs.
+pub(crate) fn data_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
+    super::build_data_zone_from(zone, &build_demo_program_artifact().bytes)
 }
 
 /// The system zone: the shared files plus the init program at `/init.elf`.

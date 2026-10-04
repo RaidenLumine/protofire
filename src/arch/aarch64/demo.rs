@@ -8,7 +8,11 @@
 //! demo payloads: a launcher, a fault demo, a Rust payload, and the ring-3
 //! shell.
 
+pub(crate) use crate::fs::demo::build_data_zone_from;
 pub(crate) use crate::fs::demo::build_system_zone_from;
+pub(crate) use crate::fs::demo::APPS_ZONE_EXTRA_DATA_BLOCKS;
+pub(crate) use crate::fs::demo::APPS_ZONE_EXTRA_DIRENTS;
+pub(crate) use crate::fs::demo::APPS_ZONE_EXTRA_INODES;
 pub(crate) use crate::fs::layout::StorageZone;
 pub(crate) use crate::fs::simplefs::ImageEntry;
 pub(crate) use crate::fs::simplefs::SimpleFs;

@@ -605,12 +605,17 @@ control that are unusual in a hobby kernel.
   payload on every target the disk is built for — one program
   (`src/user/demo/init_payload.rs`), emitted per architecture.  It lists
   `/system/rc.d`, names each declaration file through `service_declare` (#190)
-  and asks for the services to be started by `service_start_all` (#191).  The
-  kernel keeps the mechanism — registry, start order, supervision, `/service` —
-  and the distribution keeps the declarations; the two meet at those two
-  syscalls.  `service_start_all` is idempotent, so whichever of the boot path,
-  init or the supervisor arrives first starts a service and the others find
-  nothing left to do.
+  and asks for the services to be started by `service_start_all` (#191), then
+  installs the package the disk left staged in the download cache through
+  `install_package` (#192) — the same loop the host tests drive, on the machine,
+  with the line it prints as the proof.  The kernel keeps the mechanism —
+  registry, start order, supervision, `/service`, the install itself — and the
+  distribution keeps the declarations and the packages; the two meet at those
+  three syscalls.  It runs with the system token, because that is what the app
+  zone's descriptor requires of a program that installs into it.
+  `service_start_all` is idempotent, so whichever of the boot path, init or the
+  supervisor arrives first starts a service and the others find nothing left to
+  do.
 - **The boot hands the start to init**: when the disk ships an init program, the
   kernel registers the declarations — `/service` and the supervisor need them
   either way — and leaves the start to that program, so the distribution, not

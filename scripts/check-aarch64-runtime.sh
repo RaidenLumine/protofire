@@ -92,7 +92,8 @@ shell_commands() {
     sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
         'help' 'echo ring3-shell-answered' \
         'cat /service/shell/origin' 'cat /service/shell/sha256' \
-        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category'
+        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
+        'cat /apps/current/demo-installed.toml'
 }
 
 set +e
@@ -422,7 +423,15 @@ require_log_line "system: slot b active (build 2)"
 require_log_line "runtime writes: /tmp (volatile), /data (persistent)"
 require_log_line "adastra init (ring 3): reading /system/rc.d"
 require_log_line "adastra init: declared "
+# The distribution's first install, done by init on the machine: the disk
+# stages a package in the download cache, and the boot reads it, verifies what
+# it claims, writes the app zone and makes the version active.  This line is
+# the install; the typed command below reads back what it left.
+require_log_line "adastra init: installed demo-installed@1.0.0"
 require_log_line "service(s) registered; leaving the start to init"
+# Read back through the shell, which is a program the machine launched: the
+# record the install wrote names the version it made active.
+require_log_exact_line "catalog = \"../catalog/demo-installed@1.0.0.toml\""
 require_log_exact_line "ring3-shell-answered"
 # The service manager's provenance, read back by a ring-3 program: which
 # declaration file the kernel read the shell's definition from, and the SHA-256

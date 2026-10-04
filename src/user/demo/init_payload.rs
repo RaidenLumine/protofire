@@ -12,6 +12,12 @@
 //! reads the files itself, so what runs is the image's bytes and every service
 //! is attributed to the file that declared it.
 //!
+//! It also performs the distribution's first install: the demo disk stages a
+//! package in the download cache, and this program names it through
+//! `install_package` so a boot exercises the whole path — read the package,
+//! verify what it claims, write the app zone, make the version active — on the
+//! machine rather than only in the host tests.
+//!
 //! Everything here is a syscall trap or a function in the same section: the
 //! blob is copied out of the kernel image and run at another address, so an
 //! absolute address or a call outside the section would name the kernel image's
@@ -46,6 +52,22 @@ macro_rules! define_init_payload {
         /// Where a distribution's service declarations live.
         #[link_section = $section]
         static INIT_DECLARATION_DIR: [u8; b"/system/rc.d".len()] = *b"/system/rc.d";
+        /// The package the distribution ships staged for its first install.
+        ///
+        /// The demo disk leaves a package in the download cache and this
+        /// program installs it, so a boot shows the whole loop — read the
+        /// package, verify what it claims, write the app zone, make the version
+        /// active — instead of only the host tests showing it.
+        #[link_section = $section]
+        static INIT_STAGED_PACKAGE: [u8; b"/data/downloads/demo-installed@1.0.0".len()] =
+            *b"/data/downloads/demo-installed@1.0.0";
+        /// What the boot says when that install worked.
+        #[link_section = $section]
+        static INIT_INSTALLED: [u8; b"adastra init: installed demo-installed@1.0.0\n".len()] =
+            *b"adastra init: installed demo-installed@1.0.0\n";
+        #[link_section = $section]
+        static INIT_INSTALL_FAILED: [u8; b"adastra init: cannot install ".len()] =
+            *b"adastra init: cannot install ";
         /// Which files in that directory are declarations.
         #[link_section = $section]
         static INIT_DECLARATION_SUFFIX: [u8; b".toml".len()] = *b".toml";
@@ -325,6 +347,23 @@ macro_rules! define_init_payload {
             init_message!(INIT_DECLARED);
             init_write_number(files);
             init_message!(INIT_FILES_SUFFIX);
+
+            // The distribution's own first install: the package the disk
+            // staged in the download cache becomes a version under `/apps`.
+            // The kernel does the work and reads the package itself; this
+            // program only names what to install, which is the same split the
+            // declarations above use.
+            let installed = install_package(
+                init_address!(INIT_STAGED_PACKAGE),
+                INIT_STAGED_PACKAGE.len(),
+            );
+            if payload_runtime_status_is_error(installed) {
+                init_message!(INIT_INSTALL_FAILED);
+                init_message!(INIT_STAGED_PACKAGE);
+                init_message!(INIT_NEWLINE);
+            } else {
+                init_message!(INIT_INSTALLED);
+            }
 
             // The distribution's other half: asking for the services to be
             // started.  A build with `init_no_start` leaves that out so a boot

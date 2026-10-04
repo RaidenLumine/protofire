@@ -339,13 +339,15 @@ spawn_init_program(init_path)
   ├── program::load_from_filesystem(&fs, "/", init_path)
   │     └── Parses ELF, loads segments into a new address space
   ├── program::launch_loaded_program_with_security_token(
-  │       &scheduler, loaded, SecurityToken::guest(), start_suspended=false)
+  │       &scheduler, loaded, SecurityToken::system(), start_suspended=false)
   └── Logs PID on success, or error on failure
 ```
 
-`SecurityToken::guest()` assigns the lowest privilege level, restricting
-the init process to guest-scoped operations.  The init program is never
-started suspended.
+`SecurityToken::system()` gives the init process the system token: it is the
+distribution's own first program, loaded from the read-only system zone that no
+runtime write can reach, and bringing the machine up — naming the declarations,
+starting the services, installing the packages the disk staged — is the job it
+exists for.  The init program is never started suspended.
 
 If the ELF is missing (no boot disk, or distribution not installed), the
 kernel prints a diagnostic and continues -- the system runs with only

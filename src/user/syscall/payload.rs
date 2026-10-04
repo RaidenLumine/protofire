@@ -47,6 +47,27 @@ macro_rules! define_payload_service_stubs {
                 0,
             )
         }
+
+        #[inline(never)]
+        #[allow(dead_code)]
+        #[link_section = $section]
+        /// Install the package staged at `path`.
+        ///
+        /// The kernel reads the package and writes the app zone itself, under
+        /// the calling process's security token: a caller that cannot write
+        /// `/apps` is refused by the zone's own rules rather than by a rule
+        /// this stub could disagree with.
+        fn install_package(path: usize, path_length: usize) -> usize {
+            payload_runtime_invoke_raw_status(
+                $crate::syscall::SyscallNumber::InstallPackage as usize,
+                path,
+                path_length,
+                0,
+                0,
+                0,
+                0,
+            )
+        }
     };
 }
 

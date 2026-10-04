@@ -248,6 +248,10 @@ require_log_line "system: slot b active (build 2)"
 # only in the source.
 require_log_line "runtime writes: /tmp (volatile), /data (persistent)"
 require_log_line "adastra init (ring 3): reading /system/rc.d"
+# The distribution's first install: the disk stages a package in the download
+# cache and init installs it, so a boot shows the whole loop rather than only
+# the host tests showing it.
+require_log_line "adastra init: installed demo-installed@1.0.0"
 require_log_line "adastra init: declared "
 # The boot registered the declarations and left the start to that program
 # instead of starting them itself: this is the hand-off, and without it the

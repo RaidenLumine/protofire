@@ -16,12 +16,6 @@ use crate::user::demo::demo_program_x86_64_elf::build_rust_io_demo_program_artif
 
 use crate::user::demo::demo_program_x86_64_elf::build_shell_program_artifact;
 
-const APPS_ZONE_EXTRA_INODES: usize = 32;
-
-const APPS_ZONE_EXTRA_DIRENTS: usize = 64;
-
-const APPS_ZONE_EXTRA_DATA_BLOCKS: usize = 128;
-
 // These manifests are the exact on-disk payloads consumed by the catalog and
 // launcher parsers, so the demo disk exercises the same metadata path as a
 // future real installer.
@@ -113,6 +107,11 @@ pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
         h() / 1024
     );
     result
+}
+
+/// The data zone: the shared files plus the package the boot installs.
+pub(crate) fn data_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
+    super::build_data_zone_from(zone, &build_demo_program_artifact().bytes)
 }
 
 /// The system zone's init program on a host that cannot carry the payload.

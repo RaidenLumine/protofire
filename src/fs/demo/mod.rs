@@ -56,6 +56,22 @@ const DATA_ZONE_EXTRA_DIRENTS: usize = 128;
 
 const DATA_ZONE_EXTRA_DATA_BLOCKS: usize = 256;
 
+/// Headroom the app zone keeps for what a running machine installs into it.
+///
+/// An install adds a version directory, the program and its manifest, the
+/// catalog and current records, and the transaction log — so the image has to
+/// arrive with room for them, or the first install on a fresh machine would be
+/// the one that found out it had none.
+pub(crate) const APPS_ZONE_EXTRA_INODES: usize = 32;
+
+/// See [`APPS_ZONE_EXTRA_INODES`].
+pub(crate) const APPS_ZONE_EXTRA_DIRENTS: usize = 64;
+
+/// See [`APPS_ZONE_EXTRA_INODES`].  The program is the demo launcher, a few
+/// kilobytes, and the log and records are small; the count matches the x86_64
+/// zone's, which has carried an install for longest.
+pub(crate) const APPS_ZONE_EXTRA_DATA_BLOCKS: usize = 128;
+
 const SYSTEM_FILES: &[ImageEntry<'static>] = &[
     ImageEntry {
         path: "/boot/kernel.bin",
@@ -108,13 +124,7 @@ pub fn build_zone_image(zone: StorageZone) -> Vec<u8> {
     let image = match zone {
         StorageZone::System => content::system_zone_image(DEMO_SYSTEM_SLOT_A_GENERATION),
         StorageZone::Apps => content::apps_zone_image(zone),
-        StorageZone::Data => SimpleFs::build_image_with_headroom(
-            zone.volume_label(),
-            DATA_FILES,
-            DATA_ZONE_EXTRA_INODES,
-            DATA_ZONE_EXTRA_DIRENTS,
-            DATA_ZONE_EXTRA_DATA_BLOCKS,
-        ),
+        StorageZone::Data => content::data_zone_image(zone),
     };
 
     #[cfg(target_os = "none")]
@@ -294,6 +304,42 @@ pub(crate) fn build_system_zone_from(init_elf: &[u8], generation: u64) -> Result
         data: declarations.as_bytes(),
     });
     SimpleFs::build_image(StorageZone::System.volume_label(), &entries)
+}
+
+/// The data zone: the shared files, plus the package the boot installs.
+///
+/// The staged program is the target's own launcher, so what gets installed is
+/// a program this machine can really run, and the digest in the manifest is
+/// computed here — the kernel builds the package, so it can say what it is.
+/// A boot that installs it exercises the whole path on the machine rather than
+/// only in the host tests: read the package, verify what it claims, write the
+/// app zone, and make the version active.
+pub(crate) fn build_data_zone_from(zone: StorageZone, program: &[u8]) -> Result<Vec<u8>> {
+    let digest = crate::kernel::crypto::sha256_hex(program);
+    let manifest = alloc::format!(
+        "name = \"demo-installed\"\nversion = \"1.0.0\"\nformat = \"{}\"\nentry = \"bin/demo.elf\"\nworking_dir = \".\"\nentry_sha256 = \"{}\"\n",
+        crate::user::program::DEMO_PROGRAM_FORMAT,
+        digest,
+    );
+
+    let mut entries: Vec<ImageEntry<'_>> = Vec::new();
+    entries.extend_from_slice(DATA_FILES);
+    entries.push(ImageEntry {
+        path: "/downloads/demo-installed@1.0.0/manifest.toml",
+        data: manifest.as_bytes(),
+    });
+    entries.push(ImageEntry {
+        path: "/downloads/demo-installed@1.0.0/bin/demo.elf",
+        data: program,
+    });
+
+    SimpleFs::build_image_with_headroom(
+        zone.volume_label(),
+        &entries,
+        DATA_ZONE_EXTRA_INODES,
+        DATA_ZONE_EXTRA_DIRENTS,
+        DATA_ZONE_EXTRA_DATA_BLOCKS,
+    )
 }
 
 // ---------------------------------------------------------------------------
