@@ -205,7 +205,12 @@ pub fn install_system_build(disk: &Arc<dyn BlockDevice>, image: &[u8]) -> Result
         .iter()
         .find(|slot| slot.slot != active.slot)
         .ok_or(Error::NotFound)?;
-    write_volume_image(target.device.as_ref(), image)?;
+
+    // Where the marker lives inside the image is what the write order below
+    // depends on: the file that commits the volume has to be the last thing
+    // that lands.
+    let marker = image_file_extent(image)?;
+    write_volume_image(target.device.as_ref(), image, marker)?;
 
     Ok(build)
 }
@@ -232,21 +237,72 @@ fn read_image_build(image: &[u8]) -> Result<SystemBuild> {
     read_build(&device).ok_or(Error::InvalidArgument)
 }
 
-/// Write `image` over `device`, one block at a time.
-fn write_volume_image(device: &dyn BlockDevice, image: &[u8]) -> Result<()> {
+/// The blocks `image` gives the build marker, as `(first_block, block_count)`.
+fn image_file_extent(image: &[u8]) -> Result<(usize, usize)> {
+    let device: Arc<dyn BlockDevice> = MemoryBlockDevice::new("system-image", image.to_vec(), true);
+    let volume = SimpleFs::open(device, true)?;
+    let (start, count) = volume.file_extent(SYSTEM_BUILD_MARKER_PATH)?;
+    Ok((start as usize, count as usize))
+}
+
+/// Write `image` over `device`, committing it last.
+///
+/// A slot is a candidate for the next boot as soon as its build marker reads
+/// back, so *where* the marker lands in the write is what decides whether a
+/// machine that loses power mid-install boots a half-written volume.  The
+/// marker's blocks are therefore written in three steps — zeroed first, left
+/// out of the payload pass, written last — and the commit is the final write.
+/// A crash before it leaves a slot whose marker does not parse, which is a
+/// slot the boot skips.
+///
+/// The marker has to fit in a single block for that to hold: a marker written
+/// across two block writes has a moment where the first block is on the disk
+/// and the second is not, and a marker whose first block carries the whole
+/// text would read back as a commit.
+fn write_volume_image(
+    device: &dyn BlockDevice,
+    image: &[u8],
+    marker: (usize, usize),
+) -> Result<()> {
     if image.is_empty() || !image.len().is_multiple_of(BLOCK_SIZE) {
         return Err(Error::InvalidArgument);
     }
-    if image.len() / BLOCK_SIZE > device.block_count() as usize {
+    let blocks = image.len() / BLOCK_SIZE;
+    if blocks > device.block_count() as usize {
         return Err(Error::NoSpace);
     }
 
+    let (marker_start, marker_count) = marker;
+    let marker_end = marker_start
+        .checked_add(marker_count)
+        .ok_or(Error::InvalidArgument)?;
+    if marker_count != 1 || marker_end > blocks {
+        return Err(Error::InvalidArgument);
+    }
+
     let mut block = alloc::vec![0_u8; BLOCK_SIZE];
-    for (index, chunk) in image.chunks(BLOCK_SIZE).enumerate() {
-        block[..chunk.len()].copy_from_slice(chunk);
-        block[chunk.len()..].fill(0);
+
+    // 1. Disown.  The slot is overwritten in place, so the first thing that has to
+    //    go is the old marker: until it does, a machine that dies here would boot
+    //    the slot's previous build from a volume that is already being replaced.
+    block.fill(0);
+    device.write_blocks(marker_start as u64, &block)?;
+
+    // 2. The payload, everything but the file that commits it.
+    for index in 0..blocks {
+        if index == marker_start {
+            continue;
+        }
+        let offset = index * BLOCK_SIZE;
+        block.copy_from_slice(&image[offset..offset + BLOCK_SIZE]);
         device.write_blocks(index as u64, &block)?;
     }
+
+    // 3. The commit.
+    let offset = marker_start * BLOCK_SIZE;
+    block.copy_from_slice(&image[offset..offset + BLOCK_SIZE]);
+    device.write_blocks(marker_start as u64, &block)?;
+    device.flush()?;
 
     Ok(())
 }
@@ -406,6 +462,85 @@ mod tests {
         let active = select_system_slot(&slots).expect("a slot");
         assert_eq!(active.slot, SYSTEM_SLOT_A);
         assert_eq!(active.build, Some(SystemBuild { generation: 1 }));
+    }
+
+    /// A disk whose writes stop landing after a budget, which is what a
+    /// machine that loses power mid-install looks like from the kernel's side:
+    /// the writes that follow do not land either, and nobody is told.
+    struct LosingDisk {
+        inner: Arc<dyn BlockDevice>,
+        budget: core::sync::atomic::AtomicUsize,
+    }
+
+    impl LosingDisk {
+        fn new(inner: Arc<dyn BlockDevice>, budget: usize) -> Self {
+            Self {
+                inner,
+                budget: core::sync::atomic::AtomicUsize::new(budget),
+            }
+        }
+    }
+
+    impl BlockDevice for LosingDisk {
+        fn name(&self) -> &str {
+            self.inner.name()
+        }
+
+        fn block_count(&self) -> u64 {
+            self.inner.block_count()
+        }
+
+        fn is_read_only(&self) -> bool {
+            self.inner.is_read_only()
+        }
+
+        fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+            self.inner.read_blocks(lba, buffer)
+        }
+
+        fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
+            let spent = self
+                .budget
+                .try_update(
+                    core::sync::atomic::Ordering::AcqRel,
+                    core::sync::atomic::Ordering::Acquire,
+                    |left: usize| left.checked_sub(1),
+                )
+                .is_err();
+            if spent {
+                return Ok(());
+            }
+
+            self.inner.write_blocks(lba, data)
+        }
+    }
+
+    #[test]
+    fn an_install_that_loses_power_at_any_write_never_commits_a_partial_build() {
+        // The property the install path promises: a slot becomes a candidate
+        // for the next boot only once every block of the image it carries is
+        // on the disk.  The loop is the proof — it stops the writes at every
+        // point an install can be interrupted, and each of those disks has to
+        // boot the build it was already running.
+        let image = system_image(Some(3));
+        let (_, marker_blocks) = image_file_extent(&image).expect("marker extent");
+        let blocks = image.len() / BLOCK_SIZE;
+        // One tombstone write, the payload without the marker, and the commit.
+        let writes = blocks + marker_blocks;
+
+        for budget in 0..writes {
+            let inner = two_slot_disk(system_image(Some(1)), system_image(Some(2)));
+            let disk: Arc<dyn BlockDevice> = Arc::new(LosingDisk::new(inner, budget));
+            let _ = install_system_build(&disk, &image);
+
+            let slots = system_slots(&disk, true).expect("slots");
+            let active = select_system_slot(&slots).expect("a slot");
+            let generation = active.build.map(|build| build.generation).unwrap_or(0);
+            assert!(
+                generation <= 2,
+                "with {budget} of {writes} writes landed, the boot took generation {generation}"
+            );
+        }
     }
 
     #[test]

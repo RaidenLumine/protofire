@@ -107,6 +107,25 @@ impl SimpleFs {
             .unwrap_or(0)
     }
 
+    /// The blocks a file's data occupies, as `(first_block, block_count)`.
+    ///
+    /// SimpleFs gives every file one contiguous extent, and this is where it
+    /// starts and how long it is.  The caller that needs it is the one that
+    /// has to treat part of a volume differently from the rest: an install
+    /// writes everything *except* the file that commits the volume, and then
+    /// that file last, so that a machine which loses power mid-install has a
+    /// slot that is not a candidate for the next boot.
+    pub(crate) fn file_extent(&self, path: &str) -> Result<(u64, u64)> {
+        let index = self.lookup_index(path)?;
+        let state = self.state.lock();
+        let inode = state.inodes.get(index).ok_or(Error::InternalError)?;
+        if inode.kind != NodeKind::File || inode.deleted {
+            return Err(Error::NotFound);
+        }
+
+        Ok((inode.data_block as u64, inode.block_count as u64))
+    }
+
     pub(crate) fn metadata_of(&self, index: usize) -> Result<Metadata> {
         let state = self.state.lock();
         let inode = *state.inodes.get(index).ok_or(Error::InternalError)?;
