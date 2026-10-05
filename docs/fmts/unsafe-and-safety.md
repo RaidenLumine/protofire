@@ -345,5 +345,5 @@ For every `unsafe` block in the diff:
   validation machinery
 - [docs/fmts/code-style.md](code-style.md) — error handling and the global
   install pattern
-- [docs/kernel-introduction/memory.md](../kernel-introduction/memory.md) —
-  paging and allocator internals
+- [docs/kernel/memory.md](../kernel/memory.md) — paging and allocator
+  internals

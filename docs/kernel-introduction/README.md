@@ -193,7 +193,7 @@ On AArch64 and RISC-V the partitioning follows the same principle with arch-spec
 
 ### Kernel Stack and Guard Pages
 
-Each kernel thread has a dedicated stack, and each stack has a guard page below it so that an overflow faults instead of writing over whatever comes next. On all three architectures the stack is a slice of that architecture's own stack window (`arch/aarch64/mmu/mod.rs`, `arch/x86_64/paging/runtime.rs`, `arch/riscv64/mmu/mod.rs`): the usable pages are backed by frames and the guard is a slice the allocator never hands out. A stack the window cannot serve — there are no slices left, or no translation-table pages for it — is a run of frames at its own addresses and the guard is the page below it, cleared by that architecture's `unmap_page`. Both shapes are described in the memory overview under [Kernel Address Space](memory.md#kernel-address-space), and both apply to kernel threads and to user-thread kernel stacks.
+Each kernel thread has a dedicated stack, and each stack has a guard page below it so that an overflow faults instead of writing over whatever comes next. On all three architectures the stack is a slice of that architecture's own stack window (`arch/aarch64/mmu/mod.rs`, `arch/x86_64/paging/runtime.rs`, `arch/riscv64/mmu/mod.rs`): the usable pages are backed by frames and the guard is a slice the allocator never hands out. A stack the window cannot serve — there are no slices left, or no translation-table pages for it — is a run of frames at its own addresses and the guard is the page below it, cleared by that architecture's `unmap_page`. Both shapes are described in the memory overview under [the kernel-stack section](../kernel/memory.md#kernel-stacks), and both apply to kernel threads and to user-thread kernel stacks.
 
 ### Heap
 
@@ -363,7 +363,7 @@ them.
 |----------|-------------|
 | [`README.md`](README.md) | Architecture overview, subsystem dependency graph, memory layout, build system |
 | [`docs/kernel/boot.md`](../kernel/boot.md) | Hand-off, the init pipeline, SMP bring-up |
-| [`memory.md`](memory.md) | Physical/virtual memory management, TLSF heap, page tables |
+| [`docs/kernel/memory.md`](../kernel/memory.md) | Frames, heap, page tables, reclaim |
 | [`process.md`](process.md) | Process model, thread states, scheduler, security tokens |
 | [`filesystem.md`](filesystem.md) | VFS layer, SimpleFS on-disk format, two-phase commit |
 | [`network.md`](network.md) | Network stack, DHCP, TCP/UDP, DNS |
