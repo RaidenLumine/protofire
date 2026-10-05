@@ -877,7 +877,8 @@ pub(crate) fn claim_msix(
 
     // One handler per identity: the entries the driver named for its queues,
     // and the device-wide one for every other entry the table can deliver.
-    let handlers = crate::arch::platform::msix_handlers_for(count, named, fallback);
+    let handlers = crate::arch::platform::msix_handlers_for(count, named, fallback)
+        .ok_or(Error::InvalidArgument)?;
     let first_lpi = irq_handlers::claim_each(
         gicv3::LPI_BASE,
         FIRST_DEVICE_LPI,

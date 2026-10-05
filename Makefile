@@ -7,6 +7,10 @@ CARGO ?= cargo
 CARGO_FLAGS ?= --offline
 CRATE ?= protofire
 PROFILE ?= debug
+# `PROFILE` defaults to debug because that is what a developer wants from the
+# check targets; a release is the other profile unless someone asks otherwise,
+# which is why it carries its own variable rather than borrowing that default.
+RELEASE_PROFILE ?= release
 TARGET_DIR ?= target
 # Guest CPUs for every QEMU run target.  One is the default because most of the
 # suite is single-CPU by design, but the kernel brings up APs and schedules on
@@ -336,7 +340,7 @@ check-reproducible-build:
 # verifies every signature with the verifier a user would use.  It does not
 # tag or publish; CONTRIBUTING.md -> Releasing has the order around it.
 release:
-	PROFILE="$${PROFILE:-release}" \
+	PROFILE="$(RELEASE_PROFILE)" \
 		CRATE="$(CRATE)" \
 		CARGO="$(CARGO)" \
 		sh ./scripts/make-release.sh

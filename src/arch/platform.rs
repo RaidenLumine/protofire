@@ -360,6 +360,11 @@ pub(crate) fn pci_claim_msix(
 /// deliver gets `fallback`, because an identity the device can signal and
 /// nobody owns is counted as spurious, which is a worse answer than a wakeup
 /// that turns out to be for another queue.
+///
+/// Answers `None` when a named vector is outside the device's table — a driver
+/// asking for an entry the device does not have.  The caller refuses the claim,
+/// so the device stays on its polling path instead of losing a queue's
+/// interrupt silently.
 // Every configuration that compiles the two architectures' MSI-X claims needs
 // this, including the aarch64 host target `make check` type-checks.
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
@@ -367,7 +372,10 @@ pub(crate) fn msix_handlers_for(
     count: u32,
     named: &[(u16, crate::arch::irq_handlers::IrqHandler)],
     fallback: &crate::arch::irq_handlers::IrqHandler,
-) -> alloc::vec::Vec<crate::arch::irq_handlers::IrqHandler> {
+) -> Option<alloc::vec::Vec<crate::arch::irq_handlers::IrqHandler>> {
+    if named.iter().any(|(vector, _)| (*vector as u32) >= count) {
+        return None;
+    }
     let mut handlers = alloc::vec::Vec::with_capacity(count as usize);
     for index in 0..count {
         let handler = named
@@ -377,7 +385,7 @@ pub(crate) fn msix_handlers_for(
             .unwrap_or_else(|| fallback.clone());
         handlers.push(handler);
     }
-    handlers
+    Some(handlers)
 }
 
 /// The device and the largest prefetchable MMIO BAR of the first function that

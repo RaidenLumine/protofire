@@ -32,8 +32,8 @@
 //!   interrupt sets its `eie` bit, and per-IRQ priority is a no-op (the IMSIC
 //!   has a single per-file threshold),
 //! - dispatches claimed interrupts through a per-IRQ handler table
-//!   ([`claim_device_irqs`] registers an owner; [`handle_pending_external`]
-//!   hands the message to it),
+//!   ([`claim_device_irqs_each`] registers an owner per identity;
+//!   [`handle_pending_external`] hands the message to it),
 //! - programmes real 16-byte MSI-X table entries against a device BAR
 //!   ([`configure_msix`]), replacing the previous software-only table.
 //! - walks its own message path once at boot ([`self_test`]), because a machine
@@ -357,23 +357,11 @@ pub fn irq_has_handler(irq: u32) -> bool {
 /// [`IMSIC_MAX_DEVICE_IRQ`], which leaves the boot self-test's identity alone.
 pub const FIRST_DEVICE_IRQ: u32 = 1;
 
-/// Claim `count` consecutive device identities for `handler`, and answer the
-/// first one.
+/// Claim `handlers.len()` device identities, one handler each.
 ///
 /// The range is allocated first-fit from [`FIRST_DEVICE_IRQ`], with the
 /// registry in [`crate::arch::irq_handlers`] holding the table and the
 /// all-or-nothing rule.
-pub fn claim_device_irqs(count: u32, handler: IrqHandler) -> Result<u32, Error> {
-    crate::arch::irq_handlers::claim(
-        IRQ_WINDOW_BASE,
-        FIRST_DEVICE_IRQ,
-        IMSIC_MAX_DEVICE_IRQ,
-        count,
-        handler,
-    )
-}
-
-/// Claim `handlers.len()` device identities, one handler each.
 ///
 /// See [`crate::arch::irq_handlers::claim_each`] for why a device wants them:
 /// one identity per queue is what lets a completion wake its own queue's

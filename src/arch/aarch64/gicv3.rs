@@ -854,7 +854,12 @@ pub(crate) fn lpi_capable_count() -> u32 {
 fn lpi_capable_at(slot: u32) -> Option<u32> {
     let mut remaining = slot;
     for index in 0..redistributor_count() {
-        let cpu = redistributor_cpu(index)?;
+        // A frame that is there always names a CPU; the `continue` is for the
+        // reader, so that this cannot look like "the walk stops at the first
+        // hole" — `?` here would return out of the whole function.
+        let Some(cpu) = redistributor_cpu(index) else {
+            continue;
+        };
         if !lpi_capable(cpu) {
             continue;
         }

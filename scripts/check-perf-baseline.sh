@@ -143,6 +143,17 @@ drifted=0
 while read -r key value tolerance; do
     case "$key" in ''|\#*) continue ;; esac
 
+    # The rows are hand-edited, so a malformed one is reported as a row
+    # problem rather than as arithmetic on an empty string.
+    case "${value:-}:${tolerance:-}" in
+        *[!0-9:]*|:*|*:)
+            printf 'perf baseline: malformed row for %s (expected "key value tolerance")\n' \
+                "$key" >&2
+            drifted=1
+            continue
+            ;;
+    esac
+
     current="$(measured "$key")"
     if [ -z "$current" ]; then
         printf 'perf baseline check failed: %s is in the baseline and not in the boot\n' \

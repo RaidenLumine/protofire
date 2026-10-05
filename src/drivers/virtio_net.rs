@@ -250,9 +250,13 @@ fn device_msi_handler(
 }
 
 /// How many completion waits the device's interrupt has actually ended (the
-/// first one is logged), and how many ended with the ring still empty — a
-/// wakeup that was not this queue's, which the loop above is written to absorb
-/// rather than to trust.
+/// first one is logged), and how many ended with the ring still empty.
+///
+/// The second number is what one identity per queue is supposed to remove: a
+/// wait woken by an entry that was not the transmit queue's is a wakeup the
+/// loop below absorbs, and it is the shape the device had when every entry ran
+/// the same handler.  It is reported with the first number rather than left to
+/// be inferred, so the claim can be checked on a boot.
 #[cfg(target_os = "none")]
 static MSI_WOKEN_WAITS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 #[cfg(target_os = "none")]
@@ -672,9 +676,15 @@ impl VirtIoNet {
             if tx.completed_count() > 0 {
                 // Say it once: a completion that was waited for rather than
                 // spun on is the difference between a device interrupt the
-                // kernel receives and one it merely counts.
+                // kernel receives and one it merely counts.  The idle count
+                // beside it is the other half of the claim: this queue's own
+                // identity woke it, and nothing else did.
                 if MSI_WOKEN_WAITS.fetch_add(1, core::sync::atomic::Ordering::Relaxed) == 0 {
-                    crate::println!("[virtio-net] TX completion woke on the device's interrupt");
+                    crate::println!(
+                        "[virtio-net] TX completion woke on its own queue's interrupt \
+                         ({} earlier wakeup(s) were another entry's)",
+                        MSI_IDLE_WAKEUPS.load(core::sync::atomic::Ordering::Relaxed)
+                    );
                 }
                 return Ok(());
             }

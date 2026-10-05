@@ -161,8 +161,8 @@ pub struct MsixProgramming {
 ///
 /// Returns where the entries went and which identity they deliver; the caller
 /// registers a handler with
-/// [`crate::arch::riscv64::aia_imsic::claim_device_irqs`] before the device
-/// raises interrupts.
+/// [`crate::arch::riscv64::aia_imsic::claim_device_irqs_each`] before the
+/// device raises interrupts.
 pub fn pci_enable_msix(
     region: &EcamRegion,
     bus: u8,
@@ -250,8 +250,8 @@ pub fn pci_enable_msix(
 ///
 /// The other half of [`pci_enable_msix`], which leaves the function masked on
 /// purpose: the caller unmasks once every identity the table delivers has a
-/// handler ([`crate::arch::riscv64::aia_imsic::claim_device_irqs`]), so an
-/// interrupt can never arrive before there is something to receive it.
+/// handler ([`crate::arch::riscv64::aia_imsic::claim_device_irqs_each`]), so
+/// an interrupt can never arrive before there is something to receive it.
 pub fn msix_unmask(
     region: &EcamRegion,
     bus: u8,
@@ -484,7 +484,8 @@ pub fn claim_msix(
         msix_entry_count(region, bus, device, function).ok_or(crate::Error::NotImplemented)?;
     // One handler per identity: the entries the driver named for its queues,
     // and the device-wide one for every other entry the table can deliver.
-    let handlers = crate::arch::platform::msix_handlers_for(count, named, fallback);
+    let handlers = crate::arch::platform::msix_handlers_for(count, named, fallback)
+        .ok_or(crate::Error::InvalidArgument)?;
     let first_irq = aia_imsic::claim_device_irqs_each(&handlers)?;
 
     Ok(MsixClaim {

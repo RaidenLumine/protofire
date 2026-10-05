@@ -616,20 +616,51 @@ require_log_line "[its   ] MSI-X on 00:01.0 delivers LPI "
 # placement is what the rest of this section observes, and a device whose
 # entries all name one CPU would fail here.
 require_log_line "[its   ] MSI-X 00:01.0: irq 8193-8196 placed on cpu [0, 1, 0, 1]"
-require_log_line "[virtio-net] RX MSI (irq "
-require_log_line "[virtio-net] TX MSI (irq "
 
-# And the property those two lines exist for, stated as a property rather than
-# as this machine's CPU numbers: the queues were served by *different* cores.
-# A driver that registered one handler for the whole device could not say
-# which core took which queue, and its lines would be absent or agree.  The
+# And the placement is where the device's interrupts are actually served: a
+# queue that reports itself has to name the CPU its entry was placed on.  The
 # CPU is the console's own prefix — the driver prints the queue, the console
-# says where it ran.
-rx_cpu="$(sed -n 's/^\[cpu\([0-9][0-9]*\)\] \[virtio-net\] RX MSI (irq .*/\1/p' "$gicv3_log" | head -n 1)"
-tx_cpu="$(sed -n 's/^\[cpu\([0-9][0-9]*\)\] \[virtio-net\] TX MSI (irq .*/\1/p' "$gicv3_log" | head -n 1)"
-if [ -z "$rx_cpu" ] || [ -z "$tx_cpu" ] || [ "$rx_cpu" = "$tx_cpu" ]; then
-    printf 'aarch64 runtime check failed: the queues were not served by different CPUs (rx=%s tx=%s)\n' \
-        "$rx_cpu" "$tx_cpu" >&2
+# says where it ran, and a driver that read per-CPU state itself would only be
+# duplicating the line it is already on.
+#
+# Which queue reports is the boot's business, not this check's: a completion
+# can land in the ring before the wait, so the transmit queue does not always
+# have a reason to interrupt.  Every queue that does report is checked against
+# its entry, and at least one has to, or the delivery half of the placement
+# claim is untested.
+# The console writes CRLF, and a pattern anchored at `$` never matches a line
+# that still has its carriage return, so the log is stripped first.  (The
+# `grep`-based helpers above do not care; these reads do.)
+placement="$(tr -d '\r' <"$gicv3_log" \
+    | sed -n 's/.*placed on cpu \[\(.*\)\]$/\1/p' | head -n 1)"
+if [ -z "$placement" ]; then
+    printf 'aarch64 runtime check failed: the placement line could not be read\n' >&2
+    tail -n 12 "$gicv3_log" >&2
+    exit 1
+fi
+
+served=0
+for pair in RX:1 TX:2; do
+    queue="${pair%%:*}"
+    field="${pair##*:}"
+    # The entry the transport routed this queue to, from the placement line.
+    expected="$(printf '%s\n' "$placement" | cut -d, -f"$field" | tr -d ' ')"
+    cpu="$(tr -d '\r' <"$gicv3_log" \
+        | sed -n "s/^\[cpu\([0-9][0-9]*\)\] \[virtio-net\] ${queue} MSI (irq .*/\1/p" \
+        | head -n 1)"
+    [ -n "$cpu" ] || continue
+
+    if [ "$cpu" != "$expected" ]; then
+        printf 'aarch64 runtime check failed: the %s queue was served by cpu %s, but its entry is placed on cpu %s\n' \
+            "$queue" "$cpu" "$expected" >&2
+        tail -n 12 "$gicv3_log" >&2
+        exit 1
+    fi
+    served=$((served + 1))
+done
+
+if [ "$served" -eq 0 ]; then
+    printf 'aarch64 runtime check failed: no queue reported which CPU served it\n' >&2
     tail -n 12 "$gicv3_log" >&2
     exit 1
 fi
