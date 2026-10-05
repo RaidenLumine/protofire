@@ -571,8 +571,8 @@ leaves out.
 | Access helpers | Central permission checking on VFS operations | — |
 | SHA-256 integrity | Launch manifest and payload hashes; optional detached signatures | Verification is opt-in: an artifact carrying no signature loads anyway, and there is no key distribution or rotation policy |
 | PAN/SMAP | Kernel-user memory isolation on all three architectures | See the interrupt section: a window held across a block can be closed under its holder |
-| Stack canary | Per-thread random canary, verified on context switch | Software check: it detects a smashed stack rather than preventing the write |
-| MAC type enforcement | Types on subjects and objects, allow rules, VFS/Process/Network hooks, exec transitions | Default is allow until a policy is loaded; deny-by-default needs an explicit policy |
+| Stack canary | `Thread::canary` exists and is never read | There is no check: the heap block's own canary and the guard page below a kernel stack are what detect an overrun |
+| MAC type enforcement | Types on subjects and objects, allow rules enforced at the VFS file-access hook, `MacDenial` audit records | Enforcement reaches files only: `check_process` and `check_network` exist with no call site, so a policy cannot refuse a signal, a trace or a connection; default is allow until a policy is loaded; the four management syscalls (#175-178) do not check the caller |
 | Audit subsystem | Classified event types, ring buffer, syscall entry/exit hooks, AuditSetEnable (#143) and AuditReadLog (#144) | Memory-only in practice: the persistence path exists but nothing enables it, so records are lost on reboot |
 | Service authorization | A privileged rc.d declaration names an account that must resolve; the grant or refusal is audited | Provenance, not authentication: no password is involved, so the elevated token is unauthenticated |
 
@@ -582,9 +582,10 @@ control that are unusual in a hobby kernel.
 - **Biba integrity model**: a formal information-flow policy (System > High >
   Medium > Low).
 - **MAC type-enforcement engine**: security types on subjects and objects, an
-  allow-rule policy enforced at central VFS checkpoints, Process-class
-  (ptrace/signal) and Network-class checks, exec domain transitions, management
-  syscalls (#175-178), and MacDenial audit records on refusal.
+  allow-rule policy enforced at the VFS file-access checkpoint, management
+  syscalls (#175-178), and MacDenial audit records on refusal.  The
+  Process-class (ptrace/signal) and Network-class entry points are written but
+  not called, so enforcement does not reach them yet.
 - **Zone-aware DAC**: segments the filesystem into regions with different trust
   levels (`/system` read-only, `/apps` executable and writable by the token
   its descriptor allows — installing is writing it — and `/data` writable for

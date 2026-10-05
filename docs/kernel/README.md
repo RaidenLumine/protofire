@@ -48,6 +48,7 @@ one of these.
 | [interrupts.md](interrupts.md) | Controllers per machine, the identity registry, MSI, NMI, balancing |
 | [network.md](network.md) | The stack's layers, TCP and UDP, DHCP/DNS/SLAAC, TLS, and what is not wired |
 | [process.md](process.md) | Processes, threads, the scheduler, signals, handles, termination |
+| [security.md](security.md) | Tokens, integrity, DAC, MAC, the audit trail, seccomp, launch integrity |
 | [syscalls.md](syscalls.md) | The trap, the dispatch table, pointer validation, the ring-3 wrappers |
 
 The subsystems these will cover, in the order they are being written: boot and
