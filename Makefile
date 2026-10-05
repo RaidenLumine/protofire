@@ -54,6 +54,7 @@ endif
 		check-docs \
 		check-payload-relocations \
 		check-reproducible-build \
+		release \
 		check-perf-baseline \
 		check-dead-code-allows \
 		check-abi-mirror \
@@ -105,6 +106,7 @@ help:
 		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
 		'  make check-dead-code-allows  - fail if a file-level allow(dead_code) has no reason' \
 		'  make check-reproducible-build - rebuild every artifact twice and compare bytes' \
+		'  make release        - build and sign the release bundle (does not tag or publish)' \
 		'  make check-perf-baseline - boot the demo and compare its measured work to the baseline' \
 		'  make check-abi-mirror  - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
@@ -327,6 +329,17 @@ check-reproducible-build:
 		CRATE="$(CRATE)" \
 		CARGO="$(CARGO)" \
 		sh ./scripts/check-reproducible-build.sh
+
+# A release is the source, the artifacts, and the ability to check one against
+# the other.  This builds the four artifacts the reproducibility gate builds,
+# gives each the name it ships under, signs each with a fresh one-time key, and
+# verifies every signature with the verifier a user would use.  It does not
+# tag or publish; CONTRIBUTING.md -> Releasing has the order around it.
+release:
+	PROFILE="$${PROFILE:-release}" \
+		CRATE="$(CRATE)" \
+		CARGO="$(CARGO)" \
+		sh ./scripts/make-release.sh
 
 # A performance change should be judged by the work it does, not by how busy
 # the host was, so this gate compares counters rather than seconds: it boots

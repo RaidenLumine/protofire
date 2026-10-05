@@ -920,8 +920,11 @@ things make that contract *testable* rather than merely written down:
   verifiable release needs.  One artifact can be signed with a fresh one-time
   key (`cargo run -- sign-release …`, checked with `verify-signature`), using
   the same `lamport-sha256` scheme the kernel verifies manifests with.  Tagged
-  releases, published key records and the documented verify-a-rebuild flow are
-  still ahead (see the roadmap).
+  `make release` builds the four artifacts, names them for shipping, signs each
+  with its own one-time key and verifies every signature with the user's own
+  verifier; [CONTRIBUTING.md](../../CONTRIBUTING.md) carries the order around
+  it.  Tagged 1.x releases and the first published key records are still ahead
+  (see the roadmap).
 - **Measured-work baseline:** a boot with the profilers on prints one line of
   counters — frames taken, pages mapped, blocks read, packets answered — at a
   fixed tick, and `make check-perf-baseline` compares that line against

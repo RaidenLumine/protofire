@@ -237,6 +237,18 @@ with a key that has never signed anything else:
 ```bash
 make verify-p3                                   # the release gate
 make check-reproducible-build                    # same source, same bytes
+make release                                     # build, name, sign, and verify the bundle
+```
+
+`make release` builds the four artifacts the reproducibility gate builds, gives
+each the name it ships under, signs each with a fresh one-time key, verifies
+every signature with the verifier a user would use, and writes `SHA256SUMS`.
+It lands in `dist/<version>/` (override with `RELEASE_DIR`), and it refuses to
+sign a version twice, because a key that signs a second artifact is no longer
+a key that signed one.  The single-step commands are still there when a
+specific artifact needs one:
+
+```bash
 cargo run -- sign-release <artifact> <key-id>    # a fresh one-time key each time
 cargo run -- verify-signature <artifact> <artifact>.sig <key-id>.public.toml
 ```
@@ -244,6 +256,18 @@ cargo run -- verify-signature <artifact> <artifact>.sig <key-id>.public.toml
 The signature and the key record go with the artifact in the release; the
 private half of a Lamport key must not, and must never sign a second artifact
 (the command generates a fresh key every time for exactly that reason).
+
+What `make release` deliberately does not do is tag or publish, and it does
+not choose the version: it reads `Cargo.toml`, where a bump is a deliberate
+act — a 1.x version is a promise about the ABI, not a milestone marker.  The
+release itself is the tag, the uploaded bundle, and the key records published
+beside it, in that order:
+
+1. `make verify-p3` green, and `PROFILE=release make check-reproducible-build`
+   if the release artifacts were built with `PROFILE=release` (they are).
+2. Bump the version in `Cargo.toml`, commit, and tag it.
+3. `make release`, then upload everything under `dist/<version>/` — artifacts,
+   signatures, key records, and `SHA256SUMS` — to the release.
 
 What that buys a user is the check no publisher can fake: rebuild the artifact
 from the tagged source, and verify the bytes you produced against the

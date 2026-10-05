@@ -92,10 +92,12 @@ The authoritative picture of what exists today is
 - **Reproducible releases.** The artifacts are reproducible and gated
   (`make check-reproducible-build`), and one can be signed with a fresh
   one-time key (`cargo run -- sign-release …`, checked with `verify-signature`).
-  [CONTRIBUTING.md](CONTRIBUTING.md) carries the release checklist that ties
-  them together — the gate, the signature, and the rebuild a user can check the
-  signature against.  What remains is the release around them: tagged 1.x
-  versions and the first published key records.
+  `make release` builds the four artifacts, names them for shipping, signs each
+  with its own one-time key, verifies every signature, and writes the checksum
+  manifest, and [CONTRIBUTING.md](CONTRIBUTING.md) carries the order around it
+  — the gate, the tag, the upload, and the rebuild a user can check a signature
+  against.  What remains is the release itself: tagged 1.x versions and the
+  first published key records.
 - **Governance.** Design documents for large changes live under
   [`docs/rfcs/`](docs/rfcs/README.md), with a lifecycle that ends in a record
   of what was decided and why; [MAINTAINERS.md](MAINTAINERS.md) names who
