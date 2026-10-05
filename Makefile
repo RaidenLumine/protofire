@@ -56,6 +56,7 @@ endif
 		check-unsafe-comments \
 		check-repo-integrity \
 		check-docs \
+		check-rfcs \
 		check-payload-relocations \
 		check-reproducible-build \
 		release \
@@ -107,6 +108,7 @@ help:
 		'  make check-unsafe-comments - fail if any configuration gained an undocumented `unsafe` block' \
 		'  make check-repo-integrity  - fail if a ref or the index names a missing git object' \
 		'  make check-docs     - fail if a document cites a file the tree does not have' \
+		'  make check-rfcs     - fail if an RFC number, status or the generated index is wrong' \
 		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
 		'  make check-dead-code-allows  - fail if a file-level allow(dead_code) has no reason' \
 		'  make check-reproducible-build - rebuild every artifact twice and compare bytes' \
@@ -173,6 +175,13 @@ check-repo-integrity:
 # catch a broken working copy before anything is built on it.
 check-docs:
 	sh ./scripts/check-docs.sh
+
+# The RFC directory is the one place a *number* carries meaning: code cites it,
+# a later document supersedes it, and the index that lists it is generated from
+# the documents rather than maintained by hand.  This checks the numbers, the
+# statuses and the supersede links, and fails when the index has drifted.
+check-rfcs:
+	sh ./scripts/check-rfcs.sh
 
 # The co-located runtime and demo crates live inside the kernel crate
 # (src/user/shared/, src/user/demo/).  No symlinks needed.

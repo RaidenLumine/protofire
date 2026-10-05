@@ -62,6 +62,20 @@ accepted, starting at `0001`.  A number is never reused, not even after a
 rejection.  [`0000-template.md`](0000-template.md) is not an RFC and is not
 numbered.
 
+`NNNN` is four **decimal** digits, zero-padded: `0009` is nine and `0010` is
+ten, and no file ever carries a letter.  The padding is what makes the
+directory's order (`ls`, `sort`, a diff) equal to the numeric order.  Numbers
+are global and monotonic, so a skipped number stays skipped; if the project
+ever outgrows four digits, new files take five and the old names stay where
+they are.
+
+Two mechanical facts about this directory are checked by
+[`scripts/check-rfcs.sh`](../../scripts/check-rfcs.sh) (`make check-rfcs`):
+those numbers, and the statuses below.  It also generates the index from the
+documents themselves, so a document's status and the table that lists it
+cannot drift apart — `--record` is how the table is written after a status
+moves.
+
 ## Writing one
 
 Copy the template and fill it in.  Its sections exist because a design that
@@ -92,10 +106,13 @@ and its status says which of the two happened.
 
 ## The documents
 
+<!-- rfcs-table:start -->
 | RFC | Status | Subject |
 |-----|--------|---------|
-| [0001](0001-spread-message-signalled-interrupts.md) | Implemented | Delivering message-signalled interrupts on more than the boot CPU |
-| [0002](0002-signal-frame-carries-the-context.md) | Implemented | Carrying the interrupted context in the signal frame |
+| [0001](0001-spread-message-signalled-interrupts.md) | Implemented | Deliver message-signalled interrupts on more than one CPU |
+| [0002](0002-signal-frame-carries-the-context.md) | Implemented | Carry the interrupted context in the signal frame |
+<!-- rfcs-table:end -->
 
-The table is the index; each document's own status line is the authority, and
-the two say the same thing because moving a status is an edit to both.
+The table is generated from the documents between the two markers above —
+each document's own status line is the authority, and `scripts/check-rfcs.sh`
+is what keeps the table saying the same thing.
