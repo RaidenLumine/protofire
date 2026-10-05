@@ -364,7 +364,7 @@ them.
 | [`README.md`](README.md) | Architecture overview, subsystem dependency graph, memory layout, build system |
 | [`docs/kernel/boot.md`](../kernel/boot.md) | Hand-off, the init pipeline, SMP bring-up |
 | [`docs/kernel/memory.md`](../kernel/memory.md) | Frames, heap, page tables, reclaim |
-| [`process.md`](process.md) | Process model, thread states, scheduler, security tokens |
+| [`docs/kernel/process.md`](../kernel/process.md) | Processes, threads, the scheduler, signals, handles |
 | [`filesystem.md`](filesystem.md) | VFS layer, SimpleFS on-disk format, two-phase commit |
 | [`network.md`](network.md) | Network stack, DHCP, TCP/UDP, DNS |
 | [`docs/kernel/syscalls.md`](../kernel/syscalls.md) | Syscall trap, dispatch table, pointer validation |

@@ -1,6 +1,6 @@
 # Protofire Kernel
 
-This is a bare-metal `#![no_std]` monolithic kernel written in Rust, targeting x86_64, AArch64, and RISC-V 64. It provides a file-oriented userspace ABI with preemptive multi-threading, a native TCP/IP stack, a transactional in-memory filesystem (SimpleFs), NUMA-aware scheduling, virtio-gpu accelerated display, MSI/MSI-X interrupt support, per-thread stack canary protection, and a shared `src/user/shared/` library for both kernel and userspace programs.
+This is a bare-metal `#![no_std]` monolithic kernel written in Rust, targeting x86_64, AArch64, and RISC-V 64. It provides a file-oriented userspace ABI with preemptive multi-threading, a native TCP/IP stack, a transactional in-memory filesystem (SimpleFs), NUMA-aware scheduling, virtio-gpu accelerated display, MSI/MSI-X interrupt support, heap block canaries that attribute an overrun to the allocation that caused it, and a shared `src/user/shared/` library for both kernel and userspace programs.
 
 ## What's Distinct
 

@@ -205,5 +205,5 @@ a range that moves is a range that would have to be updated in two places.
 ## See also
 
 - [boot.md](boot.md) — when these subsystems come up
-- [process.md](../kernel-introduction/process.md) — the threads whose stacks
-  and address spaces these are (until that document is rewritten)
+- [process.md](process.md) — the threads whose stacks and address spaces these
+  are

@@ -42,6 +42,7 @@ one of these.
 |----------|--------|
 | [boot.md](boot.md) | Hand-off, the Rust entry, the init pipeline, SMP bring-up, platform assumptions |
 | [memory.md](memory.md) | Frames, the heap, page tables, kernel stacks, reclaim and swap |
+| [process.md](process.md) | Processes, threads, the scheduler, signals, handles, termination |
 | [syscalls.md](syscalls.md) | The trap, the dispatch table, pointer validation, the ring-3 wrappers |
 
 The subsystems these will cover, in the order they are being written: boot and

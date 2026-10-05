@@ -23,11 +23,15 @@ pub mod syscall;
 pub mod user;
 pub mod util;
 
-/// Stack canary guard, written per-thread by the scheduler before entry.
+/// The `__stack_chk_guard` slot a `-C stack-protector` build links against.
 ///
-/// The compiler-inserted stack protector reads/writes this via the
-/// `__stack_chk_guard` ABI; we expose it as an atomic so per-thread canaries
-/// can be installed race-free by [`kernel::process::scheduler::dispatch`].
+/// Exposed as an atomic so that installing a value on a context switch would
+/// be race-free — but nothing installs one, nothing checks it, and the build
+/// does not enable the protector: the per-thread canary is planned rather than
+/// wired.  See `Thread::canary`, which is initialised and never read, and
+/// `docs/kernel/process.md`.  What *is* real is the heap's block canary
+/// (`src/memory/heap/tlsf.rs`), which attributes an overrun to the allocation
+/// that caused it.
 #[allow(non_upper_case_globals)]
 pub static __stack_chk_guard: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
