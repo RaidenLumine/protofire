@@ -131,6 +131,44 @@ static SHELL_QUOTE_SUFFIX: [u8; b"'\n".len()] = *b"'\n";
 #[link_section = $section]
 static SHELL_WORD_HELP: [u8; b"help".len()] = *b"help";
 
+// `sigasync` is x86_64-only for now: it is the one architecture whose payload
+// carries the test end to end (see `shell_builtin_sigasync`).  The kernel's
+// delivery path is the same shape on all three, so the other two are a port of
+// this builtin rather than a redesign of it.
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_WORD_SIGASYNC: [u8; b"sigasync".len()] = *b"sigasync";
+
+/// What the async handler prints while the interrupted shell is in its probe.
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_SIGASYNC_HANDLER: [u8; b"[user  ] signal handler ran\n".len()] =
+    *b"[user  ] signal handler ran\n";
+
+/// What the shell prints after the handler's return reached the trampoline and
+/// `SIGRETURN` put it back.
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_SIGASYNC_RESUMED: [u8; b"[user  ] resumed after sigreturn\n".len()] =
+    *b"[user  ] resumed after sigreturn\n";
+
+/// The verdict on the register the trampoline clobbers: it is only ours again
+/// if the frame carried the interrupted value.
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_SIGASYNC_REGS_KEPT: [u8; b"[user  ] interrupted register survived\n".len()] =
+    *b"[user  ] interrupted register survived\n";
+
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_SIGASYNC_REGS_LOST: [u8; b"[user  ] interrupted register was clobbered\n".len()] =
+    *b"[user  ] interrupted register was clobbered\n";
+
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_SIGASYNC_FAILED: [u8; b"[user  ] sigasync could not start\n".len()] =
+    *b"[user  ] sigasync could not start\n";
+
 #[link_section = $section]
 static SHELL_WORD_ECHO: [u8; b"echo".len()] = *b"echo";
 
@@ -493,6 +531,160 @@ unsafe fn shell_builtin_echo(tokens: usize, token_count: usize) {
     shell_message!(SHELL_NEWLINE);
 }
 
+/// The signal the async test sends itself: `SIGUSR1`.
+#[cfg(target_arch = "x86_64")]
+const SHELL_SIGASYNC_SIGNAL: usize = 10;
+
+/// The value the signal probe keeps in a register across the delivery.
+///
+/// It is 16 bits so every machine can load it as an immediate, and it is
+/// deliberately not a plausible pointer or count: if it shows up anywhere the
+/// interrupted code did not put it, it is because the register was not put
+/// back.
+#[cfg(target_arch = "x86_64")]
+const SHELL_SIGASYNC_MAGIC: usize = 0x5a5a;
+
+/// How long the probe spins waiting for the tick that delivers the signal.
+///
+/// The tick is a hundred hertz, so this is far past one period even at a
+/// pessimistic instruction rate; the point is that a delivery which never
+/// happens ends the spin rather than hanging the shell.
+// Chosen so AArch64 can load it with one `movz` (0x800 << 16): the machine's
+// `mov` takes only a 16-bit immediate, and the spin must not need a constant
+// pool to be reachable.
+#[cfg(target_arch = "x86_64")]
+const SHELL_SIGASYNC_SPIN_TRIPS: usize = 0x0800_0000;
+
+/// The trampoline the handler returns into.
+///
+/// The kernel enters the handler the way a call would and leaves this function
+/// as its return address, so the frame — which is where the stack pointer
+/// points when this runs — is what `SIGRETURN` is handed.  It also clobbers
+/// one caller-saved register on the way past, which is what makes the register
+/// half of the test real: `SIGRETURN` has to put the interrupted value back
+/// for the probe to see it.
+#[inline(never)]
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+extern "C" fn shell_sigasync_trampoline() -> ! {
+    // SAFETY: this is the payload's own syscall trap, entered with the frame
+    // pointer the ABI expects.  `SIGRETURN` does not return: the kernel
+    // resumes the interrupted code instead.
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!(
+            "mov r11, {magic}",
+            "mov rdi, rsp",
+            "mov rax, {sigreturn}",
+            "int {vector}",
+            "ud2",
+            magic = const SHELL_SIGASYNC_MAGIC,
+            sigreturn = const $crate::syscall::SyscallNumber::SigReturn as usize,
+            vector = const $crate::user::shared::abi::syscall::X86_64_INTERRUPT_VECTOR,
+            options(noreturn, nostack),
+        );
+    }
+}
+
+/// Keep [`SHELL_SIGASYNC_MAGIC`] in a caller-saved register across a delivery.
+///
+/// The loop is pure assembly on purpose: a Rust loop would call something each
+/// trip, and the compiler would then keep the value where the handler's
+/// clobbers cannot reach it — which would test nothing.
+#[inline(never)]
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+unsafe fn shell_sigasync_probe() -> usize {
+    let survived: usize;
+    // SAFETY: the register contract is the one written here — the spin takes
+    // no trap, touches no memory, and the output is read after it.
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!(
+            "mov r11, {magic}",
+            "mov ecx, {trips}",
+            "2:",
+            "dec ecx",
+            "jnz 2b",
+            "mov {survived}, r11",
+            magic = in(reg) SHELL_SIGASYNC_MAGIC,
+            trips = const SHELL_SIGASYNC_SPIN_TRIPS,
+            survived = out(reg) survived,
+            out("ecx") _,
+            options(nostack),
+        );
+    }
+    survived
+}
+
+/// The async handler the test installs.
+///
+/// It is an ordinary function, because that is what the kernel promises to
+/// enter: delivery rewrites the trap frame the way a call would, and the
+/// handler's return is what reaches the trampoline.
+#[inline(never)]
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+extern "C" fn shell_sigasync_handler(_signal: i32) {
+    shell_message!(SHELL_SIGASYNC_HANDLER);
+}
+
+/// `sigasync`: take a signal asynchronously, and prove the path ran.
+///
+/// Nothing in this tree shipped the trampoline the kernel's delivery path
+/// needs, so the path was reachable in principle and reached by nothing.  This
+/// builtin is the missing other half: it installs an async handler with the
+/// trampoline above, sends itself the signal, and then spins in a register the
+/// trampoline clobbers — so the lines it prints say everything that has to
+/// happen for them to appear at all.
+#[inline(never)]
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+unsafe fn shell_builtin_sigasync() {
+    let pid = getpid();
+    if payload_runtime_status_is_error(pid) {
+        shell_message!(SHELL_SIGASYNC_FAILED);
+        return;
+    }
+    let handler = shell_address!(shell_sigasync_handler);
+    let trampoline = shell_address!(shell_sigasync_trampoline);
+    let status = payload_runtime_invoke_raw_status(
+        $crate::syscall::SyscallNumber::SetSignalHandler as usize,
+        SHELL_SIGASYNC_SIGNAL,
+        1,
+        handler,
+        trampoline,
+        0,
+        0,
+    );
+    if payload_runtime_status_is_error(status) {
+        shell_message!(SHELL_SIGASYNC_FAILED);
+        return;
+    }
+    let status = payload_runtime_invoke_raw_status(
+        $crate::syscall::SyscallNumber::SendSignal as usize,
+        pid,
+        SHELL_SIGASYNC_SIGNAL,
+        0,
+        0,
+        0,
+        0,
+    );
+    if payload_runtime_status_is_error(status) {
+        shell_message!(SHELL_SIGASYNC_FAILED);
+        return;
+    }
+
+    // SAFETY: the probe touches no memory and takes no trap.
+    let survived = unsafe { shell_sigasync_probe() };
+    shell_message!(SHELL_SIGASYNC_RESUMED);
+    if survived == SHELL_SIGASYNC_MAGIC {
+        shell_message!(SHELL_SIGASYNC_REGS_KEPT);
+    } else {
+        shell_message!(SHELL_SIGASYNC_REGS_LOST);
+    }
+}
+
 #[inline(never)]
 #[link_section = $section]
 /// The shell's program.  It takes nothing: the loader has already left the
@@ -615,6 +807,27 @@ extern "C" fn shell_main() -> ! {
             SHELL_WORD_EXIT.len(),
         ) {
             exit_with_code(0);
+        } else if {
+            #[cfg(target_arch = "x86_64")]
+            {
+                shell_word_at_is(
+            tokens_ptr,
+            0,
+            shell_address!(SHELL_WORD_SIGASYNC),
+            SHELL_WORD_SIGASYNC.len(),
+                )
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                false
+            }
+        } {
+            // SAFETY: the builtin touches only this payload's own code and
+            // data, and the syscalls it makes are the ABI's.
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                shell_builtin_sigasync();
+            }
         } else {
             shell_message!(SHELL_UNKNOWN_PREFIX);
             // SAFETY: token 0 exists, because the token count is non-zero.

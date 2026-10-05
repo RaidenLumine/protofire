@@ -25,7 +25,7 @@
 # is the `gap:` rows, not the total.
 #
 
-# 18 files, 47 occurrences outside src/arch
+# 19 files, 65 occurrences outside src/arch
 
 abi/ptrace.rs                                        2  # fact: the x86_64 PTRACE_GETREGS register file is a record only that architecture has
 drivers/usb_msd.rs                                   1  # fact: the USB storage controller driver is x86_64 bare-metal hardware
@@ -40,6 +40,10 @@ memory/mod.rs                                        4  # fact: the map_facts mo
 user/demo/demo_program_x86_64_rust_io.rs             1  # fact: x86_64 payload assembly behind a stub that keeps the interface on other machines
 user/demo/demo_program_x86_64_rust.rs                1  # fact: the same, for the Rust payload
 user/demo/payload_test_support.rs                    1  # fact: the helper builds x86_64 payloads for the host tests
+user/demo/shell_payload.rs                          18  # fact: a payload is its architecture — its syscall trap, its
+                                                          # signal trampoline and the section it is extracted from are that
+                                                          # machine's, and the arch layer cannot be called from a blob that
+                                                          # is copied out of the kernel image and run elsewhere
 user/exception.rs                                    4  # fact: the two user-mode exception dispatchers, which exist only where a machine can enter the kernel from user mode
 user/shared/abi/ptrace.rs                            2  # fact: the user-space mirror of the x86_64 PTRACE_GETREGS record
 user/shared/syscall.rs                               2  # fact: the never-returning halt is hlt on x86_64 and wfi on aarch64

@@ -95,6 +95,7 @@ and its status says which of the two happened.
 | RFC | Status | Subject |
 |-----|--------|---------|
 | [0001](0001-spread-message-signalled-interrupts.md) | Implemented | Delivering message-signalled interrupts on more than the boot CPU |
+| [0002](0002-signal-frame-carries-the-context.md) | Implemented | Carrying the interrupted context in the signal frame |
 
 The table is the index; each document's own status line is the authority, and
 the two say the same thing because moving a status is an edit to both.

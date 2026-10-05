@@ -262,6 +262,56 @@ impl RiscV64UserThreadContext {
         frame.sepc = self.instruction_pointer;
         frame.sstatus = self.saved_program_status;
     }
+
+    /// The interrupted code's `x1`..`x31`, in the order
+    /// [`crate::abi::process::RISCV64_SIGNAL_FRAME_REGS`] documents.
+    ///
+    /// A signal frame is the user context in a form that survives being
+    /// written to the user's stack, so the two have one register order
+    /// between them — this pair — rather than a conversion at every use.
+    pub(crate) fn regs(&self) -> [u64; crate::abi::process::RISCV64_SIGNAL_FRAME_REGS] {
+        [
+            self.x1, self.x2, self.x3, self.x4, self.x5, self.x6, self.x7, self.x8, self.x9,
+            self.x10, self.x11, self.x12, self.x13, self.x14, self.x15, self.x16, self.x17,
+            self.x18, self.x19, self.x20, self.x21, self.x22, self.x23, self.x24, self.x25,
+            self.x26, self.x27, self.x28, self.x29, self.x30, self.x31,
+        ]
+    }
+
+    /// Put the `x1`..`x31` back, read in the same order.
+    pub(crate) fn set_regs(&mut self, regs: [u64; crate::abi::process::RISCV64_SIGNAL_FRAME_REGS]) {
+        self.x1 = regs[0];
+        self.x2 = regs[1];
+        self.x3 = regs[2];
+        self.x4 = regs[3];
+        self.x5 = regs[4];
+        self.x6 = regs[5];
+        self.x7 = regs[6];
+        self.x8 = regs[7];
+        self.x9 = regs[8];
+        self.x10 = regs[9];
+        self.x11 = regs[10];
+        self.x12 = regs[11];
+        self.x13 = regs[12];
+        self.x14 = regs[13];
+        self.x15 = regs[14];
+        self.x16 = regs[15];
+        self.x17 = regs[16];
+        self.x18 = regs[17];
+        self.x19 = regs[18];
+        self.x20 = regs[19];
+        self.x21 = regs[20];
+        self.x22 = regs[21];
+        self.x23 = regs[22];
+        self.x24 = regs[23];
+        self.x25 = regs[24];
+        self.x26 = regs[25];
+        self.x27 = regs[26];
+        self.x28 = regs[27];
+        self.x29 = regs[28];
+        self.x30 = regs[29];
+        self.x31 = regs[30];
+    }
 }
 
 // ── RISC-V 64 user-thread context on `Thread` ────────────────────────

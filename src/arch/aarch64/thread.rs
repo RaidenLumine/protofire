@@ -249,6 +249,65 @@ impl AArch64UserThreadContext {
         frame.stack_pointer = self.stack_pointer;
         frame.spsr = self.saved_program_status;
     }
+
+    /// The interrupted code's `x0`..`x30`, in the order
+    /// [`crate::abi::process::AARCH64_SIGNAL_FRAME_REGS`] documents.
+    ///
+    /// A signal frame is the user context in a form that survives being
+    /// written to the user's stack, so the two have one register order
+    /// between them — this pair — rather than a conversion at every use.
+    // Its only caller is the bare-metal delivery path; a host build compiles
+    // the context for the tests and has no trap frame to read.
+    #[cfg_attr(not(target_os = "none"), allow(dead_code))]
+    pub(crate) fn regs(&self) -> [u64; crate::abi::process::AARCH64_SIGNAL_FRAME_REGS] {
+        [
+            self.x0, self.x1, self.x2, self.x3, self.x4, self.x5, self.x6, self.x7, self.x8,
+            self.x9, self.x10, self.x11, self.x12, self.x13, self.x14, self.x15, self.x16,
+            self.x17, self.x18, self.x19, self.x20, self.x21, self.x22, self.x23, self.x24,
+            self.x25, self.x26, self.x27, self.x28, self.x29, self.x30,
+        ]
+    }
+
+    /// Put the `x0`..`x30` back, read in the same order.
+    // Test builds on another host compile this context without the signal path
+    // that calls it.
+    #[cfg_attr(
+        not(any(target_arch = "aarch64", target_os = "none")),
+        allow(dead_code)
+    )]
+    pub(crate) fn set_regs(&mut self, regs: [u64; crate::abi::process::AARCH64_SIGNAL_FRAME_REGS]) {
+        self.x0 = regs[0];
+        self.x1 = regs[1];
+        self.x2 = regs[2];
+        self.x3 = regs[3];
+        self.x4 = regs[4];
+        self.x5 = regs[5];
+        self.x6 = regs[6];
+        self.x7 = regs[7];
+        self.x8 = regs[8];
+        self.x9 = regs[9];
+        self.x10 = regs[10];
+        self.x11 = regs[11];
+        self.x12 = regs[12];
+        self.x13 = regs[13];
+        self.x14 = regs[14];
+        self.x15 = regs[15];
+        self.x16 = regs[16];
+        self.x17 = regs[17];
+        self.x18 = regs[18];
+        self.x19 = regs[19];
+        self.x20 = regs[20];
+        self.x21 = regs[21];
+        self.x22 = regs[22];
+        self.x23 = regs[23];
+        self.x24 = regs[24];
+        self.x25 = regs[25];
+        self.x26 = regs[26];
+        self.x27 = regs[27];
+        self.x28 = regs[28];
+        self.x29 = regs[29];
+        self.x30 = regs[30];
+    }
 }
 
 pub(crate) const AARCH64_EXCEPTION_VECTOR_COUNT: usize = 64;

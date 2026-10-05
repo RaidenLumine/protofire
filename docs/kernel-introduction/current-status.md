@@ -495,7 +495,7 @@ extensions and in-kernel security protocols.
 | Pipe | VFS-backed, anonymous, blocking read/write | No named pipe and no descriptor passing over a pipe |
 | Signal | 43 slots (0-42), including 11 RT signals (32-42); u64 mask, install/enqueue/wait | No signal-storm stress baseline |
 | Signal mask | Per-process blocked signal tracking, u64 bitfield | — |
-| Async signal delivery | Signal frame on user stack, arch-specific trampoline, sigreturn; all three architectures | No program in the tree ships the user-side trampoline, so nothing exercises the path end to end |
+| Async signal delivery | Signal frame on user stack carrying the interrupted context, arch-specific trampoline, sigreturn; all three architectures | The kernel half is on all three; the user-side trampoline the path needs is shipped by the shell payload's `sigasync` builtin on x86_64 only, so aarch64 and RISC-V are unexercised end to end |
 | SA_SIGINFO support | siginfo_t delivery (si_signo, si_code, si_pid, si_uid, si_addr, si_value) | — |
 | SA_RESTART support | Automatic syscall restart on signal return, RestartBlock per thread | — |
 | sigsuspend (#135) | Atomic mask swap and thread suspend until a signal | — |
@@ -532,16 +532,13 @@ including the POSIX signal interaction model.
 - **Limited IPC shapes**: IPC relies mainly on pipes, signals, eventfd/mq; there
   is no standardized shared-memory IPC API (shm remains a purpose-specific
   syscall).
-- **Async delivery has no user half yet**: the kernel injects the signal frame
-  and `sigreturn` restores it on all three architectures, but the trampoline
-  that calls `SIGRETURN` is the program's to supply and nothing in the tree
-  does, so the path is reachable only by a program that brings one.  What the
-  frame carries is where the interrupted code was and how it ran — the
-  instruction pointer, stack pointer and status word (`SignalFrame`,
-  `AArch64SignalFrame`, `RiscV64SignalFrame`) — so a handler's return resumes
-  at the right instruction on the right stack, but with the handler's
-  caller-saved registers rather than the interrupted code's, which the frame
-  does not record.
+- **Async delivery is gated on one architecture.** `make check-x8664-runtime`
+  drives the shell payload's `sigasync` builtin, which installs a handler with
+  its own trampoline, signals itself, and checks that a register the trampoline
+  clobbers came back — so delivery, the trampoline, `sigreturn` and the
+  register restore are all asserted there (RFC 0002).  The kernel's half is the
+  same on all three machines, but the aarch64 and RISC-V payloads do not carry
+  the builtin yet, so their halves of the path are compiled and unexercised.
 - **Contention scenarios not benchmarked**: lock contention and signal storms
   lack stress baselines.
 

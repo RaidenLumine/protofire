@@ -38,6 +38,8 @@ use crate::abi::process::SA_RESTART;
 #[cfg(target_os = "none")]
 use crate::abi::process::SIGNAL_FRAME_SIZE;
 #[cfg(target_os = "none")]
+use crate::kernel::process::thread::X86_64UserThreadContext;
+#[cfg(target_os = "none")]
 use crate::kernel::process::Process;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -341,6 +343,12 @@ fn handle_syscall(context: &mut InterruptContext) {
 ///
 /// Called from [`interrupt_dispatch`] before returning to user mode.
 #[cfg(target_os = "none")]
+/// The most user stack a signal frame may span: the frame itself, the word
+/// under it that the handler's `ret` pops, and the alignment gap above it.
+#[cfg(target_os = "none")]
+const MAX_SIGNAL_FRAME_SPAN: usize = SIGNAL_FRAME_SIZE + 32;
+
+#[cfg(target_os = "none")]
 fn try_async_signal_delivery(context: &mut InterruptContext) {
     // Resolve current process.
     let scheduler = match crate::kernel::process::Scheduler::global() {
@@ -395,28 +403,31 @@ fn try_async_signal_delivery(context: &mut InterruptContext) {
     // Stack layout (addresses descending):
     //
     //   [original stack]           ← user_rsp (original)
-    //   [SignalFrame: 32 bytes]    ← user_rsp - 40 (signal_frame_base)
-    //   [trampoline return addr]   ← user_rsp - 8  (handler RSP)
+    //   [trampoline return addr]   ← signal_frame_base - 8 (handler RSP)
+    //   [SignalFrame]              ← signal_frame_base
     //
     // The handler is entered as if it had been called: its RSP points at the
     // slot holding the trampoline's address, so its own `ret` pops that slot
-    // and leaves RSP at `user_rsp` — the frame is then at `rsp - 40`, which is
-    // what the trampoline hands to `SYS_SIGRETURN`.
-
+    // and leaves RSP at `signal_frame_base` — the frame is then at `rsp`,
+    // which is what the trampoline hands to `SYS_SIGRETURN`.  That is the same
+    // "the frame is where your SP points" contract as the other two machines,
+    // and the alignment works out: RSP at handler entry is 8 modulo 16.
     let user_rsp = context.saved_stack_pointer;
-    let trampoline_ret_addr = user_rsp.wrapping_sub(8);
-    let signal_frame_base = trampoline_ret_addr.wrapping_sub(SIGNAL_FRAME_SIZE as u64);
+    let frame_size = SIGNAL_FRAME_SIZE as u64;
+    let signal_frame_base = user_rsp.saturating_sub(frame_size + 8) & !0xF;
+    let trampoline_ret_addr = signal_frame_base.wrapping_sub(8);
 
-    // Validate the whole region [signal_frame_base .. user_rsp).
-    let total_len = user_rsp.wrapping_sub(signal_frame_base) as usize;
-    if total_len == 0 || total_len > 128 {
+    // Validate the whole region [trampoline_ret_addr .. user_rsp): the frame,
+    // the word under it, and the alignment gap above the frame.
+    let total_len = user_rsp.wrapping_sub(trampoline_ret_addr) as usize;
+    if total_len == 0 || total_len > MAX_SIGNAL_FRAME_SPAN {
         // Sanity check — should never happen with valid RSP.
         return;
     }
 
     let validation_ok = crate::arch::user_access::validate_user_mapping(
         process,
-        signal_frame_base as usize,
+        trampoline_ret_addr as usize,
         total_len,
         crate::memory::paging::PagePermissions::WRITE,
     )
@@ -429,6 +440,9 @@ fn try_async_signal_delivery(context: &mut InterruptContext) {
 
     // Write the SignalFrame and trampoline address.
     let frame = SignalFrame {
+        // Every register: the frame is the interrupted context, not a note
+        // about where it was, so a handler may clobber what it likes.
+        regs: X86_64UserThreadContext::from_interrupt(context).regs(),
         orig_rip: if restart_pending {
             context.rip.wrapping_sub(2)
         } else {

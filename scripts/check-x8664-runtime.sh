@@ -132,11 +132,23 @@ printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU $* -serial stdio >$log_file"
 # registry and not the payload's memory.  The feeder waits for the shell's
 # banner, not for a delay; see its own header for the rest.
 shell_commands() {
-    sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
-        'help' 'echo ring3-shell-answered' \
-        'cat /service/shell/origin' 'cat /service/shell/sha256' \
-        'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
-        'cat /dev/bochs-fb/driver'
+    # The frozen payload is a shell from before the `sigasync` builtin existed,
+    # and what that gate is for is exactly this: an old payload keeps working.
+    # So the signal test is asked for only by the boots whose payload was built
+    # with it — a frozen payload is not asked to grow a command.
+    if [ "$PAYLOAD_SOURCE" = "frozen" ]; then
+        sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
+            'help' 'echo ring3-shell-answered' \
+            'cat /service/shell/origin' 'cat /service/shell/sha256' \
+            'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
+            'cat /dev/bochs-fb/driver'
+    else
+        sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
+            'help' 'echo ring3-shell-answered' \
+            'cat /service/shell/origin' 'cat /service/shell/sha256' \
+            'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
+            'cat /dev/bochs-fb/driver' 'sigasync'
+    fi
 }
 
 set +e
@@ -314,6 +326,24 @@ require_log_exact_line "network"
 # machine has is found inside the driver's own init, and it says so itself.
 require_log_line "owned by bochs-fb (console)"
 require_log_exact_line "bochs-fb"
+
+# ── A signal taken asynchronously, end to end ──────────────────────────
+#
+# The shell's `sigasync` builtin installs a handler with its own trampoline,
+# sends itself SIGUSR1, and then spins in a register the trampoline clobbers.
+# The three lines below are only printed if the whole path ran: the kernel
+# entered the handler on an interrupt return, the handler's own return reached
+# the trampoline, `SIGRETURN` resumed the interrupted instruction, and the
+# register it clobbered came back from the frame — the last line is the
+# difference between a frame that carries the interrupted context and one that
+# only carries where it was.
+# A payload that was frozen before the builtin existed cannot run it; that boot
+# is the check that it still runs everything else.
+if [ "$PAYLOAD_SOURCE" != "frozen" ]; then
+    require_log_line "[user  ] signal handler ran"
+    require_log_line "[user  ] resumed after sigreturn"
+    require_log_line "[user  ] interrupted register survived"
+fi
 
 # ── The user programs ran to the end ───────────────────────────────────
 #

@@ -971,6 +971,11 @@ fn log_user_exception_termination(frame: &TrapFrame) {
 ///
 /// Semantics match the x86_64 `try_async_signal_delivery` — called from
 /// the trap dispatch path before returning to user mode after an IRQ.
+/// The most user stack a signal frame may span: the frame itself, plus the
+/// alignment gap the frame base leaves below the interrupted SP.
+#[cfg(target_os = "none")]
+const MAX_SIGNAL_FRAME_SPAN: usize = crate::abi::process::AARCH64_SIGNAL_FRAME_SIZE + 32;
+
 #[cfg(target_os = "none")]
 fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
     use crate::abi::process::AArch64SignalFrame;
@@ -1028,10 +1033,10 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
     // The trampoline then hands its own SP to `SYS_SIGRETURN` — the frame is
     // exactly there.
     let user_sp = frame.stack_pointer;
-    let signal_frame_base = user_sp.wrapping_sub(AARCH64_SIGNAL_FRAME_SIZE as u64);
+    let signal_frame_base = user_sp.saturating_sub(AARCH64_SIGNAL_FRAME_SIZE as u64) & !0xF;
 
     let total_len = user_sp.wrapping_sub(signal_frame_base) as usize;
-    if total_len == 0 || total_len > 128 {
+    if total_len == 0 || total_len > MAX_SIGNAL_FRAME_SPAN {
         return;
     }
 
@@ -1060,6 +1065,9 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
     // Restarting an interrupted syscall on AArch64 therefore has to be
     // driven from the synchronous syscall path, not here.
     let sig_frame = AArch64SignalFrame {
+        // Every register: the frame is the interrupted context, not a note
+        // about where it was, so a handler may clobber what it likes.
+        regs: AArch64UserThreadContext::from_trap(frame).regs(),
         orig_elr: frame.elr,
         orig_sp: user_sp,
         orig_spsr: frame.spsr,

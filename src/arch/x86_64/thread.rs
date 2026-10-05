@@ -160,6 +160,42 @@ impl X86_64UserThreadContext {
         context.saved_stack_pointer = self.stack_pointer;
         context.saved_stack_segment = self.stack_segment;
     }
+
+    /// The interrupted code's general registers, in the order
+    /// [`crate::abi::process::SIGNAL_FRAME_REGS`] documents.
+    ///
+    /// A signal frame is the user context in a form that survives being
+    /// written to the user's stack, so the two have one register order
+    /// between them — this pair — rather than a conversion at every use.
+    // Only the bare-metal delivery and restore read them: a host build has no
+    // trap frame to deliver from and no signal path to restore into.
+    #[cfg_attr(not(target_os = "none"), allow(dead_code))]
+    pub(crate) fn regs(&self) -> [u64; crate::abi::process::SIGNAL_FRAME_REGS] {
+        [
+            self.rax, self.rbx, self.rcx, self.rdx, self.rsi, self.rdi, self.rbp, self.r8, self.r9,
+            self.r10, self.r11, self.r12, self.r13, self.r14, self.r15,
+        ]
+    }
+
+    /// Put the general registers back, read in the same order.
+    #[cfg_attr(not(target_os = "none"), allow(dead_code))]
+    pub(crate) fn set_regs(&mut self, regs: [u64; crate::abi::process::SIGNAL_FRAME_REGS]) {
+        self.rax = regs[0];
+        self.rbx = regs[1];
+        self.rcx = regs[2];
+        self.rdx = regs[3];
+        self.rsi = regs[4];
+        self.rdi = regs[5];
+        self.rbp = regs[6];
+        self.r8 = regs[7];
+        self.r9 = regs[8];
+        self.r10 = regs[9];
+        self.r11 = regs[10];
+        self.r12 = regs[11];
+        self.r13 = regs[12];
+        self.r14 = regs[13];
+        self.r15 = regs[14];
+    }
 }
 pub(crate) const X86_64_EXCEPTION_VECTOR_COUNT: usize = 32;
 // Keep nested user-exception delivery bounded so the per-thread bookkeeping can

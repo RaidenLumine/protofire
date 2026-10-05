@@ -23,6 +23,9 @@ pub fn restore_signal_frame(frame_ptr: usize) -> Result<()> {
         let mut user_ctx = thread
             .x86_64_user_context()
             .ok_or(crate::Error::InternalError)?;
+        // Every register the handler was free to clobber, then the three words
+        // that say where the interrupted code was.
+        user_ctx.set_regs(frame.regs);
         user_ctx.instruction_pointer = frame.orig_rip;
         user_ctx.rflags = frame.orig_rflags;
         user_ctx.stack_pointer = frame.orig_rsp;

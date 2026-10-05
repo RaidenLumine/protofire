@@ -592,6 +592,10 @@ fn advance_past_idle_wfi(frame: &mut TrapFrame) {
 
 // ── Async signal delivery (preemptive) ──
 
+/// The most user stack a signal frame may span: the frame itself, plus the
+/// alignment gap the frame base leaves below the interrupted SP.
+const MAX_SIGNAL_FRAME_SPAN: usize = crate::abi::process::RISCV64_SIGNAL_FRAME_SIZE + 32;
+
 /// Attempt to deliver a pending async signal by injecting a signal frame
 /// onto the user stack and rewriting the [`TrapFrame`].
 ///
@@ -652,10 +656,10 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
     // The trampoline then hands its own SP to `SYS_SIGRETURN` — the frame is
     // exactly there.
     let user_sp = frame.stack_pointer;
-    let signal_frame_base = user_sp.wrapping_sub(RISCV64_SIGNAL_FRAME_SIZE as u64);
+    let signal_frame_base = user_sp.saturating_sub(RISCV64_SIGNAL_FRAME_SIZE as u64) & !0xF;
 
     let total_len = user_sp.wrapping_sub(signal_frame_base) as usize;
-    if total_len == 0 || total_len > 128 {
+    if total_len == 0 || total_len > MAX_SIGNAL_FRAME_SPAN {
         return;
     }
 
@@ -687,8 +691,10 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
     // The frame is the ABI record `SYS_SIGRETURN` reads back, so the shape has
     // one definition rather than one per side of the syscall.
     let sig_frame = RiscV64SignalFrame {
+        // Every register, including `x2`: the frame is the interrupted
+        // context, not a note about where it was.
+        regs: RiscV64UserThreadContext::from_trap(frame).regs(),
         orig_sepc: frame.sepc,
-        orig_sp: user_sp,
         orig_sstatus: frame.sstatus,
         signal: signal_num as u64,
     };

@@ -31,10 +31,11 @@ pub fn restore_signal_frame(frame_ptr: usize) -> Result<()> {
         let mut user_ctx = thread
             .riscv64_user_context()
             .ok_or(crate::Error::InternalError)?;
+        // Every register the handler was free to clobber — including `x2`,
+        // which is this machine's stack pointer — then where the interrupted
+        // code was.
+        user_ctx.set_regs(frame.regs);
         user_ctx.instruction_pointer = frame.orig_sepc;
-        // The user stack pointer lives in x2/SP, which is what
-        // `write_to_trap` puts back into the trap frame's stack pointer.
-        user_ctx.x2 = frame.orig_sp;
         user_ctx.saved_program_status = frame.orig_sstatus;
         thread.set_riscv64_user_context(user_ctx);
         Ok(())

@@ -357,14 +357,19 @@ to hand the saved frame to `sigreturn` (#134):
 
 | Machine | Where the frame is when the trampoline runs | What to pass |
 |---------|--------------------------------------------|--------------|
-| x86_64 | the return pops the trampoline's address, so `rsp` sits 40 bytes above the frame | `rsp - 40` |
-| AArch64 | `sp` *is* the frame: the address travels in `x30`, not on the stack | `sp` |
-| RISC-V 64 | `sp` *is* the frame: the address travels in `ra`, not on the stack | `sp` |
+| x86_64 | the handler's `ret` pops the trampoline's address, so `rsp` is the frame | `rsp` |
+| AArch64 | `sp` *is* the frame: the return address travelled in `x30`, not on the stack | `sp` |
+| RISC-V 64 | `sp` *is* the frame: the return address travelled in `ra`, not on the stack | `sp` |
 
 The frame is the machine's ABI record (`SignalFrame`, `AArch64SignalFrame`,
 `RiscV64SignalFrame`), and a trampoline that passes the wrong pointer is a
 `sigreturn` that reads whatever is there. What the frame carries — and what it
 does not — is in the [status document](current-status.md).
+
+That shape means the trampoline is three instructions: load the `sigreturn`
+number, move the stack pointer into the argument register, and trap. The shell
+payload's `sigasync` builtin is a working example of one (x86_64 today; the
+other two architectures take the same shape through `svc` and `ecall`).
 
 ### Signal mask
 

@@ -175,15 +175,27 @@ pub const PROCESS_SIGNAL_RECORD_SENDER_PID_OFFSET: usize =
     offset_of!(ProcessSignalRecord, sender_pid);
 pub const PROCESS_SIGNAL_RECORD_PAYLOAD_OFFSET: usize = offset_of!(ProcessSignalRecord, payload);
 
+/// Registers [`SignalFrame`] carries, in the order
+/// rax, rbx, rcx, rdx, rsi, rdi, rbp, r8, r9, r10, r11, r12, r13, r14, r15.
+///
+/// The stack pointer is not among them: it is `orig_rsp` on the frame, and
+/// the frame's own address is what the handler's return makes available.
+pub const SIGNAL_FRAME_REGS: usize = 15;
+
 /// Frame pushed onto the user stack for async (preemptive) signal delivery.
 ///
-/// The kernel writes this below the user's current RSP before rewriting the
+/// The kernel writes it below the user's current RSP before rewriting the
 /// InterruptContext to jump to the user handler.  When the handler returns,
 /// the ring3 trampoline passes a pointer to this frame to `SYS_SIGRETURN`,
-/// which restores the original RIP / RSP / RFLAGS.
+/// which puts the interrupted context back — the registers below, and the
+/// instruction pointer, stack pointer and flags after them.  A handler is
+/// free to clobber registers because they are all here.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SignalFrame {
+    /// The interrupted code's general registers, in [`SIGNAL_FRAME_REGS`]
+    /// order.
+    pub regs: [u64; SIGNAL_FRAME_REGS],
     /// Original RIP of the interrupted user code.
     pub orig_rip: u64,
     /// Original RSP of the interrupted user code.
@@ -197,15 +209,23 @@ pub struct SignalFrame {
 /// Wire size of [`SignalFrame`].
 pub const SIGNAL_FRAME_SIZE: usize = size_of::<SignalFrame>();
 
+/// Registers [`AArch64SignalFrame`] carries, in the order `x0`..`x30`.
+///
+/// The stack pointer is not among them: it is `orig_sp` on the frame.
+pub const AARCH64_SIGNAL_FRAME_REGS: usize = 31;
+
 /// AArch64-specific signal frame, pushed on the user stack by
 /// [`try_async_signal_delivery_aarch64`].
 ///
-/// Layout-compatible with [`SignalFrame`] (4 × u64 = 32 bytes) but stores
-/// AArch64 exception-return state (ELR, SP, SPSR) rather than x86_64
+/// The same shape as [`SignalFrame`]: the interrupted code's registers, then
+/// the AArch64 exception-return state (ELR, SP, SPSR) rather than x86_64
 /// (RIP, RSP, RFLAGS).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AArch64SignalFrame {
+    /// The interrupted code's `x0`..`x30`, in [`AARCH64_SIGNAL_FRAME_REGS`]
+    /// order.
+    pub regs: [u64; AARCH64_SIGNAL_FRAME_REGS],
     /// Original ELR_EL1 of the interrupted user code.
     pub orig_elr: u64,
     /// Original SP_EL0 of the interrupted user code.
@@ -219,19 +239,26 @@ pub struct AArch64SignalFrame {
 /// Wire size of [`AArch64SignalFrame`].
 pub const AARCH64_SIGNAL_FRAME_SIZE: usize = size_of::<AArch64SignalFrame>();
 
+/// Registers [`RiscV64SignalFrame`] carries, in the order `x1`..`x31`.
+///
+/// Unlike the other two, the stack pointer is among them: RISC-V calls it
+/// `x2`, and the machine's own name is the honest one to carry.
+pub const RISCV64_SIGNAL_FRAME_REGS: usize = 31;
+
 /// RISC-V-specific signal frame, pushed on the user stack by
 /// [`try_async_signal_delivery_riscv64`].
 ///
-/// The same four words as [`SignalFrame`] and [`AArch64SignalFrame`], holding
-/// RISC-V exception-return state (SEPC, SP, SSTATUS) rather than x86_64
-/// (RIP, RSP, RFLAGS) or AArch64 (ELR, SP, SPSR).
+/// The same shape as the other two, holding RISC-V exception-return state
+/// (SEPC, SSTATUS) rather than x86_64 (RIP, RSP, RFLAGS) or AArch64
+/// (ELR, SP, SPSR).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RiscV64SignalFrame {
+    /// The interrupted code's `x1`..`x31`, in [`RISCV64_SIGNAL_FRAME_REGS`]
+    /// order.
+    pub regs: [u64; RISCV64_SIGNAL_FRAME_REGS],
     /// Original SEPC of the interrupted user code.
     pub orig_sepc: u64,
-    /// Original user stack pointer of the interrupted user code.
-    pub orig_sp: u64,
     /// Original SSTATUS of the interrupted user code.
     pub orig_sstatus: u64,
     /// Signal number being delivered.
@@ -571,17 +598,78 @@ mod tests {
     #[test]
     fn signal_frame_size_and_layout() {
         use super::SignalFrame;
+        use super::SIGNAL_FRAME_REGS;
         use super::SIGNAL_FRAME_SIZE;
-        assert_eq!(SIGNAL_FRAME_SIZE, 32);
+        // The registers first, then where the interrupted code was: the
+        // handler's return only has to find the frame, and the kernel's
+        // restore reads it in the order below.
+        assert_eq!(SIGNAL_FRAME_SIZE, 152);
         assert_eq!(SIGNAL_FRAME_SIZE, core::mem::size_of::<SignalFrame>());
-        // Offset 0 = orig_rip
-        // Offset 8 = orig_rsp
-        // Offset 16 = orig_rflags
-        // Offset 24 = signal
-        assert_eq!(core::mem::offset_of!(SignalFrame, orig_rip), 0);
-        assert_eq!(core::mem::offset_of!(SignalFrame, orig_rsp), 8);
-        assert_eq!(core::mem::offset_of!(SignalFrame, orig_rflags), 16);
-        assert_eq!(core::mem::offset_of!(SignalFrame, signal), 24);
+        let after_regs = 8 * SIGNAL_FRAME_REGS;
+        assert_eq!(core::mem::offset_of!(SignalFrame, regs), 0);
+        assert_eq!(core::mem::offset_of!(SignalFrame, orig_rip), after_regs);
+        assert_eq!(core::mem::offset_of!(SignalFrame, orig_rsp), after_regs + 8);
+        assert_eq!(
+            core::mem::offset_of!(SignalFrame, orig_rflags),
+            after_regs + 16
+        );
+        assert_eq!(core::mem::offset_of!(SignalFrame, signal), after_regs + 24);
+    }
+
+    #[test]
+    fn aarch64_signal_frame_size_and_layout() {
+        use super::AArch64SignalFrame;
+        use super::AARCH64_SIGNAL_FRAME_REGS;
+        use super::AARCH64_SIGNAL_FRAME_SIZE;
+        assert_eq!(AARCH64_SIGNAL_FRAME_SIZE, 280);
+        assert_eq!(
+            AARCH64_SIGNAL_FRAME_SIZE,
+            core::mem::size_of::<AArch64SignalFrame>()
+        );
+        let after_regs = 8 * AARCH64_SIGNAL_FRAME_REGS;
+        assert_eq!(core::mem::offset_of!(AArch64SignalFrame, regs), 0);
+        assert_eq!(
+            core::mem::offset_of!(AArch64SignalFrame, orig_elr),
+            after_regs
+        );
+        assert_eq!(
+            core::mem::offset_of!(AArch64SignalFrame, orig_sp),
+            after_regs + 8
+        );
+        assert_eq!(
+            core::mem::offset_of!(AArch64SignalFrame, orig_spsr),
+            after_regs + 16
+        );
+        assert_eq!(
+            core::mem::offset_of!(AArch64SignalFrame, signal),
+            after_regs + 24
+        );
+    }
+
+    #[test]
+    fn riscv64_signal_frame_size_and_layout() {
+        use super::RiscV64SignalFrame;
+        use super::RISCV64_SIGNAL_FRAME_REGS;
+        use super::RISCV64_SIGNAL_FRAME_SIZE;
+        assert_eq!(RISCV64_SIGNAL_FRAME_SIZE, 272);
+        assert_eq!(
+            RISCV64_SIGNAL_FRAME_SIZE,
+            core::mem::size_of::<RiscV64SignalFrame>()
+        );
+        let after_regs = 8 * RISCV64_SIGNAL_FRAME_REGS;
+        assert_eq!(core::mem::offset_of!(RiscV64SignalFrame, regs), 0);
+        assert_eq!(
+            core::mem::offset_of!(RiscV64SignalFrame, orig_sepc),
+            after_regs
+        );
+        assert_eq!(
+            core::mem::offset_of!(RiscV64SignalFrame, orig_sstatus),
+            after_regs + 8
+        );
+        assert_eq!(
+            core::mem::offset_of!(RiscV64SignalFrame, signal),
+            after_regs + 16
+        );
     }
 
     #[test]
