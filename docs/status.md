@@ -533,7 +533,7 @@ networking, with more protocols in the tree than the receive path dispatches.
 | Mutex | Spin mutex over the IRQ-safe spinlock; does not park a waiter | No lock-contention benchmark |
 | Semaphore | Counting semaphore, exercised by the process stress tests | No caller in the kernel |
 | Spinlock | IRQ-safe spinlock | — |
-| Shared memory | System V shm: shmget/shmat/shmdt/shmctl (#100-103); frames freed on last detach after IPC_RMID | Purpose-specific syscalls rather than a file- or handle-shaped IPC API; no POSIX `shm_open`; the registry entry is dropped by `reap_deleted_segments`, which has no live call site |
+| Shared memory | System V shm: shmget/shmat/shmdt/shmctl (#100-103); IPC_RMID frees an unattached segment at once, and a mapped one when its last detach arrives | Purpose-specific syscalls rather than a file- or handle-shaped IPC API; no POSIX `shm_open` |
 | Shell pipeline | Two commands piped together by the ring-3 shell | No kernel process group; the shell tracks jobs itself |
 
 **Strengths:** complete synchronization primitives, and signal machinery for

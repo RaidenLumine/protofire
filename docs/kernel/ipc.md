@@ -144,10 +144,11 @@ on the process so exit and fork can clean it up.  `shmdt` unmaps and drops
 the attachment.
 
 `shmctl` supports `IPC_RMID` and `IPC_STAT`/`IPC_SET`.  Removal is deferred:
-the segment is marked deleted, new attaches are refused, and the frames are
-freed when the last process detaches.  The registry entry is a second step:
-`reap_deleted_segments` is written to drop it, and has no live call site
-today, so a removed segment's id and key stay taken until something calls it.
+the segment is marked deleted and new attaches are refused.  If nothing is
+attached the frames are freed and the registry entry dropped there and then;
+if a process still has it mapped, the detach that takes the last reference is
+what frees the frames and drops the entry — so an id is never reusable while
+a mapping of it is live, and never left behind after the mapping is gone.
 There is no POSIX `shm_open` name in the filesystem, which is the difference
 the status table notes.
 

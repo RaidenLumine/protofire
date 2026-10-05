@@ -222,6 +222,28 @@ impl ShmRegistry {
             next_id: 0,
         }
     }
+
+    /// Forget a segment marked for deletion once nothing is attached to it.
+    ///
+    /// `shmctl(IPC_RMID)` frees a segment that has no attaches when it runs.
+    /// This is the other half: a segment removed while a process still had it
+    /// mapped keeps its id and key until the detach that takes the last
+    /// reference, which is also what drops the frames — so an id is never
+    /// reusable while a mapping of it is live, and never left behind after
+    /// the mapping is gone.
+    fn reap_unattached(&mut self, shmid: usize) -> bool {
+        let Some(seg) = self.by_id.get(&shmid).cloned() else {
+            return false;
+        };
+        if !seg.deleted.load(Ordering::Acquire) || seg.attach_count.load(Ordering::Acquire) != 0 {
+            return false;
+        }
+
+        self.by_id.remove(&shmid);
+        self.by_key.remove(&seg.key);
+        seg.free_frames();
+        true
+    }
 }
 
 /// Global shm registry, guarded by a mutex.
@@ -317,18 +339,17 @@ pub fn shmat(
 pub fn shmdt(shmid: usize, process: &Process) -> Result<()> {
     let attachment = process.find_shm_attachment(shmid).ok_or(Error::NotFound)?;
 
-    let registry = SHM_REGISTRY.lock();
-    let seg = registry.by_id.get(&shmid).ok_or(Error::NotFound)?;
-
-    seg.detach_from_process(process.pid(), attachment.virtual_address, seg.frame_count);
+    {
+        let registry = SHM_REGISTRY.lock();
+        let seg = registry.by_id.get(&shmid).ok_or(Error::NotFound)?.clone();
+        seg.detach_from_process(process.pid(), attachment.virtual_address, seg.frame_count);
+    }
 
     process.remove_shm_attachment(shmid);
 
-    // If the segment was marked for deletion and no more attaches, free frames.
-    if seg.deleted.load(Ordering::Acquire) && seg.attach_count.load(Ordering::Acquire) == 0 {
-        seg.free_frames();
-        // Remove from registry — deferred to shmctl IPC_RMID handler.
-    }
+    // A segment removed while it was attached is freed here, by the detach
+    // that took the last reference.
+    SHM_REGISTRY.lock().reap_unattached(shmid);
 
     Ok(())
 }
@@ -387,33 +408,6 @@ pub fn shmctl(shmid: usize, cmd: usize, buf: Option<&mut abi::ShmidDs>) -> Resul
     }
 }
 
-/// Clean up all segments that were marked deleted (IPC_RMID) and have no
-/// attaches, freeing their frames and removing them from the registry.
-///
-/// Intended to be called from a periodic memory-management tick.  The
-/// per-process detach at teardown is wired in the process lifecycle; this
-/// reaper currently has no live call site, so it is kept for the reaping
-/// feature.
-#[allow(dead_code)]
-pub(crate) fn reap_deleted_segments() {
-    let mut registry = SHM_REGISTRY.lock();
-    let to_remove: Vec<usize> = registry
-        .by_id
-        .iter()
-        .filter(|(_, seg)| {
-            seg.deleted.load(Ordering::Acquire) && seg.attach_count.load(Ordering::Acquire) == 0
-        })
-        .map(|(&id, _)| id)
-        .collect();
-
-    for id in to_remove {
-        if let Some(seg) = registry.by_id.remove(&id) {
-            registry.by_key.remove(&seg.key);
-            seg.free_frames();
-        }
-    }
-}
-
 /// Detach all shm segments for a terminating process.
 ///
 /// Called from the process-teardown path
@@ -428,11 +422,16 @@ pub(crate) fn detach_all_for_process(process: &Process) {
             virtual_address: a.virtual_address,
         })
         .collect();
-    let registry = SHM_REGISTRY.lock();
+    let mut registry = SHM_REGISTRY.lock();
     for att in &attachments {
-        if let Some(seg) = registry.by_id.get(&att.shmid) {
+        if let Some(seg) = registry.by_id.get(&att.shmid).cloned() {
             seg.detach_from_process(process.pid(), att.virtual_address, seg.frame_count);
         }
+    }
+    // A segment removed while this process had it mapped is freed now, by
+    // the detach that took the last reference.
+    for att in &attachments {
+        registry.reap_unattached(att.shmid);
     }
     drop(registry);
     process.clear_shm_attachments();
@@ -461,4 +460,73 @@ fn pick_shm_address(process: &Process, size: usize) -> Result<usize> {
 
     process.set_shm_va_hint(next);
     Ok(va)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A segment with no frames behind it, marked deleted or not.
+    ///
+    /// The frames are the allocator's business and this test is about the
+    /// registry entries, so there are none to free: `free_frames` walks an
+    /// empty list and the check needs no memory manager.
+    fn segment(key: usize, deleted: bool) -> Arc<SharedMemorySegment> {
+        Arc::new(SharedMemorySegment {
+            key,
+            size: 0,
+            frame_count: 0,
+            frames: Vec::new(),
+            perm: Mutex::new(abi::IpcPerm::new(key, 1000, 1000, 0o600)),
+            creator_pid: 1,
+            atime: AtomicU64::new(0),
+            dtime: AtomicU64::new(0),
+            ctime: AtomicU64::new(0),
+            last_attach_pid: AtomicU32::new(0),
+            attach_count: AtomicU32::new(0),
+            deleted: AtomicBool::new(deleted),
+        })
+    }
+
+    #[test]
+    fn a_deleted_segment_leaves_the_registry_with_its_last_attach() {
+        let mut registry = ShmRegistry::new();
+        let seg = segment(7, true);
+        registry.by_key.insert(7, seg.clone());
+        registry.by_id.insert(1, seg);
+
+        assert!(registry.reap_unattached(1));
+        assert!(registry.by_id.is_empty(), "id stays reserved");
+        assert!(registry.by_key.is_empty(), "key stays reserved");
+        // The second call finds nothing: a late detach cannot free twice.
+        assert!(!registry.reap_unattached(1));
+    }
+
+    #[test]
+    fn an_attached_deleted_segment_keeps_its_entries() {
+        let mut registry = ShmRegistry::new();
+        let seg = segment(8, true);
+        seg.attach_count.store(1, Ordering::Release);
+        registry.by_key.insert(8, seg.clone());
+        registry.by_id.insert(2, seg.clone());
+
+        assert!(!registry.reap_unattached(2));
+        assert!(registry.by_id.contains_key(&2));
+        assert!(registry.by_key.contains_key(&8));
+
+        seg.attach_count.store(0, Ordering::Release);
+        assert!(registry.reap_unattached(2));
+        assert!(registry.by_id.is_empty());
+    }
+
+    #[test]
+    fn a_live_segment_is_never_reaped() {
+        let mut registry = ShmRegistry::new();
+        let seg = segment(9, false);
+        registry.by_key.insert(9, seg.clone());
+        registry.by_id.insert(3, seg);
+
+        assert!(!registry.reap_unattached(3));
+        assert!(registry.by_id.contains_key(&3));
+    }
 }
