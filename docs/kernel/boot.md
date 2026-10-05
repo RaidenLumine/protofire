@@ -204,6 +204,8 @@ from the platform are worth naming next to the parts it does not ask for:
 
 ## See also
 
+- [interrupts.md](interrupts.md) — the controllers the pipeline starts, and the
+  message path it programs
 - [../fmts/syscall-abi.md](../fmts/syscall-abi.md) — the contract the first
   ring-3 program is the first caller of
 - [syscalls.md](syscalls.md) — the trap the first program enters through
