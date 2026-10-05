@@ -268,7 +268,7 @@ The `scripts/verify.sh` script runs tiered checks:
 
 ## ABI Stability Policy
 
-- **Syscall numbers are stable**. The dispatch table (`syscall::Table` in `src/syscall/table.rs`) numbers operations 0–189, of which 188 carry a handler and 141–142 are reserved. New syscalls must use previously unassigned slots.
+- **Syscall numbers are stable**. The dispatch table (`syscall::Table` in `src/syscall/table.rs`) names operations 0–192, every one of them with a handler, with 141–142 left reserved. New syscalls must use previously unassigned slots.
 - **`src/user/shared/` is the ABI boundary**. This module defines the ABI record types (`FileStat`, `DirectoryEntryRecord`, `IoVec`, etc.) and syscall wrapper functions. Changes to its public types require coordination across all consumers.
 - The kernel's own version lives in `Cargo.toml`, and it is not the ABI version: the syscall contract carries its own `SYSCALL_ABI_VERSION_MAJOR/MINOR`, reported to user space through `RuntimeAbiInfo`. Ring-3 ELFs are shipped with the demo disk and normally rebuilt together with the kernel; the frozen payloads are the exception, and they are what gives "we do not break userspace" something to break (`make check-abi-frozen-payload`).
 

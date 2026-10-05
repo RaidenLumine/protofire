@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(mapping(1 << FL_MIN), (FL_MIN, 0));
         // A 4 KiB block maps to first-level index 12 (log2(4096)).
         assert_eq!(mapping(4096), (12, 0));
-        // The full 16 MiB heap maps into the top class.
+        // The whole heap maps into the top class.
         let (fl, sl) = mapping(KERNEL_HEAP_SIZE);
         assert!((FL_MIN..=FL_MAX).contains(&fl));
         assert!(sl < SL_COUNT);

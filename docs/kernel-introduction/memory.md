@@ -49,7 +49,7 @@ static DETECTED_PHYSICAL_MEMORY: AtomicU64 = AtomicU64::new(0);
   zero).
 - `detect_memory() -> usize` — the internal fallback: if the atomic
   is non-zero it is returned, otherwise the caller gets
-  `frame::physical_pool_size()` (32 MiB).
+  `frame::physical_pool_size()` (512 MiB).
 
 The bootloader sources are:
 - **x86_64** — Multiboot2 memory map (`mb2_tag_mmap`).
@@ -73,7 +73,7 @@ pub struct FrameAllocator {
 
 ### Backing store
 
-A static 32 MiB pool (`PHYSICAL_POOL`) is the default backing store.  The
+A static 512 MiB pool (`PHYSICAL_POOL`) is the default backing store.  The
 `init(total_size)` method clamps the caller's detected size to this pool and
 rounds down to whole frames.  On real hardware the frame allocator would manage
 true physical frames; the static pool serves for prototyping and host-side
@@ -344,11 +344,11 @@ heap/
 ### TLSF Parameters
 
 ```
-KERNEL_HEAP_SIZE  = 16 MiB
+KERNEL_HEAP_SIZE  = 64 MiB
 HEAP_BLOCK_ALIGNMENT = 16 bytes
 HEADER_SIZE       = 16 bytes (size + prev_phys_block)
 MIN_FREE_BLOCK    = 32 bytes
-FL_MIN = 5, FL_MAX = 24  →  FL_COUNT = 20
+FL_MIN = 5, FL_MAX = 26  →  FL_COUNT = 22
 SL_COUNT = 32
 FREE_LISTS_COUNT  = 20 * 32 = 640
 ```
@@ -483,7 +483,7 @@ targets.
 
 ### Kernel Address Space
 
-The kernel heap occupies a contiguous region (`KERNEL_HEAP_SIZE` = 16 MiB),
+The kernel heap occupies a contiguous region (`KERNEL_HEAP_SIZE` = 64 MiB),
 registered as `MappingKind::KernelHeap` in the software page table.  The heap
 backs all `alloc`/`dealloc` calls via the `GlobalAlloc` trait.
 

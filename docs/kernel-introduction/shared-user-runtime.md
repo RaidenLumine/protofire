@@ -125,7 +125,7 @@ described below; `src/user/shared/abi/` lists the rest, and
 | `AccessQueryRecord` | 8 bytes | `required_access`, `granted_mode_bits`, `flags` |
 | `PermissionMetadataRecord` | 12 bytes | `owner_uid`, `owner_gid`, `mode`, `reserved` |
 | `DirectoryEntryRecord` | 32 bytes | Header for `read_dir`: `kind`, `size`, `name_offset`, `name_len` |
-| `MountInfoRecord` | 356 bytes | `path[256]`, `fs_name[32]`, `device[64]`, `flags` |
+| `MountInfoRecord` | 368 bytes | `path[256]`, `fs_name[32]`, `device[64]`, `flags`, `reserved` |
 | `BlockDeviceInfoRecord` | 88 bytes | `name[64]`, `block_size`, `block_count`, `read_only` |
 
 Constants: `FILE_KIND_DIRECTORY`, `FILE_KIND_FILE`, `FILE_KIND_DEVICE`, `AT_FDCWD`, `OPEN_FLAG_READ`, `OPEN_FLAG_WRITE`, `OPEN_FLAG_CREATE`, and access bit flags.
@@ -134,7 +134,7 @@ Constants: `FILE_KIND_DIRECTORY`, `FILE_KIND_FILE`, `FILE_KIND_DEVICE`, `AT_FDCW
 
 | Type | Size | Purpose |
 |---|---|---|
-| `ProcessTerminationRecord` | 40 bytes | `kind` (exit/exception/none), `status`, `vector`, `error_code`, `fault_address` |
+| `ProcessTerminationRecord` | 48 bytes | `kind` (exit/exception/none), `status`, `vector`, `error_code`, `fault_address_present`, `fault_address` |
 | `ProcessSignalRecord` | 24 bytes | `signal`, `sender_pid`, `payload` |
 | `ProcessSpawnOptions` | 56 bytes | Launch options: `flags`, `argv`, `argc`, `env`, `envc`, `working_dir` |
 | `ProcessSpawnStringRef` | 16 bytes | `ptr`, `len` — string descriptor for spawn options |
