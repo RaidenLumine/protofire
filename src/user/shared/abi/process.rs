@@ -220,6 +220,28 @@ pub struct AArch64SignalFrame {
 /// Wire size of [`AArch64SignalFrame`].
 pub const AARCH64_SIGNAL_FRAME_SIZE: usize = size_of::<AArch64SignalFrame>();
 
+/// RISC-V-specific signal frame, pushed on the user stack by
+/// [`try_async_signal_delivery_riscv64`].
+///
+/// The same four words as [`SignalFrame`] and [`AArch64SignalFrame`], holding
+/// RISC-V exception-return state (SEPC, SP, SSTATUS) rather than x86_64
+/// (RIP, RSP, RFLAGS) or AArch64 (ELR, SP, SPSR).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RiscV64SignalFrame {
+    /// Original SEPC of the interrupted user code.
+    pub orig_sepc: u64,
+    /// Original user stack pointer of the interrupted user code.
+    pub orig_sp: u64,
+    /// Original SSTATUS of the interrupted user code.
+    pub orig_sstatus: u64,
+    /// Signal number being delivered.
+    pub signal: u64,
+}
+
+/// Wire size of [`RiscV64SignalFrame`].
+pub const RISCV64_SIGNAL_FRAME_SIZE: usize = size_of::<RiscV64SignalFrame>();
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Fixed-size string descriptor used by `ProcessSpawnOptions`.

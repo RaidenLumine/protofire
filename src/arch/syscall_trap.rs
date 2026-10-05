@@ -13,12 +13,20 @@ use crate::syscall::SyscallAction;
 use crate::Error;
 use crate::Result;
 
-/// Whether the user context should be captured before the post-action is
-/// applied, or only after `ExecProcess` has replaced the user image.
+/// When, if at all, the live trap frame should be captured back into the
+/// thread as the user context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserContextCapturePoint {
+    /// Capture now: the post-action is a side effect on kernel state and the
+    /// frame still describes the code the syscall was called from.
     BeforePostAction,
+    /// Capture after `ExecProcess` has installed the new image.
     AfterExecProcessApply,
+    /// Do not capture at all: the syscall handler has already replaced the
+    /// thread's user context, and the live frame is the handler's own —
+    /// `sigreturn` is the case, and overwriting the restore with the frame
+    /// that asked for it would send the thread back into its trampoline.
+    RestoredByHandler,
 }
 
 /// Where the user context must be captured for a given post-syscall action.
@@ -29,7 +37,7 @@ pub const fn user_context_capture_point(post_action: SyscallAction) -> UserConte
         | SyscallAction::Yield
         | SyscallAction::Exit { .. }
         | SyscallAction::ReturnFromException { .. } => UserContextCapturePoint::BeforePostAction,
-        SyscallAction::SigReturn => UserContextCapturePoint::BeforePostAction,
+        SyscallAction::SigReturn => UserContextCapturePoint::RestoredByHandler,
     }
 }
 
@@ -109,6 +117,17 @@ mod tests {
         assert_eq!(
             user_context_capture_point(SyscallAction::ExecProcess),
             UserContextCapturePoint::AfterExecProcessApply
+        );
+    }
+
+    #[test]
+    fn user_context_capture_point_keeps_the_context_sigreturn_restored() {
+        // The frame live during `SYS_SIGRETURN` belongs to the trampoline
+        // that called it.  Capturing it would overwrite the context the
+        // handler just restored, so this action captures nothing.
+        assert_eq!(
+            user_context_capture_point(SyscallAction::SigReturn),
+            UserContextCapturePoint::RestoredByHandler
         );
     }
 

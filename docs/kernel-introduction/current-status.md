@@ -497,7 +497,7 @@ extensions and in-kernel security protocols.
 | Pipe | VFS-backed, anonymous, blocking read/write | No named pipe and no descriptor passing over a pipe |
 | Signal | 43 slots (0-42), including 11 RT signals (32-42); u64 mask, install/enqueue/wait | No signal-storm stress baseline |
 | Signal mask | Per-process blocked signal tracking, u64 bitfield | — |
-| Async signal delivery | Signal frame on user stack, arch-specific trampoline, sigreturn; all three architectures | — |
+| Async signal delivery | Signal frame on user stack, arch-specific trampoline, sigreturn; all three architectures | No program in the tree ships the user-side trampoline, so nothing exercises the path end to end |
 | SA_SIGINFO support | siginfo_t delivery (si_signo, si_code, si_pid, si_uid, si_addr, si_value) | — |
 | SA_RESTART support | Automatic syscall restart on signal return, RestartBlock per thread | — |
 | sigsuspend (#135) | Atomic mask swap and thread suspend until a signal | — |
@@ -534,6 +534,10 @@ including the POSIX signal interaction model.
 - **Limited IPC shapes**: IPC relies mainly on pipes, signals, eventfd/mq; there
   is no standardized shared-memory IPC API (shm remains a purpose-specific
   syscall).
+- **Async delivery has no user half yet**: the kernel injects the signal frame
+  and `sigreturn` restores it on all three architectures, but the trampoline
+  that calls `SIGRETURN` is the program's to supply and nothing in the tree
+  does, so the path is reachable only by a program that brings one.
 - **Contention scenarios not benchmarked**: lock contention and signal storms
   lack stress baselines.
 

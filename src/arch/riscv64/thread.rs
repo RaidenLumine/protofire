@@ -316,11 +316,15 @@ impl Thread {
     pub(crate) fn write_riscv64_user_context_to_trap(
         &self,
         frame: &mut crate::arch::riscv64::trap::TrapFrame,
-    ) {
-        let user_context = self.riscv64_user_context();
-        if let Some(context) = user_context {
-            context.write_to_trap(frame);
-        }
+    ) -> Result<()> {
+        // Validated for the same reason its aarch64 twin is: the status word
+        // can come back from a frame the user owns, and an SSTATUS that says
+        // supervisor would make `sret` return to S-mode.
+        let user_context = self
+            .validated_riscv64_user_context()?
+            .ok_or(Error::InternalError)?;
+        user_context.write_to_trap(frame);
+        Ok(())
     }
 }
 

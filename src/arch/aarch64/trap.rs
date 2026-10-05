@@ -666,7 +666,8 @@ fn handle_syscall(frame: &mut TrapFrame) {
         syscall_trap::UserContextCapturePoint::BeforePostAction => {
             capture_current_user_context(frame);
         }
-        syscall_trap::UserContextCapturePoint::AfterExecProcessApply => {}
+        syscall_trap::UserContextCapturePoint::AfterExecProcessApply
+        | syscall_trap::UserContextCapturePoint::RestoredByHandler => {}
     }
 
     match post_action {

@@ -9,6 +9,7 @@ use core::ptr::read_volatile;
 
 use crate::abi::syscall as syscall_abi;
 use crate::arch::interrupt_controller::InterruptController;
+use crate::arch::syscall_trap;
 use crate::kernel::process::thread::RiscV64UserThreadContext;
 use crate::kernel::process::TerminationReason;
 use crate::println;
@@ -521,8 +522,17 @@ fn handle_syscall(frame: &mut TrapFrame) {
         }
     }
 
-    // Capture user context for post-syscall state.
-    capture_current_user_context(frame);
+    // Capture the live frame back into the thread only where the action says
+    // it still describes the interrupted code.  `SIGRETURN` restores a
+    // context the handler already installed, and the frame here is the
+    // trampoline's `ecall`; capturing it would undo the restore.
+    match syscall_trap::user_context_capture_point(post_action) {
+        syscall_trap::UserContextCapturePoint::BeforePostAction => {
+            capture_current_user_context(frame);
+        }
+        syscall_trap::UserContextCapturePoint::AfterExecProcessApply
+        | syscall_trap::UserContextCapturePoint::RestoredByHandler => {}
+    }
 
     match post_action {
         SyscallAction::Yield => {
@@ -534,9 +544,19 @@ fn handle_syscall(frame: &mut TrapFrame) {
             });
         }
         SyscallAction::ExecProcess => {
-            if let Some(thread) = current_thread.as_ref() {
-                thread.write_riscv64_user_context_to_trap(frame);
-                capture_current_user_context(frame);
+            let apply_result = current_thread
+                .as_ref()
+                .ok_or(crate::Error::InternalError)
+                .and_then(|thread| thread.write_riscv64_user_context_to_trap(frame));
+
+            match syscall_trap::resolve_exec_process_apply_result(apply_result) {
+                syscall_trap::ExecProcessApplyResolution::CaptureUserContext => {
+                    capture_current_user_context(frame);
+                }
+                syscall_trap::ExecProcessApplyResolution::SetErrorAndCaptureUserContext(error) => {
+                    frame.a0 = syscall_abi::encode_error(error) as u64;
+                    capture_current_user_context(frame);
+                }
             }
         }
         SyscallAction::None | SyscallAction::ReturnFromException { .. } => {}
@@ -544,7 +564,7 @@ fn handle_syscall(frame: &mut TrapFrame) {
             // Restore the RISC-V user context from the signal frame that
             // was injected by try_async_signal_delivery_riscv64.
             if let Some(thread) = current_thread.as_ref() {
-                thread.write_riscv64_user_context_to_trap(frame);
+                let _ = thread.write_riscv64_user_context_to_trap(frame);
             }
         }
     }
@@ -579,10 +599,10 @@ fn advance_past_idle_wfi(frame: &mut TrapFrame) {
 /// `try_async_signal_delivery_aarch64` on AArch64 -- called from the
 /// trap dispatch path before returning to user mode after an IRQ.
 fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
+    use crate::abi::process::RiscV64SignalFrame;
+    use crate::abi::process::RISCV64_SIGNAL_FRAME_SIZE;
     use crate::kernel::process::Process;
     use crate::kernel::process::Scheduler;
-
-    const RISCV64_SIGNAL_FRAME_SIZE: u64 = 32; // 4 × u64
 
     let scheduler = match Scheduler::global() {
         Some(s) => s,
@@ -630,7 +650,7 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
     //   - trampoline runs, eventually calls SYS_SIGRETURN
     let user_sp = frame.stack_pointer;
     let trampoline_ret_addr = user_sp.wrapping_sub(8);
-    let signal_frame_base = trampoline_ret_addr.wrapping_sub(RISCV64_SIGNAL_FRAME_SIZE);
+    let signal_frame_base = trampoline_ret_addr.wrapping_sub(RISCV64_SIGNAL_FRAME_SIZE as u64);
 
     let total_len = user_sp.wrapping_sub(signal_frame_base) as usize;
     if total_len == 0 || total_len > 128 {
@@ -662,16 +682,18 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
     // taken.  Restarting an interrupted syscall on RISC-V therefore has
     // to be driven from the synchronous syscall path, not here.
     //
-    // Signal frame layout:
-    //   [0] = orig_sepc
-    //   [1] = orig_sp
-    //   [2] = orig_sstatus
-    //   [3] = signal number
-    let sig_frame: [u64; 4] = [frame.sepc, user_sp, frame.sstatus, signal_num as u64];
+    // The frame is the ABI record `SYS_SIGRETURN` reads back, so the shape has
+    // one definition rather than one per side of the syscall.
+    let sig_frame = RiscV64SignalFrame {
+        orig_sepc: frame.sepc,
+        orig_sp: user_sp,
+        orig_sstatus: frame.sstatus,
+        signal: signal_num as u64,
+    };
 
     // SAFETY: both addresses validated as writable user pages above.
     unsafe {
-        core::ptr::write(signal_frame_base as *mut [u64; 4], sig_frame);
+        core::ptr::write(signal_frame_base as *mut RiscV64SignalFrame, sig_frame);
         core::ptr::write(trampoline_ret_addr as *mut u64, trampoline_addr);
     }
 
