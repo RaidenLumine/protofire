@@ -156,7 +156,7 @@ follow-up.
 8. **Document it** in
    [`docs/kernel/syscalls.md`](../kernel/syscalls.md)
    and, if the change is user-visible, in
-   [`current-status.md`](../kernel-introduction/current-status.md).
+   [`docs/status.md`](../status.md).
 9. **Test it** — see §9.
 
 **Modifying an existing syscall** follows the same list, minus step 1, plus a

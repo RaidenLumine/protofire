@@ -23,10 +23,10 @@ NIC with several queues serialises all of them onto the core that also runs
 the scheduler tick, while the cores that could take half the completions
 never see one.
 
-[current-status.md](../kernel-introduction/current-status.md) records both
-halves of this as weaknesses — one LPI collection on AArch64, and MSI-X
-claimed per device rather than per queue — and [ROADMAP.md](../../ROADMAP.md)
-lists spreading the collections as what is left of the AArch64 PCIe path.
+[docs/status.md](../status.md) records both halves of this as weaknesses —
+one LPI collection on AArch64, and MSI-X claimed per device rather than per
+queue — and [ROADMAP.md](../../ROADMAP.md) lists spreading the collections
+as what is left of the AArch64 PCIe path.
 
 ## Current state
 

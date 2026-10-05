@@ -21,9 +21,8 @@ shapes that explain most of the rest:
   transparently encrypted block device (AES-256 XTS, LUKS2 headers).
 
 What exists, what is missing, and what is wired but not yet reachable is
-[`docs/kernel-introduction/current-status.md`](docs/kernel-introduction/current-status.md)
-— that document is the authority; this list is an introduction, and it does not
-repeat it.
+[`docs/status.md`](docs/status.md) — that document is the authority; this
+list is an introduction, and it does not repeat it.
 
 ## Kernel Name
 
@@ -212,10 +211,11 @@ make clippy
 
 ## Documentation
 
-- [`docs/kernel-introduction/`](docs/kernel-introduction/README.md) — architecture
-  overview and subsystem documentation (boot, memory, process, filesystem,
-  network, syscall, shared user runtime), plus the per-subsystem
-  [status](docs/kernel-introduction/current-status.md).
+- [`docs/kernel/`](docs/kernel/README.md) — how each subsystem works (boot,
+  memory, process, filesystem, network, IPC, security, and the syscall and
+  user-runtime boundaries).
+- [`docs/status.md`](docs/status.md) — the per-module census: what exists,
+  what is missing, what is reached only under QEMU.
 - [`docs/fmts/`](docs/fmts/README.md) — the contributor specifications: code
   style, comments, `unsafe` discipline, testing, the syscall ABI contract, and
   commit messages.

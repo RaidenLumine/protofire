@@ -27,10 +27,9 @@ merely expected.
 
 Supporting context, if you have not read it yet:
 
-- [docs/kernel-introduction/README.md](../kernel-introduction/README.md) —
-  architecture overview and subsystem map
-- [docs/kernel-introduction/current-status.md](../kernel-introduction/current-status.md)
-  — what is implemented, and the known gaps (a good source of work)
+- [docs/kernel/README.md](../kernel/README.md) — how each subsystem works
+- [docs/status.md](../status.md) — what is implemented, and the known gaps (a
+  good source of work)
 - [docs/rfcs/](../rfcs/README.md) — how a change too large for a pull request
   gets a design document, and the decisions those documents record
 
@@ -112,5 +111,4 @@ everything else.
   review process
 - [MAINTAINERS.md](../../MAINTAINERS.md) — who owns which subsystem
 - [ROADMAP.md](../../ROADMAP.md) — the project's guiding principles
-- [docs/kernel-introduction/](../kernel-introduction/README.md) — architecture
-  and subsystem documentation
+- [docs/kernel/](../kernel/README.md) — subsystem documentation

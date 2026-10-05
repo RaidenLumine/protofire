@@ -1,15 +1,27 @@
-# Current Status
+# Status
 
-> **Last updated:** 2026-10-03
-> **Targets:** x86_64 (full), AArch64 (full), RISC-V 64 (partial)
+This document is the per-module census of the kernel: for each subsystem, what
+the code does today and what it does not do yet.  It deliberately carries no
+line counts, file counts, test counts, or completion percentages.  Those
+figures change with every commit, and a number that has to be maintained by
+hand is a number that will eventually be wrong — the tree is the authority for
+how much code there is, and this document is the authority for what that code
+does.
 
-This document says what the kernel does today: the behaviour that exists, the
-behaviour that is missing, and the parts that have only been exercised under
-QEMU. It deliberately carries no line counts, file counts, test counts, or
-completion percentages. Those figures change with every commit, and a number
-that has to be maintained by hand is a number that will eventually be wrong —
-the tree is the authority for how much code there is, and this document is the
-authority for what that code does.
+The documents have one subject each, and the division between them is:
+
+- **mechanism** — how a subsystem works — is
+  [docs/kernel/](kernel/README.md)'s;
+- **decisions** — what was chosen, and why — are
+  [docs/rfcs/](rfcs/README.md)'s;
+- **specifications** a contributor has to follow are
+  [docs/fmts/](fmts/README.md)'s;
+- **direction** — what is planned — is
+  [ROADMAP.md](../ROADMAP.md)'s;
+- and **status** — what exists, what is missing, and what is reached only
+  under QEMU — is this file's.
+
+Targets: x86_64 (full), AArch64 (full), RISC-V 64 (partial).
 
 Two words are used strictly below:
 
@@ -17,7 +29,9 @@ Two words are used strictly below:
 - **verified** means a gate boots it or a test pins it.
 
 In the per-module tables, a dash in the *Missing* column means no gap is known
-and recorded here — not that the module has none.
+and recorded here — not that the module has none.  A subsystem's mechanism is
+written out in `docs/kernel/`; the tables here are the census, and the columns
+that say what is missing are the ones the roadmap draws from.
 
 Where this document and the tree disagree, the tree is right and this document
 is the bug. `make check-docs` enforces the part of that a machine can check:
@@ -159,7 +173,7 @@ block-cache management.
 
 The VFS is the largest subsystem in the tree. Its native filesystem, its
 external drivers, its recovery machinery, and its Unicode layer are described
-below; the mechanism itself is [docs/kernel/fs.md](../kernel/fs.md).
+below; the mechanism itself is [docs/kernel/fs.md](kernel/fs.md).
 
 #### 3.1 Native Filesystem
 
@@ -406,7 +420,7 @@ programs a device's table, NMI handling, and load balancing.
   are placed round-robin over the CPUs that can receive, so the PCIe
   virtio-net driver's queues are completed by different cores — but that
   driver is still the only device claiming identities through the ITS
-  ([RFC 0001](../rfcs/0001-spread-message-signalled-interrupts.md) is the
+  ([RFC 0001](rfcs/0001-spread-message-signalled-interrupts.md) is the
   design the placement follows).
 - **MSI-X on RISC-V is one driver deep**: the AIA IMSIC is wired and a device's
   table is programmed, but only the virtio-net PCIe driver claims interrupts
@@ -899,9 +913,9 @@ numbers it decodes against come from the shared copy.
 | Concurrency tests | Scheduler, condvar, console, keyboard | — |
 | Parser fuzz harnesses | Deterministic, in-tree, run by `make test-parsers`; coverage-guided targets in `fuzz/` run nightly | The gates are fixed-seed and bounded; the nightly corpora are not persisted across runs |
 | virtio-gpu layout tests | Struct size and layout plus command wire format, against a mock device | Mock device only; no real GPU validation |
-| Boot-work baseline | `make check-perf-baseline` compares a boot's counters against `scripts/perf-baseline.txt` (`src/kernel/perf_baseline.rs` prints them; the gate and its tolerances are [CONTRIBUTING.md](../../CONTRIBUTING.md)'s) | Counters, not seconds: it answers "did this do less work", not "was this faster", and throughput and latency under load are still unmeasured |
+| Boot-work baseline | `make check-perf-baseline` compares a boot's counters against `scripts/perf-baseline.txt` (`src/kernel/perf_baseline.rs` prints them; the gate and its tolerances are [CONTRIBUTING.md](../CONTRIBUTING.md)'s) | Counters, not seconds: it answers "did this do less work", not "was this faster", and throughput and latency under load are still unmeasured |
 | CI workflow | the gates run per commit, each as its own step (`.github/workflows/ci.yml`) | The gates run as separate steps rather than through `make verify-p3` |
-| Verification gates | P0-P3, described in [CONTRIBUTING.md](../../CONTRIBUTING.md) | The smokes and the boot-work baseline are opt-in through environment variables, so a local `make verify-p3` without them does not boot anything |
+| Verification gates | P0-P3, described in [CONTRIBUTING.md](../CONTRIBUTING.md) | The smokes and the boot-work baseline are opt-in through environment variables, so a local `make verify-p3` without them does not boot anything |
 | ABI number snapshot | `tests/syscall/abi_golden.rs`: a number's name may not change, and an experimental change has to bump the ABI minor in the same commit | Pins numbering and record layouts, not the object shapes behind them |
 
 The demo disk was verified end-to-end on all three targets under QEMU:
@@ -913,7 +927,7 @@ command at its prompt and assert the answer.
 
 The contract itself — numbers assigned once and never renumbered, record
 layouts asserted at compile time, a frozen range below a boundary — is
-[docs/fmts/syscall-abi.md](../fmts/syscall-abi.md)'s.  Three things make it
+[docs/fmts/syscall-abi.md](fmts/syscall-abi.md)'s.  Three things make it
 *testable* rather than merely written down:
 
 | Item | State | Where |
@@ -925,7 +939,7 @@ layouts asserted at compile time, a frozen range below a boundary — is
 ### Build & Development
 
 The build system, the optional features and the release profile belong to the
-root [README.md](../../README.md) and `Cargo.toml`; what this document has to
+root [README.md](../README.md) and `Cargo.toml`; what this document has to
 say is what the tree *is*, not how it is built:
 
 - **The userspace runtime lives inside the kernel crate** (`src/user/shared/`,
@@ -939,7 +953,7 @@ say is what the tree *is*, not how it is built:
   is pinned to a hash: the check asserts determinism, which is the property a
   verifiable release needs.  `make release` builds the four artifacts, names
   them for shipping, signs each with its own one-time key and verifies every
-  signature; [CONTRIBUTING.md](../../CONTRIBUTING.md) carries the order around
+  signature; [CONTRIBUTING.md](../CONTRIBUTING.md) carries the order around
   it.  Tagged 1.x releases and the first published key records are still ahead
   (see the roadmap).
 

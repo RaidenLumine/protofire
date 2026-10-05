@@ -312,6 +312,6 @@ not a ceiling.
 
 - [docs/fmts/code-style.md](code-style.md) — the global install pattern
 - [docs/fmts/syscall-abi.md](syscall-abi.md) — syscall-specific test layers
-- [docs/kernel-introduction/current-status.md](../kernel-introduction/current-status.md)
-  — known gaps, a good source of work that needs tests
+- [docs/status.md](../status.md) — known gaps, a good source of work that
+  needs tests
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) — the verification gate

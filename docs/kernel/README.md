@@ -6,10 +6,10 @@ about the code as it is, and every claim in them is meant to be checkable by
 reading the file it names.
 
 They are not a status report and not a changelog.  What exists, what is missing
-and what is wired but unreachable is [ROADMAP.md](../../ROADMAP.md)'s;
-decisions and the arguments behind them are [docs/rfcs/](../rfcs/README.md)'s;
-the specifications a contributor has to follow are
-[docs/fmts/](../fmts/README.md)'s.
+and what is wired but unreachable is [docs/status.md](../status.md)'s and
+[ROADMAP.md](../../ROADMAP.md)'s; decisions and the arguments behind them are
+[docs/rfcs/](../rfcs/README.md)'s; the specifications a contributor has to
+follow are [docs/fmts/](../fmts/README.md)'s.
 
 ## How these documents are written
 

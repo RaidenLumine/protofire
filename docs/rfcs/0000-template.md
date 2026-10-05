@@ -13,8 +13,8 @@ for whom.
 ## Motivation
 
 What is wrong today and who it hurts.  Name where the current state is
-written down — [current-status.md](../kernel-introduction/current-status.md)
-usually records the gap — and the code that would have to change.
+written down — [docs/status.md](../status.md) usually records the gap — and
+the code that would have to change.
 
 ## Current state
 

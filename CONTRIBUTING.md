@@ -75,14 +75,13 @@ make run            # boot x86_64 under QEMU (drops into the demo shell)
 
 ## Where to Start
 
-- Read the [kernel introduction](docs/kernel-introduction/README.md)
-  (architecture overview), [`syscalls.md`](docs/kernel/syscalls.md)
-  (the syscall path), and
-  [`current-status.md`](docs/kernel-introduction/current-status.md)
-  (subsystem status).
+- Read the [kernel documentation](docs/kernel/README.md) — the mechanism of
+  each subsystem, starting with [`syscalls.md`](docs/kernel/syscalls.md) —
+  and [`docs/status.md`](docs/status.md), the per-module census of what
+  exists and what is missing.
 - Good first tasks are usually marked with the `good first issue` label on
-  GitHub; if none exist, the "known gaps" in `current-status.md` are excellent
-  starting points.
+  GitHub; if none exist, the missing column in `docs/status.md` is an
+  excellent place to look.
 - If you are unsure where a change belongs, ask in an issue before starting —
   it saves rework.
 
@@ -102,7 +101,7 @@ Layout of the kernel crate:
 | `src/user/shared/` | **Single source of truth for the syscall ABI** |
 | `src/util/` | Utility helpers |
 | `tests/` | Host-side integration tests (fs, io, memory, net, process, simplefs, sync, syscall) |
-| `docs/` | Architecture & subsystem docs (`kernel-introduction/`) and contributor specifications (`fmts/`) |
+| `docs/` | Subsystem mechanism (`kernel/`), status (`status.md`), specifications (`fmts/`) and design documents (`rfcs/`) |
 
 ---
 
@@ -308,9 +307,11 @@ the review checklist — is in [`docs/fmts/syscall-abi.md`](docs/fmts/syscall-ab
 
 ## Documentation
 
-- Docs are written in English and live under `docs/kernel-introduction/`. When
-  you change a subsystem, update the matching document and the status document
-  [`docs/kernel-introduction/current-status.md`](docs/kernel-introduction/current-status.md).
+- Docs are written in English.  Mechanism lives in
+  [`docs/kernel/`](docs/kernel/README.md), the per-module census in
+  [`docs/status.md`](docs/status.md), and the roadmap in
+  [`ROADMAP.md`](ROADMAP.md); when you change a subsystem, update the
+  matching document and the rows in the census it changes.
 - Contributor specifications live under `docs/fmts/`; start at
   [`docs/fmts/README.md`](docs/fmts/README.md). If your change alters a
   convention, update the specification in the same PR.

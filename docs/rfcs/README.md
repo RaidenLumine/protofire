@@ -6,8 +6,8 @@ the decision, and what would show the decision was wrong.  This directory is
 where those documents live, and this file is the process that produces them.
 
 The code remains the source of truth about *what exists* —
-[docs/kernel-introduction/current-status.md](../kernel-introduction/current-status.md)
-is the summary of that.  An RFC is the record of *what was decided and why*,
+[docs/status.md](../status.md) is the summary of that.  An RFC is the record
+of *what was decided and why*,
 including the options that were not taken, which no amount of reading the
 final diff can recover.
 
@@ -25,8 +25,7 @@ Write one, before the code, when a change would:
   beyond what [docs/fmts/syscall-abi.md](../fmts/syscall-abi.md) already
   fixes;
 - change a policy a document states as settled, including a design decision
-  [current-status.md](../kernel-introduction/current-status.md) records as
-  deliberate;
+  [docs/status.md](../status.md) records as deliberate;
 - need more than one pull request to land.
 
 It is not required — and is usually a wasted document — for a bug fix, a new

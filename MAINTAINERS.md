@@ -69,8 +69,7 @@ Maintainers are expected to:
   keep the accepted set as the project's record of what was decided and why.
 - Keep `make verify-p3` green and gate releases on it.
 - Maintain [ROADMAP.md](ROADMAP.md) and keep
-  [docs/kernel-introduction/current-status.md](docs/kernel-introduction/current-status.md)
-  in sync with reality.
+  [docs/status.md](docs/status.md) in sync with reality.
 - Handle security reports per [SECURITY.md](SECURITY.md).
 
 ## Review Policy
