@@ -62,7 +62,7 @@ The authoritative picture of what exists today is
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped
   fallbacks, fixed device windows, and the entry contract — are listed in
-  [boot.md](docs/kernel-introduction/boot.md#bring-up-on-real-hardware).
+  [boot.md](docs/kernel/boot.md#platform-assumptions).
 - **Stabilise the syscall ABI.** Graduate Experimental syscalls into Stable as
   they mature, moving the frozen boundary up; the append-only rule already
   reserves everything above the current highest slot.

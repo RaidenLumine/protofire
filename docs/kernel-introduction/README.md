@@ -362,7 +362,7 @@ them.
 | Document | Description |
 |----------|-------------|
 | [`README.md`](README.md) | Architecture overview, subsystem dependency graph, memory layout, build system |
-| [`boot.md`](boot.md) | Boot flow, Kernel::init() step-by-step, SMP |
+| [`docs/kernel/boot.md`](../kernel/boot.md) | Hand-off, the init pipeline, SMP bring-up |
 | [`memory.md`](memory.md) | Physical/virtual memory management, TLSF heap, page tables |
 | [`process.md`](process.md) | Process model, thread states, scheduler, security tokens |
 | [`filesystem.md`](filesystem.md) | VFS layer, SimpleFS on-disk format, two-phase commit |
