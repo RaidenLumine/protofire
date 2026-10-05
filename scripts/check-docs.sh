@@ -18,7 +18,8 @@
 #
 # What is checked
 # ---------------
-# 1. A `src/...` or `tests/...` path in backticks must exist as written.
+# 1. A `src/...` or `tests/...` path in backticks must exist as written (and
+#    any other cited path — check 5 below).
 # 2. A bare filename in backticks (`tls.rs`, `commands/fs.rs`) must exist
 #    somewhere under `src/`, `tests/`, or the repository root.  `docs/fmts/`
 #    `testing.md` writes `manager.rs` and means `tests/memory/manager.rs`; the
@@ -31,6 +32,13 @@
 #    name the symbol; the symbol is what a reader searches for.
 # 4. A relative Markdown link must resolve from the document that holds it.
 #    This one is exact, and it is the only check here that can be.
+# 5. A backticked path with a separator, whether or not it ends in `.rs`:
+#    `scripts/perf-baseline.txt` and `docs/fmts/` are cited the same way a file
+#    is, and a renamed one reads exactly like a path that exists.  A path
+#    `.gitignore` names is skipped: a checkout does not have it.
+# 6. A backticked `make <target>` is an instruction a reader will run, so the
+#    target has to exist.  Prose ("make sure") is not backticked and is not
+#    this check's business.
 #
 # What is not checked
 # -------------------
@@ -99,6 +107,8 @@ trap cleanup EXIT INT TERM
 : > "$work/citations"
 : > "$work/links"
 : > "$work/stale"
+: > "$work/paths"
+: > "$work/make"
 
 # Every Markdown file in the tree, not just the ones under `docs/`: the root
 # documents cite the code as often as the reference pages do.  `target/` is
@@ -140,7 +150,37 @@ for doc in $(find . -name '*.md' -not -path './target/*' -not -path './.git/*' |
         printf '%s:%s: line-number citation `%s` — cite the file and name the symbol\n' \
             "$doc" "$line" "$text" >> "$work/stale"
     done
+
+    # (5): a backticked path with a separator is a citation whether or not it
+    # ends in `.rs` — `scripts/perf-baseline.txt` and `docs/fmts/` are named the
+    # same way, and a renamed one reads exactly like a path that exists.  The
+    # extension-led check above cannot see them.
+    awk '
+        {
+            rest = $0
+            while (match(rest, /`[A-Za-z0-9_.\/-]*\/[A-Za-z0-9_.\/-]+`/)) {
+                printf "%s %d %s\n", FILENAME, NR, substr(rest, RSTART + 1, RLENGTH - 2)
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+        }
+    ' "$doc" >> "$work/paths"
+
+    # (6): a backticked `make <target>` is an instruction a reader will run.
+    # A renamed target leaves it failing for everyone who follows the
+    # document, and nothing else in the tree would notice.
+    awk '
+        {
+            rest = $0
+            while (match(rest, /`make [a-z][a-z0-9-]*/)) {
+                printf "%s %d %s\n", FILENAME, NR, substr(rest, RSTART + 6, RLENGTH - 6)
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+        }
+    ' "$doc" >> "$work/make"
 done
+
+# The targets a Makefile declares, for the check below.
+awk -F: '/^[a-z][a-z0-9-]*:/ { print $1 }' Makefile | sort -u > "$work/targets"
 
 citations=0
 links=0
@@ -190,6 +230,36 @@ while read -r doc target; do
     [ -e "$dir/$path" ] || printf '%s: link `%s` resolves to nothing\n' \
         "$doc" "$target" >> "$work/stale"
 done < "$work/links"
+
+# (5): a cited path, unless it is written as a pattern rather than a file —
+# `src/...`, `tests/<area>/<name>.rs`, `{vfs,file_io}.rs`.
+while read -r doc line path; do
+    [ -n "${path:-}" ] || continue
+    case "$path" in
+        *"..."* | *"<"* | *">"* | *"{"* | *"}"* | *"*"* | *"NNNN"* | *".."*) continue ;;
+    esac
+    case "$path" in
+        src/* | tests/* | docs/* | scripts/* | fuzz/* | .github/*)
+            citations=$((citations + 1))
+            [ -e "$path" ] && continue
+            # An ignored path is one a checkout does not have: cargo-fuzz's
+            # `fuzz/corpus/` is created by the tool that writes to it, and
+            # `.gitignore` is where this tree declares such a path.  Everything
+            # else has to be there.
+            grep -qxF "$path" .gitignore 2>/dev/null && continue
+            grep -qxF "${path%/}/" .gitignore 2>/dev/null && continue
+            printf '%s:%s: no such path `%s`\n' \
+                "$doc" "$line" "$path" >> "$work/stale"
+            ;;
+    esac
+done < "$work/paths"
+
+# (6): the target after a backticked `make`.
+while read -r doc line target; do
+    [ -n "${target:-}" ] || continue
+    grep -qx "$target" "$work/targets" || printf '%s:%s: `make %s` is not a target the Makefile has\n' \
+        "$doc" "$line" "$target" >> "$work/stale"
+done < "$work/make"
 
 if [ -s "$work/stale" ]; then
     printf 'check-docs: the documents name things the tree does not have\n\n' >&2

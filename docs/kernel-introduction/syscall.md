@@ -376,7 +376,7 @@ points, and typed wrappers.
 ### Constants
 
 Each public syscall gets a `SYS_*` constant, re-exported from
-`src/user/shared/abi/syscall` (which shares the canonical definitions with the
+`src/user/shared/abi/syscall.rs` (which shares the canonical definitions with the
 kernel's `SyscallNumber` enum):
 
 ```rust
