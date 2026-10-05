@@ -277,7 +277,7 @@ mod tests {
     use super::ACCESS_EXECUTE_BIT;
     use super::ACCESS_QUERY_FLAG_ALLOWED;
 
-    /// The record sizes `docs/kernel-introduction/shared-user-runtime.md`
+    /// The record sizes `docs/kernel/user-runtime.md`
     /// states, checked against the records themselves.
     ///
     /// The document is where a reader looks for the wire sizes, and those
@@ -306,7 +306,7 @@ mod tests {
             size_of::<ProcessSpawnOptions>(),
             size_of::<ProcessSpawnStringRef>(),
         );
-        // The numbers as `docs/kernel-introduction/shared-user-runtime.md`
+        // The numbers as `docs/kernel/user-runtime.md`
         // states them, in the same order.
         let documented = (16usize, 8, 12, 32, 368, 88, 48, 24, 56, 16);
         assert_eq!(actual, documented);

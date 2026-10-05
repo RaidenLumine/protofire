@@ -50,6 +50,7 @@ one of these.
 | [process.md](process.md) | Processes, threads, the scheduler, signals, handles, termination |
 | [security.md](security.md) | Tokens, integrity, DAC, MAC, the audit trail, seccomp, launch integrity |
 | [syscalls.md](syscalls.md) | The trap, the dispatch table, pointer validation, the ring-3 wrappers |
+| [user-runtime.md](user-runtime.md) | The shared tree: ABI records, the mirror, the bridge, the shell library and signals |
 
 The subsystems these will cover, in the order they are being written: boot and
 the architectures, memory, process and scheduler, interrupts, drivers, the

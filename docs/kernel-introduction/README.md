@@ -368,7 +368,7 @@ them.
 | [`docs/kernel/fs.md`](../kernel/fs.md) | VFS layer, SimpleFS on-disk format, two-phase commit |
 | [`docs/kernel/network.md`](../kernel/network.md) | Network stack, DHCP, TCP/UDP, DNS |
 | [`docs/kernel/syscalls.md`](../kernel/syscalls.md) | Syscall trap, dispatch table, pointer validation |
-| [`shared-user-runtime.md`](shared-user-runtime.md) | Shared ABI types and syscall wrappers (module `src/user/shared/`) |
+| [`docs/kernel/user-runtime.md`](../kernel/user-runtime.md) | Shared ABI types and syscall wrappers (module `src/user/shared/`) |
 | [`current-status.md`](current-status.md) | Per-subsystem implementation status and known gaps |
 
 ### Contributor Specifications (`docs/fmts/`)
