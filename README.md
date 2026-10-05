@@ -2,6 +2,29 @@
 
 This is a bare-metal `#![no_std]` monolithic kernel written in Rust, targeting x86_64, AArch64, and RISC-V 64. It provides a file-oriented userspace ABI with preemptive multi-threading, a native TCP/IP stack, a transactional in-memory filesystem (SimpleFs), NUMA-aware scheduling, virtio-gpu accelerated display, MSI/MSI-X interrupt support, per-thread stack canary protection, and a shared `src/user/shared/` library for both kernel and userspace programs.
 
+## What's Distinct
+
+The parts a reader is least likely to expect from a kernel this size, and the
+shapes that explain most of the rest:
+
+- **The filesystem drivers** — FAT32, exFAT, ext4, F2FS, btrfs, XFS, NTFS,
+  ISO 9660, EROFS and SquashFS — beside SimpleFs, the native transactional
+  filesystem, with journal replay for ext4/XFS/F2FS.
+- **A userspace runtime inside the kernel crate**: `src/user/shared/` is
+  compiled on both sides of the syscall boundary, so a syscall wrapper, a
+  shell builtin and an ABI record have one definition rather than one per side.
+- **Two layers of mandatory access control**: a Biba integrity model and a MAC
+  type-enforcement engine with allow-rules and default-deny.
+- **A TLSF heap**: O(1) bounded-time allocation and free.
+- **Unicode 15.1 NFC/NFD normalization** and a GB18030 codec.
+- **A block cache that ages dirty blocks** on a scheduler-advanced clock and a
+  transparently encrypted block device (AES-256 XTS, LUKS2 headers).
+
+What exists, what is missing, and what is wired but not yet reachable is
+[`docs/kernel-introduction/current-status.md`](docs/kernel-introduction/current-status.md)
+— that document is the authority; this list is an introduction, and it does not
+repeat it.
+
 ## Kernel Name
 
 | Chinese (zh) | English (en) |

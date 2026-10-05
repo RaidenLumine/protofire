@@ -881,9 +881,9 @@ numbers it decodes against come from the shared copy.
 | Concurrency tests | Scheduler, condvar, console, keyboard | — |
 | Parser fuzz harnesses | Deterministic, in-tree, run by `make test-parsers`; coverage-guided targets in `fuzz/` run nightly | The gates are fixed-seed and bounded; the nightly corpora are not persisted across runs |
 | virtio-gpu layout tests | Struct size and layout plus command wire format, against a mock device | Mock device only; no real GPU validation |
-| Boot-work baseline | `make check-perf-baseline` boots with the profilers on and compares the counters one line reports (`src/kernel/perf_baseline.rs`) against `scripts/perf-baseline.txt`; the counters that had stopped when it sampled must not move at all | Counters, not seconds: it answers "did this do less work", not "was this faster", and throughput and latency under load are still unmeasured |
-| CI workflow | fmt, check, build, clippy on every configuration, every static gate and ratchet, and the boots | The gates run as separate steps rather than through `make verify-p3` |
-| Verification gates | P0-P3: fmt, tests, cross-builds, clippy, plus the QEMU smokes and the boot-work baseline | The smokes and the baseline are opt-in through environment variables, so a local `make verify-p3` without them does not boot anything |
+| Boot-work baseline | `make check-perf-baseline` compares a boot's counters against `scripts/perf-baseline.txt` (`src/kernel/perf_baseline.rs` prints them; the gate and its tolerances are [CONTRIBUTING.md](../../CONTRIBUTING.md)'s) | Counters, not seconds: it answers "did this do less work", not "was this faster", and throughput and latency under load are still unmeasured |
+| CI workflow | the gates run per commit, each as its own step (`.github/workflows/ci.yml`) | The gates run as separate steps rather than through `make verify-p3` |
+| Verification gates | P0-P3, described in [CONTRIBUTING.md](../../CONTRIBUTING.md) | The smokes and the boot-work baseline are opt-in through environment variables, so a local `make verify-p3` without them does not boot anything |
 | ABI number snapshot | `tests/syscall/abi_golden.rs`: a number's name may not change, and an experimental change has to bump the ABI minor in the same commit | Pins numbering and record layouts, not the object shapes behind them |
 
 The demo disk was verified end-to-end on all three targets under QEMU:
@@ -893,10 +893,10 @@ command at its prompt and assert the answer.
 
 ### Userspace compatibility (the iron rule)
 
-`docs/fmts/syscall-abi.md` states the compatibility contract — numbers assigned
-once and never renumbered, records whose layout is asserted at compile time, and
-a frozen range below a boundary with an experimental range above it. Three
-things make that contract *testable* rather than merely written down:
+The contract itself — numbers assigned once and never renumbered, record
+layouts asserted at compile time, a frozen range below a boundary — is
+[docs/fmts/syscall-abi.md](../fmts/syscall-abi.md)'s.  Three things make it
+*testable* rather than merely written down:
 
 | Item | State | Where |
 |------|-------|-------|
@@ -906,36 +906,24 @@ things make that contract *testable* rather than merely written down:
 
 ### Build & Development
 
-- **Build system:** Cargo + Makefile (verified targets per architecture)
-- **Layout:** the shared user runtime and demo payloads live inside the kernel
-  crate as `src/user/shared/` and `src/user/demo/`
-- **Optional features:** `demo-disk`, `fs_profiler`, `net_profiler`,
-  `alloc_profiler`, `fault_profiler`, `perf_baseline`, `educational_networking`,
-  plus `abi_frozen_payload` and `init_no_start`, which change what the demo disk
-  carries so a boot can exercise a path the normal disk does not reach
-- **Release profile:** `panic = "abort"`, `opt-level = "s"`, `lto = true`,
-  `codegen-units = 1`
+The build system, the optional features and the release profile belong to the
+root [README.md](../../README.md) and `Cargo.toml`; what this document has to
+say is what the tree *is*, not how it is built:
+
+- **The userspace runtime lives inside the kernel crate** (`src/user/shared/`,
+  `src/user/demo/`), so a syscall wrapper, a shell builtin and an ABI record
+  are compiled on both sides of the boundary rather than re-implemented per
+  side.
 - **Reproducible artifacts:** the same source built twice in two clean trees
   produces byte-identical artifacts for all three architectures — the two ELFs,
   the aarch64 `Image` and the demo disk image — and
   `make check-reproducible-build` is the gate that keeps it that way.  Nothing
   is pinned to a hash: the check asserts determinism, which is the property a
-  verifiable release needs.  One artifact can be signed with a fresh one-time
-  key (`cargo run -- sign-release …`, checked with `verify-signature`), using
-  the same `lamport-sha256` scheme the kernel verifies manifests with.  Tagged
-  `make release` builds the four artifacts, names them for shipping, signs each
-  with its own one-time key and verifies every signature with the user's own
-  verifier; [CONTRIBUTING.md](../../CONTRIBUTING.md) carries the order around
+  verifiable release needs.  `make release` builds the four artifacts, names
+  them for shipping, signs each with its own one-time key and verifies every
+  signature; [CONTRIBUTING.md](../../CONTRIBUTING.md) carries the order around
   it.  Tagged 1.x releases and the first published key records are still ahead
   (see the roadmap).
-- **Measured-work baseline:** a boot with the profilers on prints one line of
-  counters — frames taken, pages mapped, blocks read, packets answered — at a
-  fixed tick, and `make check-perf-baseline` compares that line against
-  `scripts/perf-baseline.txt`.  A performance change is judged by the work it
-  does: there are no seconds in the gate, the counters that had stopped when it
-  sampled must match exactly, and the few a schedule can still move carry a
-  recorded tolerance.  A counter the boot prints and the baseline does not
-  record fails as well, so the baseline cannot quietly stop covering the boot.
 
 ---
 
@@ -1024,104 +1012,6 @@ spans modules and cannot be attributed to one of them.
   driven by `.github/workflows/fuzz.yml`. What is still missing is a corpus
   persisted across runs, so each nightly start is from the seedless mutator
   rather than from everything the previous runs found.
-- **No reproducible releases**: no tagged releases with reproducible ISO/disk
-  images and signed artifacts.
-
----
-
-## What's Distinct About This Kernel
-
-1. **Many filesystem drivers** — FAT32, exFAT, ext4, F2FS, btrfs, XFS, NTFS,
-   ISO 9660, EROFS, SquashFS, and the native SimpleFs.
-2. **A native TCP/IP stack** with TLS 1.3, SCTP, DCCP, IPsec, and multicast
-   routing — not a port of lwIP/uIP, but a custom
-   implementation with TCP congestion control, DNS caching, and DHCP.
-3. **Three architecture targets** — x86_64, AArch64, RISC-V 64 — with PAN/SMAP
-   on all three.
-4. **A Biba integrity model** — a formal multi-level security policy, which is
-   rare in a hobby kernel.
-5. **Unicode 15.1 NFC/NFD normalization** plus a GB18030 codec.
-6. **A TLSF heap allocator** — O(1) bounded-time alloc/free.
-7. **`src/user/shared/`** — the userspace runtime lives inside the kernel
-   crate, so each syscall wrapper, shell builtin, and ABI record is compiled on
-   both sides of the boundary rather than re-implemented per side.
-8. **Preemptive multi-threading with guard pages** on all architectures.
-9. **NUMA-aware frame allocation, scheduling, and SRAT/FDT discovery** —
-   per-node frame allocators with CPU-to-node mapping, NUMA-aware work stealing,
-   and topology discovery via ACPI SRAT/SLIT (x86_64) and FDT numa-node-id
-   (AArch64, RISC-V).
-10. **virtio-gpu accelerated display with the VIRGL 3D protocol** — 2D
-    mode-setting and the VIRGL 3D userspace interface, as an alternative to a
-    bochs-display device.
-11. **MSI/MSI-X on the architectures that have an MSI controller** — vector
-    allocation and table programming on x86_64, and the AIA IMSIC with
-    per-device identity claims on RISC-V, and the GICv3 ITS with LPIs on
-    AArch64.
-12. **Per-thread stack canary** — software-implemented canary verification on
-    context switch for runtime buffer-overrun detection.
-13. **Encryption at rest** — AES-256 XTS, PBKDF2 key derivation, LUKS2 header
-    parsing, and a transparent EncryptedBlockDevice wrapper.
-14. **Journal replay for ext4/XFS/F2FS** — real disk log recovery: revoke
-    blocks, buffer/inode/dquot items, orphan recovery, SIT persistence.
-15. **An audit subsystem** — system-call auditing with classified event types,
-    a ring buffer, and dedicated audit syscalls.
-16. **SCTP** — a full transport layer with a 4-way handshake and CRC32C
-    verification.
-17. **Hotplug reads** — the PCIe slot-status and hotplug-event reads, and a
-    device-removal path in the device manager.  Nothing polls them yet, so a
-    slot change is not noticed by a running boot.
-18. **POSIX timers** — timer_create/settime/gettime/delete with per-process
-    timer management and signal delivery.
-19. **An HDA audio controller driver** — Intel HD Audio with CORB/RIRB, codec
-    discovery, and stream descriptors.
-20. **WireGuard** — Noise_IKpsk2 handshake state machine,
-    ChaCha20-Poly1305 transport encryption, and session key management. It is
-    not wired to an interface yet; see the network section's gaps.
-21. **CPU frequency scaling & power management** — x86_64 MSR P-state driver,
-    aarch64/riscv64 device-tree OPP discovery, governors, scheduler-tick
-    integration, and cpufreq syscalls.
-22. **Memory compression & defragmentation** — a zswap-style compressed page
-    cache on reclaim, plus physical-pool compaction that relocates movable user
-    frames to coalesce fragmented free ranges; `CompactMemory` (syscall #150).
-23. **NMI handling, SMP IRQ load balancing, and interrupt stats** — dedicated
-    NMI paths with a handler registry; periodic migration of the hottest
-    migratable IRQ; `SystemInfo` type 9 exposing per-CPU/per-vector IRQ, IPI,
-    and NMI counts plus load-balancer state.
-24. **SimpleFs V4 data reduction & extended attributes** — a persistent xattr
-    table, per-file transparent compression, cross-file content dedup with
-    mount-time refcount rebuild, and copy-on-write unsharing, all crash-safe
-    under V4's two-phase commit.
-25. **DCCP (RFC 4340)** — a connection-oriented datagram transport with the
-    Request/Response/Ack handshake, extended sequence numbers, feature
-    negotiation, CCID 2 congestion control, and a full syscall API.
-26. **IPsec (ESP + AH)** — RFC 4303/4302 data-plane transforms with AES-GCM,
-    ChaCha20-Poly1305, and HMAC-SHA256-128, in transport and tunnel modes over
-    IPv4 and IPv6, with a 64-bit anti-replay window and manual SAD/SPD
-    management.
-27. **Multicast routing** — an MFC/VIF forwarding engine with RPF and TTL
-    gating, IGMPv2/MLDv1 router mode, MRT management syscalls, and a PIM-DM
-    control plane under `educational_networking`.
-28. **IPv6 edge-case hardening** — path-MTU discovery (RFC 8201), atomic
-    fragments (RFC 6946), extension-header order and chain limits (RFC 8200
-    §4.1), routing-header type-0 rejection (RFC 5095), and overlapping-fragment
-    discard (RFC 5722).
-29. **A MAC type-enforcement engine** — mandatory access control beyond Biba:
-    security types on subjects and objects, an allow-rule policy with
-    first-match and default-deny, a central VFS hook, Process- and Network-class
-    checks, exec domain transitions, management syscalls, and MacDenial audit
-    records on refusal.
-30. **A persistent credential system** — `/data/etc/passwd` and
-    `/data/etc/shadow` written back atomically, with the shadow file kept at
-    0600.
-31. **Descriptor control (#179)** — a POSIX fcntl subset including
-    F_GETPIPE_SZ / F_SETPIPE_SZ and per-end O_NONBLOCK.
-32. **A persistent block cache** — dirty blocks aged by a scheduler-advanced
-    cache clock and written back by the maintenance thread, with `sync` (#180)
-    for the on-demand flush.
-33. **Device-tree-driven driver probe** — FDT nodes are bound to drivers by
-    `compatible` string; virtio-gpu/block/net are all probed from their DT node
-    `reg`.
-34. **The VIRGL 3D userspace interface (#181-189)** — contexts, 3D resources
-    with kernel-managed DMA backing, host transfers, command submission,
-    scanout, and a capability report, with the actual rendering executed
-    host-side via virglrenderer (plus mock-device wire-format tests).
+- **No release has been made yet**: the artifacts are reproducible and gated,
+  and `make release` builds and signs them, but no tagged 1.x release exists
+  and no key record has been published (see the roadmap).
