@@ -41,6 +41,7 @@ one of these.
 | Document | Covers |
 |----------|--------|
 | [boot.md](boot.md) | Hand-off, the Rust entry, the init pipeline, SMP bring-up, platform assumptions |
+| [drivers.md](drivers.md) | The driver framework, the device ledger, and each driver's completion path |
 | [memory.md](memory.md) | Frames, the heap, page tables, kernel stacks, reclaim and swap |
 | [interrupts.md](interrupts.md) | Controllers per machine, the identity registry, MSI, NMI, balancing |
 | [process.md](process.md) | Processes, threads, the scheduler, signals, handles, termination |

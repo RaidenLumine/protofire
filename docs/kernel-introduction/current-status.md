@@ -40,7 +40,7 @@ the syscall interface.
 | ATA (PIO) | Block | Full read/write | PIO only, no DMA; x86_64 only; QEMU only |
 | VirtIO (block) | Block | Full read/write | QEMU only; no per-queue MSI-X claim |
 | VirtIO (net) | Network | Full RX/TX, modern and legacy transports; on the two PCIe machines (AArch64, RISC-V) each queue claims its own MSI-X identity, so a queue's completion wakes that queue's waiter | On x86_64 the machine has no MSI-X claim path, so a transmit polls for its completion; no throughput baseline |
-| VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189) | No userspace renderer is shipped against the interface; QEMU only |
+| VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189), driven by the demo renderer (`src/user/demo/virgl_renderer.rs`) | QEMU only |
 | NVMe | Block | Full read/write, boot-disk probe | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; x86_64 only; QEMU only |
 | xHCI | USB host | Controller bring-up and port status | Not end-to-end: USB storage and keyboard input are not usable yet |
 | USB HID | HID (keyboard) | Report decoding and scancode injection | Not wired end-to-end until the xHCI path is complete |
