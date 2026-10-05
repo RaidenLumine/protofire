@@ -469,5 +469,6 @@ The per-module census lives in [current-status.md](current-status.md).
 
 ## See Also
 
-- [Syscall ABI reference](syscall.md) — SyscallNumber enum, dispatch table, pointer specs
+- [Syscall interface](../kernel/syscalls.md) — the trap, the dispatch table,
+  pointer validation
 - [Documentation index](README.md) — complete document tree

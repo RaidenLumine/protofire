@@ -367,7 +367,7 @@ them.
 | [`process.md`](process.md) | Process model, thread states, scheduler, security tokens |
 | [`filesystem.md`](filesystem.md) | VFS layer, SimpleFS on-disk format, two-phase commit |
 | [`network.md`](network.md) | Network stack, DHCP, TCP/UDP, DNS |
-| [`syscall.md`](syscall.md) | Syscall dispatch table, ABI catalog |
+| [`docs/kernel/syscalls.md`](../kernel/syscalls.md) | Syscall trap, dispatch table, pointer validation |
 | [`shared-user-runtime.md`](shared-user-runtime.md) | Shared ABI types and syscall wrappers (module `src/user/shared/`) |
 | [`current-status.md`](current-status.md) | Per-subsystem implementation status and known gaps |
 

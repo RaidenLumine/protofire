@@ -154,7 +154,7 @@ follow-up.
    callers never build raw register arguments.
 7. **Bump the ABI version** if the change is not purely additive (§4).
 8. **Document it** in
-   [`docs/kernel-introduction/syscall.md`](../kernel-introduction/syscall.md)
+   [`docs/kernel/syscalls.md`](../kernel/syscalls.md)
    and, if the change is user-visible, in
    [`current-status.md`](../kernel-introduction/current-status.md).
 9. **Test it** — see §9.
@@ -324,7 +324,7 @@ Before requesting review of a syscall change, confirm each line:
       the commit message.
 - [ ] `make check-abi-mirror` is green: a record added to `src/abi/` is
       declared, mirrored, and identical to its mirror below the header.
-- [ ] `docs/kernel-introduction/syscall.md` is updated.
+- [ ] `docs/kernel/syscalls.md` is updated.
 - [ ] `make verify-p3` is green.
 
 ---
@@ -332,7 +332,7 @@ Before requesting review of a syscall change, confirm each line:
 ## Related documents
 
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) — the short-form syscall rules
-- [docs/kernel-introduction/syscall.md](../kernel-introduction/syscall.md) —
-  the ABI catalog and dispatch internals
+- [docs/kernel/syscalls.md](../kernel/syscalls.md) — the trap, the dispatch
+  table, pointer validation
 - [docs/fmts/code-style.md](code-style.md) — error handling and module layout
 - [docs/fmts/testing.md](testing.md) — where tests go and how to register them

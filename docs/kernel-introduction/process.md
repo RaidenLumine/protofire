@@ -390,7 +390,8 @@ flags only one is read:
 - **SA_SIGINFO**: not implemented.  There is no siginfo record in the tree — a
   handler is entered with the signal number as its only argument, and the
   sender's pid and the caller's payload arrive through `wait_signal` as a
-  [`ProcessSignalRecord`](syscall.md) (`signal`, `sender_pid`, `payload`).
+  [`ProcessSignalRecord`](../kernel/syscalls.md) (`signal`, `sender_pid`,
+  `payload`).
 - **SA_RESTART**: When set, signal delivery marks the interrupted thread's
   `RestartBlock` with the interrupted syscall context. On sigreturn, the
   arch-specific trap dispatch rewinds the instruction pointer to retry the

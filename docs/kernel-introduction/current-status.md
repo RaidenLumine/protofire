@@ -447,7 +447,7 @@ multicast routing, and raw sockets.
 
 #### 7.3 Network Syscalls
 
-The network ranges are listed in `docs/kernel-introduction/syscall.md`. Not
+The network ranges are in the `SyscallNumber` enum. Not
 every network syscall has a typed wrapper in the shared user library
 (`src/user/shared/`); a program that needs an unwrapped one calls the raw entry
 point.

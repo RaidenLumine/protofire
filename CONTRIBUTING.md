@@ -76,8 +76,9 @@ make run            # boot x86_64 under QEMU (drops into the demo shell)
 ## Where to Start
 
 - Read the [kernel introduction](docs/kernel-introduction/README.md)
-  (architecture overview), [`syscall.md`](docs/kernel-introduction/syscall.md)
-  (ABI), and [`current-status.md`](docs/kernel-introduction/current-status.md)
+  (architecture overview), [`syscalls.md`](docs/kernel/syscalls.md)
+  (the syscall path), and
+  [`current-status.md`](docs/kernel-introduction/current-status.md)
   (subsystem status).
 - Good first tasks are usually marked with the `good first issue` label on
   GitHub; if none exist, the "known gaps" in `current-status.md` are excellent
@@ -296,7 +297,7 @@ rules strictly:
 6. **Validate user pointers** through the central `SYSCALL_POINTER_SPECS`
    table — never dereference user addresses without validation.
 7. **Add typed wrapper(s)** in `src/user/shared/syscall.rs`.
-8. **Update the docs:** `docs/kernel-introduction/syscall.md`.
+8. **Update the docs:** `docs/kernel/syscalls.md`.
 9. **Add tests:** unit tests for the handler and, where user-visible,
    integration coverage in `tests/syscall/`.
 
