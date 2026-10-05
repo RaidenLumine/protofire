@@ -59,7 +59,10 @@ The authoritative picture of what exists today is
   BtrFS, SquashFS, ISO 9660, EROFS — move toward read-write, matching ext4 /
   F2FS / XFS / exFAT / FAT32.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
-  SoCs, not just QEMU; harden the device-tree probe path accordingly.
+  SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
+  assumptions a port has to remove — a fixed memory pool, `virt`-shaped
+  fallbacks, fixed device windows, and the entry contract — are listed in
+  [boot.md](docs/kernel-introduction/boot.md#bring-up-on-real-hardware).
 - **Stabilise the syscall ABI.** Graduate Experimental syscalls into Stable as
   they mature, moving the frozen boundary up; the append-only rule already
   reserves everything above the current highest slot.

@@ -678,6 +678,38 @@ CPU bring-up. What is missing:
 
 The per-module census lives in [current-status.md](current-status.md).
 
+## Bring-Up on Real Hardware
+
+Every boot this document describes was run under QEMU.  The kernel is written
+to be *told* what the machine is rather than to assume it, so a board that
+describes itself in a device tree should reach the same code a QEMU boot does:
+the interrupt controllers, console, timer frequency, PCIe ECAM and MSI-X
+window all come from the parsed blob (`src/arch/fdt.rs`,
+`src/arch/fdt/parse.rs`) instead of from constants.  The constants below them
+are the `virt` fallbacks, used only when the blob names nothing.
+
+What a first board would still run into, and where each assumption lives:
+
+- **Memory is a fixed pool.** `src/memory/frame.rs` backs the frame allocator
+  with a 512 MiB static array rather than with the ranges the firmware
+  reports, so more RAM on a board goes unused and the image has to land where
+  that array's physical address is real memory.  Sizing the allocator from
+  the device tree's `memory` nodes is the first change a port makes.
+- **`virt`-shaped defaults.** A blob that names no controller or console base
+  falls back to the QEMU `virt` layout (`GICD_BASE_DEFAULT` and its
+  neighbours in `src/arch/aarch64/mod.rs`); the boot log prints the base it
+  used, so a board running on the defaults says so instead of failing
+  silently.
+- **Fixed device windows.** The AArch64 MSI-X table alias and the RISC-V
+  device-MMIO window (`src/arch/riscv64/mmu`) are constants that fit the
+  `virt` map; a board whose windows differ needs them derived from the tree.
+- **Firmware handoff.** The entry contract is QEMU's (`-kernel`, with PSCI or
+  SBI already up).  A bootloader that hands over different state needs that
+  contract written down, not discovered by trial.
+- **No gate proves it.** Every assertion in this tree is a QEMU assertion.
+  The first board's serial log is the only thing that can change that, and
+  the shape of the check it feeds is the milestones above.
+
 ## See Also
 
 - [Documentation index](README.md) — complete document tree
