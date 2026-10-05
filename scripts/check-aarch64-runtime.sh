@@ -607,9 +607,33 @@ require_log_absent_line "far=0x0000000008010000"
 require_log_line "[irq   ] GICv3 at "
 # The controller has one redistributor per PE, and this machine has two.
 require_log_line "2 redistributor frame(s)"
-require_log_line "[irq   ] GICv3: LPIs 8192..8447 enabled on the boot CPU"
+# Each CPU gets its own LPI pending table, so each says so for itself: one
+# line per core is what the placement below has to choose between.
+require_log_line "[irq   ] GICv3: LPIs 8192-8447 enabled on cpu 0"
+require_log_line "[irq   ] GICv3: LPIs 8192-8447 enabled on cpu 1"
 require_log_line "[its   ] MSI-X on 00:01.0 delivers LPI "
-require_log_line "[virtio-net] device MSI: irq "
+# The device's four entries are spread over the two CPUs in turn — the
+# placement is what the rest of this section observes, and a device whose
+# entries all name one CPU would fail here.
+require_log_line "[its   ] MSI-X 00:01.0: irq 8193-8196 placed on cpu [0, 1, 0, 1]"
+require_log_line "[virtio-net] RX MSI (irq "
+require_log_line "[virtio-net] TX MSI (irq "
+
+# And the property those two lines exist for, stated as a property rather than
+# as this machine's CPU numbers: the queues were served by *different* cores.
+# A driver that registered one handler for the whole device could not say
+# which core took which queue, and its lines would be absent or agree.  The
+# CPU is the console's own prefix — the driver prints the queue, the console
+# says where it ran.
+rx_cpu="$(sed -n 's/^\[cpu\([0-9][0-9]*\)\] \[virtio-net\] RX MSI (irq .*/\1/p' "$gicv3_log" | head -n 1)"
+tx_cpu="$(sed -n 's/^\[cpu\([0-9][0-9]*\)\] \[virtio-net\] TX MSI (irq .*/\1/p' "$gicv3_log" | head -n 1)"
+if [ -z "$rx_cpu" ] || [ -z "$tx_cpu" ] || [ "$rx_cpu" = "$tx_cpu" ]; then
+    printf 'aarch64 runtime check failed: the queues were not served by different CPUs (rx=%s tx=%s)\n' \
+        "$rx_cpu" "$tx_cpu" >&2
+    tail -n 12 "$gicv3_log" >&2
+    exit 1
+fi
+
 # The boot walks the same path once by itself, before any driver depends on
 # it: an event the ITS translates for a DeviceID no device uses, delivered as
 # the LPI no device can be given.  It is what makes a quiet machine fail here

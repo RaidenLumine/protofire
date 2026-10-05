@@ -183,17 +183,33 @@ require_line "[pci   ] RISC-V MSI-X unmasked on 00:01.0: irq 1-4 belong to the d
 # claimed, found handler-less, and counted as spurious.
 require_line "[pci   ] RISC-V MSI receive side: irq 1 reached its handler"
 
+# Each queue's own entry is registered, not one handler for the whole device:
+# the transport routes queue 0 to vector 0 and queue 1 to vector 1, and the
+# line names the queue that was served and the CPU that took it.  Which queue
+# signals first is the device's business — a completion can also land in the
+# ring before the wait, and this boot's traffic is short — so one line is the
+# assertion, not which one it is.
+if ! grep -a -qE "\[virtio-net\] (RX|TX) MSI \(irq " "$log_file"; then
+    printf 'riscv64 PCI check failed: no interrupt was attributed to a queue\n' >&2
+    tail -n 12 "$log_file" | tr -d '\000' >&2
+    exit 1
+fi
+
 # The path above is not only a self-check: the device raises interrupts of its
 # own during the boot's traffic.  The first line is the walk's, so a second says
 # the device signalled by itself and the kernel attributed it to this driver's
 # handler instead of counting it spurious.
-device_msis="$(grep -a -c "\[virtio-net\] device MSI: irq" "$log_file" || true)"
+device_msis="$(grep -a -c -E "\[virtio-net\] (RX|TX|device) MSI \(irq" "$log_file" || true)"
 if [ "$device_msis" -lt 2 ]; then
     printf 'riscv64 PCI check failed: the device interrupts reached the driver %s time(s); expected its own as well as the walk\n' \
         "$device_msis" >&2
     tail -n 12 "$log_file" | tr -d '\000' >&2
     exit 1
 fi
+
+# And the placement itself: one entry per hart available, so a single-hart
+# machine names hart 0 for every entry rather than leaving the field unset.
+require_line "[pci   ] RISC-V MSI-X 00:01.0: irq 1-4 placed on hart [0, 0, 0, 0]"
 
 # ...and a completion is no longer only something the driver spins for.
 require_absent "TX poll timed out"

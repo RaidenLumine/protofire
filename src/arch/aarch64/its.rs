@@ -238,14 +238,16 @@ struct ItsState {
 static ITS_STATE: SpinLock<Option<ItsState>> = SpinLock::new(None);
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
-/// The collection every device's messages are delivered to.
+/// The collection a CPU's messages are delivered to.
 ///
-/// A collection names a redistributor, and this kernel programs one: the boot
-/// CPU's.  Spreading MSIs across CPUs needs a collection per CPU and a
-/// pending table per CPU, which is the same work as enabling LPIs on the
-/// secondary cores and is not done yet.
-const COLLECTION: u16 = 0;
-const COLLECTION_CPU: u32 = 0;
+/// A collection is a name in the collection table whose entry holds a
+/// redistributor address, and this kernel maps one per CPU: collection `n` is
+/// CPU `n`'s redistributor.  Making the two numbers the same is what lets a
+/// placement name a CPU and have the mapping follow it without a second table
+/// to search.
+const fn collection_for_cpu(cpu: u32) -> u16 {
+    cpu as u16
+}
 
 /// The LPIs a device may be given.
 ///
@@ -355,9 +357,13 @@ impl ItsState {
         device_id: u32,
         first_lpi: u32,
         count: u32,
-        target: u64,
+        collections: &[u16],
+        sync_targets: &[u64],
     ) -> Result<(), Error> {
         if device_id >= (1_u32 << self.device_id_bits) {
+            return Err(Error::InvalidArgument);
+        }
+        if collections.len() != count as usize {
             return Err(Error::InvalidArgument);
         }
 
@@ -369,20 +375,25 @@ impl ItsState {
             // data word; the LPI is where the message ends up.  Making them
             // the same number below `first_lpi` would be a lie about a device
             // that names a table the kernel did not write, so the pair is
-            // mapped explicitly, entry by entry.
+            // mapped explicitly, entry by entry — including the collection,
+            // which is where this entry's interrupts land.
             let event_id = index;
             self.submit(command_mapti(
                 device_id,
                 event_id,
                 first_lpi + index,
-                COLLECTION,
+                collections[index as usize],
             ))?;
             // A translation the ITS cached before this mapping would deliver
             // the old LPI; the invalidate is what retires it.
             self.submit(command_inv(device_id, event_id))?;
         }
 
-        self.sync(target)?;
+        // One SYNC per redistributor the mapping above can now deliver to: the
+        // command only reaches the queues of the target it names.
+        for target in sync_targets {
+            self.sync(*target)?;
+        }
 
         // Only now is the table safe to keep: the ITS holds its physical
         // address, and the mapping that names it must outlive the commands.
@@ -390,10 +401,10 @@ impl ItsState {
         Ok(())
     }
 
-    /// Map the collection every device's messages are delivered to.
-    fn map_collection(&mut self, rd_base: usize) -> Result<(), Error> {
+    /// Map one collection onto a CPU's redistributor.
+    fn map_collection(&mut self, collection: u16, rd_base: usize) -> Result<(), Error> {
         let target = collection_target(self.base, rd_base);
-        self.submit(command_mapc(COLLECTION, target))?;
+        self.submit(command_mapc(collection, target))?;
         self.sync(target)
     }
 }
@@ -460,14 +471,26 @@ fn build(base: usize) -> Result<ItsState, Error> {
     write_u32(base + GITS_CTLR, GITS_CTLR_ENABLE);
     dsb_sy();
 
-    let target = gicv3::rd_base_for_cpu(COLLECTION_CPU).ok_or(Error::DeviceError)?;
-    state.map_collection(target)?;
+    // One collection per CPU that has a redistributor, not just the boot CPU's:
+    // a placement names a CPU by naming the collection that is the CPU's, and
+    // a core that comes up after this point is already nameable when it does.
+    for index in 0..gicv3::redistributor_count() {
+        let Some(cpu) = gicv3::redistributor_cpu(index) else {
+            continue;
+        };
+        let Some(rd_base) = gicv3::rd_base_for_cpu(cpu) else {
+            continue;
+        };
+        state.map_collection(collection_for_cpu(cpu), rd_base)?;
+    }
 
     // Nothing has claimed an MSI yet, and a machine whose devices stay quiet
     // would carry this path untested until one did — so the boot walks it
-    // once itself.
-    let collection = collection_target(state.base, target);
-    if !self_test(&mut state, collection) {
+    // once itself, on the CPU running it.
+    let boot_cpu = gicv3::current_cpu_id();
+    let boot_rd = gicv3::rd_base_for_cpu(boot_cpu).ok_or(Error::DeviceError)?;
+    let boot_target = collection_target(state.base, boot_rd);
+    if !self_test(&mut state, boot_cpu, boot_target) {
         crate::println!("[its   ] self-test could not be set up");
     }
 
@@ -482,7 +505,7 @@ fn build(base: usize) -> Result<ItsState, Error> {
 /// taken by the trap later and answered by the handler here, so what the boot
 /// proves is the whole chain: table, translation, LPI, trap, handler.  The
 /// message is left pending on purpose: it is the trap's half that has to run.
-fn self_test(state: &mut ItsState, target: u64) -> bool {
+fn self_test(state: &mut ItsState, cpu: u32, sync_target: u64) -> bool {
     let handler: IrqHandler = Arc::new(|identity| {
         crate::println!("[its   ] self-test delivered LPI {}", identity);
     });
@@ -494,13 +517,19 @@ fn self_test(state: &mut ItsState, target: u64) -> bool {
         return false;
     }
     if state
-        .map_device(SELF_TEST_DEVICE_ID, SELF_TEST_LPI, 1, target)
+        .map_device(
+            SELF_TEST_DEVICE_ID,
+            SELF_TEST_LPI,
+            1,
+            &[collection_for_cpu(cpu)],
+            &[sync_target],
+        )
         .is_err()
     {
         return false;
     }
 
-    state.submit(command_int(SELF_TEST_DEVICE_ID, 0)).is_ok() && state.sync(target).is_ok()
+    state.submit(command_int(SELF_TEST_DEVICE_ID, 0)).is_ok() && state.sync(sync_target).is_ok()
 }
 
 /// What a `GITS_BASER<n>` reports about the table it can hold.
@@ -628,13 +657,11 @@ fn ensure_initialized() -> Result<usize, Error> {
     let state = build(base)?;
     crate::println!(
         "[its   ] GICv3 ITS at {:#x}: device table {:#x} for {} DeviceID(s), collections {:#x}, \
-         collection {} -> CPU {}",
+         one per CPU",
         base,
         state.device_table.phys_addr(),
         1_u32 << state.device_id_bits,
-        state.collections.phys_addr(),
-        COLLECTION,
-        COLLECTION_CPU
+        state.collections.phys_addr()
     );
     *ITS_STATE.lock() = Some(state);
     Ok(base)
@@ -734,15 +761,36 @@ impl MsixClaim {
     /// unmasked.
     pub(crate) fn arm(&self) -> Result<(), Error> {
         let inner = &self.inner;
-        let translater = {
+        let (translater, placed) = {
             let mut state = ITS_STATE.lock();
             let state = state.as_mut().ok_or(Error::NotImplemented)?;
-            let target = {
-                let rd_base = gicv3::rd_base_for_cpu(COLLECTION_CPU).ok_or(Error::DeviceError)?;
-                collection_target(state.base, rd_base)
-            };
-            state.map_device(inner.device_id, inner.first_lpi, inner.count, target)?;
-            state.base + GITS_TRANSLATER
+
+            // Where each entry of this device's table is delivered.  Entries
+            // are placed in turn over the CPUs that can receive, so a device
+            // with several queues has them completed by different cores
+            // instead of all by the boot CPU.
+            let mut collections = Vec::with_capacity(inner.count as usize);
+            let mut placed = Vec::with_capacity(inner.count as usize);
+            let mut sync_targets: Vec<u64> = Vec::new();
+            for index in 0..inner.count {
+                let cpu = gicv3::lpi_cpu_for_entry(index).ok_or(Error::DeviceError)?;
+                let rd_base = gicv3::rd_base_for_cpu(cpu).ok_or(Error::DeviceError)?;
+                collections.push(collection_for_cpu(cpu));
+                placed.push(cpu);
+                let target = collection_target(state.base, rd_base);
+                if !sync_targets.contains(&target) {
+                    sync_targets.push(target);
+                }
+            }
+
+            state.map_device(
+                inner.device_id,
+                inner.first_lpi,
+                inner.count,
+                &collections,
+                &sync_targets,
+            )?;
+            (state.base + GITS_TRANSLATER, placed)
         };
 
         for index in 0..inner.count {
@@ -753,6 +801,15 @@ impl MsixClaim {
 
         program_msix_table(inner, translater)?;
         inner.armed.store(true, Ordering::Release);
+        crate::println!(
+            "[its   ] MSI-X {:02x}:{:02x}.{}: irq {}-{} placed on cpu {:?}",
+            inner.bus,
+            inner.device,
+            inner.function,
+            inner.first_lpi,
+            inner.first_lpi + inner.count - 1,
+            placed
+        );
         Ok(())
     }
 }
@@ -803,7 +860,8 @@ pub(crate) fn claim_msix(
     bus: u8,
     device: u8,
     function: u8,
-    handler: IrqHandler,
+    named: &[(u16, IrqHandler)],
+    fallback: &IrqHandler,
 ) -> Result<MsixClaim, Error> {
     if its_base().is_none() {
         return Err(Error::NotImplemented);
@@ -817,12 +875,14 @@ pub(crate) fn claim_msix(
         return Err(Error::InvalidArgument);
     }
 
-    let first_lpi = irq_handlers::claim(
+    // One handler per identity: the entries the driver named for its queues,
+    // and the device-wide one for every other entry the table can deliver.
+    let handlers = crate::arch::platform::msix_handlers_for(count, named, fallback);
+    let first_lpi = irq_handlers::claim_each(
         gicv3::LPI_BASE,
         FIRST_DEVICE_LPI,
         LAST_DEVICE_LPI,
-        count,
-        handler,
+        &handlers,
     )?;
 
     Ok(MsixClaim {

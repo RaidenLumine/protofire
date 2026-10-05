@@ -17,6 +17,8 @@ pub mod exception_recoverability;
 pub mod interrupt_controller;
 pub mod ipi;
 pub mod irq_handlers;
+/// Which CPU a message-signalled interrupt's entry is delivered to.
+pub mod irq_placement;
 pub mod mmu;
 pub mod pci;
 pub mod percpu;

@@ -111,11 +111,8 @@ input, mostly verified under QEMU.
   somebody waits on. AArch64 reaches the same place by its own road: the GICv3
   controller (`src/arch/aarch64/gicv3.rs`) receives LPIs, and the ITS
   (`src/arch/aarch64/its.rs`) translates the messages that become them. What is
-  still missing: MSI-X is claimed per device rather than per queue beyond the
-  two the NIC uses; every LPI is delivered to the boot CPU, so a device's
-  interrupt cannot be spread across cores; and every other PCIe device — NVMe,
-  HDA — is still reached through its architecture's own enumeration rather
-  than this one.
+  still missing: every other PCIe device — NVMe, HDA — is still reached
+  through its architecture's own enumeration rather than this one.
 - **Verified under QEMU only**: no real-device validation on bare-metal
   hardware yet.
 
@@ -359,7 +356,7 @@ disk-backed swap, compression, and defragmentation.
 | x86_64 IDT + exceptions | #PF, #GP, #UD, #DF, timer, IPI | — |
 | x86_64 APIC + IOAPIC | SMP IPI, timer, I/O routing | — |
 | AArch64 exception vectors | EL1 sync/IRQ/FIQ/SError, EL0 sync | — |
-| AArch64 GIC | GICv2 and GICv3 register layouts, chosen from `GICD_PIDR2` (`src/arch/aarch64/gicv3.rs`); LPIs; the ITS that translates a device's message into one (`src/arch/aarch64/its.rs`) | Every LPI goes to the boot CPU's redistributor; a machine whose device cannot carry a requester ID would need a window of its own in front of the ITS |
+| AArch64 GIC | GICv2 and GICv3 register layouts, chosen from `GICD_PIDR2` (`src/arch/aarch64/gicv3.rs`); LPIs, with one pending table per CPU; the ITS that translates a device's message into one, with a collection per CPU (`src/arch/aarch64/its.rs`) | A machine whose device cannot carry a requester ID would need a window of its own in front of the ITS |
 | RISC-V trap handler | U-mode ecall, timer, external interrupts | — |
 | RISC-V PLIC | PLIC initialization from FDT | The default machine has no IMSIC, so the PLIC stays the external controller there |
 | Common interrupt abstraction | `InterruptController` trait | — |
@@ -394,12 +391,13 @@ MSI controller, NMI handling, and load balancing.
 
 **Weaknesses:**
 
-- **One LPI collection on AArch64.** The ITS translates a device's message
-  into an LPI, and every collection this kernel maps points at the boot CPU's
-  redistributor — so every message-signalled interrupt lands on one core.
-  Spreading them needs a collection and an LPI pending table per CPU, which is
-  the next step rather than a property of the design; the design for that step
-  is [RFC 0001](../rfcs/0001-spread-message-signalled-interrupts.md).
+- **Message-signalled interrupts are one driver deep on AArch64.** The ITS
+  maps a collection and an LPI pending table per CPU, and a device's entries
+  are placed round-robin over the CPUs that can receive, so the PCIe
+  virtio-net driver's queues are completed by different cores — but that
+  driver is still the only device claiming identities through the ITS
+  ([RFC 0001](../rfcs/0001-spread-message-signalled-interrupts.md) is the
+  design the placement follows).
 - **MSI-X on RISC-V is one driver deep**: the AIA IMSIC is wired and a device's
   table is programmed, but only the virtio-net PCIe driver claims interrupts
   through it; the default machine has no IMSIC at all, so the PLIC remains the
@@ -800,7 +798,7 @@ user-memory validation.
 | SMP | Full (MADT + AP bringup; the tick is the boot CPU's) | Full (PSCI + GIC SGI) | Full (SBI HSM + per-hart vector, timer, and PLIC context; a cross-hart wake waits for the target's tick) |
 | Context switch | Full | Full | Full |
 | PAN/SMAP | SMAP (stac/clac) | PSTATE.PAN (set/clear) | SUM (sstatus) |
-| MSI/MSI-X | Full (vector allocator + table programming) | GICv3 ITS and LPIs; the PCIe virtio-net driver claims its device's identities, which all arrive on the boot CPU | AIA IMSIC; the PCIe virtio-net driver claims its device's identities |
+| MSI/MSI-X | Full (vector allocator + table programming) | GICv3 ITS and LPIs, with a collection and a pending table per CPU; the PCIe virtio-net driver claims one identity per queue, and its queues are completed by different CPUs | AIA IMSIC; the PCIe virtio-net driver claims one identity per queue |
 | PCIe | Full ECAM | Basic probing | Basic probing |
 | ASID allocator | — | Full (bitmap + CAS) | Full (bitmap + CAS) |
 | FDT parsing | — | Full | Full |
@@ -813,8 +811,9 @@ What each target still lacks:
 
 - **x86_64**: no PCID, so a context switch flushes translations; the PIT is
   routed to one LAPIC, so APs take no timer interrupt.
-- **AArch64**: MSI machinery is there — GICv3, LPIs, an ITS — but all of it
-  lands on the boot CPU, and only one driver claims identities through it.
+- **AArch64**: MSI machinery is there — GICv3, LPIs, an ITS, and a placement
+  that spreads a device's entries over the CPUs that can receive — but only
+  one driver claims identities through it.
 - **RISC-V 64**: the most partial of the three. No architectural NMI source,
   a cross-hart wake waits for the target's next tick, and the default QEMU
   machine has no IMSIC.

@@ -391,7 +391,18 @@ pub mod interrupt_controller {
     /// found and woken, and the core asking is the only one that can do it.
     pub(crate) fn init_gicc() -> bool {
         match version() {
-            Some(3) => gicv3::init_cpu(),
+            Some(3) => {
+                if !gicv3::init_cpu() {
+                    return false;
+                }
+                // LPIs are per-core state: this core's own pending table has to
+                // be installed and its redistributor pointed at it before an
+                // ITS collection may name this CPU.  A machine that never set
+                // LPIs up answers `false` here and keeps running; the
+                // placement simply never chooses this core.
+                let _ = gicv3::init_lpis_for_current_cpu();
+                true
+            }
             _ => {
                 cpu_interface_write(GICC_PMR, 0xFF);
                 cpu_interface_write(GICC_BPR, 0);

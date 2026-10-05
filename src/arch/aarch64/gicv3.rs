@@ -397,7 +397,12 @@ fn affinity_from_mpidr(mpidr: u64) -> u64 {
     aff0 | (aff1 << 8) | (aff2 << 16) | (aff3 << 24)
 }
 
-fn current_cpu_id() -> u32 {
+/// The CPU id this core runs as.
+///
+/// A PE's identity here is its Aff0 — the byte `MPIDR_EL1` puts at the bottom
+/// and the one the AP entry point reads — which is also the id the scheduler
+/// and the ITS name a CPU by.
+pub(crate) fn current_cpu_id() -> u32 {
     (affinity_from_mpidr(read_mpidr()) & 0xff) as u32
 }
 
@@ -628,15 +633,27 @@ pub(crate) fn init_cpu() -> bool {
 
 // -- LPIs -----------------------------------------------------------------
 
+/// How many CPUs the LPI tables can name.
+///
+/// One pending table per CPU, so the bound is the kernel's own CPU count: a
+/// redistributor reporting an id past it keeps LPIs off rather than indexing
+/// past the tables.
+const LPI_MAX_CPUS: usize = crate::kernel::smp::MAX_CPUS;
+
 /// The tables a redistributor needs before it can deliver an LPI.
 struct LpiState {
     /// One byte per LPI the machine implements, shared by every CPU that
     /// delivers them: bit 0 enables the LPI, bit 1 puts it in Group 1, and
-    /// bits [7:2] are its priority.
+    /// bits [7:2] are its priority.  The architecture has every redistributor
+    /// read one configuration table, so there is one.
     config: DmaBuffer,
-    /// The boot CPU's pending table, a bit per LPI.  The redistributor sets
-    /// one when a message arrives.
-    pending: DmaBuffer,
+    /// One pending table per CPU, at that CPU's id: a bit per LPI, which that
+    /// CPU's own redistributor sets when a message arrives.  It cannot be
+    /// shared the way the configuration table is — a message names the core
+    /// it is delivered to, and the pending bit belongs to that core — which is
+    /// why spreading interrupts across CPUs is what turns one table into
+    /// these.
+    pending: [Option<DmaBuffer>; LPI_MAX_CPUS],
     /// The LPI bits the machine implements, as `GICR_PROPBASER` wants them:
     /// one less than the number of bits in an LPI id, which is what sizes
     /// both tables.
@@ -656,37 +673,52 @@ fn lpi_id_bits() -> u32 {
     (typer >> 19) & 0x1f
 }
 
-/// Allocate the LPI tables and enable LPIs on the CPU that runs this.
+/// The number of LPIs a machine with `id_bits` implements.
+fn lpi_count(id_bits: u32) -> usize {
+    1_usize << (id_bits + 1)
+}
+
+/// A pending table for a machine with `lpi_count` LPIs.
 ///
-/// One CPU is the whole configuration on purpose: every ITS collection this
-/// kernel programs targets the boot CPU's redistributor (an MSI-X device's
-/// messages are delivered where its collection points, and the collection is
-/// chosen here), so there is exactly one pending table to keep alive and no
-/// per-CPU LPI state for a secondary core to bring up.  A machine whose
-/// interrupts should be spread across CPUs is a later problem, and it will
-/// need one pending table per CPU when it arrives.
+/// One bit per LPI, and the architecture wants it aligned to 64 KiB whether
+/// or not it is that large.
+fn allocate_pending_table(lpi_count: usize) -> Option<DmaBuffer> {
+    DmaBuffer::allocate_aligned(
+        (lpi_count / 8).div_ceil(crate::memory::frame::FRAME_SIZE),
+        LPI_PENDING_ALIGNMENT,
+    )
+}
+
+/// Allocate the shared LPI tables and enable LPIs on the CPU that runs this.
+///
+/// The boot CPU is this call; every other core gets its own pending table
+/// through [`init_lpis_for_current_cpu`] as it comes up.  The configuration
+/// table is allocated here because it is the one table every redistributor
+/// reads, so it has to exist before the first core is pointed at it.
 ///
 /// Returns whether LPIs are enabled; a machine whose frame allocator is
 /// already empty leaves them off and the callers stay on the polling path.
 pub(crate) fn init_lpis() -> bool {
     let id_bits = lpi_id_bits();
-    // One byte per LPI, and one bit per LPI in the pending table.
-    let lpi_count = 1_usize << (id_bits + 1);
+    // One byte per LPI, and one bit per LPI in a pending table.
+    let lpi_count = lpi_count(id_bits);
     let Some(config) = DmaBuffer::allocate(lpi_count.div_ceil(crate::memory::frame::FRAME_SIZE))
     else {
         return false;
     };
-    let pending_bytes = lpi_count / 8;
-    let Some(pending) = DmaBuffer::allocate_aligned(
-        pending_bytes.div_ceil(crate::memory::frame::FRAME_SIZE),
-        LPI_PENDING_ALIGNMENT,
-    ) else {
+    let Some(pending) = allocate_pending_table(lpi_count) else {
         return false;
     };
 
+    let cpu = current_cpu_id() as usize;
+    if cpu >= LPI_MAX_CPUS {
+        return false;
+    }
+    let mut pending_tables: [Option<DmaBuffer>; LPI_MAX_CPUS] = core::array::from_fn(|_| None);
+    pending_tables[cpu] = Some(pending);
     *LPI_STATE.lock() = Some(LpiState {
         config,
-        pending,
+        pending: pending_tables,
         id_bits,
     });
 
@@ -699,6 +731,149 @@ pub(crate) fn init_lpis() -> bool {
         return false;
     }
     true
+}
+
+/// Give the calling core its own pending table and turn LPIs on there.
+///
+/// Called on every core as it comes up, after the redistributor has been
+/// found and woken.  A core that cannot be given a table — no LPIs on this
+/// machine, an id the tables cannot name, no frames left — answers `false`
+/// and is simply never handed an interrupt: the ITS asks
+/// [`lpi_capable`] before it places one here.
+pub(crate) fn init_lpis_for_current_cpu() -> bool {
+    let ok = setup_lpis_for_current_cpu();
+    if ok {
+        crate::println!(
+            "[irq   ] GICv3: LPIs {}-{} enabled on cpu {}",
+            LPI_BASE,
+            LPI_LAST,
+            current_cpu_id()
+        );
+    } else if lpis_initialized() {
+        // LPIs are a feature of this machine and this core did not get them;
+        // saying so is what turns "no interrupt ever arrives here" from a
+        // mystery into a boot line.
+        crate::println!(
+            "[irq   ] GICv3: cpu {} could not be given an LPI pending table",
+            current_cpu_id()
+        );
+    }
+    ok
+}
+
+/// Whether this machine has the LPI tables at all.
+fn lpis_initialized() -> bool {
+    LPI_STATE.lock().is_some()
+}
+
+/// The body of [`init_lpis_for_current_cpu`], without the logging.
+fn setup_lpis_for_current_cpu() -> bool {
+    let cpu = current_cpu_id() as usize;
+    if cpu >= LPI_MAX_CPUS {
+        return false;
+    }
+
+    let already = {
+        let state = LPI_STATE.lock();
+        match state.as_ref() {
+            Some(state) => state.pending[cpu].is_some(),
+            None => return false,
+        }
+    };
+
+    if !already {
+        let id_bits = {
+            let state = LPI_STATE.lock();
+            match state.as_ref() {
+                Some(state) => state.id_bits,
+                None => return false,
+            }
+        };
+        // Allocated before the lock is taken: the frame allocator has a lock
+        // of its own, and holding this one across it is how the two orders
+        // would meet and deadlock.
+        let Some(pending) = allocate_pending_table(lpi_count(id_bits)) else {
+            return false;
+        };
+        let mut state = LPI_STATE.lock();
+        match state.as_mut() {
+            Some(state) => state.pending[cpu] = Some(pending),
+            None => return false,
+        }
+    }
+
+    enable_lpis_for_current_cpu()
+}
+
+/// Whether `cpu` can receive a message-signalled interrupt right now.
+///
+/// Two things have to be true: the CPU must be running, and it must have been
+/// given a pending table and pointed at it.  This is the question a placement
+/// asks before it names a core, because an LPI delivered to a redistributor
+/// with LPIs disabled is not queued — it is lost.
+pub(crate) fn lpi_capable(cpu: u32) -> bool {
+    if !crate::kernel::smp::cpu_is_online(cpu) {
+        return false;
+    }
+    let index = cpu as usize;
+    if index >= LPI_MAX_CPUS {
+        return false;
+    }
+    let state = LPI_STATE.lock();
+    match state.as_ref() {
+        Some(state) => state.pending[index].is_some(),
+        None => false,
+    }
+}
+
+/// The CPU id of the redistributor frame at `index`, if there is one.
+///
+/// The ITS asks this to map a collection per CPU: a collection names a CPU,
+/// and the frames are the CPUs this controller has.
+pub(crate) fn redistributor_cpu(index: usize) -> Option<u32> {
+    if index >= redistributor_count() {
+        return None;
+    }
+    Some((REDISTRIBUTOR_AFFINITY[index].load(Ordering::Acquire) & 0xff) as u32)
+}
+
+/// How many CPUs can receive a message-signalled interrupt.
+pub(crate) fn lpi_capable_count() -> u32 {
+    let mut capable = 0;
+    for index in 0..redistributor_count() {
+        if let Some(cpu) = redistributor_cpu(index) {
+            if lpi_capable(cpu) {
+                capable += 1;
+            }
+        }
+    }
+    capable
+}
+
+/// The `slot`-th CPU that can receive a message-signalled interrupt.
+fn lpi_capable_at(slot: u32) -> Option<u32> {
+    let mut remaining = slot;
+    for index in 0..redistributor_count() {
+        let cpu = redistributor_cpu(index)?;
+        if !lpi_capable(cpu) {
+            continue;
+        }
+        if remaining == 0 {
+            return Some(cpu);
+        }
+        remaining -= 1;
+    }
+    None
+}
+
+/// The CPU that entry `index` of a device's MSI-X table is delivered to.
+///
+/// Round-robin over the CPUs that can receive, which is what puts a
+/// multi-queue device's queues on different cores — see
+/// [`crate::arch::irq_placement`] for why the policy is round-robin.
+pub(crate) fn lpi_cpu_for_entry(index: u32) -> Option<u32> {
+    let slot = crate::arch::irq_placement::place_entry(index, lpi_capable_count())?;
+    lpi_capable_at(slot)
 }
 
 /// Point this core's redistributor at the LPI tables and turn LPIs on.
@@ -716,6 +891,10 @@ fn enable_lpis_for_current_cpu() -> bool {
     let Some(state) = state.as_ref() else {
         return false;
     };
+    let index = current_cpu_id() as usize;
+    let Some(pending) = state.pending.get(index).and_then(|table| table.as_ref()) else {
+        return false;
+    };
 
     let prop = state.config.phys_addr() as u64
         | TABLE_INNER_CACHEABLE
@@ -723,7 +902,7 @@ fn enable_lpis_for_current_cpu() -> bool {
         | state.id_bits as u64;
     write_u64(frame + GICR_PROPBASER, prop);
 
-    let pend = state.pending.phys_addr() as u64 | TABLE_INNER_CACHEABLE | TABLE_INNER_SHAREABLE;
+    let pend = pending.phys_addr() as u64 | TABLE_INNER_CACHEABLE | TABLE_INNER_SHAREABLE;
     write_u64(frame + GICR_PENDBASER, pend);
     dsb_sy();
 
@@ -953,9 +1132,10 @@ impl InterruptController for GicV3Controller {
         }
         if init_lpis() {
             crate::println!(
-                "[irq   ] GICv3: LPIs {}..{} enabled on the boot CPU",
+                "[irq   ] GICv3: LPIs {}-{} enabled on cpu {}",
                 LPI_BASE,
-                LPI_LAST
+                LPI_LAST,
+                current_cpu_id()
             );
         } else {
             crate::println!("[irq   ] GICv3: no LPI tables; message-signalled interrupts stay off");

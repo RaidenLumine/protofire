@@ -36,16 +36,18 @@ The authoritative picture of what exists today is
   before it is allowed to signal, and the NIC's queues are routed to them — so
   the device signals on its own and a completion waits on that interrupt
   (checking the ring first, spinning last).  Remaining gaps: MSI-X is claimed
-  per device rather than per queue, a driver for any other PCIe device, and
-  broader device-tree driver coverage.
+  per queue now, with each entry placed on a hart in turn; what remains is a
+  driver for any other PCIe device, and broader device-tree driver coverage.
 - **AArch64 PCIe.** The ECAM window is found, its buses enumerated, its BARs
   assigned, and its `virtio-net-pci` driven — the same code as riscv64 with a
   different way of reaching a BAR.  Its devices signal by MSI too now: the
   GICv3, the LPIs and the ITS that translates a device's message into one are
-  all there.  What is left is spreading them — every collection points at the
-  boot CPU — and a second driver that claims identities through it.
+  all there, one collection and one pending table per CPU, and a device's
+  entries are placed over those CPUs in turn — so the NIC's queues are
+  completed by different cores.  What is left is a second driver that claims
+  identities through the ITS.
   [RFC 0001](docs/rfcs/0001-spread-message-signalled-interrupts.md) is the
-  design for the first half.
+  design the placement follows.
 - **USB host (xHCI) completion.** The driver is present; close the remaining
   feature gaps so USB storage and HID work end-to-end.
 - **HDA audio to userspace.** Expose the Intel HD Audio engine (currently CORB/

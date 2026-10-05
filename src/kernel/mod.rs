@@ -352,10 +352,6 @@ impl Kernel {
 
         println!("[init  ] interrupt controller init...");
         arch::interrupt_controller::init();
-        // Devices whose interrupts are delivered by that controller: on
-        // riscv64 the IMSIC programs the first MSI-X table it finds, which is
-        // the half of a driver's contract that can be checked without a driver.
-        crate::arch::platform::program_device_msix();
         println!("[init  ] timer init...");
         arch::timer::init();
         let t5 = tick();
@@ -384,6 +380,17 @@ impl Kernel {
 
         // ── SMP AP bring-up ──
         crate::arch::platform::bring_up_secondary_cpus();
+
+        // ── Devices whose interrupts are delivered by that controller ──
+        //
+        // After the APs, because programming an MSI-X table *places* the
+        // device's entries: an entry assigned to a CPU that has not enabled
+        // its LPI pending table yet would have its interrupts dropped rather
+        // than queued, and before this point the only CPU that could receive
+        // one is the boot CPU.  On riscv64 the IMSIC also programs the first
+        // MSI-X table it finds, which is the half of a driver's contract that
+        // can be checked without a driver.
+        crate::arch::platform::program_device_msix();
 
         // ── Power management (CPU frequency scaling) ──
         // Probe the architecture frequency driver and install the default

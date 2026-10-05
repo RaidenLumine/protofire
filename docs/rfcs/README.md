@@ -94,7 +94,7 @@ and its status says which of the two happened.
 
 | RFC | Status | Subject |
 |-----|--------|---------|
-| [0001](0001-spread-message-signalled-interrupts.md) | Proposed | Delivering message-signalled interrupts on more than the boot CPU |
+| [0001](0001-spread-message-signalled-interrupts.md) | Implemented | Delivering message-signalled interrupts on more than the boot CPU |
 
 The table is the index; each document's own status line is the authority, and
 the two say the same thing because moving a status is an edit to both.

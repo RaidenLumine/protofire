@@ -305,10 +305,11 @@ The three targets answer differently:
   device's MSI-X table.  A device write then becomes an interrupt with no
   software in between.
 
-  The limits are deliberate and written where they are implemented: every
-  collection points at the boot CPU, so every MSI arrives there, and a device
-  whose interconnect cannot carry a requester ID would need a window of its own
-  in front of the ITS.  On a GICv2 machine there is no ITS to program, so the
+  The limits are written where they are implemented: there is one collection
+  and one LPI pending table per CPU, and a device whose entries are spread over
+  them is completed by the cores its entries name (section 4.5); a device whose
+  interconnect cannot carry a requester ID would need a window of its own in
+  front of the ITS.  On a GICv2 machine there is no ITS to program, so the
   claim is refused, the table is never written, and the AArch64 runtime check's
   first boot — the GICv2 one — is the boot that still proves the polling path.
 
@@ -666,10 +667,10 @@ CPU bring-up. What is missing:
 
 - **No bare-metal validation.** Every boot this document describes has been
   run under QEMU.
-- **AArch64 delivers every MSI to one CPU.** The GICv3 machine brings up its
-  redistributors, timer PPI, SGI delivery, LPIs and the ITS, and a PCIe
-  device's message reaches its driver — but the ITS collection this kernel
-  maps is the boot CPU's, so none of it is spread across cores (section 4.5).
+- **AArch64's MSI path is one driver deep.** The GICv3 machine brings up its
+  redistributors, timer PPI, SGI delivery, LPIs and the ITS, and a device's
+  entries are placed over the CPUs that can receive — but the PCIe virtio-net
+  driver is the only device claiming identities through the ITS (section 4.5).
 - **RISC-V wakeups are the coarsest**: a cross-hart wake waits for the target
   hart's next tick, and the machine has no architectural NMI source.
 - **The init program is a stub** that exits, so the boot's own service

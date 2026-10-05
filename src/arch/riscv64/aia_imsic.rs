@@ -295,6 +295,52 @@ pub fn has_aia_imsic() -> bool {
     IMSIC_LAYOUT.lock().is_some()
 }
 
+/// How many harts can receive a message-signalled interrupt right now.
+///
+/// A hart counts when it is running and this platform has an IMSIC for it: a
+/// message delivered to a hart that has not switched its IMSIC on is dropped
+/// rather than queued, so a placement must not name one.
+pub fn msix_capable_count() -> u32 {
+    let hart_count = match IMSIC_LAYOUT.lock().as_ref() {
+        Some(layout) => layout.hart_count,
+        None => return 0,
+    };
+    let mut capable = 0;
+    for cpu in 0..crate::kernel::smp::MAX_CPUS as u32 {
+        if cpu < hart_count && crate::kernel::smp::cpu_is_online(cpu) {
+            capable += 1;
+        }
+    }
+    capable
+}
+
+/// The `slot`-th hart that can receive a message-signalled interrupt.
+fn msix_capable_at(slot: u32) -> Option<u32> {
+    let layout = IMSIC_LAYOUT.lock();
+    let hart_count = layout.as_ref()?.hart_count;
+    let mut remaining = slot;
+    for cpu in 0..crate::kernel::smp::MAX_CPUS as u32 {
+        if cpu >= hart_count || !crate::kernel::smp::cpu_is_online(cpu) {
+            continue;
+        }
+        if remaining == 0 {
+            return Some(cpu);
+        }
+        remaining -= 1;
+    }
+    None
+}
+
+/// The hart that entry `index` of a device's MSI-X table is delivered to.
+///
+/// Round-robin over the harts that can receive, which is what puts a
+/// multi-queue device's queues on different harts — see
+/// [`crate::arch::irq_placement`] for why the policy is round-robin.
+pub fn msix_cpu_for_entry(index: u32) -> Option<u32> {
+    let slot = crate::arch::irq_placement::place_entry(index, msix_capable_count())?;
+    msix_capable_at(slot)
+}
+
 /// The identity RISC-V indexes [`crate::arch::irq_handlers`] from: its
 /// identities start at zero, so an identity is its own slot.
 const IRQ_WINDOW_BASE: u32 = 0;
@@ -324,6 +370,20 @@ pub fn claim_device_irqs(count: u32, handler: IrqHandler) -> Result<u32, Error> 
         IMSIC_MAX_DEVICE_IRQ,
         count,
         handler,
+    )
+}
+
+/// Claim `handlers.len()` device identities, one handler each.
+///
+/// See [`crate::arch::irq_handlers::claim_each`] for why a device wants them:
+/// one identity per queue is what lets a completion wake its own queue's
+/// waiter rather than the whole device's.
+pub fn claim_device_irqs_each(handlers: &[IrqHandler]) -> Result<u32, Error> {
+    crate::arch::irq_handlers::claim_each(
+        IRQ_WINDOW_BASE,
+        FIRST_DEVICE_IRQ,
+        IMSIC_MAX_DEVICE_IRQ,
+        handlers,
     )
 }
 
@@ -495,11 +555,14 @@ pub fn compose_msix_entry(target_cpu: u32, irq: u32) -> MsixTableEntry {
 }
 
 /// Programme `count` MSI-X table entries starting at `table_phys`, mapping
-/// `base_irq..base_irq + count` to `target_cpu`'s IMSIC file.
+/// `base_irq..base_irq + count` to the IMSIC files `targets` names.
 ///
 /// `table_phys` is the physical address of the device's MSI-X table within
 /// its BAR (the riscv64 identity-mapped device window, so the address is
-/// directly writable).  Returns the first interrupt identity on success.
+/// directly writable), and `targets[i]` is the hart entry `i` is delivered to
+/// — the placement, which is what lets a multi-queue device's queues be
+/// completed by different harts.  Returns the first interrupt identity on
+/// success.
 ///
 /// MSI-X must additionally be enabled via the device's Message Control
 /// register (PCI config space); that is the PCI MSI-X manager's job, not
@@ -507,11 +570,14 @@ pub fn compose_msix_entry(target_cpu: u32, irq: u32) -> MsixTableEntry {
 pub fn configure_msix(
     table_phys: u64,
     count: u32,
-    target_cpu: u32,
     base_irq: u32,
+    targets: &[u32],
 ) -> Result<u32, Error> {
     if !has_aia_imsic() {
         return Err(Error::NotImplemented);
+    }
+    if targets.len() != count as usize {
+        return Err(Error::InvalidArgument);
     }
     if count == 0 || base_irq + count > IRQ_TABLE_LEN as u32 {
         return Err(Error::InvalidArgument);
@@ -526,7 +592,7 @@ pub fn configure_msix(
 
     let table = table_phys as usize as *mut u8;
     for i in 0..count {
-        let entry = compose_msix_entry(target_cpu, base_irq + i);
+        let entry = compose_msix_entry(targets[i as usize], base_irq + i);
         // SAFETY: `table` is the identity-mapped MSI-X table the caller reserved and
         // `i` is bounded by the entry count it passed, so the pointer names one
         // entry.
@@ -545,10 +611,10 @@ pub fn configure_msix(
     log(
         LogLevel::Info,
         &format!(
-            "AIA IMSIC: programmed {} MSI-X entr(y/ies) @{:#x} -> cpu{} irq {}..={}",
+            "AIA IMSIC: programmed {} MSI-X entr(y/ies) @{:#x} -> harts {:?} irq {}..={}",
             count,
             table_phys,
-            target_cpu,
+            targets,
             base_irq,
             base_irq + count - 1
         ),

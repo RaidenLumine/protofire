@@ -65,6 +65,35 @@ pub fn claim(
     count: u32,
     handler: IrqHandler,
 ) -> Result<u32, Error> {
+    claim_run(base, first, last, count, |_| Some(handler.clone()))
+}
+
+/// Claim `handlers.len()` consecutive identities, one handler each.
+///
+/// The sibling of [`claim`], for the case that made it necessary: a device
+/// whose table delivers one identity per queue.  A driver that registers the
+/// same handler for every queue cannot tell which queue completed, so its
+/// completion path wakes on the device rather than on its own queue; naming
+/// each identity is what lets the wakeup belong to the queue that caused it.
+pub fn claim_each(base: u32, first: u32, last: u32, handlers: &[IrqHandler]) -> Result<u32, Error> {
+    claim_run(base, first, last, handlers.len() as u32, |index| {
+        handlers.get(index).cloned()
+    })
+}
+
+/// The shared half of [`claim`] and [`claim_each`].
+///
+/// `handler_at` answers which handler the `index`-th identity of the run gets,
+/// or `None` when the caller has none for it — which is a request the caller
+/// made and cannot be honoured, so it is an argument error rather than a
+/// partially registered run.
+fn claim_run(
+    base: u32,
+    first: u32,
+    last: u32,
+    count: u32,
+    handler_at: impl Fn(usize) -> Option<IrqHandler>,
+) -> Result<u32, Error> {
     if count == 0 || first < base || last < first {
         return Err(Error::InvalidArgument);
     }
@@ -76,6 +105,14 @@ pub fn claim(
     let last = last.min(window_last);
     if last < first {
         return Err(Error::NoSpace);
+    }
+
+    // The handlers first, outside the registry's lock: a caller that is one
+    // short is refused here, before anything is written, and the heap lock is
+    // not taken under this one.
+    let mut run: alloc::vec::Vec<IrqHandler> = alloc::vec::Vec::with_capacity(count as usize);
+    for index in 0..count as usize {
+        run.push(handler_at(index).ok_or(Error::InvalidArgument)?);
     }
 
     let mut handlers = IRQ_HANDLERS.lock();
@@ -90,8 +127,8 @@ pub fn claim(
         let free = (candidate..candidate + count)
             .all(|identity| handlers[(identity - base) as usize].is_none());
         if free {
-            for identity in candidate..candidate + count {
-                handlers[(identity - base) as usize] = Some(handler.clone());
+            for (offset, handler) in run.iter().enumerate() {
+                handlers[(candidate - base) as usize + offset] = Some(handler.clone());
             }
             return Ok(candidate);
         }

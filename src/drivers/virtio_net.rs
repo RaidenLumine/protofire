@@ -125,8 +125,9 @@ struct NetDevice {
     /// The claim on the device's interrupts: the identity range its table will
     /// deliver, and whether the platform has programmed it yet.
     interrupts: crate::arch::platform::DeviceInterrupts,
-    /// What the handler bumps and the completion path parks on.
-    signal: alloc::sync::Arc<NetSignal>,
+    /// What each queue's handler bumps and that queue's completion path parks
+    /// on, indexed by the transport's queue number.
+    signals: [alloc::sync::Arc<NetSignal>; 2],
 }
 
 /// What the device's handler and the completion path share.
@@ -183,7 +184,7 @@ static NET_DEVICE: Mutex<Option<alloc::sync::Arc<NetDevice>>> = Mutex::new(None)
 /// waiting for a quiet moment", and the ring is re-read either way, so polling
 /// is the honest answer for a context that cannot be woken.
 #[cfg(target_os = "none")]
-fn wait_for_device_interrupt(timeout_ticks: u64) -> bool {
+fn wait_for_queue_interrupt(queue: u16, timeout_ticks: u64) -> bool {
     if !crate::arch::interrupts::are_enabled() {
         return false;
     }
@@ -193,7 +194,59 @@ fn wait_for_device_interrupt(timeout_ticks: u64) -> bool {
     if !device.interrupts.is_armed() {
         return false;
     }
-    device.signal.wait(timeout_ticks)
+    // The queue's own signal, not the device's: with one MSI-X entry per
+    // queue, a completion wakes the queue it belongs to.  A vector the driver
+    // did not name lands on the device-wide handler, which wakes both.
+    match device.signals.get(queue as usize) {
+        Some(signal) => signal.wait(timeout_ticks),
+        None => false,
+    }
+}
+
+/// The handler one queue's MSI-X entry runs.
+///
+/// The line it prints names the queue, and which CPU took it is already on the
+/// line: the console prefixes every thread's output with the CPU it runs on,
+/// and a driver that read the CPU id itself would be reaching into per-CPU
+/// state to duplicate what the console just wrote.
+#[cfg(target_os = "none")]
+fn queue_msi_handler(
+    signal: &alloc::sync::Arc<NetSignal>,
+    name: &'static str,
+) -> crate::arch::irq_handlers::IrqHandler {
+    let signal = signal.clone();
+    alloc::sync::Arc::new(move |irq| {
+        let seen = signal
+            .count
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+            + 1;
+        if seen <= 2 {
+            crate::println!("[virtio-net] {} MSI (irq {})", name, irq);
+        }
+        signal.ready.notify_all();
+    })
+}
+
+/// The handler every entry the driver did not name runs.
+///
+/// It wakes both queues: an entry nobody can attribute still means the device
+/// has something to say, and both completion paths re-read their own rings
+/// rather than trusting the wakeup to have been theirs.
+#[cfg(target_os = "none")]
+fn device_msi_handler(
+    rx: &alloc::sync::Arc<NetSignal>,
+    tx: &alloc::sync::Arc<NetSignal>,
+) -> crate::arch::irq_handlers::IrqHandler {
+    let rx = rx.clone();
+    let tx = tx.clone();
+    alloc::sync::Arc::new(move |irq| {
+        let seen = rx.count.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+        if seen <= 2 {
+            crate::println!("[virtio-net] device MSI (irq {})", irq);
+        }
+        rx.ready.notify_all();
+        tx.ready.notify_all();
+    })
 }
 
 /// How many completion waits the device's interrupt has actually ended (the
@@ -595,7 +648,7 @@ impl VirtIoNet {
     // ─── Polling (bare-metal only) ───
 
     #[cfg(target_os = "none")]
-    fn poll_completion(&self, _queue_index: u16) -> Result<()> {
+    fn poll_completion(&self, queue_index: u16) -> Result<()> {
         // Fast path first: the device is usually quicker than the round trip
         // through this function, so the completion is often already in the ring
         // and there is nothing to wait for.
@@ -613,7 +666,7 @@ impl VirtIoNet {
         // queue's; a machine whose device signals through a line nobody waits on
         // answers `false` here and falls through to the loop below, which is
         // what every transport did before this existed.
-        if wait_for_device_interrupt(NET_MSI_WAIT_TICKS) {
+        if wait_for_queue_interrupt(queue_index, NET_MSI_WAIT_TICKS) {
             let mut tx = self.tx_queue.lock();
             tx.sync_device_used_idx();
             if tx.completed_count() > 0 {
@@ -985,32 +1038,31 @@ fn probe_pci_net() -> Option<Arc<dyn NetworkDevice>> {
     // hardware, so claiming works here; the platform programs this device's
     // table and lets it signal once the interrupt controller is up, and the
     // completion path polls until then — which is what it did before.
-    let signal = alloc::sync::Arc::new(NetSignal::new());
-    let handler = {
-        let signal = signal.clone();
-        move |irq| {
-            let seen = signal
-                .count
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-                + 1;
-            if seen <= 4 {
-                crate::println!(
-                    "[virtio-net] device MSI: irq {} claimed ({} since boot)",
-                    irq,
-                    seen
-                );
-            }
-            signal.ready.notify_all();
-        }
-    };
-    let interrupts = crate::arch::platform::pci_claim_msix(&window, handler);
+    //
+    // One identity per queue, not one for the device: the transport numbers
+    // each queue's vector (see `set_queue_msix_vector`), so queue `q` is entry
+    // `q`, and a completion then wakes the queue it belongs to.  Entries the
+    // driver does not name — the config-change entry, for one — still need an
+    // owner, and the device-wide handler is theirs: a wakeup for another queue
+    // is absorbed by the loop that re-reads the ring.
+    let rx_signal = alloc::sync::Arc::new(NetSignal::new());
+    let tx_signal = alloc::sync::Arc::new(NetSignal::new());
+    let named = [
+        (RECEIVE_QUEUE, queue_msi_handler(&rx_signal, "RX")),
+        (TRANSMIT_QUEUE, queue_msi_handler(&tx_signal, "TX")),
+    ];
+    let fallback = device_msi_handler(&rx_signal, &tx_signal);
+    let interrupts = crate::arch::platform::pci_claim_msix(&window, &named, &fallback);
     if let Some(interrupts) = interrupts {
         crate::println!(
             "[virtio-net] device interrupts claimed: irq {}+; completions wait on them once \
              the controller programs the table",
             interrupts.first_irq()
         );
-        *NET_DEVICE.lock() = Some(alloc::sync::Arc::new(NetDevice { interrupts, signal }));
+        *NET_DEVICE.lock() = Some(alloc::sync::Arc::new(NetDevice {
+            interrupts,
+            signals: [rx_signal, tx_signal],
+        }));
     }
 
     let region = Box::new(PciModernRegion::new(

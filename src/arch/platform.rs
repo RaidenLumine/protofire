@@ -308,20 +308,19 @@ impl DeviceInterrupts {
 #[cfg(target_os = "none")]
 pub(crate) fn pci_claim_msix(
     window: &PciRegisterWindow,
-    handler: impl Fn(u32) + Send + Sync + 'static,
+    named: &[(u16, crate::arch::irq_handlers::IrqHandler)],
+    fallback: &crate::arch::irq_handlers::IrqHandler,
 ) -> Option<DeviceInterrupts> {
     #[cfg(all(target_arch = "aarch64", target_os = "none"))]
     {
-        use alloc::sync::Arc;
-
         let function = window.function;
-        let handler: crate::arch::irq_handlers::IrqHandler = Arc::new(handler);
         let claim = crate::arch::aarch64::its::claim_msix(
             &function.region,
             function.bus,
             function.device,
             function.function,
-            handler,
+            named,
+            fallback,
         )
         .ok()?;
         crate::arch::aarch64::its::defer_msix_arming(claim.clone());
@@ -330,16 +329,14 @@ pub(crate) fn pci_claim_msix(
 
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
     {
-        use alloc::sync::Arc;
-
         let function = window.function;
-        let handler: crate::arch::riscv64::aia_imsic::IrqHandler = Arc::new(handler);
         let claim = crate::arch::riscv64::pci::claim_msix(
             &function.region,
             function.bus,
             function.device,
             function.function,
-            handler,
+            named,
+            fallback,
         )
         .ok()?;
         crate::arch::riscv64::pci::defer_msix_arming(claim.clone());
@@ -351,9 +348,36 @@ pub(crate) fn pci_claim_msix(
         all(target_arch = "aarch64", target_os = "none")
     )))]
     {
-        let _ = (window, handler);
+        let _ = (window, named, fallback);
         None
     }
+}
+
+/// The handler each identity of a device's MSI-X table is registered for.
+///
+/// `named` holds the entries the driver uses for itself — one per queue, in
+/// the shape the transport numbers them.  Every other entry the table can
+/// deliver gets `fallback`, because an identity the device can signal and
+/// nobody owns is counted as spurious, which is a worse answer than a wakeup
+/// that turns out to be for another queue.
+// Every configuration that compiles the two architectures' MSI-X claims needs
+// this, including the aarch64 host target `make check` type-checks.
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+pub(crate) fn msix_handlers_for(
+    count: u32,
+    named: &[(u16, crate::arch::irq_handlers::IrqHandler)],
+    fallback: &crate::arch::irq_handlers::IrqHandler,
+) -> alloc::vec::Vec<crate::arch::irq_handlers::IrqHandler> {
+    let mut handlers = alloc::vec::Vec::with_capacity(count as usize);
+    for index in 0..count {
+        let handler = named
+            .iter()
+            .find(|(vector, _)| *vector as u32 == index)
+            .map(|(_, handler)| handler.clone())
+            .unwrap_or_else(|| fallback.clone());
+        handlers.push(handler);
+    }
+    handlers
 }
 
 /// The device and the largest prefetchable MMIO BAR of the first function that

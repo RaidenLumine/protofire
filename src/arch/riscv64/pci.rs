@@ -156,8 +156,8 @@ pub struct MsixProgramming {
 /// Finds the device's MSI-X capability, derives the table address from the
 /// capability's BAR indicator and offset, programs `count` entries through
 /// [`crate::arch::riscv64::aia_imsic::configure_msix`] so they deliver
-/// `base_irq..base_irq + count` to `target_cpu`'s IMSIC file, and enables the
-/// capability.
+/// `base_irq..base_irq + count` to the IMSIC files `targets` names, and
+/// enables the capability.
 ///
 /// Returns where the entries went and which identity they deliver; the caller
 /// registers a handler with
@@ -168,8 +168,8 @@ pub fn pci_enable_msix(
     bus: u8,
     device: u8,
     function: u8,
-    target_cpu: u32,
     base_irq: u32,
+    targets: &[u32],
 ) -> Result<MsixProgramming, crate::Error> {
     use crate::arch::riscv64::aia_imsic;
 
@@ -214,7 +214,7 @@ pub fn pci_enable_msix(
     // Table size is (Message Control bits 10:0) + 1 entries.
     let table_size = ((msix.message_control & 0x07FF) as u32) + 1;
 
-    let first_irq = aia_imsic::configure_msix(table_phys, table_size, target_cpu, base_irq)?;
+    let first_irq = aia_imsic::configure_msix(table_phys, table_size, base_irq, targets)?;
 
     // Enable MSI-X (bit 15) and leave the *function mask* (bit 14) set: the
     // table is programmed, but the device may not signal yet.  Whichever side
@@ -407,13 +407,24 @@ impl MsixClaim {
         use crate::arch::riscv64::aia_imsic;
 
         let inner = &self.inner;
+
+        // Where each entry of this device's table is delivered.  Entries are
+        // placed in turn over the harts that can receive, so a device with
+        // several queues has them completed by different harts instead of all
+        // by the boot hart.
+        let mut targets = Vec::with_capacity(inner.count as usize);
+        for index in 0..inner.count {
+            let cpu = aia_imsic::msix_cpu_for_entry(index).ok_or(crate::Error::NotImplemented)?;
+            targets.push(cpu);
+        }
+
         let programmed = pci_enable_msix(
             &inner.region,
             inner.bus,
             inner.device,
             inner.function,
-            0,
             inner.first_irq,
+            &targets,
         )?;
 
         // Read the table back.  QEMU's devices decode their BAR, so the words
@@ -421,7 +432,10 @@ impl MsixClaim {
         // read as zeroes (or as a fault) and this is where that shows.
         let entry_bytes = core::mem::size_of::<aia_imsic::MsixTableEntry>();
         for index in 0..programmed.table_size {
-            let expected = aia_imsic::compose_msix_entry(0, inner.first_irq + index);
+            let Some(&target) = targets.get(index as usize) else {
+                return Err(crate::Error::DeviceError);
+            };
+            let expected = aia_imsic::compose_msix_entry(target, inner.first_irq + index);
             let entry = programmed.table_phys as usize + index as usize * entry_bytes;
             if aia_imsic::read_msix_entry(entry) != expected {
                 return Err(crate::Error::DeviceError);
@@ -432,6 +446,15 @@ impl MsixClaim {
         inner
             .armed
             .store(true, core::sync::atomic::Ordering::Release);
+        crate::println!(
+            "[pci   ] RISC-V MSI-X {:02x}:{:02x}.{}: irq {}-{} placed on hart {:?}",
+            inner.bus,
+            inner.device,
+            inner.function,
+            inner.first_irq,
+            inner.first_irq + inner.count - 1,
+            targets
+        );
         Ok(())
     }
 }
@@ -449,7 +472,8 @@ pub fn claim_msix(
     bus: u8,
     device: u8,
     function: u8,
-    handler: crate::arch::riscv64::aia_imsic::IrqHandler,
+    named: &[(u16, crate::arch::riscv64::aia_imsic::IrqHandler)],
+    fallback: &crate::arch::riscv64::aia_imsic::IrqHandler,
 ) -> Result<MsixClaim, crate::Error> {
     use crate::arch::riscv64::aia_imsic;
 
@@ -458,7 +482,10 @@ pub fn claim_msix(
     }
     let count =
         msix_entry_count(region, bus, device, function).ok_or(crate::Error::NotImplemented)?;
-    let first_irq = aia_imsic::claim_device_irqs(count, handler)?;
+    // One handler per identity: the entries the driver named for its queues,
+    // and the device-wide one for every other entry the table can deliver.
+    let handlers = crate::arch::platform::msix_handlers_for(count, named, fallback);
+    let first_irq = aia_imsic::claim_device_irqs_each(&handlers)?;
 
     Ok(MsixClaim {
         inner: alloc::sync::Arc::new(MsixClaimInner {
@@ -578,12 +605,17 @@ fn probe_unclaimed_msix() -> bool {
         return false;
     };
 
+    // The boot's own walk of an unclaimed table registers one handler for the
+    // whole device: nobody owns these identities, so there is no queue to
+    // attribute them to.
+    let probe_handler: crate::arch::riscv64::aia_imsic::IrqHandler = Arc::new(probe_msi_handler);
     let claim = match claim_msix(
         &region,
         device.bus,
         device.device,
         device.function,
-        Arc::new(probe_msi_handler),
+        &[],
+        &probe_handler,
     ) {
         Ok(claim) => claim,
         Err(error) => {

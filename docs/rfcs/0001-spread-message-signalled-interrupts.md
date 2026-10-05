@@ -1,6 +1,6 @@
 # RFC 0001: Deliver message-signalled interrupts on more than one CPU
 
-- **Status:** Proposed
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-05
 - **Supersedes:** none
@@ -108,8 +108,10 @@ the CPU the chooser chose.
   landing first.
 - **Spread per queue now.**  The right end state, and the reason the chooser
   takes a request at all, but it depends on claiming MSI-X identities per
-  queue, which is a driver-facing gap in a different layer.  This RFC makes
-  the chooser able to answer that request; it does not add the request.
+  queue, which is a driver-facing gap in a different layer.  The placement
+  landed able to answer it, and the driver half landed with it (see the
+  implementation note), because the two together are what makes the spread
+  observable.
 
 ## Drawbacks
 
@@ -134,18 +136,37 @@ say so, in the shape the existing "no LPI tables" line already has.
 ## How this is proven
 
 - The chooser is a pure function, so the host-side tests live next to it: one
-  CPU, several CPUs, an offline CPU in the middle of the online set, and a
-  driver that names a CPU.
-- The hardware path is proven by the AArch64 SMP boot with a NIC
-  (`scripts/check-aarch64-smp.sh` already boots four CPUs); it gains an
-  assertion that a device's interrupts were counted on more than one CPU.  The
-  counts exist (`src/kernel/irq_stats.rs`, per CPU and per vector) and reach
-  user space through the diagnostic records in `src/abi/diagnostic.rs`, so the
-  check reads what the kernel counted instead of trusting a log line.
-- The RISC-V half needs the same boot on the IMSIC machine rather than the
-  PLIC one: `-machine virt,aia=aplic-imsic` with more than one hart, which is
-  the machine `scripts/check-riscv64-aia-runtime.sh` boots today on a single
-  hart.
+  CPU, several CPUs, and a wrap.
+- The hardware path is proven by the AArch64 boot with a NIC: the GICv3 second
+  boot inside `scripts/check-aarch64-runtime.sh` runs two CPUs and a
+  `virtio-net-pci`, and it asserts that each CPU enabled LPIs for itself, that
+  the device's four entries were placed on `[0, 1, 0, 1]`, and — the property
+  the whole design is for — that the RX and TX queues were *served by different
+  CPUs*.  Which CPU served a queue is the console's own `[cpuN]` prefix, so the
+  driver does not reach into per-CPU state to duplicate it.
+- RISC-V is checked the same way where its tables are programmed: the
+  placement line and a per-queue interrupt are asserted by
+  `scripts/check-riscv64-pci-runtime.sh`, on the IMSIC machine
+  (`-machine virt,aia=aplic-imsic`).
+
+## Implementation note
+
+`src/arch/aarch64/gicv3.rs` keeps one pending table per CPU and enables LPIs
+for a core as it comes up; `src/arch/aarch64/its.rs` maps one collection per
+CPU and places a device's entries over the CPUs that can receive.  RISC-V
+names the hart in each MSI-X entry itself (`src/arch/riscv64/aia_imsic.rs`),
+which is the same decision taken where that machine's table lives.  Both call
+the policy in `src/arch/irq_placement.rs` (host-tested, next to the shared
+`irq_handlers` registry).  x86_64 stayed out of scope as the design says.
+
+Two things moved with it.  Device tables are now programmed after the APs are
+up (`src/kernel/mod.rs`), because an entry naming a core whose pending table is
+not installed yet would have its interrupt dropped rather than queued — before
+that point the only CPU that can receive one is the boot CPU.  And the driver
+half landed too: the registry registers one handler per identity
+(`crate::arch::irq_handlers::claim_each`), a claim takes the entry each queue
+named for itself, and virtio-net parks each queue's completion on that queue's
+own interrupt rather than on the device's.
 
 ## Unresolved questions
 
@@ -156,8 +177,10 @@ say so, in the shape the existing "no LPI tables" line already has.
   the `SYNC` that follows it), which would let the existing balancer move an
   LPI?  If so, what protocol does a driver owe — mask, drain, then move — and
   who owns the in-flight message?
-- Do the per-queue identities come before or after this lands?  The chooser
-  can answer a per-queue request today, but nothing makes one yet.
+- Per-queue identities landed with the placement rather than after it, so a
+  driver now asks for them by naming a vector; what is still open is whether
+  every queue of every future device should get its own CPU, or whether a
+  device should be able to ask for a narrower spread.
 - What happens to a CPU that comes up after a claim already picked it?  The
   chooser reads the online set at claim time, so a late CPU is only ever
   skipped, never preferred; a rebalancing story would have to revisit that.
