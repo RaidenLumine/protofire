@@ -258,22 +258,42 @@ pub(crate) fn bring_up_aps() {
     }
 
     crate::println!("[smp   ] bringing up {} AP(s)...", aps.len());
+    let mut started: Vec<u32> = Vec::with_capacity(aps.len());
     for &(cpu_id, _mpidr) in &aps {
         let idx = (cpu_id as usize).wrapping_sub(1);
         if idx >= MAX_APS {
             crate::println!("[smp   ] skipping cpu_id={} > MAX_APS", cpu_id);
             continue;
         }
-        bring_up_one(cpu_id, idx);
+        if bring_up_one(cpu_id, idx) {
+            started.push(cpu_id);
+        }
     }
 
-    // "Started", not "online": PSCI returns as soon as the request is accepted,
-    // and each core reports for itself from its own entry point — that is the
-    // line the online count is built from, and it is not this one.
-    crate::println!("[smp   ] {} AP(s) started", aps.len());
+    // PSCI returns as soon as the request is accepted, so "started" is not
+    // "online": each core reports for itself from its own entry point.  Wait
+    // for the accepted cores to do that, because everything after this call
+    // reasons about the online set — the MSI-X placement in `Kernel::init`
+    // above all, which must name a CPU that can already receive.
+    let missing = crate::kernel::smp::wait_until_online(&started);
+    for cpu_id in &missing {
+        crate::println!(
+            "[smp   ] AP cpu_id={} did not come online; continuing",
+            cpu_id
+        );
+    }
+    crate::println!(
+        "[smp   ] {} AP(s) started, {} online",
+        aps.len(),
+        started.len() - missing.len()
+    );
 }
 
-fn bring_up_one(cpu_id: u32, idx: usize) {
+/// Start one core, and answer whether the firmware accepted the request.
+///
+/// A rejected core is not "slow": PSCI will never start it, so the caller
+/// must not wait for it to report in.
+fn bring_up_one(cpu_id: u32, idx: usize) -> bool {
     crate::println!("[smp   ] bring_up_one: cpu={}", cpu_id);
 
     // SAFETY: `idx` is below `MAX_APS` (the caller's bound) and the stack pool
@@ -313,9 +333,11 @@ fn bring_up_one(cpu_id: u32, idx: usize) {
     match unsafe { crate::arch::aarch64::psci::cpu_on(cpu_id as u64, entry, stack_top as u64) } {
         Ok(()) => {
             crate::println!("  [smp   ] cpu={} started", cpu_id);
+            true
         }
         Err(status) => {
             crate::println!("  [smp   ] cpu={} CPU_ON rejected: {:#x}", cpu_id, status);
+            false
         }
     }
 }

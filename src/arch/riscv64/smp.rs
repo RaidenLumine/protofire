@@ -265,12 +265,32 @@ pub fn bring_up_aps() {
         return;
     }
 
+    let mut started: Vec<u32> = Vec::with_capacity(hartids.len());
     for (index, &hartid) in hartids.iter().enumerate() {
-        bring_up_one(hartid, index);
+        if bring_up_one(hartid, index) {
+            started.push(hartid as u32);
+        }
+    }
+
+    // The firmware accepts a start request before the hart has run a line, so
+    // "accepted" is not "online".  Wait for the harts that were accepted to
+    // report in, because what follows a bring-up reasons about the online set
+    // — the message-signalled placement above all, which names a hart that
+    // must already be able to take the interrupt.
+    let missing = crate::kernel::smp::wait_until_online(&started);
+    for hartid in &missing {
+        crate::println!(
+            "[smp] riscv64: hart {} did not come online; continuing",
+            hartid
+        );
     }
 }
 
-fn bring_up_one(hartid: u64, index: usize) {
+/// Start one hart, and answer whether the firmware accepted the request.
+///
+/// A rejected hart is not "slow": SBI will never start it, so the caller must
+/// not wait for it to report in.
+fn bring_up_one(hartid: u64, index: usize) -> bool {
     use alloc::boxed::Box;
 
     // The block, the scheduler, and the idle thread are built here, on the BSP,
@@ -331,11 +351,13 @@ fn bring_up_one(hartid: u64, index: usize) {
             hartid,
             ret
         );
+        return false;
     }
 
-    // No online count is kept here: this call reports a request SBI accepted,
-    // and the hart itself reports that it is running — see `ap_entry`.  A hart
-    // that never gets past the reset never claimed to be up.
+    // What comes back is "SBI accepted the request", not "the hart is up":
+    // the hart reports that for itself from `ap_entry`, and the caller waits
+    // for those reports before it returns.
+    true
 }
 
 // ---------------------------------------------------------------------------

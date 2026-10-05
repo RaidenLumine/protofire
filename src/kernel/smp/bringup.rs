@@ -12,6 +12,7 @@
 //! `arch/x86_64/smp.rs`, `arch/aarch64/smp.rs`, `arch/riscv64/smp.rs` — and so
 //! is reaching one of them afterwards (`arch::ipi`).
 
+use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
 // ── Constants ───────────────────────────────────────────────────────────
@@ -106,4 +107,45 @@ pub fn send_reschedule_ipi(cpu_id: u32) {
         return;
     }
     crate::arch::ipi::send_reschedule_ipi(cpu_id);
+}
+
+// ── Waiting for a started CPU to report in ──────────────────────────────
+
+/// How long a bring-up waits, in spin-loop iterations, for a CPU it started
+/// to report itself online.
+///
+/// A budget in iterations rather than a duration: the cycle counter's rate is
+/// not known this early — the calibration needs the scheduler — so a duration
+/// cannot be spelled in the units the counter provides.  What matters is that
+/// the number outlasts a core's entry path and is finite, because a core that
+/// never reports in must cost a wait and not a boot that hangs.
+pub(crate) const AP_ONLINE_SPIN_BUDGET: u64 = 100_000_000;
+
+/// Wait, boundedly, for every CPU in `expected` to report online, and return
+/// the ones that did not.
+///
+/// A start request is accepted before the core has run a line, so "accepted"
+/// is not "online" — and what runs after a bring-up reasons about the online
+/// set.  The message-signalled placement is the sharpest case: it names a CPU
+/// that must already be able to take the interrupt, so an entry handed to a
+/// core that has not enabled its LPI pending table is an interrupt dropped
+/// rather than queued.  This call is where the two events are joined.
+///
+/// An item-level `allow(dead_code)` rather than a configuration: x86_64's
+/// bring-up confirms each core's start before it returns, so only the two
+/// architectures that accept a start request without confirming it call this,
+/// and the helper is the same for both.
+#[allow(dead_code)]
+pub(crate) fn wait_until_online(expected: &[u32]) -> Vec<u32> {
+    let mut spins: u64 = 0;
+    while spins < AP_ONLINE_SPIN_BUDGET && expected.iter().any(|&cpu| !cpu_is_online(cpu)) {
+        core::hint::spin_loop();
+        spins += 1;
+    }
+
+    expected
+        .iter()
+        .copied()
+        .filter(|&cpu| !cpu_is_online(cpu))
+        .collect()
 }
