@@ -15,6 +15,16 @@ use core::arch::asm;
 /// traps to the kernel; the caller must pass arguments exactly as the raw ABI
 /// requires and guarantee that any pointer-valued argument is a valid user
 /// address for the duration of the trap.
+///
+/// `#[inline(always)]` rather than the compiler's judgement: a demo payload
+/// copies this code into its own section and runs it at another address, so a
+/// call that is outlined into the kernel's `.text` becomes a `bl` whose target
+/// is the kernel's copy — which the payload cannot reach once it is relocated.
+/// The x86_64 relocation check catches that shape where a relocation survives;
+/// on this target the link is complete, so the only thing standing between the
+/// payload and a dangling call is the inlining, and it must not be left to a
+/// heuristic.
+#[inline(always)]
 pub(super) unsafe fn raw_status(
     number: usize,
     arg0: usize,

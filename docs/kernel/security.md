@@ -151,10 +151,10 @@ entry points (`check_process`, `check_network`) exist in the module and have
 no call site, so a policy cannot yet reach a signal, a trace or a connection.
 
 The policy is managed through `MacSetMode`, `MacAddRule`, `MacSetPathType`
-and `MacGetStatus`.  None of the four checks the caller's token: any process
-that can make a syscall can enable enforcement, add rules or relabel a path.
-That is a gap in the interface rather than a deliberate policy, and the
-status table records it as one.
+and `MacGetStatus`.  The three that write require `is_admin_mode` — the same
+gate the account-management syscalls use — because the policy decides what
+every other process may do; `MacGetStatus` only reads, so any caller may ask
+whether enforcement is on.
 
 ## Audit
 
@@ -202,8 +202,8 @@ whatever the read-only system image ships.
 
 - **MAC reaches files only.** A policy cannot refuse a signal, a trace or a
   connection yet, because the two entry points that would are not called.
-- **MAC management is unprivileged.** The four policy syscalls accept any
-  caller.
+- **MAC reads are open.** `MacGetStatus` accepts any caller; only the three
+  syscalls that change the policy are gated.
 - **No stack-canary check.** `Thread` keeps a canary field, and nothing reads
   it; the real overrun detectors are the heap block's own canary and the
   guard page below a kernel stack (see [memory.md](memory.md)).

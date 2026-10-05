@@ -17,6 +17,11 @@ use crate::user::shared::abi::syscall as syscall_abi;
 /// Must be called from x86_64 user mode.  The caller must pass arguments
 /// exactly as the raw ABI requires and guarantee that any pointer-valued
 /// argument is a valid user address for the duration of the trap.
+///
+/// `#[inline(always)]` for the same reason as the AArch64 copy: a demo payload
+/// is copied out of its section and run elsewhere, and an outlined call would
+/// become a branch to the kernel's copy of this function.
+#[inline(always)]
 pub(super) unsafe fn raw_status(
     number: usize,
     arg0: usize,

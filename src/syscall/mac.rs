@@ -13,8 +13,25 @@ use crate::kernel::process::mac::MacStatus;
 use crate::Error;
 use crate::Result;
 
+/// Require a privileged caller for a policy change.
+///
+/// The policy decides what every other process may do, so writing it is
+/// administration rather than a service — the same `is_admin_mode` gate the
+/// account-management syscalls use.  Without it any process that can make a
+/// syscall could enable enforcement, add rules or relabel a path.
+fn require_privileged_caller() -> Result<()> {
+    super::runtime::with_current_process(|process| {
+        if !process.security_token().is_admin_mode() {
+            return Err(Error::PermissionDenied);
+        }
+        Ok(())
+    })
+}
+
 /// Syscall 175: mac_set_mode(enabled, default_deny, flags) → previous enabled.
 pub(super) fn mac_set_mode(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
+    require_privileged_caller()?;
+
     let enabled = context.arg(0) as u32;
     let default_deny = context.arg(1) as u32;
     super::validate_known_flags(context.arg(2), 0)?;
@@ -31,6 +48,8 @@ pub(super) fn mac_set_mode(context: &mut super::SyscallContext) -> Result<super:
 
 /// Syscall 176: mac_add_rule(&MacRule, len, flags).
 pub(super) fn mac_add_rule(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
+    require_privileged_caller()?;
+
     let ptr = context.arg(0) as *const u8;
     let len = context.arg(1);
     let flags = context.arg(2) as u32;
@@ -56,6 +75,8 @@ pub(super) fn mac_add_rule(context: &mut super::SyscallContext) -> Result<super:
 pub(super) fn mac_set_path_type(
     context: &mut super::SyscallContext,
 ) -> Result<super::SyscallDispatch> {
+    require_privileged_caller()?;
+
     let ptr = context.arg(0) as *const u8;
     let len = context.arg(1);
     let mac_type = context.arg(2) as u32;
