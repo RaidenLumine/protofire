@@ -159,19 +159,24 @@ block-cache management.
 
 The VFS is the largest subsystem in the tree. Its native filesystem, its
 external drivers, its recovery machinery, and its Unicode layer are described
-below.
+below; the mechanism itself is [docs/kernel/fs.md](../kernel/fs.md).
 
 #### 3.1 Native Filesystem
 
 | Component | Now | Missing |
 |-----------|-----|---------|
-| SimpleFs core (V2/V3) | Full read/write, CRC32C-checked, two-phase commit, V3 persistent security descriptors | Recovery is exercised by the in-tree fault matrix rather than a searching fuzzer; no real-disk validation |
-| TmpFs | In-memory, full read/write, xattrs | Contents do not survive a reboot |
+| SimpleFs core (V2/V3/V4) | Full read/write, per-file data checksum, undo-log transactions and the V3+ two-phase commit; V3 persistent security descriptors, V4 xattr table and data-reduction flags | The image builders produce V2, so the V3/V4 layouts are exercised by the tests rather than by a boot; recovery is exercised by the in-tree fault matrix rather than a searching fuzzer; no real-disk validation |
+| TmpFs | In-memory, full read/write, xattrs | Contents do not survive a reboot; no mount in the tree |
 | DevFs | The kernel's own devices as nodes, and every device a probe bound as a directory of facts (`driver`, `category`, `bus`) | Read-only; node metadata is the registry's, not the filesystem's; a discovered device has no I/O interface of its own yet |
 | ProcFs | Process and runtime state as read-only files | Read-only view; process control stays in syscalls |
 | Unicode layer | Unicode 15.1 NFC/NFD, case folding, GB18030, OEM code pages | Tables are fixed at Unicode 15.1; there is no locale database |
 
 #### 3.2 External Filesystem Drivers
+
+These parsers and their tests are in the tree, but no boot path and no runtime
+call registers or mounts one; the rows below describe what is implemented, not
+what a running machine can reach. `install_zone_devices` has an ext4 branch
+behind `rootfs_type`, and `set_rootfs_type` has no caller.
 
 | Driver | Now | Missing |
 |--------|-----|---------|
@@ -181,7 +186,7 @@ below.
 | exFAT | Read/write; VFAT extension | No journal, so crash behaviour depends on the write order; QEMU only |
 | FAT32 | Read/write; LFN, OEM code pages, FSInfo accounting | No journal; QEMU only |
 | BtrFS | Read-only; B-tree traversal | Write support is the mid-term roadmap item |
-| NTFS 3.1 | Read-only; MFT parsing, attribute resolution | Read-only; compressed and encrypted streams are not covered |
+| NTFS 3.1 | MFT parsing, attribute resolution; `write` overwrites inside existing runs | No create, rename or remove (`NotImplemented`); no file extension, and compressed and encrypted streams are not covered |
 | SquashFS 4.0 | Read-only; several compression algorithms | Read-only |
 | ISO 9660 | Read-only; Joliet, Rock Ridge | Read-only |
 | EROFS v1 | Read-only; compact inode format | Read-only |
@@ -193,23 +198,25 @@ below.
 | VFS core (mount, path resolution, ops) | Full path resolution, mount and unmount, per-node operations | One mount table for the machine; no per-process mount namespace |
 | Volume recovery | Transaction undo-log replay and check-and-repair at boot | Boot-time only, under the filesystem lock; no online repair |
 | Fault injection matrix | Single- and dual-fault, multi-cycle crash testing | Deterministic and bounded, so it does not search for a failing sequence |
-| Extended-attribute (xattr) table | SimpleFs V4 persistent storage and tmpfs in-memory; the four xattr syscalls | The VNode default is `Unsupported`, so the other filesystems do not expose xattrs |
-| Transparent file compression | Per-file LZSS/raw chunked compression, reusing the memory codec | SimpleFs only; per-file toggle rather than a mount policy |
-| Cross-file deduplication | Content-hash shared extents with mount-time refcount rebuild and CoW unsharing | SimpleFs only; no background scanner that finds new duplicates |
+| Extended-attribute (xattr) table | SimpleFs V4 persistent storage and tmpfs in-memory; the xattr syscalls | The VNode default is `Unsupported`, so the other filesystems do not expose xattrs; tmpfs is not mounted, and the shipped SimpleFs images are V2, so the persistent table is exercised by the tests |
+| Transparent file compression | Encoder and decoder in `src/fs/simplefs/compression.rs`; the per-inode flag round-trips through the on-disk format | Nothing calls the encoder: no write path produces a compressed extent, and `set_file_flags` is unimplemented in every backend |
+| Cross-file deduplication | Sharing and copy-on-write unsharing in `src/fs/simplefs/dedup.rs`; the refcount map starts empty at mount | `maybe_dedup_inode` and `unshare_inode_extent` have no caller, so no extent is ever pooled; `get_file_flags`/`set_file_flags` are unimplemented |
 | Block backend abstraction | ATA, VirtIO and NVMe all implement one `BlockDevice` trait | No hot-remove or device-error recovery path |
 
-**Strengths:** filesystem drivers for ext4, F2FS, XFS, exFAT, FAT32, BtrFS,
-NTFS, SquashFS, ISO 9660, EROFS and the native SimpleFs; a crash-safe native
-filesystem; and encryption at rest.
+**Strengths:** the native SimpleFs with undo-log transactions and the two-phase
+commit; a VFS that mounts the storage zones, the synthetic views and a
+userspace FUSE server; parsers with their own tests for ext4, F2FS, XFS,
+exFAT, FAT32, BtrFS, NTFS, SquashFS, ISO 9660 and EROFS; and the AES-XTS and
+PBKDF2 primitives.
 
-- **Multiple filesystems**: ext4, F2FS, and XFS support full journal replay from
-  real disk; exFAT and FAT32 are read/write; btrfs/NTFS/SquashFS/ISO
-  9660/EROFS are read-only.
+- **Multiple filesystems, one mounted set**: the external drivers are parsers
+  with their own tests, but a machine boots SimpleFs zones, the synthetic
+  views and whatever a `FuseMount` adds.
 - **Unicode 15.1**: full NFC/NFD normalization and a GB18030 codec.
 - **Crash safety**: SimpleFs uses undo-log transactions and two-phase commit.
-- **Encryption at rest**: EncryptedBlockDevice provides AES-256 XTS disk
-  encryption, LUKS2-compatible headers, PBKDF2 key derivation, and layers
-  transparently under any filesystem.
+- **Encryption at rest, unwired**: `EncryptedBlockDevice` wraps a block device
+  in AES-256 XTS and the LUKS2 parser recovers a key with PBKDF2, but nothing
+  constructs either and no mount is encrypted.
 - **Read-only is structural**: the synthetic filesystems (`/proc`, `/service`)
   implement the VFS `ReadOnlyFileSystem` half, and one blanket impl supplies
   every mutation as `PermissionDenied` — a view cannot declare a mutation, so
@@ -217,27 +224,27 @@ filesystem; and encryption at rest.
 
 **Weaknesses:**
 
-- **Many read-only drivers**: btrfs, NTFS, SquashFS, ISO 9660, and EROFS are
-  read-only; write support is a mid-term roadmap goal.
+- **Unmounted drivers**: ext4, F2FS, XFS, exFAT, FAT32, btrfs, NTFS,
+  SquashFS, ISO 9660 and EROFS have parsers and tests but no mount; write
+  support for the read-only ones is a mid-term roadmap goal.
 - **Journal replay verified on emulated disks**: coverage of real-corruption
   edge cases is limited.
 
-**SimpleFs V4 data-reduction format** (inherits V3's persistent security
-descriptors + `pending_commit` two-phase commit):
+**SimpleFs V4 format** (inherits V3's persistent security descriptors and
+`pending_commit` two-phase commit):
 
 - **Extended attributes**: persist per-inode in active/shadow xattr-table slots
-  flushed in the same two-phase commit as the inode/dirent tables — both
-  SimpleFs and tmpfs support `setxattr`/`getxattr`/`listxattr`/`removexattr`
-  semantics (syscalls #151-154).
-- **Transparent per-file compression**: replaces a file's extent with a chunked
-  encoded stream (each 4 KiB chunk encoded as zero/RLE/LZSS with a raw
-  incompressible fallback), keeps `size` as the logical length, and decompresses
-  only intersecting chunks on read; toggled via `SetFileFlags` (#155).
-- **Cross-file deduplication**: merges identical-content files onto a single
-  shared extent; refcounts are rebuilt at mount from the on-disk `DEDUPED`
-  markers, overwrites/deletes unshare via copy-on-write, and an extent is freed
-  only when its last reference goes away; both features are surfaced through
-  `GetFileFlags` (#156).
+  flushed in the same two-phase commit as the inode/dirent tables. SimpleFs
+  and tmpfs both implement the `setxattr`/`getxattr`/`listxattr`/`removexattr`
+  semantics.
+- **Transparent per-file compression**: the encoder and decoder are in
+  `src/fs/simplefs/compression.rs`, but no write path calls the encoder and no
+  read path calls the decoder, so a compressed extent is never produced or
+  consumed; `SetFileFlags` (#155) is unimplemented in every backend.
+- **Cross-file deduplication**: the sharing and copy-on-write unsharing logic
+  is in `src/fs/simplefs/dedup.rs`, but `maybe_dedup_inode` has no caller and
+  the refcount map starts empty at mount, so no extent is pooled; `GetFileFlags`
+  (#156) is unimplemented in every backend.
 
 #### 3.4 Encryption at Rest
 
@@ -245,8 +252,8 @@ descriptors + `pending_commit` two-phase commit):
 |-----------|-----|---------|
 | AES-256 + AES-XTS | Crypto engine in the kernel | No hardware acceleration path |
 | PBKDF2 key derivation | Key stretching for disk encryption | One KDF; no Argon2 or keyring |
-| EncryptedBlockDevice | Transparent block-device wrapper under any filesystem | No rekey or key rotation; one key per device |
-| LUKS2 header parser | LUKS2 on-disk header parsing | Header only: no keyslot management or `cryptsetup`-style control surface |
+| EncryptedBlockDevice | Transparent block-device wrapper under any filesystem | Nothing constructs one; no rekey or key rotation; one key per device |
+| LUKS2 header parser | LUKS2 on-disk header parsing and `luks2_open` key recovery | No caller: no keyslot management or `cryptsetup`-style control surface |
 
 ---
 

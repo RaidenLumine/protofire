@@ -586,6 +586,6 @@ once and a new test cannot arrive without one.
 - [docs/fmts/unsafe-and-safety.md](unsafe-and-safety.md) — what is allowed in an
   `unsafe` block
 - [docs/fmts/testing.md](testing.md) — test layout and registration
-- [docs/kernel-introduction/filesystem.md](../kernel-introduction/filesystem.md)
+- [docs/kernel/fs.md](../kernel/fs.md)
   — where the block layer sits and why
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) — the short form of these rules

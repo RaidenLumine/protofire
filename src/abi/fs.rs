@@ -287,12 +287,12 @@ mod tests {
     /// number that can drift, so the copy is what is pinned here.
     #[test]
     fn documented_record_sizes_match_the_records() {
+        use super::super::process::ProcessSignalRecord;
+        use super::super::process::ProcessSpawnOptions;
+        use super::super::process::ProcessSpawnStringRef;
+        use super::super::process::ProcessTerminationRecord;
         use super::BlockDeviceInfoRecord;
         use super::MountInfoRecord;
-        use crate::abi::process::ProcessSignalRecord;
-        use crate::abi::process::ProcessSpawnOptions;
-        use crate::abi::process::ProcessSpawnStringRef;
-        use crate::abi::process::ProcessTerminationRecord;
         use core::mem::size_of;
         let actual = (
             size_of::<FileStat>(),

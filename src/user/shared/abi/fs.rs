@@ -277,6 +277,41 @@ mod tests {
     use super::PermissionMetadataRecord;
     use super::ACCESS_EXECUTE_BIT;
     use super::ACCESS_QUERY_FLAG_ALLOWED;
+
+    /// The record sizes `docs/kernel-introduction/shared-user-runtime.md`
+    /// states, checked against the records themselves.
+    ///
+    /// The document is where a reader looks for the wire sizes, and those
+    /// numbers are copies of facts these types own — two of them were wrong
+    /// (a mount record with the wrong arithmetic, a termination record missing
+    /// a field) until this test was written.  A number a document copies is a
+    /// number that can drift, so the copy is what is pinned here.
+    #[test]
+    fn documented_record_sizes_match_the_records() {
+        use super::super::process::ProcessSignalRecord;
+        use super::super::process::ProcessSpawnOptions;
+        use super::super::process::ProcessSpawnStringRef;
+        use super::super::process::ProcessTerminationRecord;
+        use super::BlockDeviceInfoRecord;
+        use super::MountInfoRecord;
+        use core::mem::size_of;
+        let actual = (
+            size_of::<FileStat>(),
+            size_of::<AccessQueryRecord>(),
+            size_of::<PermissionMetadataRecord>(),
+            size_of::<DirectoryEntryRecord>(),
+            size_of::<MountInfoRecord>(),
+            size_of::<BlockDeviceInfoRecord>(),
+            size_of::<ProcessTerminationRecord>(),
+            size_of::<ProcessSignalRecord>(),
+            size_of::<ProcessSpawnOptions>(),
+            size_of::<ProcessSpawnStringRef>(),
+        );
+        // The numbers as `docs/kernel-introduction/shared-user-runtime.md`
+        // states them, in the same order.
+        let documented = (16usize, 8, 12, 32, 368, 88, 48, 24, 56, 16);
+        assert_eq!(actual, documented);
+    }
     use super::ACCESS_QUERY_FLAG_BYPASSES_DISCRETIONARY_PERMISSIONS;
     use super::ACCESS_QUERY_FLAG_CAN_EXECUTE;
     use super::ACCESS_QUERY_FLAG_CAN_READ;
