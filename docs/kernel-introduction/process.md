@@ -350,19 +350,19 @@ An integrity level *dominates* another if its numeric value is <= the other's.
 
 ## Signal Delivery (`src/kernel/process/process/lifecycle.rs`)
 
-The signal subsystem provides POSIX-like signal semantics with 43 signal slots
-(0-42), including 11 real-time signals (32-42). The signal mask is a 64-bit
-bitfield, and async delivery supports SA_SIGINFO and SA_RESTART flags on all
-three architectures.
+The signal subsystem provides POSIX-like signal semantics for signals 1-31,
+with a 32-slot handler table (slot 0 unused) and a `u32` mask.  Async delivery
+supports the `SA_RESTART` flag on all three architectures; there is no
+`SA_SIGINFO` and no real-time signal range.
 
 ### Architecture
 
 ```
             ┌──────────────────────────────────┐
             │ Process                           │
-            │  signal_handlers: [Option;43]     │
-            │  signal_sa_flags: [u32; 43]       │
-            │  signal_mask: u64 bitfield         │
+            │  signal_handlers: [Option; 32]     │
+            │  signal_sa_flags: [u64; 32]        │
+            │  signal_mask: u32 bitfield         │
             │  signal_queue: WaitQueue           │
             └──────────────────────────────────┘
                         │
@@ -373,27 +373,24 @@ three architectures.
             └───────────────────────┘
 ```
 
-### Real-Time Signals (RT)
+### Real-Time Signals
 
-Real-time signals (SIGRTMIN = 32 through SIGRTMAX = 42) provide 11 queued
-signal slots with POSIX-like delivery semantics. Each RT signal carries a
-`SignalInfo` (siginfo_t-compatible) payload with `si_signo`, `si_code`,
-`sender_pid`, `sender_uid`, `si_value`, and `si_addr`. RT signals are queued
-individually — unlike standard signals, multiple instances of the same RT
-signal can be pending simultaneously. The `PROCESS_SIGNAL_MAX` constant is
-now 42 (up from 31).
+None.  `PROCESS_SIGNAL_MAX` is 31, the handler tables hold 32 slots, and
+`is_valid_process_signal` refuses anything above 31 — a program that passes
+`SIGRTMIN` (32) gets `EINVAL` from the send and install paths.  The user-side
+constants `SIGRTMIN`/`SIGRTMAX` exist in `src/user/shared/syscall.rs` and mark
+where the range would begin if this were implemented.
 
 ### Handler Installation
 
-Signal handler arrays are sized to 43 slots (indices 0-42). The per-slot
-`signal_sa_flags` field stores the `sa_flags` from `sigaction`, supporting
-the SA_SIGINFO and SA_RESTART flags:
+Signal handler arrays are sized to 32 slots (indices 0-31). The per-slot
+`signal_sa_flags` field stores the `sa_flags` from `sigaction`; of the POSIX
+flags only one is read:
 
-- **SA_SIGINFO**: When set, async signal delivery writes a `SignalInfo`
-  structure onto the user stack alongside the signal frame. The handler
-  receives `si_signo`, `si_code`, `si_pid`, `si_uid`, `si_value`, and
-  `si_addr` populated with the sender process's identity and the signal
-  payload value.
+- **SA_SIGINFO**: not implemented.  There is no siginfo record in the tree — a
+  handler is entered with the signal number as its only argument, and the
+  sender's pid and the caller's payload arrive through `wait_signal` as a
+  [`ProcessSignalRecord`](syscall.md) (`signal`, `sender_pid`, `payload`).
 - **SA_RESTART**: When set, signal delivery marks the interrupted thread's
   `RestartBlock` with the interrupted syscall context. On sigreturn, the
   arch-specific trap dispatch rewinds the instruction pointer to retry the
@@ -457,9 +454,9 @@ pub type SignalHandler = fn(i32);
 ```
 
 A process installs handlers via `Process::install_signal_handler()` (in
-`src/kernel/process/process/fork.rs`). 43 slots indexed by signal number.
-Signal masks are manipulated via `block_signal()`, `unblock_signal()`, and
-`set_signal_mask()`, all operating on u64 bitfields.
+`src/kernel/process/process/fork.rs`). 32 slots indexed by signal number, of
+which 1-31 are usable.  Signal masks are manipulated via `block_signal()`,
+`unblock_signal()`, and `set_signal_mask()`, all operating on a `u32` bitfield.
 
 ### Default Actions (`apply_default_signal_action()`)
 

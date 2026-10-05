@@ -336,8 +336,8 @@ pointer and status word — and `SA_RESTART` re-issues an interrupted blocking
 syscall. The frame does not carry the interrupted code's general registers, so
 a handler that returns resumes at the right instruction with the handler's
 caller-saved registers; a program that needs the whole register set back has to
-save it itself. Handler flags such as `SA_SIGINFO` are passed through that same
-path.
+save it itself. The only handler flag this kernel accepts is `SA_RESTART`; any
+other `sa_flags` bit is refused at install time rather than ignored.
 
 The shared library also offers an explicit **wait/poll** API
 (`wait_signal()`, `wait_signal_forever()`, `poll_signal()`), which is what a
@@ -373,9 +373,9 @@ other two architectures take the same shape through `svc` and `ecall`).
 
 ### Signal mask
 
-The signal mask is now a **64-bit** bitfield (`u64`), supporting up to 64 signal
-slots. The kernel currently uses slots 0-42, including 11 real-time signals
-(SIGRTMIN=32 through SIGRTMAX=42).
+The signal mask is a **32-bit** bitfield (`u32`), and the kernel's signals are
+1-31: the handler table has 32 slots and `PROCESS_SIGNAL_MAX` is 31.  There is
+no real-time signal range on the kernel side — see the status document.
 
 Core API:
 
@@ -386,16 +386,17 @@ Core API:
 | `poll_signal()` | Non-blocking check for pending signal |
 | `send_signal(pid, signal, payload)` | `Result<(), isize>` — deliver a signal |
 | `sigsuspend(mask)` | `Result<(), isize>` — atomically set mask and suspend (syscall #135) |
-| `set_signal_mask(mask)` / `signal_mask()` | Get/set the **64-bit** signal mask |
+| `set_signal_mask(mask)` / `signal_mask()` | Get/set the **32-bit** signal mask |
 | `block_signal(signal)` / `unblock_signal(signal)` | Convenience mask helpers |
 | `signal_dispatch_loop(handlers)` | `!` — infinite loop dispatching to registered handlers |
 
 Signal constants re-exported: `SIGHUP` (1), `SIGINT` (2), `SIGQUIT` (3),
 `SIGKILL` (9), `SIGTERM` (15), `SIGCHLD` (17), `SIGCONT` (18), `SIGSTOP` (19),
-`SIGTSTP` (20). Additionally, `SIGRTMIN` (32) and `SIGRTMAX` (42) constants
-are available for real-time signal range operations. `SA_SIGINFO` and
-`SA_RESTART` flag constants are defined for use with the `SetSignalHandler`
-syscall `sa_flags` parameter.
+`SIGTSTP` (20). `SIGRTMIN` (32) and `SIGRTMAX` (42) exist as constants, but the
+kernel refuses signals above 31, so they name the range that would begin if
+real-time signals were implemented rather than a range a program can use.
+`SA_RESTART` is the only `sa_flags` bit the kernel accepts, and the only one it
+reads; any other bit is refused rather than ignored.
 
 The `sigsuspend()` wrapper calls the `SYS_SIGSUSPEND` syscall (135) which
 atomically replaces the signal mask and suspends the calling thread until a

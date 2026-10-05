@@ -39,9 +39,9 @@ the syscall interface.
 | AHCI (SATA) | Block | Full read/write (DMA, polling) | Polling only, no interrupt path; x86_64 only; QEMU only |
 | ATA (PIO) | Block | Full read/write | PIO only, no DMA; x86_64 only; QEMU only |
 | VirtIO (block) | Block | Full read/write | QEMU only; no per-queue MSI-X claim |
-| VirtIO (net) | Network | Full RX/TX, modern and legacy transports | MSI-X is claimed per device, not per queue; a transmit waits on the device's completion interrupt; no throughput baseline |
+| VirtIO (net) | Network | Full RX/TX, modern and legacy transports; on the two PCIe machines (AArch64, RISC-V) each queue claims its own MSI-X identity, so a queue's completion wakes that queue's waiter | On x86_64 the machine has no MSI-X claim path, so a transmit polls for its completion; no throughput baseline |
 | VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189) | No userspace renderer is shipped against the interface; QEMU only |
-| NVMe | Block | Full read/write, MSI-X interrupt, boot-disk probe | x86_64 only; QEMU only |
+| NVMe | Block | Full read/write, boot-disk probe | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; x86_64 only; QEMU only |
 | xHCI | USB host | Controller bring-up and port status | Not end-to-end: USB storage and keyboard input are not usable yet |
 | USB HID | HID (keyboard) | Report decoding and scancode injection | Not wired end-to-end until the xHCI path is complete |
 | USB MSD | Storage | Bulk-only transport and SCSI command blocks | Not reachable end-to-end until the xHCI path is complete |
@@ -56,9 +56,11 @@ the syscall interface.
 input, mostly verified under QEMU.
 
 - **Storage**: AHCI (SATA), ATA PIO, VirtIO, and NVMe provide independent block
-  backends; NVMe uses MSI-X for interrupt-driven completion.
-- **Network**: the VirtIO network driver is interrupt-driven and multi-queue
-  ready.
+  backends; the NVMe driver polls for completions (see its row above), and the
+  VirtIO block driver's interrupts are the transport's, not a per-queue claim.
+- **Network**: the VirtIO network driver is multi-queue ready, and on the two
+  PCIe machines its queues are interrupt-driven — one MSI-X identity per queue,
+  so a completion wakes the queue that caused it.
 - **Device ledger**: the thing that finds a device records it, where it finds
   it — a device-tree walk, a PCI scan, an MMIO window, or a driver's own
   `init()` — and the boot publishes the result into the ledger `/dev` reports:
@@ -362,22 +364,23 @@ disk-backed swap, compression, and defragmentation.
 | Common interrupt abstraction | `InterruptController` trait | — |
 | Thread exception handling | Page fault recovery, signal delivery | — |
 | PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | A window held across a block can be closed under the holder; the socket send paths still do that |
-| MSI/MSI-X programming | Vector allocator and table programming on x86_64; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines only the virtio-net PCIe driver claims identities yet |
+| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64 — but no path programs a device's table there, so a PCIe device's completions are polled; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines only the virtio-net PCIe driver claims identities yet; on x86_64 nothing does |
 | NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry | No architectural NMI source on RISC-V, so that entry stays dormant |
 | Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable | Runs from the tick; no routing-latency measurement |
 | Interrupt stats interface | Per-CPU/per-vector counters, NMI/IPI totals, balancer state (SystemInfo #9) | — |
 
 **Strengths:** architecture-complete exception handling across all three
-targets, with PAN/SMAP emulation, MSI/MSI-X on the architectures that have an
-MSI controller, NMI handling, and load balancing.
+targets, with PAN/SMAP emulation, MSI/MSI-X on the machines whose kernel
+programs a device's table, NMI handling, and load balancing.
 
 - **Exception handling**: complete on all three targets; double-fault handling
   on x86_64; the AArch64 vector table classifies synchronous exceptions, IRQs,
   FIQs, and SErrors; PAN/SMAP implemented (the `asm nomem` fix was deployed).
-- **MSI/MSI-X**: vector allocator + table programming on x86_64; on RISC-V the
-  AIA IMSIC receives MSIs and the PCIe virtio-net driver claims its device's
-  identities. NVMe and VirtIO PCI modern transport use MSI-X where the
-  controller offers it.
+- **MSI/MSI-X**: on RISC-V the AIA IMSIC receives MSIs and on AArch64 the GICv3
+  ITS translates them, each with the PCIe virtio-net driver claiming its own
+  device's identities.  On x86_64 the composition and the vector numbers are
+  there and no device's table is programmed, which is why that machine's PCIe
+  devices poll.
 - **NMI handling**: dedicated minimal path for the x86_64 NMI vector and the
   AArch64 SError/FIQ vectors, with a handler registry (`kernel::nmi`) that works
   across the architectures that have a source.
@@ -493,10 +496,10 @@ extensions and in-kernel security protocols.
 | Component | Now | Missing |
 |-----------|-----|---------|
 | Pipe | VFS-backed, anonymous, blocking read/write | No named pipe and no descriptor passing over a pipe |
-| Signal | 43 slots (0-42), including 11 RT signals (32-42); u64 mask, install/enqueue/wait | No signal-storm stress baseline |
-| Signal mask | Per-process blocked signal tracking, u64 bitfield | — |
+| Signal | Signals 1-31 (a 32-slot handler table, slot 0 unused); install/enqueue/wait | No real-time signals (32-42), and no signal-storm stress baseline |
+| Signal mask | Per-process blocked signal tracking, u32 bitfield | — |
 | Async signal delivery | Signal frame on user stack carrying the interrupted context, arch-specific trampoline, sigreturn; all three architectures | The kernel half is on all three; the user-side trampoline the path needs is shipped by the shell payload's `sigasync` builtin on x86_64 only, so aarch64 and RISC-V are unexercised end to end |
-| SA_SIGINFO support | siginfo_t delivery (si_signo, si_code, si_pid, si_uid, si_addr, si_value) | — |
+| SA_SIGINFO support | Not implemented: a handler is entered with the signal number, and `wait_signal` returns a `ProcessSignalRecord { signal, sender_pid, payload }` | An siginfo_t (`si_code`, `si_uid`, `si_addr`) and the `SA_SIGINFO` flag |
 | SA_RESTART support | Automatic syscall restart on signal return, RestartBlock per thread | — |
 | sigsuspend (#135) | Atomic mask swap and thread suspend until a signal | — |
 | POSIX timers (#137-140) | timer_create/settime/gettime/delete, per-process management, signal on expiry | — |
@@ -509,17 +512,19 @@ extensions and in-kernel security protocols.
 | Shared memory | System V shm: shmget/shmat/shmdt/shmctl (#100-103) | Purpose-specific syscalls rather than a file- or handle-shaped IPC API; no POSIX `shm_open` |
 | Shell pipeline | Two commands piped together by the ring-3 shell | No kernel process group; the shell tracks jobs itself |
 
-**Strengths:** complete synchronization primitives and signal machinery,
-including the POSIX signal interaction model.
+**Strengths:** complete synchronization primitives, and signal machinery for
+the POSIX subset it implements — see the missing column for what that subset
+leaves out.
 
 - **Synchronization primitives**: mutex, semaphore, condvar, event, and IRQ-safe
   spinlock are complete; eventfd (#107) provides counter/semaphore semantics
   (`EFD_SEMAPHORE`/`EFD_NONBLOCK`/`EFD_CLOEXEC`, write-overflow `EAGAIN`)
   integrated with `poll`/`epoll`/`io_uring` readiness probes.
-- **Signals**: 43 slots (0-42) including 11 RT signals (32-42) carrying
-  `siginfo_t`; SA_SIGINFO with per-architecture `ucontext_t`; SA_RESTART rewinds
-  the interrupted instruction pointer at syscall dispatch boundaries (2 bytes
-  on x86_64 `int 0x80`, 4 bytes on AArch64 `svc #0`, 4 bytes on RISC-V `ecall`)
+- **Signals**: signals 1-31 with a `u32` mask; a handler is entered with the
+  signal number (the sender's pid and the payload come back through
+  `wait_signal` as a `ProcessSignalRecord`); `SA_RESTART` rewinds the
+  interrupted instruction pointer at syscall dispatch boundaries (2 bytes on
+  x86_64 `int 0x80`, 4 bytes on AArch64 `svc #0`, 4 bytes on RISC-V `ecall`)
   and `restart_syscall` (#136) re-executes the interrupted call; sigsuspend
   (#135) atomically swaps the mask and suspends; POSIX timers (#137-140) deliver
   signals on expiry via the scheduler tick.
@@ -801,7 +806,7 @@ user-memory validation.
 | SMP | Full (MADT + AP bringup; the tick is the boot CPU's) | Full (PSCI + GIC SGI) | Full (SBI HSM + per-hart vector, timer, and PLIC context; a cross-hart wake waits for the target's tick) |
 | Context switch | Full | Full | Full |
 | PAN/SMAP | SMAP (stac/clac) | PSTATE.PAN (set/clear) | SUM (sstatus) |
-| MSI/MSI-X | Full (vector allocator + table programming) | GICv3 ITS and LPIs, with a collection and a pending table per CPU; the PCIe virtio-net driver claims one identity per queue, and its queues are completed by different CPUs | AIA IMSIC; the PCIe virtio-net driver claims one identity per queue |
+| MSI/MSI-X | Composition helpers, fixed vector numbers and installed handlers, but no device's table is programmed, so a PCIe device's interrupts are polled | GICv3 ITS and LPIs, with a collection and a pending table per CPU; the PCIe virtio-net driver claims one identity per queue, and its queues are completed by different CPUs | AIA IMSIC; the PCIe virtio-net driver claims one identity per queue |
 | PCIe | Full ECAM | Basic probing | Basic probing |
 | ASID allocator | — | Full (bitmap + CAS) | Full (bitmap + CAS) |
 | FDT parsing | — | Full | Full |
@@ -813,7 +818,9 @@ user-memory validation.
 What each target still lacks:
 
 - **x86_64**: no PCID, so a context switch flushes translations; the PIT is
-  routed to one LAPIC, so APs take no timer interrupt.
+  routed to one LAPIC, so APs take no timer interrupt; and there is no MSI-X
+  programming path — `src/arch/x86_64/msi.rs` composes entries that nothing
+  writes into a device, so a PCIe device's completions are polled.
 - **AArch64**: MSI machinery is there — GICv3, LPIs, an ITS, and a placement
   that spreads a device's entries over the CPUs that can receive — but only
   one driver claims identities through it.
@@ -829,7 +836,7 @@ What each target still lacks:
 | `syscall.rs` | Typed syscall wrappers plus raw entry points | Not every syscall has a wrapper |
 | `dispatch.rs` | Command-name to builtin dispatch | — |
 | `commands/` | The shell's builtin implementations | Builtins are shell commands, not a libc; a standalone program links this module to reuse them |
-| `signal.rs` | Signal API: u64 mask, sigsuspend, SA_SIGINFO | — |
+| `signal.rs` | Signal API: `u32` mask, wait/poll/send, handler installation | No siginfo record; `SA_SIGINFO` is not accepted |
 | `passwd.rs` | `/data/etc/passwd` parsing | No group file to parse |
 | `jobs.rs` | Job tracking for the shell | Jobs live in userspace, so they die with the shell |
 | `abi/` | ABI record types, mirrored from `src/abi/` | — |
