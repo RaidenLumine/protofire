@@ -430,10 +430,10 @@ multicast routing, and raw sockets.
 | Layer | Now | Missing |
 |-------|-----|---------|
 | **Link** | Ethernet, ARP, device abstraction | — |
-| **Internet** | IPv4, IPv6, ICMP, ICMPv6, IGMP, MLD, NAT, IP options | — |
-| **Transport** | TCP (congestion control, ECN), UDP, SCTP, DCCP | Congestion control is Tahoe/Reno only; no CUBIC or BBR |
-| **Application** | DHCP (discovery and renewal), DNS (cache and resolve), mDNS, NTP, PPP | IPv4 only: no DHCPv6 or prefix delegation; DNS has no DNSSEC validation |
-| **Security** | TLS 1.3 (handshake, record, certificate), IPsec (ESP + AH, SAD/SPD, transport/tunnel) | TLS has no trust-anchor management; IPsec SAD/SPD is manual |
+| **Internet** | IPv4, IPv6, ICMP, ICMPv6, IGMP, MLD; NAT and IPv4 options are in the tree | NAT is consulted but never enabled outside tests; IPv4 options are feature-gated |
+| **Transport** | TCP (congestion control, ECN), UDP; SCTP and DCCP are in the tree | Congestion control is Tahoe/Reno only; no CUBIC or BBR; DCCP has no receive dispatch and SCTP has no syscall, so neither carries a connection |
+| **Application** | DHCP (discovery and renewal), DNS (cache and resolve), mDNS, NTP; PPP/PPPoE state is in the tree | IPv4 only: no DHCPv6 or prefix delegation; DNS has no DNSSEC validation; the PPPoE consumer is enabled only by a test |
+| **Security** | TLS 1.3 (handshake, record, certificate chain), IPsec outbound ESP/AH transform | TLS trust anchors are a fixed built-in demo set; IPsec inbound is unwired and SAD/SPD is manual |
 | **VPN** | WireGuard handshake, transport and session tables (Noise_IKpsk2, ChaCha20-Poly1305, key management) | Not wired up: nothing outside the module constructs a device, so a program cannot open a tunnel yet |
 | **Multicast routing** | MFC/VIF forwarding, IGMPv2/MLDv1 router mode, MRT API | PIM-DM only, and only under a feature flag; no PIM-SM |
 | **Raw** | Raw sockets, raw packet | Not every raw entry has a typed shared-library wrapper |
@@ -446,10 +446,10 @@ multicast routing, and raw sockets.
 | Component | Now | Missing |
 |-----------|-----|---------|
 | Segment handling | Segmentation, reassembly, retransmit | — |
-| Connection table | Hash table and state machine | — |
+| Connection table | `BTreeMap` keyed by `(local_port, remote_ip, remote_port)`, plus the state machine | — |
 | Congestion control | Pluggable framework with Tahoe and Reno | No CUBIC or BBR; no throughput baseline |
 | ECN (Explicit Congestion Notification) | Negotiation and marking | — |
-| Timer management | RTO, delayed ACK, keepalive | — |
+| Timer management | RTO with exponential backoff, retransmit limit, TIME-WAIT | No delayed ACK; `SO_KEEPALIVE` is stored but no probe is sent |
 | Window scaling | Window-scaling option | — |
 
 #### 7.3 Network Syscalls
@@ -459,24 +459,23 @@ every network syscall has a typed wrapper in the shared user library
 (`src/user/shared/`); a program that needs an unwrapped one calls the raw entry
 point.
 
-**Strengths:** a complete, native (non-lwIP) TCP/IP stack with transport-layer
-extensions and in-kernel security protocols.
+**Strengths:** a native (non-lwIP) TCP/IP stack that carries a boot's
+networking, with more protocols in the tree than the receive path dispatches.
 
-- **Protocol coverage**: link (Ethernet, ARP), internet
-  (IPv4/IPv6/ICMP/IGMP/MLD/NAT), transport (TCP with congestion control + ECN,
-  UDP, SCTP, DCCP), application (DHCP, cached DNS, mDNS, NTP, PPP).
-- **IPsec**: ESP + AH with AES-GCM / ChaCha20-Poly1305 AEAD and
-  HMAC-SHA256, both transport and tunnel modes, SAD/SPD managed manually through
-  dedicated syscalls.
-- **Multicast routing**: MFC/VIF forwarding engine (RPF + TTL gating),
-  IGMPv2/MLDv1 router mode, MRT management API, plus a PIM-DM flood-and-prune
-  control plane under `educational_networking`.
+- **Protocol coverage on the wire**: link (Ethernet, ARP), internet
+  (IPv4/IPv6/ICMP/ICMPv6/IGMP/MLD), transport (TCP with congestion control +
+  ECN, UDP), application (DHCP, cached DNS, mDNS, NTP, SLAAC).
+- **IPsec**: ESP + AH with AES-GCM / ChaCha20-Poly1305 AEAD and HMAC-SHA256,
+  transport and tunnel modes, SAD/SPD managed through dedicated syscalls — on
+  the outbound path only.
+- **Multicast**: IGMPv2/MLDv1 host state and the MRT management API; PIM-DM
+  messages are parsed, but the flood/forward helpers have no live caller.
 - **IPv6 hardening**: path-MTU discovery (RFC 8201, with TX fragmentation),
   atomic fragments (RFC 6946), extension-header order and chain-length limits
   (RFC 8200 §4.1), routing-header type-0 rejection (RFC 5095),
   overlapping-fragment discard (RFC 5722).
-- **TLS 1.3**: implemented as a kernel module — unusual, and potentially useful
-  for secure bootstrapping.
+- **TLS 1.3**: implemented as a kernel module, with chain verification against
+  a built-in demo root store.
 - **Deferred periodic work**: the scheduler tick advances the stack's clock
   with a single atomic add; the pass that acts on it — ARP eviction, TCP
   retransmit and TimeWait, DHCP renewal, SLAAC, IGMP/MLD, NTP, mDNS — runs on
@@ -487,8 +486,12 @@ extensions and in-kernel security protocols.
 **Weaknesses:**
 
 - **Not every network syscall is wrapped** in the shared user library.
-- **In-kernel TLS has no trust framework**: certificate and trust-anchor
-  management is still minimal.
+- **Reads do not poll**: a bare-metal stream read waits on the receive buffer
+  while the connect, accept, DNS, DHCP and neighbour-resolution paths are the
+  ones that call `poll()`, so a read depends on another caller driving the
+  device.
+- **In-kernel TLS has a fixed trust set**: the anchors are compiled in, with no
+  way to add or replace one at runtime.
 - **Educational protocols are feature-gated**: CSMA/CD, STP, Mobile IP, RSVP,
   PIM-DM, etc. compile only under `educational_networking`.
 - **Throughput and concurrency not benchmarked**: the packets a boot sends and

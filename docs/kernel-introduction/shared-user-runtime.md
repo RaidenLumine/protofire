@@ -427,7 +427,8 @@ which answers whether the kernel reports a usable TCP stream transport.
 
 The facility underneath it is real — `src/network/` carries a native TCP/IP
 stack with TLS 1.3 — so a userspace HTTP client is a missing program rather than
-a missing capability.  See [network.md](network.md) for the stack itself.
+a missing capability.  See [network.md](../kernel/network.md) for the stack
+itself.
 
 ---
 

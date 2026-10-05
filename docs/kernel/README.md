@@ -45,6 +45,7 @@ one of these.
 | [fs.md](fs.md) | The VFS, the block layer, SimpleFs, the mount-time layout, the views and FUSE |
 | [memory.md](memory.md) | Frames, the heap, page tables, kernel stacks, reclaim and swap |
 | [interrupts.md](interrupts.md) | Controllers per machine, the identity registry, MSI, NMI, balancing |
+| [network.md](network.md) | The stack's layers, TCP and UDP, DHCP/DNS/SLAAC, TLS, and what is not wired |
 | [process.md](process.md) | Processes, threads, the scheduler, signals, handles, termination |
 | [syscalls.md](syscalls.md) | The trap, the dispatch table, pointer validation, the ring-3 wrappers |
 
