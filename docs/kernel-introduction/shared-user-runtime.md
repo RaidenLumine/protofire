@@ -331,9 +331,13 @@ File: `src/user/shared/signal.rs`
 The kernel can deliver a signal **asynchronously**: when a process has a handler
 installed through `SetSignalHandler`, delivery builds a signal frame on the user
 stack and enters the handler through the architecture's trampoline; `sigreturn`
-restores the interrupted context, and `SA_RESTART` re-issues an interrupted
-blocking syscall. Handler flags such as `SA_SIGINFO` are passed through that
-same path.
+puts back where the interrupted code was — its instruction pointer, stack
+pointer and status word — and `SA_RESTART` re-issues an interrupted blocking
+syscall. The frame does not carry the interrupted code's general registers, so
+a handler that returns resumes at the right instruction with the handler's
+caller-saved registers; a program that needs the whole register set back has to
+save it itself. Handler flags such as `SA_SIGINFO` are passed through that same
+path.
 
 The shared library also offers an explicit **wait/poll** API
 (`wait_signal()`, `wait_signal_forever()`, `poll_signal()`), which is what a
@@ -341,6 +345,26 @@ program uses when it would rather consume pending signals at a point of its own
 choosing — for example the shell's `signal_dispatch_loop`. Neither model
 preempts user code that never returns to the kernel; the difference is whether
 the *kernel* enters the handler on your behalf or hands you the record.
+
+### Writing the trampoline
+
+`SetSignalHandler` takes the trampoline's address along with the handler's, and
+that address is the program's to supply: nothing in this tree ships one. The
+kernel enters `handler` the way a call would — the signal number is the first
+argument, the stack is where the machine's return path expects it — and the
+handler's ordinary return lands in `trampoline`. The trampoline's whole job is
+to hand the saved frame to `sigreturn` (#134):
+
+| Machine | Where the frame is when the trampoline runs | What to pass |
+|---------|--------------------------------------------|--------------|
+| x86_64 | the return pops the trampoline's address, so `rsp` sits 40 bytes above the frame | `rsp - 40` |
+| AArch64 | `sp` *is* the frame: the address travels in `x30`, not on the stack | `sp` |
+| RISC-V 64 | `sp` *is* the frame: the address travels in `ra`, not on the stack | `sp` |
+
+The frame is the machine's ABI record (`SignalFrame`, `AArch64SignalFrame`,
+`RiscV64SignalFrame`), and a trampoline that passes the wrong pointer is a
+`sigreturn` that reads whatever is there. What the frame carries — and what it
+does not — is in the [status document](current-status.md).
 
 ### Signal mask
 

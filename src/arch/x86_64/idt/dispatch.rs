@@ -398,9 +398,10 @@ fn try_async_signal_delivery(context: &mut InterruptContext) {
     //   [SignalFrame: 32 bytes]    ← user_rsp - 40 (signal_frame_base)
     //   [trampoline return addr]   ← user_rsp - 8  (handler RSP)
     //
-    // After handler `ret`:
-    //   - pops trampoline address, RSP = user_rsp - 32
-    //   - trampoline sees RSP pointing at SignalFrame.orig_rip
+    // The handler is entered as if it had been called: its RSP points at the
+    // slot holding the trampoline's address, so its own `ret` pops that slot
+    // and leaves RSP at `user_rsp` — the frame is then at `rsp - 40`, which is
+    // what the trampoline hands to `SYS_SIGRETURN`.
 
     let user_rsp = context.saved_stack_pointer;
     let trampoline_ret_addr = user_rsp.wrapping_sub(8);

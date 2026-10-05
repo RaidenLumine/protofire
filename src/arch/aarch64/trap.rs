@@ -1016,15 +1016,19 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
     // Stack layout (addresses descending, AArch64 stack grows down):
     //
     //   [original stack]               ← user_sp (original)
-    //   [AArch64SignalFrame: 32 bytes] ← user_sp - 40 (frame_base)
-    //   [trampoline return addr]       ← user_sp - 8  (handler SP)
+    //   [AArch64SignalFrame: 32 bytes] ← user_sp - 32 (frame_base)
     //
-    // After handler `ret`:
-    //   - pops trampoline address, SP = user_sp - 32
-    //   - trampoline runs, eventually calls SYS_SIGRETURN
+    // The handler is entered the way a call enters a function: SP is the
+    // 16-byte-aligned frame base and `x30` (the link register) holds the
+    // trampoline's address, so an ordinary `ret` reaches the trampoline.  A
+    // return address on the stack would not: AArch64's `ret` branches through
+    // `x30` and never reads the stack, which is the whole reason the link
+    // register is set here rather than a word being pushed below it.
+    //
+    // The trampoline then hands its own SP to `SYS_SIGRETURN` — the frame is
+    // exactly there.
     let user_sp = frame.stack_pointer;
-    let trampoline_ret_addr = user_sp.wrapping_sub(8);
-    let signal_frame_base = trampoline_ret_addr.wrapping_sub(AARCH64_SIGNAL_FRAME_SIZE as u64);
+    let signal_frame_base = user_sp.wrapping_sub(AARCH64_SIGNAL_FRAME_SIZE as u64);
 
     let total_len = user_sp.wrapping_sub(signal_frame_base) as usize;
     if total_len == 0 || total_len > 128 {
@@ -1062,16 +1066,16 @@ fn try_async_signal_delivery_aarch64(frame: &mut TrapFrame) {
         signal: signal_num as u64,
     };
 
-    // SAFETY: both addresses validated as writable user pages above.
+    // SAFETY: the address was validated as a writable user page above.
     unsafe {
         core::ptr::write(signal_frame_base as *mut AArch64SignalFrame, sig_frame);
-        core::ptr::write(trampoline_ret_addr as *mut u64, trampoline_addr);
     }
 
     // ── Rewrite TrapFrame for handler entry ────────────────────────
     frame.elr = handler_addr;
-    frame.stack_pointer = trampoline_ret_addr;
+    frame.stack_pointer = signal_frame_base;
     frame.x0 = signal_num as u64; // x0 = first argument (signal number)
+    frame.x30 = trampoline_addr; // the handler's `ret` goes to the trampoline
 
     // Zero volatile caller-saved registers for cleanliness.
     frame.x1 = 0;

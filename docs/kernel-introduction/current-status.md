@@ -535,7 +535,13 @@ including the POSIX signal interaction model.
 - **Async delivery has no user half yet**: the kernel injects the signal frame
   and `sigreturn` restores it on all three architectures, but the trampoline
   that calls `SIGRETURN` is the program's to supply and nothing in the tree
-  does, so the path is reachable only by a program that brings one.
+  does, so the path is reachable only by a program that brings one.  What the
+  frame carries is where the interrupted code was and how it ran — the
+  instruction pointer, stack pointer and status word (`SignalFrame`,
+  `AArch64SignalFrame`, `RiscV64SignalFrame`) — so a handler's return resumes
+  at the right instruction on the right stack, but with the handler's
+  caller-saved registers rather than the interrupted code's, which the frame
+  does not record.
 - **Contention scenarios not benchmarked**: lock contention and signal storms
   lack stress baselines.
 

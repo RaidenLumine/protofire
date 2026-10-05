@@ -642,15 +642,17 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
     // Stack layout (addresses descending, RISC-V stack grows down):
     //
     //   [original stack]                    ← user_sp (original)
-    //   [signal frame: 32 bytes]            ← user_sp - 40 (signal_frame_base)
-    //   [trampoline return addr (8 bytes)]  ← user_sp - 8  (handler SP)
+    //   [signal frame: 32 bytes]            ← user_sp - 32 (signal_frame_base)
     //
-    // After handler `ret`:
-    //   - pops trampoline address, SP = user_sp - 32
-    //   - trampoline runs, eventually calls SYS_SIGRETURN
+    // The handler is entered the way a call enters a function: SP is the
+    // 16-byte-aligned frame base and `ra` holds the trampoline's address, so an
+    // ordinary `ret` reaches the trampoline.  A return address on the stack
+    // would not: RISC-V's `ret` jumps through `x1` and never reads the stack.
+    //
+    // The trampoline then hands its own SP to `SYS_SIGRETURN` — the frame is
+    // exactly there.
     let user_sp = frame.stack_pointer;
-    let trampoline_ret_addr = user_sp.wrapping_sub(8);
-    let signal_frame_base = trampoline_ret_addr.wrapping_sub(RISCV64_SIGNAL_FRAME_SIZE as u64);
+    let signal_frame_base = user_sp.wrapping_sub(RISCV64_SIGNAL_FRAME_SIZE as u64);
 
     let total_len = user_sp.wrapping_sub(signal_frame_base) as usize;
     if total_len == 0 || total_len > 128 {
@@ -691,16 +693,16 @@ fn try_async_signal_delivery_riscv64(frame: &mut TrapFrame) {
         signal: signal_num as u64,
     };
 
-    // SAFETY: both addresses validated as writable user pages above.
+    // SAFETY: the address was validated as a writable user page above.
     unsafe {
         core::ptr::write(signal_frame_base as *mut RiscV64SignalFrame, sig_frame);
-        core::ptr::write(trampoline_ret_addr as *mut u64, trampoline_addr);
     }
 
     // ── Rewrite TrapFrame for handler entry ────────────────────────
     frame.sepc = handler_addr;
-    frame.stack_pointer = trampoline_ret_addr;
+    frame.stack_pointer = signal_frame_base;
     frame.a0 = signal_num as u64; // a0 = first argument (signal number)
+    frame.ra = trampoline_addr; // the handler's `ret` goes to the trampoline
 
     // Zero volatile caller-saved registers (a1-a7, t0-t6).
     frame.a1 = 0;
