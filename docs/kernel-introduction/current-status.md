@@ -516,10 +516,10 @@ networking, with more protocols in the tree than the receive path dispatches.
 | eventfd (#107) | Counter/semaphore mode, EFD_NONBLOCK/EFD_CLOEXEC, poll/epoll integration, write-overflow EAGAIN | — |
 | Event | Event flag synchronization | — |
 | Condition variable | Blocking wait/wake | — |
-| Mutex | Blocking mutex | No lock-contention benchmark |
-| Semaphore | Counting semaphore | — |
+| Mutex | Spin mutex over the IRQ-safe spinlock; does not park a waiter | No lock-contention benchmark |
+| Semaphore | Counting semaphore, exercised by the process stress tests | No caller in the kernel |
 | Spinlock | IRQ-safe spinlock | — |
-| Shared memory | System V shm: shmget/shmat/shmdt/shmctl (#100-103) | Purpose-specific syscalls rather than a file- or handle-shaped IPC API; no POSIX `shm_open` |
+| Shared memory | System V shm: shmget/shmat/shmdt/shmctl (#100-103); frames freed on last detach after IPC_RMID | Purpose-specific syscalls rather than a file- or handle-shaped IPC API; no POSIX `shm_open`; the registry entry is dropped by `reap_deleted_segments`, which has no live call site |
 | Shell pipeline | Two commands piped together by the ring-3 shell | No kernel process group; the shell tracks jobs itself |
 
 **Strengths:** complete synchronization primitives, and signal machinery for

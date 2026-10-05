@@ -43,6 +43,7 @@ one of these.
 | [boot.md](boot.md) | Hand-off, the Rust entry, the init pipeline, SMP bring-up, platform assumptions |
 | [drivers.md](drivers.md) | The driver framework, the device ledger, and each driver's completion path |
 | [fs.md](fs.md) | The VFS, the block layer, SimpleFs, the mount-time layout, the views and FUSE |
+| [ipc.md](ipc.md) | Locks, wait queues, pipes, the descriptor facilities and shared memory |
 | [memory.md](memory.md) | Frames, the heap, page tables, kernel stacks, reclaim and swap |
 | [interrupts.md](interrupts.md) | Controllers per machine, the identity registry, MSI, NMI, balancing |
 | [network.md](network.md) | The stack's layers, TCP and UDP, DHCP/DNS/SLAAC, TLS, and what is not wired |
