@@ -111,6 +111,7 @@ and its status says which of the two happened.
 | [0001](0001-spread-message-signalled-interrupts.md) | Implemented | Deliver message-signalled interrupts on more than one CPU |
 | [0002](0002-signal-frame-carries-the-context.md) | Implemented | Carry the interrupted context in the signal frame |
 | [0003](0003-program-the-msix-table-on-x86_64.md) | Implemented | Program a device's MSI-X table on x86_64 |
+| [0004](0004-reuse-the-xhci-rings-by-cycle-state.md) | Accepted | Reuse the xHCI rings by cycle state |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —
