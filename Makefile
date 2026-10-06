@@ -67,6 +67,8 @@ endif
 		check-layering \
 		check-x8664-runtime \
 		check-x8664-usb-disk \
+		check-x8664-nvme \
+		check-aarch64-nvme \
 		check-x8664-churn \
 		check-riscv64-churn \
 		check-aarch64-runtime \
@@ -121,10 +123,12 @@ help:
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-usb-disk - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
+		'  make check-x8664-nvme - boot a real SimpleFs image on an NVMe device and check the controller mounts it' \
 		'  make check-x8664-init-no-start - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-riscv64-churn - the same churn on riscv64, whose window is one of the things it checks' \
 		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
+		'  make check-aarch64-nvme - the same NVMe disk on the device-tree machine, through its PCIe window' \
 		'  make check-riscv64-runtime - run the headless QEMU virt riscv64 demo smoke check' \
 		'  make check-riscv64-aia-runtime - boot riscv64 on the AIA machine and check the IMSIC' \
 		'  make check-riscv64-pci-runtime - boot riscv64 with a PCIe device and check the device-tree walk' \
@@ -459,6 +463,24 @@ check-x8664-usb-disk:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-usb-disk.sh
+
+# The same filesystem image on an NVMe device: a device class the driver had
+# for months and no gate had ever attached.  The reads go through the
+# controller's own queues, and the mount is what shows they worked.
+check-x8664-nvme:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-nvme-disk.sh x86_64
+
+# And the same device on the device-tree machine, where the BAR is reached
+# through the platform's window rather than an address the firmware assigned:
+# this is the second PCIe device class that machine drives.
+check-aarch64-nvme:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-nvme-disk.sh aarch64
 
 # Boot with the stack-window churn: ask the window for more stacks than it has
 # and the invalidation log for more requests than it can hold, then check the

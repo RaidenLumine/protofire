@@ -3,10 +3,19 @@
 //! NVMe driver: the controller, on the machines that have one.
 //!
 //! The wire format lives in [`crate::drivers::nvme_protocol`]; what this file
-//! adds is the machine's half — mapping the controller's BAR, bringing it up,
-//! driving its queues, and offering the result as a block device.  The probe is
-//! PCI, so this is compiled where that bus exists; a machine without it answers
-//! under the same module name from `nvme_absent.rs`.
+//! adds is the machine's half — bringing the controller up, driving its
+//! queues, and offering the result as a block device.  The probe is PCIe, so
+//! this is compiled where that bus exists; a machine without it answers under
+//! the same module name from `nvme_absent.rs`.
+//!
+//! The machine's half of the probe is `arch::platform::pci_register_window`,
+//! which is where the differences between the three buses live: on x86_64 the
+//! BAR is reached at the address enumeration decoded, on riscv64 the device
+//! window is identity-mapped so those are the same address, and on AArch64 the
+//! window sits above the range the page tables map, so the platform hands back
+//! an alias.  The driver asks for a window and never sees which machine it is
+//! on — which is what makes this the second PCIe device *class* the
+//! device-tree machines drive.
 
 use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
@@ -19,21 +28,33 @@ use core::sync::atomic::Ordering;
 
 pub use crate::drivers::nvme_protocol::*;
 
-// ─── MSI-X interrupt vectors ─────────────────────────────────────────
+// ─── Interrupts ───────────────────────────────────────────────────────
 
-/// MSI-X vector used for NVMe admin-queue completions.
+/// The fixed IDT vector an x86_64 build reserves for admin-queue completions.
 ///
-/// Allocated from the free IRQ range (34-127) alongside the VirtIO vectors;
-/// see `arch/x86_64/interrupts.rs`.
+/// The driver polls, so nothing claims these and no machine programs a table
+/// with them: they are the numbers `arch/x86_64/interrupts.rs` still assigns
+/// the class, and wiring them into the claim registry is a follow-up
+/// ([docs/status.md](../../docs/status.md) records the gap).
 pub const NVME_ADMIN_VECTOR: u8 = 44;
-/// MSI-X vector used for NVMe I/O-queue completions.
+/// The fixed IDT vector an x86_64 build reserves for I/O-queue completions.
 pub const NVME_IO_VECTOR: u8 = 45;
 
 static NVME_PROBED: AtomicBool = AtomicBool::new(false);
 
-/// Stores the BAR0 physical address of the first NVMe controller found during
-/// PCI enumeration so that `probe_boot_disk` can initialise it later.
-static NVME_BAR0: Mutex<Option<u64>> = Mutex::new(None);
+/// The platform-mapped controller registers of the first NVMe function found
+/// during enumeration, held for `probe_boot_disk` to initialise later.
+///
+/// It is stored as an address rather than a pointer because the static is
+/// shared: the mapping itself lives as long as the machine does, and only the
+/// boot-disk probe dereferences it.
+static NVME_BAR0: Mutex<Option<usize>> = Mutex::new(None);
+
+/// NVMe's class: mass storage (0x01), NVM subsystem (0x08).  The programming
+/// interface byte distinguishes an NVMe controller from the other things a
+/// mass-storage function can be, and the enumeration already decodes it.
+const NVME_CLASS_CODE: u8 = 0x01;
+const NVME_SUBCLASS: u8 = 0x08;
 
 struct NvmeDriver;
 
@@ -105,11 +126,11 @@ struct NvmeController {
     io_buf: Mutex<DmaBuffer>,
 }
 
-// SAFETY: NvmeController is only constructed on bare-metal x86_64 where the
-// kernel is single-threaded.  All mutable state is behind `Mutex` or accessed
-// exclusively during initialisation (before the controller is shared via
-// `Arc`).  The raw `bar0` pointer is an identity-mapped MMIO region that is
-// safe to access from any thread.
+// SAFETY: the controller is constructed on bare metal from a BAR the platform
+// mapped, and it owns that mapping for the driver's lifetime.  All mutable
+// state is behind `Mutex` or accessed exclusively during initialisation
+// (before the controller is shared via `Arc`), so moving the handle between
+// threads moves the only path to that state.
 unsafe impl Send for NvmeController {}
 // SAFETY: the controller owns its BAR0 mapping and its queue memory, which
 // live for the driver's lifetime, and the `Arc` that hands it out is what
@@ -137,18 +158,18 @@ impl NvmeController {
     ///
     /// `bar0_phys` must be the physical base address of the NVMe controller's
     /// PCI BAR0, obtained from PCI enumeration.
-    unsafe fn init(bar0_phys: u64) -> crate::Result<Self> {
-        // SAFETY: the caller's contract is that `bar0_phys` is the controller's
-        // BAR0 as PCI enumeration reported it, so the range is live MMIO; every
-        // register this body touches is one the NVMe specification puts inside
-        // those 8 KiB and within the mapping that follows.
+    /// # Safety
+    ///
+    /// `bar0` must be the platform's mapping of this controller's BAR0, at
+    /// least `NVME_BAR0_BYTES` long, and the caller must keep it mapped for as
+    /// long as the controller lives.
+    unsafe fn init(bar0: *mut u8) -> crate::Result<Self> {
+        // SAFETY: the caller's contract is that `bar0` is the controller's own
+        // BAR0 mapping, so the range is live MMIO; every register this body
+        // touches is one the NVMe specification puts inside those 8 KiB.
         unsafe {
-            use crate::arch::mmu::map_device_mmio;
             use core::ptr::read_volatile;
             use core::ptr::write_volatile;
-
-            let bar0_size = 8192; // NVMe BAR0 is at least 8 KiB
-            let bar0 = map_device_mmio(bar0_phys, bar0_size).ok_or(crate::Error::NotFound)?;
 
             // ── 1. Read controller capabilities ──────────────────────────
             let cap: u64 = read_volatile(bar0.add(NVME_REG_CAP) as *const u64);
@@ -652,41 +673,28 @@ impl BlockDevice for NvmeController {
 
 // ─── Probe and boot-disk selection ────────────────────────────────────
 
-/// Enumerate NVMe PCI devices and store the first one for later
-/// initialisation by `probe_boot_disk`.
+/// Ask the platform for an NVMe function and keep its registers for
+/// `probe_boot_disk` to initialise.
 fn probe_nvme() -> crate::Result<()> {
-    use crate::arch::x86_64::pci::pci_enumerate_buses;
     use crate::println;
 
-    let devices = pci_enumerate_buses();
-    let mut found = false;
-    for info in devices
-        .iter()
-        .filter(|d| d.class_code == 0x01 && d.subclass == 0x08)
-    {
-        let bar0 = &info.bars[0];
-        if !bar0.is_mmio || bar0.size == 0 {
-            continue;
-        }
-        found = true;
-        println!(
-            "[nvme  ] found NVMe controller at {:02x}:{:02x}.{:x} vendor={:04x} device={:04x} BAR0={:#018x} size={} KiB",
-            info.bus,
-            info.device,
-            info.function,
-            info.vendor_id,
-            info.device_id,
-            bar0.base_address,
-            bar0.size / 1024
-        );
-        let mut stored = NVME_BAR0.lock();
-        if stored.is_none() {
-            *stored = Some(bar0.base_address);
-        }
-    }
-    if !found {
+    // The vendor is the controller's maker rather than a compatibility
+    // promise — every NVMe controller speaks the same registers — so the class
+    // is the whole of the match, and `0` is the platform's "any vendor".
+    let Some(window) =
+        crate::arch::platform::pci_register_window(0, NVME_CLASS_CODE, NVME_SUBCLASS)
+    else {
         println!("[nvme  ] no NVMe controllers found");
-    }
+        return Ok(());
+    };
+    println!(
+        "[nvme  ] found NVMe controller vendor={:04x} device={:04x} BAR={:#x} size={} KiB",
+        window.vendor_id,
+        window.device_id,
+        window.bar_address,
+        window.bar_size / 1024
+    );
+    *NVME_BAR0.lock() = Some(window.bar_address);
     Ok(())
 }
 
@@ -705,11 +713,12 @@ pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     };
 
     println!(
-        "[nvme  ] initialising NVMe controller at BAR0={:#018x}...",
+        "[nvme  ] initialising NVMe controller at BAR={:#x}...",
         bar0
     );
-    // SAFETY: BAR0 address comes from PCI enumeration.
-    let controller = match unsafe { NvmeController::init(bar0) } {
+    // SAFETY: `bar0` is the platform's mapping of this function's BAR0, which
+    // `probe_nvme` stored and which lives as long as the machine does.
+    let controller = match unsafe { NvmeController::init(bar0 as *mut u8) } {
         Ok(ctrl) => ctrl,
         Err(e) => {
             println!("[nvme  ] NVMe init failed: {}", e.as_str());
@@ -728,7 +737,7 @@ pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
         device.name(),
         "nvme",
         crate::drivers::DriverCategory::Storage,
-        Some(bar0 as usize),
+        Some(bar0),
     );
     Some(device)
 }

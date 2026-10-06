@@ -55,7 +55,7 @@ the syscall interface.
 | VirtIO (block) | Block | Full read/write, on the virtio-mmio bus and on PCIe | QEMU only; the virtio-mmio transport has no vectors of its own, so only the PCIe path claims an identity per queue |
 | VirtIO (net) | Network | Full RX/TX, modern and legacy transports; on all three machines each queue claims its own MSI-X identity, so a queue's completion wakes that queue's waiter | No throughput baseline |
 | VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189), driven by the demo renderer (`src/user/demo/virgl_renderer.rs`) | QEMU only |
-| NVMe | Block | Full read/write, boot-disk probe | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; x86_64 only; QEMU only |
+| NVMe | Block | Controller bring-up (admin queues, Identify, I/O queue pair), single-block read/write, and boot-disk probe; `make check-x8664-nvme` and `make check-aarch64-nvme` boot the host's own SimpleFs image on a namespace and assert that the controller comes up and the volume mounts | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; RISC-V is not driven yet, because `arch::mmu::phys_addr_of` is unwired there and the queues cannot be allocated (see the memory section); QEMU only |
 | xHCI | USB host | Controller reset and start, command and event rings, device enumeration (Enable Slot, Address Device, GET_DESCRIPTOR), a HID interrupt endpoint per device, port status, and a claimed MSI-X vector whose interrupt drains the event ring when the rings are free; the command, control, interrupt and bulk rings each carry a Link TRB with its Toggle Cycle bit and flip their producer cycle state at the wrap, the event ring is consumed against the segment size the ERST states with no Link TRB in it, and a completion is matched to the TRB the event names; `make check-x8664-runtime` boots all of it with a USB keyboard, presses a key through QEMU's monitor, and asserts the controller's own interrupt | The timer tick still drains the ring as the fallback; the producer rings assume one TD in flight per ring rather than checking for room; no hub, so one device per port; x86_64 only; QEMU only (see [RFC 0004](rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md)) |
 | USB HID | HID (keyboard) | A HID interrupt endpoint is configured on the enumerated device, its reports are decoded into the same keyboard core the PS/2 and VirtIO paths feed, and `make check-x8664-runtime` types a command on the USB keyboard and asserts the shell's answer | No hub, so one device per port; the report deshuffling is the boot's evidence rather than a synthetic matrix |
 | USB MSD | Storage | Bulk-only transport and SCSI command blocks; `make check-x8664-runtime` attaches a disk whose first sector carries a pattern, and the driver enumerates it, identifies it (INQUIRY), reads its capacity and reads that sector back, with the pattern in the log as the evidence; `make check-x8664-usb-disk` boots the host's own SimpleFs image on a USB disk, and the shell *writes* a marker through `open`/`write` into the volume, reads it back with `cat`, and the host finds those bytes in the image afterwards | QEMU only |
@@ -139,8 +139,12 @@ input, mostly verified under QEMU.
   somebody waits on. AArch64 reaches the same place by its own road: the GICv3
   controller (`src/arch/aarch64/gicv3.rs`) receives LPIs, and the ITS
   (`src/arch/aarch64/its.rs`) translates the messages that become them. What is
-  still missing: every other PCIe device — NVMe, HDA — is still reached
-  through its architecture's own enumeration rather than this one.
+  still missing: HDA is still reached through its architecture's own
+  enumeration rather than this one.  NVMe is not: the same driver the PC
+  compiles asks the platform for a window and drives a namespace on the
+  device-tree machine too (`make check-aarch64-nvme` mounts one), which is
+  what makes a second PCIe device *class* work here rather than a second
+  device of the same class.
 - **Verified under QEMU only**: no real-device validation on bare-metal
   hardware yet.
 
@@ -429,14 +433,17 @@ programs a device's table, NMI handling, and load balancing.
 
 **Weaknesses:**
 
-- **Message-signalled interrupts are two drivers deep on AArch64.** The ITS
-  maps a collection and an LPI pending table per CPU, and a device's entries
-  are placed round-robin over the CPUs that can receive, so the PCIe
-  virtio-net driver's queues are completed by different cores, and the PCIe
-  virtio-blk driver beside it claims a range of its own under its own
-  DeviceID.  What that buys is evidence: the placement is a property of the
-  machine rather than of one driver.  What is still missing is a PCIe driver
-  for any other device class
+- **Message-signalled interrupts are two drivers deep on AArch64, and the
+  bus carries three device classes.** The ITS maps a collection and an LPI
+  pending table per CPU, and a device's entries are placed round-robin over
+  the CPUs that can receive, so the PCIe virtio-net driver's queues are
+  completed by different cores, and the PCIe virtio-blk driver beside it
+  claims a range of its own under its own DeviceID. What that buys is
+  evidence: the placement is a property of the machine rather than of one
+  driver. What is still missing: the *third* class — NVMe — is driven on this
+  machine (`make check-aarch64-nvme` mounts a namespace through the same ECAM
+  window) but does not claim an interrupt, because the driver polls; and HDA
+  has no PCIe reach here at all
   ([RFC 0001](rfcs/0001-spread-message-signalled-interrupts.md) is the
   design the placement follows).
 - **MSI-X on RISC-V is one driver deep**: the AIA IMSIC is wired and a device's

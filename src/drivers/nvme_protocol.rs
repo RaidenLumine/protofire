@@ -52,8 +52,13 @@ pub const COMPLETION_POLL_LIMIT: u32 = 1_000_000;
 
 pub const ADMIN_DELETE_IOSQ: u8 = 0x00;
 pub const ADMIN_CREATE_IOSQ: u8 = 0x01;
-pub const ADMIN_DELETE_IOCQ: u8 = 0x02;
-pub const ADMIN_CREATE_IOCQ: u8 = 0x03;
+/// The completion-queue pair, which sits at 0x04/0x05 rather than after the
+/// submission-queue pair: 0x02 and 0x03 are Get Log Page and a reserved
+/// opcode, so a controller answers the wrong numbers with "Invalid Command
+/// Opcode" and the I/O queues are never created.  No gate booted an NVMe
+/// device until the device-tree machines drove one, which is why this stood.
+pub const ADMIN_DELETE_IOCQ: u8 = 0x04;
+pub const ADMIN_CREATE_IOCQ: u8 = 0x05;
 pub const ADMIN_IDENTIFY: u8 = 0x06;
 
 // ─── Identify CNS (CDW10 bits 7:0) ────────────────────────────────────
@@ -375,6 +380,25 @@ mod tests {
         assert_ne!(ADMIN_DELETE_IOCQ, ADMIN_CREATE_IOCQ);
         assert_ne!(ADMIN_IDENTIFY, ADMIN_CREATE_IOSQ);
         assert_ne!(ADMIN_IDENTIFY, ADMIN_CREATE_IOCQ);
+    }
+
+    /// The opcodes are the specification's numbers, not merely different from
+    /// each other.
+    ///
+    /// "Distinct" was the whole test once, and it passed while the
+    /// completion-queue pair sat at 0x02/0x03 — Get Log Page and a reserved
+    /// opcode — so every `Create I/O Completion Queue` the driver sent was
+    /// answered with "Invalid Command Opcode" and no gate was attached to an
+    /// NVMe device to see it.  A number a device decodes is a fact about the
+    /// device, and it belongs in the test.
+    #[test]
+    fn admin_opcodes_are_the_specifications_numbers() {
+        assert_eq!(ADMIN_DELETE_IOSQ, 0x00);
+        assert_eq!(ADMIN_CREATE_IOSQ, 0x01);
+        // 0x02 is Get Log Page and 0x03 is reserved.
+        assert_eq!(ADMIN_DELETE_IOCQ, 0x04);
+        assert_eq!(ADMIN_CREATE_IOCQ, 0x05);
+        assert_eq!(ADMIN_IDENTIFY, 0x06);
     }
 
     #[test]

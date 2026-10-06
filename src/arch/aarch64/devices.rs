@@ -2,11 +2,12 @@
 //!
 //! Which of the machine's own devices this architecture has a driver for.
 //!
-//! None of the PC drivers: the bochs display, Intel HDA, NVMe, xHCI and the
-//! PIT speaker are reached through the x86_64 configuration mechanism, and
-//! this machine does not have it.  What it has instead is VirtIO — the MMIO
-//! devices its device tree names, and the PCIe devices behind the ECAM window
-//! — and those drivers live in `src/drivers/` and are compiled everywhere.
+//! Most of the PC drivers: the bochs display, Intel HDA, xHCI and the PIT
+//! speaker are reached through the x86_64 configuration mechanism, and this
+//! machine does not have it.  What it has instead is VirtIO — the MMIO devices
+//! its device tree names, and the PCIe devices behind the ECAM window — and
+//! NVMe, whose registers are the same on any PCIe bus; both live in
+//! `src/drivers/` and are compiled wherever that bus is.
 //!
 //! So the five names below resolve to the stubs that answer under the same
 //! module name and report that the hardware is not there, and the two
@@ -60,6 +61,14 @@ pub fn usb_boot_disk() -> Option<Arc<dyn BlockDevice>> {
 pub mod framebuffer;
 #[path = "../../drivers/hda_absent.rs"]
 pub mod hda;
+/// The NVMe driver, which this machine reaches through its PCIe window: the
+/// class is the same one an x86_64 controller has, and the platform's window
+/// helper is what maps the BAR here.
+#[cfg(target_os = "none")]
+#[path = "../../drivers/nvme.rs"]
+pub mod nvme;
+/// Nothing to answer on a host build of this architecture.
+#[cfg(not(target_os = "none"))]
 #[path = "../../drivers/nvme_absent.rs"]
 pub mod nvme;
 #[path = "../../drivers/pcspkr_absent.rs"]

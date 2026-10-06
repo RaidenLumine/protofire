@@ -161,6 +161,12 @@ jobs:
       - name: Boot a filesystem image on the USB disk
         run: make check-x8664-usb-disk
 
+      # The NVMe driver had never run in a gate until this one: it attaches a
+      # real controller and mounts the host's image from its namespace, which
+      # is what caught two wrong admin opcodes in the driver's own table.
+      - name: Boot a filesystem image on an NVMe device
+        run: make check-x8664-nvme
+
       # The other two architectures' cross-CPU paths.  `check-smp-runtime` is
       # x86_64, and the single-CPU smokes above cannot reach a second CPU at
       # all, so without these two the AArch64 and RISC-V AP bring-up is a code

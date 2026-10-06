@@ -176,6 +176,10 @@ run_p3() {
         # rings, which is where the ring-reuse defect lived, and the boot's own
         # writes are what show the volume reached the host's image.
         run_make_step "make check-x8664-usb-disk" check-x8664-usb-disk
+        # The same machine with its image on an NVMe device: the only gate
+        # that attaches one, and therefore the only place the NVMe driver's
+        # bring-up runs at all.
+        run_make_step "make check-x8664-nvme" check-x8664-nvme
         # The other half of the boot hand-off: a disk whose init reads the
         # declarations and asks for nothing, so the supervisor's fallback is
         # what starts the services.
@@ -194,6 +198,10 @@ run_p3() {
     fi
     if [ "$RUN_AARCH64_RUNTIME" = "1" ]; then
         run_make_step "make check-aarch64-runtime" check-aarch64-runtime
+        # And the same device on the device-tree machine, where the BAR comes
+        # through the platform's window instead of an address the firmware
+        # assigned.
+        run_make_step "make check-aarch64-nvme" check-aarch64-nvme
         # The same boot with the payload frozen rather than compiled, on the
         # architecture whose payload's entry point is not at its start.
         run_make_step "make check-abi-frozen-payload-aarch64" check-abi-frozen-payload-aarch64

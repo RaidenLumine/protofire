@@ -164,6 +164,9 @@ pub(crate) struct PciFunctionAddress {
 /// Find the first PCIe function of a vendor/class, and the BAR its registers
 /// live in.
 ///
+/// `vendor_id == 0` asks for any vendor, which is how a driver whose device
+/// class has no vendor of its own — NVMe — asks for one.
+///
 /// The device-tree machines differ in exactly one thing here: AArch64's device
 /// window sits above the range its page tables map, so a BAR has to be reached
 /// through an alias, and riscv64's is inside the identity map already.
@@ -186,7 +189,7 @@ pub(crate) fn pci_register_window(
         use crate::arch::aarch64::pci;
 
         let probe = pci::probe_and_enumerate()?;
-        let (dev, bar) = find_virtio_function(&probe.devices, vendor_id, class_code, subclass)?;
+        let (dev, bar) = find_function_with_bar(&probe.devices, vendor_id, class_code, subclass)?;
         pci::pci_enable_memory_and_bus_master(&probe.region, dev.bus, dev.device, dev.function);
 
         // A slot of the platform's BAR-alias window, one per registered
@@ -216,7 +219,7 @@ pub(crate) fn pci_register_window(
         use crate::arch::riscv64::pci;
 
         let probe = pci::probe_and_enumerate()?;
-        let (dev, bar) = find_virtio_function(&probe.devices, vendor_id, class_code, subclass)?;
+        let (dev, bar) = find_function_with_bar(&probe.devices, vendor_id, class_code, subclass)?;
         pci::pci_enable_memory_and_bus_master(&probe.region, dev.bus, dev.device, dev.function);
 
         Some(PciRegisterWindow {
@@ -240,7 +243,7 @@ pub(crate) fn pci_register_window(
         use crate::arch::x86_64::pci;
 
         let devices = pci::pci_enumerate_buses();
-        let (device, bar) = find_virtio_function(&devices, vendor_id, class_code, subclass)?;
+        let (device, bar) = find_function_with_bar(&devices, vendor_id, class_code, subclass)?;
         let address = pci::PciAddress::new(device.bus, device.device, device.function);
 
         // Enable Memory Space and Bus Master: the modern transport's registers
@@ -497,19 +500,26 @@ pub(crate) fn msix_named_handlers(
     Some(handlers)
 }
 
-/// The device and the largest prefetchable MMIO BAR of the first function that
-/// matches.
+/// The device and the MMIO BAR a driver reaches it through, for the first
+/// function that matches.
 ///
-/// The modern transport spreads its register areas over the biggest BAR —
-/// BAR4 on QEMU's transitional `virtio-net-pci`, which also carries the smaller
-/// one the legacy layout used — so picking the largest prefetchable one is
-/// picking the modern interface's.
+/// `bar` is the largest prefetchable MMIO BAR, which is the one a virtio
+/// device's modern transport spreads its register areas over — BAR4 on QEMU's
+/// transitional `virtio-net-pci`, which also carries the smaller one the legacy
+/// layout used.  A device with a single memory BAR (NVMe's controller
+/// registers) has that one chosen by the same rule.
+///
+/// `vendor_id == 0` means "any vendor": a class number is what a driver means
+/// when it asks for a *kind* of device — NVMe's class is the NVM one whatever
+/// the vendor sold the controller — while virtio asks for its own vendor
+/// because its class numbers are shared with other storage and network
+/// devices.
 #[cfg(any(
     all(target_arch = "aarch64", target_os = "none"),
     all(target_arch = "riscv64", target_os = "none"),
     all(target_arch = "x86_64", target_os = "none")
 ))]
-fn find_virtio_function(
+fn find_function_with_bar(
     devices: &[crate::arch::pci::PciDeviceInfo],
     vendor_id: u16,
     class_code: u8,
@@ -519,7 +529,10 @@ fn find_virtio_function(
     &crate::arch::pci::PciBarInfo,
 )> {
     for dev in devices {
-        if dev.vendor_id != vendor_id || dev.class_code != class_code || dev.subclass != subclass {
+        if (vendor_id != 0 && dev.vendor_id != vendor_id)
+            || dev.class_code != class_code
+            || dev.subclass != subclass
+        {
             continue;
         }
         let bar = dev

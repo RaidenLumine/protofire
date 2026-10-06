@@ -4,9 +4,17 @@
 //!
 //! None of the PC drivers: the bochs display, Intel HDA, NVMe, xHCI and the
 //! PIT speaker are reached through the x86_64 configuration mechanism.  This
-//! machine's own devices are VirtIO — MMIO from its device tree, PCIe from
-//! its ECAM window — and those drivers live in `src/drivers/` and are
-//! compiled everywhere.
+//! machine's own devices are VirtIO — MMIO from its device tree, PCIe from its
+//! ECAM window — and those drivers live in `src/drivers/` and are compiled
+//! everywhere.
+//!
+//! NVMe is not one of them yet, and the reason is not the device: the
+//! controller enumerates and answers on this machine's ECAM window, but its
+//! queues need `crate::arch::mmu::phys_addr_of`, which is unwired here — the
+//! RAM window is identity-mapped (the VirtIO drivers hand it device addresses
+//! already), and the translation that would say so is the one call it does not
+//! make.  Enabling the driver before that returns `OutOfMemory` at queue
+//! allocation, so it stays a stub.
 //!
 //! So the five names below resolve to the stubs, and the two capability
 //! constants say so too.  See the x86_64 module for why the driver files are
