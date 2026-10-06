@@ -220,6 +220,15 @@ The flush that ends a successful transaction is `flush_metadata`
    swapped and `pending_commit` cleared, and only then swap the in-memory
    pointers.
 
+Phase 2 is why a boot's write traffic is much larger than its files: the two
+tables and the xattr table are written *whole*, every commit.  A demo boot of
+the in-memory volumes writes 735232 bytes to a device for the 13611 bytes a
+caller asked for — 53 writes of more than 8 KiB carry 494080 of it — and the
+write-skipping optimisation the dirty flags in `SimpleFsState` are waiting for
+has to compare against the slot it is about to overwrite, not against the
+last commit: after a publish the shadow is the table from two commits ago, so
+"what changed since last time" would leave it stale.
+
 A crash before the publish leaves the mark; a mount then loads the *active*
 tables, which a commit never writes, so the visible namespace stays the one
 the last publish described.  A crash between the two mirror writes leaves one
@@ -310,6 +319,14 @@ the depth defaults to 0, `BlockCache::with_read_ahead` is how a volume asks,
 and no volume in the tree asks today, so the path is exercised by the cache's
 own tests and by no boot.  Eviction prefers the least-recently-used clean
 entry, so a dirty block is only written back when the pool is entirely dirty.
+Read-ahead is **off, and measurably so**: with depth 2 a demo boot turns 141
+cache misses into hits and issues 142 prefetches while the device sees the
+same traffic plus one block (327 reads and 233984 bytes off, 328 and 234496
+on), because `prefetch` reads the next blocks *synchronously*, inside the
+miss that triggered it.  It moves the same work earlier rather than hiding
+it, and depth 4 and 8 only add waste (4 and 7 extra device reads), so no
+volume enables it until the block layer can overlap I/O of its own.
+
 `CacheStats` counts hits, misses, evictions, dirty and aged writebacks, blocks
 prefetched and *sequential* hits — a sequential hit is a hit on the block
 right after the one read before it, which is what the cache can tell from its

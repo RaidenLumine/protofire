@@ -112,8 +112,14 @@ The authoritative picture of what exists today is
 - **Performance validation.** The work a boot does is counted and gated today:
   `make check-perf-baseline` compares the counters a boot reports against a
   recorded baseline, so a change that does more work fails without anyone
-  measuring seconds.  What remains is measurement under load — SMP
-  load-balancing on multi-core hosts, NUMA-node stress tests, and network
+  measuring seconds.  A read is now counted at all three heights it passes —
+  the filesystem's operations and their bytes, the cache's hits and misses,
+  and what reached a device — and the first two findings are recorded: a
+  commit writes its shadow tables whole (735 KiB to a device for 13 KiB of
+  writes), and read-ahead cannot pay while `prefetch` is synchronous.  What
+  remains: overlapping device I/O (which is what would make read-ahead worth
+  enabling), a commit that writes only the blocks a slot actually needs, and
+  measurement under load — SMP load-balancing, NUMA-node stress, and network
   throughput benchmarks.
 
 ## Long Term (1–3 years)

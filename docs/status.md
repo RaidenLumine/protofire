@@ -178,7 +178,7 @@ input, mostly verified under QEMU.
 |-----------|-----|---------|
 | File descriptor table | Per-process table, dup/dup2/F_DUPFD, close-on-exec, inheritance across spawn | No descriptor passing between processes |
 | Pipe | VFS-backed anonymous pipe, fcntl-resizable buffer, per-end O_NONBLOCK | No splice/tee; no named-pipe filesystem entry |
-| Block cache | Fixed-size LRU, write-through for metadata and write-back for data, dirty aging by the maintenance thread, and a read-ahead path that is implemented and tested but off unless a volume asks for it (none does) | Capacity is a fixed constant, so a large working set thrashes; no real-disk benchmark, and the boot-work line reports the cache's counters but nothing compares them *per workload* |
+| Block cache | Fixed-size LRU, write-through for metadata and write-back for data, dirty aging by the maintenance thread, and a read-ahead path that is implemented and tested but off unless a volume asks for it (none does) | Capacity is a fixed constant, so a large working set thrashes; no real-disk benchmark, and the boot-work line reports the cache's counters but nothing compares them *per workload*; read-ahead is measurably pointless while `prefetch` is synchronous — depth 2 turns 141 misses into hits with the same device traffic and one wasted block, and deeper only wastes more |
 | Handle table | `KernelObject` + `HandleEntry { rights }` with a per-kind shape table, indexed by descriptor | Rights are only read and write, so a capability that needs anything finer has to be a syscall |
 | Console I/O | One global console device, Ctrl-C handling, ring-3 reads through fd 0 | One console for the whole machine; no per-terminal isolation |
 
@@ -217,7 +217,7 @@ below; the mechanism itself is [docs/kernel/fs.md](kernel/fs.md).
 
 | Component | Now | Missing |
 |-----------|-----|---------|
-| SimpleFs core (V2/V3/V4) | Full read/write, per-file data checksum, undo-log transactions and the V3+ two-phase commit; V3 persistent security descriptors, V4 xattr table and data-reduction flags | The image builders produce V2, so the V3/V4 layouts are exercised by the tests rather than by a boot; recovery is exercised by the in-tree fault matrix rather than a searching fuzzer; no real-disk validation |
+| SimpleFs core (V2/V3/V4) | Full read/write, per-file data checksum, undo-log transactions and the V3+ two-phase commit; V3 persistent security descriptors, V4 xattr table and data-reduction flags | The image builders produce V2, so the V3/V4 layouts are exercised by the tests rather than by a boot; recovery is exercised by the in-tree fault matrix rather than a searching fuzzer; no real-disk validation; and a commit writes the two shadow tables (and the V4 xattr table) whole, so a demo boot puts 735232 bytes on a device for 13611 bytes of `VNode::write` — the write-skipping the dirty flags await must compare against the slot it is overwriting, since the shadow is a generation older than the active |
 | TmpFs | In-memory, full read/write, xattrs | Contents do not survive a reboot; no mount in the tree |
 | DevFs | The kernel's own devices as nodes, and every device a probe bound as a directory of facts (`driver`, `category`, `bus`) | Read-only; node metadata is the registry's, not the filesystem's; a discovered device has no I/O interface of its own yet |
 | ProcFs | Process and runtime state as read-only files | Read-only view; process control stays in syscalls |
