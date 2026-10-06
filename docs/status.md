@@ -56,9 +56,9 @@ the syscall interface.
 | VirtIO (net) | Network | Full RX/TX, modern and legacy transports; on all three machines each queue claims its own MSI-X identity, so a queue's completion wakes that queue's waiter | No throughput baseline |
 | VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189), driven by the demo renderer (`src/user/demo/virgl_renderer.rs`) | QEMU only |
 | NVMe | Block | Full read/write, boot-disk probe | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; x86_64 only; QEMU only |
-| xHCI | USB host | Controller bring-up and port status | Not end-to-end: USB storage and keyboard input are not usable yet |
-| USB HID | HID (keyboard) | Report decoding and scancode injection | Not wired end-to-end until the xHCI path is complete |
-| USB MSD | Storage | Bulk-only transport and SCSI command blocks | Not reachable end-to-end until the xHCI path is complete |
+| xHCI | USB host | Controller reset and start, command and event rings, device enumeration (Enable Slot, Address Device, GET_DESCRIPTOR), a HID interrupt endpoint per device, and port status; `make check-x8664-runtime` boots it with a USB keyboard and asserts each of those | The event ring is drained from the timer tick: MSI-X for the controller is not wired, so an event waits for the next tick rather than raising an interrupt; x86_64 only; QEMU only |
+| USB HID | HID (keyboard) | A HID interrupt endpoint is configured on the enumerated device and its reports are decoded into the same keyboard core the PS/2 and VirtIO paths feed; the xHCI gate boots it to the ready state | The reports' delivery is the tick; no key has been pressed in a gate, so scancode delivery is pinned by unit tests rather than by a boot |
+| USB MSD | Storage | Bulk-only transport and SCSI command blocks | Its geometry probe runs at controller bring-up and is not gated; no boot disk has been offered over USB in a check |
 | Serial (UART 16550) | Text I/O | Full duplex | RISC-V falls back to the SBI console when it has no UART |
 | PS/2 Keyboard | Input | Scancode buffering, decoding, console TTY bridge | The PS/2 interrupt path is x86_64; other targets rely on VirtIO input |
 | Framebuffer | Display | Linear framebuffer the console draws on | No userspace graphics API beyond the VIRGL syscalls; QEMU only |
@@ -105,8 +105,13 @@ input, mostly verified under QEMU.
 
 **Weaknesses:**
 
-- **USB not end-to-end**: xHCI and USB HID are only "driver present"; USB
-  storage and keyboard input are not fully usable yet.
+- **USB is gated at bring-up, not at input**: xHCI resets the controller, runs
+  the command and event rings, enumerates the device and configures a HID
+  interrupt endpoint, and `make check-x8664-runtime` boots all of that with a
+  USB keyboard attached.  What no gate does yet is *press a key*: the event
+  ring is drained from the timer tick (the controller's MSI-X is unwired) and
+  the mass-storage path has never been given a disk, so both are implemented
+  and unexercised rather than absent.
 - **HDA not surfaced to userspace**: audio has only the controller-level
   interface; there is no usable userspace stream interface yet.
 - **One PCIe driver on the device-tree machines.** The ECAM walk finds devices,

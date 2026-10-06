@@ -115,7 +115,8 @@ set -- \
     -display none \
     -no-reboot \
     -no-shutdown \
-    -netdev user,id=net0 -device virtio-net-pci,netdev=net0
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+    -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0
 
 printf 'x86_64 runtime check: 1 cpu, timeout %ss, qemu %s\n' \
     "$TIMEOUT_SECONDS" "$QEMU"
@@ -141,13 +142,15 @@ shell_commands() {
             'help' 'echo ring3-shell-answered' \
             'cat /service/shell/origin' 'cat /service/shell/sha256' \
             'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
-            'cat /dev/bochs-fb/driver'
+            'cat /dev/bochs-fb/driver' \
+            'cat /dev/xhci/driver' 'cat /dev/xhci/category'
     else
         sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
             'help' 'echo ring3-shell-answered' \
             'cat /service/shell/origin' 'cat /service/shell/sha256' \
             'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
-            'cat /dev/bochs-fb/driver' 'sigasync'
+            'cat /dev/bochs-fb/driver' 'cat /dev/xhci/driver' \
+            'cat /dev/xhci/category' 'sigasync'
     fi
 }
 
@@ -338,6 +341,20 @@ fi
 # machine has is found inside the driver's own init, and it says so itself.
 require_log_line "owned by bochs-fb (console)"
 require_log_exact_line "bochs-fb"
+# And the USB host, end to end: the controller is found, reset and started, a
+# slot is enabled and the device on the port is addressed, and a HID keyboard's
+# interrupt endpoint is configured.  The driver's own log is the evidence —
+# nothing here reads a register — and it is the first gate that boots this path
+# at all: the controller, the command/event rings, the device enumeration and
+# the HID endpoint were all implemented and unverified.
+require_log_line "[xhci  ] found xHCI controller at "
+require_log_line "[xhci  ] controller initialised and running"
+require_log_line "[xhci  ] enabled slot "
+require_log_line "[xhci  ] device addressed at slot "
+require_log_line "[xhci  ] HID keyboard ready at slot "
+require_log_line "owned by xhci (bus)"
+require_log_exact_line "xhci"
+require_log_exact_line "bus"
 
 # ── A signal taken asynchronously, end to end ──────────────────────────
 #

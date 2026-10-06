@@ -116,11 +116,23 @@ no userspace stream interface, so audio is a driver without a consumer.
 
 ## USB
 
-The xHCI driver is a bring-up: it finds the controller through PCI, maps BAR0
-and reports port status.  Nothing runs the rings yet, which is why the two USB
-drivers above it — HID report decoding and mass-storage transport — are
-implemented but not end-to-end.  The register map and the ring structures they
-will use are in `drivers/xhci_protocol.rs`.
+The xHCI driver finds the controller through PCI, maps BAR0, resets and starts
+it, and then runs two rings of its own: a command ring it posts to and an event
+ring the controller posts completions on.  Device enumeration is Enable Slot →
+Address Device → GET_DESCRIPTOR, and a device whose descriptor says HID gets an
+interrupt endpoint configured whose reports are decoded into the same keyboard
+core the PS/2 and VirtIO paths feed.  The register map and the ring structures
+are in `drivers/xhci_protocol.rs`; the machine's half is `drivers/xhci.rs`, and
+a machine without PCI answers from `xhci_absent.rs`.
+
+Two things about it are worth stating plainly, because they are what is left.
+The **event ring is drained from the timer tick**: the controller's MSI-X is
+not wired, so a completion waits for the next tick instead of raising an
+interrupt.  And the paths downstream of the endpoint — a key actually being
+pressed, a disk offered over USB — are implemented and exercised by unit tests,
+but no gate boots them: `make check-x8664-runtime` attaches a USB keyboard and
+asserts the controller, the rings, the enumeration and the configured HID
+endpoint, and stops there.
 
 ## Where the code is
 
