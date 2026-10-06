@@ -68,6 +68,7 @@ endif
 		check-x8664-runtime \
 		check-x8664-usb-disk \
 		check-x8664-nvme \
+		check-x8664-hda \
 		check-aarch64-nvme \
 		check-riscv64-nvme \
 		check-x8664-churn \
@@ -125,6 +126,7 @@ help:
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-usb-disk - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
 		'  make check-x8664-nvme - boot a real SimpleFs image on an NVMe device and check the controller mounts it' \
+		'  make check-x8664-hda - play a tone from the shell and check the samples reach the host audio backend' \
 		'  make check-x8664-init-no-start - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-riscv64-churn - the same churn on riscv64, whose window is one of the things it checks' \
@@ -492,6 +494,17 @@ check-riscv64-nvme:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-nvme-disk.sh riscv64
+
+# Audio, end to end: an HDA controller, an output codec, the shell's `tone`
+# builtin writing PCM to `/system/dev/audio`, and QEMU's wav backend as the
+# instrument that says whether the samples left the machine.  No gate had ever
+# attached an audio device, which is how three silent register-map bugs lived
+# in the driver.
+check-x8664-hda:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-hda.sh
 
 # Boot with the stack-window churn: ask the window for more stacks than it has
 # and the invalidation log for more requests than it can hold, then check the

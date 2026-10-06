@@ -180,6 +180,9 @@ run_p3() {
         # that attaches one, and therefore the only place the NVMe driver's
         # bring-up runs at all.
         run_make_step "make check-x8664-nvme" check-x8664-nvme
+        # And audio, whose samples the host's own audio backend is the
+        # instrument for: no other gate attaches an audio device.
+        run_make_step "make check-x8664-hda" check-x8664-hda
         # The other half of the boot hand-off: a disk whose init reads the
         # declarations and asks for nothing, so the supervisor's fallback is
         # what starts the services.

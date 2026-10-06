@@ -60,12 +60,14 @@ The authoritative picture of what exists today is
   design the placement follows.
 - **USB host (xHCI) completion.** The driver is present; close the remaining
   feature gaps so USB storage and HID work end-to-end.
-- **HDA audio to userspace.** The engine runs: CORB/RIRB, codec discovery, the
-  output converter, a BDL playback ring and the stream DMA, with QEMU's `wav`
-  backend carrying the samples it writes.  What is left is making the interface
-  *reachable* — `/system/dev/audio` refuses a program's open because a device
-  path is authorized against the mounted filesystem instead of the virtual
-  node — and then gating playback with a program that plays a tone.
+- **HDA audio to userspace.** Done and gated: the engine runs (CORB/RIRB,
+  codec discovery, the output converter, a BDL playback ring, the stream DMA),
+  a program reaches it — the shell's `tone` builtin writes PCM to
+  `/system/dev/audio`, which is now authorized by the node's own descriptor —
+  and `make check-x8664-hda` reads the samples back out of the WAV QEMU's audio
+  backend writes on the host.  What is left: the tone's pitch in that file is
+  half what the client's generator implies, and which side scales it is
+  unresolved.
 
 ## Mid Term (6–18 months)
 

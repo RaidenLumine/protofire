@@ -75,6 +75,14 @@ pub use vfs::DirectoryEntry;
 pub use vfs::Metadata as FileMetadata;
 pub use vfs::NodeKind;
 
+/// What a set of open rights requires of a node's permission bits.
+///
+/// Exported for the syscall layer's device-node open, which authorizes a
+/// virtual node against *its own* descriptor rather than against the mounted
+/// filesystem — the same question the stat syscall already answers from the
+/// node.  Sharing the mapping keeps the two answers the same answer.
+pub(crate) use filesystem::access_helpers::required_open_access;
+
 // ── Re-exports from submodules ──
 pub use filesystem::types::MountInfo;
 pub use handle::FileHandle;

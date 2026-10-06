@@ -152,13 +152,25 @@ fn open_named_device(
     // subset of their read/write capability masks.
     Process::validate_descriptor_rights_subset_request(request.rights, supported_rights)?;
 
-    super::runtime::with_global_fs(|fs| {
-        fs.authorize_open_normalized_path_with_security_token(
-            normalized_path,
-            request.rights,
-            process.security_token(),
-        )
-    })?;
+    // A device alias is authorized by its **own** descriptor, not by the
+    // mounted filesystem: the node is not a file in any volume, so a lookup
+    // there either misses it or finds the volume's rule — and a read-only
+    // `/system` then refuses a device the kernel means to expose, with
+    // `PermissionDenied` that says nothing about which of the two happened.
+    // The stat syscall already answers this way (`virtual_device_metadata`),
+    // so this is the same question, asked by the other caller.
+    //
+    // What is *not* dropped is the check itself: the node's mode decides, and
+    // a device that wants to be reachable by a program says so in its
+    // descriptor.
+    let metadata = device::virtual_device_metadata(normalized_path).ok_or(Error::NotFound)?;
+    let required = crate::fs::required_open_access(metadata.kind, request.rights);
+    if !metadata
+        .security
+        .grants_access(required, process.security_token())
+    {
+        return Err(Error::PermissionDenied);
+    }
 
     let fd = process.open_device_descriptor(device_name, request.rights)?;
     Ok(Some(fd))

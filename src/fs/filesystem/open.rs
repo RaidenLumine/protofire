@@ -112,13 +112,4 @@ impl FileSystem {
             share_mode,
         })
     }
-
-    pub(crate) fn authorize_open_normalized_path_with_security_token(
-        &self,
-        normalized: &str,
-        desired_access: u32,
-        security_token: SecurityToken,
-    ) -> Result<()> {
-        self.authorize_existing_open(normalized, desired_access, security_token)
-    }
 }

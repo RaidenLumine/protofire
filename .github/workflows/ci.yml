@@ -167,6 +167,11 @@ jobs:
       - name: Boot a filesystem image on an NVMe device
         run: make check-x8664-nvme
 
+      # And audio, which no gate had ever attached: the shell plays a tone and
+      # QEMU's wav backend is what says the samples left the machine.
+      - name: Play a tone and check the host's audio backend
+        run: make check-x8664-hda
+
       # The other two architectures' cross-CPU paths.  `check-smp-runtime` is
       # x86_64, and the single-CPU smokes above cannot reach a second CPU at
       # all, so without these two the AArch64 and RISC-V AP bring-up is a code

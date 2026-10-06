@@ -8,6 +8,8 @@ use alloc::vec::Vec;
 
 use crate::drivers::keyboard;
 use crate::drivers::serial;
+use crate::fs::vfs::types::PermissionMode;
+use crate::fs::vfs::types::SecurityDescriptor;
 use crate::fs::DirectoryEntry;
 use crate::fs::FileMetadata;
 use crate::fs::NodeKind;
@@ -24,6 +26,11 @@ pub const KEYBOARD_DEVICE_NAME: &str = "keyboard";
 pub const KEYBOARD_RAW_DEVICE_NAME: &str = "keyboard-raw";
 pub const MOUSE_DEVICE_NAME: &str = "mouse";
 pub const AUDIO_DEVICE_NAME: &str = "audio";
+/// Mode of the audio node: writable by any user.
+///
+/// The others keep the root-only `0660` of `DEFAULT_DEVICE_MODE`; see
+/// [`VirtualDeviceNode::metadata`] for why this one does not.
+const AUDIO_DEVICE_MODE: PermissionMode = 0o666;
 pub const NULL_DEVICE_NAME: &str = "null";
 pub const SERIAL0_DEVICE_NAME: &str = "serial0";
 pub const ZERO_DEVICE_NAME: &str = "zero";
@@ -84,7 +91,18 @@ impl VirtualDeviceNode {
     }
 
     pub fn metadata(self) -> FileMetadata {
-        device_metadata(self.target_name).unwrap_or_else(default_device_metadata)
+        let metadata = device_metadata(self.target_name).unwrap_or_else(default_device_metadata);
+        // A stream sink exists to have callers.  Device nodes are root-owned
+        // `0660` by default, which is the right default for a device whose
+        // reads or writes say something about the machine — but it would leave
+        // the audio node openable by nothing but the kernel, and the interface
+        // `/system/dev/audio` documents is one a program is meant to write.
+        // A PCM sink carries nothing in either direction, so it gets the
+        // classic `/dev/dsp` answer: writable by any user.
+        if self.target_name == AUDIO_DEVICE_NAME {
+            return metadata.with_security(SecurityDescriptor::root(AUDIO_DEVICE_MODE));
+        }
+        metadata
     }
 
     pub const fn visible_in_directory(self) -> bool {

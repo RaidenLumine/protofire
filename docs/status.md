@@ -63,7 +63,7 @@ the syscall interface.
 | PS/2 Keyboard | Input | Scancode buffering, decoding, console TTY bridge | The PS/2 interrupt path is x86_64; other targets rely on VirtIO input |
 | Framebuffer | Display | Linear framebuffer the console draws on | No userspace graphics API beyond the VIRGL syscalls; QEMU only |
 | Framebuffer Console | Display | Text rendering from a built-in 8×16 ASCII glyph table | Fixed font: characters outside the table draw as a fallback glyph, and there is no font or resolution management |
-| HDA (Intel HD Audio) | Audio | CORB/RIRB, codec discovery, the output converter, a BDL playback ring and the stream DMA that drains it, driven from `/system/dev/audio` ([`hda.rs`](../src/drivers/hda.rs)); the three register-map constants the playback path depends on are now the specification's — the stream descriptor's reset and run bits were swapped, the stream *number* was written where the codec's verb puts it instead of where the descriptor does, and playback used a capture descriptor, each of which is silent | Verified by hand and not by a gate: a boot with QEMU's `intel-hda` + `hda-output` and an `-audiodev wav` backend carried the samples the driver wrote into the host's WAV file. A *program* still cannot reach the node — see the audio weakness below — so no gate drives it yet |
+| HDA (Intel HD Audio) | Audio | CORB/RIRB, codec discovery, the output converter, a BDL playback ring and the stream DMA that drains it, driven from `/system/dev/audio` ([`hda.rs`](../src/drivers/hda.rs)); `make check-x8664-hda` types `tone 440 200` at the shell, which writes the node's `[u32le rate][interleaved samples]` payload, and reads the samples back out of the WAV QEMU's `-audiodev wav` backend writes on the host | The tone's *pitch* in that file is half what the client's generator implies, and which side of the path scales it — the client, the format word, or QEMU's resampling — is not settled; the gate asserts the wave's shape and amplitude rather than its frequency; QEMU only |
 | PCIe ECAM | Bus | x86_64: full ECAM; AArch64/RISC-V: window found, BARs assigned, one driver attached, MSI-X through the machine's own controller | One driver on the device-tree machines; every other PCIe device still uses its architecture's own enumeration |
 
 **Strengths:** driver coverage across storage, network, display, audio, and
@@ -119,19 +119,17 @@ input, mostly verified under QEMU.
   flight per ring rather than checking for room, which a future pipelining
   path has to add before it can be correct
   ([RFC 0004](rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md)).
-- **Audio plays, but no program may open it.** The playback path works —
-  QEMU's `wav` backend carries the samples the driver wrote, so the controller,
-  the codec, the BDL ring and the stream DMA all run — and the shell carries a
-  `tone` builtin that writes PCM to `/system/dev/audio` through the node's
-  documented `[u32le rate][interleaved samples]` payload. What stops it is the
-  *open*: `open_named_device` in `src/syscall/fs/path_ops.rs` authorizes a
-  device path against the **mounted filesystem**, and the virtual node's own
-  metadata — device nodes are root-owned `0660`, and
-  `kernel::device::virtual_device_metadata` is consulted by the stat syscall
-  and not by this path — so a guest process is told `PermissionDenied`. Making
-  the interface usable from a program is therefore a decision about what
-  authorizes a device open, not a driver change, and it is the next piece of
-  work for audio.
+- **Audio plays; its pitch is unresolved.** The path runs end to end — the
+  shell's `tone` builtin opens `/system/dev/audio`, the driver points the
+  codec's converter at the stream, drains a BDL ring, and QEMU's `wav` backend
+  carries the samples to a file this project's gate reads — but the wave in
+  that file has twice the half-period the client's generator implies, and
+  nothing yet says which of the three (the client's counting, the format word
+  the driver sends, or QEMU's resampling) doubles it. The gate asserts the
+  shape and the amplitude, which it can do honestly, and not the frequency.
+  A device node's *open* was the blocker before this and no longer is: it is
+  authorized by the node's own descriptor, the way the stat syscall always
+  answered, and the audio node is writable by any user.
 - **One PCIe driver on the device-tree machines.** The ECAM walk finds devices,
   the kernel's own resource pass gives their memory BARs addresses out of the
   window the host bridge's `ranges` describes (no firmware ran one), and
