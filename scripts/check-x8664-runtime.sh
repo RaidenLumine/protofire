@@ -28,7 +28,13 @@ PROFILE="${PROFILE:-debug}"
 CRATE="${CRATE:-protofire}"
 CARGO="${CARGO:-cargo}"
 TARGET_DIR="${TARGET_DIR:-target}"
-TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-30}"
+# The wall-clock budget for the whole boot *and* the commands typed at it, not
+# a tolerance: every assertion below is about what the guest said, and the
+# budget only says how long the boot may take to say it.  It has to clear the
+# slowest host this runs on — a single-threaded QEMU under whatever else the
+# machine is doing takes two to four times longer than an idle one — or a
+# perfectly correct boot is reported as a boot that stopped talking.
+TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-90}"
 QEMU="${QEMU:-qemu-system-x86_64}"
 X8664_RUNTIME_LOG="${X8664_RUNTIME_LOG:-}"
 # Features the kernel is built with: the demo disk carries the shell, the

@@ -47,7 +47,10 @@ PROFILE="${PROFILE:-debug}"
 CRATE="${CRATE:-protofire}"
 CARGO="${CARGO:-cargo}"
 TARGET_DIR="${TARGET_DIR:-target}"
-TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-40}"
+# The whole boot and its typed commands, on the slowest host this runs on; see
+# the note in `check-x8664-runtime.sh` for why this is a budget rather than a
+# tolerance.
+TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-90}"
 QEMU="${QEMU:-qemu-system-x86_64}"
 X8664_USB_DISK_LOG="${X8664_USB_DISK_LOG:-}"
 FEATURES="${FEATURES:-demo-disk}"

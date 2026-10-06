@@ -166,6 +166,12 @@ jobs:
       - name: Boot a filesystem image on the USB disk
         run: make check-x8664-usb-disk
 
+      # And the hub the disk is *not* behind: this is the only gate that reads
+      # a hub's status-change endpoint or a root port's change bits, and it
+      # moves devices on and off both while the guest runs.
+      - name: Plug and unplug devices behind a hub and on a root port
+        run: make check-x8664-usb-hotplug
+
       # The NVMe driver had never run in a gate until this one: it attaches a
       # real controller and mounts the host's image from its namespace, which
       # is what caught two wrong admin opcodes in the driver's own table.
