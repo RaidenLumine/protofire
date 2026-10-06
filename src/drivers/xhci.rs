@@ -36,6 +36,9 @@ const MAX_SLOTS: usize = 64;
 /// How many PORTSC reads to wait for a port's connection to stabilise.
 const PORT_CONNECT_SETTLE_SPINS: usize = 100_000;
 
+/// How many times to ask a hub whether a port's reset has finished.
+const HUB_PORT_RESET_SPINS: usize = 100_000;
+
 /// The xHCI host controller.
 pub struct XhciController {
     /// Operational register base (mmio_base + caplength).
@@ -753,6 +756,7 @@ impl XhciController {
         _slot_id: u8,
         ep0_ring: &TransferRing,
         root_port: u8,
+        route: u32,
     ) -> DmaBuffer {
         let ctx_size = self.context_size as usize;
         // Input context: ICC + Slot + EP0 + EP1 IN = 4 * ctx_size.
@@ -776,7 +780,11 @@ impl XhciController {
         // SAFETY: the slot context is in the same buffer, one context size on.
         unsafe {
             let sc_base = base.add(ctx_size) as *mut u32;
-            write_volatile(sc_base, 1 << 27); // context entries = 1
+            // Context Entries = 1, and the route string in bits 19:0: the path
+            // of hub ports from the root to this device, one nibble per tier.
+            // A device on a root port has an empty route, which is why this
+            // field used to be written as zero outright.
+            write_volatile(sc_base, (1 << 27) | (route & 0x000F_FFFF));
             write_volatile(sc_base.add(1), (root_port as u32) << 16);
             // DWORD 2 (interrupter target) and DWORD 3 left 0.
         }
@@ -807,7 +815,7 @@ impl XhciController {
     ///
     /// As [`Self::alloc_slot_resources`]: the slot must be one this controller
     /// enabled, and its resources allocated.
-    pub unsafe fn address_device(&mut self, slot_id: u8, root_port: u8) -> Result<()> {
+    pub unsafe fn address_device(&mut self, slot_id: u8, root_port: u8, route: u32) -> Result<()> {
         // SAFETY: the address-device command goes through this controller's command
         // ring, with the input context above as its payload.
         unsafe {
@@ -817,7 +825,7 @@ impl XhciController {
             }
             // SAFETY: we just checked it's Some.
             let ep0_ring = self.ep0_transfer_rings[idx].as_ref().unwrap();
-            let ict = self.build_address_device_input(slot_id, ep0_ring, root_port);
+            let ict = self.build_address_device_input(slot_id, ep0_ring, root_port, route);
             let ict_phys = ict.phys_addr() as u64;
             let trb = Trb::address_device(ict_phys, slot_id, false, 0);
             let evt = self.send_command(trb)?;
@@ -1703,28 +1711,54 @@ impl XhciController {
             if !connected {
                 return false;
             }
+            // A device at the root sits at route string 0: no hub is in the
+            // path, which is what the descriptor's own route nibbles say.
+            self.enumerate_device(port, 0)
+        }
+    }
 
-            let slot_id = match self.enable_slot(port) {
+    /// Enable, address and classify the device that `route` names under
+    /// `root_port`.
+    ///
+    /// The route string is the xHCI way of saying "behind which hub ports": one
+    /// nibble per tier, the first tier in the low nibble.  A device plugged
+    /// straight into a root port has an empty route; one behind a hub's port 1
+    /// has `0x1`, and one behind a second hub at that hub's port 2 has `0x21`.
+    /// The controller reads it out of the Slot Context to find which USB port
+    /// the device is on, so a device whose route is wrong is never found — the
+    /// failure is `CC_TRB_ERROR` from Address Device, not a wrong device.
+    pub(crate) unsafe fn enumerate_device(&mut self, root_port: u8, route: u32) -> bool {
+        // SAFETY: as `enumerate_port` — the slot this enables and addresses is
+        // this controller's, and the route only says where in its own tree the
+        // device hangs.
+        unsafe {
+            let slot_id = match self.enable_slot(root_port) {
                 Ok(s) => s,
                 Err(_) => {
-                    println!("[xhci  ] enable_slot failed for port {}", port);
+                    println!("[xhci  ] enable_slot failed for route {:#x}", route);
                     return false;
                 }
             };
-            println!("[xhci  ] enabled slot {} (port {})", slot_id, port);
+            println!(
+                "[xhci  ] enabled slot {} (root port {}, route {:#x})",
+                slot_id, root_port, route
+            );
 
             if self.alloc_slot_resources(slot_id).is_err() {
                 println!("[xhci  ] failed to allocate slot resources");
                 return false;
             }
-            if self.address_device(slot_id, port).is_err() {
-                println!("[xhci  ] address_device failed for slot {}", slot_id);
+            if self.address_device(slot_id, root_port, route).is_err() {
+                println!(
+                    "[xhci  ] address_device failed for slot {} (route {:#x})",
+                    slot_id, route
+                );
                 return false;
             }
             println!("[xhci  ] device addressed at slot {}", slot_id);
 
             match self.get_device_descriptor(slot_id) {
-                Ok(desc) => self.configure_slot_device(slot_id, desc),
+                Ok(desc) => self.configure_slot_device(slot_id, desc, root_port, route),
                 Err(e) => {
                     println!("[xhci  ] get_device_descriptor failed: {}", e.as_str());
                     false
@@ -1733,10 +1767,143 @@ impl XhciController {
         }
     }
 
+    /// Read a hub's port count and bring up whatever is on its downstream
+    /// ports.
+    ///
+    /// A hub needs one class request — how many ports it has — and then one
+    /// pass per port: power it, see whether anything is connected, reset it,
+    /// and address what appears behind it.  The addressing is the interesting
+    /// part: that device is a *tier* deeper, so its route string gains this
+    /// port's nibble, and the controller walks exactly those nibbles to find
+    /// which USB port the device hangs off.  Nothing else about the child
+    /// differs, so the work is the same [`Self::enumerate_device`] a root port
+    /// runs, one tier down.
+    ///
+    /// What this does not do is watch the hub's status-change endpoint: a
+    /// device plugged into a hub after the scan is seen at the next boot, not
+    /// now.  That is the difference between a hub working and a hub being a
+    /// hub, and it is the next piece of this.
+    ///
+    /// # Safety
+    ///
+    /// `slot_id` must be an addressed hub on this controller, and `root_port`
+    /// and `route` must be where that hub itself was found.
+    unsafe fn configure_hub(&mut self, slot_id: u8, root_port: u8, route: u32) {
+        // SAFETY: the hub is a device on a slot this controller addressed, and
+        // every request goes out through this controller's own EP0 ring.
+        unsafe {
+            let mut descriptor = [0u8; 8];
+            if self
+                .control_transfer(
+                    slot_id,
+                    &SetupPacket::hub_descriptor(descriptor.len() as u16),
+                    &mut descriptor,
+                    true,
+                )
+                .is_err()
+            {
+                println!("[xhci  ] hub at slot {}: no hub descriptor", slot_id);
+                return;
+            }
+            // bNbrPorts is the third byte of the hub descriptor.
+            let ports = descriptor[2];
+            println!(
+                "[xhci  ] hub at slot {}: {} downstream port(s), route {:#x}",
+                slot_id, ports, route
+            );
+
+            for port in 1..=ports {
+                // Power first: a port that is off reports nothing else.
+                let _ = self.control_transfer(
+                    slot_id,
+                    &SetupPacket::hub_set_port_feature(port, HUB_PORT_POWER),
+                    &mut [],
+                    false,
+                );
+                let Some(status) = self.hub_port_status(slot_id, port) else {
+                    continue;
+                };
+                if status & u32::from(HUB_PORT_STATUS_CONNECTION) == 0 {
+                    continue;
+                }
+                // Reset the port, then wait for the hub to *say* the reset
+                // finished — addressing a device whose port is still resetting
+                // is answered with a TRB error.
+                let _ = self.control_transfer(
+                    slot_id,
+                    &SetupPacket::hub_set_port_feature(port, HUB_PORT_RESET),
+                    &mut [],
+                    false,
+                );
+                let mut reset_done = false;
+                for _ in 0..HUB_PORT_RESET_SPINS {
+                    match self.hub_port_status(slot_id, port) {
+                        Some(status) => {
+                            if status & HUB_PORT_CHANGE_RESET != 0 {
+                                reset_done = true;
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                let _ = self.control_transfer(
+                    slot_id,
+                    &SetupPacket::hub_clear_port_feature(port, HUB_C_PORT_RESET),
+                    &mut [],
+                    false,
+                );
+                if !reset_done {
+                    println!("[xhci  ] hub port {} did not finish resetting", port);
+                    continue;
+                }
+
+                // One tier deeper: this port's nibble is appended to the route
+                // the hub itself was found at.
+                let child_route = ((route << 4) | u32::from(port)) & 0x000F_FFFF;
+                if self.enumerate_device(root_port, child_route) {
+                    println!(
+                        "[xhci  ] hub port {} enumerated (route {:#x})",
+                        port, child_route
+                    );
+                }
+            }
+        }
+    }
+
+    /// One port's status word: `wPortStatus` in the low half, `wPortChange` in
+    /// the high half, as the hub reports them.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::configure_hub`].
+    unsafe fn hub_port_status(&mut self, slot_id: u8, port: u8) -> Option<u32> {
+        let mut buffer = [0u8; 4];
+        // SAFETY: the hub is on a slot this controller addressed, and the
+        // request goes out through this controller's own EP0 ring.
+        unsafe {
+            self.control_transfer(
+                slot_id,
+                &SetupPacket::hub_port_status(port),
+                &mut buffer,
+                true,
+            )
+            .ok()?;
+        }
+        Some(u32::from_le_bytes(buffer))
+    }
+
     /// Classify an addressed device by its device descriptor and wire it
-    /// up: HID keyboard/mouse (real endpoint discovery + armed first read)
-    /// or USB mass storage (bulk endpoints + MSC init).
-    unsafe fn configure_slot_device(&mut self, slot_id: u8, desc: UsbDeviceDescriptor) -> bool {
+    /// up: a hub's downstream ports, HID keyboard/mouse (real endpoint
+    /// discovery + armed first read) or USB mass storage (bulk endpoints +
+    /// MSC init).
+    unsafe fn configure_slot_device(
+        &mut self,
+        slot_id: u8,
+        desc: UsbDeviceDescriptor,
+        root_port: u8,
+        route: u32,
+    ) -> bool {
         // SAFETY: the slot was enabled by this controller and its contexts are its own
         // DMA memory.
         unsafe {
@@ -1781,6 +1948,16 @@ impl XhciController {
                 || (dev_class == usb_hid::USB_CLASS_HID && if_class.is_none());
             let is_msc = if_class == Some(usb_msd::USB_CLASS_MSC)
                 || (dev_class == usb_msd::USB_CLASS_MSC && if_class.is_none());
+            // A hub declares 0x09 either on the device or, like the others, on
+            // its interface.  QEMU's `usb-hub` declares it as the device class
+            // and has no interface class to read, so both are checked.
+            let is_hub = if_class == Some(USB_CLASS_HUB)
+                || (dev_class == USB_CLASS_HUB && if_class.is_none());
+
+            if is_hub {
+                self.configure_hub(slot_id, root_port, route);
+                return true;
+            }
 
             if is_hid {
                 // HID device: walk the configuration descriptor for its real

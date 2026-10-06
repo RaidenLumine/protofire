@@ -132,6 +132,7 @@ set -- \
     -no-shutdown \
     -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
     -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 \
+    -device usb-hub,bus=xhci.0,port=2 -device usb-mouse,bus=xhci.0,port=2.1 \
     -drive "file=$usb_disk,if=none,id=usbdisk,format=raw" \
     -device usb-storage,drive=usbdisk,bus=xhci.0
 
@@ -411,6 +412,15 @@ require_log_line "[usbmsd] USB mass storage: 16384 blocks x 512 bytes = 8 MiB"
 require_log_line \
     "[usbmsd] sector 0: [50, 52, 4f, 54, 4f, 46, 49, 52, 45, 2d, 55, 53, 42, 2d, 44, 49]"
 require_log_line "[driver] detected boot disk: usb-msd (16384 blocks)"
+# And one tier down: a **hub** is a device with a class of its own, and what
+# sits behind it is addressed by a route string rather than by a root port, so
+# the hub's descriptor is read, its port is reset, and the mouse behind it is
+# given the route the controller walks to find it.  The keyboard above stays
+# on a root port, so the two shapes are asserted side by side.
+require_log_line "[xhci  ] hub at slot "
+require_log_line "downstream port(s), route 0x0"
+require_log_line "[xhci  ] HID mouse ready at slot "
+require_log_line "hub port 1 enumerated (route 0x1)"
 
 # ── A signal taken asynchronously, end to end ──────────────────────────
 #

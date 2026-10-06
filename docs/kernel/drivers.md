@@ -131,6 +131,14 @@ core the PS/2 and VirtIO paths feed.  The register map and the ring structures
 are in `drivers/xhci_protocol.rs`; the machine's half is `drivers/xhci.rs`, and
 a machine without PCI answers from `xhci_absent.rs`.
 
+A **hub** is one of those devices, with a class of its own: the driver reads its
+descriptor for the port count, powers and resets a port, and then addresses what
+appears behind it — a device one tier down, which the Slot Context's *route
+string* says how to find (one nibble per tier, and the controller walks exactly
+those nibbles).  What it does not do yet is watch the hub's status-change
+endpoint, so a device plugged into a hub after the boot's scan waits for the
+next boot.
+
 Three things about it are worth stating plainly.  The rings **carry a cycle
 state through their wraps**: the command ring and each endpoint's control,
 interrupt and bulk ring place a Link TRB with its Toggle Cycle bit and flip the

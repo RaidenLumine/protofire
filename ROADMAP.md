@@ -58,8 +58,13 @@ The authoritative picture of what exists today is
   interrupt of its own.
   [RFC 0001](docs/rfcs/0001-spread-message-signalled-interrupts.md) is the
   design the placement follows.
-- **USB host (xHCI) completion.** The driver is present; close the remaining
-  feature gaps so USB storage and HID work end-to-end.
+- **USB host (xHCI) completion.** Storage and HID work end to end, and a
+  **hub** is enumerated too: its port count is read, its ports are powered and
+  reset, and the device behind one is addressed by the route string the
+  controller walks — `make check-x8664-runtime` boots a keyboard on a root port
+  beside a mouse behind a hub, and keeps the key press and the disk.  What is
+  left: the hub's status-change endpoint, which is what turns "a hub is
+  scanned at boot" into "a hub is a hub" — a device plugged in later.
 - **HDA audio to userspace.** Done and gated: the engine runs (CORB/RIRB,
   codec discovery, the output converter, a BDL playback ring, the stream DMA),
   a program reaches it — the shell's `tone` builtin writes PCM to

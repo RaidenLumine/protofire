@@ -193,6 +193,46 @@ pub const REQ_SET_CONFIGURATION: u8 = 9;
 /// Descriptor type: Device = 1, Configuration = 2.
 pub const DESC_DEVICE: u8 = 1;
 pub const DESC_CONFIGURATION: u8 = 2;
+/// Descriptor type: Hub = 0x29.  A hub reports its port count here rather than
+/// through an endpoint, which is why a hub is brought up by control transfers
+/// alone.
+pub const DESC_HUB: u8 = 0x29;
+
+// ---------------------------------------------------------------------------
+// USB hub class (a hub's own requests, USB 2.0 §11.24)
+// ---------------------------------------------------------------------------
+
+/// bDeviceClass / bInterfaceClass of a hub.
+pub const USB_CLASS_HUB: u8 = 0x09;
+
+/// bmRequestType for a class request about the device itself, device-to-host.
+pub const REQ_CLASS_DEVICE_TO_HOST: u8 = 0xA0;
+/// bmRequestType for a class request about another recipient, host-to-device —
+/// what a port feature is set and cleared through.
+pub const REQ_CLASS_HOST_TO_DEVICE_OTHER: u8 = 0x23;
+/// bmRequestType for a class request about another recipient, device-to-host.
+pub const REQ_CLASS_DEVICE_TO_HOST_OTHER: u8 = 0xA3;
+
+pub const REQ_CLEAR_FEATURE: u8 = 1;
+pub const REQ_SET_FEATURE: u8 = 3;
+
+/// Hub class features a port is asked about, from USB 2.0 §11.24.2.
+pub const HUB_PORT_CONNECTION: u16 = 0;
+pub const HUB_PORT_ENABLE: u16 = 1;
+pub const HUB_PORT_RESET: u16 = 4;
+pub const HUB_PORT_POWER: u16 = 8;
+/// The change bits, cleared once the change has been handled.
+pub const HUB_C_PORT_CONNECTION: u16 = 16;
+pub const HUB_C_PORT_RESET: u16 = 21;
+
+/// `wPortStatus` bits (USB 2.0 §11.24.2.7).
+pub const HUB_PORT_STATUS_CONNECTION: u16 = 1 << 0;
+pub const HUB_PORT_STATUS_ENABLE: u16 = 1 << 1;
+pub const HUB_PORT_STATUS_POWER: u16 = 1 << 9;
+pub const HUB_PORT_STATUS_LOW_SPEED: u16 = 1 << 10;
+/// `wPortChange` bit 4: the reset finished.  It sits in the second word, so it
+/// is read as bit 20 of the 32-bit status pair.
+pub const HUB_PORT_CHANGE_RESET: u32 = 1 << 20;
 
 /// A standard USB setup packet (8 bytes).
 #[derive(Debug, Clone, Copy)]
@@ -243,6 +283,52 @@ impl SetupPacket {
             b_request: REQ_SET_CONFIGURATION,
             w_value: config_val as u16,
             w_index: 0,
+            w_length: 0,
+        }
+    }
+
+    /// The hub descriptor: how many downstream ports the hub has.
+    pub const fn hub_descriptor(length: u16) -> Self {
+        Self {
+            bm_request_type: REQ_CLASS_DEVICE_TO_HOST,
+            b_request: REQ_GET_DESCRIPTOR,
+            w_value: (DESC_HUB as u16) << 8,
+            w_index: 0,
+            w_length: length,
+        }
+    }
+
+    /// One port's status and change bits: four bytes, `wPortStatus` then
+    /// `wPortChange`.
+    pub const fn hub_port_status(port: u8) -> Self {
+        Self {
+            bm_request_type: REQ_CLASS_DEVICE_TO_HOST_OTHER,
+            b_request: 0, // GET_STATUS
+            w_value: 0,
+            w_index: port as u16,
+            w_length: 4,
+        }
+    }
+
+    /// Ask a hub to set one of its port features — power, or a reset.
+    pub const fn hub_set_port_feature(port: u8, feature: u16) -> Self {
+        Self {
+            bm_request_type: REQ_CLASS_HOST_TO_DEVICE_OTHER,
+            b_request: REQ_SET_FEATURE,
+            w_value: feature,
+            w_index: port as u16,
+            w_length: 0,
+        }
+    }
+
+    /// Clear a port's change bit, which is how the hub is told the change was
+    /// handled.
+    pub const fn hub_clear_port_feature(port: u8, feature: u16) -> Self {
+        Self {
+            bm_request_type: REQ_CLASS_HOST_TO_DEVICE_OTHER,
+            b_request: REQ_CLEAR_FEATURE,
+            w_value: feature,
+            w_index: port as u16,
             w_length: 0,
         }
     }
