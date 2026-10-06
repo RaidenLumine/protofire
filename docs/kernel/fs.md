@@ -259,10 +259,15 @@ publish step is a rename.  `swap_paths` exchanges two paths in one commit
 through a generation-named temporary, which is what a version switch needs:
 neither name is ever absent while the exchange happens.
 
-`FsProfiler` (`src/fs/fs_profiler.rs`) counts lookups, reads, writes, creates,
-deletes, renames, transactions and metadata flushes.  It is compiled out
-unless the `fs_profiler` feature is on, in which case it is a zero-sized type
-and the snapshot is all zeros.
+`FsProfiler` (`src/fs/filesystem/profiler.rs`) counts lookups, reads, writes,
+the bytes those reads and writes were *asked* for, creates, deletes, renames,
+transactions and metadata flushes.  It counts only when the `fs_profiler`
+feature is on; with the feature off it is a zero-sized type whose every method
+is a no-op, and the snapshot is all zeros.  The byte counters are what the
+boot-work line reports as
+`fs-read-bytes` and `fs-write-bytes`: a filesystem can say how much the layer
+above wanted, and how much of it a cache served or a device moved is the layer
+below's to count.
 
 ### The V4 data-reduction modules
 

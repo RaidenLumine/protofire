@@ -520,6 +520,7 @@ impl VNode for ExfatVNode {
 
     fn read(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
         self.fs.lock().profiler.inc_reads();
+        self.fs.lock().profiler.inc_read_bytes(buffer.len() as u64);
         if self.kind == NodeKind::Directory {
             return Err(Error::PermissionDenied);
         }

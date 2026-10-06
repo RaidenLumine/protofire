@@ -101,6 +101,8 @@ impl FileSystem {
             snap.lookups = snap.lookups.saturating_add(v.lookups);
             snap.reads = snap.reads.saturating_add(v.reads);
             snap.writes = snap.writes.saturating_add(v.writes);
+            snap.read_bytes = snap.read_bytes.saturating_add(v.read_bytes);
+            snap.write_bytes = snap.write_bytes.saturating_add(v.write_bytes);
             snap.creates = snap.creates.saturating_add(v.creates);
             snap.deletes = snap.deletes.saturating_add(v.deletes);
             snap.renames = snap.renames.saturating_add(v.renames);

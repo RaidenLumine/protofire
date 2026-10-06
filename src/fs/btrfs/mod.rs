@@ -338,6 +338,7 @@ impl VNode for BtrfsVNode {
 
     fn read(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
         self.profiler.inc_reads();
+        self.profiler.inc_read_bytes(buffer.len() as u64);
         if self.kind != NodeKind::File {
             return Err(Error::InvalidArgument);
         }

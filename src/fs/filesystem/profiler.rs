@@ -20,6 +20,16 @@ pub struct FsProfilerSnapshot {
     pub lookups: u64,
     pub reads: u64,
     pub writes: u64,
+    /// Bytes the read operations were *asked* for: the summed length of the
+    /// buffers a caller handed to `read`, counted where the operation itself
+    /// is counted.  What the layer above wanted is the one thing a filesystem
+    /// can say about volume — how much of it a cache serves and how much
+    /// reaches a device is the layer below's business — and counting the
+    /// request rather than the result also means a read that fails still
+    /// shows up as demand.
+    pub read_bytes: u64,
+    /// The same for writes.
+    pub write_bytes: u64,
     pub creates: u64,
     pub deletes: u64,
     pub renames: u64,
@@ -43,6 +53,8 @@ struct FsProfilerInner {
     lookups: AtomicU64,
     reads: AtomicU64,
     writes: AtomicU64,
+    read_bytes: AtomicU64,
+    write_bytes: AtomicU64,
     creates: AtomicU64,
     deletes: AtomicU64,
     renames: AtomicU64,
@@ -62,6 +74,8 @@ impl FsProfiler {
                 lookups: self.inner.lookups.load(Ordering::Relaxed),
                 reads: self.inner.reads.load(Ordering::Relaxed),
                 writes: self.inner.writes.load(Ordering::Relaxed),
+                read_bytes: self.inner.read_bytes.load(Ordering::Relaxed),
+                write_bytes: self.inner.write_bytes.load(Ordering::Relaxed),
                 creates: self.inner.creates.load(Ordering::Relaxed),
                 deletes: self.inner.deletes.load(Ordering::Relaxed),
                 renames: self.inner.renames.load(Ordering::Relaxed),
@@ -100,6 +114,24 @@ impl FsProfiler {
         self.inner.writes.fetch_add(1, Ordering::Relaxed);
         #[cfg(not(feature = "fs_profiler"))]
         let _ = self;
+    }
+
+    /// Count the bytes a read was asked for, beside the read itself.
+    #[inline]
+    pub fn inc_read_bytes(&self, bytes: u64) {
+        #[cfg(feature = "fs_profiler")]
+        self.inner.read_bytes.fetch_add(bytes, Ordering::Relaxed);
+        #[cfg(not(feature = "fs_profiler"))]
+        let _ = (self, bytes);
+    }
+
+    /// Count the bytes a write was handed, beside the write itself.
+    #[inline]
+    pub fn inc_write_bytes(&self, bytes: u64) {
+        #[cfg(feature = "fs_profiler")]
+        self.inner.write_bytes.fetch_add(bytes, Ordering::Relaxed);
+        #[cfg(not(feature = "fs_profiler"))]
+        let _ = (self, bytes);
     }
 
     #[inline]

@@ -116,6 +116,12 @@ if [ "$mode" = "record" ]; then
         printf '# `sh scripts/check-perf-baseline.sh --record`, which keeps every\n'
         printf '# tolerance that is already written down.\n'
         printf '#\n'
+        printf '# The `fs-*` rows are the counters a filesystem keeps: how many\n'
+        printf '# operations it served (`fs-reads`, `fs-writes`) and how many bytes\n'
+        printf '# those operations were asked for (`fs-read-bytes`, `fs-write-bytes`),\n'
+        printf '# summed over the mounted volumes.  What a cache served or a device\n'
+        printf '# moved is not counted here, and that is the next layer to measure.\n'
+        printf '#\n'
 
         printf '%s\n' "$pairs" | while IFS='=' read -r key value; do
             [ -n "$key" ] || continue

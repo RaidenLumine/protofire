@@ -388,6 +388,7 @@ impl VNode for Ext4VNode {
 
     fn read(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
         self.fs.profiler.inc_reads();
+        self.fs.profiler.inc_read_bytes(buffer.len() as u64);
         let inode = self.fs.read_inode(self.ino)?;
         if inode.kind() == NodeKind::Directory {
             return Err(Error::InvalidArgument);
@@ -398,6 +399,7 @@ impl VNode for Ext4VNode {
     fn write(&self, offset: u64, buffer: &[u8]) -> Result<usize> {
         self.fs.check_writable()?;
         self.fs.profiler.inc_writes();
+        self.fs.profiler.inc_write_bytes(buffer.len() as u64);
         self.fs.write_file_data(self.ino, offset, buffer)
     }
 

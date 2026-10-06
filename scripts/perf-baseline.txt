@@ -7,23 +7,31 @@
 # `sh scripts/check-perf-baseline.sh --record`, which keeps every
 # tolerance that is already written down.
 #
-ticks 512 12
+# The `fs-*` rows are the counters a filesystem keeps: how many
+# operations it served (`fs-reads`, `fs-writes`) and how many bytes
+# those operations were asked for (`fs-read-bytes`, `fs-write-bytes`),
+# summed over the mounted volumes.  What a cache served or a device
+# moved is not counted here, and that is the next layer to measure.
+#
+ticks 510 12
 frames 23 0
 frame-frees 8 0
 frame-zero-bytes 610304 0
-heap-allocs 20877 256
-heap-bytes 25368528 262144
+heap-allocs 20869 256
+heap-bytes 25360384 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
 fs-lookups 359 0
 fs-reads 1439 0
+fs-read-bytes 182994 0
 fs-writes 16 0
+fs-write-bytes 13611 0
 fs-transactions 19 0
 ip4-rx 3 4
 ip4-tx 11 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 523 12
+irqs 521 12
 ipis 0 0
 spurious 0 0

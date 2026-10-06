@@ -55,7 +55,8 @@ pub(crate) fn log_once(ticks: u64) {
     crate::println!(
         "[perf  ] boot work: ticks={} frames={} frame-frees={} frame-zero-bytes={} \
          heap-allocs={} heap-bytes={} pt-maps={} pt-lookups={} faults={} \
-         fs-lookups={} fs-reads={} fs-writes={} fs-transactions={} \
+         fs-lookups={} fs-reads={} fs-read-bytes={} fs-writes={} fs-write-bytes={} \
+         fs-transactions={} \
          ip4-rx={} ip4-tx={} ip6-rx={} ip6-tx={} \
          irqs={} ipis={} spurious={}",
         ticks,
@@ -69,7 +70,9 @@ pub(crate) fn log_once(ticks: u64) {
         faults.faults_total,
         fs.lookups,
         fs.reads,
+        fs.read_bytes,
         fs.writes,
+        fs.write_bytes,
         fs.transactions,
         net.ipv4_packets_rx,
         net.ipv4_packets_tx,

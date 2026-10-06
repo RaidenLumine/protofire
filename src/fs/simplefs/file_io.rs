@@ -68,6 +68,7 @@ impl SimpleFs {
         }
 
         self.profiler.inc_reads();
+        self.profiler.inc_read_bytes(count as u64);
         self.profiler.record_elapsed(_prof_start);
         Ok(count)
     }
@@ -119,6 +120,7 @@ impl SimpleFs {
                 Ok(())
             })?;
             self.profiler.inc_writes();
+            self.profiler.inc_write_bytes(buffer.len() as u64);
             self.profiler.record_elapsed(_prof_start);
             return Ok(buffer.len());
         }
@@ -199,6 +201,7 @@ impl SimpleFs {
         }
 
         self.profiler.inc_writes();
+        self.profiler.inc_write_bytes(count as u64);
         self.profiler.record_elapsed(_prof_start);
         Ok(count)
     }

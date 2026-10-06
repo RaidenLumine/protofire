@@ -11,7 +11,6 @@ pub use crate::kernel::block;
 pub mod block_cache;
 pub mod btrfs;
 pub mod crypt_device;
-pub mod fs_profiler;
 pub mod luks2;
 // ═══════════════════════════════════════════════════════════════════════
 // Legacy demo disk builder — kept for the fs.init() boot path and
