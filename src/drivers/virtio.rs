@@ -1340,26 +1340,6 @@ fn block_msi_handler(
     })
 }
 
-/// The handler every entry the driver did not name runs — the config-change
-/// entry, for one.  A wakeup that turns out to be another entry's is absorbed
-/// by the loop that re-reads the ring.
-#[cfg(target_os = "none")]
-fn block_device_msi_handler(
-    signal: &alloc::sync::Arc<BlockSignal>,
-) -> crate::arch::irq_handlers::IrqHandler {
-    let signal = signal.clone();
-    alloc::sync::Arc::new(move |irq| {
-        let seen = signal
-            .count
-            .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-            + 1;
-        if seen <= 2 {
-            crate::println!("[virtio-blk] device MSI (irq {})", irq);
-        }
-        signal.ready.notify_all();
-    })
-}
-
 /// Wait for the claimed device, when there is one that can signal yet.
 ///
 /// The same shape as the network driver's wait, for the same reasons: a device
@@ -1411,13 +1391,12 @@ pub fn probe_pci_boot_disk() -> Option<alloc::sync::Arc<dyn BlockDevice>> {
     // it signal once the interrupt controller is up, and the completion path
     // polls until then — which is what it did before.
     //
-    // One identity for the queue, entry 0, and the device-wide handler for the
-    // rest.  Entries the driver does not name still need an owner, because an
-    // identity the device can signal and nobody owns is counted as spurious.
+    // One identity for the queue, entry 0.  Entries the driver does not name
+    // take no identity and are left masked, so the device cannot deliver an
+    // interrupt nobody owns.
     let signal = alloc::sync::Arc::new(BlockSignal::new());
     let named = [(BLOCK_QUEUE, block_msi_handler(&signal))];
-    let fallback = block_device_msi_handler(&signal);
-    if let Some(claim) = crate::arch::platform::pci_claim_msix(&window, &named, &fallback) {
+    if let Some(claim) = crate::arch::platform::pci_claim_msix(&window, &named) {
         crate::println!(
             "[virtio-blk] device interrupts claimed: irq {}+; completions wait on them once \
              the controller programs the table",

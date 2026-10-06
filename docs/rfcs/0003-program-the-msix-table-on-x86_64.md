@@ -1,11 +1,19 @@
 # RFC 0003: Program a device's MSI-X table on x86_64
 
-- **Status:** Implemented
+- **Status:** Superseded
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-06
 - **Supersedes:** none
 
 ## Summary
+
+> **This RFC was superseded by
+> [RFC 0005](0005-claim-the-msix-entries-a-driver-names.md)**, which keeps its
+> decision to program a device's own MSI-X table and its own IDT vector window,
+> and changes the *size* of a claim: one identity per entry the driver names
+> rather than one per entry the table has.  The rest of this document is the
+> record of the decision it made, including the fallback handler that change
+> removes.
 
 Every PCIe device on x86_64 today signals through its legacy INTx line, which
 this kernel never wires, so every completion is polled.  This RFC programs a

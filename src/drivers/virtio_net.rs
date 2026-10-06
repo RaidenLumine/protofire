@@ -227,28 +227,6 @@ fn queue_msi_handler(
     })
 }
 
-/// The handler every entry the driver did not name runs.
-///
-/// It wakes both queues: an entry nobody can attribute still means the device
-/// has something to say, and both completion paths re-read their own rings
-/// rather than trusting the wakeup to have been theirs.
-#[cfg(target_os = "none")]
-fn device_msi_handler(
-    rx: &alloc::sync::Arc<NetSignal>,
-    tx: &alloc::sync::Arc<NetSignal>,
-) -> crate::arch::irq_handlers::IrqHandler {
-    let rx = rx.clone();
-    let tx = tx.clone();
-    alloc::sync::Arc::new(move |irq| {
-        let seen = rx.count.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
-        if seen <= 2 {
-            crate::println!("[virtio-net] device MSI (irq {})", irq);
-        }
-        rx.ready.notify_all();
-        tx.ready.notify_all();
-    })
-}
-
 /// How many completion waits the device's interrupt has actually ended (the
 /// first one is logged), and how many ended with the ring still empty.
 ///
@@ -1052,17 +1030,16 @@ fn probe_pci_net() -> Option<Arc<dyn NetworkDevice>> {
     // One identity per queue, not one for the device: the transport numbers
     // each queue's vector (see `set_queue_msix_vector`), so queue `q` is entry
     // `q`, and a completion then wakes the queue it belongs to.  Entries the
-    // driver does not name — the config-change entry, for one — still need an
-    // owner, and the device-wide handler is theirs: a wakeup for another queue
-    // is absorbed by the loop that re-reads the ring.
+    // driver does not name — the config-change entry, for one — take no
+    // identity at all and are left masked, so the device cannot deliver a
+    // wakeup nobody asked for.
     let rx_signal = alloc::sync::Arc::new(NetSignal::new());
     let tx_signal = alloc::sync::Arc::new(NetSignal::new());
     let named = [
         (RECEIVE_QUEUE, queue_msi_handler(&rx_signal, "RX")),
         (TRANSMIT_QUEUE, queue_msi_handler(&tx_signal, "TX")),
     ];
-    let fallback = device_msi_handler(&rx_signal, &tx_signal);
-    let interrupts = crate::arch::platform::pci_claim_msix(&window, &named, &fallback);
+    let interrupts = crate::arch::platform::pci_claim_msix(&window, &named);
     if let Some(interrupts) = interrupts {
         crate::println!(
             "[virtio-net] device interrupts claimed: irq {}+; completions wait on them once \

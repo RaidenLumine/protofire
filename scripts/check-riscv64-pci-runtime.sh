@@ -174,7 +174,9 @@ require_line "[virtio-net] queue interrupts routed to MSI-X vectors 0 and 1"
 # IMSIC and reads it back (the evidence that the BAR decodes MMIO, since the
 # words only come back if they reached the device), then unmasks the function.
 require_line "[pci   ] RISC-V MSI-X enabled on 00:01.0"
-require_line "[pci   ] RISC-V MSI-X unmasked on 00:01.0: irq 1-4 belong to the driver that claimed them"
+# Two identities, not four: the NIC names the two entries its queues use, and
+# the table's other two entries are written masked and take none.
+require_line "[pci   ] RISC-V MSI-X unmasked on 00:01.0: irq 1-2 belong to the driver that claimed them"
 
 # ...and the receive side is walked once through *that driver's* handler: the
 # message a device writes into the hart's MSI page is claimed and dispatched,
@@ -207,9 +209,10 @@ if [ "$device_msis" -lt 2 ]; then
     exit 1
 fi
 
-# And the placement itself: one entry per hart available, so a single-hart
-# machine names hart 0 for every entry rather than leaving the field unset.
-require_line "[pci   ] RISC-V MSI-X 00:01.0: irq 1-4 placed on hart [0, 0, 0, 0]"
+# And the placement itself: one hart per identity this machine can receive on,
+# so a single-hart machine names hart 0 for each of the two identities the
+# claim took rather than leaving the field unset.
+require_line "[pci   ] RISC-V MSI-X 00:01.0: irq 1-2 on table entries [0, 1] placed on hart [0, 0]"
 
 # ...and a completion is no longer only something the driver spins for.
 require_absent "TX poll timed out"

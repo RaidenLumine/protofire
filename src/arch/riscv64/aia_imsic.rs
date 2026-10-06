@@ -542,29 +542,33 @@ pub fn compose_msix_entry(target_cpu: u32, irq: u32) -> MsixTableEntry {
     }
 }
 
-/// Programme `count` MSI-X table entries starting at `table_phys`, mapping
-/// `base_irq..base_irq + count` to the IMSIC files `targets` names.
+/// Programme the MSI-X table at `table_phys`, mapping the claimed identities
+/// to the IMSIC files `targets` names.
 ///
 /// `table_phys` is the physical address of the device's MSI-X table within
 /// its BAR (the riscv64 identity-mapped device window, so the address is
-/// directly writable), and `targets[i]` is the hart entry `i` is delivered to
-/// — the placement, which is what lets a multi-queue device's queues be
-/// completed by different harts.  Returns the first interrupt identity on
-/// success.
+/// directly writable), `table_size` is how many entries that table has,
+/// `entries[i]` is the table entry that delivers `base_irq + i`, and
+/// `targets[i]` is the hart it is delivered to — the placement, which is what
+/// lets a multi-queue device's queues be completed by different harts.  Every
+/// entry not named in `entries` is written masked.  Returns the first
+/// interrupt identity on success.
 ///
 /// MSI-X must additionally be enabled via the device's Message Control
 /// register (PCI config space); that is the PCI MSI-X manager's job, not
 /// this file's.
 pub fn configure_msix(
     table_phys: u64,
-    count: u32,
+    table_size: u32,
     base_irq: u32,
+    entries: &[u16],
     targets: &[u32],
 ) -> Result<u32, Error> {
     if !has_aia_imsic() {
         return Err(Error::NotImplemented);
     }
-    if targets.len() != count as usize {
+    let count = entries.len() as u32;
+    if targets.len() != count as usize || count == 0 {
         return Err(Error::InvalidArgument);
     }
     if count == 0 || base_irq + count > IRQ_TABLE_LEN as u32 {
@@ -579,11 +583,23 @@ pub fn configure_msix(
     }
 
     let table = table_phys as usize as *mut u8;
-    for i in 0..count {
-        let entry = compose_msix_entry(targets[i as usize], base_irq + i);
+    // Every entry of the device's table is written, and each ends this step
+    // either programmed or masked: an entry this claim does not own is written
+    // with its mask bit set rather than left as whatever a previous user put
+    // there, so the device cannot deliver an identity nobody registered.
+    for i in 0..table_size {
+        let entry = match entries.iter().position(|entry| *entry as u32 == i) {
+            Some(offset) => compose_msix_entry(targets[offset], base_irq + offset as u32),
+            None => MsixTableEntry {
+                msg_addr_low: 0,
+                msg_addr_high: 0,
+                msg_data: 0,
+                vector_control: 1,
+            },
+        };
         // SAFETY: `table` is the identity-mapped MSI-X table the caller reserved and
-        // `i` is bounded by the entry count it passed, so the pointer names one
-        // entry.
+        // `i` is bounded by the table size it read from the capability, so the
+        // pointer names one entry.
         let p = unsafe { table.add(i as usize * core::mem::size_of::<MsixTableEntry>()) };
         // SAFETY: the table is identity-mapped device MMIO and each entry is
         // written as four 32-bit stores to keep the volatile accesses word

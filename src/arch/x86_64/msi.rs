@@ -204,6 +204,11 @@ struct MsixClaimInner {
     count: u32,
     /// The first vector this claim took.
     first_vector: u8,
+    /// The table entries this claim owns, in vector order: `entries[i]` is
+    /// delivered on `first_vector + i`.  Every other entry of the table is
+    /// written masked, because the device would otherwise be free to deliver
+    /// an identity this claim never took.
+    entries: Vec<u16>,
     /// Whether the table has been written and the function let through.
     armed: AtomicBool,
 }
@@ -236,26 +241,36 @@ impl MsixClaim {
 
     /// Write the entries into this function's table and let it signal.
     fn arm(&self) -> Result<(), Error> {
-        // Entries are written masked first.  A table entry is live as soon as
-        // it is written, and the vector in it belongs to a handler that is
-        // registered but whose machine is only now ready to carry a message.
-        for index in 0..self.inner.count {
-            let entry = msix_compose_entry(
-                destination_apic_id(index),
-                self.inner.first_vector + index as u8,
-                MSI_DELIVERY_FIXED,
-            );
-            // SAFETY: `index` is inside the table this claim mapped, which is
-            // `count` entries wide.
-            unsafe { write_entry(self.inner.table.add(index as usize), entry) };
+        // The whole table is written, and every entry comes out of this step
+        // masked: the owned ones carry a composed message, and the rest carry
+        // the mask and nothing else — which is what makes "nobody owns this
+        // entry" the same thing as "this entry cannot deliver".
+        for entry_index in 0..self.inner.count {
+            let entry = match self
+                .inner
+                .entries
+                .iter()
+                .position(|entry| *entry as u32 == entry_index)
+            {
+                Some(index) => msix_compose_entry(
+                    destination_apic_id(index as u32),
+                    self.inner.first_vector + index as u8,
+                    MSI_DELIVERY_FIXED,
+                ),
+                None => MsixTableEntry::masked(),
+            };
+            // SAFETY: `entry_index` is inside the table this claim mapped,
+            // which is `count` entries wide.
+            unsafe { write_entry(self.inner.table.add(entry_index as usize), entry) };
         }
 
-        // Make the writes visible, then let each entry through.  The entries
+        // Make the writes visible, then let the owned entries through.  They
         // are inert until this step, which is why it is separate.
         core::sync::atomic::fence(Ordering::SeqCst);
-        for index in 0..self.inner.count {
-            // SAFETY: as the loop above — the same table, the same entries.
-            unsafe { unmask_entry(self.inner.table.add(index as usize)) };
+        for entry in &self.inner.entries {
+            // SAFETY: as the loop above — the same table, and an entry this
+            // claim owns.
+            unsafe { unmask_entry(self.inner.table.add(*entry as usize)) };
         }
         core::sync::atomic::fence(Ordering::SeqCst);
 
@@ -293,7 +308,6 @@ impl MsixClaim {
 pub(crate) unsafe fn claim_msix(
     address: PciAddress,
     named: &[(u16, IrqHandler)],
-    fallback: &IrqHandler,
 ) -> Result<MsixClaim, Error> {
     let offset = pci_capability_find(address, MSI_X).ok_or(Error::NotImplemented)?;
     // SAFETY: `offset` names this function's MSI-X capability, which
@@ -305,20 +319,24 @@ pub(crate) unsafe fn claim_msix(
 
     let count = ((capability.message_control & 0x07FF) as u32) + 1;
     let window = (MSIX_VECTOR_LAST - MSIX_VECTOR_BASE + 1) as u32;
-    if count > window {
+    if count > window || named.len() as u32 > window {
         return Err(Error::InvalidArgument);
     }
 
-    // One handler per identity: the entries the driver named for its queues,
-    // and the device-wide one for every other entry the table can deliver.
-    let handlers = crate::arch::platform::msix_handlers_for(count, named, fallback)
-        .ok_or(Error::InvalidArgument)?;
+    // One identity per entry the driver names — and no identity for the rest,
+    // which `arm` writes masked.  The claim is the driver's requirement, not
+    // the table's size: an xHCI controller with sixteen interrupters and one
+    // in use takes one vector, not sixteen.
+    let handlers =
+        crate::arch::platform::msix_named_handlers(count, named).ok_or(Error::InvalidArgument)?;
     let first = crate::arch::irq_handlers::claim_each(
         MSIX_HANDLER_BASE,
         MSIX_VECTOR_BASE as u32,
         MSIX_VECTOR_LAST as u32,
         &handlers,
     )?;
+    // Table entry `entries[i]` is delivered on vector `first + i`.
+    let entries: Vec<u16> = named.iter().map(|(entry, _)| *entry).collect();
 
     // The table lives in one of the function's BARs: the capability names the
     // BAR by indicator and the offset inside it.
@@ -353,6 +371,7 @@ pub(crate) unsafe fn claim_msix(
             message_control: capability.message_control,
             count,
             first_vector: first as u8,
+            entries,
             armed: AtomicBool::new(false),
         }),
     })
@@ -383,14 +402,18 @@ pub(crate) fn program_device_msix() -> usize {
         match claim.arm() {
             Ok(()) => {
                 armed += 1;
-                let placement: Vec<u32> = (0..claim.inner.count).map(destination_cpu).collect();
+                let placement: Vec<u32> = (0..claim.inner.entries.len() as u32)
+                    .map(destination_cpu)
+                    .collect();
                 crate::println!(
-                    "[msix  ] MSI-X on {:02x}:{:02x}.{} delivers vectors {}..{} on cpus {:?}",
+                    "[msix  ] MSI-X on {:02x}:{:02x}.{} delivers vectors {}..{} on table \
+                     entries {:?}, placed on cpus {:?}",
                     address.bus,
                     address.device,
                     address.function,
                     claim.inner.first_vector,
-                    claim.inner.first_vector as u32 + claim.inner.count - 1,
+                    claim.inner.first_vector as u32 + claim.inner.entries.len() as u32 - 1,
+                    claim.inner.entries,
                     placement
                 );
             }

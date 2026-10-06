@@ -670,6 +670,8 @@ fn ensure_initialized() -> Result<usize, Error> {
 // -- MSI-X ----------------------------------------------------------------
 
 const MSIX_ENTRY_BYTES: usize = 16;
+/// The Vector Control mask bit: set, the entry cannot deliver.
+const MSIX_VECTOR_MASK: u32 = 1;
 const MSIX_ENABLE: u16 = 1 << 15;
 const MSIX_FUNCTION_MASK: u16 = 1 << 14;
 
@@ -708,6 +710,21 @@ impl MsixTableEntry {
             control: 0,
         }
     }
+
+    /// The entry that cannot deliver anything.
+    ///
+    /// A table entry takes effect as soon as it is written, so an entry this
+    /// claim does not own is written with its mask bit set rather than left
+    /// alone: whatever a previous user of the table left there, the device
+    /// ends this write unable to raise it.
+    fn masked() -> Self {
+        Self {
+            address_low: 0,
+            address_high: 0,
+            data: 0,
+            control: MSIX_VECTOR_MASK,
+        }
+    }
 }
 
 /// A device's claim on the LPIs its MSI-X table will deliver.
@@ -731,7 +748,14 @@ struct MsixClaimInner {
     /// The DeviceID the ITS will translate this function's messages under.
     device_id: u32,
     first_lpi: u32,
+    /// The entries the function's table has, which is how wide the table is
+    /// whenever it is written.
     count: u32,
+    /// The table entries this claim owns, in LPI order: `entries[i]` is
+    /// delivered on `first_lpi + i`.  Every other entry of the table is
+    /// written masked, so the device cannot deliver an LPI this claim did not
+    /// take.
+    entries: Vec<u16>,
     armed: AtomicBool,
 }
 
@@ -739,12 +763,6 @@ impl MsixClaim {
     /// The first interrupt identity this device's table delivers.
     pub(crate) fn first_irq(&self) -> u32 {
         self.inner.first_lpi
-    }
-
-    /// How many identities this device's table delivers.
-    #[allow(dead_code)]
-    pub(crate) fn count(&self) -> u32 {
-        self.inner.count
     }
 
     /// Whether the table has been programmed and the device let through.
@@ -765,14 +783,15 @@ impl MsixClaim {
             let mut state = ITS_STATE.lock();
             let state = state.as_mut().ok_or(Error::NotImplemented)?;
 
-            // Where each entry of this device's table is delivered.  Entries
+            // Where each identity this claim took is delivered.  Identities
             // are placed in turn over the CPUs that can receive, so a device
             // with several queues has them completed by different cores
             // instead of all by the boot CPU.
-            let mut collections = Vec::with_capacity(inner.count as usize);
-            let mut placed = Vec::with_capacity(inner.count as usize);
+            let count = inner.entries.len();
+            let mut collections = Vec::with_capacity(count);
+            let mut placed = Vec::with_capacity(count);
             let mut sync_targets: Vec<u64> = Vec::new();
-            for index in 0..inner.count {
+            for index in 0..count as u32 {
                 let cpu = gicv3::lpi_cpu_for_entry(index).ok_or(Error::DeviceError)?;
                 let rd_base = gicv3::rd_base_for_cpu(cpu).ok_or(Error::DeviceError)?;
                 collections.push(collection_for_cpu(cpu));
@@ -786,14 +805,14 @@ impl MsixClaim {
             state.map_device(
                 inner.device_id,
                 inner.first_lpi,
-                inner.count,
+                count as u32,
                 &collections,
                 &sync_targets,
             )?;
             (state.base + GITS_TRANSLATER, placed)
         };
 
-        for index in 0..inner.count {
+        for index in 0..inner.entries.len() as u32 {
             if !gicv3::set_lpi_enabled(inner.first_lpi + index, true) {
                 return Err(Error::DeviceError);
             }
@@ -802,12 +821,13 @@ impl MsixClaim {
         program_msix_table(inner, translater)?;
         inner.armed.store(true, Ordering::Release);
         crate::println!(
-            "[its   ] MSI-X {:02x}:{:02x}.{}: irq {}-{} placed on cpu {:?}",
+            "[its   ] MSI-X {:02x}:{:02x}.{}: irq {}-{} on table entries {:?} placed on cpu {:?}",
             inner.bus,
             inner.device,
             inner.function,
             inner.first_lpi,
-            inner.first_lpi + inner.count - 1,
+            inner.first_lpi + inner.entries.len() as u32 - 1,
+            inner.entries,
             placed
         );
         Ok(())
@@ -861,7 +881,6 @@ pub(crate) fn claim_msix(
     device: u8,
     function: u8,
     named: &[(u16, IrqHandler)],
-    fallback: &IrqHandler,
 ) -> Result<MsixClaim, Error> {
     if its_base().is_none() {
         return Err(Error::NotImplemented);
@@ -875,16 +894,19 @@ pub(crate) fn claim_msix(
         return Err(Error::InvalidArgument);
     }
 
-    // One handler per identity: the entries the driver named for its queues,
-    // and the device-wide one for every other entry the table can deliver.
-    let handlers = crate::arch::platform::msix_handlers_for(count, named, fallback)
-        .ok_or(Error::InvalidArgument)?;
+    // One identity per entry the driver names, and none for the rest: a table
+    // entry this claim does not own is written masked, which is what keeps the
+    // claim the driver's requirement rather than the table's size.
+    let handlers =
+        crate::arch::platform::msix_named_handlers(count, named).ok_or(Error::InvalidArgument)?;
     let first_lpi = irq_handlers::claim_each(
         gicv3::LPI_BASE,
         FIRST_DEVICE_LPI,
         LAST_DEVICE_LPI,
         &handlers,
     )?;
+    // Table entry `entries[i]` is delivered on LPI `first_lpi + i`.
+    let entries: Vec<u16> = named.iter().map(|(entry, _)| *entry).collect();
 
     Ok(MsixClaim {
         inner: Arc::new(MsixClaimInner {
@@ -895,6 +917,7 @@ pub(crate) fn claim_msix(
             device_id: device_id_of(bus, device, function),
             first_lpi,
             count,
+            entries,
             armed: AtomicBool::new(false),
         }),
     })
@@ -930,8 +953,14 @@ fn program_msix_table(inner: &MsixClaimInner, translater: usize) -> Result<(), E
     let table = unsafe { super::mmu::map_device_mmio_at(MSIX_TABLE_VA, table_phys, table_bytes) }
         .ok_or(Error::DeviceError)?;
 
+    // Every entry of the table is written, and each comes out of this step
+    // masked or unowned: the owned ones name an event id (which is where the
+    // ITS maps them) and the rest are the mask and nothing else.
     for index in 0..inner.count {
-        let entry = MsixTableEntry::compose(translater, index);
+        let entry = match inner.entries.iter().position(|e| *e as u32 == index) {
+            Some(offset) => MsixTableEntry::compose(translater, offset as u32),
+            None => MsixTableEntry::masked(),
+        };
         let address = table as usize + index as usize * MSIX_ENTRY_BYTES;
         // The table wants four 32-bit stores, which is also the only alignment
         // the entries are guaranteed: an entry is 16 bytes but its address is
@@ -955,7 +984,11 @@ fn program_msix_table(inner: &MsixClaimInner, translater: usize) -> Result<(), E
             data: read_u32(address + 8),
             control: read_u32(address + 12),
         };
-        if read_back != MsixTableEntry::compose(translater, index) {
+        let expected = match inner.entries.iter().position(|e| *e as u32 == index) {
+            Some(offset) => MsixTableEntry::compose(translater, offset as u32),
+            None => MsixTableEntry::masked(),
+        };
+        if read_back != expected {
             return Err(Error::DeviceError);
         }
     }
@@ -1012,12 +1045,14 @@ pub(crate) fn program_device_msix() -> usize {
             Ok(()) => {
                 armed += 1;
                 crate::println!(
-                    "[its   ] MSI-X on {:02x}:{:02x}.{} delivers LPI {}..{} (DeviceID {})",
+                    "[its   ] MSI-X on {:02x}:{:02x}.{} delivers LPI {}..{} on table entries \
+                     {:?} (DeviceID {})",
                     bus,
                     device,
                     function,
                     claim.first_irq(),
-                    claim.first_irq() + claim.inner.count - 1,
+                    claim.first_irq() + claim.inner.entries.len() as u32 - 1,
+                    claim.inner.entries,
                     claim.inner.device_id
                 );
             }

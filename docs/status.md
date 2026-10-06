@@ -129,7 +129,7 @@ input, mostly verified under QEMU.
   transport — that is the network device both gates boot with, DHCP and SLAAC
   included, while riscv64's default gate keeps the virtio-mmio path covered.
   On riscv64 the MSI-X table is programmed and *owned per device*: the driver
-  claims the identities its device's table will deliver at probe time (a
+  claims one identity per table entry it names at probe time (a
   registration is a table entry, not a hardware access, so this works before
   the interrupt controller is up), the platform then programs the table with
   exactly those identities, reads it back, unmasks the function, and walks the
@@ -398,7 +398,7 @@ disk-backed swap, compression, and defragmentation.
 | Common interrupt abstraction | `InterruptController` trait | — |
 | Thread exception handling | Page fault recovery, signal delivery | — |
 | PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | Nothing known: the window is opened in one module, the guard restores what it found, and the paths that can wait stage first (`make check-user-access-windows`) |
-| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64; a vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and a third device class has no PCIe driver yet; on x86_64 the PCIe virtio-net and xHCI controllers claim, and NVMe's fixed vectors are still wired by constant rather than claimed |
+| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64; a vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64; a claim takes one identity per **table entry the driver names**, and every entry it does not name is written masked, so a device takes the vectors its work needs rather than the ones its table has ([RFC 0005](rfcs/0005-claim-the-msix-entries-a-driver-names.md)) | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and a third device class has no PCIe driver yet; on x86_64 the PCIe virtio-net and xHCI controllers claim, and NVMe's fixed vectors are still wired by constant rather than claimed |
 | NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry | No architectural NMI source on RISC-V, so that entry stays dormant |
 | Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable | Runs from the tick; no routing-latency measurement |
 | Interrupt stats interface | Per-CPU/per-vector counters, NMI/IPI totals, balancer state (SystemInfo #9) | — |

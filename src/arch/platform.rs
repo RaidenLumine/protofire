@@ -348,15 +348,16 @@ impl DeviceInterrupts {
     }
 }
 
-/// Claim the window's device interrupts for `handler`.
+/// Claim the identities the entries `named` will deliver.
 ///
-/// This is the driver's half of the contract: the identities the device's MSI-X
-/// table will deliver are allocated and `handler` is registered for each.  It
-/// works at probe time — before the interrupt controller is initialised —
-/// because a registration is a table entry, not a hardware access.  The
-/// platform keeps the claim and programs the table with those identities later,
-/// at [`program_device_msix`], which is also when the device is first allowed
-/// to signal.
+/// This is the driver's half of the contract: one identity per `(entry,
+/// handler)` the driver names, registered for that handler, and every other
+/// entry of the device's table left unable to deliver.  It works at probe time
+/// — before the interrupt controller is initialised — because a registration
+/// is a table entry, not a hardware access.  The platform keeps the claim and
+/// programs the table with those identities later, at
+/// [`program_device_msix`], which is also when the device is first allowed to
+/// signal.
 ///
 /// Answers `None` when there is no unclaimed table to give: a machine with no
 /// MSI receiver, a device with no MSI-X, or one somebody has already taken.
@@ -364,7 +365,6 @@ impl DeviceInterrupts {
 pub(crate) fn pci_claim_msix(
     window: &PciRegisterWindow,
     named: &[(u16, crate::arch::irq_handlers::IrqHandler)],
-    fallback: &crate::arch::irq_handlers::IrqHandler,
 ) -> Option<DeviceInterrupts> {
     #[cfg(all(target_arch = "aarch64", target_os = "none"))]
     {
@@ -375,7 +375,6 @@ pub(crate) fn pci_claim_msix(
             function.device,
             function.function,
             named,
-            fallback,
         )
         .ok()?;
         crate::arch::aarch64::its::defer_msix_arming(claim.clone());
@@ -391,7 +390,6 @@ pub(crate) fn pci_claim_msix(
             function.device,
             function.function,
             named,
-            fallback,
         )
         .ok()?;
         crate::arch::riscv64::pci::defer_msix_arming(claim.clone());
@@ -402,9 +400,7 @@ pub(crate) fn pci_claim_msix(
     {
         // SAFETY: the window names a function this machine enumerated, which is
         // the contract `claim_msix` asks for.
-        let claim =
-            unsafe { crate::arch::x86_64::msi::claim_msix(window.function, named, fallback) }
-                .ok()?;
+        let claim = unsafe { crate::arch::x86_64::msi::claim_msix(window.function, named) }.ok()?;
         crate::arch::x86_64::msi::defer_msix_arming(claim.clone());
         Some(DeviceInterrupts { claim })
     }
@@ -415,7 +411,7 @@ pub(crate) fn pci_claim_msix(
         all(target_arch = "x86_64", target_os = "none")
     )))]
     {
-        let _ = (window, named, fallback);
+        let _ = (window, named);
         None
     }
 }
@@ -436,11 +432,10 @@ pub(crate) fn pci_claim_msix(
 pub(crate) fn claim_function_interrupts(
     address: crate::arch::x86_64::pci::PciAddress,
     named: &[(u16, crate::arch::irq_handlers::IrqHandler)],
-    fallback: &crate::arch::irq_handlers::IrqHandler,
 ) -> Option<DeviceInterrupts> {
     // SAFETY: the caller says `address` names a function this machine
     // enumerated, which is the contract `claim_msix` asks for.
-    let claim = match unsafe { crate::arch::x86_64::msi::claim_msix(address, named, fallback) } {
+    let claim = match unsafe { crate::arch::x86_64::msi::claim_msix(address, named) } {
         Ok(claim) => claim,
         Err(error) => {
             // Say why, because the alternative is a device that is silently on
@@ -461,17 +456,20 @@ pub(crate) fn claim_function_interrupts(
     Some(DeviceInterrupts { claim })
 }
 
-/// The handler each identity of a device's MSI-X table is registered for.
+/// The handlers a device's MSI-X claim registers, one per entry it names.
 ///
-/// `named` holds the entries the driver uses for itself — one per queue, in
-/// the shape the transport numbers them.  Every other entry the table can
-/// deliver gets `fallback`, because an identity the device can signal and
-/// nobody owns is counted as spurious, which is a worse answer than a wakeup
-/// that turns out to be for another queue.
+/// `named` holds the entries the driver uses, as `(table entry, handler)` —
+/// the entry numbering is the transport's own, and the driver is the only one
+/// that knows which entry carries which queue.  The claim allocates one
+/// identity per named entry and programs exactly those entries; every other
+/// entry the table has is left unable to deliver, which is why there is no
+/// fallback handler here: an entry nobody named is an entry nobody can be
+/// woken by, not one whose message wants an owner.
 ///
-/// Answers `None` when a named vector is outside the device's table — a driver
-/// asking for an entry the device does not have.  The caller refuses the claim,
-/// so the device stays on its polling path instead of losing a queue's
+/// Answers `None` when a named entry is outside the device's table, or when
+/// the same entry is named twice — a driver asking for an entry the device
+/// does not have, or for one entry to be two queues.  The caller refuses the
+/// claim, so the device stays on its polling path instead of losing a queue's
 /// interrupt silently.
 // Every configuration that compiles an architecture's MSI-X claim needs this,
 // including the aarch64 host target `make check` type-checks.
@@ -480,22 +478,21 @@ pub(crate) fn claim_function_interrupts(
     target_arch = "riscv64",
     all(target_arch = "x86_64", target_os = "none")
 ))]
-pub(crate) fn msix_handlers_for(
+pub(crate) fn msix_named_handlers(
     count: u32,
     named: &[(u16, crate::arch::irq_handlers::IrqHandler)],
-    fallback: &crate::arch::irq_handlers::IrqHandler,
 ) -> Option<alloc::vec::Vec<crate::arch::irq_handlers::IrqHandler>> {
-    if named.iter().any(|(vector, _)| (*vector as u32) >= count) {
+    if named.is_empty() || named.iter().any(|(entry, _)| (*entry as u32) >= count) {
         return None;
     }
-    let mut handlers = alloc::vec::Vec::with_capacity(count as usize);
-    for index in 0..count {
-        let handler = named
-            .iter()
-            .find(|(vector, _)| *vector as u32 == index)
-            .map(|(_, handler)| handler.clone())
-            .unwrap_or_else(|| fallback.clone());
-        handlers.push(handler);
+    let mut seen: alloc::vec::Vec<u16> = alloc::vec::Vec::with_capacity(named.len());
+    let mut handlers = alloc::vec::Vec::with_capacity(named.len());
+    for (entry, handler) in named {
+        if seen.contains(entry) {
+            return None;
+        }
+        seen.push(*entry);
+        handlers.push(handler.clone());
     }
     Some(handlers)
 }

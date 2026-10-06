@@ -622,17 +622,18 @@ require_log_line "[irq   ] GICv3: LPIs 8192-8447 enabled on cpu 0"
 require_log_line "[irq   ] GICv3: LPIs 8192-8447 enabled on cpu 1"
 require_log_line "[its   ] MSI-X on 00:01.0 delivers LPI "
 require_log_line "[its   ] MSI-X on 00:02.0 delivers LPI "
-# The device's four entries are spread over the two CPUs in turn — the
-# placement is what the rest of this section observes, and a device whose
-# entries all name one CPU would fail here.
-require_log_line "[its   ] MSI-X 00:01.0: irq 8196-8199 placed on cpu [0, 1, 0, 1]"
+# The NIC claims the two entries it names — one per queue, and not the four
+# the table has — and they are spread over the two CPUs in turn: the placement
+# is what the rest of this section observes, and a device whose entries all
+# named one CPU would fail here.
+require_log_line "[its   ] MSI-X 00:01.0: irq 8194-8195 on table entries [0, 1] placed on cpu [0, 1]"
 # The second claimant is what makes this a property of the machine rather than
-# of one driver: a block function beside the NIC has its *own* identities,
-# mapped under its own DeviceID and spread over the CPUs in turn, and the two
-# devices do not share one.
+# of one driver: a block function beside the NIC has its *own* identity —
+# one, for the one queue it names, not the three entries its table has —
+# mapped under its own DeviceID, and the two devices do not share it.
 require_log_line "[virtio-blk] device interrupts claimed: irq "
 require_log_line "[drivers] virtio-blk device found (PCI modern)"
-require_log_line "[its   ] MSI-X 00:02.0: irq 8193-8195 placed on cpu [0, 1, 0]"
+require_log_line "[its   ] MSI-X 00:02.0: irq 8193-8193 on table entries [0] placed on cpu [0]"
 require_log_line "[device] virtio-blk owned by virtio (storage)"
 
 # And the placement is where the device's interrupts are actually served: a

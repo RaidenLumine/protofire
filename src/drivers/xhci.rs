@@ -2048,11 +2048,13 @@ fn probe_xhci() -> crate::Result<()> {
         );
 
         // Claim the controller's interrupt, now that its rings exist and
-        // before anything waits on one.  One identity: this driver has a single
-        // interrupter, and the event ring is what it posts to.  The platform
-        // programs the controller's MSI-X table once the local APIC is up; a
-        // machine or a function where that fails leaves the tick draining the
-        // ring, which is what this driver did before the wiring existed.
+        // before anything waits on one.  One identity, for the table's entry 0:
+        // this driver uses a single interrupter, and the event ring is what it
+        // posts to, so the other fifteen entries of the controller's table take
+        // no vector and stay masked rather than each holding one of the
+        // window's.  The platform programs the table once the local APIC is
+        // up; a machine or a function where that fails leaves the tick draining
+        // the ring, which is what this driver did before the wiring existed.
         if let Some(controller) = XHCI_CONTROLLER.lock().as_ref() {
             XHCI_RUNTIME_BASE.store(controller.runtime_base as usize, Ordering::Release);
         }
@@ -2061,7 +2063,6 @@ fn probe_xhci() -> crate::Result<()> {
         if crate::arch::platform::claim_function_interrupts(
             crate::arch::x86_64::pci::PciAddress::new(info.bus, info.device, info.function),
             &named,
-            &handler,
         )
         .is_some()
         {

@@ -90,10 +90,19 @@ Programming happens after the secondary CPUs are up, because that is also when
 the placement is decided: an entry naming a core whose LPI pending table is not
 installed yet would have its message dropped rather than queued.
 
-What is claimed today: the PCIe `virtio-net` driver, one identity per queue, on
-the two device-tree machines.  Everything else — NVMe, HDA, any second PCIe
-driver — is reached through its architecture's own enumeration and does not
-claim identities through this path.
+A claim is sized by what the driver names, not by what the table has: the
+driver passes `(table entry, handler)` pairs, and the claim takes one identity
+per pair and **writes every other entry of the table masked**, so a device
+cannot deliver an identity nobody registered for.  That is why an xHCI
+controller with sixteen interrupters takes one identity rather than sixteen —
+[RFC 0005](../rfcs/0005-claim-the-msix-entries-a-driver-names.md) is the
+decision, and it is the successor to RFC 0003's per-entry claim.
+
+What is claimed today: the PCIe `virtio-net` driver (one identity per queue),
+`virtio-blk` (one, for its one queue), and xHCI (one, for its one interrupter),
+on the machines that have the controller to carry them.  Everything else —
+NVMe, HDA, any second PCIe driver — is reached through its architecture's own
+enumeration and does not claim identities through this path.
 
 ## Where an interrupt is placed
 
