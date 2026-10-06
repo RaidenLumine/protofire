@@ -85,8 +85,11 @@ pub unsafe fn clac() {
 /// RAII guard that brackets a user-memory access window.
 ///
 /// Constructing the guard calls `stac()` (set AC), allowing supervisor
-/// access to user-accessible pages.  Dropping the guard calls `clac()`
-/// (clear AC), restoring SMAP protection.
+/// access to user-accessible pages.  Dropping it puts AC back the way it found
+/// it: the window is per-hart state, so a helper called from inside another
+/// window must not close the one it is running in.  Clearing AC
+/// unconditionally on drop did exactly that, and the enclosing window's later
+/// accesses faulted.
 ///
 /// # Safety
 ///
@@ -95,7 +98,10 @@ pub unsafe fn clac() {
 /// is held.  (The guard is intentionally short-lived — scoped to a single
 /// copy-to/from-user operation.)
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub struct UserAccessGuard(());
+pub struct UserAccessGuard {
+    /// Whether AC was already set when this guard opened.
+    already_open: bool,
+}
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 impl UserAccessGuard {
@@ -108,10 +114,11 @@ impl UserAccessGuard {
     /// any kernel code that assumes SMAP is active.
     #[inline]
     pub unsafe fn new() -> Self {
+        let already_open = ac_is_set();
         // SAFETY: the guard's own contract, which its doc above states; `Drop` below
         // pairs with it.
         unsafe { stac() };
-        Self(())
+        Self { already_open }
     }
 }
 
@@ -119,9 +126,28 @@ impl UserAccessGuard {
 impl Drop for UserAccessGuard {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: as above — clearing the flag when the guard goes away.
-        unsafe { clac() };
+        // Only close what this guard opened: AC is per-hart state and another
+        // window may be holding it open further out on the stack.
+        if !self.already_open {
+            // SAFETY: as above — clearing the flag when the guard goes away.
+            unsafe { clac() };
+        }
     }
+}
+
+/// Whether EFLAGS.AC is currently set (user access allowed).
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+#[inline]
+fn ac_is_set() -> bool {
+    /// EFLAGS.AC: supervisor access to user-accessible pages.
+    const AC: u64 = 1 << 18;
+    let rflags: u64;
+    // SAFETY: `pushfq`/`pop` move the flags register through the stack and give
+    // back the caller's flags unchanged; nothing is dereferenced.
+    unsafe {
+        asm!("pushfq", "pop {}", out(reg) rflags, options(preserves_flags));
+    }
+    rflags & AC != 0
 }
 
 /// Convenience: execute a closure inside a user-access window.

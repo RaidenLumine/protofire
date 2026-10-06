@@ -146,6 +146,7 @@ run_p3() {
     run_make_step "make clippy" clippy
     run_make_step "make clippy-targets" clippy-targets
     run_make_step "make check-unsafe-comments" check-unsafe-comments
+    run_make_step "make check-user-access-windows" check-user-access-windows
     run_make_step "make check-layering" check-layering
     run_make_step "make check-arch-fanout" check-arch-fanout
     run_make_step "make check-payload-relocations" check-payload-relocations

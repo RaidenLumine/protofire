@@ -379,22 +379,11 @@ pub(super) fn with_optional_input_slice<T>(
     })
 }
 
-pub(super) fn optional_user_output_slice<'a>(
-    ptr: *mut u8,
-    length: usize,
-) -> Result<Option<&'a mut [u8]>> {
-    if length == 0 {
-        return Ok(None);
-    }
-
-    validate_current_process_user_output_buffer(ptr, length, length)?;
-    // SAFETY: the same validation, for a write; the slice it covers is exactly
-    // the range the validator accepted.
-    Ok(Some(unsafe {
-        core::slice::from_raw_parts_mut(ptr, length)
-    }))
-}
-
+/// Run `f` with the caller's buffer as an output slice.
+///
+/// The write side of [`with_optional_input_slice`], and the shape a handler
+/// should reach for: the window lasts exactly as long as the closure, so a
+/// caller cannot hold a slice — and therefore the access permission — past it.
 pub(super) fn with_optional_output_slice<T>(
     ptr: *mut u8,
     length: usize,
@@ -483,6 +472,53 @@ pub(super) fn with_staged_input<T>(
         staging[..capacity].copy_from_slice(source);
     });
     f(&staging[..capacity])
+}
+
+/// Run a blocking operation whose input is the caller's buffer, keeping every
+/// byte of it.
+///
+/// [`with_staged_input`] stages into a fixed stack array, and says why that is
+/// allowed: the interfaces it serves — a serial read, a pipe, a file — permit a
+/// short read or write, so a caller wanting more loops.  A *datagram* does not.
+/// Sending the first kilobyte of a two-kilobyte datagram is not a short send;
+/// it is a different message, and it arrives at the peer as one.  This variant
+/// therefore stages the exact length, on the heap when it is larger than the
+/// stack buffer, so an operation that waits can wait with no window open while
+/// the bytes it will send are already the kernel's.
+///
+/// The cost is one allocation for a payload that does not fit the stack buffer.
+/// That is the price of not holding a per-hart window across a wait, and it is
+/// paid on the path that sends, not on the path that receives.
+pub(super) fn with_staged_input_exact<T>(
+    ptr: *const u8,
+    length: usize,
+    f: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<T> {
+    if length == 0 {
+        return f(&[]);
+    }
+
+    validate_current_process_user_input_buffer(ptr, length, length)?;
+
+    if length <= STAGED_IO_CAPACITY {
+        let mut staging = [0_u8; STAGED_IO_CAPACITY];
+        with_user_access_guard(|| {
+            // SAFETY: the validator accepted `length` readable bytes at `ptr`,
+            // and the guard is what makes the read legal while it runs.
+            let source = unsafe { core::slice::from_raw_parts(ptr, length) };
+            staging[..length].copy_from_slice(source);
+        });
+        return f(&staging[..length]);
+    }
+
+    let mut staging = alloc::vec![0_u8; length];
+    with_user_access_guard(|| {
+        // SAFETY: as above — the same validated range, read into kernel memory
+        // while the window is open.
+        let source = unsafe { core::slice::from_raw_parts(ptr, length) };
+        staging.copy_from_slice(source);
+    });
+    f(&staging)
 }
 
 pub(crate) fn read_user_value<T: Copy>(
@@ -1280,13 +1316,14 @@ mod tests {
     use super::copy_user_value_with_trailing_bytes;
     use super::fixed_output_buffer_arg;
     use super::optional_user_input_slice;
-    use super::optional_user_output_slice;
     use super::user_bounded_str;
     use super::user_string;
     use super::validate_user_input_buffer;
     use super::validate_user_output_buffer;
     use super::validate_user_pointer_range;
+    use super::with_staged_input_exact;
     use super::FixedOutputBuffer;
+    use super::STAGED_IO_CAPACITY;
     use super::USER_ADDRESS_MAX;
     use crate::Error;
     use alloc::string::String;
@@ -1340,6 +1377,31 @@ mod tests {
             validate_user_output_buffer(core::ptr::null_mut(), 0, 0),
             Ok(())
         );
+    }
+
+    #[test]
+    fn with_staged_input_exact_stages_the_whole_payload() {
+        // Larger than the staged stack buffer: a datagram that came back
+        // truncated would be a different message, not a short one.
+        let payload: alloc::vec::Vec<u8> = (0..STAGED_IO_CAPACITY * 2)
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let staged =
+            with_staged_input_exact(
+                payload.as_ptr(),
+                payload.len(),
+                |staged| Ok(staged.to_vec()),
+            )
+            .expect("stage the payload");
+        assert_eq!(staged.len(), payload.len());
+        assert_eq!(staged, payload);
+    }
+
+    #[test]
+    fn with_staged_input_exact_does_not_inspect_a_zero_length_pointer() {
+        let seen = with_staged_input_exact(usize::MAX as *const u8, 0, |staged| Ok(staged.len()))
+            .expect("a zero-length payload is a no-op");
+        assert_eq!(seen, 0);
     }
 
     #[test]
@@ -1498,14 +1560,6 @@ mod tests {
     fn optional_user_input_slice_skips_pointer_validation_for_empty_payload() {
         assert_eq!(
             optional_user_input_slice(usize::MAX as *const u8, 0),
-            Ok(None)
-        );
-    }
-
-    #[test]
-    fn optional_user_output_slice_skips_pointer_validation_for_empty_payload() {
-        assert_eq!(
-            optional_user_output_slice(usize::MAX as *mut u8, 0),
             Ok(None)
         );
     }

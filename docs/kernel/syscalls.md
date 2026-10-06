@@ -132,7 +132,13 @@ which open the architecture's user-access window (SMAP on x86_64, PAN on
 AArch64, SUM on RISC-V) for the duration of one copy.  The window is scoped:
 holding it across a blocking operation would clear another thread's access when
 that thread closes its own window, so paths that can block stage their data in
-kernel memory first and hold the window only for the copy.
+kernel memory first and hold the window only for the copy.  A datagram is
+staged whole — `with_staged_input_exact` — because sending the first kilobyte of
+a two-kilobyte datagram is a different message, not a short one.  Two rules
+keep this honest: the guard restores the state it found rather than setting a
+bit, so a helper called inside another window cannot close the enclosing one,
+and the window is opened in exactly one module, which
+`make check-user-access-windows` refuses to see change.
 
 ## The ring-3 side
 

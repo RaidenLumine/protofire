@@ -54,6 +54,7 @@ endif
 		check-aarch64-host \
 		check-riscv64 \
 		check-unsafe-comments \
+		check-user-access-windows \
 		check-repo-integrity \
 		check-docs \
 		check-rfcs \
@@ -106,6 +107,7 @@ help:
 		'  make check-aarch64-host - type-check aarch64-unknown-linux-gnu, where the arch modules also build' \
 		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
 		'  make check-unsafe-comments - fail if any configuration gained an undocumented `unsafe` block' \
+		'  make check-user-access-windows - fail if a module outside `syscall/memory/user.rs` opens a user-access window' \
 		'  make check-repo-integrity  - fail if a ref or the index names a missing git object' \
 		'  make check-docs     - fail if a document cites a file the tree does not have' \
 		'  make check-rfcs     - fail if an RFC number, status or the generated index is wrong' \
@@ -299,6 +301,16 @@ check-riscv64:
 # configuration no clippy target covers.  See docs/fmts/unsafe-and-safety.md §3.
 check-unsafe-comments:
 	sh ./scripts/check-unsafe-comments.sh
+
+# Keep the user-access window — x86_64's AC, AArch64's PAN, RISC-V's SUM —
+# opened from one module.  It is per-hart state, so a handler that opens it and
+# then waits hands the permission to whatever runs next on that hart, and a
+# helper that closes it on the way out closes the enclosing window too.  The
+# window is opened in `syscall/memory/user.rs`, whose helpers scope it to a
+# single copy; every other caller reaches user memory through them, and this
+# gate refuses the first open-coded window somewhere else.
+check-user-access-windows:
+	sh ./scripts/check-user-access-windows.sh
 
 # Hold the line on the kernel's module dependency graph.  The census in
 # `scripts/layering-baseline.txt` records how often each module names every

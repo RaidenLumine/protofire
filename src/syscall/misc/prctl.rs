@@ -96,12 +96,15 @@ pub(super) fn prctl(context: &mut super::SyscallContext) -> Result<super::Syscal
                 super::user_memory::copy_user_bytes(name.as_bytes(), buf_ptr, copy_len)?;
             }
             // Write null terminator.
+            // `copy_user_bytes` opens the access window for its own copy, so
+            // this byte does not need a window of its own — the output buffer
+            // was validated for `buf_len` bytes above and `copy_len` is at most
+            // `buf_len - 1`, so the byte is inside the validated range.
             // SAFETY: the output buffer was validated for `buf_len` bytes above
-            // and `copy_len` is at most `buf_len - 1`, so this byte is inside
-            // the validated range; the guard is what makes the store legal.
-            super::user_memory::with_user_access_guard(|| unsafe {
-                buf_ptr.add(copy_len).write(0u8);
-            });
+            // and `copy_len` is at most `buf_len - 1`, so the byte this points
+            // at is inside the validated range.
+            let terminator = unsafe { buf_ptr.add(copy_len) };
+            super::user_memory::copy_user_bytes(&[0u8], terminator, 1)?;
             Ok(super::SyscallDispatch::complete(copy_len))
         }
         PR_SET_NAME => {
@@ -110,23 +113,14 @@ pub(super) fn prctl(context: &mut super::SyscallContext) -> Result<super::Syscal
             if buf_len == 0 || buf_len > PR_MAX_NAME_LEN {
                 return Err(Error::InvalidArgument);
             }
-            // Read the user string.
-            super::user_memory::validate_current_process_user_input_buffer(
-                buf_ptr, buf_len, buf_len,
-            )?;
-            let name_bytes = super::user_memory::with_user_access_guard(|| {
+            // Read the user string into kernel memory.  The window belongs to
+            // that copy, and `buf_len` is bounded by `PR_MAX_NAME_LEN`, which
+            // is far inside the staged buffer.
+            let name_bytes = super::user_memory::with_staged_input(buf_ptr, buf_len, |staged| {
                 let mut buf = [0u8; PR_MAX_NAME_LEN];
-                // SAFETY: the input range was validated for `buf_len` bytes
-                // above, `i` stays below it, and `buf` is `PR_MAX_NAME_LEN`
-                // wide with `buf_len` bounded by that.
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..buf_len {
-                    // SAFETY: the input range was validated for `buf_len` bytes above, `i` stays
-                    // below it, and `buf` is `PR_MAX_NAME_LEN` wide with `buf_len` bounded by that.
-                    buf[i] = unsafe { buf_ptr.add(i).read() };
-                }
-                buf
-            });
+                buf[..buf_len].copy_from_slice(staged);
+                Ok(buf)
+            })?;
             // Truncate at first null byte.
             let null_pos = name_bytes[..buf_len]
                 .iter()

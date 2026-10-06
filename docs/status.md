@@ -384,7 +384,7 @@ disk-backed swap, compression, and defragmentation.
 | RISC-V PLIC | PLIC initialization from FDT | The default machine has no IMSIC, so the PLIC stays the external controller there |
 | Common interrupt abstraction | `InterruptController` trait | — |
 | Thread exception handling | Page fault recovery, signal delivery | — |
-| PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | A window held across a block can be closed under the holder; the socket send paths still do that |
+| PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | Nothing known: the window is opened in one module, the guard restores what it found, and the paths that can wait stage first (`make check-user-access-windows`) |
 | MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64 — but no path programs a device's table there, so a PCIe device's completions are polled; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and a third device class has no PCIe driver yet; on x86_64 nothing claims |
 | NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry | No architectural NMI source on RISC-V, so that entry stays dormant |
 | Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable | Runs from the tick; no routing-latency measurement |
@@ -587,7 +587,7 @@ leaves out.
 | Process security token | Per-thread credentials and integrity level | — |
 | Access helpers | Central permission checking on VFS operations | — |
 | SHA-256 integrity | Launch manifest and payload hashes; optional detached signatures | Verification is opt-in: an artifact carrying no signature loads anyway, and there is no key distribution or rotation policy |
-| PAN/SMAP | Kernel-user memory isolation on all three architectures | See the interrupt section: a window held across a block can be closed under its holder |
+| PAN/SMAP | Kernel-user memory isolation on all three architectures | See the interrupt section: the window is opened where the copy is, and the guard saves and restores it |
 | Stack canary | `Thread::canary` exists and is never read | There is no check: the heap block's own canary and the guard page below a kernel stack are what detect an overrun |
 | MAC type enforcement | Types on subjects and objects, allow rules enforced at the VFS file-access hook, `MacDenial` audit records; the three policy-writing syscalls (#175-177) require an admin token | Enforcement reaches files only: `check_process` and `check_network` exist with no call site, so a policy cannot refuse a signal, a trace or a connection; default is allow until a policy is loaded |
 | Audit subsystem | Classified event types, ring buffer, syscall entry/exit hooks, AuditSetEnable (#143) and AuditReadLog (#144) | Memory-only in practice: the persistence path exists but nothing enables it, so records are lost on reboot |
@@ -1029,13 +1029,17 @@ spans modules and cannot be attributed to one of them.
   then clears them. A window that is held *across a block* is therefore at the
   mercy of any other thread that opens and closes its own window while the first
   is waiting — the first thread's access is cleared under it, and the copy
-  faults in the kernel. It took a ring-3 console reader to hit this, and the
-  read and write paths now stage in kernel memory and hold the window only for
-  the copy (`with_staged_input` on the write side, `copy_user_bytes` on the read
-  side). The socket send paths still hand the caller's slices to the network
-  stack, which can wait on the NIC's completion interrupt, so that is the
-  remaining path where the window is held across a block; the invariant the
-  guards document is "scoped to a single copy", and those paths do not keep it.
+  faults in the kernel. It took a ring-3 console reader to hit this, and every
+  path that can wait now stages in kernel memory and holds the window only for
+  the copy: the read and write paths through `with_staged_input` and
+  `copy_user_bytes`, the UDP and raw sends through `with_staged_input_exact`,
+  which stages the *whole* payload because a truncated datagram is a different
+  message rather than a short one. The guard underneath also had the second half
+  of the bug: it set the protection bit on drop instead of restoring what it
+  found, so a helper called inside an open window closed the enclosing one. It
+  saves and restores now, and the window is opened in exactly one module —
+  `syscall/memory/user.rs` — which is what `make check-user-access-windows`
+  holds.
 - **Coverage-guided fuzzing runs nightly, not per change**: the boundaries have
   deterministic harnesses as their gate — `tests/parsers/fuzz.rs`, run by
   `make test-parsers` and in CI, drives the ELF loader, the LUKS2 header and

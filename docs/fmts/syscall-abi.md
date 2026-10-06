@@ -251,6 +251,17 @@ depend on them:
   wraps only the dereference and the closure. Keep it that way if you add a new
   helper — and note the closure is where user memory is actually touched, so do
   not capture a raw pointer out of it for later use.
+- **A window is opened for the copy, never across a wait.** The permission the
+  guard grants is per-hart state, so a handler that holds it while blocking
+  hands it to whatever runs next on that hart, and has it closed under it by the
+  next thread that closes its own. A handler whose operation can wait stages the
+  caller's bytes in kernel memory first — `with_staged_input` /
+  `with_staged_output`, and `with_staged_input_exact` for a datagram, whose
+  length cannot be shortened without changing the message. The guard also
+  restores the state it found, so a helper called inside another window cannot
+  close the enclosing one. The window is opened in
+  `src/syscall/memory/user.rs` and nowhere else, which
+  `make check-user-access-windows` enforces.
 
 ---
 

@@ -79,8 +79,10 @@ unsafe fn deny_user_access() {
 /// RAII guard that brackets a user-memory access window.
 ///
 /// Constructing the guard clears PSTATE.PAN (allowing EL1 access to
-/// EL0-accessible pages).  Dropping the guard sets PSTATE.PAN again,
-/// restoring PAN protection.
+/// EL0-accessible pages).  Dropping it puts PAN back the way it found it: the
+/// window is per-hart state, so a helper called from inside another window must
+/// not close the one it is running in.  Setting PAN unconditionally on drop
+/// did exactly that, and the enclosing window's later accesses faulted.
 ///
 /// # Safety
 ///
@@ -88,7 +90,10 @@ unsafe fn deny_user_access() {
 /// code that assumes PAN protection is active should run while the guard
 /// is held.
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
-pub struct UserAccessGuard(());
+pub struct UserAccessGuard {
+    /// Whether PAN was already clear when this guard opened.
+    already_open: bool,
+}
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 impl UserAccessGuard {
@@ -101,10 +106,11 @@ impl UserAccessGuard {
     /// kernel code that assumes PAN protection is active.
     #[inline]
     pub unsafe fn new() -> Self {
+        let already_open = !pan_is_set();
         // SAFETY: the guard's own contract, which its doc above states; `Drop` below
         // pairs with it.
         unsafe { allow_user_access() };
-        Self(())
+        Self { already_open }
     }
 }
 
@@ -112,9 +118,27 @@ impl UserAccessGuard {
 impl Drop for UserAccessGuard {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: as above — restoring PAN when the guard goes away.
-        unsafe { deny_user_access() };
+        // Only close what this guard opened: PAN is per-hart state and another
+        // window may be holding it open further out on the stack.
+        if !self.already_open {
+            // SAFETY: as above — restoring PAN when the guard goes away.
+            unsafe { deny_user_access() };
+        }
     }
+}
+
+/// Whether PSTATE.PAN is currently set (user access denied).
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+#[inline]
+fn pan_is_set() -> bool {
+    let pan: u64;
+    // SAFETY: reading a PSTATE field register has no side effects.  The field
+    // is one bit and the register zero-extends it, so a non-zero read is PAN
+    // set whatever position the architecture puts the bit in.
+    unsafe {
+        asm!("mrs {pan}, PAN", pan = out(reg) pan, options(nomem, nostack, preserves_flags));
+    }
+    pan != 0
 }
 
 /// Convenience: execute a closure inside a user-access window.

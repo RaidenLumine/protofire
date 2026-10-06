@@ -61,8 +61,10 @@ unsafe fn deny_user_access() {
 /// RAII guard that brackets a user-memory access window.
 ///
 /// Constructing the guard sets sstatus.SUM (allowing S-mode access to
-/// U-mode-accessible pages).  Dropping the guard clears SUM again,
-/// restoring the protection.
+/// U-mode-accessible pages).  Dropping it puts SUM back the way it found it:
+/// the window is per-hart state, so a helper called from inside another window
+/// must not close the one it is running in.  Clearing SUM unconditionally on
+/// drop did exactly that, and the enclosing window's later accesses faulted.
 ///
 /// # Safety
 ///
@@ -70,7 +72,10 @@ unsafe fn deny_user_access() {
 /// code that assumes SUM protection is active should run while the guard
 /// is held.
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
-pub struct UserAccessGuard(());
+pub struct UserAccessGuard {
+    /// Whether SUM was already set when this guard opened.
+    already_open: bool,
+}
 
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 impl UserAccessGuard {
@@ -83,10 +88,11 @@ impl UserAccessGuard {
     /// kernel code that assumes SUM protection is active.
     #[inline]
     pub unsafe fn new() -> Self {
+        let already_open = sum_is_set();
         // SAFETY: the guard's own contract, which its doc above states; `Drop` below
         // pairs with it.
         unsafe { allow_user_access() };
-        Self(())
+        Self { already_open }
     }
 }
 
@@ -94,9 +100,25 @@ impl UserAccessGuard {
 impl Drop for UserAccessGuard {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: as above — restoring SUM when the guard goes away.
-        unsafe { deny_user_access() };
+        // Only close what this guard opened: SUM is per-hart state and another
+        // window may be holding it open further out on the stack.
+        if !self.already_open {
+            // SAFETY: as above — restoring SUM when the guard goes away.
+            unsafe { deny_user_access() };
+        }
     }
+}
+
+/// Whether sstatus.SUM is currently set (user access allowed).
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+#[inline]
+fn sum_is_set() -> bool {
+    let sstatus: u64;
+    // SAFETY: reading a system register has no side effects.
+    unsafe {
+        asm!("csrr {sstatus}, sstatus", sstatus = out(reg) sstatus, options(nomem, nostack, preserves_flags));
+    }
+    sstatus & SSTATUS_SUM != 0
 }
 
 /// Convenience: execute a closure inside a user-access window.
