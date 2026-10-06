@@ -56,8 +56,8 @@ the syscall interface.
 | VirtIO (net) | Network | Full RX/TX, modern and legacy transports; on all three machines each queue claims its own MSI-X identity, so a queue's completion wakes that queue's waiter | No throughput baseline |
 | VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189), driven by the demo renderer (`src/user/demo/virgl_renderer.rs`) | QEMU only |
 | NVMe | Block | Full read/write, boot-disk probe | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; x86_64 only; QEMU only |
-| xHCI | USB host | Controller reset and start, command and event rings, device enumeration (Enable Slot, Address Device, GET_DESCRIPTOR), a HID interrupt endpoint per device, and port status; `make check-x8664-runtime` boots it with a USB keyboard and asserts each of those | The event ring is drained from the timer tick: MSI-X for the controller is not wired, so an event waits for the next tick rather than raising an interrupt; x86_64 only; QEMU only |
-| USB HID | HID (keyboard) | A HID interrupt endpoint is configured on the enumerated device and its reports are decoded into the same keyboard core the PS/2 and VirtIO paths feed; the xHCI gate boots it to the ready state | The reports' delivery is the tick; no key has been pressed in a gate, so scancode delivery is pinned by unit tests rather than by a boot |
+| xHCI | USB host | Controller reset and start, command and event rings, device enumeration (Enable Slot, Address Device, GET_DESCRIPTOR), a HID interrupt endpoint per device, port status, and a claimed MSI-X vector whose interrupt drains the event ring when the rings are free; `make check-x8664-runtime` boots all of it with a USB keyboard, presses a key through QEMU's monitor, and asserts the controller's own interrupt | The timer tick still drains the ring as the fallback, and the interrupt drains only when the controller's lock is free; x86_64 only; QEMU only |
+| USB HID | HID (keyboard) | A HID interrupt endpoint is configured on the enumerated device, its reports are decoded into the same keyboard core the PS/2 and VirtIO paths feed, and `make check-x8664-runtime` types a command on the USB keyboard and asserts the shell's answer | No hub, so one device per port; the report deshuffling is the boot's evidence rather than a synthetic matrix |
 | USB MSD | Storage | Bulk-only transport and SCSI command blocks | Its geometry probe runs at controller bring-up and is not gated; no boot disk has been offered over USB in a check |
 | Serial (UART 16550) | Text I/O | Full duplex | RISC-V falls back to the SBI console when it has no UART |
 | PS/2 Keyboard | Input | Scancode buffering, decoding, console TTY bridge | The PS/2 interrupt path is x86_64; other targets rely on VirtIO input |
@@ -105,13 +105,14 @@ input, mostly verified under QEMU.
 
 **Weaknesses:**
 
-- **USB is gated at bring-up, not at input**: xHCI resets the controller, runs
-  the command and event rings, enumerates the device and configures a HID
-  interrupt endpoint, and `make check-x8664-runtime` boots all of that with a
-  USB keyboard attached.  What no gate does yet is *press a key*: the event
-  ring is drained from the timer tick (the controller's MSI-X is unwired) and
-  the mass-storage path has never been given a disk, so both are implemented
-  and unexercised rather than absent.
+- **USB is gated through a key press, not through a disk**: xHCI resets the
+  controller, runs the command and event rings, enumerates the device,
+  configures a HID interrupt endpoint and takes the interrupt its own MSI-X
+  vector raises when a key arrives; `make check-x8664-runtime` boots all of
+  that, presses a key on the keyboard through QEMU's monitor and reads the
+  shell's answer.  What is still unexercised is the mass-storage path: no gate
+  has offered a disk over USB, and the geometry probe it runs at bring-up is
+  the only part of it a boot reaches.
 - **HDA not surfaced to userspace**: audio has only the controller-level
   interface; there is no usable userspace stream interface yet.
 - **One PCIe driver on the device-tree machines.** The ECAM walk finds devices,
@@ -390,7 +391,7 @@ disk-backed swap, compression, and defragmentation.
 | Common interrupt abstraction | `InterruptController` trait | — |
 | Thread exception handling | Page fault recovery, signal delivery | — |
 | PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | Nothing known: the window is opened in one module, the guard restores what it found, and the paths that can wait stage first (`make check-user-access-windows`) |
-| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64; a vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and a third device class has no PCIe driver yet; on x86_64 the PCIe virtio-net driver is the only claimant, and NVMe's fixed vectors are still wired by constant rather than claimed |
+| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64; a vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and a third device class has no PCIe driver yet; on x86_64 the PCIe virtio-net and xHCI controllers claim, and NVMe's fixed vectors are still wired by constant rather than claimed |
 | NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry | No architectural NMI source on RISC-V, so that entry stays dormant |
 | Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable | Runs from the tick; no routing-latency measurement |
 | Interrupt stats interface | Per-CPU/per-vector counters, NMI/IPI totals, balancer state (SystemInfo #9) | — |

@@ -170,6 +170,12 @@ follow-up per device, not part of this decision.
   The placement itself is printed per entry; the stronger check — that the CPU
   serving a queue's MSI is the one its entry named — is the AArch64 check's,
   because that smoke runs two CPUs and this one runs a single CPU.
+- The same check attaches a USB host controller beside the NIC, so x86_64 has
+  a **second** claimant of the kind this decision was about: xHCI's table has
+  sixteen entries, it claims one identity per entry, and a key pressed on the
+  USB keyboard through QEMU's monitor raises the controller's own interrupt —
+  the first thing on this machine that proves the window, the stubs and the
+  registry answer more than one driver.
 - Unit tests in `src/arch/x86_64/msi.rs` for the vector window's bounds and
   the entry composition: the window lies inside the free range and above the
   fixed assignments, it is closed at both ends, every vector in it has a stub,

@@ -172,6 +172,22 @@ ISR_NOERR 108
 ISR_NOERR 109
 ISR_NOERR 110
 ISR_NOERR 111
+ISR_NOERR 112
+ISR_NOERR 113
+ISR_NOERR 114
+ISR_NOERR 115
+ISR_NOERR 116
+ISR_NOERR 117
+ISR_NOERR 118
+ISR_NOERR 119
+ISR_NOERR 120
+ISR_NOERR 121
+ISR_NOERR 122
+ISR_NOERR 123
+ISR_NOERR 124
+ISR_NOERR 125
+ISR_NOERR 126
+ISR_NOERR 127
 ISR_NOERR 128
 "#
 );
@@ -245,6 +261,22 @@ unsafe extern "C" {
     fn interrupt_stub_109();
     fn interrupt_stub_110();
     fn interrupt_stub_111();
+    fn interrupt_stub_112();
+    fn interrupt_stub_113();
+    fn interrupt_stub_114();
+    fn interrupt_stub_115();
+    fn interrupt_stub_116();
+    fn interrupt_stub_117();
+    fn interrupt_stub_118();
+    fn interrupt_stub_119();
+    fn interrupt_stub_120();
+    fn interrupt_stub_121();
+    fn interrupt_stub_122();
+    fn interrupt_stub_123();
+    fn interrupt_stub_124();
+    fn interrupt_stub_125();
+    fn interrupt_stub_126();
+    fn interrupt_stub_127();
     pub(super) fn interrupt_stub_128();
     pub(super) fn interrupt_stub_default();
 }
@@ -264,7 +296,7 @@ pub(crate) fn msix_window_stub(vector: usize) -> Option<InterruptHandler> {
 
     // The table is indexed from the window's base, so the stub for a vector is
     // the one the assembler emitted for it.
-    const STUBS: [InterruptHandler; 16] = [
+    const STUBS: [InterruptHandler; 32] = [
         interrupt_stub_96,
         interrupt_stub_97,
         interrupt_stub_98,
@@ -281,6 +313,22 @@ pub(crate) fn msix_window_stub(vector: usize) -> Option<InterruptHandler> {
         interrupt_stub_109,
         interrupt_stub_110,
         interrupt_stub_111,
+        interrupt_stub_112,
+        interrupt_stub_113,
+        interrupt_stub_114,
+        interrupt_stub_115,
+        interrupt_stub_116,
+        interrupt_stub_117,
+        interrupt_stub_118,
+        interrupt_stub_119,
+        interrupt_stub_120,
+        interrupt_stub_121,
+        interrupt_stub_122,
+        interrupt_stub_123,
+        interrupt_stub_124,
+        interrupt_stub_125,
+        interrupt_stub_126,
+        interrupt_stub_127,
     ];
     STUBS.get(vector - MSIX_VECTOR_BASE as usize).copied()
 }

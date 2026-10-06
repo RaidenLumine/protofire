@@ -125,14 +125,16 @@ core the PS/2 and VirtIO paths feed.  The register map and the ring structures
 are in `drivers/xhci_protocol.rs`; the machine's half is `drivers/xhci.rs`, and
 a machine without PCI answers from `xhci_absent.rs`.
 
-Two things about it are worth stating plainly, because they are what is left.
-The **event ring is drained from the timer tick**: the controller's MSI-X is
-not wired, so a completion waits for the next tick instead of raising an
-interrupt.  And the paths downstream of the endpoint — a key actually being
-pressed, a disk offered over USB — are implemented and exercised by unit tests,
-but no gate boots them: `make check-x8664-runtime` attaches a USB keyboard and
-asserts the controller, the rings, the enumeration and the configured HID
-endpoint, and stops there.
+Two things about it are worth stating plainly.  The controller **claims a
+vector of its own** and the interrupt drains the event ring, taken with
+`try_lock` so an interrupt never waits on the ring's owner; the timer tick still
+drains as the fallback, for the case where the lock is held and for a machine
+where the claim was refused.  And `make check-x8664-runtime` drives the whole
+path: it attaches a keyboard, presses a key through QEMU's monitor, and asserts
+the shell's answer — the key is a HID report, the report is a transfer event,
+and the event ring's own MSI-X vector is what carries it.  What no gate does
+yet is offer a **disk** over USB: the mass-storage path runs its geometry probe
+at bring-up and nothing else.
 
 ## Where the code is
 

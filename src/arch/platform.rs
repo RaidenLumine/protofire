@@ -420,6 +420,47 @@ pub(crate) fn pci_claim_msix(
     }
 }
 
+/// Claim the interrupts of a function the caller has already found.
+///
+/// [`pci_claim_msix`] is for a driver that asks the platform which device it
+/// should drive; this is for one that has done its own discovery and knows the
+/// function it is holding — an xHCI controller, whose class has no single
+/// vendor to match on.  Everything after the discovery is the same: the
+/// identities are claimed here, the table is programmed by
+/// [`program_device_msix`] once the machine can receive, and the caller's
+/// completion path waits on the interrupt only after that.
+///
+/// Answers `None` on a machine whose devices do not signal this way, which
+/// leaves the caller on whatever path it had.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub(crate) fn claim_function_interrupts(
+    address: crate::arch::x86_64::pci::PciAddress,
+    named: &[(u16, crate::arch::irq_handlers::IrqHandler)],
+    fallback: &crate::arch::irq_handlers::IrqHandler,
+) -> Option<DeviceInterrupts> {
+    // SAFETY: the caller says `address` names a function this machine
+    // enumerated, which is the contract `claim_msix` asks for.
+    let claim = match unsafe { crate::arch::x86_64::msi::claim_msix(address, named, fallback) } {
+        Ok(claim) => claim,
+        Err(error) => {
+            // Say why, because the alternative is a device that is silently on
+            // its polling path: a function with no MSI-X capability, one whose
+            // vector space is taken, and one whose table cannot be mapped all
+            // answer the same way from the outside.
+            crate::println!(
+                "[msix  ] {:02x}:{:02x}.{} not claimed ({:?})",
+                address.bus,
+                address.device,
+                address.function,
+                error
+            );
+            return None;
+        }
+    };
+    crate::arch::x86_64::msi::defer_msix_arming(claim.clone());
+    Some(DeviceInterrupts { claim })
+}
+
 /// The handler each identity of a device's MSI-X table is registered for.
 ///
 /// `named` holds the entries the driver uses for itself — one per queue, in

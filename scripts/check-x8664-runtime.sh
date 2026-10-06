@@ -143,22 +143,39 @@ shell_commands() {
             'cat /service/shell/origin' 'cat /service/shell/sha256' \
             'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
             'cat /dev/bochs-fb/driver' \
-            'cat /dev/xhci/driver' 'cat /dev/xhci/category'
+            'cat /dev/xhci/driver' 'cat /dev/xhci/category' \
+            'echo serial-done'
     else
         sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
             'help' 'echo ring3-shell-answered' \
             'cat /service/shell/origin' 'cat /service/shell/sha256' \
             'cat /dev/virtio-net/driver' 'cat /dev/virtio-net/category' \
             'cat /dev/bochs-fb/driver' 'cat /dev/xhci/driver' \
-            'cat /dev/xhci/category' 'sigasync'
+            'cat /dev/xhci/category' 'sigasync' 'echo serial-done'
     fi
 }
 
 set +e
-shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU" "$@" -serial stdio \
+# The USB keyboard has its own way in: QEMU's monitor drives it, and the
+# injector waits for the serial half to finish so one input stream is never
+# typed at twice.  Its key press is what makes the controller's event ring
+# raise an interrupt at all — the ring is otherwise quiet after boot.
+usb_monitor="$(mktemp -u)/protofire-usb-monitor.sock"
+usb_monitor_dir="$(dirname "$usb_monitor")"
+mkdir -p "$usb_monitor_dir"
+sh ./scripts/press-usb-keys.sh "$log_file" "$TIMEOUT_SECONDS" "$usb_monitor" \
+    "echo usbkeys" &
+usb_injector=$!
+
+shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU" "$@" \
+    -monitor "unix:$usb_monitor,server,nowait" -serial stdio \
     >"$log_file" 2>>"$log_file"
 status=$?
 set -e
+
+kill "$usb_injector" 2>/dev/null || true
+wait "$usb_injector" 2>/dev/null || true
+rm -rf "$usb_monitor_dir"
 
 # 124 is `timeout` killing a machine that is, by design, still running.
 case "$status" in
@@ -355,6 +372,13 @@ require_log_line "[xhci  ] HID keyboard ready at slot "
 require_log_line "owned by xhci (bus)"
 require_log_exact_line "xhci"
 require_log_exact_line "bus"
+# And the interrupt the controller raises for itself: a key pressed on the USB
+# keyboard is a HID report, the report is a transfer event on the event ring,
+# and the event ring's own MSI-X vector is what says so — which is the one
+# thing the tick-polled ring could not prove.  The key press comes from QEMU's
+# monitor, so the guest is not simulating anything.
+require_log_line "[xhci  ] event ring MSI (irq "
+require_log_exact_line "usbkeys"
 
 # ── A signal taken asynchronously, end to end ──────────────────────────
 #

@@ -143,7 +143,14 @@ use crate::Error;
 /// same number, which is the arrangement the ITS and the IMSIC already use.
 pub const MSIX_VECTOR_BASE: u8 = 0x60;
 /// The last vector a device's table may name.
-pub const MSIX_VECTOR_LAST: u8 = 0x6F;
+///
+/// The window is sized for more than one device at a time, and for the widest
+/// table QEMU's controllers have: an xHCI controller's MSI-X table has
+/// sixteen entries, and a claim takes one identity per entry, so a window that
+/// only fit one of those would leave the NIC beside it unclaimed.  The top of
+/// the window is the top of the range `interrupts.rs` reserves for device
+/// vectors.
+pub const MSIX_VECTOR_LAST: u8 = 0x7F;
 // The window belongs inside the range `interrupts.rs` reserves for device
 // vectors (34-127) and above the fixed assignments, or a device's message
 // could land on the timer.

@@ -14,7 +14,8 @@
 //! - Device enumeration (Enable Slot, Address Device): done
 //! - Control transfers (GET_DESCRIPTOR): done
 //! - Interrupt endpoint for HID keyboard reports: done
-//! - MSI-X interrupt wiring: deferred (polled event ring via timer tick)
+//! - MSI-X interrupt wiring: done (the event ring's vector drains the ring when
+//!   the rings are free, and the timer tick still drains it as the fallback)
 //!
 //! The register map and the USB structures live in
 //! [`crate::drivers::xhci_protocol`]; this file is the machine's half, which is
@@ -441,6 +442,22 @@ impl XhciController {
             // --- CONFIG register ---
             let max_slots_val = self.max_slots.min(MAX_SLOTS as u8) as u32;
             reg_write32(self.op_base, XHCI_OP_CONFIG, max_slots_val);
+
+            // Let the interrupter raise a message when it posts an event, and
+            // clear whatever pending bit bring-up left behind so the *next*
+            // event is a 0→1 transition the controller will speak about.  The
+            // message itself needs the function's MSI-X table programmed and
+            // unmasked, which the platform does once the local APIC is up;
+            // until then the pending bit stays set and the timer tick drains
+            // the ring, which is what this driver did before.
+            let iman = reg_read32(self.runtime_base, ir_base + XHCI_RT_IMAN);
+            reg_write32(
+                self.runtime_base,
+                ir_base + XHCI_RT_IMAN,
+                iman | IMAN_IE | IMAN_IP,
+            );
+            let usbcmd = reg_read32(self.op_base, XHCI_OP_USBCMD);
+            reg_write32(self.op_base, XHCI_OP_USBCMD, usbcmd | USBCMD_INTE);
 
             Ok(())
         }
@@ -1542,7 +1559,28 @@ impl XhciController {
                 );
             }
 
+            // Acknowledge the interrupter once the ring is drained, so the next
+            // event is again a 0→1 transition the controller will raise a
+            // message for.  The handler does this too, for the case where it
+            // could not take the rings; doing it here as well is what keeps the
+            // messages coming when the drain happens on the tick.
+            self.acknowledge_interrupt();
+
             processed
+        }
+    }
+
+    /// Clear the interrupter's pending bit, leaving it enabled.
+    fn acknowledge_interrupt(&self) {
+        // SAFETY: the runtime window belongs to this controller, and the
+        // interrupter's management register is one of its own.
+        unsafe {
+            let iman = reg_read32(self.runtime_base, XHCI_RT_IR_BASE + XHCI_RT_IMAN);
+            reg_write32(
+                self.runtime_base,
+                XHCI_RT_IR_BASE + XHCI_RT_IMAN,
+                iman | IMAN_IE | IMAN_IP,
+            );
         }
     }
 
@@ -1745,6 +1783,59 @@ use crate::kernel::sync::Mutex;
 
 static XHCI_CONTROLLER: Mutex<Option<XhciController>> = Mutex::new(None);
 
+/// The interrupter's runtime window, for the interrupt handler.
+///
+/// The handler must not wait on the controller's lock — a transfer in flight
+/// holds it, and the interrupt that ends the wait is exactly what would be
+/// blocked — so the one address it needs out of the controller is captured
+/// here, once, at probe time.  Zero means no controller.
+static XHCI_RUNTIME_BASE: AtomicUsize = AtomicUsize::new(0);
+
+/// Interrupts taken since the controller claimed its vector.
+static XHCI_IRQ_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// What the controller's MSI-X vector runs.
+///
+/// Two jobs, in this order.  **Acknowledge**: the controller raises a message
+/// per 0→1 transition of its pending bit, so a message that is never cleared
+/// silences every one after it.  **Drain**, when nobody else holds the rings:
+/// that is the latency this interrupt exists for — before it, the timer tick
+/// was the only drainer and a report could wait a whole tick.  The drain is
+/// taken with `try_lock` rather than the blocking lock because an interrupt
+/// must not wait on the ring's owner, and the owner drains on its way out.
+fn xhci_msi_handler(irq: u32) {
+    let base = XHCI_RUNTIME_BASE.load(Ordering::Acquire) as *mut u32;
+    if !base.is_null() {
+        // SAFETY: the address is the runtime window of the controller this
+        // driver probed, captured before any of its interrupts could arrive.
+        // Writing the read value back with the pending bit set clears it
+        // (write-1-to-clear) and re-states the enable bit.
+        unsafe {
+            let iman = reg_read32(base, XHCI_RT_IR_BASE + XHCI_RT_IMAN);
+            reg_write32(
+                base,
+                XHCI_RT_IR_BASE + XHCI_RT_IMAN,
+                iman | IMAN_IE | IMAN_IP,
+            );
+        }
+    }
+
+    let seen = XHCI_IRQ_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if seen <= 2 {
+        crate::println!("[xhci  ] event ring MSI (irq {})", irq);
+    }
+
+    if let Some(mut guard) = XHCI_CONTROLLER.try_lock() {
+        if let Some(controller) = guard.as_mut() {
+            // SAFETY: the controller is the one this driver probed, and the
+            // lock is held for the duration of the drain.
+            unsafe {
+                controller.poll_events();
+            }
+        }
+    }
+}
+
 /// Try to take a lock on the global XHCI controller and run a closure.
 pub fn with_controller<F, R>(f: F) -> Option<R>
 where
@@ -1777,6 +1868,7 @@ use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
 use alloc::sync::Arc;
 use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
 static XHCI_PROBED: AtomicBool = AtomicBool::new(false);
@@ -1855,6 +1947,30 @@ fn probe_xhci() -> crate::Result<()> {
             crate::drivers::DriverCategory::Bus,
             Some(bar0.base_address as usize),
         );
+
+        // Claim the controller's interrupt, now that its rings exist and
+        // before anything waits on one.  One identity: this driver has a single
+        // interrupter, and the event ring is what it posts to.  The platform
+        // programs the controller's MSI-X table once the local APIC is up; a
+        // machine or a function where that fails leaves the tick draining the
+        // ring, which is what this driver did before the wiring existed.
+        if let Some(controller) = XHCI_CONTROLLER.lock().as_ref() {
+            XHCI_RUNTIME_BASE.store(controller.runtime_base as usize, Ordering::Release);
+        }
+        let handler: crate::arch::irq_handlers::IrqHandler = Arc::new(xhci_msi_handler);
+        let named = [(0u16, handler.clone())];
+        if crate::arch::platform::claim_function_interrupts(
+            crate::arch::x86_64::pci::PciAddress::new(info.bus, info.device, info.function),
+            &named,
+            &handler,
+        )
+        .is_some()
+        {
+            println!(
+                "[xhci  ] device interrupts claimed: the event ring signals on its own vector \
+                 once the controller programs the table"
+            );
+        }
 
         // The MSD SCSI geometry probe was deferred out of device
         // enumeration (bot_transfer reaches the controller through
