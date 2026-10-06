@@ -19,6 +19,147 @@ use crate::Result;
 
 pub const BLOCK_SIZE: usize = 512;
 
+/// What the layer above has asked the devices for, in requests and bytes.
+///
+/// This is the bottom of the three heights a read can be counted at: a
+/// filesystem counts its own operations and the bytes they were asked for, a
+/// cache counts what it served and what it passed on, and this counts what
+/// actually left for a device.  The difference between the three is where a
+/// boot's reads go, and it is not visible from any one of them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeviceIo {
+    pub read_ops: u64,
+    pub read_bytes: u64,
+    pub write_ops: u64,
+    pub write_bytes: u64,
+}
+
+/// The machine's device traffic, counted only when the boot-work line is
+/// compiled in: these counters sit on the I/O path, and a build that is not
+/// measuring itself should not pay for them.
+#[cfg(feature = "perf_baseline")]
+mod io_counters {
+    use core::sync::atomic::AtomicU64;
+    use core::sync::atomic::Ordering;
+
+    use super::DeviceIo;
+
+    pub(super) struct Counters {
+        read_ops: AtomicU64,
+        read_bytes: AtomicU64,
+        write_ops: AtomicU64,
+        write_bytes: AtomicU64,
+    }
+
+    impl Counters {
+        pub(super) const fn new() -> Self {
+            Self {
+                read_ops: AtomicU64::new(0),
+                read_bytes: AtomicU64::new(0),
+                write_ops: AtomicU64::new(0),
+                write_bytes: AtomicU64::new(0),
+            }
+        }
+
+        pub(super) fn snapshot(&self) -> DeviceIo {
+            DeviceIo {
+                read_ops: self.read_ops.load(Ordering::Relaxed),
+                read_bytes: self.read_bytes.load(Ordering::Relaxed),
+                write_ops: self.write_ops.load(Ordering::Relaxed),
+                write_bytes: self.write_bytes.load(Ordering::Relaxed),
+            }
+        }
+    }
+
+    pub(super) static DEVICE_IO: Counters = Counters::new();
+
+    /// One read, of `bytes`, asked of a device.
+    pub(super) fn count_read(bytes: u64) {
+        DEVICE_IO.read_ops.fetch_add(1, Ordering::Relaxed);
+        DEVICE_IO.read_bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// One write, of `bytes`, handed to a device.
+    pub(super) fn count_write(bytes: u64) {
+        DEVICE_IO.write_ops.fetch_add(1, Ordering::Relaxed);
+        DEVICE_IO.write_bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
+}
+
+/// The machine's device traffic so far, all zeros when the counters are not
+/// compiled in.
+pub fn device_io_snapshot() -> DeviceIo {
+    #[cfg(feature = "perf_baseline")]
+    {
+        io_counters::DEVICE_IO.snapshot()
+    }
+    #[cfg(not(feature = "perf_baseline"))]
+    {
+        DeviceIo::default()
+    }
+}
+
+/// Wrap a device in the counter the boot-work line reads.
+///
+/// The wrapper goes where a device *enters the filesystem's device map*, which
+/// is the one place every device the filesystem can read through passes: a
+/// driver's published disk, and the in-memory and sliced volumes the boot
+/// installs.  A slice delegates to its parent, so a read through a slice is
+/// counted once — at the slice, which is the device the filesystem was handed.
+pub fn counting_device(device: Arc<dyn BlockDevice>) -> Arc<dyn BlockDevice> {
+    #[cfg(feature = "perf_baseline")]
+    {
+        Arc::new(CountingDevice { inner: device })
+    }
+    #[cfg(not(feature = "perf_baseline"))]
+    {
+        device
+    }
+}
+
+/// The wrapper [`counting_device`] installs.
+#[cfg(feature = "perf_baseline")]
+struct CountingDevice {
+    inner: Arc<dyn BlockDevice>,
+}
+
+#[cfg(feature = "perf_baseline")]
+impl BlockDevice for CountingDevice {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn block_size(&self) -> usize {
+        self.inner.block_size()
+    }
+
+    fn block_count(&self) -> u64 {
+        self.inner.block_count()
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.inner.is_read_only()
+    }
+
+    fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+        io_counters::count_read(buffer.len() as u64);
+        self.inner.read_blocks(lba, buffer)
+    }
+
+    fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
+        io_counters::count_write(data.len() as u64);
+        self.inner.write_blocks(lba, data)
+    }
+
+    fn flush(&self) -> Result<()> {
+        self.inner.flush()
+    }
+
+    fn device_health(&self) -> DeviceHealth {
+        self.inner.device_health()
+    }
+}
+
 /// Health classification for block devices so callers can distinguish
 /// transient I/O glitches from permanent media failure without new
 /// error codes.

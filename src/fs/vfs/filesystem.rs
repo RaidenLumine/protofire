@@ -18,6 +18,7 @@ use super::types::VolumeCheckReport;
 use super::types::XattrEntry;
 use super::vnode::StaticVNode;
 use super::vnode::VNode;
+use crate::fs::block_cache::CacheStats;
 use crate::fs::filesystem::profiler::FsProfilerSnapshot;
 use crate::Error;
 use crate::Result;
@@ -103,6 +104,15 @@ pub trait FileSystem: Send + Sync {
     /// VolumeCheckReport.
     fn check_and_repair(&self) -> Result<VolumeCheckReport> {
         Err(Error::Unsupported)
+    }
+
+    /// Return the block cache's counters, for the boot-work line.
+    ///
+    /// The default implementation returns all zeros, which is what a volume
+    /// with no cache of its own has to say: the counters `make
+    /// check-perf-baseline` compares are the sum over the mounted volumes.
+    fn cache_stats(&self) -> CacheStats {
+        CacheStats::default()
     }
 
     /// Return a point-in-time snapshot of filesystem operation counters.

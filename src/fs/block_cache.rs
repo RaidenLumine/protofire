@@ -85,8 +85,15 @@ pub struct CacheStats {
     /// Number of dirty blocks written back to the device (at eviction or
     /// explicit flush time).
     pub dirty_writebacks: u64,
-    /// Number of cache hits on blocks that were prefetched (read-ahead).
-    pub prefetch_hits: u64,
+    /// Hits on the block right after the one read before it — sequential
+    /// hits, which is what the cache can tell from its own last access.
+    ///
+    /// It is *not* a read-ahead hit count: a block that arrived by read-ahead
+    /// and a block the caller read itself are the same entry once inserted,
+    /// so an entry would have to remember where it came from for the two to be
+    /// told apart.  Read-ahead is off (depth 0) unless a volume asks for it,
+    /// so a counter named for it would report nothing in a default boot.
+    pub sequential_hits: u64,
     /// Number of sequential read-ahead blocks prefetched.
     pub prefetches_issued: u64,
     /// Number of times a full flush was triggered automatically because
@@ -135,7 +142,8 @@ pub struct BlockCache {
     /// detection and lightweight read-ahead.
     last_read_lba: Mutex<u64>,
     /// Read-ahead depth: number of extra blocks to prefetch after a
-    /// sequential hit.  Defaults to 2; 0 disables read-ahead.
+    /// sequential miss.  0 — the default — disables read-ahead; a volume that
+    /// wants it asks for it with [`BlockCache::with_read_ahead`].
     read_ahead_depth: usize,
 }
 
@@ -194,11 +202,12 @@ impl BlockCache {
                 self.bump_generation_and_update(lba);
                 self.inc_hits();
 
-                // Detect and count prefetch hits (block was previously
-                // read-ahead into cache).
+                // Count a sequential hit: this block follows the one read
+                // before it, so whatever put it in the cache had read up to
+                // here.
                 let mut last = self.last_read_lba.lock();
                 if *last != u64::MAX && lba == *last + 1 {
-                    self.inc_prefetch_hits();
+                    self.inc_sequential_hits();
                 }
                 *last = lba;
                 // Read-ahead is only triggered on MISS, not on hit,
@@ -610,8 +619,8 @@ impl BlockCache {
         self.stats.lock().pressure_flushes += 1;
     }
 
-    fn inc_prefetch_hits(&self) {
-        self.stats.lock().prefetch_hits += 1;
+    fn inc_sequential_hits(&self) {
+        self.stats.lock().sequential_hits += 1;
     }
 
     fn inc_prefetches_issued(&self) {
@@ -1115,9 +1124,10 @@ mod tests {
             "read-ahead should have been triggered"
         );
 
-        // Read LBA 2: should be a prefetch hit (was read-ahead from LBA 1 miss).
+        // Read LBA 2: a sequential hit, and in this case one that read-ahead
+        // put there.
         cache.read_cached(2, &mut buf).unwrap();
-        assert_eq!(cache.stats().prefetch_hits, 1);
+        assert_eq!(cache.stats().sequential_hits, 1);
     }
 
     #[test]

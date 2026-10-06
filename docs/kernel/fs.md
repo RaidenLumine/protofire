@@ -305,10 +305,18 @@ sits between a filesystem and its device.  It has two write shapes:
 `write_through` persists the block and leaves the cached copy clean, and
 `write_back` updates the cache, marks the entry dirty and defers the device
 write.  A read (`read_cached`) serves a hit from the pool and on a sequential
-miss prefetches the next few blocks; eviction prefers the least-recently-used
-clean entry, so a dirty block is only written back when the pool is entirely
-dirty.  `CacheStats` counts hits, misses, evictions, dirty and aged writebacks
-and prefetches.
+miss prefetches the next few blocks — *if the volume asked for read-ahead*:
+the depth defaults to 0, `BlockCache::with_read_ahead` is how a volume asks,
+and no volume in the tree asks today, so the path is exercised by the cache's
+own tests and by no boot.  Eviction prefers the least-recently-used clean
+entry, so a dirty block is only written back when the pool is entirely dirty.
+`CacheStats` counts hits, misses, evictions, dirty and aged writebacks, blocks
+prefetched and *sequential* hits — a sequential hit is a hit on the block
+right after the one read before it, which is what the cache can tell from its
+own last access; telling a block that arrived by read-ahead from one the
+caller read itself would take an entry that remembers where it came from.  The
+boot-work line reports the sum of these counters over the mounted volumes as
+`cache-*`.
 
 Write-back data needs a clock to age against, and the clock is the scheduler
 tick: `advance_cache_tick` runs from the timer

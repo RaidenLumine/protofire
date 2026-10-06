@@ -260,7 +260,8 @@ impl SimpleFs {
 
     /// Return a point-in-time snapshot of block-cache statistics including
     /// hits, misses, evictions, and dirty write-backs.
-    #[allow(dead_code)]
+    ///
+    /// Read by the boot-work line, which sums it over the mounted volumes.
     pub(crate) fn cache_stats(&self) -> CacheStats {
         self.cache.stats()
     }

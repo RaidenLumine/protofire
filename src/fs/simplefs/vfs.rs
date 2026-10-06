@@ -6,6 +6,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use crate::fs::block_cache::CacheStats;
 use crate::Result;
 
 use super::super::block::DeviceHealth;
@@ -103,6 +104,10 @@ impl VfsFileSystem for SimpleFsVolume {
 
     fn fs_profiler_snapshot(&self) -> FsProfilerSnapshot {
         self.inner.profiler_snapshot()
+    }
+
+    fn cache_stats(&self) -> CacheStats {
+        self.inner.cache_stats()
     }
 
     fn list_xattrs(&self, path: &str) -> Result<Vec<XattrEntry>> {

@@ -113,6 +113,22 @@ impl FileSystem {
         snap
     }
 
+    /// Aggregate block-cache counters across all mounted volumes, for the
+    /// boot-work line: a machine has one cache per volume, and the number that
+    /// says how much of a boot's reading the cache served is their sum.
+    pub fn cache_stats(&self) -> crate::fs::block_cache::CacheStats {
+        let mut total = crate::fs::block_cache::CacheStats::default();
+        for vfs in self.filesystems.values() {
+            let v = vfs.cache_stats();
+            total.hits = total.hits.saturating_add(v.hits);
+            total.misses = total.misses.saturating_add(v.misses);
+            total.evictions = total.evictions.saturating_add(v.evictions);
+            total.sequential_hits = total.sequential_hits.saturating_add(v.sequential_hits);
+            total.prefetches_issued = total.prefetches_issued.saturating_add(v.prefetches_issued);
+        }
+        total
+    }
+
     pub fn normalize_path(&self, path: &str) -> Result<String> {
         let cwd = self.current_working_dir.lock().clone();
         self.normalize_path_from(path, &cwd)

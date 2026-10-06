@@ -10,6 +10,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::fs::block_cache::CacheStats;
 use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
@@ -54,6 +55,10 @@ impl F2fsVolume {
 impl VfsFileSystem for F2fsVolume {
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn cache_stats(&self) -> CacheStats {
+        self.fs.cache.stats()
     }
 
     fn lookup(&self, path: &str) -> Result<Arc<dyn VNode>> {

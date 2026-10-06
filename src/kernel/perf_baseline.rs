@@ -51,12 +51,19 @@ pub(crate) fn log_once(ticks: u64) {
     let net = crate::network::stack::NetworkStack::global()
         .map(|stack| stack.profiler_snapshot())
         .unwrap_or_default();
+    let cache = crate::fs::global()
+        .map(|fs| fs.lock().cache_stats())
+        .unwrap_or_default();
+    let device = crate::kernel::block::device_io_snapshot();
 
     crate::println!(
         "[perf  ] boot work: ticks={} frames={} frame-frees={} frame-zero-bytes={} \
          heap-allocs={} heap-bytes={} pt-maps={} pt-lookups={} faults={} \
          fs-lookups={} fs-reads={} fs-read-bytes={} fs-writes={} fs-write-bytes={} \
          fs-transactions={} \
+         cache-hits={} cache-misses={} cache-prefetches={} cache-sequential-hits={} \
+         cache-evictions={} \
+         blk-reads={} blk-read-bytes={} blk-writes={} blk-write-bytes={} \
          ip4-rx={} ip4-tx={} ip6-rx={} ip6-tx={} \
          irqs={} ipis={} spurious={}",
         ticks,
@@ -74,6 +81,15 @@ pub(crate) fn log_once(ticks: u64) {
         fs.writes,
         fs.write_bytes,
         fs.transactions,
+        cache.hits,
+        cache.misses,
+        cache.prefetches_issued,
+        cache.sequential_hits,
+        cache.evictions,
+        device.read_ops,
+        device.read_bytes,
+        device.write_ops,
+        device.write_bytes,
         net.ipv4_packets_rx,
         net.ipv4_packets_tx,
         net.ipv6_packets_rx,

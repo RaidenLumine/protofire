@@ -142,8 +142,11 @@ impl FileSystem {
         let temp_image = SimpleFs::build_image("simplefs:temp", &[])
             .unwrap_or_else(|_| vec![0_u8; layout::DEMO_DISK_TEMP_BLOCKS as usize * BLOCK_SIZE]);
 
-        let temp_device =
-            MemoryBlockDevice::new("xiu-temp0", temp_image, /* read_only */ false);
+        let temp_device = crate::kernel::block::counting_device(MemoryBlockDevice::new(
+            "xiu-temp0",
+            temp_image,
+            /* read_only */ false,
+        ));
         let temp_fs = SimpleFs::open(temp_device.clone(), /* case_sensitive */ true)?;
 
         self.register_block_device(TEMP_MOUNT_DEVICE, temp_device);
@@ -164,11 +167,12 @@ impl FileSystem {
         // mounts it the way a boot disk is mounted: the same partition walk and
         // the same system-slot selection.  Two layouts would be two things to
         // keep in step — and the A/B pair would be exercised by neither.
-        let disk: Arc<dyn BlockDevice> = crate::fs::block::MemoryBlockDevice::new(
-            "xiu-demo0",
-            crate::fs::demo::build_demo_disk_image(),
-            false,
-        );
+        let disk: Arc<dyn BlockDevice> =
+            crate::kernel::block::counting_device(crate::fs::block::MemoryBlockDevice::new(
+                "xiu-demo0",
+                crate::fs::demo::build_demo_disk_image(),
+                false,
+            ));
 
         match self.boot_disk_zone_devices_from_mbr(disk)? {
             Some(devices) => self.install_zone_devices(devices),
@@ -180,6 +184,13 @@ impl FileSystem {
         &mut self,
         boot_disk: Arc<dyn BlockDevice>,
     ) -> Result<BootDiskLayoutSource> {
+        // One wrap per device, at the point it enters the filesystem: every
+        // read after this — the partition walk, the system-slot scan, and the
+        // filesystem's own reads through its slice of the disk — passes
+        // through it, and each of them is counted once because a slice hands
+        // its parent's wrapped device down.  See
+        // `crate::kernel::block::counting_device`.
+        let boot_disk = crate::kernel::block::counting_device(boot_disk);
         // Prefer explicit partition discovery first, then fall back to the
         // legacy fixed zone layout for older disk images.
         if let Some(zone_devices) = self.boot_disk_zone_devices_from_mbr(boot_disk.clone())? {

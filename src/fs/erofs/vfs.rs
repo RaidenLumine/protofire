@@ -9,6 +9,7 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 
+use crate::fs::block_cache::CacheStats;
 use crate::kernel::sync::Mutex;
 use crate::Error;
 use crate::Result;
@@ -58,6 +59,10 @@ impl EroFsVolume {
 impl VfsFileSystem for EroFsVolume {
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn cache_stats(&self) -> CacheStats {
+        self.fs.cache.stats()
     }
 
     fn lookup(&self, path: &str) -> Result<Arc<dyn VNode>> {

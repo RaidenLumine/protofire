@@ -120,7 +120,11 @@ if [ "$mode" = "record" ]; then
         printf '# operations it served (`fs-reads`, `fs-writes`) and how many bytes\n'
         printf '# those operations were asked for (`fs-read-bytes`, `fs-write-bytes`),\n'
         printf '# summed over the mounted volumes.  What a cache served or a device\n'
-        printf '# moved is not counted here, and that is the next layer to measure.\n'
+        printf '# moved is not counted here.  The `cache-*` rows are the block\n'
+        printf '# caches of those volumes summed — hits, misses, prefetches issued and\n'
+        printf '# sequential hits, evictions — and the `blk-*` rows are what actually\n'
+        printf '# reached a device, counted where a device enters the filesystem\n'
+        printf '# (`src/kernel/block.rs`).  Three heights, one read.\n'
         printf '#\n'
 
         printf '%s\n' "$pairs" | while IFS='=' read -r key value; do

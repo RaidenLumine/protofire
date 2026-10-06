@@ -37,12 +37,17 @@
 # theirs is the point of the second driver rather than duplication of the
 # first; see §13 of code-style.md.
 #
-# `perf_baseline` names `fs`, `memory`, `network` and `irq_stats` on purpose:
-# it is the boot-work summary, and the counters it prints are kept by the
-# subsystems that do the work.  The edges point one way — the observer depends
-# on what it observes, and nothing depends on the observer but `maintenance`,
-# which calls it — so these rows are the shape of the check, not a cycle to
-# cut.
+# `perf_baseline` names `fs`, `memory`, `network`, `irq_stats` and `block` on
+# purpose: it is the boot-work summary, and the counters it prints are kept by
+# the subsystems that do the work — including the three heights a read is
+# counted at (the filesystem's own operations and bytes, the block cache's
+# hits and misses, and what reached a device, which is `block`'s).  The edges
+# point one way — the observer depends on what it observes, and nothing
+# depends on the observer but `maintenance`, which calls it — so these rows
+# are the shape of the check, not a cycle to cut.  The `fs` -> `block` rows
+# beside them are that direction spelled out: `src/fs/mod.rs` re-exports the
+# block layer's interface, and the counted occurrences are the three places a
+# device is handed to the wrapper the boot-work line reads.
 #
 # `fs` no longer names `process` either.  Its one edge was the anonymous
 # pipe's condition variable, and a pipe that parks a thread is not storage:
@@ -126,6 +131,7 @@ drivers                      memory                       3
 drivers                      network                      2
 drivers                      process                      15
 drivers                      sync                         23
+fs                           block                        3
 fs                           compression                  2
 fs                           crypto                       10
 fs                           drivers                      2
@@ -178,7 +184,8 @@ oom                          memory                       2
 oom                          process                      3
 percpu                       process                      3
 percpu                       topology                     2
-perf_baseline                fs                           1
+perf_baseline                block                        1
+perf_baseline                fs                           2
 perf_baseline                irq_stats                    3
 perf_baseline                memory                       2
 perf_baseline                network                      1

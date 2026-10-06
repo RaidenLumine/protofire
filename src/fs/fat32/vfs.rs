@@ -12,6 +12,7 @@ use core::sync::atomic::AtomicU32;
 
 use crate::fs::block::BlockDevice;
 use crate::fs::block::BLOCK_SIZE;
+use crate::fs::block_cache::CacheStats;
 use crate::fs::filesystem::profiler::FsProfilerSnapshot;
 use crate::fs::vfs::DirectoryEntry;
 use crate::fs::vfs::FileSystem as VfsTrait;
@@ -402,6 +403,10 @@ impl VfsTrait for FatVolume {
 
     fn fs_profiler_snapshot(&self) -> FsProfilerSnapshot {
         self.fs.lock().profiler.snapshot()
+    }
+
+    fn cache_stats(&self) -> CacheStats {
+        self.fs.lock().cache.stats()
     }
 
     fn check_and_repair(&self) -> Result<VolumeCheckReport> {

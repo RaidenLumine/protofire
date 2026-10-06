@@ -11,6 +11,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::fs::block::BlockDevice;
+use crate::fs::block_cache::CacheStats;
 use crate::fs::filesystem::profiler::FsProfilerSnapshot;
 use crate::fs::vfs::checksum::ChecksumPolicy;
 use crate::fs::vfs::checksum::ChecksumVerifier;
@@ -341,6 +342,10 @@ impl VfsFileSystem for Ext4FsVolume {
 
     fn fs_profiler_snapshot(&self) -> FsProfilerSnapshot {
         self.fs.profiler.snapshot()
+    }
+
+    fn cache_stats(&self) -> CacheStats {
+        self.fs.cache.stats()
     }
 }
 
