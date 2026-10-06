@@ -84,12 +84,6 @@ pub const PORTSC_PED: u32 = 1 << 1;
 /// enable) the device on the port; the controller clears it when the reset
 /// finishes and raises the port reset *change* bit.
 pub const PORTSC_PR: u32 = 1 << 4;
-/// PORTSC: Port Power.
-pub const PORTSC_PP: u32 = 1 << 9;
-/// PORTSC: Port Speed, bits 13:10 (0 = full, 1 = low, 2 = high, 3 = super).
-pub const PORTSC_SPEED_SHIFT: u32 = 10;
-pub const PORTSC_SPEED_MASK: u32 = 0x0F << PORTSC_SPEED_SHIFT;
-
 /// PORTSC: the change bits in the upper half of the register.
 ///
 /// These are write-1-to-clear, and they are also how the controller decides

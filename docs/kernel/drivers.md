@@ -141,9 +141,11 @@ string* says how to find (one nibble per tier, and the controller walks exactly
 those nibbles).  It also **watches the hub's own interrupt endpoint**, which is
 where a hub reports which of its ports changed: that report is a bitmap, one bit
 per port, and a change the driver has handled is cleared so the report stops.
-A port with a device on it that is not enabled is one that just arrived — power,
-reset, address — and a port with no device is one that just left, whose slot is
-disabled so the next device on the same route can take it.  Every hub found is
+A port with a device on it that is not enabled is one that just arrived — power where the hub
+switches power per port, reset, address — and a port with no device is one that just left,
+whose slot and everything behind it is disabled so the next device on the same route can
+take it.  The change bits are read back after they are cleared, and a change this driver has
+no selector for ends the watch rather than coming back forever.  Every hub found is
 watched, including one plugged in behind another: each watch is an entry in a
 list, keyed by the hub's slot, so it is the number of hubs and not a table's
 size that decides how many are watched.  Without that
@@ -172,6 +174,9 @@ the other mechanism: the controller posts a Port Status Change Event naming the
 port, `PORTSC`'s change bits say whether a device arrived or left, and the bits
 are cleared — once after the boot's scan, because a change bit that is still
 set from the boot is a change the controller will not report again.  A device
+that arrived is reset before it is addressed (the specification's order, and
+the reset is what enables a USB 2 port), with the reset's own change bit
+waiting for the controller to say it finished.  A device
 that leaves a root port takes its whole subtree: everything behind a hub is
 behind the hub's port.  And the work those reports ask for is done **from the
 event-ring drain**, never while a transfer is in flight: answering a hub means

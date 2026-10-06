@@ -148,7 +148,7 @@ require_log_line "tone-done"
 
 # The samples themselves, as the host saw them.
 python3 - "$wav" <<'PY' || fail "the WAV the backend wrote does not carry the tone"
-import struct
+import array
 import sys
 import wave
 
@@ -181,8 +181,6 @@ if positive < 100 or negative < 100:
 # counted only between samples that carry the wave, so a stretch of silence
 # between the burst and the ring's next lap is skipped rather than read as a
 # sign change of its own.
-import array
-
 left = array.array("h")
 left.frombytes(data)
 left = left[0::channels]

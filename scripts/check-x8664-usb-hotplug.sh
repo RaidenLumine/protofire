@@ -24,8 +24,8 @@
 #     no device is enumerated behind the hub before the marker command;
 #   * plugging a mouse into the hub's port 1, after that marker, produces
 #     "hub port 1 enumerated (route 0x1)" and a HID mouse;
-#   * unplugging it produces "hub port 1: device removed (slot N)" — the slot
-#     is released, not leaked;
+#   * unplugging it produces "hub port 1: device removed (route 0x1, N slot(s)
+#     released)" — the slot, and everything behind it, is released, not leaked;
 #   * plugging it back in produces the same two lines *again*, which is what
 #     a released slot looks like from outside;
 #   * and a **second** hub, plugged in behind the first one's sibling, is
@@ -160,7 +160,7 @@ wait_for(b"hub port 1 enumerated (route 0x1)")
 wait_for(b"HID mouse ready at slot ")
 
 command("device_del hotplug0")
-wait_for(b"hub port 1: device removed (slot ")
+wait_for(b"hub port 1: device removed (route 0x1")
 
 command("device_add usb-mouse,id=hotplug1,bus=xhci.0,port=2.1")
 wait_for(b"hub port 1 enumerated (route 0x1)", count=2)
@@ -182,7 +182,7 @@ wait_for(b"HID mouse ready at slot ", count=3)
 # A root port, both directions: the keyboard that was there at boot leaves,
 # and a mouse that was not arrives on a free port.
 command("device_del hotplug-kbd")
-wait_for(b"\\[xhci  \\] port [0-9]+: device removed \\(slot ", literal=False)
+wait_for(b"\\[xhci  \\] port [0-9]+: device removed", literal=False)
 wait_for(b"slot(s) released")
 
 command("device_add usb-mouse,id=hotplug-root,bus=xhci.0")
@@ -278,7 +278,7 @@ first_line="$(grep -a -n -F "hub port 1 enumerated (route 0x1)" "$trimmed" | hea
 [ "$first_line" -gt "$marker_line" ] ||
     fail "the hub's device was enumerated at boot, not when it was plugged in"
 
-require_log_line "hub port 1: device removed (slot "
+require_log_line "hub port 1: device removed (route 0x1"
 [ "$(count_log_lines "hub port 1 enumerated (route 0x1)")" -ge 2 ] ||
     fail "the device plugged back into the hub was not enumerated again"
 [ "$(count_log_lines "HID mouse ready at slot ")" -ge 4 ] ||
