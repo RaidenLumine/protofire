@@ -134,12 +134,33 @@ pub const HDA_SDBDPL: usize = 0x18; // BDL Pointer Low (32-bit)
 pub const HDA_SDBDPU: usize = 0x1C; // BDL Pointer High (32-bit)
 
 // Stream Descriptor Control (SDCTL) bits.
-pub const SDCTL_SRUN: u32 = 1 << 0; // Stream Run
-pub const SDCTL_SRUN_RESET: u32 = 1 << 1; // Stream Run (stop / reset latch)
-pub const SDCTL_STRM_TAG_SHIFT: u32 = 4; // Stream tag lives in bits 7:4
+//
+// The two low bits are reset then run, in that order, and getting them the
+// other way round is silent: the "start" writes the reset bit, the controller
+// resets a stream it was never running, and a driver that only checks its own
+// bookkeeping still reports that it wrote every sample.
+pub const SDCTL_SRST: u32 = 1 << 0; // Stream Reset (write 1, wait for 1, write 0)
+pub const SDCTL_RUN: u32 = 1 << 1; // Stream Run
+/// Where the stream number (tag) lives in SDCTL.
+///
+/// Bits 23:20 of the descriptor's control register, *not* bits 7:4 — that is
+/// the field of the codec's `SET_CONVERTER_STREAM_CHANNEL` payload, and
+/// confusing the two is silent in the same way the run/reset swap is: the
+/// controller notifies the codec of stream 0, the codec has its converter on
+/// the tag the driver meant, and no sample ever reaches the voice.
+pub const SDCTL_STRM_TAG_SHIFT: u32 = 20;
 pub const SDCTL_STRM_TAG_MASK: u32 = 0x0F << SDCTL_STRM_TAG_SHIFT;
 pub const SDCTL_DIR_SHIFT: u32 = 19; // Direction bit (0 = output, 1 = input)
 pub const SDCTL_DIR_IN: u32 = 1 << SDCTL_DIR_SHIFT;
+
+/// The stream descriptor a playback stream uses.
+///
+/// The eight descriptors are not interchangeable by direction: the first four
+/// carry capture and the last four playback, and a controller told to play on
+/// a capture descriptor resets it instead of routing it to the output
+/// converter — which is what QEMU's `intel-hda` does with `stream >= 4` when
+/// it decides the direction to hand the codec.
+pub const HDA_PLAYBACK_STREAM: usize = 4;
 
 // Stream Descriptor Status (SDSTS) bits.
 pub const SDSTS_BCIS: u8 = 1 << 0; // Buffer Completion Interrupt Status

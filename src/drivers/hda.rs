@@ -23,6 +23,15 @@ const MAX_POSITION_SPINS: u32 = 50_000_000;
 /// Bounded poll for codec-present bits after controller reset.
 const CODEC_WAIT_SPINS: u32 = 10_000_000;
 
+/// Bounded poll for a stream descriptor to latch its reset.
+const STREAM_RESET_SPINS: u32 = 100_000;
+
+/// The base of the playback stream descriptor: the first of the four the
+/// controller reserves for output.
+const fn playback_stream_base() -> usize {
+    HDA_SD_BASE + HDA_PLAYBACK_STREAM * HDA_SD_STRIDE
+}
+
 /// MMIO helpers for 32-bit, 16-bit, and 8-bit register access.
 unsafe fn reg_read32(base: *mut u8, offset: usize) -> u32 {
     // SAFETY: the caller passes this controller's mapped register block and an
@@ -546,26 +555,35 @@ impl HdaController {
     /// Read the stream's link position in buffer (SDLPIB).
     unsafe fn stream_link_position(&self) -> u32 {
         // SAFETY: reading this controller's own stream-link position register.
-        unsafe { reg_read32(self.regs, HDA_SD_BASE + HDA_SDLPIB) }
+        unsafe { reg_read32(self.regs, playback_stream_base() + HDA_SDLPIB) }
     }
 
-    /// Stop the playback stream by clearing SDCTL.SRUN (two-step).
+    /// Stop the playback stream and put its descriptor back in reset.
+    ///
+    /// SDCTL has a two-step reset — set `SRST`, wait until it reads back set,
+    /// then clear it — and `RUN` must be clear first.  Doing it in that order
+    /// is what leaves the descriptor programmable; the previous version of
+    /// this wrote the two bits as if they were swapped and never stopped the
+    /// stream at all.
     unsafe fn stop_playback_stream(&mut self) {
         // SAFETY: stopping a stream means touching the controller's stream registers,
         // which it owns.
         unsafe {
-            let sd = HDA_SD_BASE;
+            let sd = playback_stream_base();
             let ctl = reg_read32(self.regs, sd + HDA_SDCTL);
-            if ctl & SDCTL_SRUN == 0 {
-                return;
+            if ctl & SDCTL_RUN != 0 {
+                reg_write32(self.regs, sd + HDA_SDCTL, ctl & !SDCTL_RUN);
             }
-            // Assert the stop latch, drop SRUN, then release the latch.
-            reg_write32(self.regs, sd + HDA_SDCTL, ctl | SDCTL_SRUN_RESET);
-            reg_write32(
-                self.regs,
-                sd + HDA_SDCTL,
-                ctl & !(SDCTL_SRUN | SDCTL_SRUN_RESET),
-            );
+            let ctl = reg_read32(self.regs, sd + HDA_SDCTL);
+            reg_write32(self.regs, sd + HDA_SDCTL, ctl | SDCTL_SRST);
+            for _ in 0..STREAM_RESET_SPINS {
+                if reg_read32(self.regs, sd + HDA_SDCTL) & SDCTL_SRST != 0 {
+                    break;
+                }
+                core::hint::spin_loop();
+            }
+            let ctl = reg_read32(self.regs, sd + HDA_SDCTL);
+            reg_write32(self.regs, sd + HDA_SDCTL, ctl & !SDCTL_SRST);
         }
     }
 
@@ -574,7 +592,7 @@ impl HdaController {
     unsafe fn setup_playback_stream(&mut self, format: u16) -> Result<()> {
         // SAFETY: as above — the stream descriptor belongs to this controller.
         unsafe {
-            let sd = HDA_SD_BASE;
+            let sd = playback_stream_base();
             self.stop_playback_stream();
             // Clear stale status (W1C).
             reg_write8(self.regs, sd + HDA_SDSTS, SDSTS_BCIS | SDSTS_FIFO_READY);
@@ -593,8 +611,9 @@ impl HdaController {
             let bdl_phys = bdl.phys_addr() as u64;
             reg_write32(self.regs, sd + HDA_SDBDPL, bdl_phys as u32);
             reg_write32(self.regs, sd + HDA_SDBDPU, (bdl_phys >> 32) as u32);
-            // Start: stream tag + output direction (DIR = 0) + SRUN.
-            let sctl = ((self.stream_tag as u32) & 0x0F) << SDCTL_STRM_TAG_SHIFT | SDCTL_SRUN;
+            // Start: stream tag (the direction is the descriptor's, which is
+            // why playback uses one of the last four) and RUN with SRST clear.
+            let sctl = ((self.stream_tag as u32) & 0x0F) << SDCTL_STRM_TAG_SHIFT | SDCTL_RUN;
             reg_write32(self.regs, sd + HDA_SDCTL, sctl);
             Ok(())
         }

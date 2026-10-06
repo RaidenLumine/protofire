@@ -126,6 +126,35 @@ static SHELL_CREATE_FAILED_PREFIX: [u8; b"shell: write: cannot create '".len()] 
 static SHELL_WRITE_FAILED_PREFIX: [u8; b"shell: write: cannot write '".len()] =
     *b"shell: write: cannot write '";
 
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_WORD_TONE: [u8; b"tone".len()] = *b"tone";
+
+/// The audio stream interface: a device node whose payload is a `u32` rate
+/// followed by interleaved 16-bit stereo samples.
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_TONE_PATH: [u8; b"/system/dev/audio".len()] = *b"/system/dev/audio";
+
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_TONE_USAGE: [u8; b"shell: tone needs <hz> <ms>\n".len()] =
+    *b"shell: tone needs <hz> <ms>\n";
+
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_TONE_OPEN_FAILED: [u8; b"shell: tone: cannot open /system/dev/audio\n".len()] =
+    *b"shell: tone: cannot open /system/dev/audio\n";
+
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_TONE_WRITE_FAILED: [u8; b"shell: tone: the audio device refused a write\n".len()] =
+    *b"shell: tone: the audio device refused a write\n";
+
+#[cfg(target_arch = "x86_64")]
+#[link_section = $section]
+static SHELL_TONE_PLAYED: [u8; b"tone: played\n".len()] = *b"tone: played\n";
+
 #[link_section = $section]
 static SHELL_LIST_FAILED_PREFIX: [u8; b"shell: ls: cannot list '".len()] =
     *b"shell: ls: cannot list '";
@@ -611,6 +640,163 @@ unsafe fn shell_builtin_echo(tokens: usize, token_count: usize) {
 #[cfg(target_arch = "x86_64")]
 const SHELL_SIGASYNC_SIGNAL: usize = 10;
 
+/// Parse a decimal number from one of the shell's tokens.
+///
+/// `None` for anything that is not all digits, or that would overflow — the
+/// caller answers with its usage line, which is what a shell should do with a
+/// word it cannot read as a number.
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+#[link_section = $section]
+unsafe fn shell_decimal_at(tokens: usize, index: usize) -> Option<u32> {
+    // SAFETY: `index` is below the token count the caller checked.
+    let (address, length) = unsafe { shell_token(tokens, index) };
+    if length == 0 {
+        return None;
+    }
+    let mut value: u32 = 0;
+    let mut offset = 0usize;
+    while offset < length {
+        // SAFETY: the token is a window inside the line buffer the tokenizer
+        // bounded, and `offset` stays inside it.
+        let byte = unsafe { core::ptr::read_volatile(address.wrapping_add(offset) as *const u8) };
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        // Overflow is refused here rather than by the checked operators: those
+        // call the panic machinery, and a payload that is copied to another
+        // address may not reference anything outside its own section.
+        let digit = byte.wrapping_sub(b'0') as u32;
+        if value > u32::MAX.wrapping_sub(digit) / 10 {
+            return None;
+        }
+        value = value.wrapping_mul(10).wrapping_add(digit);
+        offset += 1;
+    }
+    Some(value)
+}
+
+/// `tone <hz> <ms>`: play a square wave through the audio device node.
+///
+/// The node's ABI is `[u32le sample rate][interleaved 16-bit stereo PCM]`, so
+/// a client states the rate on every write and the driver reprograms the
+/// stream only when it changes.  This is what makes that interface reachable
+/// from the console: the shell could read a device and write a file, but it
+/// had no way to hand a *device* the binary payload its ABI asks for, which
+/// left the whole stream path — the codec, the BDL ring, the DMA — with no
+/// caller in the tree at all.  Like `sigasync`, it is a builtin a gate drives
+/// rather than one the help text advertises.
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+#[link_section = $section]
+unsafe fn shell_builtin_tone(tokens: usize, token_count: usize) {
+    /// The rate the tone is generated at; the codec resamples as it needs.
+    const RATE: u32 = 48_000;
+    /// Frames per write: small enough to live in this frame, large enough that
+    /// a few hundred of them are not a syscall storm.
+    const FRAMES_PER_WRITE: usize = 64;
+    /// Peak amplitude of the square wave, well inside 16-bit range.
+    const AMPLITUDE: i16 = 8000;
+    /// Longest tone one command may ask for, so a stray argument cannot make
+    /// the shell hold the console for minutes.
+    const MAX_MS: u32 = 60_000;
+
+    if token_count < 3 {
+        shell_message!(SHELL_TONE_USAGE);
+        return;
+    }
+    // SAFETY: token 1 exists, per the count just checked.
+    let first = unsafe { shell_decimal_at(tokens, 1) };
+    // SAFETY: and so does token 2.
+    let second = unsafe { shell_decimal_at(tokens, 2) };
+    let (hz, ms) = match (first, second) {
+        (Some(hz), Some(ms)) => (hz, ms),
+        _ => {
+            shell_message!(SHELL_TONE_USAGE);
+            return;
+        }
+    };
+    if hz == 0 || ms == 0 {
+        shell_message!(SHELL_TONE_USAGE);
+        return;
+    }
+    let ms = core::cmp::min(ms, MAX_MS);
+
+    let fd = open_path(
+        shell_address!(SHELL_TONE_PATH),
+        SHELL_TONE_PATH.len(),
+        OPEN_FLAG_WRITE,
+    );
+    if payload_runtime_status_is_error(fd) {
+        shell_message!(SHELL_TONE_OPEN_FAILED);
+        return;
+    }
+
+    // Frames per period, counted rather than divided: the divisor would be a
+    // runtime value, and a division by one carries the panic machinery that a
+    // payload may not reference.  One `hz`-sized step per period reaches the
+    // sample rate in `rate / hz` steps.
+    let mut frames_per_period: u32 = 0;
+    let mut accumulated: u32 = 0;
+    while accumulated < RATE {
+        accumulated = accumulated.wrapping_add(hz);
+        frames_per_period = frames_per_period.wrapping_add(1);
+    }
+    // Half a period, and at least one frame so a frequency above Nyquist still
+    // produces something rather than standing still.
+    let half_period = core::cmp::max(1, frames_per_period / 2);
+    let total_frames = (RATE / 1000).wrapping_mul(ms);
+    let mut buffer = MaybeUninit::<[u8; 4 + FRAMES_PER_WRITE * 4]>::uninit();
+    let buffer_ptr = buffer.as_mut_ptr() as usize;
+
+    // The square wave's state: which half of the period is being emitted, and
+    // how many frames of it are left.  Keeping it as a countdown is what lets
+    // the loop above avoid a per-frame division too.
+    let mut value: i16 = AMPLITUDE;
+    let mut until_flip = half_period;
+    let mut frame = 0u32;
+    while frame < total_frames {
+        let chunk =
+            core::cmp::min(FRAMES_PER_WRITE as u32, total_frames.wrapping_sub(frame)) as usize;
+        let bytes = 4usize.wrapping_add(chunk.wrapping_mul(4));
+        // SAFETY: `buffer_ptr` names `bytes` writable bytes of this frame: the
+        // rate header, then two 16-bit samples per frame.
+        unsafe {
+            let header = RATE.to_le_bytes();
+            // One store per byte with a constant index: a loop over the array
+            // would carry a bounds check, and a bounds check carries the panic
+            // machinery this section may not reference.
+            core::ptr::write_volatile(buffer_ptr as *mut u8, header[0]);
+            core::ptr::write_volatile(buffer_ptr.wrapping_add(1) as *mut u8, header[1]);
+            core::ptr::write_volatile(buffer_ptr.wrapping_add(2) as *mut u8, header[2]);
+            core::ptr::write_volatile(buffer_ptr.wrapping_add(3) as *mut u8, header[3]);
+            for index in 0..chunk {
+                let base = buffer_ptr.wrapping_add(4).wrapping_add(index.wrapping_mul(4));
+                let sample = value.to_le_bytes();
+                for channel in 0..2usize {
+                    let at = base.wrapping_add(channel.wrapping_mul(2));
+                    core::ptr::write_volatile(at as *mut u8, sample[0]);
+                    core::ptr::write_volatile(at.wrapping_add(1) as *mut u8, sample[1]);
+                }
+                until_flip = until_flip.wrapping_sub(1);
+                if until_flip == 0 {
+                    value = value.wrapping_neg();
+                    until_flip = half_period;
+                }
+            }
+        }
+        let written = write_fd(fd, buffer_ptr, bytes);
+        if payload_runtime_status_is_error(written) || written != bytes {
+            let _ = close_fd(fd);
+            shell_message!(SHELL_TONE_WRITE_FAILED);
+            return;
+        }
+        frame = frame.wrapping_add(chunk as u32);
+    }
+    let _ = close_fd(fd);
+    shell_message!(SHELL_TONE_PLAYED);
+}
+
 /// The value the signal probe keeps in a register across the delivery.
 ///
 /// It is 16 bits so every machine can load it as an immediate, and it is
@@ -919,6 +1105,26 @@ extern "C" fn shell_main() -> ! {
             #[cfg(target_arch = "x86_64")]
             unsafe {
                 shell_builtin_sigasync();
+            }
+        } else if {
+            #[cfg(target_arch = "x86_64")]
+            {
+                shell_word_at_is(
+                    tokens_ptr,
+                    0,
+                    shell_address!(SHELL_WORD_TONE),
+                    SHELL_WORD_TONE.len(),
+                )
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                false
+            }
+        } {
+            // SAFETY: as above — the builtin's own payload, the ABI's syscalls.
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                shell_builtin_tone(tokens_ptr, token_count);
             }
         } else {
             shell_message!(SHELL_UNKNOWN_PREFIX);

@@ -111,8 +111,14 @@ interface has a renderer: `src/user/demo/virgl_renderer.rs` presents a frame
 through the syscalls (`gpu_device_info`, a context, a 3D resource, a command
 stream the kernel forwards to the device, a scanout), and both the shell's
 `gpu` command and the demo runtime call it.  The Intel HDA driver finds
-controllers through PCI and does CORB/RIRB command and codec discovery; it has
-no userspace stream interface, so audio is a driver without a consumer.
+controllers through PCI, runs CORB/RIRB, discovers the codec, points its output
+converter at a stream, and drains a BDL ring into the controller's stream DMA
+— the playback path is real, and QEMU's `wav` backend has carried the samples
+it wrote.  What it does not have yet is a *reachable* interface:
+`/system/dev/audio` is documented and the shell's `tone` builtin writes PCM to
+it, but a program's open is refused, because a device path is authorized
+against the mounted filesystem rather than against the virtual node
+([docs/status.md](../status.md) records it as the next piece of work).
 
 ## USB
 
