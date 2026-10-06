@@ -139,6 +139,10 @@ pub mod trb_type {
 
 /// TRB control field: Cycle bit (bit 0).
 pub const TRB_CYCLE_BIT: u32 = 1;
+/// TRB control field: Link TRB Toggle Cycle (bit 1).  A consumer that
+/// follows a Link TRB with this bit set inverts its cycle state, which is
+/// what lets a ring be reused for a second lap.
+pub const TRB_LINK_TC: u32 = 1 << 1;
 /// TRB control field: TRB type shift (bits 10:16).
 pub const TRB_TYPE_SHIFT: u32 = 10;
 /// TRB control field: Chain bit (bit 4) — link TRBs in a transfer.
@@ -266,12 +270,15 @@ impl Trb {
         }
     }
 
-    /// Create a Link TRB pointing to `ring_addr` (physical).
+    /// Create a Link TRB pointing to `ring_addr` (physical), with Toggle
+    /// Cycle set: the consumer inverts its cycle state when it follows it.
+    /// The caller decides which state the link carries — for a producer ring,
+    /// the lap that is ending — and that choice is `RingPos` in `xhci.rs`.
     pub fn link(ring_addr: u64, cycle: u32) -> Self {
         Self {
             parameter: ring_addr,
             status: 0,
-            control: trb_control(trb_type::LINK, cycle),
+            control: trb_control(trb_type::LINK, cycle) | TRB_LINK_TC,
         }
     }
 
@@ -526,10 +533,19 @@ mod tests {
 
     #[test]
     fn trb_link() {
-        let link = Trb::link(0xDEAD_BEEF, TRB_CYCLE_BIT);
+        let link = Trb::link(0xDEAD_BEEF, 0);
         assert_eq!(link.parameter, 0xDEAD_BEEF);
         assert_eq!(link.trb_type(), trb_type::LINK);
-        assert_eq!(link.cycle_bit(), TRB_CYCLE_BIT);
+        // The link carries no cycle of its own until the producer writes one:
+        // a fresh ring's link is written with the state *opposite* the lap in
+        // progress, and Toggle Cycle is always set so the consumer's state
+        // flips in step with the producer's.
+        assert_eq!(link.cycle_bit(), 0);
+        assert_eq!(link.control & TRB_LINK_TC, TRB_LINK_TC);
+
+        let toggling = Trb::link(0xDEAD_BEEF, TRB_CYCLE_BIT);
+        assert_eq!(toggling.cycle_bit(), TRB_CYCLE_BIT);
+        assert_eq!(toggling.control & TRB_LINK_TC, TRB_LINK_TC);
     }
 
     #[test]

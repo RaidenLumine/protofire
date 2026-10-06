@@ -171,6 +171,11 @@ run_p3() {
     fi
     if [ "$RUN_X86_64_RUNTIME" = "1" ]; then
         run_make_step "make check-x8664-runtime" check-x8664-runtime
+        # The same machine with a real filesystem image on its USB disk rather
+        # than a single sector: the reads fill and refill the controller's
+        # rings, which is where the ring-reuse defect lived, and the boot's own
+        # writes are what show the volume reached the host's image.
+        run_make_step "make check-x8664-usb-disk" check-x8664-usb-disk
         # The other half of the boot hand-off: a disk whose init reads the
         # declarations and asks for nothing, so the supervisor's fallback is
         # what starts the services.

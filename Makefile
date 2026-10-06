@@ -66,6 +66,7 @@ endif
 		check-abi-mirror \
 		check-layering \
 		check-x8664-runtime \
+		check-x8664-usb-disk \
 		check-x8664-churn \
 		check-riscv64-churn \
 		check-aarch64-runtime \
@@ -119,6 +120,7 @@ help:
 		'  make check-abi-mirror  - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
+		'  make check-x8664-usb-disk - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
 		'  make check-x8664-init-no-start - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-riscv64-churn - the same churn on riscv64, whose window is one of the things it checks' \
@@ -445,6 +447,18 @@ check-x8664-init-no-start:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-runtime.sh
+
+# Boot the kernel with a real SimpleFs image on a USB disk — no other disk, so
+# the volume is what the boot has to mount — and require that it mounts, that a
+# program is loaded out of it, and that the host's copy of the image changed.
+# The reads wrap the controller's event and transfer rings several times, which
+# the single sector `check-x8664-runtime` reads never does; see the script for
+# what the reuse bug did when only that sector was checked.
+check-x8664-usb-disk:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-usb-disk.sh
 
 # Boot with the stack-window churn: ask the window for more stacks than it has
 # and the invalidation log for more requests than it can hold, then check the

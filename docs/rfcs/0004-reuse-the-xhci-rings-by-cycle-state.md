@@ -1,6 +1,6 @@
 # RFC 0004: Reuse the xHCI rings by cycle state
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-06
 - **Supersedes:** none
@@ -131,6 +131,18 @@ tells the controller where the consumer is — and the controller's
 event-ring-full decision is made against exactly that value, so a dequeue one
 entry out of step is what turns into a dropped-event deadlock.
 
+**The consumer reads the cycle bit before the rest of the entry.**  A TRB is
+published in address order — parameter, then status, then the control word the
+cycle bit lives in — so a control word that already reads as the expected
+cycle is a promise that the other two words are in place, and the rest is read
+only after that promise.  Reading the whole `Trb` in one go does not give that
+promise: it is not one access (the compiler emits two), and the controller can
+publish an event between them, which is exactly what happened — a completion
+whose parameter read as zero with a cycle bit that matched, so the transfer
+that had completed came back as a timeout.  The control word is re-read after
+the other two, and a slot rewritten underneath the read is refused rather than
+half-accepted.
+
 **A completion is matched by the TRB the event names.**  `poll_transfer_event`
 takes the endpoint's DCI and the physical address of the TRB carrying
 Interrupt On Completion, and accepts an event only when it names that
@@ -202,17 +214,23 @@ behaviour.
 
 ## How this is proven
 
-- **A new gate, added with the implementation**, is the one that exercises the
-  reuse: it builds the kernel, has the host write a real SimpleFs image with
-  `cargo run -- mkimage`, hashes it, boots with that image as the only disk
-  behind `usb-storage`, and asserts (a) the mass-storage device answers INQUIRY
-  and is chosen as the boot disk, (b) the boot reaches
+- `make check-x8664-usb-disk` (`scripts/check-x8664-usb-disk.sh`) is the one
+  that exercises the reuse: it builds the kernel, has the host write a real
+  SimpleFs image with `cargo run -- mkimage`, hashes it, boots with that image
+  as the only disk behind `usb-storage`, and asserts (a) the mass-storage
+  device answers INQUIRY and is chosen as the boot disk, (b) the boot reaches
   `mounted MBR-partitioned SimpleFs volumes from ATA boot disk` and not
-  `failed to mount SimpleFs volumes from ATA boot disk`, and (c) the image's
-  SHA-256 changed on the host, which is a write the guest made through the
-  controller.  The single-sector read in `make check-x8664-runtime` stays as
-  the short-transfer control, and `scripts/verify.sh` runs the new gate beside
-  it.
+  `failed to mount SimpleFs volumes from ATA boot disk`, (c) a program is
+  loaded from `/apps` on that volume, and (d) the image's SHA-256 changed on
+  the host, which is a write the guest made through the controller.  The
+  single-sector read in `make check-x8664-runtime` stays as the short-transfer
+  control, and `scripts/verify.sh` runs the new gate beside it.
+- The reproduction rate, measured the way the working rules ask: with the old
+  driver the disk-only boot failed to mount every time it was run, and the
+  same image over `virtio-blk` reached the mount line.  With the cycle change
+  alone it still failed (6 of 6 runs), which is how the torn read above was
+  found; with both, 10 of 10 consecutive boots mounted the volume and 10 of 10
+  left the image changed on the host.
 - `make check-x8664-runtime` remains green: the keyboard's interrupt path,
   the single-block read and the whole boot are unchanged in their assertions,
   and they run over the same rings this RFC rewrites.

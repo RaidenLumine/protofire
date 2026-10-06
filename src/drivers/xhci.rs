@@ -53,12 +53,8 @@ pub struct XhciController {
     /// Page size mask (from PAGESIZE register).
     #[allow(dead_code)]
     page_size: u32,
-    /// Command ring DMA buffer.
-    cmd_ring: DmaBuffer,
-    /// Command ring enqueue index.
-    cmd_enqueue: u32,
-    /// Command ring producer cycle state.
-    cmd_pcs: bool,
+    /// Command ring and its producer position.
+    cmd_ring: TransferRing,
     /// Event ring DMA buffer.
     event_ring: DmaBuffer,
     /// ERST DMA buffer (one segment table entry).
@@ -72,14 +68,9 @@ pub struct XhciController {
     /// Per-slot device context DMA buffers.
     device_contexts: [Option<DmaBuffer>; MAX_SLOTS],
     /// Per-slot transfer ring for EP0.
-    ep0_transfer_rings: [Option<DmaBuffer>; MAX_SLOTS],
-    /// Per-slot EP0 enqueue position (total TRBs produced, modulo the
-    /// ring's usable slots gives the physical slot to append at next).
-    ep0_enqueue: [u32; MAX_SLOTS],
+    ep0_transfer_rings: [Option<TransferRing>; MAX_SLOTS],
     /// Per-slot interrupt transfer ring.
-    int_transfer_rings: [Option<DmaBuffer>; MAX_SLOTS],
-    /// Per-slot interrupt-ring enqueue position (total TRBs produced).
-    int_enqueue: [u32; MAX_SLOTS],
+    int_transfer_rings: [Option<TransferRing>; MAX_SLOTS],
     /// Enumerated slot for HID keyboard (0 = none).
     pub keyboard_slot: u8,
     /// HID keyboard endpoint info.
@@ -95,13 +86,9 @@ pub struct XhciController {
     /// across re-armed reads).
     mouse_report_buf: Option<DmaBuffer>,
     /// Per-slot bulk OUT transfer rings.
-    bulk_out_rings: [Option<DmaBuffer>; MAX_SLOTS],
+    bulk_out_rings: [Option<TransferRing>; MAX_SLOTS],
     /// Per-slot bulk IN transfer rings.
-    bulk_in_rings: [Option<DmaBuffer>; MAX_SLOTS],
-    /// Per-slot bulk OUT ring enqueue position (total TRBs produced).
-    bulk_out_enqueue: [u32; MAX_SLOTS],
-    /// Per-slot bulk IN ring enqueue position (total TRBs produced).
-    bulk_in_enqueue: [u32; MAX_SLOTS],
+    bulk_in_rings: [Option<TransferRing>; MAX_SLOTS],
     /// USB mass storage slot (0 = none).
     pub msd_slot: u8,
     /// Mass storage bulk endpoint info.
@@ -153,6 +140,149 @@ unsafe fn ring_trb_ptr(ring: &DmaBuffer, index: u32) -> *mut Trb {
     }
 }
 
+/// The usable TRBs of one ring segment: the last entry holds the Link TRB.
+const RING_USABLE_TRBS: u32 = (RING_SEGMENT_TRBS - 1) as u32;
+
+/// Where a producer ring writes next, and the cycle state its lap carries.
+///
+/// The cycle bit is the whole handshake.  A slot written *this* lap carries
+/// `pcs`; a slot still holding the previous lap's TRB carries the opposite,
+/// so a consumer walking the segment stops at the first slot the producer
+/// has not rewritten this lap.  With a cycle bit that never changes, every
+/// slot ever written looks like work, and the ring is usable exactly once —
+/// which is the defect the event ring's dropped completions and the mass
+/// storage mount's timeout were both made of.
+///
+/// The Link TRB at the segment's end is part of the same handshake: while a
+/// lap is in progress it carries the *opposite* of `pcs`, so a consumer that
+/// has caught up with the producer stops there rather than following it into
+/// slots the producer has not rewritten; the producer rewrites it with the
+/// ending lap's state at the moment it wraps, which is what lets the consumer
+/// follow it and flip in step.
+#[derive(Clone, Copy)]
+struct RingPos {
+    /// Slot the next TRB goes into, in `0..RING_USABLE_TRBS`.
+    index: u32,
+    /// True while the lap being written carries cycle 1.
+    pcs: bool,
+}
+
+impl RingPos {
+    const NEW: Self = Self {
+        index: 0,
+        pcs: true,
+    };
+
+    /// The cycle bit a TRB written at the current position carries.
+    fn cycle(&self) -> u32 {
+        if self.pcs {
+            TRB_CYCLE_BIT
+        } else {
+            0
+        }
+    }
+
+    /// Write the segment's Link TRB for the lap this position describes.
+    ///
+    /// It points back at the segment's base and carries the state *opposite*
+    /// `pcs`, with Toggle Cycle set so the consumer's cycle state flips when
+    /// it follows.
+    ///
+    /// # Safety
+    ///
+    /// `ring` must be a ring segment of `RING_SEGMENT_TRBS` TRBs owned by the
+    /// caller, and it must outlive every access the controller makes to it.
+    unsafe fn write_link(&self, ring: &DmaBuffer) {
+        // SAFETY: the last entry is inside the segment the caller owns, and
+        // the write is the one field this ring's consumer reads.
+        unsafe {
+            let cycle = if self.pcs { 0 } else { TRB_CYCLE_BIT };
+            let link = ring_trb_ptr(ring, RING_USABLE_TRBS);
+            write_volatile(link, Trb::link(ring.phys_addr() as u64, cycle));
+        }
+    }
+
+    /// Reserve room for `trbs` TRBs in the lap being written, wrapping the
+    /// ring (and flipping the cycle state) first when they would cross the
+    /// Link TRB.
+    ///
+    /// A TD must not straddle the link: its TRBs would carry two different
+    /// cycle states and the controller would stop between them.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::write_link`].
+    unsafe fn reserve(&mut self, ring: &DmaBuffer, trbs: u32) {
+        debug_assert!(trbs <= RING_USABLE_TRBS);
+        if self.index + trbs > RING_USABLE_TRBS {
+            self.pcs = !self.pcs;
+            self.index = 0;
+            // SAFETY: the caller owns the ring, which `write_link` requires.
+            unsafe { self.write_link(ring) };
+        }
+    }
+
+    /// Place one TRB at the current position and advance.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::write_link`], and the caller must have reserved room for
+    /// this TRB with [`Self::reserve`].
+    unsafe fn place(&mut self, ring: &DmaBuffer, mut trb: Trb) {
+        // SAFETY: the position is inside the segment the caller owns; the
+        // controller reads the TRB this writes.
+        unsafe {
+            trb.control |= self.cycle();
+            write_volatile(ring_trb_ptr(ring, self.index), trb);
+        }
+        self.index += 1;
+    }
+}
+
+/// A transfer ring segment and where its producer will write next.
+///
+/// The controller consumes these rings (they are the *producer* side of the
+/// command ring and of each endpoint's transfer ring), so the position and
+/// the segment travel together: a ring without a position, or a position
+/// without its ring, is a state that cannot be expressed.
+struct TransferRing {
+    buf: DmaBuffer,
+    pos: RingPos,
+}
+
+impl TransferRing {
+    /// Allocate a ring segment and program its Link TRB for a first lap.
+    fn allocate() -> Option<Self> {
+        let ring = Self {
+            buf: DmaBuffer::allocate(1)?,
+            pos: RingPos::NEW,
+        };
+        // SAFETY: the ring owns its segment, which stays alive with it.
+        unsafe { ring.pos.write_link(&ring.buf) };
+        Some(ring)
+    }
+
+    /// Physical address of the segment, for a register or a context.
+    fn phys_addr(&self) -> u64 {
+        self.buf.phys_addr() as u64
+    }
+
+    /// Reserve room and place one TRB.  Callers that write a multi-TRB TD
+    /// reserve once with [`RingPos::reserve`] and place each TRB, so the TD
+    /// never straddles the Link TRB.
+    ///
+    /// # Safety
+    ///
+    /// As [`RingPos::write_link`].
+    unsafe fn push(&mut self, trb: Trb) {
+        // SAFETY: the ring owns its segment and stays alive with it.
+        unsafe {
+            self.pos.reserve(&self.buf, 1);
+            self.pos.place(&self.buf, trb);
+        }
+    }
+}
+
 /// Walk a configuration descriptor and return the first interface
 /// descriptor's (class, subclass, protocol).
 ///
@@ -176,28 +306,13 @@ fn config_interface_class(config: &[u8]) -> Option<(u8, u8, u8)> {
     None
 }
 
-/// Write a command TRB to the command ring at the enqueue position,
-/// advance the enqueue index, and ring the doorbell.
-unsafe fn post_cmd_trb(ctrl: &mut XhciController, mut trb: Trb) {
+/// Place a command TRB at the command ring's position (wrapping first if it
+/// would cross the Link TRB) and ring the doorbell.
+unsafe fn post_cmd_trb(ctrl: &mut XhciController, trb: Trb) {
     // SAFETY: `ctrl` owns the command ring and its doorbell; the enqueue index is
-    // kept inside the ring by the wrap below.
+    // kept inside the ring by the ring's own position.
     unsafe {
-        let cycle = if ctrl.cmd_pcs { TRB_CYCLE_BIT } else { 0 };
-        trb.control |= cycle;
-
-        let ptr = ring_trb_ptr(&ctrl.cmd_ring, ctrl.cmd_enqueue);
-        write_volatile(ptr, trb);
-
-        // Place a Link TRB before the end so we wrap cleanly.
-        // The last usable TRB index is RING_SEGMENT_TRBS - 2, the
-        // second-to-last is the Link TRB we always keep there.
-        ctrl.cmd_enqueue += 1;
-        if ctrl.cmd_enqueue >= (RING_SEGMENT_TRBS as u32) - 1 {
-            // We hit the Link TRB we placed at [n-1]; it should advance to [0].
-            ctrl.cmd_pcs = !ctrl.cmd_pcs;
-            ctrl.cmd_enqueue = 0;
-        }
-
+        ctrl.cmd_ring.push(trb);
         // Ring doorbell for the command ring (doorbell 0).
         write_volatile(ctrl.doorbell_base, 0u32);
     }
@@ -206,43 +321,16 @@ unsafe fn post_cmd_trb(ctrl: &mut XhciController, mut trb: Trb) {
 /// Wait for a command completion event on the event ring.
 /// Returns the Command Completion Event TRB.
 unsafe fn await_cmd_completion(ctrl: &mut XhciController) -> Result<Trb> {
-    // SAFETY: as `post_cmd_trb` — the event ring and its dequeue index are the
-    // controller's own.
+    // SAFETY: as `post_cmd_trb` — the event ring and its consumer position are
+    // the controller's own.
     unsafe {
-        // Poll the event ring for a Command Completion Event.
         for _ in 0..10_000_000 {
-            let evt_ptr = ring_trb_ptr(&ctrl.event_ring, ctrl.evt_dequeue);
-            let evt = read_volatile(evt_ptr);
-            let evt_cycle = evt.cycle_bit();
-            let expected_cycle = if ctrl.evt_ccs { TRB_CYCLE_BIT } else { 0 };
-
-            if evt_cycle == expected_cycle {
-                // Event available.
-                let trb_type = evt.trb_type();
-                if trb_type == trb_type::COMMAND_COMPLETION_EVENT {
-                    // Advance dequeue.
-                    ctrl.evt_dequeue += 1;
-                    if ctrl.evt_dequeue >= (RING_SEGMENT_TRBS as u32) - 1 {
-                        ctrl.evt_ccs = !ctrl.evt_ccs;
-                        ctrl.evt_dequeue = 0;
-                    }
-                    // Write ERDP to acknowledge.
-                    let erdp = ctrl.event_ring.phys_addr() as u64
-                        + (ctrl.evt_dequeue as u64 * TRB_SIZE as u64);
-                    reg_write64_lo_hi(
-                        ctrl.runtime_base,
-                        XHCI_RT_IR_BASE + XHCI_RT_ERDP_LOW,
-                        XHCI_RT_IR_BASE + XHCI_RT_ERDP_HIGH,
-                        erdp | (if ctrl.evt_ccs { 1u64 << 3 } else { 0 }),
-                    );
-                    return Ok(evt);
-                }
-                // Other event types: skip and advance.
-                ctrl.evt_dequeue += 1;
-                if ctrl.evt_dequeue >= (RING_SEGMENT_TRBS as u32) - 1 {
-                    ctrl.evt_ccs = !ctrl.evt_ccs;
-                    ctrl.evt_dequeue = 0;
-                }
+            let Some(evt) = ctrl.peek_event() else {
+                continue;
+            };
+            ctrl.advance_event_ring();
+            if evt.trb_type() == trb_type::COMMAND_COMPLETION_EVENT {
+                return Ok(evt);
             }
         }
         Err(crate::Error::TimedOut)
@@ -309,9 +397,10 @@ impl XhciController {
                 max_ports,
                 context_size,
                 page_size,
-                cmd_ring: DmaBuffer::allocate(1)?, // 4 KiB for command ring
-                cmd_enqueue: 0,
-                cmd_pcs: true,
+                // The command ring is a producer ring like any endpoint's:
+                // its Link TRB is written when it is allocated, so the
+                // controller has somewhere to stop before the first wrap.
+                cmd_ring: TransferRing::allocate()?,
                 event_ring: DmaBuffer::allocate(1)?, // 4 KiB for event ring
                 erst_buf: DmaBuffer::allocate(1)?,   // 4 KiB for ERST (we only need 16 bytes)
                 evt_dequeue: 0,
@@ -319,9 +408,7 @@ impl XhciController {
                 dcbaa: DmaBuffer::allocate(1)?, // 4 KiB for DCBAAP
                 device_contexts: [const { None }; MAX_SLOTS],
                 ep0_transfer_rings: [const { None }; MAX_SLOTS],
-                ep0_enqueue: [0; MAX_SLOTS],
                 int_transfer_rings: [const { None }; MAX_SLOTS],
-                int_enqueue: [0; MAX_SLOTS],
                 keyboard_slot: 0,
                 keyboard_ep: None,
                 keyboard_report_buf: None,
@@ -330,8 +417,6 @@ impl XhciController {
                 mouse_report_buf: None,
                 bulk_out_rings: [const { None }; MAX_SLOTS],
                 bulk_in_rings: [const { None }; MAX_SLOTS],
-                bulk_out_enqueue: [0; MAX_SLOTS],
-                bulk_in_enqueue: [0; MAX_SLOTS],
                 msd_slot: 0,
                 msd_endpoints: None,
             };
@@ -384,11 +469,10 @@ impl XhciController {
         // controller's own registers.
         unsafe {
             // --- Command ring ---
-            // Set up the ring with a Link TRB at the end to loop back.
-            let cmd_ring_phys = self.cmd_ring.phys_addr() as u64;
-            let link_index = (RING_SEGMENT_TRBS - 1) as u32;
-            let link_ptr = ring_trb_ptr(&self.cmd_ring, link_index);
-            write_volatile(link_ptr, Trb::link(cmd_ring_phys, TRB_CYCLE_BIT));
+            // The ring was allocated with its Link TRB already in place; all
+            // that is left is to point the controller at it.  RCS = 1 starts
+            // the controller's cycle state on the lap the ring opened.
+            let cmd_ring_phys = self.cmd_ring.phys_addr();
 
             // Program CRCR (Command Ring Control Register).
             // Bits 63:4 = physical address of cmd ring (64-byte aligned, always true for
@@ -397,11 +481,13 @@ impl XhciController {
             reg_write64_lo_hi(self.op_base, XHCI_OP_CRCR_LOW, XHCI_OP_CRCR_HIGH, crcr);
 
             // --- Event ring ---
+            // The event ring is the controller's to produce and ours to
+            // consume, so it has no Link TRB: the ERST segment size below is
+            // where *both* wraps happen, and the controller flips its
+            // producer cycle state there.  The whole segment is usable; a
+            // Link TRB in the last entry would be a slot the controller
+            // would write an event into.
             let evt_ring_phys = self.event_ring.phys_addr() as u64;
-            // Write Link TRB at end of event ring.
-            let evt_link_index = (RING_SEGMENT_TRBS - 1) as u32;
-            let evt_link_ptr = ring_trb_ptr(&self.event_ring, evt_link_index);
-            write_volatile(evt_link_ptr, Trb::link(evt_ring_phys, TRB_CYCLE_BIT));
 
             // Build ERST entry.
             let erst_entry = ErstEntry::new(evt_ring_phys, RING_SEGMENT_TRBS as u16);
@@ -497,6 +583,90 @@ impl XhciController {
         }
     }
 
+    /// The cycle bit the controller's event-ring producer is using at the
+    /// consumer's current position.
+    fn event_cycle(&self) -> u32 {
+        if self.evt_ccs {
+            TRB_CYCLE_BIT
+        } else {
+            0
+        }
+    }
+
+    /// The event the controller has posted at the consumer's position, or
+    /// `None` while that slot still belongs to the previous lap.
+    ///
+    /// The cycle bit is taken from the control word **first**, on its own.
+    /// An event TRB is published in address order — parameter, status, then
+    /// the control word the cycle bit lives in — so a control word that
+    /// already reads as the expected cycle is a promise that the rest of the
+    /// entry is in place; and the rest is read only after that promise, with
+    /// the control word checked again so a slot rewritten underneath the read
+    /// is refused rather than half-accepted.  A single read of the whole
+    /// `Trb` is not one access — the compiler emits two, and the controller
+    /// can publish its event between them — which is how this used to return
+    /// an entry with a matching cycle bit and a zeroed parameter, and how a
+    /// transfer that had completed came back as a timeout.
+    ///
+    /// # Safety
+    ///
+    /// The controller is the one this object was built for and its event
+    /// ring is still mapped.
+    unsafe fn peek_event(&self) -> Option<Trb> {
+        // SAFETY: the dequeue index stays inside the segment, which the
+        // controller owns through this object; the four word reads are the
+        // four words of the entry at that index.
+        unsafe {
+            let base = ring_trb_ptr(&self.event_ring, self.evt_dequeue) as *const u32;
+            let control = read_volatile(base.add(3));
+            if control & TRB_CYCLE_BIT != self.event_cycle() {
+                return None;
+            }
+            let parameter =
+                read_volatile(base) as u64 | (u64::from(read_volatile(base.add(1))) << 32);
+            let status = read_volatile(base.add(2));
+            if read_volatile(base.add(3)) != control {
+                return None;
+            }
+            Some(Trb {
+                parameter,
+                status,
+                control,
+            })
+        }
+    }
+
+    /// Consume the event at the consumer's position and move on.
+    ///
+    /// The wrap is the *segment size* the ERST states, because that is where
+    /// the controller's producer wraps and flips its cycle state; the event
+    /// ring carries no Link TRB.  ERDP is written with EHB set, which
+    /// acknowledges the event and is the value the controller tests its
+    /// event-ring-full condition against, so a consumer that stays in step is
+    /// also what keeps the controller willing to post the next event.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::peek_event`].
+    unsafe fn advance_event_ring(&mut self) {
+        self.evt_dequeue += 1;
+        if self.evt_dequeue >= RING_SEGMENT_TRBS as u32 {
+            self.evt_dequeue = 0;
+            self.evt_ccs = !self.evt_ccs;
+        }
+        let erdp = self.event_ring.phys_addr() as u64 + self.evt_dequeue as u64 * TRB_SIZE as u64;
+        // SAFETY: the runtime window belongs to this controller, and ERDP is
+        // one of the interrupter's own registers.
+        unsafe {
+            reg_write64_lo_hi(
+                self.runtime_base,
+                XHCI_RT_IR_BASE + XHCI_RT_ERDP_LOW,
+                XHCI_RT_IR_BASE + XHCI_RT_ERDP_HIGH,
+                erdp | (1u64 << 3), // EHB: write 1 to clear
+            );
+        }
+    }
+
     // -------------------------------------------------------------------
     // Device enumeration
     // -------------------------------------------------------------------
@@ -512,7 +682,8 @@ impl XhciController {
         // SAFETY: as `send_command` — the enable-slot command is posted to the same
         // rings.
         unsafe {
-            let trb = Trb::enable_slot(if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 }, root_port);
+            // The cycle bit is applied when the ring places the TRB.
+            let trb = Trb::enable_slot(0, root_port);
             let evt = self.send_command(trb)?;
             let cc = evt.completion_code();
             if cc != cc::SUCCESS {
@@ -555,14 +726,7 @@ impl XhciController {
             dcbaa_slice[slot_id as usize] = dev_ctx.phys_addr() as u64;
 
             // EP0 transfer ring (Default Control Endpoint).
-            let ep0_ring = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
-            let ep0_phys = ep0_ring.phys_addr() as u64;
-            // Add Link TRB at end.
-            let link_idx = (RING_SEGMENT_TRBS - 1) as u32;
-            {
-                let link_ptr = ring_trb_ptr(&ep0_ring, link_idx);
-                write_volatile(link_ptr, Trb::link(ep0_phys, TRB_CYCLE_BIT));
-            }
+            let ep0_ring = TransferRing::allocate().ok_or(crate::Error::OutOfMemory)?;
 
             self.device_contexts[idx] = Some(dev_ctx);
             self.ep0_transfer_rings[idx] = Some(ep0_ring);
@@ -587,7 +751,7 @@ impl XhciController {
     unsafe fn build_address_device_input(
         &self,
         _slot_id: u8,
-        ep0_ring: &DmaBuffer,
+        ep0_ring: &TransferRing,
         root_port: u8,
     ) -> DmaBuffer {
         let ctx_size = self.context_size as usize;
@@ -622,7 +786,7 @@ impl XhciController {
         unsafe {
             let ep0_ctrl = base.add(2 * ctx_size) as *mut u32;
             // TR Dequeue Pointer: physical address of EP0 ring | DCS=1
-            let tr_dq = ep0_ring.phys_addr() as u64 | 1; // DCS=1
+            let tr_dq = ep0_ring.phys_addr() | 1; // DCS=1
             write_volatile(ep0_ctrl.add(2), tr_dq as u32);
             write_volatile(ep0_ctrl.add(3), (tr_dq >> 32) as u32);
             // EP type: Control (4), Max Packet Size: 8 (initial MPS).
@@ -655,12 +819,7 @@ impl XhciController {
             let ep0_ring = self.ep0_transfer_rings[idx].as_ref().unwrap();
             let ict = self.build_address_device_input(slot_id, ep0_ring, root_port);
             let ict_phys = ict.phys_addr() as u64;
-            let trb = Trb::address_device(
-                ict_phys,
-                slot_id,
-                false,
-                if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 },
-            );
+            let trb = Trb::address_device(ict_phys, slot_id, false, 0);
             let evt = self.send_command(trb)?;
             let cc = evt.completion_code();
             if cc != cc::SUCCESS {
@@ -696,21 +855,6 @@ impl XhciController {
                 .as_mut()
                 .ok_or(crate::Error::InvalidArgument)?;
 
-            // Append the TD to the persistent EP0 transfer ring.  QEMU tracks
-            // each endpoint's ring dequeue in its own state (`xhci_ring_fetch`
-            // advances it past every consumed TRB and follows the fixed Link
-            // TRB back to slot 0), so clearing the ring between transfers
-            // strands a fresh TD behind a dequeue pointer that has already
-            // moved on.  Instead we append at the position QEMU will read
-            // next — the previous enqueue position — and let the Link TRB
-            // handle wraparound.  The Link TRB carries no TC bit, so QEMU's
-            // cycle state never toggles and every TRB keeps cycle 1.
-            let ring_base = ep0_ring.as_ptr() as *mut Trb;
-            let link_idx = (RING_SEGMENT_TRBS - 1) as u32;
-            let ring_slots = link_idx; // usable TRBs before the fixed Link TRB
-            let mut enq = self.ep0_enqueue[idx] % ring_slots;
-            let mut produced = 0u32;
-
             // Build the setup packet as bytes.
             let setup_bytes: &[u8; 8] = { core::mem::transmute(setup) };
 
@@ -740,45 +884,61 @@ impl XhciController {
             } else {
                 0 // no data stage
             };
+
+            // Append the TD to the persistent EP0 transfer ring.  The
+            // controller tracks this endpoint's dequeue in its own state, so
+            // clearing the ring between transfers strands a fresh TD behind a
+            // dequeue pointer that has already moved on; the ring is
+            // therefore written at its position, and the position carries the
+            // cycle state that makes a wrapped lap readable.  The whole TD is
+            // reserved in one lap first: a TD that crossed the Link TRB would
+            // carry two cycle states and stop the controller between stages.
+            let ring_phys = ep0_ring.phys_addr();
+            let stages: u32 = 1 + u32::from(data_len > 0) + 1;
             let setup_trb = Trb {
                 parameter: u64::from_le_bytes(*setup_bytes),
                 status: 8, // 8 bytes to transfer
-                control: trb_control(trb_type::SETUP_STAGE, TRB_CYCLE_BIT) | TRB_IDT | (trt << 16),
+                control: trb_control(trb_type::SETUP_STAGE, 0) | TRB_IDT | (trt << 16),
             };
-            {
-                write_volatile(ring_base.add(enq as usize), setup_trb);
-            }
-            enq = (enq + 1) % ring_slots;
-            produced += 1;
 
             // Data Stage TRB (only when there is a data stage).
-            if data_len > 0 {
+            let data_trb = if data_len > 0 {
                 let data_dir_flag: u32 = if direction_in { TRB_DIR_IN } else { 0 };
-                let data_trb = Trb {
+                Some(Trb {
                     parameter: data_phys,
                     status: data_len & TRB_TL_MASK,
-                    control: trb_control(trb_type::DATA_STAGE, TRB_CYCLE_BIT) | data_dir_flag,
-                };
-                {
-                    write_volatile(ring_base.add(enq as usize), data_trb);
-                }
-                enq = (enq + 1) % ring_slots;
-                produced += 1;
-            }
+                    control: trb_control(trb_type::DATA_STAGE, 0) | data_dir_flag,
+                })
+            } else {
+                None
+            };
 
             // Status Stage TRB (opposite direction from data).
             let status_dir: u32 = if direction_in { 0 } else { TRB_DIR_IN };
             let status_trb = Trb {
                 parameter: 0,
                 status: 0,
-                control: trb_control(trb_type::STATUS_STAGE, TRB_CYCLE_BIT) | status_dir | TRB_IOC,
+                control: trb_control(trb_type::STATUS_STAGE, 0) | status_dir | TRB_IOC,
             };
-            {
-                write_volatile(ring_base.add(enq as usize), status_trb);
-            }
-            produced += 1;
 
-            self.ep0_enqueue[idx] = self.ep0_enqueue[idx].wrapping_add(produced);
+            // The transfer event names the TRB that carries Interrupt On
+            // Completion, and that address is the completion's identity: the
+            // status stage is the last TRB of the TD, so its slot is where
+            // the position lands minus one.
+            let status_trb_phys = {
+                let pos = &mut ep0_ring.pos;
+                // The operations are safe to call here: `ep0_ring` is this
+                // controller's own segment (the caller of `control_transfer`
+                // guarantees the slot's ring exists, and the Link TRB it needs
+                // was written when that ring was allocated).
+                pos.reserve(&ep0_ring.buf, stages);
+                pos.place(&ep0_ring.buf, setup_trb);
+                if let Some(data_trb) = data_trb {
+                    pos.place(&ep0_ring.buf, data_trb);
+                }
+                pos.place(&ep0_ring.buf, status_trb);
+                ring_phys + (pos.index - 1) as u64 * TRB_SIZE as u64
+            };
 
             // Ring doorbell for EP0 of this slot: doorbell array slot
             // `slot_id` (byte offset slot_id * 4), value = target endpoint
@@ -795,7 +955,7 @@ impl XhciController {
             // field is the residual (bytes not transferred) of the reporting
             // TRB, so transferred = requested - residual.
             let residual = self
-                .poll_transfer_event(slot_id)
+                .poll_transfer_event(slot_id, DOORBELL_TARGET_EP0, status_trb_phys)
                 .map_err(|_| crate::Error::TimedOut)?;
             let transferred = data_len.saturating_sub(residual);
 
@@ -812,56 +972,50 @@ impl XhciController {
         }
     }
 
-    /// Poll the event ring for the Transfer Event of `expected_slot`.
+    /// Poll the event ring for the Transfer Event that names `trb_phys`.
     ///
-    /// Transfer events belonging to another slot (e.g. an armed HID
-    /// interrupt-IN read) are delivered to the HID consumer and re-armed
-    /// rather than dropped, so a bulk/data transfer never steals a HID
-    /// report from the shared event ring.
-    unsafe fn poll_transfer_event(&mut self, expected_slot: u8) -> Result<u32> {
+    /// A Transfer Event's parameter field is the address of the TRB that
+    /// produced it, and that is the completion's identity: the slot and the
+    /// endpoint say whose ring, and the address says *which* transfer.  A
+    /// ring that is out of step therefore surfaces as a timeout rather than
+    /// as a plausible-looking completion for a transfer that never finished.
+    ///
+    /// Transfer events belonging to a HID interrupt endpoint are delivered
+    /// and re-armed rather than dropped, so a bulk or data transfer never
+    /// steals a report from the shared event ring.
+    unsafe fn poll_transfer_event(
+        &mut self,
+        expected_slot: u8,
+        expected_dci: u32,
+        trb_phys: u64,
+    ) -> Result<u32> {
         // SAFETY: the event ring is this controller's, and the dequeue index is
         // advanced in step with what the device wrote.
         unsafe {
             for _ in 0..10_000_000 {
-                let evt_ptr = ring_trb_ptr(&self.event_ring, self.evt_dequeue);
-                let evt = read_volatile(evt_ptr);
-                let evt_cycle = evt.cycle_bit();
-                let expected_cycle = if self.evt_ccs { TRB_CYCLE_BIT } else { 0 };
+                let Some(evt) = self.peek_event() else {
+                    continue;
+                };
+                // Advance and acknowledge — shared by all event types.
+                self.advance_event_ring();
 
-                if evt_cycle != expected_cycle {
+                if evt.trb_type() != trb_type::TRANSFER_EVENT {
                     continue;
                 }
-
-                let trb_type = evt.trb_type();
-                // Advance dequeue and acknowledge — shared by all event types.
-                self.evt_dequeue += 1;
-                if self.evt_dequeue >= (RING_SEGMENT_TRBS as u32) - 1 {
-                    self.evt_ccs = !self.evt_ccs;
-                    self.evt_dequeue = 0;
-                }
-                let erdp = self.event_ring.phys_addr() as u64
-                    + (self.evt_dequeue as u64 * TRB_SIZE as u64);
-                reg_write64_lo_hi(
-                    self.runtime_base,
-                    XHCI_RT_IR_BASE + XHCI_RT_ERDP_LOW,
-                    XHCI_RT_IR_BASE + XHCI_RT_ERDP_HIGH,
-                    erdp | (if self.evt_ccs { 1u64 << 3 } else { 0 }),
-                );
-
-                if trb_type == trb_type::TRANSFER_EVENT {
-                    if evt.slot_id() == expected_slot {
-                        let residual = evt.status & TRB_TL_MASK;
-                        let cc = evt.completion_code();
-                        if cc != cc::SUCCESS {
-                            return Err(crate::Error::InvalidArgument);
-                        }
-                        // Transferred = requested - residual.
-                        return Ok(residual);
+                if evt.slot_id() == expected_slot
+                    && u32::from(evt.endpoint_id()) == expected_dci
+                    && evt.parameter == trb_phys
+                {
+                    let cc = evt.completion_code();
+                    if cc != cc::SUCCESS {
+                        return Err(crate::Error::InvalidArgument);
                     }
-                    // Transfer event for another slot: deliver + re-arm, then
-                    // keep waiting for our own.
-                    self.dispatch_hid_transfer_event(&evt);
+                    // Transferred = requested - residual.
+                    return Ok(evt.status & TRB_TL_MASK);
                 }
+                // Not ours: a HID endpoint's completed report is delivered
+                // and re-armed here rather than dropped.
+                self.dispatch_hid_transfer_event(&evt);
             }
             Err(crate::Error::TimedOut)
         }
@@ -918,14 +1072,8 @@ impl XhciController {
             let ctx_index = dci as usize;
 
             // Allocate interrupt transfer ring.
-            let int_ring = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
-            let int_ring_phys = int_ring.phys_addr() as u64;
-            // Add Link TRB.
-            let link_idx = (RING_SEGMENT_TRBS - 1) as u32;
-            {
-                let link_ptr = ring_trb_ptr(&int_ring, link_idx);
-                write_volatile(link_ptr, Trb::link(int_ring_phys, TRB_CYCLE_BIT));
-            }
+            let int_ring = TransferRing::allocate().ok_or(crate::Error::OutOfMemory)?;
+            let int_ring_phys = int_ring.phys_addr();
 
             // Build an Input Context whose endpoint contexts cover the DCI of
             // the interrupt IN endpoint, mirroring configure_bulk_endpoint:
@@ -978,11 +1126,7 @@ impl XhciController {
             }
 
             let ict_phys = ict.phys_addr() as u64;
-            let trb = Trb::configure_endpoint(
-                ict_phys,
-                slot_id,
-                if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 },
-            );
+            let trb = Trb::configure_endpoint(ict_phys, slot_id, 0);
             let evt = self.send_command(trb)?;
             let cc = evt.completion_code();
             if cc != cc::SUCCESS {
@@ -1175,13 +1319,8 @@ impl XhciController {
             let ctx_size = self.context_size as usize;
             let ep_num = (ep_addr & 0x0F) as usize;
 
-            let bulk_ring = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
-            let bulk_ring_phys = bulk_ring.phys_addr() as u64;
-            let link_idx = (RING_SEGMENT_TRBS - 1) as u32;
-            {
-                let link_ptr = ring_trb_ptr(&bulk_ring, link_idx);
-                write_volatile(link_ptr, Trb::link(bulk_ring_phys, TRB_CYCLE_BIT));
-            }
+            let bulk_ring = TransferRing::allocate().ok_or(crate::Error::OutOfMemory)?;
+            let bulk_ring_phys = bulk_ring.phys_addr();
 
             let dci = if direction_in {
                 2u32 * ep_num as u32 + 1
@@ -1221,18 +1360,14 @@ impl XhciController {
                 let ep_type: u32 = if direction_in { 6 } else { 2 };
                 let ep_ctrl: u32 = (ep_type << 3) | ((max_packet_size as u32 & 0xFFFF) << 16);
                 write_volatile(ep_ctx.add(1), ep_ctrl);
-                let tr_dq = bulk_ring_phys | TRB_CYCLE_BIT as u64;
+                let tr_dq = bulk_ring_phys | 1; // DCS=1
                 write_volatile(ep_ctx.add(2), tr_dq as u32);
                 write_volatile(ep_ctx.add(3), (tr_dq >> 32) as u32);
                 write_volatile(ep_ctx.add(4), max_packet_size as u32);
             }
 
             let ict_phys = ict.phys_addr() as u64;
-            let trb = Trb::configure_endpoint(
-                ict_phys,
-                slot_id,
-                if self.cmd_pcs { TRB_CYCLE_BIT } else { 0 },
-            );
+            let trb = Trb::configure_endpoint(ict_phys, slot_id, 0);
             let evt = self.send_command(trb)?;
             let cc = evt.completion_code();
             if cc != cc::SUCCESS {
@@ -1284,41 +1419,36 @@ impl XhciController {
             // TRB), so we append at the next position rather than rebuilding
             // at slot 0 — otherwise the second transfer on the same ring is
             // stranded behind a dequeue pointer that has already moved on.
-            let (ring, enqueue) = if direction_in {
-                (
-                    self.bulk_in_rings[idx]
-                        .as_ref()
-                        .ok_or(crate::Error::InvalidArgument)?,
-                    &mut self.bulk_in_enqueue[idx],
-                )
+            let ring = if direction_in {
+                self.bulk_in_rings[idx]
+                    .as_mut()
+                    .ok_or(crate::Error::InvalidArgument)?
             } else {
-                (
-                    self.bulk_out_rings[idx]
-                        .as_ref()
-                        .ok_or(crate::Error::InvalidArgument)?,
-                    &mut self.bulk_out_enqueue[idx],
-                )
+                self.bulk_out_rings[idx]
+                    .as_mut()
+                    .ok_or(crate::Error::InvalidArgument)?
             };
-            let ring_base = ring.as_ptr() as *mut Trb;
-            let link_idx = (RING_SEGMENT_TRBS - 1) as u32;
 
-            let enq = *enqueue % link_idx;
             let trb_flags = if direction_in { TRB_DIR_IN } else { 0 };
             let normal_trb = Trb {
                 parameter: data_phys,
                 status: length & TRB_TL_MASK,
-                control: trb_control(trb_type::NORMAL, TRB_CYCLE_BIT) | TRB_IOC | trb_flags,
+                control: trb_control(trb_type::NORMAL, 0) | TRB_IOC | trb_flags,
             };
-            write_volatile(ring_base.add(enq as usize), normal_trb);
-            *enqueue = (*enqueue).wrapping_add(1);
+            // The ring owns its segment, and the position keeps the write
+            // inside it.
+            ring.push(normal_trb);
+            // The event names the TRB that carries Interrupt On Completion,
+            // which is the one just placed — *after* any wrap, so its address
+            // is read from the position the push left behind.
+            let trb_phys = ring.phys_addr() + (ring.pos.index - 1) as u64 * TRB_SIZE as u64;
 
-            // Ring doorbell.
             // Ring doorbell: doorbell array slot `slot_id`, value = target
             // endpoint DCI.
             write_volatile(self.doorbell_base.add(slot_id as usize), dci);
 
             // Poll for transfer event.
-            self.poll_transfer_event(slot_id)?;
+            self.poll_transfer_event(slot_id, dci, trb_phys)?;
             Ok(())
         }
     }
@@ -1395,23 +1525,22 @@ impl XhciController {
         unsafe {
             let idx = slot_id as usize - 1;
             let int_ring = self.int_transfer_rings[idx]
-                .as_ref()
+                .as_mut()
                 .ok_or(crate::Error::InvalidArgument)?;
-            let ring_base = int_ring.as_ptr() as *mut Trb;
-            let link_idx = (RING_SEGMENT_TRBS - 1) as u32;
 
             // Append the Normal TRB at the ring's next position.  The interrupt
             // ring is persistent and re-armed after every completed report, so
-            // rebuilding at slot 0 would strand each re-arm behind QEMU's
-            // dequeue pointer (which advances past the consumed one-TRB TD).
-            let enq = self.int_enqueue[idx] % link_idx;
+            // rebuilding at slot 0 would strand each re-arm behind the
+            // controller's dequeue pointer (which advances past the consumed
+            // one-TRB TD).  The position carries the cycle state across a wrap.
             let normal_trb = Trb {
                 parameter: data_phys,
                 status: (report_len as u32) & TRB_TL_MASK,
-                control: trb_control(trb_type::NORMAL, TRB_CYCLE_BIT) | TRB_IOC,
+                control: trb_control(trb_type::NORMAL, 0) | TRB_IOC,
             };
-            write_volatile(ring_base.add(enq as usize), normal_trb);
-            self.int_enqueue[idx] = self.int_enqueue[idx].wrapping_add(1);
+            // The ring owns its segment, and the position keeps the write
+            // inside it.
+            int_ring.push(normal_trb);
 
             // Ring the doorbell for the endpoint's DCI.
             // Ring doorbell: doorbell array slot `slot_id`, value = target
@@ -1515,48 +1644,18 @@ impl XhciController {
             if self.keyboard_slot == 0 && self.mouse_slot == 0 {
                 return false;
             }
-            // Quick check: is there a new event?
-            let evt_ptr = ring_trb_ptr(&self.event_ring, self.evt_dequeue);
-            let evt = read_volatile(evt_ptr);
-            let evt_cycle = evt.cycle_bit();
-            let expected_cycle = if self.evt_ccs { TRB_CYCLE_BIT } else { 0 };
 
-            if evt_cycle != expected_cycle {
-                return false;
-            }
-
-            // Process event(s).
+            // Drain what the controller has posted.  `peek_event` reads the
+            // consumer's own slot, and every consumed event moves the consumer
+            // on, so the loop ends when that slot belongs to the previous lap
+            // again.
             let mut processed = false;
-            loop {
-                let evt_ptr2 = ring_trb_ptr(&self.event_ring, self.evt_dequeue);
-                let evt2 = read_volatile(evt_ptr2);
-                let evt2_cycle = evt2.cycle_bit();
-                let expected2 = if self.evt_ccs { TRB_CYCLE_BIT } else { 0 };
-                if evt2_cycle != expected2 {
-                    break;
-                }
-
-                let trb_type = evt2.trb_type();
-                self.evt_dequeue += 1;
-                if self.evt_dequeue >= (RING_SEGMENT_TRBS as u32) - 1 {
-                    self.evt_ccs = !self.evt_ccs;
-                    self.evt_dequeue = 0;
-                }
-
-                if trb_type == trb_type::TRANSFER_EVENT {
+            while let Some(evt) = self.peek_event() {
+                self.advance_event_ring();
+                if evt.trb_type() == trb_type::TRANSFER_EVENT {
                     processed = true;
-                    self.dispatch_hid_transfer_event(&evt2);
+                    self.dispatch_hid_transfer_event(&evt);
                 }
-
-                // Update ERDP.
-                let erdp = self.event_ring.phys_addr() as u64
-                    + (self.evt_dequeue as u64 * TRB_SIZE as u64);
-                reg_write64_lo_hi(
-                    self.runtime_base,
-                    XHCI_RT_IR_BASE + XHCI_RT_ERDP_LOW,
-                    XHCI_RT_IR_BASE + XHCI_RT_ERDP_HIGH,
-                    erdp | (if self.evt_ccs { 1u64 << 3 } else { 0 }),
-                );
             }
 
             // Acknowledge the interrupter once the ring is drained, so the next

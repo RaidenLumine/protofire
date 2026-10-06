@@ -56,9 +56,9 @@ the syscall interface.
 | VirtIO (net) | Network | Full RX/TX, modern and legacy transports; on all three machines each queue claims its own MSI-X identity, so a queue's completion wakes that queue's waiter | No throughput baseline |
 | VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189), driven by the demo renderer (`src/user/demo/virgl_renderer.rs`) | QEMU only |
 | NVMe | Block | Full read/write, boot-disk probe | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; x86_64 only; QEMU only |
-| xHCI | USB host | Controller reset and start, command and event rings, device enumeration (Enable Slot, Address Device, GET_DESCRIPTOR), a HID interrupt endpoint per device, port status, and a claimed MSI-X vector whose interrupt drains the event ring when the rings are free; `make check-x8664-runtime` boots all of it with a USB keyboard, presses a key through QEMU's monitor, and asserts the controller's own interrupt | The event ring's *reuse* is unfinished, and a device kept busy for more than one lap of it stops completing transfers (see the mass-storage row). Two things are known and neither is enough: the event ring's Link TRB has no Toggle Cycle bit, so the controller's producer never flips its cycle state between laps — setting it moves the failure later but does not remove it — and a completion is matched to "the next event for this slot" rather than to the TRB the event names, so a ring that is out of step delivers the wrong completion instead of none. Deciding how these rings are reused, and matching completions by TRB address, is its own piece of work; the timer tick still drains the ring as the fallback; x86_64 only; QEMU only |
+| xHCI | USB host | Controller reset and start, command and event rings, device enumeration (Enable Slot, Address Device, GET_DESCRIPTOR), a HID interrupt endpoint per device, port status, and a claimed MSI-X vector whose interrupt drains the event ring when the rings are free; the command, control, interrupt and bulk rings each carry a Link TRB with its Toggle Cycle bit and flip their producer cycle state at the wrap, the event ring is consumed against the segment size the ERST states with no Link TRB in it, and a completion is matched to the TRB the event names; `make check-x8664-runtime` boots all of it with a USB keyboard, presses a key through QEMU's monitor, and asserts the controller's own interrupt | The timer tick still drains the ring as the fallback; the producer rings assume one TD in flight per ring rather than checking for room; no hub, so one device per port; x86_64 only; QEMU only (see [RFC 0004](rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md)) |
 | USB HID | HID (keyboard) | A HID interrupt endpoint is configured on the enumerated device, its reports are decoded into the same keyboard core the PS/2 and VirtIO paths feed, and `make check-x8664-runtime` types a command on the USB keyboard and asserts the shell's answer | No hub, so one device per port; the report deshuffling is the boot's evidence rather than a synthetic matrix |
-| USB MSD | Storage | Bulk-only transport and SCSI command blocks; `make check-x8664-runtime` attaches a disk whose first sector carries a pattern, and the driver enumerates it, identifies it (INQUIRY), reads its capacity and reads that sector back, with the pattern in the log as the evidence | A disk cannot be *mounted* over USB, and so nothing writes to one. The boot-disk layout probe reads enough of the disk to fill and refill the controller's event ring, and from there the transfers stop completing: a read of the whole disk dies at the same block every time with a timeout, while the *same image* mounts over virtio-blk, which is what makes this the driver's and not the image's. QEMU only |
+| USB MSD | Storage | Bulk-only transport and SCSI command blocks; `make check-x8664-runtime` attaches a disk whose first sector carries a pattern, and the driver enumerates it, identifies it (INQUIRY), reads its capacity and reads that sector back, with the pattern in the log as the evidence; `make check-x8664-usb-disk` boots the host's own SimpleFs image on a USB disk and asserts the mount, a program loaded out of it, and that the guest's writes changed the image on the host | QEMU only; no gate writes through a *filesystem* API yet (the boot's own recovery and install are what write) |
 | Serial (UART 16550) | Text I/O | Full duplex | RISC-V falls back to the SBI console when it has no UART |
 | PS/2 Keyboard | Input | Scancode buffering, decoding, console TTY bridge | The PS/2 interrupt path is x86_64; other targets rely on VirtIO input |
 | Framebuffer | Display | Linear framebuffer the console draws on | No userspace graphics API beyond the VIRGL syscalls; QEMU only |
@@ -105,22 +105,21 @@ input, mostly verified under QEMU.
 
 **Weaknesses:**
 
-- **USB is gated through a key press and a disk, but not through its writes**:
-  xHCI resets the controller, runs the command and event rings, enumerates
-  both devices, configures a HID interrupt endpoint, claims an MSI-X vector and
-  takes the interrupt a key press raises — and `make check-x8664-runtime` boots
-  all of that, presses a key through QEMU's monitor, reads the shell's answer,
-  and offers a disk whose first sector carries a pattern the driver reads back.
-  What is missing is narrower than it was, and its cause is now known: nothing
-  writes to the USB disk because nothing can *mount* one — the controller's
-  event ring stops delivering after it has been filled and refilled once, which
-  a boot-disk mount reaches and a single-sector read does not. Reading the ring
-  out from the outside (a probe that hashes the whole disk) fails at the same
-  block every time, with the consumer sitting at the first entry of the ring
-  waiting for a lap the controller never wrote; the same image mounts over
-  virtio-blk. The cycle handling — the link TRB's toggle bit and the consumer's
-  side of it — is the work item, and it is why the two rows above say what they
-  do.
+- **USB is gated through a key press, a mount and a write, but not through a
+  filesystem API**: xHCI resets the controller, runs the command and event
+  rings, enumerates both devices, configures a HID interrupt endpoint, claims
+  an MSI-X vector and takes the interrupt a key press raises —
+  `make check-x8664-runtime` boots all of that, presses a key through QEMU's
+  monitor, reads the shell's answer, and offers a disk whose first sector
+  carries a pattern the driver reads back; and `make check-x8664-usb-disk`
+  boots the host's own SimpleFs image on a USB disk, reads enough of it to
+  wrap the rings several times, loads a program out of it, and checks on the
+  host that the guest's writes reached the image. What is still missing: no
+  gate drives the volume through the filesystem API itself (the boot's own
+  recovery and install are what write), and the rings assume one TD in flight
+  per ring rather than checking for room, which a future pipelining path has
+  to add before it can be correct
+  ([RFC 0004](rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md)).
 - **HDA not surfaced to userspace**: audio has only the controller-level
   interface; there is no usable userspace stream interface yet.
 - **One PCIe driver on the device-tree machines.** The ECAM walk finds devices,

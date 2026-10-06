@@ -125,19 +125,28 @@ core the PS/2 and VirtIO paths feed.  The register map and the ring structures
 are in `drivers/xhci_protocol.rs`; the machine's half is `drivers/xhci.rs`, and
 a machine without PCI answers from `xhci_absent.rs`.
 
-Two things about it are worth stating plainly.  The controller **claims a
-vector of its own** and the interrupt drains the event ring, taken with
-`try_lock` so an interrupt never waits on the ring's owner; the timer tick still
-drains as the fallback, for the case where the lock is held and for a machine
-where the claim was refused.  And `make check-x8664-runtime` drives the whole
-path: it attaches a keyboard, presses a key through QEMU's monitor, and asserts
-the shell's answer — the key is a HID report, the report is a transfer event,
-and the event ring's own MSI-X vector is what carries it.  The same check
-attaches a **disk** beside it: the mass-storage driver speaks bulk-only SCSI to
-it, identifies it, reads its capacity, and reads its first sector — the check
-writes a pattern into that sector before booting, so a line containing those
-bytes is a block that came back rather than a zeroed buffer.  The write half of
-the transport has no gate yet ([docs/status.md](../status.md) says so).
+Three things about it are worth stating plainly.  The rings **carry a cycle
+state through their wraps**: the command ring and each endpoint's control,
+interrupt and bulk ring place a Link TRB with its Toggle Cycle bit and flip the
+cycle state they write when that TRB wraps them, while the event ring — which
+the controller produces and this driver consumes — has no Link TRB and is
+consumed against the segment size the ERST states, with the cycle bit read from
+the control word before the rest of the entry.  That is what makes a ring
+usable for a second lap of work, and it is the design
+[RFC 0004](../rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md) settled after a
+mount over USB was found to stop completing transfers.  The controller
+**claims a vector of its own** and the interrupt drains the event ring, taken
+with `try_lock` so an interrupt never waits on the ring's owner; the timer tick
+still drains as the fallback, for the case where the lock is held and for a
+machine where the claim was refused.  And two checks drive the whole path:
+`make check-x8664-runtime` attaches a keyboard, presses a key through QEMU's
+monitor, and asserts the shell's answer — the key is a HID report, the report
+is a transfer event, and the event ring's own MSI-X vector is what carries it —
+and attaches a **disk** beside it whose first sector carries a pattern the
+driver reads back; `make check-x8664-usb-disk` goes further and boots the
+host's own SimpleFs image on a USB disk, reads enough of it to wrap the rings,
+loads a program out of it, and checks on the host that the guest's writes
+reached the image.
 
 ## Where the code is
 
