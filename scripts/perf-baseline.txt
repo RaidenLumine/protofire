@@ -7,23 +7,23 @@
 # `sh scripts/check-perf-baseline.sh --record`, which keeps every
 # tolerance that is already written down.
 #
-ticks 509 12
+ticks 512 12
 frames 23 0
 frame-frees 8 0
 frame-zero-bytes 610304 0
-heap-allocs 20830 256
-heap-bytes 25321632 262144
-pt-maps 1063 0
-pt-lookups 1066 0
+heap-allocs 20877 256
+heap-bytes 25368528 262144
+pt-maps 1064 0
+pt-lookups 1067 0
 faults 8 0
 fs-lookups 359 0
-fs-reads 1428 0
+fs-reads 1439 0
 fs-writes 16 0
 fs-transactions 19 0
 ip4-rx 3 4
 ip4-tx 11 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 510 12
+irqs 523 12
 ipis 0 0
 spurious 0 0
