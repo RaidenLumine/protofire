@@ -154,6 +154,13 @@ jobs:
           # defect this job should not be mixed up with.
           FEATURES: demo-disk
 
+      # The one boot that puts a real filesystem image on a USB disk, so the
+      # reads wrap the controller's rings several times.  `check-x8664-runtime`
+      # reads a single sector of a USB disk, which never fills a ring, so the
+      # ring reuse this boot exercises is a code path no other gate takes.
+      - name: Boot a filesystem image on the USB disk
+        run: make check-x8664-usb-disk
+
       # The other two architectures' cross-CPU paths.  `check-smp-runtime` is
       # x86_64, and the single-CPU smokes above cannot reach a second CPU at
       # all, so without these two the AArch64 and RISC-V AP bring-up is a code
