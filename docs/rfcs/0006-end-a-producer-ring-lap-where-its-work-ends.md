@@ -145,9 +145,14 @@ the first wrap.
 ## Unresolved questions
 
 - **Should the producer rings be checked for room rather than assumed
-  serial?**  Unchanged from RFC 0004: every submit path here waits for its
-  completion, so at most one TD per ring is in flight, and the rings' rules
-  depend on that rather than enforcing it.
+  serial?**  Every submit path here waits for its completion, so at most one
+  TD per ring is in flight — and the driver now *keeps* that rule instead of
+  relying on it: the work an event asks for (a hub's status-change report, a
+  root port's change) is run from the event-ring drain rather than under a
+  transfer's wait, because that work is itself requests, and a second TD on a
+  ring whose first is outstanding is how a completion comes back for nobody.
+  A path that pipelines submissions would still have to check for room first;
+  nothing here pipelines.
 - **Should a hole be detected rather than avoided?**  A consumer that stops
   early is invisible to the driver; a debug build could read the controller's
   dequeue back and say so, which no path needs yet.
