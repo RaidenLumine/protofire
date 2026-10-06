@@ -70,12 +70,13 @@ The authoritative picture of what exists today is
   bits say what happened to it, and the boot clears them so a later removal is
   a change the controller will report.  `make check-x8664-usb-hotplug` plugs,
   unplugs and re-plugs a device behind a hub and pulls a device out of a root
-  port and plugs another in, all while the guest runs.  Several hubs are watched
-  at once (four, and a hub behind a hub is one of them — the gate plugs one in
-  and puts a mouse behind it).  What is left: a hub past that count is still
-  scanned at boot but not told about later changes, and the rings hold one TD
-  in flight per ring by construction, so a pipelining path would have to
-  check for room first
+  port and plugs another in, all while the guest runs.  Every hub found is
+  watched at once — the watches are a list, not a table, and a hub behind a hub
+  is one of them (the gate plugs one in and puts a mouse behind it).  The
+  rings' one TD in flight per ring is measured now, not assumed: a submit takes
+  room from `RingRoom`, which counts the TRBs submitted and not yet completed
+  and refuses when the ring cannot hold one more, so a pipelining caller has
+  the check it needs before it can be written
   ([RFC 0006](docs/rfcs/0006-end-a-producer-ring-lap-where-its-work-ends.md)).
 - **HDA audio to userspace.** Done and gated: the engine runs (CORB/RIRB,
   codec discovery, the output converter, a BDL playback ring, the stream DMA),

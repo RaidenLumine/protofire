@@ -634,6 +634,64 @@ pub const fn endpoint_interval_field(b_interval: u8) -> u32 {
     (u8::BITS - b_interval.leading_zeros()) - 1
 }
 
+/// TRBs a producer ring may hold unconsumed: one segment's worth, less the
+/// slot a lap's Link TRB takes when the lap fills the segment exactly.
+pub const RING_ROOM_TRBS: u32 = (RING_SEGMENT_TRBS - 1) as u32;
+
+/// How much of a producer ring is already spoken for.
+///
+/// A ring can hold [`RING_ROOM_TRBS`] TRBs before the producer's next lap
+/// would overwrite a TRB the controller has not read yet — and the only
+/// measure of that software *has* is what it submitted and has not seen
+/// complete.  The controller does not write its dequeue pointer back into an
+/// endpoint's context until the endpoint stops or faults, so that context is
+/// stale by design and the ring cannot be asked how full it is; the driver's
+/// own count is what is left.
+///
+/// A caller that waits for each completion never holds more than one TD's
+/// worth of TRBs, so it can never be refused.  A caller that pipelines has to
+/// ask here first, and this is where it finds out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RingRoom {
+    /// TRBs submitted and not yet completed.
+    outstanding: u32,
+}
+
+impl RingRoom {
+    /// An empty ring: nothing submitted.
+    pub const fn new() -> Self {
+        Self { outstanding: 0 }
+    }
+
+    /// TRBs in flight.
+    pub const fn outstanding(&self) -> u32 {
+        self.outstanding
+    }
+
+    /// Take room for a TD of `trbs` TRBs, or refuse because the ring cannot
+    /// hold them.
+    ///
+    /// Refusing is the whole point: a producer that keeps going puts its next
+    /// lap over a TRB the controller has not consumed, and the completion
+    /// that names it never arrives — the transfer it belonged to times out on
+    /// an event for nobody.
+    pub fn reserve(&mut self, trbs: u32) -> Option<()> {
+        if trbs > RING_ROOM_TRBS || self.outstanding + trbs > RING_ROOM_TRBS {
+            return None;
+        }
+        self.outstanding += trbs;
+        Some(())
+    }
+
+    /// Give back the room a completed TD used.
+    ///
+    /// Saturating, because a release without a reservation is a bookkeeping
+    /// mistake and must not make the ring look fuller than it is.
+    pub fn release(&mut self, trbs: u32) {
+        self.outstanding = self.outstanding.saturating_sub(trbs);
+    }
+}
+
 /// How many tiers a route string names: one nibble per hub port the device is
 /// behind, and zero for a device on a root port.
 pub const fn route_tiers(route: u32) -> u32 {
@@ -666,6 +724,39 @@ pub const fn route_prefix_mask(tiers: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ring_room_refuses_a_ring_that_is_full() {
+        let mut room = RingRoom::new();
+        assert_eq!(room.outstanding(), 0);
+        // One TD at a time, the way every caller here submits: always room.
+        for _ in 0..1000 {
+            assert_eq!(room.reserve(3), Some(()));
+            assert_eq!(room.outstanding(), 3);
+            room.release(3);
+            assert_eq!(room.outstanding(), 0);
+        }
+        // Pipelined: sixty-three TRBs fit, the sixty-fourth does not.
+        let mut room = RingRoom::new();
+        let mut taken = 0;
+        while room.reserve(1).is_some() {
+            taken += 1;
+        }
+        assert_eq!(taken, RING_ROOM_TRBS);
+        assert_eq!(room.outstanding(), RING_ROOM_TRBS);
+        // A TD too large for the ring is refused whatever is outstanding.
+        let mut room = RingRoom::new();
+        assert_eq!(room.reserve(RING_ROOM_TRBS + 1), None);
+        assert_eq!(room.outstanding(), 0);
+        // Draining one TRB opens room for exactly one.
+        room.reserve(RING_ROOM_TRBS).expect("a whole ring fits");
+        assert_eq!(room.reserve(1), None);
+        room.release(1);
+        assert_eq!(room.reserve(1), Some(()));
+        // A release with nothing outstanding is a no-op, not an underflow.
+        room.release(99);
+        assert_eq!(room.outstanding(), 0);
+    }
 
     #[test]
     fn route_strings_name_their_tiers() {

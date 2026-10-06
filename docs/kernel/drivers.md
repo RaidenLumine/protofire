@@ -144,8 +144,9 @@ per port, and a change the driver has handled is cleared so the report stops.
 A port with a device on it that is not enabled is one that just arrived — power,
 reset, address — and a port with no device is one that just left, whose slot is
 disabled so the next device on the same route can take it.  Every hub found is
-watched (up to a fixed count), including one plugged in behind another: each
-watch is a state of its own, keyed by the hub's slot.  Without that
+watched, including one plugged in behind another: each watch is an entry in a
+list, keyed by the hub's slot, so it is the number of hubs and not a table's
+size that decides how many are watched.  Without that
 endpoint a hub is a device that was scanned once; `make check-x8664-usb-hotplug`
 is the check that plugs, unplugs and re-plugs a device while the guest runs.
 
@@ -175,7 +176,11 @@ that leaves a root port takes its whole subtree: everything behind a hub is
 behind the hub's port.  And the work those reports ask for is done **from the
 event-ring drain**, never while a transfer is in flight: answering a hub means
 issuing requests, and a request submitted under another one's wait would put a
-second TD on a ring whose first is still outstanding.  Three checks drive the
+second TD on a ring whose first is still outstanding.  A submit takes room from its ring's
+`RingRoom` first — the TRBs submitted and not yet completed are what a ring's
+occupancy is, since the controller does not write its dequeue back into an
+endpoint's context until the endpoint stops — and is refused with `Busy`
+rather than allowed to overwrite a TRB the controller has not read.  Three checks drive the
 whole path:
 `make check-x8664-runtime` attaches a keyboard, presses a key through QEMU's
 monitor, and asserts the shell's answer — the key is a HID report, the report

@@ -205,10 +205,12 @@ set +e
     -no-reboot \
     -no-shutdown \
     -monitor "unix:$monitor_socket,server,nowait" \
-    -device qemu-xhci,id=xhci \
+    -device qemu-xhci,id=xhci,p2=8 \
     -device usb-kbd,id=hotplug-kbd,bus=xhci.0 \
     -device usb-hub,id=hub0,bus=xhci.0,port=2 \
     -device usb-hub,id=hub1,bus=xhci.0,port=3 \
+    -device usb-hub,id=hub2,bus=xhci.0,port=4 \
+    -device usb-hub,id=hub3,bus=xhci.0,port=5 \
     -serial stdio >"$log" 2>&1 &
 qemu_pid=$!
 set -e
@@ -282,14 +284,15 @@ require_log_line "hub port 1: device removed (slot "
 [ "$(count_log_lines "HID mouse ready at slot ")" -ge 4 ] ||
     fail "the mouse was not ready for each of the four plugs"
 
-# Two hubs were there at boot and one more was plugged in behind them: a
-# driver that kept one watch would have taken the earlier one's away, and the
+# Four hubs were there at boot and one more was plugged in behind them.  A
+# driver that kept one watch would have taken the earlier ones' away — and the
 # device plugged into the *first* hub (the gate's first move) would never have
-# been seen at all.
-[ "$(count_log_lines "status-change endpoint watching")" -ge 3 ] ||
-    fail "a hub beyond the boot's two was not watched"
-[ "$(count_log_lines "downstream port(s), route 0x0")" -ge 2 ] ||
-    fail "the two hubs that were there at boot were not both taken up"
+# been seen at all — while a driver with a table to fill would have stopped
+# watching at its last row, which is what the fifth watch here is for.
+[ "$(count_log_lines "status-change endpoint watching")" -ge 5 ] ||
+    fail "a hub beyond the boot's four was not watched"
+[ "$(count_log_lines "downstream port(s), route 0x0")" -ge 4 ] ||
+    fail "the four hubs that were there at boot were not all taken up"
 require_log_line "downstream port(s), route 0x1"
 [ "$(count_log_lines "hub port 1 enumerated (route 0x11)")" -ge 1 ] ||
     fail "the device behind the second hub was never enumerated"

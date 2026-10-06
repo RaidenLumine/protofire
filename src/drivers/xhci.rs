@@ -33,14 +33,6 @@ use core::ptr::write_volatile;
 /// Maximum number of device slots we support.
 const MAX_SLOTS: usize = 64;
 
-/// How many hubs the driver watches at once.
-///
-/// A hub is watched through its own interrupt endpoint, and every hub found
-/// has one; what this bounds is how many the driver keeps state for.  Beyond
-/// it a hub is still scanned at boot — it is simply not told about later
-/// changes.
-const MAX_HUBS: usize = 4;
-
 /// How many PORTSC reads to wait for a port's connection to stabilise.
 const PORT_CONNECT_SETTLE_SPINS: usize = 100_000;
 
@@ -66,6 +58,15 @@ struct HubState {
     ep: HidEndpointInfo,
     /// The DMA buffer its reports land in.
     report_buf: DmaBuffer,
+    /// A completed report that has not been run yet.
+    ///
+    /// A report leads to *requests* — a port status read, a reset, an
+    /// enumeration — and those use the same rings the transfer that completed
+    /// was in flight on, so running one where its event is found would push a
+    /// second TD onto a ring whose first is still outstanding.  The residual
+    /// is recorded here and the work is done by
+    /// [`XhciController::service_pending`], from the outermost drain.
+    pending: Option<u32>,
 }
 
 /// The xHCI host controller.
@@ -125,22 +126,17 @@ pub struct XhciController {
     pub msd_slot: u8,
     /// Mass storage bulk endpoint info.
     pub msd_endpoints: Option<crate::drivers::usb_msd::MsdBulkEndpoints>,
-    /// The hubs whose status-change endpoints are watched, one watch each.
+    /// The hubs whose status-change endpoints are watched: one watch each, one
+    /// entry per hub found, and no count the machine can outrun.
     ///
-    /// A watch is per endpoint, not per controller: two hubs on one machine
-    /// each report their own ports, and a machine can have that many (a
-    /// USB 2 hub and a USB 3 hub, or a hub behind a hub).  A hub beyond
-    /// [`MAX_HUBS`] still has its ports scanned at boot.
-    hubs: [Option<HubState>; MAX_HUBS],
-    /// A completed hub report that has not been run yet, per watch.
-    ///
-    /// A report leads to *requests* — a port status read, a reset, an
-    /// enumeration — and those use the same rings the transfer that completed
-    /// was in flight on, so running one where its event is found would push a
-    /// second TD onto a ring whose first is still outstanding.  The events are
-    /// therefore recorded here and the work is done by
-    /// [`Self::service_pending`], from the outermost drain.
-    pending_hub_report: [Option<u32>; MAX_HUBS],
+    /// A hub is watched through its own interrupt endpoint, and every hub has
+    /// one, so the number of watches is the number of hubs — which is why this
+    /// is a list rather than a fixed table.  It is also the one part of the
+    /// controller's state that grows with the machine rather than with the
+    /// slot count, and the controller is built as a value on the boot's stack:
+    /// the per-slot tables are the next thing to move to the heap if this one
+    /// ever grows again.
+    hubs: alloc::vec::Vec<HubState>,
     /// Whether a root port changed since the last drain.  The port is not
     /// kept: the ports are re-read, which is what makes one missed event
     /// harmless.
@@ -337,6 +333,13 @@ impl RingPos {
 struct TransferRing {
     buf: DmaBuffer,
     pos: RingPos,
+    /// How much of the ring is submitted and not yet completed.
+    ///
+    /// The ring cannot be asked how full it is — the controller writes its
+    /// dequeue pointer back into an endpoint's context only when the endpoint
+    /// stops or faults — so what the producer has not seen complete is the
+    /// measure, and it is what bounds a caller that submits without waiting.
+    room: RingRoom,
 }
 
 impl TransferRing {
@@ -345,6 +348,7 @@ impl TransferRing {
         let ring = Self {
             buf: DmaBuffer::allocate(1)?,
             pos: RingPos::NEW,
+            room: RingRoom::new(),
         };
         // SAFETY: the ring owns its segment, which stays alive with it.
         unsafe { ring.pos.write_link(&ring.buf) };
@@ -356,19 +360,56 @@ impl TransferRing {
         self.buf.phys_addr() as u64
     }
 
-    /// Reserve room and place one TRB.  Callers that write a multi-TRB TD
-    /// reserve once with [`RingPos::reserve`] and place each TRB, so the TD
-    /// never straddles the Link TRB.
+    /// Take room for a TD of `trbs` TRBs, and end the lap first if they do not
+    /// fit in it.
+    ///
+    /// Every submission goes through here, which is what keeps the ring's
+    /// occupancy honest: a caller that waits for each completion is never
+    /// refused, and one that pipelines is told when it has to stop instead of
+    /// writing over a TRB the controller has not read.
     ///
     /// # Safety
     ///
     /// As [`RingPos::write_link`].
-    unsafe fn push(&mut self, trb: Trb) {
+    unsafe fn reserve(&mut self, trbs: u32) -> Result<()> {
+        self.room.reserve(trbs).ok_or(crate::Error::Busy)?;
         // SAFETY: the ring owns its segment and stays alive with it.
         unsafe {
-            self.pos.reserve(&self.buf, 1);
+            self.pos.reserve(&self.buf, trbs);
+        }
+        Ok(())
+    }
+
+    /// Place one TRB at the position the last [`Self::reserve`] took room for.
+    ///
+    /// # Safety
+    ///
+    /// As [`RingPos::place`], and the caller must have reserved room with
+    /// [`Self::reserve`].
+    unsafe fn place(&mut self, trb: Trb) {
+        // SAFETY: the position is inside the segment this ring owns.
+        unsafe {
             self.pos.place(&self.buf, trb);
         }
+    }
+
+    /// Give back the room a TD used, once its completion has been seen.
+    fn release(&mut self, trbs: u32) {
+        self.room.release(trbs);
+    }
+
+    /// Reserve room and place one TRB.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::reserve`].
+    unsafe fn push(&mut self, trb: Trb) -> Result<()> {
+        // SAFETY: the ring owns its segment and stays alive with it.
+        unsafe {
+            self.reserve(1)?;
+            self.place(trb);
+        }
+        Ok(())
     }
 }
 
@@ -395,16 +436,30 @@ fn config_interface_class(config: &[u8]) -> Option<(u8, u8, u8)> {
     None
 }
 
+/// The bulk ring a submit used, for handing its TRB back after the wait.
+fn using_in_ring(
+    ctrl: &mut XhciController,
+    idx: usize,
+    direction_in: bool,
+) -> Option<&mut TransferRing> {
+    if direction_in {
+        ctrl.bulk_in_rings[idx].as_mut()
+    } else {
+        ctrl.bulk_out_rings[idx].as_mut()
+    }
+}
+
 /// Place a command TRB at the command ring's position (wrapping first if it
 /// would cross the Link TRB) and ring the doorbell.
-unsafe fn post_cmd_trb(ctrl: &mut XhciController, trb: Trb) {
+unsafe fn post_cmd_trb(ctrl: &mut XhciController, trb: Trb) -> Result<()> {
     // SAFETY: `ctrl` owns the command ring and its doorbell; the enqueue index is
     // kept inside the ring by the ring's own position.
     unsafe {
-        ctrl.cmd_ring.push(trb);
+        ctrl.cmd_ring.push(trb)?;
         // Ring doorbell for the command ring (doorbell 0).
         write_volatile(ctrl.doorbell_base, 0u32);
     }
+    Ok(())
 }
 
 /// Wait for a command completion event on the event ring.
@@ -419,6 +474,9 @@ unsafe fn await_cmd_completion(ctrl: &mut XhciController) -> Result<Trb> {
             };
             ctrl.advance_event_ring();
             if evt.trb_type() == trb_type::COMMAND_COMPLETION_EVENT {
+                // The command is done with its slot on the ring, whether it
+                // completed or failed; a failure is the caller's to report.
+                ctrl.cmd_ring.release(1);
                 return Ok(evt);
             }
         }
@@ -440,7 +498,7 @@ impl XhciController {
     /// `bar0_phys` and `bar0_size` must describe the controller's BAR0 as PCI
     /// enumeration reported it, so that the range is live MMIO; the mapping
     /// this builds is what makes every later register access sound.
-    pub unsafe fn new(bar0_phys: u64, bar0_size: usize) -> Option<Self> {
+    pub unsafe fn new(bar0_phys: u64, bar0_size: usize) -> Option<alloc::boxed::Box<Self>> {
         // SAFETY: the caller passes a BAR address PCI enumeration produced; the mapping
         // this block performs is what makes every later register access sound.
         unsafe {
@@ -478,7 +536,13 @@ impl XhciController {
             hcsparams1, max_slots, max_ports, context_size, page_size
         );
 
-            let mut ctrl = Self {
+            // The controller is tens of kilobytes — a context and three rings
+            // per slot — and the boot runs on a 64 KiB stack.  Returning it by
+            // value costs that stack the value *twice* (the constructor's
+            // literal and the caller's return slot), which a field as large as
+            // a per-slot table pushes over the edge; a box costs one copy, in
+            // the constructor, and the rest of it is heap.
+            let mut ctrl = alloc::boxed::Box::new(Self {
                 op_base,
                 runtime_base,
                 doorbell_base,
@@ -508,11 +572,10 @@ impl XhciController {
                 bulk_in_rings: [const { None }; MAX_SLOTS],
                 msd_slot: 0,
                 msd_endpoints: None,
-                hubs: [const { None }; MAX_HUBS],
-                pending_hub_report: [const { None }; MAX_HUBS],
+                hubs: alloc::vec::Vec::new(),
                 port_change_pending: false,
                 slot_routes: [(0, 0); MAX_SLOTS],
-            };
+            });
 
             ctrl.reset().ok()?;
             ctrl.init_rings().ok()?;
@@ -671,7 +734,7 @@ impl XhciController {
         // SAFETY: `send_command` operates on this controller's command and event rings,
         // both owned by `self`.
         unsafe {
-            post_cmd_trb(self, trb);
+            post_cmd_trb(self, trb)?;
             await_cmd_completion(self)
         }
     }
@@ -1023,20 +1086,18 @@ impl XhciController {
             // Completion, and that address is the completion's identity: the
             // status stage is the last TRB of the TD, so its slot is where
             // the position lands minus one.
-            let status_trb_phys = {
-                let pos = &mut ep0_ring.pos;
-                // The operations are safe to call here: `ep0_ring` is this
-                // controller's own segment (the caller of `control_transfer`
-                // guarantees the slot's ring exists, and the Link TRB it needs
-                // was written when that ring was allocated).
-                pos.reserve(&ep0_ring.buf, stages);
-                pos.place(&ep0_ring.buf, setup_trb);
-                if let Some(data_trb) = data_trb {
-                    pos.place(&ep0_ring.buf, data_trb);
-                }
-                pos.place(&ep0_ring.buf, status_trb);
-                ring_phys + (pos.index - 1) as u64 * TRB_SIZE as u64
-            };
+            // The ring takes room for the whole TD and places its TRBs, so the
+            // TD never straddles the Link TRB and never writes over a TRB the
+            // controller has not read.
+            ep0_ring.reserve(stages)?;
+            ep0_ring.place(setup_trb);
+            if let Some(data_trb) = data_trb {
+                ep0_ring.place(data_trb);
+            }
+            ep0_ring.place(status_trb);
+            // The event names the TRB carrying Interrupt On Completion, which
+            // is the last of the TD — the position the pushes left behind.
+            let status_trb_phys = ring_phys + (ep0_ring.pos.index - 1) as u64 * TRB_SIZE as u64;
 
             // Ring doorbell for EP0 of this slot: doorbell array slot
             // `slot_id` (byte offset slot_id * 4), value = target endpoint
@@ -1052,9 +1113,16 @@ impl XhciController {
             // Poll for Transfer Event on the event ring.  The event's length
             // field is the residual (bytes not transferred) of the reporting
             // TRB, so transferred = requested - residual.
-            let residual = self
+            // Wait for this TD's completion, then hand its TRBs back to the
+            // ring — on either outcome, because a TD that timed out has no
+            // completion left to key the release on.
+            let outcome = self
                 .poll_transfer_event(slot_id, DOORBELL_TARGET_EP0, status_trb_phys)
-                .map_err(|_| crate::Error::TimedOut)?;
+                .map_err(|_| crate::Error::TimedOut);
+            if let Some(ring) = self.ep0_transfer_rings[idx].as_mut() {
+                ring.release(stages);
+            }
+            let residual = outcome?;
             let transferred = data_len.saturating_sub(residual);
 
             // Copy data out if direction was IN.
@@ -1537,7 +1605,7 @@ impl XhciController {
             };
             // The ring owns its segment, and the position keeps the write
             // inside it.
-            ring.push(normal_trb);
+            ring.push(normal_trb)?;
             // The event names the TRB that carries Interrupt On Completion,
             // which is the one just placed — *after* any wrap, so its address
             // is read from the position the push left behind.
@@ -1547,8 +1615,13 @@ impl XhciController {
             // endpoint DCI.
             write_volatile(self.doorbell_base.add(slot_id as usize), dci);
 
-            // Poll for transfer event.
-            self.poll_transfer_event(slot_id, dci, trb_phys)?;
+            // Poll for transfer event, and hand the TRB back either way: a TD
+            // that timed out has no completion left to key the release on.
+            let outcome = self.poll_transfer_event(slot_id, dci, trb_phys);
+            if let Some(ring) = using_in_ring(self, idx, direction_in) {
+                ring.release(1);
+            }
+            outcome?;
             Ok(())
         }
     }
@@ -1639,14 +1712,39 @@ impl XhciController {
                 control: trb_control(trb_type::NORMAL, 0) | TRB_IOC,
             };
             // The ring owns its segment, and the position keeps the write
-            // inside it.
-            int_ring.push(normal_trb);
+            // inside it.  A ring with no room is a ring whose earlier reads
+            // have not completed, which the caller hears as `Busy`.
+            int_ring.push(normal_trb)?;
 
             // Ring the doorbell for the endpoint's DCI.
             // Ring doorbell: doorbell array slot `slot_id`, value = target
             // endpoint DCI.
             write_volatile(self.doorbell_base.add(slot_id as usize), dci);
             Ok(())
+        }
+    }
+
+    /// Re-arm an interrupt endpoint after a report, giving the report's TRB
+    /// back to its ring's room first.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::arm_hid_read`] — the endpoint is one this controller
+    /// configured, and a read of its just completed.
+    unsafe fn rearm_hid_read(
+        &mut self,
+        slot_id: u8,
+        dci: u32,
+        report_len: usize,
+        data_phys: u64,
+    ) -> Result<()> {
+        // SAFETY: the ring belongs to the slot this controller addressed.
+        unsafe {
+            let idx = slot_id as usize - 1;
+            if let Some(ring) = self.int_transfer_rings[idx].as_mut() {
+                ring.release(1);
+            }
+            self.arm_hid_read(slot_id, dci, report_len, data_phys)
         }
     }
 
@@ -1664,7 +1762,7 @@ impl XhciController {
                     crate::drivers::usb_hid::handle_keyboard_report(&report);
                 }
                 if let Some(buf) = self.keyboard_report_buf.as_ref() {
-                    let _ = self.arm_hid_read(
+                    let _ = self.rearm_hid_read(
                         self.keyboard_slot,
                         ep.dci(),
                         ep.report_len,
@@ -1688,7 +1786,7 @@ impl XhciController {
                     crate::drivers::usb_hid::handle_mouse_report(&report[..len]);
                 }
                 if let Some(buf) = self.mouse_report_buf.as_ref() {
-                    let _ = self.arm_hid_read(
+                    let _ = self.rearm_hid_read(
                         self.mouse_slot,
                         ep.dci(),
                         ep.report_len,
@@ -1820,9 +1918,10 @@ impl XhciController {
         // SAFETY: this runs from the drain, which holds the controller's lock
         // and has no transfer outstanding.
         unsafe {
-            for index in 0..MAX_HUBS {
-                if let Some(residual) = self.pending_hub_report[index].take() {
-                    self.handle_hub_status_change(index, residual);
+            for index in 0..self.hubs.len() {
+                if let Some(residual) = self.hubs[index].pending.take() {
+                    let slot_id = self.hubs[index].slot_id;
+                    self.handle_hub_status_change(slot_id, residual);
                 }
             }
             if self.port_change_pending {
@@ -1868,11 +1967,11 @@ impl XhciController {
             let slot = evt.slot_id();
             let dci = evt.endpoint_id();
             let residual = evt.status & TRB_TL_MASK;
-            for (index, hub) in self.hubs.iter().enumerate() {
-                if let Some(hub) = hub {
-                    if slot == hub.slot_id && u32::from(dci) == hub.ep.dci() {
+            if slot != 0 {
+                if let Some(index) = self.hub_index(slot) {
+                    if u32::from(dci) == self.hubs[index].ep.dci() {
                         // Recorded, not run: a report is answered with requests.
-                        self.pending_hub_report[index] = Some(residual);
+                        self.hubs[index].pending = Some(residual);
                         return;
                     }
                 }
@@ -2083,16 +2182,7 @@ impl XhciController {
             // The status-change endpoint comes first, so the changes this pass
             // produces already have somewhere to be reported.
             if let Some(state) = self.configure_hub_endpoint(slot_id, root_port, route, ports) {
-                match self.hubs.iter_mut().find(|watch| watch.is_none()) {
-                    Some(watch) => *watch = Some(state),
-                    None => {
-                        println!(
-                            "[xhci  ] hub at slot {}: {} hubs are already watched — \
-                             scanning this one's ports without watching them",
-                            slot_id, MAX_HUBS
-                        );
-                    }
-                }
+                self.hubs.push(state);
             }
 
             self.scan_hub_ports(slot_id, root_port, route, ports);
@@ -2168,6 +2258,7 @@ impl XhciController {
                 ports,
                 ep,
                 report_buf,
+                pending: None,
             };
             self.arm_hid_read(
                 slot_id,
@@ -2321,19 +2412,20 @@ impl XhciController {
     ///
     /// The report must be the residual of the hub's own completed read, and
     /// the controller must still own that hub's rings.
-    unsafe fn handle_hub_status_change(&mut self, index: usize, residual: u32) {
+    unsafe fn handle_hub_status_change(&mut self, slot_id: u8, residual: u32) {
         // SAFETY: the report landed in the hub's own DMA buffer, written by a
         // transfer on this controller's interrupt ring.
         unsafe {
             let mut report = [0u8; 8];
-            let (slot_id, root_port, route, ports, transferred) = {
-                let Some(hub) = self.hubs.get(index).and_then(|watch| watch.as_ref()) else {
-                    return;
-                };
+            let Some(index) = self.hub_index(slot_id) else {
+                return;
+            };
+            let (root_port, route, ports, transferred) = {
+                let hub = &self.hubs[index];
                 let transferred = hub.ep.report_len.saturating_sub(residual as usize);
                 let len = core::cmp::min(transferred, report.len());
                 core::ptr::copy_nonoverlapping(hub.report_buf.as_ptr(), report.as_mut_ptr(), len);
-                (hub.slot_id, hub.root_port, hub.route, hub.ports, len)
+                (hub.root_port, hub.route, hub.ports, len)
             };
 
             for (byte, bits) in report.iter().enumerate().take(transferred) {
@@ -2351,7 +2443,7 @@ impl XhciController {
                         // keep this report coming back for as long as the
                         // endpoint is armed, so stop watching rather than
                         // spin.
-                        self.hubs[index] = None;
+                        self.hubs.remove(index);
                         println!(
                             "[xhci  ] hub at slot {}: port {} will not finish changing — \
                              no longer watching its ports",
@@ -2363,8 +2455,7 @@ impl XhciController {
             }
 
             // Arm the next read only once this report is fully handled.
-            let (slot, dci, len, phys) = match self.hubs.get(index).and_then(|watch| watch.as_ref())
-            {
+            let (slot, dci, len, phys) = match self.hubs.get(index) {
                 Some(hub) => (
                     hub.slot_id,
                     hub.ep.dci(),
@@ -2373,7 +2464,7 @@ impl XhciController {
                 ),
                 None => return,
             };
-            let _ = self.arm_hid_read(slot, dci, len, phys);
+            let _ = self.rearm_hid_read(slot, dci, len, phys);
         }
     }
 
@@ -2447,6 +2538,14 @@ impl XhciController {
             }
             true
         }
+    }
+
+    /// Where a hub's watch sits in the list, by the slot the hub is on.
+    ///
+    /// A hub is a device on a slot and a slot holds one device, so a slot
+    /// names at most one watch.
+    fn hub_index(&self, slot_id: u8) -> Option<usize> {
+        self.hubs.iter().position(|hub| hub.slot_id == slot_id)
     }
 
     /// The slot a device hangs from, named the way a hub names it: the root
@@ -2546,10 +2645,9 @@ impl XhciController {
                 self.msd_slot = 0;
                 self.msd_endpoints = None;
             }
-            for watch in self.hubs.iter_mut() {
-                if watch.as_ref().is_some_and(|hub| hub.slot_id == slot_id) {
-                    *watch = None;
-                }
+            // The watch belongs to the slot: releasing the slot releases it.
+            if let Some(index) = self.hub_index(slot_id) {
+                self.hubs.remove(index);
             }
             Ok(())
         }
@@ -2740,7 +2838,7 @@ use crate::kernel::sync::Mutex;
 // Global xHCI controller instance (bare-metal only)
 // ---------------------------------------------------------------------------
 
-static XHCI_CONTROLLER: Mutex<Option<XhciController>> = Mutex::new(None);
+static XHCI_CONTROLLER: Mutex<Option<alloc::boxed::Box<XhciController>>> = Mutex::new(None);
 
 /// The interrupter's runtime window, for the interrupt handler.
 ///
@@ -2801,14 +2899,14 @@ where
     F: FnOnce(&mut XhciController) -> R,
 {
     let mut guard = XHCI_CONTROLLER.lock();
-    guard.as_mut().map(f)
+    guard.as_deref_mut().map(f)
 }
 
 /// Poll the xHCI event ring (called from timer tick).
 /// Returns true if keyboard input was processed.
 pub fn xhci_poll() -> bool {
     {
-        if let Some(guard) = XHCI_CONTROLLER.lock().as_mut() {
+        if let Some(guard) = XHCI_CONTROLLER.lock().as_deref_mut() {
             // SAFETY: the global controller is published only after a successful probe, and
             // the polling path is the only reader of its rings.
             unsafe {
@@ -2918,7 +3016,7 @@ fn probe_xhci() -> crate::Result<()> {
         // window's.  The platform programs the table once the local APIC is
         // up; a machine or a function where that fails leaves the tick draining
         // the ring, which is what this driver did before the wiring existed.
-        if let Some(controller) = XHCI_CONTROLLER.lock().as_ref() {
+        if let Some(controller) = XHCI_CONTROLLER.lock().as_deref() {
             XHCI_RUNTIME_BASE.store(controller.runtime_base as usize, Ordering::Release);
         }
         let handler: crate::arch::irq_handlers::IrqHandler = Arc::new(xhci_msi_handler);
