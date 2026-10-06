@@ -967,6 +967,46 @@ pub unsafe fn restore_page(virtual_address: usize) -> bool {
     true
 }
 
+/// The window this platform reserves for reaching a device's BAR through an
+/// alias, and how much of it one device gets.
+///
+/// A PCIe BAR on this machine sits above the range the kernel maps, so a driver
+/// reads it through an alias.  The alias is handed out one slot per registered
+/// window rather than being one fixed address: two drivers reading their
+/// registers at the same alias would be reading each other's device, which is
+/// what the *second* PCIe driver found when there was only one address.  The
+/// slots stop below the address the ITS reaches an MSI-X table through, so the
+/// two windows cannot collide.
+const DEVICE_BAR_ALIAS_BASE: usize = 0x2_0040_0000;
+const DEVICE_BAR_ALIAS_SLOT: usize = 0x1_0000;
+const DEVICE_BAR_ALIAS_END: usize = 0x2_0080_0000;
+
+static DEVICE_BAR_ALIAS_NEXT: AtomicUsize = AtomicUsize::new(DEVICE_BAR_ALIAS_BASE);
+
+/// Reserve the next alias slot for a BAR of `size` bytes.
+///
+/// Answers `None` when the window is exhausted or the BAR does not fit a single
+/// slot.  A caller that gets `None` leaves its device alone instead of mapping
+/// it over another driver's window.
+pub(crate) fn reserve_device_bar_alias(size: usize) -> Option<usize> {
+    if size == 0 || size > DEVICE_BAR_ALIAS_SLOT {
+        return None;
+    }
+    loop {
+        let next = DEVICE_BAR_ALIAS_NEXT.load(Ordering::Acquire);
+        let end = next.checked_add(DEVICE_BAR_ALIAS_SLOT)?;
+        if end > DEVICE_BAR_ALIAS_END {
+            return None;
+        }
+        if DEVICE_BAR_ALIAS_NEXT
+            .compare_exchange(next, end, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return Some(next);
+        }
+    }
+}
+
 /// Map a device-MMIO region at a fixed virtual address.
 ///
 /// # Safety

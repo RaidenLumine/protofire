@@ -28,11 +28,14 @@
 # Since `sync` holds only a spinlock and the mutex wrapper over it, naming it
 # is naming the bottom layer.
 #
-# One occurrence of `drivers` naming `process` is argued rather than counted as
-# debt: `virtio_net` owns a wait queue for its own device's completion
-# interrupt, the same shape `serial`, `keyboard` and `mouse` already have for
-# theirs.  The wakeup belongs to the device whose identities were claimed, so
-# it cannot be folded into a platform-wide signal; see §13 of code-style.md.
+# The occurrences of `drivers` naming `process` and `sync` are argued rather
+# than counted as debt: each PCIe driver owns a wait queue for its own device's
+# completion interrupt — `virtio_net` for its queues, the block driver for its
+# request queue — the same shape `serial`, `keyboard` and `mouse` already have
+# for theirs.  The wakeup belongs to the device whose identities were claimed,
+# so it cannot be folded into a platform-wide signal, and two devices claiming
+# theirs is the point of the second driver rather than duplication of the
+# first; see §13 of code-style.md.
 #
 # `perf_baseline` names `fs`, `memory`, `network` and `irq_stats` on purpose:
 # it is the boot-work summary, and the counters it prints are kept by the
@@ -111,8 +114,8 @@ device                       sync                         1
 drivers                      block                        10
 drivers                      memory                       3
 drivers                      network                      2
-drivers                      process                      13
-drivers                      sync                         19
+drivers                      process                      15
+drivers                      sync                         23
 fs                           compression                  2
 fs                           crypto                       10
 fs                           drivers                      2

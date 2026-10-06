@@ -55,7 +55,7 @@ architecture: `drivers::nvme` exists everywhere, and only its body differs.
 |--------|-----------|-------|
 | ATA (PIO) | Polling | The driver is the legacy path: programmed I/O, no DMA, no interrupt |
 | AHCI (SATA) | Polling | Discovers controllers through PCI; the driver's own note says it is polling only — no MSI/MSI-X |
-| VirtIO block | The transport's | Modern and legacy transports; the boot-disk chain's `virt` path |
+| VirtIO block | The transport's | Modern and legacy transports, on the virtio-mmio bus and on PCIe; the boot-disk chain's `virt` path |
 | NVMe | Polling | The driver's own comment says it is poll-based: completions are reaped inside the submit-and-wait helpers, and the vector constants and handler exist without a programmed table behind them |
 | USB mass storage | Not reachable | Bulk-only transport and SCSI command blocks are implemented; nothing can reach them until xHCI can drive a bus |
 
@@ -67,6 +67,28 @@ and that is worth stating plainly — on the two PCIe machines the queues claim
 their identities and a transmit waits on that queue's own interrupt, while on
 x86_64 no device table is programmed and the completion is polled
 ([interrupts.md](interrupts.md) has the message path itself).
+
+## PCIe
+
+A PCIe BAR on the device-tree machines sits above the range the kernel maps, so
+a driver does not read the address the resource pass assigned; it asks the
+platform for a *window* (`arch::platform::pci_register_window`), and the
+machine's own file under `src/arch/` decides how that window is reached — a
+low alias on AArch64, the identity map on RISC-V.  AArch64 hands out one alias
+slot per registered window rather than one fixed address: two drivers reading
+their registers at the same alias would each be reading the other's device,
+which is what the *second* PCIe driver found.
+
+Interrupts are claimed, not found.  A driver names the MSI-X entries it uses,
+the platform allocates identities for them and programs the device's table once
+the interrupt controller is up, and the driver parks on an interrupt only after
+that — before then the claim answers "not armed" and the completion path polls,
+which is what every transport did before any of this existed
+([rfcs/0001](../rfcs/0001-spread-message-signalled-interrupts.md) is the
+placement design, and [interrupts.md](interrupts.md) has the message path).
+Two drivers do this on the device-tree machines — `virtio_net` and the block
+driver — and the point of the second one is that the identities are the
+*device's*: the pair do not share a claim, a DeviceID, or an LPI range.
 
 ## Input and console
 

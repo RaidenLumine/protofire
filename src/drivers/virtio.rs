@@ -1200,11 +1200,15 @@ pub fn mmio_slot_addresses() -> alloc::vec::Vec<usize> {
 #[cfg(target_os = "none")]
 pub fn probe_boot_disk() -> Option<alloc::sync::Arc<dyn BlockDevice>> {
     if let Some(slots) = crate::arch::virtio_mmio::fdt_slots() {
-        return slots.into_iter().find_map(try_virtio_block_at);
+        return slots
+            .into_iter()
+            .find_map(try_virtio_block_at)
+            .or_else(probe_pci_boot_disk);
     }
     crate::arch::virtio_mmio::window_slots()
         .into_iter()
         .find_map(try_virtio_block_at)
+        .or_else(probe_pci_boot_disk)
 }
 
 /// Attempt to initialise a VirtIO block device at the given MMIO address.
@@ -1251,6 +1255,245 @@ fn try_virtio_block_at(base: usize) -> Option<alloc::sync::Arc<dyn BlockDevice>>
         Some(base),
     );
 
+    Some(alloc::sync::Arc::new(block))
+}
+
+// ─── PCIe block device: the second driver on the message-signalled path ───
+//
+// Until this existed the network driver was the only device that claimed
+// identities from its MSI-X table, which left the whole message-signalled path
+// one driver deep: it could have been a property of that driver rather than of
+// the machine.  This driver is the second claimant — its identities are its
+// own, the platform maps them in the ITS and programs its table, and its
+// completion path waits on the interrupt instead of spinning — and it is a
+// block device, so the PCIe bus now carries storage as well as the NIC.
+
+/// How long one I/O parks on the device's interrupt before re-reading the used
+/// ring.  Short: the ring is the answer, and the wait only saves the spin.
+#[cfg(target_os = "none")]
+const BLOCK_MSI_WAIT_TICKS: u64 = 2;
+
+/// virtio-blk's request queue: the device's first queue, and the one whose
+/// MSI-X entry this driver names.
+#[cfg(target_os = "none")]
+const BLOCK_QUEUE: u16 = 0;
+
+/// What the device's interrupt handler and the I/O path share.
+#[cfg(target_os = "none")]
+struct BlockSignal {
+    /// Held across the wait, so an interrupt that lands between the count check
+    /// and the park cannot be lost.
+    lock: crate::kernel::sync::Mutex<()>,
+    ready: crate::kernel::process::wait::Condvar,
+    /// Interrupts seen since the device's identities were claimed.
+    count: core::sync::atomic::AtomicUsize,
+}
+
+#[cfg(target_os = "none")]
+impl BlockSignal {
+    fn new() -> Self {
+        Self {
+            lock: crate::kernel::sync::Mutex::new(()),
+            ready: crate::kernel::process::wait::Condvar::new(),
+            count: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Wait for the device to interrupt, up to `timeout_ticks`.
+    ///
+    /// Returns whether anything arrived; the caller re-reads its own used ring
+    /// either way, because a wakeup is a condition and not the answer.
+    fn wait(&self, timeout_ticks: u64) -> bool {
+        let guard = self.lock.lock();
+        let seen = self.count.load(core::sync::atomic::Ordering::Relaxed);
+        let wait = self.ready.wait_timeout(guard, timeout_ticks);
+        !wait.timed_out() || self.count.load(core::sync::atomic::Ordering::Relaxed) != seen
+    }
+}
+
+/// The PCIe block device, once its interrupts are its own.
+#[cfg(target_os = "none")]
+struct BlockInterrupts {
+    claim: crate::arch::platform::DeviceInterrupts,
+    signal: alloc::sync::Arc<BlockSignal>,
+}
+
+#[cfg(target_os = "none")]
+static BLOCK_INTERRUPTS: crate::kernel::sync::Mutex<Option<alloc::sync::Arc<BlockInterrupts>>> =
+    crate::kernel::sync::Mutex::new(None);
+
+/// The handler the queue's own MSI-X entry runs.
+#[cfg(target_os = "none")]
+fn block_msi_handler(
+    signal: &alloc::sync::Arc<BlockSignal>,
+) -> crate::arch::irq_handlers::IrqHandler {
+    let signal = signal.clone();
+    alloc::sync::Arc::new(move |irq| {
+        let seen = signal
+            .count
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+            + 1;
+        if seen <= 2 {
+            crate::println!("[virtio-blk] queue MSI (irq {})", irq);
+        }
+        signal.ready.notify_all();
+    })
+}
+
+/// The handler every entry the driver did not name runs — the config-change
+/// entry, for one.  A wakeup that turns out to be another entry's is absorbed
+/// by the loop that re-reads the ring.
+#[cfg(target_os = "none")]
+fn block_device_msi_handler(
+    signal: &alloc::sync::Arc<BlockSignal>,
+) -> crate::arch::irq_handlers::IrqHandler {
+    let signal = signal.clone();
+    alloc::sync::Arc::new(move |irq| {
+        let seen = signal
+            .count
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+            + 1;
+        if seen <= 2 {
+            crate::println!("[virtio-blk] device MSI (irq {})", irq);
+        }
+        signal.ready.notify_all();
+    })
+}
+
+/// Wait for the claimed device, when there is one that can signal yet.
+///
+/// The same shape as the network driver's wait, for the same reasons: a device
+/// whose MSI-X table the platform has not programmed is a polling device, a
+/// machine with no MSI receiver answers the same way, and a caller running with
+/// interrupts masked cannot be woken by the timer that would end the wait.
+#[cfg(target_os = "none")]
+fn wait_for_block_interrupt(timeout_ticks: u64) -> bool {
+    if !crate::arch::interrupts::are_enabled() {
+        return false;
+    }
+    let Some(device) = BLOCK_INTERRUPTS.lock().clone() else {
+        return false;
+    };
+    if !device.claim.is_armed() {
+        return false;
+    }
+    device.signal.wait(timeout_ticks)
+}
+
+/// Probe PCIe for a VirtIO block device.
+///
+/// The device-tree machines put virtio-blk on the PCIe bus as well as on the
+/// virtio-mmio bus, and this is the PCIe half: the machine answers with the
+/// device's register window (through a BAR alias, one slot per device), and the
+/// driver reads it with the modern transport.  The claim is the part that makes
+/// this a second driver rather than a second copy of the first: the identities
+/// the device's table delivers are this device's own, allocated when the claim
+/// is taken and programmed by the platform once the interrupt controller is up.
+#[cfg(target_os = "none")]
+pub fn probe_pci_boot_disk() -> Option<alloc::sync::Arc<dyn BlockDevice>> {
+    use crate::drivers::virtio_pci_modern::PciModernRegion;
+    use alloc::boxed::Box;
+
+    const VIRTIO_VENDOR: u16 = 0x1af4;
+    const STORAGE_CLASS: u8 = 0x01;
+
+    let window = crate::arch::platform::pci_register_window(VIRTIO_VENDOR, STORAGE_CLASS, 0x00)?;
+    crate::println!(
+        "[drivers] virtio-blk PCI: modern transport BAR at {:#018x} ({} bytes)",
+        window.bar_address,
+        window.bar_size
+    );
+
+    // Claim the device's interrupts before the queue is enabled: the vector the
+    // queue latches is only useful if something is registered for the identity
+    // it delivers.  The registration is a table entry and needs no hardware, so
+    // claiming works here; the platform programs this device's table and lets
+    // it signal once the interrupt controller is up, and the completion path
+    // polls until then — which is what it did before.
+    //
+    // One identity for the queue, entry 0, and the device-wide handler for the
+    // rest.  Entries the driver does not name still need an owner, because an
+    // identity the device can signal and nobody owns is counted as spurious.
+    let signal = alloc::sync::Arc::new(BlockSignal::new());
+    let named = [(BLOCK_QUEUE, block_msi_handler(&signal))];
+    let fallback = block_device_msi_handler(&signal);
+    if let Some(claim) = crate::arch::platform::pci_claim_msix(&window, &named, &fallback) {
+        crate::println!(
+            "[virtio-blk] device interrupts claimed: irq {}+; completions wait on them once \
+             the controller programs the table",
+            claim.first_irq()
+        );
+        *BLOCK_INTERRUPTS.lock() = Some(alloc::sync::Arc::new(BlockInterrupts { claim, signal }));
+    }
+
+    let region = Box::new(PciModernRegion::new(
+        window.bar_address,
+        window.device_id,
+        window.vendor_id,
+    ));
+    let block = try_virtio_block_device(VirtIoMmio::new(region))?;
+    crate::println!("[drivers] virtio-blk device found (PCI modern)");
+    crate::drivers::record_bound_device(
+        block.name(),
+        "virtio",
+        crate::drivers::DriverCategory::Storage,
+        Some(window.bar_address),
+    );
+    Some(block)
+}
+
+/// Drive a VirtIO block device through any transport.
+///
+/// The same sequence the virtio-mmio probe runs, with the one addition the
+/// modern transport requires: `VIRTIO_F_VERSION_1` lives in the second feature
+/// page, and a device whose transport is modern does not complete `FEATURES_OK`
+/// unless the driver accepts it.
+#[cfg(target_os = "none")]
+fn try_virtio_block_device(mut transport: VirtIoMmio) -> Option<alloc::sync::Arc<dyn BlockDevice>> {
+    if transport.discover().is_err() {
+        return None;
+    }
+    if transport.device_id() != DEVICE_ID_BLOCK {
+        return None;
+    }
+
+    transport.init_device_with_features(!0).ok()?;
+
+    // Accept VIRTIO_F_VERSION_1 (bit 0 of feature page 1) when the device
+    // offers it, and re-assert FEATURES_OK for it.
+    const VIRTIO_F_VERSION_1_PAGE1: u32 = 1;
+    transport.regs().write32(REG_DEVICE_FEATURES_SEL, 1);
+    let device_features_p1 = transport.regs().read32(REG_DEVICE_FEATURES);
+    if device_features_p1 & VIRTIO_F_VERSION_1_PAGE1 != 0 {
+        transport.regs().write32(REG_DRIVER_FEATURES_SEL, 1);
+        transport
+            .regs()
+            .write32(REG_DRIVER_FEATURES, VIRTIO_F_VERSION_1_PAGE1);
+        let status = transport.regs().read32(REG_STATUS);
+        transport
+            .regs()
+            .write32(REG_STATUS, status | STATUS_FEATURES_OK);
+    }
+
+    let capacity_low = transport.regs().read32(BLOCK_CONFIG_CAPACITY_LO) as u64;
+    let capacity_high = transport.regs().read32(BLOCK_CONFIG_CAPACITY_HI) as u64;
+    let block_count = capacity_low | (capacity_high << 32);
+    if block_count == 0 {
+        return None;
+    }
+
+    let block = VirtIoBlock::new_bare(transport, block_count);
+    // Route the queue's interrupts to its own table entry before the queue is
+    // enabled, because the device latches the vector at that point.
+    block
+        .transport
+        .set_queue_msix_vector(BLOCK_QUEUE, BLOCK_QUEUE);
+    if block.configure_bare_queue().is_err() {
+        return None;
+    }
+    if block.transport.set_driver_ok().is_err() {
+        return None;
+    }
     Some(alloc::sync::Arc::new(block))
 }
 
@@ -1355,8 +1598,8 @@ impl VirtIoBlock {
     /// Poll the used ring until at least one completion is available
     /// or the spin-limit is exhausted.
     fn poll_completion(&self) -> Result<()> {
-        let mut queue = self.queue.lock();
         for _ in 0..VIRTIO_POLL_LIMIT {
+            let mut queue = self.queue.lock();
             // Refresh the device-written used index from the used-ring
             // prefix before checking for completions (the hardware writes
             // idx into guest RAM, not into our cached copy).
@@ -1364,7 +1607,24 @@ impl VirtIoBlock {
             if queue.completed_count() > 0 {
                 return Ok(());
             }
-            core::hint::spin_loop();
+            // Drop the queue lock before parking: a wait holds it across the
+            // park, and the completion this driver is waiting for is what the
+            // interrupt handler wakes it for, not something that needs the
+            // queue.
+            drop(queue);
+
+            // Then park on the device's interrupt, when this machine has one
+            // that can signal yet.  A device whose table has not been
+            // programmed answers `false` here and the spin is what it had
+            // before; a wakeup is a condition, so the ring is re-read either
+            // way.
+            #[cfg(target_os = "none")]
+            let parked = wait_for_block_interrupt(BLOCK_MSI_WAIT_TICKS);
+            #[cfg(not(target_os = "none"))]
+            let parked = false;
+            if !parked {
+                core::hint::spin_loop();
+            }
         }
         Err(Error::TimedOut)
     }

@@ -580,7 +580,14 @@ fi
 # device itself raises when the network stack uses it.  The message is the
 # driver's handler running, so a boot that only programmed the table without
 # the LPI path behind it fails here.
+# The second PCIe device: a block function beside the NIC, so the boot has two
+# drivers claiming identities from their own MSI-X tables rather than one.  A
+# blank disk is enough — what is being checked is the claim and the placement,
+# and the filesystem rejects the image either way.
 gicv3_log="$(mktemp)"
+gicv3_blk="$(mktemp)"
+dd if=/dev/zero of="$gicv3_blk" bs=1m count=8 2>/dev/null \
+    || dd if=/dev/zero of="$gicv3_blk" bs=1048576 count=8 2>/dev/null
 set +e
 timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -machine virt,gic-version=3 \
@@ -593,7 +600,9 @@ timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -no-reboot \
     -no-shutdown \
     -global virtio-mmio.force-legacy=false \
-    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 >/dev/null 2>&1
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+    -drive file="$gicv3_blk",if=none,id=blk0 \
+    -device virtio-blk-pci,drive=blk0 >/dev/null 2>&1
 set -e
 
 # The assertions below all read `$log_file`, so point it at this boot while
@@ -612,10 +621,19 @@ require_log_line "2 redistributor frame(s)"
 require_log_line "[irq   ] GICv3: LPIs 8192-8447 enabled on cpu 0"
 require_log_line "[irq   ] GICv3: LPIs 8192-8447 enabled on cpu 1"
 require_log_line "[its   ] MSI-X on 00:01.0 delivers LPI "
+require_log_line "[its   ] MSI-X on 00:02.0 delivers LPI "
 # The device's four entries are spread over the two CPUs in turn — the
 # placement is what the rest of this section observes, and a device whose
 # entries all name one CPU would fail here.
-require_log_line "[its   ] MSI-X 00:01.0: irq 8193-8196 placed on cpu [0, 1, 0, 1]"
+require_log_line "[its   ] MSI-X 00:01.0: irq 8196-8199 placed on cpu [0, 1, 0, 1]"
+# The second claimant is what makes this a property of the machine rather than
+# of one driver: a block function beside the NIC has its *own* identities,
+# mapped under its own DeviceID and spread over the CPUs in turn, and the two
+# devices do not share one.
+require_log_line "[virtio-blk] device interrupts claimed: irq "
+require_log_line "[drivers] virtio-blk device found (PCI modern)"
+require_log_line "[its   ] MSI-X 00:02.0: irq 8193-8195 placed on cpu [0, 1, 0]"
+require_log_line "[device] virtio-blk owned by virtio (storage)"
 
 # And the placement is where the device's interrupts are actually served: a
 # queue that reports itself has to name the CPU its entry was placed on.  The
@@ -631,8 +649,11 @@ require_log_line "[its   ] MSI-X 00:01.0: irq 8193-8196 placed on cpu [0, 1, 0, 
 # The console writes CRLF, and a pattern anchored at `$` never matches a line
 # that still has its carriage return, so the log is stripped first.  (The
 # `grep`-based helpers above do not care; these reads do.)
+# The NIC's placement, named rather than taken first: with two devices claiming
+# identities there are two placement lines, and the queues compared below are
+# the NIC's.
 placement="$(tr -d '\r' <"$gicv3_log" \
-    | sed -n 's/.*placed on cpu \[\(.*\)\]$/\1/p' | head -n 1)"
+    | sed -n 's/.*MSI-X 00:01.0: irq .*placed on cpu \[\(.*\)\]$/\1/p' | head -n 1)"
 if [ -z "$placement" ]; then
     printf 'aarch64 runtime check failed: the placement line could not be read\n' >&2
     tail -n 12 "$gicv3_log" >&2
@@ -684,5 +705,6 @@ require_log_line "protofire kernel running"
 
 log_file="$main_log"
 rm -f "$gicv3_log"
+rm -f "$gicv3_blk"
 
 printf 'aarch64 runtime check passed at current metadata/fault/wait boundary\n'

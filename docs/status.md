@@ -52,7 +52,7 @@ the syscall interface.
 |--------|------|-----|---------|
 | AHCI (SATA) | Block | Full read/write (DMA, polling) | Polling only, no interrupt path; x86_64 only; QEMU only |
 | ATA (PIO) | Block | Full read/write | PIO only, no DMA; x86_64 only; QEMU only |
-| VirtIO (block) | Block | Full read/write | QEMU only; no per-queue MSI-X claim |
+| VirtIO (block) | Block | Full read/write, on the virtio-mmio bus and on PCIe | QEMU only; the virtio-mmio transport has no vectors of its own, so only the PCIe path claims an identity per queue |
 | VirtIO (net) | Network | Full RX/TX, modern and legacy transports; on the two PCIe machines (AArch64, RISC-V) each queue claims its own MSI-X identity, so a queue's completion wakes that queue's waiter | On x86_64 the machine has no MSI-X claim path, so a transmit polls for its completion; no throughput baseline |
 | VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189), driven by the demo renderer (`src/user/demo/virgl_renderer.rs`) | QEMU only |
 | NVMe | Block | Full read/write, boot-disk probe | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; x86_64 only; QEMU only |
@@ -385,7 +385,7 @@ disk-backed swap, compression, and defragmentation.
 | Common interrupt abstraction | `InterruptController` trait | — |
 | Thread exception handling | Page fault recovery, signal delivery | — |
 | PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | A window held across a block can be closed under the holder; the socket send paths still do that |
-| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64 — but no path programs a device's table there, so a PCIe device's completions are polled; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines only the virtio-net PCIe driver claims identities yet; on x86_64 nothing does |
+| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64 — but no path programs a device's table there, so a PCIe device's completions are polled; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and a third device class has no PCIe driver yet; on x86_64 nothing claims |
 | NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry | No architectural NMI source on RISC-V, so that entry stays dormant |
 | Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable | Runs from the tick; no routing-latency measurement |
 | Interrupt stats interface | Per-CPU/per-vector counters, NMI/IPI totals, balancer state (SystemInfo #9) | — |
@@ -415,11 +415,14 @@ programs a device's table, NMI handling, and load balancing.
 
 **Weaknesses:**
 
-- **Message-signalled interrupts are one driver deep on AArch64.** The ITS
+- **Message-signalled interrupts are two drivers deep on AArch64.** The ITS
   maps a collection and an LPI pending table per CPU, and a device's entries
   are placed round-robin over the CPUs that can receive, so the PCIe
-  virtio-net driver's queues are completed by different cores — but that
-  driver is still the only device claiming identities through the ITS
+  virtio-net driver's queues are completed by different cores, and the PCIe
+  virtio-blk driver beside it claims a range of its own under its own
+  DeviceID.  What that buys is evidence: the placement is a property of the
+  machine rather than of one driver.  What is still missing is a PCIe driver
+  for any other device class
   ([RFC 0001](rfcs/0001-spread-message-signalled-interrupts.md) is the
   design the placement follows).
 - **MSI-X on RISC-V is one driver deep**: the AIA IMSIC is wired and a device's
@@ -831,7 +834,7 @@ user-memory validation.
 | SMP | Full (MADT + AP bringup; the tick is the boot CPU's) | Full (PSCI + GIC SGI) | Full (SBI HSM + per-hart vector, timer, and PLIC context; a cross-hart wake waits for the target's tick) |
 | Context switch | Full | Full | Full |
 | PAN/SMAP | SMAP (stac/clac) | PSTATE.PAN (set/clear) | SUM (sstatus) |
-| MSI/MSI-X | Composition helpers, fixed vector numbers and installed handlers, but no device's table is programmed, so a PCIe device's interrupts are polled | GICv3 ITS and LPIs, with a collection and a pending table per CPU; the PCIe virtio-net driver claims one identity per queue, and its queues are completed by different CPUs | AIA IMSIC; the PCIe virtio-net driver claims one identity per queue |
+| MSI/MSI-X | Composition helpers, fixed vector numbers and installed handlers, but no device's table is programmed, so a PCIe device's interrupts are polled | GICv3 ITS and LPIs, with a collection and a pending table per CPU; the PCIe virtio-net and virtio-blk drivers each claim their own identities, and the NIC's queues are completed by different CPUs | AIA IMSIC; the PCIe virtio-net and virtio-blk drivers each claim their own identities |
 | PCIe | Full ECAM | Basic probing | Basic probing |
 | ASID allocator | — | Full (bitmap + CAS) | Full (bitmap + CAS) |
 | FDT parsing | — | Full | Full |

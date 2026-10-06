@@ -180,16 +180,18 @@ pub(crate) fn pci_register_window(
         let (dev, bar) = find_virtio_function(&probe.devices, vendor_id, class_code, subclass)?;
         pci::pci_enable_memory_and_bus_master(&probe.region, dev.bus, dev.device, dev.function);
 
-        // The fixed address this platform reserves for device windows, above
-        // the ECAM alias so the two cannot overlap.
-        const BAR_VA: usize = 0x2_0040_0000;
+        // A slot of the platform's BAR-alias window, one per registered
+        // window: the alias cannot be one fixed address, because the second
+        // device to register would map its BAR over the first driver's
+        // registers and both would read the wrong device.
+        let bar_va = crate::arch::aarch64::mmu::reserve_device_bar_alias(bar.size as usize)?;
         // SAFETY: the BAR is a live MMIO range the enumeration decoded, and
-        // `BAR_VA` is that reserved address.
-        unsafe { map_device_mmio_at(BAR_VA, bar.base_address, bar.size as usize)? };
+        // `bar_va` is a slot this platform reserved for exactly this mapping.
+        unsafe { map_device_mmio_at(bar_va, bar.base_address, bar.size as usize)? };
         Some(PciRegisterWindow {
             vendor_id: dev.vendor_id,
             device_id: dev.device_id,
-            bar_address: BAR_VA,
+            bar_address: bar_va,
             bar_size: bar.size,
             function: PciFunctionAddress {
                 region: probe.region,

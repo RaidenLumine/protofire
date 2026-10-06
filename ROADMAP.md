@@ -44,8 +44,11 @@ The authoritative picture of what exists today is
   GICv3, the LPIs and the ITS that translates a device's message into one are
   all there, one collection and one pending table per CPU, and a device's
   entries are placed over those CPUs in turn — so the NIC's queues are
-  completed by different cores.  What is left is a second driver that claims
-  identities through the ITS.
+  completed by different cores.  A second PCIe driver claims through the ITS
+  too: `virtio-blk` on the same bus has its own DeviceID, its own LPI range and
+  its own completion path that waits on it, which is what makes the placement a
+  property of the machine rather than of one driver.  What is left is a driver
+  for any other PCIe device class.
   [RFC 0001](docs/rfcs/0001-spread-message-signalled-interrupts.md) is the
   design the placement follows.
 - **USB host (xHCI) completion.** The driver is present; close the remaining
