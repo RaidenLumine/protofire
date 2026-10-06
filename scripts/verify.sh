@@ -179,6 +179,11 @@ run_p3() {
         # rings, which is where the ring-reuse defect lived, and the boot's own
         # writes are what show the volume reached the host's image.
         run_make_step "make check-x8664-usb-disk" check-x8664-usb-disk
+        # And the case that disk cannot cover: a device plugged into a hub
+        # *after* the boot scan, which is what the hub's status-change
+        # endpoint exists for.  The plug is QEMU's, so a guest that ignores it
+        # cannot pass by reading its own state.
+        run_make_step "make check-x8664-usb-hotplug" check-x8664-usb-hotplug
         # The same machine with its image on an NVMe device: the only gate
         # that attaches one, and therefore the only place the NVMe driver's
         # bring-up runs at all.

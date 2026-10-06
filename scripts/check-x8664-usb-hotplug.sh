@@ -1,0 +1,237 @@
+#!/usr/bin/env sh
+# File: scripts/check-x8664-usb-hotplug.sh
+# Purpose: Boot with a hub that has nothing on its ports, plug a device into
+#   it, unplug it, and plug it back in — and require the driver to see all
+#   three without a reboot.
+#
+# Why this exists
+# ---------------
+# A hub that is scanned once is a hub only for the devices that were already
+# plugged into it: its interrupt IN endpoint reports which of its ports
+# changed, and until the driver read it, a device plugged in after the boot
+# waited for the next boot.  That endpoint is the whole difference between a
+# hub and a port multiplier, and nothing in the tree had ever read one.
+#
+# The observation is the guest's own log, and the *line order* in it is the
+# evidence: the device appears behind the hub only after a command typed at
+# the shell long after the boot scan, so the enumeration cannot have happened
+# at boot.  QEMU's monitor is the instrument that plugs and unplugs — a real
+# device being moved — and it cannot be faked from inside the guest: the
+# attach is QEMU's USB hub asserting its status-change bit.
+#
+# What it asserts:
+#   * at boot, a keyboard sits on a root port and the hub's ports are empty —
+#     no device is enumerated behind the hub before the marker command;
+#   * plugging a mouse into the hub's port 1, after that marker, produces
+#     "hub port 1 enumerated (route 0x1)" and a HID mouse;
+#   * unplugging it produces "hub port 1: device removed (slot N)" — the slot
+#     is released, not leaked;
+#   * plugging it back in produces the same two lines *again*, which is what
+#     a released slot looks like from outside.
+#
+# Usage:
+#   sh scripts/check-x8664-usb-hotplug.sh [timeout-seconds]
+
+set -eu
+
+cd "$(dirname "$0")/.."
+
+TIMEOUT_SECONDS="${1:-60}"
+PROFILE="${PROFILE:-debug}"
+CRATE="${CRATE:-protofire}"
+CARGO="${CARGO:-cargo}"
+TARGET_DIR="${TARGET_DIR:-target}"
+QEMU="${QEMU:-qemu-system-x86_64}"
+HOTPLUG_LOG="${HOTPLUG_LOG:-}"
+FEATURES="${FEATURES:-demo-disk}"
+
+KERNEL_BIN="${TARGET_DIR}/x86_64-unknown-none/${PROFILE}/${CRATE}"
+
+if ! command -v "$QEMU" >/dev/null 2>&1; then
+    printf '%s is not installed; cannot run the USB hotplug check.\n' "$QEMU" >&2
+    exit 1
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+    printf 'python3 is not installed; cannot drive QEMU\x27s monitor.\n' >&2
+    exit 1
+fi
+
+case "$PROFILE" in
+    release) profile_flag="--release" ;;
+    *) profile_flag="" ;;
+esac
+
+"$CARGO" build --offline $profile_flag --target x86_64-unknown-none --bin "$CRATE" \
+    --features "$FEATURES"
+sh ./scripts/check-payload-relocations.sh "$KERNEL_BIN"
+
+work="$(mktemp -d)"
+log="$work/boot.log"
+monitor_socket="$work/monitor.sock"
+if [ -n "$HOTPLUG_LOG" ]; then
+    mkdir -p "$(dirname "$HOTPLUG_LOG")"
+    log="$HOTPLUG_LOG"
+fi
+: >"$log"
+
+cleanup() {
+    rm -rf "$work"
+}
+trap cleanup EXIT INT TERM
+
+printf 'x86_64 USB hotplug check: timeout %ss, qemu %s\n' "$TIMEOUT_SECONDS" "$QEMU"
+
+# The keyboard is what proves the boot's USB path still runs; the hub is what
+# this check is about, and it starts empty.
+shell_commands() {
+    sh ./scripts/feed-shell-console.sh "$log" "$TIMEOUT_SECONDS" \
+        'echo hotplug-marker' \
+        'echo serial-done'
+}
+
+# The device is moved while the guest runs: QEMU\x27s monitor addresses the
+# hub\x27s own port 1 (`port=2.1` — root port 2, its first downstream port), and
+# each step waits for the guest to *say* it saw the change rather than for a
+# fixed delay, so a slow or a fast boot both work.
+plug_and_wait() {
+    python3 - "$monitor_socket" "$log" "$TIMEOUT_SECONDS" <<'PY'
+import socket
+import sys
+import time
+
+monitor, log, timeout = sys.argv[1], sys.argv[2], int(sys.argv[3])
+
+sock = socket.socket(socket.AF_UNIX)
+for _ in range(200):
+    try:
+        sock.connect(monitor)
+        break
+    except OSError:
+        time.sleep(0.1)
+else:
+    print("hotplug: QEMU's monitor socket never appeared", file=sys.stderr)
+    sys.exit(1)
+
+def command(text):
+    sock.sendall((text + "\n").encode())
+    time.sleep(0.2)
+
+def wait_for(needle, count=1):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with open(log, "rb") as handle:
+            seen = handle.read().replace(b"\r", b"").count(needle)
+        if seen >= count:
+            return
+        time.sleep(0.25)
+    print("hotplug: the guest never reported %r" % needle.decode(), file=sys.stderr)
+    sys.exit(1)
+
+# The boot scan is done when the shell has answered the marker.
+wait_for(b"hotplug-marker")
+time.sleep(1.0)
+
+command("device_add usb-mouse,id=hotplug0,bus=xhci.0,port=2.1")
+wait_for(b"hub port 1 enumerated (route 0x1)")
+wait_for(b"HID mouse ready at slot ")
+
+command("device_del hotplug0")
+wait_for(b"hub port 1: device removed (slot ")
+
+command("device_add usb-mouse,id=hotplug1,bus=xhci.0,port=2.1")
+wait_for(b"hub port 1 enumerated (route 0x1)", count=2)
+
+command("quit")
+time.sleep(0.5)
+PY
+}
+
+set +e
+{ shell_commands; } | timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine q35 \
+    -cpu max \
+    -smp 1 \
+    -m 1G \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -no-reboot \
+    -no-shutdown \
+    -monitor "unix:$monitor_socket,server,nowait" \
+    -device qemu-xhci,id=xhci \
+    -device usb-kbd,bus=xhci.0 \
+    -device usb-hub,id=hub0,bus=xhci.0,port=2 \
+    -serial stdio >"$log" 2>&1 &
+qemu_pid=$!
+set -e
+
+set +e
+plug_and_wait
+plug_status=$?
+set -e
+
+if [ "$plug_status" -ne 0 ]; then
+    kill "$qemu_pid" 2>/dev/null || true
+    wait "$qemu_pid" 2>/dev/null || true
+    printf 'x86_64 USB hotplug check failed: the guest did not follow the plug\n' >&2
+    tail -n 20 "$log" >&2
+    exit 1
+fi
+
+set +e
+wait "$qemu_pid"
+status=$?
+set -e
+
+case "$status" in
+    0|124) ;;
+    *)
+        printf 'x86_64 USB hotplug check failed with exit status %s\n' "$status" >&2
+        exit "$status"
+        ;;
+esac
+
+fail() {
+    printf 'x86_64 USB hotplug check failed: %s\n' "$1" >&2
+    tail -n 20 "$log" >&2
+    exit 1
+}
+
+# Log lines are compared from a copy with the console's carriage returns
+# removed: the shell's prompt redraws lines, and a plain grep would miss a
+# line whose text was overwritten in place.
+trimmed="$work/trimmed.log"
+tr -d '\r' <"$log" >"$trimmed"
+
+require_log_line() {
+    grep -a -F "$1" "$trimmed" >/dev/null 2>&1 || fail "missing log line: $1"
+}
+
+count_log_lines() {
+    grep -a -c -F "$1" "$trimmed" 2>/dev/null || true
+}
+
+# The boot itself: the controller, the hub, and an empty downstream.
+require_log_line "[xhci  ] hub at slot "
+require_log_line "downstream port(s), route 0x0"
+require_log_line "status-change endpoint watching"
+require_log_line "[xhci  ] HID keyboard ready at slot "
+
+# The three moves, in the only order that means anything: the marker command
+# is typed at the shell long after the boot scan, so an enumeration *after*
+# it cannot have happened at boot.
+marker_line="$(grep -a -n -F "hotplug-marker" "$trimmed" | head -n 1 | cut -d: -f1)"
+[ -n "$marker_line" ] || fail "the marker command never reached the shell"
+
+first_line="$(grep -a -n -F "hub port 1 enumerated (route 0x1)" "$trimmed" | head -n 1 | cut -d: -f1)"
+[ -n "$first_line" ] || fail "the device plugged into the hub was never enumerated"
+[ "$first_line" -gt "$marker_line" ] ||
+    fail "the hub's device was enumerated at boot, not when it was plugged in"
+
+require_log_line "hub port 1: device removed (slot "
+[ "$(count_log_lines "hub port 1 enumerated (route 0x1)")" -ge 2 ] ||
+    fail "the device plugged back into the hub was not enumerated again"
+[ "$(count_log_lines "HID mouse ready at slot ")" -ge 2 ] ||
+    fail "the mouse was not ready for each of the two plugs"
+
+printf 'x86_64 USB hotplug check passed: a device plugged into a hub after boot was seen then\n'

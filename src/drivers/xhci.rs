@@ -39,6 +39,44 @@ const PORT_CONNECT_SETTLE_SPINS: usize = 100_000;
 /// How many times to ask a hub whether a port's reset has finished.
 const HUB_PORT_RESET_SPINS: usize = 100_000;
 
+/// The xHCI endpoint context's interval field for a full- or low-speed
+/// interrupt endpoint, given the descriptor's `bInterval`.
+///
+/// The two are not the same number.  A full- or low-speed interrupt
+/// endpoint's `bInterval` is a period in milliseconds; the context's field is
+/// a *power* of microframes, so the conversion clamps the descriptor's value
+/// into `1..=16` and subtracts one.  Copying the byte across, which is what
+/// this driver used to do, happens to work for small values — a keyboard's
+/// ten becomes a one-millisecond poll, merely faster than it asked for — and
+/// breaks completely at a hub's 255, where the controller shifts by 255 and
+/// schedules the next check of the status-change endpoint days away.  (A
+/// high-speed interrupt endpoint encodes `2^(bInterval-1)` microframes
+/// instead; nothing here is high speed yet.)
+fn endpoint_interval_field(b_interval: u8) -> u32 {
+    u32::from(b_interval.clamp(1, 16)) - 1
+}
+
+/// A hub whose status-change endpoint is watched.
+///
+/// The endpoint's reports are a bitmap: bit *n* names downstream port *n*, and
+/// the hub keeps asserting a bit until the change behind it has been cleared.
+/// Watching it is what turns "a hub is scanned at boot" into "a hub is a hub".
+struct HubState {
+    /// The hub's slot, for the requests that read and clear its ports.
+    slot_id: u8,
+    /// The root port the hub itself hangs off.
+    root_port: u8,
+    /// The route string the hub itself was found at.
+    route: u32,
+    /// How many downstream ports it reports.
+    ports: u8,
+    /// The status-change interrupt IN endpoint, as the HID devices configure
+    /// theirs — the reports differ, the ring does not.
+    ep: HidEndpointInfo,
+    /// The DMA buffer its reports land in.
+    report_buf: DmaBuffer,
+}
+
 /// The xHCI host controller.
 pub struct XhciController {
     /// Operational register base (mmio_base + caplength).
@@ -96,6 +134,13 @@ pub struct XhciController {
     pub msd_slot: u8,
     /// Mass storage bulk endpoint info.
     pub msd_endpoints: Option<crate::drivers::usb_msd::MsdBulkEndpoints>,
+    /// The hub whose status-change endpoint is watched (None = no hub, or a
+    /// hub whose endpoint could not be configured).
+    hub: Option<HubState>,
+    /// Where each addressed slot's device hangs: its root port and its route
+    /// string.  A device behind a hub is found again by its route when the hub
+    /// reports the port it was on as gone, which is how its slot is released.
+    slot_routes: [(u8, u32); MAX_SLOTS],
 }
 
 // SAFETY: XhciController owns its MMIO mapping and DMA buffers exclusively.
@@ -156,15 +201,19 @@ const RING_USABLE_TRBS: u32 = (RING_SEGMENT_TRBS - 1) as u32;
 /// which is the defect the event ring's dropped completions and the mass
 /// storage mount's timeout were both made of.
 ///
-/// The Link TRB at the segment's end is part of the same handshake: while a
-/// lap is in progress it carries the *opposite* of `pcs`, so a consumer that
-/// has caught up with the producer stops there rather than following it into
-/// slots the producer has not rewritten; the producer rewrites it with the
-/// ending lap's state at the moment it wraps, which is what lets the consumer
-/// follow it and flip in step.
+/// The Link TRB is the other half of the handshake, and it goes where the lap
+/// *ends* rather than at a fixed slot: it points back at the segment's base
+/// and carries the lap's own cycle state, so a consumer that has consumed
+/// everything the producer wrote follows it, flips, and reads the next lap
+/// from the base.  A link pinned at the segment's last slot, with the lap
+/// wrapping past the slots the last TD did not fill, leaves those slots
+/// carrying the *previous* lap's state — and a consumer stops at the first
+/// TRB it does not own, so it would stop before the link, never learn to
+/// wrap, and never see another TRB.
 #[derive(Clone, Copy)]
 struct RingPos {
-    /// Slot the next TRB goes into, in `0..RING_USABLE_TRBS`.
+    /// Slot the next TRB goes into, in `0..=RING_USABLE_TRBS`; a position at
+    /// the end is the next TD's cue that the lap ends here.
     index: u32,
     /// True while the lap being written carries cycle 1.
     pcs: bool,
@@ -185,32 +234,48 @@ impl RingPos {
         }
     }
 
-    /// Write the segment's Link TRB for the lap this position describes.
-    ///
-    /// It points back at the segment's base and carries the state *opposite*
-    /// `pcs`, with Toggle Cycle set so the consumer's cycle state flips when
-    /// it follows.
+    /// Write a Link TRB at `index`: it points back at the segment's base,
+    /// carries `cycle` so the consumer follows it, and sets Toggle Cycle so
+    /// the consumer's own cycle state flips with the lap.
     ///
     /// # Safety
     ///
     /// `ring` must be a ring segment of `RING_SEGMENT_TRBS` TRBs owned by the
     /// caller, and it must outlive every access the controller makes to it.
-    unsafe fn write_link(&self, ring: &DmaBuffer) {
-        // SAFETY: the last entry is inside the segment the caller owns, and
-        // the write is the one field this ring's consumer reads.
+    unsafe fn write_link_at(&self, ring: &DmaBuffer, index: u32, cycle: u32) {
+        // SAFETY: the caller owns the segment, and `index` is inside it.
         unsafe {
-            let cycle = if self.pcs { 0 } else { TRB_CYCLE_BIT };
-            let link = ring_trb_ptr(ring, RING_USABLE_TRBS);
+            let link = ring_trb_ptr(ring, index);
             write_volatile(link, Trb::link(ring.phys_addr() as u64, cycle));
         }
     }
 
-    /// Reserve room for `trbs` TRBs in the lap being written, wrapping the
-    /// ring (and flipping the cycle state) first when they would cross the
-    /// Link TRB.
+    /// Write the segment's Link TRB for an untouched lap.
     ///
-    /// A TD must not straddle the link: its TRBs would carry two different
-    /// cycle states and the controller would stop between them.
+    /// A ring that has never wrapped ends its first lap at the segment's last
+    /// slot, because that is the only slot a lap can reach without being told
+    /// where to end; the link carries the lap's cycle state so the consumer
+    /// may follow it there.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::write_link_at`].
+    unsafe fn write_link(&self, ring: &DmaBuffer) {
+        // SAFETY: the caller owns the ring segment.
+        unsafe {
+            self.write_link_at(ring, RING_USABLE_TRBS, self.cycle());
+        }
+    }
+
+    /// Reserve room for `trbs` TRBs in the lap being written, ending the lap
+    /// with a Link TRB first when they would not fit before the segment's
+    /// end.
+    ///
+    /// The lap ends where the work ends, so there is never a slot between the
+    /// last TRB written and the Link TRB: a TD must not straddle the link
+    /// (its TRBs would carry two different cycle states and the controller
+    /// would stop between them), and the slots it would have straddled are
+    /// exactly the ones a consumer must not be stopped by.
     ///
     /// # Safety
     ///
@@ -218,11 +283,24 @@ impl RingPos {
     unsafe fn reserve(&mut self, ring: &DmaBuffer, trbs: u32) {
         debug_assert!(trbs <= RING_USABLE_TRBS);
         if self.index + trbs > RING_USABLE_TRBS {
-            self.pcs = !self.pcs;
-            self.index = 0;
-            // SAFETY: the caller owns the ring, which `write_link` requires.
-            unsafe { self.write_link(ring) };
+            // SAFETY: the caller owns the ring, which `end_lap` requires.
+            unsafe { self.end_lap(ring) };
         }
+    }
+
+    /// Hand the consumer a Link TRB at the current position and start the
+    /// next lap at the segment's base with the opposite cycle state.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::write_link_at`].
+    unsafe fn end_lap(&mut self, ring: &DmaBuffer) {
+        // SAFETY: the position is inside the segment the caller owns.
+        unsafe {
+            self.write_link_at(ring, self.index, self.cycle());
+        }
+        self.pcs = !self.pcs;
+        self.index = 0;
     }
 
     /// Place one TRB at the current position and advance.
@@ -422,6 +500,8 @@ impl XhciController {
                 bulk_in_rings: [const { None }; MAX_SLOTS],
                 msd_slot: 0,
                 msd_endpoints: None,
+                hub: None,
+                slot_routes: [(0, 0); MAX_SLOTS],
             };
 
             ctrl.reset().ok()?;
@@ -1023,7 +1103,7 @@ impl XhciController {
                 }
                 // Not ours: a HID endpoint's completed report is delivered
                 // and re-armed here rather than dropped.
-                self.dispatch_hid_transfer_event(&evt);
+                self.dispatch_interrupt_transfer_event(&evt);
             }
             Err(crate::Error::TimedOut)
         }
@@ -1117,8 +1197,10 @@ impl XhciController {
             {
                 let ep_ctx = ict_base.add(ep_offset) as *mut u32;
                 // Interval at bits 23:16 (QEMU: interval = 1 << (ctx[0]>>16 &
-                // 0xff)); EP state stays 0 (disabled) until the command runs.
-                write_volatile(ep_ctx, (ep_info.interval as u32 & 0xFF) << 16);
+                // 0xff)), encoded from the descriptor's own period rather
+                // than copied from it; EP state stays 0 (disabled) until the
+                // command runs.
+                write_volatile(ep_ctx, endpoint_interval_field(ep_info.interval) << 16);
                 // EP type at bits 5:3 (7 = interrupt IN), Max Packet Size at
                 // bits 23:16 of DWORD 1.
                 let ep_ctrl: u32 = (7 << 3) | ((ep_info.max_packet_size as u32 & 0xFFFF) << 16);
@@ -1520,7 +1602,7 @@ impl XhciController {
     /// Posts a Normal TRB on the slot's interrupt transfer ring and rings
     /// the doorbell, then returns immediately.  The completed report is
     /// drained from the per-device DMA buffer by
-    /// [`dispatch_hid_transfer_event`] when its Transfer Event
+    /// [`dispatch_interrupt_transfer_event`] when its Transfer Event
     /// shows up on the event ring.
     unsafe fn arm_hid_read(
         &mut self,
@@ -1607,19 +1689,26 @@ impl XhciController {
         }
     }
 
-    /// Dispatch a Transfer Event to the HID device it belongs to.
+    /// Dispatch an interrupt Transfer Event to the device it belongs to: a HID
+    /// keyboard or mouse, or a hub reporting a port change.
     ///
     /// Called from the event ring drain ([`poll_events`]) and from
     /// [`poll_transfer_event`] when the event is not the one being awaited.
     /// The event is identified by (slot ID, DCI); unknown slots are
     /// ignored.
-    unsafe fn dispatch_hid_transfer_event(&mut self, evt: &Trb) {
+    unsafe fn dispatch_interrupt_transfer_event(&mut self, evt: &Trb) {
         // SAFETY: the event is one this controller's event ring produced; the dispatch
         // only reads it.
         unsafe {
             let slot = evt.slot_id();
             let dci = evt.endpoint_id();
             let residual = evt.status & TRB_TL_MASK;
+            if let Some(hub) = self.hub.as_ref() {
+                if slot == hub.slot_id && u32::from(dci) == hub.ep.dci() {
+                    self.handle_hub_status_change(residual);
+                    return;
+                }
+            }
             if slot == self.keyboard_slot {
                 if let Some(ep) = self.keyboard_ep {
                     if u32::from(dci) == ep.dci() {
@@ -1639,8 +1728,9 @@ impl XhciController {
     }
 
     /// Poll the event ring for any pending events.
-    /// Called from the timer tick to check for HID reports.
-    /// Returns true if a HID transfer event was processed.
+    /// Called from the timer tick to check for HID reports and hub port
+    /// changes.
+    /// Returns true if a transfer event was processed.
     ///
     /// # Safety
     ///
@@ -1649,7 +1739,10 @@ impl XhciController {
     pub unsafe fn poll_events(&mut self) -> bool {
         // SAFETY: polling touches this controller's own event ring and doorbells.
         unsafe {
-            if self.keyboard_slot == 0 && self.mouse_slot == 0 {
+            // A watched hub makes the drain worth doing on its own: a port
+            // change is exactly the event a machine with no keyboard and no
+            // mouse would otherwise never stop to look at.
+            if self.keyboard_slot == 0 && self.mouse_slot == 0 && self.hub.is_none() {
                 return false;
             }
 
@@ -1662,7 +1755,7 @@ impl XhciController {
                 self.advance_event_ring();
                 if evt.trb_type() == trb_type::TRANSFER_EVENT {
                     processed = true;
-                    self.dispatch_hid_transfer_event(&evt);
+                    self.dispatch_interrupt_transfer_event(&evt);
                 }
             }
 
@@ -1755,6 +1848,10 @@ impl XhciController {
                 );
                 return false;
             }
+            // Remember where this slot's device hangs: a hub reports its
+            // ports, not its children's slot numbers, so the route is how a
+            // device that left is found again to have its slot released.
+            self.slot_routes[slot_id as usize - 1] = (root_port, route);
             println!("[xhci  ] device addressed at slot {}", slot_id);
 
             match self.get_device_descriptor(slot_id) {
@@ -1767,8 +1864,8 @@ impl XhciController {
         }
     }
 
-    /// Read a hub's port count and bring up whatever is on its downstream
-    /// ports.
+    /// Read a hub's port count, watch its status-change endpoint, and bring up
+    /// whatever its ports already hold.
     ///
     /// A hub needs one class request — how many ports it has — and then one
     /// pass per port: power it, see whether anything is connected, reset it,
@@ -1779,10 +1876,14 @@ impl XhciController {
     /// differs, so the work is the same [`Self::enumerate_device`] a root port
     /// runs, one tier down.
     ///
-    /// What this does not do is watch the hub's status-change endpoint: a
-    /// device plugged into a hub after the scan is seen at the next boot, not
-    /// now.  That is the difference between a hub working and a hub being a
-    /// hub, and it is the next piece of this.
+    /// The pass is only half of a hub.  The other half is its interrupt IN
+    /// endpoint, which the hub asserts whenever one of its ports changes: a
+    /// hub that is scanned once is a hub only for devices that were already
+    /// plugged in.  That endpoint is configured here — the same way a HID
+    /// device's is, because it is the same kind of endpoint — armed with the
+    /// first read, and its reports are run by
+    /// [`Self::handle_hub_status_change`], so a device plugged in later is
+    /// enumerated then rather than at the next boot.
     ///
     /// # Safety
     ///
@@ -1812,65 +1913,434 @@ impl XhciController {
                 slot_id, ports, route
             );
 
-            for port in 1..=ports {
-                // Power first: a port that is off reports nothing else.
-                let _ = self.control_transfer(
-                    slot_id,
-                    &SetupPacket::hub_set_port_feature(port, HUB_PORT_POWER),
-                    &mut [],
-                    false,
-                );
-                let Some(status) = self.hub_port_status(slot_id, port) else {
-                    continue;
-                };
-                if status & u32::from(HUB_PORT_STATUS_CONNECTION) == 0 {
-                    continue;
-                }
-                // Reset the port, then wait for the hub to *say* the reset
-                // finished — addressing a device whose port is still resetting
-                // is answered with a TRB error.
-                let _ = self.control_transfer(
-                    slot_id,
-                    &SetupPacket::hub_set_port_feature(port, HUB_PORT_RESET),
-                    &mut [],
-                    false,
-                );
-                let mut reset_done = false;
-                for _ in 0..HUB_PORT_RESET_SPINS {
-                    match self.hub_port_status(slot_id, port) {
-                        Some(status) => {
-                            if status & HUB_PORT_CHANGE_RESET != 0 {
-                                reset_done = true;
-                                break;
-                            }
-                        }
-                        None => break,
-                    }
-                }
-                let _ = self.control_transfer(
-                    slot_id,
-                    &SetupPacket::hub_clear_port_feature(port, HUB_C_PORT_RESET),
-                    &mut [],
-                    false,
-                );
-                if !reset_done {
-                    println!("[xhci  ] hub port {} did not finish resetting", port);
-                    continue;
-                }
+            // The status-change endpoint comes first, so the changes this pass
+            // produces already have somewhere to be reported.
+            if let Some(state) = self.configure_hub_endpoint(slot_id, root_port, route, ports) {
+                self.hub = Some(state);
+            }
 
-                // One tier deeper: this port's nibble is appended to the route
-                // the hub itself was found at.
-                let child_route = ((route << 4) | u32::from(port)) & 0x000F_FFFF;
-                if self.enumerate_device(root_port, child_route) {
+            self.scan_hub_ports(slot_id, root_port, route, ports);
+        }
+    }
+
+    /// Configure and arm a hub's status-change endpoint.
+    ///
+    /// Returns the hub's watch state, or `None` when the hub has no interrupt
+    /// IN endpoint to watch — in which case the port pass below still runs and
+    /// the hub is simply a hub that has to be rescanned at boot, as it was
+    /// before this existed.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::configure_hub`].
+    unsafe fn configure_hub_endpoint(
+        &mut self,
+        slot_id: u8,
+        root_port: u8,
+        route: u32,
+        ports: u8,
+    ) -> Option<HubState> {
+        use crate::drivers::usb_hid;
+
+        // SAFETY: the hub is on a slot this controller addressed; the
+        // configuration read and the endpoint configure both go out through
+        // this controller's own rings.
+        unsafe {
+            let config = match self.read_config_descriptor(slot_id) {
+                Ok(config) => config,
+                Err(_) => {
                     println!(
-                        "[xhci  ] hub port {} enumerated (route {:#x})",
-                        port, child_route
+                        "[xhci  ] hub at slot {}: no configuration descriptor",
+                        slot_id
                     );
+                    return None;
                 }
+            };
+            let endpoint = usb_hid::interface_interrupt_in(&config, USB_CLASS_HUB)?;
+            // The report is a bitmap, one bit per port plus the hub's own bit,
+            // so its length is what the endpoint's max packet size covers.
+            let report_len = core::cmp::max(1, endpoint.max_packet_size) as usize;
+            let ep = HidEndpointInfo {
+                endpoint_address: endpoint.endpoint_address,
+                max_packet_size: endpoint.max_packet_size,
+                interval: endpoint.interval,
+                interface_number: endpoint.interface_number,
+                report_len,
+            };
+            if self.configure_hid_endpoint(slot_id, ep).is_err() {
+                println!(
+                    "[xhci  ] hub at slot {}: status-change endpoint refused",
+                    slot_id
+                );
+                return None;
+            }
+            // An endpoint only answers once its device is in the configured
+            // state.
+            let mut dummy = [];
+            let _ = self.control_transfer(
+                slot_id,
+                &SetupPacket::set_configuration(config[5]),
+                &mut dummy,
+                false,
+            );
+
+            let report_buf = DmaBuffer::allocate(1)?;
+            let state = HubState {
+                slot_id,
+                root_port,
+                route,
+                ports,
+                ep,
+                report_buf,
+            };
+            self.arm_hid_read(
+                slot_id,
+                ep.dci(),
+                ep.report_len,
+                state.report_buf.phys_addr() as u64,
+            )
+            .ok()?;
+            println!(
+                "[xhci  ] hub at slot {}: status-change endpoint watching {} port(s)",
+                slot_id, ports
+            );
+            Some(state)
+        }
+    }
+
+    /// Power and enumerate every port of a hub, at boot or on a rescan.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::configure_hub`].
+    unsafe fn scan_hub_ports(&mut self, slot_id: u8, root_port: u8, route: u32, ports: u8) {
+        for port in 1..=ports {
+            // SAFETY: the hub is on a slot this controller addressed, and
+            // every request for its port goes out through this controller's
+            // own EP0 ring.
+            unsafe {
+                self.bring_up_hub_port(slot_id, root_port, route, port);
             }
         }
     }
 
+    /// Bring one hub port up: power it, and if a device is on it that is not
+    /// already running, reset the port and address the device behind it.
+    ///
+    /// The "not already running" half is what makes this usable for a rescan
+    /// as well as for the boot pass.  A port that carries a device the driver
+    /// has already addressed is *enabled* by the hub, and resetting it again
+    /// would address the same device a second time under a second slot.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::configure_hub`].
+    unsafe fn bring_up_hub_port(&mut self, slot_id: u8, root_port: u8, route: u32, port: u8) {
+        // SAFETY: as `configure_hub` — the hub's own port requests, through
+        // this controller's own EP0 ring.
+        unsafe {
+            // Power first: a port that is off reports nothing else.
+            let _ = self.control_transfer(
+                slot_id,
+                &SetupPacket::hub_set_port_feature(port, HUB_PORT_POWER),
+                &mut [],
+                false,
+            );
+            let Some(status) = self.hub_port_status(slot_id, port) else {
+                return;
+            };
+            if status & u32::from(HUB_PORT_STATUS_CONNECTION) == 0 {
+                return;
+            }
+            if status & u32::from(HUB_PORT_STATUS_ENABLE) != 0 {
+                // Already addressed; a second reset would enumerate it twice.
+                return;
+            }
+            // Reset the port, then wait for the hub to *say* the reset
+            // finished — addressing a device whose port is still resetting is
+            // answered with a TRB error.
+            if self
+                .control_transfer(
+                    slot_id,
+                    &SetupPacket::hub_set_port_feature(port, HUB_PORT_RESET),
+                    &mut [],
+                    false,
+                )
+                .is_err()
+            {
+                println!("[xhci  ] hub port {}: the reset was refused", port);
+                return;
+            }
+            let mut reset_done = false;
+            for _ in 0..HUB_PORT_RESET_SPINS {
+                match self.hub_port_status(slot_id, port) {
+                    Some(status) => {
+                        if status & HUB_PORT_CHANGE_RESET != 0 {
+                            reset_done = true;
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+            if !reset_done {
+                println!("[xhci  ] hub port {} did not finish resetting", port);
+                return;
+            }
+            if self
+                .control_transfer(
+                    slot_id,
+                    &SetupPacket::hub_clear_port_feature(port, HUB_C_PORT_RESET),
+                    &mut [],
+                    false,
+                )
+                .is_err()
+            {
+                println!(
+                    "[xhci  ] hub port {}: the reset change would not clear",
+                    port
+                );
+                return;
+            }
+
+            // One tier deeper: this port's nibble is appended to the route the
+            // hub itself was found at.
+            let child_route = ((route << 4) | u32::from(port)) & 0x000F_FFFF;
+            if self.enumerate_device(root_port, child_route) {
+                println!(
+                    "[xhci  ] hub port {} enumerated (route {:#x})",
+                    port, child_route
+                );
+            }
+            // The connection this device arrived on has now been handled, and
+            // a change bit that is not cleared is a status-change report the
+            // hub will keep making.
+            if self
+                .control_transfer(
+                    slot_id,
+                    &SetupPacket::hub_clear_port_feature(port, HUB_C_PORT_CONNECTION),
+                    &mut [],
+                    false,
+                )
+                .is_err()
+            {
+                println!(
+                    "[xhci  ] hub port {}: the connection change would not clear",
+                    port
+                );
+            }
+        }
+    }
+
+    /// Run a hub's status-change report: one bit per port whose state changed.
+    ///
+    /// The report is a *level*, not an event queue — the hub keeps asserting a
+    /// bit until the change behind it is cleared — so this reads each named
+    /// port, does what its change asks, clears the port's change bits, and
+    /// only then arms the next read.  A report left half-handled re-arms onto
+    /// itself; a change bit that cannot be cleared would re-arm onto itself
+    /// forever, and that is why it ends the watch rather than the boot.
+    ///
+    /// # Safety
+    ///
+    /// The report must be the residual of the hub's own completed read, and
+    /// the controller must still own that hub's rings.
+    unsafe fn handle_hub_status_change(&mut self, residual: u32) {
+        // SAFETY: the report landed in the hub's own DMA buffer, written by a
+        // transfer on this controller's interrupt ring.
+        unsafe {
+            let mut report = [0u8; 8];
+            let (slot_id, root_port, route, ports, transferred) = {
+                let Some(hub) = self.hub.as_ref() else {
+                    return;
+                };
+                let transferred = hub.ep.report_len.saturating_sub(residual as usize);
+                let len = core::cmp::min(transferred, report.len());
+                core::ptr::copy_nonoverlapping(hub.report_buf.as_ptr(), report.as_mut_ptr(), len);
+                (hub.slot_id, hub.root_port, hub.route, hub.ports, len)
+            };
+
+            for (byte, bits) in report.iter().enumerate().take(transferred) {
+                for bit in 0..8u8 {
+                    // Bit 0 is the hub's own status; the ports start at 1.
+                    let port = (byte as u8).wrapping_mul(8).wrapping_add(bit);
+                    if port == 0 || port > ports {
+                        continue;
+                    }
+                    if *bits & (1 << bit) == 0 {
+                        continue;
+                    }
+                    if !self.service_hub_port(slot_id, root_port, route, port) {
+                        // A port whose change cannot be read or cleared would
+                        // keep this report coming back for as long as the
+                        // endpoint is armed, so stop watching rather than
+                        // spin.
+                        self.hub = None;
+                        println!(
+                            "[xhci  ] hub at slot {}: port {} will not finish changing — \
+                             no longer watching its ports",
+                            slot_id, port
+                        );
+                        return;
+                    }
+                }
+            }
+
+            // Arm the next read only once this report is fully handled.
+            let (slot, dci, len, phys) = match self.hub.as_ref() {
+                Some(hub) => (
+                    hub.slot_id,
+                    hub.ep.dci(),
+                    hub.ep.report_len,
+                    hub.report_buf.phys_addr() as u64,
+                ),
+                None => return,
+            };
+            let _ = self.arm_hid_read(slot, dci, len, phys);
+        }
+    }
+
+    /// Do what one port's change asks for, and clear the change bits that
+    /// produced the report.
+    ///
+    /// Returns false when a change bit could not be cleared.
+    ///
+    /// A change says only *that* the port's state changed; the port's own
+    /// status word says which way.  A port with a connection that is not
+    /// enabled has a device that just arrived — power it, reset it, address
+    /// the device behind it — and a port with no connection has one that just
+    /// left, whose slot has to be released or the next device on the same
+    /// route meets a slot that is still in use.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::configure_hub`].
+    unsafe fn service_hub_port(
+        &mut self,
+        slot_id: u8,
+        root_port: u8,
+        route: u32,
+        port: u8,
+    ) -> bool {
+        // SAFETY: as `configure_hub` — the hub's own port requests.
+        unsafe {
+            let Some(status) = self.hub_port_status(slot_id, port) else {
+                return false;
+            };
+            let change = (status >> 16) as u16;
+            let state = (status & 0xFFFF) as u16;
+
+            if change & (1 << (HUB_C_PORT_CONNECTION - 16)) != 0 {
+                if state & HUB_PORT_STATUS_CONNECTION != 0 {
+                    self.bring_up_hub_port(slot_id, root_port, route, port);
+                } else {
+                    let child_route = ((route << 4) | u32::from(port)) & 0x000F_FFFF;
+                    if let Some(slot) = self.slot_for_route(root_port, child_route) {
+                        println!("[xhci  ] hub port {}: device removed (slot {})", port, slot);
+                        let _ = self.release_slot(slot);
+                    }
+                }
+            }
+
+            // Every change bit the hub raised has to go, including the ones
+            // this driver does not act on (a port that suspended, one that
+            // reported overcurrent): they are the report's own content, and
+            // one left set keeps the report coming forever.
+            for feature in [
+                HUB_C_PORT_CONNECTION,
+                HUB_C_PORT_RESET,
+                HUB_C_PORT_ENABLE,
+                HUB_C_PORT_SUSPEND,
+                HUB_C_PORT_OVERCURRENT,
+            ] {
+                if change & (1 << (feature - 16)) == 0 {
+                    continue;
+                }
+                if self
+                    .control_transfer(
+                        slot_id,
+                        &SetupPacket::hub_clear_port_feature(port, feature),
+                        &mut [],
+                        false,
+                    )
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            true
+        }
+    }
+
+    /// The slot a device hangs from, named the way a hub names it: the root
+    /// port its tree starts at, and the route string down to it.
+    fn slot_for_route(&self, root_port: u8, route: u32) -> Option<u8> {
+        self.slot_routes
+            .iter()
+            .position(|&(slot_root, slot_route)| slot_root == root_port && slot_route == route)
+            .map(|idx| idx as u8 + 1)
+    }
+
+    /// Disable a slot and forget everything this driver holds for it.
+    ///
+    /// A device that leaves the bus does not take its slot with it: the
+    /// controller keeps the slot's contexts until the host disables it, and
+    /// the driver keeps the rings built on them.  Both halves are what the
+    /// next device on that port needs to be able to take the slot.
+    ///
+    /// # Safety
+    ///
+    /// `slot_id` must name a slot this controller enabled, and nothing on
+    /// that slot may be in flight.
+    unsafe fn release_slot(&mut self, slot_id: u8) -> Result<()> {
+        // SAFETY: the disable-slot command goes out through this controller's
+        // own command ring.
+        unsafe {
+            let evt = self.send_command(Trb::disable_slot(slot_id, 0))?;
+            let cc = evt.completion_code();
+            if cc != cc::SUCCESS {
+                println!(
+                    "[xhci  ] disable_slot failed for slot {}: cc={}",
+                    slot_id, cc
+                );
+                return Err(crate::Error::InvalidArgument);
+            }
+
+            let idx = slot_id as usize - 1;
+            self.device_contexts[idx] = None;
+            self.ep0_transfer_rings[idx] = None;
+            self.int_transfer_rings[idx] = None;
+            self.bulk_in_rings[idx] = None;
+            self.bulk_out_rings[idx] = None;
+            self.slot_routes[idx] = (0, 0);
+            // The device context address goes with them: the controller reads
+            // it out of the DCBAAP for the next command that names this slot.
+            let dcbaa_slice: &mut [u64] = core::slice::from_raw_parts_mut(
+                self.dcbaa.as_ptr() as *mut u64,
+                self.max_slots as usize + 1,
+            );
+            dcbaa_slice[slot_id as usize] = 0;
+
+            if self.keyboard_slot == slot_id {
+                self.keyboard_slot = 0;
+                self.keyboard_ep = None;
+                self.keyboard_report_buf = None;
+            }
+            if self.mouse_slot == slot_id {
+                self.mouse_slot = 0;
+                self.mouse_ep = None;
+                self.mouse_report_buf = None;
+            }
+            if self.msd_slot == slot_id {
+                self.msd_slot = 0;
+                self.msd_endpoints = None;
+            }
+            if self.hub.as_ref().is_some_and(|hub| hub.slot_id == slot_id) {
+                self.hub = None;
+            }
+            Ok(())
+        }
+    }
     /// One port's status word: `wPortStatus` in the low half, `wPortChange` in
     /// the high half, as the hub reports them.
     ///

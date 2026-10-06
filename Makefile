@@ -68,6 +68,7 @@ endif
 		check-layering \
 		check-x8664-runtime \
 		check-x8664-usb-disk \
+		check-x8664-usb-hotplug \
 		check-x8664-nvme \
 		check-x8664-hda \
 		check-aarch64-nvme \
@@ -127,6 +128,7 @@ help:
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-usb-disk - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
+		'  make check-x8664-usb-hotplug - plug a device into a hub after boot and check it is seen then' \
 		'  make check-x8664-nvme - boot a real SimpleFs image on an NVMe device and check the controller mounts it' \
 		'  make check-x8664-hda - play a tone from the shell and check the samples reach the host audio backend' \
 		'  make check-x8664-init-no-start - boot an init that asks for nothing, and reach the fallback' \
@@ -479,6 +481,15 @@ check-x8664-usb-disk:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-usb-disk.sh
+
+# And the hub's other half: a device that is *not* there at boot.  The disk
+# check above proves a hub is scanned; this one proves it is watched, by
+# moving a device on and off its port while the guest runs.
+check-x8664-usb-hotplug:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-usb-hotplug.sh
 
 # The same filesystem image on an NVMe device: a device class the driver had
 # for months and no gate had ever attached.  The reads go through the

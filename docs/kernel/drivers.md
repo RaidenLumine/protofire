@@ -138,9 +138,14 @@ A **hub** is one of those devices, with a class of its own: the driver reads its
 descriptor for the port count, powers and resets a port, and then addresses what
 appears behind it — a device one tier down, which the Slot Context's *route
 string* says how to find (one nibble per tier, and the controller walks exactly
-those nibbles).  What it does not do yet is watch the hub's status-change
-endpoint, so a device plugged into a hub after the boot's scan waits for the
-next boot.
+those nibbles).  It also **watches the hub's own interrupt endpoint**, which is
+where a hub reports which of its ports changed: that report is a bitmap, one bit
+per port, and a change the driver has handled is cleared so the report stops.
+A port with a device on it that is not enabled is one that just arrived — power,
+reset, address — and a port with no device is one that just left, whose slot is
+disabled so the next device on the same route can take it.  Without that
+endpoint a hub is a device that was scanned once; `make check-x8664-usb-hotplug`
+is the check that plugs, unplugs and re-plugs a device while the guest runs.
 
 Three things about it are worth stating plainly.  The rings **carry a cycle
 state through their wraps**: the command ring and each endpoint's control,
@@ -149,13 +154,17 @@ cycle state they write when that TRB wraps them, while the event ring — which
 the controller produces and this driver consumes — has no Link TRB and is
 consumed against the segment size the ERST states, with the cycle bit read from
 the control word before the rest of the entry.  That is what makes a ring
-usable for a second lap of work, and it is the design
-[RFC 0004](../rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md) settled after a
-mount over USB was found to stop completing transfers.  The controller
+usable for a second lap of work; what a lap cannot survive is a gap, because a
+consumer stops at the first TRB it does not own — so the link sits where the
+lap *ends* rather than at a fixed slot, or a wrap with slots left over would
+stop the consumer before it ever reached the link.  That is the design
+[RFC 0006](../rfcs/0006-end-a-producer-ring-lap-where-its-work-ends.md) settles,
+extending what [RFC 0004](../rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md)
+decided after a mount over USB was found to stop completing transfers.  The controller
 **claims a vector of its own** and the interrupt drains the event ring, taken
 with `try_lock` so an interrupt never waits on the ring's owner; the timer tick
 still drains as the fallback, for the case where the lock is held and for a
-machine where the claim was refused.  And two checks drive the whole path:
+machine where the claim was refused.  And three checks drive the whole path:
 `make check-x8664-runtime` attaches a keyboard, presses a key through QEMU's
 monitor, and asserts the shell's answer — the key is a HID report, the report
 is a transfer event, and the event ring's own MSI-X vector is what carries it —
@@ -163,7 +172,9 @@ and attaches a **disk** beside it whose first sector carries a pattern the
 driver reads back; `make check-x8664-usb-disk` goes further and boots the
 host's own SimpleFs image on a USB disk, reads enough of it to wrap the rings,
 loads a program out of it, and checks on the host that the guest's writes
-reached the image.
+reached the image; and `make check-x8664-usb-hotplug` moves a device on and off
+a hub's port after the boot, which is the only check that reads a hub's
+status-change report at all.
 
 ## Where the code is
 

@@ -222,8 +222,20 @@ pub const HUB_PORT_ENABLE: u16 = 1;
 pub const HUB_PORT_RESET: u16 = 4;
 pub const HUB_PORT_POWER: u16 = 8;
 /// The change bits, cleared once the change has been handled.
+///
+/// These are feature *selectors*, and the last of them is not where the
+/// pattern of the others suggests: the port reset's own selector is 4, its
+/// change bit is 20, and 21 is the test feature a hub is never asked for.
+/// Clearing 21 on a hub that follows the class specification is answered
+/// with a stall — which halts the endpoint the request went out on, so every
+/// later request on it is queued and never seen.  (`wPortChange` bit 20, the
+/// one [`HUB_PORT_CHANGE_RESET`] names, is a different thing: a bit position
+/// in the status pair the hub *reports*, not a selector the host sends.)
 pub const HUB_C_PORT_CONNECTION: u16 = 16;
-pub const HUB_C_PORT_RESET: u16 = 21;
+pub const HUB_C_PORT_ENABLE: u16 = 17;
+pub const HUB_C_PORT_SUSPEND: u16 = 18;
+pub const HUB_C_PORT_OVERCURRENT: u16 = 19;
+pub const HUB_C_PORT_RESET: u16 = 20;
 
 /// `wPortStatus` bits (USB 2.0 §11.24.2.7).
 pub const HUB_PORT_STATUS_CONNECTION: u16 = 1 << 0;
@@ -397,6 +409,20 @@ impl Trb {
             parameter: ict_phys,
             status: if bsr { 1 } else { 0 },
             control: trb_control(trb_type::ADDRESS_DEVICE, cycle) | ((slot_id as u32) << 24),
+        }
+    }
+
+    /// Create a Disable Slot command TRB.
+    ///
+    /// A device that leaves the bus does not take its slot with it: the
+    /// controller keeps the slot's contexts and its endpoint state until the
+    /// host says so, and the slot number it holds cannot address a different
+    /// device until then.
+    pub fn disable_slot(slot_id: u8, cycle: u32) -> Self {
+        Self {
+            parameter: 0,
+            status: 0,
+            control: trb_control(trb_type::DISABLE_SLOT, cycle) | ((slot_id as u32) << 24),
         }
     }
 

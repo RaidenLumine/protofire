@@ -62,9 +62,14 @@ The authoritative picture of what exists today is
   **hub** is enumerated too: its port count is read, its ports are powered and
   reset, and the device behind one is addressed by the route string the
   controller walks — `make check-x8664-runtime` boots a keyboard on a root port
-  beside a mouse behind a hub, and keeps the key press and the disk.  What is
-  left: the hub's status-change endpoint, which is what turns "a hub is
-  scanned at boot" into "a hub is a hub" — a device plugged in later.
+  beside a mouse behind a hub, and keeps the key press and the disk.  The hub's
+  status-change endpoint is now **watched**: a device plugged into (or pulled
+  from) one of its ports after the boot's scan is enumerated — or released —
+  when the hub says so, which `make check-x8664-usb-hotplug` does three times
+  while the guest runs.  What is left: a second hub is scanned but not
+  watched, a device removed from a *root* port needs PORTSC change polling
+  rather than a hub's report, and the endpoint's interval is converted for
+  full-speed hubs only.
 - **HDA audio to userspace.** Done and gated: the engine runs (CORB/RIRB,
   codec discovery, the output converter, a BDL playback ring, the stream DMA),
   a program reaches it — the shell's `tone` builtin writes PCM to

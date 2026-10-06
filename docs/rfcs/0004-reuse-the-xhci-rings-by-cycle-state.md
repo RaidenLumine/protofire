@@ -1,11 +1,21 @@
 # RFC 0004: Reuse the xHCI rings by cycle state
 
-- **Status:** Implemented
+- **Status:** Superseded
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-06
 - **Supersedes:** none
 
 ## Summary
+
+> **This RFC was superseded by
+> [RFC 0006](0006-end-a-producer-ring-lap-where-its-work-ends.md)**, which
+> keeps its cycle-state discipline, its event-ring arithmetic, its
+> read-the-cycle-bit-first rule and its completion identity, and changes one
+> thing: where a producer ring's lap ends.  This RFC pinned the Link TRB to
+> the segment's last slot, which leaves the slots a TD did not fill holding
+> the previous lap's cycle state — and a consumer stops there, before it can
+> reach the link.  The rest of this document is the record of the decision it
+> made, including the pinned link that change moves.
 
 Every ring this kernel gives the xHCI controller — the command ring, a slot's
 control, interrupt and bulk transfer rings, and the event ring the controller

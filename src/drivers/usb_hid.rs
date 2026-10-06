@@ -339,16 +339,24 @@ impl HidDeviceInfo {
     }
 }
 
-/// Walk a USB configuration descriptor and classify the HID interface,
-/// returning its interrupt IN endpoint.
+/// The parts of a class interface's interrupt IN endpoint that the xHCI
+/// driver programs a ring with.
 ///
-/// `fallback_proto` is the device-descriptor `bDeviceProtocol`, used only when
-/// the interface reports protocol 0 (boot-class devices on some emulators
-/// leave the interface protocol unset).
-///
-/// Returns `None` when the configuration has no HID interface with an
-/// interrupt IN endpoint.
-pub fn classify_hid_device(config: &[u8], fallback_proto: u8) -> Option<HidDeviceInfo> {
+/// A HID device and a hub both declare one — the keyboard sends its reports
+/// there, and a hub sends *which of its ports changed* there — so the walk
+/// that finds it is shared, and only what the reports mean differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceInterruptIn {
+    pub interface_number: u8,
+    pub interface_protocol: u8,
+    pub endpoint_address: u8,
+    pub max_packet_size: u16,
+    pub interval: u8,
+}
+
+/// Walk a USB configuration descriptor for the interrupt IN endpoint of the
+/// first interface whose class is `class`.
+pub fn interface_interrupt_in(config: &[u8], class: u8) -> Option<InterfaceInterruptIn> {
     let mut i = 0usize;
     while i + 1 < config.len() {
         let dlen = config[i] as usize;
@@ -360,7 +368,7 @@ pub fn classify_hid_device(config: &[u8], fallback_proto: u8) -> Option<HidDevic
             // INTERFACE descriptor: bInterfaceNumber=2, bNumEndpoints=4,
             // bInterfaceClass=5, bInterfaceSubClass=6, bInterfaceProtocol=7.
             let if_class = config[i + 5];
-            if if_class != USB_CLASS_HID {
+            if if_class != class {
                 i += dlen;
                 continue;
             }
@@ -375,7 +383,6 @@ pub fn classify_hid_device(config: &[u8], fallback_proto: u8) -> Option<HidDevic
             // The endpoint may follow one or more HID descriptors, so the
             // iteration count is endpoints found, not descriptors stepped.
             let mut pos = i + dlen;
-            let mut endpoint = None;
             let mut eps_found = 0;
             while eps_found < num_eps as usize && pos + 5 < config.len() {
                 let sub_dlen = config[pos] as usize;
@@ -393,39 +400,56 @@ pub fn classify_hid_device(config: &[u8], fallback_proto: u8) -> Option<HidDevic
                     } else {
                         0
                     };
-                    if (attr & 3) == 3 && (ea & 0x80) != 0 {
-                        endpoint = Some((ea, mps, interval));
-                    }
                     eps_found += 1;
+                    if (attr & 3) == 3 && (ea & 0x80) != 0 {
+                        return Some(InterfaceInterruptIn {
+                            interface_number: if_number,
+                            interface_protocol: if_proto,
+                            endpoint_address: ea,
+                            max_packet_size: mps,
+                            interval,
+                        });
+                    }
                 }
                 pos += sub_dlen;
             }
-            let (endpoint_address, max_packet_size, interval) = endpoint?;
-
-            let kind = match if_proto {
-                USB_PROTOCOL_MOUSE => HidDeviceKind::Mouse,
-                USB_PROTOCOL_KEYBOARD => HidDeviceKind::Keyboard,
-                // Protocol 0: fall back to the device-level boot protocol.
-                _ => match fallback_proto {
-                    USB_PROTOCOL_MOUSE => HidDeviceKind::Mouse,
-                    _ => HidDeviceKind::Keyboard,
-                },
-            };
-            let report_len =
-                max_packet_size.max(HidDeviceInfo::min_report_len(kind) as u16) as usize;
-
-            return Some(HidDeviceInfo {
-                kind,
-                endpoint_address,
-                max_packet_size,
-                interval,
-                interface_number: if_number,
-                report_len,
-            });
         }
         i += dlen;
     }
     None
+}
+
+/// Walk a USB configuration descriptor and classify the HID interface,
+/// returning its interrupt IN endpoint.
+///
+/// `fallback_proto` is the device-descriptor `bDeviceProtocol`, used only when
+/// the interface reports protocol 0 (boot-class devices on some emulators
+/// leave the interface protocol unset).
+///
+/// Returns `None` when the configuration has no HID interface with an
+/// interrupt IN endpoint.
+pub fn classify_hid_device(config: &[u8], fallback_proto: u8) -> Option<HidDeviceInfo> {
+    let interface = interface_interrupt_in(config, USB_CLASS_HID)?;
+    let kind = match interface.interface_protocol {
+        USB_PROTOCOL_MOUSE => HidDeviceKind::Mouse,
+        USB_PROTOCOL_KEYBOARD => HidDeviceKind::Keyboard,
+        // Protocol 0: fall back to the device-level boot protocol.
+        _ => match fallback_proto {
+            USB_PROTOCOL_MOUSE => HidDeviceKind::Mouse,
+            _ => HidDeviceKind::Keyboard,
+        },
+    };
+    let report_len = interface
+        .max_packet_size
+        .max(HidDeviceInfo::min_report_len(kind) as u16) as usize;
+    Some(HidDeviceInfo {
+        kind,
+        endpoint_address: interface.endpoint_address,
+        max_packet_size: interface.max_packet_size,
+        interval: interface.interval,
+        interface_number: interface.interface_number,
+        report_len,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -541,6 +565,29 @@ mod tests {
         // A config with no HID interface (class 0x08 MSC) returns None.
         let mut config = build_hid_config(USB_PROTOCOL_KEYBOARD, 8, 10);
         config[14] = 0x08; // bInterfaceClass at interface descriptor offset 5
+        assert!(classify_hid_device(&config, 0).is_none());
+    }
+
+    #[test]
+    fn interface_interrupt_in_finds_a_hub_endpoint() {
+        use crate::drivers::xhci_protocol::USB_CLASS_HUB;
+
+        // A hub's configuration: class 9, one endpoint, and no HID descriptor
+        // between the interface and it.  QEMU's `usb-hub` declares two bytes
+        // (one per eight ports, plus the hub itself) and a 255 ms interval.
+        let mut config = Vec::new();
+        config.extend_from_slice(&[9, 2, 0, 0, 1, 1, 0, 0xE0, 0]);
+        config.extend_from_slice(&[9, 4, 0, 0, 1, USB_CLASS_HUB, 0, 0, 0]);
+        config.extend_from_slice(&[7, 5, 0x81, 3, 2, 0, 0xff]);
+        let total = config.len() as u16;
+        config[2] = total as u8;
+        config[3] = (total >> 8) as u8;
+
+        let ep = interface_interrupt_in(&config, USB_CLASS_HUB).expect("hub endpoint found");
+        assert_eq!(ep.endpoint_address, 0x81);
+        assert_eq!(ep.max_packet_size, 2);
+        assert_eq!(ep.interval, 0xff);
+        // The same walk does not mistake it for HID.
         assert!(classify_hid_device(&config, 0).is_none());
     }
 
