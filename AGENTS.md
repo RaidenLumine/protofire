@@ -31,16 +31,25 @@ configuration (`make clippy`, `make clippy-targets`), the build matrix, a
 single-CPU runtime smoke per architecture plus the multi-CPU one, and the
 ratchets.  `make help` lists every target.
 
-The ratchets decide whether a change can land: `check-layering`,
-`check-arch-fanout`, `check-unsafe-comments`, `check-dead-code-allows`,
-`check-abi-mirror`, `check-abi-frozen-payload` (and its per-architecture
-variants), `check-repo-integrity`, `check-reproducible-build`,
-`check-perf-baseline`, `check-user-access-windows`.
+CI (`.github/workflows/ci.yml`) runs a subset of that tier on every push, so a
+green CI is not the floor; the local `verify` is.  It is also where a citation
+in this file is checked: `make check-docs` reads every Markdown file in the
+tree, including this one, and refuses a path or a target the tree does not
+have.
+
+The ratchets decide whether a change can land, by what they hold still:
+the dependency graph (`check-layering`, `check-arch-fanout`), memory safety
+and what the code says about itself (`check-unsafe-comments`,
+`check-user-access-windows`, `check-dead-code-allows`), the ABI
+(`check-abi-mirror`, `check-abi-frozen-payload`, one per architecture), the
+repository itself (`check-repo-integrity`, `check-reproducible-build`), and
+the work a boot does (`check-perf-baseline`).
 
 Fast loops are `make run-x8664`, `run-aarch64` and `run-riscv64` (add
 `-headless` to keep the serial console off the terminal); the smokes are
-`make check-<arch>-runtime`, plus the ones whose names end in `-smp-runtime`
-for the paths only a second CPU reaches.
+`check-x8664-runtime`, `check-aarch64-runtime` and `check-riscv64-runtime`,
+plus the ones whose names end in `-smp-runtime` for the paths only a second
+CPU reaches.
 
 ## Rules no gate can check
 
@@ -54,14 +63,22 @@ for the paths only a second CPU reaches.
   a fix, and keep probes off the hot path — they perturb exactly what they are
   looking for.  When the bug is timing-sensitive, instrument from outside
   (QEMU's monitor, a serial socket).
-- **Say what evidence shows the mechanism ran.**  The recurring defect here is
-  code that is written, wired, and never executed: a claim no gate exercises
-  is "implemented", not "verified".
+- **Say what evidence shows the mechanism ran, and name it.**  Quote the log
+  line or the gate that shows it, so a reader can re-run it; the recurring
+  defect here is code that is written, wired, and never executed, and a claim
+  whose evidence cannot be re-checked is a claim, not a result.  A claim no
+  gate exercises is "implemented", not "verified".
 - **A red gate means the product is broken.**  Fix it, or make the failure
   attributable.  Never widen a gate, or loosen its tolerance, to go green.
 - **A ratchet moves in the change that moves it.**  A raised count carries its
   argument in the baseline's own prose, the way `scripts/layering-baseline.txt`
   argues its exceptions.
+- **One change per commit.**  A commit is the change and its gates and its
+  documents, and nothing else: no drive-by refactor, no unrelated formatting,
+  no second fix that merely happened to be nearby.  When two things really do
+  have to move together, say why in the message.  (The commit-message rules
+  themselves are `docs/fmts/commits.md`'s; this one is about the *shape* of a
+  change, which no hook can see.)
 
 ## Boundaries
 
