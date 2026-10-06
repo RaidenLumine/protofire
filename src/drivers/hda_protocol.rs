@@ -173,13 +173,21 @@ pub const SDSTS_FIFO_READY: u8 = 1 << 3; // FIFO Ready
 /// Get Parameter verb (12-bit verb ID).
 pub const VERB_GET_PARAMETER: u16 = 0xF00;
 
-/// Set Stream Format verb (payload: stream tag in bits 7:4, format index
-/// in bits 3:0).
+/// Set Stream Format verb.
+///
+/// Its payload is the 16-bit format word [`hda_format`] builds — the same
+/// value the stream descriptor's SDFMT holds — so it goes out through
+/// [`hda_verb16`], not [`hda_verb`].
 pub const VERB_SET_STREAM_FORMAT: u16 = 0x200;
 /// Set Power State verb (payload: power state; 0 = D0).
 pub const VERB_SET_POWER_STATE: u16 = 0x705;
-/// Set Converter Stream Channel verb (payload: stream tag in bits 7:4,
-/// channel count - 1 in bits 3:0).
+/// Set Converter Stream Channel verb (payload: stream tag in bits 7:4, the
+/// number of the first channel this converter handles in bits 3:0).
+///
+/// The low nibble is a channel *number*, not a count: the count is a field
+/// of the format word, which is why a converter told "one channel" by its
+/// stream channel still plays stereo if its format says stereo, and why the
+/// reverse is what halves a tone's pitch.
 pub const VERB_SET_CONVERTER_STREAM_CHANNEL: u16 = 0x706;
 
 /// Parameter IDs for GET_PARAMETER.
@@ -211,7 +219,7 @@ pub const AW_WID_AUDIO_OUTPUT: u32 = 0x00;
 
 /// Build a 32-bit HDA verb value.
 ///
-/// Format per the Intel HDA specification:
+/// The eight-bit-payload form, per the Intel HDA specification:
 ///
 /// | Bits     | Field           |
 /// |----------|-----------------|
@@ -221,6 +229,29 @@ pub const AW_WID_AUDIO_OUTPUT: u32 = 0x00;
 /// | 7:0      | Payload         |
 pub const fn hda_verb(cad: u8, nid: u8, verb_id: u16, payload: u8) -> u32 {
     ((cad as u32) << 28) | ((nid as u32) << 20) | ((verb_id as u32) << 8) | (payload as u32)
+}
+
+/// Build a verb whose payload is sixteen bits wide.
+///
+/// A verb's payload width is a property of the verb, not of its caller.  The
+/// widget-control and capability verbs — `GET_PARAMETER`, `SET_POWER_STATE`,
+/// `SET_CONVERTER_STREAM_CHANNEL`, everything numbered `7xx` and up — carry
+/// one byte and use [`hda_verb`].  Everything below `0x700`,
+/// `SET_STREAM_FORMAT` among them, carries two, and its word is laid out
+/// differently: the verb ID keeps only its *high nibble*, in bits 19:16, and
+/// bits 15:0 are the payload.
+///
+/// Sending a two-byte verb through the one-byte form is silent rather than
+/// loud.  Bits 19:16 are still the verb's high nibble, so the codec finds the
+/// right verb and answers successfully; what it receives as the payload is
+/// the low byte the caller passed, and a format word truncated to its low
+/// byte is a *valid* format word for a different stream — one channel
+/// narrower than the driver meant.
+pub const fn hda_verb16(cad: u8, nid: u8, verb_id: u16, payload: u16) -> u32 {
+    ((cad as u32) << 28)
+        | ((nid as u32) << 20)
+        | (((verb_id as u32) & 0xF00) << 8)
+        | (payload as u32)
 }
 
 /// Build a GET_PARAMETER verb.
@@ -253,30 +284,41 @@ pub const BDL_RESERVED_FRAME: u32 = 4;
 
 /// Encode a PCM format into the SDFMT / SET_STREAM_FORMAT format word.
 ///
-/// Per the Intel HDA specification the 16-bit format word is laid out as:
+/// Per the Intel HDA specification the 16-bit word is laid out as:
 ///
-/// | Bits  | Field                                   |
-/// |-------|-----------------------------------------|
-/// | 15:12 | bits per sample (0=8, 1=16, 2=20, 3=24, 4=32) |
-/// | 11:9  | channels - 1                            |
-/// | 8     | base rate multiplier (1x or 4x)          |
-/// | 7:4   | base sample rate                        |
-/// | 3:0   | stream type (0 = PCM)                   |
+/// | Bits  | Field                                        |
+/// |-------|----------------------------------------------|
+/// | 3:0   | channels - 1                                  |
+/// | 6:4   | bits per sample (0=8, 1=16, 2=20, 3=24, 4=32) |
+/// | 10:8  | sample rate divisor minus one (0 = /1, 7 = /8) |
+/// | 13:11 | sample rate multiplier minus one (0 = 1x, 3 = 4x) |
+/// | 14    | base rate (0 = 48 kHz, 1 = 44.1 kHz)          |
+/// | 15    | stream type (0 = PCM)                         |
 ///
-/// Unsupported rates and bit depths fall back to the nearest encoding; the
-/// caller is expected to have validated its codec's SUPPORTED_PCM caps.
+/// The rate is not a code point per rate but a base rate times a multiplier
+/// over a divisor, and there are only two bases: 32 kHz is 48 kHz * 2 / 3,
+/// 22.05 kHz is 44.1 kHz / 2, and so on.  A rate with no such encoding falls
+/// back to 48 kHz at 1x, and an unknown depth to 16 bits; the caller is
+/// expected to have validated its codec's SUPPORTED_PCM caps.
+///
+/// The channel *count* lives here, and that is the field that matters: a
+/// codec told zero channels reads zero as one channel, plays a stereo
+/// stream's two interleaved samples one after the other, and every tone it
+/// produces comes out an octave low — with every register read back exactly
+/// as it was written.
 pub const fn hda_format(rate_hz: u32, channels: u8, bits_per_sample: u8) -> u16 {
-    let base_rate: u16 = match rate_hz {
-        48000 => 0,
-        44100 => 1,
-        32000 => 2,
-        22050 => 3,
-        16000 => 4,
-        11025 => 5,
-        8000 => 6,
-        96000 => 7,
-        192000 => 8,
-        _ => 0,
+    // (base 44.1 kHz?, multiplier minus one, divisor minus one).
+    let (base44, mult, div): (u16, u16, u16) = match rate_hz {
+        48000 => (0, 0, 0),
+        44100 => (1, 0, 0),
+        32000 => (0, 1, 2),  // 48 kHz * 2 / 3
+        22050 => (1, 0, 1),  // 44.1 kHz / 2
+        16000 => (0, 0, 2),  // 48 kHz / 3
+        11025 => (1, 0, 3),  // 44.1 kHz / 4
+        8000 => (0, 0, 5),   // 48 kHz / 6
+        96000 => (0, 1, 0),  // 48 kHz * 2
+        192000 => (0, 3, 0), // 48 kHz * 4
+        _ => (0, 0, 0),
     };
     let bits: u16 = match bits_per_sample {
         8 => 0,
@@ -286,8 +328,13 @@ pub const fn hda_format(rate_hz: u32, channels: u8, bits_per_sample: u8) -> u16 
         32 => 4,
         _ => 1,
     };
-    let channels = (channels.saturating_sub(1) as u16) & 0x07;
-    (bits << 12) | (channels << 9) | (base_rate << 4) | HDA_STREAM_TYPE_PCM
+    let channels = (channels.saturating_sub(1) as u16) & 0x0F;
+    channels
+        | ((bits & 0x07) << 4)
+        | ((div & 0x07) << 8)
+        | ((mult & 0x07) << 11)
+        | (base44 << 14)
+        | HDA_STREAM_TYPE_PCM
 }
 
 /// Serialise a BDL descriptor into its 16-byte on-wire layout.
@@ -454,6 +501,25 @@ mod tests {
     }
 
     #[test]
+    fn hda_verb16_places_the_whole_payload() {
+        // SET_STREAM_FORMAT for codec 0, node 2, carrying 48 kHz / 16-bit /
+        // stereo: the verb's high nibble in bits 19:16, the format word in
+        // 15:0.  The one-byte form would have written only 0x11's low byte
+        // into bits 7:0 and left bits 15:8 zero — a one-channel format the
+        // codec answers just as happily.
+        let v = hda_verb16(0, 2, VERB_SET_STREAM_FORMAT, 0x0011);
+        assert_eq!(v, 0x0022_0011);
+        assert_eq!((v >> 8) & 0xF00, 0x200);
+        assert_eq!(v & 0xFFFF, 0x0011);
+
+        // The truncated encoding the driver used to send, for contrast: the
+        // verb still decodes, and the payload is one channel narrower.
+        let truncated = hda_verb(0, 2, VERB_SET_STREAM_FORMAT, 0x10);
+        assert_eq!((truncated >> 8) & 0xF00, 0x200);
+        assert_eq!(truncated & 0xFFFF, 0x0010);
+    }
+
+    #[test]
     fn register_offsets_non_zero() {
         const {
             assert!(HDA_CAP < 0x100);
@@ -486,42 +552,63 @@ mod tests {
 
     #[test]
     fn hda_format_stereo_16bit_48k() {
-        // 48 kHz / 16-bit / 2 ch is the canonical 0x1200 format word.
-        assert_eq!(hda_format(48000, 2, 16), 0x1200);
+        // 48 kHz / 16-bit / 2 ch is 0x0011: channels-1 = 1 in bits 3:0, the
+        // 16-bit code 1 in bits 6:4, and no multiplier or divisor.  It is
+        // also, byte for byte, the format QEMU's hda-codec resets its
+        // converters to (`AC_FMT_TYPE_PCM | AC_FMT_BITS_16 | (1 <<
+        // AC_FMT_CHAN_SHIFT)`), which is what makes it checkable against
+        // something other than this file's own arithmetic.
+        assert_eq!(hda_format(48000, 2, 16), 0x0011);
     }
 
     #[test]
-    fn hda_format_base_rates() {
-        assert_eq!(hda_format(48000, 2, 16) & 0x00F0, 0x0000);
-        assert_eq!(hda_format(44100, 2, 16) & 0x00F0, 0x0010);
-        assert_eq!(hda_format(32000, 2, 16) & 0x00F0, 0x0020);
-        assert_eq!(hda_format(8000, 2, 16) & 0x00F0, 0x0060);
-        assert_eq!(hda_format(96000, 2, 16) & 0x00F0, 0x0070);
-        assert_eq!(hda_format(192000, 2, 16) & 0x00F0, 0x0080);
+    fn hda_format_rate_fields() {
+        // The base rate is one bit (14); the rest is a multiplier in 13:11
+        // and a divisor in 10:8, each stored minus one.
+        let rate_field = |rate: u32| hda_format(rate, 2, 16) & 0x7F00;
+        assert_eq!(rate_field(48000), 0x0000);
+        assert_eq!(rate_field(44100), 0x4000);
+        assert_eq!(rate_field(32000), 0x0A00); // 48 kHz * 2 / 3
+        assert_eq!(rate_field(22050), 0x4100); // 44.1 kHz / 2
+        assert_eq!(rate_field(16000), 0x0200); // 48 kHz / 3
+        assert_eq!(rate_field(11025), 0x4300); // 44.1 kHz / 4
+        assert_eq!(rate_field(8000), 0x0500); // 48 kHz / 6
+        assert_eq!(rate_field(96000), 0x0800); // 48 kHz * 2
+        assert_eq!(rate_field(192000), 0x1800); // 48 kHz * 4
+        assert_eq!(hda_format(44100, 2, 16) & 0x4000, 0x4000);
+        assert_eq!(hda_format(48000, 2, 16) & 0x4000, 0x0000);
     }
 
     #[test]
     fn hda_format_channels() {
-        // channels - 1 in bits 11:9.
-        assert_eq!(hda_format(48000, 1, 16) & 0x0E00, 0x0000);
-        assert_eq!(hda_format(48000, 2, 16) & 0x0E00, 0x0200);
-        assert_eq!(hda_format(48000, 6, 16) & 0x0E00, 0x0A00);
+        // channels - 1 in bits 3:0 — the field whose zero value is what
+        // turns a stereo stream into an octave-low mono one.
+        assert_eq!(hda_format(48000, 1, 16) & 0x000F, 0x0000);
+        assert_eq!(hda_format(48000, 2, 16) & 0x000F, 0x0001);
+        assert_eq!(hda_format(48000, 6, 16) & 0x000F, 0x0005);
     }
 
     #[test]
     fn hda_format_bit_depth() {
-        assert_eq!(hda_format(48000, 2, 8) & 0xF000, 0x0000);
-        assert_eq!(hda_format(48000, 2, 16) & 0xF000, 0x1000);
-        assert_eq!(hda_format(48000, 2, 24) & 0xF000, 0x3000);
-        assert_eq!(hda_format(48000, 2, 32) & 0xF000, 0x4000);
+        assert_eq!(hda_format(48000, 2, 8) & 0x0070, 0x0000);
+        assert_eq!(hda_format(48000, 2, 16) & 0x0070, 0x0010);
+        assert_eq!(hda_format(48000, 2, 20) & 0x0070, 0x0020);
+        assert_eq!(hda_format(48000, 2, 24) & 0x0070, 0x0030);
+        assert_eq!(hda_format(48000, 2, 32) & 0x0070, 0x0040);
     }
 
     #[test]
     fn hda_format_falls_back_to_nearest_encoding() {
         // Unsupported rate/depth degrade to 48 kHz / 16-bit.
-        assert_eq!(hda_format(12345, 2, 7), 0x1200);
+        assert_eq!(hda_format(12345, 2, 7), 0x0011);
         // A zero channel count still yields a valid PCM word.
-        assert_eq!(hda_format(48000, 0, 16) & 0x0E00, 0x0000);
+        assert_eq!(hda_format(48000, 0, 16) & 0x000F, 0x0000);
+    }
+
+    #[test]
+    fn hda_format_is_never_non_pcm() {
+        // Stream type is bit 15, and PCM is zero there.
+        assert_eq!(hda_format(48000, 2, 16) & 0x8000, 0x0000);
     }
 
     // -----------------------------------------------------------------------

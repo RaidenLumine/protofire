@@ -70,9 +70,13 @@ The authoritative picture of what exists today is
   a program reaches it — the shell's `tone` builtin writes PCM to
   `/system/dev/audio`, which is now authorized by the node's own descriptor —
   and `make check-x8664-hda` reads the samples back out of the WAV QEMU's audio
-  backend writes on the host.  What is left: the tone's pitch in that file is
-  half what the client's generator implies, and which side scales it is
-  unresolved.
+  backend writes on the host and measures the tone's frequency from the wave's
+  own period.  The octave it used to lose was the converter's format word:
+  `SET_STREAM_FORMAT` carries sixteen bits of payload through the verb encoding
+  reserved for that width, and the driver sent it through the eight-bit one, so
+  the codec was told "one channel" and played a stereo stream's interleaved
+  samples in sequence.  What is left is the shell generator's own rounding,
+  under a percent, and a codec that is not QEMU's.
 
 ## Mid Term (6–18 months)
 

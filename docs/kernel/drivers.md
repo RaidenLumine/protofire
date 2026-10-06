@@ -116,9 +116,12 @@ converter at a stream, and drains a BDL ring into the controller's stream DMA.
 `/system/dev/audio` is the interface: a write is a `u32` sample rate followed by
 interleaved 16-bit stereo samples, the shell's `tone` builtin is a caller, and
 `make check-x8664-hda` plays through it and reads the samples back out of the
-WAV QEMU's audio backend writes on the host
-([docs/status.md](../status.md) records the one thing about it that is not
-settled: the pitch, which comes out at half the client's generator's).
+WAV QEMU's audio backend writes on the host, measuring the tone's frequency
+from the wave's own period.  The converter learns the stream's shape from a
+16-bit format word — how many channels, how deep, at what rate, with the rate
+encoded as a base rate times a multiplier over a divisor — and it arrives
+through `SET_STREAM_FORMAT`, one of the verbs whose payload is two bytes.  The
+stream *tag* goes separately, in the channel verb.
 
 ## USB
 

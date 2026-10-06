@@ -13,6 +13,13 @@
 # is silent: the driver reports that it wrote every sample, and the machine
 # plays nothing.
 #
+# A fourth was silent in a different way: the driver's `SET_STREAM_FORMAT`
+# verb carried the stream *tag* where the codec expects the sample format, and
+# the truncated word it sent decoded as a one-channel stream, so every tone
+# came out an octave low while every register read back as written.  That one
+# is visible only in the samples themselves, which is why this check measures
+# the tone's frequency and not just its shape.
+#
 # The observation is outside the guest.  QEMU's `-audiodev wav` writes what the
 # codec's voice produces to a file on the host, so "did the samples leave" is a
 # property of a file this script can read — the same shape as the USB disk's
@@ -27,6 +34,12 @@
 #     before the fix;
 #   * that data carries a square wave at the amplitude the builtin generates:
 #     long runs of both peaks, which silence (a run of zeros) cannot fake.
+#   * the wave's period, converted back to a frequency, is the one the builtin
+#     asked for (`tone 440 200`) to within a few percent.  The residual is the
+#     generator's own rounding — a square wave's half-period is a whole number
+#     of frames, so 440 Hz lands on 110 frames rather than 109.09 — and the
+#     tolerance is far tighter than the halving a mis-told channel count
+#     produces.
 #
 # Usage:
 #   sh scripts/check-x8664-hda.sh [timeout-seconds]
@@ -153,16 +166,63 @@ if frames < 1000:
     print(f"the backend wrote only {frames} frames; nothing was played")
     sys.exit(1)
 
-# The builtin generates a square wave at +8000/-8000.  Resampled to the
-# backend's own rate the peaks come back as +7999 (0x1f3f -> 3f 1f) and -8000
-# (0xe0c0 -> c0 e0); both halves of the wave have to be there, and a run of
-# them is what silence cannot produce.
+# The builtin generates a square wave at +8000/-8000 and asks for 440 Hz
+# through the node's rate header.  Resampled to the backend's own rate the
+# peaks come back as +7999 (0x1f3f -> 3f 1f) and -8000 (0xe0c0 -> c0 e0);
+# both halves of the wave have to be there, and a run of them is what silence
+# cannot produce.
 positive = data.count(b"\x3f\x1f")
 negative = data.count(b"\xc0\xe0")
 if positive < 100 or negative < 100:
     print(f"peaks: +{positive} -{negative}; the tone is not in the file")
     sys.exit(1)
-print(f"wav: {frames} frames at {rate} Hz, {positive} positive and {negative} negative peaks")
+
+# The tone's frequency, measured from the wave's own period.  Transitions are
+# counted only between samples that carry the wave, so a stretch of silence
+# between the burst and the ring's next lap is skipped rather than read as a
+# sign change of its own.
+import array
+
+left = array.array("h")
+left.frombytes(data)
+left = left[0::channels]
+transitions = []
+previous = 0
+for index, sample in enumerate(left):
+    if sample > 1000:
+        sign = 1
+    elif sample < -1000:
+        sign = -1
+    else:
+        continue
+    if previous != 0 and sign != previous:
+        transitions.append(index)
+    previous = sign
+if len(transitions) < 16:
+    print(f"only {len(transitions)} transitions in the wave; nothing to measure")
+    sys.exit(1)
+
+# The median half-period, then the mean of the periods near it: the median
+# discards the one-off gaps a ring lap leaves behind, and the mean of what is
+# left is better than the one frame a single interval can be off by.
+intervals = sorted(
+    transitions[i + 1] - transitions[i] for i in range(len(transitions) - 1)
+)
+median = intervals[len(intervals) // 2]
+kept = [i for i in intervals if abs(i - median) <= max(1, median // 10)]
+half_period = sum(kept) / len(kept)
+measured = rate / (2.0 * half_period)
+expected = 440.0
+if abs(measured - expected) > expected * 0.05:
+    print(
+        f"the tone is {measured:.1f} Hz, not the {expected:.0f} Hz the shell "
+        f"asked for (half-period {half_period:.2f} frames at {rate} Hz)"
+    )
+    sys.exit(1)
+print(
+    f"wav: {frames} frames at {rate} Hz, {positive} positive and {negative} "
+    f"negative peaks, tone {measured:.1f} Hz (asked for {expected:.0f} Hz)"
+)
 PY
 
 printf 'x86_64 HDA check passed: the shell played a tone and the host WAV carries it\n'

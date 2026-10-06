@@ -621,7 +621,15 @@ impl HdaController {
 
     /// Route the playback stream into the output converter and power it
     /// to D0.
-    unsafe fn setup_codec_playback(&mut self, cad: u8) -> Result<()> {
+    ///
+    /// `format` is the same [`hda_format`] word the stream descriptor's
+    /// SDFMT carries.  The converter is told the stream's *shape* through it
+    /// — how many channels, how deep, at what rate — and told only which
+    /// stream tag to listen for through the channel verb.  Sending the tag
+    /// as if it were the format is what made every tone an octave low: the
+    /// codec decoded the truncated word as one channel, so it played the two
+    /// interleaved samples of each stereo frame in sequence.
+    unsafe fn setup_codec_playback(&mut self, cad: u8, format: u16) -> Result<()> {
         // SAFETY: the codec verbs for playback go out through the same CORB/RIRB pair.
         unsafe {
             let converter = self.converter_nid;
@@ -631,14 +639,16 @@ impl HdaController {
             let tag = self.stream_tag & 0x0F;
             // Power the widget to D0.
             self.send_verb(hda_verb(cad, converter, VERB_SET_POWER_STATE, 0))?;
-            // Point the converter at the stream tag (format index 0).
-            self.send_verb(hda_verb(cad, converter, VERB_SET_STREAM_FORMAT, tag << 4))?;
-            // Two-channel (stereo) sample slot mapping.
+            // The stream's format word, in the verb's sixteen-bit form.
+            self.send_verb(hda_verb16(cad, converter, VERB_SET_STREAM_FORMAT, format))?;
+            // The stream tag in bits 7:4, and the first channel this
+            // converter handles (0) in bits 3:0 — the channel *count* is in
+            // the format word above, not here.
             self.send_verb(hda_verb(
                 cad,
                 converter,
                 VERB_SET_CONVERTER_STREAM_CHANNEL,
-                (tag << 4) | 0x01,
+                tag << 4,
             ))?;
             Ok(())
         }
@@ -671,7 +681,7 @@ impl HdaController {
                 self.stop_playback_stream();
                 let format = hda_format(rate, 2, 16);
                 self.setup_playback_stream(format)?;
-                self.setup_codec_playback(0)?;
+                self.setup_codec_playback(0, format)?;
                 self.playback_ring = BdlRingState::new();
                 self.active_rate = rate;
                 self.position_spins = 0;

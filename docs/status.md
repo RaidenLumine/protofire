@@ -63,7 +63,7 @@ the syscall interface.
 | PS/2 Keyboard | Input | Scancode buffering, decoding, console TTY bridge | The PS/2 interrupt path is x86_64; other targets rely on VirtIO input |
 | Framebuffer | Display | Linear framebuffer the console draws on | No userspace graphics API beyond the VIRGL syscalls; QEMU only |
 | Framebuffer Console | Display | Text rendering from a built-in 8×16 ASCII glyph table | Fixed font: characters outside the table draw as a fallback glyph, and there is no font or resolution management |
-| HDA (Intel HD Audio) | Audio | CORB/RIRB, codec discovery, the output converter, a BDL playback ring and the stream DMA that drains it, driven from `/system/dev/audio` ([`hda.rs`](../src/drivers/hda.rs)); `make check-x8664-hda` types `tone 440 200` at the shell, which writes the node's `[u32le rate][interleaved samples]` payload, and reads the samples back out of the WAV QEMU's `-audiodev wav` backend writes on the host | The tone's *pitch* in that file is half what the client's generator implies, and which side of the path scales it — the client, the format word, or QEMU's resampling — is not settled; the gate asserts the wave's shape and amplitude rather than its frequency; QEMU only |
+| HDA (Intel HD Audio) | Audio | CORB/RIRB, codec discovery, the output converter, a BDL playback ring and the stream DMA that drains it, driven from `/system/dev/audio` ([`hda.rs`](../src/drivers/hda.rs)); the converter is bound to the stream by the same 16-bit format word the descriptor's SDFMT carries, so the codec derives the channel count from the format; `make check-x8664-hda` types `tone 440 200` at the shell, which writes the node's `[u32le rate][interleaved samples]` payload, reads the samples back out of the WAV QEMU's `-audiodev wav` backend writes on the host, and measures the tone's frequency from the wave's own period | The tone lands ~0.8% below the frequency asked for (436 Hz for 440), which is the shell generator rounding a half-period to whole frames — 110 rather than 109.09 — and not a scaling side; QEMU only |
 | PCIe ECAM | Bus | x86_64: full ECAM; AArch64/RISC-V: window found, BARs assigned, one driver attached, MSI-X through the machine's own controller | One driver on the device-tree machines; every other PCIe device still uses its architecture's own enumeration |
 
 **Strengths:** driver coverage across storage, network, display, audio, and
@@ -119,17 +119,26 @@ input, mostly verified under QEMU.
   flight per ring rather than checking for room, which a future pipelining
   path has to add before it can be correct
   ([RFC 0004](rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md)).
-- **Audio plays; its pitch is unresolved.** The path runs end to end — the
-  shell's `tone` builtin opens `/system/dev/audio`, the driver points the
+- **Audio plays, at the pitch it was asked for.** The path runs end to end —
+  the shell's `tone` builtin opens `/system/dev/audio`, the driver points the
   codec's converter at the stream, drains a BDL ring, and QEMU's `wav` backend
-  carries the samples to a file this project's gate reads — but the wave in
-  that file has twice the half-period the client's generator implies, and
-  nothing yet says which of the three (the client's counting, the format word
-  the driver sends, or QEMU's resampling) doubles it. The gate asserts the
-  shape and the amplitude, which it can do honestly, and not the frequency.
-  A device node's *open* was the blocker before this and no longer is: it is
-  authorized by the node's own descriptor, the way the stat syscall always
-  answered, and the audio node is writable by any user.
+  carries the samples to a file this project's gate reads. A device node's
+  *open* was the blocker before this and no longer is: it is authorized by the
+  node's own descriptor, the way the stat syscall always answered, and the
+  audio node is writable by any user.
+
+  The wave used to come out an octave low, and the reason was the last place
+  anyone looks: `SET_STREAM_FORMAT`'s payload. A codec's verbs come in two
+  payload widths and the driver sent this one through the eight-bit form, so
+  what reached the converter as its format word was the low byte of the
+  stream tag — a *valid* word for a one-channel stream. The codec believed it,
+  played the two interleaved samples of every stereo frame one after the
+  other, and halved the pitch of everything, while each register read back
+  exactly as written. `docs/status.md`'s own gate could not see it because it
+  asserted the wave's shape and amplitude, which both survive; the check now
+  measures the period and asserts the frequency, and the residual (436 Hz for
+  440) is the shell generator rounding a half-period to whole frames rather
+  than a copy of the old guesswork.
 - **One PCIe driver on the device-tree machines.** The ECAM walk finds devices,
   the kernel's own resource pass gives their memory BARs addresses out of the
   window the host bridge's `ranges` describes (no firmware ran one), and
