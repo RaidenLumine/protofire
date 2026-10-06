@@ -99,6 +99,16 @@
 # package, writing `/apps` — it does through `user::program`, which is where the
 # install path lives; the syscall is the way in, not a second implementation.
 #
+# The audio node's mode moved two rows, both in directions the rows already
+# had.  `device` names `fs` twice more because a device node's mode is a
+# security descriptor: the ledger is the filesystem's view of the devices, and
+# the one node that is writable by any user is the one that has to say so in
+# the filesystem's own terms.  `syscall` names `fs` once more for the same
+# descriptor, resolving what it was handed into an access mode — the same
+# direction as the path walk beside it.  Neither is a new direction, and the
+# rows above for `device` -> `fs` and `syscall` -> `fs` are where this one is
+# counted.
+#
 # from                         to                           count
 audit                        fs                           6
 audit                        handle_rights                2
@@ -108,7 +118,7 @@ boot_report                  sync                         1
 console                      process                      5
 console                      sync                         1
 device                       drivers                      8
-device                       fs                           5
+device                       fs                           7
 device                       handle_rights                2
 device                       sync                         1
 drivers                      block                        10
@@ -212,7 +222,7 @@ smp                          percpu                       3
 syscall                      audit                        9
 syscall                      boot_report                  2
 syscall                      drivers                      3
-syscall                      fs                           47
+syscall                      fs                           48
 syscall                      ipc                          6
 syscall                      irq_balance                  3
 syscall                      irq_stats                    1
