@@ -56,6 +56,7 @@ dead-code annotations, and the ABI mirror are all gated; the rest is review.
 | Module dependency edges | `make check-layering` against `scripts/layering-baseline.txt` | `verify-p3`, CI |
 | Architecture `cfg` fan-out | `make check-arch-fanout` against `scripts/arch-fanout-baseline.txt` | `verify-p3`, CI |
 | File-level `allow(dead_code)` | `make check-dead-code-allows`: the annotation must carry a reason and an exit condition | `verify-p3`, CI |
+| Every configuration the manifest declares | `make check-feature-matrix`: each feature built in the shipped `demo-disk` configuration, and then all of them together; a feature that is not part of a kernel build is listed there with where it is built instead | `verify-p3`, CI |
 | ABI records against their user-space mirror | `make check-abi-mirror` against `scripts/abi-mirror-baseline.txt` | `verify-p3`, CI |
 | Repository object database | `make check-repo-integrity` (`git fsck`, with the benign notices filtered) | `verify-p0`, CI |
 | **Everything else in this directory** | **Review** | — |

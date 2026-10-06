@@ -63,6 +63,7 @@ endif
 		release \
 		check-perf-baseline \
 		check-dead-code-allows \
+		check-feature-matrix \
 		check-abi-mirror \
 		check-layering \
 		check-x8664-runtime \
@@ -118,6 +119,7 @@ help:
 		'  make check-rfcs     - fail if an RFC number, status or the generated index is wrong' \
 		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
 		'  make check-dead-code-allows  - fail if a file-level allow(dead_code) has no reason' \
+		'  make check-feature-matrix - build every configuration the manifest declares' \
 		'  make check-reproducible-build - rebuild every artifact twice and compare bytes' \
 		'  make release        - build and sign the release bundle (does not tag or publish)' \
 		'  make check-perf-baseline - boot the demo and compare its measured work to the baseline' \
@@ -396,6 +398,16 @@ check-perf-baseline:
 # allows in this tree outlived their reasons before it existed.
 check-dead-code-allows:
 	sh ./scripts/check-dead-code-allows.sh
+
+# Every configuration `Cargo.toml` declares, built: the shipped `demo-disk`
+# build plus each switch the manifest names, and then all of them at once.  The
+# gates boot five of those switches; this is what holds the rest of them to
+# "it compiles" instead of "it is described".
+check-feature-matrix:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-feature-matrix.sh
 
 # The ABI records exist twice on purpose — `src/abi/` for the kernel and
 # `src/user/shared/abi/` for the vendored user tree — so the copy needs a check

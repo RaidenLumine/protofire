@@ -151,6 +151,9 @@ run_p3() {
     run_make_step "make check-arch-fanout" check-arch-fanout
     run_make_step "make check-payload-relocations" check-payload-relocations
     run_make_step "make check-dead-code-allows" check-dead-code-allows
+    # And every configuration the manifest declares, which is the one gate
+    # that builds the switches no boot hands to a `check-*` target.
+    run_make_step "make check-feature-matrix" check-feature-matrix
     run_make_step "make check-abi-mirror" check-abi-mirror
     # The release artifacts themselves: the same source built twice in two
     # clean trees has to come out byte for byte the same, or a signature over

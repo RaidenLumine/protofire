@@ -52,6 +52,11 @@ jobs:
             command: make check-payload-relocations
           - name: dead-code-allows
             command: make check-dead-code-allows
+          # Every configuration the manifest declares, not just the ones a
+          # runtime gate boots: a switch whose code has rotted is otherwise
+          # invisible until somebody builds it.
+          - name: feature-matrix
+            command: make check-feature-matrix
           - name: abi-mirror
             command: make check-abi-mirror
           # `git fsck` in a shallow clone (what `actions/checkout` makes by
