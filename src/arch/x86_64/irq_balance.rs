@@ -40,6 +40,20 @@ pub(crate) fn register_cpu(cpu_id: u32, lapic_id: u8) {
     }
 }
 
+/// The local APIC id registered for `cpu_id`, if that CPU is registered.
+///
+/// An MSI-X table entry names its destination by LAPIC id, so programming one
+/// needs this table rather than a CPU number: the two are equal on some
+/// machines and not on others.
+#[cfg_attr(not(all(target_arch = "x86_64", target_os = "none")), allow(dead_code))]
+pub(crate) fn lapic_id_of(cpu_id: u32) -> Option<u8> {
+    // SAFETY: reading the table `register_cpu` writes, whose entries are
+    // written once per CPU at bring-up.
+    unsafe { &*CPU_LAPIC_IDS.get() }
+        .get(cpu_id as usize)
+        .copied()
+}
+
 /// Remember that `vector` is delivered through IOAPIC redirection pin `pin`.
 ///
 /// Called from [`super::ioapic::ioapic_route_irq`].  Pin 0 (the PIT timer)

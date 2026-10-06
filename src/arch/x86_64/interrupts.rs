@@ -103,6 +103,15 @@ pub(crate) fn handle_irq(vector: u8, _allow_preemption: bool) {
         VIRTIO_CONFIG_VECTOR | VIRTIO_QUEUE_VECTOR => {
             VIRTIO_IRQ_FIRED.store(true, Ordering::Release);
         }
+        // A device's own MSI-X vectors: the identity is the vector, and the
+        // handler is whoever claimed it (see `src/arch/x86_64/msi.rs`).  A
+        // vector in the window that nobody claimed is counted as spurious, the
+        // same answer the device-tree machines give an unclaimed identity.
+        v if super::msi::is_msix_vector(v) && !super::msi::dispatch_vector(v) => {
+            crate::kernel::irq_stats::record_spurious();
+        }
+        // A claimed vector: its handler has already run.
+        v if super::msi::is_msix_vector(v) => {}
         _ => {}
     }
 

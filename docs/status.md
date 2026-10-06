@@ -53,7 +53,7 @@ the syscall interface.
 | AHCI (SATA) | Block | Full read/write (DMA, polling) | Polling only, no interrupt path; x86_64 only; QEMU only |
 | ATA (PIO) | Block | Full read/write | PIO only, no DMA; x86_64 only; QEMU only |
 | VirtIO (block) | Block | Full read/write, on the virtio-mmio bus and on PCIe | QEMU only; the virtio-mmio transport has no vectors of its own, so only the PCIe path claims an identity per queue |
-| VirtIO (net) | Network | Full RX/TX, modern and legacy transports; on the two PCIe machines (AArch64, RISC-V) each queue claims its own MSI-X identity, so a queue's completion wakes that queue's waiter | On x86_64 the machine has no MSI-X claim path, so a transmit polls for its completion; no throughput baseline |
+| VirtIO (net) | Network | Full RX/TX, modern and legacy transports; on all three machines each queue claims its own MSI-X identity, so a queue's completion wakes that queue's waiter | No throughput baseline |
 | VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189), driven by the demo renderer (`src/user/demo/virgl_renderer.rs`) | QEMU only |
 | NVMe | Block | Full read/write, boot-disk probe | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; x86_64 only; QEMU only |
 | xHCI | USB host | Controller bring-up and port status | Not end-to-end: USB storage and keyboard input are not usable yet |
@@ -385,7 +385,7 @@ disk-backed swap, compression, and defragmentation.
 | Common interrupt abstraction | `InterruptController` trait | — |
 | Thread exception handling | Page fault recovery, signal delivery | — |
 | PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | Nothing known: the window is opened in one module, the guard restores what it found, and the paths that can wait stage first (`make check-user-access-windows`) |
-| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64 — but no path programs a device's table there, so a PCIe device's completions are polled; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and a third device class has no PCIe driver yet; on x86_64 nothing claims |
+| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64; a vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64 | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and a third device class has no PCIe driver yet; on x86_64 the PCIe virtio-net driver is the only claimant, and NVMe's fixed vectors are still wired by constant rather than claimed |
 | NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry | No architectural NMI source on RISC-V, so that entry stays dormant |
 | Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable | Runs from the tick; no routing-latency measurement |
 | Interrupt stats interface | Per-CPU/per-vector counters, NMI/IPI totals, balancer state (SystemInfo #9) | — |
@@ -399,9 +399,11 @@ programs a device's table, NMI handling, and load balancing.
   FIQs, and SErrors; PAN/SMAP implemented (the `asm nomem` fix was deployed).
 - **MSI/MSI-X**: on RISC-V the AIA IMSIC receives MSIs and on AArch64 the GICv3
   ITS translates them, each with the PCIe virtio-net driver claiming its own
-  device's identities.  On x86_64 the composition and the vector numbers are
-  there and no device's table is programmed, which is why that machine's PCIe
-  devices poll.
+  device's identities.  On x86_64 the message is composed here, a device's
+  table is programmed here, and the vector a message names is looked up in the
+  same handler registry — so the NIC's queue completions arrive as interrupts
+  on that machine too
+  ([RFC 0003](rfcs/0003-program-the-msix-table-on-x86_64.md)).
 - **NMI handling**: dedicated minimal path for the x86_64 NMI vector and the
   AArch64 SError/FIQ vectors, with a handler registry (`kernel::nmi`) that works
   across the architectures that have a source.

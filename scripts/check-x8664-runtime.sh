@@ -322,6 +322,18 @@ require_log_matching '^[0-9a-f]{64}$'
 require_log_line "owned by virtio-net (network)"
 require_log_exact_line "virtio-net"
 require_log_exact_line "network"
+# The NIC's interrupts are its own now: the claim before the controller is up,
+# the table programmed once it is, and a completion that arrived on the vector
+# the driver named for its queue — the message-signalled path RFC 0003 decided
+# for this machine.  A boot that only wrote the table without a handler behind
+# it fails on the last of the three.
+require_log_line "[virtio-net] device interrupts claimed: irq "
+require_log_line "[msix  ] MSI-X on 00:02.0 delivers vectors "
+if ! grep -a -qE "\[virtio-net\] (RX|TX) MSI \(irq " "$log_file"; then
+    printf 'x86_64 runtime check failed: no queue reported an MSI\n' >&2
+    tail -n 12 "$log_file" >&2
+    exit 1
+fi
 # And one a *driver* reported rather than a probe: the bochs-display this
 # machine has is found inside the driver's own init, and it says so itself.
 require_log_line "owned by bochs-fb (console)"

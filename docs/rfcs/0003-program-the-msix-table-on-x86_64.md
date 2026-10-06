@@ -1,6 +1,6 @@
 # RFC 0003: Program a device's MSI-X table on x86_64
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-06
 - **Supersedes:** none
@@ -164,12 +164,17 @@ follow-up per device, not part of this decision.
 
 - `make check-x8664-runtime` boots with `virtio-net-pci` and asserts the claim
   (`[virtio-net] device interrupts claimed: irq ...`), the table's programming
-  (`[msix  ] ... MSI-X enabled on ...`), and a queue MSI that names the CPU its
-  entry was placed on — the same three claims the AArch64 check makes.
+  (`[msix  ] MSI-X on 00:02.0 delivers vectors ... on cpus [...]`), and that a
+  queue's own MSI arrived (`[virtio-net] RX MSI (irq ...)`, which is a handler
+  the kernel ran because a device wrote the message this machine composed).
+  The placement itself is printed per entry; the stronger check — that the CPU
+  serving a queue's MSI is the one its entry named — is the AArch64 check's,
+  because that smoke runs two CPUs and this one runs a single CPU.
 - Unit tests in `src/arch/x86_64/msi.rs` for the vector window's bounds and
-  the entry composition: an entry is written masked, its data word names the
-  vector and its address the destination APIC id, and `claim_each` refuses a
-  run that would leave the window.
+  the entry composition: the window lies inside the free range and above the
+  fixed assignments, it is closed at both ends, every vector in it has a stub,
+  an entry is written masked, and its data word names the vector while its
+  address names the destination APIC id.
 - `make check-unsafe-comments`, `make clippy` and `make clippy-targets` cover
   the new MMIO writes and the stubs.
 - The existing polling path is the control: a boot with the driver's claim

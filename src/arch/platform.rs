@@ -112,6 +112,10 @@ pub(crate) fn program_device_msix() {
     {
         let _ = crate::arch::riscv64::pci::program_device_msix();
     }
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    {
+        let _ = crate::arch::x86_64::msi::program_device_msix();
+    }
 }
 
 /// A PCIe function's registers, as this platform can reach them.
@@ -132,6 +136,11 @@ pub(crate) struct PciRegisterWindow {
         all(target_arch = "riscv64", target_os = "none")
     ))]
     pub function: PciFunctionAddress,
+    /// The same fact on x86_64, where configuration space is reached through
+    /// port I/O rather than an ECAM window: the bus address *is* the function,
+    /// and claiming its interrupts goes through that address directly.
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    pub function: crate::arch::x86_64::pci::PciAddress,
 }
 
 /// A PCIe function, as the machine that enumerated it addresses it.
@@ -226,9 +235,41 @@ pub(crate) fn pci_register_window(
         })
     }
 
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    {
+        use crate::arch::x86_64::pci;
+
+        let devices = pci::pci_enumerate_buses();
+        let (device, bar) = find_virtio_function(&devices, vendor_id, class_code, subclass)?;
+        let address = pci::PciAddress::new(device.bus, device.device, device.function);
+
+        // Enable Memory Space and Bus Master: the modern transport's registers
+        // live in a BAR, and the device reaches the rings by bus-mastering.
+        // SAFETY: the command register of a function this scan enumerated,
+        // inside its own configuration space.
+        let command = unsafe { pci::pci_config_read_u16(address, pci::COMMAND) };
+        // SAFETY: as above — writing that register to enable the two spaces the
+        // transport and its descriptors need.
+        unsafe {
+            pci::pci_config_write_u16(address, pci::COMMAND, command | (1 << 1) | (1 << 2));
+        }
+
+        // SAFETY: `bar` is a live MMIO range the enumeration decoded.
+        let mapped =
+            unsafe { crate::arch::mmu::map_device_mmio(bar.base_address, bar.size as usize) }?;
+        Some(PciRegisterWindow {
+            vendor_id: device.vendor_id,
+            device_id: device.device_id,
+            bar_address: mapped as usize,
+            bar_size: bar.size,
+            function: address,
+        })
+    }
+
     #[cfg(not(any(
         all(target_arch = "aarch64", target_os = "none"),
-        all(target_arch = "riscv64", target_os = "none")
+        all(target_arch = "riscv64", target_os = "none"),
+        all(target_arch = "x86_64", target_os = "none")
     )))]
     {
         let _ = (vendor_id, class_code, subclass);
@@ -249,6 +290,8 @@ pub(crate) struct DeviceInterrupts {
     claim: crate::arch::riscv64::pci::MsixClaim,
     #[cfg(all(target_arch = "aarch64", target_os = "none"))]
     claim: crate::arch::aarch64::its::MsixClaim,
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    claim: crate::arch::x86_64::msi::MsixClaim,
 }
 
 #[cfg(target_os = "none")]
@@ -263,9 +306,14 @@ impl DeviceInterrupts {
         {
             self.claim.is_armed()
         }
+        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+        {
+            self.claim.is_armed()
+        }
         #[cfg(not(any(
             all(target_arch = "riscv64", target_os = "none"),
-            all(target_arch = "aarch64", target_os = "none")
+            all(target_arch = "aarch64", target_os = "none"),
+            all(target_arch = "x86_64", target_os = "none")
         )))]
         {
             false
@@ -285,9 +333,14 @@ impl DeviceInterrupts {
         {
             self.claim.first_irq()
         }
+        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+        {
+            self.claim.first_irq()
+        }
         #[cfg(not(any(
             all(target_arch = "riscv64", target_os = "none"),
-            all(target_arch = "aarch64", target_os = "none")
+            all(target_arch = "aarch64", target_os = "none"),
+            all(target_arch = "x86_64", target_os = "none")
         )))]
         {
             0
@@ -345,9 +398,21 @@ pub(crate) fn pci_claim_msix(
         Some(DeviceInterrupts { claim })
     }
 
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    {
+        // SAFETY: the window names a function this machine enumerated, which is
+        // the contract `claim_msix` asks for.
+        let claim =
+            unsafe { crate::arch::x86_64::msi::claim_msix(window.function, named, fallback) }
+                .ok()?;
+        crate::arch::x86_64::msi::defer_msix_arming(claim.clone());
+        Some(DeviceInterrupts { claim })
+    }
+
     #[cfg(not(any(
         all(target_arch = "riscv64", target_os = "none"),
-        all(target_arch = "aarch64", target_os = "none")
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "x86_64", target_os = "none")
     )))]
     {
         let _ = (window, named, fallback);
@@ -367,9 +432,13 @@ pub(crate) fn pci_claim_msix(
 /// asking for an entry the device does not have.  The caller refuses the claim,
 /// so the device stays on its polling path instead of losing a queue's
 /// interrupt silently.
-// Every configuration that compiles the two architectures' MSI-X claims needs
-// this, including the aarch64 host target `make check` type-checks.
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+// Every configuration that compiles an architecture's MSI-X claim needs this,
+// including the aarch64 host target `make check` type-checks.
+#[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    all(target_arch = "x86_64", target_os = "none")
+))]
 pub(crate) fn msix_handlers_for(
     count: u32,
     named: &[(u16, crate::arch::irq_handlers::IrqHandler)],
@@ -399,7 +468,8 @@ pub(crate) fn msix_handlers_for(
 /// picking the modern interface's.
 #[cfg(any(
     all(target_arch = "aarch64", target_os = "none"),
-    all(target_arch = "riscv64", target_os = "none")
+    all(target_arch = "riscv64", target_os = "none"),
+    all(target_arch = "x86_64", target_os = "none")
 ))]
 fn find_virtio_function(
     devices: &[crate::arch::pci::PciDeviceInfo],

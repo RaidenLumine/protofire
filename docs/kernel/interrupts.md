@@ -37,11 +37,15 @@ The local APIC and the IOAPIC, mapped at their MMIO window in
 `interrupts.rs`.  The IOAPIC's redirection table is where a wired interrupt's
 destination lives, so that is the lever the load balancer pulls.  Message
 interrupts are composed in `src/arch/x86_64/msi.rs` — the address carries the
-destination LAPIC id and the data word the vector — but **nothing in this tree
-programs a device's MSI-X table on this machine**: `arch::platform::pci_claim_msix`
-has no x86_64 arm, so a PCIe device's completion is polled rather than
-delivered.  The composition helpers are what a path that does program a table
-would use.
+destination LAPIC id and the data word the vector — and a device's table is
+programmed there too: a driver claims vectors from a window of the IDT
+(`MSIX_VECTOR_BASE`..`MSIX_VECTOR_LAST`, each with its own stub), the claim is
+held until the local APIC is up, and arming it writes the function's table,
+enables MSI-X and clears its function mask.  A delivered vector *is* the
+identity: `interrupts.rs` looks it up in the same
+[handler registry](../../src/arch/irq_handlers.rs) the ITS and the IMSIC answer
+through, so a completion reaches the queue that claimed it.  The design is
+[RFC 0003](../rfcs/0003-program-the-msix-table-on-x86_64.md).
 
 ### AArch64
 

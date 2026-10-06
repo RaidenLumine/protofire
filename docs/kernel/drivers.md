@@ -62,10 +62,10 @@ architecture: `drivers::nvme` exists everywhere, and only its body differs.
 ## Network
 
 One driver: `virtio_net`, over the modern or legacy transport, with two queues
-routed to their own MSI-X vectors.  Its completion path depends on the machine
-and that is worth stating plainly — on the two PCIe machines the queues claim
-their identities and a transmit waits on that queue's own interrupt, while on
-x86_64 no device table is programmed and the completion is polled
+routed to their own MSI-X vectors.  Its completion path is one path on every
+machine now: the queues claim their identities, a transmit waits on that
+queue's own interrupt, and a machine whose claim the platform has not programmed
+answers "not armed" and polls instead
 ([interrupts.md](interrupts.md) has the message path itself).
 
 ## PCIe
@@ -88,7 +88,11 @@ which is what every transport did before any of this existed
 placement design, and [interrupts.md](interrupts.md) has the message path).
 Two drivers do this on the device-tree machines — `virtio_net` and the block
 driver — and the point of the second one is that the identities are the
-*device's*: the pair do not share a claim, a DeviceID, or an LPI range.
+*device's*: the pair do not share a claim, a DeviceID, or an LPI range.  x86_64
+claims the same way through a window of its own IDT
+([rfcs/0003](../rfcs/0003-program-the-msix-table-on-x86_64.md)); what it does
+not have yet is a second claimant, because the drivers that would be one
+(NVMe, xHCI) build their interrupts from constants instead.
 
 ## Input and console
 

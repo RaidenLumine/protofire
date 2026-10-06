@@ -151,6 +151,27 @@ ISR_NOERR 46
 ISR_NOERR 47
 ISR_NOERR 48
 ISR_NOERR 49
+// The window a device's MSI-X table may name (`msi::MSIX_VECTOR_BASE` ..
+// `msi::MSIX_VECTOR_LAST`).  Each needs its own stub: a vector without one
+// reaches `interrupt_stub_default`, which reports 255 for every vector, and a
+// message would then be answered by whoever owns 255 rather than by the
+// handler its identity was claimed with.
+ISR_NOERR 96
+ISR_NOERR 97
+ISR_NOERR 98
+ISR_NOERR 99
+ISR_NOERR 100
+ISR_NOERR 101
+ISR_NOERR 102
+ISR_NOERR 103
+ISR_NOERR 104
+ISR_NOERR 105
+ISR_NOERR 106
+ISR_NOERR 107
+ISR_NOERR 108
+ISR_NOERR 109
+ISR_NOERR 110
+ISR_NOERR 111
 ISR_NOERR 128
 "#
 );
@@ -208,8 +229,60 @@ unsafe extern "C" {
     fn interrupt_stub_47();
     fn interrupt_stub_48();
     fn interrupt_stub_49();
+    fn interrupt_stub_96();
+    fn interrupt_stub_97();
+    fn interrupt_stub_98();
+    fn interrupt_stub_99();
+    fn interrupt_stub_100();
+    fn interrupt_stub_101();
+    fn interrupt_stub_102();
+    fn interrupt_stub_103();
+    fn interrupt_stub_104();
+    fn interrupt_stub_105();
+    fn interrupt_stub_106();
+    fn interrupt_stub_107();
+    fn interrupt_stub_108();
+    fn interrupt_stub_109();
+    fn interrupt_stub_110();
+    fn interrupt_stub_111();
     pub(super) fn interrupt_stub_128();
     pub(super) fn interrupt_stub_default();
+}
+
+/// The stub for `vector`, when it is one of the MSI-X window's.
+///
+/// Answers `None` outside the window, and the caller falls back to the shared
+/// default stub — which is what every vector above 49 used before the window
+/// existed.
+pub(crate) fn msix_window_stub(vector: usize) -> Option<InterruptHandler> {
+    use crate::arch::x86_64::msi::MSIX_VECTOR_BASE;
+    use crate::arch::x86_64::msi::MSIX_VECTOR_LAST;
+
+    if vector < MSIX_VECTOR_BASE as usize || vector > MSIX_VECTOR_LAST as usize {
+        return None;
+    }
+
+    // The table is indexed from the window's base, so the stub for a vector is
+    // the one the assembler emitted for it.
+    const STUBS: [InterruptHandler; 16] = [
+        interrupt_stub_96,
+        interrupt_stub_97,
+        interrupt_stub_98,
+        interrupt_stub_99,
+        interrupt_stub_100,
+        interrupt_stub_101,
+        interrupt_stub_102,
+        interrupt_stub_103,
+        interrupt_stub_104,
+        interrupt_stub_105,
+        interrupt_stub_106,
+        interrupt_stub_107,
+        interrupt_stub_108,
+        interrupt_stub_109,
+        interrupt_stub_110,
+        interrupt_stub_111,
+    ];
+    STUBS.get(vector - MSIX_VECTOR_BASE as usize).copied()
 }
 
 pub(crate) const EARLY_HANDLERS: [InterruptHandler; 50] = [

@@ -62,6 +62,7 @@ pub fn init() {
             let handler = EARLY_HANDLERS
                 .get(index)
                 .copied()
+                .or_else(|| super::types::msix_window_stub(index))
                 .unwrap_or(interrupt_stub_default);
             *gate = InterruptGate::new(handler);
         }
