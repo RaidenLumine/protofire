@@ -397,13 +397,16 @@ require_log_exact_line "bus"
 require_log_line "[xhci  ] event ring MSI (irq "
 require_log_exact_line "usbkeys"
 # And the machine's USB mass storage, from the same controller: a disk the
-# guest enumerated, spoke bulk-only SCSI to, read the capacity of, and then
-# read a *block* from — the bytes in that line are the pattern this script
-# wrote into the image before booting, which is what makes it a read rather
-# than a zeroed buffer.  The kernel prefers it as the boot disk, and the
-# filesystem reads it again to see whether it is a volume it knows.
+# guest enumerated, spoke bulk-only SCSI to, identified (INQUIRY — its
+# allocation-length byte was one byte too far right, so this line was empty
+# until that was fixed), read the capacity of, and then read a *block* from.
+# The bytes in the block's line are the pattern this script wrote into the
+# image before booting, which is what makes it a read rather than a zeroed
+# buffer.  The kernel prefers it as the boot disk, and the filesystem reads it
+# again to see whether it is a volume it knows.
 require_log_line "[xhci  ] mass storage device detected at slot "
 require_log_line "[xhci  ] mass storage initialised at slot "
+require_log_line "[usbmsd] INQUIRY: vendor='QEMU' product='QEMU HARDDISK'"
 require_log_line "[usbmsd] USB mass storage: 16384 blocks x 512 bytes = 8 MiB"
 require_log_line \
     "[usbmsd] sector 0: [50, 52, 4f, 54, 4f, 46, 49, 52, 45, 2d, 55, 53, 42, 2d, 44, 49]"

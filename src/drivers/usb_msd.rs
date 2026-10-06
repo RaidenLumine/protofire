@@ -254,9 +254,12 @@ fn scsi_write_10(lba: u64, data: &[u8]) -> Result<()> {
 }
 
 fn scsi_test_unit_ready() -> Result<()> {
+    // TEST UNIT READY has no data stage.  Asking for a byte here — which this
+    // did — leaves the device reporting a residue of one for a transfer that
+    // should not exist, and relies on the device tolerating the extra phase.
+    // The command status wrapper is the whole answer.
     let cdb = [SCSI_TEST_UNIT_READY, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let mut dummy = [0u8; 1];
-    bot_transfer(&cdb, Some(BotData::In(&mut dummy)))
+    bot_transfer(&cdb, None)
 }
 
 fn scsi_read_capacity() -> Result<(u64, usize)> {
@@ -278,7 +281,12 @@ fn scsi_read_capacity() -> Result<(u64, usize)> {
 /// Bytes 8..16 carry the vendor ID, 16..32 the product ID, 32..36 the
 /// product revision.  Used during init for a one-line identity diagnostic.
 fn scsi_inquiry() -> Result<[u8; 36]> {
-    let cdb = [SCSI_INQUIRY, 0, 0, 0, 0, 36, 0, 0, 0, 0]; // allocation length = 36
+    // The allocation length is the *two* bytes at 3..5 — byte 3 its high half,
+    // byte 4 its low half — and byte 5 is the control byte.  This array used to
+    // carry the 36 one byte too far right, so the device was asked for zero
+    // bytes and answered with status PASSED and a residue of all thirty-six:
+    // the thirty-six zeros that the identity line printed as an empty vendor.
+    let cdb = [SCSI_INQUIRY, 0, 0, 0, 36, 0, 0, 0, 0, 0];
     let mut resp = [0u8; 36];
     bot_transfer(&cdb, Some(BotData::In(&mut resp)))?;
     Ok(resp)
@@ -288,7 +296,9 @@ fn scsi_inquiry() -> Result<[u8; 36]> {
 /// byte 2 in the fixed-format sense data).  Used to diagnose why a
 /// TEST UNIT READY keeps failing.
 fn scsi_request_sense() -> Result<u8> {
-    let cdb = [SCSI_REQUEST_SENSE, 0, 0, 0, 0, 18, 0, 0, 0, 0]; // allocation length = 18
+    // REQUEST SENSE's allocation length is the single byte 4 — byte 3 is
+    // reserved — and it had the same one-byte error as INQUIRY above.
+    let cdb = [SCSI_REQUEST_SENSE, 0, 0, 0, 18, 0, 0, 0, 0, 0];
     let mut resp = [0u8; 18];
     bot_transfer(&cdb, Some(BotData::In(&mut resp)))?;
     Ok(resp[2] & 0x0F)

@@ -58,7 +58,7 @@ the syscall interface.
 | NVMe | Block | Full read/write, boot-disk probe | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; x86_64 only; QEMU only |
 | xHCI | USB host | Controller reset and start, command and event rings, device enumeration (Enable Slot, Address Device, GET_DESCRIPTOR), a HID interrupt endpoint per device, port status, and a claimed MSI-X vector whose interrupt drains the event ring when the rings are free; `make check-x8664-runtime` boots all of it with a USB keyboard, presses a key through QEMU's monitor, and asserts the controller's own interrupt | The timer tick still drains the ring as the fallback, and the interrupt drains only when the controller's lock is free; x86_64 only; QEMU only |
 | USB HID | HID (keyboard) | A HID interrupt endpoint is configured on the enumerated device, its reports are decoded into the same keyboard core the PS/2 and VirtIO paths feed, and `make check-x8664-runtime` types a command on the USB keyboard and asserts the shell's answer | No hub, so one device per port; the report deshuffling is the boot's evidence rather than a synthetic matrix |
-| USB MSD | Storage | Bulk-only transport and SCSI command blocks; `make check-x8664-runtime` attaches a disk whose first sector carries a pattern, and the driver enumerates it, reads its capacity and reads that sector back, with the pattern in the log as the evidence | INQUIRY's data stage comes back as zeros — the vendor and product fields are empty — while READ CAPACITY's eight bytes and READ(10)'s five hundred and twelve arrive, so the identity line is not yet useful and the cause is unknown; writes are unexercised; QEMU only |
+| USB MSD | Storage | Bulk-only transport and SCSI command blocks; `make check-x8664-runtime` attaches a disk whose first sector carries a pattern, and the driver enumerates it, identifies it (INQUIRY), reads its capacity and reads that sector back, with the pattern in the log as the evidence | No write has a gate; QEMU only |
 | Serial (UART 16550) | Text I/O | Full duplex | RISC-V falls back to the SBI console when it has no UART |
 | PS/2 Keyboard | Input | Scancode buffering, decoding, console TTY bridge | The PS/2 interrupt path is x86_64; other targets rely on VirtIO input |
 | Framebuffer | Display | Linear framebuffer the console draws on | No userspace graphics API beyond the VIRGL syscalls; QEMU only |
@@ -111,8 +111,8 @@ input, mostly verified under QEMU.
   takes the interrupt a key press raises — and `make check-x8664-runtime` boots
   all of that, presses a key through QEMU's monitor, reads the shell's answer,
   and offers a disk whose first sector carries a pattern the driver reads back.
-  What is missing is narrower than it was: nothing writes to the USB disk, and
-  the SCSI INQUIRY data stage returns zeros (see the row above).
+  What is missing is narrower than it was: nothing writes to the USB disk, so
+  the write half of the bulk-only transport has no gate.
 - **HDA not surfaced to userspace**: audio has only the controller-level
   interface; there is no usable userspace stream interface yet.
 - **One PCIe driver on the device-tree machines.** The ECAM walk finds devices,

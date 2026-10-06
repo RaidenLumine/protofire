@@ -134,10 +134,10 @@ path: it attaches a keyboard, presses a key through QEMU's monitor, and asserts
 the shell's answer — the key is a HID report, the report is a transfer event,
 and the event ring's own MSI-X vector is what carries it.  The same check
 attaches a **disk** beside it: the mass-storage driver speaks bulk-only SCSI to
-it, reads its capacity, and reads its first sector — the check writes a pattern
-into that sector before booting, so a line containing those bytes is a block
-that came back rather than a zeroed buffer.  Writes have no gate, and INQUIRY's
-data stage comes back empty ([docs/status.md](../status.md) has both).
+it, identifies it, reads its capacity, and reads its first sector — the check
+writes a pattern into that sector before booting, so a line containing those
+bytes is a block that came back rather than a zeroed buffer.  The write half of
+the transport has no gate yet ([docs/status.md](../status.md) says so).
 
 ## Where the code is
 
