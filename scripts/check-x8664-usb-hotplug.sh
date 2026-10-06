@@ -28,6 +28,10 @@
 #     is released, not leaked;
 #   * plugging it back in produces the same two lines *again*, which is what
 #     a released slot looks like from outside;
+#   * and a **second** hub, plugged in behind the first one's sibling, is
+#     itself enumerated, watched, and has a device plugged into *it* — which
+#     a driver that kept one hub's watch would never see, because the second
+#     hub would have taken the watch from the first;
 #   * pulling the *keyboard* out of its root port produces the same removal
 #     for a device that was there at boot (its port's change bit has to have
 #     been cleared once, or the controller never raises the event at all);
@@ -162,6 +166,19 @@ command("device_add usb-mouse,id=hotplug1,bus=xhci.0,port=2.1")
 wait_for(b"hub port 1 enumerated (route 0x1)", count=2)
 wait_for(b"HID mouse ready at slot ", count=2)
 
+# A hub behind the other hub: it has a watch of its own, and the mouse behind
+# *it* is a tier deeper, so its route string is two nibbles.
+command("device_add usb-hub,id=hotplug-hub2,bus=xhci.0,port=3.1")
+wait_for(b"hub port 1 enumerated (route 0x1)", count=3)
+# The two hubs that were there at boot were watched before the marker; this is
+# the third watch, added while the guest runs.
+wait_for(b"status-change endpoint watching", count=1)
+wait_for(b"downstream port(s), route 0x1")
+
+command("device_add usb-mouse,id=hotplug-deep,bus=xhci.0,port=3.1.1")
+wait_for(b"hub port 1 enumerated (route 0x11)")
+wait_for(b"HID mouse ready at slot ", count=3)
+
 # A root port, both directions: the keyboard that was there at boot leaves,
 # and a mouse that was not arrives on a free port.
 command("device_del hotplug-kbd")
@@ -169,7 +186,7 @@ wait_for(b"\\[xhci  \\] port [0-9]+: device removed \\(slot ", literal=False)
 wait_for(b"slot(s) released")
 
 command("device_add usb-mouse,id=hotplug-root,bus=xhci.0")
-wait_for(b"HID mouse ready at slot ", count=3)
+wait_for(b"HID mouse ready at slot ", count=4)
 wait_for(b"\\[xhci  \\] enumerated port ", literal=False)
 
 command("quit")
@@ -191,6 +208,7 @@ set +e
     -device qemu-xhci,id=xhci \
     -device usb-kbd,id=hotplug-kbd,bus=xhci.0 \
     -device usb-hub,id=hub0,bus=xhci.0,port=2 \
+    -device usb-hub,id=hub1,bus=xhci.0,port=3 \
     -serial stdio >"$log" 2>&1 &
 qemu_pid=$!
 set -e
@@ -261,8 +279,20 @@ first_line="$(grep -a -n -F "hub port 1 enumerated (route 0x1)" "$trimmed" | hea
 require_log_line "hub port 1: device removed (slot "
 [ "$(count_log_lines "hub port 1 enumerated (route 0x1)")" -ge 2 ] ||
     fail "the device plugged back into the hub was not enumerated again"
-[ "$(count_log_lines "HID mouse ready at slot ")" -ge 3 ] ||
-    fail "the mouse was not ready for each of the three plugs"
+[ "$(count_log_lines "HID mouse ready at slot ")" -ge 4 ] ||
+    fail "the mouse was not ready for each of the four plugs"
+
+# Two hubs were there at boot and one more was plugged in behind them: a
+# driver that kept one watch would have taken the earlier one's away, and the
+# device plugged into the *first* hub (the gate's first move) would never have
+# been seen at all.
+[ "$(count_log_lines "status-change endpoint watching")" -ge 3 ] ||
+    fail "a hub beyond the boot's two was not watched"
+[ "$(count_log_lines "downstream port(s), route 0x0")" -ge 2 ] ||
+    fail "the two hubs that were there at boot were not both taken up"
+require_log_line "downstream port(s), route 0x1"
+[ "$(count_log_lines "hub port 1 enumerated (route 0x11)")" -ge 1 ] ||
+    fail "the device behind the second hub was never enumerated"
 
 # And the root port: the keyboard that was there at boot is released, and a
 # device plugged into a free root port is enumerated there.  The first is the

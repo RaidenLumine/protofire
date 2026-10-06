@@ -33,6 +33,14 @@ use core::ptr::write_volatile;
 /// Maximum number of device slots we support.
 const MAX_SLOTS: usize = 64;
 
+/// How many hubs the driver watches at once.
+///
+/// A hub is watched through its own interrupt endpoint, and every hub found
+/// has one; what this bounds is how many the driver keeps state for.  Beyond
+/// it a hub is still scanned at boot — it is simply not told about later
+/// changes.
+const MAX_HUBS: usize = 4;
+
 /// How many PORTSC reads to wait for a port's connection to stabilise.
 const PORT_CONNECT_SETTLE_SPINS: usize = 100_000;
 
@@ -117,18 +125,22 @@ pub struct XhciController {
     pub msd_slot: u8,
     /// Mass storage bulk endpoint info.
     pub msd_endpoints: Option<crate::drivers::usb_msd::MsdBulkEndpoints>,
-    /// The hub whose status-change endpoint is watched (None = no hub, or a
-    /// hub whose endpoint could not be configured).
-    hub: Option<HubState>,
-    /// A completed hub report that has not been run yet.
+    /// The hubs whose status-change endpoints are watched, one watch each.
+    ///
+    /// A watch is per endpoint, not per controller: two hubs on one machine
+    /// each report their own ports, and a machine can have that many (a
+    /// USB 2 hub and a USB 3 hub, or a hub behind a hub).  A hub beyond
+    /// [`MAX_HUBS`] still has its ports scanned at boot.
+    hubs: [Option<HubState>; MAX_HUBS],
+    /// A completed hub report that has not been run yet, per watch.
     ///
     /// A report leads to *requests* — a port status read, a reset, an
     /// enumeration — and those use the same rings the transfer that completed
     /// was in flight on, so running one where its event is found would push a
-    /// second TD onto a ring whose first is still outstanding.  The event is
+    /// second TD onto a ring whose first is still outstanding.  The events are
     /// therefore recorded here and the work is done by
     /// [`Self::service_pending`], from the outermost drain.
-    pending_hub_report: Option<u32>,
+    pending_hub_report: [Option<u32>; MAX_HUBS],
     /// Whether a root port changed since the last drain.  The port is not
     /// kept: the ports are re-read, which is what makes one missed event
     /// harmless.
@@ -496,8 +508,8 @@ impl XhciController {
                 bulk_in_rings: [const { None }; MAX_SLOTS],
                 msd_slot: 0,
                 msd_endpoints: None,
-                hub: None,
-                pending_hub_report: None,
+                hubs: [const { None }; MAX_HUBS],
+                pending_hub_report: [const { None }; MAX_HUBS],
                 port_change_pending: false,
                 slot_routes: [(0, 0); MAX_SLOTS],
             };
@@ -1808,8 +1820,10 @@ impl XhciController {
         // SAFETY: this runs from the drain, which holds the controller's lock
         // and has no transfer outstanding.
         unsafe {
-            if let Some(residual) = self.pending_hub_report.take() {
-                self.handle_hub_status_change(residual);
+            for index in 0..MAX_HUBS {
+                if let Some(residual) = self.pending_hub_report[index].take() {
+                    self.handle_hub_status_change(index, residual);
+                }
             }
             if self.port_change_pending {
                 self.port_change_pending = false;
@@ -1854,11 +1868,13 @@ impl XhciController {
             let slot = evt.slot_id();
             let dci = evt.endpoint_id();
             let residual = evt.status & TRB_TL_MASK;
-            if let Some(hub) = self.hub.as_ref() {
-                if slot == hub.slot_id && u32::from(dci) == hub.ep.dci() {
-                    // Recorded, not run: a report is answered with requests.
-                    self.pending_hub_report = Some(residual);
-                    return;
+            for (index, hub) in self.hubs.iter().enumerate() {
+                if let Some(hub) = hub {
+                    if slot == hub.slot_id && u32::from(dci) == hub.ep.dci() {
+                        // Recorded, not run: a report is answered with requests.
+                        self.pending_hub_report[index] = Some(residual);
+                        return;
+                    }
                 }
             }
             if slot == self.keyboard_slot {
@@ -2067,7 +2083,16 @@ impl XhciController {
             // The status-change endpoint comes first, so the changes this pass
             // produces already have somewhere to be reported.
             if let Some(state) = self.configure_hub_endpoint(slot_id, root_port, route, ports) {
-                self.hub = Some(state);
+                match self.hubs.iter_mut().find(|watch| watch.is_none()) {
+                    Some(watch) => *watch = Some(state),
+                    None => {
+                        println!(
+                            "[xhci  ] hub at slot {}: {} hubs are already watched — \
+                             scanning this one's ports without watching them",
+                            slot_id, MAX_HUBS
+                        );
+                    }
+                }
             }
 
             self.scan_hub_ports(slot_id, root_port, route, ports);
@@ -2296,13 +2321,13 @@ impl XhciController {
     ///
     /// The report must be the residual of the hub's own completed read, and
     /// the controller must still own that hub's rings.
-    unsafe fn handle_hub_status_change(&mut self, residual: u32) {
+    unsafe fn handle_hub_status_change(&mut self, index: usize, residual: u32) {
         // SAFETY: the report landed in the hub's own DMA buffer, written by a
         // transfer on this controller's interrupt ring.
         unsafe {
             let mut report = [0u8; 8];
             let (slot_id, root_port, route, ports, transferred) = {
-                let Some(hub) = self.hub.as_ref() else {
+                let Some(hub) = self.hubs.get(index).and_then(|watch| watch.as_ref()) else {
                     return;
                 };
                 let transferred = hub.ep.report_len.saturating_sub(residual as usize);
@@ -2326,7 +2351,7 @@ impl XhciController {
                         // keep this report coming back for as long as the
                         // endpoint is armed, so stop watching rather than
                         // spin.
-                        self.hub = None;
+                        self.hubs[index] = None;
                         println!(
                             "[xhci  ] hub at slot {}: port {} will not finish changing — \
                              no longer watching its ports",
@@ -2338,7 +2363,8 @@ impl XhciController {
             }
 
             // Arm the next read only once this report is fully handled.
-            let (slot, dci, len, phys) = match self.hub.as_ref() {
+            let (slot, dci, len, phys) = match self.hubs.get(index).and_then(|watch| watch.as_ref())
+            {
                 Some(hub) => (
                     hub.slot_id,
                     hub.ep.dci(),
@@ -2520,8 +2546,10 @@ impl XhciController {
                 self.msd_slot = 0;
                 self.msd_endpoints = None;
             }
-            if self.hub.as_ref().is_some_and(|hub| hub.slot_id == slot_id) {
-                self.hub = None;
+            for watch in self.hubs.iter_mut() {
+                if watch.as_ref().is_some_and(|hub| hub.slot_id == slot_id) {
+                    *watch = None;
+                }
             }
             Ok(())
         }

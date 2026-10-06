@@ -143,7 +143,9 @@ where a hub reports which of its ports changed: that report is a bitmap, one bit
 per port, and a change the driver has handled is cleared so the report stops.
 A port with a device on it that is not enabled is one that just arrived — power,
 reset, address — and a port with no device is one that just left, whose slot is
-disabled so the next device on the same route can take it.  Without that
+disabled so the next device on the same route can take it.  Every hub found is
+watched (up to a fixed count), including one plugged in behind another: each
+watch is a state of its own, keyed by the hub's slot.  Without that
 endpoint a hub is a device that was scanned once; `make check-x8664-usb-hotplug`
 is the check that plugs, unplugs and re-plugs a device while the guest runs.
 
