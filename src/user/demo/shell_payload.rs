@@ -58,7 +58,9 @@ use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_NAME_LEN_OFFSET;
 use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_NAME_OFFSET_OFFSET;
 use crate::user::shared::abi::fs::DIRECTORY_ENTRY_RECORD_SIZE;
 use crate::user::shared::abi::fs::FILE_KIND_DIRECTORY;
+use crate::user::shared::abi::io::OPEN_FLAG_CREATE;
 use crate::user::shared::abi::io::OPEN_FLAG_READ;
+use crate::user::shared::abi::io::OPEN_FLAG_WRITE;
 
 /// Longest command line the shell accepts, in bytes.
 const SHELL_LINE_CAPACITY: usize = 256;
@@ -100,14 +102,29 @@ static SHELL_DIRECTORY_MARK: [u8; b"/".len()] = *b"/";
 static SHELL_ROOT_PATH: [u8; b"/".len()] = *b"/";
 
 #[link_section = $section]
-static SHELL_HELP: [u8; b"adastra shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  exit           stop the shell\n"
-    .len()] = *b"adastra shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  exit           stop the shell\n";
+static SHELL_HELP: [u8; b"adastra shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  write <path> <words>  create or replace a file with the words\n  exit           stop the shell\n"
+    .len()] = *b"adastra shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  write <path> <words>  create or replace a file with the words\n  exit           stop the shell\n";
 
 #[link_section = $section]
 static SHELL_UNKNOWN_PREFIX: [u8; b"shell: unknown command: ".len()] = *b"shell: unknown command: ";
 
 #[link_section = $section]
 static SHELL_CAT_USAGE: [u8; b"shell: cat needs a path\n".len()] = *b"shell: cat needs a path\n";
+
+#[link_section = $section]
+static SHELL_WORD_WRITE: [u8; b"write".len()] = *b"write";
+
+#[link_section = $section]
+static SHELL_WRITE_USAGE: [u8; b"shell: write needs a path and words\n".len()] =
+    *b"shell: write needs a path and words\n";
+
+#[link_section = $section]
+static SHELL_CREATE_FAILED_PREFIX: [u8; b"shell: write: cannot create '".len()] =
+    *b"shell: write: cannot create '";
+
+#[link_section = $section]
+static SHELL_WRITE_FAILED_PREFIX: [u8; b"shell: write: cannot write '".len()] =
+    *b"shell: write: cannot write '";
 
 #[link_section = $section]
 static SHELL_LIST_FAILED_PREFIX: [u8; b"shell: ls: cannot list '".len()] =
@@ -496,6 +513,65 @@ unsafe fn shell_builtin_cat(path: usize, path_len: usize) {
     }
 }
 
+/// `write <path> <words...>`: create or replace a file with one line of words.
+///
+/// The other direction of `cat`, through the same descriptors: `open_path`
+/// with create-and-write, then one `write_fd` per word and a newline.  Without
+/// it the shell could read a filesystem but not add to one, which left the
+/// write half of the ABI reachable from a program and from nothing typed.
+#[inline(never)]
+#[link_section = $section]
+unsafe fn shell_builtin_write(path: usize, path_len: usize, tokens: usize, token_count: usize) {
+    let fd = open_path(path, path_len, OPEN_FLAG_WRITE | OPEN_FLAG_CREATE);
+    if payload_runtime_status_is_error(fd) {
+        shell_write_path_error(
+            shell_address!(SHELL_CREATE_FAILED_PREFIX),
+            SHELL_CREATE_FAILED_PREFIX.len(),
+            path,
+            path_len,
+        );
+        return;
+    }
+
+    let mut failed = false;
+    let mut index = 2;
+    while index < token_count {
+        if index > 2 && payload_runtime_status_is_error(write_fd(
+            fd,
+            shell_address!(SHELL_SPACE),
+            SHELL_SPACE.len(),
+        )) {
+            failed = true;
+            break;
+        }
+        // SAFETY: `index` is below the token count.
+        let (word, word_len) = unsafe { shell_token(tokens, index) };
+        if payload_runtime_status_is_error(write_fd(fd, word, word_len)) {
+            failed = true;
+            break;
+        }
+        index = index.wrapping_add(1);
+    }
+    if !failed
+        && payload_runtime_status_is_error(write_fd(
+            fd,
+            shell_address!(SHELL_NEWLINE),
+            SHELL_NEWLINE.len(),
+        ))
+    {
+        failed = true;
+    }
+    let _ = close_fd(fd);
+    if failed {
+        shell_write_path_error(
+            shell_address!(SHELL_WRITE_FAILED_PREFIX),
+            SHELL_WRITE_FAILED_PREFIX.len(),
+            path,
+            path_len,
+        );
+    }
+}
+
 /// `cd`: hand the path to the kernel and re-read the directory it lands on.
 #[inline(never)]
 #[link_section = $section]
@@ -807,6 +883,22 @@ extern "C" fn shell_main() -> ! {
             SHELL_WORD_EXIT.len(),
         ) {
             exit_with_code(0);
+        } else if shell_word_at_is(
+            tokens_ptr,
+            0,
+            shell_address!(SHELL_WORD_WRITE),
+            SHELL_WORD_WRITE.len(),
+        ) {
+            if token_count < 3 {
+                shell_message!(SHELL_WRITE_USAGE);
+            } else {
+                // SAFETY: token 1 exists, per the count check just made, and
+                // the token buffer holds what the tokenizer filled it with.
+                unsafe {
+                    let (path, path_len) = shell_token(tokens_ptr, 1);
+                    shell_builtin_write(path, path_len, tokens_ptr, token_count);
+                }
+            }
         } else if {
             #[cfg(target_arch = "x86_64")]
             {

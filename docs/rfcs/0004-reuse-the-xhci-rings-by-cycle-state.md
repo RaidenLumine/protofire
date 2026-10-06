@@ -221,10 +221,12 @@ behaviour.
   device answers INQUIRY and is chosen as the boot disk, (b) the boot reaches
   `mounted MBR-partitioned SimpleFs volumes from ATA boot disk` and not
   `failed to mount SimpleFs volumes from ATA boot disk`, (c) a program is
-  loaded from `/apps` on that volume, and (d) the image's SHA-256 changed on
-  the host, which is a write the guest made through the controller.  The
-  single-sector read in `make check-x8664-runtime` stays as the short-transfer
-  control, and `scripts/verify.sh` runs the new gate beside it.
+  loaded from `/apps` on that volume, (d) the shell *writes* a marker into the
+  volume through `open`/`write` and `cat` reads it back, and (e) the host finds
+  those bytes in the image afterwards — a write the gate drove, through the
+  filesystem API, rather than one the boot makes on its own.  The single-sector
+  read in `make check-x8664-runtime` stays as the short-transfer control, and
+  `scripts/verify.sh` runs the new gate beside it.
 - The reproduction rate, measured the way the working rules ask: with the old
   driver the disk-only boot failed to mount every time it was run, and the
   same image over `virtio-blk` reached the mount line.  With the cycle change

@@ -30,8 +30,9 @@
 #     directory walk that fills and refills the rings;
 #   * a program was loaded from `/apps` on that volume, which is a read the
 #     mount alone does not prove;
-#   * the image's SHA-256 changed on the host, which is a write the guest made
-#     through the controller.
+#   * the shell wrote a marker into `/data` — through `open`/`write`, the
+#     filesystem API, not the boot's own repair step — read it back with `cat`,
+#     and the *same bytes* are in the image on the host afterwards.
 #
 # Usage:
 #   sh scripts/check-x8664-usb-disk.sh
@@ -71,11 +72,6 @@ if ! command -v timeout >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! command -v sha256sum >/dev/null 2>&1; then
-    printf 'sha256sum is not installed; cannot tell whether the guest wrote.\n' >&2
-    exit 1
-fi
-
 case "$PROFILE" in
     release) profile_flag="--release" ;;
     *) profile_flag="" ;;
@@ -109,15 +105,35 @@ trap cleanup EXIT INT TERM
 image="$work/demo-disk.img"
 "$CARGO" run --offline --quiet -- mkimage "$image"
 
-before="$(sha256sum "$image" | cut -d' ' -f1)"
+# The bytes the shell writes to the volume, and the whole of what this check
+# looks for on the host afterwards.  It is long enough to be found in a raw
+# image and it appears in no pristine one, which is what makes finding it
+# evidence of *this* write rather than of the image's own contents.
+# The path is the demo user's own root: `/tmp`, `/data` and `/apps` themselves
+# are not writable by the guest token — only `/data/users/guest` is, which is
+# the mount and directory permission the layout gives a ring-3 program.  That
+# it is *under* `/data` is what makes this a write to the USB volume.
+marker="PROTOFIRE-USB-WRITE-4b1e9c2d"
+write_path="/data/users/guest/usb-write-check"
 
 # No other disk is attached: the USB volume *is* the boot disk, so the boot
 # cannot fall back to the in-memory demo volumes and pass on those instead.
 printf 'x86_64 USB disk check: 1 cpu, timeout %ss, qemu %s\n' \
     "$TIMEOUT_SECONDS" "$QEMU"
 
+# The console is a two-way line here: `-serial file:` can only listen, and the
+# write this check is about is one the guest has to be *told* to make.  So the
+# shell is typed at, through the same feeder the x86_64 runtime check uses,
+# once its own banner says it is reading.
+shell_commands() {
+    sh ./scripts/feed-shell-console.sh "$log" "$TIMEOUT_SECONDS" \
+        "write $write_path $marker" \
+        "cat $write_path" \
+        'echo usb-write-done'
+}
+
 set +e
-timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
     -machine q35 \
     -cpu max \
     -smp 1 \
@@ -130,7 +146,7 @@ timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
     -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 \
     -drive "file=$image,if=none,id=usbdisk,format=raw" \
     -device usb-storage,drive=usbdisk,bus=xhci.0 \
-    -serial "file:$log" >/dev/null 2>&1
+    -serial stdio >"$log" 2>&1
 status=$?
 set -e
 
@@ -164,6 +180,16 @@ require_log_absent_line() {
     fi
 }
 
+require_log_exact_line() {
+    line="$1"
+    if ! grep -F -x "$line" "$log" >/dev/null 2>&1; then
+        printf 'x86_64 USB disk check failed: missing log line (whole line): %s\n' "$line" >&2
+        printf '  full log preserved at: %s\n' "$log" >&2
+        tail -n 12 "$log" >&2
+        exit 1
+    fi
+}
+
 # The transport: the device answered, and the kernel chose it as the disk to
 # boot from rather than falling through to the in-memory volumes.
 require_log_line "[usbmsd] INQUIRY: vendor='QEMU' product='QEMU HARDDISK'"
@@ -180,15 +206,26 @@ require_log_absent_line "[fs    ] failed to mount SimpleFs volumes from ATA boot
 # read only the first few blocks.
 require_log_line "[user  ] loaded /apps/packages/shell/bin/shell.elf"
 
-# The write path: the volume was mounted writable, the boot repaired what it
-# found, and the bytes reached the file the host handed the controller.
-after="$(sha256sum "$image" | cut -d' ' -f1)"
-if [ "$before" = "$after" ]; then
-    printf 'x86_64 USB disk check failed: the image is unchanged, so the guest\n' >&2
-    printf '  wrote nothing through the controller (before=after=%s)\n' \
-        "$after" >&2
+# The write path, through the filesystem API and not the boot's own repair
+# step: the shell is typed at, `write` opens the file with create-and-write and
+# puts the words in it, and `cat` reads it back.  The read-back is a whole line
+# of its own — the console's echo of the typed command puts those words on a
+# line too, so an exact match is what distinguishes the answer from the
+# question.
+require_log_exact_line "$marker"
+require_log_exact_line "usb-write-done"
+
+# And the bytes are in the file the host handed the controller: `cat` proves
+# the guest's own view, this proves the image on the host carries them.  It is
+# the assertion the check started with (a write reached the host) made
+# specific: not "something changed" but "the bytes the guest named are there".
+if ! grep -a -q -F "$marker" "$image"; then
+    printf 'x86_64 USB disk check failed: the marker the guest wrote through\n' >&2
+    printf '  %s is not in the image on the host\n' "$write_path" >&2
+    printf '  full log preserved at: %s\n' "$log" >&2
     exit 1
 fi
 
-printf 'x86_64 USB disk check passed: image mounted, payload loaded, image %s... -> %s...\n' \
-    "$(printf '%s' "$before" | cut -c1-12)" "$(printf '%s' "$after" | cut -c1-12)"
+printf 'x86_64 USB disk check passed: image mounted, payload loaded, %s written through the\n' \
+    "$write_path"
+printf '  filesystem and read back, and the marker is in the image on the host\n'

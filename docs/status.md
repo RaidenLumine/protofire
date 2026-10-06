@@ -58,7 +58,7 @@ the syscall interface.
 | NVMe | Block | Full read/write, boot-disk probe | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; x86_64 only; QEMU only |
 | xHCI | USB host | Controller reset and start, command and event rings, device enumeration (Enable Slot, Address Device, GET_DESCRIPTOR), a HID interrupt endpoint per device, port status, and a claimed MSI-X vector whose interrupt drains the event ring when the rings are free; the command, control, interrupt and bulk rings each carry a Link TRB with its Toggle Cycle bit and flip their producer cycle state at the wrap, the event ring is consumed against the segment size the ERST states with no Link TRB in it, and a completion is matched to the TRB the event names; `make check-x8664-runtime` boots all of it with a USB keyboard, presses a key through QEMU's monitor, and asserts the controller's own interrupt | The timer tick still drains the ring as the fallback; the producer rings assume one TD in flight per ring rather than checking for room; no hub, so one device per port; x86_64 only; QEMU only (see [RFC 0004](rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md)) |
 | USB HID | HID (keyboard) | A HID interrupt endpoint is configured on the enumerated device, its reports are decoded into the same keyboard core the PS/2 and VirtIO paths feed, and `make check-x8664-runtime` types a command on the USB keyboard and asserts the shell's answer | No hub, so one device per port; the report deshuffling is the boot's evidence rather than a synthetic matrix |
-| USB MSD | Storage | Bulk-only transport and SCSI command blocks; `make check-x8664-runtime` attaches a disk whose first sector carries a pattern, and the driver enumerates it, identifies it (INQUIRY), reads its capacity and reads that sector back, with the pattern in the log as the evidence; `make check-x8664-usb-disk` boots the host's own SimpleFs image on a USB disk and asserts the mount, a program loaded out of it, and that the guest's writes changed the image on the host | QEMU only; no gate writes through a *filesystem* API yet (the boot's own recovery and install are what write) |
+| USB MSD | Storage | Bulk-only transport and SCSI command blocks; `make check-x8664-runtime` attaches a disk whose first sector carries a pattern, and the driver enumerates it, identifies it (INQUIRY), reads its capacity and reads that sector back, with the pattern in the log as the evidence; `make check-x8664-usb-disk` boots the host's own SimpleFs image on a USB disk, and the shell *writes* a marker through `open`/`write` into the volume, reads it back with `cat`, and the host finds those bytes in the image afterwards | QEMU only |
 | Serial (UART 16550) | Text I/O | Full duplex | RISC-V falls back to the SBI console when it has no UART |
 | PS/2 Keyboard | Input | Scancode buffering, decoding, console TTY bridge | The PS/2 interrupt path is x86_64; other targets rely on VirtIO input |
 | Framebuffer | Display | Linear framebuffer the console draws on | No userspace graphics API beyond the VIRGL syscalls; QEMU only |
@@ -113,12 +113,11 @@ input, mostly verified under QEMU.
   monitor, reads the shell's answer, and offers a disk whose first sector
   carries a pattern the driver reads back; and `make check-x8664-usb-disk`
   boots the host's own SimpleFs image on a USB disk, reads enough of it to
-  wrap the rings several times, loads a program out of it, and checks on the
-  host that the guest's writes reached the image. What is still missing: no
-  gate drives the volume through the filesystem API itself (the boot's own
-  recovery and install are what write), and the rings assume one TD in flight
-  per ring rather than checking for room, which a future pipelining path has
-  to add before it can be correct
+  wrap the rings several times, loads a program out of it, has the shell write
+  a marker into it through `open`/`write`, and checks on the host that those
+  bytes are in the image. What is still missing: the rings assume one TD in
+  flight per ring rather than checking for room, which a future pipelining
+  path has to add before it can be correct
   ([RFC 0004](rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md)).
 - **HDA not surfaced to userspace**: audio has only the controller-level
   interface; there is no usable userspace stream interface yet.
