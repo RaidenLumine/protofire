@@ -147,7 +147,7 @@ disabled so the next device on the same route can take it.  Without that
 endpoint a hub is a device that was scanned once; `make check-x8664-usb-hotplug`
 is the check that plugs, unplugs and re-plugs a device while the guest runs.
 
-Three things about it are worth stating plainly.  The rings **carry a cycle
+Four things about it are worth stating plainly.  The rings **carry a cycle
 state through their wraps**: the command ring and each endpoint's control,
 interrupt and bulk ring place a Link TRB with its Toggle Cycle bit and flip the
 cycle state they write when that TRB wraps them, while the event ring — which
@@ -164,7 +164,17 @@ decided after a mount over USB was found to stop completing transfers.  The cont
 **claims a vector of its own** and the interrupt drains the event ring, taken
 with `try_lock` so an interrupt never waits on the ring's owner; the timer tick
 still drains as the fallback, for the case where the lock is held and for a
-machine where the claim was refused.  And three checks drive the whole path:
+machine where the claim was refused.  A **root port** is watched too, and by
+the other mechanism: the controller posts a Port Status Change Event naming the
+port, `PORTSC`'s change bits say whether a device arrived or left, and the bits
+are cleared — once after the boot's scan, because a change bit that is still
+set from the boot is a change the controller will not report again.  A device
+that leaves a root port takes its whole subtree: everything behind a hub is
+behind the hub's port.  And the work those reports ask for is done **from the
+event-ring drain**, never while a transfer is in flight: answering a hub means
+issuing requests, and a request submitted under another one's wait would put a
+second TD on a ring whose first is still outstanding.  Three checks drive the
+whole path:
 `make check-x8664-runtime` attaches a keyboard, presses a key through QEMU's
 monitor, and asserts the shell's answer — the key is a HID report, the report
 is a transfer event, and the event ring's own MSI-X vector is what carries it —
@@ -173,8 +183,9 @@ driver reads back; `make check-x8664-usb-disk` goes further and boots the
 host's own SimpleFs image on a USB disk, reads enough of it to wrap the rings,
 loads a program out of it, and checks on the host that the guest's writes
 reached the image; and `make check-x8664-usb-hotplug` moves a device on and off
-a hub's port after the boot, which is the only check that reads a hub's
-status-change report at all.
+a hub's port after the boot, and a device out of and into a root port, which is
+the only check that reads a hub's status-change report or a port's change bits
+at all.
 
 ## Where the code is
 

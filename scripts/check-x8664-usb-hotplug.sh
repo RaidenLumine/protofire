@@ -27,7 +27,13 @@
 #   * unplugging it produces "hub port 1: device removed (slot N)" — the slot
 #     is released, not leaked;
 #   * plugging it back in produces the same two lines *again*, which is what
-#     a released slot looks like from outside.
+#     a released slot looks like from outside;
+#   * pulling the *keyboard* out of its root port produces the same removal
+#     for a device that was there at boot (its port's change bit has to have
+#     been cleared once, or the controller never raises the event at all);
+#   * and plugging a device into a free root port produces an enumeration
+#     there — the other half of the hub's work, driven by the controller's
+#     Port Status Change Event rather than by a hub's report.
 #
 # Usage:
 #   sh scripts/check-x8664-usb-hotplug.sh [timeout-seconds]
@@ -96,6 +102,7 @@ shell_commands() {
 # fixed delay, so a slow or a fast boot both work.
 plug_and_wait() {
     python3 - "$monitor_socket" "$log" "$TIMEOUT_SECONDS" <<'PY'
+import re
 import socket
 import sys
 import time
@@ -117,15 +124,27 @@ def command(text):
     sock.sendall((text + "\n").encode())
     time.sleep(0.2)
 
-def wait_for(needle, count=1):
+def read_tail():
+    """The log from the marker on: everything before it is the boot's scan."""
+    with open(log, "rb") as handle:
+        text = handle.read().replace(b"\r", b"")
+    marker = text.find(b"hotplug-marker")
+    return text[marker:] if marker >= 0 else b""
+
+def wait_for(pattern, count=1, literal=True):
+    """Wait until the log *after the marker* holds `count` matches.
+
+    Everything before the marker is the boot's scan, so a match here is a
+    change the guest saw while it was running and nothing else.
+    """
+    if literal:
+        pattern = re.escape(pattern)
     deadline = time.time() + timeout
     while time.time() < deadline:
-        with open(log, "rb") as handle:
-            seen = handle.read().replace(b"\r", b"").count(needle)
-        if seen >= count:
+        if len(re.findall(pattern, read_tail())) >= count:
             return
         time.sleep(0.25)
-    print("hotplug: the guest never reported %r" % needle.decode(), file=sys.stderr)
+    print("hotplug: the guest never reported %r" % pattern.decode(), file=sys.stderr)
     sys.exit(1)
 
 # The boot scan is done when the shell has answered the marker.
@@ -141,6 +160,17 @@ wait_for(b"hub port 1: device removed (slot ")
 
 command("device_add usb-mouse,id=hotplug1,bus=xhci.0,port=2.1")
 wait_for(b"hub port 1 enumerated (route 0x1)", count=2)
+wait_for(b"HID mouse ready at slot ", count=2)
+
+# A root port, both directions: the keyboard that was there at boot leaves,
+# and a mouse that was not arrives on a free port.
+command("device_del hotplug-kbd")
+wait_for(b"\\[xhci  \\] port [0-9]+: device removed \\(slot ", literal=False)
+wait_for(b"slot(s) released")
+
+command("device_add usb-mouse,id=hotplug-root,bus=xhci.0")
+wait_for(b"HID mouse ready at slot ", count=3)
+wait_for(b"\\[xhci  \\] enumerated port ", literal=False)
 
 command("quit")
 time.sleep(0.5)
@@ -159,7 +189,7 @@ set +e
     -no-shutdown \
     -monitor "unix:$monitor_socket,server,nowait" \
     -device qemu-xhci,id=xhci \
-    -device usb-kbd,bus=xhci.0 \
+    -device usb-kbd,id=hotplug-kbd,bus=xhci.0 \
     -device usb-hub,id=hub0,bus=xhci.0,port=2 \
     -serial stdio >"$log" 2>&1 &
 qemu_pid=$!
@@ -231,7 +261,18 @@ first_line="$(grep -a -n -F "hub port 1 enumerated (route 0x1)" "$trimmed" | hea
 require_log_line "hub port 1: device removed (slot "
 [ "$(count_log_lines "hub port 1 enumerated (route 0x1)")" -ge 2 ] ||
     fail "the device plugged back into the hub was not enumerated again"
-[ "$(count_log_lines "HID mouse ready at slot ")" -ge 2 ] ||
-    fail "the mouse was not ready for each of the two plugs"
+[ "$(count_log_lines "HID mouse ready at slot ")" -ge 3 ] ||
+    fail "the mouse was not ready for each of the three plugs"
 
-printf 'x86_64 USB hotplug check passed: a device plugged into a hub after boot was seen then\n'
+# And the root port: the keyboard that was there at boot is released, and a
+# device plugged into a free root port is enumerated there.  The first is the
+# case the port-change-bit sync exists for — a port whose change bit is still
+# set from the boot says nothing when its device leaves.
+[ "$(grep -a -c -E '\[xhci  \] port [0-9]+: device removed' "$trimmed" || true)" -ge 1 ] ||
+    fail "the device pulled out of a root port was never seen to leave"
+require_log_line "slot(s) released"
+[ "$(grep -a -n -E '\[xhci  \] enumerated port ' "$trimmed" | tail -n 1 | cut -d: -f1)" \
+    -gt "$marker_line" ] ||
+    fail "no device was enumerated on a root port after the boot's scan"
+
+printf 'x86_64 USB hotplug check passed: a hub and a root port saw their devices come and go\n'

@@ -78,6 +78,34 @@ pub const CRCR_RCS: u64 = 1; // Ring Cycle State
 pub const XHCI_OP_PORTSC: usize = 0x400;
 /// PORTSC: Current Connect Status (a device is attached to this port).
 pub const PORTSC_CCS: u32 = 1 << 0;
+/// PORTSC: Port Enabled/Disabled.
+pub const PORTSC_PED: u32 = 1 << 1;
+/// PORTSC: Port Reset.  Set by software to reset (and, for a USB2 port, to
+/// enable) the device on the port; the controller clears it when the reset
+/// finishes and raises the port reset *change* bit.
+pub const PORTSC_PR: u32 = 1 << 4;
+/// PORTSC: Port Power.
+pub const PORTSC_PP: u32 = 1 << 9;
+/// PORTSC: Port Speed, bits 13:10 (0 = full, 1 = low, 2 = high, 3 = super).
+pub const PORTSC_SPEED_SHIFT: u32 = 10;
+pub const PORTSC_SPEED_MASK: u32 = 0x0F << PORTSC_SPEED_SHIFT;
+
+/// PORTSC: the change bits in the upper half of the register.
+///
+/// These are write-1-to-clear, and they are also how the controller decides
+/// whether a *new* change is worth an event: it raises an event when a change
+/// bit goes from clear to set, so a bit this driver never clears is a port
+/// whose next attach or detach says nothing.
+pub const PORTSC_CSC: u32 = 1 << 17; // Connect Status Change
+pub const PORTSC_PEC: u32 = 1 << 18; // Port Enabled/Disabled Change
+pub const PORTSC_WRC: u32 = 1 << 19; // Warm Port Reset Change
+pub const PORTSC_OCC: u32 = 1 << 20; // Over-Current Change
+pub const PORTSC_PRC: u32 = 1 << 21; // Port Reset Change
+pub const PORTSC_PLC: u32 = 1 << 22; // Port Link State Change
+pub const PORTSC_CEC: u32 = 1 << 23; // Port Config Error Change
+/// Every change bit above, for the one write that clears them.
+pub const PORTSC_CHANGE_BITS: u32 =
+    PORTSC_CSC | PORTSC_PEC | PORTSC_WRC | PORTSC_OCC | PORTSC_PRC | PORTSC_PLC | PORTSC_CEC;
 
 // ---------------------------------------------------------------------------
 // xHCI runtime registers (offset from BAR0 + RTSOFF)
@@ -451,6 +479,16 @@ impl Trb {
         ((self.control >> 24) & 0xFF) as u8
     }
 
+    /// Port ID from a Port Status Change Event TRB.
+    ///
+    /// It sits in bits 24:31 of the *parameter* field, which is the field a
+    /// transfer event spends on the TRB it completed — the two event kinds
+    /// share the layout but not what its halves mean, and the status word's
+    /// top byte is this event's completion code rather than its port.
+    pub fn port_id(&self) -> u8 {
+        ((self.parameter >> 24) & 0xFF) as u8
+    }
+
     /// Endpoint ID (DCI) from a Transfer Event TRB (bits 16:20 of control).
     pub fn endpoint_id(&self) -> u8 {
         ((self.control >> 16) & 0x1F) as u8
@@ -570,11 +608,99 @@ impl HidEndpointInfo {
     }
 }
 
+/// The endpoint context's `Interval` field for an interrupt endpoint, from
+/// the descriptor's `bInterval`.
+///
+/// The field holds the *exponent* of the endpoint's poll period, not the
+/// period: `2^interval` microframes for a high-speed endpoint, and `2^interval`
+/// milliseconds for a low- or full-speed one.  So `bInterval` and the field
+/// are not the same number, and the conversion rounds the descriptor's value
+/// *down to a power of two* — the hub's 255 ms becomes 2^7 = 128 ms, a
+/// keyboard's 10 ms becomes 2^3 = 8 ms — which is the same rounding the
+/// controller's own scheduler applies and the same one Linux applies to
+/// interrupt endpoints at both speeds (`fls(bInterval) - 1`).
+///
+/// Copying the byte across instead, which is what this driver used to do, is
+/// not a rounding error but a different number: a hub's 255 becomes a shift
+/// of 255, which schedules the next check of a status-change endpoint days
+/// away, and a keyboard's ten becomes a poll twenty times faster than it
+/// asked for.
+pub const fn endpoint_interval_field(b_interval: u8) -> u32 {
+    if b_interval == 0 {
+        // The field's own "as soon as possible" value; only a SuperSpeed
+        // endpoint may ask for it, and the exponent of 0 is 1 microframe.
+        return 0;
+    }
+    (u8::BITS - b_interval.leading_zeros()) - 1
+}
+
+/// How many tiers a route string names: one nibble per hub port the device is
+/// behind, and zero for a device on a root port.
+pub const fn route_tiers(route: u32) -> u32 {
+    let mut tiers = 0;
+    let mut rest = route;
+    while rest != 0 {
+        tiers += 1;
+        rest >>= 4;
+    }
+    tiers
+}
+
+/// The mask over the first `tiers` nibbles of a route string.
+///
+/// A device's route is the path of hub ports from the root to it, one nibble
+/// per tier with the first tier in the lowest nibble, so one route is *behind*
+/// another exactly when the other's nibbles are its low ones: masking a route
+/// to that many nibbles leaves the route above it.  A hub that leaves the bus
+/// takes everything behind it, which is what that question is asked for.
+pub const fn route_prefix_mask(tiers: u32) -> u32 {
+    if tiers == 0 {
+        0
+    } else {
+        (1u32 << (4 * tiers)) - 1
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn route_strings_name_their_tiers() {
+        assert_eq!(route_tiers(0), 0); // a root port
+        assert_eq!(route_tiers(0x1), 1); // a hub's first port
+        assert_eq!(route_tiers(0x21), 2); // port 1 of a hub on a hub's port 2
+        assert_eq!(route_prefix_mask(0), 0);
+        assert_eq!(route_prefix_mask(1), 0xF);
+        assert_eq!(route_prefix_mask(2), 0xFF);
+        // "behind" is the prefix relation the whole subtree is found by.
+        let behind =
+            |route: u32, above: u32| (route & route_prefix_mask(route_tiers(above))) == above;
+        assert!(behind(0x11, 0x1)); // two tiers under port 1
+        assert!(behind(0x21, 0x1)); // and so is a second tier on port 1
+        assert!(!behind(0x12, 0x1)); // first tier is port 2, not port 1
+        assert!(behind(0x1, 0x1));
+        assert!(behind(0x11, 0)); // everything on a root port is behind it
+    }
+
+    #[test]
+    fn endpoint_interval_is_the_exponent_of_the_period() {
+        // A high-speed endpoint's bInterval is already an exponent (2^n
+        // microframes); a low/full-speed one is a period in milliseconds and
+        // rounds down to the power of two below it.
+        assert_eq!(endpoint_interval_field(1), 0); // 1 ms / 1 uframe
+        assert_eq!(endpoint_interval_field(2), 1);
+        assert_eq!(endpoint_interval_field(8), 3); // 8 ms
+        assert_eq!(endpoint_interval_field(10), 3); // 10 ms rounds to 8
+        assert_eq!(endpoint_interval_field(16), 4);
+        assert_eq!(endpoint_interval_field(255), 7); // a hub: 128 ms
+                                                     // Zero is the "no delay" encoding, not an underflow.
+        assert_eq!(endpoint_interval_field(0), 0);
+        // And the byte the driver used to write across is not this number.
+        assert_ne!(endpoint_interval_field(255), 255u32);
+    }
 
     #[test]
     fn trb_size_is_16() {

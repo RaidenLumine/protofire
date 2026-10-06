@@ -65,11 +65,16 @@ The authoritative picture of what exists today is
   beside a mouse behind a hub, and keeps the key press and the disk.  The hub's
   status-change endpoint is now **watched**: a device plugged into (or pulled
   from) one of its ports after the boot's scan is enumerated — or released —
-  when the hub says so, which `make check-x8664-usb-hotplug` does three times
-  while the guest runs.  What is left: a second hub is scanned but not
-  watched, a device removed from a *root* port needs PORTSC change polling
-  rather than a hub's report, and the endpoint's interval is converted for
-  full-speed hubs only.
+  when the hub says so, and **root ports** are watched the same way: the
+  controller's own Port Status Change Event names a port, `PORTSC`'s change
+  bits say what happened to it, and the boot clears them so a later removal is
+  a change the controller will report.  `make check-x8664-usb-hotplug` plugs,
+  unplugs and re-plugs a device behind a hub and pulls a device out of a root
+  port and plugs another in, all while the guest runs.  What is left: only the
+  last hub found is watched (a second hub's ports are still scanned at boot),
+  and the rings hold one TD in flight per ring by construction, so a
+  pipelining path would have to check for room first
+  ([RFC 0006](docs/rfcs/0006-end-a-producer-ring-lap-where-its-work-ends.md)).
 - **HDA audio to userspace.** Done and gated: the engine runs (CORB/RIRB,
   codec discovery, the output converter, a BDL playback ring, the stream DMA),
   a program reaches it — the shell's `tone` builtin writes PCM to

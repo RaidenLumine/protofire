@@ -39,23 +39,6 @@ const PORT_CONNECT_SETTLE_SPINS: usize = 100_000;
 /// How many times to ask a hub whether a port's reset has finished.
 const HUB_PORT_RESET_SPINS: usize = 100_000;
 
-/// The xHCI endpoint context's interval field for a full- or low-speed
-/// interrupt endpoint, given the descriptor's `bInterval`.
-///
-/// The two are not the same number.  A full- or low-speed interrupt
-/// endpoint's `bInterval` is a period in milliseconds; the context's field is
-/// a *power* of microframes, so the conversion clamps the descriptor's value
-/// into `1..=16` and subtracts one.  Copying the byte across, which is what
-/// this driver used to do, happens to work for small values — a keyboard's
-/// ten becomes a one-millisecond poll, merely faster than it asked for — and
-/// breaks completely at a hub's 255, where the controller shifts by 255 and
-/// schedules the next check of the status-change endpoint days away.  (A
-/// high-speed interrupt endpoint encodes `2^(bInterval-1)` microframes
-/// instead; nothing here is high speed yet.)
-fn endpoint_interval_field(b_interval: u8) -> u32 {
-    u32::from(b_interval.clamp(1, 16)) - 1
-}
-
 /// A hub whose status-change endpoint is watched.
 ///
 /// The endpoint's reports are a bitmap: bit *n* names downstream port *n*, and
@@ -137,6 +120,19 @@ pub struct XhciController {
     /// The hub whose status-change endpoint is watched (None = no hub, or a
     /// hub whose endpoint could not be configured).
     hub: Option<HubState>,
+    /// A completed hub report that has not been run yet.
+    ///
+    /// A report leads to *requests* — a port status read, a reset, an
+    /// enumeration — and those use the same rings the transfer that completed
+    /// was in flight on, so running one where its event is found would push a
+    /// second TD onto a ring whose first is still outstanding.  The event is
+    /// therefore recorded here and the work is done by
+    /// [`Self::service_pending`], from the outermost drain.
+    pending_hub_report: Option<u32>,
+    /// Whether a root port changed since the last drain.  The port is not
+    /// kept: the ports are re-read, which is what makes one missed event
+    /// harmless.
+    port_change_pending: bool,
     /// Where each addressed slot's device hangs: its root port and its route
     /// string.  A device behind a hub is found again by its route when the hub
     /// reports the port it was on as gone, which is how its slot is released.
@@ -501,6 +497,8 @@ impl XhciController {
                 msd_slot: 0,
                 msd_endpoints: None,
                 hub: None,
+                pending_hub_report: None,
+                port_change_pending: false,
                 slot_routes: [(0, 0); MAX_SLOTS],
             };
 
@@ -1103,7 +1101,7 @@ impl XhciController {
                 }
                 // Not ours: a HID endpoint's completed report is delivered
                 // and re-armed here rather than dropped.
-                self.dispatch_interrupt_transfer_event(&evt);
+                self.dispatch_event(&evt);
             }
             Err(crate::Error::TimedOut)
         }
@@ -1689,11 +1687,164 @@ impl XhciController {
         }
     }
 
+    /// Act on a root port whose status changed.
+    ///
+    /// The event names only the port; the port's own register says what
+    /// happened to it, and the two cases are a device that arrived and a
+    /// device that left.  An arriving device is enumerated where it stands; a
+    /// departing one takes its whole subtree with it, because everything
+    /// behind a hub is behind the hub's port.
+    ///
+    /// The change bits are cleared last, and that is not tidiness: the
+    /// controller raises this event on the 0→1 transition of a change bit, so
+    /// a port whose bits are left set says nothing the next time a device is
+    /// plugged into or pulled from it.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::peek_event`] — the port is one of this controller's root
+    /// ports, and every request made for it goes through this controller's own
+    /// rings.
+    unsafe fn handle_port_status_change(&mut self, port: u8) {
+        // SAFETY: the port register belongs to this controller and `port` is
+        // bounded against its own port count.
+        unsafe {
+            if port == 0 || port > self.max_ports {
+                return;
+            }
+            let offset = XHCI_OP_PORTSC + (port as usize - 1) * 0x10;
+            let portsc = reg_read32(self.op_base, offset);
+
+            if portsc & PORTSC_CSC != 0 {
+                if portsc & PORTSC_CCS != 0 {
+                    // Nothing may already answer for this port: a second
+                    // enumeration of the same device would take a second slot
+                    // for it.
+                    if self.slot_for_route(port, 0).is_none() && self.enumerate_port(port) {
+                        println!("[xhci  ] enumerated port {}", port);
+                    }
+                } else if let Some(slot) = self.slot_for_route(port, 0) {
+                    println!("[xhci  ] port {}: device removed (slot {})", port, slot);
+                    let released = self.release_subtree(port, 0);
+                    println!("[xhci  ] port {}: {} slot(s) released", port, released);
+                }
+            }
+
+            // W1C.  Writing the register's own value back with the change bits
+            // set clears exactly those bits and leaves every other field as it
+            // was read.
+            reg_write32(self.op_base, offset, portsc | PORTSC_CHANGE_BITS);
+        }
+    }
+
+    /// Clear every root port's change bits once the boot's scan has handled
+    /// them.
+    ///
+    /// A device that was already plugged in when the controller started has
+    /// its connect change bit set and no event posted for it (the controller
+    /// does not post events before it is running), so those bits have to be
+    /// cleared here or the *first* hotplug after the boot on that port would
+    /// be a transition the controller never sees.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::handle_port_status_change`].
+    unsafe fn sync_root_port_changes(&mut self) {
+        for port in 1..=self.max_ports {
+            let offset = XHCI_OP_PORTSC + (port as usize - 1) * 0x10;
+            // SAFETY: each of these registers belongs to this controller.
+            unsafe {
+                let portsc = reg_read32(self.op_base, offset);
+                if portsc & PORTSC_CHANGE_BITS != 0 {
+                    reg_write32(self.op_base, offset, portsc | PORTSC_CHANGE_BITS);
+                }
+            }
+        }
+    }
+
+    /// Dispatch one event from the event ring to what it belongs to.
+    ///
+    /// Called from the drain ([`poll_events`]) and from
+    /// [`poll_transfer_event`] for events that are not the one being awaited,
+    /// so an event arriving under a transfer's own wait is not lost.
+    ///
+    /// What it does *not* do is the work: a hub's report and a root port's
+    /// change both lead to further requests, and those go out on the same
+    /// rings as the transfer that just completed — one ring, one TD in
+    /// flight, which a nested submission would break.  So both are recorded,
+    /// and [`Self::service_pending`] runs them once the drain has the
+    /// controller to itself.  Delivering a HID report *is* done here, because
+    /// it only reads its own buffer and re-arms its own endpoint's ring.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::peek_event`] — the event is one this controller's event ring
+    /// produced.
+    unsafe fn dispatch_event(&mut self, evt: &Trb) {
+        // SAFETY: the event is one this controller's event ring produced, and
+        // what it is dispatched to belongs to this controller.
+        unsafe {
+            match evt.trb_type() {
+                trb_type::TRANSFER_EVENT => self.dispatch_interrupt_transfer_event(evt),
+                trb_type::PORT_STATUS_CHANGE_EVENT => self.port_change_pending = true,
+                _ => {}
+            }
+        }
+    }
+
+    /// Do the work the drained events asked for, with the controller to
+    /// itself.
+    ///
+    /// Called from [`poll_events`] once the event ring is empty.  Nothing is
+    /// in flight here — every transfer path waits for its completion, and the
+    /// drain holds the controller's lock — so this is the only place a report
+    /// may be answered with requests of its own.
+    ///
+    /// # Safety
+    ///
+    /// The controller must own its rings, and this must not be called from
+    /// under a transfer's wait.
+    unsafe fn service_pending(&mut self) {
+        // SAFETY: this runs from the drain, which holds the controller's lock
+        // and has no transfer outstanding.
+        unsafe {
+            if let Some(residual) = self.pending_hub_report.take() {
+                self.handle_hub_status_change(residual);
+            }
+            if self.port_change_pending {
+                self.port_change_pending = false;
+                self.service_root_port_changes();
+            }
+        }
+    }
+
+    /// Read every root port's status and act on the ones that changed.
+    ///
+    /// The event names one port, but the ports are re-read as a set: a port
+    /// whose change bit is set is a port whose device arrived or left, and
+    /// looking at all of them is what makes an event that was missed or
+    /// coalesced harmless.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::handle_port_status_change`].
+    unsafe fn service_root_port_changes(&mut self) {
+        for port in 1..=self.max_ports {
+            // SAFETY: each port register belongs to this controller.
+            unsafe {
+                let offset = XHCI_OP_PORTSC + (port as usize - 1) * 0x10;
+                let portsc = reg_read32(self.op_base, offset);
+                if portsc & PORTSC_CSC == 0 && portsc & PORTSC_CHANGE_BITS == 0 {
+                    continue;
+                }
+                self.handle_port_status_change(port);
+            }
+        }
+    }
+
     /// Dispatch an interrupt Transfer Event to the device it belongs to: a HID
     /// keyboard or mouse, or a hub reporting a port change.
     ///
-    /// Called from the event ring drain ([`poll_events`]) and from
-    /// [`poll_transfer_event`] when the event is not the one being awaited.
     /// The event is identified by (slot ID, DCI); unknown slots are
     /// ignored.
     unsafe fn dispatch_interrupt_transfer_event(&mut self, evt: &Trb) {
@@ -1705,7 +1856,8 @@ impl XhciController {
             let residual = evt.status & TRB_TL_MASK;
             if let Some(hub) = self.hub.as_ref() {
                 if slot == hub.slot_id && u32::from(dci) == hub.ep.dci() {
-                    self.handle_hub_status_change(residual);
+                    // Recorded, not run: a report is answered with requests.
+                    self.pending_hub_report = Some(residual);
                     return;
                 }
             }
@@ -1739,25 +1891,24 @@ impl XhciController {
     pub unsafe fn poll_events(&mut self) -> bool {
         // SAFETY: polling touches this controller's own event ring and doorbells.
         unsafe {
-            // A watched hub makes the drain worth doing on its own: a port
-            // change is exactly the event a machine with no keyboard and no
-            // mouse would otherwise never stop to look at.
-            if self.keyboard_slot == 0 && self.mouse_slot == 0 && self.hub.is_none() {
-                return false;
-            }
-
             // Drain what the controller has posted.  `peek_event` reads the
             // consumer's own slot, and every consumed event moves the consumer
             // on, so the loop ends when that slot belongs to the previous lap
-            // again.
+            // again.  The drain is unconditional: a root port's status change
+            // is an event a machine with no device at all still has to see.
             let mut processed = false;
             while let Some(evt) = self.peek_event() {
                 self.advance_event_ring();
-                if evt.trb_type() == trb_type::TRANSFER_EVENT {
+                if evt.trb_type() == trb_type::TRANSFER_EVENT
+                    || evt.trb_type() == trb_type::PORT_STATUS_CHANGE_EVENT
+                {
                     processed = true;
-                    self.dispatch_interrupt_transfer_event(&evt);
+                    self.dispatch_event(&evt);
                 }
             }
+
+            // Now that nothing is in flight, do what the events asked for.
+            self.service_pending();
 
             // Acknowledge the interrupter once the ring is drained, so the next
             // event is again a 0→1 transition the controller will raise a
@@ -2281,6 +2432,40 @@ impl XhciController {
             .map(|idx| idx as u8 + 1)
     }
 
+    /// Release the slot a route names and every slot behind it.
+    ///
+    /// A device's route string is the path of hub ports from the root to it,
+    /// one nibble per tier with the first tier in the lowest nibble, so the
+    /// devices *behind* one are exactly those whose route keeps its low
+    /// nibbles — a hub that leaves the bus takes its children with it, and a
+    /// device that leaves a root port takes the hub behind that port and its
+    /// children too (a route of zero is a prefix of every route on the port).
+    ///
+    /// Returns how many slots were released.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::release_slot`] — the slots released belong to this
+    /// controller, and nothing on them may be in flight.
+    unsafe fn release_subtree(&mut self, root_port: u8, route: u32) -> usize {
+        let mask = route_prefix_mask(route_tiers(route));
+        let mut released = 0;
+        for idx in 0..MAX_SLOTS {
+            let (slot_root, slot_route) = self.slot_routes[idx];
+            if slot_root != root_port || (slot_route & mask) != route {
+                continue;
+            }
+            // SAFETY: the slot is one this controller addressed, and releasing
+            // it disables it before anything else can use it.
+            unsafe {
+                if self.release_slot(idx as u8 + 1).is_ok() {
+                    released += 1;
+                }
+            }
+        }
+        released
+    }
+
     /// Disable a slot and forget everything this driver holds for it.
     ///
     /// A device that leaves the bus does not take its slot with it: the
@@ -2684,6 +2869,9 @@ fn probe_xhci() -> crate::Result<()> {
                 println!("[xhci  ] enumerated port {}", port);
             }
         }
+        // SAFETY: the controller was just constructed, and the sync only
+        // clears its own ports' change bits.
+        unsafe { ctrl.sync_root_port_changes() };
 
         // Store the controller.
         *XHCI_CONTROLLER.lock() = Some(ctrl);
