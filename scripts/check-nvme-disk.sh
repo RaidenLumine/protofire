@@ -24,7 +24,7 @@
 # alone does not.
 #
 # Usage:
-#   sh scripts/check-nvme-disk.sh <x86_64|aarch64> [timeout-seconds]
+#   sh scripts/check-nvme-disk.sh <x86_64|aarch64|riscv64> [timeout-seconds]
 #
 # Exits 0 when the boot reached the mount, 1 otherwise (with the log's tail on
 # stderr).
@@ -45,8 +45,9 @@ FEATURES="${FEATURES:-demo-disk}"
 case "$MACHINE" in
     x86_64) QEMU="${QEMU:-qemu-system-x86_64}" ;;
     aarch64) QEMU="${QEMU:-qemu-system-aarch64}" ;;
+    riscv64) QEMU="${QEMU:-qemu-system-riscv64}" ;;
     *)
-        printf 'usage: %s <x86_64|aarch64> [timeout-seconds]\n' "$0" >&2
+        printf 'usage: %s <x86_64|aarch64|riscv64> [timeout-seconds]\n' "$0" >&2
         exit 2
         ;;
 esac
@@ -68,15 +69,23 @@ esac
 
 # The kernel image, built the way that machine boots: an ELF for x86_64, an
 # arm64 `Image` for aarch64.
-if [ "$MACHINE" = "x86_64" ]; then
+case "$MACHINE" in
+x86_64)
     "$CARGO" build --offline $profile_flag --target x86_64-unknown-none --bin "$CRATE" \
         --features "$FEATURES"
     KERNEL_BIN="${TARGET_DIR}/x86_64-unknown-none/${PROFILE}/${CRATE}"
-else
+    ;;
+aarch64)
     PROFILE="$PROFILE" CRATE="$CRATE" TARGET_DIR="$TARGET_DIR" FEATURES="$FEATURES" \
         sh ./scripts/build-aarch64-image.sh >/dev/null
     KERNEL_BIN="${TARGET_DIR}/aarch64-unknown-none/${PROFILE}/${CRATE}.img"
-fi
+    ;;
+riscv64)
+    "$CARGO" build --offline $profile_flag --target riscv64gc-unknown-none-elf --bin "$CRATE" \
+        --features "$FEATURES"
+    KERNEL_BIN="${TARGET_DIR}/riscv64gc-unknown-none-elf/${PROFILE}/${CRATE}"
+    ;;
+esac
 
 if [ ! -f "$KERNEL_BIN" ]; then
     printf 'kernel image not found: %s\n' "$KERNEL_BIN" >&2
@@ -111,7 +120,8 @@ printf 'nvme disk check (%s): timeout %ss, qemu %s\n' "$MACHINE" "$TIMEOUT_SECON
 # cannot fall back to the in-memory demo volumes and pass on those instead.
 # 1 GiB is the x86_64 demo's RAM; the aarch64 kernel needs 2 GiB for its pool.
 set +e
-if [ "$MACHINE" = "x86_64" ]; then
+case "$MACHINE" in
+x86_64)
     timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
         -machine q35 -cpu max -smp 1 -m 1G \
         -kernel "$KERNEL_BIN" \
@@ -120,7 +130,8 @@ if [ "$MACHINE" = "x86_64" ]; then
         -drive "file=$image,if=none,id=nvme0,format=raw" \
         -device nvme,drive=nvme0,serial=protofire \
         -serial "file:$log" >/dev/null 2>&1
-else
+    ;;
+aarch64|riscv64)
     timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
         -machine virt -cpu max -smp 1 -m 2G \
         -kernel "$KERNEL_BIN" \
@@ -130,7 +141,8 @@ else
         -drive "file=$image,if=none,id=nvme0,format=raw" \
         -device nvme,drive=nvme0,serial=protofire \
         -serial "file:$log" >/dev/null 2>&1
-fi
+    ;;
+esac
 status=$?
 set -e
 

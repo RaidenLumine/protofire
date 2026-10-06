@@ -76,15 +76,38 @@ pub fn phys_addr_of(virtual_address: usize) -> Option<usize> {
         None
     }
 
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        // The same answer as AArch64's, for the same reason: the runtime
+        // tables map the RAM window identity, which is why the VirtIO drivers
+        // here already hand the device the address their buffers live at
+        // rather than translating it.  `prepare_translation` in
+        // `arch/riscv64/mmu` is where that is decided, and this window is the
+        // one it names.
+        //
+        // Only the RAM window: the device window above it is identity-mapped
+        // too, but it is MMIO rather than memory a buffer can live in, and the
+        // stack window is deliberately not — its leaves point at frames of
+        // their own, so an address there is not its own physical address.
+        use super::riscv64::mmu::KERNEL_RAM_BASE;
+        use super::riscv64::mmu::KERNEL_RAM_LENGTH;
+
+        let end = KERNEL_RAM_BASE.saturating_add(KERNEL_RAM_LENGTH);
+        if (KERNEL_RAM_BASE..end).contains(&virtual_address) {
+            return Some(virtual_address);
+        }
+        None
+    }
+
     #[cfg(not(any(
         target_arch = "x86_64",
-        all(target_arch = "aarch64", target_os = "none")
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "riscv64", target_os = "none")
     )))]
     {
-        // The device-tree machines reach their frames through a window of
-        // their own rather than the identity map, and this translation is not
-        // wired for them yet: a caller that needs it fails rather than hand a
-        // device an address that means something else.
+        // A host build, or a machine whose mapping this tree does not know:
+        // a caller that needs the answer fails rather than hand a device an
+        // address that means something else.
         let _ = virtual_address;
         None
     }

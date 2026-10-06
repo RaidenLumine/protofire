@@ -69,6 +69,7 @@ endif
 		check-x8664-usb-disk \
 		check-x8664-nvme \
 		check-aarch64-nvme \
+		check-riscv64-nvme \
 		check-x8664-churn \
 		check-riscv64-churn \
 		check-aarch64-runtime \
@@ -132,6 +133,7 @@ help:
 		'  make check-riscv64-runtime - run the headless QEMU virt riscv64 demo smoke check' \
 		'  make check-riscv64-aia-runtime - boot riscv64 on the AIA machine and check the IMSIC' \
 		'  make check-riscv64-pci-runtime - boot riscv64 with a PCIe device and check the device-tree walk' \
+		'  make check-riscv64-nvme - the same NVMe disk on riscv64, whose RAM window is identity-mapped' \
 		'  make check-riscv64-smp-runtime - boot riscv64 on several harts and check they come up' \
 		'  make test           - run host-side unit and integration tests' \
 		'  make test-lib       - run library unit tests only' \
@@ -481,6 +483,15 @@ check-aarch64-nvme:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-nvme-disk.sh aarch64
+
+# And on riscv64, where the queues needed the DMA translation that machine had
+# never answered: its RAM window is identity-mapped, and this is the boot that
+# says so with a mounted volume.
+check-riscv64-nvme:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-nvme-disk.sh riscv64
 
 # Boot with the stack-window churn: ask the window for more stacks than it has
 # and the invalidation log for more requests than it can hold, then check the

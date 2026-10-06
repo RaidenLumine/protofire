@@ -55,8 +55,11 @@ const TABLE_ENTRY_COUNT: usize = 512;
 /// `PHYSICAL_POOL` and the 16 MiB `KERNEL_HEAP` statics in `.bss` just above
 /// the text/data, so the window must span a full GiB of QEMU `virt` RAM
 /// (`-m 1G`, RAM at [0x8000_0000, 0xC000_0000)).
-const KERNEL_RAM_BASE: usize = 0x8000_0000;
-const KERNEL_RAM_LENGTH: usize = 0x4000_0000;
+/// Base of the RAM window the runtime tables map identity.  `pub(crate)` so
+/// the DMA translation can answer for the same window this file maps.
+pub(crate) const KERNEL_RAM_BASE: usize = 0x8000_0000;
+/// Length of that window.
+pub(crate) const KERNEL_RAM_LENGTH: usize = 0x4000_0000;
 
 /// Low identity-mapped MMIO window (UART, PLIC, CLINT, virtio, ...).
 const DEVICE_MMIO_BASE: usize = 0x0000_0000;

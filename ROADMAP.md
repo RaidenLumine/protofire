@@ -36,13 +36,11 @@ The authoritative picture of what exists today is
   before it is allowed to signal, and the NIC's queues are routed to them — so
   the device signals on its own and a completion waits on that interrupt
   (checking the ring first, spinning last).  Remaining gaps: MSI-X is claimed
-  per queue now, with each entry placed on a hart in turn; the NVMe driver is
-  the same one the PC compiles (it asks the platform for a window), so it
-  drives this machine's bus too — but it cannot bring its queues up here,
-  because `arch::mmu::phys_addr_of` answers nothing on riscv64 and a DMA
-  buffer cannot be allocated.  That translation is the blocker; what follows
-  it is a driver for any other PCIe device, and broader device-tree driver
-  coverage.
+  per queue now, with each entry placed on a hart in turn; NVMe is a second
+  device class on this bus, driven by the same file the PC compiles — which
+  also made `arch::mmu::phys_addr_of` answer here, since its queues are DMA
+  buffers and this machine's RAM window is identity-mapped.  What remains is
+  another class still, and broader device-tree driver coverage.
 - **AArch64 PCIe.** The ECAM window is found, its buses enumerated, its BARs
   assigned, and its `virtio-net-pci` driven — the same code as riscv64 with a
   different way of reaching a BAR.  Its devices signal by MSI too now: the

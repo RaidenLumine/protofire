@@ -223,6 +223,9 @@ run_p3() {
         # settle when it read `reg` — before `compatible` said the node *was* a
         # host bridge.  No boot had a PCIe device on the bus to notice.
         run_make_step "make check-riscv64-pci-runtime" check-riscv64-pci-runtime
+        # And the device class beside the NIC, which is what needed this
+        # machine's RAM window to be translatable for DMA.
+        run_make_step "make check-riscv64-nvme" check-riscv64-nvme
     else
         printf '==> verify[%s]: skipping riscv64 runtime smoke (set RUN_RISCV64_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"

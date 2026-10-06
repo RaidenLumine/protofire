@@ -56,7 +56,7 @@ architecture: `drivers::nvme` exists everywhere, and only its body differs.
 | ATA (PIO) | Polling | The driver is the legacy path: programmed I/O, no DMA, no interrupt |
 | AHCI (SATA) | Polling | Discovers controllers through PCI; the driver's own note says it is polling only — no MSI/MSI-X |
 | VirtIO block | The transport's | Modern and legacy transports, on the virtio-mmio bus and on PCIe; the boot-disk chain's `virt` path |
-| NVMe | Polling | The driver's own comment says it is poll-based: completions are reaped inside the submit-and-wait helpers, and the vector constants and handler exist without a programmed table behind them.  The driver is machine-neutral — it asks the platform for a register window — so x86_64 and the device-tree machines compile the same file; on riscv64 it is not driven, because that machine's DMA translation is unwired and its queues cannot be allocated |
+| NVMe | Polling | The driver's own comment says it is poll-based: completions are reaped inside the submit-and-wait helpers, and the vector constants and handler exist without a programmed table behind them.  The driver is machine-neutral — it asks the platform for a register window — so all three machines compile the same file, and each of them mounts a filesystem from a namespace in its own gate |
 | USB mass storage | Not reachable | Bulk-only transport and SCSI command blocks are implemented; nothing can reach them until xHCI can drive a bus |
 
 ## Network

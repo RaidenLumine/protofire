@@ -2,19 +2,16 @@
 //!
 //! Which of the machine's own devices this architecture has a driver for.
 //!
-//! None of the PC drivers: the bochs display, Intel HDA, NVMe, xHCI and the
-//! PIT speaker are reached through the x86_64 configuration mechanism.  This
+//! Most of the PC drivers: the bochs display, Intel HDA, xHCI and the PIT
+//! speaker are reached through the x86_64 configuration mechanism.  This
 //! machine's own devices are VirtIO — MMIO from its device tree, PCIe from its
-//! ECAM window — and those drivers live in `src/drivers/` and are compiled
-//! everywhere.
+//! ECAM window — and NVMe, whose registers are the same on any PCIe bus; those
+//! drivers live in `src/drivers/` and are compiled wherever that bus is.
 //!
-//! NVMe is not one of them yet, and the reason is not the device: the
-//! controller enumerates and answers on this machine's ECAM window, but its
-//! queues need `crate::arch::mmu::phys_addr_of`, which is unwired here — the
-//! RAM window is identity-mapped (the VirtIO drivers hand it device addresses
-//! already), and the translation that would say so is the one call it does not
-//! make.  Enabling the driver before that returns `OutOfMemory` at queue
-//! allocation, so it stays a stub.
+//! NVMe is the driver that made `crate::arch::mmu::phys_addr_of` answer on
+//! this machine: its queues are DMA buffers, and the RAM window is
+//! identity-mapped here, which is what the VirtIO drivers already rely on when
+//! they hand a device the address their rings live at.
 //!
 //! So the five names below resolve to the stubs, and the two capability
 //! constants say so too.  See the x86_64 module for why the driver files are
@@ -67,6 +64,15 @@ pub fn usb_boot_disk() -> Option<Arc<dyn BlockDevice>> {
 pub mod framebuffer;
 #[path = "../../drivers/hda_absent.rs"]
 pub mod hda;
+/// The NVMe driver, which this machine reaches through its PCIe window: the
+/// class is the same one an x86_64 controller has, and this machine's RAM
+/// window is identity-mapped, so the BAR address enumeration assigned is the
+/// one the kernel reads.
+#[cfg(target_os = "none")]
+#[path = "../../drivers/nvme.rs"]
+pub mod nvme;
+/// Nothing to answer on a host build of this architecture.
+#[cfg(not(target_os = "none"))]
 #[path = "../../drivers/nvme_absent.rs"]
 pub mod nvme;
 #[path = "../../drivers/pcspkr_absent.rs"]
