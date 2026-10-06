@@ -509,6 +509,7 @@ fn install_active_root_table_address(ttbr0: u64) {
         );
         // The root table changed — invalidate all cached translations.
         asm!(
+            "dsb ish",
             "tlbi vmalle1is",
             "dsb ish",
             "isb",
@@ -561,6 +562,7 @@ fn install_translation_configuration(ttbr0: u64) {
         );
         asm!("isb", options(nostack, preserves_flags));
         asm!(
+            "dsb ish",
             "tlbi vmalle1is",
             "dsb ish",
             "isb",
@@ -575,14 +577,28 @@ fn install_translation_configuration(_ttbr0: u64) {}
 /// Invalidate cached translations for one virtual address (all ASIDs).
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 fn flush_tlb_page(virtual_address: usize) {
+    // The full sequence is `DSB; TLBI; DSB; ISB`, and both ends matter:
+    //
+    // * The *leading* DSB is what makes the page-table write that prompted this
+    //   invalidation visible to the other cores before they honour it.  With the
+    //   invalidation broadcast first, a core can take it, walk the table before the
+    //   new descriptor has propagated, and load the *old* descriptor into its TLB —
+    //   a stale translation that outlives the flush.
+    // * The by-VA form of the TLBI takes the *page number* in bits [43:0], i.e. `VA
+    //   >> 12`, not the byte address.  Handing it the byte address asks it to drop
+    //   `VA << 12`, which is some other address entirely, so the page the caller
+    //   meant to invalidate keeps its entry.  For a recycled stack slice that is a
+    //   live stack whose pages are the frames of its previous owner.
+    //
     // SAFETY: invalidating the cached translations of one address is allowed
     // from EL1 whatever the tables say, and the address is only a value here —
     // nothing is dereferenced; the barriers order the invalidation against the
     // table writes that prompted it.
     unsafe {
         asm!(
-            "tlbi vaale1is, {va}",
-            va = in(reg) virtual_address,
+            "dsb ish",
+            "tlbi vaale1is, {page}",
+            page = in(reg) (virtual_address >> 12),
             options(nostack, preserves_flags)
         );
         asm!("dsb ish", "isb", options(nostack, preserves_flags));

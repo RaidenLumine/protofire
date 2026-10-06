@@ -4,10 +4,13 @@
 //!
 //! Nothing, on both counts.  This kernel invalidates to the inner-shareable
 //! domain where the page table is edited — the MMU's own map and unmap paths
-//! issue `tlbi ...is` and a barrier — so by the time an edit returns, every
-//! core that could hold the translation has dropped it.  The drop the kernel
-//! asks for here has already happened, and telling the other CPUs later would
-//! ask them to walk a request they have honoured.
+//! issue the full `DSB; TLBI ...IS; DSB; ISB` sequence — so by the time an
+//! edit returns, every core that could hold the translation has dropped it.
+//! The leading `DSB` is part of why that holds: without it the invalidation
+//! can be broadcast before the descriptor that prompted it is visible, and a
+//! core that walks the table then re-loads the stale entry.  The drop the
+//! kernel asks for here has already happened, and telling the other CPUs later
+//! would ask them to walk a request they have honoured.
 //!
 //! What that costs is named where it is paid: not here, and not on any path
 //! that passes through this module.

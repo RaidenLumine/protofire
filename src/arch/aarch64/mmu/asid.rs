@@ -127,7 +127,11 @@ pub(crate) fn allocate_asid() -> u64 {
                 // tables say, and the barriers order it against the reload the comment above
                 // describes.
                 unsafe {
-                    asm!("tlbi vmalle1is", options(nostack, preserves_flags));
+                    asm!(
+                        "dsb ish",
+                        "tlbi vmalle1is",
+                        options(nostack, preserves_flags)
+                    );
                     asm!("dsb ish", "isb", options(nostack, preserves_flags));
                 }
             }
@@ -183,11 +187,17 @@ pub(crate) fn ttbr0_with_asid(root_table_address: usize, asid: u64) -> u64 {
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub(crate) fn tlbi_asid(asid: u64) {
     // SAFETY: as above — an ASID-scoped invalidation, which the caller chose
-    // because only that ASID's entries are stale.
+    // because only that ASID's entries are stale.  The leading `dsb ish` is
+    // required for the same reason as in `flush_tlb_page`: the invalidation
+    // must not be broadcast before the table edit that prompted it is visible,
+    // or a core can re-load the stale descriptor it was told to drop.  The
+    // by-ASID form takes the ASID in bits [63:48], not in the low bits, so the
+    // operand is shifted: passing the bare number would name ASID 0.
     unsafe {
         asm!(
-            "tlbi aside1is, {asid}",
-            asid = in(reg) asid,
+            "dsb ish",
+            "tlbi aside1is, {operand}",
+            operand = in(reg) ((asid & 0xFFFF) << 48),
             options(nostack, preserves_flags)
         );
         asm!("dsb ish", "isb", options(nostack, preserves_flags));
