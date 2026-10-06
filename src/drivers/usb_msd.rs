@@ -494,6 +494,19 @@ pub fn probe_geometry() {
         (block_count * block_size as u64) / (1024 * 1024)
     );
 
+    // Read the first sector for a one-line identification: it is the read a
+    // filesystem would do next, and it is the only thing in this driver that
+    // shows a *block* came back rather than a capacity.
+    let mut sector = [0u8; BLOCK_SIZE];
+    match scsi_read_10(0, &mut sector) {
+        Ok(()) => {
+            println!("[usbmsd] sector 0: {:02x?}", &sector[..16]);
+        }
+        Err(_) => {
+            println!("[usbmsd] sector 0: read failed");
+        }
+    }
+
     // Fill in the real geometry now that READ CAPACITY has completed.
     {
         let mut device = MSD_DEVICE.lock();

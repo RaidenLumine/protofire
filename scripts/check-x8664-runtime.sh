@@ -97,6 +97,9 @@ cleanup() {
     if [ "$remove_log_on_exit" = "1" ]; then
         rm -f "$log_file"
     fi
+    if [ -n "${usb_disk:-}" ]; then
+        rm -f "$usb_disk"
+    fi
 }
 trap cleanup EXIT INT TERM
 
@@ -106,6 +109,18 @@ trap cleanup EXIT INT TERM
 # configuration that can type at the prompt at all — `-serial file:` can only
 # listen — and typing is the half of the shell that a boot by itself never
 # exercises.  See the SMP check for why the other checks stay one-way.
+#
+# The USB disk carries a pattern in its first sector.  A disk that reports its
+# capacity has answered a question; only a *block* coming back with the bytes
+# the host wrote shows the read path, and the pattern is what tells those bytes
+# from a zeroed buffer.  The filesystem rejects the image afterwards — it is not
+# a SimpleFs volume — which is a read of its own.
+usb_disk="$(mktemp)"
+if ! truncate -s 8M "$usb_disk" 2>/dev/null; then
+    dd if=/dev/zero of="$usb_disk" bs=1M count=8 2>/dev/null
+fi
+printf 'PROTOFIRE-USB-DISK' | dd of="$usb_disk" bs=1 conv=notrunc 2>/dev/null
+
 set -- \
     -machine q35 \
     -cpu max \
@@ -116,7 +131,9 @@ set -- \
     -no-reboot \
     -no-shutdown \
     -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
-    -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0
+    -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 \
+    -drive "file=$usb_disk,if=none,id=usbdisk,format=raw" \
+    -device usb-storage,drive=usbdisk,bus=xhci.0
 
 printf 'x86_64 runtime check: 1 cpu, timeout %ss, qemu %s\n' \
     "$TIMEOUT_SECONDS" "$QEMU"
@@ -379,6 +396,18 @@ require_log_exact_line "bus"
 # monitor, so the guest is not simulating anything.
 require_log_line "[xhci  ] event ring MSI (irq "
 require_log_exact_line "usbkeys"
+# And the machine's USB mass storage, from the same controller: a disk the
+# guest enumerated, spoke bulk-only SCSI to, read the capacity of, and then
+# read a *block* from — the bytes in that line are the pattern this script
+# wrote into the image before booting, which is what makes it a read rather
+# than a zeroed buffer.  The kernel prefers it as the boot disk, and the
+# filesystem reads it again to see whether it is a volume it knows.
+require_log_line "[xhci  ] mass storage device detected at slot "
+require_log_line "[xhci  ] mass storage initialised at slot "
+require_log_line "[usbmsd] USB mass storage: 16384 blocks x 512 bytes = 8 MiB"
+require_log_line \
+    "[usbmsd] sector 0: [50, 52, 4f, 54, 4f, 46, 49, 52, 45, 2d, 55, 53, 42, 2d, 44, 49]"
+require_log_line "[driver] detected boot disk: usb-msd (16384 blocks)"
 
 # ── A signal taken asynchronously, end to end ──────────────────────────
 #
