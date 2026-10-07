@@ -62,6 +62,7 @@ endif
 		check-reproducible-build \
 		release \
 		check-perf-baseline \
+		check-perf-baseline-smp \
 		check-dead-code-allows \
 		check-feature-matrix \
 		check-abi-mirror \
@@ -124,6 +125,7 @@ help:
 		'  make check-reproducible-build - rebuild every artifact twice and compare bytes' \
 		'  make release        - build and sign the release bundle (does not tag or publish)' \
 		'  make check-perf-baseline - boot the demo and compare its measured work to the baseline' \
+		'  make check-perf-baseline-smp - the same on several CPUs (SMP, default 4)' \
 		'  make check-abi-mirror  - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
@@ -387,11 +389,34 @@ release:
 # `scripts/perf-baseline.txt`.  It needs QEMU and a build with the profiler
 # features, which is why it is a target of its own and not part of
 # `make check`; a re-record is `sh scripts/check-perf-baseline.sh --record`.
+#
+# The single-CPU gate cannot see what a second CPU does — the AP bring-up, the
+# per-CPU timers, the IPIs a TLB shootdown sends — so `check-perf-baseline-smp`
+# boots the same demo on `SMP` CPUs (four by default) and compares it against
+# `scripts/perf-baseline-smp.txt`.  That file names the shape it was recorded
+# on, and a boot of another shape is refused rather than compared: a one-CPU
+# baseline against a four-CPU boot is two different programs.  Re-record it
+# with `SMP_CPUS=<n> BASELINE=scripts/perf-baseline-smp.txt \
+# TARGET_LABEL=check-perf-baseline-smp sh scripts/check-perf-baseline.sh --record`.
 check-perf-baseline:
 	PROFILE="$(PROFILE)" \
 		CRATE="$(CRATE)" \
 		CARGO="$(CARGO)" \
 		TARGET_DIR="$(TARGET_DIR)" \
+		SMP_CPUS=1 \
+		BASELINE=scripts/perf-baseline.txt \
+		TARGET_LABEL=check-perf-baseline \
+		sh ./scripts/check-perf-baseline.sh
+
+check-perf-baseline-smp: SMP = 4
+check-perf-baseline-smp:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		CARGO="$(CARGO)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		SMP_CPUS="$(SMP)" \
+		BASELINE=scripts/perf-baseline-smp.txt \
+		TARGET_LABEL=check-perf-baseline-smp \
 		sh ./scripts/check-perf-baseline.sh
 
 # A file-level `allow(dead_code)` is the one annotation the compiler cannot

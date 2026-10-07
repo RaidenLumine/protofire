@@ -182,6 +182,17 @@ whether a change did more or less work and does not depend on how busy the host
 was.  If the change moves a counter on purpose, re-record it with
 `sh scripts/check-perf-baseline.sh --record`, which keeps each row's tolerance.
 
+The single-CPU boot cannot see the work a second CPU does, so
+`make check-perf-baseline-smp` boots the same demo on four CPUs and compares it
+against `scripts/perf-baseline-smp.txt`.  A baseline describes one machine
+shape, and each file names its own in a header line: a boot of another shape is
+refused rather than compared, because the counters of a one-CPU boot and a
+four-CPU boot are answers to different questions.  Re-record the multi-CPU one
+with `SMP_CPUS=4 BASELINE=scripts/perf-baseline-smp.txt
+TARGET_LABEL=check-perf-baseline-smp sh scripts/check-perf-baseline.sh --record`,
+and expect to set a tolerance by hand for a counter the schedule moves that a
+single-CPU boot never moved — `ipis` is one.
+
 ### Moving code between modules: clear the incremental cache first
 
 The bare-metal targets build with incremental compilation on, and Cargo's

@@ -122,10 +122,11 @@ The authoritative picture of what exists today is
   same synchronous reads cannot be ahead of a reader this fast, so overlap has
   to be a queue at the device — and no device the tree boots today queues, so
   it is not worth landing until one can show two requests in flight),
-  measurement under load (SMP load-balancing, NUMA-node stress, network
-  throughput), and the commit comparison's own reads, which a per-block shadow
-  of the previous generation would remove if they ever show up against real
-  disks.
+  measurement under load (throughput and latency on real disks and SSDs,
+  NUMA-node stress, network throughput — the work a four-CPU boot does is
+  gated by `make check-perf-baseline-smp`, but that is a boot, not a load), and
+  the commit comparison's own reads, which a per-block shadow of the previous
+  generation would remove if they ever show up against real disks.
 
 ## Long Term (1–3 years)
 

@@ -1,6 +1,6 @@
-# Boot-work baseline for `make check-perf-baseline`.
+# Boot-work baseline for `make check-perf-baseline-smp`.
 #
-# The machine: -smp 1 -m 1G.  A baseline describes one shape, so the check
+# The machine: -smp 4 -m 1G.  A baseline describes one shape, so the check
 # refuses a boot whose shape does not match this line.
 #
 # One row per counter the boot prints: `key baseline tolerance`.
@@ -9,6 +9,12 @@
 # that stopped at boot do not drift at all.  Re-record with
 # `sh scripts/check-perf-baseline.sh --record`, which keeps every
 # tolerance that is already written down.
+#
+# The counters a second CPU adds are the ones this shape has and the
+# single-CPU record does not: the AP wake-ups, the per-CPU tick, and
+# the IPIs a TLB shootdown sends.  `ipis` moves by a count or two with
+# the schedule, so it carries a tolerance here that the one-CPU
+# baseline, where it is identically zero, does not need.
 #
 # The `fs-*` rows are the counters a filesystem keeps: how many
 # operations it served (`fs-reads`, `fs-writes`) and how many bytes
@@ -20,12 +26,12 @@
 # reached a device, counted where a device enters the filesystem
 # (`src/kernel/block.rs`).  Three heights, one read.
 #
-ticks 512 12
-frames 23 0
-frame-frees 8 0
-frame-zero-bytes 610304 0
-heap-allocs 20891 256
-heap-bytes 25415808 262144
+ticks 505 12
+frames 27 0
+frame-frees 12 0
+frame-zero-bytes 741376 0
+heap-allocs 21675 256
+heap-bytes 25427600 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
@@ -44,10 +50,10 @@ blk-reads 175 0
 blk-read-bytes 259072 0
 blk-writes 227 0
 blk-write-bytes 229888 0
-ip4-rx 3 4
-ip4-tx 11 4
+ip4-rx 2 4
+ip4-tx 10 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 523 12
-ipis 0 0
+irqs 525 12
+ipis 52 4
 spurious 0 0

@@ -165,9 +165,13 @@ run_p3() {
     # the recorded baseline.  Opt-in like the smokes because it needs QEMU and
     # a build with the profiler features; unlike them it does not mind a busy
     # host, because the rows a schedule can still move carry a tolerance
-    # rather than an assumption that the machine is idle.
+    # rather than an assumption that the machine is idle.  The second boot is
+    # the same demo on four CPUs, where the work a single-CPU boot cannot do at
+    # all — waking the APs, the per-CPU tick, the IPIs a TLB shootdown sends —
+    # is part of the comparison instead of invisible to it.
     if [ "$RUN_PERF_BASELINE" = "1" ]; then
         run_make_step "make check-perf-baseline" check-perf-baseline
+        run_make_step "make check-perf-baseline-smp" check-perf-baseline-smp
     else
         printf '==> verify[%s]: skipping the boot-work baseline (set RUN_PERF_BASELINE=1 to enable)\n' \
             "$VERIFY_TIER"

@@ -33,6 +33,12 @@ TARGET_DIR="${TARGET_DIR:-target}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-30}"
 QEMU="${QEMU:-qemu-system-x86_64}"
 BASELINE="${BASELINE:-scripts/perf-baseline.txt}"
+# How many CPUs the boot runs on, and what the baseline calls that machine.
+# A baseline is only a baseline for the machine it was recorded on: the work a
+# boot does is not the same with one CPU as with four, so the file names its
+# shape and the check refuses to compare a boot against the wrong one.
+SMP_CPUS="${SMP_CPUS:-1}"
+TARGET_LABEL="${TARGET_LABEL:-check-perf-baseline}"
 
 # The profilers are the point: a default build has no counters to read.
 FEATURES="demo-disk perf_baseline fs_profiler net_profiler alloc_profiler fault_profiler"
@@ -49,6 +55,14 @@ case "$PROFILE" in
     *) profile_flag="" ;;
 esac
 
+case "$SMP_CPUS" in
+    ''|*[!0-9]*)
+        printf 'SMP_CPUS must be a number, got: %s\n' "$SMP_CPUS" >&2
+        exit 1
+        ;;
+esac
+machine="-smp ${SMP_CPUS} -m 1G"
+
 mode=check
 case "${1:-}" in
     '') ;;
@@ -58,6 +72,27 @@ case "${1:-}" in
         exit 2
         ;;
 esac
+
+# A check compares a boot against a file, so both the file and its shape are
+# settled before the boot rather than after it: a mismatch is a mistake in the
+# invocation, and it should not cost a machine boot to be told so.
+if [ "$mode" = "check" ]; then
+    if [ ! -f "$BASELINE" ]; then
+        printf 'perf baseline not found: %s (record one with --record)\n' "$BASELINE" >&2
+        exit 1
+    fi
+    # The file names the machine it was recorded on, and the counters are only
+    # comparable to a boot of that shape: a one-CPU baseline compared against a
+    # four-CPU boot (or the reverse) is a comparison of two different programs.
+    recorded_machine="$(sed -n 's/^# The machine: \(.*\)\.  A baseline describes one shape.*/\1/p' \
+        "$BASELINE" | head -n 1)"
+    if [ "$recorded_machine" != "$machine" ]; then
+        printf 'perf baseline check failed: %s is recorded for "%s" and this boot is "%s"\n' \
+            "$BASELINE" "${recorded_machine:-<none>}" "$machine" >&2
+        printf '  re-record it with the shape you meant: set SMP_CPUS and BASELINE together\n' >&2
+        exit 1
+    fi
+fi
 
 if ! command -v "$QEMU" >/dev/null 2>&1; then
     printf '%s is not installed; cannot measure the boot.\n' "$QEMU" >&2
@@ -79,7 +114,7 @@ trap cleanup EXIT INT TERM
 # stop.
 set +e
 timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
-    -machine q35 -cpu max -smp 1 -m 1G \
+    -machine q35 -cpu max $machine \
     -kernel "$KERNEL_BIN" \
     -display none -no-reboot -no-shutdown \
     -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
@@ -107,7 +142,10 @@ measured() {
 if [ "$mode" = "record" ]; then
     new="$(mktemp)"
     {
-        printf '# Boot-work baseline for `make check-perf-baseline`.\n'
+        printf '# Boot-work baseline for `make %s`.\n' "$TARGET_LABEL"
+        printf '#\n'
+        printf '# The machine: %s.  A baseline describes one shape, so the check\n' "$machine"
+        printf '# refuses a boot whose shape does not match this line.\n'
         printf '#\n'
         printf '# One row per counter the boot prints: `key baseline tolerance`.\n'
         printf '# Tolerance is absolute: the counters a boot is still moving when it\n'
@@ -115,6 +153,14 @@ if [ "$mode" = "record" ]; then
         printf '# that stopped at boot do not drift at all.  Re-record with\n'
         printf '# `sh scripts/check-perf-baseline.sh --record`, which keeps every\n'
         printf '# tolerance that is already written down.\n'
+        if [ "$SMP_CPUS" != "1" ]; then
+            printf '#\n'
+            printf '# The counters a second CPU adds are the ones this shape has and the\n'
+            printf '# single-CPU record does not: the AP wake-ups, the per-CPU tick, and\n'
+            printf '# the IPIs a TLB shootdown sends.  `ipis` moves by a count or two with\n'
+            printf '# the schedule, so it carries a tolerance here that the one-CPU\n'
+            printf '# baseline, where it is identically zero, does not need.\n'
+        fi
         printf '#\n'
         printf '# The `fs-*` rows are the counters a filesystem keeps: how many\n'
         printf '# operations it served (`fs-reads`, `fs-writes`) and how many bytes\n'
@@ -141,11 +187,6 @@ if [ "$mode" = "record" ]; then
     printf 'recorded %s row(s) in %s\n' \
         "$(printf '%s\n' "$pairs" | grep -c .)" "$BASELINE"
     exit 0
-fi
-
-if [ ! -f "$BASELINE" ]; then
-    printf 'perf baseline not found: %s (record one with --record)\n' "$BASELINE" >&2
-    exit 1
 fi
 
 counter=0

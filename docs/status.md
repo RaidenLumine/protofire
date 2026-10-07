@@ -359,7 +359,9 @@ balancing and runtime stack protection.
   clock/firmware interface (SCMI, common-clock, SBI CPPC) that is not yet
   wired.
 - **Load balancing lacks real-load validation**: SMP/NUMA scenarios are mostly
-  tested under QEMU.
+  tested under QEMU, and the work a four-CPU boot does is counted rather than
+  measured against load (`make check-perf-baseline-smp`), so a balancer that
+  keeps up with an idle machine and not a busy one still passes.
 
 ---
 
@@ -555,9 +557,11 @@ networking, with more protocols in the tree than the receive path dispatches.
 - **Educational protocols are feature-gated**: CSMA/CD, STP, Mobile IP, RSVP,
   PIM-DM, etc. compile only under `educational_networking`.
 - **Throughput and concurrency not benchmarked**: the packets a boot sends and
-  receives are counted and gated (`make check-perf-baseline`), but no
-  throughput or load-balanced, multi-core concurrency baseline has been
-  established.
+  receives are counted and gated (`make check-perf-baseline`), and the work a
+  four-CPU boot does — which is where the cross-CPU paths first have any work
+  to do — is gated too (`make check-perf-baseline-smp`), but neither is a
+  throughput measurement: no baseline has been established for what a loaded
+  machine or a load-balanced, multi-core workload gets through.
 
 ---
 
@@ -959,7 +963,7 @@ numbers it decodes against come from the shared copy.
 | Concurrency tests | Scheduler, condvar, console, keyboard | — |
 | Parser fuzz harnesses | Deterministic, in-tree, run by `make test-parsers`; coverage-guided targets in `fuzz/` run nightly | The gates are fixed-seed and bounded; the nightly corpora are not persisted across runs |
 | virtio-gpu layout tests | Struct size and layout plus command wire format, against a mock device | Mock device only; no real GPU validation |
-| Boot-work baseline | `make check-perf-baseline` compares a boot's counters against `scripts/perf-baseline.txt` (`src/kernel/perf_baseline.rs` prints them; the gate and its tolerances are [CONTRIBUTING.md](../CONTRIBUTING.md)'s).  The read side is counted at three heights: the filesystem's own operations and the bytes those operations were asked for (`fs-read-bytes`, `fs-write-bytes`, `src/fs/filesystem/profiler.rs`), what the block cache served (`cache-*`), and what actually reached a device (`blk-*`, `src/kernel/block.rs`) | Counters, not seconds: it answers "did this do less work", not "was this faster"; throughput and latency under load are still unmeasured, and the counters are per boot rather than per workload |
+| Boot-work baseline | `make check-perf-baseline` compares a boot's counters against `scripts/perf-baseline.txt` (`src/kernel/perf_baseline.rs` prints them; the gate and its tolerances are [CONTRIBUTING.md](../CONTRIBUTING.md)'s).  The read side is counted at three heights: the filesystem's own operations and the bytes those operations were asked for (`fs-read-bytes`, `fs-write-bytes`, `src/fs/filesystem/profiler.rs`), what the block cache served (`cache-*`), and what actually reached a device (`blk-*`, `src/kernel/block.rs`).  `make check-perf-baseline-smp` boots the same demo on four CPUs against `scripts/perf-baseline-smp.txt`, so the work that only exists with a second CPU — waking the APs, the per-CPU tick, the IPIs a TLB shootdown sends — is compared rather than invisible; each file names the shape it was recorded on, and a boot of another shape is refused instead of compared | Counters, not seconds: it answers "did this do less work", not "was this faster"; throughput and latency under load are still unmeasured — the four-CPU baseline says what a boot does with four CPUs, not what a loaded machine does — and the counters are per boot rather than per workload |
 | CI workflow | the gates run per commit, each as its own step (`.github/workflows/ci.yml`) | The gates run as separate steps rather than through `make verify-p3` |
 | Verification gates | P0-P3, described in [CONTRIBUTING.md](../CONTRIBUTING.md) | The smokes and the boot-work baseline are opt-in through environment variables, so a local `make verify-p3` without them does not boot anything |
 | ABI number snapshot | `tests/syscall/abi_golden.rs`: a number's name may not change, and an experimental change has to bump the ABI minor in the same commit | Pins numbering and record layouts, not the object shapes behind them |
