@@ -33,7 +33,7 @@ use crate::fs::FileSystem;
 use crate::fs::OPEN_ALWAYS;
 use crate::kernel::block::BlockDevice;
 use crate::kernel::block::DeviceIo;
-use crate::kernel::block::ReadState;
+use crate::kernel::block::RequestState;
 use crate::kernel::block::BLOCK_SIZE;
 use crate::kernel::process::HANDLE_RIGHT_READ;
 use crate::kernel::process::HANDLE_RIGHT_WRITE;
@@ -158,7 +158,7 @@ pub(crate) fn run(fs: &FileSystem) -> WorkloadDelta {
     // totals.  It reports nothing on a device that cannot hold two.
     if let Some(report) = probe_queued_read(fs) {
         crate::println!(
-            "[perf  ] queued read: depth={} submitted={} in-flight-high-water={}",
+            "[perf  ] queued read: depth={} submitted={} read-high-water={}",
             report.depth,
             report.submitted,
             report.high_water
@@ -250,20 +250,20 @@ fn queued_read(device: &dyn BlockDevice) -> Option<QueuedReadReport> {
     // Read the counter while both are outstanding: this is the number the
     // gate holds, and the probe reading it here is what makes the claim
     // "the mechanism ran" rather than "the read returned".
-    let high_water = crate::kernel::block::device_io_snapshot().in_flight_high_water;
+    let high_water = crate::kernel::block::device_io_snapshot().read_in_flight_high_water;
 
     for ticket in [first_ticket, second_ticket] {
         let mut polls = 0u32;
         loop {
-            match device.poll_read(ticket) {
-                ReadState::Pending => {
+            match device.poll(ticket) {
+                RequestState::Pending => {
                     polls += 1;
                     if polls > QUEUED_READ_POLL_LIMIT {
                         return None;
                     }
                     core::hint::spin_loop();
                 }
-                ReadState::Done(result) => {
+                RequestState::Done(result) => {
                     result.ok()?;
                     break;
                 }

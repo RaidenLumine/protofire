@@ -33,11 +33,11 @@
 # a line of its own and is deliberately not recorded here.
 #
 ticks 523 12
-frames 27 0
+frames 26 0
 frame-frees 6 0
-frame-zero-bytes 512000 0
-heap-allocs 11250 256
-heap-bytes 17083792 262144
+frame-zero-bytes 507904 0
+heap-allocs 11221 256
+heap-bytes 17044160 262144
 pt-maps 738 0
 pt-lookups 737 0
 faults 1 0
@@ -56,7 +56,8 @@ blk-reads 167 0
 blk-read-bytes 257536 0
 blk-writes 338 0
 blk-write-bytes 264704 0
-blk-in-flight-high-water 2 0
+blk-read-high-water 2 0
+blk-write-high-water 1 0
 wl-files 8 0
 wl-bytes 49152 0
 wl-fs-reads 8 0
@@ -76,10 +77,10 @@ nw-datagrams-rx 0 0
 nw-bytes 0 0
 nw-polls 0 0
 nw-completed 0 0
-ip4-rx 3 4
-ip4-tx 11 4
+ip4-rx 1 4
+ip4-tx 9 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 534 12
+irqs 535 12
 ipis 0 0
 spurious 0 0

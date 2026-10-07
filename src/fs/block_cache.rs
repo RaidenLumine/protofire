@@ -17,6 +17,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::fs::block::BlockDevice;
+use crate::fs::block::RequestState;
+use crate::fs::block::Ticket;
 use crate::fs::block::BLOCK_SIZE;
 use crate::kernel::sync::Mutex;
 use crate::Result;
@@ -77,6 +79,22 @@ const WRITE_BACK_PRESSURE_THRESHOLD: usize = CACHE_CAPACITY / 2;
 /// a run is this many blocks on the stack, so it is a bound on stack use as
 /// much as on request size.
 const PREFETCH_RUN_BLOCKS: usize = 4;
+
+/// The most times one queued write is polled before a flush gives up on it.
+///
+/// A bound, like the read path's: a device that never completes a write must
+/// not hang a flush for ever, and the error it returns is the caller's to
+/// retry.
+const FLUSH_POLL_LIMIT: u32 = 50_000_000;
+
+/// One write a flush has handed to the device and not yet retired.
+struct PendingWrite {
+    ticket: Ticket,
+    lba: u64,
+    /// The entry generation that was submitted.  A completion clears the
+    /// block's dirty flag only while the entry still carries it.
+    generation: u64,
+}
 
 /// Sentinel value for an empty cache slot.
 const EMPTY_LBA: u64 = u64::MAX;
@@ -346,19 +364,9 @@ impl BlockCache {
     /// Write every dirty cached block to the underlying device.
     /// Dirty flags are cleared after successful writes.
     pub fn flush(&self) -> Result<()> {
-        let mut entries = self.entries.lock();
-        let mut count = 0_u64;
-        for entry in entries.iter_mut() {
-            if entry.dirty {
-                self.device.write_blocks(entry.lba, &entry.data)?;
-                entry.dirty = false;
-                entry.dirty_since = 0;
-                count += 1;
-            }
-        }
-        drop(entries);
+        let count = self.flush_selected(|_| true)?;
         if count > 0 {
-            self.add_dirty_writebacks(count);
+            self.add_dirty_writebacks(count as u64);
         }
         Ok(())
     }
@@ -372,21 +380,171 @@ impl BlockCache {
     /// for an explicit `fsync`/`sync`.  Returns the number of blocks written.
     pub fn flush_aged(&self, age_ticks: u64) -> Result<usize> {
         let now = cache_tick();
-        let mut entries = self.entries.lock();
-        let mut flushed = 0_usize;
-        for entry in entries.iter_mut() {
-            if entry.dirty && now.wrapping_sub(entry.dirty_since) >= age_ticks {
-                self.device.write_blocks(entry.lba, &entry.data)?;
-                entry.dirty = false;
-                entry.dirty_since = 0;
-                flushed += 1;
-            }
-        }
-        drop(entries);
+        let flushed =
+            self.flush_selected(|entry| now.wrapping_sub(entry.dirty_since) >= age_ticks)?;
         if flushed > 0 {
             self.add_aged_writebacks(flushed as u64);
         }
         Ok(flushed)
+    }
+
+    /// Write the dirty blocks `select` accepts, through the device's queue.
+    ///
+    /// This is the one place the cache writes deferred data back, so `flush`,
+    /// `flush_aged` and `flush_range` cannot drift apart.  The shape is
+    /// [RFC 0009](../../docs/rfcs/0009-queue-the-writes-a-flush-makes.md)'s:
+    ///
+    /// * the dirty blocks are taken under the lock and submitted up to what the
+    ///   device can hold — the driver copies each block before its submit
+    ///   returns, so the lock is held only while the queue is being filled;
+    /// * the lock is **dropped** while the writes are in flight, so a reader no
+    ///   longer waits behind the whole flush;
+    /// * a block's dirty flag is cleared only when its own write completes
+    ///   *and* the entry still carries the generation that was submitted.  A
+    ///   block rewritten while its write was in flight keeps its flag, and the
+    ///   newer content goes out with the next flush — which is what "the cache
+    ///   copy is newer than the device" means.  Each block is written at most
+    ///   once per flush, so a writer that keeps rewriting cannot make a flush
+    ///   chase it without end.
+    ///
+    /// A device that queues answers `queue_depth()` > 1 and the blocks go out
+    /// together; a device of depth one gets exactly the serialized shape it
+    /// had before.
+    fn flush_selected(&self, select: impl Fn(&CacheEntry) -> bool) -> Result<usize> {
+        let depth = core::cmp::max(1usize, self.device.queue_depth() as usize);
+        let mut pending: Vec<PendingWrite> = Vec::new();
+        // Every LBA this flush has written.  A block rewritten while its write
+        // was in flight is dirty again, and without this the flush would pick
+        // it up in the same pass and never finish under a busy writer.
+        let mut attempted: Vec<u64> = Vec::new();
+        let mut flushed = 0usize;
+        let mut failure: Option<crate::Error> = None;
+
+        loop {
+            // Top up only while nothing has failed: a flush that has seen one
+            // error stops asking the device for more work.
+            if failure.is_none() {
+                if let Err(error) =
+                    self.submit_selected(&select, depth, &mut pending, &mut attempted)
+                {
+                    failure = Some(error);
+                }
+            }
+
+            if pending.is_empty() {
+                break;
+            }
+
+            // Wait for the oldest write, then retire it.  A ticket nobody
+            // polls is a slot nobody frees, so the queue is drained before
+            // this returns even on the error path.
+            let write = pending.remove(0);
+            match self.wait_for_write(write.ticket) {
+                Ok(()) => {
+                    if self.retire_write(&write) {
+                        flushed += 1;
+                    }
+                }
+                Err(error) => {
+                    // The block keeps its dirty flag: its data is still only
+                    // in the cache.
+                    if failure.is_none() {
+                        failure = Some(error);
+                    }
+                }
+            }
+        }
+
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(flushed),
+        }
+    }
+
+    /// Submit selected dirty blocks until the device's queue is full.
+    ///
+    /// The lock is held for this and nothing else: every block is copied by
+    /// the device during its submit, so nothing the entries own has to outlive
+    /// the call.
+    fn submit_selected(
+        &self,
+        select: &impl Fn(&CacheEntry) -> bool,
+        depth: usize,
+        pending: &mut Vec<PendingWrite>,
+        attempted: &mut Vec<u64>,
+    ) -> Result<()> {
+        let mut entries = self.entries.lock();
+        while pending.len() < depth {
+            let Some(index) = entries.iter().position(|entry| {
+                entry.dirty
+                    && select(entry)
+                    // One write per block per flush.  This is also what keeps
+                    // two writes to one LBA from being in flight together,
+                    // where the device may complete them out of order and
+                    // leave the older content on it.
+                    && !attempted.contains(&entry.lba)
+            }) else {
+                return Ok(());
+            };
+
+            // The generation marks the content that is on its way out.  A
+            // rewrite while the write is in flight takes a new one, which is
+            // how the completion knows the entry moved on.
+            let generation = self.next_generation();
+            entries[index].generation = generation;
+            let entry = &entries[index];
+            let ticket = self.device.submit_write(entry.lba, &entry.data)?;
+            attempted.push(entry.lba);
+            pending.push(PendingWrite {
+                ticket,
+                lba: entry.lba,
+                generation,
+            });
+        }
+        Ok(())
+    }
+
+    /// Wait for one queued write, bounded so a wedged device cannot hang a
+    /// flush for ever.
+    fn wait_for_write(&self, ticket: Ticket) -> Result<()> {
+        let mut polls = 0u32;
+        loop {
+            match self.device.poll(ticket) {
+                RequestState::Pending => {
+                    polls += 1;
+                    if polls > FLUSH_POLL_LIMIT {
+                        return Err(crate::Error::TimedOut);
+                    }
+                    core::hint::spin_loop();
+                }
+                RequestState::Done(result) => return result,
+            }
+        }
+    }
+
+    /// Clear the dirty flag a completed write was for, and say whether the
+    /// write is one to count.
+    ///
+    /// The entry has to still be the one that was submitted *and* still be
+    /// dirty: a block rewritten while its write was in flight is a different
+    /// content than the device now holds, so it stays dirty for the next
+    /// flush.
+    fn retire_write(&self, write: &PendingWrite) -> bool {
+        let mut entries = self.entries.lock();
+        let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| entry.lba == write.lba && entry.generation == write.generation)
+        else {
+            // The block was evicted, or rewritten into a different generation;
+            // the write still happened, so it counts.
+            return true;
+        };
+        if !entry.dirty {
+            return false;
+        }
+        entry.dirty = false;
+        entry.dirty_since = 0;
+        true
     }
 
     /// Number of dirty blocks that have aged past `age_ticks` (visible for
@@ -404,18 +562,9 @@ impl BlockCache {
     /// the underlying device.  Dirty flags are cleared after successful writes.
     pub fn flush_range(&self, start_lba: u64, count: u64) -> Result<()> {
         let end_lba = start_lba.saturating_add(count);
-        let mut entries = self.entries.lock();
-        let mut flushed = 0_u64;
-        for entry in entries.iter_mut() {
-            if entry.dirty && entry.lba >= start_lba && entry.lba < end_lba {
-                self.device.write_blocks(entry.lba, &entry.data)?;
-                entry.dirty = false;
-                flushed += 1;
-            }
-        }
-        drop(entries);
+        let flushed = self.flush_selected(|entry| entry.lba >= start_lba && entry.lba < end_lba)?;
         if flushed > 0 {
-            self.add_dirty_writebacks(flushed);
+            self.add_dirty_writebacks(flushed as u64);
         }
         Ok(())
     }
@@ -718,6 +867,7 @@ impl BlockCache {
 mod tests {
     use super::*;
     use crate::kernel::sync::Mutex as TestMutex;
+    use crate::Error;
     use core::sync::atomic::AtomicU64;
     use core::sync::atomic::Ordering;
 
@@ -1046,6 +1196,207 @@ mod tests {
         // Cache entries should now be clean.
         assert_eq!(cache.dirty_slots(), 0);
         assert_eq!(cache.stats().dirty_writebacks, 2);
+    }
+
+    /// A write a test asks the device to perform in the cache, as a writer
+    /// arriving while a write is in flight would.
+    type PlotRewrite = (Arc<BlockCache>, u64, [u8; BLOCK_SIZE]);
+
+    /// A device that queues writes and remembers the most it ever held at
+    /// once.
+    struct QueuedWriteDevice {
+        name: &'static str,
+        storage: TestMutex<Vec<u8>>,
+        block_count: u64,
+        depth: u16,
+        pending: TestMutex<Vec<u64>>,
+        next_ticket: AtomicU64,
+        max_in_flight: AtomicU64,
+        /// The most writes the device was asked for at once, as its own
+        /// evidence that the flush overlapped rather than serialized.
+        writes_seen: AtomicU64,
+        next_read: AtomicU64,
+        /// A rewrite to perform the next time the device is polled, which is
+        /// how a test puts a writer *between* a submit and its completion.
+        rewrite: TestMutex<Option<PlotRewrite>>,
+    }
+
+    impl QueuedWriteDevice {
+        fn with_blocks(name: &'static str, num_blocks: u64, depth: u16) -> Arc<Self> {
+            Self::from_storage(vec![0_u8; num_blocks as usize * BLOCK_SIZE], name, depth)
+        }
+
+        fn from_storage(storage: Vec<u8>, name: &'static str, depth: u16) -> Arc<Self> {
+            let block_count = (storage.len() / BLOCK_SIZE) as u64;
+            Arc::new(Self {
+                name,
+                storage: TestMutex::new(storage),
+                block_count,
+                depth,
+                pending: TestMutex::new(Vec::new()),
+                next_ticket: AtomicU64::new(0),
+                max_in_flight: AtomicU64::new(0),
+                writes_seen: AtomicU64::new(0),
+                next_read: AtomicU64::new(0),
+                rewrite: TestMutex::new(None),
+            })
+        }
+
+        /// Rewrite `lba` in `cache` the next time this device is polled, as a
+        /// writer arriving while a write is in flight would.
+        fn rewrite_cache_on_next_poll(&self, cache: Arc<BlockCache>, lba: u64, data: &[u8]) {
+            let mut block = [0_u8; BLOCK_SIZE];
+            block.copy_from_slice(data);
+            *self.rewrite.lock() = Some((cache, lba, block));
+        }
+
+        fn bytes_at(&self, lba: u64) -> [u8; BLOCK_SIZE] {
+            let storage = self.storage.lock();
+            let start = lba as usize * BLOCK_SIZE;
+            let mut block = [0_u8; BLOCK_SIZE];
+            block.copy_from_slice(&storage[start..start + BLOCK_SIZE]);
+            block
+        }
+    }
+
+    impl BlockDevice for QueuedWriteDevice {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn block_count(&self) -> u64 {
+            self.block_count
+        }
+
+        fn is_read_only(&self) -> bool {
+            false
+        }
+
+        fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+            let _ = self.next_read.fetch_add(1, Ordering::Relaxed);
+            let storage = self.storage.lock();
+            let start = lba as usize * BLOCK_SIZE;
+            buffer.copy_from_slice(&storage[start..start + buffer.len()]);
+            Ok(())
+        }
+
+        fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
+            let mut storage = self.storage.lock();
+            let start = lba as usize * BLOCK_SIZE;
+            storage[start..start + data.len()].copy_from_slice(data);
+            self.writes_seen.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn queue_depth(&self) -> u16 {
+            self.depth
+        }
+
+        fn submit_write(&self, lba: u64, data: &[u8]) -> Result<Ticket> {
+            let mut pending = self.pending.lock();
+            if pending.len() as u16 >= self.depth {
+                return Err(Error::Busy);
+            }
+            // The bytes land here, at submit, on the terms the interface
+            // promises: the caller's borrow is over when this returns.
+            let mut storage = self.storage.lock();
+            let start = lba as usize * BLOCK_SIZE;
+            storage[start..start + data.len()].copy_from_slice(data);
+            self.writes_seen.fetch_add(1, Ordering::Relaxed);
+
+            let id = self.next_ticket.fetch_add(1, Ordering::Relaxed);
+            pending.push(id);
+            self.max_in_flight
+                .fetch_max(pending.len() as u64, Ordering::Relaxed);
+            Ok(Ticket::new(id))
+        }
+
+        fn poll(&self, ticket: Ticket) -> RequestState {
+            if let Some((cache, lba, data)) = self.rewrite.lock().take() {
+                let _ = cache.write_back(lba, &data);
+            }
+            let mut pending = self.pending.lock();
+            match pending.iter().position(|id| *id == ticket.id()) {
+                Some(index) => {
+                    pending.swap_remove(index);
+                    RequestState::Done(Ok(()))
+                }
+                None => RequestState::Done(Err(Error::InvalidArgument)),
+            }
+        }
+    }
+
+    #[test]
+    fn a_flush_of_several_blocks_holds_two_on_a_device_that_queues() {
+        let device = QueuedWriteDevice::with_blocks("queued-flush", 8, 2);
+        let cache = BlockCache::new(device.clone());
+
+        for lba in 0..4u64 {
+            cache.write_back(lba, &make_test_data(lba as u8)).unwrap();
+        }
+        assert_eq!(cache.dirty_slots(), 4);
+
+        cache.flush().unwrap();
+
+        assert_eq!(
+            device.max_in_flight.load(Ordering::Relaxed),
+            2,
+            "the flush holds two writes on a device that can take two"
+        );
+        for lba in 0..4u64 {
+            assert_eq!(
+                device.bytes_at(lba),
+                make_test_data(lba as u8),
+                "every dirty block reached the device"
+            );
+        }
+        assert_eq!(cache.dirty_slots(), 0);
+    }
+
+    #[test]
+    fn a_flush_serializes_on_a_device_that_does_not_queue() {
+        let device = QueuedWriteDevice::with_blocks("serial-flush", 8, 1);
+        let cache = BlockCache::new(device.clone());
+
+        for lba in 0..4u64 {
+            cache.write_back(lba, &make_test_data(lba as u8)).unwrap();
+        }
+        cache.flush().unwrap();
+
+        assert_eq!(
+            device.max_in_flight.load(Ordering::Relaxed),
+            1,
+            "a depth-one device is on exactly the path it was"
+        );
+        assert_eq!(cache.dirty_slots(), 0);
+    }
+
+    #[test]
+    fn a_block_rewritten_while_its_write_is_in_flight_stays_dirty() {
+        let device = QueuedWriteDevice::with_blocks("rewrite-race", 4, 2);
+        let cache = Arc::new(BlockCache::new(device.clone()));
+
+        cache.write_back(0, &make_test_data(0x11)).unwrap();
+        // The device rewrites LBA 0 the first time it is polled: from the
+        // cache's point of view a writer arrived after the block was submitted
+        // and before its write completed.
+        device.rewrite_cache_on_next_poll(cache.clone(), 0, &make_test_data(0x22));
+
+        cache.flush().unwrap();
+
+        // The device holds what was submitted — the block as it was when the
+        // write went out ...
+        assert_eq!(device.bytes_at(0), make_test_data(0x11));
+        // ... and the cache holds the newer content, still marked for the next
+        // flush, because the device does not have it.
+        assert_eq!(cache.dirty_slots(), 1);
+        let mut buffer = [0_u8; BLOCK_SIZE];
+        cache.read_cached(0, &mut buffer).unwrap();
+        assert_eq!(buffer, make_test_data(0x22));
+
+        cache.flush().unwrap();
+        assert_eq!(device.bytes_at(0), make_test_data(0x22));
+        assert_eq!(cache.dirty_slots(), 0);
     }
 
     #[test]

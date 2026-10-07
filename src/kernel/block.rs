@@ -32,14 +32,19 @@ pub struct DeviceIo {
     pub read_bytes: u64,
     pub write_ops: u64,
     pub write_bytes: u64,
-    /// The most requests that were ever in flight at once.
+    /// The most reads a device was ever holding at once.
     ///
-    /// An asynchronous interface is only worth having if some device can hold
-    /// a second request while the first is outstanding, and this is the number
-    /// that would show it: a high-water mark of one says every device the tree
-    /// boots completes in place.  It counts reads and writes, the two requests
-    /// the counters above count.
-    pub in_flight_high_water: u64,
+    /// A queued interface is only worth having if some device can hold a
+    /// second request while the first is outstanding, and this is the number
+    /// that shows it: a high-water mark of one says every device the tree
+    /// boots completes its reads in place.
+    ///
+    /// It is counted per direction rather than once for both, because one
+    /// number that two different changes can move attributes neither; the
+    /// question anyone asks of it is which direction is queued.
+    pub read_in_flight_high_water: u64,
+    /// The most writes a device was ever holding at once.
+    pub write_in_flight_high_water: u64,
 }
 
 /// The machine's device traffic, counted only when the boot-work line is
@@ -57,8 +62,10 @@ mod io_counters {
         read_bytes: AtomicU64,
         write_ops: AtomicU64,
         write_bytes: AtomicU64,
-        in_flight: AtomicU64,
-        in_flight_high_water: AtomicU64,
+        read_in_flight: AtomicU64,
+        read_in_flight_high_water: AtomicU64,
+        write_in_flight: AtomicU64,
+        write_in_flight_high_water: AtomicU64,
     }
 
     impl Counters {
@@ -68,8 +75,10 @@ mod io_counters {
                 read_bytes: AtomicU64::new(0),
                 write_ops: AtomicU64::new(0),
                 write_bytes: AtomicU64::new(0),
-                in_flight: AtomicU64::new(0),
-                in_flight_high_water: AtomicU64::new(0),
+                read_in_flight: AtomicU64::new(0),
+                read_in_flight_high_water: AtomicU64::new(0),
+                write_in_flight: AtomicU64::new(0),
+                write_in_flight_high_water: AtomicU64::new(0),
             }
         }
 
@@ -79,33 +88,56 @@ mod io_counters {
                 read_bytes: self.read_bytes.load(Ordering::Relaxed),
                 write_ops: self.write_ops.load(Ordering::Relaxed),
                 write_bytes: self.write_bytes.load(Ordering::Relaxed),
-                in_flight_high_water: self.in_flight_high_water.load(Ordering::Relaxed),
+                read_in_flight_high_water: self.read_in_flight_high_water.load(Ordering::Relaxed),
+                write_in_flight_high_water: self.write_in_flight_high_water.load(Ordering::Relaxed),
             }
         }
     }
 
     pub(super) static DEVICE_IO: Counters = Counters::new();
 
+    /// Which half of the traffic a request belongs to.
+    #[derive(Clone, Copy)]
+    pub(super) enum Direction {
+        Read,
+        Write,
+    }
+
     /// A request that is on a device right now, counted until it drops.
     ///
     /// It is a guard rather than a pair of calls so that an error return cannot
     /// leave the count up, and the mark it keeps is relaxed because it is read
     /// once at a tick, long after the requests it counted have finished.
-    pub(super) struct InFlight;
+    pub(super) struct InFlight {
+        direction: Direction,
+    }
 
     impl InFlight {
-        pub(super) fn enter() -> Self {
-            let now = DEVICE_IO.in_flight.fetch_add(1, Ordering::Relaxed) + 1;
-            DEVICE_IO
-                .in_flight_high_water
-                .fetch_max(now, Ordering::Relaxed);
-            Self
+        pub(super) fn enter(direction: Direction) -> Self {
+            let (in_flight, high_water) = Self::counters(direction);
+            let now = in_flight.fetch_add(1, Ordering::Relaxed) + 1;
+            high_water.fetch_max(now, Ordering::Relaxed);
+            Self { direction }
+        }
+
+        fn counters(direction: Direction) -> (&'static AtomicU64, &'static AtomicU64) {
+            match direction {
+                Direction::Read => (
+                    &DEVICE_IO.read_in_flight,
+                    &DEVICE_IO.read_in_flight_high_water,
+                ),
+                Direction::Write => (
+                    &DEVICE_IO.write_in_flight,
+                    &DEVICE_IO.write_in_flight_high_water,
+                ),
+            }
         }
     }
 
     impl Drop for InFlight {
         fn drop(&mut self) {
-            DEVICE_IO.in_flight.fetch_sub(1, Ordering::Relaxed);
+            let (in_flight, _) = Self::counters(self.direction);
+            in_flight.fetch_sub(1, Ordering::Relaxed);
         }
     }
 
@@ -160,19 +192,21 @@ pub fn counting_device(device: Arc<dyn BlockDevice>) -> Arc<dyn BlockDevice> {
 #[cfg(feature = "perf_baseline")]
 struct CountingDevice {
     inner: Arc<dyn BlockDevice>,
-    /// The reads that are on the device right now, one guard each, held until
-    /// their ticket is polled to completion.
+    /// The requests that are on the device right now, one guard each, held
+    /// until their ticket is polled to completion.
     ///
-    /// The guard is what makes `blk-in-flight-high-water` mean "requests a
-    /// device is holding" rather than "calls that have not returned": a
-    /// queued read's guard outlives the submit, because the read does.
+    /// The guard is what makes `blk-read-high-water` and `blk-write-high-water`
+    /// mean "requests a device is holding" rather than "calls that have not
+    /// returned": a queued request's guard outlives the submit, because the
+    /// request does.  The guard carries its own direction, so one table holds
+    /// both.
     outstanding: Mutex<Vec<(u64, io_counters::InFlight)>>,
 }
 
 #[cfg(feature = "perf_baseline")]
 impl CountingDevice {
-    /// Take back the guard of a ticket whose read has finished.
-    fn retire(&self, ticket: ReadTicket) {
+    /// Take back the guard of a ticket whose request has finished.
+    fn retire(&self, ticket: Ticket) {
         let mut outstanding = self.outstanding.lock();
         if let Some(index) = outstanding.iter().position(|(id, _)| *id == ticket.id()) {
             outstanding.swap_remove(index);
@@ -200,7 +234,7 @@ impl BlockDevice for CountingDevice {
 
     fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
         io_counters::count_read(buffer.len() as u64);
-        let _in_flight = io_counters::InFlight::enter();
+        let _in_flight = io_counters::InFlight::enter(io_counters::Direction::Read);
         self.inner.read_blocks(lba, buffer)
     }
 
@@ -208,9 +242,9 @@ impl BlockDevice for CountingDevice {
         self.inner.queue_depth()
     }
 
-    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<ReadTicket> {
+    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<Ticket> {
         io_counters::count_read(buffer.len() as u64);
-        let guard = io_counters::InFlight::enter();
+        let guard = io_counters::InFlight::enter(io_counters::Direction::Read);
         // SAFETY: the caller's buffer contract passes through unchanged — the
         // same buffer, and the same promise that it outlives the ticket.
         let ticket = match unsafe { self.inner.submit_read(lba, buffer) } {
@@ -232,9 +266,28 @@ impl BlockDevice for CountingDevice {
         Ok(ticket)
     }
 
-    fn poll_read(&self, ticket: ReadTicket) -> ReadState {
-        let state = self.inner.poll_read(ticket);
-        if matches!(state, ReadState::Done(_)) {
+    fn submit_write(&self, lba: u64, data: &[u8]) -> Result<Ticket> {
+        io_counters::count_write(data.len() as u64);
+        let guard = io_counters::InFlight::enter(io_counters::Direction::Write);
+        let ticket = match self.inner.submit_write(lba, data) {
+            Ok(ticket) => ticket,
+            Err(error) => {
+                drop(guard);
+                return Err(error);
+            }
+        };
+        if ticket.is_done() {
+            // The device wrote it in place; there is nothing left to wait for.
+            drop(guard);
+        } else {
+            self.outstanding.lock().push((ticket.id(), guard));
+        }
+        Ok(ticket)
+    }
+
+    fn poll(&self, ticket: Ticket) -> RequestState {
+        let state = self.inner.poll(ticket);
+        if matches!(state, RequestState::Done(_)) {
             self.retire(ticket);
         }
         state
@@ -242,7 +295,7 @@ impl BlockDevice for CountingDevice {
 
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
         io_counters::count_write(data.len() as u64);
-        let _in_flight = io_counters::InFlight::enter();
+        let _in_flight = io_counters::InFlight::enter(io_counters::Direction::Write);
         self.inner.write_blocks(lba, data)
     }
 
@@ -273,20 +326,20 @@ pub enum DeviceHealth {
 ///
 /// The ticket is opaque — a device hands one back from
 /// [`BlockDevice::submit_read`] and the caller gives it to
-/// [`BlockDevice::poll_read`].  [`ReadTicket::DONE`] is the ticket a device
+/// [`BlockDevice::poll`].  [`Ticket::DONE`] is the ticket a device
 /// returns when it completed the read in place, which is what a device of
 /// depth one does: the caller's buffer is already filled and there is nothing
 /// left to wait for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReadTicket(u64);
+pub struct Ticket(u64);
 
-impl ReadTicket {
+impl Ticket {
     /// The ticket for a read that finished before its submit returned.
-    pub const DONE: ReadTicket = ReadTicket(u64::MAX);
+    pub const DONE: Ticket = Ticket(u64::MAX);
 
     /// A device's own name for a request it has queued.
     ///
-    /// `id` is never `u64::MAX`: that value is what [`ReadTicket::DONE`]
+    /// `id` is never `u64::MAX`: that value is what [`Ticket::DONE`]
     /// means, and a device that used it for a real request would be unable to
     /// say it had finished in place.
     pub const fn new(id: u64) -> Self {
@@ -304,12 +357,12 @@ impl ReadTicket {
     }
 }
 
-/// How a submitted read is doing.
+/// How a submitted request is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReadState {
+pub enum RequestState {
     /// The device has not completed it yet.
     Pending,
-    /// It finished; the answer is the read's own result.
+    /// It finished; the answer is the request's own result.
     Done(Result<()>),
 }
 
@@ -329,10 +382,10 @@ pub trait BlockDevice: Send + Sync {
     /// buffer as it found it.
     fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()>;
 
-    /// The most reads this device can hold at once.
+    /// The most requests this device can hold at once.
     ///
-    /// One — the default — means the device finishes a read before its submit
-    /// returns, so a caller has nothing to be ahead of.  A driver whose
+    /// One — the default — means the device finishes a request before its
+    /// submit returns, so a caller has nothing to be ahead of.  A driver whose
     /// hardware queues answers with what its queue holds, and a caller that
     /// wants to overlap asks this *before* it pipelines: a caller that
     /// pipelines without asking holds a queue open that the device does not
@@ -344,33 +397,51 @@ pub trait BlockDevice: Send + Sync {
     /// Hand the device a one-block read and name it with a ticket.
     ///
     /// The default performs the read at once and answers
-    /// [`ReadTicket::DONE`] — which is what a device of depth one can do, and
+    /// [`Ticket::DONE`] — which is what a device of depth one can do, and
     /// leaves every device that does not queue exactly as it was.  A device
-    /// that queues returns a ticket whose [`BlockDevice::poll_read`] answers
+    /// that queues returns a ticket whose [`BlockDevice::poll`] answers
     /// when the device has the data, and refuses with `Busy` when its queue
     /// is full rather than blocking or dropping the request.
     ///
     /// # Safety
     ///
     /// `buffer` must stay live and must not move until a poll of the returned
-    /// ticket answers [`ReadState::Done`], and no other read may name it at
+    /// ticket answers [`RequestState::Done`], and no other read may name it at
     /// the same time.  A device that copies the data into its own memory
     /// during the submit (the default) is free of the constraint; a device
     /// that queues is not, and that is the price of not copying the DMA
     /// twice.
-    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<ReadTicket> {
+    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<Ticket> {
         self.read_blocks(lba, buffer)?;
-        Ok(ReadTicket::DONE)
+        Ok(Ticket::DONE)
     }
 
-    /// Ask a device whether a submitted read has finished, and with what.
+    /// Hand the device a one-block write and name it with a ticket.
+    ///
+    /// This is **safe**, and the asymmetry with [`BlockDevice::submit_read`]
+    /// is the point: the data travels *into* the device, so a driver copies it
+    /// out of the caller before this returns and nothing of the caller's has
+    /// to outlive the ticket.  A caller may hand over a borrow that dies on
+    /// the next line.
+    ///
+    /// The default performs the write at once and answers [`Ticket::DONE`],
+    /// which is what a device of depth one can do.
+    fn submit_write(&self, lba: u64, data: &[u8]) -> Result<Ticket> {
+        self.write_blocks(lba, data)?;
+        Ok(Ticket::DONE)
+    }
+
+    /// Ask a device whether a submitted request has finished, and with what.
     ///
     /// A device of depth one always answers `Done`, because its submit
-    /// already completed the read.  Polling a ticket the device does not know
-    /// answers an error rather than waiting forever: an unknown ticket is a
-    /// caller's bug, and a hang would hide it.
-    fn poll_read(&self, _ticket: ReadTicket) -> ReadState {
-        ReadState::Done(Ok(()))
+    /// already completed the request.  Polling a ticket the device does not
+    /// know answers an error rather than waiting forever: an unknown ticket is
+    /// a caller's bug, and a hang would hide it.
+    ///
+    /// One poll serves both directions: the ticket already names the request,
+    /// and whether its data moved in or out is the submit's business.
+    fn poll(&self, _ticket: Ticket) -> RequestState {
+        RequestState::Done(Ok(()))
     }
 
     /// Write `data.len() / block_size()` blocks starting at `lba`, with the
@@ -546,7 +617,7 @@ impl BlockDevice for BlockSliceDevice {
         self.parent.queue_depth()
     }
 
-    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<ReadTicket> {
+    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<Ticket> {
         if !buffer.len().is_multiple_of(BLOCK_SIZE) {
             return Err(Error::InvalidArgument);
         }
@@ -566,10 +637,34 @@ impl BlockDevice for BlockSliceDevice {
         unsafe { self.parent.submit_read(parent_lba, buffer) }
     }
 
-    fn poll_read(&self, ticket: ReadTicket) -> ReadState {
+    fn poll(&self, ticket: Ticket) -> RequestState {
         // The ticket is the parent's own name for the request, handed back
         // unread, so the parent is the one that can answer for it.
-        self.parent.poll_read(ticket)
+        self.parent.poll(ticket)
+    }
+
+    fn submit_write(&self, lba: u64, data: &[u8]) -> Result<Ticket> {
+        if self.read_only {
+            return Err(Error::PermissionDenied);
+        }
+
+        if !data.len().is_multiple_of(BLOCK_SIZE) {
+            return Err(Error::InvalidArgument);
+        }
+
+        let blocks = (data.len() / BLOCK_SIZE) as u64;
+        let end = lba.checked_add(blocks).ok_or(Error::InvalidArgument)?;
+        if end > self.block_count {
+            return Err(Error::InvalidArgument);
+        }
+
+        let parent_lba = self
+            .start_block
+            .checked_add(lba)
+            .ok_or(Error::InvalidArgument)?;
+        // A write needs no contract with the caller: the parent copies the
+        // bytes before it returns, on the same terms this slice did.
+        self.parent.submit_write(parent_lba, data)
     }
 
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
@@ -655,8 +750,8 @@ mod tests {
     use super::BlockDevice;
     use super::BlockSliceDevice;
     use super::MemoryBlockDevice;
-    use super::ReadState;
-    use super::ReadTicket;
+    use super::RequestState;
+    use super::Ticket;
     use super::BLOCK_SIZE;
     use crate::kernel::sync::Mutex;
     use crate::Error;
@@ -724,7 +819,7 @@ mod tests {
             self.depth
         }
 
-        unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> crate::Result<ReadTicket> {
+        unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> crate::Result<Ticket> {
             let mut outstanding = self.outstanding.lock();
             if outstanding.len() as u16 >= self.depth {
                 return Err(Error::Busy);
@@ -735,15 +830,15 @@ mod tests {
             let id = *next_id;
             *next_id += 1;
             outstanding.push((id, lba));
-            Ok(ReadTicket::new(id))
+            Ok(Ticket::new(id))
         }
 
-        fn poll_read(&self, ticket: ReadTicket) -> ReadState {
+        fn poll(&self, ticket: Ticket) -> RequestState {
             let mut finished = self.finished.lock();
             if let Some(index) = finished.iter().position(|id| *id == ticket.id()) {
                 finished.swap_remove(index);
                 self.outstanding.lock().retain(|(id, _)| *id != ticket.id());
-                return ReadState::Done(Ok(()));
+                return RequestState::Done(Ok(()));
             }
             if self
                 .outstanding
@@ -751,11 +846,11 @@ mod tests {
                 .iter()
                 .any(|(id, _)| *id == ticket.id())
             {
-                return ReadState::Pending;
+                return RequestState::Pending;
             }
             // The ticket is the device's own name for a request, and it has
             // never heard of this one.
-            ReadState::Done(Err(Error::InvalidArgument))
+            RequestState::Done(Err(Error::InvalidArgument))
         }
     }
 
@@ -770,7 +865,24 @@ mod tests {
         let ticket = unsafe { device.submit_read(0, &mut buffer) }.expect("submit");
         assert!(ticket.is_done(), "a depth-one device finishes in place");
         assert_eq!(buffer, [7_u8; BLOCK_SIZE], "and the data is already there");
-        assert_eq!(device.poll_read(ticket), ReadState::Done(Ok(())));
+        assert_eq!(device.poll(ticket), RequestState::Done(Ok(())));
+    }
+
+    #[test]
+    fn a_write_needs_no_borrow_that_outlives_its_ticket() {
+        let device = MemoryBlockDevice::new("memory", vec![0_u8; BLOCK_SIZE], false);
+
+        // The whole point of the write half being safe: the borrow ends here,
+        // and the data is on the device anyway.
+        let ticket = device
+            .submit_write(0, &[0x5a_u8; BLOCK_SIZE])
+            .expect("submit");
+        assert!(ticket.is_done(), "a depth-one device finishes in place");
+        assert_eq!(device.poll(ticket), RequestState::Done(Ok(())));
+
+        let mut read_back = [0_u8; BLOCK_SIZE];
+        device.read_blocks(0, &mut read_back).expect("read back");
+        assert_eq!(read_back, [0x5a_u8; BLOCK_SIZE]);
     }
 
     #[test]
@@ -790,8 +902,8 @@ mod tests {
             first_ticket, second_ticket,
             "two reads in flight are two tickets"
         );
-        assert_eq!(device.poll_read(first_ticket), ReadState::Pending);
-        assert_eq!(device.poll_read(second_ticket), ReadState::Pending);
+        assert_eq!(device.poll(first_ticket), RequestState::Pending);
+        assert_eq!(device.poll(second_ticket), RequestState::Pending);
 
         // The queue is full, so the third read is refused rather than dropped
         // or blocked.
@@ -802,15 +914,15 @@ mod tests {
         // Finishing the oldest read frees its slot, and polling it is what
         // hands the answer to the caller.
         device.finish_one();
-        assert_eq!(device.poll_read(first_ticket), ReadState::Done(Ok(())));
+        assert_eq!(device.poll(first_ticket), RequestState::Done(Ok(())));
         // SAFETY: as above; `third` is still a local nothing else names.
         let third_ticket = unsafe { device.submit_read(2, &mut third) }.expect("slot was freed");
-        assert_eq!(device.poll_read(third_ticket), ReadState::Pending);
+        assert_eq!(device.poll(third_ticket), RequestState::Pending);
 
         // A ticket the device never handed out is an error, not a wait.
         assert_eq!(
-            device.poll_read(ReadTicket::new(9_999)),
-            ReadState::Done(Err(Error::InvalidArgument))
+            device.poll(Ticket::new(9_999)),
+            RequestState::Done(Err(Error::InvalidArgument))
         );
     }
 
@@ -837,7 +949,7 @@ mod tests {
             "the parent holds the read the slice passed down, at the mapped LBA"
         );
         parent.finish_one();
-        assert_eq!(slice.poll_read(ticket), ReadState::Done(Ok(())));
+        assert_eq!(slice.poll(ticket), RequestState::Done(Ok(())));
     }
 
     #[test]

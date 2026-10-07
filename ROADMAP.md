@@ -175,13 +175,15 @@ The authoritative picture of what exists today is
   path: a flush of independent dirty blocks has no order between them and a
   buffer that goes *into* the device, which is the safe shape the read path
   lacks.
-  [RFC 0009](docs/rfcs/0009-queue-the-writes-a-flush-makes.md) decides that
-  half and that first caller: the flush's three calls become one mechanism
-  that submits the dirty blocks a device can hold, drops the cache's lock
-  while they are in flight, and wires SimpleFS into the background write-back
-  it never implemented.  Until it lands, the mechanism is verified and
-  unbilled-for — the payoff is a hardware question, and the tree's devices
-  are models.
+  [RFC 0009](docs/rfcs/0009-queue-the-writes-a-flush-makes.md) landed that
+  half and that caller: the flush's three calls are now one mechanism that
+  submits the dirty blocks a device can hold, drops the cache's lock while
+  they are in flight, and wires SimpleFS into the background write-back it
+  never implemented.  What a boot still cannot *show* is the overlap — the
+  boot-work sample is taken at tick 500 and the background write-back cannot
+  fire before a block is 600 ticks old, so `blk-write-high-water` reads 1 on
+  every baseline and the cache's own test is the gate.  The payoff of the
+  queue itself remains a hardware question: the tree's devices are models.
 
 ## Long Term (1–3 years)
 

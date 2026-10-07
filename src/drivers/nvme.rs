@@ -20,8 +20,8 @@
 use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
 use crate::kernel::block::BlockDevice;
-use crate::kernel::block::ReadState;
-use crate::kernel::block::ReadTicket;
+use crate::kernel::block::RequestState;
+use crate::kernel::block::Ticket;
 use crate::kernel::sync::Mutex;
 use crate::memory::DmaBuffer;
 use alloc::sync::Arc;
@@ -64,7 +64,7 @@ const NVME_SUBCLASS: u8 = 0x08;
 /// The controller's I/O queue is 64 entries deep (`DEFAULT_QUEUE_SIZE`), so
 /// this is not the hardware's limit — it is how many requests the driver
 /// keeps the *state* for, one bounce buffer and one destination each.  It is
-/// what `queue_depth` answers and what `poll_read` matches completions
+/// what `queue_depth` answers and what `poll` matches completions
 /// against, so it is the number a caller pipelines to.  Two is the smallest
 /// depth that is a queue at all, which is what the first caller needs and
 /// what a boot pays for: one extra frame of DMA memory per slot.
@@ -133,7 +133,7 @@ struct IoSlot {
     /// Where the data goes when the completion arrives, and how much of it.
     dst: *mut u8,
     len: usize,
-    state: ReadState,
+    state: RequestState,
 }
 
 /// A fully initialised NVMe controller that implements `BlockDevice`.
@@ -160,8 +160,6 @@ struct NvmeController {
     nsid: u32,
     block_count: u64,
     block_size: usize,
-    // Reusable bounce buffer for single-block data transfers
-    io_buf: Mutex<DmaBuffer>,
 }
 
 // SAFETY: the controller is constructed on bare metal from a BAR the platform
@@ -261,11 +259,9 @@ impl NvmeController {
             let acq = DmaBuffer::allocate(acq_frames).ok_or(crate::Error::OutOfMemory)?;
             let iosq = DmaBuffer::allocate(iosq_frames).ok_or(crate::Error::OutOfMemory)?;
             let iocq = DmaBuffer::allocate(iocq_frames).ok_or(crate::Error::OutOfMemory)?;
-            let io_buf = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
-
-            // One bounce buffer per read the driver will hold at once.  They
+            // One bounce buffer per request the driver will hold at once.  They
             // are allocated here, before the controller is shared, so a queued
-            // read never has to allocate on the submit path.
+            // request never has to allocate on the submit path.
             let mut slots = Vec::with_capacity(NVME_QUEUE_DEPTH);
             for _ in 0..NVME_QUEUE_DEPTH {
                 slots.push(IoSlot {
@@ -273,7 +269,7 @@ impl NvmeController {
                     bounce: DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?,
                     dst: core::ptr::null_mut(),
                     len: 0,
-                    state: ReadState::Pending,
+                    state: RequestState::Pending,
                 });
             }
 
@@ -327,7 +323,6 @@ impl NvmeController {
                 nsid: 1,
                 block_count: 0,
                 block_size: 512,
-                io_buf: Mutex::new(io_buf),
             };
 
             // IDENTIFY controller (CNS=1)
@@ -496,6 +491,33 @@ impl NvmeController {
         }
     }
 
+    /// Book one of the driver's request slots for a new command.
+    ///
+    /// A slot a caller has not polled to completion still owns its bounce
+    /// buffer and, for a read, its destination; taking it would hand the
+    /// caller's data to somebody else.  A full queue is refused with `Busy`
+    /// rather than blocked, so the caller decides what to do about it.
+    fn reserve_slot(&self, state: &mut NvmeIoState) -> crate::Result<(usize, u16)> {
+        let Some(index) = state.slots.iter().position(|slot| slot.id == SLOT_FREE) else {
+            return Err(crate::Error::Busy);
+        };
+        let cid = state.next_cmd_id;
+        state.next_cmd_id = state.next_cmd_id.wrapping_add(1);
+        Ok((index, cid))
+    }
+
+    /// The one-block NVM command both directions send.
+    fn block_sqe(opcode: u8, nsid: u32, cid: u16, lba: u64, prp1: u64) -> NvmeSqe {
+        let mut sqe = NvmeSqe::zeroed();
+        sqe.set_opcode(opcode);
+        sqe.set_nsid(nsid);
+        sqe.set_command_id(cid);
+        sqe.set_prp1(prp1);
+        // CDW10/CDW11: the 64-bit starting LBA; CDW12: one LBA, zero-based.
+        sqe.set_cdw(lba as u32, (lba >> 32) as u32, 0);
+        sqe
+    }
+
     /// Write an entry into the I/O submission queue and ring its doorbell.
     ///
     /// `state` is held by the caller so that a submit can name the slot it
@@ -588,9 +610,9 @@ impl NvmeController {
                     unsafe { core::ptr::copy_nonoverlapping(src, dst, len) };
                 }
                 state.slots[index].state = if success {
-                    ReadState::Done(Ok(()))
+                    RequestState::Done(Ok(()))
                 } else {
-                    ReadState::Done(Err(crate::Error::DeviceError))
+                    RequestState::Done(Err(crate::Error::DeviceError))
                 };
             } else if want == Some(cid) {
                 return Some(cqe);
@@ -598,14 +620,6 @@ impl NvmeController {
             // A completion for neither a queued read nor the caller's own
             // command cannot exist: every I/O submission is one or the other.
         }
-    }
-
-    /// Allocate the next command identifier for I/O submission tracking.
-    fn next_cmd_id(&self) -> u16 {
-        let mut state = self.io_state.lock();
-        let id = state.next_cmd_id;
-        state.next_cmd_id = state.next_cmd_id.wrapping_add(1);
-        id
     }
 
     /// Shut down the NVMe controller: delete I/O queues and disable the
@@ -679,42 +693,57 @@ impl BlockDevice for NvmeController {
         NVME_QUEUE_DEPTH as u16
     }
 
-    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> crate::Result<ReadTicket> {
-        // The queued path issues one logical block per request, which is what
-        // the synchronous path does below it and what one bounce buffer holds.
+    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> crate::Result<Ticket> {
         if buffer.len() != self.block_size || lba >= self.block_count {
             return Err(crate::Error::InvalidArgument);
         }
 
         let mut state = self.io_state.lock();
-        // A slot whose read has not been polled to completion still owns its
-        // destination; taking it would overwrite a buffer another caller is
-        // waiting on.  A full queue is refused rather than blocked.
-        let Some(index) = state.slots.iter().position(|slot| slot.id == SLOT_FREE) else {
-            return Err(crate::Error::Busy);
-        };
-        let cid = state.next_cmd_id;
-        state.next_cmd_id = state.next_cmd_id.wrapping_add(1);
+        let (index, cid) = self.reserve_slot(&mut state)?;
         let prp1 = state.slots[index].bounce.phys_addr() as u64;
-
-        let mut sqe = NvmeSqe::zeroed();
-        sqe.set_opcode(NVM_READ);
-        sqe.set_nsid(self.nsid);
-        sqe.set_command_id(cid);
-        sqe.set_prp1(prp1);
-        // CDW10/CDW11: the 64-bit starting LBA; CDW12: one LBA, zero-based.
-        sqe.set_cdw(lba as u32, (lba >> 32) as u32, 0);
-        self.io_submit(&mut state, &sqe);
+        self.io_submit(
+            &mut state,
+            &Self::block_sqe(NVM_READ, self.nsid, cid, lba, prp1),
+        );
 
         let slot = &mut state.slots[index];
         slot.id = cid as u64;
         slot.dst = buffer.as_mut_ptr();
         slot.len = buffer.len();
-        slot.state = ReadState::Pending;
-        Ok(ReadTicket::new(cid as u64))
+        slot.state = RequestState::Pending;
+        Ok(Ticket::new(cid as u64))
     }
 
-    fn poll_read(&self, ticket: ReadTicket) -> ReadState {
+    fn submit_write(&self, lba: u64, data: &[u8]) -> crate::Result<Ticket> {
+        if data.len() != self.block_size || lba >= self.block_count {
+            return Err(crate::Error::InvalidArgument);
+        }
+
+        let mut state = self.io_state.lock();
+        let (index, cid) = self.reserve_slot(&mut state)?;
+        // The asymmetry with a read, and the whole reason a write is the safe
+        // half of the interface: the bytes come *from* the caller, so the slot
+        // is filled here and the caller's borrow dies with this call.  Nothing
+        // is copied back at completion.
+        let prp1 = {
+            let slot = &mut state.slots[index];
+            slot.bounce.as_mut_slice()[..self.block_size].copy_from_slice(data);
+            slot.bounce.phys_addr() as u64
+        };
+        self.io_submit(
+            &mut state,
+            &Self::block_sqe(NVM_WRITE, self.nsid, cid, lba, prp1),
+        );
+
+        let slot = &mut state.slots[index];
+        slot.id = cid as u64;
+        slot.dst = core::ptr::null_mut();
+        slot.len = 0;
+        slot.state = RequestState::Pending;
+        Ok(Ticket::new(cid as u64))
+    }
+
+    fn poll(&self, ticket: Ticket) -> RequestState {
         let mut state = self.io_state.lock();
         // Drain whatever the controller has published: this read may have
         // completed behind another request's.
@@ -723,17 +752,17 @@ impl BlockDevice for NvmeController {
         let Some(index) = state.slots.iter().position(|s| s.id == ticket.id()) else {
             // An unknown ticket is the caller's bug, and an error is how it
             // finds out; a hang would hide it.
-            return ReadState::Done(Err(crate::Error::InvalidArgument));
+            return RequestState::Done(Err(crate::Error::InvalidArgument));
         };
         let answer = state.slots[index].state;
-        if matches!(answer, ReadState::Done(_)) {
+        if matches!(answer, RequestState::Done(_)) {
             // The caller has its data, so the slot and its bounce buffer are
             // free for the next request.
             let slot = &mut state.slots[index];
             slot.id = SLOT_FREE;
             slot.dst = core::ptr::null_mut();
             slot.len = 0;
-            slot.state = ReadState::Pending;
+            slot.state = RequestState::Pending;
         }
         answer
     }
@@ -765,15 +794,15 @@ impl BlockDevice for NvmeController {
             let ticket = unsafe { self.submit_read(lba + i as u64, block) }?;
             let mut polls = 0u32;
             loop {
-                match self.poll_read(ticket) {
-                    ReadState::Pending => {
+                match self.poll(ticket) {
+                    RequestState::Pending => {
                         polls += 1;
                         if polls > COMPLETION_POLL_LIMIT {
                             return Err(crate::Error::TimedOut);
                         }
                         core::hint::spin_loop();
                     }
-                    ReadState::Done(result) => {
+                    RequestState::Done(result) => {
                         result?;
                         break;
                     }
@@ -789,9 +818,7 @@ impl BlockDevice for NvmeController {
             return Err(crate::Error::InvalidArgument);
         }
 
-        let mut io_buf = self.io_buf.lock();
         let bsz = self.block_size;
-
         let num_blocks = data.len() / bsz;
         debug_assert!(
             lba.saturating_add(num_blocks as u64) <= self.block_count,
@@ -799,28 +826,29 @@ impl BlockDevice for NvmeController {
             nblk = num_blocks,
             nsze = self.block_count
         );
+
+        // A waiting write is a queued write polled at once, exactly as the
+        // waiting read is: one write path, and the queued one is exercised by
+        // every write the filesystem does.
         for i in 0..num_blocks {
-            let block_lba = lba.saturating_add(i as u64);
-
-            // Copy caller's data into the bounce buffer.
             let start = i * bsz;
-            io_buf.as_mut_slice()[..bsz].copy_from_slice(&data[start..start + bsz]);
-
-            let mut sqe = NvmeSqe::zeroed();
-            sqe.set_opcode(NVM_WRITE);
-            sqe.set_nsid(self.nsid);
-            sqe.set_command_id(self.next_cmd_id());
-            sqe.set_prp1(io_buf.phys_addr() as u64);
-            let num_lbas = 1_u32;
-            sqe.set_cdw(
-                block_lba as u32,
-                (block_lba >> 32) as u32,
-                (num_lbas - 1) & 0xFFFF,
-            );
-
-            let cqe = self.io_submit_and_wait(&sqe)?;
-            if !cqe.is_success() {
-                return Err(crate::Error::NotFound);
+            let block = &data[start..start + bsz];
+            let ticket = self.submit_write(lba + i as u64, block)?;
+            let mut polls = 0u32;
+            loop {
+                match self.poll(ticket) {
+                    RequestState::Pending => {
+                        polls += 1;
+                        if polls > COMPLETION_POLL_LIMIT {
+                            return Err(crate::Error::TimedOut);
+                        }
+                        core::hint::spin_loop();
+                    }
+                    RequestState::Done(result) => {
+                        result?;
+                        break;
+                    }
+                }
             }
         }
 

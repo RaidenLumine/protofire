@@ -110,6 +110,19 @@ impl VfsFileSystem for SimpleFsVolume {
         self.inner.cache_stats()
     }
 
+    /// Write back this volume's aged dirty blocks.
+    ///
+    /// The persistent write-back path is driven by the maintenance thread
+    /// (`kernel::maintenance` → `fs::sync_global_caches_aged`) so that dirty
+    /// data reaches the device without waiting for an explicit `sync`.  Until
+    /// this method existed the VFS default answered `0` here and SimpleFs was
+    /// the filesystem that never took part in it — only fat32 implemented the
+    /// call — so its data reached the device through an explicit sync,
+    /// pressure, or eviction and nothing else.
+    fn flush_aged(&self, age_ticks: u64) -> Result<usize> {
+        self.inner.cache.flush_aged(age_ticks)
+    }
+
     fn list_xattrs(&self, path: &str) -> Result<Vec<XattrEntry>> {
         self.lookup(path)?.list_xattrs()
     }
