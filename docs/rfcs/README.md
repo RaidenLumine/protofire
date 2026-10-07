@@ -114,6 +114,7 @@ and its status says which of the two happened.
 | [0004](0004-reuse-the-xhci-rings-by-cycle-state.md) | Superseded | Reuse the xHCI rings by cycle state |
 | [0005](0005-claim-the-msix-entries-a-driver-names.md) | Implemented | Claim the MSI-X entries a driver names |
 | [0006](0006-end-a-producer-ring-lap-where-its-work-ends.md) | Implemented | End a producer ring's lap where its work ends |
+| [0007](0007-hold-a-second-request-on-a-device.md) | Accepted | Hold a second request on a device |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —

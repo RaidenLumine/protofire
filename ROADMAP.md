@@ -161,6 +161,10 @@ The authoritative picture of what exists today is
   boot the tree runs and on every device those boots touch, so nothing here
   holds a second request while the first is outstanding — an interface built
   today would be unverifiable, which is why it is not built today.
+  [RFC 0007](docs/rfcs/0007-hold-a-second-request-on-a-device.md) records the
+  shape it will take — a submit/poll pair beside the waiting call, defaulted
+  so a device that cannot hold two requests keeps today's path — and the
+  caller that makes it verifiable, which is what has to land with it.
 
 ## Long Term (1–3 years)
 
