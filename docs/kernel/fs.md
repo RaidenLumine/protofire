@@ -223,11 +223,24 @@ The flush that ends a successful transaction is `flush_metadata`
 Phase 2 is why a boot's write traffic is much larger than its files: the two
 tables and the xattr table are written *whole*, every commit.  A demo boot of
 the in-memory volumes writes 735232 bytes to a device for the 13611 bytes a
-caller asked for — 53 writes of more than 8 KiB carry 494080 of it — and the
-write-skipping optimisation the dirty flags in `SimpleFsState` are waiting for
-has to compare against the slot it is about to overwrite, not against the
-last commit: after a publish the shadow is the table from two commits ago, so
-"what changed since last time" would leave it stale.
+caller asked for — 53 writes of more than 8 KiB carry 494080 of it.
+
+The headroom is measured.  A probe that read each written block back and
+compared it with the block it was overwriting counted **1436 blocks written
+and 370 that differed**, so those 735232 bytes carry 189440 bytes of change
+and writing only what differs would cut the traffic by 3.9×.
+
+What that optimisation has to be, the same measurement says.  The comparison
+is against the *slot*, not against the last commit: after a publish the shadow
+is the table from two commits ago, so the set to write is the union of the last
+*two* generations' changes — "what changed since last time" would leave a
+block the previous commit wrote unwritten in the slot it is about to become.
+And it needs per-block tracking, because the flags in `SimpleFsState`
+(`inode_table_dirty`, `dirent_table_dirty`) are one bit per *table*: they can
+answer "is this table worth writing" and not "which of its 1436 blocks are".
+The undo log already saves and restores those two bits per transaction; a
+per-block set would need the same treatment, which is what makes this a change
+to the commit protocol rather than to its write loop.
 
 A crash before the publish leaves the mark; a mount then loads the *active*
 tables, which a commit never writes, so the visible namespace stays the one

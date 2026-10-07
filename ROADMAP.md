@@ -120,10 +120,11 @@ The authoritative picture of what exists today is
   that asked for it — now cuts the commands a boot issues by more than half
   (158 against 327) for exactly the same bytes.  What remains: an asynchronous
   device interface (a thread issuing the same synchronous reads cannot be
-  ahead of a reader this fast, so overlap has to be a queue at the device), a
-  commit that writes only the blocks a slot actually needs, and measurement
-  under load — SMP load-balancing, NUMA-node stress, and network throughput
-  benchmarks.
+  ahead of a reader this fast, so overlap has to be a queue at the device — and
+  no device the tree boots today queues, so it is not worth landing until one
+  can show two requests in flight), a commit that writes only the blocks a slot
+  actually needs (measured at 370 differing blocks out of 1436 written per
+  boot, so 3.9x of the traffic).
 
 ## Long Term (1–3 years)
 
