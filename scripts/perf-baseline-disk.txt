@@ -1,0 +1,80 @@
+# Boot-work baseline for `make check-perf-baseline-disk`.
+#
+# The machine: -smp 1 -m 1G -drive file=target/perf-baseline-disk.img,if=none,id=nvme0,format=raw -device nvme,drive=nvme0,serial=protofire.  A baseline describes one shape, so the check
+# refuses a boot whose shape does not match this line.
+#
+# One row per counter the boot prints: `key baseline tolerance`.
+# Tolerance is absolute: the counters a boot is still moving when it
+# samples (heap, DHCP traffic) drift by scheduling jitter, and the ones
+# that stopped at boot do not drift at all.  Re-record with
+# `sh scripts/check-perf-baseline.sh --record`, which keeps every
+# tolerance that is already written down.
+#
+# The `fs-*` rows are the counters a filesystem keeps: how many
+# operations it served (`fs-reads`, `fs-writes`) and how many bytes
+# those operations were asked for (`fs-read-bytes`, `fs-write-bytes`),
+# summed over the mounted volumes.  What a cache served or a device
+# moved is not counted here.  The `cache-*` rows are the block
+# caches of those volumes summed — hits, misses, prefetches issued and
+# sequential hits, evictions — and the `blk-*` rows are what actually
+# reached a device, counted where a device enters the filesystem
+# (`src/kernel/block.rs`).  Three heights, one read.  The last of
+# those rows, `blk-in-flight-high-water`, is the most requests that
+# were ever outstanding at once: one says every device the boot used
+# completes in place, which is the number an asynchronous interface
+# would have to beat before it is worth having.
+#
+# The `wl-*` rows are the defined storage workload's own share of that
+# work, counted as deltas around the run (`src/kernel/workload.rs`):
+# what a filesystem, a cache and a device did for a fixed set of writes
+# and reads rather than for the boot as a whole.
+# `wl-device-bytes-per-asked-byte` is the ratio between the two — the
+# write amplification of one named workload.  Its duration is printed on
+# a line of its own and is deliberately not recorded here.
+#
+ticks 524 12
+frames 25 0
+frame-frees 6 0
+frame-zero-bytes 503808 0
+heap-allocs 11249 256
+heap-bytes 17080768 262144
+pt-maps 738 0
+pt-lookups 737 0
+faults 1 0
+fs-lookups 258 0
+fs-reads 841 0
+fs-read-bytes 121173 0
+fs-writes 27 0
+fs-write-bytes 49618 0
+fs-transactions 10 0
+cache-hits 889 0
+cache-misses 83 0
+cache-prefetches 157 0
+cache-sequential-hits 277 0
+cache-evictions 0 0
+blk-reads 165 0
+blk-read-bytes 256512 0
+blk-writes 338 0
+blk-write-bytes 264704 0
+blk-in-flight-high-water 1 0
+wl-files 8 0
+wl-bytes 49152 0
+wl-fs-reads 8 0
+wl-fs-read-bytes 16384 0
+wl-fs-writes 24 0
+wl-fs-write-bytes 49152 0
+wl-fs-transactions 1 0
+wl-cache-hits 128 0
+wl-cache-misses 8 0
+wl-blk-reads 32 0
+wl-blk-read-bytes 61440 0
+wl-blk-writes 292 0
+wl-blk-write-bytes 231936 0
+wl-device-bytes-per-asked-byte 5 0
+ip4-rx 3 4
+ip4-tx 11 4
+ip6-rx 1 0
+ip6-tx 0 0
+irqs 535 12
+ipis 0 0
+spurious 0 0

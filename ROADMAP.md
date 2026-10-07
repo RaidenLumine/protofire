@@ -129,10 +129,18 @@ The authoritative picture of what exists today is
   on; the number is there to explain a counter, not to be one.
   What remains: an asynchronous device interface (a thread issuing the
   same synchronous reads cannot be ahead of a reader this fast, so overlap has
-  to be a queue at the device), the same workload on a real disk or an SSD and
-  on the network (the work a four-CPU boot does is gated by
-  `make check-perf-baseline-smp`, but that is a boot, not a load; the workload
-  above is in memory, which is what makes it deterministic), and the commit
+  to be a queue at the device), the same workload where the volumes are not
+  memory, and on the network.  The first of those has landed:
+  `make check-perf-baseline-disk` boots the demo with an NVMe namespace as the
+  only disk, so the workload writes to `/data` on a device.  Its counters come
+  back **identical** to the in-memory run — the filesystem asks a device for
+  exactly what it asks a memory volume for — and the duration it prints grows
+  by about four fifths, which is what a person wanted to know.  What that gate
+  does not measure is a physical disk: QEMU's NVMe is a device model, and its
+  latency is the host's, so the number stays a report.  Still open: a real SSD
+  or spinning disk, NUMA-node stress and network throughput (the work a
+  four-CPU boot does is gated by `make check-perf-baseline-smp`, but that is a
+  boot, not a load), and the commit
   comparison's own reads, which a per-block
   shadow of the previous generation would remove if they ever show up against
   real disks.  What would have to change first is measured, not argued: the

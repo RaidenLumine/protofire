@@ -39,6 +39,11 @@ BASELINE="${BASELINE:-scripts/perf-baseline.txt}"
 # shape and the check refuses to compare a boot against the wrong one.
 SMP_CPUS="${SMP_CPUS:-1}"
 TARGET_LABEL="${TARGET_LABEL:-check-perf-baseline}"
+# Extra QEMU arguments that change the machine the boot sees — a disk, say —
+# so the same workload can be measured with its volumes on a device rather
+# than in memory.  They are part of the shape the baseline records, because a
+# boot with a disk and one without are two different machines.
+QEMU_ARGS="${QEMU_ARGS:-}"
 
 # The profilers are the point: a default build has no counters to read.
 FEATURES="demo-disk perf_baseline fs_profiler net_profiler alloc_profiler fault_profiler"
@@ -61,7 +66,8 @@ case "$SMP_CPUS" in
         exit 1
         ;;
 esac
-machine="-smp ${SMP_CPUS} -m 1G"
+machine="-smp ${SMP_CPUS} -m 1G ${QEMU_ARGS}"
+machine="${machine% }"
 
 mode=check
 case "${1:-}" in

@@ -161,6 +161,7 @@ help:
 		'Runtime gates:' \
 		'  make check-perf-baseline              - boot the demo and compare its measured work to the baseline' \
 		'  make check-perf-baseline-smp          - the same on several CPUs (SMP, default 4)' \
+		'  make check-perf-baseline-disk         - the same with the workload on an NVMe namespace, not memory' \
 		'  make check-x8664-runtime              - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-init-no-start        - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-usb-disk             - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
@@ -475,7 +476,7 @@ check-abi-frozen-payload-riscv64:
 		sh ./scripts/check-riscv64-runtime.sh
 
 # ── Runtime gates ─────────────────────────────────────────────────────
-.PHONY: check-perf-baseline check-perf-baseline-smp \
+.PHONY: check-perf-baseline check-perf-baseline-smp check-perf-baseline-disk \
 	check-x8664-runtime check-x8664-init-no-start check-x8664-usb-disk \
 	check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
 	check-riscv64-nvme check-x8664-hda check-x8664-churn \
@@ -520,6 +521,20 @@ check-perf-baseline-smp:
 		BASELINE=scripts/perf-baseline-smp.txt \
 		TARGET_LABEL=check-perf-baseline-smp \
 		sh ./scripts/check-perf-baseline.sh
+
+# The boot-work gate with an NVMe namespace attached as the only disk, so the
+# zones the storage workload writes — `/data` above all — are a device rather
+# than memory.  The same workload's counters come back identical, which says
+# the filesystem asks a device for exactly what it asks a memory volume for;
+# what changes is the duration the boot prints, and that line is a report
+# rather than a row, because a device model's latency is still the host's.
+# A re-record is `sh scripts/check-perf-baseline-disk.sh --record`.
+check-perf-baseline-disk:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		CARGO="$(CARGO)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-perf-baseline-disk.sh
 
 # Boot the kernel on a single emulated CPU with the demo disk and assert that
 # the user programs actually run.  The SMP smoke cannot see a defect that

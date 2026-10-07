@@ -180,6 +180,7 @@ run_p3() {
     if [ "$RUN_PERF_BASELINE" = "1" ]; then
         run_make_step "make check-perf-baseline" check-perf-baseline
         run_make_step "make check-perf-baseline-smp" check-perf-baseline-smp
+        run_make_step "make check-perf-baseline-disk" check-perf-baseline-disk
     else
         printf '==> verify[%s]: skipping the boot-work baseline (set RUN_PERF_BASELINE=1 to enable)\n' \
             "$VERIFY_TIER"
