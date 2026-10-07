@@ -279,7 +279,9 @@ beside it, in that order:
 
 1. `make verify-p3` green, and `PROFILE=release make check-reproducible-build`
    if the release artifacts were built with `PROFILE=release` (they are).
-2. Bump the version in `Cargo.toml`, commit, and tag it.
+2. Bump the version in `Cargo.toml`, refresh the lockfile the bump moves —
+   `cargo metadata --manifest-path fuzz/Cargo.toml` rewrites the version that
+   lock records for the path dependency, and nothing else — commit, and tag it.
 3. `make release`, then upload everything under `dist/<version>/` — artifacts,
    signatures, key records, and `SHA256SUMS` — to the release.
 

@@ -42,10 +42,15 @@ endif
 # KASLR relocation table path.
 KERNEL_ELF = $(TARGET_DIR)/$(TARGET)/$(PROFILE)/$(CRATE)
 KASLR_RELOCS = src/arch/x86_64/kaslr_relocs.generated.rs
-# The tool that writes that table is a package of its own under `tools/`, so
-# the root package's cargo commands do not reach it and the format and lint
-# targets name its manifest explicitly.
-KASLR_TOOL_MANIFEST = tools/gen-kaslr-relocs/Cargo.toml
+# Packages in the tree that cargo's own commands do not reach, because each is
+# a package of its own rather than a workspace member: the KASLR tool under
+# `tools/`, and the fuzz targets under `fuzz/` (whose separation `fuzz/README.md`
+# argues).  `TOOL_MANIFESTS` builds from the tree alone, so the format and lint
+# targets cover it; `FUZZ_MANIFEST` needs libFuzzer from crates.io, so only the
+# format targets — which never resolve dependencies — cover it there, and the
+# rest is `check-fuzz-targets`, where those dependencies are installed.
+TOOL_MANIFESTS = tools/gen-kaslr-relocs/Cargo.toml
+FUZZ_MANIFEST = fuzz/Cargo.toml
 
 # QEMU 8.x `virt` machines default each virtio-mmio transport to *legacy* mode
 # (force-legacy=true => version register reads 1), but the kernel drives the
@@ -185,6 +190,7 @@ help:
 		'Lints:' \
 		'  make clippy                           - run clippy for all targets' \
 		'  make clippy-targets                   - run clippy for the other targets and architectures' \
+		'  make check-fuzz-targets               - lint `fuzz/` and check its lockfile (needs its dependencies)' \
 		'' \
 		'Runs:' \
 		'  make run-x8664                        - alias of make run (x86_64 serial interactive shell)' \
@@ -197,7 +203,7 @@ help:
 		'' \
 		'Housekeeping:' \
 		'  make fmt                              - format the source tree' \
-		'  make fmt-all                          - format the source tree, its dependencies and `tools/`' \
+		'  make fmt-all                          - format the source tree, its dependencies, and `tools/` and `fuzz/`' \
 		'  make fmt-check                        - verify formatting without modifying files' \
 		'  make clean                            - remove Cargo artifacts' \
 		'' \
@@ -761,7 +767,7 @@ release:
 		sh ./scripts/make-release.sh
 
 # ── Lints ─────────────────────────────────────────────────────────────
-.PHONY: clippy clippy-targets
+.PHONY: clippy clippy-targets check-fuzz-targets
 
 # `-D clippy::undocumented_unsafe_blocks` is spelled out because the lint is
 # allow-by-default: `-D warnings` alone does not turn it on.  The tree reached
@@ -771,8 +777,30 @@ release:
 clippy:
 	$(CARGO) clippy $(CARGO_FLAGS) --all-targets -- \
 		-D warnings -D clippy::undocumented_unsafe_blocks
-	$(CARGO) clippy $(CARGO_FLAGS) --manifest-path $(KASLR_TOOL_MANIFEST) \
-		--all-targets -- -D warnings -D clippy::undocumented_unsafe_blocks
+	@for manifest in $(TOOL_MANIFESTS); do \
+		$(CARGO) clippy $(CARGO_FLAGS) --manifest-path $$manifest \
+			--all-targets -- \
+			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
+	done
+
+# `fuzz/` is the one package here that depends on crates.io, and every other
+# target in this file is deliberately dependency-free and `--offline` — see
+# `fuzz/README.md` for why it is a package of its own.  So this target is not
+# part of `make clippy`, of `make verify` or of the push CI, all of which work
+# from a bare checkout: it is what `.github/workflows/fuzz.yml` runs, where the
+# toolchain and the dependencies are installed, and what a contributor runs
+# after `cargo fetch --manifest-path $(FUZZ_MANIFEST)`.
+#
+# It lints the targets and then checks that the lockfile still matches the
+# manifests.  The path dependency's version in that lock is the kernel's, so
+# bumping `version` in `Cargo.toml` silently left it a release behind until
+# this check existed; `cargo metadata` is what rewrites it.
+check-fuzz-targets:
+	$(CARGO) metadata --locked --offline --manifest-path $(FUZZ_MANIFEST) \
+		--format-version 1 > /dev/null
+	$(CARGO) clippy $(CARGO_FLAGS) --manifest-path $(FUZZ_MANIFEST) \
+		--all-targets -- \
+		-D warnings -D clippy::undocumented_unsafe_blocks
 
 clippy-targets:
 	@for target in $(CLIPPY_TARGETS); do \
@@ -939,11 +967,15 @@ fmt:
 # `make gen-kaslr-relocs` and is formatted like everything else in the tree.
 fmt-all:
 	$(CARGO) fmt --all
-	$(CARGO) fmt --manifest-path $(KASLR_TOOL_MANIFEST)
+	@for manifest in $(TOOL_MANIFESTS) $(FUZZ_MANIFEST); do \
+		$(CARGO) fmt --manifest-path $$manifest || exit 1; \
+	done
 
 fmt-check:
 	$(CARGO) fmt --all --check
-	$(CARGO) fmt --manifest-path $(KASLR_TOOL_MANIFEST) --check
+	@for manifest in $(TOOL_MANIFESTS) $(FUZZ_MANIFEST); do \
+		$(CARGO) fmt --manifest-path $$manifest --check || exit 1; \
+	done
 
 clean:
 	$(CARGO) clean

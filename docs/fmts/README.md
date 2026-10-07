@@ -44,14 +44,15 @@ dead-code annotations, and the ABI mirror are all gated; the rest is review.
 
 | Rule | Enforced by | Where it runs |
 |------|-------------|---------------|
-| Formatting | `make fmt-check` (`cargo fmt --all --check`, and the same for each manifest under `tools/`, which is a package of its own rather than a workspace member) | `verify-p0`, CI |
+| Formatting | `make fmt-check` (`cargo fmt --all --check`, and the same for each manifest under `tools/` and `fuzz/`, which are packages of their own rather than workspace members; formatting never resolves dependencies, so all of them are covered here) | `verify-p0`, CI |
 | `.rs` file headers | `check_source_headers` in [`scripts/verify.sh`](../../scripts/verify.sh) | `verify-p0`, CI |
 | Every file a document cites | [`scripts/check-docs.sh`](../../scripts/check-docs.sh) — `make check-docs`: `src/...` paths and relative links must resolve, bare filenames must exist somewhere, line-number citations are refused | `verify-p0`, CI |
 | The RFC directory | [`scripts/check-rfcs.sh`](../../scripts/check-rfcs.sh) — `make check-rfcs`: four-digit decimal numbers, a status from the fixed set, supersede links that agree at both ends, and an index generated from the documents (`--record` rewrites it) | `verify-p0`, CI |
 | The Makefile's target set, in all three places it is written | [`scripts/check-make-targets.sh`](../../scripts/check-make-targets.sh) — `make check-make-targets`: the rules, `.PHONY` and the `help` recipe name the same targets, in both directions (a target no list declares may be silently skipped; a name with no target is a promise the list still makes) | `verify-p0`, CI |
 | Commit hook installed | `check_commit_hooks` in the same script | `verify-p0` |
 | Commit message shape, `Signed-off-by:` | [`scripts/hooks/commit-msg`](../../scripts/hooks/commit-msg) — see [commits.md](commits.md) | Every `git commit` (`make install-hooks`), and every PR commit in CI |
-| Lints | `make clippy` (`-D warnings`) and `make clippy-targets` (`-D warnings` for every target the tree builds for) | CI, `verify-p3` |
+| Lints | `make clippy` (`-D warnings`, and the same for each manifest under `tools/`) and `make clippy-targets` (`-D warnings` for every target the tree builds for) | CI, `verify-p3` |
+| The fuzz package's lint and lockfile | `make check-fuzz-targets` — the only package in the tree that resolves dependencies, so this one runs where they are installed | [fuzz.yml](../../.github/workflows/fuzz.yml) |
 | Undocumented `unsafe` | `make clippy`, `make clippy-targets` (the lint is denied), and `make check-unsafe-comments` as a per-configuration census | `verify-p3`, CI |
 | Syntax and types on every target | `make check` (host + x86_64 + the aarch64 host configuration), `make check-aarch64`, `make check-riscv64`, `make build`, `make build-aarch64` | `verify-p0` and `verify-p3`, CI |
 | Module dependency edges | `make check-layering` against `scripts/layering-baseline.txt` | `verify-p3`, CI |

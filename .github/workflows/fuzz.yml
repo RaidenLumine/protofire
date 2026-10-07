@@ -19,6 +19,34 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The fuzz targets are the one package in the tree that needs crates.io, so
+  # this is where they are linted and where their lockfile is checked: the push
+  # CI and `make verify` are deliberately dependency-free and `--offline`, and
+  # `make check-fuzz-targets` is not part of either.  The fetch is what lets the
+  # check run `--offline` afterwards.
+  targets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "nightly-2026-08-24"
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "fuzz -> ../target/fuzz"
+
+      - name: Fetch the fuzz dependencies
+        run: cargo fetch --manifest-path fuzz/Cargo.toml
+
+      - name: Check the fuzz targets
+        run: make check-fuzz-targets
+
   parsers:
     runs-on: ubuntu-latest
     timeout-minutes: 60

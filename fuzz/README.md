@@ -30,6 +30,24 @@ cargo fuzz run luks2 --features demo-disk
 cargo fuzz run packet_parsers --features demo-disk
 ```
 
+## Checking the targets
+
+`make fmt-check` formats this package along with the tree, because formatting
+never resolves dependencies.  Linting and type-checking it do resolve them, so
+those are `make check-fuzz-targets`, which needs the dependencies present:
+
+```sh
+cargo fetch --manifest-path fuzz/Cargo.toml
+make check-fuzz-targets
+```
+
+That target also fails when this package's `Cargo.lock` is stale, which is what
+happens whenever the kernel's `version` in the root `Cargo.toml` is bumped: the
+lock records that version for the path dependency, and `cargo metadata` is what
+rewrites it.  `.github/workflows/fuzz.yml` runs the check on its nightly
+schedule; it is not in `make clippy` or in `make verify`, which work from a bare
+checkout.
+
 Build output goes to the repository's ignored `target/fuzz` (see
 `fuzz/.cargo/config.toml`), and corpora and crash artifacts land in
 `fuzz/corpus/` and `fuzz/artifacts/`, both ignored. A crashing input is written
