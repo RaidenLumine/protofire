@@ -137,10 +137,14 @@ The authoritative picture of what exists today is
   exactly what it asks a memory volume for — and the duration it prints grows
   by about four fifths, which is what a person wanted to know.  What that gate
   does not measure is a physical disk: QEMU's NVMe is a device model, and its
-  latency is the host's, so the number stays a report.  Still open: a real SSD
-  or spinning disk, NUMA-node stress and network throughput (the work a
-  four-CPU boot does is gated by `make check-perf-baseline-smp`, but that is a
-  boot, not a load), and the commit
+  latency is the host's, so the number stays a report.  A NUMA-shaped boot is
+  gated too (`make check-perf-baseline-numa`, two nodes of two CPUs over the
+  same four), which is the first gate that ever ran with a topology: it found
+  the SRAT/SLIT walk costing about seventy allocations and changing nothing
+  else.  Still open: a real SSD or spinning disk, load *on* a NUMA machine
+  rather than a boot with its shape (the work a four-CPU boot does is gated by
+  `make check-perf-baseline-smp`, but that is a boot, not a load), network
+  throughput, and the commit
   comparison's own reads, which a per-block
   shadow of the previous generation would remove if they ever show up against
   real disks.  What would have to change first is measured, not argued: the

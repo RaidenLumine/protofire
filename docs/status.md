@@ -323,7 +323,7 @@ PBKDF2 primitives.
 | Waker | Thread wakeup notification with a per-CPU reschedule flag | Cross-CPU wakeups set a flag or send an IPI; RISC-V waits for the target hart's next tick |
 | Scheduler stats | Load average (sampled ring), per-thread CPU ticks, idle tracking, ProcFs integration | — |
 | Priority boosting | Starvation boost: Normal → High after an idle threshold, demote after a short run | — |
-| Work stealing | Cross-CPU load balancing, NUMA-aware victim selection | Validated under QEMU only; no real-load validation |
+| Work stealing | Cross-CPU load balancing, NUMA-aware victim selection; the placement runs in a two-node boot (`make check-perf-baseline-numa`) | Validated under QEMU only; no real-load validation |
 | Stack canary | Per-thread random canary, checked on context switch | Software check, not a hardware feature; it detects a smashed stack after the fact |
 | Power management | CPU frequency scaling (x86_64 MSR P-state driver; aarch64/riscv64 DT OPP range discovery + target tracking), governors, scheduler-tick integration, DTS temperature reading | AArch64 and RISC-V only track the requested target; no SCMI or CPPC interface is wired |
 
@@ -360,8 +360,13 @@ balancing and runtime stack protection.
   wired.
 - **Load balancing lacks real-load validation**: SMP/NUMA scenarios are mostly
   tested under QEMU, and the work a four-CPU boot does is counted rather than
-  measured against load (`make check-perf-baseline-smp`), so a balancer that
-  keeps up with an idle machine and not a busy one still passes.
+  measured against load (`make check-perf-baseline-smp`, and
+  `make check-perf-baseline-numa` for the same four CPUs arranged as two
+  nodes), so a balancer that keeps up with an idle machine and not a busy one
+  still passes.  The two-node boot is the first gate that ever ran with a
+  topology — the SRAT/SLIT walk, the node-aware allocators and the placement
+  had only ever run in unit tests — and it found the discovery costs about
+  seventy allocations and changes nothing else in the boot's work.
 
 ---
 

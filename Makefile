@@ -162,6 +162,7 @@ help:
 		'  make check-perf-baseline              - boot the demo and compare its measured work to the baseline' \
 		'  make check-perf-baseline-smp          - the same on several CPUs (SMP, default 4)' \
 		'  make check-perf-baseline-disk         - the same with the workload on an NVMe namespace, not memory' \
+		'  make check-perf-baseline-numa         - the same on four CPUs arranged as two NUMA nodes' \
 		'  make check-x8664-runtime              - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-init-no-start        - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-usb-disk             - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
@@ -477,6 +478,7 @@ check-abi-frozen-payload-riscv64:
 
 # ── Runtime gates ─────────────────────────────────────────────────────
 .PHONY: check-perf-baseline check-perf-baseline-smp check-perf-baseline-disk \
+	check-perf-baseline-numa \
 	check-x8664-runtime check-x8664-init-no-start check-x8664-usb-disk \
 	check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
 	check-riscv64-nvme check-x8664-hda check-x8664-churn \
@@ -535,6 +537,24 @@ check-perf-baseline-disk:
 		CARGO="$(CARGO)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-perf-baseline-disk.sh
+
+# A NUMA-shaped boot: two nodes of two CPUs each, over the same four CPUs the
+# SMP baseline uses.  Until this target existed no gate had ever booted with a
+# topology at all — the SRAT/SLIT walk, the node-aware frame allocators and the
+# work-stealing placement had only ever run in unit tests — so this is the
+# first boot that exercises them, and what it should show is that discovering
+# two nodes costs a little and changes nothing else.  Re-record with the same
+# `QEMU_ARGS` and `BASELINE` against a spare label.
+check-perf-baseline-numa:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		CARGO="$(CARGO)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		SMP_CPUS=4 \
+		QEMU_ARGS="-object memory-backend-ram,size=512M,id=m0 -object memory-backend-ram,size=512M,id=m1 -numa node,nodeid=0,cpus=0-1,memdev=m0 -numa node,nodeid=1,cpus=2-3,memdev=m1" \
+		BASELINE=scripts/perf-baseline-numa.txt \
+		TARGET_LABEL=check-perf-baseline-numa \
+		sh ./scripts/check-perf-baseline.sh
 
 # Boot the kernel on a single emulated CPU with the demo disk and assert that
 # the user programs actually run.  The SMP smoke cannot see a defect that
