@@ -181,7 +181,16 @@ pub trait BlockDevice: Send + Sync {
     }
     fn block_count(&self) -> u64;
     fn is_read_only(&self) -> bool;
+    /// Read `buffer.len() / block_size()` blocks starting at `lba` into
+    /// `buffer`.
+    ///
+    /// The request may cover more than one block: a filesystem reading a
+    /// table, or a cache reading ahead, asks for a run in one call, and a
+    /// device that answered only the first block would leave the rest of the
+    /// buffer as it found it.
     fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()>;
+    /// Write `data.len() / block_size()` blocks starting at `lba`, with the
+    /// same multi-block contract as [`BlockDevice::read_blocks`].
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()>;
 
     /// Flush any device-side write caches to stable storage.

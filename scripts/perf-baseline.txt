@@ -17,12 +17,12 @@
 # reached a device, counted where a device enters the filesystem
 # (`src/kernel/block.rs`).  Three heights, one read.
 #
-ticks 512 12
+ticks 511 12
 frames 23 0
 frame-frees 8 0
 frame-zero-bytes 610304 0
-heap-allocs 20893 256
-heap-bytes 25417920 262144
+heap-allocs 20877 256
+heap-bytes 25414512 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
@@ -32,19 +32,19 @@ fs-read-bytes 182994 0
 fs-writes 16 0
 fs-write-bytes 13611 0
 fs-transactions 19 0
-cache-hits 1227 0
-cache-misses 256 0
-cache-prefetches 0 0
-cache-sequential-hits 147 0
+cache-hits 1400 0
+cache-misses 83 0
+cache-prefetches 177 0
+cache-sequential-hits 316 0
 cache-evictions 0 0
-blk-reads 327 0
-blk-read-bytes 233984 0
+blk-reads 208 0
+blk-read-bytes 236032 0
 blk-writes 237 0
 blk-write-bytes 735232 0
 ip4-rx 3 4
 ip4-tx 11 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 523 12
+irqs 522 12
 ipis 0 0
 spurious 0 0

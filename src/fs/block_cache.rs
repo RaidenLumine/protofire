@@ -73,6 +73,11 @@ const CACHE_CAPACITY: usize = 512;
 /// conservative so short bursts of writes don't hit the device on every call.
 const WRITE_BACK_PRESSURE_THRESHOLD: usize = CACHE_CAPACITY / 2;
 
+/// Most blocks one read-ahead request covers.  The scratch buffer that holds
+/// a run is this many blocks on the stack, so it is a bound on stack use as
+/// much as on request size.
+const PREFETCH_RUN_BLOCKS: usize = 4;
+
 /// Sentinel value for an empty cache slot.
 const EMPTY_LBA: u64 = u64::MAX;
 
@@ -440,28 +445,69 @@ impl BlockCache {
         self.insert(lba, data, false);
     }
 
-    /// Issue read-ahead for the next `prefetch_depth` blocks after `lba`.
+    /// Read-ahead the next `count` blocks after `start_lba`.
     ///
-    /// Each block is read from the device into the cache (clean) so that a
-    /// subsequent sequential read will be a cache hit.  The caller's read
-    /// is not blocked — the device I/O happens synchronously but the data
-    /// is available immediately on the next call to `read_cached`.
+    /// The blocks that are not already cached are read from the device **as
+    /// runs** — one request per contiguous stretch rather than one per block.
+    /// That is the shape a device wants (a single command covering a
+    /// kilobyte costs far less than two covering 512 bytes each), and it is
+    /// the shape a queue would be handed if this ever became asynchronous.
+    /// The read is still synchronous, so read-ahead gets *cheaper* here, not
+    /// concurrent; `docs/status.md` records what that means for enabling it.
     pub fn prefetch(&self, start_lba: u64, count: usize) {
+        let mut run_start: Option<u64> = None;
+        let mut run_blocks = 0usize;
         for offset in 0..count {
             let lba = start_lba.saturating_add(offset as u64);
-            // Skip if already cached.
-            {
-                let entries = self.entries.lock();
-                if entries.iter().any(|e| e.lba == lba) {
-                    continue;
-                }
+            if self.is_cached(lba) {
+                self.read_run(&mut run_start, &mut run_blocks);
+                continue;
             }
-            let mut buf = [0_u8; BLOCK_SIZE];
-            if self.device.read_blocks(lba, &mut buf).is_ok() {
-                self.insert(lba, &buf, false);
+            if run_start.is_none() {
+                run_start = Some(lba);
+            }
+            run_blocks += 1;
+        }
+        self.read_run(&mut run_start, &mut run_blocks);
+    }
+
+    /// Read one run of uncached blocks from the device and insert them clean.
+    ///
+    /// A run longer than [`PREFETCH_RUN_BLOCKS`] is split, so the scratch
+    /// buffer is a constant size on the stack rather than an allocation in
+    /// the read path.
+    fn read_run(&self, run_start: &mut Option<u64>, run_blocks: &mut usize) {
+        let Some(start) = run_start.take() else {
+            *run_blocks = 0;
+            return;
+        };
+        let mut blocks = core::mem::take(run_blocks);
+        let mut lba = start;
+        while blocks > 0 {
+            let chunk = core::cmp::min(blocks, PREFETCH_RUN_BLOCKS);
+            let mut buffer = [0_u8; PREFETCH_RUN_BLOCKS * BLOCK_SIZE];
+            if self
+                .device
+                .read_blocks(lba, &mut buffer[..chunk * BLOCK_SIZE])
+                .is_err()
+            {
+                // A failed read is not cached and not counted: whatever asked
+                // for the block will read it itself and see the error.
+                return;
+            }
+            for i in 0..chunk {
+                let offset = i * BLOCK_SIZE;
+                self.insert(lba + i as u64, &buffer[offset..offset + BLOCK_SIZE], false);
                 self.inc_prefetches_issued();
             }
+            lba += chunk as u64;
+            blocks -= chunk;
         }
+    }
+
+    /// Whether a block is in the pool.
+    fn is_cached(&self, lba: u64) -> bool {
+        self.entries.lock().iter().any(|e| e.lba == lba)
     }
 
     /// Internal: trigger read-ahead when sequential access is detected.
@@ -675,7 +721,7 @@ mod tests {
             self.read_count.fetch_add(1, Ordering::Relaxed);
             let storage = self.storage.lock();
             let start = lba as usize * BLOCK_SIZE;
-            let end = start + BLOCK_SIZE;
+            let end = start + buffer.len();
             buffer.copy_from_slice(&storage[start..end]);
             Ok(())
         }
@@ -683,7 +729,7 @@ mod tests {
         fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
             let mut storage = self.storage.lock();
             let start = lba as usize * BLOCK_SIZE;
-            let end = start + BLOCK_SIZE;
+            let end = start + data.len();
             storage[start..end].copy_from_slice(data);
             Ok(())
         }

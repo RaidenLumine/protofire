@@ -116,11 +116,12 @@ The authoritative picture of what exists today is
   the filesystem's operations and their bytes, the cache's hits and misses,
   and what reached a device — and the first two findings are recorded: a
   commit writes its shadow tables whole (735 KiB to a device for 13 KiB of
-  writes), and read-ahead cannot pay while `prefetch` is synchronous.  What
-  remains: overlapping device I/O (which is what would make read-ahead worth
-  enabling), a commit that writes only the blocks a slot actually needs, and
-  measurement under load — SMP load-balancing, NUMA-node stress, and network
-  throughput benchmarks.
+  writes), and read-ahead — coalesced into one request per run — now cuts the
+  commands a boot issues by a third (208 against 327) for under a percent more
+  traffic.  What remains: overlapping device I/O (the prefetch is still
+  synchronous, so it buys commands rather than concurrency), a commit that
+  writes only the blocks a slot actually needs, and measurement under load —
+  SMP load-balancing, NUMA-node stress, and network throughput benchmarks.
 
 ## Long Term (1–3 years)
 

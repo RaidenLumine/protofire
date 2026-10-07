@@ -50,7 +50,15 @@ impl SimpleFs {
             .format_version
             .dirent_capacity(parsed_superblock.record.dirent_table_blocks);
 
-        let cache = BlockCache::new(device.clone());
+        // Read-ahead at depth 4, which the boot-work counters chose: with the
+        // prefetch coalesced into one request per run, a demo boot issues 208
+        // device reads instead of 327 (the same boot with read-ahead off) for
+        // 236032 bytes instead of 233984 — 36 % fewer commands for 0.9 % more
+        // traffic — and the caller sees 83 misses instead of 256.  Deeper
+        // depths trade more waste for few commands (depth 8: 189 reads, 237568
+        // bytes), and the other filesystems keep it off until a boot measures
+        // them.
+        let cache = BlockCache::with_read_ahead(device.clone(), 4);
 
         // V4+: reload the persisted xattr records from the active xattr table
         // so attributes set before the last clean unmount survive a remount.

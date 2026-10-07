@@ -319,13 +319,23 @@ the depth defaults to 0, `BlockCache::with_read_ahead` is how a volume asks,
 and no volume in the tree asks today, so the path is exercised by the cache's
 own tests and by no boot.  Eviction prefers the least-recently-used clean
 entry, so a dirty block is only written back when the pool is entirely dirty.
-Read-ahead is **off, and measurably so**: with depth 2 a demo boot turns 141
-cache misses into hits and issues 142 prefetches while the device sees the
-same traffic plus one block (327 reads and 233984 bytes off, 328 and 234496
-on), because `prefetch` reads the next blocks *synchronously*, inside the
-miss that triggered it.  It moves the same work earlier rather than hiding
-it, and depth 4 and 8 only add waste (4 and 7 extra device reads), so no
-volume enables it until the block layer can overlap I/O of its own.
+Read-ahead is **on for SimpleFS, at depth 4, because the counters chose it**.
+`prefetch` reads the blocks that are not already cached as *runs* — one
+request per contiguous stretch, capped at four blocks (`PREFETCH_RUN_BLOCKS`,
+which is also what keeps the scratch buffer a constant size on the stack) —
+and a demo boot then asks a device for
+
+  * 208 reads and 236032 bytes, against 327 and 233984 with read-ahead off:
+    36 % fewer commands for 0.9 % more traffic, and 83 caller-visible misses
+    against 256;
+  * 262 reads at depth 2 and 189 at depth 8, the deeper setting buying 19 more
+    commands for 1536 more bytes.
+
+The read is still synchronous, so what it buys is *commands*, not concurrency:
+a miss waits for one 2 KiB request instead of one 512-byte request.  What it
+cannot do is hide the wait, which is the next thing this needs — see
+`docs/status.md`.  The other filesystems keep read-ahead off until a boot
+measures them.
 
 `CacheStats` counts hits, misses, evictions, dirty and aged writebacks, blocks
 prefetched and *sequential* hits — a sequential hit is a hit on the block
