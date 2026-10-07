@@ -257,3 +257,11 @@ fi
 
 printf 'perf baseline check passed: %s counter(s) within their recorded tolerance\n' \
     "$counter"
+# The workload's own duration, repeated here because the log it was read from
+# is deleted on the way out and a number nobody can see is a number nobody
+# uses.  It is not part of the comparison — see the paragraph above about what
+# a duration measures — so it is reported and then forgotten.
+workload_time="$(tr -d '\r' <"$log" | grep -o '\[perf  \] workload time:.*' | head -n 1 || true)"
+if [ -n "$workload_time" ]; then
+    printf '  %s\n' "$workload_time"
+fi
