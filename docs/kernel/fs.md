@@ -319,23 +319,31 @@ the depth defaults to 0, `BlockCache::with_read_ahead` is how a volume asks,
 and no volume in the tree asks today, so the path is exercised by the cache's
 own tests and by no boot.  Eviction prefers the least-recently-used clean
 entry, so a dirty block is only written back when the pool is entirely dirty.
-Read-ahead is **on for SimpleFS, at depth 4, because the counters chose it**.
-`prefetch` reads the blocks that are not already cached as *runs* — one
-request per contiguous stretch, capped at four blocks (`PREFETCH_RUN_BLOCKS`,
-which is also what keeps the scratch buffer a constant size on the stack) —
-and a demo boot then asks a device for
+Read-ahead is **on for SimpleFS, at depth 4, and it shares its request with the
+read that asked for it**.  A sequential miss reads the block the caller wants
+*and* the blocks after it in **one** device request — the demand and the
+lookahead are contiguous and a device charges per request rather than per byte
+— stopping at the first block that is already cached, because those are
+exactly the blocks a previous request read ahead.  The scratch buffer is a
+constant `(1 + PREFETCH_RUN_BLOCKS)` blocks on the stack.  A demo boot of the
+in-memory volumes then asks a device for
 
-  * 208 reads and 236032 bytes, against 327 and 233984 with read-ahead off:
-    36 % fewer commands for 0.9 % more traffic, and 83 caller-visible misses
-    against 256;
-  * 262 reads at depth 2 and 189 at depth 8, the deeper setting buying 19 more
-    commands for 1536 more bytes.
+  * 158 reads and 233984 bytes: **24 % fewer commands than read-ahead off (327
+    reads) for exactly the same bytes**, with 87 caller-visible misses against
+    256;
+  * 208 reads and 236032 bytes when the lookahead is a second request (the
+    first shape it was written in), and 154 reads with 243712 bytes when the
+    shared request does not stop at cached blocks — three shapes, measured,
+    and the one kept is the one that adds no traffic;
+  * 189 reads at depth 8 against 208 at depth 4 with the lookahead separate, so
+    depth 4 is where the curve flattens.
 
-The read is still synchronous, so what it buys is *commands*, not concurrency:
-a miss waits for one 2 KiB request instead of one 512-byte request.  What it
-cannot do is hide the wait, which is the next thing this needs — see
-`docs/status.md`.  The other filesystems keep read-ahead off until a boot
-measures them.
+What this buys is still *commands*, not concurrency: every read in the tree is
+synchronous, so a miss waits for its share of one request.  Overlapping them
+would take an asynchronous device interface — a *thread* that issues the same
+synchronous reads cannot be ahead of a reader this fast, which a probe in the
+counters would show as lookahead that arrives after the ask.  The other
+filesystems keep read-ahead off until a boot measures them.
 
 `CacheStats` counts hits, misses, evictions, dirty and aged writebacks, blocks
 prefetched and *sequential* hits — a sequential hit is a hit on the block

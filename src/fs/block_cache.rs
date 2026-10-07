@@ -221,23 +221,52 @@ impl BlockCache {
             }
         }
 
-        // Cache miss — read from device and insert.
-        self.device.read_blocks(lba, buffer)?;
-        self.inc_misses();
-        self.insert(lba, buffer, false);
-
-        // Trigger read-ahead on sequential miss so the next few blocks
-        // are warmed in the cache.  Update last_read_lba regardless.
-        {
+        // Cache miss.  Whether this read is part of a sequential stream is
+        // decided first, because a sequential miss reads the block *and* the
+        // lookahead after it in one request: the demand and the read-ahead are
+        // contiguous, a device charges per request rather than per byte, and
+        // one request that serves the caller and warms four blocks is strictly
+        // better than two.
+        let is_sequential = {
             let mut last = self.last_read_lba.lock();
-            let is_sequential = *last != u64::MAX && lba == *last + 1;
+            let sequential = *last != u64::MAX && lba == *last + 1;
             *last = lba;
-            if is_sequential {
-                drop(last);
-                self.trigger_read_ahead(lba);
+            sequential
+        };
+        // The lookahead runs only as far as the first block that is already
+        // cached: those blocks are exactly the ones a previous request read
+        // ahead, and asking for them again would pay for them twice.
+        let mut lookahead = 0usize;
+        if is_sequential {
+            let depth = self.read_ahead_depth.min(PREFETCH_RUN_BLOCKS);
+            while lookahead < depth && !self.is_cached(lba + lookahead as u64 + 1) {
+                lookahead += 1;
             }
         }
 
+        if lookahead == 0 {
+            self.device.read_blocks(lba, buffer)?;
+            self.inc_misses();
+            self.insert(lba, buffer, false);
+            return Ok(());
+        }
+
+        // One request covers the caller's block and the blocks after it.  The
+        // scratch buffer is a constant on the stack, like the prefetch's.
+        let mut run = [0_u8; (1 + PREFETCH_RUN_BLOCKS) * BLOCK_SIZE];
+        let blocks = lookahead + 1;
+        self.device
+            .read_blocks(lba, &mut run[..blocks * BLOCK_SIZE])?;
+        buffer.copy_from_slice(&run[..BLOCK_SIZE]);
+        self.inc_misses();
+        for i in 0..blocks {
+            let offset = i * BLOCK_SIZE;
+            self.insert(lba + i as u64, &run[offset..offset + BLOCK_SIZE], false);
+            if i > 0 {
+                // The caller's own block is the miss; the rest are lookahead.
+                self.inc_prefetches_issued();
+            }
+        }
         Ok(())
     }
 
@@ -445,7 +474,13 @@ impl BlockCache {
         self.insert(lba, data, false);
     }
 
-    /// Read-ahead the next `count` blocks after `start_lba`.
+    /// Read-ahead the next `count` blocks after `start_lba`, on their own.
+    ///
+    /// The read path does not call this: a sequential miss reads its own block
+    /// and the lookahead after it in one request, which is strictly better
+    /// than a second one.  This is the explicit form — a caller that wants the
+    /// cache warmed ahead of a read it has not made yet — and what the cache's
+    /// own tests drive.
     ///
     /// The blocks that are not already cached are read from the device **as
     /// runs** — one request per contiguous stretch rather than one per block.
@@ -508,17 +543,6 @@ impl BlockCache {
     /// Whether a block is in the pool.
     fn is_cached(&self, lba: u64) -> bool {
         self.entries.lock().iter().any(|e| e.lba == lba)
-    }
-
-    /// Internal: trigger read-ahead when sequential access is detected.
-    fn trigger_read_ahead(&self, lba: u64) {
-        let depth = self.read_ahead_depth;
-        if depth == 0 {
-            return;
-        }
-        // Prefetch the next `depth` blocks.
-        let start = lba.saturating_add(1);
-        self.prefetch(start, depth);
     }
 
     // ─── internal helpers ───
