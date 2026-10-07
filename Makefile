@@ -928,7 +928,7 @@ fmt:
 	$(CARGO) fmt
 
 fmt-all:
-	$(CARGO) fmt --
+	$(CARGO) fmt --all
 
 fmt-check:
 	$(CARGO) fmt --all --check
