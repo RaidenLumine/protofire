@@ -13,6 +13,15 @@ license = "Apache-2.0"
 # package says the same for the same reason.
 publish = false
 
+# The KASLR tool under `tools/` is a package of its own, so the workspace has
+# to name it for cargo's commands to reach it: `cargo fmt --all` formats it,
+# `cargo clippy --workspace` lints it, and its lockfile is this one rather than
+# a second one it would otherwise keep.  `fuzz/` is deliberately not here —
+# it declares its own `[workspace]` and needs crates.io, which is the property
+# `fuzz/README.md` argues for — so `make check-fuzz-targets` covers it.
+[workspace]
+members = ["tools/gen-kaslr-relocs"]
+
 [lints.rust]
 # Edition 2024 makes this the default; on edition 2021 it is opt-in, and the
 # kernel wants it now: an unsafe operation inside an unsafe function is a

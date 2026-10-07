@@ -42,14 +42,12 @@ endif
 # KASLR relocation table path.
 KERNEL_ELF = $(TARGET_DIR)/$(TARGET)/$(PROFILE)/$(CRATE)
 KASLR_RELOCS = src/arch/x86_64/kaslr_relocs.generated.rs
-# Packages in the tree that cargo's own commands do not reach, because each is
-# a package of its own rather than a workspace member: the KASLR tool under
-# `tools/`, and the fuzz targets under `fuzz/` (whose separation `fuzz/README.md`
-# argues).  `TOOL_MANIFESTS` builds from the tree alone, so the format and lint
-# targets cover it; `FUZZ_MANIFEST` needs libFuzzer from crates.io, so only the
-# format targets — which never resolve dependencies — cover it there, and the
-# rest is `check-fuzz-targets`, where those dependencies are installed.
-TOOL_MANIFESTS = tools/gen-kaslr-relocs/Cargo.toml
+# A package in the tree that cargo's own commands do not reach: `fuzz/` declares
+# its own `[workspace]` and needs libFuzzer from crates.io (which `fuzz/README.md`
+# argues for), so the workspace does not name it, the format targets — which
+# never resolve dependencies — cover it here, and the rest is
+# `check-fuzz-targets`, where those dependencies are installed.  The KASLR tool
+# under `tools/` is a workspace member, so `--all` and `--workspace` reach it.
 FUZZ_MANIFEST = fuzz/Cargo.toml
 
 # QEMU 8.x `virt` machines default each virtio-mmio transport to *legacy* mode
@@ -746,10 +744,9 @@ build-riscv64-demo:
 # Run `make build` twice for a fully self-consistent result:
 #   Pass 1: build with existing relocs, generate new relocs.
 #   Pass 2: rebuild with fresh relocs.
-.PHONY: gen-kaslr-relocs
 gen-kaslr-relocs:
 	@if [ -f "$(KERNEL_ELF)" ]; then \
-		cargo run --manifest-path tools/gen-kaslr-relocs/Cargo.toml -- \
+		$(CARGO) run $(CARGO_FLAGS) -p gen-kaslr-relocs -- \
 			"$(KERNEL_ELF)" "$(KASLR_RELOCS)"; \
 	else \
 		echo "KASLR relocs: $(KERNEL_ELF) not found — skip gen (first build)"; \
@@ -775,13 +772,8 @@ release:
 # that held the line could stop being the only thing watching for them; see
 # docs/fmts/unsafe-and-safety.md §3.
 clippy:
-	$(CARGO) clippy $(CARGO_FLAGS) --all-targets -- \
+	$(CARGO) clippy $(CARGO_FLAGS) --workspace --all-targets -- \
 		-D warnings -D clippy::undocumented_unsafe_blocks
-	@for manifest in $(TOOL_MANIFESTS); do \
-		$(CARGO) clippy $(CARGO_FLAGS) --manifest-path $$manifest \
-			--all-targets -- \
-			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
-	done
 
 # `fuzz/` is the one package here that depends on crates.io, and every other
 # target in this file is deliberately dependency-free and `--offline` — see
@@ -809,18 +801,18 @@ clippy-targets:
 			aarch64-unknown-linux-gnu|x86_64-apple-darwin) extra="--all-targets" ;; \
 			*) extra="" ;; \
 		esac; \
-		$(CARGO) clippy $(CARGO_FLAGS) $$extra --target $$target -- \
+		$(CARGO) clippy $(CARGO_FLAGS) -p $(CRATE) $$extra --target $$target -- \
 			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
 	done
 	@for target in $(CLIPPY_BARE_METAL_TARGETS); do \
 		echo "==> clippy $$target ($(CLIPPY_BARE_METAL_FEATURES))"; \
-		$(CARGO) clippy $(CARGO_FLAGS) --target $$target \
+		$(CARGO) clippy $(CARGO_FLAGS) -p $(CRATE) --target $$target \
 			--features "$(CLIPPY_BARE_METAL_FEATURES)" -- \
 			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
 	done
 	@for target in $(CLIPPY_NO_START_TARGET); do \
 		echo "==> clippy $$target ($(CLIPPY_NO_START_FEATURES))"; \
-		$(CARGO) clippy $(CARGO_FLAGS) --target $$target \
+		$(CARGO) clippy $(CARGO_FLAGS) -p $(CRATE) --target $$target \
 			--features "$(CLIPPY_NO_START_FEATURES)" -- \
 			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
 	done
@@ -967,15 +959,11 @@ fmt:
 # `make gen-kaslr-relocs` and is formatted like everything else in the tree.
 fmt-all:
 	$(CARGO) fmt --all
-	@for manifest in $(TOOL_MANIFESTS) $(FUZZ_MANIFEST); do \
-		$(CARGO) fmt --manifest-path $$manifest || exit 1; \
-	done
+	$(CARGO) fmt --manifest-path $(FUZZ_MANIFEST)
 
 fmt-check:
 	$(CARGO) fmt --all --check
-	@for manifest in $(TOOL_MANIFESTS) $(FUZZ_MANIFEST); do \
-		$(CARGO) fmt --manifest-path $$manifest --check || exit 1; \
-	done
+	$(CARGO) fmt --manifest-path $(FUZZ_MANIFEST) --check
 
 clean:
 	$(CARGO) clean
