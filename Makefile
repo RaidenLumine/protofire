@@ -1011,7 +1011,7 @@ fmt-all:
 
 fmt-check:
 	$(CARGO) fmt --all --check
-	$(CARGO) fmt --manifest-path $(FUZZ_MANIFEST) --check
+	$(CARGO) fmt --manifest-path $(FUZZ_MANIFEST) --all --check
 
 clean:
 	$(CARGO) clean
