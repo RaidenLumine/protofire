@@ -249,3 +249,42 @@ and growing a directory's extent, or rewriting one without a record.  And the
 allocator's cost is stated where it lives: a removal reclaims nothing, and a
 file that has something after it pays a copy to grow.  A free-space scan over
 every extent is what would fix both, and it is the next step.
+
+**Stage 3b — the directory, which is where a record lives.**
+
+- `resolve_child` splits a path into the parent directory and the child's
+  name, and `resolve` now answers the *parent's* record offset — including the
+  root's, which is a field of the PVD rather than a record in some directory.
+  That is the second half of the position question stage 2 answered for files.
+- `fs::place_extent` is stage 3a's growth, extracted: give an extent the blocks
+  a size needs, in place if it is the volume's last, by moving otherwise.
+  `set_len` and the directory append are both it, so a file and a directory
+  grow the same way.
+- `fs::append_record` puts a record at the end of a directory's extent.  A
+  record may not straddle a block boundary, so one that does not fit starts the
+  next block — and the bytes it skips are left alone, which a reader reads as
+  "no more records in this block" (`read_directory` already did).
+- `create_file` writes an empty file's record: its extent starts where the
+  volume's space ends and its length is zero, so a create costs the record and
+  nothing else, and the first write gives it blocks.
+- `remove_path` shifts the records after the target down over it and zeroes
+  what is left, then shortens the directory's record.  The bytes are shifted
+  rather than re-serialised because a record carries whatever its writer put in
+  the System Use area, and this driver does not parse all of it.
+- A **name** an ISO identifier has no room for is refused: no Rock Ridge name
+  entry is written yet, so a caller that asks for `hello.txt` gets
+  `HELLO.TXT;1` — which this driver reads back as `hello.txt`, because its
+  lookup is case-insensitive — and a caller that asks for `a name with spaces`
+  is told no.
+- Nine tests: a created file is empty and findable, on a second mount too; it
+  can be written and read back; the directory is longer by exactly the record's
+  43 bytes; a directory that fills its block takes another and every created
+  name is still found; a create of an existing name is `AlreadyExists`; a name
+  with a space is `InvalidArgument`; a removal takes the record out and the
+  neighbour and a second mount agree; a directory is `Unsupported`; and a
+  read-only device refuses both.
+
+**What that leaves.**  Stage 3c is directories — creating one needs a new
+extent *and* an entry in both path tables, in their order, and removing one
+needs the same in reverse — and a Rock Ridge name entry, which is what would
+let a created name be anything a caller likes.

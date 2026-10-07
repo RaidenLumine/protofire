@@ -74,6 +74,12 @@ impl Pvd {
 
 // ── Directory Record ──
 
+/// Byte offset of the root directory's record inside the PVD.
+///
+/// The root's record is a field of the descriptor rather than a record in some
+/// directory, and a root that grows or shrinks rewrites its length there.
+pub const PVD_ROOT_RECORD_OFFSET: usize = 156;
+
 /// Byte offset of a directory record's data-length field.
 ///
 /// The field is the file's length, stored twice — little-endian then
@@ -108,6 +114,11 @@ pub struct DirRecord {
     pub rr_symlink: Option<Vec<u8>>,
     /// Whether this record came from a Joliet (UCS-2BE) directory.
     pub joliet: bool,
+    /// How long this record is, in bytes, as its first byte says.
+    ///
+    /// A record is variable-length and the length is the only thing that finds
+    /// the next one, so removing a record means knowing this.
+    pub record_len: usize,
     /// Where this record itself sits, as a byte offset into the buffer it was
     /// parsed from.
     ///
@@ -120,6 +131,35 @@ pub struct DirRecord {
 }
 
 impl DirRecord {
+    /// Serialise a directory record for a regular file.
+    ///
+    /// The two fields that say where a file is and how long it is are each
+    /// stored twice — little-endian then big-endian — because a reader is free
+    /// to check either, and the recording date is left as all-zero, which the
+    /// standard reads as "not specified" and this driver does not use.
+    pub fn new_file(identifier: &[u8], extent_location: u32, extent_size: u32) -> Vec<u8> {
+        let fi_len = identifier.len();
+        let pad = usize::from(fi_len % 2 == 1);
+        let dr_len = 33 + fi_len + pad;
+        let mut rec = alloc::vec![0u8; dr_len];
+        rec[0] = dr_len as u8;
+        rec[DIR_RECORD_EXTENT_LOCATION_OFFSET..][..4]
+            .copy_from_slice(&extent_location.to_le_bytes());
+        rec[DIR_RECORD_EXTENT_LOCATION_OFFSET + 4..][..4]
+            .copy_from_slice(&extent_location.to_be_bytes());
+        rec[DIR_RECORD_DATA_LENGTH_OFFSET..][..4].copy_from_slice(&extent_size.to_le_bytes());
+        rec[DIR_RECORD_DATA_LENGTH_OFFSET + 4..][..4].copy_from_slice(&extent_size.to_be_bytes());
+        // A regular file: not a directory, not associated, not multi-extent.
+        rec[25] = 0x00;
+        // The volume sequence number, stored twice, is the volume this record
+        // belongs to — the first and only one this driver writes.
+        rec[28..30].copy_from_slice(&1u16.to_le_bytes());
+        rec[30..32].copy_from_slice(&1u16.to_be_bytes());
+        rec[32] = fi_len as u8;
+        rec[33..33 + fi_len].copy_from_slice(identifier);
+        rec
+    }
+
     /// Parse an ISO 9660 directory record (ASCII filenames).
     pub fn parse(sector_data: &[u8], offset: usize) -> Option<(Self, usize)> {
         Self::parse_inner(sector_data, offset, false)
@@ -199,6 +239,7 @@ impl DirRecord {
                 rr_symlink,
                 joliet,
                 source_offset: offset,
+                record_len: dr_len as usize,
             },
             next,
         ))
@@ -353,7 +394,7 @@ fn parse_susp_entries(
 // ── Filename decoding ──
 
 /// Decode an ISO 9660 file identifier to a human-readable name.
-fn decode_iso_filename(raw: &[u8]) -> String {
+pub(crate) fn decode_iso_filename(raw: &[u8]) -> String {
     // Strip ";1" version suffix if present.
     let without_version = if let Some(pos) = raw.iter().rposition(|&b| b == b';') {
         &raw[..pos]

@@ -426,6 +426,138 @@ fn a_directory_refuses_a_write() {
     assert_eq!(dir.write(0, b"x"), Err(Error::InvalidArgument));
 }
 
+// ─── Creating and removing files (RFC 0011, stage 3b) ──────────────────
+
+#[test]
+fn a_created_file_is_empty_and_findable() {
+    let (device, volume) = writable_volume();
+    let node = volume.create_file("/NEW.TXT").expect("create");
+    assert_eq!(node.name(), "new.txt");
+    assert_eq!(node.kind(), NodeKind::File);
+    assert_eq!(node.size(), 0);
+    assert_eq!(volume.lookup("/new.txt").expect("lookup").size(), 0);
+
+    // A second mount reads the record the create wrote into the directory.
+    let reopened = open_volume(device);
+    assert_eq!(reopened.lookup("/NEW.TXT").expect("relookup").size(), 0);
+}
+
+#[test]
+fn a_created_file_can_be_written_and_read_back() {
+    let (device, volume) = writable_volume();
+    let node = volume.create_file("/data.bin").expect("create");
+    let payload = b"written after the create";
+    assert_eq!(node.write(0, payload).expect("write"), payload.len());
+    assert_eq!(node.size(), payload.len());
+
+    let reopened = open_volume(device);
+    let again = reopened.lookup("/data.bin").expect("relookup");
+    assert_eq!(again.size(), payload.len());
+    let mut buf = vec![0u8; payload.len()];
+    assert_eq!(again.read(0, &mut buf).expect("read"), payload.len());
+    assert_eq!(buf, payload);
+}
+
+#[test]
+fn a_created_file_makes_its_directory_longer() {
+    let (device, volume) = writable_volume();
+    assert_eq!(
+        volume.lookup("/").expect("root").size(),
+        ROOT_EXTENT_SIZE as usize
+    );
+
+    volume.create_file("/NEW.TXT").expect("create");
+
+    // `NEW.TXT;1` is nine bytes, so its record is 33 + 9 + one pad byte.
+    let reopened = open_volume(device);
+    assert_eq!(
+        reopened.lookup("/").expect("root again").size(),
+        ROOT_EXTENT_SIZE as usize + 43
+    );
+}
+
+#[test]
+fn a_directory_that_fills_a_block_takes_another() {
+    let (device, volume) = writable_volume();
+
+    // The root's records start at byte 152 of a 2048-byte block, so filling it
+    // takes about forty records and the one that does not fit starts the next
+    // block — which the volume has to give the directory.
+    let mut created = Vec::new();
+    for index in 0..48u32 {
+        let name = alloc::format!("/F{index}.TXT");
+        volume.create_file(&name).expect("create");
+        created.push(name);
+    }
+
+    let reopened = open_volume(device);
+    for name in &created {
+        assert!(reopened.lookup(name).is_ok(), "missing {name}");
+    }
+    assert!(
+        reopened.lookup("/").expect("root").size() > SECTOR_SIZE,
+        "the directory should need a second block"
+    );
+}
+
+#[test]
+fn creating_a_file_that_exists_is_refused() {
+    let (_device, volume) = writable_volume();
+    assert!(matches!(
+        volume.create_file("/HELLO.TXT"),
+        Err(Error::AlreadyExists)
+    ));
+}
+
+#[test]
+fn a_name_the_format_cannot_hold_is_refused() {
+    let (_device, volume) = writable_volume();
+    // No Rock Ridge name entry is written yet, so a name an ISO identifier has
+    // no room for is refused rather than stored mangled.
+    assert!(matches!(
+        volume.create_file("/a name with spaces"),
+        Err(Error::InvalidArgument)
+    ));
+}
+
+#[test]
+fn removing_a_file_takes_its_record_out_of_the_directory() {
+    let (device, volume) = writable_volume();
+    volume.remove_path("/HELLO.TXT").expect("remove");
+    assert!(matches!(volume.lookup("/HELLO.TXT"), Err(Error::NotFound)));
+    assert!(volume.lookup("/SUB/NOTES.TXT").is_ok());
+
+    // A second mount agrees, and the directory is shorter by exactly the
+    // record that left it — 45 bytes of `HELLO.TXT;1`.
+    let reopened = open_volume(device);
+    assert!(matches!(
+        reopened.lookup("/HELLO.TXT"),
+        Err(Error::NotFound)
+    ));
+    assert!(reopened.lookup("/SUB/NOTES.TXT").is_ok());
+    assert_eq!(
+        reopened.lookup("/").expect("root").size(),
+        ROOT_EXTENT_SIZE as usize - 45
+    );
+}
+
+#[test]
+fn removing_a_directory_is_refused() {
+    let (_device, volume) = writable_volume();
+    assert_eq!(volume.remove_path("/SUB"), Err(Error::Unsupported));
+}
+
+#[test]
+fn creating_and_removing_are_refused_on_a_read_only_device() {
+    let device = MemoryBlockDevice::new("iso-ro", build_test_image(), true);
+    let volume = open_volume(device);
+    assert!(volume.create_file("/NEW.TXT").is_err());
+    assert_eq!(
+        volume.remove_path("/HELLO.TXT"),
+        Err(Error::PermissionDenied)
+    );
+}
+
 // ─── Changing a file's length (RFC 0011, stage 2) ──────────────────────
 
 /// Where `HELLO.TXT;1`'s directory record sits inside the root extent: the

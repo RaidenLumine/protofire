@@ -21,9 +21,16 @@
 //!   that block takes blocks from an **append-only** allocator, which grows the
 //!   volume's own declared size over them; a file with something after it
 //!   *moves* to the end rather than growing where it is, because an extent is
-//!   one contiguous run.  Creating, removing and renaming still return
-//!   [`Error::PermissionDenied`], and a write to a read-only *device* is
+//!   one contiguous run.  A regular file can be created — empty, in the
+//!   directory it names — and removed, which is a record appended to that
+//!   directory or shifted out of it.  A *directory* cannot be created or
+//!   removed yet, because both would rewrite the path tables; `rename` is
+//!   refused for the same reason, and a write to a read-only *device* is
 //!   refused by the device.
+//! - No Rock Ridge *name* entry is written, so a created name has to be an ISO
+//!   9660 identifier (`NAME.EXT`): the name is upper-cased and versioned, and a
+//!   name with characters an identifier has no room for is refused rather than
+//!   stored as something a reader would decode differently.
 //! - No multi-extent files (ISO 9660 Level 3 interleave).
 //! - XA attributes are ignored.
 //! - Sector size is always assumed to be 2048 bytes.
@@ -181,9 +188,9 @@ impl Iso9660Volume {
             let pvd = fs::read_pvd(&self.device)?;
             let (root_rec, _) =
                 DirRecord::parse(&pvd.root_dir_record, 0).ok_or(Error::InvalidArgument)?;
-            // The root's record lives in the PVD, not in an extent, and a
-            // directory is not resizable; zero is the honest answer.
-            return Ok((root_rec, Some(entries), 0));
+            // The root's record is a field of the PVD, and a root that grows
+            // or shrinks rewrites its length there.
+            return Ok((root_rec, Some(entries), fs::root_record_offset()));
         }
 
         let segments: Vec<&str> = clean_path
@@ -222,6 +229,33 @@ impl Iso9660Volume {
         }
 
         Err(Error::NotFound)
+    }
+
+    /// The directory a path names a child of, and the child's own name.
+    ///
+    /// A path is resolved one segment at a time, and a create or a remove needs
+    /// the *parent*: its extent is where a child's record goes, and its own
+    /// record is where the directory's length lives.
+    fn resolve_child(&self, clean_path: &str) -> Result<(DirRecord, u64, String)> {
+        let (parent_path, child) = match clean_path.rfind('/') {
+            Some(index) => (&clean_path[..index], &clean_path[index + 1..]),
+            None => ("", clean_path),
+        };
+        if child.is_empty() {
+            // The root has no parent to add it to or take it from.
+            return Err(Error::InvalidArgument);
+        }
+
+        let parent_path = if parent_path.is_empty() {
+            "/"
+        } else {
+            parent_path
+        };
+        let (parent, _entries, record_offset) = self.resolve(parent_path)?;
+        if !parent.is_dir() {
+            return Err(Error::InvalidArgument);
+        }
+        Ok((parent, record_offset, String::from(child)))
     }
 }
 
@@ -284,8 +318,48 @@ impl VfsFileSystem for Iso9660Volume {
     fn rename(&self, _o: &str, _n: &str) -> Result<()> {
         Err(Error::PermissionDenied)
     }
-    fn create_file(&self, _p: &str) -> Result<Arc<dyn VNode>> {
-        Err(Error::PermissionDenied)
+
+    /// Add a regular file to a directory.
+    ///
+    /// The file is *empty*: its record points at where the volume's space ends
+    /// and says its length is zero, so creating one costs the record and
+    /// nothing else, and the first write is what gives it blocks
+    /// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+    fn create_file(&self, path: &str) -> Result<Arc<dyn VNode>> {
+        let clean = clean_path(path);
+        if self.resolve(&clean).is_ok() {
+            return Err(Error::AlreadyExists);
+        }
+        let (parent, parent_record_offset, child) = self.resolve_child(&clean)?;
+        let identifier = iso_identifier(&child)?;
+        // The node is named the way the reader will name it: the identifier's
+        // own form, which is what a lookup of this file answers with.
+        let name = types::decode_iso_filename(&identifier);
+
+        let extent_location = fs::volume_blocks(&self.device)?;
+        let record = DirRecord::new_file(&identifier, extent_location, 0);
+        let (location, new_size, record_offset) = fs::append_record(
+            &self.device,
+            self.block_size,
+            parent.extent_location,
+            parent.extent_size,
+            &record,
+        )?;
+        // The directory's own record says where its extent is and how long it
+        // is, and appending a record may have changed both.
+        fs::rewrite_record_placement(&self.device, parent_record_offset, location, new_size)?;
+
+        Ok(Arc::new(Iso9660VNode {
+            name,
+            kind: NodeKind::File,
+            extent_location: AtomicU32::new(extent_location),
+            extent_size: AtomicU32::new(0),
+            record_offset,
+            rr_posix: None,
+            rr_symlink: None,
+            device: self.device.clone(),
+            block_size: self.block_size,
+        }))
     }
     fn create_dir(&self, _p: &str) -> Result<()> {
         Err(Error::PermissionDenied)
@@ -296,8 +370,59 @@ impl VfsFileSystem for Iso9660Volume {
     fn create_device(&self, _p: &str, _m: u32, _n: u32) -> Result<Arc<dyn VNode>> {
         Err(Error::PermissionDenied)
     }
-    fn remove_path(&self, _p: &str) -> Result<()> {
-        Err(Error::PermissionDenied)
+    /// Take a regular file out of its directory.
+    ///
+    /// The records after it move down over it rather than being re-serialised:
+    /// a record carries whatever its writer put in the System Use area, and
+    /// this driver does not parse all of it, so the bytes are the only honest
+    /// copy.  What the file's blocks were is not reclaimed — the allocator
+    /// appends, and a free-space scan is what would change that.
+    fn remove_path(&self, path: &str) -> Result<()> {
+        let clean = clean_path(path);
+        let (record, _entries, record_offset) = self.resolve(&clean)?;
+        if record.is_dir() {
+            // Removing a directory would also rewrite the path tables, which
+            // is a later stage.
+            return Err(Error::Unsupported);
+        }
+        let (parent, parent_record_offset, _child) = self.resolve_child(&clean)?;
+
+        let mut data = alloc::vec![0u8; parent.extent_size as usize];
+        fs::read_extent(
+            &self.device,
+            self.block_size,
+            parent.extent_location,
+            parent.extent_size,
+            0,
+            &mut data,
+        )?;
+        let at = record_offset
+            .checked_sub(parent.extent_location as u64 * self.block_size as u64)
+            .ok_or(Error::InvalidArgument)? as usize;
+        let len = record.record_len;
+        if at + len > data.len() {
+            return Err(Error::InvalidArgument);
+        }
+        data.copy_within(at + len.., at);
+        let new_size = parent.extent_size - len as u32;
+        data[new_size as usize..].fill(0);
+        fs::write_extent(
+            &self.device,
+            self.block_size,
+            parent.extent_location,
+            parent.extent_size,
+            0,
+            &data,
+        )?;
+
+        // The directory is that much shorter, and nothing else about it moved.
+        fs::rewrite_record_placement(
+            &self.device,
+            parent_record_offset,
+            parent.extent_location,
+            new_size,
+        )?;
+        Ok(())
     }
     fn security_descriptor_mutation_support(&self) -> SecurityDescriptorMutationSupport {
         SecurityDescriptorMutationSupport::LayoutDerivedOnly
@@ -438,51 +563,21 @@ impl VNode for Iso9660VNode {
             return Err(Error::InvalidArgument);
         }
         let length = u32::try_from(length).map_err(|_| Error::InvalidArgument)?;
-        let block_size = self.block_size as u32;
         let current = self.extent_size.load(Ordering::Relaxed);
         if length == current {
             return Ok(());
         }
 
-        let mut extent_location = self.extent_location.load(Ordering::Relaxed);
-        let last_block_end = current.div_ceil(block_size) * block_size;
-        if length > last_block_end {
-            let old_blocks = current.div_ceil(block_size);
-            let new_blocks = length.div_ceil(block_size);
-            let volume_end = fs::volume_blocks(&self.device)?;
-
-            if volume_end != 0 && extent_location + old_blocks == volume_end {
-                // The file is the last thing on the volume: the blocks it
-                // needs are the ones that follow it, and the volume grows over
-                // them.  Growing the volume first is what keeps a crash from
-                // leaving a record that claims blocks the volume does not own.
-                fs::set_volume_blocks(&self.device, volume_end + (new_blocks - old_blocks))?;
-            } else {
-                // Something follows it.  An extent is one run, so the file
-                // moves to the end of the volume — data first, then the record
-                // that points at it, so a crash before the record leaves the
-                // old file whole.
-                let first = fs::allocate_blocks(&self.device, self.block_size, new_blocks)?;
-                let mut data = alloc::vec![0u8; current as usize];
-                fs::read_extent(
-                    &self.device,
-                    self.block_size,
-                    extent_location,
-                    current,
-                    0,
-                    &mut data,
-                )?;
-                fs::write_extent(
-                    &self.device,
-                    self.block_size,
-                    first,
-                    length,
-                    0,
-                    &data[..current as usize],
-                )?;
-                extent_location = first;
-            }
-        }
+        let extent_location = self.extent_location.load(Ordering::Relaxed);
+        // Past the block the file has, the extent needs blocks; `place_extent`
+        // takes them where it can and moves the file where it cannot.
+        let extent_location = fs::place_extent(
+            &self.device,
+            self.block_size,
+            extent_location,
+            current,
+            length,
+        )?;
 
         // Where the file is and how long it is, in one write: the two fields
         // are adjacent in the record and each is stored twice.
@@ -510,6 +605,35 @@ impl VNode for Iso9660VNode {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/// The ISO 9660 identifier for a file a caller names.
+///
+/// A level-1/2 identifier is upper case and carries a version — `NAME.EXT;1` —
+/// and this driver writes no Rock Ridge name entry yet, so a name that is not
+/// one of those is refused rather than stored as something a reader would
+/// decode differently.  A caller that asks for `hello.txt` gets
+/// `HELLO.TXT;1`, which this driver reads back as `hello.txt` because its
+/// lookup is case-insensitive.
+fn iso_identifier(name: &str) -> Result<Vec<u8>> {
+    if name.is_empty() || name.len() > 30 {
+        return Err(Error::InvalidArgument);
+    }
+
+    let mut identifier = Vec::with_capacity(name.len() + 2);
+    let mut dotted = false;
+    for character in name.chars() {
+        match character.to_ascii_uppercase() {
+            upper @ ('A'..='Z' | '0'..='9' | '_') => identifier.push(upper as u8),
+            '.' if !dotted => {
+                dotted = true;
+                identifier.push(b'.');
+            }
+            _ => return Err(Error::InvalidArgument),
+        }
+    }
+    identifier.extend_from_slice(b";1");
+    Ok(identifier)
+}
 
 fn clean_path(path: &str) -> String {
     if path.is_empty() || path == "/" {

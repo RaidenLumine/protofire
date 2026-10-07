@@ -13,6 +13,7 @@ use super::types::BootEntry;
 use super::types::DirRecord;
 use super::types::Pvd;
 use super::types::DIR_RECORD_EXTENT_LOCATION_OFFSET;
+use super::types::PVD_ROOT_RECORD_OFFSET;
 use super::types::PVD_SECTOR;
 use super::types::SECTOR_SIZE;
 use super::types::SVD_SECTOR;
@@ -369,6 +370,15 @@ use alloc;
 ///
 /// The descriptor's own statement of the volume's extent, stored twice.  Zero
 /// means the image never said.
+/// Where the root directory's record lives: a field of the PVD.
+///
+/// The root is the one directory that is not a record inside another, and its
+/// length lives in the descriptor.
+pub fn root_record_offset() -> u64 {
+    PVD_SECTOR * SECTOR_SIZE as u64 + PVD_ROOT_RECORD_OFFSET as u64
+}
+
+/// How many logical blocks the volume says it has.
 pub fn volume_blocks(device: &Arc<dyn BlockDevice>) -> Result<u32, Error> {
     let pvd = read_pvd(device)?;
     let bytes: [u8; 4] = pvd.volume_space_size[..4]
@@ -420,6 +430,89 @@ pub fn allocate_blocks(
 
     set_volume_blocks(device, end)?;
     Ok(first)
+}
+
+/// Give an extent the blocks `new_size` bytes need, and answer where it is.
+///
+/// An extent is **one contiguous run**, so there are two ways to make it
+/// bigger and this picks by where it is.  When it is the last thing the volume
+/// holds, the blocks it needs follow it and the volume grows over them — no
+/// copy.  Otherwise something is in the way, and the extent **moves** to the
+/// end of the volume: the data first, and the caller writes the record that
+/// points at it afterwards, so a crash before that leaves the old record
+/// pointing at the old content.
+///
+/// A size that fits in the blocks the extent already has allocates nothing and
+/// moves nothing.
+pub fn place_extent(
+    device: &Arc<dyn BlockDevice>,
+    block_size: u16,
+    extent_location: u32,
+    extent_size: u32,
+    new_size: u32,
+) -> Result<u32, Error> {
+    let bs = block_size as u32;
+    let old_blocks = extent_size.div_ceil(bs);
+    let new_blocks = new_size.div_ceil(bs);
+    if new_blocks <= old_blocks {
+        return Ok(extent_location);
+    }
+
+    let volume_end = volume_blocks(device)?;
+    if volume_end != 0 && extent_location + old_blocks == volume_end {
+        // The extent is the last thing on the volume: grow the volume over the
+        // blocks that follow it, which keeps a crash from leaving a record
+        // that claims blocks the volume does not own.
+        set_volume_blocks(device, volume_end + (new_blocks - old_blocks))?;
+        return Ok(extent_location);
+    }
+
+    let first = allocate_blocks(device, block_size, new_blocks)?;
+    if extent_size > 0 {
+        let mut data = alloc::vec![0u8; extent_size as usize];
+        read_extent(
+            device,
+            block_size,
+            extent_location,
+            extent_size,
+            0,
+            &mut data,
+        )?;
+        write_extent(device, block_size, first, new_size, 0, &data)?;
+    }
+    Ok(first)
+}
+
+/// Add `record` to the end of a directory's extent, and answer where it went.
+///
+/// A directory record may not straddle a logical block boundary, so a record
+/// that does not fit in the block the directory's records end in starts the
+/// next one.  The bytes it skips are left as the image had them — a reader
+/// reads a zero-length record as "no more records in this block" and continues
+/// at the next one, which is what [`read_directory`] does.
+///
+/// The directory's own record is the caller's to rewrite: it says where the
+/// extent is and how long it is, and nothing here touches it.
+pub fn append_record(
+    device: &Arc<dyn BlockDevice>,
+    block_size: u16,
+    dir_extent: u32,
+    dir_size: u32,
+    record: &[u8],
+) -> Result<(u32, u32, u64), Error> {
+    let bs = block_size as u64;
+    let mut at = dir_size as u64;
+    if at % bs + record.len() as u64 > bs {
+        at = at.div_ceil(bs) * bs;
+    }
+
+    let new_size = u32::try_from(at + record.len() as u64).map_err(|_| Error::NoSpace)?;
+    let location = place_extent(device, block_size, dir_extent, dir_size, new_size)?;
+
+    // The record goes into the extent's own byte space, which the move above
+    // preserved, so `at` is where it is either way.
+    write_exact(device, location as u64 * bs + at, record)?;
+    Ok((location, new_size, location as u64 * bs + at))
 }
 
 /// Point a file's record at a new extent, and give it a new length.
