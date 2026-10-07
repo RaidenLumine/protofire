@@ -121,8 +121,6 @@ impl SimpleFs {
                 shadow_inode_table_block: parsed_superblock.record.shadow_inode_table_block,
                 shadow_dirent_table_block: parsed_superblock.record.shadow_dirent_table_block,
                 generation: parsed_superblock.record.generation,
-                inode_table_dirty: false,
-                dirent_table_dirty: false,
                 needs_shadow_sync: true,
                 staging_roots: Vec::new(),
                 free_inode_slots,
@@ -134,7 +132,6 @@ impl SimpleFs {
                 xattrs,
                 active_xattr_table_block: parsed_superblock.record.active_xattr_table_block,
                 shadow_xattr_table_block: parsed_superblock.record.shadow_xattr_table_block,
-                xattr_table_dirty: false,
                 dedup_refcounts: BTreeMap::new(),
                 dedup_hash_to_extents: BTreeMap::new(),
                 open_handles: BTreeMap::new(),
@@ -232,6 +229,64 @@ impl SimpleFs {
             let offset = i * BLOCK_SIZE;
             self.cache
                 .populate_clean(lba + i as u64, &data[offset..offset + BLOCK_SIZE]);
+        }
+        Ok(())
+    }
+
+    /// Write one metadata table into its shadow slot, skipping the blocks that
+    /// already hold the same bytes there.
+    ///
+    /// A commit writes into the slot that holds the table from *two*
+    /// generations back — the previous commit published into the other slot —
+    /// so the bytes to compare against are the slot's **current** content, not
+    /// the last committed image.  That content was populated into the block
+    /// cache when the slot was last written, so the comparison usually comes
+    /// straight out of the cache.  Only a handful of a table's blocks differ
+    /// after a burst of metadata edits — of the 1436 blocks a demo boot wrote
+    /// whole, 370 had changed — and the rest is traffic the device never has
+    /// to see.
+    ///
+    /// Consecutive differing blocks go out as one request, so a full write is
+    /// still a single `write_blocks` call: the crash-recovery tests that count
+    /// metadata writes keep their indices for the first commit after a mount.
+    ///
+    /// `full` forces every block out in one request, which the first commit
+    /// after a mount must do — nothing has described the shadow slot yet, and
+    /// a commit that failed part way may have left it partly updated.
+    pub(crate) fn write_shadow_table(&self, base: usize, image: &[u8], full: bool) -> Result<()> {
+        if self.device.device_health() == DeviceHealth::Failed {
+            return Err(Error::DeviceError);
+        }
+        if full {
+            return self.write_blocks_cached(base as u64, image);
+        }
+
+        let block_count = image.len() / BLOCK_SIZE;
+        // One pass, no scratch: a run of differing blocks is flushed as soon
+        // as it ends, so the commit path allocates nothing of its own.
+        let mut run_start: Option<usize> = None;
+        for index in 0..block_count {
+            let offset = index * BLOCK_SIZE;
+            let mut on_disk = [0_u8; BLOCK_SIZE];
+            match self.cache.cached((base + index) as u64) {
+                Some(cached) => on_disk = cached,
+                None => self
+                    .cache
+                    .read_cached((base + index) as u64, &mut on_disk)?,
+            }
+            if on_disk[..] == image[offset..offset + BLOCK_SIZE] {
+                if let Some(start) = run_start.take() {
+                    self.write_blocks_cached(
+                        (base + start) as u64,
+                        &image[start * BLOCK_SIZE..offset],
+                    )?;
+                }
+            } else if run_start.is_none() {
+                run_start = Some(index);
+            }
+        }
+        if let Some(start) = run_start {
+            self.write_blocks_cached((base + start) as u64, &image[start * BLOCK_SIZE..])?;
         }
         Ok(())
     }

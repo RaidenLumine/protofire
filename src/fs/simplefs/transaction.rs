@@ -21,14 +21,11 @@ use super::SimpleFsState;
 use super::UndoLog;
 
 impl SimpleFsState {
-    /// Clear the undo log at the start of a commit.  Saves the current dirty
-    /// flags so rollback can restore them regardless of what the closure sets,
-    /// and the pre-transaction table lengths so the pending superblock written
-    /// in Phase 1 describes the still-referenced active tables.
+    /// Clear the undo log at the start of a commit.  Saves the pre-transaction
+    /// table lengths so the pending superblock written in Phase 1 describes the
+    /// still-referenced active tables.
     pub(crate) fn begin_undo(&mut self) {
         self.undo = UndoLog::default();
-        self.undo.old_inode_table_dirty = Some(self.inode_table_dirty);
-        self.undo.old_dirent_table_dirty = Some(self.dirent_table_dirty);
         self.undo.old_inode_count = Some(self.inodes.len());
         self.undo.old_dirent_count = Some(self.dir_entries.len());
         self.undo.old_xattr_count = Some(self.xattrs.len());
@@ -126,15 +123,6 @@ impl SimpleFsState {
         }
     }
 
-    /// Lazily save dirty flags before any modification in a commit.
-    #[allow(dead_code)]
-    pub(crate) fn save_dirty_flags_for_undo(&mut self) {
-        if self.undo.old_inode_table_dirty.is_none() {
-            self.undo.old_inode_table_dirty = Some(self.inode_table_dirty);
-            self.undo.old_dirent_table_dirty = Some(self.dirent_table_dirty);
-        }
-    }
-
     /// Rollback all mutations recorded in the undo log.  LIFO order ensures
     /// that dependent mutations are unwound correctly.
     pub(crate) fn rollback_undo(&mut self) {
@@ -201,13 +189,6 @@ impl SimpleFsState {
         // Restore staging_roots length
         if let Some(len) = self.undo.staging_roots_len {
             self.staging_roots.truncate(len);
-        }
-        // Restore dirty flags
-        if let Some(dirty) = self.undo.old_inode_table_dirty {
-            self.inode_table_dirty = dirty;
-        }
-        if let Some(dirty) = self.undo.old_dirent_table_dirty {
-            self.dirent_table_dirty = dirty;
         }
     }
 
@@ -377,7 +358,6 @@ impl TransactionContext<'_> {
             inode.size = 0;
             inode.entry_count = 0;
             inode.persistent_security = None;
-            self.state.inode_table_dirty = true;
             // A slot still referenced by an open handle must not be recycled;
             // it is freed by SimpleVNode's Drop once the last handle closes.
             if self
@@ -442,7 +422,6 @@ impl TransactionContext<'_> {
             owner_gid: security.owner_gid,
             mode: security.mode,
         });
-        self.state.inode_table_dirty = true;
         Ok(())
     }
 

@@ -2,6 +2,14 @@
 //!
 //! Exercise a block-level fault-injection matrix for writable SimpleFs recovery
 //! behavior.
+//!
+//! A plan fires on the `match_number`-th write that falls in its target.  A
+//! metadata-table target is the whole slot rather than its first block,
+//! because a commit now writes only the blocks of a slot that differ — so a
+//! plan that means "the write into the shadow table" has to match wherever in
+//! the slot that write lands.  A case that has to fault one particular commit
+//! arms its plan after the commits before it, rather than counting writes
+//! across them.
 
 mod support;
 
@@ -32,6 +40,8 @@ const SUPERBLOCK_ACTIVE_DIRENT_TABLE_OFFSET: usize = 28;
 const SUPERBLOCK_DATA_BLOCK_START_OFFSET: usize = 32;
 const SUPERBLOCK_SHADOW_INODE_TABLE_OFFSET: usize = 36;
 const SUPERBLOCK_SHADOW_DIRENT_TABLE_OFFSET: usize = 40;
+const SUPERBLOCK_INODE_TABLE_BLOCKS_OFFSET: usize = 44;
+const SUPERBLOCK_DIRENT_TABLE_BLOCKS_OFFSET: usize = 48;
 const SUPERBLOCK_GENERATION_OFFSET: usize = 52;
 const SUPERBLOCK_CHECKSUM_OFFSET: usize = 56;
 const PUBLISH_THEN_RETIRE_REMOVE_COMMIT_NUMBER: usize = 4;
@@ -61,6 +71,8 @@ struct SimpleFsLayout {
     active_dirent_table_block: u64,
     shadow_inode_table_block: u64,
     shadow_dirent_table_block: u64,
+    inode_table_blocks: u64,
+    dirent_table_blocks: u64,
     data_block_start: u64,
     generation: u32,
 }
@@ -83,13 +95,13 @@ struct MatrixCase {
 }
 
 struct FaultSequenceState {
+    plans: Vec<FaultPlan>,
     target_matches: BTreeMap<FaultTarget, usize>,
     fired: Vec<bool>,
 }
 
 struct FaultInjectingBlockDevice {
     inner: Arc<MemoryBlockDevice>,
-    plans: Vec<FaultPlan>,
     state: Mutex<FaultSequenceState>,
 }
 
@@ -99,20 +111,31 @@ impl FaultInjectingBlockDevice {
     }
 
     fn new_sequence(inner: Arc<MemoryBlockDevice>, plans: Vec<FaultPlan>) -> Arc<Self> {
-        let plan_count = plans.len();
-        Arc::new(Self {
+        let device = Arc::new(Self {
             inner,
-            plans,
             state: Mutex::new(FaultSequenceState {
+                plans: Vec::new(),
                 target_matches: BTreeMap::new(),
-                fired: vec![false; plan_count],
+                fired: Vec::new(),
             }),
-        })
+        });
+        device.arm(plans);
+        device
     }
 
-    fn matches_target(plan: FaultPlan, lba: u64, block_count: u64) -> bool {
+    /// Install `plans`, forgetting any prior matches.  Used by cases that must
+    /// fault one specific commit: the device is opened unarmed, the commits
+    /// before the target run, and the plans are armed just before it.
+    fn arm(&self, plans: Vec<FaultPlan>) {
+        let mut state = self.state.lock().expect("fault state lock");
+        state.fired = vec![false; plans.len()];
+        state.plans = plans;
+        state.target_matches.clear();
+    }
+
+    fn target_matches(target: FaultTarget, lba: u64, block_count: u64) -> bool {
         let end = lba.saturating_add(block_count);
-        match plan.target {
+        match target {
             FaultTarget::ExactLba(target_lba) => lba <= target_lba && target_lba < end,
             FaultTarget::Range {
                 start_lba,
@@ -153,12 +176,13 @@ impl BlockDevice for FaultInjectingBlockDevice {
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
         let block_count = (data.len() / BLOCK_SIZE) as u64;
         let mut state = self.state.lock().expect("fault state lock");
+
         let mut matched_targets = BTreeMap::new();
-        for plan in self.plans.iter().copied() {
-            if !Self::matches_target(plan, lba, block_count) {
+        for plan_index in 0..state.plans.len() {
+            let plan = state.plans[plan_index];
+            if !Self::target_matches(plan.target, lba, block_count) {
                 continue;
             }
-
             let count = matched_targets.entry(plan.target).or_insert_with(|| {
                 let entry = state.target_matches.entry(plan.target).or_insert(0);
                 *entry += 1;
@@ -167,7 +191,7 @@ impl BlockDevice for FaultInjectingBlockDevice {
             let _ = count;
         }
 
-        for (index, plan) in self.plans.iter().copied().enumerate() {
+        for (index, plan) in state.plans.iter().copied().enumerate() {
             if state.fired[index] {
                 continue;
             }
@@ -329,6 +353,8 @@ fn read_superblock_layout(device: &dyn BlockDevice, block: u64) -> Result<Simple
         shadow_inode_table_block: read_u32_le(&buffer, SUPERBLOCK_SHADOW_INODE_TABLE_OFFSET) as u64,
         shadow_dirent_table_block: read_u32_le(&buffer, SUPERBLOCK_SHADOW_DIRENT_TABLE_OFFSET)
             as u64,
+        inode_table_blocks: read_u32_le(&buffer, SUPERBLOCK_INODE_TABLE_BLOCKS_OFFSET) as u64,
+        dirent_table_blocks: read_u32_le(&buffer, SUPERBLOCK_DIRENT_TABLE_BLOCKS_OFFSET) as u64,
         data_block_start: read_u32_le(&buffer, SUPERBLOCK_DATA_BLOCK_START_OFFSET) as u64,
         generation: read_u32_le(&buffer, SUPERBLOCK_GENERATION_OFFSET),
     })
@@ -358,51 +384,21 @@ fn fault_target_for_case(
     device_blocks: u64,
 ) -> FaultTarget {
     match stage {
-        MatrixStage::ShadowInodeTable => FaultTarget::ExactLba(layout.shadow_inode_table_block),
-        MatrixStage::ShadowDirentTable => FaultTarget::ExactLba(layout.shadow_dirent_table_block),
+        // A commit writes only the blocks of a slot that differ, so a fault in
+        // the slot has to target the whole slot rather than its first block.
+        MatrixStage::ShadowInodeTable => FaultTarget::Range {
+            start_lba: layout.shadow_inode_table_block,
+            block_count: layout.inode_table_blocks,
+        },
+        MatrixStage::ShadowDirentTable => FaultTarget::Range {
+            start_lba: layout.shadow_dirent_table_block,
+            block_count: layout.dirent_table_blocks,
+        },
         MatrixStage::SecondarySuperblock => FaultTarget::ExactLba(SECONDARY_SUPERBLOCK_BLOCK),
         MatrixStage::PrimarySuperblock => FaultTarget::ExactLba(PRIMARY_SUPERBLOCK_BLOCK),
         MatrixStage::DataRegion => FaultTarget::Range {
             start_lba: layout.data_block_start,
             block_count: device_blocks.saturating_sub(layout.data_block_start),
-        },
-    }
-}
-
-fn fault_plan_for_commit_number(
-    stage: MatrixStage,
-    layout: SimpleFsLayout,
-    device_blocks: u64,
-    commit_number: usize,
-    mode: FaultMode,
-) -> FaultPlan {
-    assert!(commit_number != 0, "commit number must be 1-based");
-
-    match stage {
-        MatrixStage::ShadowInodeTable => FaultPlan {
-            target: FaultTarget::ExactLba(if commit_number % 2 == 1 {
-                layout.shadow_inode_table_block
-            } else {
-                layout.active_inode_table_block
-            }),
-            match_number: commit_number.div_ceil(2),
-            mode,
-        },
-        MatrixStage::ShadowDirentTable => FaultPlan {
-            target: FaultTarget::ExactLba(if commit_number % 2 == 1 {
-                layout.shadow_dirent_table_block
-            } else {
-                layout.active_dirent_table_block
-            }),
-            match_number: commit_number.div_ceil(2),
-            mode,
-        },
-        MatrixStage::SecondarySuperblock
-        | MatrixStage::PrimarySuperblock
-        | MatrixStage::DataRegion => FaultPlan {
-            target: fault_target_for_case(stage, layout, device_blocks),
-            match_number: commit_number,
-            mode,
         },
     }
 }
@@ -557,7 +553,9 @@ fn assert_cross_directory_rename_committed(
     assert_eq!(volume.stat("/right").expect("stat right").size, 1, "{note}");
 }
 
-fn execute_publish_then_retire_sequence(volume: &SimpleFsVolume) -> Result<()> {
+/// Stage a file, write it, and publish it by rename — the commits before the
+/// retired payload is removed.
+fn publish_staged_payload(volume: &SimpleFsVolume) {
     let file = volume
         .create_file("/staging/current.bin")
         .expect("create staged payload");
@@ -569,6 +567,10 @@ fn execute_publish_then_retire_sequence(volume: &SimpleFsVolume) -> Result<()> {
     volume
         .rename("/staging/current.bin", "/history/current.bin")
         .expect("publish staged payload");
+}
+
+fn execute_publish_then_retire_sequence(volume: &SimpleFsVolume) -> Result<()> {
+    publish_staged_payload(volume);
     volume.remove_path("/archive/retired.bin")
 }
 
@@ -922,25 +924,25 @@ fn simplefs_publish_then_retire_metadata_fault_matrix_preserves_pre_remove_state
     for case in cases {
         let device = build_publish_then_retire_device();
         let warmup_paths = apply_warmup_commits(&device, case.warmup_commits);
-        let layout = load_current_layout(&*device).expect("read current layout");
-        let failing = FaultInjectingBlockDevice::new(
-            device.clone(),
-            // The failing `remove_path()` is the fourth metadata commit in the
-            // high-level workflow: create staged file, write it, publish it,
-            // then retire the old payload.
-            fault_plan_for_commit_number(
-                case.stage,
-                layout,
-                device.block_count(),
-                PUBLISH_THEN_RETIRE_REMOVE_COMMIT_NUMBER,
-                case.mode,
-            ),
-        );
-
-        let fs = SimpleFs::open(failing, true).expect("open failing publish-retire simplefs");
+        // The failing `remove_path()` is the fourth metadata commit in the
+        // workflow (create staged file, write it, publish it, then retire the
+        // old payload).  Run the first three unarmed, then arm the fault on the
+        // slot that commit is about to write, so the plan does not depend on
+        // how many blocks the earlier commits happened to put out.
+        let failing = FaultInjectingBlockDevice::new_sequence(device.clone(), Vec::new());
+        let fs =
+            SimpleFs::open(failing.clone(), true).expect("open failing publish-retire simplefs");
         let volume = SimpleFsVolume::new(fs);
+        publish_staged_payload(&volume);
+
+        let layout = load_current_layout(&*device).expect("read layout before the remove");
+        failing.arm(vec![FaultPlan {
+            target: fault_target_for_case(case.stage, layout, device.block_count()),
+            match_number: 1,
+            mode: case.mode,
+        }]);
         assert_eq!(
-            execute_publish_then_retire_sequence(&volume),
+            volume.remove_path("/archive/retired.bin"),
             Err(Error::DeviceError),
             "{}",
             case.name
@@ -976,13 +978,13 @@ fn simplefs_publish_then_retire_primary_superblock_fault_matrix_commits_across_r
         let layout = load_current_layout(&*device).expect("read current layout");
         let failing = FaultInjectingBlockDevice::new(
             device.clone(),
-            fault_plan_for_commit_number(
-                case.stage,
-                layout,
-                device.block_count(),
-                PUBLISH_THEN_RETIRE_REMOVE_COMMIT_NUMBER,
-                case.mode,
-            ),
+            // The primary superblock is written once per commit, so counting
+            // its writes counts commits: the fourth is the `remove_path()`.
+            FaultPlan {
+                target: fault_target_for_case(case.stage, layout, device.block_count()),
+                match_number: PUBLISH_THEN_RETIRE_REMOVE_COMMIT_NUMBER,
+                mode: case.mode,
+            },
         );
 
         let fs = SimpleFs::open(failing, true).expect("open failing publish-retire simplefs");

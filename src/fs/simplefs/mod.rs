@@ -59,8 +59,6 @@ pub(crate) struct UndoLog {
     free_inode_slots: Option<Vec<usize>>,
     dir_inode_indices: Option<Vec<usize>>,
     staging_roots_len: Option<usize>,
-    old_inode_table_dirty: Option<bool>,
-    old_dirent_table_dirty: Option<bool>,
     /// Per-record snapshots for xattr-table mutations (V4+).
     xattrs: Vec<(usize, XattrRecord)>,
     /// Length of `xattrs` before the first push (for rollback truncation).
@@ -86,8 +84,9 @@ pub(crate) struct SimpleFsState {
     shadow_inode_table_block: usize,
     shadow_dirent_table_block: usize,
     generation: u32,
-    inode_table_dirty: bool,
-    dirent_table_dirty: bool,
+    /// True when the shadow slots' content is not known — just after a mount,
+    /// or after a commit failed part way — so the next flush must write every
+    /// block of every table instead of only the blocks that differ.
     needs_shadow_sync: bool,
     staging_roots: Vec<String>,
     free_inode_slots: Vec<usize>,
@@ -102,7 +101,6 @@ pub(crate) struct SimpleFsState {
     /// active/shadow pair).
     active_xattr_table_block: usize,
     shadow_xattr_table_block: usize,
-    xattr_table_dirty: bool,
     /// V4+: live cross-file dedup refcounts keyed by `(data_block,
     /// block_count)`.
     dedup_refcounts: BTreeMap<(u32, u32), usize>,

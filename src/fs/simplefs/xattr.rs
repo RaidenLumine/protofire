@@ -58,7 +58,6 @@ impl SimpleFs {
             record.value.fill(0);
             record.value[..value.len()].copy_from_slice(value);
             state.xattrs[index] = record;
-            state.xattr_table_dirty = true;
             return Ok(());
         }
 
@@ -92,7 +91,6 @@ impl SimpleFs {
         record.name[..name.len()].copy_from_slice(name);
         record.value[..value.len()].copy_from_slice(value);
         state.xattrs[index] = record;
-        state.xattr_table_dirty = true;
         Ok(())
     }
 
@@ -129,7 +127,6 @@ impl SimpleFs {
         record.value_len = 0;
         record.name.fill(0);
         record.value.fill(0);
-        state.xattr_table_dirty = true;
         Ok(())
     }
 
@@ -177,6 +174,5 @@ impl SimpleFs {
             record.name.fill(0);
             record.value.fill(0);
         }
-        state.xattr_table_dirty = true;
     }
 }

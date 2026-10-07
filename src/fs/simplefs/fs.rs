@@ -221,7 +221,6 @@ impl SimpleFs {
         let insert_at = parent_inode.entry_start as usize + parent_inode.entry_count as usize;
         let child_inode_index = entry.inode_index as usize;
         state.dir_entries.insert(insert_at, entry);
-        state.dirent_table_dirty = true;
 
         // Update the reverse parent index for the newly inserted child.
         if child_inode_index < state.parent_of.len() {
@@ -249,7 +248,6 @@ impl SimpleFs {
                 inode.entry_start += 1;
             }
         }
-        state.inode_table_dirty = true;
 
         Ok(())
     }
@@ -281,7 +279,6 @@ impl SimpleFs {
         }
 
         let removed = state.dir_entries.remove(entry_index);
-        state.dirent_table_dirty = true;
 
         // Clear the reverse parent index for the removed child.
         let child_idx = removed.inode_index as usize;
@@ -340,7 +337,6 @@ impl SimpleFs {
                     }
                 }
                 *slot = inode;
-                state.inode_table_dirty = true;
                 // Clear any stale parent_of and entry index from the previous occupant.
                 if free_idx < state.parent_of.len() {
                     state.save_parent_of_for_undo(free_idx);
@@ -362,7 +358,6 @@ impl SimpleFs {
             state.inodes.push(inode);
             state.parent_of.push(None);
             state.inode_to_entry_index.push(None);
-            state.inode_table_dirty = true;
             idx
         };
 

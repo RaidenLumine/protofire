@@ -233,7 +233,8 @@ impl SimpleFs {
     /// superblock mirrors so a crash during the write is detectable on next
     /// mount.  The superblock still points to the **current** active tables.
     ///
-    /// Phase 2 — Write: flush dirty shadow metadata tables (inode then dirent).
+    /// Phase 2 — Write: flush the shadow metadata tables (inode then dirent),
+    /// skipping the blocks whose bytes already match the slot they overwrite.
     ///
     /// Phase 3 — Publish: write both superblock mirrors with swapped
     /// active/shadow pointers, the bumped generation, and `pending_commit`
@@ -243,9 +244,31 @@ impl SimpleFs {
     /// On mount, if either superblock has `pending_commit != 0`, the shadow
     /// tables may be corrupt and the active tables are used instead;
     /// [`check_and_repair`] clears the stale flag.
+    ///
+    /// The slot a commit writes holds the table from *two* generations back:
+    /// the previous commit published into the other slot, which left the write
+    /// target as the copy from before it.  Phase 2 therefore compares against
+    /// the slot's own bytes rather than against the last commit's image — the
+    /// difference is the union of the last two generations' changes, and a
+    /// block the previous commit wrote but this one did not would otherwise
+    /// stay stale in the copy the publish is about to make active.  The slot
+    /// left behind by the publish is likewise a generation behind, which is
+    /// what [`check_and_repair`] reports as one issue and clears with a single
+    /// synchronising commit.
     pub(crate) fn flush_metadata(&self, state: &mut SimpleFsState) -> Result<()> {
         self.profiler.inc_metadata_flushes();
+        let result = self.flush_metadata_inner(state);
+        if result.is_err() {
+            // A commit that stopped part way may have written some of the
+            // shadow slot's blocks before it failed, so the slot no longer
+            // holds the generation the next differential write would compare
+            // against.  Force the next commit to rewrite the whole slot.
+            state.needs_shadow_sync = true;
+        }
+        result
+    }
 
+    fn flush_metadata_inner(&self, state: &mut SimpleFsState) -> Result<()> {
         let image = self.runtime_metadata_image(state);
         let next_generation = state
             .generation
@@ -290,19 +313,30 @@ impl SimpleFs {
             self.write_blocks_cached(PRIMARY_SUPERBLOCK_BLOCK as u64, &pending_sb)?;
         }
 
-        // Phase 2: Write shadow metadata tables.
-        // All tables are always written so that after the pointer swap
-        // both shadow slots contain a consistent copy of the current
-        // metadata.  The `inode_table_dirty` / `dirent_table_dirty` flags
-        // and `needs_shadow_sync` are maintained for a future write-skipping
-        // optimisation; see the field-level docs on [`SimpleFsState`].
-        self.write_blocks_cached(state.shadow_inode_table_block as u64, &image.inode_table)?;
-        self.write_blocks_cached(state.shadow_dirent_table_block as u64, &image.dirent_table)?;
+        // Phase 2: Write the shadow metadata tables.  Each block of the slot
+        // that already holds the new image's bytes is left alone, so a commit
+        // puts only its changes on the device; the first commit after a mount
+        // (and the first after a failed one) writes the whole slot instead,
+        // because nothing has described the slot's content yet.
+        self.write_shadow_table(
+            state.shadow_inode_table_block,
+            &image.inode_table,
+            state.needs_shadow_sync,
+        )?;
+        self.write_shadow_table(
+            state.shadow_dirent_table_block,
+            &image.dirent_table,
+            state.needs_shadow_sync,
+        )?;
         // V4+: the shadow xattr table is part of the same atomic slot.  It is
         // gated on the format so V2/V3 write sequences stay byte-identical
         // (crash tests hard-code the absolute write-call indices).
         if self.format_version.supports_persistent_xattrs() {
-            self.write_blocks_cached(state.shadow_xattr_table_block as u64, &image.xattr_table)?;
+            self.write_shadow_table(
+                state.shadow_xattr_table_block,
+                &image.xattr_table,
+                state.needs_shadow_sync,
+            )?;
         }
 
         // Phase 3: Publish — swap active/shadow, bump generation, clear
@@ -344,9 +378,6 @@ impl SimpleFs {
             &mut state.shadow_xattr_table_block,
         );
         state.generation = next_generation;
-        state.inode_table_dirty = false;
-        state.dirent_table_dirty = false;
-        state.xattr_table_dirty = false;
         state.needs_shadow_sync = false;
         Ok(())
     }
@@ -412,16 +443,11 @@ impl SimpleFs {
         }
 
         // A no-op commit republishes the current in-memory tree into the
-        // inactive slot and rewrites both mirrored superblocks. Running it up
-        // to twice repairs whichever slot was stale or torn.
+        // inactive slot — writing every block of it that differs — and
+        // rewrites both mirrored superblocks.  Running it up to twice repairs
+        // whichever slot was stale or torn.
         for _ in 0..2 {
             self.commit_metadata_update(|state| {
-                // Force the metadata tables dirty so the shadow slot is fully
-                // rewritten, including the V4+ xattr table.
-                state.dirent_table_dirty = true;
-                if self.format_version.supports_persistent_xattrs() {
-                    state.xattr_table_dirty = true;
-                }
                 // Rebuild free extents from current inode table state so that
                 // any blocks zeroed by orphan/staging cleanup are tracked.
                 self.rebuild_free_data_extents(state);

@@ -70,6 +70,23 @@ fn open_writable_v4_for_test(device: Arc<dyn BlockDevice>) -> Arc<SimpleFs> {
     SimpleFs::open(device, true).expect("open writable v4 simplefs")
 }
 
+/// Build a writable V2 image — the format the tree's own image builders
+/// produce — with a single `/README.txt` seed file.
+fn build_v2_test_device(name: &str, seed: &[u8]) -> Arc<MemoryBlockDevice> {
+    let image = SimpleFs::build_image_with_headroom(
+        name,
+        &[ImageEntry {
+            path: "/README.txt",
+            data: seed,
+        }],
+        64,
+        200,
+        16,
+    )
+    .expect("build v2 test image");
+    MemoryBlockDevice::new(name, image, false)
+}
+
 /// Read a whole file node into a fresh `Vec`.
 fn read_full_test(node: &dyn VNode) -> Vec<u8> {
     let size = node.size();
@@ -82,6 +99,60 @@ fn read_full_test(node: &dyn VNode) -> Vec<u8> {
 }
 
 // ── Metadata write-failure injection ──────────────────────────────────
+
+/// Block-device wrapper that counts the blocks each write puts on the device.
+///
+/// `write_shadow_table` writes a metadata table block by block, so this is how
+/// a test can see that a commit after the first one — the one that describes
+/// the slot — carries only the blocks that differ.
+struct WriteCountingBlockDevice {
+    name: String,
+    parent: Arc<dyn BlockDevice>,
+    blocks_written: Mutex<usize>,
+}
+
+impl WriteCountingBlockDevice {
+    fn new(parent: Arc<dyn BlockDevice>) -> Arc<Self> {
+        let mut name = String::from("write-counting-");
+        name.push_str(parent.name());
+        Arc::new(Self {
+            name,
+            parent,
+            blocks_written: Mutex::new(0),
+        })
+    }
+
+    fn blocks_written(&self) -> usize {
+        *self.blocks_written.lock()
+    }
+
+    fn reset_blocks_written(&self) {
+        *self.blocks_written.lock() = 0;
+    }
+}
+
+impl BlockDevice for WriteCountingBlockDevice {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn block_count(&self) -> u64 {
+        self.parent.block_count()
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.parent.is_read_only()
+    }
+
+    fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+        self.parent.read_blocks(lba, buffer)
+    }
+
+    fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
+        *self.blocks_written.lock() += data.len() / super::super::block::BLOCK_SIZE;
+        self.parent.write_blocks(lba, data)
+    }
+}
 
 #[derive(Clone, Copy)]
 enum MetadataWriteFailureMode {
@@ -242,6 +313,56 @@ fn v4_set_xattr_round_trip_within_capacity() {
         .transaction(|ctx| ctx.set_xattr("/README.txt", b"user.other", b"x"))
         .expect_err("capacity exceeded");
     assert!(matches!(err, Error::OutOfMemory));
+}
+
+#[test]
+fn metadata_commit_after_the_first_writes_only_the_blocks_that_changed() {
+    let device = build_v2_test_device("write-skip", b"demo");
+    let counting = WriteCountingBlockDevice::new(device);
+    let fs = SimpleFs::open(counting.clone(), true).expect("open writable simplefs");
+    let volume = SimpleFsVolume::new(fs);
+
+    // The first commit has nothing describing the shadow slot, so it writes
+    // both tables whole, plus the two superblock mirrors.
+    let (_, parsed) =
+        super::format_io::read_superblock_record(counting.as_ref(), 0).expect("read superblock");
+    let whole_slot = parsed.record.inode_table_blocks + parsed.record.dirent_table_blocks;
+    counting.reset_blocks_written();
+    volume.create_dir("/first").expect("create first directory");
+    let first = counting.blocks_written();
+    assert!(
+        first >= whole_slot + 2,
+        "the first commit after a mount should write the whole slot ({first} blocks)",
+    );
+
+    // A second directory adds one inode, one dirent and the root's entry
+    // count, so the commit puts a handful of blocks on the device instead of
+    // the whole table: the slot it overwrites still holds the generation the
+    // previous commit published, and only the blocks that changed since then
+    // go out.
+    counting.reset_blocks_written();
+    volume
+        .create_dir("/second")
+        .expect("create second directory");
+    let second = counting.blocks_written();
+    assert!(
+        second * 3 < first,
+        "a small commit wrote {second} blocks against the first commit's {first}",
+    );
+
+    // Skipping blocks must still leave the slot the publish swaps in an exact
+    // copy of the image.  The *retired* slot is a generation behind — that is
+    // what the checker calls drift and clears with one synchronising commit.
+    let report = VfsFileSystem::check_and_repair(&volume).expect("check the volume");
+    assert_eq!(
+        report.issues_detected, 1,
+        "expected only the retired slot: {report:?}"
+    );
+    let report = VfsFileSystem::check_and_repair(&volume).expect("recheck the volume");
+    assert!(
+        report.is_clean(),
+        "the synchronised volume drifted: {report:?}"
+    );
 }
 
 #[test]

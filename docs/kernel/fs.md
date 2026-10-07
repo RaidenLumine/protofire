@@ -214,33 +214,34 @@ The flush that ends a successful transaction is `flush_metadata`
 
 1. **Mark** (V3+): write `pending_commit = target_generation` into both
    superblock mirrors, which still point at the current active tables.
-2. **Write**: write the shadow inode and dirent tables, and the shadow xattr
-   table on V4.
+2. **Write**: write the parts of the shadow inode and dirent tables, and of
+   the shadow xattr table on V4, that differ from the image being committed.
 3. **Publish**: write both mirrors with the active and shadow pointers
    swapped and `pending_commit` cleared, and only then swap the in-memory
    pointers.
 
-Phase 2 is why a boot's write traffic is much larger than its files: the two
-tables and the xattr table are written *whole*, every commit.  A demo boot of
-the in-memory volumes writes 735232 bytes to a device for the 13611 bytes a
-caller asked for — 53 writes of more than 8 KiB carry 494080 of it.
+Phase 2 used to write both tables and the xattr table *whole*, every commit,
+which is why a boot's write traffic dwarfed its files: a demo boot of the
+in-memory volumes put 735232 bytes on a device for the 13611 bytes a caller
+asked for, and a probe that read each written block back counted **1436 blocks
+written and 370 that differed**.  A commit now compares the image it is
+committing against the bytes the slot already holds — through the block cache,
+where the previous write left them — and writes out only the runs that differ.
+That same demo boot writes 229888 bytes instead of 735232, for 25088 bytes
+more read: the first commit after a mount writes its slot whole (nothing has
+described it yet), so the first *differential* commit is the one that reads a
+slot the mount never cached.
 
-The headroom is measured.  A probe that read each written block back and
-compared it with the block it was overwriting counted **1436 blocks written
-and 370 that differed**, so those 735232 bytes carry 189440 bytes of change
-and writing only what differs would cut the traffic by 3.9×.
-
-What that optimisation has to be, the same measurement says.  The comparison
-is against the *slot*, not against the last commit: after a publish the shadow
-is the table from two commits ago, so the set to write is the union of the last
-*two* generations' changes — "what changed since last time" would leave a
-block the previous commit wrote unwritten in the slot it is about to become.
-And it needs per-block tracking, because the flags in `SimpleFsState`
-(`inode_table_dirty`, `dirent_table_dirty`) are one bit per *table*: they can
-answer "is this table worth writing" and not "which of its 1436 blocks are".
-The undo log already saves and restores those two bits per transaction; a
-per-block set would need the same treatment, which is what makes this a change
-to the commit protocol rather than to its write loop.
+The comparison is against the *slot*, not against the last commit, and that is
+what makes it a commit-protocol change rather than a smaller write loop.  A
+publish swaps the pointers, so the slot the next commit overwrites holds the
+table from **two** generations back; the difference is therefore the union of
+the last two generations' changes, and "what changed since last time" would
+leave a block the previous commit wrote unwritten in the copy about to become
+active.  Reading the slot is what makes the set exact without a per-block
+shadow of the last commit.  It also leaves the retired slot a generation
+behind, which is the drift `check_and_repair` reports as one issue and clears
+with a single synchronising commit.
 
 A crash before the publish leaves the mark; a mount then loads the *active*
 tables, which a commit never writes, so the visible namespace stays the one

@@ -562,7 +562,6 @@ impl SimpleFs {
             inode.size = 0;
             inode.entry_count = 0;
             inode.persistent_security = None;
-            state.inode_table_dirty = true;
             // A slot still referenced by an open handle must not be recycled;
             // it is freed by SimpleVNode's Drop once the last handle closes.
             if state.open_handles.get(&inode_index).copied().unwrap_or(0) == 0 {

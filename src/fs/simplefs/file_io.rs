@@ -404,10 +404,6 @@ impl SimpleFs {
                 return Err(error);
             }
         };
-        // Any mutation may have modified inodes directly; mark dirty here
-        // so flush_metadata knows to write the inode table.  Dirent table
-        // dirty tracking is handled precisely by insert/remove helpers.
-        state.inode_table_dirty = true;
 
         if let Err(error) = self.validate_runtime_state(&state) {
             state.rollback_undo();

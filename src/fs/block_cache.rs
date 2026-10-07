@@ -545,6 +545,22 @@ impl BlockCache {
         self.entries.lock().iter().any(|e| e.lba == lba)
     }
 
+    /// Copy the cached copy of `lba`, if there is one.
+    ///
+    /// Unlike [`read_cached`](Self::read_cached), a hit here leaves the hit
+    /// and sequential-read counters and the read-ahead heuristic alone, and a
+    /// miss does not read the device.  A caller that compares a block it is
+    /// about to write against the copy already in the slot is doing
+    /// bookkeeping, and charging that to the counters would describe the
+    /// comparison instead of the workload the counters are there to report.
+    pub fn cached(&self, lba: u64) -> Option<[u8; BLOCK_SIZE]> {
+        let entries = self.entries.lock();
+        entries
+            .iter()
+            .find(|entry| entry.lba == lba)
+            .map(|entry| entry.data)
+    }
+
     // ─── internal helpers ───
 
     fn next_generation(&self) -> u64 {

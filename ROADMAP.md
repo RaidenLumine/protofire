@@ -114,17 +114,18 @@ The authoritative picture of what exists today is
   recorded baseline, so a change that does more work fails without anyone
   measuring seconds.  A read is now counted at all three heights it passes —
   the filesystem's operations and their bytes, the cache's hits and misses,
-  and what reached a device — and the first two findings are recorded: a
-  commit writes its shadow tables whole (735 KiB to a device for 13 KiB of
-  writes), and read-ahead — its lookahead sharing one request with the read
-  that asked for it — now cuts the commands a boot issues by more than half
-  (158 against 327) for exactly the same bytes.  What remains: an asynchronous
-  device interface (a thread issuing the same synchronous reads cannot be
-  ahead of a reader this fast, so overlap has to be a queue at the device — and
-  no device the tree boots today queues, so it is not worth landing until one
-  can show two requests in flight), a commit that writes only the blocks a slot
-  actually needs (measured at 370 differing blocks out of 1436 written per
-  boot, so 3.9x of the traffic).
+  and what reached a device — and the findings have landed: read-ahead, its
+  lookahead sharing one request with the read that asked for it, and a commit
+  that writes only the blocks the slot does not already hold, which cut the
+  bytes a demo boot writes to a device from 735232 to 229888 for 25088 more
+  read.  What remains: an asynchronous device interface (a thread issuing the
+  same synchronous reads cannot be ahead of a reader this fast, so overlap has
+  to be a queue at the device — and no device the tree boots today queues, so
+  it is not worth landing until one can show two requests in flight),
+  measurement under load (SMP load-balancing, NUMA-node stress, network
+  throughput), and the commit comparison's own reads, which a per-block shadow
+  of the previous generation would remove if they ever show up against real
+  disks.
 
 ## Long Term (1–3 years)
 
