@@ -1,6 +1,6 @@
 # Boot-work baseline for `make check-perf-baseline-disk`.
 #
-# The machine: -smp 1 -m 1G -drive file=target/perf-baseline-disk.img,if=none,id=nvme0,format=raw -device nvme,drive=nvme0,serial=protofire.  A baseline describes one shape, so the check
+# The machine: -smp 1 -m 1G -drive file=target/perf-baseline-disk.img,if=none,id=nvme0,format=raw -device nvme,drive=nvme0,serial=protofire -netdev user,id=net0 -device virtio-net-pci,netdev=net0 [features: demo-disk perf_baseline fs_profiler net_profiler alloc_profiler fault_profiler].  A baseline describes one shape, so the check
 # refuses a boot whose shape does not match this line.
 #
 # One row per counter the boot prints: `key baseline tolerance`.
@@ -32,12 +32,12 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-ticks 524 12
+ticks 523 12
 frames 25 0
 frame-frees 6 0
 frame-zero-bytes 503808 0
-heap-allocs 11249 256
-heap-bytes 17080768 262144
+heap-allocs 11251 256
+heap-bytes 17045760 262144
 pt-maps 738 0
 pt-lookups 737 0
 faults 1 0
@@ -71,10 +71,15 @@ wl-blk-read-bytes 61440 0
 wl-blk-writes 292 0
 wl-blk-write-bytes 231936 0
 wl-device-bytes-per-asked-byte 5 0
+nw-datagrams-tx 0 0
+nw-datagrams-rx 0 0
+nw-bytes 0 0
+nw-polls 0 0
+nw-completed 0 0
 ip4-rx 3 4
 ip4-tx 11 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 535 12
+irqs 534 12
 ipis 0 0
 spurious 0 0

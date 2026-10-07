@@ -144,7 +144,11 @@ The authoritative picture of what exists today is
   else.  Still open: a real SSD or spinning disk, load *on* a NUMA machine
   rather than a boot with its shape (the work a four-CPU boot does is gated by
   `make check-perf-baseline-smp`, but that is a boot, not a load), network
-  throughput, and the commit
+  throughput against a peer (a boot with no NIC can initialize the stack on
+  the loopback device, and `make check-perf-baseline-net` counts the defined
+  exchange it then runs — one datagram to itself, `nw-*` rows and an
+  `nw-completed` that has to be 1 — which is a measurement of the stack's own
+  work rather than throughput through a NIC), and the commit
   comparison's own reads, which a per-block
   shadow of the previous generation would remove if they ever show up against
   real disks.  What would have to change first is measured, not argued: the

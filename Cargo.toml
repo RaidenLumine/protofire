@@ -193,6 +193,11 @@ liveness_heartbeat = []
 # check; it costs tens of megabytes of frames for the moment it runs.
 stack_churn = []
 net_profiler = []
+# Boots with the loopback device as the network stack's only device, on a
+# static address, so the network half of the boot workload has a peer that
+# cannot change between boots and needs no host behind it.  Used by
+# `make check-perf-baseline-net`; see `src/kernel/workload.rs`.
+net_loopback = []
 # Prints one line of measured boot work at a fixed tick, so a boot's counters
 # can be compared against a recorded baseline (`make check-perf-baseline`).
 perf_baseline = []

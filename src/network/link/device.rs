@@ -171,6 +171,14 @@ pub mod loopback {
     /// The largest frame it will carry.
     const LOOPBACK_MTU: usize = 1500;
 
+    /// The address a boot gives the stack when this is its only device.
+    ///
+    /// The conventional loopback address, so an exchange that runs over it
+    /// reads the way one would anywhere else.  It is written once, here beside
+    /// the device that answers to it, because the boot that assigns it and the
+    /// workload that sends to it have to agree.
+    pub const LOOPBACK_IPV4: [u8; 4] = [127, 0, 0, 1];
+
     /// The most frames that can be waiting to be received.
     ///
     /// It is not a protocol limit: the stack receives a queued frame before it

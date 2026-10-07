@@ -44,9 +44,13 @@ TARGET_LABEL="${TARGET_LABEL:-check-perf-baseline}"
 # than in memory.  They are part of the shape the baseline records, because a
 # boot with a disk and one without are two different machines.
 QEMU_ARGS="${QEMU_ARGS:-}"
-
-# The profilers are the point: a default build has no counters to read.
-FEATURES="demo-disk perf_baseline fs_profiler net_profiler alloc_profiler fault_profiler"
+# Whether the boot gets a NIC.  A flavour that initializes the stack on the
+# loopback has no use for one, and a driver probing a device the boot does not
+# use is work the baseline would have to explain.
+NIC="${NIC:-1}"
+# The features the boot is built with are part of its shape: two builds of the
+# same machine are two different programs, and a baseline is about one program.
+FEATURES="${FEATURES:-demo-disk perf_baseline fs_profiler net_profiler alloc_profiler fault_profiler}"
 
 case "$PROFILE" in
     debug|release) ;;
@@ -66,8 +70,20 @@ case "$SMP_CPUS" in
         exit 1
         ;;
 esac
-machine="-smp ${SMP_CPUS} -m 1G ${QEMU_ARGS}"
-machine="${machine% }"
+nic_args=""
+if [ "$NIC" = "1" ]; then
+    nic_args="-netdev user,id=net0 -device virtio-net-pci,netdev=net0"
+fi
+# The QEMU command line and the shape the baseline records are two things: the
+# features and the presence of a NIC describe the program, and QEMU has never
+# heard of either.  Keeping them apart is what stopped `[features: …]` being
+# parsed as a protocol.
+qemu_machine="-smp ${SMP_CPUS} -m 1G ${QEMU_ARGS} ${nic_args}"
+qemu_machine="$(printf '%s' "$qemu_machine" | tr -s ' ')"
+machine="${qemu_machine} [features: ${FEATURES}]"
+if [ "$NIC" != "1" ]; then
+    machine="${machine} (no NIC)"
+fi
 
 mode=check
 case "${1:-}" in
@@ -120,10 +136,9 @@ trap cleanup EXIT INT TERM
 # stop.
 set +e
 timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
-    -machine q35 -cpu max $machine \
+    -machine q35 -cpu max $qemu_machine \
     -kernel "$KERNEL_BIN" \
     -display none -no-reboot -no-shutdown \
-    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
     -serial stdio >"$log" 2>&1
 set -e
 

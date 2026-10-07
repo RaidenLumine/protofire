@@ -107,6 +107,8 @@ pub(crate) fn log_once(ticks: u64) {
          wl-cache-hits={} wl-cache-misses={} \
          wl-blk-reads={} wl-blk-read-bytes={} wl-blk-writes={} wl-blk-write-bytes={} \
          wl-device-bytes-per-asked-byte={} \
+         nw-datagrams-tx={} nw-datagrams-rx={} nw-bytes={} nw-polls={} \
+         nw-completed={} \
          ip4-rx={} ip4-tx={} ip6-rx={} ip6-tx={} \
          irqs={} ipis={} spurious={}",
         ticks,
@@ -148,6 +150,11 @@ pub(crate) fn log_once(ticks: u64) {
         workload.blk_writes,
         workload.blk_write_bytes,
         workload.device_bytes_per_asked_byte(),
+        workload.net_datagrams_tx,
+        workload.net_datagrams_rx,
+        workload.net_bytes,
+        workload.net_polls,
+        workload.net_completed,
         net.ipv4_packets_rx,
         net.ipv4_packets_tx,
         net.ipv6_packets_rx,

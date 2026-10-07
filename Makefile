@@ -98,7 +98,7 @@ CLIPPY_NO_START_FEATURES = demo-disk init_no_start
 # Code behind `perf_baseline` — the boot-work line, the workload — was
 # therefore compiled by one gate and checked by none.
 CLIPPY_PROFILER_TARGET = x86_64-unknown-none
-CLIPPY_PROFILER_FEATURES = demo-disk perf_baseline fs_profiler net_profiler alloc_profiler fault_profiler
+CLIPPY_PROFILER_FEATURES = demo-disk perf_baseline net_loopback fs_profiler net_profiler alloc_profiler fault_profiler
 
 # ── help ──────────────────────────────────────────────────────────────
 .PHONY: help
@@ -163,6 +163,7 @@ help:
 		'  make check-perf-baseline-smp          - the same on several CPUs (SMP, default 4)' \
 		'  make check-perf-baseline-disk         - the same with the workload on an NVMe namespace, not memory' \
 		'  make check-perf-baseline-numa         - the same on four CPUs arranged as two NUMA nodes' \
+		'  make check-perf-baseline-net          - the same on the loopback, with no NIC and no host' \
 		'  make check-x8664-runtime              - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-init-no-start        - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-usb-disk             - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
@@ -478,7 +479,7 @@ check-abi-frozen-payload-riscv64:
 
 # ── Runtime gates ─────────────────────────────────────────────────────
 .PHONY: check-perf-baseline check-perf-baseline-smp check-perf-baseline-disk \
-	check-perf-baseline-numa \
+	check-perf-baseline-numa check-perf-baseline-net \
 	check-x8664-runtime check-x8664-init-no-start check-x8664-usb-disk \
 	check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
 	check-riscv64-nvme check-x8664-hda check-x8664-churn \
@@ -554,6 +555,24 @@ check-perf-baseline-numa:
 		QEMU_ARGS="-object memory-backend-ram,size=512M,id=m0 -object memory-backend-ram,size=512M,id=m1 -numa node,nodeid=0,cpus=0-1,memdev=m0 -numa node,nodeid=1,cpus=2-3,memdev=m1" \
 		BASELINE=scripts/perf-baseline-numa.txt \
 		TARGET_LABEL=check-perf-baseline-numa \
+		sh ./scripts/check-perf-baseline.sh
+
+# The boot-work gate on the loopback flavour: the stack's only device answers
+# its own transmissions, on a static address, with no NIC to probe and no host
+# to answer.  The workload's network half sends one datagram to itself and waits
+# for it to come back, so `nw-*` rows are the stack's own work — one datagram,
+# one receive, and the receive-path polls between them — and `nw-completed` is
+# the property: the frame came back whole.
+check-perf-baseline-net:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		CARGO="$(CARGO)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		SMP_CPUS=1 \
+		NIC=0 \
+		FEATURES="demo-disk perf_baseline net_loopback fs_profiler net_profiler alloc_profiler fault_profiler" \
+		BASELINE=scripts/perf-baseline-net.txt \
+		TARGET_LABEL=check-perf-baseline-net \
 		sh ./scripts/check-perf-baseline.sh
 
 # Boot the kernel on a single emulated CPU with the demo disk and assert that

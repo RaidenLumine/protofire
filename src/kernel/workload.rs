@@ -45,6 +45,20 @@ pub(crate) const FILES: usize = 8;
 pub(crate) const FILE_BYTES: usize = 2048;
 pub(crate) const PASSES: usize = 3;
 
+/// The network exchange's shape: one datagram, to itself.
+pub(crate) const NET_PORT: u16 = 4321;
+pub(crate) const NET_BYTES: usize = 512;
+
+/// The most receive-path polls the exchange waits for its own datagram.
+///
+/// A bound, because an unbounded wait is a hang, and a workload that hangs the
+/// boot is worse than one that reports it never saw its own datagram.  The
+/// loopback queues what it is sent and the stack's receive path is polled, so
+/// the frame waits for `poll` the way a real device's frame waits for its
+/// interrupt; sixty-four polls is far more than a frame needs and far less
+/// than a boot would take to time out.
+pub(crate) const NET_POLL_LIMIT: usize = 64;
+
 /// What one run cost, in the counters the boot-work line already prints.
 ///
 /// Written when the workload runs and read when that line is printed, so a
@@ -66,6 +80,17 @@ pub(crate) struct WorkloadDelta {
     pub(crate) blk_read_bytes: u64,
     pub(crate) blk_writes: u64,
     pub(crate) blk_write_bytes: u64,
+    /// The network exchange: datagrams the stack sent and received, the bytes
+    /// the exchange got back, and the polls it took to get them.
+    pub(crate) net_datagrams_tx: u64,
+    pub(crate) net_datagrams_rx: u64,
+    pub(crate) net_bytes: u64,
+    pub(crate) net_polls: u64,
+    /// One when the datagram came back whole.  A counter rather than a
+    /// comment, because "the exchange completed" is the property, and a boot
+    /// whose peer never answered should fail a baseline rather than pass it
+    /// quietly.
+    pub(crate) net_completed: u64,
     /// Cycles the run took, printed on a line of its own and not compared.
     pub(crate) cycles: u64,
 }
@@ -100,6 +125,11 @@ pub(crate) fn last() -> WorkloadDelta {
     LAST.lock().unwrap_or_default()
 }
 
+/// Publish a delta for the boot-work line to read.
+pub(crate) fn publish(delta: WorkloadDelta) {
+    *LAST.lock() = Some(delta);
+}
+
 /// Run the workload against `fs`, which the caller has locked.
 ///
 /// The aggregate is passed in rather than looked up because the caller holds
@@ -112,7 +142,7 @@ pub(crate) fn run(fs: &FileSystem) -> WorkloadDelta {
     let (files, bytes, ops) = write_and_read(fs);
 
     let after = Snapshot::take(fs);
-    let delta = WorkloadDelta {
+    WorkloadDelta {
         files: files as u64,
         bytes: bytes as u64,
         ops: ops as u64,
@@ -137,9 +167,57 @@ pub(crate) fn run(fs: &FileSystem) -> WorkloadDelta {
             .write_bytes
             .saturating_sub(before.device.write_bytes),
         cycles: crate::arch::timer::monotonic_cycles().wrapping_sub(started),
+        // The network half is filled by `run_network`, which only a boot with
+        // a loopback calls.
+        ..WorkloadDelta::default()
+    }
+}
+
+/// Run the network half: one datagram to itself over whatever device the stack
+/// was given, and the polls it took to see it come back.
+///
+/// Only a boot built with `net_loopback` calls this, and only such a boot has
+/// a peer that answers without a host; the counters it fills stay zero
+/// everywhere else, which is the honest reading of "no exchange happened".
+pub(crate) fn run_network(delta: &mut WorkloadDelta) {
+    use crate::network::link::device::loopback::LOOPBACK_IPV4;
+
+    let Some(stack) = crate::network::stack::NetworkStack::global() else {
+        return;
     };
-    *LAST.lock() = Some(delta);
-    delta
+    let before = stack.profiler_snapshot();
+    let Ok(socket) = crate::network::bind_udp(NET_PORT) else {
+        return;
+    };
+
+    let payload = vec![0xA5_u8; NET_BYTES];
+    let sent = crate::network::send_to_udp(&socket, LOOPBACK_IPV4, NET_PORT, &payload).is_ok();
+
+    let mut buffer = vec![0_u8; NET_BYTES];
+    let mut polls = 0u64;
+    let mut received = 0usize;
+    while polls < NET_POLL_LIMIT as u64 {
+        polls += 1;
+        // A poll that processed some other frame leaves the socket empty, so
+        // the receive is tried again rather than assumed.
+        if let Ok(true) = stack.poll() {
+            if let Ok((count, _, _)) = crate::network::recv_from_udp(&socket, &mut buffer) {
+                received = count;
+                break;
+            }
+        }
+    }
+
+    let after = stack.profiler_snapshot();
+    delta.net_datagrams_tx = after
+        .udp_datagrams_tx
+        .saturating_sub(before.udp_datagrams_tx);
+    delta.net_datagrams_rx = after
+        .udp_datagrams_rx
+        .saturating_sub(before.udp_datagrams_rx);
+    delta.net_bytes = received as u64;
+    delta.net_polls = polls;
+    delta.net_completed = u64::from(sent && received == NET_BYTES);
 }
 
 /// The counters the workload is measured with, in one place each.

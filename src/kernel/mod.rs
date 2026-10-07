@@ -234,7 +234,27 @@ impl Kernel {
         // was discovered during driver probing.  Start with a placeholder IP
         // (0.0.0.0), then run DHCP to obtain a real address.  Fall back to
         // QEMU's default guest IP (10.0.2.15) if DHCP fails.
-        #[cfg(target_os = "none")]
+        // A boot built with `net_loopback` gives the stack one device that
+        // answers its own transmissions and a static address: no NIC to find,
+        // no DHCP to ask, and no host that could answer differently between
+        // two boots.  That is what makes the network half of the workload a
+        // measurement rather than an experiment — see `kernel::workload`.
+        #[cfg(all(target_os = "none", feature = "net_loopback"))]
+        {
+            use crate::network::link::device::loopback::LoopbackDevice;
+            use crate::network::link::device::loopback::LOOPBACK_IPV4;
+            use crate::network::stack::NetworkStack;
+
+            NetworkStack::init_with_device(
+                alloc::sync::Arc::new(LoopbackDevice::new()),
+                LOOPBACK_IPV4,
+            );
+            if let Some(stack) = NetworkStack::global() {
+                stack.set_ip(LOOPBACK_IPV4);
+            }
+            println!("[kernel] network stack initialized on lo");
+        }
+        #[cfg(all(target_os = "none", not(feature = "net_loopback")))]
         if let Some(net_device) = self.drivers.boot_net_device() {
             use crate::network::stack::NetworkStack;
             const DEFAULT_GUEST_IP: [u8; 4] = [10, 0, 2, 15];
@@ -349,8 +369,14 @@ impl Kernel {
         #[cfg(feature = "perf_baseline")]
         {
             let fs = self.fs.lock();
-            let delta = crate::kernel::workload::run(&fs);
+            let mut delta = crate::kernel::workload::run(&fs);
             drop(fs);
+            // The network half runs outside the filesystem lock: it takes the
+            // stack's own, and nesting the two would be this file deciding an
+            // order the rest of the tree has not been asked about.
+            #[cfg(feature = "net_loopback")]
+            crate::kernel::workload::run_network(&mut delta);
+            crate::kernel::workload::publish(delta);
             if !delta.ran() {
                 println!("[perf  ] workload: did not run (no scratch volume to run it in)");
             }
