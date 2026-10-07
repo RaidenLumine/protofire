@@ -3,6 +3,12 @@ target/
 dist/
 *.iso
 
+# `make gen-kaslr-relocs` writes the relocation table into the source tree so
+# the kernel can `include!` it by a path that does not depend on the build
+# directory.  It is generated, 24k lines long, and nothing compiles it yet —
+# so it is ignored rather than left for a `git add -A` to pick up.
+src/arch/x86_64/kaslr_relocs.generated.rs
+
 # ISO tree outputs (entirely build artifacts)
 isodir/
 iso/boot/*.elf

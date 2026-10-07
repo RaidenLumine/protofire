@@ -42,6 +42,10 @@ endif
 # KASLR relocation table path.
 KERNEL_ELF = $(TARGET_DIR)/$(TARGET)/$(PROFILE)/$(CRATE)
 KASLR_RELOCS = src/arch/x86_64/kaslr_relocs.generated.rs
+# The tool that writes that table is a package of its own under `tools/`, so
+# the root package's cargo commands do not reach it and the format and lint
+# targets name its manifest explicitly.
+KASLR_TOOL_MANIFEST = tools/gen-kaslr-relocs/Cargo.toml
 
 # QEMU 8.x `virt` machines default each virtio-mmio transport to *legacy* mode
 # (force-legacy=true => version register reads 1), but the kernel drives the
@@ -193,7 +197,7 @@ help:
 		'' \
 		'Housekeeping:' \
 		'  make fmt                              - format the source tree' \
-		'  make fmt-all                          - format the source tree and all dependencies' \
+		'  make fmt-all                          - format the source tree, its dependencies and `tools/`' \
 		'  make fmt-check                        - verify formatting without modifying files' \
 		'  make clean                            - remove Cargo artifacts' \
 		'' \
@@ -767,6 +771,8 @@ release:
 clippy:
 	$(CARGO) clippy $(CARGO_FLAGS) --all-targets -- \
 		-D warnings -D clippy::undocumented_unsafe_blocks
+	$(CARGO) clippy $(CARGO_FLAGS) --manifest-path $(KASLR_TOOL_MANIFEST) \
+		--all-targets -- -D warnings -D clippy::undocumented_unsafe_blocks
 
 clippy-targets:
 	@for target in $(CLIPPY_TARGETS); do \
@@ -927,11 +933,17 @@ run-riscv64-headless: build-riscv64
 fmt:
 	$(CARGO) fmt
 
+# `--all` reaches the kernel's own packages and their local path dependencies.
+# It does not reach `tools/`, whose crates are packages of their own, so each
+# one is named here: the tool that generates the KASLR table is built by
+# `make gen-kaslr-relocs` and is formatted like everything else in the tree.
 fmt-all:
 	$(CARGO) fmt --all
+	$(CARGO) fmt --manifest-path $(KASLR_TOOL_MANIFEST)
 
 fmt-check:
 	$(CARGO) fmt --all --check
+	$(CARGO) fmt --manifest-path $(KASLR_TOOL_MANIFEST) --check
 
 clean:
 	$(CARGO) clean

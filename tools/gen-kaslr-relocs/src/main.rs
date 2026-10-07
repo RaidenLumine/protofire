@@ -13,7 +13,8 @@
 
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io::Write;
+use std::io::{self};
 
 // ── ELF64 constants ─────────────────────────────────────────────────────
 const EM_X86_64: u16 = 62;
@@ -21,8 +22,8 @@ const SHT_RELA: u32 = 4;
 const EI_NIDENT: usize = 16; // ELF e_ident size
 
 // Relocation types (x86_64 ABI).
-const R_X86_64_64: u32 = 1;   // S + A (64-bit absolute)
-const R_X86_64_32: u32 = 10;  // S + A (32-bit absolute)
+const R_X86_64_64: u32 = 1; // S + A (64-bit absolute)
+const R_X86_64_32: u32 = 10; // S + A (32-bit absolute)
 const R_X86_64_32S: u32 = 11; // S + A (32-bit signed)
 
 /// Minimum virtual address considered "inside the kernel image".
@@ -215,8 +216,8 @@ fn main() -> io::Result<()> {
     let mut relocations: Vec<(u64, i64, u32)> = Vec::new();
 
     for i in 0..shdr_count {
-        let shdr = read_shdr(&data, (shdr_off + i * shdr_entsize) as u64)
-            .expect("invalid section header");
+        let shdr =
+            read_shdr(&data, (shdr_off + i * shdr_entsize) as u64).expect("invalid section header");
         let name = section_name(&shdr);
 
         if shdr.sh_type == SHT_RELA && name.starts_with(".rela.") {
@@ -252,13 +253,13 @@ fn main() -> io::Result<()> {
                 let r_type = rela_type(rela.r_info);
 
                 match r_type {
-                    R_X86_64_64 | R_X86_64_32 | R_X86_64_32S => {
-                        // Only keep entries whose target is within the
-                        // kernel image range.
-                        if rela.r_offset >= KERNEL_VADDR_MIN {
-                            relocations.push((rela.r_offset, rela.r_addend, r_type));
-                            count += 1;
-                        }
+                    // Only keep entries whose target is within the kernel
+                    // image range.
+                    R_X86_64_64 | R_X86_64_32 | R_X86_64_32S
+                        if rela.r_offset >= KERNEL_VADDR_MIN =>
+                    {
+                        relocations.push((rela.r_offset, rela.r_addend, r_type));
+                        count += 1;
                     }
                     _ => {} // skip PC-relative, PLT, and other relocations
                 }
@@ -276,6 +277,7 @@ fn main() -> io::Result<()> {
     }
 
     let total = relocations.len();
+    eprintln!("Collected {total} absolute relocation entries");
 
     // ── Pre-compute VMA→file-offset mapping from LOAD segments ──────────
     struct LoadSegment {
@@ -292,12 +294,17 @@ fn main() -> io::Result<()> {
         if ph_off + 56 > data.len() {
             break;
         }
-        let p_type = u32::from_le_bytes(data[ph_off..ph_off+4].try_into().unwrap());
-        if p_type == 1 { // PT_LOAD
-            let p_offset = u64::from_le_bytes(data[ph_off+8..ph_off+16].try_into().unwrap());
-            let p_vaddr  = u64::from_le_bytes(data[ph_off+16..ph_off+24].try_into().unwrap());
-            let p_filesz = u64::from_le_bytes(data[ph_off+32..ph_off+40].try_into().unwrap());
-            segs.push(LoadSegment { vaddr: p_vaddr, file_off: p_offset, file_size: p_filesz });
+        let p_type = u32::from_le_bytes(data[ph_off..ph_off + 4].try_into().unwrap());
+        if p_type == 1 {
+            // PT_LOAD
+            let p_offset = u64::from_le_bytes(data[ph_off + 8..ph_off + 16].try_into().unwrap());
+            let p_vaddr = u64::from_le_bytes(data[ph_off + 16..ph_off + 24].try_into().unwrap());
+            let p_filesz = u64::from_le_bytes(data[ph_off + 32..ph_off + 40].try_into().unwrap());
+            segs.push(LoadSegment {
+                vaddr: p_vaddr,
+                file_off: p_offset,
+                file_size: p_filesz,
+            });
         }
     }
     let vma_to_offset = |vma: u64| -> Option<u64> {
@@ -314,18 +321,24 @@ fn main() -> io::Result<()> {
     let mut kernel_end: u64 = 0;
     for seg in &segs {
         let mem_end = seg.vaddr + seg.file_size; // use file_size since mem in BSS is zero
-        if mem_end > kernel_end { kernel_end = mem_end; }
+        if mem_end > kernel_end {
+            kernel_end = mem_end;
+        }
     }
     // Also check the BSS LOAD segment (file_sz=0, mem_sz>0).
     for ph_i in 0..e_phnum {
         let ph_off = e_phoff as usize + ph_i * e_phentsize;
-        if ph_off + 56 > data.len() { break; }
-        let p_type = u32::from_le_bytes(data[ph_off..ph_off+4].try_into().unwrap());
+        if ph_off + 56 > data.len() {
+            break;
+        }
+        let p_type = u32::from_le_bytes(data[ph_off..ph_off + 4].try_into().unwrap());
         if p_type == 1 {
-            let p_vaddr = u64::from_le_bytes(data[ph_off+16..ph_off+24].try_into().unwrap());
-            let p_memsz = u64::from_le_bytes(data[ph_off+40..ph_off+48].try_into().unwrap());
+            let p_vaddr = u64::from_le_bytes(data[ph_off + 16..ph_off + 24].try_into().unwrap());
+            let p_memsz = u64::from_le_bytes(data[ph_off + 40..ph_off + 48].try_into().unwrap());
             let mem_end = p_vaddr + p_memsz;
-            if mem_end > kernel_end { kernel_end = mem_end; }
+            if mem_end > kernel_end {
+                kernel_end = mem_end;
+            }
         }
     }
     // Symbol table lookup is a more precise source; override if available.
@@ -347,9 +360,17 @@ fn main() -> io::Result<()> {
         if let Some(file_off) = vma_to_offset(r_off) {
             if (file_off + width) as usize <= data.len() {
                 let val = if width == 8 {
-                    u64::from_le_bytes(data[file_off as usize..file_off as usize + 8].try_into().unwrap())
+                    u64::from_le_bytes(
+                        data[file_off as usize..file_off as usize + 8]
+                            .try_into()
+                            .unwrap(),
+                    )
                 } else {
-                    u32::from_le_bytes(data[file_off as usize..file_off as usize + 4].try_into().unwrap()) as u64
+                    u32::from_le_bytes(
+                        data[file_off as usize..file_off as usize + 4]
+                            .try_into()
+                            .unwrap(),
+                    ) as u64
                 };
                 // Additional check for 8-byte entries: valid kernel addresses
                 // fit in 32 bits (kernel < 4 GiB).  If upper 32 bits are set,
@@ -366,7 +387,10 @@ fn main() -> io::Result<()> {
         }
     }
     let total = validated.len();
-    eprintln!("Validated KASLR relocation entries: {} (filtered {} spurious)", total, filtered);
+    eprintln!(
+        "Validated KASLR relocation entries: {} (filtered {} spurious)",
+        total, filtered
+    );
 
     // Sort by offset for reliable processing.
     validated.sort_by_key(|&(offset, _, _)| offset);
@@ -392,7 +416,11 @@ fn main() -> io::Result<()> {
         out,
         "/// At boot, for each entry: read/write `width` bytes at `kernel_base + offset`, then `value += delta`."
     )?;
-    writeln!(out, "pub(crate) const KASLR_RELOCATIONS: [(usize, isize, u8); {}] = [", total)?;
+    writeln!(
+        out,
+        "pub(crate) const KASLR_RELOCATIONS: [(usize, isize, u8); {}] = [",
+        total
+    )?;
 
     let kernel_base = KERNEL_VADDR_MIN;
     for &(offset, addend, r_type) in &validated {

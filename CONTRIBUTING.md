@@ -116,7 +116,10 @@ Layout of the kernel crate:
 
 The codebase is a large, long-lived Rust tree; consistency matters.
 
-- **Formatting:** run `cargo fmt`. The gate treats formatting as mandatory.
+- **Formatting:** run `make fmt`, or `make fmt-all` when you also touched
+  `tools/` — its crates are packages of their own, so `cargo fmt` in the root
+  does not reach them, and `make fmt-check` checks both. The gate treats
+  formatting as mandatory.
 - **File headers:** every `.rs` file opens with `//! <repo-relative-path>` on
   line 1 and a bare `//!` on line 2, followed by the `//!` description lines.
   A blank line must separate the whole `//!` header block from the first body
