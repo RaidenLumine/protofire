@@ -45,6 +45,18 @@ pub struct DeviceIo {
     pub read_in_flight_high_water: u64,
     /// The most writes a device was ever holding at once.
     pub write_in_flight_high_water: u64,
+    /// The requests a driver put on a device's own queue.
+    ///
+    /// This is the height *below* `read_ops`/`write_ops`: those count what a
+    /// caller asked the device for, and this counts what the driver asked the
+    /// hardware for.  The two differ exactly when one request covers more than
+    /// one device command — which is what a run-capable request is for, so
+    /// this is the row that shows a driver going back to one command per
+    /// block.
+    ///
+    /// Zero on a machine whose driver does not count: a volume backed by
+    /// memory has no device queue to put a command on.
+    pub commands: u64,
 }
 
 /// The machine's device traffic, counted only when the boot-work line is
@@ -66,6 +78,7 @@ mod io_counters {
         read_in_flight_high_water: AtomicU64,
         write_in_flight: AtomicU64,
         write_in_flight_high_water: AtomicU64,
+        commands: AtomicU64,
     }
 
     impl Counters {
@@ -79,6 +92,7 @@ mod io_counters {
                 read_in_flight_high_water: AtomicU64::new(0),
                 write_in_flight: AtomicU64::new(0),
                 write_in_flight_high_water: AtomicU64::new(0),
+                commands: AtomicU64::new(0),
             }
         }
 
@@ -90,6 +104,7 @@ mod io_counters {
                 write_bytes: self.write_bytes.load(Ordering::Relaxed),
                 read_in_flight_high_water: self.read_in_flight_high_water.load(Ordering::Relaxed),
                 write_in_flight_high_water: self.write_in_flight_high_water.load(Ordering::Relaxed),
+                commands: self.commands.load(Ordering::Relaxed),
             }
         }
     }
@@ -151,6 +166,24 @@ mod io_counters {
     pub(super) fn count_write(bytes: u64) {
         DEVICE_IO.write_ops.fetch_add(1, Ordering::Relaxed);
         DEVICE_IO.write_bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// One request a driver handed to its device's own queue.
+    pub(super) fn count_command() {
+        DEVICE_IO.commands.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Count one request a driver put on a device's own queue.
+///
+/// A driver calls this where it submits — one call per command the hardware
+/// receives.  A run-capable request is one command however many blocks it
+/// covers, so a driver that went back to one command per block moves this row
+/// and nothing else.
+pub fn count_device_command() {
+    #[cfg(feature = "perf_baseline")]
+    {
+        io_counters::count_command();
     }
 }
 
@@ -394,7 +427,16 @@ pub trait BlockDevice: Send + Sync {
         1
     }
 
-    /// Hand the device a one-block read and name it with a ticket.
+    /// Hand the device a read of one or more blocks, and name it with a
+    /// ticket.
+    ///
+    /// `buffer.len()` is a whole number of blocks and the request covers them
+    /// all: a run is one request, not one request per block.  A device that
+    /// queues **may refuse** a run it cannot hold — `InvalidArgument`, refused
+    /// rather than split behind the caller's back — so a caller that wants a
+    /// run has to be prepared to fall back.  The waiting call,
+    /// [`BlockDevice::read_blocks`], takes any size and splits it into runs the
+    /// device can take.
     ///
     /// The default performs the read at once and answers
     /// [`Ticket::DONE`] — which is what a device of depth one can do, and
@@ -416,7 +458,11 @@ pub trait BlockDevice: Send + Sync {
         Ok(Ticket::DONE)
     }
 
-    /// Hand the device a one-block write and name it with a ticket.
+    /// Hand the device a write of one or more blocks, and name it with a
+    /// ticket.
+    ///
+    /// The same run contract as [`BlockDevice::submit_read`], including the
+    /// refusal a driver may answer for a run it cannot hold.
     ///
     /// This is **safe**, and the asymmetry with [`BlockDevice::submit_read`]
     /// is the point: the data travels *into* the device, so a driver copies it

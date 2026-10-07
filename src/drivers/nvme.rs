@@ -73,6 +73,18 @@ const NVME_QUEUE_DEPTH: usize = 2;
 /// The slot id of a slot no request is using.
 const SLOT_FREE: u64 = u64::MAX;
 
+/// Frames one slot's run buffer holds, and so the longest run one request may
+/// cover.
+///
+/// Two frames are 8192 bytes — 16 blocks — and [`DmaBuffer`]'s frames are
+/// physically contiguous, so a run up to that length is described by PRP1 and
+/// PRP2 alone: no PRP list, and no assumption the buffer does not already
+/// make.  A longer request is the *caller's* to split, which `read_blocks` and
+/// `write_blocks` do.
+const RUN_FRAMES: usize = 2;
+/// Bytes one queued request may cover.
+const RUN_BYTES: usize = RUN_FRAMES * NVME_PAGE_SIZE;
+
 struct NvmeDriver;
 
 impl Driver for NvmeDriver {
@@ -127,8 +139,9 @@ struct IoSlot {
     /// The command identifier the controller will name in the completion;
     /// [`SLOT_FREE`] when the slot is unused.
     id: u64,
-    /// This request's own bounce buffer.  One per slot, because one shared
-    /// buffer is exactly what stops a second request from being written.
+    /// This request's own run buffer: two physically contiguous frames, one
+    /// per slot, because one shared buffer is exactly what stops a second
+    /// request from being written.
     bounce: DmaBuffer,
     /// Where the data goes when the completion arrives, and how much of it.
     dst: *mut u8,
@@ -259,14 +272,15 @@ impl NvmeController {
             let acq = DmaBuffer::allocate(acq_frames).ok_or(crate::Error::OutOfMemory)?;
             let iosq = DmaBuffer::allocate(iosq_frames).ok_or(crate::Error::OutOfMemory)?;
             let iocq = DmaBuffer::allocate(iocq_frames).ok_or(crate::Error::OutOfMemory)?;
-            // One bounce buffer per request the driver will hold at once.  They
-            // are allocated here, before the controller is shared, so a queued
-            // request never has to allocate on the submit path.
+            // One run buffer per request the driver will hold at once, sized
+            // for the longest run one request may cover.  They are allocated
+            // here, before the controller is shared, so a queued request never
+            // has to allocate on the submit path.
             let mut slots = Vec::with_capacity(NVME_QUEUE_DEPTH);
             for _ in 0..NVME_QUEUE_DEPTH {
                 slots.push(IoSlot {
                     id: SLOT_FREE,
-                    bounce: DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?,
+                    bounce: DmaBuffer::allocate(RUN_FRAMES).ok_or(crate::Error::OutOfMemory)?,
                     dst: core::ptr::null_mut(),
                     len: 0,
                     state: RequestState::Pending,
@@ -506,16 +520,39 @@ impl NvmeController {
         Ok((index, cid))
     }
 
-    /// The one-block NVM command both directions send.
-    fn block_sqe(opcode: u8, nsid: u32, cid: u16, lba: u64, prp1: u64) -> NvmeSqe {
+    /// The NVM command both directions send: one run, at `lba`, of `blocks`
+    /// logical blocks.
+    fn run_sqe(
+        opcode: u8,
+        nsid: u32,
+        cid: u16,
+        lba: u64,
+        blocks: u32,
+        prp1: u64,
+        prp2: u64,
+    ) -> NvmeSqe {
         let mut sqe = NvmeSqe::zeroed();
         sqe.set_opcode(opcode);
         sqe.set_nsid(nsid);
         sqe.set_command_id(cid);
         sqe.set_prp1(prp1);
-        // CDW10/CDW11: the 64-bit starting LBA; CDW12: one LBA, zero-based.
-        sqe.set_cdw(lba as u32, (lba >> 32) as u32, 0);
+        sqe.set_prp2(prp2);
+        // CDW10/CDW11: the 64-bit starting LBA; CDW12: NLB, which the spec
+        // counts from zero.
+        sqe.set_cdw(lba as u32, (lba >> 32) as u32, (blocks - 1) & 0xFFFF);
         sqe
+    }
+
+    /// Check a run against this namespace, and answer the blocks it covers.
+    fn run_blocks(&self, lba: u64, bytes: usize) -> crate::Result<u32> {
+        if bytes == 0 || !bytes.is_multiple_of(self.block_size) || bytes > RUN_BYTES {
+            return Err(crate::Error::InvalidArgument);
+        }
+        let blocks = bytes / self.block_size;
+        if lba.saturating_add(blocks as u64) > self.block_count {
+            return Err(crate::Error::InvalidArgument);
+        }
+        Ok(blocks as u32)
     }
 
     /// Write an entry into the I/O submission queue and ring its doorbell.
@@ -546,6 +583,11 @@ impl NvmeController {
         // SAFETY: as the doorbell address above; the write is volatile because
         // the device, not the kernel, consumes it.
         unsafe { write_volatile(sq_doorbell as *mut u32, state.iosq_tail) };
+
+        // One request reached the hardware, at the height below the one the
+        // caller's request is counted at: this is where a run's single command
+        // is distinguished from one command per block.
+        crate::kernel::block::count_device_command();
     }
 
     /// Reap every completion the controller has published, and answer the one
@@ -694,16 +736,13 @@ impl BlockDevice for NvmeController {
     }
 
     unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> crate::Result<Ticket> {
-        if buffer.len() != self.block_size || lba >= self.block_count {
-            return Err(crate::Error::InvalidArgument);
-        }
-
+        let blocks = self.run_blocks(lba, buffer.len())?;
         let mut state = self.io_state.lock();
         let (index, cid) = self.reserve_slot(&mut state)?;
-        let prp1 = state.slots[index].bounce.phys_addr() as u64;
+        let (prp1, prp2) = run_prp(state.slots[index].bounce.phys_addr() as u64, buffer.len());
         self.io_submit(
             &mut state,
-            &Self::block_sqe(NVM_READ, self.nsid, cid, lba, prp1),
+            &Self::run_sqe(NVM_READ, self.nsid, cid, lba, blocks, prp1, prp2),
         );
 
         let slot = &mut state.slots[index];
@@ -715,24 +754,21 @@ impl BlockDevice for NvmeController {
     }
 
     fn submit_write(&self, lba: u64, data: &[u8]) -> crate::Result<Ticket> {
-        if data.len() != self.block_size || lba >= self.block_count {
-            return Err(crate::Error::InvalidArgument);
-        }
-
+        let blocks = self.run_blocks(lba, data.len())?;
         let mut state = self.io_state.lock();
         let (index, cid) = self.reserve_slot(&mut state)?;
         // The asymmetry with a read, and the whole reason a write is the safe
         // half of the interface: the bytes come *from* the caller, so the slot
         // is filled here and the caller's borrow dies with this call.  Nothing
         // is copied back at completion.
-        let prp1 = {
+        let (prp1, prp2) = {
             let slot = &mut state.slots[index];
-            slot.bounce.as_mut_slice()[..self.block_size].copy_from_slice(data);
-            slot.bounce.phys_addr() as u64
+            slot.bounce.as_mut_slice()[..data.len()].copy_from_slice(data);
+            run_prp(slot.bounce.phys_addr() as u64, data.len())
         };
         self.io_submit(
             &mut state,
-            &Self::block_sqe(NVM_WRITE, self.nsid, cid, lba, prp1),
+            &Self::run_sqe(NVM_WRITE, self.nsid, cid, lba, blocks, prp1, prp2),
         );
 
         let slot = &mut state.slots[index];
@@ -782,16 +818,21 @@ impl BlockDevice for NvmeController {
         );
 
         // A waiting read is a queued read that is polled at once: the same
-        // submit, the same completion reaping, the same per-slot bounce
-        // buffer.  There is one read path in this driver, which is what makes
-        // the queued one exercised by every read the filesystem does.
-        for i in 0..num_blocks {
-            let start = i * bsz;
-            let block = &mut buffer[start..start + bsz];
-            // SAFETY: `block` is a window into the caller's `buffer`, which is
+        // submit, the same completion reaping, the same per-slot run buffer.
+        // There is one read path in this driver, which is what makes the
+        // queued one exercised by every read the filesystem does — and a
+        // request longer than one run is split into runs here, so a caller
+        // never has to know how wide the device's request can be.
+        let per_run = RUN_BYTES / bsz;
+        let mut done = 0usize;
+        while done < num_blocks {
+            let chunk = core::cmp::min(per_run, num_blocks - done);
+            let start = done * bsz;
+            let run = &mut buffer[start..start + chunk * bsz];
+            // SAFETY: `run` is a window into the caller's `buffer`, which is
             // alive and unmoved for as long as this function runs — and the
             // poll below runs before this iteration ends.
-            let ticket = unsafe { self.submit_read(lba + i as u64, block) }?;
+            let ticket = unsafe { self.submit_read(lba + done as u64, run) }?;
             let mut polls = 0u32;
             loop {
                 match self.poll(ticket) {
@@ -808,6 +849,7 @@ impl BlockDevice for NvmeController {
                     }
                 }
             }
+            done += chunk;
         }
 
         Ok(())
@@ -828,12 +870,15 @@ impl BlockDevice for NvmeController {
         );
 
         // A waiting write is a queued write polled at once, exactly as the
-        // waiting read is: one write path, and the queued one is exercised by
-        // every write the filesystem does.
-        for i in 0..num_blocks {
-            let start = i * bsz;
-            let block = &data[start..start + bsz];
-            let ticket = self.submit_write(lba + i as u64, block)?;
+        // waiting read is, and a request longer than one run is split into
+        // runs here.
+        let per_run = RUN_BYTES / bsz;
+        let mut done = 0usize;
+        while done < num_blocks {
+            let chunk = core::cmp::min(per_run, num_blocks - done);
+            let start = done * bsz;
+            let run = &data[start..start + chunk * bsz];
+            let ticket = self.submit_write(lba + done as u64, run)?;
             let mut polls = 0u32;
             loop {
                 match self.poll(ticket) {
@@ -850,6 +895,7 @@ impl BlockDevice for NvmeController {
                     }
                 }
             }
+            done += chunk;
         }
 
         Ok(())

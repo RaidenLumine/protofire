@@ -132,11 +132,14 @@
 # zone whose device it read; the mount is the interface's caller now and the
 # probe is gone, so the rows came back with it.)
 #
-# The queued interface (RFC 0007) moved `drivers` -> `block`, and only that
-# row: the driver names the ticket and the request state.  Its counts are
-# higher than a hand would write because the formatter gives every imported
-# path its own `use` line and this census counts paths; the direction, which
-# is what the rows are about, is unchanged.
+# The queued interface moved `drivers` -> `block`, and only that row: the
+# driver names the ticket and the request state (RFC 0007), and it counts the
+# commands it queues through the block layer's counter (RFC 0010) — the count
+# belongs where the boot-work line reads it, and the driver is the only place
+# that knows how many commands the hardware received.  Its counts are higher
+# than a hand would write because the formatter gives every imported path its
+# own `use` line and this census counts paths; the direction, which is what the
+# rows are about, is unchanged.
 #
 # from                         to                           count
 audit                        fs                           6
@@ -150,7 +153,7 @@ device                       drivers                      8
 device                       fs                           7
 device                       handle_rights                2
 device                       sync                         1
-drivers                      block                        12
+drivers                      block                        13
 drivers                      memory                       3
 drivers                      network                      2
 drivers                      process                      15

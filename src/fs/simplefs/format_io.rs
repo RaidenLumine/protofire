@@ -49,20 +49,15 @@ fn wait_for_read(device: &dyn BlockDevice, ticket: Ticket) -> Result<()> {
     }
 }
 
-pub(crate) fn read_inodes(
-    device: &dyn BlockDevice,
+/// Decode the inode table out of the bytes read for it.
+///
+/// The read is the mount's, not this: one table is a request the mount submits
+/// beside the dirent table's, and both are decoded here once they have landed.
+pub(crate) fn decode_inodes(
     format_version: SimpleFsFormatVersion,
-    table_block: usize,
+    buffer: &[u8],
     count: usize,
 ) -> Result<Vec<OnDiskInode>> {
-    // One request, however many blocks: the queued interface carries a single
-    // block per request, so a table this size goes through the waiting call
-    // rather than being split into one request per block — which would change
-    // what `blk-reads` counts rather than what the device is asked for.
-    let inode_bytes = format_version.inode_table_bytes(count)?;
-    let mut buffer = vec![0_u8; blocks_for(inode_bytes) * BLOCK_SIZE];
-    device.read_blocks(table_block as u64, &mut buffer)?;
-
     let mut inodes = Vec::with_capacity(count);
     for index in 0..count {
         let base = format_version.inode_table_entry_offset(0, index)?;
@@ -75,19 +70,19 @@ pub(crate) fn read_inodes(
             & INODE_FLAG_DELETED
             != 0;
         let data_checksum = match format_version.data_checksum_offset() {
-            Some(offset) => read_u32(&buffer, base + offset)?,
+            Some(offset) => read_u32(buffer, base + offset)?,
             None => 0,
         };
         inodes.push(OnDiskInode {
             kind: decode_kind(kind)?,
             deleted,
-            entry_start: read_u32(&buffer, base + format_version.inode_entry_start_offset())?,
-            entry_count: read_u32(&buffer, base + format_version.inode_entry_count_offset())?,
-            data_block: read_u32(&buffer, base + format_version.inode_data_block_offset())?,
-            block_count: read_u32(&buffer, base + format_version.inode_block_count_offset())?,
-            size: read_u32(&buffer, base + format_version.inode_size_field_offset())?,
+            entry_start: read_u32(buffer, base + format_version.inode_entry_start_offset())?,
+            entry_count: read_u32(buffer, base + format_version.inode_entry_count_offset())?,
+            data_block: read_u32(buffer, base + format_version.inode_data_block_offset())?,
+            block_count: read_u32(buffer, base + format_version.inode_block_count_offset())?,
+            size: read_u32(buffer, base + format_version.inode_size_field_offset())?,
             persistent_security: read_inode_persistent_security_descriptor(
-                &buffer,
+                buffer,
                 format_version,
                 base,
             )?,
@@ -124,20 +119,17 @@ pub(crate) fn read_inode_persistent_security_descriptor(
     }))
 }
 
-pub(crate) fn read_dir_entries(
-    device: &dyn BlockDevice,
+/// Decode the dirent table out of the bytes read for it.  See
+/// [`decode_inodes`] for why the read is not part of this.
+pub(crate) fn decode_dir_entries(
     format_version: SimpleFsFormatVersion,
-    table_block: usize,
+    buffer: &[u8],
     count: usize,
 ) -> Result<Vec<OnDiskDirEntry>> {
-    let dirent_bytes = format_version.dirent_table_bytes(count)?;
-    let mut buffer = vec![0_u8; blocks_for(dirent_bytes) * BLOCK_SIZE];
-    device.read_blocks(table_block as u64, &mut buffer)?;
-
     let mut entries = Vec::with_capacity(count);
     for index in 0..count {
         let base = format_version.dirent_table_entry_offset(0, index)?;
-        let inode_index = read_u32(&buffer, base + format_version.dirent_inode_index_offset())?;
+        let inode_index = read_u32(buffer, base + format_version.dirent_inode_index_offset())?;
         let kind = decode_kind(
             *buffer
                 .get(base + format_version.dirent_kind_offset())
@@ -450,24 +442,61 @@ pub(crate) fn load_runtime_state_from_superblock(
         return Err(Error::InvalidArgument);
     }
 
-    // The two tables *are* independent of each other, but each is several
-    // blocks and the queued interface carries one block per request, so they
-    // stay on the waiting call: overlapping them would mean one queued request
-    // per block, which changes what `blk-reads` counts rather than what the
-    // device is asked for.  A run-capable queued request is what would let the
-    // mount overlap these, and it is a decision of its own.
-    let inodes = read_inodes(
-        device,
-        format_version,
-        superblock.active_inode_table_block,
-        superblock.inode_count,
-    )?;
-    let dir_entries = read_dir_entries(
-        device,
-        format_version,
-        superblock.active_dirent_table_block,
-        superblock.dirent_count,
-    )?;
+    // The two tables do not depend on each other, so each is one request and
+    // they go out together on a device that queues: the same two commands, one
+    // wait instead of two ([RFC
+    // 0010](../../../docs/rfcs/0010-carry-a-run-in-one-queued-request.md)).
+    let inode_bytes = format_version.inode_table_bytes(superblock.inode_count)?;
+    let dirent_bytes = format_version.dirent_table_bytes(superblock.dirent_count)?;
+    let mut inode_buffer = vec![0_u8; blocks_for(inode_bytes) * BLOCK_SIZE];
+    let mut dirent_buffer = vec![0_u8; blocks_for(dirent_bytes) * BLOCK_SIZE];
+
+    // SAFETY: both buffers are locals that outlive the polls below, and each is
+    // named by exactly one outstanding read.
+    let inode_ticket = unsafe {
+        device.submit_read(
+            superblock.active_inode_table_block as u64,
+            &mut inode_buffer,
+        )
+    };
+    // SAFETY: as above, for the dirent table.
+    let dirent_ticket = unsafe {
+        device.submit_read(
+            superblock.active_dirent_table_block as u64,
+            &mut dirent_buffer,
+        )
+    };
+
+    match (inode_ticket, dirent_ticket) {
+        (Ok(inode_ticket), Ok(dirent_ticket)) => {
+            // Poll both before judging either: a ticket nobody polls is a slot
+            // nobody frees.
+            let inode_read = wait_for_read(device, inode_ticket);
+            let dirent_read = wait_for_read(device, dirent_ticket);
+            inode_read?;
+            dirent_read?;
+        }
+        (inode_ticket, dirent_ticket) => {
+            // One of the two was refused — a run this device cannot hold — and
+            // the other may still be on its way, so drain it, then read both
+            // tables the waiting way.  Four times the bytes at worst, on a
+            // device whose request is narrower than this filesystem's table.
+            for ticket in [inode_ticket, dirent_ticket].into_iter().flatten() {
+                let _ = wait_for_read(device, ticket);
+            }
+            device.read_blocks(
+                superblock.active_inode_table_block as u64,
+                &mut inode_buffer,
+            )?;
+            device.read_blocks(
+                superblock.active_dirent_table_block as u64,
+                &mut dirent_buffer,
+            )?;
+        }
+    }
+
+    let inodes = decode_inodes(format_version, &inode_buffer, superblock.inode_count)?;
+    let dir_entries = decode_dir_entries(format_version, &dirent_buffer, superblock.dirent_count)?;
 
     // Reject malformed or inconsistent metadata before exposing the volume.
     validate_loaded_metadata(

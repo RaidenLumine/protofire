@@ -32,12 +32,12 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-ticks 512 12
+ticks 510 12
 frames 23 0
 frame-frees 8 0
 frame-zero-bytes 610304 0
-heap-allocs 22923 256
-heap-bytes 26662544 262144
+heap-allocs 22936 256
+heap-bytes 26712672 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
@@ -56,6 +56,7 @@ blk-reads 199 0
 blk-read-bytes 308224 0
 blk-writes 519 0
 blk-write-bytes 461312 0
+blk-commands 0 0
 blk-read-high-water 1 0
 blk-write-high-water 1 0
 wl-files 8 0
@@ -77,10 +78,10 @@ nw-datagrams-rx 0 0
 nw-bytes 0 0
 nw-polls 0 0
 nw-completed 0 0
-ip4-rx 2 4
-ip4-tx 10 4
+ip4-rx 3 4
+ip4-tx 11 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 524 12
+irqs 521 12
 ipis 0 0
 spurious 0 0

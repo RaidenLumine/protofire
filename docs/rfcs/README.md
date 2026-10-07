@@ -117,6 +117,7 @@ and its status says which of the two happened.
 | [0007](0007-hold-a-second-request-on-a-device.md) | Implemented | Hold a second request on a device |
 | [0008](0008-keep-a-sequential-miss-in-one-request.md) | Accepted | Keep a sequential miss in one request |
 | [0009](0009-queue-the-writes-a-flush-makes.md) | Implemented | Queue the writes a flush makes |
+| [0010](0010-carry-a-run-in-one-queued-request.md) | Implemented | Carry a run in one queued request |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —

@@ -164,10 +164,14 @@ The authoritative picture of what exists today is
   [RFC 0007](docs/rfcs/0007-hold-a-second-request-on-a-device.md) landed the
   queued interface — a submit/poll pair beside the waiting call, defaulted so
   a device that cannot hold two requests keeps today's path — and its read
-  half now has a caller that is not a stand-in: the mount submits both
-  superblock mirrors before polling either (`readable_superblock_candidates`),
-  so `blk-read-high-water` is **2** on the disk baseline and stays **1** on
-  the four depth-one ones.  The block cache's lookahead is the caller it does
+  half now has a caller that is not a stand-in: the mount submits the reads it
+  can overlap — both superblock mirrors, then the inode and dirent tables —
+  before polling them, and [RFC 0010](docs/rfcs/0010-carry-a-run-in-one-queued-request.md)
+  gave a queued request the *run* that made the second pair possible, so a
+  multi-block read is one device command rather than one per block
+  (`blk-commands` is the row that says so).  `blk-read-high-water` is **2** on
+  the disk baseline and stays **1** on the four depth-one ones.  The block
+  cache's lookahead is the caller it does
   *not* have: its lookahead rides in the same request as the block it was
   asked for, so overlapping that read means
   splitting a request the cache decided to keep whole — and

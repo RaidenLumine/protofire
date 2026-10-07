@@ -101,7 +101,7 @@ pub(crate) fn log_once(ticks: u64) {
          cache-hits={} cache-misses={} cache-prefetches={} cache-sequential-hits={} \
          cache-evictions={} \
          blk-reads={} blk-read-bytes={} blk-writes={} blk-write-bytes={} \
-         blk-read-high-water={} blk-write-high-water={} \
+         blk-commands={} blk-read-high-water={} blk-write-high-water={} \
          wl-files={} wl-bytes={} wl-fs-reads={} wl-fs-read-bytes={} \
          wl-fs-writes={} wl-fs-write-bytes={} wl-fs-transactions={} \
          wl-cache-hits={} wl-cache-misses={} \
@@ -135,6 +135,7 @@ pub(crate) fn log_once(ticks: u64) {
         device.read_bytes,
         device.write_ops,
         device.write_bytes,
+        device.commands,
         device.read_in_flight_high_water,
         device.write_in_flight_high_water,
         workload.files,

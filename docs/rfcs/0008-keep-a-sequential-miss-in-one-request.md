@@ -141,9 +141,8 @@ and no baseline moves.
   an inode table and a dirent table that do not depend on each other, and the
   **mirror pair** is now overlapped: `readable_superblock_candidates`
   (`src/fs/simplefs/format_io.rs`) submits both, so the read half has a caller
-  that is not a probe.  The two *tables* are not overlapped, because each is
-  several blocks and the queued interface carries one block per request —
-  overlapping them would mean one request per block, which changes what
-  `blk-reads` counts rather than what the device is asked for.  A run-capable
-  queued request is what would let the mount overlap those, and that is a
-  decision of its own.
+  that is not a probe.  The two *tables* are overlapped now as well, once the
+  queued request learned to carry a run
+  ([RFC 0010](0010-carry-a-run-in-one-queued-request.md)): `SimpleFs::open`
+  submits both and waits for both.  What is still true here is the decision
+  above — the *cache's* lookahead stays where it is.

@@ -378,8 +378,10 @@ share of one request.  Overlapping *that* read would mean splitting a request
 the cache decided to keep whole, which
 [RFC 0008](../rfcs/0008-keep-a-sequential-miss-in-one-request.md) decides
 against; the queued interface's read half is used where reads really are
-independent — the mount's two superblock mirrors
-([RFC 0007](../rfcs/0007-hold-a-second-request-on-a-device.md)).  The other
+independent — the mount's two superblock mirrors, and its inode and dirent
+tables, which are runs
+([RFC 0007](../rfcs/0007-hold-a-second-request-on-a-device.md),
+[RFC 0010](../rfcs/0010-carry-a-run-in-one-queued-request.md)).  The other
 filesystems keep read-ahead off until a boot measures them.
 
 `CacheStats` counts hits, misses, evictions, dirty and aged writebacks, blocks

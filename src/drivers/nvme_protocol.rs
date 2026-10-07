@@ -16,6 +16,21 @@ pub const CQ_ENTRY_SIZE: usize = 16;
 /// NVMe page size (minimum memory page for PRP lists).
 pub const NVME_PAGE_SIZE: usize = 4096;
 
+/// The PRP entries for a run of `bytes` out of a buffer that starts at `base`,
+/// is page-aligned and whose frames are physically contiguous.
+///
+/// A run of one page is PRP1 alone (`PRP2 = 0`); a run of two pages puts the
+/// second page in PRP2.  A run longer than two pages needs a PRP list instead,
+/// which is why the driver's run buffer is two frames and no longer.
+pub const fn run_prp(base: u64, bytes: usize) -> (u64, u64) {
+    let prp2 = if bytes > NVME_PAGE_SIZE {
+        base + NVME_PAGE_SIZE as u64
+    } else {
+        0
+    };
+    (base, prp2)
+}
+
 /// Default number of entries per queue.
 pub const DEFAULT_QUEUE_SIZE: usize = 64;
 
@@ -426,5 +441,19 @@ mod tests {
     #[test]
     fn namespace_identify_size_check() {
         assert!(core::mem::size_of::<IdentifyNamespace>() <= 4096);
+    }
+
+    #[test]
+    fn a_run_of_one_page_needs_no_second_prp() {
+        assert_eq!(run_prp(0x1000, 512), (0x1000, 0));
+        assert_eq!(run_prp(0x1000, 4096), (0x1000, 0));
+    }
+
+    #[test]
+    fn a_run_of_two_pages_names_the_second_page() {
+        // Two frames that are physically contiguous: the second page follows
+        // the first, and a PRP list is not needed for a run this buffer holds.
+        assert_eq!(run_prp(0x1000, 4097), (0x1000, 0x2000));
+        assert_eq!(run_prp(0x1000, 8192), (0x1000, 0x2000));
     }
 }
