@@ -53,10 +53,17 @@ check_source_headers() {
     #   followed by the `//!` description lines,
     # and a blank line must separate the whole `//!` header block from the
     # first body line (the convention requested by the maintainer).
-    files="$(find . -type f -name '*.rs' -not -path './target/*' | sort)"
+    #
+    # "In the repository" leaves out what `.gitignore` covers: `target/` is the
+    # case this always had to skip, and a generated source file under `src/`
+    # (`make gen-kaslr-relocs` writes one) is the same case.  A file that is not
+    # added yet is still checked, because that is where a missing header is.
+    files="$(git ls-files -z --cached --others --exclude-standard -- '*.rs' \
+        | tr '\0' '\n' | sort)"
     for file in $files; do
+        [ -f "$file" ] || continue
         total_files=$((total_files + 1))
-        relative_path="${file#./}"
+        relative_path="$file"
 
         first_line="$(sed -n '1p' "$file")"
         second_line="$(sed -n '2p' "$file")"
