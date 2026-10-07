@@ -259,7 +259,9 @@ Design section names is not.
   block the caller asked for, and `src/fs/block_cache.rs` argues why ("one
   request that serves the caller and warms four blocks is strictly better than
   two").  Overlapping that read means splitting a request the filesystem
-  decided to keep whole, which is its own decision and its own change.  What
+  decided to keep whole — [RFC 0008](0008-keep-a-sequential-miss-in-one-request.md)
+  asks whether that pays and decides it does not, so the read path keeps its
+  shape and no baseline moves.  What
   landed instead is the boot probe in `src/kernel/workload.rs`: when the data
   zone's device advertises a depth of two, it submits two one-block reads
   before polling either, then waits for both.  It is deliberately the smallest

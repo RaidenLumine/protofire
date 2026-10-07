@@ -324,8 +324,11 @@ boot-work counters keep moves from the call to the ticket, so
 `blk-in-flight-high-water` means "requests a device is holding".  The NVMe
 driver answers a depth of two, matches completions by command identifier, and
 implements its waiting `read_blocks` as that pair polled at once — so there is
-one read path, and a boot exercises it.  See
-[RFC 0007](../rfcs/0007-hold-a-second-request-on-a-device.md).
+one read path, and a boot exercises it.  Nothing in the tree queues reads
+yet: the cache keeps its lookahead folded into the demand's own request
+([RFC 0008](../rfcs/0008-keep-a-sequential-miss-in-one-request.md) is why).
+See [RFC 0007](../rfcs/0007-hold-a-second-request-on-a-device.md) for the
+interface itself.
 
 A driver that finds a disk does not know about the filesystem.  It calls
 `publish_device`, and `set_device_publisher` — installed by `Kernel::init`

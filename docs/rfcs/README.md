@@ -115,6 +115,7 @@ and its status says which of the two happened.
 | [0005](0005-claim-the-msix-entries-a-driver-names.md) | Implemented | Claim the MSI-X entries a driver names |
 | [0006](0006-end-a-producer-ring-lap-where-its-work-ends.md) | Implemented | End a producer ring's lap where its work ends |
 | [0007](0007-hold-a-second-request-on-a-device.md) | Implemented | Hold a second request on a device |
+| [0008](0008-keep-a-sequential-miss-in-one-request.md) | Accepted | Keep a sequential miss in one request |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —

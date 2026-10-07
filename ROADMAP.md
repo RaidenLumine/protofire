@@ -168,9 +168,14 @@ The authoritative picture of what exists today is
   disk baseline and stays **1** on the four depth-one ones.  What is still
   missing is a *production* caller: the block cache's lookahead rides in the
   same request as the block it was asked for, so overlapping that read means
-  splitting a request the cache decided to keep whole, which is its own
-  argument.  Until one lands, the mechanism is verified and unbilled-for —
-  the payoff is a hardware question, and the tree's devices are models.
+  splitting a request the cache decided to keep whole — and
+  [RFC 0008](docs/rfcs/0008-keep-a-sequential-miss-in-one-request.md) decides
+  against it, with the coalescing measured at 36 % of a boot's device commands
+  and no earlier block to show for the split.  The candidate left is the write
+  path: a flush of independent dirty blocks has no order between them and a
+  buffer that goes *into* the device, which is the safe shape the read path
+  lacks.  Until one lands, the mechanism is verified and unbilled-for — the
+  payoff is a hardware question, and the tree's devices are models.
 
 ## Long Term (1–3 years)
 

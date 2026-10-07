@@ -1200,10 +1200,20 @@ mod tests {
         let mut buf = [0_u8; BLOCK_SIZE];
         cache.read_cached(0, &mut buf).unwrap();
         assert_eq!(cache.stats().misses, 1);
+        assert_eq!(device.read_count(), 1);
 
         // Read LBA 1 (miss, last=0 → sequential → triggers read-ahead for 2,3).
         cache.read_cached(1, &mut buf).unwrap();
         assert_eq!(cache.stats().misses, 2);
+        // One request covered the demand *and* its lookahead: two blocks,
+        // 1024 bytes, one device command.  This is the shape RFC 0008 keeps,
+        // and the assertion is what makes that a gate rather than a comment —
+        // a split into two overlapping requests fails here.
+        assert_eq!(
+            device.read_count(),
+            2,
+            "a sequential miss is one request for the demand and its lookahead"
+        );
         let prefetches_after = cache.stats().prefetches_issued;
         assert!(
             prefetches_after >= 1,
@@ -1214,6 +1224,7 @@ mod tests {
         // put there.
         cache.read_cached(2, &mut buf).unwrap();
         assert_eq!(cache.stats().sequential_hits, 1);
+        assert_eq!(device.read_count(), 2, "the lookahead was already read");
     }
 
     #[test]
