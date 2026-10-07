@@ -92,6 +92,13 @@ CLIPPY_BARE_METAL_FEATURES = demo-disk abi_frozen_payload
 # the payload body every machine emits.
 CLIPPY_NO_START_TARGET = x86_64-unknown-none
 CLIPPY_NO_START_FEATURES = demo-disk init_no_start
+# The profiler features are a configuration of their own, and until this entry
+# existed nothing *linted* them: `make clippy` builds the host configuration,
+# which has none of them, and the feature matrix builds them without a lint.
+# Code behind `perf_baseline` — the boot-work line, the workload — was
+# therefore compiled by one gate and checked by none.
+CLIPPY_PROFILER_TARGET = x86_64-unknown-none
+CLIPPY_PROFILER_FEATURES = demo-disk perf_baseline fs_profiler net_profiler alloc_profiler fault_profiler
 
 # ── help ──────────────────────────────────────────────────────────────
 .PHONY: help
@@ -814,6 +821,12 @@ clippy-targets:
 		echo "==> clippy $$target ($(CLIPPY_NO_START_FEATURES))"; \
 		$(CARGO) clippy $(CARGO_FLAGS) -p $(CRATE) --target $$target \
 			--features "$(CLIPPY_NO_START_FEATURES)" -- \
+			-D warnings || exit 1; \
+	done
+	@for target in $(CLIPPY_PROFILER_TARGET); do \
+		echo "==> clippy $$target ($(CLIPPY_PROFILER_FEATURES))"; \
+		$(CARGO) clippy $(CARGO_FLAGS) -p $(CRATE) --target $$target \
+			--features "$(CLIPPY_PROFILER_FEATURES)" -- \
 			-D warnings || exit 1; \
 	done
 
