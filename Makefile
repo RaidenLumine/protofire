@@ -1007,7 +1007,7 @@ fmt:
 # `make gen-kaslr-relocs` and is formatted like everything else in the tree.
 fmt-all:
 	$(CARGO) fmt --all
-	$(CARGO) fmt --manifest-path $(FUZZ_MANIFEST)
+	$(CARGO) fmt --manifest-path $(FUZZ_MANIFEST) --all
 
 fmt-check:
 	$(CARGO) fmt --all --check
@@ -1015,3 +1015,4 @@ fmt-check:
 
 clean:
 	$(CARGO) clean
+	$(CARGO) clean --manifest-path $(FUZZ_MANIFEST)
