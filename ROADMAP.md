@@ -103,14 +103,15 @@ The authoritative picture of what exists today is
   F2FS / XFS / exFAT / FAT32.  The first of them is moving:
   [RFC 0011](docs/rfcs/0011-make-iso9660-file-data-writable.md) made an ISO
   9660 file's *data*, its *length*, its *space* — from an append-only allocator
-  that no longer refuses at the block boundary — and then its *record*, so
-  regular files can be created and removed.  The RFC records why ISO 9660 went
-  first (no compression to redo, no checksum tree to update, and a test image
-  builder that already exists), and what it costs: the allocator appends, so a
-  removal reclaims nothing and a growth can pay a copy.  What is left of ISO
-  9660 is directories, which is the path tables, and the Rock Ridge name entry
-  that would let a created name be anything a caller likes.  NTFS is the prize
-  and the largest step; its RFC has to decide its harness before its writes.
+  that no longer refuses at the block boundary — its *record*, so files can be
+  created and removed, and then *directories*, which is both path tables
+  rebuilt from the tree.  The RFC records why ISO 9660 went first (no
+  compression to redo, no checksum tree to update, and a test image builder
+  that already exists), and what it costs: the allocator appends, so a removal
+  reclaims nothing and a growth can pay a copy.  What is left of ISO 9660 is
+  `rename` and the Rock Ridge name entry that would let a created name be
+  anything a caller likes.  NTFS is the prize and the largest step; its RFC has
+  to decide its harness before its writes.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

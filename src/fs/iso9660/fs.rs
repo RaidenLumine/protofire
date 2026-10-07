@@ -366,6 +366,103 @@ use alloc;
 // Allocation
 // ---------------------------------------------------------------------------
 
+/// One directory, as a path table describes it.
+///
+/// A path table is how a reader finds a directory without walking the tree
+/// from the root: every directory the volume has, in level order, each naming
+/// its parent by number.  A directory's number *is* its position in the table,
+/// so a table is built from the whole list at once and never edited in place.
+pub struct PathTableEntry {
+    pub identifier: Vec<u8>,
+    pub extent_location: u32,
+    /// This directory's number, and its parent's — both 1-based.
+    pub number: u16,
+    pub parent_number: u16,
+}
+
+/// Serialise a path table.
+///
+/// Two are required — one little-endian and one big-endian — and they are
+/// identical apart from the byte order of the numbers a record carries, which
+/// is why the order is an argument.
+pub fn build_path_table(entries: &[PathTableEntry], big_endian: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (position, entry) in entries.iter().enumerate() {
+        // A directory's number is where it sits; a table whose numbers do not
+        // say that is a table a reader cannot follow.
+        debug_assert_eq!(entry.number as usize, position + 1);
+
+        let len_di = entry.identifier.len();
+        let extent = if big_endian {
+            entry.extent_location.to_be_bytes()
+        } else {
+            entry.extent_location.to_le_bytes()
+        };
+        let parent = if big_endian {
+            entry.parent_number.to_be_bytes()
+        } else {
+            entry.parent_number.to_le_bytes()
+        };
+
+        out.push(len_di as u8);
+        out.push(0); // extended attribute record length
+        out.extend_from_slice(&extent);
+        out.extend_from_slice(&parent);
+        out.extend_from_slice(&entry.identifier);
+        if len_di % 2 == 1 {
+            // A record's length is even, so an odd identifier takes a pad byte.
+            out.push(0);
+        }
+    }
+    out
+}
+
+/// Rewrite the four descriptor fields that describe the path tables.
+///
+/// The size is stored twice; the little-endian table's locations are
+/// little-endian and the big-endian table's are big-endian.  That is the
+/// format, not a choice.  The two optional copies are rewritten too, because a
+/// reader is allowed to follow them and a stale copy is a wrong answer.
+pub fn rewrite_path_table_fields(
+    device: &Arc<dyn BlockDevice>,
+    size: u32,
+    l_location: u32,
+    opt_l_location: u32,
+    m_location: u32,
+    opt_m_location: u32,
+) -> Result<(), Error> {
+    let at = |field: usize| PVD_SECTOR * SECTOR_SIZE as u64 + field as u64;
+
+    let mut size_field = [0u8; 8];
+    size_field[..4].copy_from_slice(&size.to_le_bytes());
+    size_field[4..].copy_from_slice(&size.to_be_bytes());
+    write_exact(
+        device,
+        at(core::mem::offset_of!(Pvd, path_table_size)),
+        &size_field,
+    )?;
+    write_exact(
+        device,
+        at(core::mem::offset_of!(Pvd, l_path_table_loc)),
+        &l_location.to_le_bytes(),
+    )?;
+    write_exact(
+        device,
+        at(core::mem::offset_of!(Pvd, opt_l_path_table_loc)),
+        &opt_l_location.to_le_bytes(),
+    )?;
+    write_exact(
+        device,
+        at(core::mem::offset_of!(Pvd, m_path_table_loc)),
+        &m_location.to_be_bytes(),
+    )?;
+    write_exact(
+        device,
+        at(core::mem::offset_of!(Pvd, opt_m_path_table_loc)),
+        &opt_m_location.to_be_bytes(),
+    )
+}
+
 /// How many logical blocks the volume says it has.
 ///
 /// The descriptor's own statement of the volume's extent, stored twice.  Zero
@@ -376,6 +473,21 @@ use alloc;
 /// length lives in the descriptor.
 pub fn root_record_offset() -> u64 {
     PVD_SECTOR * SECTOR_SIZE as u64 + PVD_ROOT_RECORD_OFFSET as u64
+}
+
+/// A descriptor field whose on-disk bytes are little-endian.
+///
+/// The descriptor is read as bytes and its fields have whatever byte order the
+/// format gives them, which is not always the machine's — the big-endian path
+/// table's location is stored big-endian on a little-endian machine, and
+/// reading it as an integer gives a number that addresses nothing.
+pub fn field_le(value: u32) -> u32 {
+    u32::from_le_bytes(value.to_ne_bytes())
+}
+
+/// A descriptor field whose on-disk bytes are big-endian.
+pub fn field_be(value: u32) -> u32 {
+    u32::from_be_bytes(value.to_ne_bytes())
 }
 
 /// How many logical blocks the volume says it has.

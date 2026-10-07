@@ -468,11 +468,12 @@ fn a_created_file_makes_its_directory_longer() {
 
     volume.create_file("/NEW.TXT").expect("create");
 
-    // `NEW.TXT;1` is nine bytes, so its record is 33 + 9 + one pad byte.
+    // `NEW.TXT;1` is nine bytes, so its record is 33 + 9 rounded up to an even
+    // length: 42.
     let reopened = open_volume(device);
     assert_eq!(
         reopened.lookup("/").expect("root again").size(),
-        ROOT_EXTENT_SIZE as usize + 43
+        ROOT_EXTENT_SIZE as usize + 42
     );
 }
 
@@ -544,7 +545,10 @@ fn removing_a_file_takes_its_record_out_of_the_directory() {
 #[test]
 fn removing_a_directory_is_refused() {
     let (_device, volume) = writable_volume();
-    assert_eq!(volume.remove_path("/SUB"), Err(Error::Unsupported));
+    // `/SUB` holds `NOTES.TXT`, and a directory that still holds something
+    // cannot go: its child's record would be pointing at a parent nothing
+    // names.
+    assert_eq!(volume.remove_path("/SUB"), Err(Error::Busy));
 }
 
 #[test]
@@ -556,6 +560,204 @@ fn creating_and_removing_are_refused_on_a_read_only_device() {
         volume.remove_path("/HELLO.TXT"),
         Err(Error::PermissionDenied)
     );
+}
+
+// ─── Creating and removing directories (RFC 0011, stage 3c) ────────────
+
+/// The directories a path table names, as `(number, parent, identifier,
+/// extent)`.  A record's number is its position, so it is not read from the
+/// table — it *is* the table's order.
+fn parse_path_table(bytes: &[u8], big_endian: bool) -> Vec<(u16, u16, Vec<u8>, u32)> {
+    let mut entries = Vec::new();
+    let mut at = 0usize;
+    while at < bytes.len() {
+        let len_di = bytes[at] as usize;
+        if len_di == 0 {
+            // The table is shorter than the space it is stored in.
+            break;
+        }
+        let extent = if big_endian {
+            u32::from_be_bytes(bytes[at + 2..at + 6].try_into().expect("four bytes"))
+        } else {
+            u32::from_le_bytes(bytes[at + 2..at + 6].try_into().expect("four bytes"))
+        };
+        let parent = if big_endian {
+            u16::from_be_bytes(bytes[at + 6..at + 8].try_into().expect("two bytes"))
+        } else {
+            u16::from_le_bytes(bytes[at + 6..at + 8].try_into().expect("two bytes"))
+        };
+        let identifier = bytes[at + 8..at + 8 + len_di].to_vec();
+        entries.push((entries.len() as u16 + 1, parent, identifier, extent));
+        at += 8 + len_di + (len_di % 2);
+    }
+    entries
+}
+
+/// The records a path table holds, as `(number, parent, identifier, extent)`.
+type PathTableRecords = Vec<(u16, u16, Vec<u8>, u32)>;
+
+/// Both path tables, read back off the volume.
+fn path_tables(device: &Arc<MemoryBlockDevice>) -> (PathTableRecords, PathTableRecords) {
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let pvd = fs::read_pvd(&as_device).expect("read pvd");
+    let size = u32::from_le_bytes(pvd.path_table_size[..4].try_into().expect("four bytes"));
+    let l = fs::field_le(pvd.l_path_table_loc);
+    let m = fs::field_be(pvd.m_path_table_loc);
+
+    let mut little = vec![0u8; size as usize];
+    fs::read_extent(&as_device, SECTOR_SIZE as u16, l, size, 0, &mut little)
+        .expect("read the little-endian table");
+    let mut big = vec![0u8; size as usize];
+    fs::read_extent(&as_device, SECTOR_SIZE as u16, m, size, 0, &mut big)
+        .expect("read the big-endian table");
+
+    (
+        parse_path_table(&little, false),
+        parse_path_table(&big, true),
+    )
+}
+
+/// Check the properties a reader depends on, in both tables.
+fn assert_path_tables_name(device: &Arc<MemoryBlockDevice>, expected: &[(Vec<u8>, u32)]) {
+    let (little, big) = path_tables(device);
+    assert_eq!(little.len(), big.len(), "the two tables disagree");
+    for (left, right) in little.iter().zip(big.iter()) {
+        assert_eq!(left, right, "the two tables disagree");
+    }
+
+    assert_eq!(little[0].2, vec![0x00], "the root is the first record");
+    assert_eq!(little[0].1, 1, "the root's parent is itself");
+    for (index, (number, parent, _, _)) in little.iter().enumerate() {
+        assert_eq!(*number as usize, index + 1, "a number is its position");
+        assert!(*parent <= *number, "a parent is numbered before its child");
+    }
+
+    for (identifier, extent) in expected {
+        let found = little.iter().filter(|entry| &entry.2 == identifier).count();
+        assert_eq!(found, 1, "a directory is named once");
+        assert!(
+            little
+                .iter()
+                .any(|entry| &entry.2 == identifier && entry.3 == *extent),
+            "a directory's extent is the one its record says"
+        );
+    }
+
+    // Within one parent the identifiers are ordered, which is the part of the
+    // standard's order a level-order walk does not give for free.
+    for window in little.windows(2) {
+        if window[0].1 == window[1].1 {
+            assert!(
+                window[0].2 <= window[1].2,
+                "siblings are not in identifier order"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_created_directory_is_empty_and_findable() {
+    let (device, volume) = writable_volume();
+    volume.create_dir("/NEWDIR").expect("create dir");
+
+    let node = volume.lookup("/newdir").expect("lookup");
+    assert_eq!(node.kind(), NodeKind::Directory);
+    // It holds its own two records and nothing else, so listing it lists
+    // nothing: the reader skips "." and "..".
+    assert!(matches!(
+        volume.read_dir("/newdir", 0),
+        Err(Error::NotFound)
+    ));
+
+    // A second mount sees it, and the path tables name it.
+    assert_path_tables_name(
+        &device,
+        &[
+            (vec![0x00], ROOT_EXTENT_SECTOR as u32),
+            (b"SUB".to_vec(), SUB_EXTENT_SECTOR as u32),
+            (b"NEWDIR".to_vec(), VOLUME_BLOCKS),
+        ],
+    );
+    let reopened = open_volume(device);
+    assert_eq!(
+        reopened.lookup("/NEWDIR").expect("relookup").kind(),
+        NodeKind::Directory
+    );
+}
+
+#[test]
+fn a_created_directory_holds_files() {
+    let (device, volume) = writable_volume();
+    volume.create_dir("/holding").expect("create dir");
+    let node = volume
+        .create_file("/holding/item.bin")
+        .expect("create file");
+    assert_eq!(node.write(0, b"inside").expect("write"), 6);
+
+    let reopened = open_volume(device);
+    let file = reopened.lookup("/holding/item.bin").expect("relookup");
+    assert_eq!(file.size(), 6);
+    let mut buf = vec![0u8; 6];
+    assert_eq!(file.read(0, &mut buf).expect("read"), 6);
+    assert_eq!(buf, b"inside");
+}
+
+#[test]
+fn the_path_table_orders_siblings_by_identifier() {
+    let (device, volume) = writable_volume();
+    // Created in the order a walk would *not* list them.
+    volume.create_dir("/zebra").expect("create zebra");
+    volume.create_dir("/alpha").expect("create alpha");
+
+    let (little, _) = path_tables(&device);
+    let names: Vec<&Vec<u8>> = little.iter().map(|entry| &entry.2).collect();
+    let alpha = names
+        .iter()
+        .position(|name| *name == b"ALPHA")
+        .expect("alpha");
+    let zebra = names
+        .iter()
+        .position(|name| *name == b"ZEBRA")
+        .expect("zebra");
+    let sub = names.iter().position(|name| *name == b"SUB").expect("sub");
+    assert!(alpha < sub && sub < zebra, "siblings are out of order");
+    assert!(little.iter().all(|entry| entry.1 <= entry.0));
+}
+
+#[test]
+fn removing_an_empty_directory_takes_it_out_of_the_tree_and_the_tables() {
+    let (device, volume) = writable_volume();
+    volume.create_dir("/gone").expect("create dir");
+    assert_path_tables_name(
+        &device,
+        &[
+            (vec![0x00], ROOT_EXTENT_SECTOR as u32),
+            (b"SUB".to_vec(), SUB_EXTENT_SECTOR as u32),
+            (b"GONE".to_vec(), VOLUME_BLOCKS),
+        ],
+    );
+
+    volume.remove_path("/gone").expect("remove dir");
+    assert!(matches!(volume.lookup("/gone"), Err(Error::NotFound)));
+
+    // The tables no longer name it, and a second mount agrees.
+    assert_path_tables_name(
+        &device,
+        &[
+            (vec![0x00], ROOT_EXTENT_SECTOR as u32),
+            (b"SUB".to_vec(), SUB_EXTENT_SECTOR as u32),
+        ],
+    );
+    let reopened = open_volume(device);
+    assert!(matches!(reopened.lookup("/GONE"), Err(Error::NotFound)));
+    assert!(reopened.lookup("/SUB/NOTES.TXT").is_ok());
+}
+
+#[test]
+fn a_read_only_device_refuses_a_created_directory() {
+    let device = MemoryBlockDevice::new("iso-ro", build_test_image(), true);
+    let volume = open_volume(device);
+    assert!(volume.create_dir("/NEWDIR").is_err());
 }
 
 // ─── Changing a file's length (RFC 0011, stage 2) ──────────────────────

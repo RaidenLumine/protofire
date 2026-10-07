@@ -23,10 +23,10 @@
 //!   *moves* to the end rather than growing where it is, because an extent is
 //!   one contiguous run.  A regular file can be created — empty, in the
 //!   directory it names — and removed, which is a record appended to that
-//!   directory or shifted out of it.  A *directory* cannot be created or
-//!   removed yet, because both would rewrite the path tables; `rename` is
-//!   refused for the same reason, and a write to a read-only *device* is
-//!   refused by the device.
+//!   directory or shifted out of it; a **directory** can be created and removed
+//!   too, and that is what moves the path tables, which are rebuilt from the
+//!   tree rather than edited in place.  A directory that still holds something
+//!   refuses to go, and `rename` still refuses.
 //! - No Rock Ridge *name* entry is written, so a created name has to be an ISO
 //!   9660 identifier (`NAME.EXT`): the name is upper-cased and versioned, and a
 //!   name with characters an identifier has no room for is refused rather than
@@ -47,6 +47,7 @@ mod fs;
 mod tests;
 pub(crate) mod types;
 
+use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -153,8 +154,8 @@ impl Iso9660Volume {
         }
     }
 
-    /// Read the root directory, and say which extent it came from.
-    fn read_root(&self) -> Result<(u32, Vec<DirRecord>)> {
+    /// Read the root directory: its own record, and its entries.
+    fn read_root(&self) -> Result<(DirRecord, Vec<DirRecord>)> {
         if let Some(ref joliet_root) = self.joliet_root {
             let entries = fs::read_joliet_directory(
                 &self.device,
@@ -162,7 +163,7 @@ impl Iso9660Volume {
                 joliet_root.extent_location,
                 joliet_root.extent_size,
             )?;
-            return Ok((joliet_root.extent_location, entries));
+            return Ok((joliet_root.clone(), entries));
         }
         let pvd = fs::read_pvd(&self.device)?;
         let (root_record, _next) =
@@ -173,7 +174,103 @@ impl Iso9660Volume {
             root_record.extent_location,
             root_record.extent_size,
         )?;
-        Ok((root_record.extent_location, entries))
+        Ok((root_record, entries))
+    }
+
+    /// Every directory the volume has, in the order a path table keeps them.
+    ///
+    /// The standard's order is by hierarchy level, then by the parent's number,
+    /// then by identifier.  A level-order walk gives the first two for free —
+    /// a parent is always numbered before its children — so this walks the
+    /// levels in turn and sorts each directory's children by identifier.
+    fn path_table_entries(&self) -> Result<Vec<fs::PathTableEntry>> {
+        let (root, root_entries) = self.read_root()?;
+        let mut entries = alloc::vec![fs::PathTableEntry {
+            identifier: alloc::vec![0x00],
+            extent_location: root.extent_location,
+            number: 1,
+            parent_number: 1,
+        }];
+
+        let mut pending: VecDeque<(u16, Vec<DirRecord>)> = VecDeque::new();
+        pending.push_back((1, root_entries));
+        while let Some((parent_number, records)) = pending.pop_front() {
+            let mut children: Vec<DirRecord> = records
+                .into_iter()
+                .filter(|record| record.is_dir() && !is_self_or_parent(record))
+                .collect();
+            children.sort_by(|left, right| left.identifier.cmp(&right.identifier));
+
+            for child in children {
+                let number = u16::try_from(entries.len() + 1).map_err(|_| Error::NoSpace)?;
+                entries.push(fs::PathTableEntry {
+                    identifier: child.identifier.clone(),
+                    extent_location: child.extent_location,
+                    number,
+                    parent_number,
+                });
+                let sub = self.read_dir_extent(child.extent_location, child.extent_size)?;
+                pending.push_back((number, sub));
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Rebuild both path tables from the tree and write them.
+    ///
+    /// The tables are *derived* rather than edited: a directory's number is its
+    /// position, so inserting one renumbers everything after it, and rebuilding
+    /// the list is the same work with fewer ways to be wrong.  Two are
+    /// required — one per byte order — and a volume may also carry optional
+    /// copies, which are rewritten to the same content because a reader is
+    /// allowed to follow them.
+    fn rewrite_path_tables(&self) -> Result<()> {
+        let entries = self.path_table_entries()?;
+        let little = fs::build_path_table(&entries, false);
+        let big = fs::build_path_table(&entries, true);
+        debug_assert_eq!(little.len(), big.len());
+        let size = u32::try_from(little.len()).map_err(|_| Error::NoSpace)?;
+
+        let pvd = fs::read_pvd(&self.device)?;
+        let old_size = u32::from_le_bytes(
+            pvd.path_table_size[..4]
+                .try_into()
+                .map_err(|_| Error::InvalidArgument)?,
+        );
+        let blocks = |bytes: u32| (bytes as u64).div_ceil(self.block_size as u64) as u32;
+
+        let mut l_location = fs::field_le(pvd.l_path_table_loc);
+        let mut m_location = fs::field_be(pvd.m_path_table_loc);
+        if blocks(size) > blocks(old_size) {
+            // A path table is one contiguous extent like any other, so more
+            // room than it has means moving it to the end of the volume.
+            l_location = fs::allocate_blocks(&self.device, self.block_size, blocks(size))?;
+            m_location = fs::allocate_blocks(&self.device, self.block_size, blocks(size))?;
+        }
+
+        let write_at = |location: u32, table: &[u8]| -> Result<()> {
+            fs::write_exact(
+                &self.device,
+                location as u64 * self.block_size as u64,
+                table,
+            )
+        };
+        write_at(l_location, &little)?;
+        write_at(m_location, &big)?;
+        let opt_l = if pvd.opt_l_path_table_loc == 0 {
+            0
+        } else {
+            write_at(l_location, &little)?;
+            l_location
+        };
+        let opt_m = if pvd.opt_m_path_table_loc == 0 {
+            0
+        } else {
+            write_at(m_location, &big)?;
+            m_location
+        };
+
+        fs::rewrite_path_table_fields(&self.device, size, l_location, opt_l, m_location, opt_m)
     }
 
     /// Resolve a clean path to its record, its directory's entries when it is a
@@ -184,10 +281,7 @@ impl Iso9660Volume {
     /// something a lookup can recover later without walking the path again.
     fn resolve(&self, clean_path: &str) -> Result<(DirRecord, Option<Vec<DirRecord>>, u64)> {
         if clean_path.is_empty() || clean_path == "/" {
-            let (_, entries) = self.read_root()?;
-            let pvd = fs::read_pvd(&self.device)?;
-            let (root_rec, _) =
-                DirRecord::parse(&pvd.root_dir_record, 0).ok_or(Error::InvalidArgument)?;
+            let (root_rec, entries) = self.read_root()?;
             // The root's record is a field of the PVD, and a root that grows
             // or shrinks rewrites its length there.
             return Ok((root_rec, Some(entries), fs::root_record_offset()));
@@ -200,7 +294,9 @@ impl Iso9660Volume {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let (mut entries_extent, mut current_entries) = self.read_root()?;
+        let (root_record, root_entries) = self.read_root()?;
+        let mut entries_extent = root_record.extent_location;
+        let mut current_entries = root_entries;
 
         for (i, name) in segments.iter().enumerate() {
             let record = find_in_dir(&current_entries, name).ok_or(Error::NotFound)?;
@@ -361,8 +457,49 @@ impl VfsFileSystem for Iso9660Volume {
             block_size: self.block_size,
         }))
     }
-    fn create_dir(&self, _p: &str) -> Result<()> {
-        Err(Error::PermissionDenied)
+    fn create_dir(&self, path: &str) -> Result<()> {
+        let clean = clean_path(path);
+        if self.resolve(&clean).is_ok() {
+            return Err(Error::AlreadyExists);
+        }
+        let (parent, parent_record_offset, child) = self.resolve_child(&clean)?;
+        let identifier = dir_identifier(&child)?;
+
+        // A directory's extent holds its own two records before anything else:
+        // "." is itself and ".." is its parent, and they are what makes it a
+        // directory at all.
+        let extent_location = fs::allocate_blocks(&self.device, self.block_size, 1)?;
+        let mut extent = DirRecord::new_directory(&[0x00], extent_location, EMPTY_DIRECTORY_BYTES);
+        extent.extend_from_slice(&DirRecord::new_directory(
+            &[0x01],
+            parent.extent_location,
+            parent.extent_size,
+        ));
+        debug_assert_eq!(extent.len(), EMPTY_DIRECTORY_BYTES as usize);
+        fs::write_exact(
+            &self.device,
+            extent_location as u64 * self.block_size as u64,
+            &extent,
+        )?;
+
+        // The parent's own record for it, appended to the parent's extent the
+        // way any other child is.
+        let record = DirRecord::new_directory(&identifier, extent_location, EMPTY_DIRECTORY_BYTES);
+        let (location, new_size, _record_offset) = fs::append_record(
+            &self.device,
+            self.block_size,
+            parent.extent_location,
+            parent.extent_size,
+            &record,
+        )?;
+        fs::rewrite_record_placement(&self.device, parent_record_offset, location, new_size)?;
+
+        // And the path tables, which are how a reader finds a directory without
+        // walking the tree.  They come last on purpose: a crash between the two
+        // leaves a directory the *tree* has and the table does not, which a
+        // walk still finds, rather than an entry for a directory that is not
+        // there at all.
+        self.rewrite_path_tables()
     }
     fn create_symlink(&self, _t: &str, _p: &str) -> Result<Arc<dyn VNode>> {
         Err(Error::PermissionDenied)
@@ -381,9 +518,13 @@ impl VfsFileSystem for Iso9660Volume {
         let clean = clean_path(path);
         let (record, _entries, record_offset) = self.resolve(&clean)?;
         if record.is_dir() {
-            // Removing a directory would also rewrite the path tables, which
-            // is a later stage.
-            return Err(Error::Unsupported);
+            // A directory that still holds something cannot go: its children's
+            // records would be pointing at a parent nothing names, and the
+            // path tables would have to lose their entries one by one.  An
+            // empty one is exactly its own two records.
+            if record.extent_size != EMPTY_DIRECTORY_BYTES {
+                return Err(Error::Busy);
+            }
         }
         let (parent, parent_record_offset, _child) = self.resolve_child(&clean)?;
 
@@ -422,6 +563,12 @@ impl VfsFileSystem for Iso9660Volume {
             parent.extent_location,
             new_size,
         )?;
+
+        if record.is_dir() {
+            // The tables still name it, and a table that names a directory the
+            // tree does not have is the worse half of the same crash.
+            self.rewrite_path_tables()?;
+        }
         Ok(())
     }
     fn security_descriptor_mutation_support(&self) -> SecurityDescriptorMutationSupport {
@@ -605,6 +752,25 @@ impl VNode for Iso9660VNode {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/// The ISO 9660 identifier for a file a caller names.
+fn is_self_or_parent(record: &DirRecord) -> bool {
+    record.identifier.len() == 1 && (record.identifier[0] == 0x00 || record.identifier[0] == 0x01)
+}
+
+/// The bytes an empty directory's extent holds: its own two records, which
+/// have one-byte identifiers and so are 34 bytes each.
+const EMPTY_DIRECTORY_BYTES: u32 = 2 * (33 + 1);
+
+/// The ISO 9660 identifier for a directory a caller names.
+///
+/// The same rule as a file's, minus the version: a directory identifier has no
+/// `;1`, because it is not a versioned file name.
+fn dir_identifier(name: &str) -> Result<Vec<u8>> {
+    let mut identifier = iso_identifier(name)?;
+    identifier.truncate(identifier.len() - 2);
+    Ok(identifier)
+}
 
 /// The ISO 9660 identifier for a file a caller names.
 ///

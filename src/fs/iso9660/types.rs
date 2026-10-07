@@ -139,8 +139,16 @@ impl DirRecord {
     /// standard reads as "not specified" and this driver does not use.
     pub fn new_file(identifier: &[u8], extent_location: u32, extent_size: u32) -> Vec<u8> {
         let fi_len = identifier.len();
-        let pad = usize::from(fi_len % 2 == 1);
-        let dr_len = 33 + fi_len + pad;
+        // A record's length is even: the identifier is followed by one pad byte
+        // when it has to be.
+        let dr_len = {
+            let base = 33 + fi_len;
+            if base.is_multiple_of(2) {
+                base
+            } else {
+                base + 1
+            }
+        };
         let mut rec = alloc::vec![0u8; dr_len];
         rec[0] = dr_len as u8;
         rec[DIR_RECORD_EXTENT_LOCATION_OFFSET..][..4]
@@ -157,6 +165,13 @@ impl DirRecord {
         rec[30..32].copy_from_slice(&1u16.to_be_bytes());
         rec[32] = fi_len as u8;
         rec[33..33 + fi_len].copy_from_slice(identifier);
+        rec
+    }
+
+    /// The same record, marked as a directory.
+    pub fn new_directory(identifier: &[u8], extent_location: u32, extent_size: u32) -> Vec<u8> {
+        let mut rec = Self::new_file(identifier, extent_location, extent_size);
+        rec[25] = 0x02; // directory
         rec
     }
 

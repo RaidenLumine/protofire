@@ -288,3 +288,46 @@ every extent is what would fix both, and it is the next step.
 extent *and* an entry in both path tables, in their order, and removing one
 needs the same in reverse — and a Rock Ridge name entry, which is what would
 let a created name be anything a caller likes.
+
+**Stage 3c — directories, which means the path tables.**
+
+- `Iso9660Volume::path_table_entries` walks the tree level by level and builds
+  the table the standard asks for: by level, then by the parent's number, then
+  by identifier.  A level-order walk gives the first two for free, because a
+  parent is always numbered before its children; each directory's children are
+  sorted by identifier, which is the part a walk does not give.
+- The tables are **rebuilt, not edited**: a directory's number *is* its
+  position, so inserting one renumbers everything after it, and rebuilding the
+  list is the same work with fewer ways to be wrong.  Both are written — one
+  per byte order — and the descriptor's four fields (size, both locations, and
+  the optional copies when the image has them) are rewritten to match.  A table
+  that no longer fits the blocks it holds moves to the end of the volume like
+  any other extent.
+- `create_dir` writes the two records an empty directory is — "." at its own
+  extent and ".." at its parent's — appends the parent's record for it, and
+  rebuilds the tables **last**, so a crash in between leaves a directory the
+  tree has and the table does not (which a walk still finds) rather than an
+  entry for a directory that is not there.
+- `remove_path` takes a directory out only when it is empty — its extent is
+  exactly its own two records — because a child's record would otherwise point
+  at a parent nothing names, and rebuilds the tables after it.
+- **A bug the first test found**: the descriptor stores one path table's
+  location big-endian and the other's little-endian, and reading the
+  big-endian one as an integer gives a number that addresses nothing.  The
+  tests caught it as a write past the device's end; `field_le`/`field_be` are
+  now what reads those fields.
+- Five tests, and the important one is a **checker**: the reader never consults
+  a path table (it walks records), so nothing in the driver would notice a
+  table that was wrong.  The tests parse both tables back off the medium and
+  require the properties a reader depends on — the two agree, the root is
+  first and its own parent, a number is its position, a parent is numbered
+  before its child, every directory appears exactly once at the extent its
+  record names, and siblings are in identifier order.  Plus: a created
+  directory is empty, findable and named in the tables, on a second mount too;
+  it holds files; removing an empty one takes it out of the tree and the
+  tables; a directory that holds something is `Busy`; a read-only device
+  refuses.
+
+**What that leaves.**  `rename`, which is a removal and a create that the
+caller sees as one, and the Rock Ridge name entry that would let a created
+name be anything at all.
