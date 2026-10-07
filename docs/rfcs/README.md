@@ -116,6 +116,7 @@ and its status says which of the two happened.
 | [0006](0006-end-a-producer-ring-lap-where-its-work-ends.md) | Implemented | End a producer ring's lap where its work ends |
 | [0007](0007-hold-a-second-request-on-a-device.md) | Implemented | Hold a second request on a device |
 | [0008](0008-keep-a-sequential-miss-in-one-request.md) | Accepted | Keep a sequential miss in one request |
+| [0009](0009-queue-the-writes-a-flush-makes.md) | Accepted | Queue the writes a flush makes |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —

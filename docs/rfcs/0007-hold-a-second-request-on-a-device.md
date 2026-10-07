@@ -276,3 +276,8 @@ Design section names is not.
   probe naming its own evidence.  What the boot pays for the mechanism is two
   4 KiB frames of DMA memory, one bounce buffer per slot, and the recorded
   `frames` and `frame-zero-bytes` moved by exactly that.
+- **Where the production caller is.**  This RFC covered reads only.  The read
+  path is not a caller and should not become one
+  ([RFC 0008](0008-keep-a-sequential-miss-in-one-request.md)); the write path
+  is, and [RFC 0009](0009-queue-the-writes-a-flush-makes.md) decides its
+  interface and its first caller.

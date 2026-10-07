@@ -327,7 +327,11 @@ implements its waiting `read_blocks` as that pair polled at once — so there is
 one read path, and a boot exercises it.  Nothing in the tree queues reads
 yet: the cache keeps its lookahead folded into the demand's own request
 ([RFC 0008](../rfcs/0008-keep-a-sequential-miss-in-one-request.md) is why).
-See [RFC 0007](../rfcs/0007-hold-a-second-request-on-a-device.md) for the
+The write half is decided the same way and is where the interface's first
+production caller is: a flush's dirty blocks are independent, so they are
+submitted into the queue with the driver holding the bytes rather than the
+caller ([RFC 0009](../rfcs/0009-queue-the-writes-a-flush-makes.md)).  See
+[RFC 0007](../rfcs/0007-hold-a-second-request-on-a-device.md) for the
 interface itself.
 
 A driver that finds a disk does not know about the filesystem.  It calls

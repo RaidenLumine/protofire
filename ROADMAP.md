@@ -174,8 +174,14 @@ The authoritative picture of what exists today is
   and no earlier block to show for the split.  The candidate left is the write
   path: a flush of independent dirty blocks has no order between them and a
   buffer that goes *into* the device, which is the safe shape the read path
-  lacks.  Until one lands, the mechanism is verified and unbilled-for — the
-  payoff is a hardware question, and the tree's devices are models.
+  lacks.
+  [RFC 0009](docs/rfcs/0009-queue-the-writes-a-flush-makes.md) decides that
+  half and that first caller: the flush's three calls become one mechanism
+  that submits the dirty blocks a device can hold, drops the cache's lock
+  while they are in flight, and wires SimpleFS into the background write-back
+  it never implemented.  Until it lands, the mechanism is verified and
+  unbilled-for — the payoff is a hardware question, and the tree's devices
+  are models.
 
 ## Long Term (1–3 years)
 

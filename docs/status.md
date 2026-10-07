@@ -269,7 +269,7 @@ behind `rootfs_type`, and `set_rootfs_type` has no caller.
 | Extended-attribute (xattr) table | SimpleFs V4 persistent storage and tmpfs in-memory; the xattr syscalls | The VNode default is `Unsupported`, so the other filesystems do not expose xattrs; tmpfs is not mounted, and the shipped SimpleFs images are V2, so the persistent table is exercised by the tests |
 | Transparent file compression | Encoder and decoder in `src/fs/simplefs/compression.rs`; the per-inode flag round-trips through the on-disk format | Nothing calls the encoder: no write path produces a compressed extent, and `set_file_flags` is unimplemented in every backend |
 | Cross-file deduplication | Sharing and copy-on-write unsharing in `src/fs/simplefs/dedup.rs`; the refcount map starts empty at mount | `maybe_dedup_inode` and `unshare_inode_extent` have no caller, so no extent is ever pooled; `get_file_flags`/`set_file_flags` are unimplemented |
-| Block backend abstraction | ATA, VirtIO and NVMe all implement one `BlockDevice` trait | No hot-remove or device-error recovery path |
+| Block backend abstraction | ATA, VirtIO and NVMe all implement one `BlockDevice` trait, which also carries the queued path: `queue_depth` and a submit/poll pair, for reads ([RFC 0007](rfcs/0007-hold-a-second-request-on-a-device.md), whose caller is a boot probe) and — decided, not yet built — for the independent blocks a flush writes ([RFC 0009](rfcs/0009-queue-the-writes-a-flush-makes.md)) | No hot-remove or device-error recovery path |
 
 **Strengths:** the native SimpleFs with undo-log transactions and the two-phase
 commit; a VFS that mounts the storage zones, the synthetic views and a

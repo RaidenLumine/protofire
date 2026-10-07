@@ -135,7 +135,8 @@ and no baseline moves.
   no ordering constraint *between* them, and its data goes *into* the device,
   so a driver can copy the block into its own slot at submit and nothing of
   the caller's has to stay alive — the safe shape this RFC says the read path
-  lacks.  That is a decision of its own, and the next one to make.
+  lacks.  [RFC 0009](0009-queue-the-writes-a-flush-makes.md) decides that it
+  is, and that the flush's three calls become one queued mechanism.
 - **Does anything else read independently?**  A mount reads a superblock, an
   inode table and a dirent table that do not depend on each other; whether
   overlapping those pays is unmeasured, and it is a boot-once cost rather
