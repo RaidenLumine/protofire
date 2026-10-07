@@ -32,6 +32,14 @@ pub struct DeviceIo {
     pub read_bytes: u64,
     pub write_ops: u64,
     pub write_bytes: u64,
+    /// The most requests that were ever in flight at once.
+    ///
+    /// An asynchronous interface is only worth having if some device can hold
+    /// a second request while the first is outstanding, and this is the number
+    /// that would show it: a high-water mark of one says every device the tree
+    /// boots completes in place.  It counts reads and writes, the two requests
+    /// the counters above count.
+    pub in_flight_high_water: u64,
 }
 
 /// The machine's device traffic, counted only when the boot-work line is
@@ -49,6 +57,8 @@ mod io_counters {
         read_bytes: AtomicU64,
         write_ops: AtomicU64,
         write_bytes: AtomicU64,
+        in_flight: AtomicU64,
+        in_flight_high_water: AtomicU64,
     }
 
     impl Counters {
@@ -58,6 +68,8 @@ mod io_counters {
                 read_bytes: AtomicU64::new(0),
                 write_ops: AtomicU64::new(0),
                 write_bytes: AtomicU64::new(0),
+                in_flight: AtomicU64::new(0),
+                in_flight_high_water: AtomicU64::new(0),
             }
         }
 
@@ -67,11 +79,35 @@ mod io_counters {
                 read_bytes: self.read_bytes.load(Ordering::Relaxed),
                 write_ops: self.write_ops.load(Ordering::Relaxed),
                 write_bytes: self.write_bytes.load(Ordering::Relaxed),
+                in_flight_high_water: self.in_flight_high_water.load(Ordering::Relaxed),
             }
         }
     }
 
     pub(super) static DEVICE_IO: Counters = Counters::new();
+
+    /// A request that is on a device right now, counted until it drops.
+    ///
+    /// It is a guard rather than a pair of calls so that an error return cannot
+    /// leave the count up, and the mark it keeps is relaxed because it is read
+    /// once at a tick, long after the requests it counted have finished.
+    pub(super) struct InFlight;
+
+    impl InFlight {
+        pub(super) fn enter() -> Self {
+            let now = DEVICE_IO.in_flight.fetch_add(1, Ordering::Relaxed) + 1;
+            DEVICE_IO
+                .in_flight_high_water
+                .fetch_max(now, Ordering::Relaxed);
+            Self
+        }
+    }
+
+    impl Drop for InFlight {
+        fn drop(&mut self) {
+            DEVICE_IO.in_flight.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
 
     /// One read, of `bytes`, asked of a device.
     pub(super) fn count_read(bytes: u64) {
@@ -143,11 +179,13 @@ impl BlockDevice for CountingDevice {
 
     fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
         io_counters::count_read(buffer.len() as u64);
+        let _in_flight = io_counters::InFlight::enter();
         self.inner.read_blocks(lba, buffer)
     }
 
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
         io_counters::count_write(data.len() as u64);
+        let _in_flight = io_counters::InFlight::enter();
         self.inner.write_blocks(lba, data)
     }
 

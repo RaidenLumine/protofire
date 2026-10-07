@@ -24,7 +24,11 @@
 # caches of those volumes summed — hits, misses, prefetches issued and
 # sequential hits, evictions — and the `blk-*` rows are what actually
 # reached a device, counted where a device enters the filesystem
-# (`src/kernel/block.rs`).  Three heights, one read.
+# (`src/kernel/block.rs`).  Three heights, one read.  The last of
+# those rows, `blk-in-flight-high-water`, is the most requests that
+# were ever outstanding at once: one says every device the boot used
+# completes in place, which is the number an asynchronous interface
+# would have to beat before it is worth having.
 #
 ticks 505 12
 frames 27 0
@@ -50,6 +54,7 @@ blk-reads 175 0
 blk-read-bytes 259072 0
 blk-writes 227 0
 blk-write-bytes 229888 0
+blk-in-flight-high-water 1 0
 ip4-rx 2 4
 ip4-tx 10 4
 ip6-rx 1 0

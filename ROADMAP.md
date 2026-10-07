@@ -120,13 +120,16 @@ The authoritative picture of what exists today is
   bytes a demo boot writes to a device from 735232 to 229888 for 25088 more
   read.  What remains: an asynchronous device interface (a thread issuing the
   same synchronous reads cannot be ahead of a reader this fast, so overlap has
-  to be a queue at the device — and no device the tree boots today queues, so
-  it is not worth landing until one can show two requests in flight),
-  measurement under load (throughput and latency on real disks and SSDs,
-  NUMA-node stress, network throughput — the work a four-CPU boot does is
-  gated by `make check-perf-baseline-smp`, but that is a boot, not a load), and
-  the commit comparison's own reads, which a per-block shadow of the previous
-  generation would remove if they ever show up against real disks.
+  to be a queue at the device), measurement under load (throughput and latency
+  on real disks and SSDs, NUMA-node stress, network throughput — the work a
+  four-CPU boot does is gated by `make check-perf-baseline-smp`, but that is a
+  boot, not a load), and the commit comparison's own reads, which a per-block
+  shadow of the previous generation would remove if they ever show up against
+  real disks.  What would have to change first is measured, not argued: the
+  boot-work line records `blk-in-flight-high-water`, and it is **1** on every
+  boot the tree runs and on every device those boots touch, so nothing here
+  holds a second request while the first is outstanding — an interface built
+  today would be unverifiable, which is why it is not built today.
 
 ## Long Term (1–3 years)
 

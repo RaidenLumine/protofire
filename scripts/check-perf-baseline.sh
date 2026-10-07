@@ -170,7 +170,11 @@ if [ "$mode" = "record" ]; then
         printf '# caches of those volumes summed — hits, misses, prefetches issued and\n'
         printf '# sequential hits, evictions — and the `blk-*` rows are what actually\n'
         printf '# reached a device, counted where a device enters the filesystem\n'
-        printf '# (`src/kernel/block.rs`).  Three heights, one read.\n'
+        printf '# (`src/kernel/block.rs`).  Three heights, one read.  The last of\n'
+        printf '# those rows, `blk-in-flight-high-water`, is the most requests that\n'
+        printf '# were ever outstanding at once: one says every device the boot used\n'
+        printf '# completes in place, which is the number an asynchronous interface\n'
+        printf '# would have to beat before it is worth having.\n'
         printf '#\n'
 
         printf '%s\n' "$pairs" | while IFS='=' read -r key value; do

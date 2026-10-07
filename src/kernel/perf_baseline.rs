@@ -64,6 +64,7 @@ pub(crate) fn log_once(ticks: u64) {
          cache-hits={} cache-misses={} cache-prefetches={} cache-sequential-hits={} \
          cache-evictions={} \
          blk-reads={} blk-read-bytes={} blk-writes={} blk-write-bytes={} \
+         blk-in-flight-high-water={} \
          ip4-rx={} ip4-tx={} ip6-rx={} ip6-tx={} \
          irqs={} ipis={} spurious={}",
         ticks,
@@ -90,6 +91,7 @@ pub(crate) fn log_once(ticks: u64) {
         device.read_bytes,
         device.write_ops,
         device.write_bytes,
+        device.in_flight_high_water,
         net.ipv4_packets_rx,
         net.ipv4_packets_tx,
         net.ipv6_packets_rx,
