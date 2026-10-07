@@ -104,6 +104,50 @@ pub fn build_stable_anchor_device(
     device
 }
 
+/// The same stable anchor on a **V4** image, whose superblock carries an
+/// active/shadow xattr-table pair the commit writes as part of the same
+/// atomic slot.
+///
+/// The layout is V2's plus the two xattr slots, so this is the device the
+/// fault matrix uses to crash a commit that changes an extended attribute —
+/// a region V2 has no equivalent of, and therefore one no case in that matrix
+/// reached before.
+#[allow(dead_code)]
+pub fn build_v4_stable_anchor_device(
+    device_name: &str,
+    fs_label: &str,
+    extra_inodes: usize,
+    extra_dir_entries: usize,
+    extra_xattrs: usize,
+    extra_data_blocks: usize,
+) -> Arc<MemoryBlockDevice> {
+    let device = MemoryBlockDevice::new(
+        device_name,
+        build_v4_seed_image(
+            fs_label,
+            extra_inodes,
+            extra_dir_entries,
+            extra_xattrs,
+            extra_data_blocks,
+        ),
+        false,
+    );
+    {
+        let fs = SimpleFs::open(device.clone(), true).expect("open writable v4 simplefs");
+        let volume = SimpleFsVolume::new(fs);
+        volume
+            .create_dir("/stable")
+            .expect("create stable directory");
+        let anchor = volume
+            .create_file("/stable/anchor.txt")
+            .expect("create stable anchor");
+        anchor
+            .write(0, b"stable-state")
+            .expect("write stable anchor");
+    }
+    device
+}
+
 /// How a [`FaultingBlockDevice`] fails the target device write.
 #[derive(Clone, Copy, Debug)]
 #[allow(dead_code)]

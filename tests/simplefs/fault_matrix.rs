@@ -28,11 +28,13 @@ use protofire::Result;
 
 use support::build_seed_image;
 use support::build_stable_anchor_device;
+use support::build_v4_stable_anchor_device;
 use support::read_all;
 use support::read_u32_le;
 
 const MAGIC: &[u8; 8] = b"ADAFS1\0\0";
 const VERSION: u32 = 2;
+const V4_VERSION: u32 = 4;
 const PRIMARY_SUPERBLOCK_BLOCK: u64 = 0;
 const SECONDARY_SUPERBLOCK_BLOCK: u64 = 1;
 const SUPERBLOCK_ACTIVE_INODE_TABLE_OFFSET: usize = 24;
@@ -44,6 +46,8 @@ const SUPERBLOCK_INODE_TABLE_BLOCKS_OFFSET: usize = 44;
 const SUPERBLOCK_DIRENT_TABLE_BLOCKS_OFFSET: usize = 48;
 const SUPERBLOCK_GENERATION_OFFSET: usize = 52;
 const SUPERBLOCK_CHECKSUM_OFFSET: usize = 56;
+const SUPERBLOCK_SHADOW_XATTR_TABLE_OFFSET: usize = 104;
+const SUPERBLOCK_XATTR_TABLE_BLOCKS_OFFSET: usize = 108;
 const PUBLISH_THEN_RETIRE_REMOVE_COMMIT_NUMBER: usize = 4;
 
 #[derive(Clone, Copy)]
@@ -73,6 +77,11 @@ struct SimpleFsLayout {
     shadow_dirent_table_block: u64,
     inode_table_blocks: u64,
     dirent_table_blocks: u64,
+    /// V4's shadow xattr-table slot; zero on a V2 image, which has no such
+    /// region.
+    shadow_xattr_table_block: u64,
+    /// V4's xattr-table slot size in blocks; zero on a V2 image.
+    xattr_table_blocks: u64,
     data_block_start: u64,
     generation: u32,
 }
@@ -81,6 +90,7 @@ struct SimpleFsLayout {
 enum MatrixStage {
     ShadowInodeTable,
     ShadowDirentTable,
+    ShadowXattrTable,
     SecondarySuperblock,
     PrimarySuperblock,
     DataRegion,
@@ -331,13 +341,26 @@ fn superblock_checksum(block: &[u8]) -> u32 {
 }
 
 fn read_superblock_layout(device: &dyn BlockDevice, block: u64) -> Result<SimpleFsLayout> {
+    read_superblock_layout_versioned(device, block, VERSION)
+}
+
+/// The same read, for a superblock whose on-disk format version is `version`.
+///
+/// The version is part of what makes a superblock readable, so the V2 matrix
+/// passes 2 and the V4 cases pass 4; a V2 image's trailing offsets are zero,
+/// so the two readers differ only in the version they accept.
+fn read_superblock_layout_versioned(
+    device: &dyn BlockDevice,
+    block: u64,
+    version: u32,
+) -> Result<SimpleFsLayout> {
     let mut buffer = [0_u8; BLOCK_SIZE];
     device.read_blocks(block, &mut buffer)?;
 
     if buffer.get(..MAGIC.len()) != Some(MAGIC.as_slice()) {
         return Err(Error::InvalidArgument);
     }
-    if read_u32_le(&buffer, 8) != VERSION {
+    if read_u32_le(&buffer, 8) != version {
         return Err(Error::InvalidArgument);
     }
 
@@ -355,9 +378,32 @@ fn read_superblock_layout(device: &dyn BlockDevice, block: u64) -> Result<Simple
             as u64,
         inode_table_blocks: read_u32_le(&buffer, SUPERBLOCK_INODE_TABLE_BLOCKS_OFFSET) as u64,
         dirent_table_blocks: read_u32_le(&buffer, SUPERBLOCK_DIRENT_TABLE_BLOCKS_OFFSET) as u64,
+        shadow_xattr_table_block: read_u32_le(&buffer, SUPERBLOCK_SHADOW_XATTR_TABLE_OFFSET) as u64,
+        xattr_table_blocks: read_u32_le(&buffer, SUPERBLOCK_XATTR_TABLE_BLOCKS_OFFSET) as u64,
         data_block_start: read_u32_le(&buffer, SUPERBLOCK_DATA_BLOCK_START_OFFSET) as u64,
         generation: read_u32_le(&buffer, SUPERBLOCK_GENERATION_OFFSET),
     })
+}
+
+/// The newest readable **V4** superblock, the way [`load_current_layout`] reads
+/// the newest V2 one.
+fn load_v4_layout(device: &dyn BlockDevice) -> Result<SimpleFsLayout> {
+    let primary = read_superblock_layout_versioned(device, PRIMARY_SUPERBLOCK_BLOCK, V4_VERSION);
+    let secondary =
+        read_superblock_layout_versioned(device, SECONDARY_SUPERBLOCK_BLOCK, V4_VERSION);
+
+    match (primary, secondary) {
+        (Ok(primary), Ok(secondary)) => {
+            if secondary.generation > primary.generation {
+                Ok(secondary)
+            } else {
+                Ok(primary)
+            }
+        }
+        (Ok(primary), Err(_)) => Ok(primary),
+        (Err(_), Ok(secondary)) => Ok(secondary),
+        (Err(_), Err(_)) => Err(Error::InvalidArgument),
+    }
 }
 
 fn load_current_layout(device: &dyn BlockDevice) -> Result<SimpleFsLayout> {
@@ -393,6 +439,13 @@ fn fault_target_for_case(
         MatrixStage::ShadowDirentTable => FaultTarget::Range {
             start_lba: layout.shadow_dirent_table_block,
             block_count: layout.dirent_table_blocks,
+        },
+        // V4's shadow xattr slot, the region V2 does not have.  The slot size
+        // is zero on a V2 image, so the range would be degenerate there; a
+        // case only names this stage on a V4 device.
+        MatrixStage::ShadowXattrTable => FaultTarget::Range {
+            start_lba: layout.shadow_xattr_table_block,
+            block_count: layout.xattr_table_blocks.max(1),
         },
         MatrixStage::SecondarySuperblock => FaultTarget::ExactLba(SECONDARY_SUPERBLOCK_BLOCK),
         MatrixStage::PrimarySuperblock => FaultTarget::ExactLba(PRIMARY_SUPERBLOCK_BLOCK),
@@ -433,7 +486,10 @@ fn assert_slot_rotation(
                 case.name
             );
         }
-        MatrixStage::SecondarySuperblock
+        // The xattr slot's rotation is asserted by the V4 test itself, which
+        // is the only place a case can name this stage.
+        MatrixStage::ShadowXattrTable
+        | MatrixStage::SecondarySuperblock
         | MatrixStage::PrimarySuperblock
         | MatrixStage::DataRegion => {}
     }
@@ -1254,4 +1310,151 @@ fn simplefs_fault_sequence_recovers_across_data_then_publish_failures() {
         .lookup("/stable/anchor.txt")
         .expect("lookup mutated anchor after reopen");
     assert_eq!(read_all(&*anchor), b"mutated-state");
+}
+
+/// The crash points only a V4 image has: the shadow xattr table the commit
+/// writes as part of the same atomic slot, and the two superblock *phases*
+/// the V3+ protocol adds.
+///
+/// The matrix above reads V2 superblocks (`read_superblock_layout` accepts
+/// version 2), so nothing in it ever reached the xattr region — the one
+/// metadata table V4 adds.  A V3/V4 commit is also a different sequence: it
+/// marks `pending_commit` on both mirrors *before* it writes the slot, so the
+/// secondary superblock is written twice, and a fault on the first write is
+/// not the same crash point as a fault on the second.  All of them are below.
+///
+/// The last case is the one the V2 matrix already has an analogue of
+/// (`cross-rename-primary-superblock-fault-matrix-keeps-committed-state`): the
+/// secondary mirror carries the new generation before the primary is written,
+/// so a fault on the primary leaves the commit *durable* even though the call
+/// returned an error.  The set-xattr is visible after reopening there, and
+/// that is what the case asserts.
+#[test]
+fn simplefs_v4_xattr_fault_matrix_preserves_last_stable_state() {
+    // `(name, stage, fault write number within the target, mode, committed)`.
+    const CASES: &[(&str, MatrixStage, usize, FaultMode, bool)] = &[
+        (
+            "xattr-shadow-slot-before-write",
+            MatrixStage::ShadowXattrTable,
+            1,
+            FaultMode::BeforeWrite,
+            false,
+        ),
+        (
+            "xattr-shadow-slot-torn-write",
+            MatrixStage::ShadowXattrTable,
+            1,
+            FaultMode::TornWrite { prefix_len: 32 },
+            false,
+        ),
+        (
+            "xattr-pending-superblock-before-write",
+            MatrixStage::SecondarySuperblock,
+            1,
+            FaultMode::BeforeWrite,
+            false,
+        ),
+        (
+            "xattr-publish-secondary-superblock-before-write",
+            MatrixStage::SecondarySuperblock,
+            2,
+            FaultMode::BeforeWrite,
+            false,
+        ),
+        (
+            "xattr-publish-primary-superblock-before-write",
+            MatrixStage::PrimarySuperblock,
+            2,
+            FaultMode::BeforeWrite,
+            true,
+        ),
+    ];
+
+    const XATTR_NAME: &[u8] = b"user.matrix.note";
+    const XATTR_VALUE: &[u8] = b"matrix-xattr";
+
+    for (name, stage, match_number, mode, committed) in CASES.iter().copied() {
+        let device =
+            build_v4_stable_anchor_device("v4-fault-matrix", "v4-matrix", 256, 512, 64, 1024);
+        let layout = load_v4_layout(&*device).expect("read v4 layout");
+        let anchor_bytes = {
+            let fs = SimpleFs::open(device.clone(), true).expect("open stable v4 simplefs");
+            let volume = SimpleFsVolume::new(fs);
+            assert!(
+                volume
+                    .get_xattr("/stable/anchor.txt", XATTR_NAME)
+                    .expect("read xattr before fault")
+                    .is_none(),
+                "{name}: the anchor starts with no xattr"
+            );
+            let anchor = volume.lookup("/stable/anchor.txt").expect("lookup anchor");
+            read_all(&*anchor)
+        };
+        assert_eq!(anchor_bytes, b"stable-state", "{name}");
+
+        let failing = FaultInjectingBlockDevice::new(
+            device.clone(),
+            FaultPlan {
+                target: fault_target_for_case(stage, layout, device.block_count()),
+                match_number,
+                mode,
+            },
+        );
+
+        let fs = SimpleFs::open(failing, true).expect("open failing v4 simplefs");
+        let result =
+            fs.transaction(|ctx| ctx.set_xattr("/stable/anchor.txt", XATTR_NAME, XATTR_VALUE));
+        assert_eq!(
+            result,
+            Err(Error::DeviceError),
+            "{name}: the injected fault has to fail the commit"
+        );
+
+        // The in-memory volume never saw the commit's state swap, so it
+        // reports the pre-commit xattr state whichever mirror the disk holds.
+        let volume = SimpleFsVolume::new(fs);
+        assert!(
+            volume
+                .get_xattr("/stable/anchor.txt", XATTR_NAME)
+                .expect("read xattr after fault")
+                .is_none(),
+            "{name}: a failed commit must not publish in memory"
+        );
+
+        // On disk, the answer depends on how far the commit got: the two
+        // mirror writes are what decide whether it is durable.
+        let reopened = SimpleFs::open(device, true).expect("reopen v4 simplefs");
+        let volume = SimpleFsVolume::new(reopened);
+        let anchor = volume
+            .lookup("/stable/anchor.txt")
+            .expect("lookup anchor after reopen");
+        assert_eq!(read_all(&*anchor), b"stable-state", "{name}");
+        let xattr = volume
+            .get_xattr("/stable/anchor.txt", XATTR_NAME)
+            .expect("read xattr after reopen");
+        if committed {
+            assert_eq!(
+                xattr.as_deref(),
+                Some(XATTR_VALUE),
+                "{name}: the secondary mirror was published before the primary failed"
+            );
+        } else {
+            assert!(
+                xattr.is_none(),
+                "{name}: a commit that did not publish must leave no xattr: {xattr:?}"
+            );
+        }
+
+        // The directory the commit was reorganising has to survive too: the
+        // file list is read out of the slot that was just being written, so a
+        // slot the recovery chose wrongly shows up as a missing or duplicated
+        // entry rather than as a wrong byte.
+        let mut names = collect_dir_names(&volume, "/stable");
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["anchor.txt".to_string()],
+            "{name}: the stable directory survives the crash"
+        );
+    }
 }

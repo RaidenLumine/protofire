@@ -111,9 +111,13 @@ The authoritative picture of what exists today is
   reserves everything above the current highest slot.
 - **Userspace VIRGL 3D demo.** Ship a demo renderer driving the virtio-gpu VIRGL
   interface (#181–189) to scanout.
-- **Fuzzing & robustness.** Add cargo-fuzz-style targets for the ELF loader,
-  filesystem image parsers, network packet parsers, and the LUKS2 header;
-  extend the existing SimpleFs crash matrix.
+- **Fuzzing & robustness.** The cargo-fuzz-style targets for the ELF loader,
+  filesystem image parsers, network packet parsers, and the LUKS2 header are
+  there; the SimpleFs crash matrix now enumerates V4's own crash points as
+  well — the shadow xattr table, which V2 has no equivalent of, and the two
+  superblock *phases* a V3+ commit adds around it.  What is left is a case for
+  V3 itself (its sequence is V4's without the xattr table) and a searching
+  fuzzer over the recovery path rather than a bounded matrix.
 - **Performance validation.** The work a boot does is counted and gated today:
   `make check-perf-baseline` compares the counters a boot reports against a
   recorded baseline, so a change that does more work fails without anyone

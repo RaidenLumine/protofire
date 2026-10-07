@@ -265,7 +265,7 @@ behind `rootfs_type`, and `set_rootfs_type` has no caller.
 |-----------|-----|---------|
 | VFS core (mount, path resolution, ops) | Full path resolution, mount and unmount, per-node operations | One mount table for the machine; no per-process mount namespace |
 | Volume recovery | Transaction undo-log replay and check-and-repair at boot | Boot-time only, under the filesystem lock; no online repair |
-| Fault injection matrix | Single- and dual-fault, multi-cycle crash testing | Deterministic and bounded, so it does not search for a failing sequence |
+| Fault injection matrix | Single- and dual-fault, multi-cycle crash testing, and the V4-only crash points — the shadow xattr table and the two superblock phases a V3+ commit adds (`tests/simplefs/fault_matrix.rs`) | Deterministic and bounded, so it does not search for a failing sequence; V3 has no case of its own, since its commit sequence is V4's without the xattr table |
 | Extended-attribute (xattr) table | SimpleFs V4 persistent storage and tmpfs in-memory; the xattr syscalls | The VNode default is `Unsupported`, so the other filesystems do not expose xattrs; tmpfs is not mounted, and the shipped SimpleFs images are V2, so the persistent table is exercised by the tests |
 | Transparent file compression | Encoder and decoder in `src/fs/simplefs/compression.rs`; the per-inode flag round-trips through the on-disk format | Nothing calls the encoder: no write path produces a compressed extent, and `set_file_flags` is unimplemented in every backend |
 | Cross-file deduplication | Sharing and copy-on-write unsharing in `src/fs/simplefs/dedup.rs`; the refcount map starts empty at mount | `maybe_dedup_inode` and `unshare_inode_extent` have no caller, so no extent is ever pooled; `get_file_flags`/`set_file_flags` are unimplemented |
@@ -980,7 +980,7 @@ numbers it decodes against come from the shared copy.
 |----------|-----|---------|
 | Unit tests (in-module) | Per-module behaviour, registered by feature | — |
 | Integration tests | Filesystem, I/O, memory, process, network and syscall areas | Host-side only; the bare-metal side is covered by the runtime smokes, not by these |
-| Fault injection | SimpleFs single- and dual-fault matrix | Deterministic and bounded; the other filesystems have no equivalent matrix |
+| Fault injection | SimpleFs single- and dual-fault matrix, including V4's xattr table and two-phase superblock writes | Deterministic and bounded; the other filesystems have no equivalent matrix |
 | Recovery tests | Crash and replay scenarios | — |
 | Concurrency tests | Scheduler, condvar, console, keyboard | — |
 | Parser fuzz harnesses | Deterministic, in-tree, run by `make test-parsers`; coverage-guided targets in `fuzz/` run nightly | The gates are fixed-seed and bounded; the nightly corpora are not persisted across runs |

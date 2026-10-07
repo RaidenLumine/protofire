@@ -165,7 +165,7 @@ is expected to follow it:
 | Technique | File | What it does |
 |-----------|------|--------------|
 | **Validation** | `tests/simplefs/validation.rs` | On-disk format and consistency rules |
-| **Fault matrix** | `tests/simplefs/fault_matrix.rs` | Injects block-level faults across the write path and checks that recovery restores a consistent state |
+| **Fault matrix** | `tests/simplefs/fault_matrix.rs` | Injects block-level faults across the write path and checks that recovery restores a consistent state; a V2 case per stage, plus V4's own crash points (the shadow xattr table and the two-phase superblock writes) |
 | **Recovery** | `tests/simplefs/recovery.rs` | Tears down mid-transaction and re-mounts |
 | **Property** | `tests/simplefs/property.rs` | Randomised operation sequences checked against invariants |
 | **Undo-log property** | `tests/simplefs/undo_property.rs` | Crash-point property tests for the undo log |
