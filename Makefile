@@ -172,6 +172,7 @@ help:
 		'  make check-aarch64-nvme               - the same NVMe disk on the device-tree machine, through its PCIe window' \
 		'  make check-riscv64-nvme               - the same NVMe disk on riscv64, whose RAM window is identity-mapped' \
 		'  make check-x8664-hda                  - play a tone from the shell and check the samples reach the host audio backend' \
+		'  make check-aarch64-hda                - the same tone on the device-tree machine, through its PCIe window' \
 		'  make check-x8664-churn                - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-riscv64-churn              - the same churn on riscv64, whose window is one of the things it checks' \
 		'  make check-aarch64-runtime            - run the headless QEMU virt aarch64 fault/wait smoke check' \
@@ -482,7 +483,7 @@ check-abi-frozen-payload-riscv64:
 	check-perf-baseline-numa check-perf-baseline-net \
 	check-x8664-runtime check-x8664-init-no-start check-x8664-usb-disk \
 	check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
-	check-riscv64-nvme check-x8664-hda check-x8664-churn \
+	check-riscv64-nvme check-x8664-hda check-aarch64-hda check-x8664-churn \
 	check-riscv64-churn check-aarch64-runtime check-riscv64-runtime \
 	check-riscv64-aia-runtime check-riscv64-pci-runtime \
 	check-smp-runtime check-aarch64-smp-runtime \
@@ -656,6 +657,17 @@ check-x8664-hda:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-hda.sh
+
+# The same end-to-end tone on the device-tree machine, where the controller is
+# a PCIe function reached through the ECAM window and a low BAR alias rather
+# than the x86_64 configuration ports.  The driver polls and claims no
+# interrupt, so this is parity of the bus, not of the ITS — the interrupt is
+# the half still missing for a device that has to signal.
+check-aarch64-hda:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-aarch64-hda.sh
 
 # Boot with the stack-window churn: ask the window for more stacks than it has
 # and the invalidation log for more requests than it can hold, then check the

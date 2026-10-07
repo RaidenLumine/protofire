@@ -110,14 +110,21 @@ driver and its consumers share the shape.
 interface has a renderer: `src/user/demo/virgl_renderer.rs` presents a frame
 through the syscalls (`gpu_device_info`, a context, a 3D resource, a command
 stream the kernel forwards to the device, a scanout), and both the shell's
-`gpu` command and the demo runtime call it.  The Intel HDA driver finds
-controllers through PCI, runs CORB/RIRB, discovers the codec, points its output
-converter at a stream, and drains a BDL ring into the controller's stream DMA.
+`gpu` command and the demo runtime call it.  The Intel HDA driver asks the
+platform for the controller's BAR
+(`arch::platform::pci_register_window`, the call NVMe makes), runs CORB/RIRB,
+discovers the codec, points its output converter at a stream, and drains a BDL
+ring into the controller's stream DMA.  Because the window is the platform's,
+the one file drives the controller on x86_64 and on AArch64, where the BAR is
+reached through the ECAM window and a low alias; the driver polls, so it claims
+no interrupt and the ITS has nothing to do with it.
 `/system/dev/audio` is the interface: a write is a `u32` sample rate followed by
-interleaved 16-bit stereo samples, the shell's `tone` builtin is a caller, and
-`make check-x8664-hda` plays through it and reads the samples back out of the
-WAV QEMU's audio backend writes on the host, measuring the tone's frequency
-from the wave's own period.  The converter learns the stream's shape from a
+interleaved 16-bit stereo samples, the shell's `tone` builtin is a caller on
+every machine (a machine with no controller has the node and refuses the
+write), and `make check-x8664-hda` and `make check-aarch64-hda` play through it
+and read the samples back out of the WAV QEMU's audio backend writes on the
+host, measuring the tone's frequency from the wave's own period.  The converter
+learns the stream's shape from a
 16-bit format word — how many channels, how deep, at what rate, with the rate
 encoded as a base rate times a multiplier over a divisor — and it arrives
 through `SET_STREAM_FORMAT`, one of the verbs whose payload is two bytes.  The

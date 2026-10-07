@@ -2,14 +2,18 @@
 //!
 //! Intel HDA audio driver, on the machines that have one.
 //!
-//! The controller is discovered via PCI (class 0x04, subclass 0x03), brought
-//! up through its CORB/RIRB engines, and driven from the bare-metal device
-//! node.  The register map and the codec protocol are in
-//! [`crate::drivers::hda_protocol`]; this file is the machine's half, so it is
-//! compiled where that controller exists, and a machine without one answers
-//! under the same module name from `hda_absent.rs`.
+//! The controller is discovered on the PCI/PCIe bus (class 0x04, subclass
+//! 0x03) through [`crate::arch::platform::pci_register_window`], brought up
+//! through its CORB/RIRB engines, and driven from the bare-metal device node.
+//! The register map and the codec protocol are in
+//! [`crate::drivers::hda_protocol`]; this file is the register-level half, and
+//! because the platform hands back the controller's BAR already mapped, it is
+//! the same file on every bus — x86_64's configuration ports, AArch64's ECAM
+//! alias, riscv64's identity-mapped window.  The controller polls its
+//! completion ring and claims no interrupt, so it needs nothing of a machine's
+//! interrupt controller.  A machine without a controller answers under the
+//! same module name from `hda_absent.rs`.
 
-use crate::arch::mmu::map_device_mmio;
 use crate::drivers::hda_protocol::*;
 use crate::memory::DmaBuffer;
 use crate::println;
@@ -111,22 +115,28 @@ pub struct HdaController {
 unsafe impl Send for HdaController {}
 
 impl HdaController {
-    /// Create and initialise a new HDA controller.
+    /// Create and initialise a new HDA controller over its mapped BAR0.
     ///
-    /// `bar0_phys` is the physical base address of BAR0, `bar0_size`
-    /// the length of the MMIO region.
+    /// `bar_address` is the platform's mapping of the controller's BAR0 — the
+    /// `bar_address` of the window
+    /// [`crate::arch::platform::pci_register_window`] hands back.  On a machine
+    /// that identity-maps its device window the number is the BAR's own
+    /// address; on a machine whose window sits above the range its page
+    /// tables map, it is the low alias the platform reserved for this
+    /// device.  The driver reads registers through whatever the platform
+    /// returned and maps nothing itself, which is what lets one file drive
+    /// the controller on every bus.
     ///
     /// # Safety
     ///
-    /// `bar0_phys` and `bar0_size` must describe the controller's BAR0 as PCI
-    /// enumeration reported it, so that the range is live MMIO; the mapping
-    /// this builds is what makes every later register access sound.
-    pub unsafe fn new(bar0_phys: u64, bar0_size: usize) -> Option<Self> {
-        // SAFETY: the caller passes a BAR address and size PCI enumeration produced;
-        // mapping it is what makes every later register access sound.
+    /// `bar_address` must be a live mapping of the controller's BAR0, as the
+    /// platform's PCI enumeration produced it; every later register access is
+    /// sound only while that mapping exists.
+    pub unsafe fn new(bar_address: usize) -> Option<Self> {
+        // SAFETY: the caller passes the platform's mapping of BAR0, which is the
+        // register block every later method reads and writes.
         unsafe {
-            let mmio = map_device_mmio(bar0_phys, bar0_size)?;
-            let regs = mmio;
+            let regs = bar_address as *mut u8;
 
             // Read capabilities.
             let cap = reg_read16(regs, HDA_CAP);
@@ -753,90 +763,55 @@ pub fn driver() -> Arc<dyn Driver> {
 }
 
 /// Find the HDA controller on PCI and initialise it.
+///
+/// The discovery is the platform's: `pci_register_window` walks whatever bus
+/// this machine reaches its devices through — x86_64's configuration ports, or
+/// the ECAM window the two device-tree machines map — and hands back a
+/// controller's register block already mapped.  Vendor `0` is "any vendor": the
+/// class is what names an HDA controller, and it says nothing about who built
+/// it, the same way NVMe's does.
 fn probe_hda_pci() -> crate::Result<()> {
-    use crate::arch::x86_64::pci::pci_config_read_u16;
-    use crate::arch::x86_64::pci::pci_config_write_u16;
-    use crate::arch::x86_64::pci::pci_enumerate_buses;
-    use crate::arch::x86_64::pci::PciAddress;
-    use crate::arch::x86_64::pci::COMMAND;
     use crate::println;
 
-    // PCI COMMAND register bits the controller needs before it can DMA
-    // (mirrors the virtio-net setup).
-    const CMD_IO_SPACE: u16 = 1 << 0;
-    const CMD_MEMORY_SPACE: u16 = 1 << 1;
-    const CMD_BUS_MASTER: u16 = 1 << 2;
-
-    let devices = pci_enumerate_buses();
-    let mut found = false;
-
-    for info in devices
-        .iter()
-        .filter(|d| d.class_code == HDA_CLASS && d.subclass == HDA_SUBCLASS)
-    {
-        found = true;
-        println!(
-            "[hda   ] found HDA controller at {:02x}:{:02x}.{:x} vendor={:#06x} device={:#06x}",
-            info.bus, info.device, info.function, info.vendor_id, info.device_id
-        );
-
-        // Enable IO Space, Memory Space, and Bus Master so the CORB/RIRB
-        // DMA engines can access guest RAM (QEMU keeps the device's DMA
-        // address space empty until the BUS_MASTER bit is set).
-        let pci_addr = PciAddress::new(info.bus, info.device, info.function);
-        // SAFETY: the address is a function the PCI scan enumerated; the command
-        // register is part of its standard header.
-        let cmd = unsafe { pci_config_read_u16(pci_addr, COMMAND) };
-        // SAFETY: writing the command register of that same function to enable memory
-        // space and bus mastering.
-        unsafe {
-            pci_config_write_u16(
-                pci_addr,
-                COMMAND,
-                cmd | CMD_IO_SPACE | CMD_MEMORY_SPACE | CMD_BUS_MASTER,
-            );
-        }
-
-        let bar0 = &info.bars[0];
-        if !bar0.is_mmio || bar0.size == 0 {
-            println!("[hda   ] BAR0 is not MMIO — skipping");
-            continue;
-        }
-
-        println!(
-            "[hda   ] BAR0: phys={:#018x} size={} KiB",
-            bar0.base_address,
-            bar0.size / 1024
-        );
-
-        // SAFETY: `HdaController::new` takes the BAR address and size PCI enumeration
-        // produced.
-        let ctrl = match unsafe { HdaController::new(bar0.base_address, bar0.size as usize) } {
-            Some(c) => c,
-            None => {
-                println!("[hda   ] controller initialisation failed — skipping");
-                continue;
-            }
-        };
-
-        println!("[hda   ] HDA controller ready");
-
-        // Store the controller.
-        *HDA_CONTROLLER.lock() = Some(ctrl);
-        crate::drivers::record_bound_device(
-            "hda",
-            "hda",
-            crate::drivers::DriverCategory::Audio,
-            Some(bar0.base_address as usize),
-        );
-
-        // Only initialise the first HDA controller.
-        break;
-    }
-
-    if !found {
+    // The platform's window is the BAR the controller's registers live in —
+    // BAR0, the one memory BAR an HDA controller has — and it arrives already
+    // mapped, with memory space and bus mastering enabled so the CORB/RIRB
+    // engines can reach guest RAM (QEMU keeps a function's DMA address space
+    // empty until the bus-master bit is set, and the platform sets it).
+    let Some(window) = crate::arch::platform::pci_register_window(0, HDA_CLASS, HDA_SUBCLASS)
+    else {
         println!("[hda   ] no HDA controllers found");
-    }
+        return Ok(());
+    };
+
+    println!(
+        "[hda   ] found HDA controller vendor={:#06x} device={:#06x} BAR0={:#018x} size={} KiB",
+        window.vendor_id,
+        window.device_id,
+        window.bar_address,
+        window.bar_size / 1024
+    );
+
+    // SAFETY: `window.bar_address` is the platform's live mapping of the
+    // controller's BAR0, which is what `HdaController::new` asks for.
+    let ctrl = match unsafe { HdaController::new(window.bar_address) } {
+        Some(c) => c,
+        None => {
+            println!("[hda   ] controller initialisation failed — skipping");
+            return Ok(());
+        }
+    };
+
+    println!("[hda   ] HDA controller ready");
+
+    // Store the controller.
+    *HDA_CONTROLLER.lock() = Some(ctrl);
+    crate::drivers::record_bound_device(
+        "hda",
+        "hda",
+        crate::drivers::DriverCategory::Audio,
+        Some(window.bar_address),
+    );
 
     Ok(())
 }

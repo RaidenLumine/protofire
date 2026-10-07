@@ -228,6 +228,10 @@ run_p3() {
         # through the platform's window instead of an address the firmware
         # assigned.
         run_make_step "make check-aarch64-nvme" check-aarch64-nvme
+        # And audio on this machine: the same controller, now reached through
+        # the ECAM window and a low BAR alias rather than the configuration
+        # ports, with the host's WAV backend as the instrument again.
+        run_make_step "make check-aarch64-hda" check-aarch64-hda
         # The same boot with the payload frozen rather than compiled, on the
         # architecture whose payload's entry point is not at its start.
         run_make_step "make check-abi-frozen-payload-aarch64" check-abi-frozen-payload-aarch64

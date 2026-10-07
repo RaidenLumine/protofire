@@ -126,32 +126,31 @@ static SHELL_CREATE_FAILED_PREFIX: [u8; b"shell: write: cannot create '".len()] 
 static SHELL_WRITE_FAILED_PREFIX: [u8; b"shell: write: cannot write '".len()] =
     *b"shell: write: cannot write '";
 
-#[cfg(target_arch = "x86_64")]
+// The tone builtin talks to `/system/dev/audio`, which every machine has: on
+// one with an HDA controller the node plays, and on one without it the write
+// is refused and the player is told.  That is why the builtin is not gated by
+// architecture — the node is the interface, and the machine is what it says
+// it is through the node.
 #[link_section = $section]
 static SHELL_WORD_TONE: [u8; b"tone".len()] = *b"tone";
 
 /// The audio stream interface: a device node whose payload is a `u32` rate
 /// followed by interleaved 16-bit stereo samples.
-#[cfg(target_arch = "x86_64")]
 #[link_section = $section]
 static SHELL_TONE_PATH: [u8; b"/system/dev/audio".len()] = *b"/system/dev/audio";
 
-#[cfg(target_arch = "x86_64")]
 #[link_section = $section]
 static SHELL_TONE_USAGE: [u8; b"shell: tone needs <hz> <ms>\n".len()] =
     *b"shell: tone needs <hz> <ms>\n";
 
-#[cfg(target_arch = "x86_64")]
 #[link_section = $section]
 static SHELL_TONE_OPEN_FAILED: [u8; b"shell: tone: cannot open /system/dev/audio\n".len()] =
     *b"shell: tone: cannot open /system/dev/audio\n";
 
-#[cfg(target_arch = "x86_64")]
 #[link_section = $section]
 static SHELL_TONE_WRITE_FAILED: [u8; b"shell: tone: the audio device refused a write\n".len()] =
     *b"shell: tone: the audio device refused a write\n";
 
-#[cfg(target_arch = "x86_64")]
 #[link_section = $section]
 static SHELL_TONE_PLAYED: [u8; b"tone: played\n".len()] = *b"tone: played\n";
 
@@ -645,7 +644,6 @@ const SHELL_SIGASYNC_SIGNAL: usize = 10;
 /// `None` for anything that is not all digits, or that would overflow — the
 /// caller answers with its usage line, which is what a shell should do with a
 /// word it cannot read as a number.
-#[cfg(target_arch = "x86_64")]
 #[inline(never)]
 #[link_section = $section]
 unsafe fn shell_decimal_at(tokens: usize, index: usize) -> Option<u32> {
@@ -685,8 +683,9 @@ unsafe fn shell_decimal_at(tokens: usize, index: usize) -> Option<u32> {
 /// had no way to hand a *device* the binary payload its ABI asks for, which
 /// left the whole stream path — the codec, the BDL ring, the DMA — with no
 /// caller in the tree at all.  Like `sigasync`, it is a builtin a gate drives
-/// rather than one the help text advertises.
-#[cfg(target_arch = "x86_64")]
+/// rather than one the help text advertises.  It is compiled on every machine
+/// because the node is: a machine with no controller refuses the write and
+/// says so, rather than answering that it has never heard of the word.
 #[inline(never)]
 #[link_section = $section]
 unsafe fn shell_builtin_tone(tokens: usize, token_count: usize) {
@@ -1107,22 +1106,14 @@ extern "C" fn shell_main() -> ! {
                 shell_builtin_sigasync();
             }
         } else if {
-            #[cfg(target_arch = "x86_64")]
-            {
-                shell_word_at_is(
-                    tokens_ptr,
-                    0,
-                    shell_address!(SHELL_WORD_TONE),
-                    SHELL_WORD_TONE.len(),
-                )
-            }
-            #[cfg(not(target_arch = "x86_64"))]
-            {
-                false
-            }
+            shell_word_at_is(
+                tokens_ptr,
+                0,
+                shell_address!(SHELL_WORD_TONE),
+                SHELL_WORD_TONE.len(),
+            )
         } {
             // SAFETY: as above — the builtin's own payload, the ABI's syscalls.
-            #[cfg(target_arch = "x86_64")]
             unsafe {
                 shell_builtin_tone(tokens_ptr, token_count);
             }

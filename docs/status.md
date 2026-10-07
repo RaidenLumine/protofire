@@ -63,7 +63,7 @@ the syscall interface.
 | PS/2 Keyboard | Input | Scancode buffering, decoding, console TTY bridge | The PS/2 interrupt path is x86_64; other targets rely on VirtIO input |
 | Framebuffer | Display | Linear framebuffer the console draws on | No userspace graphics API beyond the VIRGL syscalls; QEMU only |
 | Framebuffer Console | Display | Text rendering from a built-in 8×16 ASCII glyph table | Fixed font: characters outside the table draw as a fallback glyph, and there is no font or resolution management |
-| HDA (Intel HD Audio) | Audio | CORB/RIRB, codec discovery, the output converter, a BDL playback ring and the stream DMA that drains it, driven from `/system/dev/audio` ([`hda.rs`](../src/drivers/hda.rs)); the converter is bound to the stream by the same 16-bit format word the descriptor's SDFMT carries, so the codec derives the channel count from the format; `make check-x8664-hda` types `tone 440 200` at the shell, which writes the node's `[u32le rate][interleaved samples]` payload, reads the samples back out of the WAV QEMU's `-audiodev wav` backend writes on the host, and measures the tone's frequency from the wave's own period | The tone lands ~0.8% below the frequency asked for (436 Hz for 440), which is the shell generator rounding a half-period to whole frames — 110 rather than 109.09 — and not a scaling side; QEMU only |
+| HDA (Intel HD Audio) | Audio | CORB/RIRB, codec discovery, the output converter, a BDL playback ring and the stream DMA that drains it, driven from `/system/dev/audio` ([`hda.rs`](../src/drivers/hda.rs)); the converter is bound to the stream by the same 16-bit format word the descriptor's SDFMT carries, so the codec derives the channel count from the format; the controller is found through the platform's PCI window, so the one file drives it on x86_64 and AArch64; `make check-x8664-hda` and `make check-aarch64-hda` type `tone 440 200` at the shell, which writes the node's `[u32le rate][interleaved samples]` payload, read the samples back out of the WAV QEMU's `-audiodev wav` backend writes on the host, and measure the tone's frequency from the wave's own period | The tone lands ~0.8% below the frequency asked for (436 Hz for 440), which is the shell generator rounding a half-period to whole frames — 110 rather than 109.09 — and not a scaling side; the driver polls and claims no interrupt, so a device that has to signal is still a gap; QEMU only |
 | PCIe ECAM | Bus | x86_64: full ECAM; AArch64/RISC-V: window found, BARs assigned, one driver attached, MSI-X through the machine's own controller | One driver on the device-tree machines; every other PCIe device still uses its architecture's own enumeration |
 
 **Strengths:** driver coverage across storage, network, display, audio, and
@@ -96,7 +96,10 @@ input, mostly verified under QEMU.
   `DriverManager::probe_dt_devices`; virtio-gpu/block/net are all probed from
   their DT node `reg`, making the GPU available on AArch64/RISC-V.
 - **Audio**: the Intel HDA driver provides controller initialization, the
-  CORB/RIRB engine, codec discovery, and stream descriptor configuration.
+  CORB/RIRB engine, codec discovery, and stream descriptor configuration, and
+  it runs where the controller is — x86_64 and AArch64 — because it is handed
+  the controller's BAR by the platform rather than by an architecture's own
+  configuration code.
 - **Hotplug, half-built**: the PCIe slot-status and hotplug-event reads exist
   (`arch::pci::pcie_read_slot_status`, `pcie_check_hotplug_event`) and the
   device manager has a removal path, but nothing polls either: no boot
@@ -131,6 +134,17 @@ input, mostly verified under QEMU.
   node's own descriptor, the way the stat syscall always answered, and the
   audio node is writable by any user.
 
+  It plays on the device-tree machine too. The probe used to read BAR0 out of
+  x86_64's configuration mechanism by hand, which is why the module resolved
+  to `hda_absent.rs` on AArch64; it now asks
+  `arch::platform::pci_register_window` for a window, the same call NVMe
+  makes, and the platform hands back the BAR already mapped — through port I/O
+  on a PC, through the ECAM window and a low alias on `virt`. `make
+  check-aarch64-hda` types the same `tone 440 200` at the shell and reads the
+  same host WAV backend, so the file is one driver on two buses, and the
+  `tone` builtin is no longer gated by architecture: the node exists on every
+  machine, and a machine without a controller refuses the write.
+
   The wave used to come out an octave low, and the reason was the last place
   anyone looks: `SET_STREAM_FORMAT`'s payload. A codec's verbs come in two
   payload widths and the driver sent this one through the eight-bit form, so
@@ -161,12 +175,14 @@ input, mostly verified under QEMU.
   somebody waits on. AArch64 reaches the same place by its own road: the GICv3
   controller (`src/arch/aarch64/gicv3.rs`) receives LPIs, and the ITS
   (`src/arch/aarch64/its.rs`) translates the messages that become them. What is
-  still missing: HDA is still reached through its architecture's own
-  enumeration rather than this one.  NVMe is not: the same driver the PC
-  compiles asks the platform for a window and drives a namespace on the
-  device-tree machine too (`make check-aarch64-nvme` mounts one), which is
-  what makes a second PCIe device *class* work here rather than a second
-  device of the same class.
+  still missing: the classes that poll — NVMe, which mounts a namespace here
+  (`make check-aarch64-nvme`), and HDA, which plays a tone here
+  (`make check-aarch64-hda`) — ask the platform for a window and claim no
+  identity, so the interrupt path has only ever been exercised by a device
+  that has to be woken.  What is *not* missing is the class itself: the same
+  files the PC compiles drive the device-tree machine, which is what makes a
+  second PCIe device *class* work here rather than a second device of the
+  same class.
 - **Verified under QEMU only**: no real-device validation on bare-metal
   hardware yet.
 
@@ -430,7 +446,7 @@ disk-backed swap, compression, and defragmentation.
 | Common interrupt abstraction | `InterruptController` trait | — |
 | Thread exception handling | Page fault recovery, signal delivery | — |
 | PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | Nothing known: the window is opened in one module, the guard restores what it found, and the paths that can wait stage first (`make check-user-access-windows`) |
-| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64; a vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64; a claim takes one identity per **table entry the driver names**, and every entry it does not name is written masked, so a device takes the vectors its work needs rather than the ones its table has ([RFC 0005](rfcs/0005-claim-the-msix-entries-a-driver-names.md)) | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and the third device class on that bus — NVMe — does not claim one because its driver polls; on x86_64 the PCIe virtio-net and xHCI controllers claim, and NVMe's fixed vectors are still wired by constant rather than claimed |
+| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64; a vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64; a claim takes one identity per **table entry the driver names**, and every entry it does not name is written masked, so a device takes the vectors its work needs rather than the ones its table has ([RFC 0005](rfcs/0005-claim-the-msix-entries-a-driver-names.md)) | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and the classes whose drivers poll — NVMe and HDA — do not claim one; on x86_64 the PCIe virtio-net and xHCI controllers claim, and NVMe's fixed vectors are still wired by constant rather than claimed |
 | NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry | No architectural NMI source on RISC-V, so that entry stays dormant |
 | Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable | Runs from the tick; no routing-latency measurement |
 | Interrupt stats interface | Per-CPU/per-vector counters, NMI/IPI totals, balancer state (SystemInfo #9) | — |
@@ -463,16 +479,17 @@ programs a device's table, NMI handling, and load balancing.
 **Weaknesses:**
 
 - **Message-signalled interrupts are two drivers deep on AArch64, and the
-  bus carries three device classes.** The ITS maps a collection and an LPI
+  bus carries four device classes.** The ITS maps a collection and an LPI
   pending table per CPU, and a device's entries are placed round-robin over
   the CPUs that can receive, so the PCIe virtio-net driver's queues are
   completed by different cores, and the PCIe virtio-blk driver beside it
   claims a range of its own under its own DeviceID. What that buys is
   evidence: the placement is a property of the machine rather than of one
-  driver. What is still missing: the *third* class — NVMe — is driven on this
-  machine (`make check-aarch64-nvme` mounts a namespace through the same ECAM
-  window) but does not claim an interrupt, because the driver polls; and HDA
-  has no PCIe reach here at all
+  driver. What is still missing: the two classes whose drivers poll — NVMe,
+  which mounts a namespace through the same ECAM window
+  (`make check-aarch64-nvme`), and HDA, which plays a tone through it
+  (`make check-aarch64-hda`) — are driven here but claim no interrupt, so the
+  bus's fourth class is still a device that has to signal
   ([RFC 0001](rfcs/0001-spread-message-signalled-interrupts.md) is the
   design the placement follows).
 - **MSI-X on RISC-V is one driver deep**: the AIA IMSIC is wired and a device's

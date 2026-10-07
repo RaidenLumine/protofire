@@ -2,17 +2,18 @@
 //!
 //! Which of the machine's own devices this architecture has a driver for.
 //!
-//! Most of the PC drivers: the bochs display, Intel HDA, xHCI and the PIT
-//! speaker are reached through the x86_64 configuration mechanism, and this
-//! machine does not have it.  What it has instead is VirtIO — the MMIO devices
-//! its device tree names, and the PCIe devices behind the ECAM window — and
-//! NVMe, whose registers are the same on any PCIe bus; both live in
-//! `src/drivers/` and are compiled wherever that bus is.
+//! Most of the PC drivers: the bochs display, xHCI and the PIT speaker are
+//! reached through the x86_64 configuration mechanism, and this machine does
+//! not have it.  What it has instead is VirtIO — the MMIO devices its device
+//! tree names, and the PCIe devices behind the ECAM window — and the two PCI
+//! function drivers whose registers are the same on any bus, NVMe and Intel
+//! HDA; all of them live in `src/drivers/` and are compiled where that bus is.
+//! What is left on the x86-only side is the display and the speaker.
 //!
-//! So the five names below resolve to the stubs that answer under the same
-//! module name and report that the hardware is not there, and the two
-//! capability constants say the same thing.  See the x86_64 module for why the
-//! driver files are reached through `#[path]`.
+//! So the names below that have no PCIe form resolve to the stubs that answer
+//! under the same module name and report that the hardware is not there, and
+//! the capability constants say the same thing.  See the x86_64 module for why
+//! the driver files are reached through `#[path]`.
 
 use alloc::sync::Arc;
 
@@ -59,6 +60,15 @@ pub fn usb_boot_disk() -> Option<Arc<dyn BlockDevice>> {
 
 #[path = "../../drivers/framebuffer_absent.rs"]
 pub mod framebuffer;
+/// The HDA driver, which this machine reaches through its PCIe window: an
+/// Intel HDA controller is a PCI function like any other, and the platform's
+/// window helper is what maps its BAR.  The driver polls and claims no
+/// interrupt, so the ITS is not involved.
+#[cfg(target_os = "none")]
+#[path = "../../drivers/hda.rs"]
+pub mod hda;
+/// Nothing to answer on a host build of this architecture.
+#[cfg(not(target_os = "none"))]
 #[path = "../../drivers/hda_absent.rs"]
 pub mod hda;
 /// The NVMe driver, which this machine reaches through its PCIe window: the

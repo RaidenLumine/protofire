@@ -50,12 +50,15 @@ The authoritative picture of what exists today is
   completed by different cores.  A second PCIe driver claims through the ITS
   too: `virtio-blk` on the same bus has its own DeviceID, its own LPI range and
   its own completion path that waits on it, which is what makes the placement a
-  property of the machine rather than of one driver.  A third device class is
-  driven now as well: NVMe, whose driver asks the platform for a window and
-  whose queues and DMA are machine-neutral, so `make check-aarch64-nvme` mounts
-  a real filesystem from a namespace on this bus.  What is left is another
-  class still — the HDA controller, and anything that has to claim an
-  interrupt of its own.
+  property of the machine rather than of one driver.  Two more device classes
+  are driven here as well, both by the files the PC compiles: NVMe, so
+  `make check-aarch64-nvme` mounts a real filesystem from a namespace on this
+  bus, and HDA, so `make check-aarch64-hda` plays a tone through the
+  controller and reads the samples out of the host's WAV backend.  What is
+  left is the first class that has to *claim an interrupt of its own*: both
+  NVMe and HDA poll their own completion rings, so neither of the two classes
+  added on top of virtio has yet exercised the ITS through a driver that must
+  be woken.
   [RFC 0001](docs/rfcs/0001-spread-message-signalled-interrupts.md) is the
   design the placement follows.
 - **USB host (xHCI) completion.** Storage and HID work end to end, and a
@@ -82,9 +85,11 @@ The authoritative picture of what exists today is
   codec discovery, the output converter, a BDL playback ring, the stream DMA),
   a program reaches it — the shell's `tone` builtin writes PCM to
   `/system/dev/audio`, which is now authorized by the node's own descriptor —
-  and `make check-x8664-hda` reads the samples back out of the WAV QEMU's audio
-  backend writes on the host and measures the tone's frequency from the wave's
-  own period.  The octave it used to lose was the converter's format word:
+  and `make check-x8664-hda` and `make check-aarch64-hda` read the samples back
+  out of the WAV QEMU's audio backend writes on the host and measure the tone's
+  frequency from the wave's own period, so the one driver runs on the PC's
+  configuration ports and on the device-tree machine's PCIe window alike.  The
+  octave it used to lose was the converter's format word:
   `SET_STREAM_FORMAT` carries sixteen bits of payload through the verb encoding
   reserved for that width, and the driver sent it through the eight-bit one, so
   the codec was told "one channel" and played a stereo stream's interleaved

@@ -101,8 +101,10 @@ decision, and it is the successor to RFC 0003's per-entry claim.
 What is claimed today: the PCIe `virtio-net` driver (one identity per queue),
 `virtio-blk` (one, for its one queue), and xHCI (one, for its one interrupter),
 on the machines that have the controller to carry them.  Everything else —
-NVMe, HDA, any second PCIe driver — is reached through its architecture's own
-enumeration and does not claim identities through this path.
+NVMe and HDA, the classes whose drivers poll their own completion rings — asks
+the platform for a register window (`arch::platform::pci_register_window`) and
+claims no identity through this path, because there is no interrupt for it to
+wait on.
 
 ## Where an interrupt is placed
 
