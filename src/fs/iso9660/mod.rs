@@ -13,7 +13,13 @@
 //!
 //! ## Limitations
 //!
-//! - Read-only (all mutating operations return [`Error::PermissionDenied`]).
+//! - File data is writable in place, within the length the file already has
+//!   ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)): an
+//!   ISO 9660 file is one raw contiguous extent whose length is a field of its
+//!   directory record, so replacing bytes inside that length changes no
+//!   metadata.  Growing, truncating, creating and removing rewrite metadata and
+//!   still return [`Error::PermissionDenied`], and a write to a read-only
+//!   *device* is refused by the device.
 //! - No El Torito boot catalog support.
 //! - No multi-extent files (ISO 9660 Level 3 interleave).
 //! - XA attributes are ignored.
@@ -349,8 +355,25 @@ impl VNode for Iso9660VNode {
         )
     }
 
-    fn write(&self, _o: u64, _b: &[u8]) -> Result<usize> {
-        Err(Error::PermissionDenied)
+    /// Overwrite bytes the file already has.
+    ///
+    /// The extent's recorded length is the file's length, so this writes no
+    /// metadata: no directory record, no path table, no volume space.  A write
+    /// that runs past the end is a short write — growing means rewriting the
+    /// record that says how long the file is, which is a later stage
+    /// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+    fn write(&self, offset: u64, buffer: &[u8]) -> Result<usize> {
+        if self.kind != NodeKind::File {
+            return Err(Error::InvalidArgument);
+        }
+        fs::write_extent(
+            &self.device,
+            self.block_size,
+            self.extent_location,
+            self.extent_size,
+            offset,
+            buffer,
+        )
     }
     fn set_len(&self, _l: u64) -> Result<()> {
         Err(Error::PermissionDenied)

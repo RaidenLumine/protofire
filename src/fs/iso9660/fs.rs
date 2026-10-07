@@ -210,6 +210,37 @@ pub fn read_extent(
     Ok(n)
 }
 
+/// Write file data into an extent, and answer how much of `buffer` was taken.
+///
+/// The mirror of [`read_extent`], and it is deliberately clamped to the
+/// extent's recorded size: a file's length is a field of its directory record,
+/// so *growing* one is a metadata change and not a data write.  A write that
+/// runs past the end is therefore a short write, which is what the VFS
+/// contract says a write that cannot take everything should be.
+pub fn write_extent(
+    device: &Arc<dyn BlockDevice>,
+    block_size: u16,
+    extent_location: u32,
+    extent_size: u32,
+    file_offset: u64,
+    buffer: &[u8],
+) -> Result<usize, Error> {
+    if file_offset >= extent_size as u64 {
+        return Ok(0);
+    }
+
+    let block_size = block_size as u64;
+    let available = (extent_size as u64).saturating_sub(file_offset);
+    let n = (buffer.len() as u64).min(available) as usize;
+    if n == 0 {
+        return Ok(0);
+    }
+
+    let start = extent_location as u64 * block_size + file_offset;
+    write_exact(device, start, &buffer[..n])?;
+    Ok(n)
+}
+
 // ---------------------------------------------------------------------------
 // El Torito boot catalog
 // ---------------------------------------------------------------------------
@@ -275,6 +306,50 @@ fn read_exact(device: &Arc<dyn BlockDevice>, offset: u64, buf: &mut [u8]) -> Res
     }
 
     buf.copy_from_slice(&scratch[start_off..start_off + buf.len()]);
+    Ok(())
+}
+
+/// Write `buf` at a byte offset, through whole-block device writes.
+///
+/// A device writes blocks, so each sector the range touches is classified
+/// first: one the range covers in full is written without being read, and one
+/// it only partly covers is read, patched and written back — the bytes the
+/// caller is not replacing have to survive, and on ISO 9660 a file's last
+/// sector is where that matters, since its neighbours there are padding and
+/// whatever the image put after it.
+fn write_exact(device: &Arc<dyn BlockDevice>, offset: u64, buf: &[u8]) -> Result<(), Error> {
+    if buf.is_empty() {
+        return Ok(());
+    }
+
+    let dev_bs = device.block_size() as u64;
+    let bs = dev_bs as usize;
+    let start_lba = offset / dev_bs;
+    let start_off = (offset % dev_bs) as usize;
+
+    // The range's own bounds inside the scratch, which spans exactly the
+    // sectors it touches.
+    let covered_from = start_off;
+    let covered_to = start_off + buf.len();
+    let total_blocks = covered_to.div_ceil(bs);
+
+    let mut scratch = alloc::vec![0u8; total_blocks * bs];
+    for i in 0..total_blocks {
+        let sector_from = i * bs;
+        let sector_to = sector_from + bs;
+        if covered_from > sector_from || sector_to > covered_to {
+            device.read_blocks(start_lba + i as u64, &mut scratch[sector_from..sector_to])?;
+        }
+    }
+    scratch[covered_from..covered_to].copy_from_slice(buf);
+
+    for i in 0..total_blocks {
+        let sector_from = i * bs;
+        device.write_blocks(
+            start_lba + i as u64,
+            &scratch[sector_from..sector_from + bs],
+        )?;
+    }
     Ok(())
 }
 

@@ -23,11 +23,13 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::fs::block::BlockDevice;
 use crate::fs::block::MemoryBlockDevice;
 use crate::fs::vfs::FileSystem as VfsFileSystem;
 use crate::fs::vfs::NodeKind;
 use crate::Error;
 
+use super::fs;
 use super::types::parse_boot_catalog;
 use super::types::PVD_SECTOR;
 use super::types::SECTOR_SIZE;
@@ -277,6 +279,132 @@ fn lookup_and_read_file() {
     // Reading past EOF returns 0.
     let mut tail = [0u8; 4];
     assert_eq!(node.read(HELLO.len() as u64, &mut tail).expect("eof"), 0);
+}
+
+// ─── Writing file data (RFC 0011, stage 1) ─────────────────────────────
+
+/// The volume and its device, writable: the write tests need a device that
+/// takes the write, which is the one thing the read tests never do.
+fn writable_volume() -> (Arc<MemoryBlockDevice>, Iso9660Volume) {
+    let device = MemoryBlockDevice::new("iso-write", build_test_image(), false);
+    let volume = open_volume(device.clone());
+    (device, volume)
+}
+
+#[test]
+fn an_overwrite_inside_a_file_is_what_the_reader_reads_back() {
+    let (device, volume) = writable_volume();
+    let node = volume.lookup("/HELLO.TXT").expect("lookup");
+
+    let replacement = b"JELLO";
+    assert_eq!(
+        node.write(0, replacement).expect("overwrite"),
+        replacement.len()
+    );
+
+    // The reader sees the new bytes and keeps the rest of the file.
+    let mut buf = vec![0u8; HELLO.len()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), HELLO.len());
+    assert_eq!(&buf[..replacement.len()], replacement);
+    assert_eq!(&buf[replacement.len()..], &HELLO[replacement.len()..]);
+
+    // And it is on the medium: the sector the extent lives in carries it, and
+    // the padding after the file inside that sector is untouched — the file is
+    // 21 bytes of a 2048-byte sector, so this is the read-modify-write path.
+    // The device's blocks are 512 bytes and an ISO sector is 2048, so the
+    // extent's sector is four device blocks in.
+    let mut sector = vec![0u8; SECTOR_SIZE];
+    let lba = HELLO_SECTOR * (SECTOR_SIZE as u64) / crate::fs::block::BLOCK_SIZE as u64;
+    device.read_blocks(lba, &mut sector).expect("read sector");
+    assert_eq!(&sector[..replacement.len()], replacement);
+    assert_eq!(
+        &sector[replacement.len()..HELLO.len()],
+        &HELLO[replacement.len()..]
+    );
+    assert!(
+        sector[HELLO.len()..].iter().all(|byte| *byte == 0),
+        "the sector's padding was rewritten"
+    );
+}
+
+#[test]
+fn an_extent_write_keeps_every_byte_it_was_not_given() {
+    // A three-sector extent over an image whose every byte is distinguishable,
+    // so a write that straddles two file sectors is visible byte for byte
+    // outside the range as well as inside it.
+    let image: Vec<u8> = (0..8 * SECTOR_SIZE).map(|i| (i % 251) as u8).collect();
+    let before = image.clone();
+    let device = MemoryBlockDevice::new("iso-extent", image, false);
+
+    let extent_location = 2u32;
+    let extent_size = (3 * SECTOR_SIZE) as u32;
+    // Eight bytes starting four before the extent's second sector: both
+    // sectors are only partly covered, so both take the read-modify-write path
+    // in one call.
+    let offset = (SECTOR_SIZE - 4) as u64;
+    let replacement = [0xAAu8; 8];
+    assert_eq!(
+        fs::write_extent(
+            &(device.clone() as Arc<dyn crate::fs::block::BlockDevice>),
+            SECTOR_SIZE as u16,
+            extent_location,
+            extent_size,
+            offset,
+            &replacement,
+        )
+        .expect("write extent"),
+        replacement.len()
+    );
+
+    let mut after = vec![0u8; before.len()];
+    device.read_blocks(0, &mut after).expect("read image back");
+
+    let start = extent_location as usize * SECTOR_SIZE + offset as usize;
+    assert_eq!(&after[start..start + replacement.len()], &replacement);
+    for (index, (old, new)) in before.iter().zip(after.iter()).enumerate() {
+        if (start..start + replacement.len()).contains(&index) {
+            continue;
+        }
+        assert_eq!(old, new, "byte {index} outside the write changed");
+    }
+}
+
+#[test]
+fn a_write_past_the_end_is_short_and_does_not_grow_the_file() {
+    let (_device, volume) = writable_volume();
+    let node = volume.lookup("/HELLO.TXT").expect("lookup");
+    let data = [0xAAu8; 8];
+
+    // At the end, nothing is taken; before it, only as far as the end.
+    assert_eq!(node.write(HELLO.len() as u64, &data).expect("at end"), 0);
+    assert_eq!(
+        node.write((HELLO.len() - 3) as u64, &data)
+            .expect("before end"),
+        3
+    );
+    assert_eq!(
+        node.size(),
+        HELLO.len(),
+        "a data write must not change the length the record carries"
+    );
+}
+
+#[test]
+fn a_read_only_device_refuses_an_overwrite() {
+    // `/system` is a read-only slice of the boot disk: the refusal is the
+    // device's, so a writable filesystem on a read-only device still refuses.
+    let device = MemoryBlockDevice::new("iso-ro", build_test_image(), true);
+    let volume = open_volume(device);
+    let node = volume.lookup("/HELLO.TXT").expect("lookup");
+
+    assert_eq!(node.write(0, b"JELLO"), Err(Error::PermissionDenied));
+}
+
+#[test]
+fn a_directory_refuses_a_write() {
+    let (_device, volume) = writable_volume();
+    let dir = volume.lookup("/SUB").expect("lookup /SUB");
+    assert_eq!(dir.write(0, b"x"), Err(Error::InvalidArgument));
 }
 
 #[test]

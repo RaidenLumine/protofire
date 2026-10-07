@@ -256,7 +256,7 @@ behind `rootfs_type`, and `set_rootfs_type` has no caller.
 | BtrFS | Read-only; B-tree traversal | Write support is the mid-term roadmap item |
 | NTFS 3.1 | MFT parsing, attribute resolution; `write` overwrites inside existing runs | No create, rename or remove (`NotImplemented`); no file extension, and compressed and encrypted streams are not covered |
 | SquashFS 4.0 | Read-only; several compression algorithms | Read-only |
-| ISO 9660 | Read-only; Joliet, Rock Ridge | Read-only |
+| ISO 9660 | Joliet, Rock Ridge, and **file data writable in place** within the length the file already has: an ISO 9660 file is one raw contiguous extent whose length is a field of its directory record, so replacing bytes inside that length changes no metadata ([RFC 0011](rfcs/0011-make-iso9660-file-data-writable.md)) | Growing, truncating, creating and removing rewrite metadata and still refuse; a torn data write is a half-written file, because the format has no journal and no data checksum; the tests are the harness (there is no ISO image on the demo disk) |
 | EROFS v1 | Read-only; compact inode format | Read-only |
 
 #### 3.3 VFS Layer
@@ -293,8 +293,10 @@ PBKDF2 primitives.
 **Weaknesses:**
 
 - **Unmounted drivers**: ext4, F2FS, XFS, exFAT, FAT32, btrfs, NTFS,
-  SquashFS, ISO 9660 and EROFS have parsers and tests but no mount; write
-  support for the read-only ones is a mid-term roadmap goal.
+  SquashFS, ISO 9660 and EROFS have parsers and tests but no mount.  Of the
+  read-only ones, ISO 9660 has begun moving: a file's *data* is writable in
+  place, but its metadata stages (grow, truncate, create, remove) are still
+  to come, and none of the ten is reachable from a boot yet.
 - **Journal replay verified on emulated disks**: coverage of real-corruption
   edge cases is limited.
 

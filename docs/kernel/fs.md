@@ -449,9 +449,12 @@ handshake, falling back to the FUSE convention inode 1.
 
 `src/fs/` also contains format drivers for ext4, FAT32, exFAT, NTFS, btrfs,
 XFS, F2FS, EROFS, SquashFS and ISO 9660 (`src/fs/ext4/`, `src/fs/fat32/` and
-so on), each with its own parser, `VNode` implementation and tests.  None of
-them is mounted by the boot path and nothing registers one at runtime:
-`install_zone_devices` has an ext4 branch behind `rootfs_type`, but
+so on), each with its own parser, `VNode` implementation and tests.  Of the
+read-only ones, ISO 9660 has begun moving toward read-write: a file's *data*
+is writable in place, which is the one stage of that format that changes no
+metadata ([RFC 0011](../rfcs/0011-make-iso9660-file-data-writable.md)).
+None of them is mounted by the boot path and nothing registers one at
+runtime: `install_zone_devices` has an ext4 branch behind `rootfs_type`, but
 `set_rootfs_type` has no caller, so a machine's zones are SimpleFs.  The
 read-only views above and FUSE are the backends a boot or a syscall can
 actually reach; the rest are code and tests awaiting a mount.
