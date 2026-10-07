@@ -148,6 +148,10 @@ pub(crate) fn maintenance_entry() {
 
         // The boot-work baseline, when the build asks for it: one line, once,
         // after the machine has done enough for the numbers to mean something.
+        // The workload reports a duration, so the counter it is measured in
+        // has to be calibrated before the sample is printed.
+        #[cfg(feature = "perf_baseline")]
+        crate::kernel::perf_baseline::observe_tick(now_tick);
         #[cfg(feature = "perf_baseline")]
         crate::kernel::perf_baseline::log_once(now_tick);
 

@@ -118,12 +118,22 @@ The authoritative picture of what exists today is
   lookahead sharing one request with the read that asked for it, and a commit
   that writes only the blocks the slot does not already hold, which cut the
   bytes a demo boot writes to a device from 735232 to 229888 for 25088 more
-  read.  What remains: an asynchronous device interface (a thread issuing the
+  read.  The counters are no longer only a boot's: the boot now runs a **defined
+  storage workload** (`src/kernel/workload.rs`) — eight files written three
+  times and read back — and the line reports that workload's own share as
+  `wl-*` counters beside the boot's, with
+  `wl-device-bytes-per-asked-byte` as its write amplification.  Both halves are
+  gated, so a change that costs the filesystem more work per write fails with
+  the workload named.  Its duration is printed separately and compared by
+  nothing, because a gate that measures a duration measures the machine it ran
+  on; the number is there to explain a counter, not to be one.
+  What remains: an asynchronous device interface (a thread issuing the
   same synchronous reads cannot be ahead of a reader this fast, so overlap has
-  to be a queue at the device), measurement under load (throughput and latency
-  on real disks and SSDs, NUMA-node stress, network throughput — the work a
-  four-CPU boot does is gated by `make check-perf-baseline-smp`, but that is a
-  boot, not a load), and the commit comparison's own reads, which a per-block
+  to be a queue at the device), the same workload on a real disk or an SSD and
+  on the network (the work a four-CPU boot does is gated by
+  `make check-perf-baseline-smp`, but that is a boot, not a load; the workload
+  above is in memory, which is what makes it deterministic), and the commit
+  comparison's own reads, which a per-block
   shadow of the previous generation would remove if they ever show up against
   real disks.  What would have to change first is measured, not argued: the
   boot-work line records `blk-in-flight-high-water`, and it is **1** on every

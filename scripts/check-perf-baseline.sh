@@ -176,6 +176,14 @@ if [ "$mode" = "record" ]; then
         printf '# completes in place, which is the number an asynchronous interface\n'
         printf '# would have to beat before it is worth having.\n'
         printf '#\n'
+        printf '# The `wl-*` rows are the defined storage workload'"'"'s own share of that\n'
+        printf '# work, counted as deltas around the run (`src/kernel/workload.rs`):\n'
+        printf '# what a filesystem, a cache and a device did for a fixed set of writes\n'
+        printf '# and reads rather than for the boot as a whole.\n'
+        printf '# `wl-device-bytes-per-asked-byte` is the ratio between the two — the\n'
+        printf '# write amplification of one named workload.  Its duration is printed on\n'
+        printf '# a line of its own and is deliberately not recorded here.\n'
+        printf '#\n'
 
         printf '%s\n' "$pairs" | while IFS='=' read -r key value; do
             [ -n "$key" ] || continue

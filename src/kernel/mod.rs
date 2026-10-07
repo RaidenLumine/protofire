@@ -32,6 +32,10 @@ pub mod procfs;
 pub mod random;
 pub mod scheduler;
 pub mod security;
+/// A fixed storage workload, run once at boot so those counters have a
+/// workload of their own to be read against rather than only a boot.
+#[cfg(feature = "perf_baseline")]
+pub(crate) mod workload;
 // Service-definition parsing (`/system/rc.d/*.toml`) is only exercised by the
 // demo distribution's embedded default services; a pure kernel boot spawns
 // the distribution's `/system/init.elf` directly and never reads rc.d.  The
@@ -336,6 +340,23 @@ impl Kernel {
             );
         #[cfg(any(feature = "demo-disk", test))]
         self.log_demo_storage_sample();
+        // A fixed storage workload, so the counters printed at the sample tick
+        // have a workload of their own to be read against rather than only a
+        // boot.  It runs *before* that sample on purpose: the boot's totals
+        // include it, and the `wl-*` keys the line prints say which part of
+        // them it is.  Its duration is reported on a line of its own, which no
+        // gate compares — see `kernel::workload`.
+        #[cfg(feature = "perf_baseline")]
+        {
+            let fs = self.fs.lock();
+            let delta = crate::kernel::workload::run(&fs);
+            drop(fs);
+            if !delta.ran() {
+                println!("[perf  ] workload: did not run (no scratch volume to run it in)");
+            }
+            // Its duration is reported where the counters are, because the
+            // clock rate it is converted with is measured later than this.
+        }
         boot.set_recovery_summary(tx_recovered, tx_repaired, vol_checked, vol_repaired);
         let t4 = tick();
 
