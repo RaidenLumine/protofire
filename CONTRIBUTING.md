@@ -337,6 +337,11 @@ the review checklist — is in [`docs/fmts/syscall-abi.md`](docs/fmts/syscall-ab
   and it also covers the other direction: describe an absent module by name, not
   by filename, since a document cannot cite a ghost without looking like it
   meant to.
+- `make help` is the index of what can be run, so a target the Makefile defines
+  has to be named in it, and a name in it has to be a target. The list is prose
+  and drifts — fifteen targets had fallen out of it, three of them ratchets —
+  so [`scripts/check-make-help.sh`](scripts/check-make-help.sh) checks both
+  directions in `verify-p0`.
 - Code comments should be written in English.
 
 ---

@@ -29,7 +29,9 @@ the RFC that decided it, in the same commit.
 The floor is `make verify VERIFY_TIER=p3`: the host suites, clippy in every
 configuration (`make clippy`, `make clippy-targets`), the build matrix, a
 single-CPU runtime smoke per architecture plus the multi-CPU one, and the
-ratchets.  `make help` lists every target.
+ratchets.  `make help` lists every target, and `make check-make-help` is what
+keeps that true: a target the list does not name fails, as does a name the
+Makefile no longer defines.
 
 CI (`.github/workflows/ci.yml`) runs a subset of that tier on every push, so a
 green CI is not the floor; the local `verify` is.  It is also where a citation

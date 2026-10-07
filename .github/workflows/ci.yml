@@ -64,6 +64,11 @@ jobs:
           # a full checkout here.
           - name: repo-integrity
             command: make check-repo-integrity
+          # `make help` is the index of what can be run, and a list nobody
+          # checks is a list that is eventually wrong: fifteen targets, three
+          # of them ratchets, had fallen out of it before this gate existed.
+          - name: make-help
+            command: make check-make-help
 
     steps:
       - name: Checkout

@@ -59,6 +59,7 @@ endif
 		check-user-access-windows \
 		check-repo-integrity \
 		check-docs \
+		check-make-help \
 		check-rfcs \
 		check-payload-relocations \
 		check-reproducible-build \
@@ -106,6 +107,7 @@ endif
 help:
 	@printf '%s\n' \
 		'Available targets:' \
+		'  make help           - print this list (the default goal, so a bare `make` does too)' \
 		'  make doctor         - check the environment, failing if a required tool is absent' \
 		'  make verify         - run the default P3 verification gate (override with VERIFY_TIER=p0..p3)' \
 		'  make verify-p0      - format check + host/x86_64/aarch64 build checks + header coverage' \
@@ -113,6 +115,8 @@ help:
 		'  make verify-p2      - P1 plus storage/recovery/fault-matrix regressions' \
 		'  make verify-p3      - P2 plus clippy and optional AArch64 runtime smoke' \
 		'  make check          - run both host and bare-metal type checks' \
+		'  make check-host     - type-check the host configuration, which is the one the tests build' \
+		'  make check-target   - type-check the bare-metal target on its own' \
 		'  make check-aarch64  - run bare-metal type checks for aarch64-unknown-none' \
 		'  make check-aarch64-host - type-check aarch64-unknown-linux-gnu, where the arch modules also build' \
 		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
@@ -120,6 +124,7 @@ help:
 		'  make check-user-access-windows - fail if a module outside `syscall/memory/user.rs` opens a user-access window' \
 		'  make check-repo-integrity  - fail if a ref or the index names a missing git object' \
 		'  make check-docs     - fail if a document cites a file the tree does not have' \
+		'  make check-make-help - fail if a target the Makefile defines is missing from this list' \
 		'  make check-rfcs     - fail if an RFC number, status or the generated index is wrong' \
 		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
 		'  make check-dead-code-allows  - fail if a file-level allow(dead_code) has no reason' \
@@ -129,7 +134,11 @@ help:
 		'  make check-perf-baseline - boot the demo and compare its measured work to the baseline' \
 		'  make check-perf-baseline-smp - the same on several CPUs (SMP, default 4)' \
 		'  make check-abi-mirror  - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
+		'  make check-abi-frozen-payload - boot the pre-built frozen payload, which this build does not recompile' \
+		'  make check-abi-frozen-payload-aarch64 - the same frozen payload on aarch64' \
+		'  make check-abi-frozen-payload-riscv64 - the same frozen payload on riscv64' \
 		'  make check-layering - fail if a module gained a dependency the census does not have' \
+		'  make check-arch-fanout - fail if the architecture census outside `src/arch/` grew' \
 		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-usb-disk - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
 		'  make check-x8664-usb-hotplug - plug a device into a hub after boot and check it is seen then' \
@@ -145,26 +154,34 @@ help:
 		'  make check-riscv64-pci-runtime - boot riscv64 with a PCIe device and check the device-tree walk' \
 		'  make check-riscv64-nvme - the same NVMe disk on riscv64, whose RAM window is identity-mapped' \
 		'  make check-riscv64-smp-runtime - boot riscv64 on several harts and check they come up' \
+		'  make check-smp-runtime - run the headless QEMU x86_64 SMP smoke check (SMP, default 4)' \
+		'  make check-aarch64-smp-runtime - boot aarch64 on several CPUs and check they come up (SMP, default 4)' \
 		'  make test           - run host-side unit and integration tests' \
 		'  make test-lib       - run library unit tests only' \
 		'  make test-fast      - run path/I-O/syscall/user integration regressions' \
 		'  make test-concurrency - run scheduler/input/condvar concurrency regressions' \
 		'  make test-storage   - run filesystem/recovery/fault-injection regressions' \
+		'  make test-fs-locking - run filesystem lock-discipline regressions' \
+		'  make test-fat32     - run FAT32 filesystem integration tests' \
+		'  make test-service   - run service-registry and /service filesystem integration tests' \
 		'  make test-usb       - run USB Mass Storage (MSD) integration tests' \
 		'  make test-gpu       - run VIRGL 3D demo renderer integration tests' \
 		'  make test-parsers   - run the deterministic in-tree parser fuzz harnesses' \
 		'  make fmt            - format the source tree' \
 		'  make fmt-all        - format the source tree and all dependencies' \
 		'  make fmt-check      - verify formatting without modifying files' \
-		'  make build          - build the bare-metal kernel ELF (PROFILE=debug|release)' by default \
+		'  make build          - build the bare-metal kernel ELF (PROFILE=debug|release)' \
 		'  make build-x8664    - build the bare-metal kernel ELF (PROFILE=debug|release)' \
 		'  make build-aarch64  - build the aarch64 bare-metal kernel ELF for QEMU virt' \
 		'  make build-aarch64-image - build the aarch64 kernel as the bootable arm64 Image (device tree)' \
+		'  make build-aarch64-image-plain - the same Image with no extra features linked in' \
 		'  make build-riscv64  - build the riscv64 bare-metal kernel ELF for QEMU virt' \
 		'  make build-x8664-demo - build x86_64 kernel with the in-memory demo disk (shell)' \
 		'  make build-aarch64-demo - build aarch64 kernel with the in-memory demo disk (shell)' \
 		'  make build-riscv64-demo - build riscv64 kernel with the in-memory demo disk (shell)' \
 		'  make clippy         - run clippy for all targets' \
+		'  make clippy-targets - run clippy for the other targets and architectures' \
+		'  make gen-kaslr-relocs - write the KASLR relocation list from the built kernel ELF' \
 		'  make run             - x86_64 demo shell on QEMU q35, interactive over serial (no window)' \
 		'  make run-x8664       - alias of make run (x86_64 serial interactive shell)' \
 		'  make run-x8664-headless - x86_64 smoke (no demo-disk, no display)' \
@@ -195,6 +212,14 @@ check-repo-integrity:
 # catch a broken working copy before anything is built on it.
 check-docs:
 	sh ./scripts/check-docs.sh
+
+# `make help` is the index of what can be run, and this tree asks it to be
+# complete: a target nobody lists is a gate only its author runs.  The list is
+# prose, so it drifts — fifteen targets, three of them ratchets, had fallen out
+# of it before this check existed.  Both directions are failures, because a
+# name the Makefile no longer defines is a promise the list still makes.
+check-make-help:
+	sh ./scripts/check-make-help.sh
 
 # The RFC directory is the one place a *number* carries meaning: code cites it,
 # a later document supersedes it, and the index that lists it is generated from
