@@ -8,6 +8,10 @@ edition = "2021"
 authors = ["Raiden Lumine"]
 description = "A Rust bare-metal kernel prototype with a file-oriented user ABI."
 license = "Apache-2.0"
+# The kernel ships as a signed bundle of images, not as a crate: `publish =
+# false` keeps a stray `cargo publish` from offering it to crates.io.  The fuzz
+# package says the same for the same reason.
+publish = false
 
 [lints.rust]
 # Edition 2024 makes this the default; on edition 2021 it is opt-in, and the
@@ -174,7 +178,11 @@ educational_networking = []
 [profile.dev]
 panic = "abort"
 opt-level = 1
-debug = true
+# Line tables only.  Full DWARF made the debug kernel 149 MB per architecture
+# for a debugger workflow nothing in the tree documents, and it is the largest
+# single cost in a link; `debug = 1` keeps file and line in a backtrace (and in
+# a panic's `Location`) without the type and variable records.
+debug = 1
 debug-assertions = true
 
 [profile.release]

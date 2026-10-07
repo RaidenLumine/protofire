@@ -2,6 +2,9 @@
 name = "gen-kaslr-relocs"
 version = "0.1.0"
 edition = "2021"
+# Built by `make gen-kaslr-relocs`, never published: the same reason the fuzz
+# package states for itself.
+publish = false
 
 [[bin]]
 name = "gen-kaslr-relocs"
