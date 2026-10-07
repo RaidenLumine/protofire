@@ -102,14 +102,16 @@ The authoritative picture of what exists today is
   BtrFS, SquashFS, ISO 9660, EROFS — move toward read-write, matching ext4 /
   F2FS / XFS / exFAT / FAT32.  The first of them is moving:
   [RFC 0011](docs/rfcs/0011-make-iso9660-file-data-writable.md) made an ISO
-  9660 file's *data* writable in place and then its *length* — the two stages
-  of that format that change no structure, since a file's length is one field
-  of its directory record — and it records why ISO 9660 went first (no
-  compression to redo, no checksum tree to update, and a test image builder
-  that already exists).  What is left of ISO 9660 is allocation: a length past
-  the block the file has, and creating and removing, all need a free-space
-  story the format does not have.  NTFS is the prize and the largest step; its
-  RFC has to decide its harness before its writes.
+  9660 file's *data*, its *length* and then its *space* writable — a file
+  grows from an append-only allocator that no longer refuses at the block
+  boundary, in place when it is the volume's last extent and by moving to the
+  end when it is not.  The RFC records why ISO 9660 went first (no compression
+  to redo, no checksum tree to update, and a test image builder that already
+  exists), and what it costs: the allocator appends, so a removal would
+  reclaim nothing and a growth can pay a copy.  What is left of ISO 9660 is
+  creating and removing, which is the same allocator plus the directory work.
+  NTFS is the prize and the largest step; its RFC has to decide its harness
+  before its writes.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

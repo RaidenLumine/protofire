@@ -13,6 +13,7 @@
 //!             "."  (35), ".." (35), "NOTES.TXT;1" (45)
 //! sector 30 : HELLO.TXT content
 //! sector 31 : NOTES.TXT content
+//! sector 32-39: spare, which the volume does not claim and growth allocates
 //! ```
 //!
 //! The boot-catalog tests additionally splice in a Boot Record descriptor
@@ -32,11 +33,18 @@ use crate::Error;
 use super::fs;
 use super::types::parse_boot_catalog;
 use super::types::DIR_RECORD_DATA_LENGTH_OFFSET;
+use super::types::DIR_RECORD_EXTENT_LOCATION_OFFSET;
 use super::types::PVD_SECTOR;
 use super::types::SECTOR_SIZE;
 use super::Iso9660Volume;
 
 // ── Image geometry ──────────────────────────────────────────────────────
+
+/// Sectors in the image.  The volume claims the first 32 and the rest is the
+/// room a growth allocates into.
+const IMAGE_SECTORS: usize = 40;
+/// Blocks the volume *claims*, which is what its descriptor says.
+const VOLUME_BLOCKS: u32 = 32;
 
 const ROOT_EXTENT_SECTOR: u64 = 20;
 const ROOT_EXTENT_SIZE: u32 = 152; // 35 + 35 + 37 + 45
@@ -99,6 +107,11 @@ fn build_pvd() -> [u8; SECTOR_SIZE] {
     // logical block size (LE u16) at bytes 128..132.
     buf[128..130].copy_from_slice(&2048u16.to_le_bytes());
 
+    // volume space size at bytes 80..88: how much of the medium this volume
+    // claims, stored twice.  A volume that does not say cannot be grown.
+    buf[80..84].copy_from_slice(&VOLUME_BLOCKS.to_le_bytes());
+    buf[84..88].copy_from_slice(&VOLUME_BLOCKS.to_be_bytes());
+
     // Embedded root directory record at bytes 156..190.
     let root = make_root_record(ROOT_EXTENT_SECTOR, ROOT_EXTENT_SIZE);
     buf[156..190].copy_from_slice(&root);
@@ -117,7 +130,6 @@ fn put_sector(image: &mut [u8], sector: u64, data: &[u8]) {
 
 /// Build the base (non-bootable) test image.
 fn build_test_image() -> Vec<u8> {
-    const IMAGE_SECTORS: usize = 32;
     let mut image = vec![0u8; IMAGE_SECTORS * SECTOR_SIZE];
 
     put_sector(&mut image, PVD_SECTOR, &build_pvd());
@@ -371,23 +383,29 @@ fn an_extent_write_keeps_every_byte_it_was_not_given() {
 }
 
 #[test]
-fn a_write_past_the_end_is_short_and_does_not_grow_the_file() {
-    let (_device, volume) = writable_volume();
+fn a_write_past_the_end_grows_the_file() {
+    let (device, volume) = writable_volume();
     let node = volume.lookup("/HELLO.TXT").expect("lookup");
     let data = [0xAAu8; 8];
 
-    // At the end, nothing is taken; before it, only as far as the end.
-    assert_eq!(node.write(HELLO.len() as u64, &data).expect("at end"), 0);
-    assert_eq!(
-        node.write((HELLO.len() - 3) as u64, &data)
-            .expect("before end"),
-        3
-    );
-    assert_eq!(
-        node.size(),
-        HELLO.len(),
-        "a data write must not change the length the record carries"
-    );
+    // A write at the end grows the file by what it takes, so a caller can
+    // write a file the way it writes any other.
+    assert_eq!(node.write(HELLO.len() as u64, &data).expect("append"), 8);
+    assert_eq!(node.size(), HELLO.len() + 8);
+
+    let mut buf = vec![0u8; node.size()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), node.size());
+    assert_eq!(&buf[..HELLO.len()], HELLO);
+    assert_eq!(&buf[HELLO.len()..], &data);
+
+    // A second mount sees the length and the bytes: both are on the medium.
+    let reopened = open_volume(device);
+    let again = reopened.lookup("/HELLO.TXT").expect("relookup");
+    assert_eq!(again.size(), HELLO.len() + 8);
+    let mut buf = vec![0u8; again.size()];
+    assert_eq!(again.read(0, &mut buf).expect("read again"), again.size());
+    assert_eq!(&buf[..HELLO.len()], HELLO);
+    assert_eq!(&buf[HELLO.len()..], &data);
 }
 
 #[test]
@@ -413,6 +431,10 @@ fn a_directory_refuses_a_write() {
 /// Where `HELLO.TXT;1`'s directory record sits inside the root extent: the
 /// records before it are `.` (35), `..` (35) and `SUB` (37).
 const HELLO_RECORD_OFFSET: usize = 35 + 35 + 37;
+
+/// Where `NOTES.TXT;1`'s record sits inside the subdirectory's extent: the
+/// records before it are `.` (35) and `..` (35).
+const SUB_NOTES_RECORD_OFFSET: usize = 35 + 35;
 
 /// The `HELLO.TXT;1` record's data-length field, read off the medium.
 fn hello_record_length(device: &Arc<MemoryBlockDevice>) -> [u8; 8] {
@@ -471,16 +493,123 @@ fn growing_a_file_stays_inside_the_block_it_already_has() {
         "the block's tail is not this file's to grow into"
     );
 
-    // The block after that one is a block this format keeps no allocation
-    // for, so a length that would reach into it is refused rather than
-    // silently overwriting whatever the image put next.
-    assert_eq!(node.set_len(SECTOR_SIZE as u64 + 1), Err(Error::NoSpace));
-
+    // Nothing was allocated for it: the file is still where it was.
+    assert_eq!(
+        record_extent_location(&device, HELLO_SECTOR - 10, HELLO_RECORD_OFFSET),
+        HELLO_SECTOR as u32,
+        "an in-block growth must not move the file"
+    );
     let reopened = open_volume(device);
     assert_eq!(
         reopened.lookup("/HELLO.TXT").expect("relookup").size(),
         SECTOR_SIZE
     );
+}
+
+/// The extent-location field of the record at `offset` inside the directory
+/// extent that starts at `dir_sector`.
+fn record_extent_location(device: &Arc<MemoryBlockDevice>, dir_sector: u64, offset: usize) -> u32 {
+    let mut sector = vec![0u8; SECTOR_SIZE];
+    let lba = dir_sector * (SECTOR_SIZE as u64) / crate::fs::block::BLOCK_SIZE as u64;
+    device.read_blocks(lba, &mut sector).expect("read record");
+    let at = offset + DIR_RECORD_EXTENT_LOCATION_OFFSET;
+    u32::from_le_bytes(sector[at..at + 4].try_into().expect("four bytes"))
+}
+
+#[test]
+fn growing_past_the_block_moves_a_file_that_has_something_after_it() {
+    let (device, volume) = writable_volume();
+    let node = volume.lookup("/HELLO.TXT").expect("lookup");
+
+    // HELLO's extent is one block and NOTES begins in the next one, and an
+    // extent is one contiguous run — so the file moves to the end of the
+    // volume, which is where this allocator hands out blocks.
+    node.set_len(2 * SECTOR_SIZE as u64).expect("grow");
+    assert_eq!(node.size(), 2 * SECTOR_SIZE);
+    assert_eq!(
+        record_extent_location(&device, ROOT_EXTENT_SECTOR, HELLO_RECORD_OFFSET),
+        VOLUME_BLOCKS,
+        "the record must point at the space the file moved to"
+    );
+
+    let mut buf = vec![0u8; node.size()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), node.size());
+    assert_eq!(&buf[..HELLO.len()], HELLO);
+
+    // The neighbour it used to sit beside is untouched ...
+    let notes = volume.lookup("/SUB/NOTES.TXT").expect("lookup notes");
+    let mut notes_buf = vec![0u8; NOTES.len()];
+    assert_eq!(
+        notes.read(0, &mut notes_buf).expect("read notes"),
+        NOTES.len()
+    );
+    assert_eq!(notes_buf, NOTES);
+
+    // ... and a second mount reads the file the record now points at.
+    let reopened = open_volume(device);
+    let again = reopened.lookup("/HELLO.TXT").expect("relookup");
+    assert_eq!(again.size(), 2 * SECTOR_SIZE);
+    let mut buf = vec![0u8; again.size()];
+    assert_eq!(again.read(0, &mut buf).expect("read again"), again.size());
+    assert_eq!(&buf[..HELLO.len()], HELLO);
+}
+
+#[test]
+fn growing_past_the_block_extends_the_last_file_in_place() {
+    let (device, volume) = writable_volume();
+    let node = volume.lookup("/SUB/NOTES.TXT").expect("lookup");
+
+    // NOTES is the last extent the volume holds, so the blocks it needs are
+    // the ones that follow it and it grows where it is — no copy.
+    node.set_len(2 * SECTOR_SIZE as u64).expect("grow");
+    assert_eq!(node.size(), 2 * SECTOR_SIZE);
+    assert_eq!(
+        record_extent_location(&device, SUB_EXTENT_SECTOR, SUB_NOTES_RECORD_OFFSET),
+        NOTES_SECTOR as u32,
+        "a file that is already last must not move"
+    );
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    assert_eq!(
+        fs::volume_blocks(&as_device).expect("volume size"),
+        VOLUME_BLOCKS + 1,
+        "the volume grew over the block the file took"
+    );
+
+    let reopened = open_volume(device);
+    let again = reopened.lookup("/SUB/NOTES.TXT").expect("relookup");
+    assert_eq!(again.size(), 2 * SECTOR_SIZE);
+    let mut buf = vec![0u8; again.size()];
+    assert_eq!(again.read(0, &mut buf).expect("read again"), again.size());
+    assert_eq!(&buf[..NOTES.len()], NOTES);
+}
+
+#[test]
+fn growth_the_medium_cannot_hold_is_refused() {
+    let (_device, volume) = writable_volume();
+    let node = volume.lookup("/HELLO.TXT").expect("lookup");
+
+    // The image is 40 blocks and the volume claims 32, so a length that would
+    // need the rest of the medium and more has nowhere to go.
+    assert_eq!(
+        node.set_len(64 * SECTOR_SIZE as u64),
+        Err(Error::NoSpace),
+        "a length the medium cannot hold"
+    );
+}
+
+#[test]
+fn a_write_that_cannot_grow_is_short() {
+    // The same image on a medium that is exactly the volume's size: what the
+    // file would need to grow into is not there, so the write takes what it
+    // can rather than failing.
+    let tight = build_test_image()[..VOLUME_BLOCKS as usize * SECTOR_SIZE].to_vec();
+    let device = MemoryBlockDevice::new("iso-tight", tight, false);
+    let volume = open_volume(device);
+    let node = volume.lookup("/HELLO.TXT").expect("lookup");
+    let data = [0xAAu8; 8];
+
+    assert_eq!(node.write(SECTOR_SIZE as u64, &data).expect("write"), 0);
+    assert_eq!(node.size(), HELLO.len());
 }
 
 #[test]

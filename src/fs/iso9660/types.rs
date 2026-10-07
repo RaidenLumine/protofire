@@ -81,6 +81,12 @@ impl Pvd {
 /// length rewrites both halves.
 pub const DIR_RECORD_DATA_LENGTH_OFFSET: usize = 10;
 
+/// Byte offset of a directory record's extent-location field.
+///
+/// The file's first logical block, stored twice — little-endian then
+/// big-endian — and rewritten with the length when a file moves to new space.
+pub const DIR_RECORD_EXTENT_LOCATION_OFFSET: usize = 2;
+
 /// A parsed ISO 9660 directory record.
 #[derive(Clone)]
 pub struct DirRecord {
@@ -139,7 +145,13 @@ impl DirRecord {
 
         let rec = &sector_data[offset..][..dr_len as usize];
 
-        let extent_location = u32::from_le_bytes([rec[2], rec[3], rec[4], rec[5]]);
+        let location_at = DIR_RECORD_EXTENT_LOCATION_OFFSET;
+        let extent_location = u32::from_le_bytes([
+            rec[location_at],
+            rec[location_at + 1],
+            rec[location_at + 2],
+            rec[location_at + 3],
+        ]);
         let length_at = DIR_RECORD_DATA_LENGTH_OFFSET;
         let extent_size = u32::from_le_bytes([
             rec[length_at],

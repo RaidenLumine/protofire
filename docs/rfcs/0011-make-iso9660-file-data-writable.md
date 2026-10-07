@@ -174,7 +174,7 @@ ISO 9660's tests already build a full image:
 
 ## What landed
 
-Stages 1 and 2.
+Stages 1, 2 and 3a.
 
 - **Stage 1 — the data path.**
 - `src/fs/iso9660/fs.rs` gained `write_extent`, the mirror of `read_extent`:
@@ -217,3 +217,35 @@ Stages 1 and 2.
 
 The module's own documentation said "read-only (all mutating operations return
 `PermissionDenied`)" and now says which operations do not.
+
+**Stage 3a — space, from an append-only allocator.**
+
+- `fs::allocate_blocks` hands out blocks beginning where the volume's declared
+  size ends, and moves the one metadata field that says how far the volume
+  goes — the PVD's volume-space size, stored twice.  It never hands out a block
+  the image already wrote, which is what makes it correct **without a
+  free-space scan**: the property is a consequence of the design rather than
+  something it has to check.
+- `set_len` past the block a file has therefore has two ways to grow, and
+  `Iso9660VNode` picks by where the file is: the blocks that follow it, if it
+  is the last extent the volume holds (grow in place — the volume moves over
+  them, no copy); otherwise it **moves** to the end of the volume, data first
+  and the record after, so a crash before the record leaves the old file whole.
+- `write` past the end grows first, so a caller can write a file the way it
+  writes any other; when the growth is refused the write is **short**, which is
+  the answer this call has always given for a byte it could not take.
+- The two fields move together: `rewrite_record_placement` writes the extent
+  location and the length in one 16-byte write, because they are adjacent and
+  each is stored twice.
+- Four more tests: a file with a neighbour moves and the neighbour is
+  untouched; the last file extends where it is, with its record's location
+  field unchanged and the volume grown by exactly the block it took; a length
+  beyond the medium is `NoSpace`; and on a medium that is exactly the volume's
+  size, a write that cannot grow is short.
+
+**What that leaves.**  Stage 3b is creating and removing, which is the same
+allocator plus the directory work the RFC's stage 3 named: appending a record
+and growing a directory's extent, or rewriting one without a record.  And the
+allocator's cost is stated where it lives: a removal reclaims nothing, and a
+file that has something after it pays a copy to grow.  A free-space scan over
+every extent is what would fix both, and it is the next step.

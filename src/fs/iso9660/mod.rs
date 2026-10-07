@@ -13,15 +13,17 @@
 //!
 //! ## Limitations
 //!
-//! - File data and file length are writable ([RFC
+//! - File data, length and space are writable ([RFC
 //!   0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)): an ISO
-//!   9660 file is one raw contiguous extent whose length is a field of its
-//!   directory record, so replacing bytes inside that length changes no
-//!   metadata, and changing the length rewrites that one 8-byte field.  A
-//!   length past the block the file already has is refused: growing into a
-//!   second block needs an allocation this format does not keep.  Creating,
-//!   removing and renaming still return [`Error::PermissionDenied`], and a
-//!   write to a read-only *device* is refused by the device.
+//!   9660 file is one raw contiguous extent whose two fields — where it starts
+//!   and how long it is — are in its directory record, so writing bytes, or a
+//!   length inside the block the file has, touches nothing else.  Growing past
+//!   that block takes blocks from an **append-only** allocator, which grows the
+//!   volume's own declared size over them; a file with something after it
+//!   *moves* to the end rather than growing where it is, because an extent is
+//!   one contiguous run.  Creating, removing and renaming still return
+//!   [`Error::PermissionDenied`], and a write to a read-only *device* is
+//!   refused by the device.
 //! - No multi-extent files (ISO 9660 Level 3 interleave).
 //! - XA attributes are ignored.
 //! - Sector size is always assumed to be 2048 bytes.
@@ -58,7 +60,6 @@ use crate::Error;
 use crate::Result;
 
 use types::DirRecord;
-use types::DIR_RECORD_DATA_LENGTH_OFFSET;
 
 // ── Volume label helper ────────────────────────────────────────────────────
 
@@ -244,7 +245,7 @@ impl VfsFileSystem for Iso9660Volume {
         Ok(Arc::new(Iso9660VNode {
             name: record.best_name(),
             kind,
-            extent_location: record.extent_location,
+            extent_location: AtomicU32::new(record.extent_location),
             extent_size: AtomicU32::new(record.extent_size),
             record_offset,
             rr_posix: record.rr_posix,
@@ -330,7 +331,12 @@ impl VfsFileSystem for Iso9660Volume {
 struct Iso9660VNode {
     name: String,
     kind: NodeKind,
-    extent_location: u32,
+    /// The file's first logical block, as its record says.
+    ///
+    /// Atomic because a growth that has to move the file rewrites it: an
+    /// extent is one contiguous run, so a file with something after it moves
+    /// to new space rather than growing in place.
+    extent_location: AtomicU32,
     /// The length the file's directory record carries.
     ///
     /// Atomic because [`VNode::set_len`] changes it: the record on the volume
@@ -377,7 +383,7 @@ impl VNode for Iso9660VNode {
         fs::read_extent(
             &self.device,
             self.block_size,
-            self.extent_location,
+            self.extent_location.load(Ordering::Relaxed),
             self.extent_size.load(Ordering::Relaxed),
             offset,
             buffer,
@@ -386,19 +392,26 @@ impl VNode for Iso9660VNode {
 
     /// Overwrite bytes the file already has.
     ///
-    /// The extent's recorded length is the file's length, so this writes no
-    /// metadata: no directory record, no path table, no volume space.  A write
-    /// that runs past the end is a short write — growing means rewriting the
-    /// record that says how long the file is, which is a later stage
-    /// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+    /// A write inside the file's length changes no metadata at all.  One that
+    /// runs past the end grows the file first — the same `set_len` a caller
+    /// could ask for — so a caller can create a file and write it the way it
+    /// writes any other.  When the file cannot grow, the write is **short**
+    /// rather than failing, which is the answer this call has always given for
+    /// a byte it could not take.
     fn write(&self, offset: u64, buffer: &[u8]) -> Result<usize> {
         if self.kind != NodeKind::File {
             return Err(Error::InvalidArgument);
         }
+        let end = offset.saturating_add(buffer.len() as u64);
+        if end > self.size() as u64 {
+            // A refusal here is not this write's answer: the short write below
+            // is.
+            let _ = self.set_len(end);
+        }
         fs::write_extent(
             &self.device,
             self.block_size,
-            self.extent_location,
+            self.extent_location.load(Ordering::Relaxed),
             self.extent_size.load(Ordering::Relaxed),
             offset,
             buffer,
@@ -408,14 +421,18 @@ impl VNode for Iso9660VNode {
     /// Change the length the file's directory record carries.
     ///
     /// The record is the file's only metadata — its extent start and its
-    /// length, both fields of the record — so this is one 8-byte write.
+    /// length, both fields of the record — so a resize in place is one 16-byte
+    /// write that covers both.
     ///
     /// A file's extent starts on a logical block boundary and its blocks are
     /// its own, so a length up to the end of the block the current one ends in
     /// needs no allocation: growing into that block's tail is free, and
-    /// shrinking is free.  Past that block is a second block, and this format
-    /// keeps no allocation map to give it one — that is stage 3
-    /// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+    /// shrinking is free.  Past that block the file needs more blocks, and a
+    /// file's extent is **one contiguous run**, so there are two ways to get
+    /// them: take the blocks that follow, when the file is the last thing the
+    /// volume holds, or move the file to the end of the volume, which is what
+    /// happens when something else is in the way.  The allocator is
+    /// append-only, so neither way reuses a block the image already wrote.
     fn set_len(&self, length: u64) -> Result<()> {
         if self.kind != NodeKind::File {
             return Err(Error::InvalidArgument);
@@ -427,24 +444,52 @@ impl VNode for Iso9660VNode {
             return Ok(());
         }
 
-        // Every extent begins on a block boundary, so the bytes between the
-        // length and the end of its last block belong to no other extent.
+        let mut extent_location = self.extent_location.load(Ordering::Relaxed);
         let last_block_end = current.div_ceil(block_size) * block_size;
         if length > last_block_end {
-            return Err(Error::NoSpace);
+            let old_blocks = current.div_ceil(block_size);
+            let new_blocks = length.div_ceil(block_size);
+            let volume_end = fs::volume_blocks(&self.device)?;
+
+            if volume_end != 0 && extent_location + old_blocks == volume_end {
+                // The file is the last thing on the volume: the blocks it
+                // needs are the ones that follow it, and the volume grows over
+                // them.  Growing the volume first is what keeps a crash from
+                // leaving a record that claims blocks the volume does not own.
+                fs::set_volume_blocks(&self.device, volume_end + (new_blocks - old_blocks))?;
+            } else {
+                // Something follows it.  An extent is one run, so the file
+                // moves to the end of the volume — data first, then the record
+                // that points at it, so a crash before the record leaves the
+                // old file whole.
+                let first = fs::allocate_blocks(&self.device, self.block_size, new_blocks)?;
+                let mut data = alloc::vec![0u8; current as usize];
+                fs::read_extent(
+                    &self.device,
+                    self.block_size,
+                    extent_location,
+                    current,
+                    0,
+                    &mut data,
+                )?;
+                fs::write_extent(
+                    &self.device,
+                    self.block_size,
+                    first,
+                    length,
+                    0,
+                    &data[..current as usize],
+                )?;
+                extent_location = first;
+            }
         }
 
-        // The length is stored twice, little-endian then big-endian, and a
-        // reader is free to check either.
-        let mut field = [0u8; 8];
-        field[..4].copy_from_slice(&length.to_le_bytes());
-        field[4..].copy_from_slice(&length.to_be_bytes());
-        fs::write_exact(
-            &self.device,
-            self.record_offset + DIR_RECORD_DATA_LENGTH_OFFSET as u64,
-            &field,
-        )?;
+        // Where the file is and how long it is, in one write: the two fields
+        // are adjacent in the record and each is stored twice.
+        fs::rewrite_record_placement(&self.device, self.record_offset, extent_location, length)?;
 
+        self.extent_location
+            .store(extent_location, Ordering::Relaxed);
         self.extent_size.store(length, Ordering::Relaxed);
         Ok(())
     }

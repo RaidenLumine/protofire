@@ -12,6 +12,7 @@ use super::types::parse_boot_catalog;
 use super::types::BootEntry;
 use super::types::DirRecord;
 use super::types::Pvd;
+use super::types::DIR_RECORD_EXTENT_LOCATION_OFFSET;
 use super::types::PVD_SECTOR;
 use super::types::SECTOR_SIZE;
 use super::types::SVD_SECTOR;
@@ -359,3 +360,87 @@ pub(crate) fn write_exact(
 
 /// Specialized trait needed for read_extent.
 use alloc;
+
+// ---------------------------------------------------------------------------
+// Allocation
+// ---------------------------------------------------------------------------
+
+/// How many logical blocks the volume says it has.
+///
+/// The descriptor's own statement of the volume's extent, stored twice.  Zero
+/// means the image never said.
+pub fn volume_blocks(device: &Arc<dyn BlockDevice>) -> Result<u32, Error> {
+    let pvd = read_pvd(device)?;
+    let bytes: [u8; 4] = pvd.volume_space_size[..4]
+        .try_into()
+        .map_err(|_| Error::InvalidArgument)?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+/// Declare the volume to be `blocks` logical blocks long.
+pub fn set_volume_blocks(device: &Arc<dyn BlockDevice>, blocks: u32) -> Result<(), Error> {
+    // The room has to be there in the device's own block size, not the
+    // volume's — a volume that claimed blocks the medium does not have would
+    // be a volume whose last files cannot be read.
+    let needed = blocks as u64 * SECTOR_SIZE as u64;
+    let available = device.block_count() * device.block_size() as u64;
+    if needed > available {
+        return Err(Error::NoSpace);
+    }
+
+    let mut field = [0u8; 8];
+    field[..4].copy_from_slice(&blocks.to_le_bytes());
+    field[4..].copy_from_slice(&blocks.to_be_bytes());
+    let at = PVD_SECTOR * SECTOR_SIZE as u64 + core::mem::offset_of!(Pvd, volume_space_size) as u64;
+    write_exact(device, at, &field)
+}
+
+/// Take `count` logical blocks for a file, and grow the volume to hold them.
+///
+/// This is an **append-only** allocator: the blocks it hands out begin where
+/// the volume's declared extent ends, and the one metadata field it moves is
+/// the volume's own size.  It never hands out a block the image already wrote,
+/// which is what makes it correct without a free-space scan — and what it
+/// costs is that a removal reclaims nothing, and a file grows either where the
+/// blocks after it happen to be free or by moving.  A scan of every extent is
+/// what reclaiming would take, and it is the next step
+/// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+pub fn allocate_blocks(
+    device: &Arc<dyn BlockDevice>,
+    block_size: u16,
+    count: u32,
+) -> Result<u32, Error> {
+    let first = volume_blocks(device)?;
+    if first == 0 {
+        // The image never declared its size, so there is no end to append to.
+        return Err(Error::NoSpace);
+    }
+    let _ = block_size;
+    let end = first.checked_add(count).ok_or(Error::NoSpace)?;
+
+    set_volume_blocks(device, end)?;
+    Ok(first)
+}
+
+/// Point a file's record at a new extent, and give it a new length.
+///
+/// The two fields are adjacent in the record and each is stored twice —
+/// little-endian then big-endian — so one write covers both, and a reader that
+/// checks either half sees the same file.
+pub fn rewrite_record_placement(
+    device: &Arc<dyn BlockDevice>,
+    record_offset: u64,
+    extent_location: u32,
+    length: u32,
+) -> Result<(), Error> {
+    let mut field = [0u8; 16];
+    field[..4].copy_from_slice(&extent_location.to_le_bytes());
+    field[4..8].copy_from_slice(&extent_location.to_be_bytes());
+    field[8..12].copy_from_slice(&length.to_le_bytes());
+    field[12..].copy_from_slice(&length.to_be_bytes());
+    write_exact(
+        device,
+        record_offset + DIR_RECORD_EXTENT_LOCATION_OFFSET as u64,
+        &field,
+    )
+}
