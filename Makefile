@@ -16,7 +16,9 @@ TARGET_DIR ?= target
 # suite is single-CPU by design, but the kernel brings up APs and schedules on
 # them, so `make run-x8664 SMP=4` is how you exercise the SMP paths locally —
 # in particular the cross-CPU TLB-shootdown interactions that a single CPU
-# cannot reach at all.
+# cannot reach at all.  A target whose name says SMP is meaningless on one CPU,
+# so those default to four for themselves: asking for the gate asks for the
+# CPUs it needs, and `SMP=<n>` still overrides it.
 SMP ?= 1
 TARGET ?= x86_64-unknown-none
 
@@ -615,6 +617,7 @@ check-riscv64-pci-runtime:
 # The hart IDs have to come from the device tree, and the hart the kernel is
 # already running on has to be skipped — QEMU gives the reset to whichever hart
 # it likes, and asking SBI to start the running hart is an error, not a start.
+check-riscv64-smp-runtime: SMP = 4
 check-riscv64-smp-runtime:
 	PROFILE="$(PROFILE)" \
 		CRATE="$(CRATE)" \
@@ -625,6 +628,7 @@ check-riscv64-smp-runtime:
 # Boot the kernel on several emulated CPUs and assert that the APs came up and
 # that it is still making progress afterwards.  Single-CPU runs cannot reach
 # the cross-CPU paths at all, so this is the only check that exercises them.
+check-aarch64-smp-runtime: SMP = 4
 check-aarch64-smp-runtime:
 	PROFILE="$(PROFILE)" \
 		CRATE="$(CRATE)" \
@@ -632,6 +636,7 @@ check-aarch64-smp-runtime:
 		SMP_CPUS="$(SMP)" \
 		sh ./scripts/check-aarch64-smp.sh
 
+check-smp-runtime: SMP = 4
 check-smp-runtime:
 	PROFILE="$(PROFILE)" \
 		CRATE="$(CRATE)" \
