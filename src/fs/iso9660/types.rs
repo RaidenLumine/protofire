@@ -74,6 +74,13 @@ impl Pvd {
 
 // ── Directory Record ──
 
+/// Byte offset of a directory record's data-length field.
+///
+/// The field is the file's length, stored twice — little-endian then
+/// big-endian — and a reader may check either, so anything that rewrites the
+/// length rewrites both halves.
+pub const DIR_RECORD_DATA_LENGTH_OFFSET: usize = 10;
+
 /// A parsed ISO 9660 directory record.
 #[derive(Clone)]
 pub struct DirRecord {
@@ -95,6 +102,15 @@ pub struct DirRecord {
     pub rr_symlink: Option<Vec<u8>>,
     /// Whether this record came from a Joliet (UCS-2BE) directory.
     pub joliet: bool,
+    /// Where this record itself sits, as a byte offset into the buffer it was
+    /// parsed from.
+    ///
+    /// The record says where a file's *extent* is; this says where the record
+    /// is, which is what a resize rewrites.  The parser knows it because it
+    /// walks the extent, and the mount keeps it so a node can change the
+    /// length the record carries without walking the path again
+    /// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+    pub source_offset: usize,
 }
 
 impl DirRecord {
@@ -124,7 +140,13 @@ impl DirRecord {
         let rec = &sector_data[offset..][..dr_len as usize];
 
         let extent_location = u32::from_le_bytes([rec[2], rec[3], rec[4], rec[5]]);
-        let extent_size = u32::from_le_bytes([rec[10], rec[11], rec[12], rec[13]]);
+        let length_at = DIR_RECORD_DATA_LENGTH_OFFSET;
+        let extent_size = u32::from_le_bytes([
+            rec[length_at],
+            rec[length_at + 1],
+            rec[length_at + 2],
+            rec[length_at + 3],
+        ]);
         let flags = rec[25];
         let fi_len = rec[32] as usize;
 
@@ -164,6 +186,7 @@ impl DirRecord {
                 rr_posix,
                 rr_symlink,
                 joliet,
+                source_offset: offset,
             },
             next,
         ))

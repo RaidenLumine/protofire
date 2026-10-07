@@ -13,14 +13,15 @@
 //!
 //! ## Limitations
 //!
-//! - File data is writable in place, within the length the file already has
-//!   ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)): an
-//!   ISO 9660 file is one raw contiguous extent whose length is a field of its
+//! - File data and file length are writable ([RFC
+//!   0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)): an ISO
+//!   9660 file is one raw contiguous extent whose length is a field of its
 //!   directory record, so replacing bytes inside that length changes no
-//!   metadata.  Growing, truncating, creating and removing rewrite metadata and
-//!   still return [`Error::PermissionDenied`], and a write to a read-only
-//!   *device* is refused by the device.
-//! - No El Torito boot catalog support.
+//!   metadata, and changing the length rewrites that one 8-byte field.  A
+//!   length past the block the file already has is refused: growing into a
+//!   second block needs an allocation this format does not keep.  Creating,
+//!   removing and renaming still return [`Error::PermissionDenied`], and a
+//!   write to a read-only *device* is refused by the device.
 //! - No multi-extent files (ISO 9660 Level 3 interleave).
 //! - XA attributes are ignored.
 //! - Sector size is always assumed to be 2048 bytes.
@@ -40,6 +41,8 @@ pub(crate) mod types;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::Ordering;
 
 use crate::fs::block::BlockDevice;
 use crate::fs::filesystem::profiler::FsProfilerSnapshot;
@@ -55,6 +58,7 @@ use crate::Error;
 use crate::Result;
 
 use types::DirRecord;
+use types::DIR_RECORD_DATA_LENGTH_OFFSET;
 
 // ── Volume label helper ────────────────────────────────────────────────────
 
@@ -141,36 +145,44 @@ impl Iso9660Volume {
         }
     }
 
-    /// Read the root directory entries, preferring Joliet when available.
-    fn read_root_entries(&self) -> Result<Vec<DirRecord>> {
+    /// Read the root directory, and say which extent it came from.
+    fn read_root(&self) -> Result<(u32, Vec<DirRecord>)> {
         if let Some(ref joliet_root) = self.joliet_root {
-            return fs::read_joliet_directory(
+            let entries = fs::read_joliet_directory(
                 &self.device,
                 self.block_size,
                 joliet_root.extent_location,
                 joliet_root.extent_size,
-            );
+            )?;
+            return Ok((joliet_root.extent_location, entries));
         }
         let pvd = fs::read_pvd(&self.device)?;
         let (root_record, _next) =
             DirRecord::parse(&pvd.root_dir_record, 0).ok_or(Error::InvalidArgument)?;
-        fs::read_directory(
+        let entries = fs::read_directory(
             &self.device,
             self.block_size,
             root_record.extent_location,
             root_record.extent_size,
-        )
+        )?;
+        Ok((root_record.extent_location, entries))
     }
 
-    /// Resolve a clean path to a `(DirRecord, Option<Vec<DirRecord>>)` pair.
-    /// The second element is populated for directories.
-    fn resolve(&self, clean_path: &str) -> Result<(DirRecord, Option<Vec<DirRecord>>)> {
+    /// Resolve a clean path to its record, its directory's entries when it is a
+    /// directory, and where its own record sits on the volume.
+    ///
+    /// The third element is what a resize rewrites: a directory record carries
+    /// the length of the file it describes, and the record's position is not
+    /// something a lookup can recover later without walking the path again.
+    fn resolve(&self, clean_path: &str) -> Result<(DirRecord, Option<Vec<DirRecord>>, u64)> {
         if clean_path.is_empty() || clean_path == "/" {
-            let entries = self.read_root_entries()?;
+            let (_, entries) = self.read_root()?;
             let pvd = fs::read_pvd(&self.device)?;
             let (root_rec, _) =
                 DirRecord::parse(&pvd.root_dir_record, 0).ok_or(Error::InvalidArgument)?;
-            return Ok((root_rec, Some(entries)));
+            // The root's record lives in the PVD, not in an extent, and a
+            // directory is not resizable; zero is the honest answer.
+            return Ok((root_rec, Some(entries), 0));
         }
 
         let segments: Vec<&str> = clean_path
@@ -180,10 +192,15 @@ impl Iso9660Volume {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let mut current_entries = self.read_root_entries()?;
+        let (mut entries_extent, mut current_entries) = self.read_root()?;
 
         for (i, name) in segments.iter().enumerate() {
             let record = find_in_dir(&current_entries, name).ok_or(Error::NotFound)?;
+            // The parser recorded the offset it found the record at *inside
+            // the extent it walked*; the volume is what knows where that
+            // extent is.
+            let record_offset =
+                entries_extent as u64 * self.block_size as u64 + record.source_offset as u64;
 
             if i == segments.len() - 1 {
                 let sub = if record.is_dir() {
@@ -191,10 +208,11 @@ impl Iso9660Volume {
                 } else {
                     None
                 };
-                return Ok((record.clone(), sub));
+                return Ok((record.clone(), sub, record_offset));
             }
 
             if record.is_dir() {
+                entries_extent = record.extent_location;
                 current_entries =
                     self.read_dir_extent(record.extent_location, record.extent_size)?;
             } else {
@@ -213,7 +231,7 @@ impl VfsFileSystem for Iso9660Volume {
 
     fn lookup(&self, path: &str) -> Result<Arc<dyn VNode>> {
         let clean = clean_path(path);
-        let (record, _entries) = self.resolve(&clean)?;
+        let (record, _entries, record_offset) = self.resolve(&clean)?;
 
         let kind = if record.is_dir() {
             NodeKind::Directory
@@ -227,7 +245,8 @@ impl VfsFileSystem for Iso9660Volume {
             name: record.best_name(),
             kind,
             extent_location: record.extent_location,
-            extent_size: record.extent_size,
+            extent_size: AtomicU32::new(record.extent_size),
+            record_offset,
             rr_posix: record.rr_posix,
             rr_symlink: record.rr_symlink,
             device: self.device.clone(),
@@ -241,7 +260,7 @@ impl VfsFileSystem for Iso9660Volume {
 
     fn read_dir(&self, path: &str, index: usize) -> Result<DirectoryEntry> {
         let clean = clean_path(path);
-        let (_, entries) = self.resolve(&clean)?;
+        let (_, entries, _) = self.resolve(&clean)?;
         let entries = entries.ok_or(Error::InvalidArgument)?;
         let record = entries.get(index).ok_or(Error::NotFound)?;
 
@@ -312,7 +331,17 @@ struct Iso9660VNode {
     name: String,
     kind: NodeKind,
     extent_location: u32,
-    extent_size: u32,
+    /// The length the file's directory record carries.
+    ///
+    /// Atomic because [`VNode::set_len`] changes it: the record on the volume
+    /// is the authority, and this is the copy the node answers with while it
+    /// lives.
+    extent_size: AtomicU32,
+    /// Where this node's own directory record sits on the volume, in bytes.
+    ///
+    /// A resize rewrites the length *in that record*, and nothing else on the
+    /// volume knows the file's size.
+    record_offset: u64,
     rr_posix: Option<(u32, u32, u32, u32)>,
     rr_symlink: Option<Vec<u8>>,
     device: Arc<dyn BlockDevice>,
@@ -327,13 +356,13 @@ impl VNode for Iso9660VNode {
         self.kind
     }
     fn size(&self) -> usize {
-        self.extent_size as usize
+        self.extent_size.load(Ordering::Relaxed) as usize
     }
 
     fn metadata(&self) -> Result<Metadata> {
         Ok(Metadata {
             kind: self.kind,
-            size: self.extent_size as usize,
+            size: self.size(),
             security: rr_to_security(&self.rr_posix),
             created: 0,
             modified: 0,
@@ -349,7 +378,7 @@ impl VNode for Iso9660VNode {
             &self.device,
             self.block_size,
             self.extent_location,
-            self.extent_size,
+            self.extent_size.load(Ordering::Relaxed),
             offset,
             buffer,
         )
@@ -370,13 +399,54 @@ impl VNode for Iso9660VNode {
             &self.device,
             self.block_size,
             self.extent_location,
-            self.extent_size,
+            self.extent_size.load(Ordering::Relaxed),
             offset,
             buffer,
         )
     }
-    fn set_len(&self, _l: u64) -> Result<()> {
-        Err(Error::PermissionDenied)
+
+    /// Change the length the file's directory record carries.
+    ///
+    /// The record is the file's only metadata — its extent start and its
+    /// length, both fields of the record — so this is one 8-byte write.
+    ///
+    /// A file's extent starts on a logical block boundary and its blocks are
+    /// its own, so a length up to the end of the block the current one ends in
+    /// needs no allocation: growing into that block's tail is free, and
+    /// shrinking is free.  Past that block is a second block, and this format
+    /// keeps no allocation map to give it one — that is stage 3
+    /// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+    fn set_len(&self, length: u64) -> Result<()> {
+        if self.kind != NodeKind::File {
+            return Err(Error::InvalidArgument);
+        }
+        let length = u32::try_from(length).map_err(|_| Error::InvalidArgument)?;
+        let block_size = self.block_size as u32;
+        let current = self.extent_size.load(Ordering::Relaxed);
+        if length == current {
+            return Ok(());
+        }
+
+        // Every extent begins on a block boundary, so the bytes between the
+        // length and the end of its last block belong to no other extent.
+        let last_block_end = current.div_ceil(block_size) * block_size;
+        if length > last_block_end {
+            return Err(Error::NoSpace);
+        }
+
+        // The length is stored twice, little-endian then big-endian, and a
+        // reader is free to check either.
+        let mut field = [0u8; 8];
+        field[..4].copy_from_slice(&length.to_le_bytes());
+        field[4..].copy_from_slice(&length.to_be_bytes());
+        fs::write_exact(
+            &self.device,
+            self.record_offset + DIR_RECORD_DATA_LENGTH_OFFSET as u64,
+            &field,
+        )?;
+
+        self.extent_size.store(length, Ordering::Relaxed);
+        Ok(())
     }
 
     fn readlink(&self) -> Result<Vec<u8>> {

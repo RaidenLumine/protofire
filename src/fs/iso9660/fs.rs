@@ -317,7 +317,11 @@ fn read_exact(device: &Arc<dyn BlockDevice>, offset: u64, buf: &mut [u8]) -> Res
 /// caller is not replacing have to survive, and on ISO 9660 a file's last
 /// sector is where that matters, since its neighbours there are padding and
 /// whatever the image put after it.
-fn write_exact(device: &Arc<dyn BlockDevice>, offset: u64, buf: &[u8]) -> Result<(), Error> {
+pub(crate) fn write_exact(
+    device: &Arc<dyn BlockDevice>,
+    offset: u64,
+    buf: &[u8],
+) -> Result<(), Error> {
     if buf.is_empty() {
         return Ok(());
     }

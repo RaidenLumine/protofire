@@ -150,21 +150,33 @@ ISO 9660's tests already build a full image:
 
 ## Unresolved questions
 
-- **Where does the directory record live?**  Stage 2 needs it; the lookup path
-  currently returns a parsed record with no position.  Whether the node
-  carries `(extent, offset)` or the volume re-walks the path is a design
-  choice for that stage.
+- **Where does the directory record live?**  *Decided when stage 2 landed*:
+  the node carries it.  `DirRecord` gained `source_offset` — the offset the
+  parser found the record at, inside the buffer it walked — and `resolve`
+  turns that into an offset on the volume, because the volume is what knows
+  where the extent it read came from.  The node keeps that number for its
+  life and a resize writes there; the alternative, re-walking the path on
+  every `set_len`, would read a directory extent to change eight bytes.
 - **Does ISO 9660 want a cache?**  It has none today and a write is visible at
   once because of it; adding one later means the write path has to go through
   it too.
+- **A Joliet image has two directory trees.**  The mount reads the Joliet tree
+  when the image has one, so a resize rewrites the record it looked the file up
+  in — and the *primary* tree's record for the same file keeps the old length.
+  The data is one extent and both trees point at it, so nothing is lost; what
+  is stale is one tree's idea of how long the file is, for a reader that
+  prefers the primary tree.  Updating both means mapping a Joliet record to its
+  primary counterpart, which is name work rather than record work, and it is
+  the first thing a stage-2 follow-up should do.
 - **Is NTFS's harness the demo disk or a fixture image?**  Whichever it is, it
   is a prerequisite for NTFS's own RFC, and it is what that RFC should decide
   first.
 
 ## What landed
 
-Stage 1, and only stage 1.
+Stages 1 and 2.
 
+- **Stage 1 — the data path.**
 - `src/fs/iso9660/fs.rs` gained `write_extent`, the mirror of `read_extent`:
   the byte offset maps into the extent the same way, and the number of bytes it
   will take is `extent_size - offset`, so a write past the end is a short
@@ -174,8 +186,8 @@ Stage 1, and only stage 1.
   is read, patched and written back.  On a 21-byte file in a 2048-byte sector
   that is the only path there is, which is why the tests check the sector's
   padding survives.
-- `Iso9660VNode::write` is that call for files.  `set_len`, `create_file`,
-  `create_dir`, `remove_path` and `rename` still refuse, and a read-only device
+- `Iso9660VNode::write` is that call for files.  `create_file`, `create_dir`,
+  `remove_path` and `rename` still refuse, and a read-only device
   still refuses — the test for that mounts the image on a read-only
   `MemoryBlockDevice`, which is what `/system`'s slice is.
 - Five tests: the overwrite reads back and is on the medium; a write that
@@ -183,5 +195,25 @@ Stage 1, and only stage 1.
   the end is short and does not change the recorded length; a read-only device
   refuses; a directory refuses.
 
+**Stage 2 — the length, which is one field.**
+
+- `DirRecord` carries `source_offset` and `resolve` turns it into an offset on
+  the volume, so `Iso9660VNode` knows where its own record sits (the open
+  question above, decided).
+- `Iso9660VNode::set_len` rewrites the record's data-length field — both
+  endiannesses, because the format stores it twice — and then answers with the
+  new length, which the node keeps in an atomic because the VFS hands out
+  `&self`.
+- The rule is the format's own: a length up to the end of the block the file
+  already has is free, and one that would reach into a second block is refused
+  with `NoSpace`, because there is no allocation map to give it one.  Every
+  extent begins on a block boundary, so that block's tail belongs to no other
+  extent — which is what makes the grow safe rather than merely unchecked.
+- Four more tests: a truncation reads back short, a *second mount* sees the new
+  length (so it is on the medium), both halves of the field carry it, and a
+  shrink can be grown back because the bytes were never erased; a grow fills
+  the block's tail with the medium's own bytes and stops there; a directory
+  refuses; a read-only device refuses.
+
 The module's own documentation said "read-only (all mutating operations return
-`PermissionDenied`)" and now says which one does not.
+`PermissionDenied`)" and now says which operations do not.

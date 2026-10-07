@@ -31,6 +31,7 @@ use crate::Error;
 
 use super::fs;
 use super::types::parse_boot_catalog;
+use super::types::DIR_RECORD_DATA_LENGTH_OFFSET;
 use super::types::PVD_SECTOR;
 use super::types::SECTOR_SIZE;
 use super::Iso9660Volume;
@@ -405,6 +406,96 @@ fn a_directory_refuses_a_write() {
     let (_device, volume) = writable_volume();
     let dir = volume.lookup("/SUB").expect("lookup /SUB");
     assert_eq!(dir.write(0, b"x"), Err(Error::InvalidArgument));
+}
+
+// ─── Changing a file's length (RFC 0011, stage 2) ──────────────────────
+
+/// Where `HELLO.TXT;1`'s directory record sits inside the root extent: the
+/// records before it are `.` (35), `..` (35) and `SUB` (37).
+const HELLO_RECORD_OFFSET: usize = 35 + 35 + 37;
+
+/// The `HELLO.TXT;1` record's data-length field, read off the medium.
+fn hello_record_length(device: &Arc<MemoryBlockDevice>) -> [u8; 8] {
+    let mut sector = vec![0u8; SECTOR_SIZE];
+    let lba = ROOT_EXTENT_SECTOR * (SECTOR_SIZE as u64) / crate::fs::block::BLOCK_SIZE as u64;
+    device.read_blocks(lba, &mut sector).expect("read record");
+    let at = HELLO_RECORD_OFFSET + DIR_RECORD_DATA_LENGTH_OFFSET;
+    sector[at..at + 8].try_into().expect("eight bytes")
+}
+
+#[test]
+fn truncating_a_file_rewrites_the_length_its_record_carries() {
+    let (device, volume) = writable_volume();
+    let node = volume.lookup("/HELLO.TXT").expect("lookup");
+
+    node.set_len(5).expect("truncate");
+    assert_eq!(node.size(), 5);
+    let mut buf = vec![0u8; HELLO.len()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), 5);
+    assert_eq!(&buf[..5], &HELLO[..5]);
+
+    // A second mount reads the record the write rewrote, which is what says
+    // the length is on the medium rather than only in this node.
+    let reopened = open_volume(device.clone());
+    assert_eq!(reopened.lookup("/HELLO.TXT").expect("relookup").size(), 5);
+
+    // The field carries it in both halves: the format stores it twice and a
+    // reader is free to check either.
+    let field = hello_record_length(&device);
+    assert_eq!(u32::from_le_bytes(field[..4].try_into().unwrap()), 5);
+    assert_eq!(u32::from_be_bytes(field[4..].try_into().unwrap()), 5);
+
+    // A shrink does not lose the block: the length can go back up to the end
+    // of the block it already has, and the bytes it hid were never erased.
+    node.set_len(SECTOR_SIZE as u64).expect("grow back");
+    let mut again = vec![0u8; HELLO.len()];
+    assert_eq!(node.read(0, &mut again).expect("read again"), HELLO.len());
+    assert_eq!(again, HELLO);
+}
+
+#[test]
+fn growing_a_file_stays_inside_the_block_it_already_has() {
+    let (device, volume) = writable_volume();
+    let node = volume.lookup("/HELLO.TXT").expect("lookup");
+
+    // 21 bytes occupy one 2048-byte block, and every extent begins on a block
+    // boundary, so the rest of that block belongs to this file alone.
+    node.set_len(SECTOR_SIZE as u64).expect("grow");
+    assert_eq!(node.size(), SECTOR_SIZE);
+
+    let mut buf = vec![0u8; SECTOR_SIZE];
+    assert_eq!(node.read(0, &mut buf).expect("read"), SECTOR_SIZE);
+    assert_eq!(&buf[..HELLO.len()], HELLO);
+    assert!(
+        buf[HELLO.len()..].iter().all(|byte| *byte == 0),
+        "the block's tail is not this file's to grow into"
+    );
+
+    // The block after that one is a block this format keeps no allocation
+    // for, so a length that would reach into it is refused rather than
+    // silently overwriting whatever the image put next.
+    assert_eq!(node.set_len(SECTOR_SIZE as u64 + 1), Err(Error::NoSpace));
+
+    let reopened = open_volume(device);
+    assert_eq!(
+        reopened.lookup("/HELLO.TXT").expect("relookup").size(),
+        SECTOR_SIZE
+    );
+}
+
+#[test]
+fn a_directory_refuses_a_length_change() {
+    let (_device, volume) = writable_volume();
+    let dir = volume.lookup("/SUB").expect("lookup /SUB");
+    assert_eq!(dir.set_len(1), Err(Error::InvalidArgument));
+}
+
+#[test]
+fn a_read_only_device_refuses_a_length_change() {
+    let device = MemoryBlockDevice::new("iso-ro", build_test_image(), true);
+    let volume = open_volume(device);
+    let node = volume.lookup("/HELLO.TXT").expect("lookup");
+    assert_eq!(node.set_len(1), Err(Error::PermissionDenied));
 }
 
 #[test]
