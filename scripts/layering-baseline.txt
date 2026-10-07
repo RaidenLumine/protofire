@@ -114,6 +114,17 @@
 # rows above for `device` -> `fs` and `syscall` -> `fs` are where this one is
 # counted.
 #
+# `workload` is a diagnostic like `vm_churn` rather than a layer: it is the
+# defined storage workload and the defined network exchange the boot-work gate
+# runs, so it names the subsystems whose work it performs — `fs` and `block`
+# for the eight files it writes and reads back, `network` for the datagram it
+# sends itself, and `process` and `sync` for the thread it runs on and the
+# counters the boot collects.  `perf_baseline` names it for the same reason it
+# names those subsystems — it prints the workload's counters beside the boot's
+# — and `mod` names it to run it.  Every edge points from the caller to the
+# subsystem it drives, so these rows are the shape of a consumer, not a new
+# direction for other code to take.
+#
 # from                         to                           count
 audit                        fs                           6
 audit                        handle_rights                2
@@ -154,7 +165,7 @@ maintenance                  audit                        1
 maintenance                  fs                           3
 maintenance                  heartbeat                    1
 maintenance                  network                      1
-maintenance                  perf_baseline                1
+maintenance                  perf_baseline                2
 maintenance                  process                      2
 memory                       fs                           4
 memory                       oom                          2
@@ -167,18 +178,19 @@ mod                          device                       1
 mod                          drivers                      1
 mod                          fs                           15
 mod                          memory                       6
-mod                          network                      3
+mod                          network                      6
 mod                          percpu                       2
 mod                          power                        1
 mod                          procfs                       1
 mod                          syscall                      4
 mod                          topology                     5
+mod                          workload                     3
 network                      crypto                       30
-network                      fs                           5
+network                      fs                           6
 network                      ipc                          1
 network                      process                      3
 network                      random                       5
-network                      sync                         16
+network                      sync                         17
 nmi                          sync                         1
 oom                          memory                       2
 oom                          process                      3
@@ -189,6 +201,7 @@ perf_baseline                fs                           2
 perf_baseline                irq_stats                    3
 perf_baseline                memory                       2
 perf_baseline                network                      1
+perf_baseline                workload                     1
 power                        sync                         2
 process                      audit                        1
 process                      device                       7
@@ -249,3 +262,8 @@ user                         sync                         1
 vm_churn                     memory                       1
 vm_churn                     process                      6
 vm_churn                     smp                          4
+workload                     block                        2
+workload                     fs                           4
+workload                     network                      5
+workload                     process                      2
+workload                     sync                         2
