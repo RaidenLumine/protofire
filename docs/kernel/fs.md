@@ -372,11 +372,14 @@ in-memory volumes then asks a device for
   * 189 reads at depth 8 against 208 at depth 4 with the lookahead separate, so
     depth 4 is where the curve flattens.
 
-What this buys is still *commands*, not concurrency: every read in the tree is
-synchronous, so a miss waits for its share of one request.  Overlapping them
-would take an asynchronous device interface — a *thread* that issues the same
-synchronous reads cannot be ahead of a reader this fast, which a probe in the
-counters would show as lookahead that arrives after the ask.  The other
+What this buys is still *commands*, not concurrency: the cache's own read
+waits, and its lookahead rides in the same request, so a miss waits for its
+share of one request.  Overlapping *that* read would mean splitting a request
+the cache decided to keep whole, which
+[RFC 0008](../rfcs/0008-keep-a-sequential-miss-in-one-request.md) decides
+against; the queued interface's read half is used where reads really are
+independent — the mount's two superblock mirrors
+([RFC 0007](../rfcs/0007-hold-a-second-request-on-a-device.md)).  The other
 filesystems keep read-ahead off until a boot measures them.
 
 `CacheStats` counts hits, misses, evictions, dirty and aged writebacks, blocks

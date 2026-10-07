@@ -137,7 +137,13 @@ and no baseline moves.
   the caller's has to stay alive — the safe shape this RFC says the read path
   lacks.  [RFC 0009](0009-queue-the-writes-a-flush-makes.md) decides that it
   is, and that the flush's three calls become one queued mechanism.
-- **Does anything else read independently?**  A mount reads a superblock, an
-  inode table and a dirent table that do not depend on each other; whether
-  overlapping those pays is unmeasured, and it is a boot-once cost rather
-  than a steady-state one.
+- **Does anything else read independently?**  A mount reads a superblock pair,
+  an inode table and a dirent table that do not depend on each other, and the
+  **mirror pair** is now overlapped: `readable_superblock_candidates`
+  (`src/fs/simplefs/format_io.rs`) submits both, so the read half has a caller
+  that is not a probe.  The two *tables* are not overlapped, because each is
+  several blocks and the queued interface carries one block per request —
+  overlapping them would mean one request per block, which changes what
+  `blk-reads` counts rather than what the device is asked for.  A run-capable
+  queued request is what would let the mount overlap those, and that is a
+  decision of its own.

@@ -163,11 +163,13 @@ The authoritative picture of what exists today is
   real disks.  The prerequisite was measured, not argued, and it has moved:
   [RFC 0007](docs/rfcs/0007-hold-a-second-request-on-a-device.md) landed the
   queued interface — a submit/poll pair beside the waiting call, defaulted so
-  a device that cannot hold two requests keeps today's path — with a boot
-  probe as its first caller, so `blk-in-flight-high-water` is **2** on the
-  disk baseline and stays **1** on the four depth-one ones.  What is still
-  missing is a *production* caller: the block cache's lookahead rides in the
-  same request as the block it was asked for, so overlapping that read means
+  a device that cannot hold two requests keeps today's path — and its read
+  half now has a caller that is not a stand-in: the mount submits both
+  superblock mirrors before polling either (`readable_superblock_candidates`),
+  so `blk-read-high-water` is **2** on the disk baseline and stays **1** on
+  the four depth-one ones.  The block cache's lookahead is the caller it does
+  *not* have: its lookahead rides in the same request as the block it was
+  asked for, so overlapping that read means
   splitting a request the cache decided to keep whole — and
   [RFC 0008](docs/rfcs/0008-keep-a-sequential-miss-in-one-request.md) decides
   against it, with the coalescing measured at 36 % of a boot's device commands

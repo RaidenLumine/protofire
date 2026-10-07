@@ -28,13 +28,9 @@
 use alloc::format;
 use alloc::vec;
 
-use crate::fs::layout::StorageZone;
 use crate::fs::FileSystem;
 use crate::fs::OPEN_ALWAYS;
-use crate::kernel::block::BlockDevice;
 use crate::kernel::block::DeviceIo;
-use crate::kernel::block::RequestState;
-use crate::kernel::block::BLOCK_SIZE;
 use crate::kernel::process::HANDLE_RIGHT_READ;
 use crate::kernel::process::HANDLE_RIGHT_WRITE;
 
@@ -63,14 +59,6 @@ pub(crate) const NET_BYTES: usize = 512;
 /// interrupt; sixty-four polls is far more than a frame needs and far less
 /// than a boot would take to time out.
 pub(crate) const NET_POLL_LIMIT: usize = 64;
-
-/// The most times one queued read is polled before the probe gives up.
-///
-/// A bound, for the same reason the exchange has one: a device that never
-/// completes a request must not hang the boot.  Fifty million polls is far
-/// more than a real device needs and far less than a boot would take to time
-/// out on its own.
-const QUEUED_READ_POLL_LIMIT: u32 = 50_000_000;
 
 /// What one run cost, in the counters the boot-work line already prints.
 ///
@@ -153,17 +141,6 @@ pub(crate) fn run(fs: &FileSystem) -> WorkloadDelta {
     let started = crate::arch::timer::monotonic_cycles();
 
     let (files, bytes, ops) = write_and_read(fs);
-    // The queued-read probe runs inside the same window, so its two reads are
-    // attributed to the workload rather than disappearing into the boot's
-    // totals.  It reports nothing on a device that cannot hold two.
-    if let Some(report) = probe_queued_read(fs) {
-        crate::println!(
-            "[perf  ] queued read: depth={} submitted={} read-high-water={}",
-            report.depth,
-            report.submitted,
-            report.high_water
-        );
-    }
 
     let after = Snapshot::take(fs);
     WorkloadDelta {
@@ -195,87 +172,6 @@ pub(crate) fn run(fs: &FileSystem) -> WorkloadDelta {
         // a loopback calls.
         ..WorkloadDelta::default()
     }
-}
-
-/// What the queued-read probe saw, when it had a device to run on.
-struct QueuedReadReport {
-    /// The device's advertised depth.
-    depth: u16,
-    /// How many reads were handed to it before either was polled.
-    submitted: u64,
-    /// The most requests that were in flight at once, read while both were
-    /// outstanding — the probe's own evidence that it was not serialized.
-    high_water: u64,
-}
-
-/// Submit two reads to a device that can hold them, then wait for both.
-///
-/// This is RFC 0007's first caller, and deliberately the smallest one: it
-/// exists so the queued interface is *executed* by a gate rather than merely
-/// implemented, which is what this tree asks of a mechanism before anything
-/// depends on it.  What it does not do is measure a benefit — that is a
-/// question for real hardware, not for a device model whose latency is the
-/// host's — so its counters are the proof that the mechanism ran, and the
-/// duration no gate compares is the only thing a reader can use to ask
-/// whether it was worth it.
-///
-/// A read-ahead that overlaps its own wait is the caller the RFC settles on;
-/// this probe is the step before it, and it is why the interface can be
-/// verified at all.
-fn probe_queued_read(fs: &FileSystem) -> Option<QueuedReadReport> {
-    // The data zone's device is a slice of the boot disk, and a slice of a
-    // device that queues is itself a queued device, so the depth that comes
-    // back is the disk's.  A boot with no data zone has nothing to ask.
-    let device = fs.block_device(StorageZone::Data.device())?;
-    queued_read(&*device)
-}
-
-/// The device half of the probe, so it can be exercised without a filesystem.
-fn queued_read(device: &dyn BlockDevice) -> Option<QueuedReadReport> {
-    if device.queue_depth() < 2 || device.block_size() != BLOCK_SIZE || device.block_count() < 2 {
-        return None;
-    }
-
-    let mut first = [0_u8; BLOCK_SIZE];
-    let mut second = [0_u8; BLOCK_SIZE];
-
-    // SAFETY: both buffers are locals that outlive the tickets — the polls
-    // below run before either goes out of scope — and each is named by exactly
-    // one of the two outstanding reads.
-    let first_ticket = unsafe { device.submit_read(0, &mut first) }.ok()?;
-    // SAFETY: as above — `second` is the other local, named by this read
-    // alone.
-    let second_ticket = unsafe { device.submit_read(1, &mut second) }.ok()?;
-
-    // Read the counter while both are outstanding: this is the number the
-    // gate holds, and the probe reading it here is what makes the claim
-    // "the mechanism ran" rather than "the read returned".
-    let high_water = crate::kernel::block::device_io_snapshot().read_in_flight_high_water;
-
-    for ticket in [first_ticket, second_ticket] {
-        let mut polls = 0u32;
-        loop {
-            match device.poll(ticket) {
-                RequestState::Pending => {
-                    polls += 1;
-                    if polls > QUEUED_READ_POLL_LIMIT {
-                        return None;
-                    }
-                    core::hint::spin_loop();
-                }
-                RequestState::Done(result) => {
-                    result.ok()?;
-                    break;
-                }
-            }
-        }
-    }
-
-    Some(QueuedReadReport {
-        depth: device.queue_depth(),
-        submitted: 2,
-        high_water,
-    })
 }
 
 /// Run the network half: one datagram to itself over whatever device the stack

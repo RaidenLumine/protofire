@@ -32,12 +32,12 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-ticks 523 12
+ticks 524 12
 frames 26 0
 frame-frees 6 0
 frame-zero-bytes 507904 0
-heap-allocs 11221 256
-heap-bytes 17044160 262144
+heap-allocs 11251 256
+heap-bytes 17084368 262144
 pt-maps 738 0
 pt-lookups 737 0
 faults 1 0
@@ -52,8 +52,8 @@ cache-misses 83 0
 cache-prefetches 157 0
 cache-sequential-hits 277 0
 cache-evictions 0 0
-blk-reads 167 0
-blk-read-bytes 257536 0
+blk-reads 165 0
+blk-read-bytes 256512 0
 blk-writes 338 0
 blk-write-bytes 264704 0
 blk-read-high-water 2 0
@@ -67,8 +67,8 @@ wl-fs-write-bytes 49152 0
 wl-fs-transactions 1 0
 wl-cache-hits 128 0
 wl-cache-misses 8 0
-wl-blk-reads 34 0
-wl-blk-read-bytes 62464 0
+wl-blk-reads 32 0
+wl-blk-read-bytes 61440 0
 wl-blk-writes 292 0
 wl-blk-write-bytes 231936 0
 wl-device-bytes-per-asked-byte 5 0
@@ -77,8 +77,8 @@ nw-datagrams-rx 0 0
 nw-bytes 0 0
 nw-polls 0 0
 nw-completed 0 0
-ip4-rx 1 4
-ip4-tx 9 4
+ip4-rx 3 4
+ip4-tx 11 4
 ip6-rx 1 0
 ip6-tx 0 0
 irqs 535 12

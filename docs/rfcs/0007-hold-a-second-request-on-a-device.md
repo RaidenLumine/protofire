@@ -253,7 +253,7 @@ Design section names is not.
   shared buffer had made impossible.  `read_blocks` is now the waiting form of
   that pair — the same submit, polled at once — so there is one read path in
   the driver and the queued one is exercised by every read the filesystem
-  does, not only by the probe.
+  does.
 - **The caller that landed is not the read-ahead this RFC names**, and that is
   deliberate.  The block cache's lookahead rides in the *same request* as the
   block the caller asked for, and `src/fs/block_cache.rs` argues why ("one
@@ -261,21 +261,23 @@ Design section names is not.
   two").  Overlapping that read means splitting a request the filesystem
   decided to keep whole — [RFC 0008](0008-keep-a-sequential-miss-in-one-request.md)
   asks whether that pays and decides it does not, so the read path keeps its
-  shape and no baseline moves.  What
-  landed instead is the boot probe in `src/kernel/workload.rs`: when the data
-  zone's device advertises a depth of two, it submits two one-block reads
-  before polling either, then waits for both.  It is deliberately the smallest
-  caller that makes the mechanism run rather than a workload that benefits
-  from it — the benefit is a question for real hardware, which is not what
-  this tree's gates boot.
-- `make check-perf-baseline-disk` records `blk-in-flight-high-water` at **2**,
-  and the in-memory, SMP, NUMA and loopback baselines stay at **1**, which is
-  what says the change did not make *every* device report a queue.  The same
-  boot prints
-  `[perf  ] queued read: depth=2 submitted=2 in-flight-high-water=2` — the
-  probe naming its own evidence.  What the boot pays for the mechanism is two
-  4 KiB frames of DMA memory, one bounce buffer per slot, and the recorded
-  `frames` and `frame-zero-bytes` moved by exactly that.
+  shape and no baseline moves.
+- **A probe stood in until a real caller arrived, and then it was removed.**
+  For one landing the only caller was a probe in `src/kernel/workload.rs`,
+  which submitted two one-block reads to the data zone's device before polling
+  either — honest about being a stand-in, and enough to make the mechanism
+  executed and counted.  It is gone now: the mount overlaps the two superblock
+  mirrors (`readable_superblock_candidates`,
+  `src/fs/simplefs/format_io.rs`), which are two independent one-block reads
+  the filesystem needs, so the read half has a caller that does work somebody
+  wanted and the boot pays two frames fewer.
+- `make check-perf-baseline-disk` records `blk-read-high-water` at **2** — the
+  mount's two mirrors, submitted before either is polled — and the in-memory,
+  SMP, NUMA and loopback baselines stay at **1**, because a device of depth
+  one completes each submit in place and takes exactly the path it took
+  before.  What the boot pays for the mechanism is two 4 KiB frames of DMA
+  memory, one bounce buffer per slot, and the recorded `frames` and
+  `frame-zero-bytes` moved by exactly that.
 - **Where the production caller is.**  This RFC covered reads only.  The read
   path is not a caller and should not become one
   ([RFC 0008](0008-keep-a-sequential-miss-in-one-request.md)); the write path

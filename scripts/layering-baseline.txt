@@ -125,14 +125,18 @@
 # names those subsystems — it prints the workload's counters beside the boot's
 # — and `mod` names it to run it.  Every edge points from the caller to the
 # subsystem it drives, so these rows are the shape of a consumer, not a new
-# direction for other code to take.  The queued interface (RFC 0007) is more
-# occurrences of the same two rows and no new direction: `workload` names
-# `block` for the submit/poll pair and the counter the probe reads and `fs` for
-# the zone whose device handle it asks for, and `drivers` names `block` for the
-# types the driver's overrides take.  The counts are higher than a hand would
-# write because the formatter gives every imported path its own `use` line and
-# this census counts paths; the direction, which is what the rows are about, is
-# unchanged.
+# direction for other code to take.  Its two rows are the ones named above:
+# `block` for the device counters it reads around a run and `fs` for the
+# filesystem it runs against.  (For one landing they were four and five,
+# because a probe here named `block` for the queued interface and `fs` for the
+# zone whose device it read; the mount is the interface's caller now and the
+# probe is gone, so the rows came back with it.)
+#
+# The queued interface (RFC 0007) moved `drivers` -> `block`, and only that
+# row: the driver names the ticket and the request state.  Its counts are
+# higher than a hand would write because the formatter gives every imported
+# path its own `use` line and this census counts paths; the direction, which
+# is what the rows are about, is unchanged.
 #
 # from                         to                           count
 audit                        fs                           6
@@ -271,8 +275,8 @@ user                         sync                         1
 vm_churn                     memory                       1
 vm_churn                     process                      6
 vm_churn                     smp                          4
-workload                     block                        6
-workload                     fs                           5
+workload                     block                        2
+workload                     fs                           4
 workload                     network                      5
 workload                     process                      2
 workload                     sync                         2

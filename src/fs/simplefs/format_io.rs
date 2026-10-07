@@ -16,6 +16,8 @@ use crate::Error;
 use crate::Result;
 
 use super::super::block::BlockDevice;
+use super::super::block::RequestState;
+use super::super::block::Ticket;
 use super::super::block::BLOCK_SIZE;
 use super::super::vfs::NodeKind;
 
@@ -24,12 +26,39 @@ use super::free_fns::*;
 use super::types::*;
 use super::ImageEntry;
 
+/// The most times one queued read is polled before a mount gives up on it.
+///
+/// A bound, like the cache's: a device that never completes a read must not
+/// hang a mount for ever.
+const MOUNT_READ_POLL_LIMIT: u32 = 50_000_000;
+
+/// Wait for one queued read, bounded.
+fn wait_for_read(device: &dyn BlockDevice, ticket: Ticket) -> Result<()> {
+    let mut polls = 0u32;
+    loop {
+        match device.poll(ticket) {
+            RequestState::Pending => {
+                polls += 1;
+                if polls > MOUNT_READ_POLL_LIMIT {
+                    return Err(Error::TimedOut);
+                }
+                core::hint::spin_loop();
+            }
+            RequestState::Done(result) => return result,
+        }
+    }
+}
+
 pub(crate) fn read_inodes(
     device: &dyn BlockDevice,
     format_version: SimpleFsFormatVersion,
     table_block: usize,
     count: usize,
 ) -> Result<Vec<OnDiskInode>> {
+    // One request, however many blocks: the queued interface carries a single
+    // block per request, so a table this size goes through the waiting call
+    // rather than being split into one request per block — which would change
+    // what `blk-reads` counts rather than what the device is asked for.
     let inode_bytes = format_version.inode_table_bytes(count)?;
     let mut buffer = vec![0_u8; blocks_for(inode_bytes) * BLOCK_SIZE];
     device.read_blocks(table_block as u64, &mut buffer)?;
@@ -368,11 +397,40 @@ pub(crate) fn readable_superblock_candidates(
     device: &dyn BlockDevice,
 ) -> Vec<(String, ParsedSuperblock)> {
     let mut candidates = Vec::with_capacity(2);
-    if let Ok(primary) = read_superblock_record(device, PRIMARY_SUPERBLOCK_BLOCK) {
-        candidates.push(primary);
+
+    // The two mirrors do not depend on each other — the newer valid one wins —
+    // so on a device that queues they are handed over together: the same two
+    // commands, one wait instead of two.  A device of depth one completes each
+    // submit in place and takes exactly the path it took before, in the same
+    // order.  This is the caller [RFC
+    // 0007](../../../docs/rfcs/0007-hold-a-second-request-on-a-device.md)
+    // left the read half waiting for: the mount's reads really are independent
+    // ([RFC 0008](../../../docs/rfcs/0008-keep-a-sequential-miss-in-one-request.md)
+    // says why the block cache's are not).
+    let mut primary = [0_u8; BLOCK_SIZE];
+    let mut secondary = [0_u8; BLOCK_SIZE];
+    // SAFETY: both buffers are locals that outlive the polls below, and each is
+    // named by exactly one outstanding read.
+    let primary_ticket =
+        unsafe { device.submit_read(PRIMARY_SUPERBLOCK_BLOCK as u64, &mut primary) };
+    // SAFETY: as above, for the secondary mirror.
+    let secondary_ticket =
+        unsafe { device.submit_read(SECONDARY_SUPERBLOCK_BLOCK as u64, &mut secondary) };
+
+    // Poll both before judging either: a ticket nobody polls is a slot nobody
+    // frees, and a refused submit is a read that did not happen.
+    let primary_read = primary_ticket.and_then(|ticket| wait_for_read(device, ticket));
+    let secondary_read = secondary_ticket.and_then(|ticket| wait_for_read(device, ticket));
+
+    if primary_read.is_ok() {
+        if let Ok(candidate) = parse_superblock(&primary) {
+            candidates.push(candidate);
+        }
     }
-    if let Ok(secondary) = read_superblock_record(device, SECONDARY_SUPERBLOCK_BLOCK) {
-        candidates.push(secondary);
+    if secondary_read.is_ok() {
+        if let Ok(candidate) = parse_superblock(&secondary) {
+            candidates.push(candidate);
+        }
     }
     candidates
 }
@@ -392,6 +450,12 @@ pub(crate) fn load_runtime_state_from_superblock(
         return Err(Error::InvalidArgument);
     }
 
+    // The two tables *are* independent of each other, but each is several
+    // blocks and the queued interface carries one block per request, so they
+    // stay on the waiting call: overlapping them would mean one queued request
+    // per block, which changes what `blk-reads` counts rather than what the
+    // device is asked for.  A run-capable queued request is what would let the
+    // mount overlap these, and it is a decision of its own.
     let inodes = read_inodes(
         device,
         format_version,
