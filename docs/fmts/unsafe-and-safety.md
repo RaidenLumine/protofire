@@ -15,8 +15,9 @@ The tree uses `unsafe` for the things only `unsafe` can do: MMIO, inline
 assembly, pointer-level context-switch mechanics, and the boundary where the
 kernel reads or writes memory a user program owns. Every one of those sites
 carries an argument — `clippy::undocumented_unsafe_blocks` reports zero in
-every configuration the tree builds for, and `make clippy`,
-`make clippy-targets` and `make check-unsafe-comments` all deny a new one.
+every configuration the tree builds for, and the manifests deny it, so
+`make clippy`, `make clippy-targets` and `make check-fuzz-targets` all refuse a
+new one that has none.
 The tree reached that state by writing the argument for each block rather than
 a comment-shaped placeholder, and the work found real defects along the way,
 because an argument that has to name the bound a read relies on is an argument
@@ -111,9 +112,12 @@ controls).
 ### The ratchet, and the gate it became
 
 `clippy::undocumented_unsafe_blocks` is denied in every configuration the
-kernel is built in — the host, the three machine targets, and the aarch64 host,
-by `make clippy` and `make clippy-targets`. That is a hard gate on new work: an
-`unsafe` block or `unsafe impl` without an argument fails the build.
+kernel is built in — the host, the three machine targets, and the aarch64 host.
+The denial is in the manifests (`[workspace.lints.clippy]` in the root, and in
+`fuzz/Cargo.toml`, which is a workspace of its own) rather than on the command
+line, so a clippy invocation the tree does not control still denies it; the
+targets that run clippy pass only `-D warnings`.  That is a hard gate on new
+work: an `unsafe` block or `unsafe impl` without an argument fails the build.
 
 [`scripts/check-unsafe-comments.sh`](../../scripts/check-unsafe-comments.sh)
 remains as the second, independent census. It reads

@@ -54,6 +54,13 @@ bench = false
 # two in step so a target can reuse the same corpus.
 demo-disk = ["protofire/demo-disk"]
 
+# The kernel's workspace lints cannot reach this package — `[workspace]` below
+# is this package's own, because it needs crates.io and the kernel's build must
+# never resolve it — so the one policy that matters for a fuzzer is spelled out
+# here: an `unsafe` block carries its argument, or clippy refuses it.
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
 [workspace]
 
 [profile.release]

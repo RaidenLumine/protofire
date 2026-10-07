@@ -9,3 +9,9 @@ publish = false
 [[bin]]
 name = "gen-kaslr-relocs"
 path = "src/main.rs"
+
+# The workspace's lint policy — `unsafe_op_in_unsafe_fn` and
+# `clippy::undocumented_unsafe_blocks` — applies here the same way it applies
+# to the kernel.
+[lints]
+workspace = true

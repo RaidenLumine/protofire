@@ -766,14 +766,15 @@ release:
 # ── Lints ─────────────────────────────────────────────────────────────
 .PHONY: clippy clippy-targets check-fuzz-targets
 
-# `-D clippy::undocumented_unsafe_blocks` is spelled out because the lint is
-# allow-by-default: `-D warnings` alone does not turn it on.  The tree reached
-# zero undocumented blocks and impls on 2026-09-27, which is when the ratchet
-# that held the line could stop being the only thing watching for them; see
+# `-D clippy::undocumented_unsafe_blocks` is *not* here: it is allow-by-default,
+# so it lives in the manifests (`[workspace.lints.clippy]` in the root, and in
+# `fuzz/Cargo.toml`, which is a workspace of its own) where every clippy
+# invocation picks it up without being told.  The tree reached zero undocumented
+# blocks and impls on 2026-09-27, which is when the ratchet that held the line
+# could stop being the only thing watching for them; see
 # docs/fmts/unsafe-and-safety.md §3.
 clippy:
-	$(CARGO) clippy $(CARGO_FLAGS) --workspace --all-targets -- \
-		-D warnings -D clippy::undocumented_unsafe_blocks
+	$(CARGO) clippy $(CARGO_FLAGS) --workspace --all-targets -- -D warnings
 
 # `fuzz/` is the one package here that depends on crates.io, and every other
 # target in this file is deliberately dependency-free and `--offline` — see
@@ -791,8 +792,7 @@ check-fuzz-targets:
 	$(CARGO) metadata --locked --offline --manifest-path $(FUZZ_MANIFEST) \
 		--format-version 1 > /dev/null
 	$(CARGO) clippy $(CARGO_FLAGS) --manifest-path $(FUZZ_MANIFEST) \
-		--all-targets -- \
-		-D warnings -D clippy::undocumented_unsafe_blocks
+		--all-targets -- -D warnings
 
 clippy-targets:
 	@for target in $(CLIPPY_TARGETS); do \
@@ -802,19 +802,19 @@ clippy-targets:
 			*) extra="" ;; \
 		esac; \
 		$(CARGO) clippy $(CARGO_FLAGS) -p $(CRATE) $$extra --target $$target -- \
-			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
+			-D warnings || exit 1; \
 	done
 	@for target in $(CLIPPY_BARE_METAL_TARGETS); do \
 		echo "==> clippy $$target ($(CLIPPY_BARE_METAL_FEATURES))"; \
 		$(CARGO) clippy $(CARGO_FLAGS) -p $(CRATE) --target $$target \
 			--features "$(CLIPPY_BARE_METAL_FEATURES)" -- \
-			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
+			-D warnings || exit 1; \
 	done
 	@for target in $(CLIPPY_NO_START_TARGET); do \
 		echo "==> clippy $$target ($(CLIPPY_NO_START_FEATURES))"; \
 		$(CARGO) clippy $(CARGO_FLAGS) -p $(CRATE) --target $$target \
 			--features "$(CLIPPY_NO_START_FEATURES)" -- \
-			-D warnings -D clippy::undocumented_unsafe_blocks || exit 1; \
+			-D warnings || exit 1; \
 	done
 
 # ── Runs ──────────────────────────────────────────────────────────────

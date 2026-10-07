@@ -22,13 +22,31 @@ publish = false
 [workspace]
 members = ["tools/gen-kaslr-relocs"]
 
-[lints.rust]
+# The lints the whole workspace shares.  The root package opts in below, the
+# KASLR tool does the same in its own manifest, and `fuzz/` — a workspace of
+# its own, so it cannot inherit anything from here — spells the clippy one out
+# directly.  Keeping them here rather than on every clippy command line is what
+# makes the policy apply to a clippy run nobody thought about.
+[workspace.lints.rust]
 # Edition 2024 makes this the default; on edition 2021 it is opt-in, and the
 # kernel wants it now: an unsafe operation inside an unsafe function is a
 # distinct statement from "this function's contract covers it" — the block is
 # where the reason goes, and the compiler checks the placement rather than
 # trusting the reader to notice it.
 unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+# `-D warnings` turns warnings into errors and only the command line can ask
+# for it, but this lint is allow-by-default: a clippy invocation that does not
+# name it does not have it.  Naming it here is what stops the rule from
+# depending on every command remembering a flag; `make clippy`,
+# `make clippy-targets` and `make check-fuzz-targets` therefore pass only
+# `-D warnings`, and `make check-unsafe-comments` stays as the second,
+# independent census.
+undocumented_unsafe_blocks = "deny"
+
+[lints]
+workspace = true
 
 [lib]
 name = "protofire"
