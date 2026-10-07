@@ -106,7 +106,7 @@ run_p0() {
     # P0 keeps the baseline strict: format, multi-target builds, and source headers.
     run_make_step "make check-repo-integrity" check-repo-integrity
     run_make_step "make check-docs" check-docs
-    run_make_step "make check-make-help" check-make-help
+    run_make_step "make check-make-targets" check-make-targets
     run_make_step "make check-rfcs" check-rfcs
     run_make_step "make fmt-check" fmt-check
     run_make_step "make check (host + x86_64 target)" check

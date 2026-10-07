@@ -64,11 +64,13 @@ jobs:
           # a full checkout here.
           - name: repo-integrity
             command: make check-repo-integrity
-          # `make help` is the index of what can be run, and a list nobody
-          # checks is a list that is eventually wrong: fifteen targets, three
-          # of them ratchets, had fallen out of it before this gate existed.
-          - name: make-help
-            command: make check-make-help
+          # The Makefile writes its target set down three times — the rules,
+          # `.PHONY` and `make help` — and a list nobody checks is a list that
+          # is eventually wrong: fifteen targets had fallen out of the help
+          # list and eleven out of `.PHONY`, where a missing entry makes the
+          # target silently skippable.
+          - name: make-targets
+            command: make check-make-targets
 
     steps:
       - name: Checkout

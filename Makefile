@@ -52,14 +52,17 @@ endif
 		check \
 		check-host \
 		check-target \
+		check-x8664-init-no-start \
 		check-aarch64 \
 		check-aarch64-host \
 		check-riscv64 \
+		test-fs-locking \
+		test-service \
 		check-unsafe-comments \
 		check-user-access-windows \
 		check-repo-integrity \
 		check-docs \
-		check-make-help \
+		check-make-targets \
 		check-rfcs \
 		check-payload-relocations \
 		check-reproducible-build \
@@ -69,7 +72,11 @@ endif
 		check-dead-code-allows \
 		check-feature-matrix \
 		check-abi-mirror \
+		check-abi-frozen-payload \
+		check-abi-frozen-payload-aarch64 \
+		check-abi-frozen-payload-riscv64 \
 		check-layering \
+		check-arch-fanout \
 		check-x8664-runtime \
 		check-x8664-usb-disk \
 		check-x8664-usb-hotplug \
@@ -85,7 +92,10 @@ endif
 		check-riscv64-aia-runtime \
 		check-riscv64-pci-runtime \
 		check-riscv64-smp-runtime \
+		check-smp-runtime \
 		build \
+		build-x8664 \
+		run-x8664 \
 		build-aarch64 \
 		build-aarch64-image \
 		build-aarch64-image-plain \
@@ -94,6 +104,7 @@ endif
 		build-aarch64-demo \
 		build-riscv64-demo \
 		clippy \
+		clippy-targets \
 		run \
 		run-x8664-headless \
 		run-aarch64 \
@@ -107,57 +118,57 @@ endif
 help:
 	@printf '%s\n' \
 		'Available targets:' \
-		'  make help           - print this list (the default goal, so a bare `make` does too)' \
-		'  make doctor         - check the environment, failing if a required tool is absent' \
-		'  make verify         - run the default P3 verification gate (override with VERIFY_TIER=p0..p3)' \
-		'  make verify-p0      - format check + host/x86_64/aarch64 build checks + header coverage' \
-		'  make verify-p1      - P0 plus fast concurrency/path/I-O/ABI regressions' \
-		'  make verify-p2      - P1 plus storage/recovery/fault-matrix regressions' \
-		'  make verify-p3      - P2 plus clippy and optional AArch64 runtime smoke' \
-		'  make check          - run both host and bare-metal type checks' \
-		'  make check-host     - type-check the host configuration, which is the one the tests build' \
-		'  make check-target   - type-check the bare-metal target on its own' \
-		'  make check-aarch64  - run bare-metal type checks for aarch64-unknown-none' \
-		'  make check-aarch64-host - type-check aarch64-unknown-linux-gnu, where the arch modules also build' \
-		'  make check-riscv64  - run bare-metal type checks for riscv64gc-unknown-none-elf' \
-		'  make check-unsafe-comments - fail if any configuration gained an undocumented `unsafe` block' \
-		'  make check-user-access-windows - fail if a module outside `syscall/memory/user.rs` opens a user-access window' \
-		'  make check-repo-integrity  - fail if a ref or the index names a missing git object' \
-		'  make check-docs     - fail if a document cites a file the tree does not have' \
-		'  make check-make-help - fail if a target the Makefile defines is missing from this list' \
-		'  make check-rfcs     - fail if an RFC number, status or the generated index is wrong' \
-		'  make check-payload-relocations - fail if a demo payload refers outside itself' \
-		'  make check-dead-code-allows  - fail if a file-level allow(dead_code) has no reason' \
-		'  make check-feature-matrix - build every configuration the manifest declares' \
-		'  make check-reproducible-build - rebuild every artifact twice and compare bytes' \
-		'  make release        - build and sign the release bundle (does not tag or publish)' \
-		'  make check-perf-baseline - boot the demo and compare its measured work to the baseline' \
-		'  make check-perf-baseline-smp - the same on several CPUs (SMP, default 4)' \
-		'  make check-abi-mirror  - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
-		'  make check-abi-frozen-payload - boot the pre-built frozen payload, which this build does not recompile' \
-		'  make check-abi-frozen-payload-aarch64 - the same frozen payload on aarch64' \
-		'  make check-abi-frozen-payload-riscv64 - the same frozen payload on riscv64' \
-		'  make check-layering - fail if a module gained a dependency the census does not have' \
-		'  make check-arch-fanout - fail if the architecture census outside `src/arch/` grew' \
-		'  make check-x8664-runtime - run the headless single-CPU QEMU x86_64 demo smoke check' \
-		'  make check-x8664-usb-disk - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
-		'  make check-x8664-usb-hotplug - plug a device into a hub after boot and check it is seen then' \
-		'  make check-x8664-nvme - boot a real SimpleFs image on an NVMe device and check the controller mounts it' \
-		'  make check-x8664-hda - play a tone from the shell and check the samples reach the host audio backend' \
-		'  make check-x8664-init-no-start - boot an init that asks for nothing, and reach the fallback' \
-		'  make check-x8664-churn - exhaust the stack window and the TLB log, and check the fallbacks' \
-		'  make check-riscv64-churn - the same churn on riscv64, whose window is one of the things it checks' \
-		'  make check-aarch64-runtime - run the headless QEMU virt aarch64 fault/wait smoke check' \
-		'  make check-aarch64-nvme - the same NVMe disk on the device-tree machine, through its PCIe window' \
-		'  make check-riscv64-runtime - run the headless QEMU virt riscv64 demo smoke check' \
-		'  make check-riscv64-aia-runtime - boot riscv64 on the AIA machine and check the IMSIC' \
-		'  make check-riscv64-pci-runtime - boot riscv64 with a PCIe device and check the device-tree walk' \
-		'  make check-riscv64-nvme - the same NVMe disk on riscv64, whose RAM window is identity-mapped' \
-		'  make check-riscv64-smp-runtime - boot riscv64 on several harts and check they come up' \
-		'  make check-smp-runtime - run the headless QEMU x86_64 SMP smoke check (SMP, default 4)' \
-		'  make check-aarch64-smp-runtime - boot aarch64 on several CPUs and check they come up (SMP, default 4)' \
-		'  make test           - run host-side unit and integration tests' \
-		'  make test-lib       - run library unit tests only' \
+		'  make help                         - print this list (the default goal, so a bare `make` does too)' \
+		'  make doctor                       - check the environment, failing if a required tool is absent' \
+		'  make verify                       - run the default P3 verification gate (override with VERIFY_TIER=p0..p3)' \
+		'  make verify-p0                    - format check + host/x86_64/aarch64 build checks + header coverage' \
+		'  make verify-p1                    - P0 plus fast concurrency/path/I-O/ABI regressions' \
+		'  make verify-p2                    - P1 plus storage/recovery/fault-matrix regressions' \
+		'  make verify-p3                    - P2 plus clippy and optional AArch64 runtime smoke' \
+		'  make check                        - run both host and bare-metal type checks' \
+		'  make check-host                   - type-check the host configuration, which is the one the tests build' \
+		'  make check-target                 - type-check the bare-metal target on its own' \
+		'  make check-aarch64                - run bare-metal type checks for aarch64-unknown-none' \
+		'  make check-aarch64-host           - type-check aarch64-unknown-linux-gnu, where the arch modules also build' \
+		'  make check-riscv64                - run bare-metal type checks for riscv64gc-unknown-none-elf' \
+		'  make check-unsafe-comments        - fail if any configuration gained an undocumented `unsafe` block' \
+		'  make check-user-access-windows    - fail if a module outside `syscall/memory/user.rs` opens a user-access window' \
+		'  make check-repo-integrity         - fail if a ref or the index names a missing git object' \
+		'  make check-docs                   - fail if a document cites a file the tree does not have' \
+		'  make check-make-targets           - fail if the targets, `.PHONY` and this list disagree' \
+		'  make check-rfcs                   - fail if an RFC number, status or the generated index is wrong' \
+		'  make check-payload-relocations    - fail if a demo payload refers outside itself' \
+		'  make check-dead-code-allows       - fail if a file-level allow(dead_code) has no reason' \
+		'  make check-feature-matrix         - build every configuration the manifest declares' \
+		'  make check-reproducible-build     - rebuild every artifact twice and compare bytes' \
+		'  make release                      - build and sign the release bundle (does not tag or publish)' \
+		'  make check-perf-baseline          - boot the demo and compare its measured work to the baseline' \
+		'  make check-perf-baseline-smp      - the same on several CPUs (SMP, default 4)' \
+		'  make check-abi-mirror             - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
+		'  make check-abi-frozen-payload                - boot the pre-built frozen payload, which this build does not recompile' \
+		'  make check-abi-frozen-payload-aarch64        - the same frozen payload on aarch64' \
+		'  make check-abi-frozen-payload-riscv64        - the same frozen payload on riscv64' \
+		'  make check-layering               - fail if a module gained a dependency the census does not have' \
+		'  make check-arch-fanout            - fail if the architecture census outside `src/arch/` grew' \
+		'  make check-x8664-runtime          - run the headless single-CPU QEMU x86_64 demo smoke check' \
+		'  make check-x8664-usb-disk         - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
+		'  make check-x8664-usb-hotplug      - plug a device into a hub after boot and check it is seen then' \
+		'  make check-x8664-nvme             - boot a real SimpleFs image on an NVMe device and check the controller mounts it' \
+		'  make check-x8664-hda              - play a tone from the shell and check the samples reach the host audio backend' \
+		'  make check-x8664-init-no-start    - boot an init that asks for nothing, and reach the fallback' \
+		'  make check-x8664-churn            - exhaust the stack window and the TLB log, and check the fallbacks' \
+		'  make check-riscv64-churn          - the same churn on riscv64, whose window is one of the things it checks' \
+		'  make check-aarch64-runtime        - run the headless QEMU virt aarch64 fault/wait smoke check' \
+		'  make check-aarch64-nvme           - the same NVMe disk on the device-tree machine, through its PCIe window' \
+		'  make check-riscv64-runtime        - run the headless QEMU virt riscv64 demo smoke check' \
+		'  make check-riscv64-aia-runtime    - boot riscv64 on the AIA machine and check the IMSIC' \
+		'  make check-riscv64-pci-runtime    - boot riscv64 with a PCIe device and check the device-tree walk' \
+		'  make check-riscv64-nvme           - the same NVMe disk on riscv64, whose RAM window is identity-mapped' \
+		'  make check-riscv64-smp-runtime    - boot riscv64 on several harts and check they come up' \
+		'  make check-smp-runtime            - run the headless QEMU x86_64 SMP smoke check (SMP, default 4)' \
+		'  make check-aarch64-smp-runtime    - boot aarch64 on several CPUs and check they come up (SMP, default 4)' \
+		'  make test                         - run host-side unit and integration tests' \
+		'  make test-lib                     - run library unit tests only' \
 		'  make test-fast      - run path/I-O/syscall/user integration regressions' \
 		'  make test-concurrency - run scheduler/input/condvar concurrency regressions' \
 		'  make test-storage   - run filesystem/recovery/fault-injection regressions' \
@@ -216,10 +227,14 @@ check-docs:
 # `make help` is the index of what can be run, and this tree asks it to be
 # complete: a target nobody lists is a gate only its author runs.  The list is
 # prose, so it drifts — fifteen targets, three of them ratchets, had fallen out
-# of it before this check existed.  Both directions are failures, because a
-# name the Makefile no longer defines is a promise the list still makes.
-check-make-help:
-	sh ./scripts/check-make-help.sh
+# of it before this check existed.  `.PHONY` is the same target set written a
+# second time, and eleven targets had fallen out of *that*, which fails worse
+# than a missing line: a target that is not `.PHONY` is skipped, silently and
+# with a zero exit, when a file of its name exists (`make build` builds nothing
+# if a file called `build-x8664` is in the tree).  So this checks all three
+# declarations against each other, in both directions.
+check-make-targets:
+	sh ./scripts/check-make-targets.sh
 
 # The RFC directory is the one place a *number* carries meaning: code cites it,
 # a later document supersedes it, and the index that lists it is generated from
