@@ -314,6 +314,19 @@ boundary; `BlockSliceDevice` is a sub-range of a parent device, which is what
 an MBR partition becomes.  The filesystem re-exports the module as `fs::block`
 for the callers that used to name it there, but the dependency is one-way.
 
+The trait also has the queued path: `queue_depth` is how many reads a device
+can hold at once (one by default), and `submit_read`/`poll_read` are a
+submit/poll pair beside `read_blocks` whose default completes the read in
+place, so a device that does not queue is exactly the device it was.  A
+queued read borrows the caller's buffer across a window the compiler cannot
+see, which is why `submit_read` is `unsafe`; the `InFlight` guard the
+boot-work counters keep moves from the call to the ticket, so
+`blk-in-flight-high-water` means "requests a device is holding".  The NVMe
+driver answers a depth of two, matches completions by command identifier, and
+implements its waiting `read_blocks` as that pair polled at once — so there is
+one read path, and a boot exercises it.  See
+[RFC 0007](../rfcs/0007-hold-a-second-request-on-a-device.md).
+
 A driver that finds a disk does not know about the filesystem.  It calls
 `publish_device`, and `set_device_publisher` — installed by `Kernel::init`
 with a closure that locks the filesystem and calls `register_block_device` —

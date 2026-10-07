@@ -145,7 +145,10 @@ pub fn device_io_snapshot() -> DeviceIo {
 pub fn counting_device(device: Arc<dyn BlockDevice>) -> Arc<dyn BlockDevice> {
     #[cfg(feature = "perf_baseline")]
     {
-        Arc::new(CountingDevice { inner: device })
+        Arc::new(CountingDevice {
+            inner: device,
+            outstanding: Mutex::new(Vec::new()),
+        })
     }
     #[cfg(not(feature = "perf_baseline"))]
     {
@@ -157,6 +160,24 @@ pub fn counting_device(device: Arc<dyn BlockDevice>) -> Arc<dyn BlockDevice> {
 #[cfg(feature = "perf_baseline")]
 struct CountingDevice {
     inner: Arc<dyn BlockDevice>,
+    /// The reads that are on the device right now, one guard each, held until
+    /// their ticket is polled to completion.
+    ///
+    /// The guard is what makes `blk-in-flight-high-water` mean "requests a
+    /// device is holding" rather than "calls that have not returned": a
+    /// queued read's guard outlives the submit, because the read does.
+    outstanding: Mutex<Vec<(u64, io_counters::InFlight)>>,
+}
+
+#[cfg(feature = "perf_baseline")]
+impl CountingDevice {
+    /// Take back the guard of a ticket whose read has finished.
+    fn retire(&self, ticket: ReadTicket) {
+        let mut outstanding = self.outstanding.lock();
+        if let Some(index) = outstanding.iter().position(|(id, _)| *id == ticket.id()) {
+            outstanding.swap_remove(index);
+        }
+    }
 }
 
 #[cfg(feature = "perf_baseline")]
@@ -181,6 +202,42 @@ impl BlockDevice for CountingDevice {
         io_counters::count_read(buffer.len() as u64);
         let _in_flight = io_counters::InFlight::enter();
         self.inner.read_blocks(lba, buffer)
+    }
+
+    fn queue_depth(&self) -> u16 {
+        self.inner.queue_depth()
+    }
+
+    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<ReadTicket> {
+        io_counters::count_read(buffer.len() as u64);
+        let guard = io_counters::InFlight::enter();
+        // SAFETY: the caller's buffer contract passes through unchanged — the
+        // same buffer, and the same promise that it outlives the ticket.
+        let ticket = match unsafe { self.inner.submit_read(lba, buffer) } {
+            Ok(ticket) => ticket,
+            Err(error) => {
+                // The guard drops with the failed request, so an error cannot
+                // leave the in-flight count up.
+                drop(guard);
+                return Err(error);
+            }
+        };
+        if ticket.is_done() {
+            // The device completed the read in place; there is nothing left
+            // to wait for, so the request is over before this returns.
+            drop(guard);
+        } else {
+            self.outstanding.lock().push((ticket.id(), guard));
+        }
+        Ok(ticket)
+    }
+
+    fn poll_read(&self, ticket: ReadTicket) -> ReadState {
+        let state = self.inner.poll_read(ticket);
+        if matches!(state, ReadState::Done(_)) {
+            self.retire(ticket);
+        }
+        state
     }
 
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
@@ -212,6 +269,50 @@ pub enum DeviceHealth {
     Failed,
 }
 
+/// A read a device has accepted but not yet completed.
+///
+/// The ticket is opaque — a device hands one back from
+/// [`BlockDevice::submit_read`] and the caller gives it to
+/// [`BlockDevice::poll_read`].  [`ReadTicket::DONE`] is the ticket a device
+/// returns when it completed the read in place, which is what a device of
+/// depth one does: the caller's buffer is already filled and there is nothing
+/// left to wait for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadTicket(u64);
+
+impl ReadTicket {
+    /// The ticket for a read that finished before its submit returned.
+    pub const DONE: ReadTicket = ReadTicket(u64::MAX);
+
+    /// A device's own name for a request it has queued.
+    ///
+    /// `id` is never `u64::MAX`: that value is what [`ReadTicket::DONE`]
+    /// means, and a device that used it for a real request would be unable to
+    /// say it had finished in place.
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    /// The device's own name for the request.
+    pub const fn id(self) -> u64 {
+        self.0
+    }
+
+    /// Whether the read finished in place, before the submit returned.
+    pub const fn is_done(self) -> bool {
+        self.0 == u64::MAX
+    }
+}
+
+/// How a submitted read is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadState {
+    /// The device has not completed it yet.
+    Pending,
+    /// It finished; the answer is the read's own result.
+    Done(Result<()>),
+}
+
 pub trait BlockDevice: Send + Sync {
     fn name(&self) -> &str;
     fn block_size(&self) -> usize {
@@ -227,6 +328,51 @@ pub trait BlockDevice: Send + Sync {
     /// device that answered only the first block would leave the rest of the
     /// buffer as it found it.
     fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()>;
+
+    /// The most reads this device can hold at once.
+    ///
+    /// One — the default — means the device finishes a read before its submit
+    /// returns, so a caller has nothing to be ahead of.  A driver whose
+    /// hardware queues answers with what its queue holds, and a caller that
+    /// wants to overlap asks this *before* it pipelines: a caller that
+    /// pipelines without asking holds a queue open that the device does not
+    /// have, and then pays for it with `Busy`.
+    fn queue_depth(&self) -> u16 {
+        1
+    }
+
+    /// Hand the device a one-block read and name it with a ticket.
+    ///
+    /// The default performs the read at once and answers
+    /// [`ReadTicket::DONE`] — which is what a device of depth one can do, and
+    /// leaves every device that does not queue exactly as it was.  A device
+    /// that queues returns a ticket whose [`BlockDevice::poll_read`] answers
+    /// when the device has the data, and refuses with `Busy` when its queue
+    /// is full rather than blocking or dropping the request.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must stay live and must not move until a poll of the returned
+    /// ticket answers [`ReadState::Done`], and no other read may name it at
+    /// the same time.  A device that copies the data into its own memory
+    /// during the submit (the default) is free of the constraint; a device
+    /// that queues is not, and that is the price of not copying the DMA
+    /// twice.
+    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<ReadTicket> {
+        self.read_blocks(lba, buffer)?;
+        Ok(ReadTicket::DONE)
+    }
+
+    /// Ask a device whether a submitted read has finished, and with what.
+    ///
+    /// A device of depth one always answers `Done`, because its submit
+    /// already completed the read.  Polling a ticket the device does not know
+    /// answers an error rather than waiting forever: an unknown ticket is a
+    /// caller's bug, and a hang would hide it.
+    fn poll_read(&self, _ticket: ReadTicket) -> ReadState {
+        ReadState::Done(Ok(()))
+    }
+
     /// Write `data.len() / block_size()` blocks starting at `lba`, with the
     /// same multi-block contract as [`BlockDevice::read_blocks`].
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()>;
@@ -394,6 +540,38 @@ impl BlockDevice for BlockSliceDevice {
         self.parent.read_blocks(parent_lba, buffer)
     }
 
+    fn queue_depth(&self) -> u16 {
+        // A slice of a device that queues is a device that queues: the slice
+        // is a window on the same hardware, not a copy of it.
+        self.parent.queue_depth()
+    }
+
+    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<ReadTicket> {
+        if !buffer.len().is_multiple_of(BLOCK_SIZE) {
+            return Err(Error::InvalidArgument);
+        }
+
+        let blocks = (buffer.len() / BLOCK_SIZE) as u64;
+        let end = lba.checked_add(blocks).ok_or(Error::InvalidArgument)?;
+        if end > self.block_count {
+            return Err(Error::InvalidArgument);
+        }
+
+        let parent_lba = self
+            .start_block
+            .checked_add(lba)
+            .ok_or(Error::InvalidArgument)?;
+        // SAFETY: the caller's buffer contract passes through — the slice
+        // hands the parent the same buffer, so it is the same promise.
+        unsafe { self.parent.submit_read(parent_lba, buffer) }
+    }
+
+    fn poll_read(&self, ticket: ReadTicket) -> ReadState {
+        // The ticket is the parent's own name for the request, handed back
+        // unread, so the parent is the one that can answer for it.
+        self.parent.poll_read(ticket)
+    }
+
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
         if self.read_only {
             return Err(Error::PermissionDenied);
@@ -470,13 +648,197 @@ pub fn publish_device(name: &str, device: Arc<dyn BlockDevice>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use alloc::sync::Arc;
     use alloc::vec;
+    use alloc::vec::Vec;
 
     use super::BlockDevice;
     use super::BlockSliceDevice;
     use super::MemoryBlockDevice;
+    use super::ReadState;
+    use super::ReadTicket;
     use super::BLOCK_SIZE;
+    use crate::kernel::sync::Mutex;
     use crate::Error;
+
+    /// A device that queues a fixed number of reads and finishes them only
+    /// when a test says so.
+    ///
+    /// The data is copied at submit rather than at completion, so the test can
+    /// check what the interface promises — depth, tickets, `Busy`, and an
+    /// answer for a ticket the device does not know — without a raw pointer to
+    /// hand around.
+    struct QueuedMock {
+        storage: Vec<u8>,
+        depth: u16,
+        next_id: Mutex<u64>,
+        /// `(ticket, lba)` for each read the device is holding.
+        outstanding: Mutex<Vec<(u64, u64)>>,
+        finished: Mutex<Vec<u64>>,
+    }
+
+    impl QueuedMock {
+        fn new(blocks: usize, depth: u16) -> Arc<Self> {
+            Arc::new(Self {
+                storage: vec![0x5a_u8; blocks * BLOCK_SIZE],
+                depth,
+                next_id: Mutex::new(0),
+                outstanding: Mutex::new(Vec::new()),
+                finished: Mutex::new(Vec::new()),
+            })
+        }
+
+        /// Finish the oldest read that is still outstanding.
+        fn finish_one(&self) {
+            let mut outstanding = self.outstanding.lock();
+            assert!(!outstanding.is_empty(), "no read is outstanding");
+            let (id, _) = outstanding.remove(0);
+            self.finished.lock().push(id);
+        }
+    }
+
+    impl BlockDevice for QueuedMock {
+        fn name(&self) -> &str {
+            "queued-mock"
+        }
+
+        fn block_count(&self) -> u64 {
+            (self.storage.len() / BLOCK_SIZE) as u64
+        }
+
+        fn is_read_only(&self) -> bool {
+            false
+        }
+
+        fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> crate::Result<()> {
+            let start = lba as usize * BLOCK_SIZE;
+            buffer.copy_from_slice(&self.storage[start..start + buffer.len()]);
+            Ok(())
+        }
+
+        fn write_blocks(&self, _lba: u64, _data: &[u8]) -> crate::Result<()> {
+            Err(Error::Unsupported)
+        }
+
+        fn queue_depth(&self) -> u16 {
+            self.depth
+        }
+
+        unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> crate::Result<ReadTicket> {
+            let mut outstanding = self.outstanding.lock();
+            if outstanding.len() as u16 >= self.depth {
+                return Err(Error::Busy);
+            }
+            let start = lba as usize * BLOCK_SIZE;
+            buffer.copy_from_slice(&self.storage[start..start + buffer.len()]);
+            let mut next_id = self.next_id.lock();
+            let id = *next_id;
+            *next_id += 1;
+            outstanding.push((id, lba));
+            Ok(ReadTicket::new(id))
+        }
+
+        fn poll_read(&self, ticket: ReadTicket) -> ReadState {
+            let mut finished = self.finished.lock();
+            if let Some(index) = finished.iter().position(|id| *id == ticket.id()) {
+                finished.swap_remove(index);
+                self.outstanding.lock().retain(|(id, _)| *id != ticket.id());
+                return ReadState::Done(Ok(()));
+            }
+            if self
+                .outstanding
+                .lock()
+                .iter()
+                .any(|(id, _)| *id == ticket.id())
+            {
+                return ReadState::Pending;
+            }
+            // The ticket is the device's own name for a request, and it has
+            // never heard of this one.
+            ReadState::Done(Err(Error::InvalidArgument))
+        }
+    }
+
+    #[test]
+    fn a_device_that_does_not_queue_completes_a_read_in_place() {
+        let device = MemoryBlockDevice::new("memory", vec![7_u8; BLOCK_SIZE], false);
+        assert_eq!(device.queue_depth(), 1);
+
+        let mut buffer = [0_u8; BLOCK_SIZE];
+        // SAFETY: the buffer outlives the ticket — the default submit fills it
+        // before it returns — and nothing else names it.
+        let ticket = unsafe { device.submit_read(0, &mut buffer) }.expect("submit");
+        assert!(ticket.is_done(), "a depth-one device finishes in place");
+        assert_eq!(buffer, [7_u8; BLOCK_SIZE], "and the data is already there");
+        assert_eq!(device.poll_read(ticket), ReadState::Done(Ok(())));
+    }
+
+    #[test]
+    fn a_queued_device_holds_a_second_read_and_refuses_a_third() {
+        let device = QueuedMock::new(4, 2);
+        let mut first = [0_u8; BLOCK_SIZE];
+        let mut second = [0_u8; BLOCK_SIZE];
+        let mut third = [0_u8; BLOCK_SIZE];
+
+        // SAFETY: each buffer is a local named by exactly one read, and both
+        // outlive the polls below.
+        let first_ticket = unsafe { device.submit_read(0, &mut first) }.expect("first submit");
+        // SAFETY: as above, for `second`.
+        let second_ticket = unsafe { device.submit_read(1, &mut second) }.expect("second submit");
+
+        assert_ne!(
+            first_ticket, second_ticket,
+            "two reads in flight are two tickets"
+        );
+        assert_eq!(device.poll_read(first_ticket), ReadState::Pending);
+        assert_eq!(device.poll_read(second_ticket), ReadState::Pending);
+
+        // The queue is full, so the third read is refused rather than dropped
+        // or blocked.
+        // SAFETY: as above, for `third`.
+        let refused = unsafe { device.submit_read(2, &mut third) };
+        assert_eq!(refused, Err(Error::Busy));
+
+        // Finishing the oldest read frees its slot, and polling it is what
+        // hands the answer to the caller.
+        device.finish_one();
+        assert_eq!(device.poll_read(first_ticket), ReadState::Done(Ok(())));
+        // SAFETY: as above; `third` is still a local nothing else names.
+        let third_ticket = unsafe { device.submit_read(2, &mut third) }.expect("slot was freed");
+        assert_eq!(device.poll_read(third_ticket), ReadState::Pending);
+
+        // A ticket the device never handed out is an error, not a wait.
+        assert_eq!(
+            device.poll_read(ReadTicket::new(9_999)),
+            ReadState::Done(Err(Error::InvalidArgument))
+        );
+    }
+
+    #[test]
+    fn a_slice_of_a_queued_device_queues_and_maps_the_lba() {
+        let parent = QueuedMock::new(4, 2);
+        let parent_device: Arc<dyn BlockDevice> = parent.clone();
+        let slice = BlockSliceDevice::new("slice", parent_device, 2, 2, false);
+        assert_eq!(
+            slice.queue_depth(),
+            2,
+            "a window on a device that queues queues"
+        );
+
+        let mut buffer = [0_u8; BLOCK_SIZE];
+        // SAFETY: the buffer is a local that outlives the ticket, and no other
+        // read names it.
+        let ticket = unsafe { slice.submit_read(0, &mut buffer) }.expect("submit through slice");
+        // The parent sees the mapped LBA, not the caller's: block 0 of the
+        // window is block 2 of the disk.
+        assert_eq!(
+            parent.outstanding.lock().as_slice(),
+            &[(ticket.id(), 2)],
+            "the parent holds the read the slice passed down, at the mapped LBA"
+        );
+        parent.finish_one();
+        assert_eq!(slice.poll_read(ticket), ReadState::Done(Ok(())));
+    }
 
     #[test]
     fn memory_block_device_rejects_lba_multiplication_overflow() {

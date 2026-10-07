@@ -22,6 +22,16 @@ impl FileSystem {
         self.block_devices.insert(name.to_string(), device);
     }
 
+    /// The handle a device was registered under, for a caller that needs the
+    /// device itself rather than its geometry.
+    ///
+    /// The handle is the *wrapped* one a zone was mounted through — the
+    /// wrapper the boot-work counters sit in — so a caller that reads through
+    /// it is counted exactly once, the same way the zone's own reads are.
+    pub fn block_device(&self, name: &str) -> Option<Arc<dyn BlockDevice>> {
+        self.block_devices.get(name).cloned()
+    }
+
     pub fn mount(&mut self, device: &str, path: &str, fs_name: &str, flags: u32) -> Result<()> {
         let mount_path = path::normalize_path(path, "/")?;
         let fs = self

@@ -1,6 +1,6 @@
 # RFC 0007: Hold a second request on a device
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-07
 - **Supersedes:** none
@@ -199,7 +199,7 @@ makes the number a gate rather than a report.
 
 - **The count is the gate.**  `make check-perf-baseline-disk` boots the
   workload on the NVMe namespace, and the recorded row for
-  `blk-in-flight-high-water` moves from 1 to 2 when the read-ahead pipelines;
+  `blk-in-flight-high-water` moves from 1 to 2 when a caller pipelines;
   the in-memory, SMP, NUMA and loopback baselines stay at 1, so the change
   cannot pass by making *every* device report a queue.
 - **The waiting path is unchanged.**  `make test-lib` and
@@ -230,3 +230,47 @@ makes the number a gate rather than a report.
 - **Is the ticket table the right place for the counter?**  It is where the
   guard has to live for the number to mean the right thing; whether it should
   enumerate requests for anything else (a timeout, a cancel) is left open.
+
+## What landed
+
+The interface and its first caller are in the tree; the read-ahead caller the
+Design section names is not.
+
+- `BlockDevice` carries `queue_depth`, `submit_read` and `poll_read`, all
+  defaulted, so a device that does not queue is the device it was: its submit
+  completes the read in place and answers `ReadTicket::DONE`, and its poll
+  always answers `Done`.  `BlockSliceDevice` passes the three through, because
+  a slice of a device that queues is a device that queues.
+- `CountingDevice` holds each queued read's in-flight guard in a ticket table
+  instead of on the call's stack, which is what makes
+  `blk-in-flight-high-water` mean "requests a device is holding" rather than
+  "calls that have not returned".
+- `src/drivers/nvme.rs` answers a depth of two and splits its submission from
+  its completion reaping.  It matches a completion to its request by the
+  command identifier — so a queued read and a synchronous one can be
+  outstanding together, which "the next completion to arrive" would have got
+  wrong — and each slot owns its own bounce buffer, which is what the single
+  shared buffer had made impossible.  `read_blocks` is now the waiting form of
+  that pair — the same submit, polled at once — so there is one read path in
+  the driver and the queued one is exercised by every read the filesystem
+  does, not only by the probe.
+- **The caller that landed is not the read-ahead this RFC names**, and that is
+  deliberate.  The block cache's lookahead rides in the *same request* as the
+  block the caller asked for, and `src/fs/block_cache.rs` argues why ("one
+  request that serves the caller and warms four blocks is strictly better than
+  two").  Overlapping that read means splitting a request the filesystem
+  decided to keep whole, which is its own decision and its own change.  What
+  landed instead is the boot probe in `src/kernel/workload.rs`: when the data
+  zone's device advertises a depth of two, it submits two one-block reads
+  before polling either, then waits for both.  It is deliberately the smallest
+  caller that makes the mechanism run rather than a workload that benefits
+  from it — the benefit is a question for real hardware, which is not what
+  this tree's gates boot.
+- `make check-perf-baseline-disk` records `blk-in-flight-high-water` at **2**,
+  and the in-memory, SMP, NUMA and loopback baselines stay at **1**, which is
+  what says the change did not make *every* device report a queue.  The same
+  boot prints
+  `[perf  ] queued read: depth=2 submitted=2 in-flight-high-water=2` — the
+  probe naming its own evidence.  What the boot pays for the mechanism is two
+  4 KiB frames of DMA memory, one bounce buffer per slot, and the recorded
+  `frames` and `frame-zero-bytes` moved by exactly that.

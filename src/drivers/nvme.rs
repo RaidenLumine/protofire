@@ -20,9 +20,12 @@
 use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
 use crate::kernel::block::BlockDevice;
+use crate::kernel::block::ReadState;
+use crate::kernel::block::ReadTicket;
 use crate::kernel::sync::Mutex;
 use crate::memory::DmaBuffer;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
 
@@ -55,6 +58,20 @@ static NVME_BAR0: Mutex<Option<usize>> = Mutex::new(None);
 /// mass-storage function can be, and the enumeration already decodes it.
 const NVME_CLASS_CODE: u8 = 0x01;
 const NVME_SUBCLASS: u8 = 0x08;
+
+/// How many reads this driver lets a caller hold at once.
+///
+/// The controller's I/O queue is 64 entries deep (`DEFAULT_QUEUE_SIZE`), so
+/// this is not the hardware's limit — it is how many requests the driver
+/// keeps the *state* for, one bounce buffer and one destination each.  It is
+/// what `queue_depth` answers and what `poll_read` matches completions
+/// against, so it is the number a caller pipelines to.  Two is the smallest
+/// depth that is a queue at all, which is what the first caller needs and
+/// what a boot pays for: one extra frame of DMA memory per slot.
+const NVME_QUEUE_DEPTH: usize = 2;
+
+/// The slot id of a slot no request is using.
+const SLOT_FREE: u64 = u64::MAX;
 
 struct NvmeDriver;
 
@@ -96,6 +113,27 @@ struct NvmeIoState {
     iocq_head: u32,
     iocq_phase: bool,
     next_cmd_id: u16,
+    /// One entry per read the driver can hold at once, matched to a
+    /// completion by the command identifier the completion names.
+    ///
+    /// The whole table is behind `io_state` on purpose: submitting writes a
+    /// slot and reaping a completion reads one, and a table under its own
+    /// lock would be a second lock to order against this one for no gain.
+    slots: Vec<IoSlot>,
+}
+
+/// One read that is (or may be) on the device.
+struct IoSlot {
+    /// The command identifier the controller will name in the completion;
+    /// [`SLOT_FREE`] when the slot is unused.
+    id: u64,
+    /// This request's own bounce buffer.  One per slot, because one shared
+    /// buffer is exactly what stops a second request from being written.
+    bounce: DmaBuffer,
+    /// Where the data goes when the completion arrives, and how much of it.
+    dst: *mut u8,
+    len: usize,
+    state: ReadState,
 }
 
 /// A fully initialised NVMe controller that implements `BlockDevice`.
@@ -225,6 +263,20 @@ impl NvmeController {
             let iocq = DmaBuffer::allocate(iocq_frames).ok_or(crate::Error::OutOfMemory)?;
             let io_buf = DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?;
 
+            // One bounce buffer per read the driver will hold at once.  They
+            // are allocated here, before the controller is shared, so a queued
+            // read never has to allocate on the submit path.
+            let mut slots = Vec::with_capacity(NVME_QUEUE_DEPTH);
+            for _ in 0..NVME_QUEUE_DEPTH {
+                slots.push(IoSlot {
+                    id: SLOT_FREE,
+                    bounce: DmaBuffer::allocate(1).ok_or(crate::Error::OutOfMemory)?,
+                    dst: core::ptr::null_mut(),
+                    len: 0,
+                    state: ReadState::Pending,
+                });
+            }
+
             // ── 4. Configure admin queues ────────────────────────────────
             // AQA: ACQS (11:0) | ASQS (27:16)
             let aqa = ((acq_entries - 1) & 0xFFF) | (((asq_entries - 1) & 0xFFF) << 16);
@@ -270,6 +322,7 @@ impl NvmeController {
                     iocq_head: 0,
                     iocq_phase: true,
                     next_cmd_id: 0,
+                    slots,
                 }),
                 nsid: 1,
                 block_count: 0,
@@ -422,21 +475,45 @@ impl NvmeController {
 
     /// Submit a command on the I/O SQ and poll for completion.
     fn io_submit_and_wait(&self, sqe: &NvmeSqe) -> crate::Result<NvmeCqe> {
-        use core::ptr::read_volatile;
+        let mut state = self.io_state.lock();
+        self.io_submit(&mut state, sqe);
+
+        // Spin for *this* command's completion.  Reaping completes any queued
+        // read whose data has arrived on the way, so a queued read this driver
+        // is holding does not have to finish before a synchronous one starts.
+        let cid = sqe.command_id();
+        let mut waited = 0;
+        loop {
+            if let Some(cqe) = self.reap(&mut state, Some(cid)) {
+                drop(state);
+                return Ok(cqe);
+            }
+            waited += 1;
+            if waited > COMPLETION_POLL_LIMIT {
+                return Err(crate::Error::TimedOut);
+            }
+            core::hint::spin_loop();
+        }
+    }
+
+    /// Write an entry into the I/O submission queue and ring its doorbell.
+    ///
+    /// `state` is held by the caller so that a submit can name the slot it
+    /// filled and advance the tail without a second lock; the doorbell write
+    /// is the only thing the device sees.
+    fn io_submit(&self, state: &mut NvmeIoState, sqe: &NvmeSqe) {
         use core::ptr::write_volatile;
 
-        let mut state = self.io_state.lock();
-
         let tail = state.iosq_tail as usize;
-        // SAFETY: the I/O SQ DMA buffer is exclusive to this controller;
-        // all pointer arithmetic stays within the allocated region.
+        // SAFETY: the I/O SQ DMA buffer is exclusive to this controller; all
+        // pointer arithmetic stays within the allocated region, and `tail` is
+        // below `iosq_entries`.
         let dst = unsafe { self.iosq.as_ptr().add(tail * SQ_ENTRY_SIZE) } as *mut NvmeSqe;
         // SAFETY: as the note above: `dst` is the submission-queue slot for
         // `tail` inside this controller's own DMA region, and the device reads
         // it as one 64-byte entry.
         unsafe { write_volatile(dst, *sqe) };
 
-        // Advance tail with wrap.
         state.iosq_tail = (state.iosq_tail + 1) % self.iosq_entries;
 
         // Ring SQ doorbell (queue id = 1).
@@ -447,48 +524,79 @@ impl NvmeController {
         // SAFETY: as the doorbell address above; the write is volatile because
         // the device, not the kernel, consumes it.
         unsafe { write_volatile(sq_doorbell as *mut u32, state.iosq_tail) };
+    }
 
-        // Spin for completion.
-        let mut waited = 0;
+    /// Reap every completion the controller has published, and answer the one
+    /// a synchronous caller is waiting for.
+    ///
+    /// Each completion names its request by command identifier.  A completion
+    /// for a queued read is copied into the buffer the submit named and
+    /// recorded on that read's slot; a completion naming `want` is returned to
+    /// the caller spinning for it.  Matching by identifier is what lets a
+    /// queued read and a synchronous one be outstanding at the same time —
+    /// taking "the next completion" would hand one request's answer to another.
+    fn reap(&self, state: &mut NvmeIoState, want: Option<u16>) -> Option<NvmeCqe> {
+        use core::ptr::read_volatile;
+        use core::ptr::write_volatile;
+
         loop {
             // SAFETY: the completion-queue slot for `head`, inside the DMA
-            // region this controller owns — the same argument as the submission
-            // path above.
+            // region this controller owns.
             let cqe_ptr = unsafe {
                 self.iocq
                     .as_ptr()
                     .add(state.iocq_head as usize * CQ_ENTRY_SIZE)
             } as *const NvmeCqe;
             // SAFETY: the completion entry the device writes; the read is
-            // volatile because the device owns it, and the phase check below
-            // decides whether it has been published yet.
+            // volatile because the device owns it, and the phase check decides
+            // whether it has been published yet.
             let cqe = unsafe { read_volatile(cqe_ptr) };
-            let phase = (cqe.status & 0x1) != 0;
-            if phase == state.iocq_phase {
-                state.iocq_head = (state.iocq_head + 1) % self.iocq_entries;
-                if state.iocq_head == 0 {
-                    state.iocq_phase = !state.iocq_phase;
+            if ((cqe.status & 0x1) != 0) != state.iocq_phase {
+                // Nothing published past this entry: the queue is drained.
+                return None;
+            }
+
+            state.iocq_head = (state.iocq_head + 1) % self.iocq_entries;
+            if state.iocq_head == 0 {
+                state.iocq_phase = !state.iocq_phase;
+            }
+            // Ring CQ doorbell (queue id = 1).
+            // SAFETY: as the submission doorbell: a register inside the mapped
+            // BAR at the controller's own stride.
+            let cq_doorbell = unsafe { self.bar0.add(cq_doorbell_offset(1, self.dstrd)) };
+            debug_assert!(
+                (cq_doorbell as usize).is_multiple_of(core::mem::align_of::<u32>()),
+                "IO CQ doorbell misaligned: {:#x}",
+                cq_doorbell as usize
+            );
+            // SAFETY: as the submission doorbell write; volatile for the same
+            // reason.
+            unsafe { write_volatile(cq_doorbell as *mut u32, state.iocq_head) };
+
+            let cid = cqe.command_id;
+            if let Some(index) = state.slots.iter().position(|s| s.id == cid as u64) {
+                let success = cqe.is_success();
+                let (dst, len, src) = {
+                    let slot = &state.slots[index];
+                    (slot.dst, slot.len, slot.bounce.as_ptr() as *const u8)
+                };
+                if success && !dst.is_null() {
+                    // SAFETY: the submit's contract keeps the caller's buffer
+                    // live and unmoved until this read's poll answers Done, and
+                    // `src` is this slot's own bounce buffer, which nothing
+                    // else writes while the slot is in use.
+                    unsafe { core::ptr::copy_nonoverlapping(src, dst, len) };
                 }
-                // Ring CQ doorbell (queue id = 1).
-                // SAFETY: as the submission doorbell above: a register inside
-                // the mapped BAR at the controller's own stride.
-                let cq_doorbell = unsafe { self.bar0.add(cq_doorbell_offset(1, self.dstrd)) };
-                debug_assert!(
-                    (cq_doorbell as usize).is_multiple_of(core::mem::align_of::<u32>()),
-                    "IO CQ doorbell misaligned: {:#x}",
-                    cq_doorbell as usize
-                );
-                // SAFETY: as the submission doorbell write; volatile for the
-                // same reason.
-                unsafe { write_volatile(cq_doorbell as *mut u32, state.iocq_head) };
-                drop(state);
-                return Ok(cqe);
+                state.slots[index].state = if success {
+                    ReadState::Done(Ok(()))
+                } else {
+                    ReadState::Done(Err(crate::Error::DeviceError))
+                };
+            } else if want == Some(cid) {
+                return Some(cqe);
             }
-            waited += 1;
-            if waited > COMPLETION_POLL_LIMIT {
-                return Err(crate::Error::TimedOut);
-            }
-            core::hint::spin_loop();
+            // A completion for neither a queued read nor the caller's own
+            // command cannot exist: every I/O submission is one or the other.
         }
     }
 
@@ -567,15 +675,75 @@ impl BlockDevice for NvmeController {
         false
     }
 
+    fn queue_depth(&self) -> u16 {
+        NVME_QUEUE_DEPTH as u16
+    }
+
+    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> crate::Result<ReadTicket> {
+        // The queued path issues one logical block per request, which is what
+        // the synchronous path does below it and what one bounce buffer holds.
+        if buffer.len() != self.block_size || lba >= self.block_count {
+            return Err(crate::Error::InvalidArgument);
+        }
+
+        let mut state = self.io_state.lock();
+        // A slot whose read has not been polled to completion still owns its
+        // destination; taking it would overwrite a buffer another caller is
+        // waiting on.  A full queue is refused rather than blocked.
+        let Some(index) = state.slots.iter().position(|slot| slot.id == SLOT_FREE) else {
+            return Err(crate::Error::Busy);
+        };
+        let cid = state.next_cmd_id;
+        state.next_cmd_id = state.next_cmd_id.wrapping_add(1);
+        let prp1 = state.slots[index].bounce.phys_addr() as u64;
+
+        let mut sqe = NvmeSqe::zeroed();
+        sqe.set_opcode(NVM_READ);
+        sqe.set_nsid(self.nsid);
+        sqe.set_command_id(cid);
+        sqe.set_prp1(prp1);
+        // CDW10/CDW11: the 64-bit starting LBA; CDW12: one LBA, zero-based.
+        sqe.set_cdw(lba as u32, (lba >> 32) as u32, 0);
+        self.io_submit(&mut state, &sqe);
+
+        let slot = &mut state.slots[index];
+        slot.id = cid as u64;
+        slot.dst = buffer.as_mut_ptr();
+        slot.len = buffer.len();
+        slot.state = ReadState::Pending;
+        Ok(ReadTicket::new(cid as u64))
+    }
+
+    fn poll_read(&self, ticket: ReadTicket) -> ReadState {
+        let mut state = self.io_state.lock();
+        // Drain whatever the controller has published: this read may have
+        // completed behind another request's.
+        self.reap(&mut state, None);
+
+        let Some(index) = state.slots.iter().position(|s| s.id == ticket.id()) else {
+            // An unknown ticket is the caller's bug, and an error is how it
+            // finds out; a hang would hide it.
+            return ReadState::Done(Err(crate::Error::InvalidArgument));
+        };
+        let answer = state.slots[index].state;
+        if matches!(answer, ReadState::Done(_)) {
+            // The caller has its data, so the slot and its bounce buffer are
+            // free for the next request.
+            let slot = &mut state.slots[index];
+            slot.id = SLOT_FREE;
+            slot.dst = core::ptr::null_mut();
+            slot.len = 0;
+            slot.state = ReadState::Pending;
+        }
+        answer
+    }
+
     fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> crate::Result<()> {
         if !buffer.len().is_multiple_of(self.block_size) {
             return Err(crate::Error::InvalidArgument);
         }
 
-        let io_buf = self.io_buf.lock();
         let bsz = self.block_size;
-
-        // Process block-at-a-time through the bounce buffer.
         let num_blocks = buffer.len() / bsz;
         debug_assert!(
             lba.saturating_add(num_blocks as u64) <= self.block_count,
@@ -583,33 +751,34 @@ impl BlockDevice for NvmeController {
             nblk = num_blocks,
             nsze = self.block_count
         );
+
+        // A waiting read is a queued read that is polled at once: the same
+        // submit, the same completion reaping, the same per-slot bounce
+        // buffer.  There is one read path in this driver, which is what makes
+        // the queued one exercised by every read the filesystem does.
         for i in 0..num_blocks {
-            let block_lba = lba.saturating_add(i as u64);
-
-            let mut sqe = NvmeSqe::zeroed();
-            sqe.set_opcode(NVM_READ);
-            sqe.set_nsid(self.nsid);
-            sqe.set_command_id(self.next_cmd_id()); // rotating IDs for multi-cmd tracking
-            sqe.set_prp1(io_buf.phys_addr() as u64);
-            // PRP2 = 0: single 512-byte block fits in one page.
-            let num_lbas = 1_u32; // one logical block per transfer
-                                  // CDW10/CDW11: 64-bit Starting LBA split per NVMe 1.0 §6.8.
-                                  // `block_lba as u32` extracts the low 32 bits; this is *not* a
-                                  // truncation bug — the high 32 bits follow on the next line.
-            sqe.set_cdw(
-                block_lba as u32,         // CDW10: SLBA low
-                (block_lba >> 32) as u32, // CDW11: SLBA high
-                (num_lbas - 1) & 0xFFFF,  // CDW12: NLB (0-based)
-            );
-
-            let cqe = self.io_submit_and_wait(&sqe)?;
-            if !cqe.is_success() {
-                return Err(crate::Error::NotFound);
-            }
-
-            // Copy from bounce buffer to caller's buffer.
             let start = i * bsz;
-            buffer[start..start + bsz].copy_from_slice(&io_buf.as_slice()[..bsz]);
+            let block = &mut buffer[start..start + bsz];
+            // SAFETY: `block` is a window into the caller's `buffer`, which is
+            // alive and unmoved for as long as this function runs — and the
+            // poll below runs before this iteration ends.
+            let ticket = unsafe { self.submit_read(lba + i as u64, block) }?;
+            let mut polls = 0u32;
+            loop {
+                match self.poll_read(ticket) {
+                    ReadState::Pending => {
+                        polls += 1;
+                        if polls > COMPLETION_POLL_LIMIT {
+                            return Err(crate::Error::TimedOut);
+                        }
+                        core::hint::spin_loop();
+                    }
+                    ReadState::Done(result) => {
+                        result?;
+                        break;
+                    }
+                }
+            }
         }
 
         Ok(())

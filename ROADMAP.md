@@ -160,15 +160,17 @@ The authoritative picture of what exists today is
   work rather than throughput through a NIC), and the commit
   comparison's own reads, which a per-block
   shadow of the previous generation would remove if they ever show up against
-  real disks.  What would have to change first is measured, not argued: the
-  boot-work line records `blk-in-flight-high-water`, and it is **1** on every
-  boot the tree runs and on every device those boots touch, so nothing here
-  holds a second request while the first is outstanding — an interface built
-  today would be unverifiable, which is why it is not built today.
-  [RFC 0007](docs/rfcs/0007-hold-a-second-request-on-a-device.md) records the
-  shape it will take — a submit/poll pair beside the waiting call, defaulted
-  so a device that cannot hold two requests keeps today's path — and the
-  caller that makes it verifiable, which is what has to land with it.
+  real disks.  The prerequisite was measured, not argued, and it has moved:
+  [RFC 0007](docs/rfcs/0007-hold-a-second-request-on-a-device.md) landed the
+  queued interface — a submit/poll pair beside the waiting call, defaulted so
+  a device that cannot hold two requests keeps today's path — with a boot
+  probe as its first caller, so `blk-in-flight-high-water` is **2** on the
+  disk baseline and stays **1** on the four depth-one ones.  What is still
+  missing is a *production* caller: the block cache's lookahead rides in the
+  same request as the block it was asked for, so overlapping that read means
+  splitting a request the cache decided to keep whole, which is its own
+  argument.  Until one lands, the mechanism is verified and unbilled-for —
+  the payoff is a hardware question, and the tree's devices are models.
 
 ## Long Term (1–3 years)
 

@@ -115,6 +115,15 @@ impl NvmeSqe {
         self.raw[0] = (self.raw[0] & !0xFFFF_0000) | ((id as u32) << 16);
     }
 
+    /// The command identifier this entry carries.
+    ///
+    /// A completion names the request it completes by this number, so a
+    /// driver that holds more than one request matches on it rather than on
+    /// "the next completion to arrive".
+    pub fn command_id(&self) -> u16 {
+        (self.raw[0] >> 16) as u16
+    }
+
     /// Store a 64-bit physical address into the two PRP1 DWORDs (DW6–DW7).
     ///
     /// NVMe splits 64-bit addresses across two 32-bit registers.  Physical

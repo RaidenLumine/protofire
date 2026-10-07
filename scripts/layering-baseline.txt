@@ -19,7 +19,9 @@
 #
 #   * `block` naming anything above `sync` — it is the layer the disk drivers
 #     and the filesystem both build on, so it must stay at the bottom.  The
-#     one row it has is the leaf mutex, which is where the bottom is.
+#     one row it has is the leaf mutex, which is where the bottom is.  The
+#     second occurrence is the same leaf mutex imported by the trait's own
+#     test mock — the same direction twice, not a layer above.
 #   * `drivers` naming `fs` — a driver hands a found device over through
 #     `kernel::block::publish_device`; it does not know who consumes it.
 #
@@ -123,13 +125,20 @@
 # names those subsystems — it prints the workload's counters beside the boot's
 # — and `mod` names it to run it.  Every edge points from the caller to the
 # subsystem it drives, so these rows are the shape of a consumer, not a new
-# direction for other code to take.
+# direction for other code to take.  The queued interface (RFC 0007) is more
+# occurrences of the same two rows and no new direction: `workload` names
+# `block` for the submit/poll pair and the counter the probe reads and `fs` for
+# the zone whose device handle it asks for, and `drivers` names `block` for the
+# types the driver's overrides take.  The counts are higher than a hand would
+# write because the formatter gives every imported path its own `use` line and
+# this census counts paths; the direction, which is what the rows are about, is
+# unchanged.
 #
 # from                         to                           count
 audit                        fs                           6
 audit                        handle_rights                2
 audit                        process                      1
-block                        sync                         1
+block                        sync                         2
 boot_report                  sync                         1
 console                      process                      5
 console                      sync                         1
@@ -137,7 +146,7 @@ device                       drivers                      8
 device                       fs                           7
 device                       handle_rights                2
 device                       sync                         1
-drivers                      block                        10
+drivers                      block                        12
 drivers                      memory                       3
 drivers                      network                      2
 drivers                      process                      15
@@ -262,8 +271,8 @@ user                         sync                         1
 vm_churn                     memory                       1
 vm_churn                     process                      6
 vm_churn                     smp                          4
-workload                     block                        2
-workload                     fs                           4
+workload                     block                        6
+workload                     fs                           5
 workload                     network                      5
 workload                     process                      2
 workload                     sync                         2
