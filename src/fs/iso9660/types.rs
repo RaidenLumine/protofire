@@ -175,6 +175,20 @@ impl DirRecord {
         rec
     }
 
+    /// The same record for an entry that may be either.
+    pub fn new_entry(
+        identifier: &[u8],
+        extent_location: u32,
+        extent_size: u32,
+        directory: bool,
+    ) -> Vec<u8> {
+        let mut rec = Self::new_file(identifier, extent_location, extent_size);
+        if directory {
+            rec[25] = 0x02;
+        }
+        rec
+    }
+
     /// Parse an ISO 9660 directory record (ASCII filenames).
     pub fn parse(sector_data: &[u8], offset: usize) -> Option<(Self, usize)> {
         Self::parse_inner(sector_data, offset, false)

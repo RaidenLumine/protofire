@@ -108,9 +108,11 @@ The authoritative picture of what exists today is
   rebuilt from the tree.  The RFC records why ISO 9660 went first (no
   compression to redo, no checksum tree to update, and a test image builder
   that already exists), and what it costs: the allocator appends, so a removal
-  reclaims nothing and a growth can pay a copy.  What is left of ISO 9660 is
-  `rename` and the Rock Ridge name entry that would let a created name be
-  anything a caller likes.  NTFS is the prize and the largest step; its RFC has
+  reclaims nothing and a growth can pay a copy.  Entries can be renamed and
+  moved as well, which is the same two halves as one operation.  What is left
+  of ISO 9660 is the Rock Ridge name entry that would let a created name be
+  anything a caller likes, and the free-space scan that would let a removal
+  reclaim what it freed.  NTFS is the prize and the largest step; its RFC has
   to decide its harness before its writes.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The

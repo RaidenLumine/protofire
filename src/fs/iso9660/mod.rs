@@ -26,7 +26,9 @@
 //!   directory or shifted out of it; a **directory** can be created and removed
 //!   too, and that is what moves the path tables, which are rebuilt from the
 //!   tree rather than edited in place.  A directory that still holds something
-//!   refuses to go, and `rename` still refuses.
+//!   refuses to go, and an entry can be renamed or moved: its record leaves one
+//!   directory and joins another, a directory's ".." follows it, and the tables
+//!   are rebuilt.
 //! - No Rock Ridge *name* entry is written, so a created name has to be an ISO
 //!   9660 identifier (`NAME.EXT`): the name is upper-cased and versioned, and a
 //!   name with characters an identifier has no room for is refused rather than
@@ -353,6 +355,32 @@ impl Iso9660Volume {
         }
         Ok((parent, record_offset, String::from(child)))
     }
+
+    /// Where a directory's own ".." record sits on the volume.
+    ///
+    /// It is the second record in the directory's extent, and the parser finds
+    /// it by its identifier — one byte, `0x01` — so this does not have to
+    /// assume how long the first record is.
+    fn parent_record_of(&self, extent_location: u32, extent_size: u32) -> Result<u64> {
+        let mut data = alloc::vec![0u8; extent_size as usize];
+        fs::read_extent(
+            &self.device,
+            self.block_size,
+            extent_location,
+            extent_size,
+            0,
+            &mut data,
+        )?;
+
+        let mut at = 0usize;
+        while let Some((record, next)) = DirRecord::parse(&data, at) {
+            if record.identifier == [0x01] {
+                return Ok(extent_location as u64 * self.block_size as u64 + at as u64);
+            }
+            at = next;
+        }
+        Err(Error::InvalidArgument)
+    }
 }
 
 impl VfsFileSystem for Iso9660Volume {
@@ -411,8 +439,89 @@ impl VfsFileSystem for Iso9660Volume {
         })
     }
 
-    fn rename(&self, _o: &str, _n: &str) -> Result<()> {
-        Err(Error::PermissionDenied)
+    /// Move or rename an entry.
+    ///
+    /// This is a removal and a create the caller sees as one: the record leaves
+    /// its directory, and an identical one — the same extent and the same
+    /// length — joins the destination's under the new name.  A directory also
+    /// carries ".." pointing at its parent, so a move rewrites that, and both
+    /// path tables are rebuilt because a directory's level and number are
+    /// properties of where it sits.
+    fn rename(&self, old: &str, new: &str) -> Result<()> {
+        let old_clean = clean_path(old);
+        let new_clean = clean_path(new);
+        if old_clean == new_clean {
+            return Ok(());
+        }
+
+        let (record, _entries, record_offset) = self.resolve(&old_clean)?;
+        if self.resolve(&new_clean).is_ok() {
+            return Err(Error::AlreadyExists);
+        }
+        let (old_parent, old_parent_record_offset, _old_name) = self.resolve_child(&old_clean)?;
+        let new_name = self.resolve_child(&new_clean)?.2;
+
+        if record.is_dir() {
+            // A directory cannot move inside itself: the records a move would
+            // rewrite are the ones it is made of.
+            let old_prefix = alloc::format!("{old_clean}/");
+            let new_parent_path = parent_path_of(&new_clean);
+            if new_parent_path == old_clean || new_parent_path.starts_with(&old_prefix) {
+                return Err(Error::InvalidArgument);
+            }
+        }
+
+        let identifier = if record.is_dir() {
+            dir_identifier(&new_name)?
+        } else {
+            iso_identifier(&new_name)?
+        };
+
+        // Out of the old directory first, and then the destination is resolved
+        // again: when both are the same directory, the removal shortened it and
+        // the append has to see the length that leaves.
+        remove_child_record(
+            &self.device,
+            self.block_size,
+            old_parent.extent_location,
+            old_parent.extent_size,
+            old_parent_record_offset,
+            record_offset,
+            record.record_len,
+        )?;
+        let (new_parent, new_parent_record_offset, _new_name) = self.resolve_child(&new_clean)?;
+
+        let bytes = DirRecord::new_entry(
+            &identifier,
+            record.extent_location,
+            record.extent_size,
+            record.is_dir(),
+        );
+        let (location, new_size, _record_offset) = fs::append_record(
+            &self.device,
+            self.block_size,
+            new_parent.extent_location,
+            new_parent.extent_size,
+            &bytes,
+        )?;
+        fs::rewrite_record_placement(&self.device, new_parent_record_offset, location, new_size)?;
+
+        if record.is_dir() {
+            if old_parent.extent_location != new_parent.extent_location {
+                // ".." is the directory's own record of its parent, and this is
+                // the one thing about it that a move changes.
+                let parent_record =
+                    self.parent_record_of(record.extent_location, record.extent_size)?;
+                fs::rewrite_record_placement(
+                    &self.device,
+                    parent_record,
+                    new_parent.extent_location,
+                    new_parent.extent_size,
+                )?;
+            }
+            self.rewrite_path_tables()?;
+        }
+        Ok(())
     }
 
     /// Add a regular file to a directory.
@@ -527,41 +636,14 @@ impl VfsFileSystem for Iso9660Volume {
             }
         }
         let (parent, parent_record_offset, _child) = self.resolve_child(&clean)?;
-
-        let mut data = alloc::vec![0u8; parent.extent_size as usize];
-        fs::read_extent(
+        remove_child_record(
             &self.device,
             self.block_size,
             parent.extent_location,
             parent.extent_size,
-            0,
-            &mut data,
-        )?;
-        let at = record_offset
-            .checked_sub(parent.extent_location as u64 * self.block_size as u64)
-            .ok_or(Error::InvalidArgument)? as usize;
-        let len = record.record_len;
-        if at + len > data.len() {
-            return Err(Error::InvalidArgument);
-        }
-        data.copy_within(at + len.., at);
-        let new_size = parent.extent_size - len as u32;
-        data[new_size as usize..].fill(0);
-        fs::write_extent(
-            &self.device,
-            self.block_size,
-            parent.extent_location,
-            parent.extent_size,
-            0,
-            &data,
-        )?;
-
-        // The directory is that much shorter, and nothing else about it moved.
-        fs::rewrite_record_placement(
-            &self.device,
             parent_record_offset,
-            parent.extent_location,
-            new_size,
+            record_offset,
+            record.record_len,
         )?;
 
         if record.is_dir() {
@@ -761,6 +843,49 @@ fn is_self_or_parent(record: &DirRecord) -> bool {
 /// The bytes an empty directory's extent holds: its own two records, which
 /// have one-byte identifiers and so are 34 bytes each.
 const EMPTY_DIRECTORY_BYTES: u32 = 2 * (33 + 1);
+
+/// Take one record out of a directory's extent.
+///
+/// The records after it move down over it and the tail is zeroed, rather than
+/// the survivors being re-serialised: a record carries whatever its writer put
+/// in its System Use area, and this driver does not parse all of it, so the
+/// bytes are the only honest copy.  The directory's own record is rewritten to
+/// the length that leaves.
+fn remove_child_record(
+    device: &Arc<dyn BlockDevice>,
+    block_size: u16,
+    dir_extent: u32,
+    dir_size: u32,
+    dir_record_offset: u64,
+    child_record_offset: u64,
+    child_len: usize,
+) -> Result<()> {
+    let mut data = alloc::vec![0u8; dir_size as usize];
+    fs::read_extent(device, block_size, dir_extent, dir_size, 0, &mut data)?;
+
+    let at = child_record_offset
+        .checked_sub(dir_extent as u64 * block_size as u64)
+        .ok_or(Error::InvalidArgument)? as usize;
+    if at + child_len > data.len() {
+        return Err(Error::InvalidArgument);
+    }
+    data.copy_within(at + child_len.., at);
+    let new_size = dir_size - child_len as u32;
+    data[new_size as usize..].fill(0);
+    fs::write_extent(device, block_size, dir_extent, dir_size, 0, &data)?;
+
+    // The directory is that much shorter, and nothing else about it moved.
+    fs::rewrite_record_placement(device, dir_record_offset, dir_extent, new_size)
+}
+
+/// The ISO 9660 identifier for a directory a caller names.
+/// The path of the directory a path names a child of.
+fn parent_path_of(clean_path: &str) -> &str {
+    match clean_path.rfind('/') {
+        Some(0) | None => "/",
+        Some(index) => &clean_path[..index],
+    }
+}
 
 /// The ISO 9660 identifier for a directory a caller names.
 ///

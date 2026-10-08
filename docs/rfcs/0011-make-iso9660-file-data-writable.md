@@ -331,3 +331,33 @@ let a created name be anything a caller likes.
 **What that leaves.**  `rename`, which is a removal and a create that the
 caller sees as one, and the Rock Ridge name entry that would let a created
 name be anything at all.
+
+**Stage 3d — renaming and moving.**
+
+- `rename` is a removal and a create the caller sees as one: the record leaves
+  its directory and an identical one — the same extent, the same length —
+  joins the destination's under the new name.  Both halves already existed;
+  what is new is that they are one operation.
+- The destination is resolved **again after the removal**, because when both
+  names are in the same directory the removal shortened it and the append has
+  to see the length that leaves.  That is the kind of ordering a single
+  operation makes easy to get wrong, so it is written where it happens.
+- A directory that moves rewrites its own ".." record, found by its identifier
+  (`0x01`) rather than by assuming how long the "." record before it is — a
+  foreign image's first record need not be the length this driver would write.
+  A directory whose parent did not change skips that, and a **file** rename
+  skips the path tables entirely, because the tables name directories.
+- A directory cannot move inside itself: the records the move would rewrite are
+  the ones it is made of.  The check is on the paths, before anything is
+  written.
+- Seven tests: a renamed file keeps its contents and a second mount agrees; a
+  move into a subdirectory takes the record with it; a renamed directory is
+  found under its new identifier and the tables no longer name the old one;
+  a *moved* directory's ".." points at the directory it moved into (read off
+  the medium, because the driver never resolves `..`); a move into itself is
+  `InvalidArgument`; a rename onto an existing name is `AlreadyExists`; a
+  read-only device refuses.
+
+**What that leaves.**  The Rock Ridge name entry, which would let a created or
+renamed name be anything at all, and the free-space scan that would let a
+removal reclaim what it freed.

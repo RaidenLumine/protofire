@@ -760,6 +760,152 @@ fn a_read_only_device_refuses_a_created_directory() {
     assert!(volume.create_dir("/NEWDIR").is_err());
 }
 
+// ─── Renaming and moving (RFC 0011, stage 3d) ──────────────────────────
+
+/// The extent a directory's own ".." record points at, read off the medium.
+fn parent_record_extent(device: &Arc<MemoryBlockDevice>, dir_extent: u32, dir_size: u32) -> u32 {
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let mut data = vec![0u8; dir_size as usize];
+    fs::read_extent(
+        &as_device,
+        SECTOR_SIZE as u16,
+        dir_extent,
+        dir_size,
+        0,
+        &mut data,
+    )
+    .expect("read the directory");
+
+    let mut at = 0usize;
+    while at < data.len() {
+        let len = data[at] as usize;
+        if len == 0 {
+            break;
+        }
+        if data[at + 32] == 1 && data[at + 33] == 0x01 {
+            return u32::from_le_bytes(data[at + 2..at + 6].try_into().expect("four bytes"));
+        }
+        at += len;
+    }
+    panic!("the directory has no parent record");
+}
+
+/// The extent a path table gives a directory, by identifier.
+fn table_extent(device: &Arc<MemoryBlockDevice>, identifier: &[u8]) -> u32 {
+    let (little, _) = path_tables(device);
+    little
+        .iter()
+        .find(|entry| entry.2 == identifier)
+        .unwrap_or_else(|| panic!("no path-table entry for {identifier:?}"))
+        .3
+}
+
+#[test]
+fn renaming_a_file_keeps_its_contents() {
+    let (device, volume) = writable_volume();
+    volume.rename("/HELLO.TXT", "/RENAMED.TXT").expect("rename");
+
+    assert!(matches!(volume.lookup("/HELLO.TXT"), Err(Error::NotFound)));
+    let node = volume.lookup("/RENAMED.TXT").expect("lookup");
+    assert_eq!(node.size(), HELLO.len());
+    let mut buf = vec![0u8; HELLO.len()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), HELLO.len());
+    assert_eq!(buf, HELLO);
+
+    // The name is a record in the directory, so a second mount sees it.
+    let reopened = open_volume(device);
+    assert!(matches!(
+        reopened.lookup("/HELLO.TXT"),
+        Err(Error::NotFound)
+    ));
+    assert!(reopened.lookup("/RENAMED.TXT").is_ok());
+}
+
+#[test]
+fn moving_a_file_into_a_directory_takes_its_record_with_it() {
+    let (_device, volume) = writable_volume();
+    volume.rename("/HELLO.TXT", "/SUB/HELLO.TXT").expect("move");
+
+    assert!(matches!(volume.lookup("/HELLO.TXT"), Err(Error::NotFound)));
+    let node = volume.lookup("/SUB/HELLO.TXT").expect("lookup");
+    let mut buf = vec![0u8; HELLO.len()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), HELLO.len());
+    assert_eq!(buf, HELLO);
+
+    // The neighbour it joined is still there.
+    assert!(volume.lookup("/SUB/NOTES.TXT").is_ok());
+}
+
+#[test]
+fn renaming_a_directory_keeps_it_and_the_tables_agree() {
+    let (device, volume) = writable_volume();
+    volume.rename("/SUB", "/RENAMED").expect("rename");
+
+    assert!(matches!(volume.lookup("/SUB"), Err(Error::NotFound)));
+    assert!(volume.lookup("/RENAMED/NOTES.TXT").is_ok());
+
+    // A directory is in the path tables, and they must not still name the old
+    // identifier.
+    let (little, _) = path_tables(&device);
+    let names: Vec<&Vec<u8>> = little.iter().map(|entry| &entry.2).collect();
+    assert!(names.contains(&&b"RENAMED".to_vec()));
+    assert!(!names.contains(&&b"SUB".to_vec()));
+}
+
+#[test]
+fn moving_a_directory_rewrites_its_parent_record() {
+    let (device, volume) = writable_volume();
+    volume.create_dir("/outer").expect("create outer");
+    volume.create_dir("/mover").expect("create mover");
+    let outer_extent = table_extent(&device, b"OUTER");
+    assert_ne!(
+        parent_record_extent(&device, table_extent(&device, b"MOVER"), 68),
+        outer_extent,
+        "the mover starts somewhere else"
+    );
+
+    volume.rename("/mover", "/outer/mover").expect("move");
+
+    // ".." is the moved directory's own record of its parent, and this is the
+    // one thing about it that a move changes.
+    let moved_extent = table_extent(&device, b"MOVER");
+    assert_eq!(
+        parent_record_extent(&device, moved_extent, 68),
+        outer_extent,
+        "\"..\" still points at the directory it left"
+    );
+    assert!(volume.lookup("/outer/mover").is_ok());
+    assert!(matches!(volume.lookup("/mover"), Err(Error::NotFound)));
+}
+
+#[test]
+fn moving_a_directory_into_itself_is_refused() {
+    let (_device, volume) = writable_volume();
+    assert_eq!(
+        volume.rename("/SUB", "/SUB/inner"),
+        Err(Error::InvalidArgument)
+    );
+}
+
+#[test]
+fn renaming_onto_an_existing_name_is_refused() {
+    let (_device, volume) = writable_volume();
+    assert_eq!(
+        volume.rename("/HELLO.TXT", "/SUB"),
+        Err(Error::AlreadyExists)
+    );
+}
+
+#[test]
+fn a_read_only_device_refuses_a_rename() {
+    let device = MemoryBlockDevice::new("iso-ro", build_test_image(), true);
+    let volume = open_volume(device);
+    assert_eq!(
+        volume.rename("/HELLO.TXT", "/RENAMED.TXT"),
+        Err(Error::PermissionDenied)
+    );
+}
+
 // ─── Changing a file's length (RFC 0011, stage 2) ──────────────────────
 
 /// Where `HELLO.TXT;1`'s directory record sits inside the root extent: the
