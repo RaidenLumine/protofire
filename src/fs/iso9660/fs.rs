@@ -144,11 +144,17 @@ fn read_records(
 }
 
 /// Whether a record is a directory's own "." or its "..".
-fn names_self_or_parent(record: &DirRecord, joliet: bool) -> bool {
-    // A Joliet identifier is UCS-2BE, so its one-character form is two bytes.
-    let length = if joliet { 2 } else { 1 };
-    record.identifier.len() == length
+pub fn names_self_or_parent(record: &DirRecord, joliet: bool) -> bool {
+    if !joliet {
+        return record.identifier.len() == 1
+            && (record.identifier[0] == 0x00 || record.identifier[0] == 0x01);
+    }
+    // A Joliet identifier is UCS-2BE, where "." is the code unit 0x0000 and
+    // ".." is 0x0001 — so *both* bytes are what says so.  A name whose first
+    // byte is zero is any name starting below U+0100, which is most of them.
+    record.identifier.len() == 2
         && (record.identifier[0] == 0x00 || record.identifier[0] == 0x01)
+        && record.identifier[1] == 0x00
 }
 
 /// Read all directory entries from an extent.
@@ -447,15 +453,20 @@ pub fn build_path_table(entries: &[PathTableEntry], big_endian: bool) -> Vec<u8>
 /// little-endian and the big-endian table's are big-endian.  That is the
 /// format, not a choice.  The two optional copies are rewritten too, because a
 /// reader is allowed to follow them and a stale copy is a wrong answer.
+///
+/// The descriptor is a parameter because a volume has one per tree: the
+/// primary descriptor's tables name the primary tree's directories and the
+/// supplementary descriptor's name its own.
 pub fn rewrite_path_table_fields(
     device: &Arc<dyn BlockDevice>,
+    descriptor_sector: u64,
     size: u32,
     l_location: u32,
     opt_l_location: u32,
     m_location: u32,
     opt_m_location: u32,
 ) -> Result<(), Error> {
-    let at = |field: usize| PVD_SECTOR * SECTOR_SIZE as u64 + field as u64;
+    let at = |field: usize| descriptor_sector * SECTOR_SIZE as u64 + field as u64;
 
     let mut size_field = [0u8; 8];
     size_field[..4].copy_from_slice(&size.to_le_bytes());
@@ -491,12 +502,12 @@ pub fn rewrite_path_table_fields(
 ///
 /// The descriptor's own statement of the volume's extent, stored twice.  Zero
 /// means the image never said.
-/// Where the root directory's record lives: a field of the PVD.
+/// Where a descriptor's root directory record lives.
 ///
 /// The root is the one directory that is not a record inside another, and its
-/// length lives in the descriptor.
-pub fn root_record_offset() -> u64 {
-    PVD_SECTOR * SECTOR_SIZE as u64 + PVD_ROOT_RECORD_OFFSET as u64
+/// length lives in the descriptor that names it — one per tree.
+pub fn root_record_offset(descriptor_sector: u64) -> u64 {
+    descriptor_sector * SECTOR_SIZE as u64 + PVD_ROOT_RECORD_OFFSET as u64
 }
 
 /// A descriptor field whose on-disk bytes are little-endian.
@@ -682,6 +693,43 @@ fn descriptor_of(bytes: &[u8; SECTOR_SIZE]) -> &Pvd {
     // buffer cannot give, and a sector is wider than the descriptor it starts
     // with.
     unsafe { &*bytes.as_ptr().cast::<Pvd>() }
+}
+
+/// The root record a descriptor carries.
+///
+/// A volume's trees are each named by a descriptor — the primary one, and the
+/// supplementary one when the volume has it — and their root records are the
+/// same field of the same structure, so this is what says where a tree starts.
+pub fn descriptor_root(
+    device: &Arc<dyn BlockDevice>,
+    descriptor_sector: u64,
+    joliet: bool,
+) -> Result<DirRecord, Error> {
+    let mut bytes = [0u8; SECTOR_SIZE];
+    read_exact(device, descriptor_sector * SECTOR_SIZE as u64, &mut bytes)?;
+    let descriptor = descriptor_of(&bytes);
+    let parsed = if joliet {
+        DirRecord::parse_joliet(&descriptor.root_dir_record, 0)
+    } else {
+        DirRecord::parse(&descriptor.root_dir_record, 0)
+    };
+    let (root, _next) = parsed.ok_or(Error::InvalidArgument)?;
+    Ok(root)
+}
+
+/// Read one of a volume's descriptors, whichever tree it names.
+pub fn read_descriptor(
+    device: &Arc<dyn BlockDevice>,
+    descriptor_sector: u64,
+) -> Result<Pvd, Error> {
+    let mut bytes = [0u8; SECTOR_SIZE];
+    read_exact(device, descriptor_sector * SECTOR_SIZE as u64, &mut bytes)?;
+    if &bytes[1..6] != b"CD001" || bytes[6] != 0x01 {
+        return Err(Error::InvalidArgument);
+    }
+    // SAFETY: as `read_pvd` — a packed descriptor at the start of a full
+    // sector buffer, copied out rather than borrowed.
+    Ok(unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const Pvd) })
 }
 
 /// Where every structure a volume holds is, or an error when this driver

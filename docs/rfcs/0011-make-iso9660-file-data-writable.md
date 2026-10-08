@@ -160,14 +160,15 @@ ISO 9660's tests already build a full image:
 - **Does ISO 9660 want a cache?**  It has none today and a write is visible at
   once because of it; adding one later means the write path has to go through
   it too.
-- **A Joliet image has two directory trees.**  The mount reads the Joliet tree
-  when the image has one, so a resize rewrites the record it looked the file up
-  in — and the *primary* tree's record for the same file keeps the old length.
-  The data is one extent and both trees point at it, so nothing is lost; what
-  is stale is one tree's idea of how long the file is, for a reader that
-  prefers the primary tree.  Updating both means mapping a Joliet record to its
-  primary counterpart, which is name work rather than record work, and it is
-  the first thing a stage-2 follow-up should do.
+- **A Joliet image has two directory trees.**  *Decided when stage 3i landed,
+  and the answer is that this driver does not write *through* the second tree.*
+  The trees share a file's data but not its directories, and they do not spell
+  a name the same way — that is what a second tree is for — so "which record in
+  the other tree is this file's" is not a question the volume answers.  Matching
+  by data extent comes close and fails exactly where it matters: two empty
+  files name the same extent, and the record whose *length* is stale cannot be
+  matched by its length.  A change that goes into one tree and not the other is
+  the defect; a change that goes into a guessed record is a worse one.
 - **Is NTFS's harness the demo disk or a fixture image?**  Whichever it is, it
   is a prerequisite for NTFS's own RFC, and it is what that RFC should decide
   first.
@@ -536,7 +537,32 @@ removal reclaim what it freed.
   declared; and a volume with nothing to append to still mounts and still
   takes a create.
 
-**What that leaves.**  A change still updates only the tree the lookup used —
-the Joliet note in the questions above — and a volume whose structures this
-driver cannot account for keeps appending, which is a decision rather than a
-gap: the alternative is guessing.
+**Stage 3i — the second tree, and the line this driver draws.**
+
+- The trees are modelled as what they are: a descriptor and an encoding each.
+  A read names one, and the tree a lookup used is the one a node's record
+  offset belongs to.
+- Each tree's path tables are rebuilt from **that tree** and written into
+  **that tree's** descriptor.  Before, they were derived from the Joliet tree
+  and written into the primary descriptor's fields: a primary reader that
+  followed them was handed the other tree's directories, and the supplementary
+  descriptor's own tables were never written at all.
+- Whether a record says "." or ".." is not the same test in the two encodings.
+  Joliet's identifier for them is one UCS-2 code unit, so *both* bytes say it —
+  and a name of one character below U+0100 ("A") begins with a zero byte.  The
+  old test made that name a dot record: it was listed to nobody and its extent
+  was never walked.
+- A two-tree volume is written only where the trees agree, which is the file's
+  **data**: an overwrite inside the length puts the same bytes under both
+  records.  A length, a create, a removal and a rename are `Unsupported`, since
+  each would have to appear in both trees and there is no way to say in which
+  record of the other tree.
+- Four tests: the second tree's label, names and listing, including the
+  one-character directory above; each descriptor's path tables naming its own
+  root's extent; an overwrite that both trees' records share; and the refusals,
+  with the primary record still saying exactly what it said.
+
+**What that leaves.**  ISO 9660's list is done.  What is left of it is a
+decision rather than a gap: a volume whose structures this driver cannot
+account for keeps appending, and a volume with two trees is written only where
+the trees agree.  Both are places where the alternative is guessing.

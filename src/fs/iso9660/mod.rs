@@ -34,6 +34,14 @@
 //!   refuses to go, and an entry can be renamed or moved: its record leaves one
 //!   directory and joins another, a directory's ".." follows it, and the tables
 //!   are rebuilt.
+//! - A volume with **two trees** — a Joliet one beside the primary — is written
+//!   only where the two agree, which is the file's data: an overwrite inside
+//!   its length is the same bytes under both records.  A length change and
+//!   everything structural is refused, because each would have to appear in
+//!   both trees and the trees spell a name differently by design, so nothing on
+//!   the volume says which record in the other tree is the same file's ([RFC
+//!   0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md) draws the
+//!   line where a write would otherwise be a guess).
 //! - A created or renamed entry carries a Rock Ridge **name** entry, so its
 //!   name is the caller's — lower case, spaces, anything a record has room for
 //!   — and the identifier beside it is the mangled form a reader that ignores
@@ -103,6 +111,23 @@ fn pvd_volume_label(pvd: &types::Pvd) -> String {
 
 // ── Iso9660Volume ─────────────────────────────────────────────────────────
 
+/// One of a volume's directory trees.
+///
+/// ISO 9660 lets a volume carry more than one: the primary descriptor's tree,
+/// whose identifiers are upper case and versioned, and a supplementary tree —
+/// Joliet's, when the descriptor's escape sequence says so — whose identifiers
+/// are UCS-2BE.  The trees share the files' *data*, but not their directories:
+/// each has its own root, its own directory extents, and its own path tables.
+/// A record in every tree names that shared data, which is what makes a file's
+/// length something every tree has an opinion about.
+#[derive(Clone, Copy)]
+struct Tree {
+    /// Whether identifiers in this tree are UCS-2BE.
+    joliet: bool,
+    /// The descriptor that names this tree and carries its path tables.
+    descriptor_sector: u64,
+}
+
 /// A mounted ISO 9660 volume implementing the VFS [`VfsFileSystem`] trait.
 pub struct Iso9660Volume {
     device: Arc<dyn BlockDevice>,
@@ -115,13 +140,43 @@ pub struct Iso9660Volume {
     /// *it* took.  That is what lets a removal reclaim space without this
     /// driver having to know every structure a foreign volume could hold.
     volume_floor: u32,
-    /// Joliet SVD root directory record, if present.
-    joliet_root: Option<DirRecord>,
-    /// Whether Joliet UCS-2BE filenames should be used.
-    has_joliet: bool,
+    /// The primary descriptor's tree, and the supplementary one when the
+    /// volume has it.
+    primary: Tree,
+    joliet: Option<Tree>,
 }
 
 impl Iso9660Volume {
+    /// Every tree the volume has, the primary one first.
+    fn trees(&self) -> impl Iterator<Item = &Tree> {
+        core::iter::once(&self.primary).chain(self.joliet.iter())
+    }
+
+    /// The tree a read answers from.
+    ///
+    /// Joliet's, when the volume has one: it is the tree whose names are meant
+    /// to be read, and the primary tree's are the fallback spelling of them.
+    fn reading_tree(&self) -> &Tree {
+        self.joliet.as_ref().unwrap_or(&self.primary)
+    }
+
+    /// Refuse a change that would alter a *directory* on a volume with two
+    /// trees.
+    ///
+    /// A create, a removal and a rename each add or take away a record in a
+    /// directory, and a volume's trees do not share their directories: the
+    /// entry would have to be made in every tree, with an identifier encoded
+    /// for each, and this driver makes it in one.  A *length* is a field of a
+    /// record every tree has, so that one is kept in step; anything structural
+    /// is not, and a change that would half-happen is refused instead ([RFC
+    /// 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+    fn refuse_a_change_to_one_of_two_trees(&self) -> Result<()> {
+        if self.joliet.is_some() {
+            return Err(Error::Unsupported);
+        }
+        Ok(())
+    }
+
     /// Open an ISO 9660 volume on the given block device.
     ///
     /// Reads the PVD and validates the ISO 9660 signature.
@@ -135,21 +190,28 @@ impl Iso9660Volume {
         let volume_floor = fs::volume_blocks(&device)?;
 
         // Try to detect a Joliet Supplementary Volume Descriptor.
-        let (joliet_label, joliet_root, has_joliet) = if let Some(svd) = fs::read_svd(&device) {
-            let (joliet_root_rec, _) =
-                DirRecord::parse_joliet(&svd.root_dir_record, 0).ok_or(Error::InvalidArgument)?;
-            (pvd_volume_label(&svd), Some(joliet_root_rec), true)
+        let (volume_label, joliet) = if let Some(svd) = fs::read_svd(&device) {
+            (
+                pvd_volume_label(&svd),
+                Some(Tree {
+                    joliet: true,
+                    descriptor_sector: types::SVD_SECTOR,
+                }),
+            )
         } else {
-            (pvd_volume_label(&pvd), None, false)
+            (pvd_volume_label(&pvd), None)
         };
 
         let volume = Self {
             device,
             block_size,
-            volume_label: joliet_label,
+            volume_label,
             volume_floor,
-            joliet_root,
-            has_joliet,
+            primary: Tree {
+                joliet: false,
+                descriptor_sector: types::PVD_SECTOR,
+            },
+            joliet,
         };
 
         // A volume this driver is going to write entries into has to say which
@@ -327,35 +389,29 @@ impl Iso9660Volume {
         }
     }
 
-    /// Read directory entries from an extent, using Joliet if enabled.
-    fn read_dir_extent(&self, extent_location: u32, extent_size: u32) -> Result<Vec<DirRecord>> {
-        if self.has_joliet {
+    /// Read directory entries from an extent, in one tree's encoding.
+    fn read_dir_extent(
+        &self,
+        tree: &Tree,
+        extent_location: u32,
+        extent_size: u32,
+    ) -> Result<Vec<DirRecord>> {
+        if tree.joliet {
             fs::read_joliet_directory(&self.device, self.block_size, extent_location, extent_size)
         } else {
             fs::read_directory(&self.device, self.block_size, extent_location, extent_size)
         }
     }
 
-    /// Read the root directory: its own record, and its entries.
-    fn read_root(&self) -> Result<(DirRecord, Vec<DirRecord>)> {
-        if let Some(ref joliet_root) = self.joliet_root {
-            let entries = fs::read_joliet_directory(
-                &self.device,
-                self.block_size,
-                joliet_root.extent_location,
-                joliet_root.extent_size,
-            )?;
-            return Ok((joliet_root.clone(), entries));
-        }
-        let pvd = fs::read_pvd(&self.device)?;
-        let (root_record, _next) =
-            DirRecord::parse(&pvd.root_dir_record, 0).ok_or(Error::InvalidArgument)?;
-        let entries = fs::read_directory(
-            &self.device,
-            self.block_size,
-            root_record.extent_location,
-            root_record.extent_size,
-        )?;
+    /// Read a tree's root directory: its own record, and its entries.
+    ///
+    /// The record is read from the descriptor every time rather than kept,
+    /// because a writable volume's root can *move* — the extension reference
+    /// rebuilds it — and a copy taken at open would name the extent it left.
+    fn read_root(&self, tree: &Tree) -> Result<(DirRecord, Vec<DirRecord>)> {
+        let root_record = fs::descriptor_root(&self.device, tree.descriptor_sector, tree.joliet)?;
+        let entries =
+            self.read_dir_extent(tree, root_record.extent_location, root_record.extent_size)?;
         Ok((root_record, entries))
     }
 
@@ -365,8 +421,8 @@ impl Iso9660Volume {
     /// then by identifier.  A level-order walk gives the first two for free —
     /// a parent is always numbered before its children — so this walks the
     /// levels in turn and sorts each directory's children by identifier.
-    fn path_table_entries(&self) -> Result<Vec<fs::PathTableEntry>> {
-        let (root, root_entries) = self.read_root()?;
+    fn path_table_entries(&self, tree: &Tree) -> Result<Vec<fs::PathTableEntry>> {
+        let (root, root_entries) = self.read_root(tree)?;
         let mut entries = alloc::vec![fs::PathTableEntry {
             identifier: alloc::vec![0x00],
             extent_location: root.extent_location,
@@ -379,7 +435,7 @@ impl Iso9660Volume {
         while let Some((parent_number, records)) = pending.pop_front() {
             let mut children: Vec<DirRecord> = records
                 .into_iter()
-                .filter(|record| record.is_dir() && !is_self_or_parent(record))
+                .filter(|record| record.is_dir() && !fs::names_self_or_parent(record, tree.joliet))
                 .collect();
             children.sort_by(|left, right| left.identifier.cmp(&right.identifier));
 
@@ -391,38 +447,48 @@ impl Iso9660Volume {
                     number,
                     parent_number,
                 });
-                let sub = self.read_dir_extent(child.extent_location, child.extent_size)?;
+                let sub = self.read_dir_extent(tree, child.extent_location, child.extent_size)?;
                 pending.push_back((number, sub));
             }
         }
         Ok(entries)
     }
 
-    /// Rebuild both path tables from the tree and write them.
+    /// Rebuild the path tables of every tree the volume has.
+    fn rewrite_path_tables(&self) -> Result<()> {
+        for tree in self.trees() {
+            self.rewrite_path_tables_in(tree)?;
+        }
+        Ok(())
+    }
+
+    /// Rebuild one tree's path tables from that tree, and write them.
     ///
     /// The tables are *derived* rather than edited: a directory's number is its
     /// position, so inserting one renumbers everything after it, and rebuilding
     /// the list is the same work with fewer ways to be wrong.  Two are
     /// required — one per byte order — and a volume may also carry optional
     /// copies, which are rewritten to the same content because a reader is
-    /// allowed to follow them.
-    fn rewrite_path_tables(&self) -> Result<()> {
-        let entries = self.path_table_entries()?;
+    /// allowed to follow them.  Every one of them goes in the descriptor that
+    /// names the tree: a second tree's tables are its own, and a reader that
+    /// follows them must not be handed the first tree's directories.
+    fn rewrite_path_tables_in(&self, tree: &Tree) -> Result<()> {
+        let entries = self.path_table_entries(tree)?;
         let little = fs::build_path_table(&entries, false);
         let big = fs::build_path_table(&entries, true);
         debug_assert_eq!(little.len(), big.len());
         let size = u32::try_from(little.len()).map_err(|_| Error::NoSpace)?;
 
-        let pvd = fs::read_pvd(&self.device)?;
+        let descriptor = fs::read_descriptor(&self.device, tree.descriptor_sector)?;
         let old_size = u32::from_le_bytes(
-            pvd.path_table_size[..4]
+            descriptor.path_table_size[..4]
                 .try_into()
                 .map_err(|_| Error::InvalidArgument)?,
         );
         let blocks = |bytes: u32| (bytes as u64).div_ceil(self.block_size as u64) as u32;
 
-        let mut l_location = fs::field_le(pvd.l_path_table_loc);
-        let mut m_location = fs::field_be(pvd.m_path_table_loc);
+        let mut l_location = fs::field_le(descriptor.l_path_table_loc);
+        let mut m_location = fs::field_be(descriptor.m_path_table_loc);
         if blocks(size) > blocks(old_size) {
             // A path table is one contiguous extent like any other, so more
             // room than it has means moving it to free blocks — one allocator
@@ -441,20 +507,28 @@ impl Iso9660Volume {
         };
         write_at(l_location, &little)?;
         write_at(m_location, &big)?;
-        let opt_l = if pvd.opt_l_path_table_loc == 0 {
+        let opt_l = if descriptor.opt_l_path_table_loc == 0 {
             0
         } else {
             write_at(l_location, &little)?;
             l_location
         };
-        let opt_m = if pvd.opt_m_path_table_loc == 0 {
+        let opt_m = if descriptor.opt_m_path_table_loc == 0 {
             0
         } else {
             write_at(m_location, &big)?;
             m_location
         };
 
-        fs::rewrite_path_table_fields(&self.device, size, l_location, opt_l, m_location, opt_m)
+        fs::rewrite_path_table_fields(
+            &self.device,
+            tree.descriptor_sector,
+            size,
+            l_location,
+            opt_l,
+            m_location,
+            opt_m,
+        )
     }
 
     /// Resolve a clean path to its record, its directory's entries when it is a
@@ -464,11 +538,24 @@ impl Iso9660Volume {
     /// the length of the file it describes, and the record's position is not
     /// something a lookup can recover later without walking the path again.
     fn resolve(&self, clean_path: &str) -> Result<(DirRecord, Option<Vec<DirRecord>>, u64)> {
+        self.resolve_in(self.reading_tree(), clean_path)
+    }
+
+    /// The same, in one named tree.
+    fn resolve_in(
+        &self,
+        tree: &Tree,
+        clean_path: &str,
+    ) -> Result<(DirRecord, Option<Vec<DirRecord>>, u64)> {
         if clean_path.is_empty() || clean_path == "/" {
-            let (root_rec, entries) = self.read_root()?;
-            // The root's record is a field of the PVD, and a root that grows
-            // or shrinks rewrites its length there.
-            return Ok((root_rec, Some(entries), fs::root_record_offset()));
+            let (root_rec, entries) = self.read_root(tree)?;
+            // A root's record is a field of the descriptor that names it, and
+            // a root that grows or shrinks rewrites its length there.
+            return Ok((
+                root_rec,
+                Some(entries),
+                fs::root_record_offset(tree.descriptor_sector),
+            ));
         }
 
         let segments: Vec<&str> = clean_path
@@ -478,7 +565,7 @@ impl Iso9660Volume {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let (root_record, root_entries) = self.read_root()?;
+        let (root_record, root_entries) = self.read_root(tree)?;
         let mut entries_extent = root_record.extent_location;
         let mut current_entries = root_entries;
 
@@ -492,7 +579,7 @@ impl Iso9660Volume {
 
             if i == segments.len() - 1 {
                 let sub = if record.is_dir() {
-                    Some(self.read_dir_extent(record.extent_location, record.extent_size)?)
+                    Some(self.read_dir_extent(tree, record.extent_location, record.extent_size)?)
                 } else {
                     None
                 };
@@ -502,7 +589,7 @@ impl Iso9660Volume {
             if record.is_dir() {
                 entries_extent = record.extent_location;
                 current_entries =
-                    self.read_dir_extent(record.extent_location, record.extent_size)?;
+                    self.read_dir_extent(tree, record.extent_location, record.extent_size)?;
             } else {
                 return Err(Error::NotFound);
             }
@@ -596,7 +683,11 @@ impl Iso9660Volume {
         )?;
 
         if location != parent.extent_location {
-            let children = self.read_dir_extent(parent.extent_location, parent.extent_size)?;
+            let children = self.read_dir_extent(
+                self.reading_tree(),
+                parent.extent_location,
+                parent.extent_size,
+            )?;
             for child in children.iter().filter(|child| child.is_dir()) {
                 let child_parent =
                     self.parent_record_of(child.extent_location, child.extent_size)?;
@@ -638,6 +729,7 @@ impl VfsFileSystem for Iso9660Volume {
             extent_location: AtomicU32::new(record.extent_location),
             extent_size: AtomicU32::new(record.extent_size),
             record_offset,
+            trees: u8::try_from(self.trees().count()).unwrap_or(u8::MAX),
             volume_floor: self.volume_floor,
             rr_posix: record.rr_posix,
             rr_symlink: record.rr_symlink,
@@ -681,6 +773,7 @@ impl VfsFileSystem for Iso9660Volume {
     /// path tables are rebuilt because a directory's level and number are
     /// properties of where it sits.
     fn rename(&self, old: &str, new: &str) -> Result<()> {
+        self.refuse_a_change_to_one_of_two_trees()?;
         let old_clean = clean_path(old);
         let new_clean = clean_path(new);
         if old_clean == new_clean {
@@ -718,7 +811,11 @@ impl VfsFileSystem for Iso9660Volume {
         )?;
         let (new_parent, new_parent_record_offset, _new_name) = self.resolve_child(&new_clean)?;
 
-        let entries = self.read_dir_extent(new_parent.extent_location, new_parent.extent_size)?;
+        let entries = self.read_dir_extent(
+            self.reading_tree(),
+            new_parent.extent_location,
+            new_parent.extent_size,
+        )?;
         let identifier = identifier_for(&new_name, record.is_dir(), &identifiers_in(&entries))?;
         // The entry keeps everything its record said about it — its POSIX
         // attributes, a symlink's target, whatever else its System Use area
@@ -764,12 +861,17 @@ impl VfsFileSystem for Iso9660Volume {
     /// stored as itself and read back as itself, while the identifier is the
     /// mangled form a reader without Rock Ridge sees.
     fn create_file(&self, path: &str) -> Result<Arc<dyn VNode>> {
+        self.refuse_a_change_to_one_of_two_trees()?;
         let clean = clean_path(path);
         if self.resolve(&clean).is_ok() {
             return Err(Error::AlreadyExists);
         }
         let (parent, parent_record_offset, child) = self.resolve_child(&clean)?;
-        let entries = self.read_dir_extent(parent.extent_location, parent.extent_size)?;
+        let entries = self.read_dir_extent(
+            self.reading_tree(),
+            parent.extent_location,
+            parent.extent_size,
+        )?;
         let identifier = identifier_for(&child, false, &identifiers_in(&entries))?;
 
         let extent_location = fs::volume_blocks(&self.device)?;
@@ -790,6 +892,7 @@ impl VfsFileSystem for Iso9660Volume {
             extent_location: AtomicU32::new(extent_location),
             extent_size: AtomicU32::new(0),
             record_offset,
+            trees: 1,
             volume_floor: self.volume_floor,
             // The attributes are what the record this call wrote carries, so
             // the node answers with them rather than with the default a record
@@ -801,12 +904,17 @@ impl VfsFileSystem for Iso9660Volume {
         }))
     }
     fn create_dir(&self, path: &str) -> Result<()> {
+        self.refuse_a_change_to_one_of_two_trees()?;
         let clean = clean_path(path);
         if self.resolve(&clean).is_ok() {
             return Err(Error::AlreadyExists);
         }
         let (parent, parent_record_offset, child) = self.resolve_child(&clean)?;
-        let entries = self.read_dir_extent(parent.extent_location, parent.extent_size)?;
+        let entries = self.read_dir_extent(
+            self.reading_tree(),
+            parent.extent_location,
+            parent.extent_size,
+        )?;
         let identifier = identifier_for(&child, true, &identifiers_in(&entries))?;
 
         // A directory's extent holds its own two records before anything else:
@@ -859,6 +967,7 @@ impl VfsFileSystem for Iso9660Volume {
     /// are its last; what is free in the middle of one takes a scan this
     /// driver does not do.
     fn remove_path(&self, path: &str) -> Result<()> {
+        self.refuse_a_change_to_one_of_two_trees()?;
         let clean = clean_path(path);
         let (record, _entries, record_offset) = self.resolve(&clean)?;
         if record.is_dir() {
@@ -951,6 +1060,15 @@ struct Iso9660VNode {
     /// A resize rewrites the length *in that record*, and nothing else on the
     /// volume knows the file's size.
     record_offset: u64,
+    /// How many directory trees the volume has.
+    ///
+    /// One means the record above is the only copy of the file's length.  More
+    /// than one means every tree has a copy, and the trees do not spell the
+    /// file's name the same way — so which record in the other tree is *this*
+    /// file's is not a question the volume answers, and a length is not
+    /// something to write into a guess ([`Iso9660Volume`]'s
+    /// `refuse_a_change_to_one_of_two_trees` is the whole argument).
+    trees: u8,
     /// The size the volume declared when it was opened, which is the floor a
     /// shrink may not take blocks back below — see [`Iso9660Volume`].
     volume_floor: u32,
@@ -1042,6 +1160,16 @@ impl VNode for Iso9660VNode {
     fn set_len(&self, length: u64) -> Result<()> {
         if self.kind != NodeKind::File {
             return Err(Error::InvalidArgument);
+        }
+        // A file's *length* is a field of a record in every tree, and a
+        // volume's trees do not spell the file's name the same way: which
+        // record in the other tree is this file's is not something the volume
+        // says.  What a change to the length would leave behind is one tree
+        // that has it and one that does not, so it is refused — and an
+        // overwrite *inside* the length is not, because the data both trees
+        // point at is the same data.
+        if self.trees > 1 {
+            return Err(Error::Unsupported);
         }
         let length = u32::try_from(length).map_err(|_| Error::InvalidArgument)?;
         let current = self.extent_size.load(Ordering::Relaxed);

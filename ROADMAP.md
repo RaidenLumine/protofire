@@ -114,7 +114,11 @@ The authoritative picture of what exists today is
   is appended to instead, which is a decision rather than a gap.  The volume
   also declares the extension its entries belong to, which a writable open
   writes once by rebuilding the root directory's extent.  What is left of
-  ISO 9660 is the secondary tree: a change updates the one a lookup used.
+  ISO 9660 is a decision rather than a gap: a volume whose structures the driver
+  cannot name is appended to, and a volume with a second directory tree is
+  written only where both trees agree — an overwrite inside a file's length —
+  because the trees spell a name differently and nothing says which record in
+  the other tree is the same file's.
   NTFS is the prize and the largest step; its RFC has to decide its harness
   before its writes.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64

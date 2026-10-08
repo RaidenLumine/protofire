@@ -251,6 +251,115 @@ fn open_volume(device: Arc<dyn crate::fs::block::BlockDevice>) -> Iso9660Volume 
     Iso9660Volume::open(device).expect("open iso9660 volume")
 }
 
+// ── The two-tree fixture ────────────────────────────────────────────────
+
+/// Where the second tree's own extents are.
+const JOLIET_ROOT_SECTOR: u64 = 33;
+const JOLIET_SUB_SECTOR: u64 = 34;
+/// The supplementary root extent: its own two records, a file whose data is
+/// the primary tree's, and a directory whose identifier is one UCS-2 code
+/// unit — a name of one character below U+0100, whose first byte is zero and
+/// which is nevertheless not a "." record.
+const JOLIET_ROOT_BYTES: u32 = 35 + 35 + 35 + 63; // ".", "..", "A",
+                                                  // "Hello World.txt"
+/// The supplementary directory's extent: its own two records, and nothing.
+const JOLIET_SUB_BYTES: u32 = 35 + 35;
+
+/// A name as a Joliet identifier: UCS-2BE, with no version.
+fn ucs2(name: &str) -> Vec<u8> {
+    name.encode_utf16()
+        .flat_map(|unit| unit.to_be_bytes())
+        .collect()
+}
+
+/// The Supplementary Volume Descriptor of the two-tree fixture.
+///
+/// Its root record is the descriptor's own 34-byte field, which holds the one
+/// byte identifier 0x00 whatever the tree's identifiers look like — the field
+/// has no room for more, and that is what a released image has too.
+fn build_svd(root_sector: u64, root_size: u32) -> [u8; SECTOR_SIZE] {
+    let mut buf = [0u8; SECTOR_SIZE];
+    buf[0] = 0x02;
+    buf[1..6].copy_from_slice(b"CD001");
+    buf[6] = 0x01;
+    buf[40..46].copy_from_slice(b"JOLIET");
+    for b in buf[40..72].iter_mut() {
+        if *b == 0 {
+            *b = b' ';
+        }
+    }
+    buf[88..91].copy_from_slice(b"%/@");
+    buf[128..130].copy_from_slice(&2048u16.to_le_bytes());
+    buf[80..84].copy_from_slice(&VOLUME_BLOCKS.to_le_bytes());
+    buf[84..88].copy_from_slice(&VOLUME_BLOCKS.to_be_bytes());
+    let root = make_root_record(root_sector, root_size);
+    buf[156..190].copy_from_slice(&root);
+    buf[881] = 0x01;
+    buf
+}
+
+/// Build an image with two trees: the primary one the other fixtures have,
+/// and a Joliet one whose names are the ones a reader is meant to see.
+///
+/// The file is the same file: both records name the same data extent, which is
+/// what makes its length something two records have an opinion about.
+fn build_joliet_image() -> Vec<u8> {
+    let mut image = build_test_image();
+
+    put_sector(
+        &mut image,
+        17,
+        &build_svd(JOLIET_ROOT_SECTOR, JOLIET_ROOT_BYTES),
+    );
+    put_sector(&mut image, 18, &build_terminator());
+
+    let mut root = Vec::new();
+    root.extend(make_dir_record(
+        JOLIET_ROOT_SECTOR,
+        JOLIET_ROOT_BYTES,
+        0x02,
+        &[0x00, 0x00],
+    ));
+    root.extend(make_dir_record(
+        JOLIET_ROOT_SECTOR,
+        JOLIET_ROOT_BYTES,
+        0x02,
+        &[0x01, 0x00],
+    ));
+    root.extend(make_dir_record(
+        JOLIET_SUB_SECTOR,
+        JOLIET_SUB_BYTES,
+        0x02,
+        &ucs2("A"),
+    ));
+    root.extend(make_dir_record(
+        HELLO_SECTOR,
+        HELLO.len() as u32,
+        0x00,
+        &ucs2("Hello World.txt"),
+    ));
+    assert_eq!(root.len() as u32, JOLIET_ROOT_BYTES);
+    put_sector(&mut image, JOLIET_ROOT_SECTOR, &root);
+
+    let mut sub = Vec::new();
+    sub.extend(make_dir_record(
+        JOLIET_SUB_SECTOR,
+        JOLIET_SUB_BYTES,
+        0x02,
+        &[0x00, 0x00],
+    ));
+    sub.extend(make_dir_record(
+        JOLIET_ROOT_SECTOR,
+        JOLIET_ROOT_BYTES,
+        0x02,
+        &[0x01, 0x00],
+    ));
+    assert_eq!(sub.len() as u32, JOLIET_SUB_BYTES);
+    put_sector(&mut image, JOLIET_SUB_SECTOR, &sub);
+
+    image
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────
 
 #[test]
@@ -1652,6 +1761,143 @@ fn bootable_volume_reports_boot_entries() {
 }
 
 // ─── Giving the blocks back (RFC 0011, stage 3g) ───────────────────────
+
+/// The records of a Joliet extent, read off the medium.
+fn joliet_records(
+    device: &Arc<MemoryBlockDevice>,
+    extent_location: u32,
+    extent_size: u32,
+) -> Vec<super::types::DirRecord> {
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let mut data = vec![0u8; extent_size as usize];
+    fs::read_extent(
+        &as_device,
+        SECTOR_SIZE as u16,
+        extent_location,
+        extent_size,
+        0,
+        &mut data,
+    )
+    .expect("read the extent");
+
+    let mut records = Vec::new();
+    let mut at = 0usize;
+    while let Some((record, next)) = super::types::DirRecord::parse_joliet(&data, at) {
+        records.push(record);
+        at = next;
+    }
+    records
+}
+
+/// The extent the first entry of a descriptor's little-endian path table
+/// names — which is that descriptor's tree's root.
+fn table_root_extent(device: &Arc<MemoryBlockDevice>, descriptor: &super::types::Pvd) -> u32 {
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let size = u32::from_le_bytes(
+        descriptor.path_table_size[..4]
+            .try_into()
+            .expect("four bytes"),
+    );
+    let l = fs::field_le(descriptor.l_path_table_loc);
+    let mut bytes = vec![0u8; size as usize];
+    fs::read_extent(&as_device, SECTOR_SIZE as u16, l, size, 0, &mut bytes)
+        .expect("read the table");
+    parse_path_table(&bytes, false)[0].3
+}
+
+#[test]
+fn a_two_tree_volume_reads_its_supplementary_tree() {
+    let device = MemoryBlockDevice::new("iso-joliet", build_joliet_image(), true);
+    let volume = open_volume(device.clone());
+
+    // The label comes from the supplementary descriptor, and the names a
+    // reader is meant to see are that tree's.
+    assert_eq!(volume.volume_label(), "JOLIET");
+    let node = volume.lookup("/Hello World.txt").expect("lookup");
+    assert_eq!(node.name(), "Hello World.txt");
+    assert_eq!(node.size(), HELLO.len());
+    let mut buf = vec![0u8; HELLO.len()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), HELLO.len());
+    assert_eq!(buf, HELLO);
+
+    // Its entries are listed, and a name whose identifier begins below U+0100
+    // is a name — not a "." record.
+    assert_eq!(volume.read_dir("/", 0).expect("first entry").name, "A");
+    assert_eq!(
+        volume.read_dir("/", 1).expect("second entry").name,
+        "Hello World.txt"
+    );
+
+    // The primary tree names the same *data* differently, and that is the
+    // record the primary parser reads.
+    let (primary, size) = root_extent(&device);
+    assert_eq!(
+        record_named(&device, primary, size, b"HELLO.TXT;1").extent_location,
+        HELLO_SECTOR as u32
+    );
+}
+
+#[test]
+fn each_tree_gets_its_own_path_tables() {
+    let device = MemoryBlockDevice::new("iso-joliet", build_joliet_image(), false);
+    let _volume = open_volume(device.clone());
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+
+    // Opening a writable volume rebuilds the tables of every tree it has: the
+    // primary descriptor's name the primary root ...
+    let pvd = fs::read_pvd(&as_device).expect("pvd");
+    assert_eq!(table_root_extent(&device, &pvd), root_extent(&device).0);
+
+    // ... and the supplementary descriptor's name the supplementary one, which
+    // is a different extent and a different tree.
+    let svd = fs::read_svd(&as_device).expect("svd");
+    let supplementary = table_root_extent(&device, &svd);
+    assert_eq!(supplementary, JOLIET_ROOT_SECTOR as u32);
+    assert_ne!(supplementary, root_extent(&device).0);
+}
+
+#[test]
+fn a_two_tree_volume_writes_only_what_both_trees_share() {
+    let device = MemoryBlockDevice::new("iso-joliet", build_joliet_image(), false);
+    let volume = open_volume(device.clone());
+    let node = volume.lookup("/Hello World.txt").expect("lookup");
+
+    // The data is one extent both records name, so an overwrite inside the
+    // length is a change every tree sees ...
+    assert_eq!(node.write(0, b"JELLO").expect("write"), 5);
+    let mut buf = vec![0u8; HELLO.len()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), HELLO.len());
+    assert_eq!(&buf[..5], b"JELLO");
+
+    // ... and a length is not.  Each tree's record carries its own copy of it,
+    // and nothing on the volume says which record in the other tree is this
+    // file's: the trees spell a name differently by design.  A change that
+    // would leave one tree saying five and the other twenty-one is refused.
+    assert_eq!(node.set_len(5), Err(Error::Unsupported));
+    assert!(matches!(
+        volume.create_file("/new.bin"),
+        Err(Error::Unsupported)
+    ));
+    assert_eq!(volume.create_dir("/new"), Err(Error::Unsupported));
+    assert_eq!(
+        volume.remove_path("/Hello World.txt"),
+        Err(Error::Unsupported)
+    );
+    assert_eq!(
+        volume.rename("/Hello World.txt", "/renamed.txt"),
+        Err(Error::Unsupported)
+    );
+
+    // The primary tree's record is exactly what it was, which is the point of
+    // refusing rather than half-writing.
+    let (primary, size) = root_extent(&device);
+    assert_eq!(
+        record_named(&device, primary, size, b"HELLO.TXT;1").extent_size,
+        HELLO.len() as u32
+    );
+    let joliet = joliet_records(&device, JOLIET_ROOT_SECTOR as u32, JOLIET_ROOT_BYTES);
+    assert_eq!(joliet[3].extent_size, HELLO.len() as u32);
+}
 
 #[test]
 fn the_block_map_is_absent_for_a_volume_it_cannot_account_for() {
