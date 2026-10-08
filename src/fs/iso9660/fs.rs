@@ -1,6 +1,9 @@
 //! src/fs/iso9660/fs.rs
 //!
-//! Low-level ISO 9660 operations: read PVD, parse directories, read files.
+//! Low-level ISO 9660 operations: reading descriptors and directories, reading
+//! and writing extents, and the two things that decide where a written extent
+//! goes — the map of what the volume holds, and the allocator that hands out
+//! what it does not.
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -16,7 +19,6 @@ use super::types::DIR_RECORD_EXTENT_LOCATION_OFFSET;
 use super::types::PVD_ROOT_RECORD_OFFSET;
 use super::types::PVD_SECTOR;
 use super::types::SECTOR_SIZE;
-use super::types::SVD_SECTOR;
 
 // ---------------------------------------------------------------------------
 // PVD reading
@@ -45,32 +47,35 @@ pub fn read_pvd(device: &Arc<dyn BlockDevice>) -> Result<Pvd, Error> {
     Ok(pvd)
 }
 
-/// Read the Joliet Supplementary Volume Descriptor (SVD), if present.
+/// The Joliet supplementary descriptor, and the sector it sits in.
 ///
-/// The Joliet SVD is a type-2 volume descriptor ("CD001", version 1) whose
-/// escape sequence at offset 88 identifies the UCS-2BE character set ("%/@").
-/// Returns `None` when the descriptor is absent or not a Joliet SVD.
-pub fn read_svd(device: &Arc<dyn BlockDevice>) -> Option<Pvd> {
-    let mut buf = [0u8; SECTOR_SIZE];
-    let offset = SVD_SECTOR * SECTOR_SIZE as u64;
-    read_exact(device, offset, &mut buf).ok()?;
-
-    // Validate the descriptor header and the Joliet escape sequence.
-    // SAFETY: as `read_pvd` — a packed descriptor at the start of a full
-    // sector buffer.
-    let pvd_ref: &Pvd = unsafe { &*buf.as_ptr().cast::<Pvd>() };
-    if pvd_ref.desc_type != 0x02
-        || &pvd_ref.std_identifier != b"CD001"
-        || pvd_ref.desc_version != 0x01
-    {
-        return None;
+/// A Joliet SVD is a type-2 volume descriptor ("CD001", version 1) whose
+/// escape sequence at offset 88 identifies the UCS-2BE character set
+/// ("%/@").  Which *sector* it is in is not fixed: the set is a run of sectors
+/// beginning with the primary descriptor, and a disc with a Boot Record puts
+/// that — and so the supplementary descriptor — behind it, which is the shape
+/// a released bootable image has.  So the set is walked, the way the block map
+/// walks it, and the walk stops where the set does.
+pub fn find_joliet_descriptor(device: &Arc<dyn BlockDevice>) -> Option<(u64, Pvd)> {
+    for offset in 0..MAX_DESCRIPTORS {
+        let sector = PVD_SECTOR + u64::from(offset);
+        let mut bytes = [0u8; SECTOR_SIZE];
+        read_exact(device, sector * SECTOR_SIZE as u64, &mut bytes).ok()?;
+        if &bytes[1..6] != b"CD001" || bytes[6] != 0x01 {
+            return None;
+        }
+        match bytes[0] {
+            0xFF => return None, // the set ended without one
+            0x02 if &bytes[88..91] == b"%/@" => {
+                // SAFETY: as `read_pvd` — a packed descriptor at the start of a
+                // full sector buffer, copied out rather than borrowed.
+                let svd = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const Pvd) };
+                return Some((sector, svd));
+            }
+            _ => {}
+        }
     }
-    if &buf[88..91] != b"%/@" {
-        return None;
-    }
-
-    // SAFETY: as above — the sector's own descriptor, copied out.
-    Some(unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Pvd) })
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -744,6 +749,9 @@ pub fn read_descriptor(
 /// driver does not know to an extended attribute record it does not read,
 /// gives an error rather than a map with a hole in it.
 pub fn occupied_blocks(device: &Arc<dyn BlockDevice>, block_size: u16) -> Result<Occupied, Error> {
+    if block_size == 0 {
+        return Err(Error::InvalidArgument);
+    }
     let mut occupied = Occupied::new();
     occupied.mark(0, SYSTEM_AREA_BLOCKS);
 

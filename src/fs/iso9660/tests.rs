@@ -231,7 +231,13 @@ fn build_bootable_image() -> Vec<u8> {
     // Volume descriptor set terminator.
     put_sector(&mut image, 18, &build_terminator());
 
-    // Boot catalog.
+    put_sector(&mut image, 22, &build_boot_catalog());
+
+    image
+}
+
+/// The El Torito catalog the bootable fixtures point a Boot Record at.
+fn build_boot_catalog() -> [u8; SECTOR_SIZE] {
     let mut catalog = [0u8; SECTOR_SIZE];
     catalog[0] = 0x01; // validation entry header id
     catalog[1] = 0x00; // platform id
@@ -242,9 +248,7 @@ fn build_bootable_image() -> Vec<u8> {
     catalog[34..36].copy_from_slice(&0x07C0u16.to_le_bytes()); // load segment
     catalog[38..40].copy_from_slice(&4u16.to_le_bytes()); // sector count
     catalog[40..44].copy_from_slice(&16u32.to_le_bytes()); // load RBA
-    put_sector(&mut image, 22, &catalog);
-
-    image
+    catalog
 }
 
 fn open_volume(device: Arc<dyn crate::fs::block::BlockDevice>) -> Iso9660Volume {
@@ -1203,6 +1207,57 @@ fn a_broken_root_size_does_not_stop_a_writable_open() {
     );
 }
 
+#[test]
+fn a_writable_open_survives_a_mutated_image() {
+    // Opening a *writable* volume runs code an image can steer: the extension
+    // upgrade reads a foreign root record and then writes by what it says.  So
+    // the bytes worth flipping are the ones it reads — the descriptor's root
+    // record and the records of a directory — and every one of these has to
+    // end in an answer rather than a panic.
+    let base = build_test_image();
+    let root = ROOT_EXTENT_SECTOR as usize * SECTOR_SIZE;
+    let pvd_root = PVD_SECTOR as usize * SECTOR_SIZE + 156;
+
+    let mut cases: Vec<Vec<u8>> = Vec::new();
+    for at in [
+        pvd_root,
+        pvd_root + 1,
+        pvd_root + 2,
+        pvd_root + 10,
+        pvd_root + 32,
+    ] {
+        for value in [0x00u8, 0xFF] {
+            let mut image = base.clone();
+            image[at] = value;
+            cases.push(image);
+        }
+    }
+    // A record whose own length says it is shorter than the part every reader
+    // reads from it, and one that says it is longer than the extent.
+    for length in [1u8, 32, 33, 255] {
+        let mut image = base.clone();
+        image[root] = length;
+        cases.push(image);
+    }
+    // Every byte of the root's first record, one at a time.
+    for at in 0..35usize {
+        let mut image = base.clone();
+        image[root + at] = 0xFF;
+        cases.push(image);
+    }
+
+    for (index, image) in cases.into_iter().enumerate() {
+        let device = MemoryBlockDevice::new("iso-hostile", image, false);
+        // Whatever it answers — and it is allowed to fail, and allowed to skip
+        // the upgrade — it must not take the volume with it.
+        if let Ok(volume) = Iso9660Volume::open(device) {
+            let _ = volume.lookup("/HELLO.TXT");
+            let _ = volume.read_dir("/", 0);
+            let _ = volume.create_file(&alloc::format!("/new{index}.bin"));
+        }
+    }
+}
+
 // ─── Renaming and moving (RFC 0011, stage 3d) ──────────────────────────
 
 /// The extent a directory's own ".." record points at, read off the medium.
@@ -1838,6 +1893,34 @@ fn a_two_tree_volume_reads_its_supplementary_tree() {
 }
 
 #[test]
+fn a_supplementary_descriptor_behind_a_boot_record_is_found() {
+    // The shape a released bootable image has: the Boot Record sits between the
+    // primary descriptor and the supplementary one, so the supplementary
+    // descriptor is *not* at sector 17 and a reader that looked there would
+    // find a boot record and no second tree at all.
+    let mut image = build_joliet_image();
+    let svd = image[17 * SECTOR_SIZE..18 * SECTOR_SIZE].to_vec();
+    put_sector(&mut image, 18, &svd);
+    put_sector(&mut image, 19, &build_terminator());
+    let mut boot_rec = [0u8; SECTOR_SIZE];
+    boot_rec[0] = 0x00;
+    boot_rec[1..6].copy_from_slice(b"CD001");
+    boot_rec[6] = 0x01;
+    boot_rec[71..75].copy_from_slice(&22u32.to_le_bytes());
+    put_sector(&mut image, 17, &boot_rec);
+    put_sector(&mut image, 22, &build_boot_catalog());
+
+    let device = MemoryBlockDevice::new("iso-boot-joliet", image, true);
+    let volume = open_volume(device);
+    assert_eq!(volume.volume_label(), "JOLIET");
+    assert_eq!(
+        volume.lookup("/Hello World.txt").expect("lookup").size(),
+        HELLO.len()
+    );
+    assert_eq!(volume.boot_entries().len(), 1);
+}
+
+#[test]
 fn each_tree_gets_its_own_path_tables() {
     let device = MemoryBlockDevice::new("iso-joliet", build_joliet_image(), false);
     let _volume = open_volume(device.clone());
@@ -1850,7 +1933,8 @@ fn each_tree_gets_its_own_path_tables() {
 
     // ... and the supplementary descriptor's name the supplementary one, which
     // is a different extent and a different tree.
-    let svd = fs::read_svd(&as_device).expect("svd");
+    let (sector, svd) = fs::find_joliet_descriptor(&as_device).expect("supplementary descriptor");
+    assert_eq!(sector, 17, "the fixture's supplementary descriptor");
     let supplementary = table_root_extent(&device, &svd);
     assert_eq!(supplementary, JOLIET_ROOT_SECTOR as u32);
     assert_ne!(supplementary, root_extent(&device).0);
@@ -1874,6 +1958,10 @@ fn a_two_tree_volume_writes_only_what_both_trees_share() {
     // file's: the trees spell a name differently by design.  A change that
     // would leave one tree saying five and the other twenty-one is refused.
     assert_eq!(node.set_len(5), Err(Error::Unsupported));
+    // A write that runs past the end needs the length every tree disagrees
+    // about, so it takes what it can and stops: the contract's short write,
+    // and not an error the caller has to know how to read.
+    assert_eq!(node.write(0, &[0xAB; 40]).expect("write"), HELLO.len());
     assert!(matches!(
         volume.create_file("/new.bin"),
         Err(Error::Unsupported)
@@ -1940,6 +2028,22 @@ fn the_block_map_is_absent_for_a_volume_it_cannot_account_for() {
     let mut with_attributes = image;
     with_attributes[PVD_SECTOR as usize * SECTOR_SIZE + 156 + 1] = 1;
     assert!(!map(with_attributes));
+}
+
+#[test]
+fn a_directory_that_names_its_ancestor_is_not_walked_forever() {
+    // A walk of a tree whose records point back up the tree is a walk that
+    // never ends unless something says where the end is.  The root's record for
+    // its subdirectory is pointed at the root's own extent, so every level
+    // leads to the same directory — and the walk has to come back with an
+    // answer, which is "no map", rather than not come back at all.
+    let mut image = build_test_image();
+    let sub_record = ROOT_EXTENT_SECTOR as usize * SECTOR_SIZE + 70;
+    image[sub_record + 2..sub_record + 6]
+        .copy_from_slice(&(ROOT_EXTENT_SECTOR as u32).to_le_bytes());
+
+    let device: Arc<dyn BlockDevice> = MemoryBlockDevice::new("iso-cycle", image, true);
+    assert!(fs::occupied_blocks(&device, SECTOR_SIZE as u16).is_err());
 }
 
 #[test]
@@ -2040,6 +2144,29 @@ fn a_removal_inside_the_volume_frees_its_blocks_for_the_next_allocation() {
         "the allocator hands out the hole the removal left"
     );
     assert_eq!(fs::volume_blocks(&as_device).expect("volume size"), before);
+}
+
+#[test]
+fn a_removed_directory_gives_its_extent_to_the_next_one() {
+    let (device, volume) = writable_volume();
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let before = fs::volume_blocks(&as_device).expect("volume size");
+
+    // A directory's extent is an allocation like any other, so it comes from
+    // the volume's free space — and goes back to it when the directory does.
+    volume.create_dir("/first").expect("create");
+    let (root, root_size) = root_extent(&device);
+    let first = record_named(&device, root, root_size, b"FIRST").extent_location;
+    assert!(first < before, "it took free space, not the end");
+
+    volume.remove_path("/first").expect("remove");
+    volume.create_dir("/second").expect("create");
+    let (root, root_size) = root_extent(&device);
+    assert_eq!(
+        record_named(&device, root, root_size, b"SECOND").extent_location,
+        first,
+        "the extent the removal freed is handed out again"
+    );
 }
 
 #[test]

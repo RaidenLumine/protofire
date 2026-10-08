@@ -15,9 +15,6 @@ pub const SECTOR_SIZE: usize = 2048;
 /// Offset of the Primary Volume Descriptor (sector 16, 0-indexed).
 pub const PVD_SECTOR: u64 = 16;
 
-/// Offset of the Joliet Supplementary Volume Descriptor (sector 17).
-pub const SVD_SECTOR: u64 = 17;
-
 // ── Volume Descriptor ──
 
 /// Primary Volume Descriptor (ECMA-119 §7.4).
@@ -99,6 +96,9 @@ pub const DIR_RECORD_EXTENT_LOCATION_OFFSET: usize = 2;
 /// and a version.  Everything after it is the entry's own body, which is what
 /// makes one builder enough for all of them.
 fn susp_entry(signature: &[u8; 2], body: &[u8]) -> Vec<u8> {
+    // The length is one byte and includes the header, so what fits is what
+    // this can write; a caller with more has to split it (`susp_name` does).
+    debug_assert!(4 + body.len() <= u8::MAX as usize);
     let mut entry = Vec::with_capacity(4 + body.len());
     entry.extend_from_slice(signature);
     entry.push((4 + body.len()) as u8);
@@ -395,20 +395,27 @@ impl DirRecord {
     ///
     /// The area starts where the identifier's own padding ends, and the record
     /// grows to hold it and is padded to an even length like every other.
+    ///
+    /// `None` is a record with more in it than its own length byte can say —
+    /// the caller asked for an entry too long to write, and it is the caller
+    /// that has to refuse it rather than store part of it.
     pub fn new_entry_with(
         identifier: &[u8],
         extent_location: u32,
         extent_size: u32,
         directory: bool,
         system_use: &[u8],
-    ) -> Vec<u8> {
+    ) -> Option<Vec<u8>> {
         let mut rec = Self::new_entry(identifier, extent_location, extent_size, directory);
         rec.extend_from_slice(system_use);
         if !rec.len().is_multiple_of(2) {
             rec.push(0);
         }
+        if rec.len() > u8::MAX as usize {
+            return None;
+        }
         rec[0] = rec.len() as u8;
-        rec
+        Some(rec)
     }
 
     /// Parse an ISO 9660 directory record (ASCII filenames).
@@ -1007,7 +1014,8 @@ mod tests {
         // length byte, and the two identifiers below take the two paths.
         for identifier in [&b"ODD;1"[..], &b"EVEN;1"[..]] {
             let area = susp_name(b"a name");
-            let record = DirRecord::new_entry_with(identifier, 7, 9, false, &area);
+            let record =
+                DirRecord::new_entry_with(identifier, 7, 9, false, &area).expect("it fits");
 
             let (parsed, next) = DirRecord::parse(&record, 0).expect("parse");
             assert_eq!(next, record.len());

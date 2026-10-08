@@ -522,6 +522,10 @@ removal reclaim what it freed.
   as a way to bring the declared size down: a volume that cannot be accounted
   for still gets its last blocks back, because a block past the size a volume
   declares belongs to nobody whether or not anything knows what else is there.
+  What 3g's floor was really protecting — "never hand out a block the image
+  came with" — is what the map *replaces* rather than keeps: a hole inside the
+  volume is free exactly when the walk accounted for everything around it, and
+  that is the only reason the walk has to be complete.
 - **What the map costs is the walk.**  It is built per operation, so an
   operation that allocates reads every directory extent on the volume — a
   create on a volume with many entries pays for the volume, not for the

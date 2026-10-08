@@ -22,6 +22,7 @@ use protofire::fs::ntfs::NtfsFs;
 use protofire::fs::partition::read_mbr_partitions;
 use protofire::fs::simplefs::SimpleFs;
 use protofire::fs::squashfs::SquashfsVolume;
+use protofire::fs::vfs::FileSystem as VfsFileSystem;
 use protofire::fs::xfs::XfsVolume;
 
 fuzz_target!(|data: &[u8]| {
@@ -45,4 +46,14 @@ fuzz_target!(|data: &[u8]| {
     let _ = Iso9660Volume::open(device.clone());
     let _ = SimpleFs::open(device.clone(), false);
     let _ = XfsVolume::open(device);
+
+    // And the same bytes on a device this driver would *write* to.  A writable
+    // volume is steered by the image as much as a readable one — opening it
+    // runs the extension upgrade, which reads a foreign root record and then
+    // writes by what it says — so it gets the same treatment.
+    let writable = MemoryBlockDevice::new("fuzz-fs-writable", data.to_vec(), false);
+    if let Ok(volume) = Iso9660Volume::open(writable) {
+        let _ = volume.lookup("/HELLO.TXT");
+        let _ = volume.create_file("/fuzz.bin");
+    }
 });

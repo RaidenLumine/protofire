@@ -1,7 +1,7 @@
 //! src/fs/iso9660/mod.rs
 //!
-//! ISO 9660 (CD-ROM) read-only filesystem with Rock Ridge, Joliet, and El
-//! Torito.
+//! ISO 9660 (CD-ROM) with Rock Ridge, Joliet and El Torito: readable as it
+//! comes, and writable in the places the format and the volume allow.
 //!
 //! ## Supported features
 //!
@@ -11,6 +11,9 @@
 //! - Rock Ridge: NM (POSIX names), PX (permissions), SL (symlinks) — read, and
 //!   NM/PX written for an entry this driver creates or renames
 //! - Case-insensitive path lookup (ISO 9660 native behavior)
+//! - A volume with more than one descriptor is read through the tree the reader
+//!   is meant to see — Joliet's, when there is one — and an entry only another
+//!   tree names is not found from here
 //!
 //! ## Limitations
 //!
@@ -135,10 +138,14 @@ pub struct Iso9660Volume {
     volume_label: String,
     /// The size the volume declared when it was opened.
     ///
-    /// Nothing below it is ever handed out again: the blocks the image came
-    /// with are the image's, and what the allocator gives back is only what
-    /// *it* took.  That is what lets a removal reclaim space without this
-    /// driver having to know every structure a foreign volume could hold.
+    /// It is the floor a **shrink** may not take the volume's end below: the
+    /// blocks the image came with are the image's, and the one rule this
+    /// driver can apply without knowing what is on the volume is that
+    /// everything past the size it declares belongs to nobody.
+    ///
+    /// It is *not* a floor on what the allocator may hand out: a block inside
+    /// the volume is free when the block map says nothing names it, and the map
+    /// is what lets a hole left by a removal be reused — see [`Allocator`].
     volume_floor: u32,
     /// The primary descriptor's tree, and the supplementary one when the
     /// volume has it.
@@ -158,6 +165,12 @@ impl Iso9660Volume {
     /// to be read, and the primary tree's are the fallback spelling of them.
     fn reading_tree(&self) -> &Tree {
         self.joliet.as_ref().unwrap_or(&self.primary)
+    }
+
+    /// How many trees the volume has, which is what says whether a length is
+    /// one record's to change.
+    fn tree_count(&self) -> u8 {
+        u8::try_from(self.trees().count()).unwrap_or(u8::MAX)
     }
 
     /// Refuse a change that would alter a *directory* on a volume with two
@@ -189,18 +202,21 @@ impl Iso9660Volume {
         // Before the upgrade below, which is the first thing that grows it.
         let volume_floor = fs::volume_blocks(&device)?;
 
-        // Try to detect a Joliet Supplementary Volume Descriptor.
-        let (volume_label, joliet) = if let Some(svd) = fs::read_svd(&device) {
-            (
-                pvd_volume_label(&svd),
-                Some(Tree {
-                    joliet: true,
-                    descriptor_sector: types::SVD_SECTOR,
-                }),
-            )
-        } else {
-            (pvd_volume_label(&pvd), None)
-        };
+        // Try to detect a Joliet Supplementary Volume Descriptor — wherever in
+        // the descriptor set it is, which is not a fixed sector when the
+        // volume is bootable.
+        let (volume_label, joliet) =
+            if let Some((sector, svd)) = fs::find_joliet_descriptor(&device) {
+                (
+                    pvd_volume_label(&svd),
+                    Some(Tree {
+                        joliet: true,
+                        descriptor_sector: sector,
+                    }),
+                )
+            } else {
+                (pvd_volume_label(&pvd), None)
+            };
 
         let volume = Self {
             device,
@@ -729,7 +745,7 @@ impl VfsFileSystem for Iso9660Volume {
             extent_location: AtomicU32::new(record.extent_location),
             extent_size: AtomicU32::new(record.extent_size),
             record_offset,
-            trees: u8::try_from(self.trees().count()).unwrap_or(u8::MAX),
+            trees: self.tree_count(),
             volume_floor: self.volume_floor,
             rr_posix: record.rr_posix,
             rr_symlink: record.rr_symlink,
@@ -773,12 +789,12 @@ impl VfsFileSystem for Iso9660Volume {
     /// path tables are rebuilt because a directory's level and number are
     /// properties of where it sits.
     fn rename(&self, old: &str, new: &str) -> Result<()> {
-        self.refuse_a_change_to_one_of_two_trees()?;
         let old_clean = clean_path(old);
         let new_clean = clean_path(new);
         if old_clean == new_clean {
             return Ok(());
         }
+        self.refuse_a_change_to_one_of_two_trees()?;
 
         let (record, _entries, record_offset) = self.resolve(&old_clean)?;
         if self.resolve(&new_clean).is_ok() {
@@ -892,7 +908,7 @@ impl VfsFileSystem for Iso9660Volume {
             extent_location: AtomicU32::new(extent_location),
             extent_size: AtomicU32::new(0),
             record_offset,
-            trees: 1,
+            trees: self.tree_count(),
             volume_floor: self.volume_floor,
             // The attributes are what the record this call wrote carries, so
             // the node answers with them rather than with the default a record
@@ -963,9 +979,9 @@ impl VfsFileSystem for Iso9660Volume {
     /// The records after it move down over it rather than being re-serialised:
     /// a record carries whatever its writer put in the System Use area, and
     /// this driver does not parse all of it, so the bytes are the only honest
-    /// copy.  What the file's blocks were comes back to the volume when they
-    /// are its last; what is free in the middle of one takes a scan this
-    /// driver does not do.
+    /// copy.  What the file's blocks were are free again the moment its record
+    /// is gone: the volume's declared size comes down over them when they were
+    /// its last, and the block map finds them wherever they are.
     fn remove_path(&self, path: &str) -> Result<()> {
         self.refuse_a_change_to_one_of_two_trees()?;
         let clean = clean_path(path);
@@ -1154,12 +1170,16 @@ impl VNode for Iso9660VNode {
     /// shrinking is free.  Past that block the file needs more blocks, and a
     /// file's extent is **one contiguous run**, so there are two ways to get
     /// them: take the blocks that follow, when the file is the last thing the
-    /// volume holds, or move the file to the end of the volume, which is what
-    /// happens when something else is in the way.  The allocator is
-    /// append-only, so neither way reuses a block the image already wrote.
+    /// volume holds, or move the file — into the free space the allocator
+    /// finds, which is where a hole a removal left is handed out again.
     fn set_len(&self, length: u64) -> Result<()> {
         if self.kind != NodeKind::File {
             return Err(Error::InvalidArgument);
+        }
+        let length = u32::try_from(length).map_err(|_| Error::InvalidArgument)?;
+        let current = self.extent_size.load(Ordering::Relaxed);
+        if length == current {
+            return Ok(());
         }
         // A file's *length* is a field of a record in every tree, and a
         // volume's trees do not spell the file's name the same way: which
@@ -1170,11 +1190,6 @@ impl VNode for Iso9660VNode {
         // point at is the same data.
         if self.trees > 1 {
             return Err(Error::Unsupported);
-        }
-        let length = u32::try_from(length).map_err(|_| Error::InvalidArgument)?;
-        let current = self.extent_size.load(Ordering::Relaxed);
-        if length == current {
-            return Ok(());
         }
 
         let extent_location = self.extent_location.load(Ordering::Relaxed);
@@ -1434,17 +1449,14 @@ fn directory_record(
     directory: bool,
     system_use: &[u8],
 ) -> Result<Vec<u8>> {
-    let record = types::DirRecord::new_entry_with(
+    types::DirRecord::new_entry_with(
         identifier,
         extent_location,
         extent_size,
         directory,
         system_use,
-    );
-    if record.len() > u8::MAX as usize {
-        return Err(Error::InvalidArgument);
-    }
-    Ok(record)
+    )
+    .ok_or(Error::InvalidArgument)
 }
 
 fn clean_path(path: &str) -> String {
