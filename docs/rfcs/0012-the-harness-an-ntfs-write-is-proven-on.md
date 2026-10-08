@@ -356,7 +356,10 @@ second mount as the proof.
   fresh mount agrees with; a file shortened to two of its three clusters'
   length and grown back, the second run's bytes still there; a length past the
   runs refused, with a write into that space a short write; and the volume's
-  dirty flag going up with the first change and down again at `sync`.
+  dirty flag going up with the first change and down again at `sync`.  And one
+  that pins where a field write does *not* go: the sequence is still at every
+  sector's end of the record on the volume afterwards, which is what a reader
+  unpacks and what a record-relocating stage will have to put back itself.
 
 **What comes next is stage 2:** growing a file past what it already has —
 `$Bitmap` read as a file, clusters claimed, the run list rewritten by the

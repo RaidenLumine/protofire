@@ -482,6 +482,36 @@ fn the_volume_is_dirty_until_it_is_synced() {
     assert!(!dirty_flag(&device, &fs_handle), "and stops saying so");
 }
 
+#[test]
+fn a_field_write_leaves_the_sequence_array_where_it_was() {
+    // Which is what lets a field write be a field write: the update sequence
+    // array's territory is the end of each sector, a field does not reach it,
+    // and a reader that unpacks the record finds the sequence it expects.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let node = fs_handle.lookup("/resident.txt").expect("resident.txt");
+    node.write(0, b"HELLO").expect("write");
+    node.set_len(4).expect("truncate");
+
+    let info = fs_handle.info().lock();
+    let at = fs_handle
+        .record_offset(&info, RESIDENT_FILE)
+        .expect("offset");
+    let as_device: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> = device.clone();
+    let mut record = vec![0u8; info.mft_record_size as usize];
+    super::fs::read_device_bytes(&as_device, at, &mut record).expect("read the record");
+
+    let sequence = u16::from_le_bytes([record[48], record[49]]);
+    let sector = info.bs.bytes_per_sector as usize;
+    for end in (sector..=record.len()).step_by(sector) {
+        assert_eq!(
+            u16::from_le_bytes([record[end - 2], record[end - 1]]),
+            sequence,
+            "the sequence at the end of the sector ending at {end}"
+        );
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // The fixture volume
 // ═══════════════════════════════════════════════════════════════════════════════
