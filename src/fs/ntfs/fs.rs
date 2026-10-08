@@ -389,6 +389,7 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
             attr_type,
             offset,
             value_offset: u16::from_le_bytes([buf[offset + 20], buf[offset + 21]]) as usize,
+            attr_len: attr_len as usize,
             content,
             data_runs_offset,
             data_runs,
@@ -402,6 +403,52 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
     }
 
     attrs
+}
+
+/// Encode data runs, the way [`parse_data_runs`] reads them.
+///
+/// A run's header byte says how many bytes its length and its *delta* take,
+/// and the delta is signed and always measured from the run before it — so a
+/// list of runs has one spelling and a reader accumulates the same addresses
+/// back.  A zero header ends the list.
+pub fn encode_runs(runs: &[DataRun]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut previous: i64 = 0;
+    for run in runs {
+        if run.cluster_count == 0 {
+            continue;
+        }
+
+        let mut length = Vec::new();
+        let mut count = run.cluster_count;
+        while count > 0 {
+            length.push((count & 0xff) as u8);
+            count >>= 8;
+        }
+
+        // A sparse run names no cluster, so it has no delta to write and does
+        // not move the place the next run measures from.
+        let mut offset = Vec::new();
+        if run.lcn >= 0 {
+            let delta = run.lcn - previous;
+            previous = run.lcn;
+            let mut value = delta;
+            loop {
+                offset.push((value & 0xff) as u8);
+                value >>= 8;
+                let done = (delta >= 0 && value == 0) || (delta < 0 && value == -1);
+                if done {
+                    break;
+                }
+            }
+        }
+
+        out.push(((offset.len() as u8) << 4) | length.len() as u8);
+        out.extend_from_slice(&length);
+        out.extend_from_slice(&offset);
+    }
+    out.push(0);
+    out
 }
 
 /// Undo an update sequence array, so the bytes a record's sectors end with are

@@ -35,6 +35,9 @@ const ROOT_RECORD: u64 = 5;
 /// The volume's own record, which the standard fixes at the third.
 const VOLUME_RECORD: u64 = 3;
 
+/// The volume's cluster bitmap, which the standard fixes at the sixth.
+const BITMAP_RECORD: u64 = 6;
+
 /// Where a volume's flags are inside its `$VOLUME_INFORMATION` value: eight
 /// reserved bytes, then a major and a minor version.
 const VOLUME_FLAGS_OFFSET: usize = 10;
@@ -240,12 +243,114 @@ impl NtfsFs {
         fs::byte_offset_in_runs(runs, info.cluster_size, offset).ok_or(Error::InvalidArgument)
     }
 
+    /// How many clusters the volume holds.
+    fn volume_clusters(&self, info: &fs::NtfsInfo) -> u64 {
+        info.bs.total_sectors / u64::from(info.bs.sectors_per_cluster.max(1))
+    }
+
+    /// The volume's cluster bitmap, as many bytes of it as the volume needs.
+    ///
+    /// The bitmap is a *file* — the sixth record's `$DATA` — with its own
+    /// runs, so reading it is the same walk as reading any other file's data.
+    fn read_bitmap(&self) -> Result<Vec<u8>> {
+        let record = self.read_mft_record(BITMAP_RECORD)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let data = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?;
+
+        // The lock goes on after the record has been read: reading a record
+        // takes the same one, and a lock held across that is a lock held
+        // against itself.
+        let info = self.info.lock();
+        let wanted = self.volume_clusters(&info).div_ceil(8) as usize;
+        let size = wanted.min(data.data_size as usize);
+        let mut bitmap = alloc::vec![0u8; size];
+        if data.data_runs_offset.is_none() {
+            bitmap.copy_from_slice(&data.content[..size.min(data.content.len())]);
+            return Ok(bitmap);
+        }
+        fs::read_from_runs(
+            &self.device,
+            &info,
+            &data.data_runs,
+            u64::from(data.data_size),
+            0,
+            &mut bitmap,
+        )?;
+        Ok(bitmap)
+    }
+
+    /// Write the bitmap back where it came from.
+    fn write_bitmap(&self, bitmap: &[u8]) -> Result<()> {
+        let record = self.read_mft_record(BITMAP_RECORD)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let data = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?;
+
+        let info = self.info.lock();
+        if data.data_runs_offset.is_none() {
+            let record_at = self.record_offset(&info, BITMAP_RECORD)?;
+            let at =
+                record_at + header.size() as u64 + data.offset as u64 + data.value_offset as u64;
+            return fs::write_device_bytes(&self.device, at, bitmap);
+        }
+        fs::write_to_runs(&self.device, &info, &data.data_runs, 0, bitmap)?;
+        Ok(())
+    }
+
+    /// Take `count` clusters from the volume's free space.
+    ///
+    /// The bitmap is the free list: the first run of `count` clear bits is
+    /// what a growth gets, and the bits it took are set before the cluster is
+    /// handed out — so a crash after the answer leaves a cluster claimed and
+    /// unused, which is the harmless direction to be wrong in.
+    fn claim_clusters(&self, count: u64) -> Result<u64> {
+        let volume_clusters = {
+            let info = self.info.lock();
+            self.volume_clusters(&info)
+        };
+        let mut bitmap = self.read_bitmap()?;
+
+        let mut found = None;
+        let mut run_start = 0u64;
+        let mut run = 0u64;
+        for cluster in 0..volume_clusters {
+            let used = bitmap[cluster as usize / 8] & (1 << (cluster % 8)) != 0;
+            if used {
+                run = 0;
+                continue;
+            }
+            if run == 0 {
+                run_start = cluster;
+            }
+            run += 1;
+            if run == count {
+                found = Some(run_start);
+                break;
+            }
+        }
+        let first = found.ok_or(Error::NoSpace)?;
+
+        for cluster in first..first + count {
+            bitmap[cluster as usize / 8] |= 1 << (cluster % 8);
+        }
+        self.set_dirty(true)?;
+        self.write_bitmap(&bitmap)?;
+        Ok(first)
+    }
+
     /// Where the volume's `$VOLUME_INFORMATION` flags are, if it has them.
     ///
     /// The flags are the last two bytes of a twelve-byte value in the third
-    /// record, and bit zero is the one that says the volume is dirty — which
-    /// is what a reader that finds it left set is supposed to check rather
-    /// than trust.
+    /// record, and bit zero is the one that says the volume is dirty — which is
+    /// what a reader that finds it left set is supposed to check rather than
+    /// trust.
     fn volume_flags_offset(&self) -> Result<u64> {
         let record = self.read_mft_record(VOLUME_RECORD)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
@@ -530,6 +635,35 @@ impl VNode for NtfsVnode {
         // it there: setting the flag reads a record.
         self.fs.set_dirty(true)?;
 
+        // A growth's clusters are taken **before** the locks below: claiming
+        // reads and writes the bitmap, which are record reads, and a lock held
+        // across that is a lock held against itself.
+        let needs = {
+            let info = self.fs.info.lock();
+            let record = self.mft_record.lock();
+            let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+            let attributes = parse_attributes(&record[header.size() as usize..]);
+            let data = attributes
+                .iter()
+                .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+                .ok_or(Error::NotFound)?;
+            let held: u64 = if data.data_runs_offset.is_none() {
+                0
+            } else {
+                data.data_runs
+                    .iter()
+                    .map(|run| run.cluster_count)
+                    .sum::<u64>()
+                    * u64::from(info.cluster_size)
+            };
+            (data.data_runs_offset.is_some() && u64::from(length) > held)
+                .then(|| (u64::from(length) - held).div_ceil(u64::from(info.cluster_size)))
+        };
+        let claim = match needs {
+            Some(needed) => Some((needed, self.fs.claim_clusters(needed)?)),
+            None => None,
+        };
+
         let info = self.fs.info.lock();
         let mut record = self.mft_record.lock();
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
@@ -539,11 +673,10 @@ impl VNode for NtfsVnode {
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
             .ok_or(Error::NotFound)?;
 
-        // What the file already *has* is what this stage can use.  A resident
-        // value can only shrink — growing it would need the record's own room
-        // and its bookkeeping — and a file with runs can be as long as those
-        // runs add up to.  Growing past either is allocation, which is the next
-        // stage.
+        // A resident value can only shrink: growing it would need the record's
+        // own room and its bookkeeping.  A file with runs can be as long as
+        // those runs add up to, and past that it *claims clusters*.
+        let mut runs = data.data_runs.clone();
         let allocated = if data.data_runs_offset.is_none() {
             if length > current {
                 return Err(Error::NoSpace);
@@ -551,11 +684,39 @@ impl VNode for NtfsVnode {
             current
         } else {
             let clusters: u64 = data.data_runs.iter().map(|run| run.cluster_count).sum();
-            (clusters * info.cluster_size as u64) as u32
+            let mut allocated = clusters * u64::from(info.cluster_size);
+            if let Some((needed, first)) = claim {
+                // The run list sits at an offset from the *attribute's* start,
+                // which is what the room it has is measured from.
+                let attr_len = data.attr_len;
+                let runs_relative =
+                    data.data_runs_offset.ok_or(Error::InvalidArgument)? - data.offset;
+                let encoded_length = fs::encode_runs(
+                    &[
+                        runs.clone(),
+                        alloc::vec![DataRun {
+                            lcn: first as i64,
+                            cluster_count: needed,
+                        }],
+                    ]
+                    .concat(),
+                )
+                .len();
+                // The run list has to fit where the old one did: an attribute
+                // that has outgrown its room is relocated, and that is the
+                // stage after this one.
+                if runs_relative + encoded_length > attr_len {
+                    return Err(Error::NoSpace);
+                }
+                runs.push(DataRun {
+                    lcn: first as i64,
+                    cluster_count: needed,
+                });
+                allocated += needed * u64::from(info.cluster_size);
+            }
+            allocated as u32
         };
-        if length > allocated {
-            return Err(Error::NoSpace);
-        }
+        let grew = runs.len() > data.data_runs.len();
 
         let record_at = self
             .fs
@@ -565,6 +726,42 @@ impl VNode for NtfsVnode {
             // The value's length, in the header the attribute carries.
             fs::write_device_bytes(&self.fs.device, attr_at + 16, &length.to_le_bytes())?;
         } else {
+            if grew {
+                // The run list, and the three sizes that say how much of the
+                // file's space is spoken for.  A run that was appended is what
+                // the mapping pairs have to spell; the bytes it claims are
+                // written as zeros, which is what a file that has just grown
+                // holds and what its initialized size then says it holds.
+                let encoded = fs::encode_runs(&runs);
+                let runs_relative =
+                    data.data_runs_offset.ok_or(Error::InvalidArgument)? - data.offset;
+                let room = data.attr_len - runs_relative;
+                let mut field = alloc::vec![0u8; room];
+                field[..encoded.len()].copy_from_slice(&encoded);
+                fs::write_device_bytes(&self.fs.device, attr_at + runs_relative as u64, &field)?;
+
+                // And the node's own copy of the record says the same: a stale
+                // run list here would answer with the length the file had.
+                let at = header.size() as usize + data.offset + runs_relative;
+                record[at..at + encoded.len()].copy_from_slice(&encoded);
+                record[at + encoded.len()..at + room].fill(0);
+
+                // The clusters the file just took have never held its bytes,
+                // so they read as zeros until something writes them.
+                let zeros = alloc::vec![0u8; (allocated as u64 - u64::from(current)) as usize];
+                fs::write_to_runs(&self.fs.device, &info, &runs, u64::from(current), &zeros)?;
+
+                let mut sizes = [0u8; 16];
+                sizes[..8].copy_from_slice(&u64::from(length).to_le_bytes());
+                sizes[8..].copy_from_slice(&u64::from(length).to_le_bytes());
+                fs::write_device_bytes(&self.fs.device, attr_at + 48, &sizes)?;
+
+                let mut allocated_field = [0u8; 8];
+                allocated_field.copy_from_slice(&u64::from(allocated).to_le_bytes());
+                fs::write_device_bytes(&self.fs.device, attr_at + 40, &allocated_field)?;
+                let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
+                fs::write_device_bytes(&self.fs.device, attr_at + 24, &last_vcn.to_le_bytes())?;
+            }
             // The data size and the initialized size, adjacent in a
             // non-resident header: a shorter file has no initialized bytes
             // beyond its length.

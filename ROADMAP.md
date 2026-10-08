@@ -133,8 +133,11 @@ The authoritative picture of what exists today is
   where it lives, one block read-modify-written at a time, and a second mount
   is what proves it — an overwrite, a shorter length, and a length change
   inside what the file already has, with the volume's dirty bit up until it is
-  synced.  What comes next is growth: `$Bitmap`, the run list, and the MFT's
-  own expansion.
+  synced.  Growth followed: the `$Bitmap` is read as a file, clusters are
+  claimed, and the run list is rewritten by the mapping pairs' rules.  What is
+  left of the stage is an attribute that has outgrown its room — which is
+  where the update sequence array stops being ignorable — and the MFT's own
+  expansion.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

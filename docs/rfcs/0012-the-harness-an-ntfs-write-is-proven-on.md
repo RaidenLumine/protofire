@@ -362,3 +362,32 @@ second mount as the proof.
 `$Bitmap` read as a file, clusters claimed, the run list rewritten by the
 mapping pairs' rules, and the MFT's own growth when a record's attribute no
 longer fits.
+
+**Stage 2a — claiming clusters, and the run list that names them.**
+
+- The **`$Bitmap` is read as a file** — the sixth record's `$DATA`, with its
+  own runs — and the clusters the volume says are free are the run of clear
+  bits a growth takes.  The bits are set *before* the cluster is handed out,
+  so a crash after the answer leaves a cluster claimed and unused, which is
+  the harmless direction to be wrong in.
+- The run list is **rewritten by the mapping pairs' own rules** — each run's
+  length and its signed delta from the one before it, which is a spelling
+  `encode_runs` answers and `parse_data_runs` reads back — and the attribute's
+  data size, initialized size, allocated size and last VCN follow.  The list
+  has to fit the room the attribute already has; an attribute that has
+  outgrown it is *relocated*, and that is stage 2b.
+- The clusters a file has just taken **read as zeros**: they have never held
+  its bytes, and writing them makes them the file's.
+- The **node's own copy of the record** is updated with the new run list as
+  well as the volume's: a stale list there answered a read with the length the
+  file *had*, which is what the first version of this stage did.
+- Three tests: a growth that claims a cluster, reads zeros there, writes them
+  and is read back by a **second mount**, with the bitmap's count of set bits
+  one higher than the fixture's own; a growth the volume has no *run* for
+  refused with `NoSpace`; and a write that would need it a short write — zero
+  bytes when it starts past the end of a file that cannot grow.
+
+**What is left of stage 2 is 2b:** an attribute whose run list no longer fits
+its room has to move inside the record — which is where the update sequence
+array stops being something a partial write can ignore — and the MFT's own
+growth when a record has no room left at all.

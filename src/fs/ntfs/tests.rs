@@ -397,27 +397,69 @@ fn a_file_can_be_as_long_as_the_runs_it_has() {
 }
 
 #[test]
-fn a_length_the_file_has_not_the_room_for_is_refused() {
+fn a_growth_claims_clusters_and_says_so_in_the_bitmap() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+    let node = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
+    assert_eq!(node.size(), 3 * cluster as usize);
+
+    // One more cluster than the file has: the volume has free space, so the
+    // growth claims it.
+    node.set_len(4 * cluster).expect("grow");
+    assert_eq!(node.size(), 4 * cluster as usize);
+
+    // A cluster the file just took has never held its bytes, so it reads as
+    // zeros — and writing it makes them the file's.
+    let mut buf = vec![0u8; 4 * cluster as usize];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(buf[3 * cluster as usize..].iter().all(|b| *b == 0));
+    node.write(3 * cluster, b"END")
+        .expect("write the new cluster");
+    let mut buf = vec![0u8; 4 * cluster as usize];
+    node.read(0, &mut buf).expect("read it back");
+    assert_eq!(&buf[3 * cluster as usize..3 * cluster as usize + 3], b"END");
+
+    // A second mount agrees, and the volume's bitmap says the cluster is taken.
+    let again = remount(&device);
+    let reread = again.lookup("/two-runs.bin").expect("relookup");
+    assert_eq!(reread.size(), 4 * cluster as usize);
+    let mut buf = vec![0u8; 4 * cluster as usize];
+    assert_eq!(reread.read(0, &mut buf).expect("read"), buf.len());
+    assert_eq!(&buf[3 * cluster as usize..3 * cluster as usize + 3], b"END");
+
+    let bitmap = again.read_bitmap().expect("the bitmap");
+    let taken: usize = bitmap.iter().map(|byte| byte.count_ones() as usize).sum();
+    let was: usize = fixture.used.iter().filter(|used| **used != 0).count();
+    assert_eq!(taken, was + 1, "the cluster it claimed is the one more");
+}
+
+#[test]
+fn a_growth_the_volume_has_no_room_for_is_refused() {
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
     let cluster = fixture.cluster_size();
     let node = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
 
-    // Allocation is the next stage; until it exists, a length past the runs is
-    // not something this can pretend to have.
-    assert_eq!(node.set_len(4 * cluster), Err(Error::NoSpace));
-    assert_eq!(node.size(), 3 * cluster as usize, "and nothing moved");
+    // The fixture's free clusters are in two runs: two of them together, and
+    // one on its own.  The two are what it can give, and a claim of three has
+    // no run to land in.
+    node.set_len(5 * cluster).expect("grow into the free space");
+    assert_eq!(node.set_len(8 * cluster), Err(Error::NoSpace));
+    assert_eq!(node.size(), 5 * cluster as usize, "and nothing moved");
 
-    // A write that would need it is a short write, not an error.
+    // A write that would need the refused clusters is a short write — and one
+    // that starts past the end of a file that cannot grow takes nothing at
+    // all, which is the same answer with nothing left of it.
     let written = node
-        .write(3 * cluster - 2, &[0xAB; 8])
+        .write(8 * cluster - 2, &[0xAB; 8])
         .expect("a short write");
-    assert_eq!(written, 2);
+    assert_eq!(written, 0);
 
     let again = remount(&device);
     assert_eq!(
         again.lookup("/two-runs.bin").expect("relookup").size(),
-        3 * cluster as usize
+        5 * cluster as usize
     );
 }
 
@@ -934,17 +976,31 @@ fn build_volume(shape: Shape) -> Fixture {
                         0,
                     ));
                 }
-                RESIDENT_FILE | SUBDIRECTORY_FILE => {
-                    attributes.extend(attribute(0x80, "", &data, None, 0));
-                }
-                TWO_RUN_FILE => {
+                6 => {
+                    // The cluster bitmap is a *file*: one cluster of bits, which is
+                    // what an allocating stage reads and writes.
                     attributes.extend(attribute(
                         0x80,
                         "",
                         &[],
-                        Some(&fixture.file_runs),
-                        3 * cluster_size,
+                        Some(&[(fixture.bitmap, 1)]),
+                        cluster_size,
                     ));
+                }
+                RESIDENT_FILE | SUBDIRECTORY_FILE => {
+                    attributes.extend(attribute(0x80, "", &data, None, 0));
+                }
+                TWO_RUN_FILE => {
+                    // A writer leaves an attribute room to grow, and this one's
+                    // run list has some: that is the room an appended run
+                    // uses.  An attribute *without* the room is the relocation
+                    // case, which is the stage after this one.
+                    let mut data =
+                        attribute(0x80, "", &[], Some(&fixture.file_runs), 3 * cluster_size);
+                    let length = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+                    put_u32_le(&mut data, 4, length + 16);
+                    data.extend_from_slice(&[0u8; 16]);
+                    attributes.extend(data);
                 }
                 ROOT_RECORD | SUBDIRECTORY => {
                     // The root's entries live in an index allocation, and the
@@ -1262,6 +1318,7 @@ fn get_best_filename_prefers_win32_over_dos() {
         attr_type: ATTR_TYPE_FILENAME,
         offset: 0,
         value_offset: 24,
+        attr_len: 0,
         content: make_filename_body("HELLO~1", 2, 0, 5),
         data_runs_offset: None,
         data_runs: Vec::new(),
@@ -1271,6 +1328,7 @@ fn get_best_filename_prefers_win32_over_dos() {
         attr_type: ATTR_TYPE_FILENAME,
         offset: 0,
         value_offset: 24,
+        attr_len: 0,
         content: make_filename_body("hello.txt", 3, 0, 5),
         data_runs_offset: None,
         data_runs: Vec::new(),

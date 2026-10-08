@@ -193,6 +193,9 @@ pub struct ParsedAttr {
     pub offset: usize,
     /// The value's offset from the attribute's start, for a resident one.
     pub value_offset: usize,
+    /// How long the attribute is, which is the room a rewrite of its run list
+    /// has to fit in.
+    pub attr_len: usize,
     pub content: Vec<u8>,
     pub data_runs_offset: Option<usize>,
     pub data_runs: Vec<DataRun>,
@@ -556,6 +559,7 @@ mod tests {
             attr_type: ATTR_TYPE_FILENAME,
             offset: 0,
             value_offset: 24,
+            attr_len: 0,
             content: make_filename_body("HELLO~1", 2, 0, 5),
             data_runs_offset: None,
             data_runs: Vec::new(),
@@ -565,6 +569,7 @@ mod tests {
             attr_type: ATTR_TYPE_FILENAME,
             offset: 0,
             value_offset: 24,
+            attr_len: 0,
             content: make_filename_body("hello.txt", 3, 0, 5),
             data_runs_offset: None,
             data_runs: Vec::new(),
