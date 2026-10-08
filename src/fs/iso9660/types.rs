@@ -288,6 +288,13 @@ pub struct DirRecord {
     pub extent_location: u32,
     /// Extent size in bytes.
     pub extent_size: u32,
+    /// The blocks of extended attributes that precede the file's data.
+    ///
+    /// A record may name an Extended Attribute Record in front of its data,
+    /// and this driver does not read them (`XA attributes are ignored`), so a
+    /// volume that has any is one whose data it could not read correctly —
+    /// which is what the block map refuses to hand blocks out of.
+    pub extended_attribute_blocks: u8,
     /// File flags (0x02 = directory).
     pub flags: u8,
     /// ISO 9660 file identifier (raw bytes).
@@ -426,6 +433,11 @@ impl DirRecord {
         if dr_len as usize > sector_data.len() - offset {
             return None;
         }
+        // The fixed part of a record is 33 bytes — everything up to the
+        // identifier's length — and nothing below reads past this.
+        if dr_len < 33 {
+            return None;
+        }
 
         let rec = &sector_data[offset..][..dr_len as usize];
 
@@ -480,6 +492,7 @@ impl DirRecord {
             DirRecord {
                 extent_location,
                 extent_size,
+                extended_attribute_blocks: rec[1],
                 flags,
                 identifier,
                 rr_name,
@@ -884,6 +897,21 @@ mod tests {
     fn dir_record_end() {
         let rec = [0u8];
         assert!(DirRecord::parse(&rec, 0).is_none());
+    }
+
+    #[test]
+    fn dir_record_shorter_than_its_fixed_part_is_not_one() {
+        // A record's own length is the first byte, and everything a reader
+        // reads from it is behind that: one that says it is shorter than the
+        // length it claims is a record nobody can read, not a short one to
+        // read past the end of.
+        for length in 1..33u8 {
+            let rec = vec![length; SECTOR_SIZE];
+            assert!(
+                DirRecord::parse(&rec, 0).is_none(),
+                "a {length}-byte record is not a record"
+            );
+        }
     }
 
     #[test]

@@ -19,11 +19,15 @@
 //!   9660 file is one raw contiguous extent whose two fields — where it starts
 //!   and how long it is — are in its directory record, so writing bytes, or a
 //!   length inside the block the file has, touches nothing else.  Growing past
-//!   that block takes blocks from an **append-only** allocator, which grows the
-//!   volume's own declared size over them; a file with something after it
-//!   *moves* to the end rather than growing where it is, because an extent is
-//!   one contiguous run.  A regular file can be created — empty, in the
-//!   directory it names — and removed, which is a record appended to that
+//!   that block takes blocks from the volume's **free space**, which is what
+//!   its structures do not name: a block map is built by walking the whole
+//!   volume, and a volume with anything this driver cannot account for — a
+//!   descriptor it does not know, an extended attribute record, no terminator
+//!   on the descriptor set — is one it appends to instead, because handing a
+//!   block out is not a thing to guess at.  A file with something after it
+//!   *moves* into that free space rather than growing where it is, because an
+//!   extent is one contiguous run.  A regular file can be created — empty, in
+//!   the directory it names — and removed, which is a record appended to that
 //!   directory or shifted out of it; a **directory** can be created and removed
 //!   too, and that is what moves the path tables, which are rebuilt from the
 //!   tree rather than edited in place.  A directory that still holds something
@@ -240,7 +244,8 @@ impl Iso9660Volume {
         // The continuation area first: nothing names it until the record below
         // does, so a failure or a crash here changes nothing that is read.
         let reference = types::susp_extensions_reference();
-        let continuation = fs::allocate_blocks(&self.device, self.block_size, 1)?;
+        let mut allocate = fs::Allocator::of(&self.device, self.block_size);
+        let continuation = allocate.take(1)?;
         fs::write_exact(
             &self.device,
             continuation as u64 * self.block_size as u64,
@@ -258,7 +263,7 @@ impl Iso9660Volume {
             directory_record(&[0x00], root.extent_location, 0, true, &area)?.len();
         let new_size = u32::try_from(first_record_len + tail.len()).map_err(|_| Error::NoSpace)?;
         let new_blocks = (new_size as u64).div_ceil(self.block_size as u64) as u32;
-        let location = fs::allocate_blocks(&self.device, self.block_size, new_blocks)?;
+        let location = allocate.take(new_blocks)?;
 
         let record = directory_record(&[0x00], location, new_size, true, &area)?;
         let mut rebuilt = Vec::with_capacity(new_size as usize);
@@ -420,9 +425,11 @@ impl Iso9660Volume {
         let mut m_location = fs::field_be(pvd.m_path_table_loc);
         if blocks(size) > blocks(old_size) {
             // A path table is one contiguous extent like any other, so more
-            // room than it has means moving it to the end of the volume.
-            l_location = fs::allocate_blocks(&self.device, self.block_size, blocks(size))?;
-            m_location = fs::allocate_blocks(&self.device, self.block_size, blocks(size))?;
+            // room than it has means moving it to free blocks — one allocator
+            // for both, so the second table cannot be handed the first's.
+            let mut allocate = fs::Allocator::of(&self.device, self.block_size);
+            l_location = allocate.take(blocks(size))?;
+            m_location = allocate.take(blocks(size))?;
         }
 
         let write_at = |location: u32, table: &[u8]| -> Result<()> {
@@ -585,6 +592,7 @@ impl Iso9660Volume {
             parent.extent_location,
             parent.extent_size,
             record,
+            &mut fs::Allocator::of(&self.device, self.block_size),
         )?;
 
         if location != parent.extent_location {
@@ -804,7 +812,7 @@ impl VfsFileSystem for Iso9660Volume {
         // A directory's extent holds its own two records before anything else:
         // "." is itself and ".." is its parent, and they are what makes it a
         // directory at all.
-        let extent_location = fs::allocate_blocks(&self.device, self.block_size, 1)?;
+        let extent_location = fs::Allocator::of(&self.device, self.block_size).take(1)?;
         let mut extent = DirRecord::new_directory(&[0x00], extent_location, EMPTY_DIRECTORY_BYTES);
         extent.extend_from_slice(&DirRecord::new_directory(
             &[0x01],
@@ -1043,13 +1051,16 @@ impl VNode for Iso9660VNode {
 
         let extent_location = self.extent_location.load(Ordering::Relaxed);
         // Past the block the file has, the extent needs blocks; `place_extent`
-        // takes them where it can and moves the file where it cannot.
+        // grows it where the volume ends and moves it to free blocks where it
+        // cannot — which is what puts a moved file into a hole a removal left.
+        let mut allocate = fs::Allocator::of(&self.device, self.block_size);
         let extent_location = fs::place_extent(
             &self.device,
             self.block_size,
             extent_location,
             current,
             length,
+            &mut allocate,
         )?;
 
         // Where the file is and how long it is, in one write: the two fields

@@ -135,12 +135,25 @@ fn put_sector(image: &mut [u8], sector: u64, data: &[u8]) {
     image[start..end].copy_from_slice(data);
 }
 
+/// The Volume Descriptor Set Terminator, which is what says a volume's
+/// descriptor set has ended.
+fn build_terminator() -> [u8; SECTOR_SIZE] {
+    let mut buf = [0u8; SECTOR_SIZE];
+    buf[0] = 0xFF;
+    buf[1..6].copy_from_slice(b"CD001");
+    buf[6] = 0x01;
+    buf
+}
+
 /// Build the base (non-bootable) test image.
 fn build_test_image() -> Vec<u8> {
     let mut image = vec![0u8; IMAGE_SECTORS * SECTOR_SIZE];
 
     put_sector(&mut image, PVD_SECTOR, &build_pvd());
-    // Sector 17 stays zeroed — no Joliet SVD.
+    // Sector 17 ends the descriptor set: a volume with no terminator, or with
+    // a descriptor this driver cannot name, is one whose blocks it will not
+    // hand out.
+    put_sector(&mut image, 17, &build_terminator());
 
     // Root directory extent.
     let mut root_extent = Vec::new();
@@ -201,25 +214,22 @@ fn build_test_image() -> Vec<u8> {
     image
 }
 
-/// Build a bootable image: Boot Record at sector 18, volume-descriptor
-/// terminator at sector 19, and a boot catalog at sector 22.
+/// Build a bootable image: Boot Record at sector 17, volume-descriptor
+/// terminator at sector 18, and a boot catalog at sector 22.
 fn build_bootable_image() -> Vec<u8> {
     let mut image = build_test_image();
 
-    // Boot Record descriptor.
+    // Boot Record descriptor — inside the set, before its terminator, which is
+    // where a reader that walks descriptors looks for it.
     let mut boot_rec = [0u8; SECTOR_SIZE];
     boot_rec[0] = 0x00;
     boot_rec[1..6].copy_from_slice(b"CD001");
     boot_rec[6] = 0x01;
     boot_rec[71..75].copy_from_slice(&22u32.to_le_bytes()); // catalog LBA
-    put_sector(&mut image, 18, &boot_rec);
+    put_sector(&mut image, 17, &boot_rec);
 
     // Volume descriptor set terminator.
-    let mut term = [0u8; SECTOR_SIZE];
-    term[0] = 0xFF;
-    term[1..6].copy_from_slice(b"CD001");
-    term[6] = 0x01;
-    put_sector(&mut image, 19, &term);
+    put_sector(&mut image, 18, &build_terminator());
 
     // Boot catalog.
     let mut catalog = [0u8; SECTOR_SIZE];
@@ -763,8 +773,6 @@ fn assert_path_tables_name(device: &Arc<MemoryBlockDevice>, expected: &[(Vec<u8>
 #[test]
 fn a_created_directory_is_empty_and_findable() {
     let (device, volume) = writable_volume();
-    let as_device: Arc<dyn BlockDevice> = device.clone();
-    let extent = fs::volume_blocks(&as_device).expect("volume size");
     volume.create_dir("/NEWDIR").expect("create dir");
 
     let node = volume.lookup("/newdir").expect("lookup");
@@ -776,11 +784,15 @@ fn a_created_directory_is_empty_and_findable() {
         Err(Error::NotFound)
     ));
 
-    // A second mount sees it, and the path tables name it.
+    // A second mount sees it, and the path tables name it — at the extent its
+    // own record does, which is the property the tables have to hold whether
+    // the new extent came from the volume's end or from a hole.
+    let (root, root_size) = root_extent(&device);
+    let extent = record_named(&device, root, root_size, b"NEWDIR").extent_location;
     assert_path_tables_name(
         &device,
         &[
-            (vec![0x00], root_extent(&device).0),
+            (vec![0x00], root),
             (b"SUB".to_vec(), SUB_EXTENT_SECTOR as u32),
             (b"NEWDIR".to_vec(), extent),
         ],
@@ -834,13 +846,13 @@ fn the_path_table_orders_siblings_by_identifier() {
 #[test]
 fn removing_an_empty_directory_takes_it_out_of_the_tree_and_the_tables() {
     let (device, volume) = writable_volume();
-    let as_device: Arc<dyn BlockDevice> = device.clone();
-    let extent = fs::volume_blocks(&as_device).expect("volume size");
     volume.create_dir("/gone").expect("create dir");
+    let (root, root_size) = root_extent(&device);
+    let extent = record_named(&device, root, root_size, b"GONE").extent_location;
     assert_path_tables_name(
         &device,
         &[
-            (vec![0x00], root_extent(&device).0),
+            (vec![0x00], root),
             (b"SUB".to_vec(), SUB_EXTENT_SECTOR as u32),
             (b"GONE".to_vec(), extent),
         ],
@@ -1014,16 +1026,41 @@ fn the_rebuilt_root_still_lists_what_it_listed() {
 }
 
 #[test]
+fn a_volume_that_cannot_be_accounted_for_is_appended_to() {
+    // A volume whose descriptor set has no terminator is one this driver
+    // cannot say the structures of — so it hands blocks out from the end,
+    // which is where the image's own space stops.
+    let mut image = build_test_image();
+    put_sector(&mut image, 17, &[0u8; SECTOR_SIZE]);
+    let device = MemoryBlockDevice::new("iso-opaque", image, false);
+    let volume = open_volume(device.clone());
+
+    let (location, _size) = root_extent(&device);
+    assert!(
+        location >= VOLUME_BLOCKS,
+        "the rebuilt root went past the space the image declared"
+    );
+    assert!(volume.lookup("/HELLO.TXT").is_ok());
+}
+
+#[test]
 fn a_volume_with_no_room_for_the_reference_still_mounts() {
-    // A medium that is exactly the volume: the block the reference would
-    // continue in is not there, so the volume is left as it was.
-    let tight = build_test_image()[..VOLUME_BLOCKS as usize * SECTOR_SIZE].to_vec();
+    // And the same volume on a medium that is exactly its size: there is
+    // nowhere to append the reference either, so the volume is left as it was.
+    let mut image = build_test_image();
+    put_sector(&mut image, 17, &[0u8; SECTOR_SIZE]);
+    let tight = image[..VOLUME_BLOCKS as usize * SECTOR_SIZE].to_vec();
     let device = MemoryBlockDevice::new("iso-tight", tight, false);
     let volume = open_volume(device.clone());
 
     assert_eq!(
         root_extent(&device),
         (ROOT_EXTENT_SECTOR as u32, ROOT_EXTENT_SIZE)
+    );
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    assert_eq!(
+        fs::volume_blocks(&as_device).expect("volume size"),
+        VOLUME_BLOCKS
     );
     assert!(volume.lookup("/HELLO.TXT").is_ok());
 
@@ -1358,15 +1395,22 @@ fn growing_past_the_block_moves_a_file_that_has_something_after_it() {
     let end = fs::volume_blocks(&as_device).expect("volume size");
 
     // HELLO's extent is one block and NOTES begins in the next one, and an
-    // extent is one contiguous run — so the file moves to the end of the
-    // volume, which is where this allocator hands out blocks.
+    // extent is one contiguous run — so the file moves, and what it moves into
+    // is the volume's free space, which is a hole below its end here rather
+    // than the end itself.
     node.set_len(2 * SECTOR_SIZE as u64).expect("grow");
     assert_eq!(node.size(), 2 * SECTOR_SIZE);
     let (location, size) = root_extent(&device);
+    let moved_to = record_named(&device, location, size, b"HELLO.TXT;1").extent_location;
+    assert_ne!(moved_to, HELLO_SECTOR as u32, "the file had to move");
+    assert!(
+        moved_to < end,
+        "it moved into a hole, so the volume did not have to grow"
+    );
     assert_eq!(
-        record_named(&device, location, size, b"HELLO.TXT;1").extent_location,
+        fs::volume_blocks(&as_device).expect("volume size"),
         end,
-        "the record must point at the space the file moved to"
+        "the volume's space is what it was"
     );
 
     let mut buf = vec![0u8; node.size()];
@@ -1449,16 +1493,20 @@ fn growth_the_medium_cannot_hold_is_refused() {
 
 #[test]
 fn a_write_that_cannot_grow_is_short() {
-    // The same image on a medium that is exactly the volume's size: what the
-    // file would need to grow into is not there, so the write takes what it
-    // can rather than failing.
+    // The same image on a medium that is exactly the volume's size, and a
+    // write far enough past the end that neither the holes inside the volume
+    // nor its end can hold it: the write takes what it can rather than
+    // failing.
     let tight = build_test_image()[..VOLUME_BLOCKS as usize * SECTOR_SIZE].to_vec();
     let device = MemoryBlockDevice::new("iso-tight", tight, false);
     let volume = open_volume(device);
     let node = volume.lookup("/HELLO.TXT").expect("lookup");
     let data = [0xAAu8; 8];
 
-    assert_eq!(node.write(SECTOR_SIZE as u64, &data).expect("write"), 0);
+    assert_eq!(
+        node.write(64 * SECTOR_SIZE as u64, &data).expect("write"),
+        0
+    );
     assert_eq!(node.size(), HELLO.len());
 }
 
@@ -1606,6 +1654,49 @@ fn bootable_volume_reports_boot_entries() {
 // ─── Giving the blocks back (RFC 0011, stage 3g) ───────────────────────
 
 #[test]
+fn the_block_map_is_absent_for_a_volume_it_cannot_account_for() {
+    let map = |image: Vec<u8>| {
+        let device: Arc<dyn BlockDevice> = MemoryBlockDevice::new("iso-map", image, true);
+        fs::occupied_blocks(&device, SECTOR_SIZE as u16).is_ok()
+    };
+    let image = build_test_image();
+    assert!(
+        map(image.clone()),
+        "the fixture is a volume it can account for"
+    );
+
+    // A descriptor set with no terminator: there is no telling where its
+    // descriptors stop.
+    let mut no_terminator = image.clone();
+    put_sector(&mut no_terminator, 17, &[0u8; SECTOR_SIZE]);
+    assert!(!map(no_terminator));
+
+    // A descriptor this driver does not know, which could name anything.
+    let mut unknown = image.clone();
+    let mut other = [0u8; SECTOR_SIZE];
+    other[0] = 0x03;
+    other[1..6].copy_from_slice(b"CD001");
+    other[6] = 0x01;
+    put_sector(&mut unknown, 17, &other);
+    assert!(!map(unknown));
+
+    // A supplementary descriptor that is not Joliet's: that is another tree,
+    // and this driver would not know where its extents are.
+    let mut other_tree = image.clone();
+    let mut supplementary = [0u8; SECTOR_SIZE];
+    supplementary[0] = 0x02;
+    supplementary[1..6].copy_from_slice(b"CD001");
+    supplementary[6] = 0x01;
+    put_sector(&mut other_tree, 17, &supplementary);
+    assert!(!map(other_tree));
+
+    // A root with an Extended Attribute Record in front of it.
+    let mut with_attributes = image;
+    with_attributes[PVD_SECTOR as usize * SECTOR_SIZE + 156 + 1] = 1;
+    assert!(!map(with_attributes));
+}
+
+#[test]
 fn a_removal_at_the_end_of_the_volume_gives_its_blocks_back() {
     let (device, volume) = writable_volume();
     let as_device: Arc<dyn BlockDevice> = device.clone();
@@ -1648,10 +1739,60 @@ fn a_removal_inside_the_volume_gives_nothing_back() {
     let as_device: Arc<dyn BlockDevice> = device.clone();
     let before = fs::volume_blocks(&as_device).expect("volume size");
 
-    // `HELLO.TXT` is in the middle: the volume's space ends past it, and what
-    // is free there is not something this driver can see without walking every
-    // extent on the volume.
+    // `HELLO.TXT` is in the middle: the volume's space ends past it, so the
+    // *declared size* does not move.  What is free there is not lost, though —
+    // the block map is what the next allocation looks in.
     volume.remove_path("/HELLO.TXT").expect("remove");
+    assert_eq!(fs::volume_blocks(&as_device).expect("volume size"), before);
+}
+
+#[test]
+fn a_removal_inside_the_volume_frees_its_blocks_for_the_next_allocation() {
+    let (device, volume) = writable_volume();
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+
+    // A file that ends up after the others, so that the ones above it in the
+    // tree have something to move away from.
+    let tail = volume.create_file("/tail.bin").expect("create");
+    assert_eq!(
+        tail.write(0, &[0x5A; SECTOR_SIZE]).expect("write"),
+        SECTOR_SIZE
+    );
+
+    // A file with something after it moves into the volume's free space when
+    // it grows, and here that is a hole below the volume's end.
+    volume
+        .lookup("/HELLO.TXT")
+        .expect("lookup hello")
+        .set_len(2 * SECTOR_SIZE as u64)
+        .expect("grow");
+    let (root, root_size) = root_extent(&device);
+    let moved_to = record_named(&device, root, root_size, b"HELLO.TXT;1").extent_location;
+    assert!(moved_to < fs::volume_blocks(&as_device).expect("volume size"));
+    let before = fs::volume_blocks(&as_device).expect("volume size");
+
+    // Removing it leaves two free blocks that are not the volume's tail, so
+    // the declared size stays where it is ...
+    volume.remove_path("/HELLO.TXT").expect("remove");
+    assert_eq!(fs::volume_blocks(&as_device).expect("volume size"), before);
+
+    // ... and the next file that needs two of them is handed those.
+    volume
+        .lookup("/SUB/NOTES.TXT")
+        .expect("lookup notes")
+        .set_len(2 * SECTOR_SIZE as u64)
+        .expect("grow");
+    assert_eq!(
+        record_named(
+            &device,
+            SUB_EXTENT_SECTOR as u32,
+            SUB_EXTENT_SIZE,
+            b"NOTES.TXT;1"
+        )
+        .extent_location,
+        moved_to,
+        "the allocator hands out the hole the removal left"
+    );
     assert_eq!(fs::volume_blocks(&as_device).expect("volume size"), before);
 }
 

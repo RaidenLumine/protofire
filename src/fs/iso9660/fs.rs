@@ -85,12 +85,19 @@ pub fn read_svd(device: &Arc<dyn BlockDevice>) -> Option<Pvd> {
 /// than any directory a disc this driver writes has.
 pub const MAX_DIRECTORY_BYTES: u64 = 16 * 1024 * 1024;
 
-/// Read all directory entries from an extent.
-pub fn read_directory(
+/// Read the records an extent holds, with or without its own "." and "..".
+///
+/// A block map needs the two: a record's System Use area can continue into a
+/// block of its own, the entry that says so is in the record, and the root
+/// directory's own "." record is where a volume declares its extension — so a
+/// walk that skipped it would leave that block looking free.
+fn read_records(
     device: &Arc<dyn BlockDevice>,
     block_size: u16,
     extent_location: u32,
     extent_size: u32,
+    joliet: bool,
+    with_the_dots: bool,
 ) -> Result<Vec<DirRecord>, Error> {
     let block_size = block_size as u64;
     let extent_size = extent_size as u64;
@@ -107,13 +114,14 @@ pub fn read_directory(
     let mut offset = 0;
 
     while offset < data.len() {
-        match DirRecord::parse(&data, offset) {
+        let parsed = if joliet {
+            DirRecord::parse_joliet(&data, offset)
+        } else {
+            DirRecord::parse(&data, offset)
+        };
+        match parsed {
             Some((record, next)) => {
-                // Skip "." and ".." entries for cleaner listing.
-                let skip = record.identifier.len() == 1
-                    && (record.identifier[0] == 0x00 || record.identifier[0] == 0x01);
-
-                if !skip {
+                if with_the_dots || !names_self_or_parent(&record, joliet) {
                     records.push(record);
                 }
                 offset = next;
@@ -135,6 +143,49 @@ pub fn read_directory(
     Ok(records)
 }
 
+/// Whether a record is a directory's own "." or its "..".
+fn names_self_or_parent(record: &DirRecord, joliet: bool) -> bool {
+    // A Joliet identifier is UCS-2BE, so its one-character form is two bytes.
+    let length = if joliet { 2 } else { 1 };
+    record.identifier.len() == length
+        && (record.identifier[0] == 0x00 || record.identifier[0] == 0x01)
+}
+
+/// Read all directory entries from an extent.
+pub fn read_directory(
+    device: &Arc<dyn BlockDevice>,
+    block_size: u16,
+    extent_location: u32,
+    extent_size: u32,
+) -> Result<Vec<DirRecord>, Error> {
+    read_records(
+        device,
+        block_size,
+        extent_location,
+        extent_size,
+        false,
+        false,
+    )
+}
+
+/// Read every record an extent holds, its own "." and ".." included.
+pub fn read_all_records(
+    device: &Arc<dyn BlockDevice>,
+    block_size: u16,
+    extent_location: u32,
+    extent_size: u32,
+    joliet: bool,
+) -> Result<Vec<DirRecord>, Error> {
+    read_records(
+        device,
+        block_size,
+        extent_location,
+        extent_size,
+        joliet,
+        true,
+    )
+}
+
 /// Read all directory entries from a Joliet extent (UCS-2BE filenames).
 ///
 /// Identical to [`read_directory`] but parses records with
@@ -146,47 +197,14 @@ pub fn read_joliet_directory(
     extent_location: u32,
     extent_size: u32,
 ) -> Result<Vec<DirRecord>, Error> {
-    let block_size = block_size as u64;
-    let extent_size = extent_size as u64;
-
-    if extent_size > MAX_DIRECTORY_BYTES {
-        return Err(Error::InvalidArgument);
-    }
-
-    let mut data = alloc::vec![0u8; extent_size as usize];
-    let extent_offset = extent_location as u64 * block_size;
-    read_exact(device, extent_offset, &mut data)?;
-
-    let mut records = Vec::new();
-    let mut offset = 0;
-
-    while offset < data.len() {
-        match DirRecord::parse_joliet(&data, offset) {
-            Some((record, next)) => {
-                // Skip "." and ".." entries (UCS-2BE encoded as 0x0000 / 0x0001).
-                let skip = record.identifier.len() == 2
-                    && (record.identifier[0] == 0x00 || record.identifier[0] == 0x01);
-
-                if !skip {
-                    records.push(record);
-                }
-                offset = next;
-                if offset >= data.len() {
-                    break;
-                }
-            }
-            None => {
-                // dr_len == 0: end of directory. Advance to next sector boundary.
-                let block_end = ((offset / SECTOR_SIZE) + 1) * SECTOR_SIZE;
-                offset = block_end;
-                if offset >= data.len() {
-                    break;
-                }
-            }
-        }
-    }
-
-    Ok(records)
+    read_records(
+        device,
+        block_size,
+        extent_location,
+        extent_size,
+        true,
+        false,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -526,18 +544,14 @@ pub fn set_volume_blocks(device: &Arc<dyn BlockDevice>, blocks: u32) -> Result<(
 /// Give back the blocks an extent no longer holds.
 ///
 /// `held` is the size the extent had and `kept` the size it has now; the
-/// blocks between them are the ones it gave up.  The volume's declared size
-/// **is** this allocator's free list — everything below it is claimed by an
-/// extent, everything from it on is not — so an extent that was the last thing
-/// the volume held can lower that size over the blocks it gave back, and
-/// nothing else has to be consulted: a block beyond the size the volume
-/// declares belongs to no file by definition, which is the same property the
-/// append-only allocator rests on.
+/// blocks between them are the ones it gave up.  An extent that was the last
+/// thing the volume held can lower the size the volume declares over them, and
+/// nothing else has to be consulted: a block past that size belongs to nobody
+/// by definition.  That is the one property a volume this driver *cannot*
+/// account for still has, which is why this needs no map.
 ///
-/// It is a **tail** rule and only a tail rule.  A removal in the middle of the
-/// volume gives nothing back, because finding what is free in the middle means
-/// enumerating every extent on the volume — a scan with a list of structures
-/// to know about, which is the step after this one
+/// The middle of a volume is [`Allocator`]'s business: this is a **tail** rule
+/// and lowering the declared size is all it does
 /// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
 pub fn release_volume_tail(
     device: &Arc<dyn BlockDevice>,
@@ -567,15 +581,341 @@ pub fn release_volume_tail(
     set_volume_blocks(device, new_end)
 }
 
+// ---------------------------------------------------------------------------
+// What the volume holds
+// ---------------------------------------------------------------------------
+
+/// The blocks the standard reserves for a volume's system area.
+pub const SYSTEM_AREA_BLOCKS: u32 = 16;
+
+/// The most volume descriptors this driver will walk before giving up.
+///
+/// A descriptor set is a handful of sectors and ends in a terminator; a volume
+/// that has not reached one within this many is not one whose structures this
+/// driver can name.
+const MAX_DESCRIPTORS: u32 = 32;
+
+/// How deep a directory tree may go before the walk gives up.
+const MAX_TREE_DEPTH: u32 = 64;
+
+/// The catalog block, and the sectors El Torito may continue it into.
+///
+/// Claiming more than a catalog uses costs space, and claiming less costs the
+/// catalog, so this is generous on purpose.
+const BOOT_CATALOG_BLOCKS: u32 = 8;
+
+/// How many logical blocks `bytes` takes.
+fn blocks_of(bytes: u32, block_size: u16) -> u32 {
+    (u64::from(bytes).div_ceil(u64::from(block_size))) as u32
+}
+
+/// The blocks a volume's structures occupy, as sorted, disjoint runs.
+///
+/// A block is free when nothing in here names it, so what the map has to be is
+/// **complete**: a volume with anything this driver cannot account for gives
+/// no map at all, and then allocations append, because handing a block to a
+/// file that a structure already holds is the one thing that must not happen.
+pub struct Occupied {
+    runs: Vec<(u32, u32)>,
+    /// Whether `runs` is sorted and merged, which is what a gap search needs
+    /// and what marking a block breaks.
+    settled: bool,
+}
+
+impl Occupied {
+    fn new() -> Self {
+        Self {
+            runs: Vec::new(),
+            settled: true,
+        }
+    }
+
+    /// Claim `blocks` logical blocks beginning at `start`.
+    fn mark(&mut self, start: u32, blocks: u32) {
+        let end = start.saturating_add(blocks);
+        if end > start {
+            self.runs.push((start, end));
+            self.settled = false;
+        }
+    }
+
+    /// Sort and merge the runs, so that what is free is the gaps between them.
+    fn settle(&mut self) {
+        if self.settled {
+            return;
+        }
+        self.runs.sort_unstable_by_key(|run| run.0);
+        let mut merged: Vec<(u32, u32)> = Vec::with_capacity(self.runs.len());
+        for &(start, end) in &self.runs {
+            match merged.last_mut() {
+                Some(last) if start <= last.1 => last.1 = last.1.max(end),
+                _ => merged.push((start, end)),
+            }
+        }
+        self.runs = merged;
+        self.settled = true;
+    }
+
+    /// The first run of `blocks` logical blocks nothing here claims.
+    ///
+    /// The answer may be past the space the volume declares, which is free by
+    /// definition; a caller that takes it has to grow the volume over it.
+    fn first_free_run(&mut self, blocks: u32) -> Option<u32> {
+        self.settle();
+        if blocks == 0 {
+            return Some(0);
+        }
+        let mut at = 0u32;
+        for &(start, end) in &self.runs {
+            if start.saturating_sub(at) >= blocks {
+                return Some(at);
+            }
+            at = at.max(end);
+        }
+        at.checked_add(blocks).map(|_| at)
+    }
+}
+
+/// The packed descriptor a sector holds.
+fn descriptor_of(bytes: &[u8; SECTOR_SIZE]) -> &Pvd {
+    // SAFETY: `Pvd` is `#[repr(C, packed)]`, so it needs no alignment the byte
+    // buffer cannot give, and a sector is wider than the descriptor it starts
+    // with.
+    unsafe { &*bytes.as_ptr().cast::<Pvd>() }
+}
+
+/// Where every structure a volume holds is, or an error when this driver
+/// cannot account for all of them.
+///
+/// The structures a well-formed volume can have are a closed list: the system
+/// area, the descriptor set, the path tables a descriptor names (with their
+/// optional copies), the boot catalog a Boot Record names and the images its
+/// entries point at, the directory trees of the primary and the Joliet
+/// descriptors, and the continuation areas a record's `CE` entry names.  Every
+/// one of them is claimed here — and anything else, from a descriptor this
+/// driver does not know to an extended attribute record it does not read,
+/// gives an error rather than a map with a hole in it.
+pub fn occupied_blocks(device: &Arc<dyn BlockDevice>, block_size: u16) -> Result<Occupied, Error> {
+    let mut occupied = Occupied::new();
+    occupied.mark(0, SYSTEM_AREA_BLOCKS);
+
+    let mut trees: Vec<(DirRecord, bool)> = Vec::new();
+    let mut terminated = false;
+    for offset in 0..MAX_DESCRIPTORS {
+        let sector = PVD_SECTOR as u32 + offset;
+        let mut bytes = [0u8; SECTOR_SIZE];
+        read_exact(
+            device,
+            u64::from(sector) * u64::from(block_size),
+            &mut bytes,
+        )?;
+        if &bytes[1..6] != b"CD001" || bytes[6] != 0x01 {
+            return Err(Error::InvalidArgument);
+        }
+        occupied.mark(sector, 1);
+
+        match bytes[0] {
+            0xFF => {
+                terminated = true;
+                break;
+            }
+            0x01 | 0x02 => {
+                // There is exactly one supplementary descriptor this driver
+                // reads, and a volume with another is one whose other tree it
+                // cannot account for.
+                let joliet = &bytes[88..91] == b"%/@";
+                if bytes[0] == 0x02 && !joliet {
+                    return Err(Error::Unsupported);
+                }
+                let descriptor = descriptor_of(&bytes);
+                mark_path_tables(&mut occupied, block_size, descriptor);
+                let parsed = if joliet {
+                    DirRecord::parse_joliet(&descriptor.root_dir_record, 0)
+                } else {
+                    DirRecord::parse(&descriptor.root_dir_record, 0)
+                };
+                let (root, _next) = parsed.ok_or(Error::InvalidArgument)?;
+                trees.push((root, joliet));
+            }
+            0x00 => mark_boot_record(&mut occupied, block_size, &bytes),
+            _ => return Err(Error::Unsupported),
+        }
+    }
+    if !terminated {
+        return Err(Error::InvalidArgument);
+    }
+
+    for (root, joliet) in &trees {
+        mark_tree(device, block_size, &mut occupied, root, *joliet, 0)?;
+    }
+    Ok(occupied)
+}
+
+/// Claim the path tables a descriptor names, and any optional copies of them.
+fn mark_path_tables(occupied: &mut Occupied, block_size: u16, descriptor: &Pvd) {
+    let size = u32::from_le_bytes(
+        descriptor.path_table_size[..4]
+            .try_into()
+            .unwrap_or_default(),
+    );
+    let blocks = blocks_of(size, block_size);
+    for location in [
+        field_le(descriptor.l_path_table_loc),
+        field_be(descriptor.m_path_table_loc),
+        field_le(descriptor.opt_l_path_table_loc),
+        field_be(descriptor.opt_m_path_table_loc),
+    ] {
+        if location != 0 {
+            occupied.mark(location, blocks);
+        }
+    }
+}
+
+/// Claim the boot catalog a Boot Record names, and the images its entries do.
+fn mark_boot_record(occupied: &mut Occupied, block_size: u16, bytes: &[u8; SECTOR_SIZE]) {
+    let catalog = u32::from_le_bytes([bytes[71], bytes[72], bytes[73], bytes[74]]);
+    if catalog == 0 {
+        return;
+    }
+    occupied.mark(catalog, BOOT_CATALOG_BLOCKS);
+    for entry in parse_boot_catalog(bytes) {
+        // An entry counts its image in the 512-byte sectors a boot loader
+        // reads, not in the volume's logical blocks.
+        let image = (u64::from(entry.sector_count) * 512).div_ceil(u64::from(block_size)) as u32;
+        occupied.mark(entry.load_rba, image);
+    }
+}
+
+/// Claim every extent a directory tree names, from its root down.
+fn mark_tree(
+    device: &Arc<dyn BlockDevice>,
+    block_size: u16,
+    occupied: &mut Occupied,
+    root: &DirRecord,
+    joliet: bool,
+    depth: u32,
+) -> Result<(), Error> {
+    if depth > MAX_TREE_DEPTH {
+        return Err(Error::InvalidArgument);
+    }
+    if root.extended_attribute_blocks != 0 {
+        // The root's own attributes sit in front of the extent below, and what
+        // this walk is about to read is not where the record says the entries
+        // are.
+        return Err(Error::Unsupported);
+    }
+    // Every record, its own "." and ".." included: those two are records like
+    // any other here, and the root's "." is where a volume's extension
+    // reference is, whose continuation is a block of its own.
+    let records = read_all_records(
+        device,
+        block_size,
+        root.extent_location,
+        root.extent_size,
+        joliet,
+    )?;
+    occupied.mark(
+        root.extent_location,
+        blocks_of(root.extent_size, block_size),
+    );
+
+    for record in &records {
+        mark_record(occupied, block_size, record)?;
+        // "." is this directory and ".." is its parent: neither is a child,
+        // and following them would walk the tree in circles.
+        if record.is_dir() && !names_self_or_parent(record, joliet) {
+            mark_tree(device, block_size, occupied, record, joliet, depth + 1)?;
+        }
+    }
+    Ok(())
+}
+
+/// Claim what one record names.
+fn mark_record(occupied: &mut Occupied, block_size: u16, record: &DirRecord) -> Result<(), Error> {
+    if record.extended_attribute_blocks != 0 {
+        // The attributes sit in front of the data and this driver does not
+        // read them, so what the record says is not the whole of what the
+        // entry holds.
+        return Err(Error::Unsupported);
+    }
+    occupied.mark(
+        record.extent_location,
+        blocks_of(record.extent_size, block_size),
+    );
+    mark_continuations(occupied, block_size, &record.system_use);
+    Ok(())
+}
+
+/// Claim the bytes a record's System Use area says it continues into.
+fn mark_continuations(occupied: &mut Occupied, block_size: u16, system_use: &[u8]) {
+    let mut rest = system_use;
+    while rest.len() >= 4 {
+        let len = rest[2] as usize;
+        if len < 4 || len > rest.len() {
+            break;
+        }
+        if &rest[..2] == b"CE" && len >= 28 {
+            let number =
+                |at: usize| u32::from_le_bytes(rest[at..at + 4].try_into().unwrap_or_default());
+            // The continuation begins at a byte offset inside that block, so
+            // what it takes is however many blocks its bytes fall in.
+            let bytes = u64::from(number(12)) + u64::from(number(20));
+            let blocks = bytes.div_ceil(u64::from(block_size)) as u32;
+            occupied.mark(number(4), blocks);
+        }
+        rest = &rest[len..];
+    }
+}
+
+/// Where a new extent comes from.
+///
+/// The volume's free blocks are everything its structures do not name, and
+/// finding them means walking the whole volume — so it happens once per
+/// operation, and the blocks are claimed here as they are handed out.
+pub struct Allocator<'a> {
+    device: &'a Arc<dyn BlockDevice>,
+    block_size: u16,
+    /// The volume's structures, when this driver can account for all of them;
+    /// `None` is a volume it cannot, and then every allocation appends.
+    free: Option<Occupied>,
+}
+
+impl<'a> Allocator<'a> {
+    /// An allocator for a volume, which hands out the blocks that are free and
+    /// appends when it cannot account for what is on the volume.
+    pub fn of(device: &'a Arc<dyn BlockDevice>, block_size: u16) -> Self {
+        Self {
+            device,
+            block_size,
+            free: occupied_blocks(device, block_size).ok(),
+        }
+    }
+
+    /// Take `blocks` logical blocks, and answer where they are.
+    pub fn take(&mut self, blocks: u32) -> Result<u32, Error> {
+        let Some(free) = self.free.as_mut() else {
+            return allocate_blocks(self.device, self.block_size, blocks);
+        };
+        let start = free.first_free_run(blocks).ok_or(Error::NoSpace)?;
+        free.mark(start, blocks);
+        // The run may be past the space the volume declares, which is free by
+        // definition; taking it means the volume grows over it.
+        let end = start.checked_add(blocks).ok_or(Error::NoSpace)?;
+        if end > volume_blocks(self.device)? {
+            set_volume_blocks(self.device, end)?;
+        }
+        Ok(start)
+    }
+}
+
 /// Take `count` logical blocks for a file, and grow the volume to hold them.
 ///
-/// This is an **append-only** allocator: the blocks it hands out begin where
-/// the volume's declared extent ends, and the one metadata field it moves is
-/// the volume's own size.  It never hands out a block the image already wrote,
-/// which is what makes it correct without a free-space scan — and what it
-/// costs is that a removal reclaims nothing, and a file grows either where the
-/// blocks after it happen to be free or by moving.  A scan of every extent is
-/// what reclaiming would take, and it is the next step
+/// This is the **fallback** the allocator above uses for a volume whose
+/// structures this driver cannot account for: the blocks begin where the
+/// volume's declared extent ends, and the one metadata field it moves is the
+/// volume's own size.  It never hands out a block the image already wrote,
+/// which is what makes it correct without knowing what is on the volume — and
+/// what it costs is that nothing in the middle is ever handed out again
 /// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
 pub fn allocate_blocks(
     device: &Arc<dyn BlockDevice>,
@@ -600,9 +940,9 @@ pub fn allocate_blocks(
 /// bigger and this picks by where it is.  When it is the last thing the volume
 /// holds, the blocks it needs follow it and the volume grows over them — no
 /// copy.  Otherwise something is in the way, and the extent **moves** to the
-/// end of the volume: the data first, and the caller writes the record that
-/// points at it afterwards, so a crash before that leaves the old record
-/// pointing at the old content.
+/// free blocks the allocator gives it: the data first, and the caller writes
+/// the record that points at it afterwards, so a crash before that leaves the
+/// old record pointing at the old content.
 ///
 /// A size that fits in the blocks the extent already has allocates nothing and
 /// moves nothing.
@@ -612,6 +952,7 @@ pub fn place_extent(
     extent_location: u32,
     extent_size: u32,
     new_size: u32,
+    allocate: &mut Allocator,
 ) -> Result<u32, Error> {
     let bs = block_size as u32;
     let old_blocks = extent_size.div_ceil(bs);
@@ -629,7 +970,7 @@ pub fn place_extent(
         return Ok(extent_location);
     }
 
-    let first = allocate_blocks(device, block_size, new_blocks)?;
+    let first = allocate.take(new_blocks)?;
     if extent_size > 0 {
         let mut data = alloc::vec![0u8; extent_size as usize];
         read_extent(
@@ -661,6 +1002,7 @@ pub fn append_record(
     dir_extent: u32,
     dir_size: u32,
     record: &[u8],
+    allocate: &mut Allocator,
 ) -> Result<(u32, u32, u64), Error> {
     let bs = block_size as u64;
     let mut at = dir_size as u64;
@@ -669,7 +1011,7 @@ pub fn append_record(
     }
 
     let new_size = u32::try_from(at + record.len() as u64).map_err(|_| Error::NoSpace)?;
-    let location = place_extent(device, block_size, dir_extent, dir_size, new_size)?;
+    let location = place_extent(device, block_size, dir_extent, dir_size, new_size, allocate)?;
 
     // The record goes into the extent's own byte space, which the move above
     // preserved, so `at` is where it is either way.

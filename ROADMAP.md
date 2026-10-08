@@ -103,17 +103,18 @@ The authoritative picture of what exists today is
   F2FS / XFS / exFAT / FAT32.  The first of them is moving:
   [RFC 0011](docs/rfcs/0011-make-iso9660-file-data-writable.md) made an ISO
   9660 file's *data*, its *length*, its *space* — from an allocator that hands
-  out the volume's tail and no longer refuses at the block boundary — its
+  out the volume's free space and no longer refuses at the block boundary — its
   *record*, so files can be created and removed, then *directories*, which is
   both path tables rebuilt from the tree, and then entries that can be renamed
   and moved, which is the same two halves as one operation.  The RFC records
   why ISO 9660 went first (no compression to redo, no checksum tree to update,
   and a test image builder that already exists), and what it costs: a growth
-  with something after it pays a copy, and a removal gives its blocks back only
-  when they are the volume's last, because what is free in the middle would
-  take a scan of every extent.  What is left of ISO 9660 is that scan.  The
-  volume also declares the extension its entries belong to, which a writable
-  open writes once by rebuilding the root directory's extent.
+  with something after it pays a copy, and what is free is only known for a
+  volume whose structures the driver can name — anything it cannot account for
+  is appended to instead, which is a decision rather than a gap.  The volume
+  also declares the extension its entries belong to, which a writable open
+  writes once by rebuilding the root directory's extent.  What is left of
+  ISO 9660 is the secondary tree: a change updates the one a lookup used.
   NTFS is the prize and the largest step; its RFC has to decide its harness
   before its writes.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64

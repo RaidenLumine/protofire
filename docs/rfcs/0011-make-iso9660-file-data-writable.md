@@ -489,5 +489,54 @@ removal reclaim what it freed.
   medium that is exactly the volume does not come down onto the blocks the
   image came with.
 
-**What that leaves.**  The scan: a removal in the middle of a volume reclaims
-nothing, and neither does one of the entries the image itself came with.
+**Stage 3h — the free-space scan, and what it refuses.**
+
+- The blocks a volume's structures occupy are a **closed list**: the system
+  area, the descriptor set (its terminator included), the path tables a
+  descriptor names and their optional copies, the boot catalog a Boot Record
+  names and the images its entries point at, the directory trees of the
+  primary and the Joliet descriptors, and every continuation area a record's
+  `CE` entry names — including the one in the root's own "." record, which is
+  where a conforming volume keeps its extension reference.  `occupied_blocks`
+  walks all of it, and `Allocator::take` hands out the first run of the size
+  asked for that nothing in the map claims.
+- The map has to be **complete or absent**.  A volume with a descriptor this
+  driver does not know, a supplementary descriptor that is not Joliet's, a
+  descriptor set with no terminator, a record carrying an Extended Attribute
+  Record — whose blocks sit in front of the data, which this driver does not
+  read — or a tree deeper than the walk will follow gives **no map at all**,
+  and then allocations append, the way every allocation used to.  Handing a
+  block to a file that a structure already holds is the one mistake this must
+  not make, and a volume whose structures cannot be named is not one to guess
+  about.
+- Two things follow for the reader, both because the map walks a foreign
+  volume: the walk needs a directory's own "." and ".." records, since a
+  record's System Use area may continue into a block of its own and the root's
+  "." is where the extension reference lives, so the directory reader grew an
+  unfiltered form rather than the map growing a second copy of its loop; and a
+  record whose own length says it is shorter than the fixed part every reader
+  reads from is rejected rather than indexed into, which is a panic this walk
+  would otherwise have been able to reach.
+- The tail rule from 3g stays, and now it is the *fallback's* reclaim as well
+  as a way to bring the declared size down: a volume that cannot be accounted
+  for still gets its last blocks back, because a block past the size a volume
+  declares belongs to nobody whether or not anything knows what else is there.
+- **What the map costs is the walk.**  It is built per operation, so an
+  operation that allocates reads every directory extent on the volume — a
+  create on a volume with many entries pays for the volume, not for the
+  entry.  The alternative is a free map *written into the volume*, which is a
+  structure of this driver's own that no other reader of an ISO 9660 disc
+  would know; between a slow allocation and a private format, the format is
+  the more expensive thing to be wrong about.
+- Tests: the map is present for the fixture and **absent** for each of the
+  four shapes above; a file that grows past its block moves into a hole and the
+  volume does not grow; a removal inside the volume frees its blocks for the
+  next allocation of that size, read off the medium; a volume that cannot be
+  accounted for has its allocations appended past the space the image
+  declared; and a volume with nothing to append to still mounts and still
+  takes a create.
+
+**What that leaves.**  A change still updates only the tree the lookup used —
+the Joliet note in the questions above — and a volume whose structures this
+driver cannot account for keeps appending, which is a decision rather than a
+gap: the alternative is guessing.
