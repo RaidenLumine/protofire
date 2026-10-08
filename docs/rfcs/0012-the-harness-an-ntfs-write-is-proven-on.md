@@ -1,0 +1,245 @@
+# RFC 0012: Decide the harness an NTFS write is proven on
+
+- **Status:** Accepted
+- **Author(s):** Raiden Lumine <2557597107@qq.com>
+- **Date:** 2026-10-08
+- **Supersedes:** none
+
+## Summary
+
+NTFS is the next filesystem the roadmap moves toward read-write and the
+largest of them, and the roadmap says its RFC has to decide its **harness**
+before its writes.  This decides both that harness and the first stage under
+it: a **fixture volume built in the tree**, in the shapes a real volume has,
+checked by its own invariants and kept honest against a volume `mkntfs`
+makes — and, as the first stage, the **read** path through it, because the
+probe below shows the driver answering a question about a real volume with a
+different record than it was asked for, and there is nothing in the tree that
+would notice.
+
+## Motivation
+
+[docs/status.md](../status.md) records the gap in NTFS's own row: "MFT
+parsing, attribute resolution; `write` overwrites inside existing runs",
+with "no create, rename or remove (`NotImplemented`); no file extension, and
+compressed and encrypted streams are not covered".  The roadmap, in the same
+breath, says why this RFC comes before any of that work: "its RFC has to
+decide its harness before its writes".
+
+That is not a formality, and the reason is measurable.  A volume `mkntfs`
+makes has 1024-byte MFT records and 4096-byte clusters, and this driver
+computes the record size from the boot sector's exponent as
+`(1 << |exp|) / cluster_size`, with a floor of one cluster — so it decides the
+records are 4096 bytes.  Asked for records 0, 3 and 5 of that volume it
+answered with records **0, 12 and 0**, the last of which is not in use: the
+root directory this driver works with is, on a real volume, some other
+record.  Every one of those reads *succeeded*, because the magic is still
+`FILE` — the MFT is a run of records the format wrote, and four times the
+right stride still lands inside it.
+
+Nothing in the tree can notice that today.  `src/fs/ntfs/tests.rs` says it in
+its own header: the end-to-end suite went with the API the driver was
+refactored away from, and what is left tests parsers — reparse points, `$EA`,
+filename selection, `$STANDARD_INFORMATION`, index entries — none of which
+has ever seen a volume.
+
+## Current state
+
+- **`src/fs/ntfs/mod.rs`.**  `NtfsFs::new` reads the boot sector;
+  `NtfsInfo::new` derives the cluster, record and index sizes from it.
+  `read_mft_record` addresses a record as
+  `mft_lcn * cluster_size + record_number * mft_record_size` — a stride from
+  the MFT's first cluster, with no runlist in between.  `lookup` ignores the
+  path it is given and answers the root; `read_dir` answers one dummy entry;
+  `create_file`, `create_dir`, `remove_path` and `rename` are
+  `NotImplemented`.  `NtfsVnode::write` writes data through the runlist
+  (`fs::write_clusters`, the only call in the module that reaches the device
+  with a write) and then calls `update_mft_record(&mut record, …)` — on the
+  record the vnode holds in a `SpinLock`, which is a buffer, not the volume.
+  `set_len` changes that same in-memory record's `$DATA` size.  The vnode has
+  a `readdir` helper that walks the record's `$INDEX_ROOT`, but it is not a
+  trait method and nothing calls it.
+- **`src/fs/ntfs/fs.rs`.**  `BootSector::parse`; attribute parsing; runlist
+  decoding; `parse_index_entries`; `apply_usa_fixup`; `write_clusters`.
+- **`src/fs/ntfs/types.rs`.**  The structures the above use.  `$Bitmap`,
+  `$UpCase`, `$Volume` and `$LogFile` are not named anywhere in the module.
+- **`src/fs/ntfs/tests.rs`.**  Parser-level tests, as above.
+- **What a real volume is**, measured on a 16 MiB image `mkntfs -F -Q` made:
+  8 × 512-byte sectors per cluster (4096 bytes), the record-size exponent
+  `-10` (1024 bytes), a 4096-byte index buffer, `$MFT` at LCN 4, `$MFTMirr`
+  at 2047, the USA at offset 48 with three entries — and `$MFT`'s own `$DATA`
+  as **one run of seven clusters**, which is what a volume looks like at the
+  moment it is made.
+
+## Design
+
+### The harness
+
+A **fixture volume built by the driver's own tests**, the shape
+`src/fs/iso9660/tests.rs` already has, with the differences NTFS forces:
+
+- **The record size is what the exponent says**, which for a volume whose
+  records are smaller than a cluster is a *fraction* of one — 1024 bytes in a
+  4096-byte cluster is the default shape and is what the probe above got
+  wrong.  The fixture builds both that shape and a whole-cluster one, because
+  the arithmetic differs and only one of them is common.
+- **A contiguous `$MFT`**, with the records the fixture's reads touch:
+  `$MFT` itself (0) carrying its own `$DATA` runlist, the root (5) with its
+  `$I30` index root, `$Bitmap` (6) for the stage that allocates, `$Volume`
+  (3) for the dirty flag — and the rest formatted but not in use, which is
+  what a real MFT's free records look like.
+- **Every record with its update sequence array**, at offset 48 of a
+  1024-byte record and wherever the header says otherwise: a fixture without
+  one would test a volume no NTFS writer produces.
+- **Files that exercise the two shapes of `$DATA`**: one resident in the
+  record, one non-resident with a runlist of *two* runs (a runlist of one is
+  the case that cannot expose an offset-decoding bug, because the delta is
+  the address).
+- **A `$Bitmap` and an `$I30` root** whose contents the fixture's own checks
+  can compare against the runlists and the records.
+
+### What the fixture is checked against
+
+ISO 9660's tests parse both path tables back and check the properties a
+reader depends on, because its reader never consults one.  NTFS needs the
+same discipline for different reasons, and the checks are the ones the
+writes must preserve:
+
+- every record's USA is the one its own header says, and the last two bytes
+  of each sector are the sequence number;
+- `bytes_in_use` and the attribute end marker agree with the attributes the
+  record holds;
+- the `$INDEX_ROOT`'s entries name records whose `$FILE_NAME` has the same
+  parent and the same name;
+- the `$Bitmap`'s bits are set for every cluster the runlists name, and clear
+  for the clusters the fixture left free — the check that a stage which
+  allocates has to keep true;
+- `$MFT`'s own `$DATA` covers the records the volume has.
+
+### Keeping it honest against a real volume
+
+A fixture written by the same head that writes the driver shares its
+misunderstandings.  So a **script**, not a test, makes a volume with `mkntfs`
+and compares shapes: the boot sector's fields, the record size the exponent
+implies, the MFT's own runlist, the USA's place.  The probe in this RFC's
+Motivation is what that comparison found; it is also how the ISO 9660 work
+found what a real Rock Ridge root record is (`xorriso`, and a released
+distribution image).  The script is run when the format is in question, and
+never from `make verify`: the gates do not depend on a host tool.
+
+### The stages
+
+0. **Read a file end to end.**  `lookup` resolves a path through the index
+   instead of answering the root, `read_dir` lists it, `read` follows the
+   runlist — and the record size comes out of the boot sector as the format
+   says (`1 << |exp|` bytes, and clusters per record as that divided by the
+   cluster size, which may be zero) with the MFT's own runlist followed
+   rather than assumed.  Proven by reading the fixture end to end, and by the
+   probe above answering the record it was asked for.
+1. **A write that lands.**  The record's changes are written back: the USA
+   applied before the write, `bytes_in_use` and the attribute end marker
+   set, and the volume's dirty flag raised while it is in flight.  Proven by
+   a **second mount** of the same device reading the new bytes *and the new
+   length* — which today never leaves memory.
+2. **Growing a file.**  `$Bitmap` is read (as a file, with its own runs),
+   clusters are claimed, the `$DATA` runlist is rewritten by the mapping
+   pairs' own rules, and the record's allocated size follows.  When the
+   attribute no longer fits its record, the `$MFT` itself has to grow, which
+   is the same problem one level up — the reason this is a stage and not a
+   paragraph.
+3. **Creating and removing.**  A record out of the MFT's free space, the
+   index insertion and removal, `$Bitmap` again, `$MFTMirr` when the records
+   it mirrors change, and the sequence number that makes a removed record's
+   number unusable.
+
+### The journal, decided once
+
+This driver writes **no `$LogFile`**.  A volume carries a dirty flag, and the
+driver raises it for the window in which it is changing metadata and clears
+it when it is done: that is what tells Windows and `chkdsk` that the volume
+needs checking rather than replaying, and it is the one thing about NTFS's
+crash story this driver can state honestly.  Nothing here journals, and the
+Drawbacks section says what that costs.
+
+## Alternatives
+
+- **A captured image in the tree.**  A volume made by `mkntfs` and committed
+  would be the most real thing to test against — and unreadable: a reader
+  cannot tell which byte of a blob the fixture was built to test, the diff
+  cannot show what changed when the format question changes, and the tests
+  would then depend on one writer's choices about allocator layout.  Rejected
+  as the fixture; kept as the script that checks the fixture.
+- **A generator tool in the test path.**  `tools/` could make the volume the
+  way ISO 9660's tests make theirs in Rust — but the gates would then need
+  `mkntfs` on the machine, and every test in this tree is self-contained by
+  design.
+- **Writes first.**  ISO 9660's first stage was a write, and it landed with
+  tests.  It could do that because a foreign image was not needed to prove
+  it: a file's data is one extent and the write either lands there or does
+  not.  NTFS's write lands in a record that this driver currently cannot even
+  *find*, and a length that changes in a buffer is not visible to anything
+  short of a second mount.
+- **A stride, not a runlist.**  The record addressing could be fixed by the
+  exponent alone, and left as a stride from the MFT's first cluster.  That
+  is correct for a volume that was just made — the probe measures exactly
+  such a volume, and `$MFT` is one run of seven clusters there — and wrong
+  for every volume that has grown, which is every volume in use.  The
+  runlist is one attribute read away.
+
+## Drawbacks
+
+- **A fixture shares its author's misunderstandings.**  The script that
+  compares it against a real volume is the mitigation, and it is a manual
+  step, not a gate.
+- **The first stage is a read, and the feature is a write.**  The road to
+  write support for NTFS now has a stage that adds no capability.  What it
+  adds is the ability to tell a write landed, which is what every later stage
+  is measured by.
+- **No journal.**  A volume this driver writes to has no log of the change.
+  A machine that mounts it afterwards can only be told, by the dirty flag,
+  that it should check rather than replay; a torn metadata write is a
+  half-written record, and the fixture's invariants are what say which.
+- **`$UpCase` is not read.**  NTFS compares names through a folding table the
+  volume carries; this driver has never read it, so a lookup here is
+  byte-exact where a real one is not.
+
+## Compatibility and migration
+
+The harness changes nothing on disk.  The record-size correction changes what
+a *read* means on every volume whose records are a fraction of a cluster —
+which is the default shape — from "a different record" to "the record asked
+for"; a volume that is currently misread is one this driver cannot be said to
+have read at all, so this is a fix rather than a migration.  A volume written
+by a later stage stays a volume this driver and a real NTFS can read, which is
+what stage 1's record serialisation is for.
+
+## How this is proven
+
+- The fixture's own invariants, listed above, checked by the tests that read
+  the volume back — the same shape as ISO 9660's table checks, and for the
+  same reason: the code under test is the code that just wrote.
+- A **second mount** after every write in stages 1 to 3: a fresh `NtfsFs` on
+  the same device, asked the same questions.
+- The real-volume script for the format facts it is worth asking about, and
+  the probe in the Motivation as the case stage 0 has to make stop being
+  true: a record number answers with the record that has that number.
+
+## Unresolved questions
+
+- **Where does the dirty flag live, and what does Windows need from it?**  A
+  volume's `$Volume` carries volume information with a dirty bit, and this
+  driver does not read `$Volume` at all.  Stage 1 has to settle which field
+  it is, when it goes up, and when it comes down — and whether a volume left
+  clean needs anything written into `$LogFile` for a replay to be a no-op.
+- **Is case folding a stage of its own?**  Reading `$UpCase` is one
+  attribute in a system record the fixture can carry; using it is a rule in
+  every name comparison.  It is not needed for a write to land, and it is
+  needed for a lookup to behave like NTFS.
+- **The index allocation.**  A directory whose entries do not fit its index
+  root keeps them in a `$INDEX_ALLOCATION` the root points at, with an index
+  bitmap.  The fixture's directories are small; a stage that creates
+  entries needs the other shape, and stage 3 is where it arrives.
+- **Compressed, encrypted and sparse `$DATA`.**  `docs/status.md` records
+  that they are not covered.  Writing one is a different problem from writing
+  a plain runlist — compression units, EFS metadata, and runs that name no
+  cluster — and this RFC does not decide them.

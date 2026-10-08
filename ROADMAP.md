@@ -119,8 +119,13 @@ The authoritative picture of what exists today is
   written only where both trees agree — an overwrite inside a file's length —
   because the trees spell a name differently and nothing says which record in
   the other tree is the same file's.
-  NTFS is the prize and the largest step; its RFC has to decide its harness
-  before its writes.
+  NTFS is the prize and the largest step, and its RFC has done the first thing
+  it had to: [RFC 0012](docs/rfcs/0012-the-harness-an-ntfs-write-is-proven-on.md)
+  decides the fixture volume its writes are proven on, and finds that the
+  driver cannot yet read a real one — a record's size comes out of the boot
+  sector as a whole number of clusters, so the volume `mkntfs` makes by default
+  is addressed four times too far apart.  Its first stage is that read path,
+  because a write cannot be shown to have landed without one.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

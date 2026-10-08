@@ -119,6 +119,7 @@ and its status says which of the two happened.
 | [0009](0009-queue-the-writes-a-flush-makes.md) | Implemented | Queue the writes a flush makes |
 | [0010](0010-carry-a-run-in-one-queued-request.md) | Implemented | Carry a run in one queued request |
 | [0011](0011-make-iso9660-file-data-writable.md) | Implemented | Make ISO 9660 file data writable |
+| [0012](0012-the-harness-an-ntfs-write-is-proven-on.md) | Accepted | Decide the harness an NTFS write is proven on |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —
