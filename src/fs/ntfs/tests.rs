@@ -1814,13 +1814,15 @@ fn node(body: &[u8], has_children: bool, entries_offset: u16) -> Vec<u8> {
     node
 }
 
-/// The entry a non-leaf node ends with: its file reference is the virtual
-/// cluster number of the child block, and it says it is the last entry.
+/// The entry a non-leaf node ends with: no name, the last-entry flag, and the
+/// child block's virtual cluster number — which is the entry's *last* eight
+/// bytes, where the format puts it, and not the reference field a name entry
+/// keeps its record in: a real volume's pointer entries leave that zero.
 fn node_pointer(vcn: u64) -> Vec<u8> {
     let mut entry = vec![0u8; 24];
-    put_u64_le(&mut entry, 0, vcn);
     put_u16_le(&mut entry, 8, 24);
     put_u32_le(&mut entry, 12, 3);
+    put_u64_le(&mut entry, 16, vcn);
     entry
 }
 
@@ -2799,4 +2801,35 @@ fn parse_index_node_reads_the_names_its_entries_carry() {
         .collect();
     assert_eq!(names, ["HELLO~1", "hello.txt"]);
     assert!(node.entries.iter().all(|entry| entry.reference == 42));
+}
+
+#[test]
+fn a_child_pointer_is_read_from_the_end_of_its_entry() {
+    // A pointer entry has no key, and the reference field a name entry keeps
+    // its record in is left zero: the child block's virtual cluster number is
+    // the entry's *last* eight bytes.  A reader that took the child's address
+    // from the reference field found zero there — which is the right block
+    // only while the child is the volume's first.
+    let mut entry = vec![0u8; 24];
+    put_u16_le(&mut entry, 8, 24);
+    put_u32_le(&mut entry, 12, 3);
+    put_u64_le(&mut entry, 16, 7);
+
+    let mut buf = vec![0u8; 16];
+    put_u16_le(&mut buf, 0, 16);
+    let length = (16 + entry.len()) as u16;
+    put_u16_le(&mut buf, 4, length);
+    put_u16_le(&mut buf, 8, length);
+    buf[12] = 1; // the node has children
+    buf.extend_from_slice(&entry);
+
+    let node = parse_index_node(&buf, 0);
+    assert!(node.has_children);
+    let pointer = node
+        .entries
+        .iter()
+        .find(|entry| entry.points_at_a_node)
+        .expect("the pointer entry");
+    assert_eq!(pointer.reference, 7);
+    assert!(pointer.name.is_none());
 }

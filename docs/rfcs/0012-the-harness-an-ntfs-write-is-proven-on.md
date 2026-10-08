@@ -315,6 +315,13 @@ what stage 1's record serialisation is for.
     the block's update sequence array sits in front of them — a node that
     starts them at sixteen is *overwritten* by the array, which is what the
     reader saw as a node with no entries at all.
+  - **a child pointer's virtual cluster number is the entry's *last* eight
+    bytes**, and the reference field a name entry keeps its record in is left
+    zero — found when a writer needed to produce one, and measured on a
+    volume `mkntfs` makes.  The fixture and the reader had agreed on the
+    reference field, which a real volume leaves zero, so a walk descended by
+    an address that was only right while the child was the volume's first
+    block.
 - `NtfsFs::directory_entries` walks a directory's index the way a real volume
   stores it: from the record's `$INDEX_ROOT`, down the child pointer its last
   entry carries, into the `$INDEX_ALLOCATION` block at that virtual cluster

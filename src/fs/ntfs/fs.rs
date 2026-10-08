@@ -818,14 +818,33 @@ pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
         ]);
 
         let points_at_a_node = flags & 0x01 != 0;
+        // A pointer entry has no key, and the reference field a name entry
+        // keeps its record in is left zero: the child block's virtual cluster
+        // number is the entry's *last* eight bytes.  A reader that took the
+        // child's address from the reference field found zero there — which is
+        // the right block only while the child is the volume's first.
+        let reference = if points_at_a_node && entry_length >= 24 {
+            u64::from_le_bytes([
+                buf[at + entry_length - 8],
+                buf[at + entry_length - 7],
+                buf[at + entry_length - 6],
+                buf[at + entry_length - 5],
+                buf[at + entry_length - 4],
+                buf[at + entry_length - 3],
+                buf[at + entry_length - 2],
+                buf[at + entry_length - 1],
+            ])
+        } else {
+            // The upper sixteen bits of a reference are a sequence number.
+            reference & 0x0000_FFFF_FFFF_FFFF
+        };
         let name = if !points_at_a_node && at + 16 + stream_length <= buf.len() {
             FileName::parse(&buf[at + 16..at + 16 + stream_length])
         } else {
             None
         };
         entries.push(IndexEntry {
-            // The upper sixteen bits of a reference are a sequence number.
-            reference: reference & 0x0000_FFFF_FFFF_FFFF,
+            reference,
             name,
             points_at_a_node,
             offset: at,
