@@ -199,9 +199,11 @@ Drawbacks section says what that costs.
   A machine that mounts it afterwards can only be told, by the dirty flag,
   that it should check rather than replay; a torn metadata write is a
   half-written record, and the fixture's invariants are what say which.
-- **`$UpCase` is not read.**  NTFS compares names through a folding table the
-  volume carries; this driver has never read it, so a lookup here is
-  byte-exact where a real one is not.
+- **`$UpCase` costs the fixture a file.**  NTFS compares names through a
+  folding table the volume carries, and stage 3a reads it, so the fixture had
+  to grow a 128 KiB table of its own: a fixture without one would exercise the
+  driver's fallback — compare the bytes as they are stored — and never the
+  format's order, which is what decides where a new name goes.
 
 ## Compatibility and migration
 
@@ -231,18 +233,22 @@ what stage 1's record serialisation is for.
   driver does not read `$Volume` at all.  Stage 1 has to settle which field
   it is, when it goes up, and when it comes down — and whether a volume left
   clean needs anything written into `$LogFile` for a replay to be a no-op.
-- **Is case folding a stage of its own?**  Reading `$UpCase` is one
-  attribute in a system record the fixture can carry; using it is a rule in
-  every name comparison.  It is not needed for a write to land, and it is
-  needed for a lookup to behave like NTFS.
+- **Is case folding a stage of its own?**  *Stage 3a answered this.*  Reading
+  `$UpCase` is one attribute in a system record, and using it is a rule in
+  every name comparison — and it turned out to be load-bearing for a *write*
+  and not only for a lookup, because where a new name goes in an index is
+  decided by the same table.  The fixture carries a table of its own for it.
 - **The index allocation.**  A directory whose entries do not fit its index
   root keeps them in a `$INDEX_ALLOCATION` the root points at, with an index
   bitmap.  *The measurement behind stage 0 settled part of this*: a directory
   with children has that shape and nothing else — the volume `mkntfs` makes
   holds even one file's entry in the allocation, with the index root reduced
   to a node that points at it — so walking a directory the way a real volume
-  stores one is stage 0's work, not a later stage's.  What is still open is
-  *creating* entries: inserting into a node, and the index bitmap's own bits.
+  stores one is stage 0's work, not a later stage's.  *Stage 3a built the
+  insertion*: a node is rewritten as a run with the new entry where its name
+  sorts.  What is still open is a node with no room — the format splits it,
+  which is refused here — and, with it, the index bitmap's own bits, since no
+  block is added.
 - **Compressed, encrypted and sparse `$DATA`.**  `docs/status.md` records
   that they are not covered.  Writing one is a different problem from writing
   a plain runlist — compression units, EFS metadata, and runs that name no
@@ -425,3 +431,56 @@ being something a partial write can ignore.
   (three clusters in three runs), the attribute that followed it — still eight
   bytes — and the sequence at every sector's end of the record as the volume
   holds it.
+
+**Stage 3a — creating and removing a file.**
+
+- A path's *last* segment is the name and the rest is the directory it is in,
+  so a creation is two changes: a **record** out of the MFT's free space, and
+  the name in the parent's **index**.  The record goes down first and the name
+  second, and a removal is the reverse — a name nothing names a record for is
+  the worse half of either crash, so the order is the one that leaves a leak
+  rather than a dangling name.
+- The record is the first the volume says is free past the sixteen it keeps
+  for itself, and **`$MFT`'s own `$BITMAP`** is the volume's word on it: the
+  bit is raised *before* the record is written and lowered *after* it is given
+  back, so a crash between the two leaves a record the volume calls used that
+  nothing names.  A record a volume has never written is all zeros and free
+  too — which is what the records past `mkntfs`'s own look like — and its
+  sequence then starts at one, where a record that had one gets the next.  The
+  bitmap is a **file with its own runs**, which is the shape a real volume
+  keeps, and the fixture carries that shape rather than a value inside the
+  record.
+- The new record is written **whole**: its name, the timestamps a volume with
+  no clock leaves zero, an empty and therefore *resident* `$DATA`, its update
+  sequence array packed, and the next attribute instance the attributes it
+  holds imply.
+- **An index node is rewritten as a run** (`write_index_entries`): the entries
+  it had, the new one in the place its name sorts to, and the node's own
+  terminator last, with the node's own length fields following.  A node with no
+  room refuses (`NoSpace`) rather than writing past what it owns — the format's
+  answer to a full node is to split it, which is not built — and that refusal
+  is verified on the fixture's subdirectory, whose entries are in its *index
+  root* and leave no room at all.
+- **The collation is the volume's, so `$UpCase` is read**: the tenth record's
+  `$DATA` — 128 KiB of code units — folded into every comparison.  A name is
+  matched the way a real NTFS matches one (`/RESIDENT.TXT` finds
+  `resident.txt`), which is the question this RFC opened, and it is also what
+  decides where a new name goes: `a.txt` sorts before `B.txt` because the table
+  folds both.
+- A removal takes the name out of the index, gives the file's clusters back to
+  the `$Bitmap`, and moves the record's **sequence** on with its in-use bit
+  down — which is what makes the number that named it stop matching.
+- **What is not built.**  An index node is never split, so no block is added
+  and the index bitmap is untouched; the MFT is never grown, so a new record
+  comes from the records the volume already has; a directory cannot be created
+  or removed; and a file created empty is resident, so writing content into it
+  needs the resident-to-non-resident conversion.  `$MFTMirr` is *not* written,
+  and does not need to be: it mirrors the volume's first four records, which
+  this stage never touches.
+- Seven tests, every write proved by a **second mount**: a created file that
+  the fresh mount finds, reads as empty and lists, with `$MFT`'s `$BITMAP`
+  naming its record; `$UpCase` folding in a lookup; a new name placed by the
+  folded order; a name that is already there refused (`AlreadyExists`); a
+  creation the index has no room for refused with nothing left behind; a
+  removal the fresh mount agrees with, in the name, the clusters and both
+  words on the record; and a directory refused.

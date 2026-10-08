@@ -136,6 +136,9 @@ pub const ATTR_TYPE_FILENAME: u32 = 0x30;
 pub const ATTR_TYPE_DATA: u32 = 0x80;
 pub const ATTR_TYPE_INDEX_ROOT: u32 = 0x90;
 pub const ATTR_TYPE_INDEX_ALLOC: u32 = 0xA0;
+/// A bitmap, in the record that owns what it describes: `$MFT`'s is the
+/// volume's own list of which records are in use.
+pub const ATTR_TYPE_BITMAP: u32 = 0xB0;
 /// The volume's own information, whose flags say whether it is dirty.
 pub const ATTR_TYPE_VOLUME_INFORMATION: u32 = 0x70;
 pub const ATTR_TYPE_EA: u32 = 0xE0;

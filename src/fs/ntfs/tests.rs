@@ -212,6 +212,27 @@ fn the_fixture_keeps_its_own_invariants() {
         let set = bitmap[cluster / 8] & (1 << (cluster % 8)) != 0;
         assert_eq!(set, *used != 0, "cluster {cluster}'s bit");
     }
+
+    // And the MFT's own bitmap names the records in use — the volume's list of
+    // what has been handed out, which a claim has to keep true.  It is a file
+    // of its own, with runs, and the bits are where its runs say.
+    let mft = fixture.record(0);
+    let header = super::types::MftRecordHeader::parse(mft).expect("the MFT's record");
+    let attributes = super::fs::parse_attributes(&mft[header.size() as usize..]);
+    let bits = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0xb0)
+        .expect("the MFT's bitmap");
+    assert!(
+        bits.data_runs_offset.is_some(),
+        "the MFT's bitmap is a file"
+    );
+    let at = fixture.mft_bitmap_runs[0].0 as usize * fixture.cluster_size() as usize;
+    let bits = &fixture.image[at..at + bits.data_size as usize];
+    for number in 0..RECORDS {
+        let set = bits[number as usize / 8] & (1 << (number % 8)) != 0;
+        assert_eq!(set, is_named(number), "record {number}'s bit in the MFT");
+    }
 }
 
 #[test]
@@ -237,6 +258,7 @@ fn a_directory_lists_what_its_index_holds() {
             "$Volume",
             "$AttrDef",
             "$Bitmap",
+            "$UpCase",
             "resident.txt",
             "two-runs.bin",
             "tight.bin",
@@ -260,14 +282,14 @@ fn a_directory_lists_what_its_index_holds() {
     ));
 
     // A file and a directory are listed as what they are.
-    let resident = fs_handle.read_dir("/", 6).expect("resident.txt");
+    let resident = fs_handle.read_dir("/", 7).expect("resident.txt");
     assert_eq!(resident.kind, NodeKind::File);
     assert_eq!(resident.size, 5);
-    let tight = fs_handle.read_dir("/", 8).expect("tight.bin");
+    let tight = fs_handle.read_dir("/", 9).expect("tight.bin");
     assert_eq!(tight.kind, NodeKind::File);
-    let full = fs_handle.read_dir("/", 9).expect("full.bin");
+    let full = fs_handle.read_dir("/", 10).expect("full.bin");
     assert_eq!(full.kind, NodeKind::File);
-    let sub = fs_handle.read_dir("/", 10).expect("sub");
+    let sub = fs_handle.read_dir("/", 11).expect("sub");
     assert_eq!(sub.kind, NodeKind::Directory);
 }
 
@@ -621,6 +643,231 @@ fn a_run_list_that_cannot_fit_a_full_record_is_refused() {
     );
 }
 
+#[test]
+fn a_lookup_folds_case_through_the_volumes_table() {
+    // A name is found by the case a real NTFS would find it by, because the
+    // volume carries the table names are folded through.  Without it these
+    // lookups are the bytes as they are stored and both are `NotFound`.
+    let fixture = build_volume(FRACTIONAL);
+    let fs_handle = open(&fixture);
+    assert_eq!(
+        fs_handle
+            .lookup("/RESIDENT.TXT")
+            .expect("at the root")
+            .size(),
+        5
+    );
+    assert_eq!(
+        fs_handle
+            .lookup("/Sub/Leaf.TXT")
+            .expect("below a directory")
+            .size(),
+        4
+    );
+}
+
+#[test]
+fn a_created_file_is_on_the_volume() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let node = fs_handle.create_file("/new.txt").expect("create a file");
+    assert_eq!(node.name(), "new.txt");
+    assert_eq!(node.kind(), NodeKind::File);
+    assert_eq!(node.size(), 0);
+    assert!(
+        dirty_flag(&device, &fs_handle),
+        "the volume says it is being changed"
+    );
+
+    // A second mount finds it: the name is in the index, and the record it
+    // names is a record the volume holds.
+    let again = remount(&device);
+    let reread = again.lookup("/new.txt").expect("relookup");
+    assert_eq!(reread.kind(), NodeKind::File);
+    assert_eq!(reread.size(), 0);
+    let mut buf = [0u8; 4];
+    assert_eq!(reread.read(0, &mut buf).expect("read"), 0);
+
+    // Its record is one the volume had formatted but not in use.
+    let (number, _) = again.resolve("/new.txt").expect("resolve");
+    assert_eq!(number, 16, "the first record past the volume's own");
+
+    // And the volume's own list of what is in use names it, which is what a
+    // volume that mounts this one afterwards would believe.
+    let bits = again
+        .mft_bitmap()
+        .expect("the MFT's bitmap")
+        .expect("a bitmap");
+    assert_eq!(
+        bits[number as usize / 8] & (1 << (number % 8)),
+        1 << (number % 8),
+        "the MFT's bitmap claimed the record"
+    );
+
+    // And the root lists it, which is the index saying the same thing.
+    let mut names = Vec::new();
+    for index in 0.. {
+        match again.read_dir("/", index) {
+            Ok(entry) => names.push(entry.name),
+            Err(_) => break,
+        }
+    }
+    assert!(
+        names.iter().any(|name| name == "new.txt"),
+        "the root lists it: {names:?}"
+    );
+}
+
+#[test]
+fn a_new_name_is_placed_where_the_collation_puts_it() {
+    // "a.txt" sorts before "B.txt" only when the names are folded: compared as
+    // they are stored, 'B' is the smaller byte.  The fixture carries the
+    // volume's `$UpCase` table, so the order is the format's.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle.create_file("/a.txt").expect("create a.txt");
+    fs_handle.create_file("/B.txt").expect("create B.txt");
+
+    let again = remount(&device);
+    let mut names = Vec::new();
+    for index in 0.. {
+        match again.read_dir("/", index) {
+            Ok(entry) => names.push(entry.name),
+            Err(_) => break,
+        }
+    }
+    let a = names
+        .iter()
+        .position(|name| name == "a.txt")
+        .expect("a.txt is listed");
+    let b = names
+        .iter()
+        .position(|name| name == "B.txt")
+        .expect("B.txt is listed");
+    assert!(a < b, "the folded order comes first: {names:?}");
+}
+
+#[test]
+fn a_name_that_is_already_there_is_not_created_twice() {
+    let fixture = build_volume(FRACTIONAL);
+    let (_device, fs_handle) = writable(&fixture);
+    assert_eq!(
+        fs_handle.create_file("/resident.txt").err(),
+        Some(Error::AlreadyExists)
+    );
+    // A directory is there too, and it is found the same way.
+    assert_eq!(
+        fs_handle.create_file("/sub").err(),
+        Some(Error::AlreadyExists)
+    );
+}
+
+#[test]
+fn a_creation_the_index_has_no_room_for_is_refused() {
+    // A subdirectory keeps its entries in its index *root*, which is a
+    // fraction of a record: a name there has nowhere to go until this driver
+    // can grow a directory, so the creation refuses rather than half-writing.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    assert_eq!(
+        fs_handle.create_file("/sub/another.txt").err(),
+        Some(Error::NoSpace)
+    );
+
+    // And nothing was left behind: the directory has the entries it had.
+    let again = remount(&device);
+    assert!(matches!(
+        again.lookup("/sub/another.txt"),
+        Err(Error::NotFound)
+    ));
+    assert_eq!(again.lookup("/sub/leaf.txt").expect("leaf.txt").size(), 4);
+}
+
+#[test]
+fn a_removed_file_is_gone_and_its_clusters_come_back() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+    assert_eq!(
+        fs_handle.lookup("/two-runs.bin").expect("before").size(),
+        3 * cluster as usize
+    );
+    fs_handle.remove_path("/two-runs.bin").expect("remove");
+    assert!(matches!(
+        fs_handle.lookup("/two-runs.bin"),
+        Err(Error::NotFound)
+    ));
+
+    // A second mount agrees; the clusters the file held are free again; and
+    // the record is formatted but not in use, with a sequence that has moved
+    // on — which is what makes the number it had stop meaning it.
+    let again = remount(&device);
+    assert!(matches!(
+        again.lookup("/two-runs.bin"),
+        Err(Error::NotFound)
+    ));
+    let bitmap = again.read_bitmap().expect("the bitmap");
+    let taken: usize = bitmap.iter().map(|byte| byte.count_ones() as usize).sum();
+    let was: usize = fixture.used.iter().filter(|used| **used != 0).count();
+    assert_eq!(taken, was - 3, "the three clusters it held");
+
+    let info = again.info().lock();
+    let at = again.record_offset(&info, TWO_RUN_FILE).expect("offset");
+    let as_device: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> = device.clone();
+    let mut raw = vec![0u8; info.mft_record_size as usize];
+    super::fs::read_device_bytes(&as_device, at, &mut raw).expect("read the record");
+    assert_eq!(
+        u16::from_le_bytes([raw[22], raw[23]]) & 0x0001,
+        0,
+        "not in use"
+    );
+    assert_eq!(
+        u16::from_le_bytes([raw[16], raw[17]]),
+        2,
+        "its sequence went up"
+    );
+    drop(info);
+
+    // And the volume's own list says the record is free again.
+    let bits = again
+        .mft_bitmap()
+        .expect("the MFT's bitmap")
+        .expect("a bitmap");
+    assert_eq!(
+        bits[TWO_RUN_FILE as usize / 8] & (1 << (TWO_RUN_FILE % 8)),
+        0,
+        "the MFT's bitmap gave the record back"
+    );
+
+    let mut names = Vec::new();
+    for index in 0.. {
+        match again.read_dir("/", index) {
+            Ok(entry) => names.push(entry.name),
+            Err(_) => break,
+        }
+    }
+    assert!(
+        !names.iter().any(|name| name == "two-runs.bin"),
+        "the name went with it: {names:?}"
+    );
+}
+
+#[test]
+fn a_file_removal_leaves_a_directory_alone() {
+    // Taking a directory out is its own stage: what it holds has to go first,
+    // and so does the index bitmap that says its block is in use.
+    let fixture = build_volume(FRACTIONAL);
+    let (_device, fs_handle) = writable(&fixture);
+    assert_eq!(
+        fs_handle.remove_path("/sub").err(),
+        Some(Error::NotImplemented)
+    );
+    assert!(
+        fs_handle.lookup("/sub/leaf.txt").is_ok(),
+        "and it is still there"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // The fixture volume
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -673,6 +920,8 @@ const WHOLE_CLUSTERS: Shape = Shape {
 
 /// The records the fixture gives a name to.
 const ROOT_RECORD: u64 = 5;
+/// The volume's `$UpCase` table, which a name is folded through.
+const UPCASE_RECORD: u64 = 10;
 const RESIDENT_FILE: u64 = 24;
 const TWO_RUN_FILE: u64 = 25;
 const SUBDIRECTORY: u64 = 26;
@@ -685,9 +934,28 @@ const TIGHT_FILE: u64 = 28;
 const FULL_FILE: u64 = 29;
 const RECORDS: u64 = 30;
 
+/// How long a `$UpCase` table is: 65,536 code units.
+const UPCASE_BYTES: u64 = 0x1_0000 * 2;
+
 /// How many clusters the MFT's first run takes, so that the two-run shape is
 /// the fixture's own choice rather than a consequence of the record size.
 const MFT_FIRST_RUN_CLUSTERS: u64 = 4;
+
+/// Whether a record is one the fixture has in use.
+///
+/// The records a volume keeps for itself, the folding table, this fixture's
+/// own files — and not the rest, which are formatted but free.  `$MFT`'s own
+/// bitmap is built from this, so the two say the same thing.
+fn is_named(number: u64) -> bool {
+    (0..=6).contains(&number)
+        || number == UPCASE_RECORD
+        || number == RESIDENT_FILE
+        || number == TWO_RUN_FILE
+        || number == TIGHT_FILE
+        || number == FULL_FILE
+        || number == SUBDIRECTORY
+        || number == SUBDIRECTORY_FILE
+}
 
 /// A runlist, from absolute `(lcn, clusters)` runs.
 fn runlist(runs: &[(u64, u64)]) -> Vec<u8> {
@@ -931,6 +1199,11 @@ struct Fixture {
     tight_runs: [(u64, u64); 2],
     /// The two runs of the file whose *record* has none.
     full_runs: [(u64, u64); 2],
+    /// Where the `$UpCase` table is.
+    upcase_runs: [(u64, u64); 1],
+    /// Where `$MFT`'s own bitmap is — a file of its own, the way a real
+    /// volume's is.
+    mft_bitmap_runs: [(u64, u64); 1],
 }
 
 impl Fixture {
@@ -991,6 +1264,8 @@ fn build_volume(shape: Shape) -> Fixture {
     let full_first = take(1);
     take(1); // the same shape, in a record with no room at all
     let full_second = take(1);
+    let upcase_at = take(UPCASE_BYTES / cluster_size);
+    let mft_bitmap_at = take(1);
     let total_clusters = cursor + 2;
 
     let mut fixture = Fixture {
@@ -1009,6 +1284,8 @@ fn build_volume(shape: Shape) -> Fixture {
         file_runs: [(file_first, 1), (file_second, 2)],
         tight_runs: [(tight_first, 1), (tight_second, 1)],
         full_runs: [(full_first, 1), (full_second, 1)],
+        upcase_runs: [(upcase_at, UPCASE_BYTES / cluster_size)],
+        mft_bitmap_runs: [(mft_bitmap_at, 1)],
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -1027,6 +1304,8 @@ fn build_volume(shape: Shape) -> Fixture {
         .iter()
         .chain(&fixture.tight_runs)
         .chain(&fixture.full_runs)
+        .chain(&fixture.upcase_runs)
+        .chain(&fixture.mft_bitmap_runs)
     {
         for cluster in lcn..lcn + clusters {
             fixture.used[cluster as usize] = 1;
@@ -1057,6 +1336,12 @@ fn build_volume(shape: Shape) -> Fixture {
     // The records: the system files a real volume's first records are, then
     // this fixture's own files, and a subdirectory whose entries are in its
     // index root.
+    let mut mft_bits = alloc::vec![0u8; (RECORDS as usize).div_ceil(8)];
+    for number in 0..RECORDS {
+        if is_named(number) {
+            mft_bits[number as usize / 8] |= 1 << (number % 8);
+        }
+    }
     let mut attributes = Vec::new();
     for number in 0..RECORDS {
         let (parent, name, directory, size, data): (u64, &str, bool, u64, Vec<u8>) = match number {
@@ -1066,6 +1351,7 @@ fn build_volume(shape: Shape) -> Fixture {
             3 => (ROOT_RECORD, "$Volume", false, 0, Vec::new()),
             4 => (ROOT_RECORD, "$AttrDef", false, 0, Vec::new()),
             6 => (ROOT_RECORD, "$Bitmap", false, 0, Vec::new()),
+            UPCASE_RECORD => (ROOT_RECORD, "$UpCase", false, UPCASE_BYTES, Vec::new()),
             RESIDENT_FILE => (
                 ROOT_RECORD,
                 "resident.txt",
@@ -1103,13 +1389,7 @@ fn build_volume(shape: Shape) -> Fixture {
         // A record nothing uses is **formatted but free**, which is what a
         // real MFT's spare records look like: their number is theirs, their
         // attributes are none, and their flags say they are not in use.
-        let named = (0..=6).contains(&number)
-            || number == RESIDENT_FILE
-            || number == TWO_RUN_FILE
-            || number == TIGHT_FILE
-            || number == FULL_FILE
-            || number == SUBDIRECTORY
-            || number == SUBDIRECTORY_FILE;
+        let named = is_named(number);
 
         attributes.clear();
         if named {
@@ -1133,6 +1413,20 @@ fn build_volume(shape: Shape) -> Fixture {
                         Some(&fixture.mft_runs),
                         RECORDS * record_size,
                     ));
+                    // And the MFT's own bitmap: one bit per record, set for the
+                    // records the volume has in use.  It is what a real volume
+                    // allocates from, so a created file has to turn one on — and
+                    // it is a *file* of its own, with runs, the way a real
+                    // volume's is.
+                    let mut bitmap = attribute(
+                        0xb0,
+                        "",
+                        &[],
+                        Some(&fixture.mft_bitmap_runs),
+                        mft_bits.len() as u64,
+                    );
+                    put_u64_le(&mut bitmap, 40, cluster_size); // allocated size
+                    attributes.extend(bitmap);
                 }
                 3 => {
                     // The volume's own information: a version, and the flags whose
@@ -1157,6 +1451,18 @@ fn build_volume(shape: Shape) -> Fixture {
                         &[],
                         Some(&[(fixture.bitmap, 1)]),
                         cluster_size,
+                    ));
+                }
+                UPCASE_RECORD => {
+                    // The folding table is a file too, and it is what a name
+                    // is compared through: without it the index's order is the
+                    // driver's own rather than the volume's.
+                    attributes.extend(attribute(
+                        0x80,
+                        "",
+                        &[],
+                        Some(&fixture.upcase_runs),
+                        UPCASE_BYTES,
                     ));
                 }
                 RESIDENT_FILE | SUBDIRECTORY_FILE => {
@@ -1216,6 +1522,7 @@ fn build_volume(shape: Shape) -> Fixture {
                             3,
                             4,
                             6,
+                            UPCASE_RECORD,
                             RESIDENT_FILE,
                             TWO_RUN_FILE,
                             TIGHT_FILE,
@@ -1229,6 +1536,7 @@ fn build_volume(shape: Shape) -> Fixture {
                                 3 => ("$Volume", false, 0),
                                 4 => ("$AttrDef", false, 0),
                                 6 => ("$Bitmap", false, 0),
+                                UPCASE_RECORD => ("$UpCase", false, UPCASE_BYTES),
                                 RESIDENT_FILE => ("resident.txt", false, 5),
                                 TWO_RUN_FILE => ("two-runs.bin", false, 3 * cluster_size),
                                 TIGHT_FILE => ("tight.bin", false, 2 * cluster_size),
@@ -1327,6 +1635,26 @@ fn build_volume(shape: Shape) -> Fixture {
             *byte = 0x33;
         }
     }
+
+    // The `$UpCase` table: every code unit folded the way a real volume folds
+    // it — the Latin letters up, everything else as it is — so the fixture's
+    // index order is the format's and not the driver's.
+    let mut table = alloc::vec![0u8; UPCASE_BYTES as usize];
+    for code in 0u32..0x1_0000 {
+        let folded = if (0x61..=0x7a).contains(&code) {
+            code - 0x20
+        } else {
+            code
+        };
+        let at = code as usize * 2;
+        table[at..at + 2].copy_from_slice(&(folded as u16).to_le_bytes());
+    }
+    let at = fixture.upcase_runs[0].0 as usize * cluster_size as usize;
+    fixture.image[at..at + table.len()].copy_from_slice(&table);
+
+    // And the MFT's own bitmap, in the cluster its attribute names.
+    let at = fixture.mft_bitmap_runs[0].0 as usize * cluster_size as usize;
+    fixture.image[at..at + mft_bits.len()].copy_from_slice(&mft_bits);
 
     // The `$Bitmap`: one bit per cluster, set for every cluster the layout
     // above used.  It is what an allocating stage has to keep true, so the

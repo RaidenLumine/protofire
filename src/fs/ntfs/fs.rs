@@ -619,6 +619,11 @@ pub struct IndexEntry {
     pub name: Option<FileName>,
     /// Whether the entry points at a child node rather than naming a file.
     pub points_at_a_node: bool,
+    /// Where the entry begins in the buffer it was parsed from, and how long
+    /// it is: an entry is rebuilt from the bytes it already has, so a writer
+    /// has to be able to name them.
+    pub offset: usize,
+    pub length: usize,
 }
 
 /// One index node: its entries, and whether it has children at all.
@@ -652,9 +657,20 @@ pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
             has_children,
         };
     }
-    let entries_offset = u16::from_le_bytes([buf[node], buf[node + 1]]) as usize;
-    let length = u16::from_le_bytes([buf[node + 4], buf[node + 5]]) as usize;
-    has_children = u16::from_le_bytes([buf[node + 12], buf[node + 13]]) & 0x01 != 0;
+    // The node header's fields are 32 bits wide — an entry offset, the length
+    // the entries use, the length the node *has*, and the flags — and reading
+    // them as 16 worked only while every value fit in one.
+    let entries_offset =
+        u32::from_le_bytes([buf[node], buf[node + 1], buf[node + 2], buf[node + 3]]) as usize;
+    let length =
+        u32::from_le_bytes([buf[node + 4], buf[node + 5], buf[node + 6], buf[node + 7]]) as usize;
+    let flags = u32::from_le_bytes([
+        buf[node + 12],
+        buf[node + 13],
+        buf[node + 14],
+        buf[node + 15],
+    ]);
+    has_children = flags & 0x01 != 0;
 
     let mut at = node + entries_offset;
     let end = (node + length).min(buf.len());
@@ -687,6 +703,8 @@ pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
             reference: reference & 0x0000_FFFF_FFFF_FFFF,
             name,
             points_at_a_node,
+            offset: at,
+            length: entry_length,
         });
 
         if flags & 0x02 != 0 {
@@ -699,6 +717,185 @@ pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
         entries,
         has_children,
     }
+}
+
+/// Rewrite an index node's entries in the buffer the node lives in.
+///
+/// `entries` are the entries as bytes, in the order they are to lie, with the
+/// node's own terminator last — a node is a run of entries whose last one
+/// says so, and an entry that is not there cannot be patched, so the whole
+/// run is written.  `room` is how much of the buffer the node may use: an
+/// index *root*'s node has the resident value's room, and a block's has
+/// whatever follows its own header.
+///
+/// A node that does not have the room refuses rather than writing past it,
+/// which is the direction a caller can act on: the alternative is a node
+/// whose length field describes bytes it does not own.
+pub fn write_index_entries(
+    buf: &mut [u8],
+    node: usize,
+    room: usize,
+    entries: &[Vec<u8>],
+) -> Result<(), Error> {
+    if node + 16 > buf.len() || node + room > buf.len() {
+        return Err(Error::InvalidArgument);
+    }
+    let entries_offset =
+        u32::from_le_bytes([buf[node], buf[node + 1], buf[node + 2], buf[node + 3]]) as usize;
+    if entries_offset < 16 || entries_offset > room {
+        return Err(Error::InvalidArgument);
+    }
+
+    let used = entries_offset
+        + entries
+            .iter()
+            .try_fold(0usize, |total, entry| total.checked_add(entry.len()))
+            .ok_or(Error::InvalidArgument)?;
+    if used > room {
+        return Err(Error::NoSpace);
+    }
+
+    let mut at = node + entries_offset;
+    for entry in entries {
+        buf[at..at + entry.len()].copy_from_slice(entry);
+        at += entry.len();
+    }
+    buf[at..node + room].fill(0);
+
+    // The node says how much it uses and how much it has; the flags (whether
+    // it has children) are the node's own and are left as they were.
+    buf[node + 4..node + 8].copy_from_slice(&(used as u32).to_le_bytes());
+    buf[node + 8..node + 12].copy_from_slice(&(room as u32).to_le_bytes());
+    Ok(())
+}
+
+/// The bytes of a `$FILE_NAME` value, as an index entry's key.
+///
+/// The value is what a name is stored as wherever it is stored: a record's
+/// own name and an index entry's key are the same structure, so the two are
+/// built here once.  A new file's timestamps are zero — the volume has no
+/// clock to ask — and its size is whatever the caller says.
+pub fn file_name_value(parent: u64, name: &str, directory: bool, size: u64) -> Vec<u8> {
+    let name_bytes: Vec<u8> = name.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut value = vec![0u8; 66];
+    put_u64_le(&mut value, 0, parent);
+    put_u64_le(&mut value, 40, size); // allocated size
+    put_u64_le(&mut value, 48, size); // real size
+    put_u32_le(&mut value, 56, if directory { 0x1000_0000 } else { 0x20 });
+    value[64] = (name_bytes.len() / 2) as u8;
+    value[65] = 3; // Win32 & DOS
+    value.extend_from_slice(&name_bytes);
+    value
+}
+
+/// One index entry: its sixteen-byte header and the name it is keyed by.
+///
+/// `reference` is a record number with its sequence number in the top sixteen
+/// bits, which is what makes a removed record's number unusable: the entry is
+/// looked up by number *and* sequence.
+pub fn index_entry(name: &str, reference: u64, parent: u64, directory: bool, size: u64) -> Vec<u8> {
+    let value = file_name_value(parent, name, directory, size);
+    let mut entry = vec![0u8; 16];
+    put_u64_le(&mut entry, 0, reference);
+    // The field beside the entry's length is the *name's* length, not an
+    // offset to it.
+    put_u16_le(&mut entry, 10, value.len() as u16);
+    entry.extend_from_slice(&value);
+    let length = entry.len().div_ceil(8) * 8;
+    entry.resize(length, 0);
+    put_u16_le(&mut entry, 8, length as u16);
+    entry
+}
+
+/// A resident attribute, with the value its own header points at.
+///
+/// `instance` is the attribute's instance number, which a record's attributes
+/// are each given; the reader this driver has does not consult it, and a real
+/// NTFS does.
+pub fn resident_attribute(attr_type: u32, name: &str, instance: u16, value: &[u8]) -> Vec<u8> {
+    let name_bytes: Vec<u8> = name.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let name_offset = 24;
+    let value_offset = name_offset + name_bytes.len();
+
+    let mut attr = vec![0u8; value_offset];
+    attr[name_offset..name_offset + name_bytes.len()].copy_from_slice(&name_bytes);
+    attr.extend_from_slice(value);
+    put_u32_le(&mut attr, 0, attr_type);
+    attr[8] = 0; // resident
+    attr[9] = (name_bytes.len() / 2) as u8;
+    put_u16_le(&mut attr, 10, name_offset as u16);
+    put_u16_le(&mut attr, 14, instance);
+    put_u16_le(&mut attr, 20, value_offset as u16);
+    put_u32_le(&mut attr, 16, value.len() as u32);
+    let length = attr.len().div_ceil(8) * 8;
+    attr.resize(length, 0);
+    put_u32_le(&mut attr, 4, length as u32);
+    attr
+}
+
+/// A record, from the attributes it holds: its header, their end marker, and
+/// its update sequence array packed.
+///
+/// This is what a *new* record is: the bytes a volume holds for one, with the
+/// sizes the record's own content gives — which is the same shape the reader
+/// takes apart, and the reason a record is written whole rather than field by
+/// field.
+pub fn build_record(
+    record_size: usize,
+    sector_size: usize,
+    number: u64,
+    sequence: u16,
+    flags: u16,
+    link_count: u16,
+    attributes: &[Vec<u8>],
+) -> Vec<u8> {
+    let mut record = vec![0u8; record_size];
+    record[..4].copy_from_slice(&super::types::MFT_MAGIC);
+    put_u16_le(&mut record, 4, 48); // where the update sequence array is
+    let usa_count = 1 + record_size / sector_size.max(1);
+    put_u16_le(&mut record, 6, usa_count as u16);
+    put_u16_le(&mut record, 16, sequence);
+    put_u16_le(&mut record, 18, link_count);
+    put_u16_le(&mut record, 20, 56); // where the attributes begin
+    put_u16_le(&mut record, 22, flags);
+    put_u32_le(&mut record, 28, record_size as u32);
+    put_u32_le(&mut record, 44, number as u32);
+
+    let mut at = 56;
+    for attribute in attributes {
+        record[at..at + attribute.len()].copy_from_slice(attribute);
+        at += attribute.len();
+    }
+    put_u32_le(&mut record, at, 0xFFFF_FFFF); // the end marker
+    put_u32_le(&mut record, 24, (at + 8) as u32); // bytes in use
+
+    // The update sequence number is the record's own; the array holds the
+    // bytes it replaced, which is what makes the sector ends a reader's to
+    // check.
+    let sequence_word = 0x0401u16;
+    put_u16_le(&mut record, 48, sequence_word);
+    for i in 1..usa_count {
+        let sector_end = i * sector_size;
+        if sector_end >= 2 && sector_end <= record.len() {
+            let low = record[sector_end - 2];
+            let high = record[sector_end - 1];
+            put_u16_le(&mut record, 48 + i * 2, u16::from_le_bytes([low, high]));
+            put_u16_le(&mut record, sector_end - 2, sequence_word);
+        }
+    }
+    record
+}
+
+fn put_u16_le(buf: &mut [u8], off: usize, value: u16) {
+    buf[off..off + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn put_u32_le(buf: &mut [u8], off: usize, value: u32) {
+    buf[off..off + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn put_u64_le(buf: &mut [u8], off: usize, value: u64) {
+    buf[off..off + 8].copy_from_slice(&value.to_le_bytes());
 }
 
 // ── Byte I/O ──────────────────────────────────────────────────────────────

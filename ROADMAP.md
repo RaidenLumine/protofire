@@ -134,11 +134,18 @@ The authoritative picture of what exists today is
   is what proves it — an overwrite, a shorter length, and a length change
   inside what the file already has, with the volume's dirty bit up until it is
   synced.  Growth followed: the `$Bitmap` is read as a file, clusters are
-  claimed, and the run list is rewritten by the mapping pairs' rules.  What is
-  left of the stage is a record that is *full*, which the format gives an
-  attribute list for and this driver refuses: an attribute that has outgrown
-  its room now *moves* inside the record, and the update sequence array is
-  packed again for it.
+  claimed, and the run list is rewritten by the mapping pairs' rules — an
+  attribute that has outgrown its room *moves* inside the record, and the
+  update sequence array is packed again for it.  Creation and removal followed:
+  a new file's record comes from the MFT's own free space, and the bit `$MFT`'s
+  `$BITMAP` keeps is raised before the record is written and lowered after the
+  record is given back; the name goes into the parent's index where the
+  volume's `$UpCase` table puts it, and a name is *matched* through that same
+  table; a removal returns the file's clusters to the `$Bitmap` and moves the
+  record's sequence past the number that named it.  What is left is a
+  directory, whose creation and removal are the next stage, and a record that
+  is *full*, which the format gives an attribute list for and this driver
+  refuses.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped
