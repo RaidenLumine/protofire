@@ -124,10 +124,13 @@ The authoritative picture of what exists today is
   decides the fixture volume its writes are proven on, and the fixture found
   three format mistakes in the reader at once — a record's size read as whole
   clusters, a resident value read from a fixed offset, a runlist read from the
-  wrong base.  Those are fixed and the record addressing now follows the MFT's
-  own run list; what is left of the stage is the index walk `lookup` and
-  `read_dir` need, because a write cannot be shown to have landed without a
-  read.
+  wrong base — and then two more in the index: an entry's name is at a fixed
+  sixteen bytes and the field beside it is the name's *length*, and an
+  allocation block's node clears its own update sequence array.  With those
+  fixed the driver **reads a file end to end**: a path resolves through the
+  directory index, and the bytes come through the runs — or out of the record,
+  when the `$DATA` is resident.  What comes next is the stage a write needs to
+  be proven by: the record written back, and a second mount reading it.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

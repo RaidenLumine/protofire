@@ -3,8 +3,6 @@
 //! NTFS low-level operations: cluster I/O, MFT record reading, directory
 //! traversal, file reads.
 
-use alloc::collections::btree_map::BTreeMap;
-use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -470,98 +468,95 @@ pub fn get_standard_info(attrs: &[ParsedAttr]) -> Option<StandardInfoAttr> {
 
 // ── Directory operations ──────────────────────────────────────────────────
 
-/// Parse index entries to get directory contents.
+/// One entry of an index node.
+pub struct IndexEntry {
+    /// The record the entry names — or, when it points at a child node, that
+    /// node's virtual cluster number.
+    pub reference: u64,
+    /// The name the entry carries, when it names a file.
+    pub name: Option<FileName>,
+    /// Whether the entry points at a child node rather than naming a file.
+    pub points_at_a_node: bool,
+}
+
+/// One index node: its entries, and whether it has children at all.
+pub struct IndexNode {
+    pub entries: Vec<IndexEntry>,
+    /// Whether the node has a child to descend into: its last entry then
+    /// points at one.
+    pub has_children: bool,
+}
+
+/// Read the entries of one index node.
 ///
-/// The buffer is the resident content of an `$INDEX_ROOT` attribute: a
-/// 16-byte index header (first-entry offset at +8, total size at +10)
-/// followed by index entries.  Each entry carries an embedded `$FILE_NAME`
-/// key:
-///   u64  MFT reference       (offset +0)
-///   u16  entry length        (offset +8)
-///   u16  content offset      (offset +10)
-///   u32  flags               (offset +12, 0x02 = last entry in node)
-#[allow(dead_code)]
-pub fn parse_index_entries(buf: &[u8]) -> Result<Vec<(String, u64)>, Error> {
-    if buf.len() < 16 {
-        return Ok(Vec::new());
-    }
+/// `node` is where the node's own header begins inside `buf`, because the two
+/// places a node lives put it at different offsets: an index *root*'s value
+/// carries it after the root header (the indexed attribute's type, the
+/// collation rule and the buffer size, 16 bytes), and an allocation block
+/// carries it after `INDX`, the block's update sequence array and its virtual
+/// cluster number — 24 bytes.
+///
+/// Each entry is a 16-byte header and the `$FILE_NAME` it is keyed by.  The
+/// value beside the entry's length is the *length* of that name and not an
+/// offset to it: they look alike only while a name is 16 bytes long, which is
+/// how a reader can be wrong about every other one.
+pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
+    let mut entries = Vec::new();
+    let mut has_children = false;
 
-    let start_offset = u16::from_le_bytes([buf[8], buf[9]]) as usize;
-    let end_offset = u16::from_le_bytes([buf[10], buf[11]]) as usize;
-    if start_offset >= buf.len() || end_offset > buf.len() {
-        return Ok(Vec::new());
+    if node + 16 > buf.len() {
+        return IndexNode {
+            entries,
+            has_children,
+        };
     }
+    let entries_offset = u16::from_le_bytes([buf[node], buf[node + 1]]) as usize;
+    let length = u16::from_le_bytes([buf[node + 4], buf[node + 5]]) as usize;
+    has_children = u16::from_le_bytes([buf[node + 12], buf[node + 13]]) & 0x01 != 0;
 
-    let mut entries: Vec<(u64, FileName)> = Vec::new();
-    let mut offset = start_offset;
-    while offset + 16 <= end_offset {
-        let entry_length = u16::from_le_bytes([buf[offset + 8], buf[offset + 9]]) as usize;
-        if entry_length == 0 || offset + entry_length > end_offset {
+    let mut at = node + entries_offset;
+    let end = (node + length).min(buf.len());
+    while at + 16 <= end {
+        let entry_length = u16::from_le_bytes([buf[at + 8], buf[at + 9]]) as usize;
+        if entry_length == 0 || at + entry_length > end {
             break;
         }
-        let content_offset = u16::from_le_bytes([buf[offset + 10], buf[offset + 11]]) as usize;
-        let mft_ref = u64::from_le_bytes([
-            buf[offset],
-            buf[offset + 1],
-            buf[offset + 2],
-            buf[offset + 3],
-            buf[offset + 4],
-            buf[offset + 5],
-            buf[offset + 6],
-            buf[offset + 7],
-        ]);
-        let flags = u32::from_le_bytes([
-            buf[offset + 12],
-            buf[offset + 13],
-            buf[offset + 14],
-            buf[offset + 15],
+        let stream_length = u16::from_le_bytes([buf[at + 10], buf[at + 11]]) as usize;
+        let flags = u32::from_le_bytes([buf[at + 12], buf[at + 13], buf[at + 14], buf[at + 15]]);
+        let reference = u64::from_le_bytes([
+            buf[at],
+            buf[at + 1],
+            buf[at + 2],
+            buf[at + 3],
+            buf[at + 4],
+            buf[at + 5],
+            buf[at + 6],
+            buf[at + 7],
         ]);
 
-        let content_start = offset + content_offset;
-        if content_start < buf.len() {
-            if let Some(name) = FileName::parse(&buf[content_start..]) {
-                // Keep only the 48-bit MFT record number (the upper 16 bits
-                // hold a sequence number).
-                entries.push((mft_ref & 0x0000_FFFF_FFFF_FFFF, name));
-            }
-        }
+        let points_at_a_node = flags & 0x01 != 0;
+        let name = if !points_at_a_node && at + 16 + stream_length <= buf.len() {
+            FileName::parse(&buf[at + 16..at + 16 + stream_length])
+        } else {
+            None
+        };
+        entries.push(IndexEntry {
+            // The upper sixteen bits of a reference are a sequence number.
+            reference: reference & 0x0000_FFFF_FFFF_FFFF,
+            name,
+            points_at_a_node,
+        });
 
-        offset += entry_length;
         if flags & 0x02 != 0 {
-            // Last entry in this node; skip the 8-byte alignment padding.
-            offset = (offset + 7) & !7;
+            break;
         }
+        at += entry_length;
     }
 
-    // NTFS stores one `$FILE_NAME` index entry per namespace for the same
-    // file (POSIX=0, Win32=1, DOS=2, Win32&DOS=3).  Deduplicate by MFT
-    // record, keeping the preferred spelling and dropping pure-DOS 8.3
-    // duplicates while preserving first-seen order.
-    let mut best: Vec<(u64, FileName)> = Vec::new();
-    let mut by_ref: BTreeMap<u64, usize> = BTreeMap::new();
-    for (mft, name) in entries {
-        match by_ref.get(&mft).copied() {
-            Some(idx) => {
-                let existing = &best[idx].1;
-                // Prefer a Win32/Win32&DOS name over a POSIX one, and replace
-                // a pure-DOS 8.3 entry with any better namespace.
-                if (name.preferred_namespace() && !existing.preferred_namespace())
-                    || (existing.namespace == 2 && name.namespace != 2)
-                {
-                    best[idx] = (mft, name);
-                }
-            }
-            None => {
-                by_ref.insert(mft, best.len());
-                best.push((mft, name));
-            }
-        }
+    IndexNode {
+        entries,
+        has_children,
     }
-
-    Ok(best
-        .into_iter()
-        .map(|(mft, name)| (name.name, mft))
-        .collect())
 }
 
 // ── Byte I/O ──────────────────────────────────────────────────────────────

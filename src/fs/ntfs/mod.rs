@@ -5,7 +5,6 @@
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::string::String;
-use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
@@ -20,6 +19,7 @@ use crate::Error;
 use crate::Result;
 
 use crate::fs::ntfs::fs::parse_attributes;
+use crate::fs::ntfs::fs::parse_index_node;
 use crate::fs::ntfs::types::*;
 
 mod fs;
@@ -28,6 +28,16 @@ mod tests;
 pub(crate) mod types;
 
 // ── NTFS filesystem handle ──────────────────────────────────────────────
+
+/// The root directory's record, which the standard fixes at the fifth.
+const ROOT_RECORD: u64 = 5;
+
+/// How deep an index tree this driver will follow before it gives up.
+///
+/// A directory's index is a B-tree, and a volume can make one deeper than a
+/// reader should walk looking for a name: the bound is what keeps a damaged
+/// pointer from being a loop.
+const MAX_INDEX_DEPTH: u32 = 8;
 
 pub struct NtfsFs {
     device: Arc<dyn BlockDevice>,
@@ -95,17 +105,154 @@ impl NtfsFs {
         false // Enable write support
     }
 
-    /// Resolve the root directory vnode (MFT record 5).
-    fn root_vnode(&self) -> Result<Arc<dyn VNode>> {
-        let root_record_number = self.find_root_directory_record()?;
-        let root_record = self.read_mft_record(root_record_number)?;
+    /// The entries a directory holds, whatever shape its index is in.
+    ///
+    /// A directory's index is a tree.  Its root lives in the record's
+    /// `$INDEX_ROOT`, and a directory that has children keeps the entries
+    /// themselves in an `$INDEX_ALLOCATION` whose blocks the root's last entry
+    /// points at by virtual cluster number — which is the shape a real volume
+    /// uses even for a single file, so this walks the tree rather than reading
+    /// one node.
+    fn directory_entries(&self, record_number: u64) -> Result<Vec<(String, u64)>> {
+        let record = self.read_mft_record(record_number)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let attributes = parse_attributes(&record[header.size() as usize..]);
+
+        let index_root = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_INDEX_ROOT)
+            .ok_or(Error::NotFound)?;
+        let mut node = parse_index_node(&index_root.content, 16);
+
+        let mut depth = 0;
+        while node.has_children && depth < MAX_INDEX_DEPTH {
+            let pointer = match node.entries.iter().find(|entry| entry.points_at_a_node) {
+                Some(pointer) => pointer,
+                None => break,
+            };
+            let block = self.read_index_block(&attributes, pointer.reference)?;
+            node = parse_index_node(&block, 24);
+            depth += 1;
+        }
+
+        // A directory's index holds an entry for itself, and one file can have
+        // more than one name: a short one and a long one.  The listing is the
+        // long one, and it is not the self entry.
+        let mut best: Vec<(String, u64)> = Vec::new();
+        for entry in &node.entries {
+            let Some(name) = &entry.name else { continue };
+            if name.name == "." {
+                continue;
+            }
+            match best
+                .iter()
+                .position(|(_, record)| *record == entry.reference)
+            {
+                Some(index) => {
+                    if name.preferred_namespace() {
+                        best[index] = (name.name.clone(), entry.reference);
+                    }
+                }
+                None => best.push((name.name.clone(), entry.reference)),
+            }
+        }
+        Ok(best)
+    }
+
+    /// Read the index allocation block a virtual cluster number names.
+    fn read_index_block(&self, attributes: &[ParsedAttr], vcn: u64) -> Result<Vec<u8>> {
+        let info = self.info.lock();
+        let allocation = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_INDEX_ALLOC && !attr.data_runs.is_empty())
+            .ok_or(Error::NotFound)?;
+        let mut block = alloc::vec![0u8; info.index_block_size as usize];
+        fs::read_from_runs(
+            &self.device,
+            &info,
+            &allocation.data_runs,
+            allocation.data_size as u64,
+            vcn * info.cluster_size as u64,
+            &mut block,
+        )?;
+
+        // The block carries its own update sequence array, and the volume's
+        // sector size says where its sectors end.
+        let usa_offset = u16::from_le_bytes([block[4], block[5]]) as usize;
+        let usa_count = u16::from_le_bytes([block[6], block[7]]) as usize;
+        fs::apply_usa_fixup(
+            &mut block,
+            usa_offset,
+            usa_count,
+            info.bs.bytes_per_sector as usize,
+        );
+        Ok(block)
+    }
+
+    /// The record a path names, from the root down, and the name it has.
+    ///
+    /// A name is matched against what the volume stores, byte for byte.  NTFS
+    /// compares through a folding table the volume carries (`$UpCase`), which
+    /// this driver does not read yet ([RFC 0012]).
+    fn resolve(&self, path: &str) -> Result<(u64, String)> {
+        let mut record_number = ROOT_RECORD;
+        let mut name = String::from("/");
+        for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+            let entries = self.directory_entries(record_number)?;
+            let (found_name, found_record) = entries
+                .into_iter()
+                .find(|(entry_name, _)| entry_name == segment)
+                .ok_or(Error::NotFound)?;
+            record_number = found_record;
+            name = found_name;
+        }
+        Ok((record_number, name))
+    }
+
+    /// The bytes a record's `$DATA` says it holds.
+    fn data_size(&self, record: &[u8]) -> u64 {
+        let Some(header) = MftRecordHeader::parse(record) else {
+            return 0;
+        };
+        parse_attributes(&record[header.size() as usize..])
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .map(|attr| attr.data_size as u64)
+            .unwrap_or(0)
+    }
+
+    /// The vnode for a record, named the way its parent's index names it.
+    fn vnode(&self, record_number: u64, name: String) -> Result<Arc<dyn VNode>> {
+        let record = self.read_mft_record(record_number)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let data = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA);
+        let first_cluster = data
+            .map(|attr| {
+                attr.data_runs
+                    .first()
+                    .map(|run| run.lcn.max(0) as u64)
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
         Ok(Arc::new(NtfsVnode {
             fs: Arc::new(self.clone()),
-            mft_record: SpinLock::new(root_record),
-            mft_record_number: SpinLock::new(root_record_number),
-            first_cluster: SpinLock::new(0),
-            file_size: SpinLock::new(0),
-            kind: SpinLock::new(NodeKind::Directory),
+            mft_record: SpinLock::new(record),
+            mft_record_number: SpinLock::new(record_number),
+            first_cluster: SpinLock::new(first_cluster),
+            file_size: SpinLock::new(if header.is_dir() {
+                0
+            } else {
+                data.map(|attr| attr.data_size as u64).unwrap_or(0)
+            }),
+            kind: SpinLock::new(if header.is_dir() {
+                NodeKind::Directory
+            } else {
+                NodeKind::File
+            }),
+            name,
         }))
     }
 }
@@ -116,21 +263,36 @@ impl FileSystem for NtfsFs {
     }
 
     fn lookup(&self, _path: &str) -> Result<Arc<dyn VNode>> {
-        // For now, just return the root vnode
-        // In a full implementation, you'd parse the path and traverse the directory
-        // structure
-        self.root_vnode()
+        let (record_number, name) = self.resolve(_path)?;
+        self.vnode(record_number, name)
     }
 
     fn read_dir(&self, _path: &str, _index: usize) -> Result<DirectoryEntry> {
-        let vnode = self.lookup(_path)?;
-        if vnode.kind() != NodeKind::Directory {
+        let (record_number, _name) = self.resolve(_path)?;
+        let record = self.read_mft_record(record_number)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        if !header.is_dir() {
             return Err(Error::InvalidArgument);
         }
 
-        // For now, just return a dummy entry
-        // In a full implementation, you'd read the directory entries
-        Ok(DirectoryEntry::new(NodeKind::File, 0, "dummy".to_string()))
+        let (name, child) = self
+            .directory_entries(record_number)?
+            .into_iter()
+            .nth(_index)
+            .ok_or(Error::NotFound)?;
+        let child_record = self.read_mft_record(child)?;
+        let child_header = MftRecordHeader::parse(&child_record).ok_or(Error::InvalidArgument)?;
+        let kind = if child_header.is_dir() {
+            NodeKind::Directory
+        } else {
+            NodeKind::File
+        };
+        let size = if kind == NodeKind::Directory {
+            0
+        } else {
+            self.data_size(&child_record) as usize
+        };
+        Ok(DirectoryEntry::new(kind, size, name))
     }
 
     fn rename(&self, _old_path: &str, _new_path: &str) -> Result<()> {
@@ -157,6 +319,8 @@ impl FileSystem for NtfsFs {
 // ── NTFS vnode ─────────────────────────────────────────────────────────
 
 pub struct NtfsVnode {
+    /// The name its parent's index gives it.
+    pub name: String,
     pub fs: Arc<NtfsFs>,
     pub mft_record: SpinLock<Vec<u8>>,
     pub mft_record_number: SpinLock<u64>,
@@ -167,7 +331,7 @@ pub struct NtfsVnode {
 
 impl VNode for NtfsVnode {
     fn name(&self) -> &str {
-        "ntfs_file"
+        &self.name
     }
 
     fn kind(&self) -> NodeKind {
@@ -194,6 +358,16 @@ impl VNode for NtfsVnode {
 
         let file_size = data_attr.data_size as u64;
         let data_runs = &data_attr.data_runs;
+
+        // A *resident* attribute has no runs: its bytes are in the record the
+        // node already holds, which is where a small file lives.
+        if data_attr.data_runs_offset.is_none() {
+            let content = &data_attr.content;
+            let start = (offset as usize).min(content.len());
+            let end = (start + buffer.len()).min(content.len());
+            buffer[..end - start].copy_from_slice(&content[start..end]);
+            return Ok(end - start);
+        }
 
         // Calculate how much data to read
         let end_offset = (offset + buffer.len() as u64).min(file_size);
@@ -321,58 +495,6 @@ impl VNode for NtfsVnode {
     }
 }
 
-impl NtfsVnode {
-    /// Enumerate the directory entries stored in this vnode's index-root
-    /// attribute. This is a convenience helper on `NtfsVnode` rather than a
-    /// `VNode` trait method (the trait has no `readdir`).
-    #[allow(dead_code)]
-    fn readdir(&self) -> Result<Vec<(String, Arc<dyn VNode>)>> {
-        let record = self.mft_record.lock();
-
-        // Parse the MFT record to find attributes
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
-
-        // Find the index root attribute for directory entries
-        let index_root_attr = attributes
-            .iter()
-            .find(|attr| attr.attr_type == ATTR_TYPE_INDEX_ROOT)
-            .ok_or(Error::NotFound)?;
-
-        // Parse the index root to get directory entries
-        let entries = fs::parse_index_entries(&index_root_attr.content)?;
-
-        let mut result = Vec::new();
-
-        for (name, mft_ref) in entries {
-            // Create vnode for each entry
-            let entry_record = self.fs.read_mft_record(mft_ref)?;
-            let entry_header =
-                MftRecordHeader::parse(&entry_record).ok_or(Error::InvalidArgument)?;
-
-            let entry_kind = if entry_header.is_dir() {
-                NodeKind::Directory
-            } else {
-                NodeKind::File
-            };
-
-            result.push((
-                name,
-                Arc::new(NtfsVnode {
-                    fs: self.fs.clone(),
-                    mft_record: SpinLock::new(entry_record),
-                    mft_record_number: SpinLock::new(mft_ref),
-                    first_cluster: SpinLock::new(0),
-                    file_size: SpinLock::new(0),
-                    kind: SpinLock::new(entry_kind),
-                }) as Arc<dyn VNode>,
-            ));
-        }
-
-        Ok(result)
-    }
-}
-
 // Helper functions
 
 fn update_mft_record(record: &mut [u8], attributes: &[ParsedAttr]) {
@@ -441,13 +563,5 @@ impl Clone for NtfsFs {
             info: Mutex::new((*self.info.lock()).clone()),
             mft_cache: Mutex::new(self.mft_cache.lock().clone()),
         }
-    }
-}
-
-impl NtfsFs {
-    fn find_root_directory_record(&self) -> Result<u64> {
-        // Root directory is typically in MFT record 5, but we need to verify
-        // For now, we'll use the standard location
-        Ok(5)
     }
 }

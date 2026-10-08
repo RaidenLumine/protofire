@@ -285,5 +285,36 @@ what stage 1's record serialisation is for.
   looked, it lands on **another** record — with the same `FILE` magic, which
   is why nothing had complained.
 
-**Still to do in stage 0.**  The index walk — `lookup` and `read_dir` through
-`$INDEX_ROOT` and `$INDEX_ALLOCATION` — and the file read that follows it.
+**Stage 0, second half — the index, and reading a file end to end.**
+
+- `parse_index_node` (`src/fs/ntfs/fs.rs`) reads a node where the format puts
+  it: an index *root*'s value carries its node after the root header, and an
+  allocation block after `INDX`, the block's own update sequence array and its
+  virtual cluster number.  Two shape facts the fixture settled:
+  - **an entry's name begins sixteen bytes into it**, and the field beside the
+    entry's length is that name's *length* and not an offset to it — the two
+    are the same number only while a name is sixteen bytes long, which is how
+    a reader can be wrong about every other one;
+  - **an allocation block's node starts its entries forty bytes in**, because
+    the block's update sequence array sits in front of them — a node that
+    starts them at sixteen is *overwritten* by the array, which is what the
+    reader saw as a node with no entries at all.
+- `NtfsFs::directory_entries` walks a directory's index the way a real volume
+  stores it: from the record's `$INDEX_ROOT`, down the child pointer its last
+  entry carries, into the `$INDEX_ALLOCATION` block at that virtual cluster
+  number — following the block's own runs and unpacking its update sequence
+  array with the volume's sector size — skipping the directory's own "."
+  entry and keeping one name per record, the preferred namespace's.
+- `resolve`, `lookup` and `read_dir` are that walk: a path is resolved from the
+  root down, the root's record being the standard's fifth; a name is matched
+  byte for byte, which is what the driver can do without the `$UpCase` table;
+  and a node now carries the name its parent's index gave it.
+- A **resident** `$DATA` is served from the record the node holds rather than
+  from a run list — it has none — which is where a small file's bytes live.
+
+**Stage 0 is done.**  A file reads end to end through a path: five tests over
+the fixture, from the root's listing (whose entries are in an allocation) and
+the subdirectory's (whose entries are in its index root) to a two-run file
+whose second run is the part a reader that stopped early would miss.  What
+comes next is stage 1: a write that lands — the record written back, and a
+second mount as the proof.

@@ -19,7 +19,10 @@ use super::types::StandardInfoAttr;
 use super::types::ATTR_TYPE_FILENAME;
 use super::types::IO_REPARSE_TAG_SYMLINK;
 use crate::fs::ntfs::fs::get_best_filename;
-use crate::fs::ntfs::fs::parse_index_entries;
+use crate::fs::ntfs::fs::parse_index_node;
+use crate::fs::vfs::FileSystem as VfsFileSystem;
+use crate::fs::vfs::NodeKind;
+use crate::Error;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Byte-level helpers
@@ -182,6 +185,122 @@ fn the_fixture_keeps_its_own_invariants() {
         let set = bitmap[cluster / 8] & (1 << (cluster % 8)) != 0;
         assert_eq!(set, *used != 0, "cluster {cluster}'s bit");
     }
+}
+
+#[test]
+fn a_directory_lists_what_its_index_holds() {
+    let fixture = build_volume(FRACTIONAL);
+    let fs_handle = open(&fixture);
+
+    // The root's entries live in an index *allocation*, and the index root is
+    // a node that points at it — the shape a directory with children has.
+    let mut names = Vec::new();
+    for index in 0.. {
+        match fs_handle.read_dir("/", index) {
+            Ok(entry) => names.push(entry.name),
+            Err(_) => break,
+        }
+    }
+    assert_eq!(
+        names,
+        [
+            "$MFT",
+            "$MFTMirr",
+            "$LogFile",
+            "$Volume",
+            "$AttrDef",
+            "$Bitmap",
+            "resident.txt",
+            "two-runs.bin",
+            "sub",
+        ],
+        "the root's entries, without its own \".\""
+    );
+
+    // The subdirectory's entries are in its index *root*, which is the other
+    // shape a directory has.
+    let leaf = fs_handle
+        .read_dir("/sub", 0)
+        .expect("the subdirectory's entry");
+    assert_eq!(leaf.name, "leaf.txt");
+    assert_eq!(leaf.kind, NodeKind::File);
+    assert_eq!(leaf.size, 4);
+    assert!(matches!(
+        fs_handle.read_dir("/sub", 1),
+        Err(Error::NotFound)
+    ));
+
+    // A file and a directory are listed as what they are.
+    let resident = fs_handle.read_dir("/", 6).expect("resident.txt");
+    assert_eq!(resident.kind, NodeKind::File);
+    assert_eq!(resident.size, 5);
+    let sub = fs_handle.read_dir("/", 8).expect("sub");
+    assert_eq!(sub.kind, NodeKind::Directory);
+}
+
+#[test]
+fn a_path_resolves_to_the_record_it_names() {
+    let fixture = build_volume(FRACTIONAL);
+    let fs_handle = open(&fixture);
+
+    let root = fs_handle.lookup("/").expect("the root");
+    assert_eq!(root.kind(), NodeKind::Directory);
+    assert_eq!(root.name(), "/");
+
+    let file = fs_handle
+        .lookup("/resident.txt")
+        .expect("a file at the root");
+    assert_eq!(file.kind(), NodeKind::File);
+    assert_eq!(file.name(), "resident.txt");
+    assert_eq!(file.size(), 5);
+
+    let sub = fs_handle.lookup("/sub").expect("a directory at the root");
+    assert_eq!(sub.kind(), NodeKind::Directory);
+    let leaf = fs_handle.lookup("/sub/leaf.txt").expect("a file below it");
+    assert_eq!(leaf.size(), 4);
+    assert_eq!(leaf.name(), "leaf.txt");
+
+    // A name that is not there, and a path through a file, are both answers
+    // and not accidents.
+    assert!(matches!(fs_handle.lookup("/nope"), Err(Error::NotFound)));
+    assert!(matches!(
+        fs_handle.lookup("/resident.txt/inside"),
+        Err(Error::NotFound)
+    ));
+}
+
+#[test]
+fn a_files_data_reads_through_the_runs_its_record_names() {
+    let fixture = build_volume(FRACTIONAL);
+    let fs_handle = open(&fixture);
+
+    // A resident file's bytes are in its own record.
+    let resident = fs_handle.lookup("/resident.txt").expect("resident.txt");
+    let mut buf = vec![0u8; 5];
+    assert_eq!(resident.read(0, &mut buf).expect("read"), 5);
+    assert_eq!(&buf, b"hello");
+
+    // A file in two runs reads the *second* run too, which is where a reader
+    // that stopped at the first would come up short.
+    let two_runs = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
+    let size = fixture.cluster_size() as usize * 3;
+    assert_eq!(two_runs.size(), size);
+    let mut buf = vec![0u8; size];
+    assert_eq!(two_runs.read(0, &mut buf).expect("read"), size);
+    assert!(buf[..fixture.cluster_size() as usize]
+        .iter()
+        .all(|b| *b == 0x11));
+    assert!(
+        buf[2 * fixture.cluster_size() as usize..]
+            .iter()
+            .all(|b| *b == 0x22),
+        "the second run's bytes"
+    );
+
+    // A directory is not a file, and saying so is the answer.
+    let sub = fs_handle.lookup("/sub").expect("sub");
+    let mut buf = [0u8; 4];
+    assert_eq!(sub.read(0, &mut buf), Err(Error::NotFound));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -376,7 +495,9 @@ fn index_root(body: &[u8], has_children: bool) -> Vec<u8> {
     put_u32_le(&mut value, 4, 1); // COLLATION_FILENAME
     put_u32_le(&mut value, 8, 4096);
     value[12] = 1;
-    value.extend_from_slice(&node(body, has_children));
+    // An index *root*'s node begins right after the root header, so its
+    // entries start sixteen bytes into the node.
+    value.extend_from_slice(&node(body, has_children, 16));
     value
 }
 
@@ -411,9 +532,9 @@ fn index_block(shape: &Shape, vcn: u64, node: &[u8]) -> Vec<u8> {
 /// The body is the caller's: a leaf ends with the end entry, and a non-leaf
 /// node ends with the entry that points at its child — which is the last
 /// entry there is, so there is nothing to append.
-fn node(body: &[u8], has_children: bool) -> Vec<u8> {
+fn node(body: &[u8], has_children: bool, entries_offset: u16) -> Vec<u8> {
     let mut node = vec![0u8; 16];
-    let entries_offset = 16u16;
+    node.resize(entries_offset as usize, 0);
     let mut body = body.to_vec();
     let length = (entries_offset as usize + body.len()).div_ceil(8) * 8;
     put_u16_le(&mut node, 0, entries_offset);
@@ -724,7 +845,10 @@ fn build_volume(shape: Shape) -> Fixture {
                     if root {
                         let mut leaf = entries.clone();
                         leaf.extend_from_slice(&index_end_entry());
-                        let block_node = node(&leaf, false);
+                        // A block's node sits behind the block's own update
+                        // sequence array, so its entries start forty bytes into
+                        // the node rather than sixteen.
+                        let block_node = node(&leaf, false, 40);
                         let block = index_block(&shape, 0, &block_node);
                         let at = fixture.index_block as usize * cluster_size as usize;
                         fixture.image[at..at + block.len()].copy_from_slice(&block);
@@ -1003,33 +1127,41 @@ fn get_best_filename_prefers_win32_over_dos() {
 }
 
 #[test]
-fn parse_index_entries_dedups_namespaces() {
-    // Two index entries for the same MFT record (42): a pure-DOS 8.3 name and
-    // a Win32 long name.  Only the Win32 name should survive.
-    let make_entry = |name: &str, namespace: u8| -> Vec<u8> {
+fn parse_index_node_reads_the_names_its_entries_carry() {
+    // An entry's name begins 16 bytes into it, and the field beside the
+    // entry's length is that name's *length*: the two are the same number only
+    // while a name is sixteen bytes long.
+    let make_entry = |name: &str, namespace: u8, last: bool| -> Vec<u8> {
         let name_bytes = make_filename_body(name, namespace, 0, 5);
-        let entry_len = 16 + name_bytes.len();
-        let mut e = vec![0u8; entry_len];
-        put_u64_le(&mut e, 0, 42); // MFT ref
-        put_u16_le(&mut e, 8, entry_len as u16);
-        put_u16_le(&mut e, 10, 16); // content offset
-                                    // flags at 12..16 (0 = not last for entry 1; set by caller)
-        e[16..16 + name_bytes.len()].copy_from_slice(&name_bytes);
-        e
+        let entry_len = (16 + name_bytes.len()).div_ceil(8) * 8;
+        let mut entry = vec![0u8; entry_len];
+        put_u64_le(&mut entry, 0, 42); // MFT ref
+        put_u16_le(&mut entry, 8, entry_len as u16);
+        put_u16_le(&mut entry, 10, name_bytes.len() as u16); // the name's length
+        put_u32_le(&mut entry, 12, u32::from(last) * 2);
+        entry[16..16 + name_bytes.len()].copy_from_slice(&name_bytes);
+        entry
     };
-    let mut e1 = make_entry("HELLO~1", 2);
-    let e2 = make_entry("hello.txt", 1);
-    put_u32_le(&mut e1, 12, 0x02); // last-entry flag on the DOS entry
-                                   // Prepend the 16-byte `$INDEX_ROOT` header: first entry at 16, total
-                                   // index size spans both entries.
-    let mut buf = vec![0u8; 16];
-    put_u16_le(&mut buf, 8, 16); // first entry offset
-    put_u16_le(&mut buf, 10, (16 + e1.len() + e2.len()) as u16); // index size
-    buf.extend_from_slice(&e1);
-    buf.extend_from_slice(&e2);
+    let first = make_entry("HELLO~1", 2, false);
+    let second = make_entry("hello.txt", 1, true);
 
-    let entries = parse_index_entries(&buf).expect("parse index");
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].0, "hello.txt");
-    assert_eq!(entries[0].1, 42);
+    // The node: its header, then the entries.
+    let mut buf = vec![0u8; 16];
+    let length = (16 + first.len() + second.len()) as u16;
+    put_u16_le(&mut buf, 0, 16); // where the entries begin
+    put_u16_le(&mut buf, 4, length); // how long the node is
+    put_u16_le(&mut buf, 8, length); // how much is allocated
+    buf.extend_from_slice(&first);
+    buf.extend_from_slice(&second);
+
+    let node = parse_index_node(&buf, 0);
+    assert!(!node.has_children);
+    assert_eq!(node.entries.len(), 2, "the last-entry flag ends the node");
+    let names: Vec<&str> = node
+        .entries
+        .iter()
+        .filter_map(|entry| entry.name.as_ref().map(|name| name.name.as_str()))
+        .collect();
+    assert_eq!(names, ["HELLO~1", "hello.txt"]);
+    assert!(node.entries.iter().all(|entry| entry.reference == 42));
 }

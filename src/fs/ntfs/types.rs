@@ -448,7 +448,6 @@ mod tests {
     use super::*;
     use crate::fs::ntfs::fs::get_best_filename;
     use crate::fs::ntfs::fs::parse_data_runs;
-    use crate::fs::ntfs::fs::parse_index_entries;
     use alloc::vec;
 
     #[test]
@@ -562,38 +561,6 @@ mod tests {
         let best = get_best_filename(&[dos.clone(), win32]).expect("best filename");
         assert_eq!(best.name, "hello.txt");
         assert_eq!(best.namespace, 3);
-    }
-
-    #[test]
-    fn parse_index_entries_dedups_namespaces() {
-        // Two index entries for the same MFT record (42): a pure-DOS 8.3 name and
-        // a Win32 long name.  Only the Win32 name should survive.
-        let make_entry = |name: &str, namespace: u8| -> Vec<u8> {
-            let name_bytes = make_filename_body(name, namespace, 0, 5);
-            let entry_len = 16 + name_bytes.len();
-            let mut e = vec![0u8; entry_len];
-            put_u64_le(&mut e, 0, 42); // MFT ref
-            put_u16_le(&mut e, 8, entry_len as u16);
-            put_u16_le(&mut e, 10, 16); // content offset
-                                        // flags at 12..16 (0 = not last for entry 1; set by caller)
-            e[16..16 + name_bytes.len()].copy_from_slice(&name_bytes);
-            e
-        };
-        let mut e1 = make_entry("HELLO~1", 2);
-        let e2 = make_entry("hello.txt", 1);
-        put_u32_le(&mut e1, 12, 0x02); // last-entry flag on the DOS entry
-                                       // Prepend the 16-byte `$INDEX_ROOT` header: first entry at 16, total
-                                       // index size spans both entries.
-        let mut buf = vec![0u8; 16];
-        put_u16_le(&mut buf, 8, 16); // first entry offset
-        put_u16_le(&mut buf, 10, (16 + e1.len() + e2.len()) as u16); // index size
-        buf.extend_from_slice(&e1);
-        buf.extend_from_slice(&e2);
-
-        let entries = parse_index_entries(&buf).expect("parse index");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].0, "hello.txt");
-        assert_eq!(entries[0].1, 42);
     }
 
     // Helper functions for tests
