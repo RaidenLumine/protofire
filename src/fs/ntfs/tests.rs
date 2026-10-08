@@ -672,8 +672,9 @@ fn an_attribute_that_outgrows_its_room_moves_and_takes_its_neighbours_with_it() 
 fn a_record_with_no_room_puts_an_attribute_in_an_extension_record() {
     // A record that has no room left at all is not short of *records*: it is
     // full, and the mechanism the format has for that is the attribute list.
-    // The attribute that would have to grow stays — the room is made by moving
-    // another one out, the largest there is.
+    // The attribute that has to grow moves out first — which is what the
+    // measured volume did with a directory's index root — and the largest
+    // others go with it when its own bytes are not enough to hold the list.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
     let cluster = fixture.cluster_size();
@@ -690,13 +691,13 @@ fn a_record_with_no_room_puts_an_attribute_in_an_extension_record() {
     let reread = again.lookup("/full.bin").expect("relookup");
     assert_eq!(reread.size(), 3 * cluster as usize);
     let mut buf = vec![0u8; 3 * cluster as usize];
-    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert_eq!(reread.read(0, &mut buf).expect("read"), buf.len());
     assert!(buf[..2 * cluster as usize].iter().all(|byte| *byte == 0x33));
     assert!(buf[2 * cluster as usize..].iter().all(|byte| *byte == 0));
 
-    // The record it left carries a list now, and the attribute that made the
-    // room is in a record of its own — one the volume has spoken for, and which
-    // no directory names.
+    // The record it left carries a list, and both the `$DATA` that had to grow
+    // and the filler that made room for the list are in a record of its own —
+    // one the volume has spoken for, and which no directory names.
     let record = again.read_mft_record(FULL_FILE).expect("the record");
     let header = super::types::MftRecordHeader::parse(&record).expect("a header");
     let attributes = super::fs::parse_attributes(&record[header.size() as usize..]);
@@ -704,10 +705,12 @@ fn a_record_with_no_room_puts_an_attribute_in_an_extension_record() {
         attributes.iter().any(|attr| attr.attr_type == 0x20),
         "the record carries a list"
     );
-    assert!(
-        !attributes.iter().any(|attr| attr.attr_type == 0xe0),
-        "and the attribute that made the room has left it"
-    );
+    for moved_type in [0x80, 0xe0] {
+        assert!(
+            !attributes.iter().any(|attr| attr.attr_type == moved_type),
+            "the attribute that moved has left it"
+        );
+    }
     let list = attributes
         .iter()
         .find(|attr| attr.attr_type == 0x20)
@@ -716,15 +719,24 @@ fn a_record_with_no_room_puts_an_attribute_in_an_extension_record() {
     assert_eq!(
         entries.len(),
         4,
-        "the standard information, the name, the data, and the one that moved"
+        "the standard information, the name, the data, and the filler"
     );
     let moved = entries
         .iter()
-        .find(|entry| entry.attr_type == 0xe0)
-        .expect("the moved attribute's entry");
+        .find(|entry| entry.attr_type == 0x80)
+        .expect("the data's entry");
+    assert_eq!(
+        entries
+            .iter()
+            .find(|entry| entry.attr_type == 0xe0)
+            .expect("the filler's entry")
+            .holder,
+        moved.holder,
+        "and the filler went to the same record"
+    );
     let holder = again
         .read_mft_record(moved.holder)
-        .expect("the record it moved to");
+        .expect("the record they moved to");
     assert_eq!(
         u64::from_le_bytes([
             holder[32], holder[33], holder[34], holder[35], holder[36], holder[37], holder[38],
@@ -734,12 +746,13 @@ fn a_record_with_no_room_puts_an_attribute_in_an_extension_record() {
         "and that record says which record it belongs to"
     );
     let held = super::types::MftRecordHeader::parse(&holder).expect("a header");
-    assert!(
-        super::fs::parse_attributes(&holder[held.size() as usize..])
-            .iter()
-            .any(|attr| attr.attr_type == 0xe0),
-        "and holds it"
-    );
+    let held = super::fs::parse_attributes(&holder[held.size() as usize..]);
+    for moved_type in [0x80, 0xe0] {
+        assert!(
+            held.iter().any(|attr| attr.attr_type == moved_type),
+            "and holds what moved"
+        );
+    }
 
     // The volume has one more record in use than the fixture made.
     let bits = again
@@ -750,14 +763,13 @@ fn a_record_with_no_room_puts_an_attribute_in_an_extension_record() {
     let was: usize = (0..RECORDS)
         .filter(|number| is_in_use(*number, false))
         .count();
-    assert_eq!(in_use, was + 1, "the record the attribute went to");
+    assert_eq!(in_use, was + 1, "the record the attributes went to");
 
-    // The record is one a writer can still change: a second growth adds another
-    // cluster to the same `$DATA`, which never left the record.
+    // And the `$DATA` that moved is one a writer can still change: a second
+    // growth writes into the record it landed in.
     node.set_len(4 * cluster).expect("a second growth");
     assert_eq!(node.size(), 4 * cluster as usize);
 }
-
 #[test]
 fn a_lookup_folds_case_through_the_volumes_table() {
     // A name is found by the case a real NTFS would find it by, because the
@@ -962,13 +974,49 @@ fn a_name_a_full_record_has_no_room_for_makes_its_own_room() {
     }
     assert!(names.iter().any(|name| name == "another.txt"), "{names:?}");
 
-    // And the record that made the room carries a list now.
+    // The record carried a list *before* the name arrived — an attribute had
+    // moved out of it once already — so this was the list being *extended*: the
+    // index root is what needed the room, it is what moved, and its entry now
+    // names the record it went to.
     let record = again.read_mft_record(FULL_DIRECTORY).expect("the record");
     let header = super::types::MftRecordHeader::parse(&record).expect("a header");
     let attributes = super::fs::parse_attributes(&record[header.size() as usize..]);
     assert!(
-        attributes.iter().any(|attr| attr.attr_type == 0x20),
-        "the record carries a list"
+        !attributes
+            .iter()
+            .any(|attr| attr.attr_type == 0x90 || attr.attr_type == 0x90),
+        "the index root has left the record"
+    );
+    let list = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0x20)
+        .expect("the list it already had");
+    let entries = super::fs::parse_attribute_list(&list.content);
+    assert_eq!(entries.len(), 4, "and names the same four attributes");
+    let root = entries
+        .iter()
+        .find(|entry| entry.attr_type == 0x90)
+        .expect("the index root's entry");
+    assert_ne!(
+        root.holder, FULL_DIRECTORY,
+        "which is no longer the record the list is in"
+    );
+    let holder = again
+        .read_mft_record(root.holder)
+        .expect("the record it moved to");
+    let held = super::types::MftRecordHeader::parse(&holder).expect("a header");
+    assert!(
+        super::fs::parse_attributes(&holder[held.size() as usize..])
+            .iter()
+            .any(|attr| attr.attr_type == 0x90),
+        "and holds it"
+    );
+    assert!(
+        entries
+            .iter()
+            .filter(|entry| entry.attr_type == 0xe0)
+            .all(|entry| entry.holder == FULL_DIRECTORY),
+        "while the filler stayed"
     );
 }
 
@@ -1616,6 +1664,9 @@ fn attribute(
             put_u16_le(&mut attr, 14, 1); // instance
             put_u16_le(&mut attr, 20, value_offset);
             put_u32_le(&mut attr, 16, value.len() as u32);
+            // The name's own bytes, which a named attribute carries between
+            // its header and its value.
+            attr[name_offset as usize..value_offset as usize].copy_from_slice(&name_bytes);
             attr.extend_from_slice(value);
             let length = attr.len().div_ceil(8) * 8;
             attr.resize(length, 0);
@@ -1666,13 +1717,16 @@ fn file_name(parent: u64, name: &str, directory: bool, size: u64) -> Vec<u8> {
 /// The entry's header is 26 bytes and the entry is padded to eight, which is
 /// the shape a real volume's entries have; the sequence number the reference
 /// carries is the one every fixture record was made with.
-fn list_entry(attr_type: u32, instance: u16, holder: u64, lowest_vcn: u64) -> Vec<u8> {
+fn list_entry(attr_type: u32, name: &str, instance: u16, holder: u64, lowest_vcn: u64) -> Vec<u8> {
+    let name_bytes: Vec<u8> = name.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let mut entry = vec![0u8; 26];
     put_u32_le(&mut entry, 0, attr_type);
-    entry[7] = 26; // where a name would begin
+    entry[6] = (name_bytes.len() / 2) as u8;
+    entry[7] = 26; // where a name begins
     put_u64_le(&mut entry, 8, lowest_vcn);
     put_u64_le(&mut entry, 16, (1u64 << 48) | holder);
     put_u16_le(&mut entry, 24, instance);
+    entry.extend_from_slice(&name_bytes);
     let length = entry.len().div_ceil(8) * 8;
     entry.resize(length, 0);
     put_u16_le(&mut entry, 4, length as u16);
@@ -2001,16 +2055,16 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     // its.  The list does not name *itself*, which is what the volume this was
     // measured against does too.
     let split_list: Vec<u8> = [
-        list_entry(0x10, 1, LISTED_FILE, 0),
-        list_entry(0x30, 1, LISTED_FILE, 0),
-        list_entry(0x80, 1, LISTED_FILE, 0),
-        list_entry(0x80, 1, LISTED_FILE_EXT, 1),
+        list_entry(0x10, "", 1, LISTED_FILE, 0),
+        list_entry(0x30, "", 1, LISTED_FILE, 0),
+        list_entry(0x80, "", 1, LISTED_FILE, 0),
+        list_entry(0x80, "", 1, LISTED_FILE_EXT, 1),
     ]
     .concat();
     let moved_list: Vec<u8> = [
-        list_entry(0x10, 1, MOVED_FILE, 0),
-        list_entry(0x30, 1, MOVED_FILE, 0),
-        list_entry(0x80, 1, MOVED_FILE_EXT, 0),
+        list_entry(0x10, "", 1, MOVED_FILE, 0),
+        list_entry(0x30, "", 1, MOVED_FILE, 0),
+        list_entry(0x80, "", 1, MOVED_FILE_EXT, 0),
     ]
     .concat();
 
@@ -2195,9 +2249,11 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     attributes.extend(attribute(0xe0, "", &alloc::vec![0u8; room], None, 0));
                 }
                 FULL_DIRECTORY => {
-                    // An index *root* with nothing in it, and then an attribute
-                    // sized to fill the record: a name that would have to make
-                    // the root's value longer has nowhere to go.
+                    // An index *root* with nothing in it, a **list** that already
+                    // names everything the record holds — an attribute moved out
+                    // of it once before — and then an attribute sized to fill
+                    // the record: a name whose entry needs the root's value
+                    // longer has to *extend* that list.
                     attributes.extend(attribute(
                         0x90,
                         "$I30",
@@ -2205,6 +2261,14 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                         None,
                         0,
                     ));
+                    let list: Vec<u8> = [
+                        list_entry(0x10, "", 1, FULL_DIRECTORY, 0),
+                        list_entry(0x30, "", 1, FULL_DIRECTORY, 0),
+                        list_entry(0x90, "$I30", 1, FULL_DIRECTORY, 0),
+                        list_entry(0xe0, "", 1, FULL_DIRECTORY, 0),
+                    ]
+                    .concat();
+                    attributes.extend(attribute(0x20, "", &list, None, 0));
                     let room = 1024 - 8 - 56 - attributes.len() - 24;
                     attributes.extend(attribute(0xe0, "", &alloc::vec![0u8; room], None, 0));
                 }

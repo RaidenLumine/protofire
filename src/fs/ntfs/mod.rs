@@ -106,10 +106,11 @@ fn compare_names(left: &str, right: &str, upcase: &[u16]) -> core::cmp::Ordering
 /// Where a directory keeps its index entries, so a change can be written back
 /// to the place it belongs.
 enum IndexHome {
-    /// In the record's own `$INDEX_ROOT` value: the record is the buffer, and
-    /// writing it back means writing the record whole, its update sequence
-    /// array packed again.
-    Record,
+    /// In the `$INDEX_ROOT`'s value: the record that *holds* that attribute is
+    /// the buffer — the parent record itself, or an extension record an
+    /// `$ATTRIBUTE_LIST` moved the root into — and writing it back means
+    /// writing that record whole, its update sequence array packed again.
+    Record { holder: u64 },
     /// In an `$INDEX_ALLOCATION` block at a virtual cluster number: the block
     /// is the buffer, and it carries an update sequence array of its own.
     Block {
@@ -430,6 +431,242 @@ impl NtfsFs {
 
     /// The extension records a record's `$ATTRIBUTE_LIST` puts its attributes
     /// in.
+    /// Make room in a record by moving attributes into a record of their own.
+    ///
+    /// This is the format's answer to a record with no room, and the answer the
+    /// measured volume gave: the attribute that needs the room **moves out**
+    /// into an *extension* record, and an `$ATTRIBUTE_LIST` names every
+    /// attribute of the file and which record holds it.  When the attribute
+    /// does not free enough room by itself, the largest others go with it,
+    /// until the list fits where they were.
+    ///
+    /// `growing` is the attribute that asked for the room — an index root whose
+    /// value has to be longer, or a `$DATA` whose run list does not fit.  It
+    /// goes first, and the caller follows it to the record it lands in.
+    ///
+    /// A record that is *itself* an extension refuses (`NotImplemented`): the
+    /// file's list is in the base record, and extending it from an extension is
+    /// a step of its own.
+    fn make_room(&self, record_number: u64, growing: u32) -> Result<()> {
+        if self.base_record(record_number).is_some() {
+            return Err(Error::NotImplemented);
+        }
+        let record = self.read_mft_record(record_number)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let base = header.size() as usize;
+        let attributes = parse_attributes(&record[base..]);
+        let list = attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST);
+        let base_reference = {
+            let sequence = u16::from_le_bytes([record[16], record[17]]);
+            record_number | (u64::from(sequence) << 48)
+        };
+
+        // The entries the list has, or would have: one per attribute of the
+        // file, in the order the record holds them — and the entries that name
+        // an attribute in a record of its own keep the record they name.
+        let mut entries: Vec<(u32, Option<String>, u16, u64, u64)> = match list {
+            Some(list) => self
+                .list_entries(list)?
+                .into_iter()
+                .map(|entry| {
+                    (
+                        entry.attr_type,
+                        entry.name,
+                        entry.instance,
+                        entry.lowest_vcn,
+                        entry.holder | (u64::from(entry.sequence) << 48),
+                    )
+                })
+                .collect(),
+            None => attributes
+                .iter()
+                .map(|attribute| {
+                    (
+                        attribute.attr_type,
+                        attribute.name.clone(),
+                        attribute.instance,
+                        0,
+                        base_reference,
+                    )
+                })
+                .collect(),
+        };
+        // A list that is not there yet is an attribute like any other, and its
+        // room has to be found where the attributes that move were.
+        let list_attr_len = match list {
+            Some(list) => list.attr_len,
+            None => {
+                let value: usize = entries
+                    .iter()
+                    .map(|(attr_type, name, instance, vcn, holder)| {
+                        fs::list_entry(
+                            *attr_type,
+                            name.as_deref().unwrap_or(""),
+                            *instance,
+                            *vcn,
+                            *holder,
+                        )
+                        .len()
+                    })
+                    .sum();
+                (24 + value).next_multiple_of(8)
+            }
+        };
+        let fits = |moved_len: usize| -> bool {
+            let used =
+                bytes_in_use(&record) - moved_len + if list.is_some() { 0 } else { list_attr_len };
+            used + 8 <= record.len()
+        };
+
+        // The attribute that asked for the room goes first, and the largest
+        // others follow until what is left of the record fits the list.
+        let mut moved: Vec<&ParsedAttr> = Vec::new();
+        let mut moved_len = 0usize;
+        let grower = attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == growing);
+        if let Some(grower) = grower {
+            moved.push(grower);
+            moved_len += grower.attr_len;
+        }
+        let mut others: Vec<&ParsedAttr> = attributes
+            .iter()
+            .filter(|attribute| {
+                attribute.attr_type != ATTR_TYPE_ATTRIBUTE_LIST
+                    && grower.is_none_or(|grower| grower.offset != attribute.offset)
+            })
+            .collect();
+        others.sort_by_key(|attribute| core::cmp::Reverse(attribute.attr_len));
+        for other in others {
+            if fits(moved_len) {
+                break;
+            }
+            moved.push(other);
+            moved_len += other.attr_len;
+        }
+        if moved.is_empty() || !fits(moved_len) {
+            return Err(Error::NoSpace);
+        }
+
+        // One record for all of them, whose own header will name the record they
+        // belong to — and whose own room has to hold them.
+        if moved_len + 64 > record.len() {
+            return Err(Error::NoSpace);
+        }
+        let mut to_go: Vec<Vec<u8>> = Vec::new();
+        for attribute in &moved {
+            let at = base + attribute.offset;
+            to_go.push(record[at..at + attribute.attr_len].to_vec());
+        }
+        let (extension, _) = self.claim_record(NewRecord::Extension {
+            base: record_number,
+            attributes: to_go,
+        })?;
+        let extension_reference = {
+            let extension_record = self.read_mft_record(extension)?;
+            let sequence = u16::from_le_bytes([extension_record[16], extension_record[17]]);
+            extension | (u64::from(sequence) << 48)
+        };
+        for (attr_type, name, instance, _, holder) in entries.iter_mut() {
+            if moved.iter().any(|attribute| {
+                attribute.attr_type == *attr_type
+                    && attribute.instance == *instance
+                    && attribute.name == *name
+            }) {
+                *holder = extension_reference;
+            }
+        }
+        let mut list_value: Vec<u8> = Vec::new();
+        for (attr_type, name, instance, lowest_vcn, holder) in &entries {
+            list_value.extend_from_slice(&fs::list_entry(
+                *attr_type,
+                name.as_deref().unwrap_or(""),
+                *instance,
+                *lowest_vcn,
+                *holder,
+            ));
+        }
+
+        // The list itself: the one the record has, with the holders it just
+        // learnt — its value written through its own runs when it is a file of
+        // its own — or a new one, where its own type sorts.
+        let list_attribute = match list {
+            Some(list) => {
+                let mut bytes =
+                    record[base + list.offset..base + list.offset + list.attr_len].to_vec();
+                if list.data_runs_offset.is_none() {
+                    let start = list.value_offset;
+                    bytes[start..start + list_value.len()].copy_from_slice(&list_value);
+                } else {
+                    let info = self.info.lock();
+                    fs::write_to_runs(&self.device, &info, &list.data_runs, 0, &list_value)?;
+                }
+                bytes
+            }
+            None => {
+                let instance = u16::from_le_bytes([record[40], record[41]]);
+                fs::resident_attribute(ATTR_TYPE_ATTRIBUTE_LIST, "", instance, &list_value)
+            }
+        };
+
+        // The record, rebuilt: the attributes that stayed, and the list where it
+        // was — or where its own type sorts among them.
+        let mut rebuilt = record[..base].to_vec();
+        let mut placed = false;
+        for attribute in &attributes {
+            if list.is_some_and(|list| list.offset == attribute.offset) {
+                rebuilt.extend_from_slice(&list_attribute);
+                placed = true;
+                continue;
+            }
+            if moved.iter().any(|moved| moved.offset == attribute.offset) {
+                continue;
+            }
+            if !placed && list.is_none() && attribute.attr_type > ATTR_TYPE_ATTRIBUTE_LIST {
+                rebuilt.extend_from_slice(&list_attribute);
+                placed = true;
+            }
+            let at = base + attribute.offset;
+            rebuilt.extend_from_slice(&record[at..at + attribute.attr_len]);
+        }
+        if !placed {
+            rebuilt.extend_from_slice(&list_attribute);
+        }
+        rebuilt.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+
+        let used = rebuilt.len();
+        if used + 8 > record.len() {
+            return Err(Error::NoSpace);
+        }
+        rebuilt.resize(record.len(), 0);
+        rebuilt[24..28].copy_from_slice(&(used as u32).to_le_bytes());
+        if list.is_none() {
+            let instance = u16::from_le_bytes([record[40], record[41]]);
+            rebuilt[40..42].copy_from_slice(&instance.wrapping_add(1).to_le_bytes());
+        }
+
+        let (at, sector) = {
+            let info = self.info.lock();
+            (
+                self.record_offset(&info, record_number)?,
+                info.bs.bytes_per_sector as usize,
+            )
+        };
+        fs::pack_usa(
+            &mut rebuilt,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            sector,
+        );
+        fs::write_device_bytes(&self.device, at, &rebuilt)?;
+        self.mft_cache.lock().insert(record_number, rebuilt);
+        Ok(())
+    }
+
+    /// The extension records a record's `$ATTRIBUTE_LIST` puts its attributes
+    /// in.
     /// Make room in a record by moving one of its attributes into a record of
     /// its own.
     ///
@@ -601,143 +838,6 @@ impl NtfsFs {
         let at = self.record_offset(&info, holder)?;
         fs::write_device_bytes(&self.device, at, &rebuilt)?;
         self.mft_cache.lock().insert(holder, rebuilt);
-        Ok(())
-    }
-
-    /// Make room in a record by moving one of its attributes into a record of
-    /// its own.
-    ///
-    /// This is the format's answer to a record with no room: the attribute goes
-    /// to an **extension record**, and an `$ATTRIBUTE_LIST` in the record it
-    /// left names every attribute of that record and which record holds it, so
-    /// that a reader is not left guessing.
-    ///
-    /// `keep` is the attribute that must *stay* — the one that has to grow — so
-    /// the room is made with another one, the largest there is.  A record that
-    /// already carries a list refuses (`NotImplemented`), extending one being a
-    /// step of its own, and so does a record the move does not free enough room
-    /// in (`NoSpace`): the list has to fit where the attribute was.
-    fn make_room(&self, record_number: u64, keep: u32) -> Result<()> {
-        let record = self.read_mft_record(record_number)?;
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let base = header.size() as usize;
-        let attributes = parse_attributes(&record[base..]);
-        if attributes
-            .iter()
-            .any(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
-        {
-            return Err(Error::NotImplemented);
-        }
-
-        let moved = attributes
-            .iter()
-            .filter(|attribute| attribute.attr_type != keep)
-            .max_by_key(|attribute| attribute.attr_len)
-            .ok_or(Error::NoSpace)?;
-
-        // The list that takes the moved attribute's place, measured before
-        // anything is taken from the volume: it is a run of entries, one per
-        // attribute, and an entry's length is the name's.
-        let list_len: usize = attributes
-            .iter()
-            .map(|attribute| {
-                fs::list_entry(
-                    attribute.attr_type,
-                    attribute.name.as_deref().unwrap_or(""),
-                    attribute.instance,
-                    0,
-                    0,
-                )
-                .len()
-            })
-            .sum();
-        let list_attribute_len = (24 + list_len).next_multiple_of(8);
-        let free = record.len() - bytes_in_use(&record);
-        if free + moved.attr_len < list_attribute_len {
-            return Err(Error::NoSpace);
-        }
-
-        // The record the attribute goes to: one of the MFT's free space, whose
-        // own header will name the record it belongs to, holding the
-        // attribute's bytes as they lie.
-        let moved_at = base + moved.offset;
-        let moved_bytes = record[moved_at..moved_at + moved.attr_len].to_vec();
-        let (extension, _) = self.claim_record(NewRecord::Extension {
-            base: record_number,
-            attributes: alloc::vec![moved_bytes],
-        })?;
-
-        let base_reference = {
-            let sequence = u16::from_le_bytes([record[16], record[17]]);
-            record_number | (u64::from(sequence) << 48)
-        };
-        let extension_reference = {
-            let extension_record = self.read_mft_record(extension)?;
-            let sequence = u16::from_le_bytes([extension_record[16], extension_record[17]]);
-            extension | (u64::from(sequence) << 48)
-        };
-        let mut list_value: Vec<u8> = Vec::new();
-        for attribute in &attributes {
-            let holder = if attribute.offset == moved.offset {
-                extension_reference
-            } else {
-                base_reference
-            };
-            list_value.extend_from_slice(&fs::list_entry(
-                attribute.attr_type,
-                attribute.name.as_deref().unwrap_or(""),
-                attribute.instance,
-                0,
-                holder,
-            ));
-        }
-        let instance = u16::from_le_bytes([record[40], record[41]]);
-        let list_attribute =
-            fs::resident_attribute(ATTR_TYPE_ATTRIBUTE_LIST, "", instance, &list_value);
-
-        // The record, rebuilt without the attribute and with the list where its
-        // own type sorts among the attributes that stayed.
-        let mut rebuilt = record[..base].to_vec();
-        let mut inserted = false;
-        for attribute in &attributes {
-            if attribute.offset == moved.offset {
-                continue;
-            }
-            if !inserted && attribute.attr_type > ATTR_TYPE_ATTRIBUTE_LIST {
-                rebuilt.extend_from_slice(&list_attribute);
-                inserted = true;
-            }
-            let at = base + attribute.offset;
-            rebuilt.extend_from_slice(&record[at..at + attribute.attr_len]);
-        }
-        if !inserted {
-            rebuilt.extend_from_slice(&list_attribute);
-        }
-        rebuilt.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
-
-        let used = rebuilt.len();
-        if used + 8 > record.len() {
-            return Err(Error::NoSpace);
-        }
-        rebuilt.resize(record.len(), 0);
-        rebuilt[24..28].copy_from_slice(&(used as u32).to_le_bytes());
-        rebuilt[40..42].copy_from_slice(&instance.wrapping_add(1).to_le_bytes());
-
-        let (at, sector) = {
-            let info = self.info.lock();
-            (
-                self.record_offset(&info, record_number)?,
-                info.bs.bytes_per_sector as usize,
-            )
-        };
-        fs::pack_usa(
-            &mut rebuilt,
-            header.usa_offset as usize,
-            header.usa_count as usize,
-            sector,
-        );
-        fs::write_device_bytes(&self.device, at, &rebuilt)?;
-        self.mft_cache.lock().insert(record_number, rebuilt);
         Ok(())
     }
 
@@ -1080,20 +1180,28 @@ impl NtfsFs {
     /// the node's place and its room, so a change to the entries can be
     /// written back where they belong.
     fn index_leaf(&self, parent_record: u64) -> Result<(Vec<u8>, usize, IndexHome)> {
-        let record = self.read_mft_record(parent_record)?;
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
         let attributes = self.attributes_of(parent_record)?;
-        // The node's own offset is an offset in the bytes this record holds,
-        // so the index root has to be one of them: one an `$ATTRIBUTE_LIST`
-        // moved is a directory shape this driver does not change yet.
-        let root = own_attribute(parent_record, &attributes, ATTR_TYPE_INDEX_ROOT)?;
+        let root = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_INDEX_ROOT)
+            .ok_or(Error::NotFound)?;
+        // The node's own offset is an offset in the bytes of the record that
+        // holds the attribute, which an `$ATTRIBUTE_LIST` can have made an
+        // extension record of the parent's.
+        let holder = root.holder;
+        if holder == u64::MAX {
+            // A root split across records is one no single record's bytes are.
+            return Err(Error::NotImplemented);
+        }
+        let record = self.read_mft_record(holder)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
 
         // An index *root*'s node begins after the root header — the indexed
         // attribute's type, the collation rule and the buffer size — and the
         // value it sits in is the resident attribute the record gives it.
         let mut node = header.size() as usize + root.offset + root.value_offset + 16;
         let mut buffer = record;
-        let mut home = IndexHome::Record;
+        let mut home = IndexHome::Record { holder };
 
         let mut depth = 0;
         while parse_index_node(&buffer, node).has_children {
@@ -1140,22 +1248,23 @@ impl NtfsFs {
     /// gives it, and that value **grows** when it has to: an attribute inside a
     /// record can be as long as the record has room for, so the value's bytes
     /// extend, everything after the attribute shifts up with the end marker,
-    /// and the record goes back whole.  A record with no room refuses
-    /// (`NoSpace`) — the format's answer to that is an `$INDEX_ALLOCATION` of
-    /// its own, which this driver does not make yet.
+    /// and the record goes back whole.  The record that holds the attribute is
+    /// the buffer, which an `$ATTRIBUTE_LIST` can have made an extension record
+    /// of the parent's.  A record with no room refuses (`NoSpace`), and the
+    /// caller makes room by moving attributes out of it.
     fn write_index_leaf(
         &self,
-        parent_record: u64,
+        _parent_record: u64,
         buffer: &mut [u8],
         node: usize,
         entries: &[Vec<u8>],
         home: &IndexHome,
     ) -> Result<()> {
         match home {
-            IndexHome::Record => {
+            IndexHome::Record { holder } => {
                 let header = MftRecordHeader::parse(buffer).ok_or(Error::InvalidArgument)?;
-                let attributes = self.attributes_of(parent_record)?;
-                let root = own_attribute(parent_record, &attributes, ATTR_TYPE_INDEX_ROOT)?;
+                let attributes = self.attributes_of(*holder)?;
+                let root = own_attribute(*holder, &attributes, ATTR_TYPE_INDEX_ROOT)?;
                 let attr_at = header.size() as usize + root.offset;
 
                 // What the node's entries come to, and whether the record has
@@ -1204,7 +1313,7 @@ impl NtfsFs {
                 let (at, sector) = {
                     let info = self.info.lock();
                     (
-                        self.record_offset(&info, parent_record)?,
+                        self.record_offset(&info, *holder)?,
                         info.bs.bytes_per_sector as usize,
                     )
                 };
@@ -1215,7 +1324,7 @@ impl NtfsFs {
                     sector,
                 );
                 fs::write_device_bytes(&self.device, at, &rebuilt)?;
-                self.mft_cache.lock().insert(parent_record, rebuilt);
+                self.mft_cache.lock().insert(*holder, rebuilt);
             }
             IndexHome::Block {
                 vcn,
@@ -1266,9 +1375,9 @@ impl NtfsFs {
             size,
         );
 
-        // Two attempts: a directory whose own record has no room for the longer
-        // value makes it the way a file does — an attribute moves into a record
-        // of its own — and that changes where the node is, so the whole
+        // Two attempts: a directory whose record has no room for the longer
+        // value makes it the way a file does — the index root moves into a
+        // record of its own — and that changes the node's place, so the whole
         // insertion is worked out again.
         for attempt in 0..2 {
             let (mut buffer, node, home) = self.index_leaf(parent_record)?;
@@ -1298,8 +1407,12 @@ impl NtfsFs {
 
             match self.write_index_leaf(parent_record, &mut buffer, node, &raws, &home) {
                 Ok(()) => return Ok(()),
-                Err(Error::NoSpace) if attempt == 0 && matches!(home, IndexHome::Record) => {
-                    self.make_room(parent_record, ATTR_TYPE_INDEX_ROOT)?;
+                Err(Error::NoSpace) if attempt == 0 => {
+                    let holder = match home {
+                        IndexHome::Record { holder } => holder,
+                        IndexHome::Block { .. } => return Err(Error::NoSpace),
+                    };
+                    self.make_room(holder, ATTR_TYPE_INDEX_ROOT)?;
                 }
                 Err(error) => return Err(error),
             }

@@ -158,10 +158,13 @@ The authoritative picture of what exists today is
   took apart readable here.  It is *written* now too: a record with no room
   moves its largest attribute that is not the one that has to grow into an
   extension record of its own, and the list names where everything went — so a
-  record that is *full* grows.  What is left of the stage is extending a list a
-  record already has, the `$INDEX_ALLOCATION` a directory full of entries needs,
-  and moving the attribute that has to grow itself, which is what the format
-  does when nothing else can spare the room.
+  record that is *full* grows.  The attribute that needs the room is the one
+  that moves — as the format's own writer does — the largest others go with it
+  when the list needs more, and a list the record already has is *extended*
+  rather than refused.  What is left of the stage is the `$INDEX_ALLOCATION` a
+  directory full of entries needs, and the two shapes the fixture does not
+  carry: a record that is itself an extension, and one where even moving
+  everything leaves no room for the list.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

@@ -650,15 +650,11 @@ being something a partial write can ignore.
 - The reader's view is what the writer walks: the merged attributes are what
   `set_len` finds its `$DATA` in and what the removal walks to give clusters
   and extension records back, which stage 4a had already pinned.
-- **What is refused, and why.**  A record that *already* carries a list
-  (`NotImplemented`): extending one is a step of its own, and the fixture does
-  not carry a record that needs it.  A record the move does not free enough
-  room in (`NoSpace`): the list has to fit where the attribute was, and the
-  fixture does not carry that shape either, so both of those paths are
-  *implemented* and not yet *verified*.  A `$DATA` **split** across records is
-  grown only where a writer can name one record's bytes, so the split fixture
-  file is still refused a length change — while a file whose `$DATA` has
-  *moved whole* into an extension record grows there.
+- **What is refused.**  A `$DATA` **split** across records is grown only where a
+  writer can name one record's bytes, so the split fixture file is still refused
+  a length change — while a file whose `$DATA` has *moved whole* into an
+  extension record grows there.  *(Stage 4c makes the list itself grow, and
+  lets the attribute that needs the room be the one that moves.)*
 - Three tests: a file whose record is full grows, its third cluster reading as
   zeros and a second mount agreeing — with the run list in the room the move
   made, the base record carrying a list, the moved attribute in a record whose
@@ -666,3 +662,37 @@ being something a partial write can ignore.
   *second* growth landing in the same record; a directory whose record is full
   takes a name the same way; and a file whose `$DATA` already lives in an
   extension record grows *there*.
+
+**Stage 4c — the list grows, and the attribute that needs the room moves.**
+
+- **The attribute that asked for the room goes first.**  Stage 4b made room
+  with *another* attribute and kept the growing one where a writer could patch
+  it; that is the smaller change, and it is not what the measured volume did:
+  ntfs-3g moved the attribute that had to grow — a directory's `$INDEX_ROOT` —
+  into record 74.  Now the caller names the attribute that needs the room, it
+  moves first, and the caller finds it by the record its list entry names.  An
+  index root that moves is written *there*: `index_leaf` answers with the
+  record that holds the attribute, and `write_index_leaf` patches that record,
+  so a directory whose root has left its record still lists and still takes
+  names.
+- **The move is a *set*, chosen to fit the list.**  When the attribute's own
+  bytes are not enough to hold the list where it was, the largest others go
+  with it, biggest first, until what is left of the record fits.  That is what
+  makes a record full of several attributes work rather than refuse.
+- **A list that is already there grows.**  Its entries name every attribute of
+  the file and the record that holds each, so an attribute that moves again
+  only changes *its* entry's holder — the list's own length does not change,
+  whether the list is a value in the record or a file of its own (whose value
+  is written through its runs).
+- **What is still refused**, and not carried by the fixture: a record that is
+  *itself* an extension (`NotImplemented`) — the file's list is in the base
+  record, and extending it from an extension is a step of its own — and a
+  record where even moving everything the list names leaves no room for the
+  list (`NoSpace`).
+- The two stage-4b tests are now *extensions* of it: the file whose record is
+  full moves its `$DATA` — the attribute that had to grow — and the filler that
+  makes room for the list into one extension record, both entries naming it;
+  and the directory whose record is full already *carries* a list, so the name
+  that arrives moves the index root out of it and grows it there.  Both keep
+  what stage 4b proved: the second mount, the length, the listing, and a writer
+  that can still change the file afterwards.
