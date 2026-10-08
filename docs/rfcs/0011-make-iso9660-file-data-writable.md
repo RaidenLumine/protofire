@@ -458,5 +458,36 @@ removal reclaim what it freed.
   descriptor whose root size is `0xFFFF_FFFF` opens without allocating it; and
   the reference is found in a continuation as well as in an area directly.
 
-**What that leaves.**  The free-space scan that would let a removal reclaim
-what it freed.
+**Stage 3g — giving back what it took.**
+
+- The append-only allocator's stated cost was that a removal reclaims nothing.
+  The volume's declared size **is** its free list — everything below it is
+  claimed by an extent, everything from it on is not — so an extent that was
+  the **last** thing the volume held can lower that size over the blocks it
+  gives up, and nothing else has to be consulted.
+- It is a **tail** rule and only a tail rule.  A removal in the middle gives
+  nothing back, because finding what is free in the middle means enumerating
+  every extent on the volume.  That scan is the step after this one, and it is
+  not a small one: it has to know every structure a foreign volume can hold —
+  the descriptor set, an El Torito catalog and the images it names, both path
+  tables and their optional copies, the primary tree and the Joliet one — and
+  treat anything it cannot parse as used.
+- What the reclaim does **not** change is the property the allocator is built
+  on: it still never hands out a block the image came with.  The mount
+  remembers the size the volume declared when it was opened, and a shrink may
+  not take the volume's end below it, so what comes back is only what this
+  driver took.  That is what makes the rule safe without knowing a foreign
+  volume's structures: a block that was the image's is never given out again,
+  whatever a file's record says about it.
+- Two call sites, one mechanism: `remove_path` gives up everything the entry
+  held, and `set_len` gives up the blocks a shrink drops — each only where the
+  extent was the volume's last.
+- Four tests: a removal at the end gives the blocks back and the next
+  allocation is handed one of them, read off the medium; a removal in the
+  middle gives nothing back; a truncation at the end gives back exactly the
+  block it stopped needing and a second mount agrees about the length; and a
+  medium that is exactly the volume does not come down onto the blocks the
+  image came with.
+
+**What that leaves.**  The scan: a removal in the middle of a volume reclaims
+nothing, and neither does one of the entries the image itself came with.

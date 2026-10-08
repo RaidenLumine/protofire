@@ -1602,3 +1602,106 @@ fn bootable_volume_reports_boot_entries() {
     let plain_volume = open_volume(plain);
     assert!(plain_volume.boot_entries().is_empty());
 }
+
+// ─── Giving the blocks back (RFC 0011, stage 3g) ───────────────────────
+
+#[test]
+fn a_removal_at_the_end_of_the_volume_gives_its_blocks_back() {
+    let (device, volume) = writable_volume();
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let before = fs::volume_blocks(&as_device).expect("volume size");
+
+    let node = volume.create_file("/tail.bin").expect("create");
+    assert_eq!(
+        node.write(0, &[0x5A; SECTOR_SIZE]).expect("write"),
+        SECTOR_SIZE
+    );
+    assert_eq!(
+        fs::volume_blocks(&as_device).expect("volume size"),
+        before + 1
+    );
+
+    volume.remove_path("/tail.bin").expect("remove");
+    assert_eq!(
+        fs::volume_blocks(&as_device).expect("volume size"),
+        before,
+        "the blocks it held at the end are the volume's again"
+    );
+
+    // And the next thing that needs a block is handed one of them.
+    let again = volume.create_file("/other.bin").expect("create");
+    assert_eq!(
+        again.write(0, &[0x11; SECTOR_SIZE]).expect("write"),
+        SECTOR_SIZE
+    );
+    let (location, size) = root_extent(&device);
+    assert_eq!(
+        record_named(&device, location, size, b"OTHER.BIN;1").extent_location,
+        before,
+        "the reclaimed block is the one the allocator hands out"
+    );
+}
+
+#[test]
+fn a_removal_inside_the_volume_gives_nothing_back() {
+    let (device, volume) = writable_volume();
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let before = fs::volume_blocks(&as_device).expect("volume size");
+
+    // `HELLO.TXT` is in the middle: the volume's space ends past it, and what
+    // is free there is not something this driver can see without walking every
+    // extent on the volume.
+    volume.remove_path("/HELLO.TXT").expect("remove");
+    assert_eq!(fs::volume_blocks(&as_device).expect("volume size"), before);
+}
+
+#[test]
+fn a_truncation_at_the_end_of_the_volume_gives_its_blocks_back() {
+    let (device, volume) = writable_volume();
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let node = volume.create_file("/tail.bin").expect("create");
+    node.set_len(2 * SECTOR_SIZE as u64).expect("grow");
+    let grown = fs::volume_blocks(&as_device).expect("volume size");
+
+    node.set_len(SECTOR_SIZE as u64).expect("truncate");
+    assert_eq!(
+        fs::volume_blocks(&as_device).expect("volume size"),
+        grown - 1,
+        "the block it gave up was the volume's last"
+    );
+
+    // The block it kept is still its own, and a second mount agrees about the
+    // length.
+    let (location, size) = root_extent(&device);
+    let record = record_named(&device, location, size, b"TAIL.BIN;1");
+    assert_eq!(record.extent_size, SECTOR_SIZE as u32);
+    let reopened = open_volume(device);
+    assert_eq!(
+        reopened.lookup("/tail.bin").expect("relookup").size(),
+        SECTOR_SIZE
+    );
+}
+
+#[test]
+fn the_blocks_an_image_came_with_are_never_handed_out_again() {
+    // A medium that is exactly the volume: the open cannot declare the
+    // extension, so the image is the one it came with.  `NOTES.TXT` is the
+    // last file it holds and ends exactly where the volume does — the shape
+    // the tail rule would give back — and the volume's own floor is what says
+    // no, because the blocks the image came with are the image's.
+    let tight = build_test_image()[..VOLUME_BLOCKS as usize * SECTOR_SIZE].to_vec();
+    let device = MemoryBlockDevice::new("iso-tight", tight, false);
+    let volume = open_volume(device.clone());
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    assert_eq!(
+        fs::volume_blocks(&as_device).expect("volume size"),
+        VOLUME_BLOCKS
+    );
+
+    volume.remove_path("/SUB/NOTES.TXT").expect("remove");
+    assert_eq!(
+        fs::volume_blocks(&as_device).expect("volume size"),
+        VOLUME_BLOCKS,
+        "the volume never comes down to a block the image came with"
+    );
+}

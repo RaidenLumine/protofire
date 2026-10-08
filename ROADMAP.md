@@ -102,17 +102,18 @@ The authoritative picture of what exists today is
   BtrFS, SquashFS, ISO 9660, EROFS — move toward read-write, matching ext4 /
   F2FS / XFS / exFAT / FAT32.  The first of them is moving:
   [RFC 0011](docs/rfcs/0011-make-iso9660-file-data-writable.md) made an ISO
-  9660 file's *data*, its *length*, its *space* — from an append-only allocator
-  that no longer refuses at the block boundary — its *record*, so files can be
-  created and removed, and then *directories*, which is both path tables
-  rebuilt from the tree.  The RFC records why ISO 9660 went first (no
-  compression to redo, no checksum tree to update, and a test image builder
-  that already exists), and what it costs: the allocator appends, so a removal
-  reclaims nothing and a growth can pay a copy.  Entries can be renamed and
-  moved as well, which is the same two halves as one operation.  What is left
-  of ISO 9660 is the free-space scan that would let a removal reclaim what it
-  freed.  The volume also declares the extension those entries belong to, which
-  a writable open writes once by rebuilding the root directory's extent.
+  9660 file's *data*, its *length*, its *space* — from an allocator that hands
+  out the volume's tail and no longer refuses at the block boundary — its
+  *record*, so files can be created and removed, then *directories*, which is
+  both path tables rebuilt from the tree, and then entries that can be renamed
+  and moved, which is the same two halves as one operation.  The RFC records
+  why ISO 9660 went first (no compression to redo, no checksum tree to update,
+  and a test image builder that already exists), and what it costs: a growth
+  with something after it pays a copy, and a removal gives its blocks back only
+  when they are the volume's last, because what is free in the middle would
+  take a scan of every extent.  What is left of ISO 9660 is that scan.  The
+  volume also declares the extension its entries belong to, which a writable
+  open writes once by rebuilding the root directory's extent.
   NTFS is the prize and the largest step; its RFC has to decide its harness
   before its writes.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64

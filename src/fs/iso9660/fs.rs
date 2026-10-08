@@ -523,6 +523,50 @@ pub fn set_volume_blocks(device: &Arc<dyn BlockDevice>, blocks: u32) -> Result<(
     write_exact(device, at, &field)
 }
 
+/// Give back the blocks an extent no longer holds.
+///
+/// `held` is the size the extent had and `kept` the size it has now; the
+/// blocks between them are the ones it gave up.  The volume's declared size
+/// **is** this allocator's free list — everything below it is claimed by an
+/// extent, everything from it on is not — so an extent that was the last thing
+/// the volume held can lower that size over the blocks it gave back, and
+/// nothing else has to be consulted: a block beyond the size the volume
+/// declares belongs to no file by definition, which is the same property the
+/// append-only allocator rests on.
+///
+/// It is a **tail** rule and only a tail rule.  A removal in the middle of the
+/// volume gives nothing back, because finding what is free in the middle means
+/// enumerating every extent on the volume — a scan with a list of structures
+/// to know about, which is the step after this one
+/// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+pub fn release_volume_tail(
+    device: &Arc<dyn BlockDevice>,
+    block_size: u16,
+    floor: u32,
+    extent_location: u32,
+    held: u32,
+    kept: u32,
+) -> Result<(), Error> {
+    let blocks = |bytes: u32| (bytes as u64).div_ceil(block_size as u64) as u32;
+    let held_blocks = blocks(held);
+    let kept_blocks = blocks(kept);
+    if kept_blocks >= held_blocks {
+        return Ok(());
+    }
+
+    let volume_end = volume_blocks(device)?;
+    if extent_location.checked_add(held_blocks) != Some(volume_end) {
+        return Ok(());
+    }
+    // Never below what the image itself declared: the blocks it came with are
+    // the image's, whatever a file's record says about them.
+    let new_end = extent_location + kept_blocks;
+    if new_end < floor {
+        return Ok(());
+    }
+    set_volume_blocks(device, new_end)
+}
+
 /// Take `count` logical blocks for a file, and grow the volume to hold them.
 ///
 /// This is an **append-only** allocator: the blocks it hands out begin where

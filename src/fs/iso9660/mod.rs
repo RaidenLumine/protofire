@@ -104,6 +104,13 @@ pub struct Iso9660Volume {
     device: Arc<dyn BlockDevice>,
     block_size: u16,
     volume_label: String,
+    /// The size the volume declared when it was opened.
+    ///
+    /// Nothing below it is ever handed out again: the blocks the image came
+    /// with are the image's, and what the allocator gives back is only what
+    /// *it* took.  That is what lets a removal reclaim space without this
+    /// driver having to know every structure a foreign volume could hold.
+    volume_floor: u32,
     /// Joliet SVD root directory record, if present.
     joliet_root: Option<DirRecord>,
     /// Whether Joliet UCS-2BE filenames should be used.
@@ -120,6 +127,8 @@ impl Iso9660Volume {
         if block_size == 0 || !(block_size as usize).is_multiple_of(types::SECTOR_SIZE) {
             return Err(Error::InvalidArgument);
         }
+        // Before the upgrade below, which is the first thing that grows it.
+        let volume_floor = fs::volume_blocks(&device)?;
 
         // Try to detect a Joliet Supplementary Volume Descriptor.
         let (joliet_label, joliet_root, has_joliet) = if let Some(svd) = fs::read_svd(&device) {
@@ -134,6 +143,7 @@ impl Iso9660Volume {
             device,
             block_size,
             volume_label: joliet_label,
+            volume_floor,
             joliet_root,
             has_joliet,
         };
@@ -620,6 +630,7 @@ impl VfsFileSystem for Iso9660Volume {
             extent_location: AtomicU32::new(record.extent_location),
             extent_size: AtomicU32::new(record.extent_size),
             record_offset,
+            volume_floor: self.volume_floor,
             rr_posix: record.rr_posix,
             rr_symlink: record.rr_symlink,
             device: self.device.clone(),
@@ -771,6 +782,7 @@ impl VfsFileSystem for Iso9660Volume {
             extent_location: AtomicU32::new(extent_location),
             extent_size: AtomicU32::new(0),
             record_offset,
+            volume_floor: self.volume_floor,
             // The attributes are what the record this call wrote carries, so
             // the node answers with them rather than with the default a record
             // without them would get.
@@ -835,8 +847,9 @@ impl VfsFileSystem for Iso9660Volume {
     /// The records after it move down over it rather than being re-serialised:
     /// a record carries whatever its writer put in the System Use area, and
     /// this driver does not parse all of it, so the bytes are the only honest
-    /// copy.  What the file's blocks were is not reclaimed — the allocator
-    /// appends, and a free-space scan is what would change that.
+    /// copy.  What the file's blocks were comes back to the volume when they
+    /// are its last; what is free in the middle of one takes a scan this
+    /// driver does not do.
     fn remove_path(&self, path: &str) -> Result<()> {
         let clean = clean_path(path);
         let (record, _entries, record_offset) = self.resolve(&clean)?;
@@ -858,6 +871,20 @@ impl VfsFileSystem for Iso9660Volume {
             parent_record_offset,
             record_offset,
             record.record_len,
+        )?;
+
+        // The record is gone, so whatever the entry held is free — and if it
+        // was the last thing the volume held, its blocks are the volume's last
+        // and it takes them back.  A removal in the middle gives nothing back,
+        // because what is free there is not something this driver can see
+        // without walking every extent on the volume.
+        fs::release_volume_tail(
+            &self.device,
+            self.block_size,
+            self.volume_floor,
+            record.extent_location,
+            record.extent_size,
+            0,
         )?;
 
         if record.is_dir() {
@@ -916,6 +943,9 @@ struct Iso9660VNode {
     /// A resize rewrites the length *in that record*, and nothing else on the
     /// volume knows the file's size.
     record_offset: u64,
+    /// The size the volume declared when it was opened, which is the floor a
+    /// shrink may not take blocks back below — see [`Iso9660Volume`].
+    volume_floor: u32,
     rr_posix: Option<(u32, u32, u32, u32)>,
     rr_symlink: Option<Vec<u8>>,
     device: Arc<dyn BlockDevice>,
@@ -1025,6 +1055,20 @@ impl VNode for Iso9660VNode {
         // Where the file is and how long it is, in one write: the two fields
         // are adjacent in the record and each is stored twice.
         fs::rewrite_record_placement(&self.device, self.record_offset, extent_location, length)?;
+
+        // A shrink that gives up whole blocks at the very end of the volume
+        // hands them back to it, which is the one place this driver can tell
+        // what is free without walking the tree.
+        if length < current {
+            fs::release_volume_tail(
+                &self.device,
+                self.block_size,
+                self.volume_floor,
+                extent_location,
+                current,
+                length,
+            )?;
+        }
 
         self.extent_location
             .store(extent_location, Ordering::Relaxed);
