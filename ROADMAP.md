@@ -110,8 +110,9 @@ The authoritative picture of what exists today is
   that already exists), and what it costs: the allocator appends, so a removal
   reclaims nothing and a growth can pay a copy.  Entries can be renamed and
   moved as well, which is the same two halves as one operation.  What is left
-  of ISO 9660 is the Rock Ridge name entry that would let a created name be
-  anything a caller likes, and the free-space scan that would let a removal
+  of ISO 9660 is the `ER` entry that tells a reader the name entries are Rock
+  Ridge at all — until it is written, a reader is entitled to read the mangled
+  identifiers instead — and the free-space scan that would let a removal
   reclaim what it freed.  NTFS is the prize and the largest step; its RFC has
   to decide its harness before its writes.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64

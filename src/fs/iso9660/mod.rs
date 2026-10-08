@@ -8,7 +8,8 @@
 //! - Primary Volume Descriptor (PVD) parsing
 //! - Directory record traversal (Level 1, 2, 3)
 //! - Contiguous extent-based file reading
-//! - Rock Ridge: NM (POSIX names), PX (permissions), SL (symlinks)
+//! - Rock Ridge: NM (POSIX names), PX (permissions), SL (symlinks) — read, and
+//!   NM/PX written for an entry this driver creates or renames
 //! - Case-insensitive path lookup (ISO 9660 native behavior)
 //!
 //! ## Limitations
@@ -29,10 +30,12 @@
 //!   refuses to go, and an entry can be renamed or moved: its record leaves one
 //!   directory and joins another, a directory's ".." follows it, and the tables
 //!   are rebuilt.
-//! - No Rock Ridge *name* entry is written, so a created name has to be an ISO
-//!   9660 identifier (`NAME.EXT`): the name is upper-cased and versioned, and a
-//!   name with characters an identifier has no room for is refused rather than
-//!   stored as something a reader would decode differently.
+//! - A created or renamed entry carries a Rock Ridge **name** entry, so its
+//!   name is the caller's — lower case, spaces, anything a record has room for
+//!   — and the identifier beside it is the mangled form a reader that ignores
+//!   Rock Ridge sees.  No `ER` entry is written yet, so such a reader is
+//!   entitled to ignore the name entry; a name too long for the 255-byte record
+//!   that has to hold it is refused rather than stored in part.
 //! - No multi-extent files (ISO 9660 Level 3 interleave).
 //! - XA attributes are ignored.
 //! - Sector size is always assumed to be 2048 bytes.
@@ -66,6 +69,7 @@ use crate::fs::vfs::SecurityDescriptor;
 use crate::fs::vfs::SecurityDescriptorMutationSupport;
 use crate::fs::vfs::VNode;
 use crate::fs::vfs::VolumeCheckReport;
+use crate::fs::vfs::MAX_PERMISSION_MODE;
 use crate::Error;
 use crate::Result;
 
@@ -381,6 +385,55 @@ impl Iso9660Volume {
         }
         Err(Error::InvalidArgument)
     }
+
+    /// Add a record to a directory, and answer where it landed.
+    ///
+    /// A directory that has to grow can **move**: an extent is one contiguous
+    /// run, and the blocks after it may be taken.  When it does, its children's
+    /// own ".." records — which name it by where it was — are stale, so they
+    /// are rewritten here, at the one place a directory grows.
+    ///
+    /// The children are read out of the extent the directory *left*, which the
+    /// move copied rather than changed: that copy is the directory as it was
+    /// before this record joined it, which is exactly the list to correct.
+    ///
+    /// Three things name a directory by its address, and a move leaves all
+    /// three behind: its parent's record for it, its children's "..", and both
+    /// path tables.  Correcting them here is what keeps a create that happens
+    /// to fill a full directory from writing a volume whose tree and whose
+    /// tables disagree.
+    fn append_to_directory(
+        &self,
+        parent: &DirRecord,
+        parent_record_offset: u64,
+        record: &[u8],
+    ) -> Result<u64> {
+        let (location, new_size, record_offset) = fs::append_record(
+            &self.device,
+            self.block_size,
+            parent.extent_location,
+            parent.extent_size,
+            record,
+        )?;
+
+        if location != parent.extent_location {
+            let children = self.read_dir_extent(parent.extent_location, parent.extent_size)?;
+            for child in children.iter().filter(|child| child.is_dir()) {
+                let child_parent =
+                    self.parent_record_of(child.extent_location, child.extent_size)?;
+                fs::rewrite_record_placement(&self.device, child_parent, location, new_size)?;
+            }
+            fs::rewrite_record_placement(&self.device, parent_record_offset, location, new_size)?;
+            // Last, because the tables are rebuilt from the tree: the walk that
+            // derives them starts at the root's record, which the line above
+            // just moved when the directory that grew *is* the root.
+            self.rewrite_path_tables()?;
+            return Ok(record_offset);
+        }
+
+        fs::rewrite_record_placement(&self.device, parent_record_offset, location, new_size)?;
+        Ok(record_offset)
+    }
 }
 
 impl VfsFileSystem for Iso9660Volume {
@@ -471,12 +524,6 @@ impl VfsFileSystem for Iso9660Volume {
             }
         }
 
-        let identifier = if record.is_dir() {
-            dir_identifier(&new_name)?
-        } else {
-            iso_identifier(&new_name)?
-        };
-
         // Out of the old directory first, and then the destination is resolved
         // again: when both are the same directory, the removal shortened it and
         // the append has to see the length that leaves.
@@ -491,20 +538,21 @@ impl VfsFileSystem for Iso9660Volume {
         )?;
         let (new_parent, new_parent_record_offset, _new_name) = self.resolve_child(&new_clean)?;
 
-        let bytes = DirRecord::new_entry(
+        let entries = self.read_dir_extent(new_parent.extent_location, new_parent.extent_size)?;
+        let identifier = identifier_for(&new_name, record.is_dir(), &identifiers_in(&entries))?;
+        // The entry keeps everything its record said about it — its POSIX
+        // attributes, a symlink's target, whatever else its System Use area
+        // holds — except the name entries, which are the one thing a rename
+        // changes.
+        let bytes = directory_record(
             &identifier,
             record.extent_location,
             record.extent_size,
             record.is_dir(),
-        );
-        let (location, new_size, _record_offset) = fs::append_record(
-            &self.device,
-            self.block_size,
-            new_parent.extent_location,
-            new_parent.extent_size,
-            &bytes,
+            &types::susp_with_name(&record.system_use, new_name.as_bytes()),
         )?;
-        fs::rewrite_record_placement(&self.device, new_parent_record_offset, location, new_size)?;
+        let _record_offset =
+            self.append_to_directory(&new_parent, new_parent_record_offset, &bytes)?;
 
         if record.is_dir() {
             if old_parent.extent_location != new_parent.extent_location {
@@ -530,37 +578,42 @@ impl VfsFileSystem for Iso9660Volume {
     /// and says its length is zero, so creating one costs the record and
     /// nothing else, and the first write is what gives it blocks
     /// ([RFC 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+    ///
+    /// The name the caller used is what its record's `NM` entry holds, so a
+    /// name the identifier cannot spell — lower case, spaces, anything — is
+    /// stored as itself and read back as itself, while the identifier is the
+    /// mangled form a reader without Rock Ridge sees.
     fn create_file(&self, path: &str) -> Result<Arc<dyn VNode>> {
         let clean = clean_path(path);
         if self.resolve(&clean).is_ok() {
             return Err(Error::AlreadyExists);
         }
         let (parent, parent_record_offset, child) = self.resolve_child(&clean)?;
-        let identifier = iso_identifier(&child)?;
-        // The node is named the way the reader will name it: the identifier's
-        // own form, which is what a lookup of this file answers with.
-        let name = types::decode_iso_filename(&identifier);
+        let entries = self.read_dir_extent(parent.extent_location, parent.extent_size)?;
+        let identifier = identifier_for(&child, false, &identifiers_in(&entries))?;
 
         let extent_location = fs::volume_blocks(&self.device)?;
-        let record = DirRecord::new_file(&identifier, extent_location, 0);
-        let (location, new_size, record_offset) = fs::append_record(
-            &self.device,
-            self.block_size,
-            parent.extent_location,
-            parent.extent_size,
-            &record,
+        let record = directory_record(
+            &identifier,
+            extent_location,
+            0,
+            false,
+            &rock_ridge_area(&child, default_posix(false)),
         )?;
-        // The directory's own record says where its extent is and how long it
-        // is, and appending a record may have changed both.
-        fs::rewrite_record_placement(&self.device, parent_record_offset, location, new_size)?;
+        let record_offset = self.append_to_directory(&parent, parent_record_offset, &record)?;
 
         Ok(Arc::new(Iso9660VNode {
-            name,
+            // The record's name entry holds what the caller asked for, so the
+            // node is named that and a second mount agrees.
+            name: child,
             kind: NodeKind::File,
             extent_location: AtomicU32::new(extent_location),
             extent_size: AtomicU32::new(0),
             record_offset,
-            rr_posix: None,
+            // The attributes are what the record this call wrote carries, so
+            // the node answers with them rather than with the default a record
+            // without them would get.
+            rr_posix: Some(default_posix(false)),
             rr_symlink: None,
             device: self.device.clone(),
             block_size: self.block_size,
@@ -572,7 +625,8 @@ impl VfsFileSystem for Iso9660Volume {
             return Err(Error::AlreadyExists);
         }
         let (parent, parent_record_offset, child) = self.resolve_child(&clean)?;
-        let identifier = dir_identifier(&child)?;
+        let entries = self.read_dir_extent(parent.extent_location, parent.extent_size)?;
+        let identifier = identifier_for(&child, true, &identifiers_in(&entries))?;
 
         // A directory's extent holds its own two records before anything else:
         // "." is itself and ".." is its parent, and they are what makes it a
@@ -593,15 +647,14 @@ impl VfsFileSystem for Iso9660Volume {
 
         // The parent's own record for it, appended to the parent's extent the
         // way any other child is.
-        let record = DirRecord::new_directory(&identifier, extent_location, EMPTY_DIRECTORY_BYTES);
-        let (location, new_size, _record_offset) = fs::append_record(
-            &self.device,
-            self.block_size,
-            parent.extent_location,
-            parent.extent_size,
-            &record,
+        let record = directory_record(
+            &identifier,
+            extent_location,
+            EMPTY_DIRECTORY_BYTES,
+            true,
+            &rock_ridge_area(&child, default_posix(true)),
         )?;
-        fs::rewrite_record_placement(&self.device, parent_record_offset, location, new_size)?;
+        let _record_offset = self.append_to_directory(&parent, parent_record_offset, &record)?;
 
         // And the path tables, which are how a reader finds a directory without
         // walking the tree.  They come last on purpose: a crash between the two
@@ -878,7 +931,6 @@ fn remove_child_record(
     fs::rewrite_record_placement(device, dir_record_offset, dir_extent, new_size)
 }
 
-/// The ISO 9660 identifier for a directory a caller names.
 /// The path of the directory a path names a child of.
 fn parent_path_of(clean_path: &str) -> &str {
     match clean_path.rfind('/') {
@@ -887,43 +939,137 @@ fn parent_path_of(clean_path: &str) -> &str {
     }
 }
 
-/// The ISO 9660 identifier for a directory a caller names.
+/// The identifier a directory record carries for the name a caller used.
 ///
-/// The same rule as a file's, minus the version: a directory identifier has no
-/// `;1`, because it is not a versioned file name.
-fn dir_identifier(name: &str) -> Result<Vec<u8>> {
-    let mut identifier = iso_identifier(name)?;
-    identifier.truncate(identifier.len() - 2);
-    Ok(identifier)
-}
-
-/// The ISO 9660 identifier for a file a caller names.
+/// The identifier is what a reader **without** Rock Ridge sees, and the rule
+/// for one is level 2: upper case letters, digits, underscores and at most one
+/// dot, inside thirty bytes, with the `;1` version a file has and a directory
+/// does not.  The name itself is kept instead in the record's `NM` entry
+/// ([`types::susp_name`]), so the identifier is only the fallback a reader
+/// that ignores Rock Ridge falls back to: a name with none of those characters
+/// in it is *mangled* to the nearest identifier rather than refused.
 ///
-/// A level-1/2 identifier is upper case and carries a version — `NAME.EXT;1` —
-/// and this driver writes no Rock Ridge name entry yet, so a name that is not
-/// one of those is refused rather than stored as something a reader would
-/// decode differently.  A caller that asks for `hello.txt` gets
-/// `HELLO.TXT;1`, which this driver reads back as `hello.txt` because its
-/// lookup is case-insensitive.
-fn iso_identifier(name: &str) -> Result<Vec<u8>> {
-    if name.is_empty() || name.len() > 30 {
-        return Err(Error::InvalidArgument);
-    }
+/// Mangling is many-to-one — `a b` and `a_b` both want `A_B` — and two records
+/// with one identifier are two entries only one of which a lookup can reach,
+/// so the identifiers the directory already holds decide a numbered suffix.
+fn identifier_for(name: &str, directory: bool, taken: &[Vec<u8>]) -> Result<Vec<u8>> {
+    /// A level-2 identifier is at most thirty bytes, version included.
+    const MAX_IDENTIFIER: usize = 30;
+    /// How many suffixes a collision is worth trying before giving up.
+    const SUFFIX_LIMIT: u32 = 9999;
 
-    let mut identifier = Vec::with_capacity(name.len() + 2);
+    let room = if directory {
+        MAX_IDENTIFIER
+    } else {
+        MAX_IDENTIFIER - 2 // the ";1" every file identifier carries
+    };
+
+    let mut stem = Vec::with_capacity(name.len().min(room));
     let mut dotted = false;
     for character in name.chars() {
         match character.to_ascii_uppercase() {
-            upper @ ('A'..='Z' | '0'..='9' | '_') => identifier.push(upper as u8),
+            upper @ ('A'..='Z' | '0'..='9' | '_') => stem.push(upper as u8),
             '.' if !dotted => {
                 dotted = true;
-                identifier.push(b'.');
+                stem.push(b'.');
             }
-            _ => return Err(Error::InvalidArgument),
+            _ => stem.push(b'_'),
         }
     }
-    identifier.extend_from_slice(b";1");
-    Ok(identifier)
+    if stem.is_empty() {
+        stem.push(b'_');
+    }
+    stem.truncate(room);
+
+    let versioned = |stem: &[u8]| -> Vec<u8> {
+        let mut out = Vec::with_capacity(stem.len() + 2);
+        out.extend_from_slice(stem);
+        if !directory {
+            out.extend_from_slice(b";1");
+        }
+        out
+    };
+    let taken_holds = |candidate: &[u8]| taken.iter().any(|held| held == candidate);
+
+    let candidate = versioned(&stem);
+    if !taken_holds(&candidate) {
+        return Ok(candidate);
+    }
+
+    // A suffix has to fit inside the identifier too, so the stem gives back as
+    // many bytes as the number takes.
+    for suffix in 1..=SUFFIX_LIMIT {
+        let text = alloc::format!("_{suffix}");
+        let keep = room.saturating_sub(text.len()).min(stem.len());
+        let mut numbered = stem[..keep].to_vec();
+        numbered.extend_from_slice(text.as_bytes());
+        let candidate = versioned(&numbered);
+        if !taken_holds(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err(Error::NoSpace)
+}
+
+/// The identifiers a directory holds, which is what a name is mangled against.
+fn identifiers_in(entries: &[types::DirRecord]) -> Vec<Vec<u8>> {
+    entries
+        .iter()
+        .map(|entry| entry.identifier.clone())
+        .collect()
+}
+
+/// The attributes a created entry gets out of the POSIX entry.
+///
+/// The mode is a POSIX one, file type included, which is what Rock Ridge
+/// records and what a POSIX reader applies whole: a file its owner may write,
+/// a directory it may enter, and everyone else may read.
+fn default_posix(directory: bool) -> (u32, u32, u32, u32) {
+    if directory {
+        (0o040755, 2, 0, 0)
+    } else {
+        (0o100644, 1, 0, 0)
+    }
+}
+
+/// The System Use area a created entry carries.
+///
+/// `PX` gives it the attributes a POSIX reader reports, `NM` the name its
+/// caller used, and `ST` ends the area — which is what says the entries are
+/// complete rather than truncated by the record that holds them.
+fn rock_ridge_area(name: &str, posix: (u32, u32, u32, u32)) -> Vec<u8> {
+    let (mode, links, uid, gid) = posix;
+    let mut area = types::susp_posix(mode, links, uid, gid);
+    area.extend_from_slice(&types::susp_name(name.as_bytes()));
+    area.extend_from_slice(&types::susp_terminator());
+    area
+}
+
+/// Assemble a directory record from its parts, refusing one too long to write.
+///
+/// A record's own length is a single byte, so its identifier, its padding and
+/// its System Use area together have to fit in 255 of them.  The name a caller
+/// chose is in that area and is the part they control, so a name too long to
+/// fit is refused — rather than written in part, which a reader would read
+/// back as a different name.
+fn directory_record(
+    identifier: &[u8],
+    extent_location: u32,
+    extent_size: u32,
+    directory: bool,
+    system_use: &[u8],
+) -> Result<Vec<u8>> {
+    let record = types::DirRecord::new_entry_with(
+        identifier,
+        extent_location,
+        extent_size,
+        directory,
+        system_use,
+    );
+    if record.len() > u8::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    Ok(record)
 }
 
 fn clean_path(path: &str) -> String {
@@ -952,10 +1098,13 @@ fn find_in_dir<'a>(entries: &'a [DirRecord], name: &str) -> Option<&'a DirRecord
 
 fn rr_to_security(rr: &Option<(u32, u32, u32, u32)>) -> SecurityDescriptor {
     match rr {
+        // A Rock Ridge `PX` mode is a POSIX one, file type included, and the
+        // VFS's is the permission bits alone (`MAX_PERMISSION_MODE`), which is
+        // what every other filesystem here reports.
         Some((mode, _links, uid, gid)) => SecurityDescriptor {
             owner_uid: *uid,
             owner_gid: *gid,
-            mode: *mode as u16,
+            mode: (*mode & u32::from(MAX_PERMISSION_MODE)) as u16,
         },
         None => SecurityDescriptor {
             owner_uid: 0,

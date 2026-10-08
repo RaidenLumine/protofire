@@ -93,6 +93,88 @@ pub const DIR_RECORD_DATA_LENGTH_OFFSET: usize = 10;
 /// big-endian — and rewritten with the length when a file moves to new space.
 pub const DIR_RECORD_EXTENT_LOCATION_OFFSET: usize = 2;
 
+/// A System Use entry as SUSP defines it.
+///
+/// The header is a two-byte signature, a length that *includes* the header,
+/// and a version.  Everything after it is the entry's own body, which is what
+/// makes one builder enough for all of them.
+fn susp_entry(signature: &[u8; 2], body: &[u8]) -> Vec<u8> {
+    let mut entry = Vec::with_capacity(4 + body.len());
+    entry.extend_from_slice(signature);
+    entry.push((4 + body.len()) as u8);
+    entry.push(1); // SUSP version 1
+    entry.extend_from_slice(body);
+    entry
+}
+
+/// The `NM` entry: the name a Rock Ridge reader uses instead of the identifier.
+///
+/// One entry holds 250 bytes of name, and a longer name continues in the next
+/// entry with the CONTINUE flag set — the flag is what tells a reader to join
+/// them rather than to replace what it has.
+pub fn susp_name(name: &[u8]) -> Vec<u8> {
+    const PER_ENTRY: usize = 250;
+
+    let mut out = Vec::new();
+    let mut rest = name;
+    loop {
+        let chunk = core::cmp::min(rest.len(), PER_ENTRY);
+        let (head, tail) = rest.split_at(chunk);
+
+        let mut body = Vec::with_capacity(1 + head.len());
+        body.push(if tail.is_empty() { 0x00 } else { 0x01 });
+        body.extend_from_slice(head);
+        out.extend_from_slice(&susp_entry(b"NM", &body));
+
+        if tail.is_empty() {
+            return out;
+        }
+        rest = tail;
+    }
+}
+
+/// The `PX` entry: POSIX attributes, each stored twice.
+pub fn susp_posix(mode: u32, links: u32, uid: u32, gid: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(32);
+    for value in [mode, links, uid, gid] {
+        body.extend_from_slice(&value.to_le_bytes());
+        body.extend_from_slice(&value.to_be_bytes());
+    }
+    susp_entry(b"PX", &body)
+}
+
+/// The `ST` entry: four bytes, and the last one in a record's System Use area.
+pub fn susp_terminator() -> Vec<u8> {
+    susp_entry(b"ST", &[])
+}
+
+/// The same System Use area with the name entries replaced.
+///
+/// Every other entry is copied **verbatim**, because a record can carry
+/// entries this driver does not parse — a symlink's target, a timestamp — and
+/// re-serialising them from parsed fields would store what the parse could
+/// hold and lose the rest.  The `NM` entries are the ones a rename changes,
+/// and the terminator goes last, as SUSP requires.
+pub fn susp_with_name(system_use: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(system_use.len() + name.len() + 8);
+    let mut rest = system_use;
+    while rest.len() >= 4 {
+        let len = rest[2] as usize;
+        if len < 4 || len > rest.len() {
+            break;
+        }
+        let (entry, tail) = rest.split_at(len);
+        let signature = &entry[..2];
+        if signature != b"NM" && signature != b"ST" {
+            out.extend_from_slice(entry);
+        }
+        rest = tail;
+    }
+    out.extend_from_slice(&susp_name(name));
+    out.extend_from_slice(&susp_terminator());
+    out
+}
+
 /// A parsed ISO 9660 directory record.
 #[derive(Clone)]
 pub struct DirRecord {
@@ -112,6 +194,13 @@ pub struct DirRecord {
     pub rr_posix: Option<(u32, u32, u32, u32)>,
     /// Symlink components (from SL entries).
     pub rr_symlink: Option<Vec<u8>>,
+    /// The record's System Use area, byte for byte, as the volume has it.
+    ///
+    /// The parsed entries above are what this driver understands of it; a
+    /// record can also carry entries it does not (`SL` components beyond the
+    /// first, `TF` timestamps), and a rename has to keep them, so the bytes
+    /// themselves are kept rather than rebuilt from the parse.
+    pub system_use: Vec<u8>,
     /// Whether this record came from a Joliet (UCS-2BE) directory.
     pub joliet: bool,
     /// How long this record is, in bytes, as its first byte says.
@@ -189,6 +278,26 @@ impl DirRecord {
         rec
     }
 
+    /// The same record, carrying a System Use area after its identifier.
+    ///
+    /// The area starts where the identifier's own padding ends, and the record
+    /// grows to hold it and is padded to an even length like every other.
+    pub fn new_entry_with(
+        identifier: &[u8],
+        extent_location: u32,
+        extent_size: u32,
+        directory: bool,
+        system_use: &[u8],
+    ) -> Vec<u8> {
+        let mut rec = Self::new_entry(identifier, extent_location, extent_size, directory);
+        rec.extend_from_slice(system_use);
+        if !rec.len().is_multiple_of(2) {
+            rec.push(0);
+        }
+        rec[0] = rec.len() as u8;
+        rec
+    }
+
     /// Parse an ISO 9660 directory record (ASCII filenames).
     pub fn parse(sector_data: &[u8], offset: usize) -> Option<(Self, usize)> {
         Self::parse_inner(sector_data, offset, false)
@@ -241,19 +350,23 @@ impl DirRecord {
         let su_start = if fi_len == 0 {
             33
         } else {
-            // File identifier is at offset 33, length fi_len.
-            // If fi_len is odd, there's a padding byte.
-            let pad = if fi_len.is_multiple_of(2) { 0 } else { 1 };
+            // The identifier is at offset 33 and is followed by one padding
+            // byte **when its length is even**, which is what makes the
+            // System Use area begin at an even offset from the record's own
+            // start: 33 + odd is even, and 33 + even takes the byte back.
+            let pad = if fi_len.is_multiple_of(2) { 1 } else { 0 };
             33 + fi_len + pad
         };
 
         let mut rr_name = None;
         let mut rr_posix = None;
         let mut rr_symlink: Option<Vec<u8>> = None;
+        let mut system_use = Vec::new();
 
         if su_start < dr_len as usize {
             let su = &rec[su_start..];
             parse_susp_entries(su, &mut rr_name, &mut rr_posix, &mut rr_symlink);
+            system_use.extend_from_slice(su);
         }
 
         let next = offset + dr_len as usize;
@@ -266,6 +379,7 @@ impl DirRecord {
                 rr_name,
                 rr_posix,
                 rr_symlink,
+                system_use,
                 joliet,
                 source_offset: offset,
                 record_len: dr_len as usize,
@@ -302,6 +416,10 @@ fn parse_susp_entries(
     rr_posix: &mut Option<(u32, u32, u32, u32)>,
     rr_symlink: &mut Option<Vec<u8>>,
 ) {
+    // Whether the entry before this one said its name continues into the next
+    // `NM`: a name longer than one entry's 250 bytes is written as several.
+    let mut name_continues = false;
+
     while data.len() >= 4 {
         let sig = [data[0], data[1]];
         let len = data[2] as usize;
@@ -326,12 +444,18 @@ fn parse_susp_entries(
             }
             b"NM" => {
                 // Alternative name: flags(1) + name bytes.
-                if body.len() >= 2 {
-                    let _flags = body[0];
-                    let name_bytes = &body[1..];
-                    let nm = String::from_utf8_lossy(name_bytes).into_owned();
-                    // CONTINUE flag (0x01) would mean concatenation; we overwrite for simplicity.
-                    *rr_name = Some(nm);
+                if !body.is_empty() {
+                    let flags = body[0];
+                    let piece = String::from_utf8_lossy(&body[1..]).into_owned();
+                    let name = if name_continues {
+                        let mut held = rr_name.take().unwrap_or_default();
+                        held.push_str(&piece);
+                        held
+                    } else {
+                        piece
+                    };
+                    *rr_name = Some(name);
+                    name_continues = flags & 0x01 != 0;
                 }
             }
             b"SL" => {
@@ -414,6 +538,13 @@ fn parse_susp_entries(
                 break;
             }
             _ => {}
+        }
+
+        // Only a name continues a name: the flag means something of its own on
+        // any other entry, and SUSP puts a continued one next to what it
+        // continues.
+        if sig != *b"NM" {
+            name_continues = false;
         }
 
         data = &data[len..];
@@ -732,6 +863,39 @@ mod tests {
         parse_susp_entries(&data, &mut name, &mut posix, &mut link);
         // name should still be "should_keep" since ST stops before XX
         assert_eq!(name, Some("should_keep".into()));
+    }
+
+    #[test]
+    fn a_records_system_use_area_starts_after_the_identifier_padding() {
+        // The padding byte is there when the identifier's length is *even*,
+        // which is what makes 33 + fi_len + pad even either way.  Reading the
+        // area one byte off is how a `PX` entry gets mistaken for its own
+        // length byte, and the two identifiers below take the two paths.
+        for identifier in [&b"ODD;1"[..], &b"EVEN;1"[..]] {
+            let area = susp_name(b"a name");
+            let record = DirRecord::new_entry_with(identifier, 7, 9, false, &area);
+
+            let (parsed, next) = DirRecord::parse(&record, 0).expect("parse");
+            assert_eq!(next, record.len());
+            assert_eq!(parsed.rr_name.as_deref(), Some("a name"));
+            assert!(parsed.system_use.starts_with(&area));
+        }
+    }
+
+    #[test]
+    fn a_name_longer_than_one_name_entry_is_carried_in_several() {
+        // One entry holds 250 bytes and says it continues; the rest goes in
+        // the next, which says it does not.  A parser that replaced rather
+        // than joined would answer with the tail alone.
+        let long = vec![b'x'; 300];
+        let area = susp_name(&long);
+        assert_eq!(area.len(), 4 + 1 + 250 + 4 + 1 + 50);
+
+        let mut name = None;
+        let mut posix = None;
+        let mut link = None;
+        parse_susp_entries(&area, &mut name, &mut posix, &mut link);
+        assert_eq!(name.expect("name").as_bytes(), long.as_slice());
     }
 
     #[test]

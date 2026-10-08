@@ -171,6 +171,17 @@ ISO 9660's tests already build a full image:
 - **Is NTFS's harness the demo disk or a fixture image?**  Whichever it is, it
   is a prerequisite for NTFS's own RFC, and it is what that RFC should decide
   first.
+- **Where does the `ER` entry go, and when is it written?**  Rock Ridge says
+  the root directory's own "." record carries it, because the root record
+  embedded in the volume descriptor is a fixed 34 bytes with no room for a
+  System Use area.  That record is the first thing in the root directory's
+  extent, so writing it there **relays out** the extent — the entry is some
+  250 bytes of the standard's own description, and every record after it moves
+  — which is a change to make with nothing else in flight, and only where the
+  image does not already carry one.  Until then a reader that requires `ER`
+  before it believes any other entry sees the mangled identifiers rather than
+  the names; this driver's own reader does not require it, which is what the
+  round-trip tests rest on.
 
 ## What landed
 
@@ -360,4 +371,45 @@ name be anything at all.
 
 **What that leaves.**  The Rock Ridge name entry, which would let a created or
 renamed name be anything at all, and the free-space scan that would let a
+removal reclaim what it freed.
+
+**Stage 3e — the name, in a Rock Ridge entry.**
+
+- A record's identifier is level 2 — upper case, digits, underscores, one dot,
+  thirty bytes — and it is what a reader that ignores Rock Ridge sees.  The
+  name the caller used is recorded beside it now, in an `NM` System Use entry
+  (`types::susp_name`), with `PX` for the POSIX attributes and `ST` to end the
+  area, so `a name with spaces` is a name a file can have rather than an
+  `InvalidArgument`.
+- Mangling is many-to-one: `a b` and `a_b` both want `A_B`, and two records
+  with one identifier are two entries only one of which a lookup can reach, so
+  `identifier_for` is given the identifiers the directory already holds and a
+  collision takes a numbered suffix.
+- A record's own length is one byte.  Its identifier, its padding and its
+  System Use area have to fit in 255 of them, and the name is the part a caller
+  controls, so a name too long for one record is refused rather than written in
+  part and read back as a different name.  `susp_name` splits a longer name
+  over several entries with the CONTINUE flag and the parser joins them — but a
+  record that cannot hold the split is not written.
+- A rename rebuilds its record from the *old* record's System Use area with the
+  name entries replaced (`types::susp_with_name`).  A `PX`, a symlink's `SL`
+  and anything else the driver does not parse are copied verbatim, because
+  re-serialising them from parsed fields would store what the parse could hold
+  and lose the rest.  That is also why `DirRecord` keeps the area's bytes.
+- A `PX` mode is a POSIX one, file type included; the VFS's `mode` is the
+  permission bits alone (`MAX_PERMISSION_MODE`), which is what `rr_to_security`
+  now reports and what every other filesystem here reports.
+- **A bug the round trip found.**  The System Use area begins after the
+  identifier and one padding byte when the identifier's length is *even*, not
+  when it is odd.  The parser had that inverted, which put the area one byte
+  off on every record — invisible while nothing in the tests had an area, and
+  fatal the moment a name this driver wrote had to be read back.
+- Seven tests: a name with spaces is kept and read back by a second mount; two
+  names that mangle alike each keep their own record off the medium; a name too
+  long for the record is refused; a rename keeps the attributes the record
+  carried and can give a file a name the identifier cannot hold; a record's
+  System Use area starts where each parity of identifier length says; and a
+  name longer than one entry is carried in several.
+
+**What that leaves.**  The `ER` entry, and the free-space scan that would let a
 removal reclaim what it freed.

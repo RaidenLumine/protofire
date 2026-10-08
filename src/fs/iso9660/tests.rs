@@ -428,11 +428,37 @@ fn a_directory_refuses_a_write() {
 
 // ─── Creating and removing files (RFC 0011, stage 3b) ──────────────────
 
+/// The identifiers the root directory's records carry, in the order they sit
+/// on the medium.
+fn root_identifiers(device: &Arc<MemoryBlockDevice>) -> Vec<Vec<u8>> {
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let mut data = vec![0u8; SECTOR_SIZE];
+    fs::read_extent(
+        &as_device,
+        SECTOR_SIZE as u16,
+        ROOT_EXTENT_SECTOR as u32,
+        SECTOR_SIZE as u32,
+        0,
+        &mut data,
+    )
+    .expect("read the root extent");
+
+    let mut identifiers = Vec::new();
+    let mut at = 0usize;
+    while let Some((record, next)) = super::types::DirRecord::parse(&data, at) {
+        identifiers.push(record.identifier);
+        at = next;
+    }
+    identifiers
+}
+
 #[test]
 fn a_created_file_is_empty_and_findable() {
     let (device, volume) = writable_volume();
     let node = volume.create_file("/NEW.TXT").expect("create");
-    assert_eq!(node.name(), "new.txt");
+    // The name the caller used goes into the record's `NM` entry, so that is
+    // the name the file has — not the identifier's own upper-cased form.
+    assert_eq!(node.name(), "NEW.TXT");
     assert_eq!(node.kind(), NodeKind::File);
     assert_eq!(node.size(), 0);
     assert_eq!(volume.lookup("/new.txt").expect("lookup").size(), 0);
@@ -468,12 +494,12 @@ fn a_created_file_makes_its_directory_longer() {
 
     volume.create_file("/NEW.TXT").expect("create");
 
-    // `NEW.TXT;1` is nine bytes, so its record is 33 + 9 rounded up to an even
-    // length: 42.
+    // The record is the identifier's own 33 + 9 bytes plus the System Use area
+    // that carries the name: `PX` (36), `NM` for `NEW.TXT` (12) and `ST` (4).
     let reopened = open_volume(device);
     assert_eq!(
         reopened.lookup("/").expect("root again").size(),
-        ROOT_EXTENT_SIZE as usize + 42
+        ROOT_EXTENT_SIZE as usize + 42 + 36 + 12 + 4
     );
 }
 
@@ -511,12 +537,51 @@ fn creating_a_file_that_exists_is_refused() {
 }
 
 #[test]
-fn a_name_the_format_cannot_hold_is_refused() {
+fn a_name_the_format_cannot_hold_is_kept_in_a_name_entry() {
+    let (device, volume) = writable_volume();
+    volume
+        .create_file("/a name with spaces")
+        .expect("a name an identifier has no room for");
+
+    // The record's identifier is the mangled form a reader without Rock Ridge
+    // sees, and `NM` is what a reader with it — and this driver — reports.
+    assert!(
+        root_identifiers(&device).contains(&b"A_NAME_WITH_SPACES;1".to_vec()),
+        "the identifier stands in for the name"
+    );
+
+    let reopened = open_volume(device);
+    let node = reopened.lookup("/a name with spaces").expect("lookup");
+    assert_eq!(node.name(), "a name with spaces");
+}
+
+#[test]
+fn two_names_that_mangle_alike_still_get_their_own_records() {
+    let (device, volume) = writable_volume();
+    volume.create_file("/a b").expect("create /a b");
+    volume.create_file("/a_b").expect("create /a_b");
+
+    // Both want `A_B;1`, and two records with one identifier are two entries
+    // only one of which is reachable, so the second takes a suffix.
+    let identifiers = root_identifiers(&device);
+    assert!(identifiers.contains(&b"A_B;1".to_vec()));
+    assert!(identifiers.contains(&b"A_B_1;1".to_vec()));
+
+    let first = volume.lookup("/a b").expect("lookup /a b");
+    let second = volume.lookup("/a_b").expect("lookup /a_b");
+    assert_eq!(first.name(), "a b");
+    assert_eq!(second.name(), "a_b");
+}
+
+#[test]
+fn a_name_too_long_for_one_record_is_refused() {
     let (_device, volume) = writable_volume();
-    // No Rock Ridge name entry is written yet, so a name an ISO identifier has
-    // no room for is refused rather than stored mangled.
+    // The name lives in the record, whose own length is a single byte: the
+    // entries cannot fit in 255 of them, so the create is refused rather than
+    // writing the name in part.
+    let long = alloc::format!("/{}", "n".repeat(300));
     assert!(matches!(
-        volume.create_file("/a name with spaces"),
+        volume.create_file(&long),
         Err(Error::InvalidArgument)
     ));
 }
@@ -763,14 +828,18 @@ fn a_read_only_device_refuses_a_created_directory() {
 // ─── Renaming and moving (RFC 0011, stage 3d) ──────────────────────────
 
 /// The extent a directory's own ".." record points at, read off the medium.
-fn parent_record_extent(device: &Arc<MemoryBlockDevice>, dir_extent: u32, dir_size: u32) -> u32 {
+///
+/// One block of the directory is enough for the tests' directories, and the
+/// records end at a zero length, so this does not have to know the extent's
+/// recorded size.
+fn parent_record_extent(device: &Arc<MemoryBlockDevice>, dir_extent: u32) -> u32 {
     let as_device: Arc<dyn BlockDevice> = device.clone();
-    let mut data = vec![0u8; dir_size as usize];
+    let mut data = vec![0u8; SECTOR_SIZE];
     fs::read_extent(
         &as_device,
         SECTOR_SIZE as u16,
         dir_extent,
-        dir_size,
+        SECTOR_SIZE as u32,
         0,
         &mut data,
     )
@@ -822,6 +891,34 @@ fn renaming_a_file_keeps_its_contents() {
 }
 
 #[test]
+fn a_rename_can_give_a_name_the_identifier_cannot_hold() {
+    let (_device, volume) = writable_volume();
+    volume
+        .rename("/HELLO.TXT", "/a moved file")
+        .expect("rename");
+
+    let node = volume.lookup("/a moved file").expect("lookup");
+    assert_eq!(node.name(), "a moved file");
+    assert_eq!(node.size(), HELLO.len());
+}
+
+#[test]
+fn a_rename_keeps_the_attributes_the_record_carried() {
+    let (_device, volume) = writable_volume();
+    let created = volume.create_file("/kept.txt").expect("create");
+    assert_eq!(created.metadata().expect("metadata").security.mode, 0o644);
+
+    volume.rename("/kept.txt", "/moved.txt").expect("rename");
+
+    // The record's System Use area is carried over whole, so the POSIX
+    // attributes the create wrote are still there: a record rebuilt without
+    // them would report the default that a record with no `PX` entry gets.
+    let node = volume.lookup("/moved.txt").expect("lookup");
+    assert_eq!(node.name(), "moved.txt");
+    assert_eq!(node.metadata().expect("metadata").security.mode, 0o644);
+}
+
+#[test]
 fn moving_a_file_into_a_directory_takes_its_record_with_it() {
     let (_device, volume) = writable_volume();
     volume.rename("/HELLO.TXT", "/SUB/HELLO.TXT").expect("move");
@@ -859,7 +956,7 @@ fn moving_a_directory_rewrites_its_parent_record() {
     volume.create_dir("/mover").expect("create mover");
     let outer_extent = table_extent(&device, b"OUTER");
     assert_ne!(
-        parent_record_extent(&device, table_extent(&device, b"MOVER"), 68),
+        parent_record_extent(&device, table_extent(&device, b"MOVER")),
         outer_extent,
         "the mover starts somewhere else"
     );
@@ -870,7 +967,7 @@ fn moving_a_directory_rewrites_its_parent_record() {
     // one thing about it that a move changes.
     let moved_extent = table_extent(&device, b"MOVER");
     assert_eq!(
-        parent_record_extent(&device, moved_extent, 68),
+        parent_record_extent(&device, moved_extent),
         outer_extent,
         "\"..\" still points at the directory it left"
     );
@@ -903,6 +1000,36 @@ fn a_read_only_device_refuses_a_rename() {
     assert_eq!(
         volume.rename("/HELLO.TXT", "/RENAMED.TXT"),
         Err(Error::PermissionDenied)
+    );
+}
+
+#[test]
+fn a_directory_that_moves_takes_its_childrens_parent_with_it() {
+    let (device, volume) = writable_volume();
+    volume.create_dir("/holding").expect("create holding");
+    volume.create_dir("/holding/inner").expect("create inner");
+    let root_extent = table_extent(&device, &[0x00]);
+    assert_eq!(
+        parent_record_extent(&device, table_extent(&device, b"HOLDING")),
+        root_extent,
+        "a new directory's parent is the root"
+    );
+
+    // Filling the root's first block makes it take a second — and the root is
+    // not the last extent on the volume, so it *moves*, which is what leaves a
+    // child's ".." naming the address it left.
+    for index in 0..48u32 {
+        volume
+            .create_file(&alloc::format!("/F{index}.TXT"))
+            .expect("create");
+    }
+
+    let moved_root = table_extent(&device, &[0x00]);
+    assert_ne!(moved_root, root_extent, "the root should have moved");
+    assert_eq!(
+        parent_record_extent(&device, table_extent(&device, b"HOLDING")),
+        moved_root,
+        "\"..\" still names the address the root left"
     );
 }
 
