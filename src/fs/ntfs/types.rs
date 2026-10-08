@@ -132,6 +132,9 @@ impl MftRecordHeader {
 // ── Attributes ────────────────────────────────────────────────────────────
 
 pub const ATTR_TYPE_STANDARD_INFO: u32 = 0x10;
+/// The list of a record's attributes and the records that hold them, which a
+/// record too full to hold them all carries.
+pub const ATTR_TYPE_ATTRIBUTE_LIST: u32 = 0x20;
 pub const ATTR_TYPE_FILENAME: u32 = 0x30;
 pub const ATTR_TYPE_DATA: u32 = 0x80;
 pub const ATTR_TYPE_INDEX_ROOT: u32 = 0x90;
@@ -190,6 +193,12 @@ impl AttrHeader {
 #[derive(Debug, Clone)]
 pub struct ParsedAttr {
     pub attr_type: AttrType,
+    /// The attribute instance number, which the record that holds it counts
+    /// up: a record can hold two attributes of the same type, so an
+    /// `$ATTRIBUTE_LIST` names one by its name *and* by this.
+    pub instance: u16,
+    /// The attribute's name, when it has one.
+    pub name: Option<String>,
     /// Where the attribute's own record begins, in the buffer it was parsed
     /// from: a field a writer changes is at an offset from here, and the
     /// volume is what knows where that buffer lives.
@@ -560,6 +569,8 @@ mod tests {
     fn get_best_filename_prefers_win32_over_dos() {
         let dos = ParsedAttr {
             attr_type: ATTR_TYPE_FILENAME,
+            instance: 2,
+            name: None,
             offset: 0,
             value_offset: 24,
             attr_len: 0,
@@ -570,6 +581,8 @@ mod tests {
         };
         let win32 = ParsedAttr {
             attr_type: ATTR_TYPE_FILENAME,
+            instance: 3,
+            name: None,
             offset: 0,
             value_offset: 24,
             attr_len: 0,

@@ -150,10 +150,14 @@ The authoritative picture of what exists today is
   still holds something refuses to be removed.  A volume whose records are all
   spoken for **grows the MFT**: a cluster comes from the `$Bitmap`, `$MFT`'s
   own run list gains a run, its own bitmap is extended over the records the
-  growth made, and those records are written as zeros so they are free.  What
-  is left of the stage is a record that is *full* — which the format gives an
-  attribute list for — and a name a directory's record is too full to take,
-  which it gives an `$INDEX_ALLOCATION`.
+  growth made, and those records are written as zeros so they are free.  The
+  **attribute list** is *read* now: a record whose attributes did not fit one
+  record names each attribute and the record that holds it, an attribute can be
+  split across records by virtual cluster number, and the reader answers with
+  the one attribute the parts are — which is what makes a volume another writer
+  took apart readable here.  What is left of the stage is *writing* one, which
+  is what would let a record that is *full* grow, and the
+  `$INDEX_ALLOCATION` a directory whose record is full needs.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

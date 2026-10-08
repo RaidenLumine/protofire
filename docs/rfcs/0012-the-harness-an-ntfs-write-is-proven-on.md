@@ -152,6 +152,10 @@ never from `make verify`: the gates do not depend on a host tool.
    it mirrors change, and the sequence number that makes a removed record's
    number unusable — and the **MFT's own growth**, which is what a volume with
    no free record left needs.
+4. **The attribute list.**  A record with no room for its attributes gets an
+   **extension record** of its own, named by an `$ATTRIBUTE_LIST` — read
+   first, so that a volume taken apart by another writer reads here, and then
+   written, which is what lets a record that is *full* grow.
 
 ### The journal, decided once
 
@@ -571,3 +575,45 @@ being something a partial write can ignore.
   landing right after the first, no second growth; a creation on a volume with
   free records that does *not* grow it; and a record the growth made that a
   removal frees, and that the next creation takes back on the same mount.
+
+**Stage 4a — reading through an `$ATTRIBUTE_LIST`.**
+
+- The format's answer to a record with no room is an `$ATTRIBUTE_LIST`: a list
+  of the record's attributes, each with the record that holds it.  Stage 2b
+  named it and refused it; this is the reader half — and the half a *read*
+  needs, because a volume another writer took apart is one this driver could
+  not read at all before it.
+- The entry is 26 bytes and padded to eight: the attribute's type, its
+  instance number and its name, the lowest virtual cluster number this part
+  covers, and the reference of the record that holds it.  The list does **not**
+  name itself — measured on a real volume, where putting a directory's
+  `$INDEX_ROOT` in an extension record was what made one — so the attributes a
+  record holds in *its own bytes* are kept as well where the list leaves them
+  out.
+- A non-resident attribute can be **split** by virtual cluster number: the
+  parts live in different records, and `attributes_of` puts them back together
+  in the order their entries give them.  The entry's *instance* number is what
+  pairs a part with the attribute it belongs to, and the *sequence* number in
+  its reference is what says the record is the one the list was written about.
+- A list is usually a value in the record that carries it, and can be a file of
+  its own — which is what the measured volume writes.  Both are read.
+- The read path answers with the merged attributes: `lookup`, `read`, a
+  directory's index, both bitmaps, the folding table and a record's `$DATA`
+  length.  The **writers refuse** (`NotImplemented`) a record whose attributes
+  are listed, because patching a field where it lies is only right when the
+  attribute is all there.  The removal is the exception that proves the rule:
+  it walks the merged view so every cluster goes back, and gives the
+  **extension records themselves** back too — a leak nothing else would have
+  caught.
+- The fixture carries both shapes: one file whose `$DATA` is **split** across
+  its own record and an extension (the fragmented shape), and one whose `$DATA`
+  has **moved** into an extension whole (the measured shape, its list a file of
+  its own).  Neither extension is named by any directory, and the fixture's own
+  invariants check that every entry names an attribute the record it points at
+  really holds, and that the record it points at names the one that listed it.
+- Four tests: the split file reads whole — both parts, and a read that starts
+  inside the second — and a second mount reads a rewrite that landed in *both*
+  parts; the moved file reads whole, with its extension record in use and
+  unnamed; a listed file is refused a length change and still takes an
+  overwrite; and a removal gives the extension record and the list's own
+  cluster back.

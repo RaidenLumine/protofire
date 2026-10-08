@@ -3,6 +3,7 @@
 //! NTFS low-level operations: cluster I/O, MFT record reading, directory
 //! traversal, file reads.
 
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -321,12 +322,25 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
         }
 
         let non_resident = buf[offset + 8] != 0;
-        // The remaining header fields are read for completeness; the current
-        // reader does not need them (no named attributes are resolved).
-        let _name_len = buf[offset + 9] as usize;
-        let _name_offset = u16::from_le_bytes([buf[offset + 10], buf[offset + 11]]) as usize;
+        // An attribute's name and its instance number are how an
+        // `$ATTRIBUTE_LIST` names it in another record.
+        let name_len = buf[offset + 9] as usize;
+        let name_offset = u16::from_le_bytes([buf[offset + 10], buf[offset + 11]]) as usize;
+        let name = if name_len > 0 && offset + name_offset + name_len * 2 <= buf.len() {
+            let bytes = &buf[offset + name_offset..offset + name_offset + name_len * 2];
+            Some(String::from_utf16_lossy(
+                &bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .collect::<Vec<u16>>(),
+            ))
+        } else {
+            None
+        };
         let _flags = u16::from_le_bytes([buf[offset + 12], buf[offset + 13]]);
-        let _instance = u16::from_le_bytes([buf[offset + 14], buf[offset + 15]]);
+        let instance = u16::from_le_bytes([buf[offset + 14], buf[offset + 15]]);
 
         let content_size = if non_resident {
             // Non-resident: the real data size is stored in the attribute
@@ -387,6 +401,8 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
 
         attrs.push(ParsedAttr {
             attr_type,
+            instance,
+            name,
             offset,
             value_offset: u16::from_le_bytes([buf[offset + 20], buf[offset + 21]]) as usize,
             attr_len: attr_len as usize,
@@ -609,6 +625,85 @@ pub fn get_standard_info(attrs: &[ParsedAttr]) -> Option<StandardInfoAttr> {
 }
 
 // ── Directory operations ──────────────────────────────────────────────────
+
+/// One entry of an `$ATTRIBUTE_LIST`: an attribute, and the record that holds
+/// it.
+///
+/// The entry's header is 26 bytes — a type, the entry's own length, the name's
+/// length and where in the entry it begins, the lowest virtual cluster number
+/// this part of the attribute covers, the record that holds the part, and the
+/// attribute's instance number — and the name follows it.  An entry is padded
+/// to eight bytes, and the length is what says so; the list is a run of them
+/// with no count in front.
+pub struct AttributeListEntry {
+    pub attr_type: u32,
+    pub name: Option<String>,
+    pub instance: u16,
+    /// The first virtual cluster number this entry's part of the attribute
+    /// covers: a non-resident attribute whose mapping pairs did not fit one
+    /// record is *split*, and the parts are put back together in this order.
+    pub lowest_vcn: u64,
+    /// The record that holds this part, and its sequence number.
+    pub holder: u64,
+    pub sequence: u16,
+}
+
+/// Read the entries of an `$ATTRIBUTE_LIST` value.
+pub fn parse_attribute_list(buf: &[u8]) -> Vec<AttributeListEntry> {
+    let mut entries = Vec::new();
+    let mut at = 0usize;
+    while at + 26 <= buf.len() {
+        let attr_type = u32::from_le_bytes([buf[at], buf[at + 1], buf[at + 2], buf[at + 3]]);
+        let length = u16::from_le_bytes([buf[at + 4], buf[at + 5]]) as usize;
+        if length < 26 || at + length > buf.len() {
+            break;
+        }
+        let name_len = buf[at + 6] as usize;
+        let name_offset = buf[at + 7] as usize;
+        let name = if name_len > 0 && at + name_offset + name_len * 2 <= buf.len() {
+            let bytes = &buf[at + name_offset..at + name_offset + name_len * 2];
+            Some(String::from_utf16_lossy(
+                &bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .collect::<Vec<u16>>(),
+            ))
+        } else {
+            None
+        };
+        let reference = u64::from_le_bytes([
+            buf[at + 16],
+            buf[at + 17],
+            buf[at + 18],
+            buf[at + 19],
+            buf[at + 20],
+            buf[at + 21],
+            buf[at + 22],
+            buf[at + 23],
+        ]);
+        entries.push(AttributeListEntry {
+            attr_type,
+            name,
+            instance: u16::from_le_bytes([buf[at + 24], buf[at + 25]]),
+            lowest_vcn: u64::from_le_bytes([
+                buf[at + 8],
+                buf[at + 9],
+                buf[at + 10],
+                buf[at + 11],
+                buf[at + 12],
+                buf[at + 13],
+                buf[at + 14],
+                buf[at + 15],
+            ]),
+            holder: reference & 0x0000_FFFF_FFFF_FFFF,
+            sequence: (reference >> 48) as u16,
+        });
+        at += length;
+    }
+    entries
+}
 
 /// One entry of an index node.
 pub struct IndexEntry {

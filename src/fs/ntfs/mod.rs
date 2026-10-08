@@ -126,6 +126,45 @@ fn bit_is_set(bits: &[u8], number: u64) -> bool {
     index < bits.len() && bits[index] & (1 << (number % 8)) != 0
 }
 
+/// Whether two list entries are parts of the same attribute.
+fn names_the_same(left: &fs::AttributeListEntry, right: &fs::AttributeListEntry) -> bool {
+    left.attr_type == right.attr_type
+        && left.instance == right.instance
+        && left.name.as_deref() == right.name.as_deref()
+}
+
+/// Whether a list entry names an attribute, wherever it lives.
+fn names_the_same_attribute(entry: &fs::AttributeListEntry, attribute: &ParsedAttr) -> bool {
+    entry.attr_type == attribute.attr_type
+        && entry.instance == attribute.instance
+        && entry.name.as_deref() == attribute.name.as_deref()
+}
+
+/// The attributes a record holds in its *own* bytes.
+///
+/// A writer patches a field where it lies, and a field of an attribute an
+/// `$ATTRIBUTE_LIST` has moved to an extension record does not lie in these
+/// bytes: that is `NotImplemented`, which is a different answer from "there is
+/// no such attribute".
+fn own_attribute(record: &[u8], attr_type: u32) -> Result<ParsedAttr> {
+    let header = MftRecordHeader::parse(record).ok_or(Error::InvalidArgument)?;
+    let attributes = parse_attributes(&record[header.size() as usize..]);
+    // A record whose attributes are *listed* is one a reader follows and a
+    // writer does not yet rewrite: the attributes are not all in these bytes,
+    // and the ones that are can be the first part of an attribute that
+    // continues in another record.
+    if attributes
+        .iter()
+        .any(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
+    {
+        return Err(Error::NotImplemented);
+    }
+    attributes
+        .into_iter()
+        .find(|attribute| attribute.attr_type == attr_type)
+        .ok_or(Error::NotFound)
+}
+
 /// How many bytes of a record are in use, from its own header.
 fn bytes_in_use(record: &[u8]) -> usize {
     u32::from_le_bytes([record[24], record[25], record[26], record[27]]) as usize
@@ -235,6 +274,161 @@ impl NtfsFs {
         false // Enable write support
     }
 
+    /// The attributes a record holds, wherever they live.
+    ///
+    /// A record whose own bytes are not enough carries an **`$ATTRIBUTE_LIST`**
+    /// naming each of its attributes and the record that holds it — which is
+    /// the record itself, or an *extension* record of its, one with a base
+    /// reference to the record it belongs to and no name of its own in any
+    /// directory.  A non-resident attribute whose mapping pairs did not fit one
+    /// record is **split** by virtual cluster number, so the parts of one
+    /// attribute are put back together in the order their entries give them:
+    /// what a reader wants is the one attribute the parts are.
+    ///
+    /// The list does not name itself — the volume this was measured against
+    /// leaves its own entry out — so the attributes a record holds *in its own
+    /// bytes* are kept as well, where the list does not name them.
+    fn attributes_of(&self, record_number: u64) -> Result<Vec<ParsedAttr>> {
+        let record = self.read_mft_record(record_number)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let inline = parse_attributes(&record[header.size() as usize..]);
+        let Some(list) = inline
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
+        else {
+            return Ok(inline);
+        };
+        let entries = self.list_entries(list)?;
+
+        // One group per attribute the list names, in the order it names them.
+        let mut groups: Vec<Vec<fs::AttributeListEntry>> = Vec::new();
+        for entry in entries {
+            match groups
+                .iter_mut()
+                .find(|group| names_the_same(&group[0], &entry))
+            {
+                Some(group) => group.push(entry),
+                None => groups.push(alloc::vec![entry]),
+            }
+        }
+
+        let mut attributes: Vec<ParsedAttr> = Vec::new();
+        for group in &mut groups {
+            group.sort_by_key(|entry| entry.lowest_vcn);
+            if group[0].lowest_vcn != 0 {
+                // A part that starts past the first is a list with no
+                // beginning, and the attribute it belongs to is not here.
+                return Err(Error::InvalidArgument);
+            }
+            let mut merged = self.attribute_in(&group[0])?;
+            for part in &group[1..] {
+                let part = self.attribute_in(part)?;
+                merged.data_runs.extend(part.data_runs);
+                if merged.data_runs_offset.is_none() {
+                    merged.data_runs_offset = part.data_runs_offset;
+                }
+            }
+            attributes.push(merged);
+        }
+        // And an attribute the record holds itself that the list did not name.
+        for attribute in inline {
+            if !groups
+                .iter()
+                .any(|group| names_the_same_attribute(&group[0], &attribute))
+            {
+                attributes.push(attribute);
+            }
+        }
+        Ok(attributes)
+    }
+
+    /// The entries of an `$ATTRIBUTE_LIST`, wherever its own bytes are.
+    ///
+    /// A list is usually resident in the record that carries it, and can be a
+    /// file of its own — the volume this was measured against writes one that
+    /// is — in which case its entries are read through its own runs.
+    fn list_entries(&self, list: &ParsedAttr) -> Result<Vec<fs::AttributeListEntry>> {
+        if list.data_runs_offset.is_none() {
+            return Ok(fs::parse_attribute_list(&list.content));
+        }
+        let info = self.info.lock();
+        let mut value = alloc::vec![0u8; list.data_size as usize];
+        fs::read_from_runs(
+            &self.device,
+            &info,
+            &list.data_runs,
+            u64::from(list.data_size),
+            0,
+            &mut value,
+        )?;
+        Ok(fs::parse_attribute_list(&value))
+    }
+
+    /// The attribute one list entry names, from the record it says holds it.
+    ///
+    /// The entry is matched by the attribute's type, its name and its instance
+    /// number: a record can hold two attributes of the same type, and a name
+    /// alone would not tell them apart.
+    fn attribute_in(&self, entry: &fs::AttributeListEntry) -> Result<ParsedAttr> {
+        let record = self.read_mft_record(entry.holder)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        // The sequence number is what says this is the record the list was
+        // written about, and not one that has since been handed out again.
+        if u16::from_le_bytes([record[16], record[17]]) != entry.sequence {
+            return Err(Error::InvalidArgument);
+        }
+        let attributes = parse_attributes(&record[header.size() as usize..]);
+        attributes
+            .into_iter()
+            .find(|attribute| {
+                attribute.attr_type == entry.attr_type
+                    && attribute.instance == entry.instance
+                    && attribute.name.as_deref() == entry.name.as_deref()
+            })
+            .ok_or(Error::InvalidArgument)
+    }
+
+    /// The record an extension record belongs to, from its own header.
+    ///
+    /// The base reference is the field that says so: a record whose header
+    /// names a base record is an extension of it, and a record whose header
+    /// names none is not — the volume this was measured against marks such a
+    /// record as in use and nothing else, with a link count of zero.
+    fn base_record(&self, record_number: u64) -> Option<u64> {
+        let record = self.read_mft_record(record_number).ok()?;
+        MftRecordHeader::parse(&record)?;
+        let base = u64::from_le_bytes([
+            record[32], record[33], record[34], record[35], record[36], record[37], record[38],
+            record[39],
+        ]) & 0x0000_FFFF_FFFF_FFFF;
+        (base != 0 && base != record_number).then_some(base)
+    }
+
+    /// The extension records a record's `$ATTRIBUTE_LIST` puts its attributes
+    /// in.
+    fn extension_records(&self, record_number: u64, record: &[u8]) -> Result<Vec<u64>> {
+        let header = MftRecordHeader::parse(record).ok_or(Error::InvalidArgument)?;
+        let inline = parse_attributes(&record[header.size() as usize..]);
+        let Some(list) = inline
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
+        else {
+            return Ok(Vec::new());
+        };
+
+        let mut holders: Vec<u64> = Vec::new();
+        for entry in self.list_entries(list)? {
+            if entry.holder == record_number
+                || holders.contains(&entry.holder)
+                || self.base_record(entry.holder) != Some(record_number)
+            {
+                continue;
+            }
+            holders.push(entry.holder);
+        }
+        Ok(holders)
+    }
+
     /// The entries a directory holds, whatever shape its index is in.
     ///
     /// A directory's index is a tree.  Its root lives in the record's
@@ -244,9 +438,7 @@ impl NtfsFs {
     /// uses even for a single file, so this walks the tree rather than reading
     /// one node.
     fn directory_entries(&self, record_number: u64) -> Result<Vec<(String, u64)>> {
-        let record = self.read_mft_record(record_number)?;
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let attributes = self.attributes_of(record_number)?;
 
         let index_root = attributes
             .iter()
@@ -354,9 +546,7 @@ impl NtfsFs {
     }
 
     fn read_upcase_table(&self) -> Option<Vec<u16>> {
-        let record = self.read_mft_record(UPCASE_RECORD).ok()?;
-        let header = MftRecordHeader::parse(&record)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let attributes = self.attributes_of(UPCASE_RECORD).ok()?;
         let data = attributes
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)?;
@@ -389,11 +579,12 @@ impl NtfsFs {
     }
 
     /// The bytes a record's `$DATA` says it holds.
-    fn data_size(&self, record: &[u8]) -> u64 {
-        let Some(header) = MftRecordHeader::parse(record) else {
-            return 0;
-        };
-        parse_attributes(&record[header.size() as usize..])
+    ///
+    /// The `$DATA` an `$ATTRIBUTE_LIST` moved is a `$DATA` like any other, so
+    /// this is the merged view's answer and not the record's own.
+    fn data_size(&self, record_number: u64) -> u64 {
+        self.attributes_of(record_number)
+            .unwrap_or_default()
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
             .map(|attr| attr.data_size as u64)
@@ -422,9 +613,7 @@ impl NtfsFs {
     /// The bitmap is a *file* — the sixth record's `$DATA` — with its own
     /// runs, so reading it is the same walk as reading any other file's data.
     fn read_bitmap(&self) -> Result<Vec<u8>> {
-        let record = self.read_mft_record(BITMAP_RECORD)?;
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let attributes = self.attributes_of(BITMAP_RECORD)?;
         let data = attributes
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
@@ -454,9 +643,10 @@ impl NtfsFs {
 
     /// Write the bitmap back where it came from.
     fn write_bitmap(&self, bitmap: &[u8]) -> Result<()> {
-        let record = self.read_mft_record(BITMAP_RECORD)?;
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
+        // A bitmap that has moved to an extension record is written through
+        // its runs like any other file; a *resident* one is a field inside the
+        // record, and writing that is only this record's to do.
+        let attributes = self.attributes_of(BITMAP_RECORD)?;
         let data = attributes
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
@@ -464,6 +654,12 @@ impl NtfsFs {
 
         let info = self.info.lock();
         if data.data_runs_offset.is_none() {
+            // A resident bitmap is a value inside the record, so the field
+            // write and the record it lives in go together — which only a
+            // record whose attributes are not listed is a writer's to make.
+            let record = self.read_mft_record(BITMAP_RECORD)?;
+            let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+            let data = own_attribute(&record, ATTR_TYPE_DATA)?;
             let record_at = self.record_offset(&info, BITMAP_RECORD)?;
             let at =
                 record_at + header.size() as u64 + data.offset as u64 + data.value_offset as u64;
@@ -549,11 +745,11 @@ impl NtfsFs {
     fn index_leaf(&self, parent_record: u64) -> Result<(Vec<u8>, usize, IndexHome)> {
         let record = self.read_mft_record(parent_record)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
-        let root = attributes
-            .iter()
-            .find(|attr| attr.attr_type == ATTR_TYPE_INDEX_ROOT)
-            .ok_or(Error::NotFound)?;
+        let attributes = self.attributes_of(parent_record)?;
+        // The node's own offset is an offset in the bytes this record holds,
+        // so the index root has to be one of them: one an `$ATTRIBUTE_LIST`
+        // moved is a directory shape this driver does not change yet.
+        let root = own_attribute(&record, ATTR_TYPE_INDEX_ROOT)?;
 
         // An index *root*'s node begins after the root header — the indexed
         // attribute's type, the collation rule and the buffer size — and the
@@ -621,11 +817,7 @@ impl NtfsFs {
         match home {
             IndexHome::Record => {
                 let header = MftRecordHeader::parse(buffer).ok_or(Error::InvalidArgument)?;
-                let attributes = parse_attributes(&buffer[header.size() as usize..]);
-                let root = attributes
-                    .iter()
-                    .find(|attr| attr.attr_type == ATTR_TYPE_INDEX_ROOT)
-                    .ok_or(Error::NotFound)?;
+                let root = own_attribute(buffer, ATTR_TYPE_INDEX_ROOT)?;
                 let attr_at = header.size() as usize + root.offset;
 
                 // What the node's entries come to, and whether the record has
@@ -930,17 +1122,17 @@ impl NtfsFs {
         let record = self.read_mft_record(MFT_RECORD)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
         let base = header.size() as usize;
-        let attributes = parse_attributes(&record[base..]);
-        let data = attributes
-            .iter()
-            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
-            .ok_or(Error::NotFound)?;
+        // Growing the MFT rewrites the record that holds its runs, so an
+        // attribute an `$ATTRIBUTE_LIST` moved is out of this one's reach.
+        let data = own_attribute(&record, ATTR_TYPE_DATA)?;
         // A resident `$MFT` is a volume whose records are inside its own
         // record, and growing that is a conversion this driver does not make.
         let data_runs_offset = data.data_runs_offset.ok_or(Error::NotImplemented)?;
-        let bitmap = attributes
-            .iter()
-            .find(|attr| attr.attr_type == ATTR_TYPE_BITMAP);
+        let bitmap = match own_attribute(&record, ATTR_TYPE_BITMAP) {
+            Ok(bitmap) => Some(bitmap),
+            Err(Error::NotFound) => None,
+            Err(error) => return Err(error),
+        };
 
         // How much longer the MFT has to be, and where the new records are.
         let step = cluster_size.max(record_size).div_ceil(record_size) * record_size;
@@ -957,7 +1149,7 @@ impl NtfsFs {
 
         // The bitmap has to be able to name the new records, and its own bytes
         // to reach them, before anything is taken from the volume.
-        let bitmap_growth = match bitmap {
+        let bitmap_growth = match &bitmap {
             Some(bitmap) => {
                 let wanted = records.div_ceil(8);
                 if wanted <= u64::from(bitmap.data_size) {
@@ -1022,7 +1214,7 @@ impl NtfsFs {
             }
         }
         if let Some(wanted) = bitmap_growth {
-            let bitmap = bitmap.expect("a bitmap that was just looked at");
+            let bitmap = bitmap.as_ref().expect("a bitmap that was just looked at");
             let zeros = alloc::vec![0u8; (wanted - u64::from(bitmap.data_size)) as usize];
             let info = self.info.lock();
             fs::write_to_runs(
@@ -1048,7 +1240,7 @@ impl NtfsFs {
         raw[attr + 48..attr + 56].copy_from_slice(&new_data.to_le_bytes());
         raw[attr + 56..attr + 64].copy_from_slice(&new_data.to_le_bytes());
         if let Some(wanted) = bitmap_growth {
-            let bitmap = bitmap.expect("a bitmap that was just looked at");
+            let bitmap = bitmap.as_ref().expect("a bitmap that was just looked at");
             // The bitmap is a *file* too, so its sizes are a non-resident
             // attribute's: what it uses at +48, what it has at +40.  A
             // resident value's length is the field at +16, and writing there
@@ -1096,9 +1288,7 @@ impl NtfsFs {
     /// NTFS allocates from.  A volume that does not carry one answers with
     /// none, and the record headers are then the only word on what is free.
     fn mft_bitmap(&self) -> Result<Option<Vec<u8>>> {
-        let record = self.read_mft_record(MFT_RECORD)?;
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let attributes = self.attributes_of(MFT_RECORD)?;
         let Some(bitmap) = attributes
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_BITMAP)
@@ -1136,9 +1326,7 @@ impl NtfsFs {
     /// driver took and did not name there is one that would be handed out
     /// twice.
     fn set_mft_bitmap(&self, number: u64, in_use: bool) -> Result<()> {
-        let record = self.read_mft_record(MFT_RECORD)?;
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let attributes = self.attributes_of(MFT_RECORD)?;
         let Some(bitmap) = attributes
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_BITMAP)
@@ -1149,11 +1337,14 @@ impl NtfsFs {
         let mask = 1u8 << (number % 8);
 
         if bitmap.data_runs_offset.is_none() {
+            // A bitmap the record holds itself: the field change and the
+            // record it lives in go together.
+            let record = self.read_mft_record(MFT_RECORD)?;
+            let bitmap = own_attribute(&record, ATTR_TYPE_BITMAP)?;
             if index >= bitmap.content.len() {
                 return Err(Error::InvalidArgument);
             }
-            // The bitmap is a value in the record, so the record is what is
-            // written: the field change and the record it lives in go together.
+            let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
             let at = header.size() as usize + bitmap.offset + bitmap.value_offset + index;
             let mut raw = record.clone();
             if in_use {
@@ -1246,11 +1437,10 @@ impl NtfsFs {
     fn volume_flags_offset(&self) -> Result<u64> {
         let record = self.read_mft_record(VOLUME_RECORD)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
-        let information = attributes
-            .iter()
-            .find(|attr| attr.attr_type == ATTR_TYPE_VOLUME_INFORMATION)
-            .ok_or(Error::NotFound)?;
+        // The flags are a field in this record: keeping them in step is a
+        // rewrite of the record, which a record whose attributes are listed is
+        // not this driver's to make yet.
+        let information = own_attribute(&record, ATTR_TYPE_VOLUME_INFORMATION)?;
         // The lock is taken here and not around the read above: reading a
         // record takes it too, and a lock held across that is a lock held
         // against itself.
@@ -1290,7 +1480,10 @@ impl NtfsFs {
     fn vnode(&self, record_number: u64, name: String) -> Result<Arc<dyn VNode>> {
         let record = self.read_mft_record(record_number)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
+        // The size and the first cluster are the *merged* attributes': a
+        // `$DATA` an `$ATTRIBUTE_LIST` split or moved answers with the whole
+        // file, not with the part this record happens to hold.
+        let attributes = self.attributes_of(record_number)?;
         let data = attributes
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA);
@@ -1355,7 +1548,7 @@ impl FileSystem for NtfsFs {
         let size = if kind == NodeKind::Directory {
             0
         } else {
-            self.data_size(&child_record) as usize
+            self.data_size(child) as usize
         };
         Ok(DirectoryEntry::new(kind, size, name))
     }
@@ -1462,8 +1655,10 @@ impl FileSystem for NtfsFs {
         // between the two leaves them claimed and unused rather than free and
         // spoken for.  Every non-resident attribute's runs go back, not only
         // `$DATA`'s: a directory keeps its entries — and the bitmap of the
-        // blocks they are in — in files of their own.
-        let attributes = parse_attributes(&record[header.size() as usize..]);
+        // blocks they are in — in files of their own.  The merged view is what
+        // is walked, so a part an `$ATTRIBUTE_LIST` put in an extension record
+        // gives its clusters back too.
+        let attributes = self.attributes_of(record_number)?;
         for attribute in attributes
             .iter()
             .filter(|attribute| attribute.data_runs_offset.is_some())
@@ -1471,7 +1666,14 @@ impl FileSystem for NtfsFs {
             self.free_clusters(&attribute.data_runs)?;
         }
 
-        self.release_mft_record(record_number)
+        // And the extension records themselves: a record that holds a moved
+        // attribute is a record the volume has spoken for, and the removal is
+        // what gives it back.
+        self.release_mft_record(record_number)?;
+        for holder in self.extension_records(record_number, &record)? {
+            self.release_mft_record(holder)?;
+        }
+        Ok(())
     }
 
     /// Settle the volume.
@@ -1514,12 +1716,12 @@ impl VNode for NtfsVnode {
     }
 
     fn read(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
+        // The attributes a record holds *wherever they live*: a `$DATA` an
+        // `$ATTRIBUTE_LIST` split across records is one attribute again here,
+        // which is what makes the file read whole rather than to its first
+        // part.
+        let attributes = self.fs.attributes_of(*self.mft_record_number.lock())?;
         let info = self.fs.info.lock();
-        let record = self.mft_record.lock();
-
-        // Parse the MFT record to find attributes
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
 
         // Find the data attribute
         let data_attr = attributes
@@ -1575,10 +1777,13 @@ impl VNode for NtfsVnode {
         // this write is about to hold.
         self.fs.set_dirty(true)?;
 
+        // The attributes a record holds *wherever they live*, and before the
+        // locks below: reading a record takes the same lock `info` is.
+        let number = *self.mft_record_number.lock();
+        let attributes = self.fs.attributes_of(number)?;
         let info = self.fs.info.lock();
-        let record = self.mft_record.lock();
+        let mut record = self.mft_record.lock();
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
         let data = attributes
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
@@ -1587,6 +1792,9 @@ impl VNode for NtfsVnode {
         if data.data_runs_offset.is_none() {
             // A resident file's bytes are in the record itself, so the field
             // write is the data write — and the volume is where the record is.
+            // A record whose attributes are listed is not one this rewrite is
+            // for.
+            let data = own_attribute(&record, ATTR_TYPE_DATA)?;
             let length = self.size().min(data.content.len());
             let start = (offset as usize).min(length);
             let take = (length - start).min(buffer.len());
@@ -1600,6 +1808,12 @@ impl VNode for NtfsVnode {
                 + (header.size() as u64 + data.offset as u64 + data.value_offset as u64)
                 + start as u64;
             fs::write_device_bytes(&self.fs.device, field, &buffer[..take])?;
+            // The bytes are the file's now, in the record this node holds and
+            // in the mount's copy of it: a read asks for the record by number,
+            // and a copy left behind would answer with the bytes it had.
+            let at = header.size() as usize + data.offset + data.value_offset + start;
+            record[at..at + take].copy_from_slice(&buffer[..take]);
+            self.fs.mft_cache.lock().insert(number, record.clone());
             return Ok(take);
         }
 
@@ -1628,11 +1842,10 @@ impl VNode for NtfsVnode {
             let info = self.fs.info.lock();
             let record = self.mft_record.lock();
             let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-            let attributes = parse_attributes(&record[header.size() as usize..]);
-            let data = attributes
-                .iter()
-                .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
-                .ok_or(Error::NotFound)?;
+            let _ = header;
+            // A record whose attributes are listed is one this writer does not
+            // grow (see below): its `$DATA` here would not be the whole one.
+            let data = own_attribute(&record, ATTR_TYPE_DATA)?;
             let held: u64 = if data.data_runs_offset.is_none() {
                 0
             } else {
@@ -1653,11 +1866,11 @@ impl VNode for NtfsVnode {
         let info = self.fs.info.lock();
         let mut record = self.mft_record.lock();
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let attributes = parse_attributes(&record[header.size() as usize..]);
-        let data = attributes
-            .iter()
-            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
-            .ok_or(Error::NotFound)?;
+        // Growing a file rewrites the attribute that says how long it is, so a
+        // record whose attributes are *listed* is not one this writer grows:
+        // the attribute can be a first part that continues in another record,
+        // and its run list here would not be the whole one.
+        let data = own_attribute(&record, ATTR_TYPE_DATA)?;
 
         // A resident value can only shrink: growing it would need the record's
         // own room and its bookkeeping.  A file with runs can be as long as
@@ -1788,6 +2001,13 @@ impl VNode for NtfsVnode {
                 record[at + 8..at + 16].copy_from_slice(&u64::from(length).to_le_bytes());
             }
         }
+        // And so does the mount's copy of it: a read asks for the record by
+        // number, and a copy left behind would answer with the length the file
+        // *had* — and with a run list that no longer covers it.
+        self.fs
+            .mft_cache
+            .lock()
+            .insert(*self.mft_record_number.lock(), record.clone());
         *self.file_size.lock() = u64::from(length);
         Ok(())
     }

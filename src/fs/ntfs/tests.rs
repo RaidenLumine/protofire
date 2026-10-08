@@ -233,8 +233,53 @@ fn the_fixture_keeps_its_own_invariants() {
         let set = bits[number as usize / 8] & (1 << (number % 8)) != 0;
         assert_eq!(
             set,
-            is_named(number, false),
+            is_in_use(number, false),
             "record {number}'s bit in the MFT"
+        );
+    }
+
+    // The records that carry an `$ATTRIBUTE_LIST` agree with it: every entry
+    // names an attribute the record it points at really holds, and the record
+    // it points at is an extension of the one that listed it.
+    for (base, extension) in [(LISTED_FILE, LISTED_FILE_EXT), (MOVED_FILE, MOVED_FILE_EXT)] {
+        let record = fixture.record(base);
+        let header = super::types::MftRecordHeader::parse(record).expect("a record header");
+        let attributes = super::fs::parse_attributes(&record[header.size() as usize..]);
+        let list = attributes
+            .iter()
+            .find(|attr| attr.attr_type == 0x20)
+            .expect("the attribute list");
+        let value = if list.data_runs_offset.is_none() {
+            list.content.clone()
+        } else {
+            let at = fixture.list_runs[0].0 as usize * fixture.cluster_size() as usize;
+            fixture.image[at..at + list.data_size as usize].to_vec()
+        };
+        let entries = super::fs::parse_attribute_list(&value);
+        assert!(!entries.is_empty(), "a list with entries");
+        for entry in &entries {
+            let holder = fixture.record(entry.holder);
+            let header = super::types::MftRecordHeader::parse(holder).expect("a holder header");
+            let held = super::fs::parse_attributes(&holder[header.size() as usize..]);
+            assert!(
+                held.iter().any(|attribute| {
+                    attribute.attr_type == entry.attr_type
+                        && attribute.instance == entry.instance
+                        && attribute.name.as_deref() == entry.name.as_deref()
+                }),
+                "record {} holds what the entry names: {:#x}",
+                entry.holder,
+                entry.attr_type
+            );
+        }
+        let holder = fixture.record(extension);
+        assert_eq!(
+            u64::from_le_bytes([
+                holder[32], holder[33], holder[34], holder[35], holder[36], holder[37], holder[38],
+                holder[39]
+            ]) & 0x0000_FFFF_FFFF_FFFF,
+            base,
+            "and the record a list points at names the record it belongs to"
         );
     }
 }
@@ -268,6 +313,8 @@ fn a_directory_lists_what_its_index_holds() {
             "tight.bin",
             "full.bin",
             "full-dir",
+            "split.bin",
+            "moved.bin",
             "sub",
         ],
         "the root's entries, without its own \".\""
@@ -294,7 +341,7 @@ fn a_directory_lists_what_its_index_holds() {
     assert_eq!(tight.kind, NodeKind::File);
     let full = fs_handle.read_dir("/", 10).expect("full.bin");
     assert_eq!(full.kind, NodeKind::File);
-    let sub = fs_handle.read_dir("/", 12).expect("sub");
+    let sub = fs_handle.read_dir("/", 14).expect("sub");
     assert_eq!(sub.kind, NodeKind::Directory);
 }
 
@@ -996,6 +1043,141 @@ fn a_removed_file_is_gone_and_its_clusters_come_back() {
 }
 
 #[test]
+fn a_file_whose_data_is_split_reads_whole() {
+    // The mapping pairs of a fragmented file do not fit one record, so the
+    // attribute is *split* by virtual cluster number: the record that names it
+    // holds the first part, and an extension record of its holds the second.  A
+    // reader that stops at the first part reads a shorter file, and reads it
+    // without complaint.
+    let fixture = build_volume(FRACTIONAL);
+    let fs_handle = open(&fixture);
+    let cluster = fixture.cluster_size() as usize;
+    let node = fs_handle.lookup("/split.bin").expect("split.bin");
+    assert_eq!(node.size(), 3 * cluster, "the whole attribute's length");
+
+    let mut buf = vec![0u8; 3 * cluster];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(
+        buf[..cluster].iter().all(|byte| *byte == 0x66),
+        "the part its own record holds"
+    );
+    assert!(
+        buf[cluster..].iter().all(|byte| *byte == 0x77),
+        "the part the list names"
+    );
+
+    // And a read that starts inside the second part comes from the other
+    // record.
+    let mut tail = vec![0u8; cluster];
+    assert_eq!(
+        node.read(2 * cluster as u64, &mut tail).expect("read"),
+        cluster
+    );
+    assert!(tail.iter().all(|byte| *byte == 0x77));
+}
+
+#[test]
+fn a_file_whose_data_has_moved_reads_whole() {
+    // The shape measured on a real volume: a record the attributes did not fit
+    // writes an `$ATTRIBUTE_LIST` and puts one attribute in an extension record
+    // *whole* — and the list itself is a file of its own there.
+    let fixture = build_volume(FRACTIONAL);
+    let fs_handle = open(&fixture);
+    let cluster = fixture.cluster_size() as usize;
+    let node = fs_handle.lookup("/moved.bin").expect("moved.bin");
+    assert_eq!(node.size(), 2 * cluster);
+
+    let mut buf = vec![0u8; 2 * cluster];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(buf[..cluster].iter().all(|byte| *byte == 0x88));
+    assert!(buf[cluster..].iter().all(|byte| *byte == 0x99));
+
+    // The record that holds it is one the volume has spoken for — its bit is
+    // set in the MFT's bitmap — and it has no name of its own for any
+    // directory to list.
+    let bits = fs_handle
+        .mft_bitmap()
+        .expect("the MFT's bitmap")
+        .expect("a bitmap");
+    assert_eq!(
+        bits[MOVED_FILE_EXT as usize / 8] & (1 << (MOVED_FILE_EXT % 8)),
+        1 << (MOVED_FILE_EXT % 8),
+        "the extension record is in use"
+    );
+    let record = fixture.record(MOVED_FILE_EXT);
+    let header = super::types::MftRecordHeader::parse(record).expect("a header");
+    let attributes = super::fs::parse_attributes(&record[header.size() as usize..]);
+    assert!(
+        !attributes.iter().any(|attr| attr.attr_type == 0x30),
+        "and has no name"
+    );
+}
+
+#[test]
+fn a_listed_file_is_read_but_not_grown() {
+    // A record whose attributes are *listed* is one this driver reads and does
+    // not rewrite yet: the attributes are not all in its bytes, and the ones
+    // that are can be the first part of an attribute that continues in another
+    // record.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+    let node = fs_handle.lookup("/split.bin").expect("split.bin");
+    assert_eq!(node.set_len(4 * cluster), Err(Error::NotImplemented));
+
+    // An overwrite inside the length does not touch the attribute at all — the
+    // bytes go through the runs — so that still lands, in *both* parts.
+    assert_eq!(node.write(0, b"AB").expect("write"), 2);
+    assert_eq!(node.write(2 * cluster, b"CD").expect("write"), 2);
+
+    let again = remount(&device);
+    let reread = again.lookup("/split.bin").expect("relookup");
+    let mut buf = vec![0u8; 3 * cluster as usize];
+    assert_eq!(reread.read(0, &mut buf).expect("read"), buf.len());
+    assert_eq!(&buf[..2], b"AB", "the part in its own record");
+    assert_eq!(
+        &buf[2 * cluster as usize..2 * cluster as usize + 2],
+        b"CD",
+        "and the part in the extension record"
+    );
+}
+
+#[test]
+fn removing_a_listed_file_gives_its_extension_record_back() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle.remove_path("/moved.bin").expect("remove");
+    assert!(matches!(
+        fs_handle.lookup("/moved.bin"),
+        Err(Error::NotFound)
+    ));
+
+    // The extension record is a record the volume had spoken for, and the
+    // removal is what gives it back — with the clusters of both the data and
+    // the list.
+    let again = remount(&device);
+    let bits = again
+        .mft_bitmap()
+        .expect("the MFT's bitmap")
+        .expect("a bitmap");
+    for number in [MOVED_FILE, MOVED_FILE_EXT] {
+        assert_eq!(
+            bits[number as usize / 8] & (1 << (number % 8)),
+            0,
+            "record {number} is free again"
+        );
+    }
+    let bitmap = again.read_bitmap().expect("the volume's bitmap");
+    let taken: usize = bitmap.iter().map(|byte| byte.count_ones() as usize).sum();
+    let was: usize = fixture.used.iter().filter(|used| **used != 0).count();
+    assert_eq!(
+        taken,
+        was - 3,
+        "the two clusters of data and the one the list is in"
+    );
+}
+
+#[test]
 fn a_directory_that_still_holds_something_is_not_removed() {
     // A directory that still has children cannot go: their names are in *its*
     // index, and a walk that reached it would find entries whose parent the
@@ -1199,7 +1381,20 @@ const FULL_FILE: u64 = 29;
 /// A directory whose record is **full**: the shape a name has nowhere to go
 /// in, where the format's answer is an allocation block of its own.
 const FULL_DIRECTORY: u64 = 30;
-const RECORDS: u64 = 31;
+/// A file whose `$DATA` is **split** by virtual cluster number: the record that
+/// names it holds the first part, and an extension record of its holds the
+/// second — which is the shape a fragmented file's mapping pairs make when
+/// they no longer fit one record.
+const LISTED_FILE: u64 = 31;
+const LISTED_FILE_EXT: u64 = 32;
+/// A file whose `$DATA` has **moved** out of its own record whole, which is the
+/// shape a directory's `$INDEX_ROOT` takes on a volume taken apart above.
+const MOVED_FILE: u64 = 33;
+const MOVED_FILE_EXT: u64 = 34;
+const RECORDS: u64 = 35;
+
+/// The records that hold another record's attributes.
+const EXTENSION_RECORDS: [u64; 2] = [LISTED_FILE_EXT, MOVED_FILE_EXT];
 
 /// How long a `$UpCase` table is: 65,536 code units.
 const UPCASE_BYTES: u64 = 0x1_0000 * 2;
@@ -1223,7 +1418,20 @@ fn is_named(number: u64, spares_in_use: bool) -> bool {
         || number == FULL_DIRECTORY
         || number == SUBDIRECTORY
         || number == SUBDIRECTORY_FILE
-        || (spares_in_use && number < RECORDS)
+        || number == LISTED_FILE
+        || number == MOVED_FILE
+        // An extension record is not a name of its own, so making every record
+        // in use does not name one.
+        || (spares_in_use && number < RECORDS && !EXTENSION_RECORDS.contains(&number))
+}
+
+/// Whether a record is one the fixture has *in use*, named or not.
+///
+/// An extension record holds another record's attributes: the volume has
+/// spoken for it, so its bit is set in `$MFT`'s bitmap, and no directory names
+/// it — a record with a base reference is not a file of its own.
+fn is_in_use(number: u64, spares_in_use: bool) -> bool {
+    is_named(number, spares_in_use) || EXTENSION_RECORDS.contains(&number)
 }
 
 /// The name a record takes when the fixture makes every record in use.
@@ -1351,6 +1559,25 @@ fn file_name(parent: u64, name: &str, directory: bool, size: u64) -> Vec<u8> {
     value[65] = 3; // Win32 & DOS
     value.extend_from_slice(&name_bytes);
     value
+}
+
+/// An index entry naming a record.
+/// One `$ATTRIBUTE_LIST` entry: an attribute, and the record that holds it.
+///
+/// The entry's header is 26 bytes and the entry is padded to eight, which is
+/// the shape a real volume's entries have; the sequence number the reference
+/// carries is the one every fixture record was made with.
+fn list_entry(attr_type: u32, instance: u16, holder: u64, lowest_vcn: u64) -> Vec<u8> {
+    let mut entry = vec![0u8; 26];
+    put_u32_le(&mut entry, 0, attr_type);
+    entry[7] = 26; // where a name would begin
+    put_u64_le(&mut entry, 8, lowest_vcn);
+    put_u64_le(&mut entry, 16, (1u64 << 48) | holder);
+    put_u16_le(&mut entry, 24, instance);
+    let length = entry.len().div_ceil(8) * 8;
+    entry.resize(length, 0);
+    put_u16_le(&mut entry, 4, length as u16);
+    entry
 }
 
 /// An index entry naming a record.
@@ -1501,6 +1728,14 @@ struct Fixture {
     /// Where `$MFT`'s own bitmap is — a file of its own, the way a real
     /// volume's is.
     mft_bitmap_runs: [(u64, u64); 1],
+    /// The two parts of the file whose `$DATA` is split by virtual cluster
+    /// number: one cluster in its own record, two in an extension record.
+    split_runs: [(u64, u64); 2],
+    /// The runs of the file whose `$DATA` has moved whole: both of them in an
+    /// extension record.
+    moved_runs: [(u64, u64); 2],
+    /// Where the entries of a *non-resident* `$ATTRIBUTE_LIST` are.
+    list_runs: [(u64, u64); 1],
 }
 
 impl Fixture {
@@ -1573,6 +1808,12 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let full_second = take(1);
     let upcase_at = take(UPCASE_BYTES / cluster_size);
     let mft_bitmap_at = take(1);
+    let split_first = take(1);
+    take(1); // the second part is somewhere else, like a fragmented file's
+    let split_second = take(2);
+    let moved_first = take(1);
+    let moved_second = take(1);
+    let list_at = take(1);
     let total_clusters = cursor + 2;
 
     let mut fixture = Fixture {
@@ -1593,6 +1834,9 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         full_runs: [(full_first, 1), (full_second, 1)],
         upcase_runs: [(upcase_at, UPCASE_BYTES / cluster_size)],
         mft_bitmap_runs: [(mft_bitmap_at, 1)],
+        split_runs: [(split_first, 1), (split_second, 2)],
+        moved_runs: [(moved_first, 1), (moved_second, 1)],
+        list_runs: [(list_at, 1)],
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -1613,6 +1857,9 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         .chain(&fixture.full_runs)
         .chain(&fixture.upcase_runs)
         .chain(&fixture.mft_bitmap_runs)
+        .chain(&fixture.split_runs)
+        .chain(&fixture.moved_runs)
+        .chain(&fixture.list_runs)
     {
         for cluster in lcn..lcn + clusters {
             fixture.used[cluster as usize] = 1;
@@ -1645,11 +1892,29 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     // index root.
     let mut mft_bits = alloc::vec![0u8; (RECORDS as usize).div_ceil(8)];
     for number in 0..RECORDS {
-        if is_named(number, spares_in_use) {
+        if is_in_use(number, spares_in_use) {
             mft_bits[number as usize / 8] |= 1 << (number % 8);
         }
     }
     let mut attributes = Vec::new();
+    // The lists the two listed files carry: every attribute of the file and the
+    // record that holds it — the file's own record, or an extension record of
+    // its.  The list does not name *itself*, which is what the volume this was
+    // measured against does too.
+    let split_list: Vec<u8> = [
+        list_entry(0x10, 1, LISTED_FILE, 0),
+        list_entry(0x30, 1, LISTED_FILE, 0),
+        list_entry(0x80, 1, LISTED_FILE, 0),
+        list_entry(0x80, 1, LISTED_FILE_EXT, 1),
+    ]
+    .concat();
+    let moved_list: Vec<u8> = [
+        list_entry(0x10, 1, MOVED_FILE, 0),
+        list_entry(0x30, 1, MOVED_FILE, 0),
+        list_entry(0x80, 1, MOVED_FILE_EXT, 0),
+    ]
+    .concat();
+
     for number in 0..RECORDS {
         let (parent, name, directory, size, data): (u64, &str, bool, u64, Vec<u8>) = match number {
             0 => (ROOT_RECORD, "$MFT", false, 0, Vec::new()),
@@ -1682,6 +1947,20 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             ),
             FULL_FILE => (ROOT_RECORD, "full.bin", false, 2 * cluster_size, Vec::new()),
             FULL_DIRECTORY => (ROOT_RECORD, "full-dir", true, 0, Vec::new()),
+            LISTED_FILE => (
+                ROOT_RECORD,
+                "split.bin",
+                false,
+                3 * cluster_size,
+                Vec::new(),
+            ),
+            MOVED_FILE => (
+                ROOT_RECORD,
+                "moved.bin",
+                false,
+                2 * cluster_size,
+                Vec::new(),
+            ),
             SUBDIRECTORY => (ROOT_RECORD, "sub", true, 0, Vec::new()),
             SUBDIRECTORY_FILE => (
                 SUBDIRECTORY,
@@ -1700,18 +1979,24 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         // real MFT's spare records look like: their number is theirs, their
         // attributes are none, and their flags say they are not in use.
         let named = is_named(number, spares_in_use);
+        let extension = EXTENSION_RECORDS.contains(&number);
 
         attributes.clear();
-        if named {
+        if named || extension {
             let standard = alloc::vec![0u8; 48];
-            attributes.extend(attribute(0x10, "", &standard, None, 0)); // $STANDARD_INFORMATION
-            attributes.extend(attribute(
-                0x30,
-                "",
-                &file_name(parent, name, directory, size),
-                None,
-                0,
-            ));
+            // An extension record holds another record's attributes and
+            // nothing of its own: no standard information, and no name for any
+            // directory to list.
+            if named {
+                attributes.extend(attribute(0x10, "", &standard, None, 0));
+                attributes.extend(attribute(
+                    0x30,
+                    "",
+                    &file_name(parent, name, directory, size),
+                    None,
+                    0,
+                ));
+            }
             match number {
                 0 => {
                     // The MFT's own data: two runs, which is what a reader has to
@@ -1836,6 +2121,55 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     ));
                     attributes.extend(attribute(0xd0, "", &[0u8; 8], None, 0));
                 }
+                LISTED_FILE => {
+                    // The first part of a `$DATA` split by virtual cluster
+                    // number: one run here, and the rest in the record the list
+                    // names.
+                    attributes.extend(attribute(
+                        0x80,
+                        "",
+                        &[],
+                        Some(&fixture.split_runs[..1]),
+                        3 * cluster_size,
+                    ));
+                    attributes.extend(attribute(0x20, "", &split_list, None, 0));
+                }
+                LISTED_FILE_EXT => {
+                    // The second part: a run list that begins at the cluster
+                    // number the first part ended on.
+                    let mut data = attribute(
+                        0x80,
+                        "",
+                        &[],
+                        Some(&fixture.split_runs[1..]),
+                        3 * cluster_size,
+                    );
+                    put_u64_le(&mut data, 16, 1); // lowest VCN: what came before
+                    put_u64_le(&mut data, 24, 2); // and the last one it covers
+                    attributes.extend(data);
+                }
+                MOVED_FILE => {
+                    // The list is a *file* of its own here, which is the shape
+                    // the volume this was measured against writes.
+                    let mut list = attribute(
+                        0x20,
+                        "",
+                        &[],
+                        Some(&fixture.list_runs),
+                        moved_list.len() as u64,
+                    );
+                    put_u64_le(&mut list, 40, cluster_size); // allocated size
+                    attributes.extend(list);
+                }
+                MOVED_FILE_EXT => {
+                    attributes.extend(attribute(
+                        0x80,
+                        "",
+                        &[],
+                        Some(&fixture.moved_runs),
+                        2 * cluster_size,
+                    ));
+                }
                 ROOT_RECORD | SUBDIRECTORY => {
                     // The root's entries live in an index allocation, and the
                     // subdirectory's in its index root: the two shapes a directory
@@ -1858,13 +2192,19 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                             TIGHT_FILE,
                             FULL_FILE,
                             FULL_DIRECTORY,
+                            LISTED_FILE,
+                            MOVED_FILE,
                             SUBDIRECTORY,
                         ];
                         if spares_in_use {
                             // Every record in use is a record some directory
-                            // names.
+                            // names — but an extension record is not a name of
+                            // its own.
                             for record in 0..RECORDS {
-                                if !listed.contains(&record) && record != ROOT_RECORD {
+                                if !listed.contains(&record)
+                                    && record != ROOT_RECORD
+                                    && !EXTENSION_RECORDS.contains(&record)
+                                {
                                     listed.push(record);
                                 }
                             }
@@ -1883,6 +2223,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                 TIGHT_FILE => ("tight.bin", false, 2 * cluster_size),
                                 FULL_FILE => ("full.bin", false, 2 * cluster_size),
                                 FULL_DIRECTORY => ("full-dir", true, 0),
+                                LISTED_FILE => ("split.bin", false, 3 * cluster_size),
+                                MOVED_FILE => ("moved.bin", false, 2 * cluster_size),
                                 SUBDIRECTORY => ("sub", true, 0),
                                 _ => (spare_name(record), false, 0),
                             };
@@ -1953,10 +2295,24 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             } else {
                 0x01
             }
+        } else if extension {
+            0x01 // in use, and nothing else
         } else {
             0x00
         };
-        let bytes = record(&shape, number, flags, &attributes);
+        let mut bytes = record(&shape, number, flags, &attributes);
+        if extension {
+            // An extension record is one that names the record it belongs to:
+            // the base reference is the field that says so, and a record that
+            // has one has no name and no link to count.
+            let base = if number == LISTED_FILE_EXT {
+                LISTED_FILE
+            } else {
+                MOVED_FILE
+            };
+            put_u64_le(&mut bytes, 32, (1u64 << 48) | base);
+            put_u16_le(&mut bytes, 18, 0); // link count
+        }
         let at = fixture.record_offset(number) as usize;
         fixture.image[at..at + bytes.len()].copy_from_slice(&bytes);
     }
@@ -1978,6 +2334,24 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             *byte = 0x33;
         }
     }
+
+    // The listed files' bytes: one value in each part of the split file, and
+    // one in each run of the moved one, so a reader that stops at the first
+    // part reads the wrong thing and not something that looks right.
+    for &(lcn, clusters, value) in &[
+        (fixture.split_runs[0].0, 1, 0x66u8),
+        (fixture.split_runs[1].0, 2, 0x77),
+        (fixture.moved_runs[0].0, 1, 0x88),
+        (fixture.moved_runs[1].0, 1, 0x99),
+    ] {
+        let at = lcn as usize * cluster_size as usize;
+        for byte in &mut fixture.image[at..at + clusters as usize * cluster_size as usize] {
+            *byte = value;
+        }
+    }
+    // And the entries of the list that is a file of its own.
+    let at = fixture.list_runs[0].0 as usize * cluster_size as usize;
+    fixture.image[at..at + moved_list.len()].copy_from_slice(&moved_list);
 
     // The `$UpCase` table: every code unit folded the way a real volume folds
     // it — the Latin letters up, everything else as it is — so the fixture's
@@ -2195,6 +2569,8 @@ fn standard_info_parse_timestamps_and_dir() {
 fn get_best_filename_prefers_win32_over_dos() {
     let dos = ParsedAttr {
         attr_type: ATTR_TYPE_FILENAME,
+        instance: 2,
+        name: None,
         offset: 0,
         value_offset: 24,
         attr_len: 0,
@@ -2205,6 +2581,8 @@ fn get_best_filename_prefers_win32_over_dos() {
     };
     let win32 = ParsedAttr {
         attr_type: ATTR_TYPE_FILENAME,
+        instance: 3,
+        name: None,
         offset: 0,
         value_offset: 24,
         attr_len: 0,
