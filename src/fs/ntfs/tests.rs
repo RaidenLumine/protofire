@@ -231,7 +231,11 @@ fn the_fixture_keeps_its_own_invariants() {
     let bits = &fixture.image[at..at + bits.data_size as usize];
     for number in 0..RECORDS {
         let set = bits[number as usize / 8] & (1 << (number % 8)) != 0;
-        assert_eq!(set, is_named(number), "record {number}'s bit in the MFT");
+        assert_eq!(
+            set,
+            is_named(number, false),
+            "record {number}'s bit in the MFT"
+        );
     }
 }
 
@@ -1005,6 +1009,129 @@ fn a_directory_that_still_holds_something_is_not_removed() {
     );
 }
 
+#[test]
+fn a_creation_grows_the_mft_when_no_record_is_free() {
+    // A volume whose records are all spoken for: the creation has to *grow*
+    // the MFT, and the record it gets is one the growth made.
+    let fixture = build_volume_with(FRACTIONAL, true);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+    let record_size = fixture.shape.record_size() as u64;
+
+    let before = {
+        let mut info = fs_handle.info().lock();
+        info.resolve_mft_runs(&fs_handle.device)
+            .expect("the MFT's runs");
+        info.mft_data_size
+    };
+    assert_eq!(
+        before,
+        RECORDS * record_size,
+        "the records it was built with"
+    );
+
+    let node = fs_handle
+        .create_file("/grown.txt")
+        .expect("a creation that grows the MFT");
+    assert_eq!(node.size(), 0);
+
+    // A second mount finds it, and the MFT it reads is the longer one: whole
+    // records, at least a cluster's worth of them, and the record the name
+    // got is the first the growth made.
+    let again = remount(&device);
+    let (number, _) = again.resolve("/grown.txt").expect("resolve");
+    assert_eq!(number, RECORDS, "the first record past the ones it had");
+    let mut info = again.info().lock();
+    info.resolve_mft_runs(&again.device)
+        .expect("the MFT's runs");
+    let after = info.mft_data_size;
+    assert!(
+        after >= before + cluster,
+        "the MFT grew by a cluster's worth: {before} -> {after}"
+    );
+    assert_eq!(after % record_size, 0, "and in whole records");
+    drop(info);
+
+    // The volume's own lists say the same: its MFT bitmap names the new
+    // record, and the cluster the MFT took is not the volume's any more.
+    let bits = again
+        .mft_bitmap()
+        .expect("the MFT's bitmap")
+        .expect("a bitmap");
+    assert_eq!(
+        bits[number as usize / 8] & (1 << (number % 8)),
+        1 << (number % 8),
+        "the MFT's bitmap claimed the record"
+    );
+    let bitmap = again.read_bitmap().expect("the volume's bitmap");
+    let taken: usize = bitmap.iter().map(|byte| byte.count_ones() as usize).sum();
+    let was: usize = fixture.used.iter().filter(|used| **used != 0).count();
+    assert_eq!(taken, was + 1, "the one cluster the growth claimed");
+
+    // The growth made room for more than one record: the next name lands right
+    // after the first, with no second growth.
+    let second = fs_handle.create_file("/next.txt").expect("a second file");
+    assert_eq!(second.size(), 0);
+    assert_eq!(
+        fs_handle.resolve("/next.txt").expect("resolve").0,
+        RECORDS + 1,
+        "the record after the first one the growth made"
+    );
+}
+
+#[test]
+fn the_mft_is_not_grown_while_a_record_is_free() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle.create_file("/new.txt").expect("create a file");
+
+    let again = remount(&device);
+    assert_eq!(
+        again.resolve("/new.txt").expect("resolve").0,
+        16,
+        "a record the volume already had"
+    );
+    let mut info = again.info().lock();
+    info.resolve_mft_runs(&again.device)
+        .expect("the MFT's runs");
+    assert_eq!(
+        info.mft_data_size,
+        RECORDS * fixture.shape.record_size() as u64,
+        "and the MFT is the one it was"
+    );
+}
+
+#[test]
+fn a_record_the_mft_grew_for_can_be_given_back() {
+    // The record a growth made is a record like any other: a removal frees it,
+    // and the next name takes it back.
+    let fixture = build_volume_with(FRACTIONAL, true);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle.create_file("/grown.txt").expect("grow");
+    fs_handle.remove_path("/grown.txt").expect("remove it");
+    assert!(matches!(
+        fs_handle.lookup("/grown.txt"),
+        Err(Error::NotFound)
+    ));
+
+    let again = remount(&device);
+    assert!(matches!(again.lookup("/grown.txt"), Err(Error::NotFound)));
+    let bits = again
+        .mft_bitmap()
+        .expect("the MFT's bitmap")
+        .expect("a bitmap");
+    assert_eq!(
+        bits[RECORDS as usize / 8] & (1 << (RECORDS % 8)),
+        0,
+        "the record the growth made is free again"
+    );
+
+    // And the same mount that grew it can answer with it again, which is what
+    // its own idea of the MFT being the longer one means.
+    fs_handle.create_file("/again.txt").expect("create again");
+    assert_eq!(fs_handle.resolve("/again.txt").expect("resolve").0, RECORDS);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // The fixture volume
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1086,7 +1213,7 @@ const MFT_FIRST_RUN_CLUSTERS: u64 = 4;
 /// The records a volume keeps for itself, the folding table, this fixture's
 /// own files — and not the rest, which are formatted but free.  `$MFT`'s own
 /// bitmap is built from this, so the two say the same thing.
-fn is_named(number: u64) -> bool {
+fn is_named(number: u64, spares_in_use: bool) -> bool {
     (0..=6).contains(&number)
         || number == UPCASE_RECORD
         || number == RESIDENT_FILE
@@ -1096,6 +1223,33 @@ fn is_named(number: u64) -> bool {
         || number == FULL_DIRECTORY
         || number == SUBDIRECTORY
         || number == SUBDIRECTORY_FILE
+        || (spares_in_use && number < RECORDS)
+}
+
+/// The name a record takes when the fixture makes every record in use.
+///
+/// A record that is in use is a record some directory names, so the ones a
+/// volume would have kept free need names of their own.
+fn spare_name(number: u64) -> &'static str {
+    match number {
+        7 => "spare-07",
+        8 => "spare-08",
+        9 => "spare-09",
+        11 => "spare-11",
+        12 => "spare-12",
+        13 => "spare-13",
+        14 => "spare-14",
+        15 => "spare-15",
+        16 => "spare-16",
+        17 => "spare-17",
+        18 => "spare-18",
+        19 => "spare-19",
+        20 => "spare-20",
+        21 => "spare-21",
+        22 => "spare-22",
+        23 => "spare-23",
+        _ => "",
+    }
 }
 
 /// A runlist, from absolute `(lcn, clusters)` runs.
@@ -1382,6 +1536,16 @@ impl Fixture {
 /// in its index root, and a root whose entries are in an index *allocation*,
 /// which is the shape a directory with children really has.
 fn build_volume(shape: Shape) -> Fixture {
+    build_volume_with(shape, false)
+}
+
+/// The same volume, with every record the fixture has **in use**.
+///
+/// A volume whose MFT has no free record is what a creation has to *grow* the
+/// MFT for, so the fixture can be built either way: the records a real volume
+/// keeps formatted but free are then names of their own, which is what a
+/// volume that has used them up looks like.
+fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let cluster_size = shape.cluster_size() as u64;
     let record_size = shape.record_size() as u64;
     let index_block_clusters = shape.index_block_size() as u64 / cluster_size;
@@ -1481,7 +1645,7 @@ fn build_volume(shape: Shape) -> Fixture {
     // index root.
     let mut mft_bits = alloc::vec![0u8; (RECORDS as usize).div_ceil(8)];
     for number in 0..RECORDS {
-        if is_named(number) {
+        if is_named(number, spares_in_use) {
             mft_bits[number as usize / 8] |= 1 << (number % 8);
         }
     }
@@ -1527,13 +1691,15 @@ fn build_volume(shape: Shape) -> Fixture {
                 b"leaf".to_vec(),
             ),
             _ if number == ROOT_RECORD => (ROOT_RECORD, ".", true, 0, Vec::new()),
-            _ => (ROOT_RECORD, "", false, 0, Vec::new()),
+            // With the spares in use this is one of them, and it needs a name
+            // like any other record a directory holds.
+            _ => (ROOT_RECORD, spare_name(number), false, 0, Vec::new()),
         };
 
         // A record nothing uses is **formatted but free**, which is what a
         // real MFT's spare records look like: their number is theirs, their
         // attributes are none, and their flags say they are not in use.
-        let named = is_named(number);
+        let named = is_named(number, spares_in_use);
 
         attributes.clear();
         if named {
@@ -1549,14 +1715,20 @@ fn build_volume(shape: Shape) -> Fixture {
             match number {
                 0 => {
                     // The MFT's own data: two runs, which is what a reader has to
-                    // follow to find any record after the first.
-                    attributes.extend(attribute(
+                    // follow to find any record after the first — and room for
+                    // one more run, which is where a growth appends the
+                    // clusters it takes.
+                    let mut data = attribute(
                         0x80,
                         "",
                         &[],
                         Some(&fixture.mft_runs),
                         RECORDS * record_size,
-                    ));
+                    );
+                    let length = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+                    put_u32_le(&mut data, 4, length + 16);
+                    data.extend_from_slice(&[0u8; 16]);
+                    attributes.extend(data);
                     // And the MFT's own bitmap: one bit per record, set for the
                     // records the volume has in use.  It is what a real volume
                     // allocates from, so a created file has to turn one on — and
@@ -1673,8 +1845,8 @@ fn build_volume(shape: Shape) -> Fixture {
                     // The entries the directory holds, and its own "." entry.
                     let mut entries = Vec::new();
                     if root {
-                        for record in [
-                            0u64,
+                        let mut listed: Vec<u64> = alloc::vec![
+                            0,
                             1,
                             2,
                             3,
@@ -1687,7 +1859,17 @@ fn build_volume(shape: Shape) -> Fixture {
                             FULL_FILE,
                             FULL_DIRECTORY,
                             SUBDIRECTORY,
-                        ] {
+                        ];
+                        if spares_in_use {
+                            // Every record in use is a record some directory
+                            // names.
+                            for record in 0..RECORDS {
+                                if !listed.contains(&record) && record != ROOT_RECORD {
+                                    listed.push(record);
+                                }
+                            }
+                        }
+                        for record in listed {
                             let (name, directory, size): (&str, bool, u64) = match record {
                                 0 => ("$MFT", false, 0),
                                 1 => ("$MFTMirr", false, 0),
@@ -1701,7 +1883,8 @@ fn build_volume(shape: Shape) -> Fixture {
                                 TIGHT_FILE => ("tight.bin", false, 2 * cluster_size),
                                 FULL_FILE => ("full.bin", false, 2 * cluster_size),
                                 FULL_DIRECTORY => ("full-dir", true, 0),
-                                _ => ("sub", true, 0),
+                                SUBDIRECTORY => ("sub", true, 0),
+                                _ => (spare_name(record), false, 0),
                             };
                             entries.extend_from_slice(&index_entry(record, name, directory, size));
                         }

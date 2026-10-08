@@ -147,10 +147,13 @@ The authoritative picture of what exists today is
   name added to a small one makes that resident value *longer* — the free
   space its own record has is what it grows into, with everything after the
   attribute shifted up and the record written whole — and a directory that
-  still holds something refuses to be removed.  What is left of the stage is a
-  record that is *full* — which the format gives an attribute list for, and a
-  name a directory's record is too full to take, which it gives an
-  `$INDEX_ALLOCATION` — and the MFT's own growth.
+  still holds something refuses to be removed.  A volume whose records are all
+  spoken for **grows the MFT**: a cluster comes from the `$Bitmap`, `$MFT`'s
+  own run list gains a run, its own bitmap is extended over the records the
+  growth made, and those records are written as zeros so they are free.  What
+  is left of the stage is a record that is *full* — which the format gives an
+  attribute list for — and a name a directory's record is too full to take,
+  which it gives an `$INDEX_ALLOCATION`.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

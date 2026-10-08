@@ -809,76 +809,283 @@ impl NtfsFs {
     /// so, and a record a volume has never written is all zeros and free too.
     /// Where `$MFT` carries its own `$BITMAP`, the bit is the volume's word on
     /// it and is read first; the header is then a second one.
+    ///
+    /// A volume whose records are all spoken for **grows the MFT** by a
+    /// cluster and looks again, once: a growth that cannot be made is the
+    /// volume being full.
     fn claim_mft_record(&self, parent: u64, name: &str, directory: bool) -> Result<(u64, u16)> {
-        let (record_size, sector_size, records, runs, cluster_size, index_block_size) = {
-            let mut info = self.info.lock();
-            let runs = info.resolve_mft_runs(&self.device)?;
-            let record_size = u64::from(info.mft_record_size);
-            (
-                record_size,
-                info.bs.bytes_per_sector as usize,
-                info.mft_data_size / record_size,
-                runs,
-                info.cluster_size,
-                info.index_block_size,
-            )
-        };
         let parent_reference = {
             let parent_record = self.read_mft_record(parent)?;
             let sequence = u16::from_le_bytes([parent_record[16], parent_record[17]]);
             parent | (u64::from(sequence) << 48)
         };
-        let bitmap = self.mft_bitmap()?;
 
-        for number in FIRST_FREE_RECORD..records {
-            if bitmap.as_ref().is_some_and(|bits| bit_is_set(bits, number)) {
-                continue;
-            }
-            let offset = number * record_size;
-            let Some(at) = fs::byte_offset_in_runs(&runs, cluster_size, offset) else {
-                continue;
+        // One growth is enough for one record: the MFT grows by at least a
+        // cluster's worth of records, and a volume that grew and still has no
+        // free record is a volume with no room.
+        let mut grown = false;
+        loop {
+            let (record_size, sector_size, records, runs, cluster_size, index_block_size) = {
+                let mut info = self.info.lock();
+                let runs = info.resolve_mft_runs(&self.device)?;
+                let record_size = u64::from(info.mft_record_size);
+                (
+                    record_size,
+                    info.bs.bytes_per_sector as usize,
+                    info.mft_data_size / record_size,
+                    runs,
+                    info.cluster_size,
+                    info.index_block_size,
+                )
             };
-            let mut raw = alloc::vec![0u8; record_size as usize];
-            fs::read_device_bytes(&self.device, at, &mut raw)?;
+            let bitmap = self.mft_bitmap()?;
 
-            // A record that was used before keeps its number unusable through
-            // its sequence, which only ever goes up; a record a volume has
-            // never written is all zeros, and its sequence starts at one.
-            let sequence = match MftRecordHeader::parse(&raw) {
-                Some(header) if header.flags & MFT_RECORD_IN_USE == 0 => {
-                    u16::from_le_bytes([raw[16], raw[17]]).wrapping_add(1)
+            for number in FIRST_FREE_RECORD..records {
+                if bitmap.as_ref().is_some_and(|bits| bit_is_set(bits, number)) {
+                    continue;
                 }
-                Some(_) => continue,
-                None if raw.iter().all(|byte| *byte == 0) => 1,
-                None => continue,
-            };
+                let offset = number * record_size;
+                let Some(at) = fs::byte_offset_in_runs(&runs, cluster_size, offset) else {
+                    continue;
+                };
+                let mut raw = alloc::vec![0u8; record_size as usize];
+                fs::read_device_bytes(&self.device, at, &mut raw)?;
 
-            // The volume's word on it goes first: a record the volume says is
-            // in use and nothing names is a leak, and the other order would
-            // leave a record in use that the volume would hand out again.
-            self.set_mft_bitmap(number, true)?;
-            let attributes = record_attributes(
-                parent_reference,
-                name,
-                directory,
-                index_block_size,
-                cluster_size,
-            );
-            let record = fs::build_record(
-                record_size as usize,
-                sector_size,
-                number,
-                sequence,
-                if directory { 0x03 } else { 0x01 },
-                1,
-                &attributes,
-            );
-            fs::write_device_bytes(&self.device, at, &record)?;
-            // Whatever the mount had of this number is not what is there now.
-            self.mft_cache.lock().remove(&number);
-            return Ok((number, sequence));
+                // A record that was used before keeps its number unusable
+                // through its sequence, which only ever goes up; a record a
+                // volume has never written is all zeros, and its sequence
+                // starts at one.
+                let sequence = match MftRecordHeader::parse(&raw) {
+                    Some(header) if header.flags & MFT_RECORD_IN_USE == 0 => {
+                        u16::from_le_bytes([raw[16], raw[17]]).wrapping_add(1)
+                    }
+                    Some(_) => continue,
+                    None if raw.iter().all(|byte| *byte == 0) => 1,
+                    None => continue,
+                };
+
+                // The volume's word on it goes first: a record the volume says
+                // is in use and nothing names is a leak, and the other order
+                // would leave a record in use that the volume would hand out
+                // again.
+                self.set_mft_bitmap(number, true)?;
+                let attributes = record_attributes(
+                    parent_reference,
+                    name,
+                    directory,
+                    index_block_size,
+                    cluster_size,
+                );
+                let record = fs::build_record(
+                    record_size as usize,
+                    sector_size,
+                    number,
+                    sequence,
+                    if directory { 0x03 } else { 0x01 },
+                    1,
+                    &attributes,
+                );
+                fs::write_device_bytes(&self.device, at, &record)?;
+                // Whatever the mount had of this number is not what is there
+                // now.
+                self.mft_cache.lock().remove(&number);
+                return Ok((number, sequence));
+            }
+
+            if grown {
+                return Err(Error::NoSpace);
+            }
+            self.grow_mft()?;
+            grown = true;
         }
-        Err(Error::NoSpace)
+    }
+
+    /// Grow the MFT by at least one more record.
+    ///
+    /// The MFT is a file whose content is its records, so growing it is
+    /// growing a file: clusters come from the volume's `$Bitmap`, the run list
+    /// in `$MFT`'s own record gains a run — or the last one gets longer, when
+    /// the clusters continue it — and the sizes that say how much of it is
+    /// spoken for follow.  A record a volume has never written is all zeros,
+    /// so the new clusters are **written as zeros**: that is what makes the
+    /// records they hold free rather than whatever they held before.
+    ///
+    /// Its own `$BITMAP` grows with it, because a record past the bitmap's
+    /// last byte is a record nothing could say was in use.
+    ///
+    /// The step is a whole cluster's worth of records, so one growth answers
+    /// the one record that asked for it.  A volume with no free *cluster*
+    /// refuses (`NoSpace`), and so does a `$MFT` whose `$DATA` run list has no
+    /// room for another run: that attribute would have to move inside the
+    /// record, which is the relocation the attribute list is for.
+    fn grow_mft(&self) -> Result<()> {
+        let (record_size, sector_size, cluster_size) = {
+            let info = self.info.lock();
+            (
+                u64::from(info.mft_record_size),
+                info.bs.bytes_per_sector as usize,
+                u64::from(info.cluster_size),
+            )
+        };
+        let record = self.read_mft_record(MFT_RECORD)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let base = header.size() as usize;
+        let attributes = parse_attributes(&record[base..]);
+        let data = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?;
+        // A resident `$MFT` is a volume whose records are inside its own
+        // record, and growing that is a conversion this driver does not make.
+        let data_runs_offset = data.data_runs_offset.ok_or(Error::NotImplemented)?;
+        let bitmap = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_BITMAP);
+
+        // How much longer the MFT has to be, and where the new records are.
+        let step = cluster_size.max(record_size).div_ceil(record_size) * record_size;
+        let old_data = u64::from(data.data_size);
+        let new_data = old_data + step;
+        let records = new_data / record_size;
+        let mut runs = data.data_runs.clone();
+        let held: u64 = runs.iter().map(|run| run.cluster_count).sum::<u64>() * cluster_size;
+        let claim = if held >= new_data {
+            0
+        } else {
+            (new_data - held).div_ceil(cluster_size)
+        };
+
+        // The bitmap has to be able to name the new records, and its own bytes
+        // to reach them, before anything is taken from the volume.
+        let bitmap_growth = match bitmap {
+            Some(bitmap) => {
+                let wanted = records.div_ceil(8);
+                if wanted <= u64::from(bitmap.data_size) {
+                    None
+                } else {
+                    let runs = bitmap.data_runs_offset.is_some();
+                    let capacity = bitmap
+                        .data_runs
+                        .iter()
+                        .map(|run| run.cluster_count)
+                        .sum::<u64>()
+                        * cluster_size;
+                    if !runs || wanted > capacity {
+                        return Err(Error::NoSpace);
+                    }
+                    Some(wanted)
+                }
+            }
+            None => None,
+        };
+
+        let claimed = if claim > 0 {
+            let first = self.claim_clusters(claim)?;
+            let continues = runs
+                .last()
+                .is_some_and(|last| last.lcn >= 0 && last.lcn as u64 + last.cluster_count == first);
+            if continues {
+                runs.last_mut()
+                    .expect("a last run that was just looked at")
+                    .cluster_count += claim;
+            } else {
+                runs.push(DataRun {
+                    lcn: first as i64,
+                    cluster_count: claim,
+                });
+            }
+            Some((first, claim))
+        } else {
+            None
+        };
+
+        // A run list that no longer fits where it is would have to move, and
+        // that is not this driver's to do inside the MFT's own record: the
+        // clusters just taken go back rather than being half-used.
+        let encoded = fs::encode_runs(&runs);
+        let room = data.attr_len - (data_runs_offset - data.offset);
+        if encoded.len() > room {
+            if let Some((first, count)) = claimed {
+                let _ = self.free_clusters(&[DataRun {
+                    lcn: first as i64,
+                    cluster_count: count,
+                }]);
+            }
+            return Err(Error::NoSpace);
+        }
+
+        // A record a volume has never written is all zeros.
+        if let Some((first, count)) = claimed {
+            let zeros = alloc::vec![0u8; cluster_size as usize];
+            for cluster in first..first + count {
+                fs::write_device_bytes(&self.device, cluster * cluster_size, &zeros)?;
+            }
+        }
+        if let Some(wanted) = bitmap_growth {
+            let bitmap = bitmap.expect("a bitmap that was just looked at");
+            let zeros = alloc::vec![0u8; (wanted - u64::from(bitmap.data_size)) as usize];
+            let info = self.info.lock();
+            fs::write_to_runs(
+                &self.device,
+                &info,
+                &bitmap.data_runs,
+                u64::from(bitmap.data_size),
+                &zeros,
+            )?;
+        }
+
+        // The record that holds the run list, written whole with the sizes the
+        // runs now add up to.
+        let mut raw = record.clone();
+        let attr = base + data.offset;
+        let runs_at = attr + (data_runs_offset - data.offset);
+        raw[runs_at..runs_at + encoded.len()].copy_from_slice(&encoded);
+        raw[runs_at + encoded.len()..attr + data.attr_len].fill(0);
+        let allocated = held + claim * cluster_size;
+        let last_vcn = allocated / cluster_size - 1;
+        raw[attr + 24..attr + 32].copy_from_slice(&last_vcn.to_le_bytes());
+        raw[attr + 40..attr + 48].copy_from_slice(&allocated.to_le_bytes());
+        raw[attr + 48..attr + 56].copy_from_slice(&new_data.to_le_bytes());
+        raw[attr + 56..attr + 64].copy_from_slice(&new_data.to_le_bytes());
+        if let Some(wanted) = bitmap_growth {
+            let bitmap = bitmap.expect("a bitmap that was just looked at");
+            // The bitmap is a *file* too, so its sizes are a non-resident
+            // attribute's: what it uses at +48, what it has at +40.  A
+            // resident value's length is the field at +16, and writing there
+            // would have rewritten the attribute's first VCN.
+            let attr = base + bitmap.offset;
+            let allocated = bitmap
+                .data_runs
+                .iter()
+                .map(|run| run.cluster_count)
+                .sum::<u64>()
+                * cluster_size;
+            raw[attr + 40..attr + 48].copy_from_slice(&allocated.to_le_bytes());
+            raw[attr + 48..attr + 56].copy_from_slice(&wanted.to_le_bytes());
+            raw[attr + 56..attr + 64].copy_from_slice(&wanted.to_le_bytes());
+        }
+        let (at, sector) = {
+            let info = self.info.lock();
+            (
+                self.record_offset(&info, MFT_RECORD)?,
+                info.bs.bytes_per_sector as usize,
+            )
+        };
+        let _ = sector_size;
+        fs::pack_usa(
+            &mut raw,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            sector,
+        );
+        fs::write_device_bytes(&self.device, at, &raw)?;
+        self.mft_cache.lock().insert(MFT_RECORD, raw);
+
+        // The mount's own idea of the MFT is what it just changed.
+        let mut info = self.info.lock();
+        info.mft_runs = Some(runs);
+        info.mft_data_size = new_data;
+        Ok(())
     }
 
     /// `$MFT`'s own `$BITMAP`, as many bytes of it as the volume's records

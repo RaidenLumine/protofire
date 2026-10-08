@@ -150,7 +150,8 @@ never from `make verify`: the gates do not depend on a host tool.
 3. **Creating and removing.**  A record out of the MFT's free space, the
    index insertion and removal, `$Bitmap` again, `$MFTMirr` when the records
    it mirrors change, and the sequence number that makes a removed record's
-   number unusable.
+   number unusable — and the **MFT's own growth**, which is what a volume with
+   no free record left needs.
 
 ### The journal, decided once
 
@@ -474,11 +475,12 @@ being something a partial write can ignore.
   down — which is what makes the number that named it stop matching.
 - **What is not built.**  An index node is never split, so no block is added
   and the index bitmap is untouched; the MFT is never grown, so a new record
-  comes from the records the volume already has; a directory cannot be created
-  or removed *— stage 3b adds that —*; and a file created empty is resident, so
-  writing content into it needs the resident-to-non-resident conversion.
-  `$MFTMirr` is *not* written, and does not need to be: it mirrors the
-  volume's first four records, which this stage never touches.
+  comes from the records the volume already has *— stage 3c adds that —*; a
+  directory cannot be created or removed *— stage 3b adds that —*; and a file
+  created empty is resident, so writing content into it needs the
+  resident-to-non-resident conversion.  `$MFTMirr` is *not* written, and does
+  not need to be: it mirrors the volume's first four records, which this stage
+  never touches.
 - Seven tests, every write proved by a **second mount**: a created file that
   the fresh mount finds, reads as empty and lists, with `$MFT`'s `$BITMAP`
   naming its record; `$UpCase` folding in a lookup; a new name placed by the
@@ -527,3 +529,45 @@ being something a partial write can ignore.
   one already, with both listed by the fresh mount; a name a full record has
   no room for refused, with the claimed record given back; and a directory
   that still holds something refused (`Busy`).
+
+**Stage 3c — the MFT grows.**
+
+- Stage 2b said it: the MFT growing is what *creating* a record needs, and a
+  volume whose records are all spoken for is the case.  The MFT is a file
+  whose content is its records, so growing it is growing a file: clusters come
+  from the volume's `$Bitmap`, the run list in `$MFT`'s **own** record gains a
+  run — or its last one gets longer, when the clusters continue it — and the
+  allocated, data and initialized sizes follow with the last VCN.
+- The step is a **cluster's worth of records** (a record's worth where a
+  cluster holds only part of one), so one growth answers the one record that
+  asked for it.  The measured reference grows the same way: a real `$MFT`'s
+  `$DATA` is 70656 bytes of data — 69 records — over 77824 bytes of
+  allocation, 19 clusters, with the initialized size equal to the data size.
+- **The records the growth made are written as zeros.**  A record a volume has
+  never written is all zeros, and that is what the search for a free one
+  reads; a cluster that held a file's data would otherwise be a record with
+  the wrong `FILE` magic in it.
+- `$MFT`'s own `$BITMAP` grows with it, because a record past the bitmap's last
+  byte is a record nothing could say was in use.  That bitmap is a *file*
+  too — the fields are a non-resident attribute's, the value it uses at +48
+  and the space it has at +40 — which is the one thing a first version of this
+  got wrong: it wrote the resident attribute's length field at +16, which is
+  where a non-resident attribute keeps its **first VCN**.  The test that
+  caught it creates a second name after the growth, which is the first thing
+  that reads the record past the one the growth was asked for.
+- A volume with no free *cluster*, a `$MFT` whose `$DATA` run list has no room
+  for another run, and a resident `$MFT` are all refused (`NoSpace`,
+  `NotImplemented`) rather than half-grown — the run list's case is the
+  relocation the attribute list is for, which is the next stage.  A run list
+  that does not fit is refused *after* the clusters are claimed, so the
+  clusters are given straight back.
+- The fixture builds a second shape: **every record in use**, with the records
+  a volume would keep formatted but free named like any other, because a
+  record in use is a record some directory names.  `$MFT`'s `$DATA` gains room
+  for one more run, which is where a growth appends.
+- Three tests: a creation on a full volume that grows the MFT, names the first
+  record the growth made, passes to a **second mount** that reads the longer
+  MFT, and leaves one cluster of the volume claimed — with a second name
+  landing right after the first, no second growth; a creation on a volume with
+  free records that does *not* grow it; and a record the growth made that a
+  removal frees, and that the next creation takes back on the same mount.
