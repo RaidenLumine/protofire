@@ -390,10 +390,9 @@ longer fits.
   refused with `NoSpace`; and a write that would need it a short write — zero
   bytes when it starts past the end of a file that cannot grow.
 
-**What is left of stage 2 is 2b:** an attribute whose run list no longer fits
-its room has to move inside the record — which is where the update sequence
-array stops being something a partial write can ignore — and the MFT's own
-growth when a record has no room left at all.
+**What stage 2b is:** an attribute whose run list no longer fits its room has
+to move inside the record — which is where the update sequence array stops
+being something a partial write can ignore.
 
 **Stage 2b — the attribute that has outgrown its room.**
 
@@ -407,10 +406,19 @@ growth when a record has no room left at all.
 - `bytes_in_use` and the attribute end marker follow the new layout, and the
   record's copy in the mount's **cache** is replaced with it: a stale cache
   would serve the record as it was before the move.
-- **What is left of stage 2 is 2c**: a record with no room at all, where the
-  MFT itself has to grow.  That case is refused (`NoSpace`) today, and the
-  refusal is not covered by a test — no fixture drives it — which is the honest
-  state of it: implemented, not verified.
+- **Stage 2's last case, decided rather than built.**  A record that is *full*
+  is not a record that is short of records: the MFT growing gives records, and
+  what a run list that no longer fits needs is **room**.  The format's answer
+  is an `$ATTRIBUTE_LIST` — attributes that live in a record of their own,
+  named by the one that owns them — and that is a feature with its own shape:
+  a new attribute type, a record's attributes split across two places, and
+  every reader of a record taught to follow it.  It is a stage, not this one's
+  last line.
+- So the refusal stands, and it is now **verified**: the fixture carries a file
+  whose record is full to within its end marker, and one more run is
+  `NoSpace` — with nothing moved, and a second mount agreeing.
+- The MFT's own growth, then, is what *creating* a record needs, which is stage
+  3's business and not a full run list's.
 - One test: the fixture's *tight* file has a `$DATA` with two runs, no room to
   spare, and a `$EA_INFORMATION` after it.  Growing it by a cluster makes the
   attribute move, and a second mount reads the longer file, the moved run list
