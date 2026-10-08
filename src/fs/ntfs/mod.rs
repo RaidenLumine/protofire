@@ -140,34 +140,45 @@ fn names_the_same_attribute(entry: &fs::AttributeListEntry, attribute: &ParsedAt
         && entry.name.as_deref() == attribute.name.as_deref()
 }
 
-/// The attributes a record holds in its *own* bytes.
+/// The attribute a record holds *in its own* bytes.
 ///
-/// A writer patches a field where it lies, and a field of an attribute an
-/// `$ATTRIBUTE_LIST` has moved to an extension record does not lie in these
-/// bytes: that is `NotImplemented`, which is a different answer from "there is
-/// no such attribute".
-fn own_attribute(record: &[u8], attr_type: u32) -> Result<ParsedAttr> {
-    let header = MftRecordHeader::parse(record).ok_or(Error::InvalidArgument)?;
-    let attributes = parse_attributes(&record[header.size() as usize..]);
-    // A record whose attributes are *listed* is one a reader follows and a
-    // writer does not yet rewrite: the attributes are not all in these bytes,
-    // and the ones that are can be the first part of an attribute that
-    // continues in another record.
-    if attributes
+/// A writer patches a field where it lies, so an attribute that lives in
+/// another record — an `$ATTRIBUTE_LIST` moved it — or in several — a run list
+/// *split* by virtual cluster number — is `NotImplemented`: there is no one
+/// place the field is, and half a patch is worse than none.
+fn own_attribute(
+    record_number: u64,
+    attributes: &[ParsedAttr],
+    attr_type: u32,
+) -> Result<&ParsedAttr> {
+    let attribute = attributes
         .iter()
-        .any(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
-    {
+        .find(|attribute| attribute.attr_type == attr_type)
+        .ok_or(Error::NotFound)?;
+    if attribute.holder != record_number {
         return Err(Error::NotImplemented);
     }
-    attributes
-        .into_iter()
-        .find(|attribute| attribute.attr_type == attr_type)
-        .ok_or(Error::NotFound)
+    Ok(attribute)
 }
 
 /// How many bytes of a record are in use, from its own header.
 fn bytes_in_use(record: &[u8]) -> usize {
     u32::from_le_bytes([record[24], record[25], record[26], record[27]]) as usize
+}
+
+/// The attributes a new record holds.
+/// What a new record is for, which is what decides what it holds.
+enum NewRecord<'a> {
+    /// A file or a directory of its own: where it came from, its own name, and
+    /// either an empty `$DATA` or an empty index.
+    Named {
+        parent: u64,
+        name: &'a str,
+        directory: bool,
+    },
+    /// An *extension* record: attributes another record's `$ATTRIBUTE_LIST`
+    /// names, and a reference back to the record they belong to.
+    Extension { base: u64, attributes: Vec<Vec<u8>> },
 }
 
 /// The attributes a new record holds.
@@ -291,7 +302,10 @@ impl NtfsFs {
     fn attributes_of(&self, record_number: u64) -> Result<Vec<ParsedAttr>> {
         let record = self.read_mft_record(record_number)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let inline = parse_attributes(&record[header.size() as usize..]);
+        let mut inline = parse_attributes(&record[header.size() as usize..]);
+        for attribute in &mut inline {
+            attribute.holder = record_number;
+        }
         let Some(list) = inline
             .iter()
             .find(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
@@ -321,12 +335,18 @@ impl NtfsFs {
                 return Err(Error::InvalidArgument);
             }
             let mut merged = self.attribute_in(&group[0])?;
+            // One entry is one record's worth of attribute; more than one is an
+            // attribute split across records, which is no one record's bytes.
+            let whole = group.len() == 1;
             for part in &group[1..] {
                 let part = self.attribute_in(part)?;
                 merged.data_runs.extend(part.data_runs);
                 if merged.data_runs_offset.is_none() {
                     merged.data_runs_offset = part.data_runs_offset;
                 }
+            }
+            if !whole {
+                merged.holder = u64::MAX;
             }
             attributes.push(merged);
         }
@@ -378,6 +398,10 @@ impl NtfsFs {
             return Err(Error::InvalidArgument);
         }
         let attributes = parse_attributes(&record[header.size() as usize..]);
+        let mut attributes = attributes;
+        for attribute in &mut attributes {
+            attribute.holder = entry.holder;
+        }
         attributes
             .into_iter()
             .find(|attribute| {
@@ -402,6 +426,319 @@ impl NtfsFs {
             record[39],
         ]) & 0x0000_FFFF_FFFF_FFFF;
         (base != 0 && base != record_number).then_some(base)
+    }
+
+    /// The extension records a record's `$ATTRIBUTE_LIST` puts its attributes
+    /// in.
+    /// Make room in a record by moving one of its attributes into a record of
+    /// its own.
+    ///
+    /// Write a grown `$DATA` where it lives: the run list, the allocated, data
+    /// and initialized sizes, and the last virtual cluster number, in the
+    /// record that holds the attribute.
+    ///
+    /// The record that holds it need not be the one the node was opened on: an
+    /// `$ATTRIBUTE_LIST` can have put the attribute in an extension record, and
+    /// the fields are written wherever that record's bytes are.  A run list
+    /// that no longer fits the room the attribute has *moves within* the record
+    /// — and a record with no room for that answers `NoSpace`, which is where
+    /// the caller moves the attribute into a record of its own.
+    #[allow(clippy::too_many_arguments)]
+    fn write_grown_data(
+        &self,
+        holder: u64,
+        data: &ParsedAttr,
+        runs: &[DataRun],
+        allocated: u32,
+        length: u32,
+        zeros: &[u8],
+    ) -> Result<()> {
+        let record = self.read_mft_record(holder)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let base = header.size() as usize;
+        let Some(runs_offset) = data.data_runs_offset else {
+            // A resident value carries its length in its own header, and there
+            // is no run list and no allocated size to write: a resident file
+            // can only shrink here, which the caller has already checked.
+            let info = self.info.lock();
+            let record_at = self.record_offset(&info, holder)?;
+            fs::write_device_bytes(
+                &self.device,
+                record_at + (base + data.offset + 16) as u64,
+                &length.to_le_bytes(),
+            )?;
+            let mut raw = record.clone();
+            raw[base + data.offset + 16..base + data.offset + 20]
+                .copy_from_slice(&length.to_le_bytes());
+            self.mft_cache.lock().insert(holder, raw);
+            return Ok(());
+        };
+        let runs_relative = runs_offset - data.offset;
+        let encoded = fs::encode_runs(runs);
+        if runs_relative + encoded.len() > data.attr_len {
+            return self.relocate_run_list(holder, data, runs, allocated, length, zeros);
+        }
+
+        let info = self.info.lock();
+        let record_at = self.record_offset(&info, holder)?;
+        let attr_at = record_at + (base + data.offset) as u64;
+        let mut raw = record.clone();
+
+        if runs.len() > data.data_runs.len() {
+            // The run list, in the room the attribute has for it.
+            let room = data.attr_len - runs_relative;
+            let mut field = alloc::vec![0u8; room];
+            field[..encoded.len()].copy_from_slice(&encoded);
+            fs::write_device_bytes(&self.device, attr_at + runs_relative as u64, &field)?;
+            let at = base + data.offset + runs_relative;
+            raw[at..at + room].copy_from_slice(&field);
+
+            // The clusters the file just took have never held its bytes.
+            fs::write_to_runs(
+                &self.device,
+                &info,
+                runs,
+                u64::from(length) - zeros.len() as u64,
+                zeros,
+            )?;
+
+            let mut allocated_field = [0u8; 8];
+            allocated_field.copy_from_slice(&u64::from(allocated).to_le_bytes());
+            fs::write_device_bytes(&self.device, attr_at + 40, &allocated_field)?;
+            raw[base + data.offset + 40..base + data.offset + 48].copy_from_slice(&allocated_field);
+            let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
+            fs::write_device_bytes(&self.device, attr_at + 24, &last_vcn.to_le_bytes())?;
+            raw[base + data.offset + 24..base + data.offset + 32]
+                .copy_from_slice(&last_vcn.to_le_bytes());
+        }
+
+        // The data size and the initialized size, adjacent in a non-resident
+        // header: a shorter file has no initialized bytes beyond its length.
+        let mut sizes = [0u8; 16];
+        sizes[..8].copy_from_slice(&u64::from(length).to_le_bytes());
+        sizes[8..].copy_from_slice(&u64::from(length).to_le_bytes());
+        fs::write_device_bytes(&self.device, attr_at + 48, &sizes)?;
+        raw[base + data.offset + 48..base + data.offset + 64].copy_from_slice(&sizes);
+
+        self.mft_cache.lock().insert(holder, raw);
+        Ok(())
+    }
+
+    /// Move an attribute to the end of its record's used area, with a longer
+    /// run list, and write the record whole.
+    ///
+    /// A run list that no longer fits the room its attribute has means the
+    /// attribute **moves**: it goes last, and every attribute that followed it
+    /// shifts up by the difference.  The record then changes from end to end,
+    /// so it is written in one piece, with the update sequence array packed
+    /// again — the shift crosses sector ends, and a field write could not leave
+    /// those as they were.
+    #[allow(clippy::too_many_arguments)]
+    fn relocate_run_list(
+        &self,
+        holder: u64,
+        data: &ParsedAttr,
+        runs: &[DataRun],
+        allocated: u32,
+        length: u32,
+        zeros: &[u8],
+    ) -> Result<()> {
+        let record = self.read_mft_record(holder)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let info = self.info.lock();
+        let base = header.size() as usize;
+        let runs_relative = data.data_runs_offset.ok_or(Error::InvalidArgument)? - data.offset;
+        let encoded = fs::encode_runs(runs);
+
+        // Every attribute as it is, except this one — which goes last, grown.
+        let attributes = parse_attributes(&record[base..]);
+        let mut rebuilt = record[..base].to_vec();
+        for attribute in &attributes {
+            if attribute.attr_type == data.attr_type
+                && attribute.offset == data.offset
+                && attribute.instance == data.instance
+            {
+                continue;
+            }
+            let at = base + attribute.offset;
+            rebuilt.extend_from_slice(&record[at..at + attribute.attr_len]);
+        }
+
+        let mut grown = record[base + data.offset..base + data.offset + runs_relative].to_vec();
+        grown.resize((runs_relative + encoded.len()).div_ceil(8) * 8, 0);
+        grown[runs_relative..runs_relative + encoded.len()].copy_from_slice(&encoded);
+        let grown_len = grown.len() as u32;
+        grown[4..8].copy_from_slice(&grown_len.to_le_bytes());
+        grown[40..48].copy_from_slice(&u64::from(allocated).to_le_bytes());
+        grown[48..56].copy_from_slice(&u64::from(length).to_le_bytes());
+        grown[56..64].copy_from_slice(&u64::from(length).to_le_bytes());
+        let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
+        grown[24..32].copy_from_slice(&last_vcn.to_le_bytes());
+        rebuilt.extend_from_slice(&grown);
+        rebuilt.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+
+        let used = rebuilt.len();
+        if used + 8 > record.len() {
+            return Err(Error::NoSpace);
+        }
+        rebuilt.resize(record.len(), 0);
+        rebuilt[24..28].copy_from_slice(&(used as u32).to_le_bytes());
+        fs::pack_usa(
+            &mut rebuilt,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            info.bs.bytes_per_sector as usize,
+        );
+
+        // The clusters the file just took have never held its bytes.
+        fs::write_to_runs(
+            &self.device,
+            &info,
+            runs,
+            u64::from(length) - zeros.len() as u64,
+            zeros,
+        )?;
+        let at = self.record_offset(&info, holder)?;
+        fs::write_device_bytes(&self.device, at, &rebuilt)?;
+        self.mft_cache.lock().insert(holder, rebuilt);
+        Ok(())
+    }
+
+    /// Make room in a record by moving one of its attributes into a record of
+    /// its own.
+    ///
+    /// This is the format's answer to a record with no room: the attribute goes
+    /// to an **extension record**, and an `$ATTRIBUTE_LIST` in the record it
+    /// left names every attribute of that record and which record holds it, so
+    /// that a reader is not left guessing.
+    ///
+    /// `keep` is the attribute that must *stay* — the one that has to grow — so
+    /// the room is made with another one, the largest there is.  A record that
+    /// already carries a list refuses (`NotImplemented`), extending one being a
+    /// step of its own, and so does a record the move does not free enough room
+    /// in (`NoSpace`): the list has to fit where the attribute was.
+    fn make_room(&self, record_number: u64, keep: u32) -> Result<()> {
+        let record = self.read_mft_record(record_number)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let base = header.size() as usize;
+        let attributes = parse_attributes(&record[base..]);
+        if attributes
+            .iter()
+            .any(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
+        {
+            return Err(Error::NotImplemented);
+        }
+
+        let moved = attributes
+            .iter()
+            .filter(|attribute| attribute.attr_type != keep)
+            .max_by_key(|attribute| attribute.attr_len)
+            .ok_or(Error::NoSpace)?;
+
+        // The list that takes the moved attribute's place, measured before
+        // anything is taken from the volume: it is a run of entries, one per
+        // attribute, and an entry's length is the name's.
+        let list_len: usize = attributes
+            .iter()
+            .map(|attribute| {
+                fs::list_entry(
+                    attribute.attr_type,
+                    attribute.name.as_deref().unwrap_or(""),
+                    attribute.instance,
+                    0,
+                    0,
+                )
+                .len()
+            })
+            .sum();
+        let list_attribute_len = (24 + list_len).next_multiple_of(8);
+        let free = record.len() - bytes_in_use(&record);
+        if free + moved.attr_len < list_attribute_len {
+            return Err(Error::NoSpace);
+        }
+
+        // The record the attribute goes to: one of the MFT's free space, whose
+        // own header will name the record it belongs to, holding the
+        // attribute's bytes as they lie.
+        let moved_at = base + moved.offset;
+        let moved_bytes = record[moved_at..moved_at + moved.attr_len].to_vec();
+        let (extension, _) = self.claim_record(NewRecord::Extension {
+            base: record_number,
+            attributes: alloc::vec![moved_bytes],
+        })?;
+
+        let base_reference = {
+            let sequence = u16::from_le_bytes([record[16], record[17]]);
+            record_number | (u64::from(sequence) << 48)
+        };
+        let extension_reference = {
+            let extension_record = self.read_mft_record(extension)?;
+            let sequence = u16::from_le_bytes([extension_record[16], extension_record[17]]);
+            extension | (u64::from(sequence) << 48)
+        };
+        let mut list_value: Vec<u8> = Vec::new();
+        for attribute in &attributes {
+            let holder = if attribute.offset == moved.offset {
+                extension_reference
+            } else {
+                base_reference
+            };
+            list_value.extend_from_slice(&fs::list_entry(
+                attribute.attr_type,
+                attribute.name.as_deref().unwrap_or(""),
+                attribute.instance,
+                0,
+                holder,
+            ));
+        }
+        let instance = u16::from_le_bytes([record[40], record[41]]);
+        let list_attribute =
+            fs::resident_attribute(ATTR_TYPE_ATTRIBUTE_LIST, "", instance, &list_value);
+
+        // The record, rebuilt without the attribute and with the list where its
+        // own type sorts among the attributes that stayed.
+        let mut rebuilt = record[..base].to_vec();
+        let mut inserted = false;
+        for attribute in &attributes {
+            if attribute.offset == moved.offset {
+                continue;
+            }
+            if !inserted && attribute.attr_type > ATTR_TYPE_ATTRIBUTE_LIST {
+                rebuilt.extend_from_slice(&list_attribute);
+                inserted = true;
+            }
+            let at = base + attribute.offset;
+            rebuilt.extend_from_slice(&record[at..at + attribute.attr_len]);
+        }
+        if !inserted {
+            rebuilt.extend_from_slice(&list_attribute);
+        }
+        rebuilt.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+
+        let used = rebuilt.len();
+        if used + 8 > record.len() {
+            return Err(Error::NoSpace);
+        }
+        rebuilt.resize(record.len(), 0);
+        rebuilt[24..28].copy_from_slice(&(used as u32).to_le_bytes());
+        rebuilt[40..42].copy_from_slice(&instance.wrapping_add(1).to_le_bytes());
+
+        let (at, sector) = {
+            let info = self.info.lock();
+            (
+                self.record_offset(&info, record_number)?,
+                info.bs.bytes_per_sector as usize,
+            )
+        };
+        fs::pack_usa(
+            &mut rebuilt,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            sector,
+        );
+        fs::write_device_bytes(&self.device, at, &rebuilt)?;
+        self.mft_cache.lock().insert(record_number, rebuilt);
+        Ok(())
     }
 
     /// The extension records a record's `$ATTRIBUTE_LIST` puts its attributes
@@ -657,9 +994,9 @@ impl NtfsFs {
             // A resident bitmap is a value inside the record, so the field
             // write and the record it lives in go together — which only a
             // record whose attributes are not listed is a writer's to make.
+            let data = own_attribute(BITMAP_RECORD, &attributes, ATTR_TYPE_DATA)?;
             let record = self.read_mft_record(BITMAP_RECORD)?;
             let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-            let data = own_attribute(&record, ATTR_TYPE_DATA)?;
             let record_at = self.record_offset(&info, BITMAP_RECORD)?;
             let at =
                 record_at + header.size() as u64 + data.offset as u64 + data.value_offset as u64;
@@ -749,7 +1086,7 @@ impl NtfsFs {
         // The node's own offset is an offset in the bytes this record holds,
         // so the index root has to be one of them: one an `$ATTRIBUTE_LIST`
         // moved is a directory shape this driver does not change yet.
-        let root = own_attribute(&record, ATTR_TYPE_INDEX_ROOT)?;
+        let root = own_attribute(parent_record, &attributes, ATTR_TYPE_INDEX_ROOT)?;
 
         // An index *root*'s node begins after the root header — the indexed
         // attribute's type, the collation rule and the buffer size — and the
@@ -817,7 +1154,8 @@ impl NtfsFs {
         match home {
             IndexHome::Record => {
                 let header = MftRecordHeader::parse(buffer).ok_or(Error::InvalidArgument)?;
-                let root = own_attribute(buffer, ATTR_TYPE_INDEX_ROOT)?;
+                let attributes = self.attributes_of(parent_record)?;
+                let root = own_attribute(parent_record, &attributes, ATTR_TYPE_INDEX_ROOT)?;
                 let attr_at = header.size() as usize + root.offset;
 
                 // What the node's entries come to, and whether the record has
@@ -928,32 +1266,45 @@ impl NtfsFs {
             size,
         );
 
-        let (mut buffer, node, home) = self.index_leaf(parent_record)?;
-        let parsed = parse_index_node(&buffer, node);
-        let Some((terminator, rest)) = parsed.entries.split_last() else {
-            return Err(Error::InvalidArgument);
-        };
-        // The terminator is the entry no name follows, and it stays last.
-        if terminator.name.is_some() {
-            return Err(Error::InvalidArgument);
-        }
+        // Two attempts: a directory whose own record has no room for the longer
+        // value makes it the way a file does — an attribute moves into a record
+        // of its own — and that changes where the node is, so the whole
+        // insertion is worked out again.
+        for attempt in 0..2 {
+            let (mut buffer, node, home) = self.index_leaf(parent_record)?;
+            let parsed = parse_index_node(&buffer, node);
+            let Some((terminator, rest)) = parsed.entries.split_last() else {
+                return Err(Error::InvalidArgument);
+            };
+            // The terminator is the entry no name follows, and it stays last.
+            if terminator.name.is_some() {
+                return Err(Error::InvalidArgument);
+            }
 
-        let mut raws: Vec<Vec<u8>> = rest
-            .iter()
-            .map(|entry| buffer[entry.offset..entry.offset + entry.length].to_vec())
-            .collect();
-        let place =
-            rest.iter()
+            let mut raws: Vec<Vec<u8>> = rest
+                .iter()
+                .map(|entry| buffer[entry.offset..entry.offset + entry.length].to_vec())
+                .collect();
+            let place = rest
+                .iter()
                 .position(|existing| {
                     existing.name.as_ref().is_some_and(|existing| {
                         compare_names(name, &existing.name, &upcase).is_lt()
                     })
                 })
                 .unwrap_or(rest.len());
-        raws.insert(place, entry);
-        raws.push(buffer[terminator.offset..terminator.offset + terminator.length].to_vec());
+            raws.insert(place, entry.clone());
+            raws.push(buffer[terminator.offset..terminator.offset + terminator.length].to_vec());
 
-        self.write_index_leaf(parent_record, &mut buffer, node, &raws, &home)
+            match self.write_index_leaf(parent_record, &mut buffer, node, &raws, &home) {
+                Ok(()) => return Ok(()),
+                Err(Error::NoSpace) if attempt == 0 && matches!(home, IndexHome::Record) => {
+                    self.make_room(parent_record, ATTR_TYPE_INDEX_ROOT)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(Error::NoSpace)
     }
 
     /// Take a name out of a directory's index.
@@ -1006,10 +1357,28 @@ impl NtfsFs {
     /// cluster and looks again, once: a growth that cannot be made is the
     /// volume being full.
     fn claim_mft_record(&self, parent: u64, name: &str, directory: bool) -> Result<(u64, u16)> {
-        let parent_reference = {
-            let parent_record = self.read_mft_record(parent)?;
-            let sequence = u16::from_le_bytes([parent_record[16], parent_record[17]]);
-            parent | (u64::from(sequence) << 48)
+        self.claim_record(NewRecord::Named {
+            parent,
+            name,
+            directory,
+        })
+    }
+
+    /// Put a record into the MFT's first free slot, and answer its number and
+    /// its sequence.
+    ///
+    /// What the record *is* is the caller's: a file's own record carries its
+    /// name and the attributes a new file has, and an extension record carries
+    /// attributes another record's list names and a reference back to it.
+    fn claim_record(&self, what: NewRecord<'_>) -> Result<(u64, u16)> {
+        let base_reference = {
+            let base = match &what {
+                NewRecord::Named { parent, .. } => *parent,
+                NewRecord::Extension { base, .. } => *base,
+            };
+            let base_record = self.read_mft_record(base)?;
+            let sequence = u16::from_le_bytes([base_record[16], base_record[17]]);
+            base | (u64::from(sequence) << 48)
         };
 
         // One growth is enough for one record: the MFT grows by at least a
@@ -1061,22 +1430,38 @@ impl NtfsFs {
                 // would leave a record in use that the volume would hand out
                 // again.
                 self.set_mft_bitmap(number, true)?;
-                let attributes = record_attributes(
-                    parent_reference,
-                    name,
-                    directory,
-                    index_block_size,
-                    cluster_size,
-                );
-                let record = fs::build_record(
+                let (flags, link_count, attributes, extension) = match &what {
+                    NewRecord::Named {
+                        name, directory, ..
+                    } => (
+                        if *directory { 0x03 } else { 0x01 },
+                        1,
+                        record_attributes(
+                            base_reference,
+                            name,
+                            *directory,
+                            index_block_size,
+                            cluster_size,
+                        ),
+                        false,
+                    ),
+                    NewRecord::Extension { attributes, .. } => (0x01, 0, attributes.clone(), true),
+                };
+                let mut record = fs::build_record(
                     record_size as usize,
                     sector_size,
                     number,
                     sequence,
-                    if directory { 0x03 } else { 0x01 },
-                    1,
+                    flags,
+                    link_count,
                     &attributes,
                 );
+                if extension {
+                    // The record names the record it belongs to: the base
+                    // reference is the field that says so, and a record that
+                    // has one has no name of its own for a directory to list.
+                    record[32..40].copy_from_slice(&base_reference.to_le_bytes());
+                }
                 fs::write_device_bytes(&self.device, at, &record)?;
                 // Whatever the mount had of this number is not what is there
                 // now.
@@ -1122,14 +1507,15 @@ impl NtfsFs {
         let record = self.read_mft_record(MFT_RECORD)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
         let base = header.size() as usize;
+        let attributes = self.attributes_of(MFT_RECORD)?;
         // Growing the MFT rewrites the record that holds its runs, so an
         // attribute an `$ATTRIBUTE_LIST` moved is out of this one's reach.
-        let data = own_attribute(&record, ATTR_TYPE_DATA)?;
+        let data = own_attribute(MFT_RECORD, &attributes, ATTR_TYPE_DATA)?;
         // A resident `$MFT` is a volume whose records are inside its own
         // record, and growing that is a conversion this driver does not make.
         let data_runs_offset = data.data_runs_offset.ok_or(Error::NotImplemented)?;
-        let bitmap = match own_attribute(&record, ATTR_TYPE_BITMAP) {
-            Ok(bitmap) => Some(bitmap),
+        let bitmap = match own_attribute(MFT_RECORD, &attributes, ATTR_TYPE_BITMAP) {
+            Ok(bitmap) => Some(bitmap.clone()),
             Err(Error::NotFound) => None,
             Err(error) => return Err(error),
         };
@@ -1339,8 +1725,8 @@ impl NtfsFs {
         if bitmap.data_runs_offset.is_none() {
             // A bitmap the record holds itself: the field change and the
             // record it lives in go together.
+            let bitmap = own_attribute(MFT_RECORD, &attributes, ATTR_TYPE_BITMAP)?;
             let record = self.read_mft_record(MFT_RECORD)?;
-            let bitmap = own_attribute(&record, ATTR_TYPE_BITMAP)?;
             if index >= bitmap.content.len() {
                 return Err(Error::InvalidArgument);
             }
@@ -1437,10 +1823,11 @@ impl NtfsFs {
     fn volume_flags_offset(&self) -> Result<u64> {
         let record = self.read_mft_record(VOLUME_RECORD)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let attributes = self.attributes_of(VOLUME_RECORD)?;
         // The flags are a field in this record: keeping them in step is a
-        // rewrite of the record, which a record whose attributes are listed is
-        // not this driver's to make yet.
-        let information = own_attribute(&record, ATTR_TYPE_VOLUME_INFORMATION)?;
+        // rewrite of the record, so an attribute that has moved out of it is
+        // not one this driver can keep in step.
+        let information = own_attribute(VOLUME_RECORD, &attributes, ATTR_TYPE_VOLUME_INFORMATION)?;
         // The lock is taken here and not around the read above: reading a
         // record takes it too, and a lock held across that is a lock held
         // against itself.
@@ -1497,7 +1884,6 @@ impl NtfsFs {
             .unwrap_or(0);
         Ok(Arc::new(NtfsVnode {
             fs: Arc::new(self.clone()),
-            mft_record: SpinLock::new(record),
             mft_record_number: SpinLock::new(record_number),
             first_cluster: SpinLock::new(first_cluster),
             file_size: SpinLock::new(if header.is_dir() {
@@ -1695,7 +2081,6 @@ pub struct NtfsVnode {
     /// The name its parent's index gives it.
     pub name: String,
     pub fs: Arc<NtfsFs>,
-    pub mft_record: SpinLock<Vec<u8>>,
     pub mft_record_number: SpinLock<u64>,
     pub first_cluster: SpinLock<u64>,
     pub file_size: SpinLock<u64>,
@@ -1781,9 +2166,6 @@ impl VNode for NtfsVnode {
         // locks below: reading a record takes the same lock `info` is.
         let number = *self.mft_record_number.lock();
         let attributes = self.fs.attributes_of(number)?;
-        let info = self.fs.info.lock();
-        let mut record = self.mft_record.lock();
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
         let data = attributes
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
@@ -1792,35 +2174,38 @@ impl VNode for NtfsVnode {
         if data.data_runs_offset.is_none() {
             // A resident file's bytes are in the record itself, so the field
             // write is the data write — and the volume is where the record is.
-            // A record whose attributes are listed is not one this rewrite is
-            // for.
-            let data = own_attribute(&record, ATTR_TYPE_DATA)?;
+            let data = own_attribute(number, &attributes, ATTR_TYPE_DATA)?;
+            let info = self.fs.info.lock();
+            let mut record = self.fs.read_mft_record(number)?;
+            let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
             let length = self.size().min(data.content.len());
             let start = (offset as usize).min(length);
             let take = (length - start).min(buffer.len());
             if take == 0 {
                 return Ok(0);
             }
-            let record_at = self
-                .fs
-                .record_offset(&info, *self.mft_record_number.lock())?;
+            let record_at = self.fs.record_offset(&info, number)?;
             let field = record_at
                 + (header.size() as u64 + data.offset as u64 + data.value_offset as u64)
                 + start as u64;
             fs::write_device_bytes(&self.fs.device, field, &buffer[..take])?;
-            // The bytes are the file's now, in the record this node holds and
-            // in the mount's copy of it: a read asks for the record by number,
-            // and a copy left behind would answer with the bytes it had.
+            // The bytes are the file's now, in the mount's copy of the record
+            // as well: a read asks for the record by number, and a copy left
+            // behind would answer with the bytes it had.
             let at = header.size() as usize + data.offset + data.value_offset + start;
             record[at..at + take].copy_from_slice(&buffer[..take]);
-            self.fs.mft_cache.lock().insert(number, record.clone());
+            self.fs.mft_cache.lock().insert(number, record);
             return Ok(take);
         }
 
+        let info = self.fs.info.lock();
         let written = fs::write_to_runs(&self.fs.device, &info, &data.data_runs, offset, buffer)?;
         Ok(written)
     }
 
+    /// Change how long a file is, claiming clusters for a growth and moving
+    /// the attribute into a record of its own when the one it is in has no room
+    /// left.
     fn set_len(&self, len: u64) -> Result<()> {
         if self.kind() != NodeKind::File {
             return Err(Error::InvalidArgument);
@@ -1831,271 +2216,118 @@ impl VNode for NtfsVnode {
             return Ok(());
         }
 
-        // Raised before the locks below, for the same reason the write raises
-        // it there: setting the flag reads a record.
+        // Raised before the work below, for the same reason the write raises it
+        // there: setting the flag reads a record.
         self.fs.set_dirty(true)?;
 
-        // A growth's clusters are taken **before** the locks below: claiming
-        // reads and writes the bitmap, which are record reads, and a lock held
-        // across that is a lock held against itself.
+        let number = *self.mft_record_number.lock();
+        let attributes = self.fs.attributes_of(number)?;
+        let data = attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?
+            .clone();
+
+        // A growth's clusters are taken **before** the record is touched:
+        // claiming reads and writes the volume's bitmap, which are record
+        // reads.
         let needs = {
-            let info = self.fs.info.lock();
-            let record = self.mft_record.lock();
-            let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-            let _ = header;
-            // A record whose attributes are listed is one this writer does not
-            // grow (see below): its `$DATA` here would not be the whole one.
-            let data = own_attribute(&record, ATTR_TYPE_DATA)?;
-            let held: u64 = if data.data_runs_offset.is_none() {
-                0
+            if data.data_runs_offset.is_none() {
+                None
             } else {
-                data.data_runs
+                let info = self.fs.info.lock();
+                let held: u64 = data
+                    .data_runs
                     .iter()
                     .map(|run| run.cluster_count)
                     .sum::<u64>()
-                    * u64::from(info.cluster_size)
-            };
-            (data.data_runs_offset.is_some() && u64::from(length) > held)
-                .then(|| (u64::from(length) - held).div_ceil(u64::from(info.cluster_size)))
+                    * u64::from(info.cluster_size);
+                (u64::from(length) > held)
+                    .then(|| (u64::from(length) - held).div_ceil(u64::from(info.cluster_size)))
+            }
         };
         let claim = match needs {
             Some(needed) => Some((needed, self.fs.claim_clusters(needed)?)),
             None => None,
         };
 
-        let info = self.fs.info.lock();
-        let mut record = self.mft_record.lock();
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        // Growing a file rewrites the attribute that says how long it is, so a
-        // record whose attributes are *listed* is not one this writer grows:
-        // the attribute can be a first part that continues in another record,
-        // and its run list here would not be the whole one.
-        let data = own_attribute(&record, ATTR_TYPE_DATA)?;
-
-        // A resident value can only shrink: growing it would need the record's
-        // own room and its bookkeeping.  A file with runs can be as long as
-        // those runs add up to, and past that it *claims clusters*.
-        let mut runs = data.data_runs.clone();
-        let allocated = if data.data_runs_offset.is_none() {
-            if length > current {
-                return Err(Error::NoSpace);
+        let growth = self.grow_data(&data, claim, length, current);
+        // A record with no room for the longer run list is what the format
+        // gives an attribute list for: the attribute goes into a record of its
+        // own, which has the room the old one did not, and the run list follows
+        // it there.
+        let growth = match growth {
+            Err(Error::NoSpace) if data.holder == number => {
+                self.fs.make_room(number, ATTR_TYPE_DATA)?;
+                let attributes = self.fs.attributes_of(number)?;
+                let data = attributes
+                    .iter()
+                    .find(|attribute| attribute.attr_type == ATTR_TYPE_DATA)
+                    .ok_or(Error::NotFound)?
+                    .clone();
+                self.grow_data(&data, claim, length, current)
             }
-            current
-        } else {
-            let clusters: u64 = data.data_runs.iter().map(|run| run.cluster_count).sum();
-            let mut allocated = clusters * u64::from(info.cluster_size);
-            if let Some((needed, first)) = claim {
-                // The run list sits at an offset from the *attribute's* start,
-                // which is what the room it has is measured from.
-                let attr_len = data.attr_len;
-                let runs_relative =
-                    data.data_runs_offset.ok_or(Error::InvalidArgument)? - data.offset;
-                let encoded_length = fs::encode_runs(
-                    &[
-                        runs.clone(),
-                        alloc::vec![DataRun {
-                            lcn: first as i64,
-                            cluster_count: needed,
-                        }],
-                    ]
-                    .concat(),
-                )
-                .len();
-                // The run list has to fit where the old one did: an attribute
-                // that has outgrown its room **moves**, and with it everything
-                // after it in the record.
-                if runs_relative + encoded_length > attr_len {
-                    runs.push(DataRun {
-                        lcn: first as i64,
-                        cluster_count: needed,
-                    });
-                    allocated += needed * u64::from(info.cluster_size);
-                    let encoded = fs::encode_runs(&runs);
-                    let zeros = alloc::vec![0u8; (allocated - u64::from(current)) as usize];
-                    self.relocate_run_list(
-                        &info,
-                        &mut record,
-                        &header,
-                        &data.clone(),
-                        &runs,
-                        runs_relative,
-                        &encoded,
-                        length,
-                        allocated as u32,
-                        &zeros,
-                    )?;
-                    *self.file_size.lock() = u64::from(length);
-                    return Ok(());
-                }
-                runs.push(DataRun {
-                    lcn: first as i64,
-                    cluster_count: needed,
-                });
-                allocated += needed * u64::from(info.cluster_size);
-            }
-            allocated as u32
+            other => other,
         };
-        let grew = runs.len() > data.data_runs.len();
+        growth?;
 
-        let record_at = self
-            .fs
-            .record_offset(&info, *self.mft_record_number.lock())?;
-        let attr_at = record_at + header.size() as u64 + data.offset as u64;
-        if data.data_runs_offset.is_none() {
-            // The value's length, in the header the attribute carries.
-            fs::write_device_bytes(&self.fs.device, attr_at + 16, &length.to_le_bytes())?;
-        } else {
-            if grew {
-                // The run list, and the three sizes that say how much of the
-                // file's space is spoken for.  A run that was appended is what
-                // the mapping pairs have to spell; the bytes it claims are
-                // written as zeros, which is what a file that has just grown
-                // holds and what its initialized size then says it holds.
-                let encoded = fs::encode_runs(&runs);
-                let runs_relative =
-                    data.data_runs_offset.ok_or(Error::InvalidArgument)? - data.offset;
-                let room = data.attr_len - runs_relative;
-                let mut field = alloc::vec![0u8; room];
-                field[..encoded.len()].copy_from_slice(&encoded);
-                fs::write_device_bytes(&self.fs.device, attr_at + runs_relative as u64, &field)?;
-
-                // And the node's own copy of the record says the same: a stale
-                // run list here would answer with the length the file had.
-                let at = header.size() as usize + data.offset + runs_relative;
-                record[at..at + encoded.len()].copy_from_slice(&encoded);
-                record[at + encoded.len()..at + room].fill(0);
-
-                // The clusters the file just took have never held its bytes,
-                // so they read as zeros until something writes them.
-                let zeros = alloc::vec![0u8; (u64::from(allocated) - u64::from(current)) as usize];
-                fs::write_to_runs(&self.fs.device, &info, &runs, u64::from(current), &zeros)?;
-
-                let mut sizes = [0u8; 16];
-                sizes[..8].copy_from_slice(&u64::from(length).to_le_bytes());
-                sizes[8..].copy_from_slice(&u64::from(length).to_le_bytes());
-                fs::write_device_bytes(&self.fs.device, attr_at + 48, &sizes)?;
-
-                let mut allocated_field = [0u8; 8];
-                allocated_field.copy_from_slice(&u64::from(allocated).to_le_bytes());
-                fs::write_device_bytes(&self.fs.device, attr_at + 40, &allocated_field)?;
-                let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
-                fs::write_device_bytes(&self.fs.device, attr_at + 24, &last_vcn.to_le_bytes())?;
-            }
-            // The data size and the initialized size, adjacent in a
-            // non-resident header: a shorter file has no initialized bytes
-            // beyond its length.
-            let mut field = [0u8; 16];
-            field[..8].copy_from_slice(&u64::from(length).to_le_bytes());
-            field[8..].copy_from_slice(&u64::from(length).to_le_bytes());
-            fs::write_device_bytes(&self.fs.device, attr_at + 48, &field)?;
-        }
-
-        // The record this node holds says the same thing now.
-        {
-            let at = header.size() as usize + data.offset + 16;
-            if data.data_runs_offset.is_none() {
-                record[at..at + 4].copy_from_slice(&length.to_le_bytes());
-            } else {
-                let at = header.size() as usize + data.offset + 48;
-                record[at..at + 8].copy_from_slice(&u64::from(length).to_le_bytes());
-                record[at + 8..at + 16].copy_from_slice(&u64::from(length).to_le_bytes());
-            }
-        }
-        // And so does the mount's copy of it: a read asks for the record by
-        // number, and a copy left behind would answer with the length the file
-        // *had* — and with a run list that no longer covers it.
-        self.fs
-            .mft_cache
-            .lock()
-            .insert(*self.mft_record_number.lock(), record.clone());
         *self.file_size.lock() = u64::from(length);
         Ok(())
     }
 }
 
 impl NtfsVnode {
-    /// Move a record's `$DATA` to the end of its used area, with a longer run
-    /// list, and write the record whole.
+    /// Take a grown `$DATA` to the record that holds it.
     ///
-    /// A run list that no longer fits the room its attribute has means the
-    /// attribute **moves**: it goes last, and every attribute that followed it
-    /// shifts up by the difference.  That changes the record from end to end,
-    /// so it is written in one piece, with the update sequence array packed —
-    /// the shift crosses sector ends, and a partial write could not leave
-    /// those as they were.
-    ///
-    /// The record has to have the room.  A record with none left at all is the
-    /// MFT growing, which is the stage after this one.
-    #[allow(clippy::too_many_arguments)]
-    fn relocate_run_list(
+    /// The runs are the file's own runs with the claimed one appended, the
+    /// allocated size is what they add up to, and the clusters the growth took
+    /// are written as zeros — they have never held the file's bytes.
+    fn grow_data(
         &self,
-        info: &fs::NtfsInfo,
-        record: &mut Vec<u8>,
-        header: &MftRecordHeader,
         data: &ParsedAttr,
-        runs: &[DataRun],
-        runs_relative: usize,
-        encoded: &[u8],
+        claim: Option<(u64, u64)>,
         length: u32,
-        allocated: u32,
-        zeros: &[u8],
+        current: u32,
     ) -> Result<()> {
-        let base = header.size() as usize;
-        let attributes = parse_attributes(&record[base..]);
+        // An attribute split across records has no one record its fields are
+        // in, so it is not one of these writes can patch.
+        if data.holder == u64::MAX {
+            return Err(Error::NotImplemented);
+        }
+        let holder = data.holder;
+        let cluster_size = {
+            let info = self.fs.info.lock();
+            u64::from(info.cluster_size)
+        };
 
-        // Every attribute as it is, except this one — which goes last, grown.
-        let mut rebuilt = record[..base].to_vec();
-        for attr in &attributes {
-            if attr.attr_type == ATTR_TYPE_DATA && attr.offset == data.offset {
-                continue;
+        let mut runs = data.data_runs.clone();
+        let allocated = if data.data_runs_offset.is_none() {
+            // A resident value can only shrink: growing it would need the
+            // record's own room and its bookkeeping, which is the
+            // resident-to-non-resident conversion.
+            if length > current {
+                return Err(Error::NoSpace);
             }
-            let at = base + attr.offset;
-            rebuilt.extend_from_slice(&record[at..at + attr.attr_len]);
-        }
-
-        let mut grown = record[base + data.offset..base + data.offset + runs_relative].to_vec();
-        grown.resize((runs_relative + encoded.len()).div_ceil(8) * 8, 0);
-        grown[runs_relative..runs_relative + encoded.len()].copy_from_slice(encoded);
-        let grown_len = grown.len() as u32;
-        grown[4..8].copy_from_slice(&grown_len.to_le_bytes());
-        grown[40..48].copy_from_slice(&u64::from(allocated).to_le_bytes());
-        grown[48..56].copy_from_slice(&u64::from(length).to_le_bytes());
-        grown[56..64].copy_from_slice(&u64::from(length).to_le_bytes());
-        let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
-        grown[24..32].copy_from_slice(&last_vcn.to_le_bytes());
-        rebuilt.extend_from_slice(&grown);
-        rebuilt.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
-
-        let used = rebuilt.len();
-        if used + 8 > record.len() {
-            return Err(Error::NoSpace);
-        }
-        rebuilt.resize(record.len(), 0);
-        rebuilt[24..28].copy_from_slice(&(used as u32).to_le_bytes());
-        fs::pack_usa(
-            &mut rebuilt,
-            header.usa_offset as usize,
-            header.usa_count as usize,
-            info.bs.bytes_per_sector as usize,
-        );
-
-        // The clusters the file just took have never held its bytes.
-        fs::write_to_runs(
-            &self.fs.device,
-            info,
-            runs,
-            u64::from(length) - zeros.len() as u64,
-            zeros,
-        )?;
-
-        let number = *self.mft_record_number.lock();
-        let at = self.fs.record_offset(info, number)?;
-        fs::write_device_bytes(&self.fs.device, at, &rebuilt)?;
-
-        // The volume, the cache and this node all say the same thing now.
-        self.fs.mft_cache.lock().insert(number, rebuilt.clone());
-        *record = rebuilt;
-        Ok(())
+            current
+        } else {
+            let clusters: u64 = data.data_runs.iter().map(|run| run.cluster_count).sum();
+            let mut allocated = clusters * cluster_size;
+            if let Some((needed, first)) = claim {
+                runs.push(DataRun {
+                    lcn: first as i64,
+                    cluster_count: needed,
+                });
+                allocated += needed * cluster_size;
+            }
+            allocated as u32
+        };
+        let zeros = if data.data_runs_offset.is_some() && allocated > current {
+            alloc::vec![0u8; (u64::from(allocated) - u64::from(current)) as usize]
+        } else {
+            Vec::new()
+        };
+        self.fs
+            .write_grown_data(holder, data, &runs, allocated, length, &zeros)
     }
 }
 

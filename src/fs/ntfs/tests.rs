@@ -669,30 +669,93 @@ fn an_attribute_that_outgrows_its_room_moves_and_takes_its_neighbours_with_it() 
 }
 
 #[test]
-fn a_run_list_that_cannot_fit_a_full_record_is_refused() {
-    // What the MFT growing gives is *records*, and this is not a record that
-    // is short of records: it is one that is full.  The mechanism the format
-    // has for that is an attribute list, which is a feature of its own — so
-    // until it exists the growth is refused rather than half-made.
+fn a_record_with_no_room_puts_an_attribute_in_an_extension_record() {
+    // A record that has no room left at all is not short of *records*: it is
+    // full, and the mechanism the format has for that is the attribute list.
+    // The attribute that would have to grow stays — the room is made by moving
+    // another one out, the largest there is.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
     let cluster = fixture.cluster_size();
     let node = fs_handle.lookup("/full.bin").expect("full.bin");
     assert_eq!(node.size(), 2 * cluster as usize);
 
-    assert_eq!(node.set_len(3 * cluster), Err(Error::NoSpace));
-    assert_eq!(node.size(), 2 * cluster as usize, "and nothing moved");
+    node.set_len(3 * cluster)
+        .expect("a growth it makes room for");
+    assert_eq!(node.size(), 3 * cluster as usize);
 
-    // The record is the record it was: the file reads, and a second mount
-    // agrees about its length.
-    let mut buf = vec![0u8; 2 * cluster as usize];
-    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
-    assert!(buf.iter().all(|byte| *byte == 0x33));
+    // A second mount reads the longer file: its three clusters, the last one
+    // the growth took and which has never held its bytes.
     let again = remount(&device);
-    assert_eq!(
-        again.lookup("/full.bin").expect("relookup").size(),
-        2 * cluster as usize
+    let reread = again.lookup("/full.bin").expect("relookup");
+    assert_eq!(reread.size(), 3 * cluster as usize);
+    let mut buf = vec![0u8; 3 * cluster as usize];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(buf[..2 * cluster as usize].iter().all(|byte| *byte == 0x33));
+    assert!(buf[2 * cluster as usize..].iter().all(|byte| *byte == 0));
+
+    // The record it left carries a list now, and the attribute that made the
+    // room is in a record of its own — one the volume has spoken for, and which
+    // no directory names.
+    let record = again.read_mft_record(FULL_FILE).expect("the record");
+    let header = super::types::MftRecordHeader::parse(&record).expect("a header");
+    let attributes = super::fs::parse_attributes(&record[header.size() as usize..]);
+    assert!(
+        attributes.iter().any(|attr| attr.attr_type == 0x20),
+        "the record carries a list"
     );
+    assert!(
+        !attributes.iter().any(|attr| attr.attr_type == 0xe0),
+        "and the attribute that made the room has left it"
+    );
+    let list = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0x20)
+        .expect("the list");
+    let entries = super::fs::parse_attribute_list(&list.content);
+    assert_eq!(
+        entries.len(),
+        4,
+        "the standard information, the name, the data, and the one that moved"
+    );
+    let moved = entries
+        .iter()
+        .find(|entry| entry.attr_type == 0xe0)
+        .expect("the moved attribute's entry");
+    let holder = again
+        .read_mft_record(moved.holder)
+        .expect("the record it moved to");
+    assert_eq!(
+        u64::from_le_bytes([
+            holder[32], holder[33], holder[34], holder[35], holder[36], holder[37], holder[38],
+            holder[39]
+        ]) & 0x0000_FFFF_FFFF_FFFF,
+        FULL_FILE,
+        "and that record says which record it belongs to"
+    );
+    let held = super::types::MftRecordHeader::parse(&holder).expect("a header");
+    assert!(
+        super::fs::parse_attributes(&holder[held.size() as usize..])
+            .iter()
+            .any(|attr| attr.attr_type == 0xe0),
+        "and holds it"
+    );
+
+    // The volume has one more record in use than the fixture made.
+    let bits = again
+        .mft_bitmap()
+        .expect("the MFT's bitmap")
+        .expect("a bitmap");
+    let in_use: usize = bits.iter().map(|byte| byte.count_ones() as usize).sum();
+    let was: usize = (0..RECORDS)
+        .filter(|number| is_in_use(*number, false))
+        .count();
+    assert_eq!(in_use, was + 1, "the record the attribute went to");
+
+    // The record is one a writer can still change: a second growth adds another
+    // cluster to the same `$DATA`, which never left the record.
+    node.set_len(4 * cluster).expect("a second growth");
+    assert_eq!(node.size(), 4 * cluster as usize);
 }
 
 #[test]
@@ -871,32 +934,41 @@ fn a_name_added_to_a_directory_grows_its_index_root() {
 }
 
 #[test]
-fn a_name_a_full_record_has_no_room_for_is_refused() {
-    // The other half: a directory whose record *is* full cannot make the value
-    // longer, and the format's answer — an allocation block of its own — is
-    // not built, so the creation refuses rather than half-writing.
+fn a_name_a_full_record_has_no_room_for_makes_its_own_room() {
+    // A directory whose record *is* full: the value the name goes into cannot
+    // grow there, and the room is made the way a file's is — an attribute moves
+    // into a record of its own, and an `$ATTRIBUTE_LIST` says where.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
-    assert_eq!(
-        fs_handle.create_file("/full-dir/another.txt").err(),
-        Some(Error::NoSpace)
-    );
+    fs_handle
+        .create_file("/full-dir/another.txt")
+        .expect("a name in a directory whose record is full");
 
-    // And nothing was left behind: the name is not there, and the record the
-    // creation would have claimed is free again.
+    // A second mount finds the name, and the directory it is in still reads.
     let again = remount(&device);
-    assert!(matches!(
-        again.lookup("/full-dir/another.txt"),
-        Err(Error::NotFound)
-    ));
-    let bits = again
-        .mft_bitmap()
-        .expect("the MFT's bitmap")
-        .expect("a bitmap");
     assert_eq!(
-        bits[16 / 8] & (1 << (16 % 8)),
-        0,
-        "the record a failed creation claimed went back"
+        again
+            .lookup("/full-dir/another.txt")
+            .expect("the new name")
+            .size(),
+        0
+    );
+    let mut names = Vec::new();
+    for index in 0.. {
+        match again.read_dir("/full-dir", index) {
+            Ok(entry) => names.push(entry.name),
+            Err(_) => break,
+        }
+    }
+    assert!(names.iter().any(|name| name == "another.txt"), "{names:?}");
+
+    // And the record that made the room carries a list now.
+    let record = again.read_mft_record(FULL_DIRECTORY).expect("the record");
+    let header = super::types::MftRecordHeader::parse(&record).expect("a header");
+    let attributes = super::fs::parse_attributes(&record[header.size() as usize..]);
+    assert!(
+        attributes.iter().any(|attr| attr.attr_type == 0x20),
+        "the record carries a list"
     );
 }
 
@@ -1115,6 +1187,33 @@ fn a_file_whose_data_has_moved_reads_whole() {
 
 #[test]
 fn a_listed_file_is_read_but_not_grown() {
+    // A file whose `$DATA` an `$ATTRIBUTE_LIST` has *moved whole* into an
+    // extension record is one a growth still works on: the run list is one
+    // record's worth of attribute, and that record is where the fields are
+    // written.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+    let node = fs_handle.lookup("/moved.bin").expect("moved.bin");
+    assert_eq!(node.size(), 2 * cluster as usize);
+    node.set_len(3 * cluster)
+        .expect("a growth in the extension");
+    assert_eq!(node.size(), 3 * cluster as usize);
+
+    let again = remount(&device);
+    let reread = again.lookup("/moved.bin").expect("relookup");
+    assert_eq!(reread.size(), 3 * cluster as usize);
+    let mut buf = vec![0u8; 3 * cluster as usize];
+    assert_eq!(reread.read(0, &mut buf).expect("read"), buf.len());
+    assert!(buf[..cluster as usize].iter().all(|byte| *byte == 0x88));
+    assert!(buf[cluster as usize..2 * cluster as usize]
+        .iter()
+        .all(|byte| *byte == 0x99));
+    assert!(buf[2 * cluster as usize..].iter().all(|byte| *byte == 0));
+}
+
+#[test]
+fn a_split_file_is_read_but_not_grown() {
     // A record whose attributes are *listed* is one this driver reads and does
     // not rewrite yet: the attributes are not all in its bytes, and the ones
     // that are can be the first part of an attribute that continues in another
@@ -2570,6 +2669,7 @@ fn get_best_filename_prefers_win32_over_dos() {
     let dos = ParsedAttr {
         attr_type: ATTR_TYPE_FILENAME,
         instance: 2,
+        holder: 24,
         name: None,
         offset: 0,
         value_offset: 24,
@@ -2582,6 +2682,7 @@ fn get_best_filename_prefers_win32_over_dos() {
     let win32 = ParsedAttr {
         attr_type: ATTR_TYPE_FILENAME,
         instance: 3,
+        holder: 24,
         name: None,
         offset: 0,
         value_offset: 24,

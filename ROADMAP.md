@@ -155,9 +155,13 @@ The authoritative picture of what exists today is
   record names each attribute and the record that holds it, an attribute can be
   split across records by virtual cluster number, and the reader answers with
   the one attribute the parts are — which is what makes a volume another writer
-  took apart readable here.  What is left of the stage is *writing* one, which
-  is what would let a record that is *full* grow, and the
-  `$INDEX_ALLOCATION` a directory whose record is full needs.
+  took apart readable here.  It is *written* now too: a record with no room
+  moves its largest attribute that is not the one that has to grow into an
+  extension record of its own, and the list names where everything went — so a
+  record that is *full* grows.  What is left of the stage is extending a list a
+  record already has, the `$INDEX_ALLOCATION` a directory full of entries needs,
+  and moving the attribute that has to grow itself, which is what the format
+  does when nothing else can spare the room.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

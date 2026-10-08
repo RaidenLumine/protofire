@@ -255,7 +255,10 @@ what stage 1's record serialisation is for.
   into the record's own free space when a name does not fit.  What is still
   open is the other answer to a name that does not fit: a record with no room
   gets an allocation block of its own, and with it the index bitmap's bits.
-  A name that arrives at such a record is refused until then.
+  *Stage 4b* makes such a record's *room* by moving another attribute into an
+  extension record, which is enough while the record has one to spare; the
+  block of its own — a record full of index entries and nothing else — is not
+  built.
 - **Compressed, encrypted and sparse `$DATA`.**  `docs/status.md` records
   that they are not covered.  Writing one is a different problem from writing
   a plain runlist — compression units, EFS metadata, and runs that name no
@@ -429,7 +432,10 @@ being something a partial write can ignore.
   last line.
 - So the refusal stands, and it is now **verified**: the fixture carries a file
   whose record is full to within its end marker, and one more run is
-  `NoSpace` — with nothing moved, and a second mount agreeing.
+  `NoSpace` — with nothing moved, and a second mount agreeing.  *(Stage 4b
+  turns that growth into the one the format gives a record with no room: the
+  run list stays where a writer can patch it, and another attribute moves into
+  a record of its own.)*
 - The MFT's own growth, then, is what *creating* a record needs, which is stage
   3's business and not a full run list's.
 - One test: the fixture's *tight* file has a `$DATA` with two runs, no room to
@@ -520,7 +526,8 @@ being something a partial write can ignore.
   `$INDEX_ALLOCATION` block of its own.  The fixture carries a directory whose
   record is full to within its end marker, so the refusal is verified rather
   than implemented — and a name a *failed* creation claimed has given its
-  `$MFT` bit back.
+  `$MFT` bit back.  *(Stage 4b makes such a record grow instead: the attribute
+  that could not grow stays, and another one moves out of the way.)*
 - A removal refuses a directory that still holds something (`Busy`, as ISO
   9660 does): its children's names are in *its* index, and a walk that reached
   it would find entries whose parent the volume no longer has.  An empty one
@@ -617,3 +624,45 @@ being something a partial write can ignore.
   unnamed; a listed file is refused a length change and still takes an
   overwrite; and a removal gives the extension record and the list's own
   cluster back.
+
+**Stage 4b — writing one: an attribute that moves.**
+
+- A record with no room now answers with the list, instead of refusing: **an
+  attribute moves into an extension record**, and the `$ATTRIBUTE_LIST` the
+  record it left carries names every attribute of that record and which record
+  holds it.  This is the mechanism stage 2b named and refused, and the one the
+  measured volume had already used.
+- **Which attribute moves**: the largest one that is *not* the one that has to
+  grow, so the attribute a writer is about to patch stays where it is.  A
+  record full because of its `$DATA`'s run list therefore makes room with
+  something else — the fixture's file is full because of a filler attribute,
+  and the filler is what leaves.
+- The record it goes to is **claimed out of the MFT's free space** like any
+  other, growing the MFT when it has to, and its own header carries the base
+  reference: in use, no name of its own, and no link to count — which is the
+  shape the measured extension record (record 74, holding a directory's
+  `$INDEX_ROOT`) had.  The bytes that move are the attribute's *as they lay*,
+  so a writer's own flags and padding survive the move.
+- The list joins the record **where its own type sorts** — between
+  `$STANDARD_INFORMATION` and `$FILE_NAME`, which is where the measured volume
+  keeps it — and `bytes_in_use` and the next attribute instance follow it.  The
+  record goes back whole, its update sequence array packed again.
+- The reader's view is what the writer walks: the merged attributes are what
+  `set_len` finds its `$DATA` in and what the removal walks to give clusters
+  and extension records back, which stage 4a had already pinned.
+- **What is refused, and why.**  A record that *already* carries a list
+  (`NotImplemented`): extending one is a step of its own, and the fixture does
+  not carry a record that needs it.  A record the move does not free enough
+  room in (`NoSpace`): the list has to fit where the attribute was, and the
+  fixture does not carry that shape either, so both of those paths are
+  *implemented* and not yet *verified*.  A `$DATA` **split** across records is
+  grown only where a writer can name one record's bytes, so the split fixture
+  file is still refused a length change — while a file whose `$DATA` has
+  *moved whole* into an extension record grows there.
+- Three tests: a file whose record is full grows, its third cluster reading as
+  zeros and a second mount agreeing — with the run list in the room the move
+  made, the base record carrying a list, the moved attribute in a record whose
+  own header points back, the volume one record further into its MFT, and a
+  *second* growth landing in the same record; a directory whose record is full
+  takes a name the same way; and a file whose `$DATA` already lives in an
+  extension record grows *there*.

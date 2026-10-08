@@ -403,6 +403,7 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
             attr_type,
             instance,
             name,
+            holder: u64::MAX,
             offset,
             value_offset: u16::from_le_bytes([buf[offset + 20], buf[offset + 21]]) as usize,
             attr_len: attr_len as usize,
@@ -646,6 +647,35 @@ pub struct AttributeListEntry {
     /// The record that holds this part, and its sequence number.
     pub holder: u64,
     pub sequence: u16,
+}
+
+/// Write one `$ATTRIBUTE_LIST` entry: an attribute, and the record that holds
+/// it.
+///
+/// The entry is 26 bytes and padded to eight — the type, the entry's own
+/// length, the name's length and where it begins, the lowest virtual cluster
+/// number this part of the attribute covers, the record that holds it and the
+/// attribute's instance number — and the name follows the header.
+pub fn list_entry(
+    attr_type: u32,
+    name: &str,
+    instance: u16,
+    lowest_vcn: u64,
+    holder: u64,
+) -> Vec<u8> {
+    let name_bytes: Vec<u8> = name.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut entry = vec![0u8; 26];
+    put_u32_le(&mut entry, 0, attr_type);
+    entry[6] = (name_bytes.len() / 2) as u8;
+    entry[7] = 26; // where a name begins
+    put_u64_le(&mut entry, 8, lowest_vcn);
+    put_u64_le(&mut entry, 16, holder);
+    put_u16_le(&mut entry, 24, instance);
+    entry.extend_from_slice(&name_bytes);
+    let length = entry.len().div_ceil(8) * 8;
+    entry.resize(length, 0);
+    put_u16_le(&mut entry, 4, length as u16);
+    entry
 }
 
 /// Read the entries of an `$ATTRIBUTE_LIST` value.

@@ -199,6 +199,18 @@ pub struct ParsedAttr {
     pub instance: u16,
     /// The attribute's name, when it has one.
     pub name: Option<String>,
+    /// The record whose bytes the attribute is *wholly* in, or `u64::MAX` when
+    /// there is no one such record.
+    ///
+    /// A writer patches a field where it lies, and the field of an attribute
+    /// an `$ATTRIBUTE_LIST` moved to an extension record lies in that record —
+    /// while a non-resident attribute *split* across records by virtual
+    /// cluster number lies in none of them, so patching "its run list" would
+    /// patch a part of it.  [`parse_attributes`](super::fs::parse_attributes)
+    /// does not know which record it is looking at and says `u64::MAX`;
+    /// [`NtfsFs::attributes_of`](super::NtfsFs::attributes_of) says which
+    /// record, or `u64::MAX` for one that is in several.
+    pub holder: u64,
     /// Where the attribute's own record begins, in the buffer it was parsed
     /// from: a field a writer changes is at an offset from here, and the
     /// volume is what knows where that buffer lives.
@@ -570,6 +582,7 @@ mod tests {
         let dos = ParsedAttr {
             attr_type: ATTR_TYPE_FILENAME,
             instance: 2,
+            holder: 24,
             name: None,
             offset: 0,
             value_offset: 24,
@@ -582,6 +595,7 @@ mod tests {
         let win32 = ParsedAttr {
             attr_type: ATTR_TYPE_FILENAME,
             instance: 3,
+            holder: 24,
             name: None,
             offset: 0,
             value_offset: 24,
