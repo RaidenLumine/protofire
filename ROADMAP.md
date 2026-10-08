@@ -135,9 +135,9 @@ The authoritative picture of what exists today is
   inside what the file already has, with the volume's dirty bit up until it is
   synced.  Growth followed: the `$Bitmap` is read as a file, clusters are
   claimed, and the run list is rewritten by the mapping pairs' rules.  What is
-  left of the stage is an attribute that has outgrown its room — which is
-  where the update sequence array stops being ignorable — and the MFT's own
-  expansion.
+  left of the stage is a record with no room at all, which is the MFT's own
+  expansion: an attribute that has outgrown its room now *moves* inside the
+  record, and the update sequence array is packed again for it.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

@@ -703,10 +703,30 @@ impl VNode for NtfsVnode {
                 )
                 .len();
                 // The run list has to fit where the old one did: an attribute
-                // that has outgrown its room is relocated, and that is the
-                // stage after this one.
+                // that has outgrown its room **moves**, and with it everything
+                // after it in the record.
                 if runs_relative + encoded_length > attr_len {
-                    return Err(Error::NoSpace);
+                    runs.push(DataRun {
+                        lcn: first as i64,
+                        cluster_count: needed,
+                    });
+                    allocated += needed * u64::from(info.cluster_size);
+                    let encoded = fs::encode_runs(&runs);
+                    let zeros = alloc::vec![0u8; (allocated - u64::from(current)) as usize];
+                    self.relocate_run_list(
+                        &info,
+                        &mut record,
+                        &header,
+                        &data.clone(),
+                        &runs,
+                        runs_relative,
+                        &encoded,
+                        length,
+                        allocated as u32,
+                        &zeros,
+                    )?;
+                    *self.file_size.lock() = u64::from(length);
+                    return Ok(());
                 }
                 runs.push(DataRun {
                     lcn: first as i64,
@@ -748,7 +768,7 @@ impl VNode for NtfsVnode {
 
                 // The clusters the file just took have never held its bytes,
                 // so they read as zeros until something writes them.
-                let zeros = alloc::vec![0u8; (allocated as u64 - u64::from(current)) as usize];
+                let zeros = alloc::vec![0u8; (u64::from(allocated) - u64::from(current)) as usize];
                 fs::write_to_runs(&self.fs.device, &info, &runs, u64::from(current), &zeros)?;
 
                 let mut sizes = [0u8; 16];
@@ -783,6 +803,92 @@ impl VNode for NtfsVnode {
             }
         }
         *self.file_size.lock() = u64::from(length);
+        Ok(())
+    }
+}
+
+impl NtfsVnode {
+    /// Move a record's `$DATA` to the end of its used area, with a longer run
+    /// list, and write the record whole.
+    ///
+    /// A run list that no longer fits the room its attribute has means the
+    /// attribute **moves**: it goes last, and every attribute that followed it
+    /// shifts up by the difference.  That changes the record from end to end,
+    /// so it is written in one piece, with the update sequence array packed —
+    /// the shift crosses sector ends, and a partial write could not leave
+    /// those as they were.
+    ///
+    /// The record has to have the room.  A record with none left at all is the
+    /// MFT growing, which is the stage after this one.
+    #[allow(clippy::too_many_arguments)]
+    fn relocate_run_list(
+        &self,
+        info: &fs::NtfsInfo,
+        record: &mut Vec<u8>,
+        header: &MftRecordHeader,
+        data: &ParsedAttr,
+        runs: &[DataRun],
+        runs_relative: usize,
+        encoded: &[u8],
+        length: u32,
+        allocated: u32,
+        zeros: &[u8],
+    ) -> Result<()> {
+        let base = header.size() as usize;
+        let attributes = parse_attributes(&record[base..]);
+
+        // Every attribute as it is, except this one — which goes last, grown.
+        let mut rebuilt = record[..base].to_vec();
+        for attr in &attributes {
+            if attr.attr_type == ATTR_TYPE_DATA && attr.offset == data.offset {
+                continue;
+            }
+            let at = base + attr.offset;
+            rebuilt.extend_from_slice(&record[at..at + attr.attr_len]);
+        }
+
+        let mut grown = record[base + data.offset..base + data.offset + runs_relative].to_vec();
+        grown.resize((runs_relative + encoded.len()).div_ceil(8) * 8, 0);
+        grown[runs_relative..runs_relative + encoded.len()].copy_from_slice(encoded);
+        let grown_len = grown.len() as u32;
+        grown[4..8].copy_from_slice(&grown_len.to_le_bytes());
+        grown[40..48].copy_from_slice(&u64::from(allocated).to_le_bytes());
+        grown[48..56].copy_from_slice(&u64::from(length).to_le_bytes());
+        grown[56..64].copy_from_slice(&u64::from(length).to_le_bytes());
+        let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
+        grown[24..32].copy_from_slice(&last_vcn.to_le_bytes());
+        rebuilt.extend_from_slice(&grown);
+        rebuilt.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+
+        let used = rebuilt.len();
+        if used + 8 > record.len() {
+            return Err(Error::NoSpace);
+        }
+        rebuilt.resize(record.len(), 0);
+        rebuilt[24..28].copy_from_slice(&(used as u32).to_le_bytes());
+        fs::pack_usa(
+            &mut rebuilt,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            info.bs.bytes_per_sector as usize,
+        );
+
+        // The clusters the file just took have never held its bytes.
+        fs::write_to_runs(
+            &self.fs.device,
+            info,
+            runs,
+            u64::from(length) - zeros.len() as u64,
+            zeros,
+        )?;
+
+        let number = *self.mft_record_number.lock();
+        let at = self.fs.record_offset(info, number)?;
+        fs::write_device_bytes(&self.fs.device, at, &rebuilt)?;
+
+        // The volume, the cache and this node all say the same thing now.
+        self.fs.mft_cache.lock().insert(number, rebuilt.clone());
+        *record = rebuilt;
         Ok(())
     }
 }

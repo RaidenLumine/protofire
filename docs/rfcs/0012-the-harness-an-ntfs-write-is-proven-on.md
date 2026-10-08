@@ -394,3 +394,26 @@ longer fits.
 its room has to move inside the record — which is where the update sequence
 array stops being something a partial write can ignore — and the MFT's own
 growth when a record has no room left at all.
+
+**Stage 2b — the attribute that has outgrown its room.**
+
+- A run list that no longer fits the room its attribute has means the
+  attribute **moves**: it is written last, and every attribute that followed it
+  shifts up by the difference.  The record therefore changes from end to end,
+  so it is written in **one** piece — the shift crosses sector ends — with the
+  update sequence array **packed again**.  `pack_usa` is that direction, and it
+  is not the same task as `apply_usa_fixup`: a reader unpacks the record it
+  read, and a writer that rewrote it has to put the sequence back.
+- `bytes_in_use` and the attribute end marker follow the new layout, and the
+  record's copy in the mount's **cache** is replaced with it: a stale cache
+  would serve the record as it was before the move.
+- **What is left of stage 2 is 2c**: a record with no room at all, where the
+  MFT itself has to grow.  That case is refused (`NoSpace`) today, and the
+  refusal is not covered by a test — no fixture drives it — which is the honest
+  state of it: implemented, not verified.
+- One test: the fixture's *tight* file has a `$DATA` with two runs, no room to
+  spare, and a `$EA_INFORMATION` after it.  Growing it by a cluster makes the
+  attribute move, and a second mount reads the longer file, the moved run list
+  (three clusters in three runs), the attribute that followed it — still eight
+  bytes — and the sequence at every sector's end of the record as the volume
+  holds it.

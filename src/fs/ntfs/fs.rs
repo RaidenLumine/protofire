@@ -452,6 +452,30 @@ pub fn encode_runs(runs: &[DataRun]) -> Vec<u8> {
 }
 
 /// Undo an update sequence array, so the bytes a record's sectors end with are
+/// Put the update sequence array back, which is what makes a rewritten record
+/// one a reader can unpack.
+///
+/// [`apply_usa_fixup`] is the other direction.  The two are not the same task:
+/// a reader unpacks the record it read, and a writer that rewrites the
+/// record's bytes — a relocation inside it — has to pack them again, with the
+/// sequence at every sector's end and the bytes it replaced in the array.
+pub fn pack_usa(buf: &mut [u8], usa_offset: usize, usa_count: usize, sector_size: usize) {
+    if sector_size == 0 || usa_count == 0 || usa_offset + usa_count * 2 > buf.len() {
+        return;
+    }
+    let sequence = u16::from_le_bytes([buf[usa_offset], buf[usa_offset + 1]]);
+    for i in 1..usa_count {
+        let sector_end = i * sector_size;
+        if sector_end >= 2 && sector_end <= buf.len() && usa_offset + i * 2 + 1 < buf.len() {
+            let low = buf[sector_end - 2];
+            let high = buf[sector_end - 1];
+            buf[usa_offset + i * 2] = low;
+            buf[usa_offset + i * 2 + 1] = high;
+            buf[sector_end - 2..sector_end].copy_from_slice(&sequence.to_le_bytes());
+        }
+    }
+}
+
 /// the ones they held before the write that put the sequence number there.
 ///
 /// The sector size is the *volume's*, from the boot sector, not the device's:

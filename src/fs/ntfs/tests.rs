@@ -239,6 +239,7 @@ fn a_directory_lists_what_its_index_holds() {
             "$Bitmap",
             "resident.txt",
             "two-runs.bin",
+            "tight.bin",
             "sub",
         ],
         "the root's entries, without its own \".\""
@@ -261,7 +262,9 @@ fn a_directory_lists_what_its_index_holds() {
     let resident = fs_handle.read_dir("/", 6).expect("resident.txt");
     assert_eq!(resident.kind, NodeKind::File);
     assert_eq!(resident.size, 5);
-    let sub = fs_handle.read_dir("/", 8).expect("sub");
+    let tight = fs_handle.read_dir("/", 8).expect("tight.bin");
+    assert_eq!(tight.kind, NodeKind::File);
+    let sub = fs_handle.read_dir("/", 9).expect("sub");
     assert_eq!(sub.kind, NodeKind::Directory);
 }
 
@@ -484,6 +487,8 @@ fn the_volume_is_dirty_until_it_is_synced() {
 
 #[test]
 fn a_field_write_leaves_the_sequence_array_where_it_was() {
+    // (Before the relocation test below, which is the one that *does* move the
+    // sequence array.)
     // Which is what lets a field write be a field write: the update sequence
     // array's territory is the end of each sector, a field does not reach it,
     // and a reader that unpacks the record finds the sequence it expects.
@@ -510,6 +515,80 @@ fn a_field_write_leaves_the_sequence_array_where_it_was() {
             "the sequence at the end of the sector ending at {end}"
         );
     }
+}
+
+#[test]
+fn an_attribute_that_outgrows_its_room_moves_and_takes_its_neighbours_with_it() {
+    // The fixture's tight file has a two-run `$DATA` with no room to spare and
+    // a `$EA_INFORMATION` after it: one more run cannot fit where the run list
+    // is, so the attribute moves — and so does everything after it.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+    let node = fs_handle.lookup("/tight.bin").expect("tight.bin");
+    assert_eq!(node.size(), 2 * cluster as usize);
+
+    node.set_len(3 * cluster).expect("grow");
+    assert_eq!(node.size(), 3 * cluster as usize);
+
+    // What the read path sees first: the file is longer, its first two runs'
+    // bytes are there, and the cluster it took reads as zeros.
+    let mut buf = vec![0u8; 3 * cluster as usize];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(buf[..cluster as usize].iter().all(|b| *b == 0x33));
+    assert!(buf[2 * cluster as usize..].iter().all(|b| *b == 0));
+
+    // A second mount agrees, and the record it reads is a record: the
+    // attribute that followed the moved one is still there, whole.
+    let again = remount(&device);
+    let reread = again.lookup("/tight.bin").expect("relookup");
+    assert_eq!(reread.size(), 3 * cluster as usize);
+
+    let info = again.info().lock();
+    let at = again.record_offset(&info, TIGHT_FILE).expect("offset");
+    let as_device: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> = device.clone();
+    let mut raw = vec![0u8; info.mft_record_size as usize];
+    super::fs::read_device_bytes(&as_device, at, &mut raw).expect("read the record");
+
+    // Packed, as a record on a volume is: the sequence at every sector's end.
+    let sequence = u16::from_le_bytes([raw[48], raw[49]]);
+    let sector = info.bs.bytes_per_sector as usize;
+    for end in (sector..=raw.len()).step_by(sector) {
+        assert_eq!(
+            u16::from_le_bytes([raw[end - 2], raw[end - 1]]),
+            sequence,
+            "the sequence at the end of the sector ending at {end}"
+        );
+    }
+
+    // And unpacking it gives the attributes back: the moved `$DATA` names
+    // three clusters in three runs, and the `$EA_INFORMATION` is where the
+    // shift left it.
+    let header = super::types::MftRecordHeader::parse(&raw).expect("header");
+    super::fs::apply_usa_fixup(
+        &mut raw,
+        header.usa_offset as usize,
+        header.usa_count as usize,
+        sector,
+    );
+    let attributes = super::fs::parse_attributes(&raw[header.size() as usize..]);
+    let data = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0x80)
+        .expect("the data attribute");
+    assert_eq!(u64::from(data.data_size), 3 * cluster);
+    assert_eq!(
+        data.data_runs
+            .iter()
+            .map(|run| run.cluster_count)
+            .sum::<u64>(),
+        3
+    );
+    let eas = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0xd0)
+        .expect("the attribute that followed it");
+    assert_eq!(eas.content.len(), 8);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -568,7 +647,10 @@ const RESIDENT_FILE: u64 = 24;
 const TWO_RUN_FILE: u64 = 25;
 const SUBDIRECTORY: u64 = 26;
 const SUBDIRECTORY_FILE: u64 = 27;
-const RECORDS: u64 = 28;
+/// A file whose `$DATA` has no room to grow and is followed by another
+/// attribute: the shape that makes a growth *move* the attribute.
+const TIGHT_FILE: u64 = 28;
+const RECORDS: u64 = 29;
 
 /// How many clusters the MFT's first run takes, so that the two-run shape is
 /// the fixture's own choice rather than a consequence of the record size.
@@ -812,6 +894,8 @@ struct Fixture {
     index_block: u64,
     bitmap: u64,
     file_runs: [(u64, u64); 2],
+    /// The two runs of the file whose `$DATA` has no room to grow.
+    tight_runs: [(u64, u64); 2],
 }
 
 impl Fixture {
@@ -866,6 +950,9 @@ fn build_volume(shape: Shape) -> Fixture {
     let file_first = take(1);
     take(1); // the gap between the file's two runs
     let file_second = take(2);
+    let tight_first = take(1);
+    take(1); // a gap, so its run list is two runs and not one
+    let tight_second = take(1);
     let total_clusters = cursor + 2;
 
     let mut fixture = Fixture {
@@ -882,6 +969,7 @@ fn build_volume(shape: Shape) -> Fixture {
         index_block: index_block_at,
         bitmap: bitmap_at,
         file_runs: [(file_first, 1), (file_second, 2)],
+        tight_runs: [(tight_first, 1), (tight_second, 1)],
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -895,7 +983,7 @@ fn build_volume(shape: Shape) -> Fixture {
     for cluster in index_block_at..index_block_at + index_block_clusters {
         fixture.used[cluster as usize] = 1;
     }
-    for &(lcn, clusters) in &fixture.file_runs {
+    for &(lcn, clusters) in fixture.file_runs.iter().chain(&fixture.tight_runs) {
         for cluster in lcn..lcn + clusters {
             fixture.used[cluster as usize] = 1;
         }
@@ -948,6 +1036,13 @@ fn build_volume(shape: Shape) -> Fixture {
                 3 * cluster_size,
                 Vec::new(),
             ),
+            TIGHT_FILE => (
+                ROOT_RECORD,
+                "tight.bin",
+                false,
+                2 * cluster_size,
+                Vec::new(),
+            ),
             SUBDIRECTORY => (ROOT_RECORD, "sub", true, 0, Vec::new()),
             SUBDIRECTORY_FILE => (
                 SUBDIRECTORY,
@@ -966,6 +1061,7 @@ fn build_volume(shape: Shape) -> Fixture {
         let named = (0..=6).contains(&number)
             || number == RESIDENT_FILE
             || number == TWO_RUN_FILE
+            || number == TIGHT_FILE
             || number == SUBDIRECTORY
             || number == SUBDIRECTORY_FILE;
 
@@ -1032,6 +1128,18 @@ fn build_volume(shape: Shape) -> Fixture {
                     data.extend_from_slice(&[0u8; 16]);
                     attributes.extend(data);
                 }
+                TIGHT_FILE => {
+                    // Two runs, no room to spare, and an attribute *after* it:
+                    // the shape a growth has to move.
+                    attributes.extend(attribute(
+                        0x80,
+                        "",
+                        &[],
+                        Some(&fixture.tight_runs),
+                        2 * cluster_size,
+                    ));
+                    attributes.extend(attribute(0xd0, "", &[0u8; 8], None, 0));
+                }
                 ROOT_RECORD | SUBDIRECTORY => {
                     // The root's entries live in an index allocation, and the
                     // subdirectory's in its index root: the two shapes a directory
@@ -1050,6 +1158,7 @@ fn build_volume(shape: Shape) -> Fixture {
                             6,
                             RESIDENT_FILE,
                             TWO_RUN_FILE,
+                            TIGHT_FILE,
                             SUBDIRECTORY,
                         ] {
                             let (name, directory, size): (&str, bool, u64) = match record {
@@ -1061,6 +1170,7 @@ fn build_volume(shape: Shape) -> Fixture {
                                 6 => ("$Bitmap", false, 0),
                                 RESIDENT_FILE => ("resident.txt", false, 5),
                                 TWO_RUN_FILE => ("two-runs.bin", false, 3 * cluster_size),
+                                TIGHT_FILE => ("tight.bin", false, 2 * cluster_size),
                                 _ => ("sub", true, 0),
                             };
                             entries.extend_from_slice(&index_entry(record, name, directory, size));
@@ -1148,6 +1258,12 @@ fn build_volume(shape: Shape) -> Fixture {
     let at = second_lcn as usize * cluster_size as usize;
     for byte in &mut fixture.image[at..at + second_clusters as usize * cluster_size as usize] {
         *byte = 0x22;
+    }
+    for &(lcn, clusters) in &fixture.tight_runs {
+        let at = lcn as usize * cluster_size as usize;
+        for byte in &mut fixture.image[at..at + clusters as usize * cluster_size as usize] {
+            *byte = 0x33;
+        }
     }
 
     // The `$Bitmap`: one bit per cluster, set for every cluster the layout
