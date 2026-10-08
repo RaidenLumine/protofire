@@ -10,7 +10,6 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::fs::block::BlockDevice;
-use crate::fs::block::BLOCK_SIZE;
 use crate::fs::vfs::filesystem::FileSystem;
 use crate::fs::vfs::types::DirectoryEntry;
 use crate::fs::vfs::types::NodeKind;
@@ -61,33 +60,28 @@ impl NtfsFs {
             return Ok(cached_record.clone());
         }
 
-        let info = self.info.lock();
+        let mut info = self.info.lock();
         let record_size = info.mft_record_size as usize;
         let mut record = alloc::vec![0u8; record_size];
-
-        // Calculate the LBA for the MFT record
-        let record_lba = (info.bs.mft_lcn * info.cluster_size as u64
-            + record_number * info.mft_record_size as u64)
-            / BLOCK_SIZE as u64;
-
-        // Read the record in blocks
-        let blocks_to_read = record_size.div_ceil(BLOCK_SIZE);
-        for i in 0..blocks_to_read {
-            let block_offset = record_lba + i as u64;
-            let block_data_start = i * BLOCK_SIZE;
-            let block_data_end = ((i + 1) * BLOCK_SIZE).min(record_size);
-            let block_len = block_data_end - block_data_start;
-
-            let mut block = [0u8; BLOCK_SIZE];
-            self.device.read_blocks(block_offset, &mut block)?;
-
-            record[block_data_start..block_data_end].copy_from_slice(&block[..block_len]);
+        let runs = info.resolve_mft_runs(&self.device)?;
+        let data_size = info.mft_data_size;
+        let offset = record_number
+            .checked_mul(info.mft_record_size as u64)
+            .ok_or(Error::InvalidArgument)?;
+        if offset + record_size as u64 > data_size {
+            return Err(Error::NotFound);
         }
+        fs::read_from_runs(&self.device, &info, &runs, data_size, offset, &mut record)?;
 
         // Apply USA fixup if present
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
         if header.usa_count > 0 {
-            apply_usa_fixup(&mut record, &header);
+            fs::apply_usa_fixup(
+                &mut record,
+                header.usa_offset as usize,
+                header.usa_count as usize,
+                info.bs.bytes_per_sector as usize,
+            );
         }
 
         cache.insert(record_number, record.clone());
@@ -380,30 +374,6 @@ impl NtfsVnode {
 }
 
 // Helper functions
-
-fn apply_usa_fixup(record: &mut [u8], header: &MftRecordHeader) {
-    let usa_offset = header.usa_offset as usize;
-    let usa_count = header.usa_count as usize;
-
-    if usa_offset + usa_count * 2 > record.len() {
-        return;
-    }
-
-    // Read fixup sequence value (first u16 of the USA array; validation of the
-    // sector-end markers is not performed).
-    let _fixup_seq = u16::from_le_bytes([record[usa_offset], record[usa_offset + 1]]);
-
-    // Apply fixup for each sector
-    for i in 1..usa_count {
-        let sector_end = i * BLOCK_SIZE;
-        if sector_end >= 2 && sector_end <= record.len() && usa_offset + i * 2 + 1 < record.len() {
-            let orig_lo = record[usa_offset + i * 2];
-            let orig_hi = record[usa_offset + i * 2 + 1];
-            record[sector_end - 2] = orig_lo;
-            record[sector_end - 1] = orig_hi;
-        }
-    }
-}
 
 fn update_mft_record(record: &mut [u8], attributes: &[ParsedAttr]) {
     // Update the record with modified attributes

@@ -12,12 +12,14 @@ use alloc::vec::Vec;
 use crate::fs::block::BlockDevice;
 use crate::Error;
 
+use super::types::size_from_exponent;
 use super::types::BootSector;
 use super::types::DataRun;
 use super::types::FileName;
 use super::types::MftRecordHeader;
 use super::types::ParsedAttr;
 use super::types::StandardInfoAttr;
+use super::types::ATTR_TYPE_DATA;
 use super::types::ATTR_TYPE_FILENAME;
 use super::types::ATTR_TYPE_STANDARD_INFO;
 use super::types::BLOCK_SIZE;
@@ -39,19 +41,67 @@ pub struct NtfsInfo {
     pub cluster_size: u32,
     pub mft_record_size: u32,
     pub index_block_size: u32,
+    /// The MFT's own data runs, once something has asked for a record.
+    ///
+    /// The MFT is a file like any other: its `$DATA` says where its records
+    /// are, and record 0 is the one whose address the boot sector names — so
+    /// reading record 0 is what answers where the rest of them are.  A stride
+    /// from the first cluster is right only for a volume whose MFT never grew.
+    pub mft_runs: Option<Vec<DataRun>>,
+    /// How long the MFT's own `$DATA` says it is.
+    pub mft_data_size: u64,
 }
 
 impl NtfsInfo {
     pub fn new(bs: BootSector) -> Self {
         let cluster_size = bs.bytes_per_sector as u32 * bs.sectors_per_cluster as u32;
-        let mft_record_size = bs.clusters_per_mft_record * cluster_size;
-        let index_block_size = bs.clusters_per_index_buffer * cluster_size;
+        let mft_record_size = size_from_exponent(bs.mft_record_exponent, cluster_size);
+        let index_block_size = size_from_exponent(bs.index_buffer_exponent, cluster_size);
         Self {
             bs,
             cluster_size,
             mft_record_size,
             index_block_size,
+            mft_runs: None,
+            mft_data_size: 0,
         }
+    }
+
+    /// The MFT's own data runs, resolved once.
+    pub fn resolve_mft_runs(
+        &mut self,
+        device: &Arc<dyn BlockDevice>,
+    ) -> Result<Vec<DataRun>, Error> {
+        if let Some(runs) = &self.mft_runs {
+            return Ok(runs.clone());
+        }
+
+        let record_size = self.mft_record_size as usize;
+        let mut record = alloc::vec![0u8; record_size];
+        read_device_bytes(
+            device,
+            self.bs.mft_lcn * self.cluster_size as u64,
+            &mut record,
+        )?;
+
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        if header.usa_count > 0 {
+            apply_usa_fixup(
+                &mut record,
+                header.usa_offset as usize,
+                header.usa_count as usize,
+                self.bs.bytes_per_sector as usize,
+            );
+        }
+        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let data = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::InvalidArgument)?;
+
+        self.mft_data_size = data.data_size as u64;
+        self.mft_runs = Some(data.data_runs.clone());
+        Ok(data.data_runs.clone())
     }
 }
 
@@ -211,12 +261,6 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
         let _flags = u16::from_le_bytes([buf[offset + 12], buf[offset + 13]]);
         let _instance = u16::from_le_bytes([buf[offset + 14], buf[offset + 15]]);
 
-        let content_offset = if non_resident {
-            24 + 8 // Resident header + start VCN + data runs length
-        } else {
-            24 + 4 // Resident header + content size
-        };
-
         let content_size = if non_resident {
             // Non-resident: the real data size is stored in the attribute
             // header at +48 (u64), not derivable from the data runs alone.
@@ -239,16 +283,29 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
             ])
         };
 
+        // A resident attribute's value begins where its own header says it
+        // does, at `value_offset` from the attribute's start — which is 24 for
+        // an unnamed one and further along when the attribute carries a name
+        // (`$INDEX_ROOT` is named "$I30", so its value starts at 32).
         let mut content = Vec::new();
-        if content_offset + content_size as usize <= buf.len() {
-            content.extend_from_slice(&buf[content_offset..content_offset + content_size as usize]);
+        if !non_resident {
+            let value_offset = u16::from_le_bytes([buf[offset + 20], buf[offset + 21]]) as usize;
+            let start = offset + value_offset;
+            if start + content_size as usize <= buf.len() {
+                content.extend_from_slice(&buf[start..start + content_size as usize]);
+            }
         }
 
         let data_runs_offset = if non_resident {
             // Non-resident: the data-runs array begins at header +32.
             let runs_off = u16::from_le_bytes([buf[offset + 32], buf[offset + 33]]) as usize;
-            if runs_off > 0 && runs_off + 2 <= buf.len() {
-                Some(runs_off)
+            // The field is an offset from the *attribute's* own start, not
+            // from the buffer the attribute sits in: for the first attribute
+            // of a record the two coincide, and for every later one they do
+            // not.
+            let at = offset + runs_off;
+            if runs_off > 0 && at + 2 <= buf.len() {
+                Some(at)
             } else {
                 None
             }
@@ -276,6 +333,28 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
     }
 
     attrs
+}
+
+/// Undo an update sequence array, so the bytes a record's sectors end with are
+/// the ones they held before the write that put the sequence number there.
+///
+/// The sector size is the *volume's*, from the boot sector, not the device's:
+/// an NTFS record's sectors are `bytes_per_sector` bytes, and a volume whose
+/// sectors are not 512 would otherwise have its records unpacked at the wrong
+/// offsets.
+pub fn apply_usa_fixup(buf: &mut [u8], usa_offset: usize, usa_count: usize, sector_size: usize) {
+    if sector_size == 0 || usa_count == 0 || usa_offset + usa_count * 2 > buf.len() {
+        return;
+    }
+    for i in 1..usa_count {
+        let sector_end = i * sector_size;
+        if sector_end >= 2 && sector_end <= buf.len() && usa_offset + i * 2 + 1 < buf.len() {
+            let low = buf[usa_offset + i * 2];
+            let high = buf[usa_offset + i * 2 + 1];
+            buf[sector_end - 2] = low;
+            buf[sector_end - 1] = high;
+        }
+    }
 }
 
 /// Parse data runs from a buffer.

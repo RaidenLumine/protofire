@@ -237,9 +237,53 @@ what stage 1's record serialisation is for.
   needed for a lookup to behave like NTFS.
 - **The index allocation.**  A directory whose entries do not fit its index
   root keeps them in a `$INDEX_ALLOCATION` the root points at, with an index
-  bitmap.  The fixture's directories are small; a stage that creates
-  entries needs the other shape, and stage 3 is where it arrives.
+  bitmap.  *The measurement behind stage 0 settled part of this*: a directory
+  with children has that shape and nothing else — the volume `mkntfs` makes
+  holds even one file's entry in the allocation, with the index root reduced
+  to a node that points at it — so walking a directory the way a real volume
+  stores one is stage 0's work, not a later stage's.  What is still open is
+  *creating* entries: inserting into a node, and the index bitmap's own bits.
 - **Compressed, encrypted and sparse `$DATA`.**  `docs/status.md` records
   that they are not covered.  Writing one is a different problem from writing
   a plain runlist — compression units, EFS metadata, and runs that name no
   cluster — and this RFC does not decide them.
+
+## What landed
+
+**Stage 0, first half — the fixture, and the record addressing.**
+
+- `src/fs/ntfs/tests.rs` builds a **fixture volume** in the two shapes the
+  arithmetic differs between: records that are a fraction of a cluster (1024
+  bytes in 4096, which is what `mkntfs` makes) and records that are whole
+  clusters.  It carries the MFT in **two runs with a gap between them**, an
+  update sequence array in every record and index block, a resident file, a
+  file in two runs, a subdirectory whose entries are in its index root, a root
+  whose entries are in an index *allocation*, a `$Bitmap`, spare records that
+  are formatted but not in use, and a check of its own invariants — the
+  sequence at every sector's end, the end marker, and the bitmap against the
+  layout it just made.
+- Three format facts the fixture found by disagreeing with the reader, all of
+  them now written the way the format says:
+  - **A negative exponent is bytes, not clusters.**  `size_from_exponent`
+    (`src/fs/ntfs/types.rs`) is what `NtfsInfo` reads the record and index
+    sizes through, so the default shape's records are 1024 bytes and not
+    "one cluster" of 4096 — which is what asked for record 5 and got record 0.
+  - **A resident attribute's value is where its own header says**, and
+    `$INDEX_ROOT` is a *named* attribute, so its value begins after the name.
+  - **A runlist's offset is from the attribute, not from the buffer it sits
+    in** — which for the first attribute of a record is the same number, and
+    for every later one is not.
+  - And the update sequence array is unpacked with the *volume's* sector size,
+    from the boot sector, rather than the device's.
+- `read_mft_record` follows the MFT's own `$DATA` run list: record 0 is the
+  one the boot sector names, and reading record 0 is what says where the rest
+  of them are.  A stride from the first cluster is right only for a volume
+  whose MFT never grew, and the fixture's second run is the shape that says
+  so.
+- The load-bearing tests: every record of both shapes answers with the number
+  it was asked for; and where a stride from the first cluster would have
+  looked, it lands on **another** record — with the same `FILE` magic, which
+  is why nothing had complained.
+
+**Still to do in stage 0.**  The index walk — `lookup` and `read_dir` through
+`$INDEX_ROOT` and `$INDEX_ALLOCATION` — and the file read that follows it.

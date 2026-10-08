@@ -28,9 +28,33 @@ pub struct BootSector {
     pub total_sectors: u64,
     pub mft_lcn: u64,
     pub mft_mirr_lcn: u64,
-    pub clusters_per_mft_record: u32,
-    pub clusters_per_index_buffer: u32,
+    /// The boot sector's record-size field: clusters per record when it is
+    /// positive, and the *binary logarithm of the bytes per record*, negated,
+    /// when it is negative.
+    pub mft_record_exponent: i8,
+    /// The same field for an index buffer.
+    pub index_buffer_exponent: i8,
     pub volume_serial: u32,
+}
+
+/// The size a boot sector's exponent field describes.
+///
+/// A positive value is a number of clusters; a negative one is the binary
+/// logarithm of a number of *bytes*, which is how a volume whose records are
+/// smaller than a cluster — the shape `mkntfs` makes by default — says so.
+pub fn size_from_exponent(exponent: i8, cluster_size: u32) -> u32 {
+    if exponent >= 0 {
+        (exponent as u32)
+            .saturating_mul(cluster_size)
+            .max(cluster_size)
+    } else {
+        let shift = (-exponent) as u32;
+        if shift >= 32 {
+            1
+        } else {
+            1u32 << shift
+        }
+    }
 }
 
 impl BootSector {
@@ -43,33 +67,6 @@ impl BootSector {
         }
         let sectors_per_cluster = buf[13];
         let bytes_per_sector = u16::from_le_bytes([buf[11], buf[12]]);
-        let cluster_size = bytes_per_sector as u32 * sectors_per_cluster as u32;
-
-        let mft_rec_exp = buf[64] as i8;
-        let clusters_per_mft_record = if mft_rec_exp < 0 {
-            let exp = (-mft_rec_exp) as u32;
-            if exp >= 32 {
-                1
-            } else {
-                (1u32 << exp) / cluster_size
-            }
-        } else {
-            mft_rec_exp as u32
-        }
-        .max(1);
-
-        let idx_exp = buf[68] as i8;
-        let clusters_per_index_buffer = if idx_exp < 0 {
-            let exp = (-idx_exp) as u32;
-            if exp >= 32 {
-                1
-            } else {
-                (1u32 << exp) / cluster_size
-            }
-        } else {
-            idx_exp as u32
-        }
-        .max(1);
 
         Some(Self {
             bytes_per_sector,
@@ -83,8 +80,8 @@ impl BootSector {
             mft_mirr_lcn: u64::from_le_bytes([
                 buf[56], buf[57], buf[58], buf[59], buf[60], buf[61], buf[62], buf[63],
             ]),
-            clusters_per_mft_record,
-            clusters_per_index_buffer,
+            mft_record_exponent: buf[64] as i8,
+            index_buffer_exponent: buf[68] as i8,
             volume_serial: u32::from_le_bytes([buf[72], buf[73], buf[74], buf[75]]),
         })
     }
