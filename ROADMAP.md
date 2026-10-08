@@ -142,10 +142,15 @@ The authoritative picture of what exists today is
   record is given back; the name goes into the parent's index where the
   volume's `$UpCase` table puts it, and a name is *matched* through that same
   table; a removal returns the file's clusters to the `$Bitmap` and moves the
-  record's sequence past the number that named it.  What is left is a
-  directory, whose creation and removal are the next stage, and a record that
-  is *full*, which the format gives an attribute list for and this driver
-  refuses.
+  record's sequence past the number that named it.  Directories followed: a
+  directory's record carries an empty `$INDEX_ROOT` in the place of `$DATA`, a
+  name added to a small one makes that resident value *longer* — the free
+  space its own record has is what it grows into, with everything after the
+  attribute shifted up and the record written whole — and a directory that
+  still holds something refuses to be removed.  What is left of the stage is a
+  record that is *full* — which the format gives an attribute list for, and a
+  name a directory's record is too full to take, which it gives an
+  `$INDEX_ALLOCATION` — and the MFT's own growth.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

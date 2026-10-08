@@ -244,11 +244,13 @@ what stage 1's record serialisation is for.
   with children has that shape and nothing else — the volume `mkntfs` makes
   holds even one file's entry in the allocation, with the index root reduced
   to a node that points at it — so walking a directory the way a real volume
-  stores one is stage 0's work, not a later stage's.  *Stage 3a built the
-  insertion*: a node is rewritten as a run with the new entry where its name
-  sorts.  What is still open is a node with no room — the format splits it,
-  which is refused here — and, with it, the index bitmap's own bits, since no
-  block is added.
+  stores one is stage 0's work, not a later stage's.  *Stages 3a and 3b built
+  the insertion*: a node is rewritten as a run with the new entry where its
+  name sorts, and an index *root* — which is a value inside a record — grows
+  into the record's own free space when a name does not fit.  What is still
+  open is the other answer to a name that does not fit: a record with no room
+  gets an allocation block of its own, and with it the index bitmap's bits.
+  A name that arrives at such a record is refused until then.
 - **Compressed, encrypted and sparse `$DATA`.**  `docs/status.md` records
   that they are not covered.  Writing one is a different problem from writing
   a plain runlist — compression units, EFS metadata, and runs that name no
@@ -473,14 +475,55 @@ being something a partial write can ignore.
 - **What is not built.**  An index node is never split, so no block is added
   and the index bitmap is untouched; the MFT is never grown, so a new record
   comes from the records the volume already has; a directory cannot be created
-  or removed; and a file created empty is resident, so writing content into it
-  needs the resident-to-non-resident conversion.  `$MFTMirr` is *not* written,
-  and does not need to be: it mirrors the volume's first four records, which
-  this stage never touches.
+  or removed *— stage 3b adds that —*; and a file created empty is resident, so
+  writing content into it needs the resident-to-non-resident conversion.
+  `$MFTMirr` is *not* written, and does not need to be: it mirrors the
+  volume's first four records, which this stage never touches.
 - Seven tests, every write proved by a **second mount**: a created file that
   the fresh mount finds, reads as empty and lists, with `$MFT`'s `$BITMAP`
   naming its record; `$UpCase` folding in a lookup; a new name placed by the
   folded order; a name that is already there refused (`AlreadyExists`); a
   creation the index has no room for refused with nothing left behind; a
   removal the fresh mount agrees with, in the name, the clusters and both
-  words on the record; and a directory refused.
+  words on the record; and a directory refused *— which stage 3b makes a
+  `Busy` for a directory that still holds something.*
+
+**Stage 3b — directories, and an index root that grows.**
+
+- A **directory is created and removed the same way a file is**: a record out
+  of the MFT's free space with its name in the parent's index.  What differs
+  is one attribute — an empty `$INDEX_ROOT` in the place of `$DATA` — and the
+  flags and the link count that say a record is a directory.
+- An empty index root is the shape the reference writer makes: the
+  `$FILE_NAME` index's own header (the attribute it indexes, the collation
+  rule, the size of a block, and the clusters in one), and then a node with
+  nothing but its terminator.  **A directory's entries are its children**:
+  the "." and ".." a listing shows are the reader's own, and the `.` that
+  `mkntfs` writes into the root it makes is why a reader skips one rather than
+  expecting it.  `directory_entries` now skips both, whichever a volume keeps.
+- **A name added to a small directory makes its index root longer.**  That
+  value is a resident attribute inside the record, and a record's free space
+  is what it may grow into: the value's bytes extend, everything after the
+  attribute — the end marker included — shifts up, `bytes_in_use` follows, and
+  the record goes back whole with its update sequence array packed.  This is
+  what the measured reference does: a directory with one child has a
+  `$INDEX_ROOT` value of 136 bytes over the 48 it started with, its node's
+  index length and allocated size both 120.
+- A record that has *no* room refuses (`NoSpace`), and that is the other
+  answer this RFC left open: the format gives such a directory an
+  `$INDEX_ALLOCATION` block of its own.  The fixture carries a directory whose
+  record is full to within its end marker, so the refusal is verified rather
+  than implemented — and a name a *failed* creation claimed has given its
+  `$MFT` bit back.
+- A removal refuses a directory that still holds something (`Busy`, as ISO
+  9660 does): its children's names are in *its* index, and a walk that reached
+  it would find entries whose parent the volume no longer has.  An empty one
+  goes the way a file does — and every non-resident attribute's runs go back
+  to the `$Bitmap`, not only `$DATA`'s, because a directory keeps its entries,
+  and the bitmap of the blocks they are in, in files of their own.
+- Five tests: a created directory a second mount finds, empty, with the
+  volume's own record of what is in use naming it; a file created *in* it,
+  which is where the index root grows; a name added to a directory that has
+  one already, with both listed by the fresh mount; a name a full record has
+  no room for refused, with the claimed record given back; and a directory
+  that still holds something refused (`Busy`).

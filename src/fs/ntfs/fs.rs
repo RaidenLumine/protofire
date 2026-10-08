@@ -781,11 +781,49 @@ pub fn file_name_value(parent: u64, name: &str, directory: bool, size: u64) -> V
     put_u64_le(&mut value, 0, parent);
     put_u64_le(&mut value, 40, size); // allocated size
     put_u64_le(&mut value, 48, size); // real size
-    put_u32_le(&mut value, 56, if directory { 0x1000_0000 } else { 0x20 });
+                                      // FILE_ATTRIBUTE_ARCHIVE, and the bit that says a directory is one: a real
+                                      // volume writes both for a directory's name.
+    put_u32_le(&mut value, 56, if directory { 0x1000_0020 } else { 0x20 });
     value[64] = (name_bytes.len() / 2) as u8;
     value[65] = 3; // Win32 & DOS
     value.extend_from_slice(&name_bytes);
     value
+}
+
+/// The value a directory's `$INDEX_ROOT` holds while it has no children.
+///
+/// It is the `$FILE_NAME` index's own header — the attribute it indexes, the
+/// collation rule, the size of a block — and then a node with nothing but its
+/// terminator.  A directory's entries are its *children*: the "." and ".." a
+/// listing shows are the reader's own, and a volume may carry a "." of its own
+/// (the one `mkntfs` makes does), which is why a reader skips one rather than
+/// expecting it.
+pub fn empty_index_root(index_block_size: u32, cluster_size: u32) -> Vec<u8> {
+    let mut value = vec![0u8; 16];
+    put_u32_le(&mut value, 0, ATTR_TYPE_FILENAME);
+    put_u32_le(&mut value, 4, 1); // COLLATION_FILENAME
+    put_u32_le(&mut value, 8, index_block_size);
+    value[12] = (index_block_size / cluster_size.max(1)) as u8;
+
+    let node = {
+        let mut node = vec![0u8; 16];
+        put_u32_le(&mut node, 0, 16); // where the entries begin
+        put_u32_le(&mut node, 4, 32); // what they use: the terminator
+        put_u32_le(&mut node, 8, 32); // and what the node has
+        put_u32_le(&mut node, 12, 0); // no children
+        node
+    };
+    value.extend_from_slice(&node);
+    value.extend_from_slice(&index_terminator());
+    value
+}
+
+/// The entry an index node ends with: no name, and the last-entry flag.
+pub fn index_terminator() -> Vec<u8> {
+    let mut terminator = vec![0u8; 16];
+    put_u16_le(&mut terminator, 8, 16); // its own length
+    put_u32_le(&mut terminator, 12, 0x0000_0002); // the last entry
+    terminator
 }
 
 /// One index entry: its sixteen-byte header and the name it is keyed by.

@@ -126,42 +126,47 @@ fn bit_is_set(bits: &[u8], number: u64) -> bool {
     index < bits.len() && bits[index] & (1 << (number % 8)) != 0
 }
 
-/// The bytes of a new file's record.
+/// How many bytes of a record are in use, from its own header.
+fn bytes_in_use(record: &[u8]) -> usize {
+    u32::from_le_bytes([record[24], record[25], record[26], record[27]]) as usize
+}
+
+/// The attributes a new record holds.
 ///
-/// It carries what a real one carries at the moment it is made: its own name,
-/// the timestamps a volume with no clock leaves zero, and an empty `$DATA` —
-/// which is *resident*, because that is where an empty file's bytes live.  A
-/// file that grows out of its record converts that attribute, which is a step
-/// this driver does not take yet.
-fn new_record(
-    record_size: usize,
-    sector_size: usize,
-    number: u64,
-    sequence: u16,
+/// What a real one carries at the moment it is made: where it came from, its
+/// own name, the timestamps a volume with no clock leaves zero, and then
+/// either an empty `$DATA` — which is *resident*, because that is where an
+/// empty file's bytes live — or, for a directory, the empty index it grows
+/// into.  A file that grows out of its record has to convert that attribute,
+/// which is a step this driver does not take yet.
+fn record_attributes(
     parent: u64,
     name: &str,
     directory: bool,
-) -> Vec<u8> {
+    index_block_size: u32,
+    cluster_size: u32,
+) -> Vec<Vec<u8>> {
     // A record's own standard information is where the file-attribute bits
-    // live: archive for a file, the "is a directory" bit for a directory.
+    // live, and archive is what a real volume writes there — for a directory
+    // too, whose "is a directory" bit lives in its name and its record header.
     let mut standard = alloc::vec![0u8; 48];
-    let file_attributes: u32 = if directory { 0x1000_0000 } else { 0x20 };
-    standard[32..36].copy_from_slice(&file_attributes.to_le_bytes());
+    standard[32..36].copy_from_slice(&0x20u32.to_le_bytes());
     let filename = fs::file_name_value(parent, name, directory, 0);
-    let data = fs::resident_attribute(ATTR_TYPE_DATA, "", 4, &[]);
-    fs::build_record(
-        record_size,
-        sector_size,
-        number,
-        sequence,
-        if directory { 0x03 } else { 0x01 },
-        1,
-        &[
-            fs::resident_attribute(ATTR_TYPE_STANDARD_INFO, "", 0, &standard),
-            fs::resident_attribute(ATTR_TYPE_FILENAME, "", 1, &filename),
-            data,
-        ],
-    )
+    let mut attributes = alloc::vec![
+        fs::resident_attribute(ATTR_TYPE_STANDARD_INFO, "", 0, &standard),
+        fs::resident_attribute(ATTR_TYPE_FILENAME, "", 1, &filename),
+    ];
+    if directory {
+        attributes.push(fs::resident_attribute(
+            ATTR_TYPE_INDEX_ROOT,
+            "$I30",
+            2,
+            &fs::empty_index_root(index_block_size, cluster_size),
+        ));
+    } else {
+        attributes.push(fs::resident_attribute(ATTR_TYPE_DATA, "", 2, &[]));
+    }
+    attributes
 }
 
 pub struct NtfsFs {
@@ -260,13 +265,15 @@ impl NtfsFs {
             depth += 1;
         }
 
-        // A directory's index holds an entry for itself, and one file can have
-        // more than one name: a short one and a long one.  The listing is the
-        // long one, and it is not the self entry.
+        // A directory's entries are its *children*: a volume may keep a "." of
+        // its own (the one `mkntfs` makes does), "." and ".." are a
+        // directory's own links rather than things in it, and one file can
+        // have more than one name — a short one and a long one, of which the
+        // listing keeps the preferred one.
         let mut best: Vec<(String, u64)> = Vec::new();
         for entry in &node.entries {
             let Some(name) = &entry.name else { continue };
-            if name.name == "." {
+            if name.name == "." || name.name == ".." {
                 continue;
             }
             match best
@@ -539,7 +546,7 @@ impl NtfsFs {
     /// children, which is where this descends to; the buffer comes back with
     /// the node's place and its room, so a change to the entries can be
     /// written back where they belong.
-    fn index_leaf(&self, parent_record: u64) -> Result<(Vec<u8>, usize, usize, IndexHome)> {
+    fn index_leaf(&self, parent_record: u64) -> Result<(Vec<u8>, usize, IndexHome)> {
         let record = self.read_mft_record(parent_record)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
         let attributes = parse_attributes(&record[header.size() as usize..]);
@@ -550,9 +557,8 @@ impl NtfsFs {
 
         // An index *root*'s node begins after the root header — the indexed
         // attribute's type, the collation rule and the buffer size — and the
-        // room it has is the rest of the value the record gives it.
+        // value it sits in is the resident attribute the record gives it.
         let mut node = header.size() as usize + root.offset + root.value_offset + 16;
-        let mut room = root.content.len().saturating_sub(16);
         let mut buffer = record;
         let mut home = IndexHome::Record;
 
@@ -584,26 +590,87 @@ impl NtfsFs {
                 usa_offset,
                 usa_count,
             };
-            room = block.len().saturating_sub(24);
             node = 24;
             buffer = block;
         }
-        Ok((buffer, node, room, home))
+        Ok((buffer, node, home))
     }
 
-    /// Write an index node's buffer back to the volume.
+    /// Write a directory's index entries back where they live.
+    ///
+    /// A node's entries are replaced as a run, so what a caller hands over is
+    /// the run itself — the entries that were there, or the ones that should
+    /// be, with the node's own terminator last.
+    ///
+    /// The two places an index lives differ in what "room" means.  A block has
+    /// what is left of the block.  An index *root* has the value the record
+    /// gives it, and that value **grows** when it has to: an attribute inside a
+    /// record can be as long as the record has room for, so the value's bytes
+    /// extend, everything after the attribute shifts up with the end marker,
+    /// and the record goes back whole.  A record with no room refuses
+    /// (`NoSpace`) — the format's answer to that is an `$INDEX_ALLOCATION` of
+    /// its own, which this driver does not make yet.
     fn write_index_leaf(
         &self,
         parent_record: u64,
         buffer: &mut [u8],
+        node: usize,
+        entries: &[Vec<u8>],
         home: &IndexHome,
     ) -> Result<()> {
         match home {
             IndexHome::Record => {
-                // The record is the buffer: it goes back whole, with its
-                // update sequence array packed again for the sector ends the
-                // entries do not reach.
                 let header = MftRecordHeader::parse(buffer).ok_or(Error::InvalidArgument)?;
+                let attributes = parse_attributes(&buffer[header.size() as usize..]);
+                let root = attributes
+                    .iter()
+                    .find(|attr| attr.attr_type == ATTR_TYPE_INDEX_ROOT)
+                    .ok_or(Error::NotFound)?;
+                let attr_at = header.size() as usize + root.offset;
+
+                // What the node's entries come to, and whether the record has
+                // the room for that much value.
+                let entries_offset = u32::from_le_bytes([
+                    buffer[node],
+                    buffer[node + 1],
+                    buffer[node + 2],
+                    buffer[node + 3],
+                ]) as usize;
+                let used = entries_offset
+                    + entries
+                        .iter()
+                        .try_fold(0usize, |total, entry| total.checked_add(entry.len()))
+                        .ok_or(Error::InvalidArgument)?;
+                let value_len = 16 + used;
+                let room = buffer.len() - bytes_in_use(buffer);
+                if value_len > root.content.len() + room {
+                    return Err(Error::NoSpace);
+                }
+
+                // The attribute as it should be: the longer value, its node's
+                // sizes following, and the entries inside it.
+                let mut attribute = buffer[attr_at..attr_at + root.attr_len].to_vec();
+                let attr_len = (root.value_offset + value_len).div_ceil(8) * 8;
+                attribute.resize(attr_len, 0);
+                attribute[4..8].copy_from_slice(&(attr_len as u32).to_le_bytes());
+                attribute[16..20].copy_from_slice(&(value_len as u32).to_le_bytes());
+                fs::write_index_entries(
+                    &mut attribute[root.value_offset..root.value_offset + value_len],
+                    16,
+                    value_len - 16,
+                    entries,
+                )?;
+
+                // Everything after the attribute — the end marker included —
+                // shifts up by what it grew.
+                let end = bytes_in_use(buffer);
+                let mut rebuilt = buffer[..attr_at].to_vec();
+                rebuilt.extend_from_slice(&attribute);
+                rebuilt.extend_from_slice(&buffer[attr_at + root.attr_len..end]);
+                let rebuilt_used = rebuilt.len();
+                rebuilt.resize(buffer.len(), 0);
+                rebuilt[24..28].copy_from_slice(&(rebuilt_used as u32).to_le_bytes());
+
                 let (at, sector) = {
                     let info = self.info.lock();
                     (
@@ -612,13 +679,13 @@ impl NtfsFs {
                     )
                 };
                 fs::pack_usa(
-                    buffer,
+                    &mut rebuilt,
                     header.usa_offset as usize,
                     header.usa_count as usize,
                     sector,
                 );
-                fs::write_device_bytes(&self.device, at, buffer)?;
-                self.mft_cache.lock().insert(parent_record, buffer.to_vec());
+                fs::write_device_bytes(&self.device, at, &rebuilt)?;
+                self.mft_cache.lock().insert(parent_record, rebuilt);
             }
             IndexHome::Block {
                 vcn,
@@ -626,6 +693,7 @@ impl NtfsFs {
                 usa_offset,
                 usa_count,
             } => {
+                fs::write_index_entries(buffer, node, buffer.len() - 24, entries)?;
                 let (cluster_size, sector) = {
                     let info = self.info.lock();
                     (
@@ -668,7 +736,7 @@ impl NtfsFs {
             size,
         );
 
-        let (mut buffer, node, room, home) = self.index_leaf(parent_record)?;
+        let (mut buffer, node, home) = self.index_leaf(parent_record)?;
         let parsed = parse_index_node(&buffer, node);
         let Some((terminator, rest)) = parsed.entries.split_last() else {
             return Err(Error::InvalidArgument);
@@ -693,8 +761,7 @@ impl NtfsFs {
         raws.insert(place, entry);
         raws.push(buffer[terminator.offset..terminator.offset + terminator.length].to_vec());
 
-        fs::write_index_entries(&mut buffer, node, room, &raws)?;
-        self.write_index_leaf(parent_record, &mut buffer, &home)
+        self.write_index_leaf(parent_record, &mut buffer, node, &raws, &home)
     }
 
     /// Take a name out of a directory's index.
@@ -704,7 +771,7 @@ impl NtfsFs {
     /// wrong one.
     fn index_remove(&self, parent_record: u64, name: &str, reference: u64) -> Result<()> {
         let upcase = self.upcase_table();
-        let (mut buffer, node, room, home) = self.index_leaf(parent_record)?;
+        let (mut buffer, node, home) = self.index_leaf(parent_record)?;
         let parsed = parse_index_node(&buffer, node);
         let last = parsed.entries.len().saturating_sub(1);
 
@@ -732,8 +799,7 @@ impl NtfsFs {
             return Err(Error::NotFound);
         }
 
-        fs::write_index_entries(&mut buffer, node, room, &raws)?;
-        self.write_index_leaf(parent_record, &mut buffer, &home)
+        self.write_index_leaf(parent_record, &mut buffer, node, &raws, &home)
     }
 
     /// Put a new file's record into the MFT's first free slot, and answer its
@@ -744,7 +810,7 @@ impl NtfsFs {
     /// Where `$MFT` carries its own `$BITMAP`, the bit is the volume's word on
     /// it and is read first; the header is then a second one.
     fn claim_mft_record(&self, parent: u64, name: &str, directory: bool) -> Result<(u64, u16)> {
-        let (record_size, sector_size, records, runs, cluster_size) = {
+        let (record_size, sector_size, records, runs, cluster_size, index_block_size) = {
             let mut info = self.info.lock();
             let runs = info.resolve_mft_runs(&self.device)?;
             let record_size = u64::from(info.mft_record_size);
@@ -754,11 +820,13 @@ impl NtfsFs {
                 info.mft_data_size / record_size,
                 runs,
                 info.cluster_size,
+                info.index_block_size,
             )
         };
-        let parent_sequence = {
-            let parent = self.read_mft_record(parent)?;
-            u16::from_le_bytes([parent[16], parent[17]])
+        let parent_reference = {
+            let parent_record = self.read_mft_record(parent)?;
+            let sequence = u16::from_le_bytes([parent_record[16], parent_record[17]]);
+            parent | (u64::from(sequence) << 48)
         };
         let bitmap = self.mft_bitmap()?;
 
@@ -789,14 +857,21 @@ impl NtfsFs {
             // in use and nothing names is a leak, and the other order would
             // leave a record in use that the volume would hand out again.
             self.set_mft_bitmap(number, true)?;
-            let record = new_record(
+            let attributes = record_attributes(
+                parent_reference,
+                name,
+                directory,
+                index_block_size,
+                cluster_size,
+            );
+            let record = fs::build_record(
                 record_size as usize,
                 sector_size,
                 number,
                 sequence,
-                parent | (u64::from(parent_sequence) << 48),
-                name,
-                directory,
+                if directory { 0x03 } else { 0x01 },
+                1,
+                &attributes,
             );
             fs::write_device_bytes(&self.device, at, &record)?;
             // Whatever the mount had of this number is not what is there now.
@@ -1116,18 +1191,47 @@ impl FileSystem for NtfsFs {
         self.vnode(number, String::from(name))
     }
 
-    fn create_dir(&self, _path: &str) -> Result<()> {
-        // NTFS directory creation is complex - for now, just return not implemented
-        Err(Error::NotImplemented)
+    /// Make a directory: a record of its own, and its name in the parent's
+    /// index.
+    ///
+    /// The record a directory gets differs from a file's in one attribute: an
+    /// empty `$INDEX_ROOT` in the place of `$DATA`, which is what its children
+    /// are later added to.  The order is a creation's — the record down
+    /// first — and for the same reason.
+    fn create_dir(&self, path: &str) -> Result<()> {
+        let (parent_path, name) = split_parent(path);
+        if name.is_empty() || name.encode_utf16().count() > 255 {
+            return Err(Error::InvalidArgument);
+        }
+        if self.resolve(path).is_ok() {
+            return Err(Error::AlreadyExists);
+        }
+
+        // Raised before the work below: setting the flag reads a record.
+        self.set_dirty(true)?;
+
+        let (parent_record, _) = self.resolve(parent_path)?;
+        let (number, sequence) = self.claim_mft_record(parent_record, name, true)?;
+        let reference = number | (u64::from(sequence) << 48);
+        if let Err(error) = self.index_insert(parent_record, name, reference, true, 0) {
+            let _ = self.release_mft_record(number);
+            return Err(error);
+        }
+        Ok(())
     }
 
-    /// Take a file out: its name from the parent's index, its clusters back
+    /// Take an entry out: its name from the parent's index, its clusters back
     /// to the volume, and its record back to the MFT's free space.
     ///
     /// The name goes first, which is the reverse of a creation and for the
     /// same reason: a name that a walk finds and a record that is already free
     /// is the worse half of the two, and what is left after a crash is a
     /// cluster claimed by a record nothing names.
+    ///
+    /// A directory that still holds something cannot go: its children's names
+    /// are in *its* index, and a walk that reaches it would find entries whose
+    /// parent the volume no longer has.  An empty one goes the same way a file
+    /// does.
     fn remove_path(&self, path: &str) -> Result<()> {
         let (parent_path, _) = split_parent(path);
         let (record_number, name) = self.resolve(path)?;
@@ -1136,11 +1240,8 @@ impl FileSystem for NtfsFs {
         }
         let record = self.read_mft_record(record_number)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        if header.is_dir() {
-            // A directory's removal is its own stage: what it holds has to go
-            // first, and so does the index bitmap that says its block is in
-            // use.
-            return Err(Error::NotImplemented);
+        if header.is_dir() && !self.directory_entries(record_number)?.is_empty() {
+            return Err(Error::Busy);
         }
 
         // Raised before the work below, for the same reason a creation raises
@@ -1152,15 +1253,15 @@ impl FileSystem for NtfsFs {
 
         // The clusters go back before the record stops naming them, so a crash
         // between the two leaves them claimed and unused rather than free and
-        // spoken for.
+        // spoken for.  Every non-resident attribute's runs go back, not only
+        // `$DATA`'s: a directory keeps its entries — and the bitmap of the
+        // blocks they are in — in files of their own.
         let attributes = parse_attributes(&record[header.size() as usize..]);
-        if let Some(data) = attributes
+        for attribute in attributes
             .iter()
-            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .filter(|attribute| attribute.data_runs_offset.is_some())
         {
-            if data.data_runs_offset.is_some() {
-                self.free_clusters(&data.data_runs)?;
-            }
+            self.free_clusters(&attribute.data_runs)?;
         }
 
         self.release_mft_record(record_number)

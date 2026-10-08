@@ -263,6 +263,7 @@ fn a_directory_lists_what_its_index_holds() {
             "two-runs.bin",
             "tight.bin",
             "full.bin",
+            "full-dir",
             "sub",
         ],
         "the root's entries, without its own \".\""
@@ -289,7 +290,7 @@ fn a_directory_lists_what_its_index_holds() {
     assert_eq!(tight.kind, NodeKind::File);
     let full = fs_handle.read_dir("/", 10).expect("full.bin");
     assert_eq!(full.kind, NodeKind::File);
-    let sub = fs_handle.read_dir("/", 11).expect("sub");
+    let sub = fs_handle.read_dir("/", 12).expect("sub");
     assert_eq!(sub.kind, NodeKind::Directory);
 }
 
@@ -760,27 +761,165 @@ fn a_name_that_is_already_there_is_not_created_twice() {
         fs_handle.create_file("/sub").err(),
         Some(Error::AlreadyExists)
     );
+    assert_eq!(
+        fs_handle.create_dir("/sub").err(),
+        Some(Error::AlreadyExists)
+    );
+    assert_eq!(
+        fs_handle.create_dir("/resident.txt").err(),
+        Some(Error::AlreadyExists)
+    );
 }
 
 #[test]
-fn a_creation_the_index_has_no_room_for_is_refused() {
-    // A subdirectory keeps its entries in its index *root*, which is a
-    // fraction of a record: a name there has nowhere to go until this driver
-    // can grow a directory, so the creation refuses rather than half-writing.
+fn a_name_added_to_a_directory_grows_its_index_root() {
+    // A small directory keeps its children in its index *root*, and a record
+    // gives that value as much room as it has: a new name makes the value
+    // longer, everything after the attribute shifts up, and the record goes
+    // back whole — which is what a real volume does, and not an allocation
+    // block.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
     assert_eq!(
-        fs_handle.create_file("/sub/another.txt").err(),
+        fs_handle
+            .read_dir("/sub", 0)
+            .expect("the entry it had")
+            .name,
+        "leaf.txt"
+    );
+    fs_handle
+        .create_file("/sub/another.txt")
+        .expect("a name in a directory whose record has room");
+
+    // A second mount reads the new entry, and the one next to it too: growing
+    // the value moved what followed it rather than losing it.
+    let again = remount(&device);
+    assert_eq!(
+        again
+            .lookup("/sub/another.txt")
+            .expect("the new entry")
+            .size(),
+        0
+    );
+    assert_eq!(
+        again
+            .lookup("/sub/leaf.txt")
+            .expect("the entry it had")
+            .size(),
+        4
+    );
+    let mut names = Vec::new();
+    for index in 0.. {
+        match again.read_dir("/sub", index) {
+            Ok(entry) => names.push(entry.name),
+            Err(_) => break,
+        }
+    }
+    assert!(names.iter().any(|name| name == "another.txt"), "{names:?}");
+    assert!(names.iter().any(|name| name == "leaf.txt"), "{names:?}");
+}
+
+#[test]
+fn a_name_a_full_record_has_no_room_for_is_refused() {
+    // The other half: a directory whose record *is* full cannot make the value
+    // longer, and the format's answer — an allocation block of its own — is
+    // not built, so the creation refuses rather than half-writing.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    assert_eq!(
+        fs_handle.create_file("/full-dir/another.txt").err(),
         Some(Error::NoSpace)
     );
 
-    // And nothing was left behind: the directory has the entries it had.
+    // And nothing was left behind: the name is not there, and the record the
+    // creation would have claimed is free again.
     let again = remount(&device);
     assert!(matches!(
-        again.lookup("/sub/another.txt"),
+        again.lookup("/full-dir/another.txt"),
         Err(Error::NotFound)
     ));
-    assert_eq!(again.lookup("/sub/leaf.txt").expect("leaf.txt").size(), 4);
+    let bits = again
+        .mft_bitmap()
+        .expect("the MFT's bitmap")
+        .expect("a bitmap");
+    assert_eq!(
+        bits[16 / 8] & (1 << (16 % 8)),
+        0,
+        "the record a failed creation claimed went back"
+    );
+}
+
+#[test]
+fn a_created_directory_is_on_the_volume() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle.create_dir("/made").expect("create a directory");
+
+    // A second mount finds it, calls it a directory, and finds it *empty*: a
+    // directory's entries are its children, and the "." and ".." a listing
+    // shows are the reader's own.
+    let again = remount(&device);
+    let made = again.lookup("/made").expect("the new directory");
+    assert_eq!(made.kind(), NodeKind::Directory);
+    assert_eq!(made.size(), 0);
+    assert!(matches!(again.read_dir("/made", 0), Err(Error::NotFound)));
+
+    // Its record is one the volume had free, and the volume's own list of what
+    // is in use names it.
+    let (number, _) = again.resolve("/made").expect("resolve");
+    assert_eq!(number, 16, "the first record past the volume's own");
+    let bits = again
+        .mft_bitmap()
+        .expect("the MFT's bitmap")
+        .expect("a bitmap");
+    assert_eq!(
+        bits[number as usize / 8] & (1 << (number % 8)),
+        1 << (number % 8),
+        "the MFT's bitmap claimed the record"
+    );
+}
+
+#[test]
+fn a_file_can_be_created_in_a_new_directory() {
+    // The point of a directory: a name goes into the one just made, which is
+    // where its index root has to grow.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle.create_dir("/made").expect("create a directory");
+    fs_handle
+        .create_file("/made/inside.txt")
+        .expect("a file in it");
+
+    let again = remount(&device);
+    assert_eq!(
+        again.lookup("/made/inside.txt").expect("the file").kind(),
+        NodeKind::File
+    );
+    let listed = again.read_dir("/made", 0).expect("the entry in it");
+    assert_eq!(listed.name, "inside.txt");
+    assert_eq!(listed.kind, NodeKind::File);
+}
+
+#[test]
+fn a_removed_directory_is_gone() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle.create_dir("/made").expect("create a directory");
+    fs_handle.remove_path("/made").expect("remove it");
+    assert!(matches!(fs_handle.lookup("/made"), Err(Error::NotFound)));
+
+    // A second mount agrees, and the record is free again.
+    let again = remount(&device);
+    assert!(matches!(again.lookup("/made"), Err(Error::NotFound)));
+    let bits = again
+        .mft_bitmap()
+        .expect("the MFT's bitmap")
+        .expect("a bitmap");
+    assert_eq!(
+        bits[16 / 8] & (1 << (16 % 8)),
+        0,
+        "the MFT's bitmap gave the record back"
+    );
 }
 
 #[test]
@@ -853,18 +992,16 @@ fn a_removed_file_is_gone_and_its_clusters_come_back() {
 }
 
 #[test]
-fn a_file_removal_leaves_a_directory_alone() {
-    // Taking a directory out is its own stage: what it holds has to go first,
-    // and so does the index bitmap that says its block is in use.
+fn a_directory_that_still_holds_something_is_not_removed() {
+    // A directory that still has children cannot go: their names are in *its*
+    // index, and a walk that reached it would find entries whose parent the
+    // volume no longer has.
     let fixture = build_volume(FRACTIONAL);
     let (_device, fs_handle) = writable(&fixture);
-    assert_eq!(
-        fs_handle.remove_path("/sub").err(),
-        Some(Error::NotImplemented)
-    );
+    assert_eq!(fs_handle.remove_path("/sub").err(), Some(Error::Busy));
     assert!(
         fs_handle.lookup("/sub/leaf.txt").is_ok(),
-        "and it is still there"
+        "and what it held is still there"
     );
 }
 
@@ -932,7 +1069,10 @@ const TIGHT_FILE: u64 = 28;
 /// A file whose record is **full**: the shape a run list cannot grow in, and
 /// the one an attribute list — not the MFT — is for.
 const FULL_FILE: u64 = 29;
-const RECORDS: u64 = 30;
+/// A directory whose record is **full**: the shape a name has nowhere to go
+/// in, where the format's answer is an allocation block of its own.
+const FULL_DIRECTORY: u64 = 30;
+const RECORDS: u64 = 31;
 
 /// How long a `$UpCase` table is: 65,536 code units.
 const UPCASE_BYTES: u64 = 0x1_0000 * 2;
@@ -953,6 +1093,7 @@ fn is_named(number: u64) -> bool {
         || number == TWO_RUN_FILE
         || number == TIGHT_FILE
         || number == FULL_FILE
+        || number == FULL_DIRECTORY
         || number == SUBDIRECTORY
         || number == SUBDIRECTORY_FILE
 }
@@ -1158,7 +1299,9 @@ fn record(shape: &Shape, number: u64, flags: u16, attributes: &[u8]) -> Vec<u8> 
     let usa_count = 1 + size / shape.bytes_per_sector as usize;
     put_u16_le(&mut record, 6, usa_count as u16);
     put_u16_le(&mut record, 16, 1); // sequence
-    put_u16_le(&mut record, 18, if flags & 0x02 != 0 { 2 } else { 1 }); // link count
+                                    // A directory has one name and so one hard link, which is what a real
+                                    // volume's own `mkdir` leaves.
+    put_u16_le(&mut record, 18, 1);
     put_u16_le(&mut record, 20, 56); // attributes offset
     put_u16_le(&mut record, 22, flags);
     put_u32_le(&mut record, 28, size as u32);
@@ -1374,6 +1517,7 @@ fn build_volume(shape: Shape) -> Fixture {
                 Vec::new(),
             ),
             FULL_FILE => (ROOT_RECORD, "full.bin", false, 2 * cluster_size, Vec::new()),
+            FULL_DIRECTORY => (ROOT_RECORD, "full-dir", true, 0, Vec::new()),
             SUBDIRECTORY => (ROOT_RECORD, "sub", true, 0, Vec::new()),
             SUBDIRECTORY_FILE => (
                 SUBDIRECTORY,
@@ -1494,6 +1638,20 @@ fn build_volume(shape: Shape) -> Fixture {
                     let room = 1024 - 8 - 56 - attributes.len() - 24;
                     attributes.extend(attribute(0xe0, "", &alloc::vec![0u8; room], None, 0));
                 }
+                FULL_DIRECTORY => {
+                    // An index *root* with nothing in it, and then an attribute
+                    // sized to fill the record: a name that would have to make
+                    // the root's value longer has nowhere to go.
+                    attributes.extend(attribute(
+                        0x90,
+                        "$I30",
+                        &index_root(&index_end_entry(), false),
+                        None,
+                        0,
+                    ));
+                    let room = 1024 - 8 - 56 - attributes.len() - 24;
+                    attributes.extend(attribute(0xe0, "", &alloc::vec![0u8; room], None, 0));
+                }
                 TIGHT_FILE => {
                     // Two runs, no room to spare, and an attribute *after* it:
                     // the shape a growth has to move.
@@ -1527,6 +1685,7 @@ fn build_volume(shape: Shape) -> Fixture {
                             TWO_RUN_FILE,
                             TIGHT_FILE,
                             FULL_FILE,
+                            FULL_DIRECTORY,
                             SUBDIRECTORY,
                         ] {
                             let (name, directory, size): (&str, bool, u64) = match record {
@@ -1541,6 +1700,7 @@ fn build_volume(shape: Shape) -> Fixture {
                                 TWO_RUN_FILE => ("two-runs.bin", false, 3 * cluster_size),
                                 TIGHT_FILE => ("tight.bin", false, 2 * cluster_size),
                                 FULL_FILE => ("full.bin", false, 2 * cluster_size),
+                                FULL_DIRECTORY => ("full-dir", true, 0),
                                 _ => ("sub", true, 0),
                             };
                             entries.extend_from_slice(&index_entry(record, name, directory, size));
@@ -1603,7 +1763,7 @@ fn build_volume(shape: Shape) -> Fixture {
             }
         }
 
-        let directory = number == ROOT_RECORD || number == SUBDIRECTORY;
+        let directory = number == ROOT_RECORD || number == SUBDIRECTORY || number == FULL_DIRECTORY;
         let flags = if named {
             if directory {
                 0x03
