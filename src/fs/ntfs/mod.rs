@@ -32,6 +32,13 @@ pub(crate) mod types;
 /// The root directory's record, which the standard fixes at the fifth.
 const ROOT_RECORD: u64 = 5;
 
+/// The volume's own record, which the standard fixes at the third.
+const VOLUME_RECORD: u64 = 3;
+
+/// Where a volume's flags are inside its `$VOLUME_INFORMATION` value: eight
+/// reserved bytes, then a major and a minor version.
+const VOLUME_FLAGS_OFFSET: usize = 10;
+
 /// How deep an index tree this driver will follow before it gives up.
 ///
 /// A directory's index is a B-tree, and a volume can make one deeper than a
@@ -221,6 +228,67 @@ impl NtfsFs {
             .unwrap_or(0)
     }
 
+    /// Where a record's own bytes are on the volume.
+    ///
+    /// The MFT is a file: a record's position is its number's offset inside
+    /// that file, mapped through the file's own runs.
+    fn record_offset(&self, info: &fs::NtfsInfo, record_number: u64) -> Result<u64> {
+        let runs = info.mft_runs.as_ref().ok_or(Error::InvalidArgument)?;
+        let offset = record_number
+            .checked_mul(u64::from(info.mft_record_size))
+            .ok_or(Error::InvalidArgument)?;
+        fs::byte_offset_in_runs(runs, info.cluster_size, offset).ok_or(Error::InvalidArgument)
+    }
+
+    /// Where the volume's `$VOLUME_INFORMATION` flags are, if it has them.
+    ///
+    /// The flags are the last two bytes of a twelve-byte value in the third
+    /// record, and bit zero is the one that says the volume is dirty — which
+    /// is what a reader that finds it left set is supposed to check rather
+    /// than trust.
+    fn volume_flags_offset(&self) -> Result<u64> {
+        let record = self.read_mft_record(VOLUME_RECORD)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let information = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_VOLUME_INFORMATION)
+            .ok_or(Error::NotFound)?;
+        // The lock is taken here and not around the read above: reading a
+        // record takes it too, and a lock held across that is a lock held
+        // against itself.
+        let info = self.info.lock();
+        let record_at = self.record_offset(&info, VOLUME_RECORD)?;
+        Ok(record_at
+            + header.size() as u64
+            + information.offset as u64
+            + information.value_offset as u64
+            + VOLUME_FLAGS_OFFSET as u64)
+    }
+
+    /// Say whether the volume is in the middle of being changed.
+    pub fn set_dirty(&self, dirty: bool) -> Result<()> {
+        let info = self.info.lock();
+        if info.bs.bytes_per_sector == 0 {
+            return Err(Error::InvalidArgument);
+        }
+        drop(info);
+
+        let at = self.volume_flags_offset()?;
+        let mut field = [0u8; 2];
+        fs::read_device_bytes(&self.device, at, &mut field)?;
+        let flags = u16::from_le_bytes(field);
+        let wanted = if dirty {
+            flags | 0x0001
+        } else {
+            flags & !0x0001
+        };
+        if wanted == flags {
+            return Ok(());
+        }
+        fs::write_device_bytes(&self.device, at, &wanted.to_le_bytes())
+    }
+
     /// The vnode for a record, named the way its parent's index names it.
     fn vnode(&self, record_number: u64, name: String) -> Result<Arc<dyn VNode>> {
         let record = self.read_mft_record(record_number)?;
@@ -314,6 +382,18 @@ impl FileSystem for NtfsFs {
         // NTFS path removal is complex - for now, just return not implemented
         Err(Error::NotImplemented)
     }
+
+    /// Settle the volume.
+    ///
+    /// A volume this driver has changed is left **dirty** until it is told it
+    /// is done: that flag is what tells a checker to look rather than trust,
+    /// and clearing it is the one honest thing this driver can say about the
+    /// changes it made, since it writes no `$LogFile`
+    /// ([RFC 0012](../../docs/rfcs/0012-the-harness-an-ntfs-write-is-proven-on.
+    /// md)).
+    fn sync(&self) -> Result<()> {
+        self.set_dirty(false)
+    }
 }
 
 // ── NTFS vnode ─────────────────────────────────────────────────────────
@@ -382,177 +462,131 @@ impl VNode for NtfsVnode {
     }
 
     fn write(&self, offset: u64, buffer: &[u8]) -> Result<usize> {
-        let info = self.fs.info.lock();
-        let mut record = self.mft_record.lock();
-
-        // Parse the MFT record to find attributes
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let mut attributes = parse_attributes(&record[header.size() as usize..]);
-
-        // Find or create the data attribute
-        let data_attr = if let Some(pos) = attributes
-            .iter()
-            .position(|attr| attr.attr_type == ATTR_TYPE_DATA)
-        {
-            attributes.get_mut(pos).unwrap()
-        } else {
-            // Create a new data attribute
-            let data_attr = ParsedAttr {
-                attr_type: ATTR_TYPE_DATA,
-                content: Vec::new(),
-                data_runs_offset: None,
-                data_runs: Vec::new(),
-                data_size: 0,
-            };
-            attributes.push(data_attr);
-            attributes.last_mut().unwrap()
-        };
-
-        let file_size = data_attr.data_size as u64;
-        let new_size = (offset + buffer.len() as u64).max(file_size);
-
-        // For simplicity, we'll just write to existing runs
-        // In a full implementation, you'd need to handle extending the file
-        if offset + buffer.len() as u64 > file_size {
-            // File extension would require cluster allocation
-            return Err(Error::NotImplemented);
+        if self.kind() == NodeKind::Directory {
+            return Err(Error::InvalidArgument);
         }
-
-        let data_runs = &mut data_attr.data_runs;
-
-        // Write data using data runs
-        let mut remaining = buffer.len();
-        let mut buf_offset = 0;
-        let mut current_offset = offset;
-
-        for data_run in data_runs.iter_mut() {
-            // `lcn` is signed to allow sparse runs (-1); a write targets only
-            // real runs, so treat it as an unsigned cluster address.
-            let run_lcn = data_run.lcn as u64;
-            let run_offset = run_lcn * info.cluster_size as u64;
-            let run_size = data_run.cluster_count * info.cluster_size as u64;
-
-            if current_offset >= run_offset + run_size {
-                continue;
-            }
-
-            let run_start = current_offset.saturating_sub(run_offset);
-            let run_end = (current_offset + remaining as u64)
-                .saturating_sub(run_offset)
-                .min(run_size);
-            let run_write_size = (run_end - run_start) as usize;
-
-            if run_write_size > 0 {
-                fs::write_clusters(
-                    &self.fs.device,
-                    &info,
-                    run_lcn + run_start / info.cluster_size as u64,
-                    run_write_size as u64 / info.cluster_size as u64,
-                    &buffer[buf_offset..buf_offset + run_write_size],
-                )?;
-
-                buf_offset += run_write_size;
-                remaining -= run_write_size;
-                current_offset += run_write_size as u64;
-
-                if remaining == 0 {
-                    break;
+        let end = offset.saturating_add(buffer.len() as u64);
+        if end > self.size() as u64 {
+            // A write past the end grows the file first, and a growth this
+            // driver cannot make is a *short* write rather than an error: the
+            // contract's own answer for bytes it could not take.
+            if self.set_len(end).is_err() {
+                let room = self.size().saturating_sub(offset as usize);
+                if room == 0 {
+                    return Ok(0);
                 }
+                return self.write(offset, &buffer[..room]);
             }
         }
 
-        // Update file size if needed
-        if new_size > file_size {
-            data_attr.data_size = new_size as u32;
-            *self.file_size.lock() = new_size;
+        // The flag goes up before the change, and before the locks below are
+        // taken: setting it reads a record, and reading a record takes the lock
+        // this write is about to hold.
+        self.fs.set_dirty(true)?;
+
+        let info = self.fs.info.lock();
+        let record = self.mft_record.lock();
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let data = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?;
+
+        if data.data_runs_offset.is_none() {
+            // A resident file's bytes are in the record itself, so the field
+            // write is the data write — and the volume is where the record is.
+            let length = self.size().min(data.content.len());
+            let start = (offset as usize).min(length);
+            let take = (length - start).min(buffer.len());
+            if take == 0 {
+                return Ok(0);
+            }
+            let record_at = self
+                .fs
+                .record_offset(&info, *self.mft_record_number.lock())?;
+            let field = record_at
+                + (header.size() as u64 + data.offset as u64 + data.value_offset as u64)
+                + start as u64;
+            fs::write_device_bytes(&self.fs.device, field, &buffer[..take])?;
+            return Ok(take);
         }
 
-        // Update the MFT record
-        update_mft_record(&mut record, &attributes);
-
-        Ok(buffer.len())
+        let written = fs::write_to_runs(&self.fs.device, &info, &data.data_runs, offset, buffer)?;
+        Ok(written)
     }
 
     fn set_len(&self, len: u64) -> Result<()> {
-        let mut record = self.mft_record.lock();
-
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let mut attributes = parse_attributes(&record[header.size() as usize..]);
-
-        if let Some(pos) = attributes
-            .iter()
-            .position(|attr| attr.attr_type == ATTR_TYPE_DATA)
-        {
-            let data_attr = attributes.get_mut(pos).unwrap();
-            data_attr.data_size = len as u32;
-            *self.file_size.lock() = len;
-            update_mft_record(&mut record, &attributes);
-        } else {
-            return Err(Error::NotFound);
+        if self.kind() != NodeKind::File {
+            return Err(Error::InvalidArgument);
+        }
+        let length = u32::try_from(len).map_err(|_| Error::InvalidArgument)?;
+        let current = *self.file_size.lock() as u32;
+        if length == current {
+            return Ok(());
         }
 
-        Ok(())
-    }
-}
+        // Raised before the locks below, for the same reason the write raises
+        // it there: setting the flag reads a record.
+        self.fs.set_dirty(true)?;
 
-// Helper functions
+        let info = self.fs.info.lock();
+        let mut record = self.mft_record.lock();
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let attributes = parse_attributes(&record[header.size() as usize..]);
+        let data = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?;
 
-fn update_mft_record(record: &mut [u8], attributes: &[ParsedAttr]) {
-    // Update the record with modified attributes
-    let mut offset = 48; // Start after header
-
-    for attr in attributes {
-        let attr_header = AttrHeader {
-            attr_type: attr.attr_type,
-            attr_len: 24 + attr.content.len() as u32,
-            non_resident: attr.data_runs_offset.is_some(),
-            name_len: 0,
-            name_offset: 0,
-            flags: 0,
-            instance: 0,
-            content_size: attr.data_size,
-            data_runs_offset: attr.data_runs_offset.map(|o| o as u16).unwrap_or(0),
-            data_runs_length: 0,
+        // What the file already *has* is what this stage can use.  A resident
+        // value can only shrink — growing it would need the record's own room
+        // and its bookkeeping — and a file with runs can be as long as those
+        // runs add up to.  Growing past either is allocation, which is the next
+        // stage.
+        let allocated = if data.data_runs_offset.is_none() {
+            if length > current {
+                return Err(Error::NoSpace);
+            }
+            current
+        } else {
+            let clusters: u64 = data.data_runs.iter().map(|run| run.cluster_count).sum();
+            (clusters * info.cluster_size as u64) as u32
         };
+        if length > allocated {
+            return Err(Error::NoSpace);
+        }
 
-        // Copy attribute header
-        let header_bytes = [
-            attr_header.attr_type.to_le_bytes()[0],
-            attr_header.attr_type.to_le_bytes()[1],
-            attr_header.attr_type.to_le_bytes()[2],
-            attr_header.attr_type.to_le_bytes()[3],
-            attr_header.attr_len.to_le_bytes()[0],
-            attr_header.attr_len.to_le_bytes()[1],
-            attr_header.attr_len.to_le_bytes()[2],
-            attr_header.attr_len.to_le_bytes()[3],
-            attr_header.non_resident as u8,
-            attr_header.name_len,
-            attr_header.name_offset.to_le_bytes()[0],
-            attr_header.name_offset.to_le_bytes()[1],
-            attr_header.flags.to_le_bytes()[0],
-            attr_header.flags.to_le_bytes()[1],
-            attr_header.instance.to_le_bytes()[0],
-            attr_header.instance.to_le_bytes()[1],
-            attr_header.content_size.to_le_bytes()[0],
-            attr_header.content_size.to_le_bytes()[1],
-            attr_header.content_size.to_le_bytes()[2],
-            attr_header.content_size.to_le_bytes()[3],
-            attr_header.data_runs_offset.to_le_bytes()[0],
-            attr_header.data_runs_offset.to_le_bytes()[1],
-            attr_header.data_runs_length.to_le_bytes()[0],
-            attr_header.data_runs_length.to_le_bytes()[1],
-        ];
+        let record_at = self
+            .fs
+            .record_offset(&info, *self.mft_record_number.lock())?;
+        let attr_at = record_at + header.size() as u64 + data.offset as u64;
+        if data.data_runs_offset.is_none() {
+            // The value's length, in the header the attribute carries.
+            fs::write_device_bytes(&self.fs.device, attr_at + 16, &length.to_le_bytes())?;
+        } else {
+            // The data size and the initialized size, adjacent in a
+            // non-resident header: a shorter file has no initialized bytes
+            // beyond its length.
+            let mut field = [0u8; 16];
+            field[..8].copy_from_slice(&u64::from(length).to_le_bytes());
+            field[8..].copy_from_slice(&u64::from(length).to_le_bytes());
+            fs::write_device_bytes(&self.fs.device, attr_at + 48, &field)?;
+        }
 
-        if offset + header_bytes.len() <= record.len() {
-            record[offset..offset + header_bytes.len()].copy_from_slice(&header_bytes);
-            offset += header_bytes.len();
-
-            // Copy attribute content
-            if offset + attr.content.len() <= record.len() {
-                record[offset..offset + attr.content.len()].copy_from_slice(&attr.content);
-                offset += attr.content.len();
+        // The record this node holds says the same thing now.
+        {
+            let at = header.size() as usize + data.offset + 16;
+            if data.data_runs_offset.is_none() {
+                record[at..at + 4].copy_from_slice(&length.to_le_bytes());
+            } else {
+                let at = header.size() as usize + data.offset + 48;
+                record[at..at + 8].copy_from_slice(&u64::from(length).to_le_bytes());
+                record[at + 8..at + 16].copy_from_slice(&u64::from(length).to_le_bytes());
             }
         }
+        *self.file_size.lock() = u64::from(length);
+        Ok(())
     }
 }
 

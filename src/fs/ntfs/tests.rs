@@ -39,6 +39,33 @@ fn open(fixture: &Fixture) -> super::NtfsFs {
     super::NtfsFs::new(device).expect("open the fixture")
 }
 
+/// Open a fixture volume on a device that takes writes, and hand back the
+/// device with it: a *second* mount of the same bytes is what says a write
+/// landed.
+fn writable(
+    fixture: &Fixture,
+) -> (
+    alloc::sync::Arc<crate::fs::block::MemoryBlockDevice>,
+    super::NtfsFs,
+) {
+    let device =
+        crate::fs::block::MemoryBlockDevice::new("ntfs-writable", fixture.image.clone(), false);
+    let fs_handle = super::NtfsFs::new(device.clone()).expect("open the fixture");
+    (device, fs_handle)
+}
+
+/// The volume's dirty flag, read off the device.
+fn dirty_flag(
+    device: &alloc::sync::Arc<crate::fs::block::MemoryBlockDevice>,
+    fs_handle: &super::NtfsFs,
+) -> bool {
+    let at = fs_handle.volume_flags_offset().expect("the volume's flags");
+    let mut field = [0u8; 2];
+    let as_device: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> = device.clone();
+    super::fs::read_device_bytes(&as_device, at, &mut field).expect("read the flags");
+    field[0] & 0x01 != 0
+}
+
 #[test]
 fn a_record_answers_with_the_number_it_was_asked_for() {
     // The whole point of the addressing: the record a reader gets is the one
@@ -301,6 +328,116 @@ fn a_files_data_reads_through_the_runs_its_record_names() {
     let sub = fs_handle.lookup("/sub").expect("sub");
     let mut buf = [0u8; 4];
     assert_eq!(sub.read(0, &mut buf), Err(Error::NotFound));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Writing, and what a second mount sees
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Mount the same bytes again: a change only a node knows about does not
+/// survive this.
+fn remount(device: &alloc::sync::Arc<crate::fs::block::MemoryBlockDevice>) -> super::NtfsFs {
+    super::NtfsFs::new(device.clone()).expect("mount it again")
+}
+
+#[test]
+fn an_overwrite_reaches_the_volume() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let node = fs_handle.lookup("/resident.txt").expect("resident.txt");
+    assert_eq!(node.write(0, b"HELLO").expect("write"), 5);
+
+    let again = remount(&device);
+    let reread = again.lookup("/resident.txt").expect("relookup");
+    let mut buf = vec![0u8; 5];
+    assert_eq!(reread.read(0, &mut buf).expect("read"), 5);
+    assert_eq!(&buf, b"HELLO", "the bytes are on the volume");
+}
+
+#[test]
+fn a_shorter_length_is_on_the_volume() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let node = fs_handle.lookup("/resident.txt").expect("resident.txt");
+    node.set_len(3).expect("truncate");
+    assert_eq!(node.size(), 3);
+
+    let again = remount(&device);
+    let reread = again.lookup("/resident.txt").expect("relookup");
+    assert_eq!(reread.size(), 3, "the length is on the volume");
+    let mut buf = vec![0u8; 3];
+    assert_eq!(reread.read(0, &mut buf).expect("read"), 3);
+    assert_eq!(&buf, b"hel");
+}
+
+#[test]
+fn a_file_can_be_as_long_as_the_runs_it_has() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+    let node = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
+
+    // It holds three clusters in two runs; two of them are within what it has.
+    node.set_len(2 * cluster).expect("shorten inside the runs");
+    assert_eq!(node.size(), 2 * cluster as usize);
+
+    let again = remount(&device);
+    assert_eq!(
+        again.lookup("/two-runs.bin").expect("relookup").size(),
+        2 * cluster as usize
+    );
+
+    // And back to what the runs add up to: the second run's bytes were never
+    // erased, which is what lets the length go back up.
+    let node = again.lookup("/two-runs.bin").expect("relookup");
+    node.set_len(3 * cluster).expect("grow back");
+    let mut buf = vec![0u8; 3 * cluster as usize];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(buf[2 * cluster as usize..].iter().all(|b| *b == 0x22));
+}
+
+#[test]
+fn a_length_the_file_has_not_the_room_for_is_refused() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+    let node = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
+
+    // Allocation is the next stage; until it exists, a length past the runs is
+    // not something this can pretend to have.
+    assert_eq!(node.set_len(4 * cluster), Err(Error::NoSpace));
+    assert_eq!(node.size(), 3 * cluster as usize, "and nothing moved");
+
+    // A write that would need it is a short write, not an error.
+    let written = node
+        .write(3 * cluster - 2, &[0xAB; 8])
+        .expect("a short write");
+    assert_eq!(written, 2);
+
+    let again = remount(&device);
+    assert_eq!(
+        again.lookup("/two-runs.bin").expect("relookup").size(),
+        3 * cluster as usize
+    );
+}
+
+#[test]
+fn the_volume_is_dirty_until_it_is_synced() {
+    use crate::fs::vfs::FileSystem as VfsFileSystem;
+
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    assert!(!dirty_flag(&device, &fs_handle), "a fresh volume is clean");
+
+    let node = fs_handle.lookup("/resident.txt").expect("resident.txt");
+    node.write(0, b"HELLO").expect("write");
+    assert!(
+        dirty_flag(&device, &fs_handle),
+        "a volume in the middle of being changed says so"
+    );
+
+    fs_handle.sync().expect("settle the volume");
+    assert!(!dirty_flag(&device, &fs_handle), "and stops saying so");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -783,6 +920,20 @@ fn build_volume(shape: Shape) -> Fixture {
                         RECORDS * record_size,
                     ));
                 }
+                3 => {
+                    // The volume's own information: a version, and the flags whose
+                    // lowest bit says the volume is dirty.
+                    let mut information = vec![0u8; 12];
+                    information[8] = 3; // major version
+                    information[9] = 1; // minor version
+                    attributes.extend(attribute(
+                        super::types::ATTR_TYPE_VOLUME_INFORMATION,
+                        "",
+                        &information,
+                        None,
+                        0,
+                    ));
+                }
                 RESIDENT_FILE | SUBDIRECTORY_FILE => {
                     attributes.extend(attribute(0x80, "", &data, None, 0));
                 }
@@ -1109,6 +1260,8 @@ fn standard_info_parse_timestamps_and_dir() {
 fn get_best_filename_prefers_win32_over_dos() {
     let dos = ParsedAttr {
         attr_type: ATTR_TYPE_FILENAME,
+        offset: 0,
+        value_offset: 24,
         content: make_filename_body("HELLO~1", 2, 0, 5),
         data_runs_offset: None,
         data_runs: Vec::new(),
@@ -1116,6 +1269,8 @@ fn get_best_filename_prefers_win32_over_dos() {
     };
     let win32 = ParsedAttr {
         attr_type: ATTR_TYPE_FILENAME,
+        offset: 0,
+        value_offset: 24,
         content: make_filename_body("hello.txt", 3, 0, 5),
         data_runs_offset: None,
         data_runs: Vec::new(),

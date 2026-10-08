@@ -318,3 +318,47 @@ the subdirectory's (whose entries are in its index root) to a two-run file
 whose second run is the part a reader that stopped early would miss.  What
 comes next is stage 1: a write that lands — the record written back, and a
 second mount as the proof.
+
+**Stage 1 — a write that lands.**
+
+- A change is written as the **field it is**, in the place it lives, rather
+  than by rebuilding the record: the `$DATA`'s value length for a resident
+  file, its data and initialized sizes for one with runs.  `parse_attributes`
+  now reports each attribute's own offset, so the field's address is the
+  record's position on the volume plus that offset plus the header's — and the
+  record's position comes from its number mapped through the MFT's runs, which
+  is what [`byte_offset_in_runs`] answers.
+- A field write is a **read-modify-write of the block around it**
+  (`write_device_bytes`), because the device writes blocks and the bytes around
+  a field are not this write's to lose.  An in-place field write needs no
+  sequence-array handling at all: the array's territory is the end of each
+  sector, and a field does not reach it.  A stage that *relocates* an attribute
+  is the one that will have to unpack and repack the array.
+- A length is bounded by what the file already has — a resident value may
+  shrink, and a file with runs may be as long as those runs add up to — and
+  anything past that is `NoSpace`, with allocation as the next stage.  A write
+  past the end grows first and is a **short write** when it cannot, which is
+  the contract's own answer.  A write that would land in a *sparse* run is
+  refused rather than reported as bytes it did not store.
+- The volume's `$VOLUME_INFORMATION` flags carry the **dirty** bit, and this
+  driver keeps it set while it is changing the volume and clears it in
+  `sync()`: a change that stops half way leaves the flag up, which is what
+  tells a checker to look rather than trust, and the one honest thing a driver
+  with no `$LogFile` can say.
+- `update_mft_record`, the in-memory re-serialiser, is gone: it built
+  attribute headers from scratch with zeroed names, flags and run lengths, and
+  nothing ever wrote its output to the volume.  Two of the bugs it hid came
+  out with it — the write path's run walk treated a run's *absolute* cluster
+  address as if it were a file offset, and `write_device_bytes` underflowed on
+  a write smaller than the offset inside its block.
+- Five tests, every one of them proved by a **second mount** of the same
+  bytes: an overwrite that a fresh mount reads back; a shorter length that a
+  fresh mount agrees with; a file shortened to two of its three clusters'
+  length and grown back, the second run's bytes still there; a length past the
+  runs refused, with a write into that space a short write; and the volume's
+  dirty flag going up with the first change and down again at `sync`.
+
+**What comes next is stage 2:** growing a file past what it already has —
+`$Bitmap` read as a file, clusters claimed, the run list rewritten by the
+mapping pairs' rules, and the MFT's own growth when a record's attribute no
+longer fits.

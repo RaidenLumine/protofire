@@ -129,8 +129,12 @@ The authoritative picture of what exists today is
   allocation block's node clears its own update sequence array.  With those
   fixed the driver **reads a file end to end**: a path resolves through the
   directory index, and the bytes come through the runs — or out of the record,
-  when the `$DATA` is resident.  What comes next is the stage a write needs to
-  be proven by: the record written back, and a second mount reading it.
+  when the `$DATA` is resident.  And a **write lands**: the field is written
+  where it lives, one block read-modify-written at a time, and a second mount
+  is what proves it — an overwrite, a shorter length, and a length change
+  inside what the file already has, with the volume's dirty bit up until it is
+  synced.  What comes next is growth: `$Bitmap`, the run list, and the MFT's
+  own expansion.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

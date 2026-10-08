@@ -136,6 +136,8 @@ pub const ATTR_TYPE_FILENAME: u32 = 0x30;
 pub const ATTR_TYPE_DATA: u32 = 0x80;
 pub const ATTR_TYPE_INDEX_ROOT: u32 = 0x90;
 pub const ATTR_TYPE_INDEX_ALLOC: u32 = 0xA0;
+/// The volume's own information, whose flags say whether it is dirty.
+pub const ATTR_TYPE_VOLUME_INFORMATION: u32 = 0x70;
 pub const ATTR_TYPE_EA: u32 = 0xE0;
 pub const ATTR_TYPE_EA_INFORMATION: u32 = 0xD0;
 pub const ATTR_TYPE_REPARSE_POINT: u32 = 0xC0;
@@ -185,6 +187,12 @@ impl AttrHeader {
 #[derive(Debug, Clone)]
 pub struct ParsedAttr {
     pub attr_type: AttrType,
+    /// Where the attribute's own record begins, in the buffer it was parsed
+    /// from: a field a writer changes is at an offset from here, and the
+    /// volume is what knows where that buffer lives.
+    pub offset: usize,
+    /// The value's offset from the attribute's start, for a resident one.
+    pub value_offset: usize,
     pub content: Vec<u8>,
     pub data_runs_offset: Option<usize>,
     pub data_runs: Vec<DataRun>,
@@ -546,6 +554,8 @@ mod tests {
     fn get_best_filename_prefers_win32_over_dos() {
         let dos = ParsedAttr {
             attr_type: ATTR_TYPE_FILENAME,
+            offset: 0,
+            value_offset: 24,
             content: make_filename_body("HELLO~1", 2, 0, 5),
             data_runs_offset: None,
             data_runs: Vec::new(),
@@ -553,6 +563,8 @@ mod tests {
         };
         let win32 = ParsedAttr {
             attr_type: ATTR_TYPE_FILENAME,
+            offset: 0,
+            value_offset: 24,
             content: make_filename_body("hello.txt", 3, 0, 5),
             data_runs_offset: None,
             data_runs: Vec::new(),

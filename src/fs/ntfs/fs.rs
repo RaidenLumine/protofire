@@ -185,6 +185,75 @@ pub fn read_from_runs(
 
 // ── MFT record reading ──────────────────────────────────────────────────
 
+/// Write a byte range by following data runs — the mirror of
+/// [`read_from_runs`].
+///
+/// A sparse run names no cluster, so a write that would land in one has
+/// nowhere to go: this refuses rather than reporting bytes it did not store.
+pub fn write_to_runs(
+    device: &Arc<dyn BlockDevice>,
+    info: &NtfsInfo,
+    runs: &[DataRun],
+    offset: u64,
+    buf: &[u8],
+) -> Result<usize, Error> {
+    if buf.is_empty() {
+        return Ok(0);
+    }
+
+    let cluster_size = info.cluster_size as u64;
+    let end = offset + buf.len() as u64;
+    let mut total = 0usize;
+    let mut cluster_start: u64 = 0;
+
+    for run in runs {
+        let run_end = cluster_start + run.cluster_count * cluster_size;
+        if cluster_start >= end {
+            break;
+        }
+        if run_end <= offset {
+            cluster_start = run_end;
+            continue;
+        }
+
+        let seg_start = offset.max(cluster_start);
+        let seg_end = end.min(run_end);
+        let seg_len = (seg_end - seg_start) as usize;
+        if run.lcn < 0 {
+            return Err(Error::Unsupported);
+        }
+
+        let phys_off = run.lcn as u64 * cluster_size + (seg_start - cluster_start);
+        let source = (seg_start - offset) as usize;
+        write_device_bytes(device, phys_off, &buf[source..source + seg_len])?;
+
+        total += seg_len;
+        cluster_start = run_end;
+    }
+    Ok(total)
+}
+
+/// Where a byte offset inside a run list lands on the volume.
+///
+/// The inverse of what [`read_from_runs`] does, for a caller that has to say
+/// where a field it is about to change *lives*: a record's own position on the
+/// volume is what its number and the MFT's runs give.
+pub fn byte_offset_in_runs(runs: &[DataRun], cluster_size: u32, offset: u64) -> Option<u64> {
+    let cluster_size = cluster_size as u64;
+    let mut cluster_start: u64 = 0;
+    for run in runs {
+        let run_end = cluster_start + run.cluster_count * cluster_size;
+        if offset < run_end {
+            if run.lcn < 0 {
+                return None;
+            }
+            return Some(run.lcn as u64 * cluster_size + (offset - cluster_start));
+        }
+        cluster_start = run_end;
+    }
+    None
+}
+
 /// Read an MFT record by number, applying the USA fixup. Kept as a free
 /// primitive; [`super::NtfsFs::read_mft_record`] is the cache-aware wrapper.
 #[allow(dead_code)]
@@ -318,6 +387,8 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
 
         attrs.push(ParsedAttr {
             attr_type,
+            offset,
+            value_offset: u16::from_le_bytes([buf[offset + 20], buf[offset + 21]]) as usize,
             content,
             data_runs_offset,
             data_runs,
@@ -561,7 +632,7 @@ pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
 
 // ── Byte I/O ──────────────────────────────────────────────────────────────
 
-fn read_device_bytes(
+pub fn read_device_bytes(
     device: &Arc<dyn BlockDevice>,
     byte_offset: u64,
     buf: &mut [u8],
@@ -589,69 +660,35 @@ fn read_device_bytes(
     Ok(())
 }
 
-/// Write clusters to the NTFS volume.
-pub fn write_clusters(
-    device: &Arc<dyn BlockDevice>,
-    info: &NtfsInfo,
-    lcn: u64,
-    count: u64,
-    buf: &[u8],
-) -> Result<usize, Error> {
-    if lcn == u64::MAX {
-        // Cannot write to sparse regions.
-        return Err(Error::InvalidArgument);
-    }
-
-    let byte_off = lcn * info.cluster_size as u64;
-    let total = (count * info.cluster_size as u64) as usize;
-    let n = total.min(buf.len());
-    write_device_bytes(device, byte_off, &buf[..n])?;
-    Ok(n)
-}
-
 /// Write a byte range to the device.
 pub fn write_device_bytes(
     device: &Arc<dyn BlockDevice>,
     byte_offset: u64,
     data: &[u8],
 ) -> Result<(), Error> {
+    if data.is_empty() {
+        return Ok(());
+    }
+
+    // A block at a time, each read before it is patched: a field is a few bytes
+    // inside a block, and the bytes around them are not this write's to lose.
+    // A block that cannot be read is an error rather than something to fill
+    // with zeros, which would be the same loss by another route.
+    let device_bs = device.block_size();
     let mut offset = byte_offset;
-    let mut remaining = data.len();
     let mut written = 0usize;
+    while written < data.len() {
+        let lba = offset / device_bs as u64;
+        let within = (offset % device_bs as u64) as usize;
+        let take = (device_bs - within).min(data.len() - written);
 
-    while remaining > 0 {
-        let block_offset = offset % BLOCK_SIZE as u64;
-        let block_bytes = BLOCK_SIZE.min(remaining - (offset as usize % BLOCK_SIZE));
-        let block_lba = offset / BLOCK_SIZE as u64;
+        let mut block = vec![0u8; device_bs];
+        read_device_bytes(device, lba * device_bs as u64, &mut block)?;
+        block[within..within + take].copy_from_slice(&data[written..written + take]);
+        device.write_blocks(lba, &block)?;
 
-        let mut block_data = [0u8; BLOCK_SIZE];
-        // Read existing block to preserve other data
-        if read_device_bytes(device, block_lba * BLOCK_SIZE as u64, &mut block_data).is_err() {
-            // If read fails (e.g., invalid LBA), create a new block
-            block_data.fill(0);
-        }
-
-        // Copy new data into the block
-        let start_pos = block_offset as usize;
-        block_data[start_pos..start_pos + block_bytes]
-            .copy_from_slice(&data[written..written + block_bytes]);
-
-        // Write the modified block back
-        write_device_block(device, block_lba, &block_data)?;
-
-        offset += block_bytes as u64;
-        remaining -= block_bytes;
-        written += block_bytes;
+        offset += take as u64;
+        written += take;
     }
-
-    Ok(())
-}
-
-/// Write a single block to the device.
-fn write_device_block(device: &Arc<dyn BlockDevice>, lba: u64, data: &[u8]) -> Result<(), Error> {
-    if data.len() != BLOCK_SIZE {
-        return Err(Error::InvalidArgument);
-    }
-    device.write_blocks(lba, data)?;
     Ok(())
 }
