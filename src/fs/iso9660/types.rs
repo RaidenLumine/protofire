@@ -148,6 +148,112 @@ pub fn susp_terminator() -> Vec<u8> {
     susp_entry(b"ST", &[])
 }
 
+/// The `SP` entry: the marker that says a record's System Use area is SUSP's.
+///
+/// SUSP puts it first, and only in the root directory's own "." record: it is
+/// what tells a reader that the entries after it are the protocol's rather
+/// than a format of the volume's own.  The two magic bytes are the standard's,
+/// and the last field is how far into the area a reader should start — zero,
+/// because the entries here begin where the record says they do.
+pub fn susp_sharing_protocol() -> Vec<u8> {
+    susp_entry(b"SP", &[0xBE, 0xEF, 0x00])
+}
+
+/// The `CE` entry: where the entries that did not fit continue.
+///
+/// A directory record's length is a single byte, so an area with more in it
+/// than that continues in a block of its own, named here by logical block,
+/// byte offset and length — each stored twice, the way the format stores every
+/// number a reader might check.
+pub fn susp_continuation(block: u32, offset: u32, size: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(24);
+    for value in [block, offset, size] {
+        body.extend_from_slice(&value.to_le_bytes());
+        body.extend_from_slice(&value.to_be_bytes());
+    }
+    susp_entry(b"CE", &body)
+}
+
+/// The `ER` entry: the extension a volume's System Use areas belong to.
+///
+/// It names `RRIP_1991A`, the standard whose `NM`, `PX` and `SL` entries this
+/// driver writes and reads, and it is the entry a reader looks for before it
+/// believes any of the others.  Its own description and source text are the
+/// ones the standard fixes, which is what makes it 237 bytes and too long for
+/// a directory record: the record holds a `CE` pointing at where this goes.
+pub fn susp_extensions_reference() -> Vec<u8> {
+    const ID: &[u8] = b"RRIP_1991A";
+    const DESCRIPTION: &[u8] =
+        b"THE ROCK RIDGE INTERCHANGE PROTOCOL PROVIDES SUPPORT FOR POSIX FILE SYSTEM SEMANTICS";
+    const SOURCE: &[u8] = b"PLEASE CONTACT DISC PUBLISHER FOR SPECIFICATION SOURCE.  SEE PUBLISHER IDENTIFIER IN PRIMARY VOLUME DESCRIPTOR FOR CONTACT INFORMATION.";
+
+    let mut body = Vec::with_capacity(4 + ID.len() + DESCRIPTION.len() + SOURCE.len());
+    body.push(ID.len() as u8);
+    body.push(DESCRIPTION.len() as u8);
+    body.push(SOURCE.len() as u8);
+    body.push(1); // extension version
+    body.extend_from_slice(ID);
+    body.extend_from_slice(DESCRIPTION);
+    body.extend_from_slice(SOURCE);
+    susp_entry(b"ER", &body)
+}
+
+/// Whether an area names the extension its entries belong to.
+///
+/// The `ER` entry may be in the area itself or — because it is 237 bytes and a
+/// directory record's length is one byte — in the continuation area a `CE`
+/// entry names, which is where a writer that has one puts it.  One level of
+/// continuation is as far as this follows, and the bytes of a continuation are
+/// the caller's to fetch, since only it knows what a block number means.
+pub fn susp_names_extension(
+    system_use: &[u8],
+    mut continuation: impl FnMut(u32, u32, u32) -> Option<Vec<u8>>,
+) -> bool {
+    let mut rest = system_use;
+    while rest.len() >= 4 {
+        let len = rest[2] as usize;
+        if len < 4 || len > rest.len() {
+            break;
+        }
+        let (entry, tail) = rest.split_at(len);
+        let signature = &entry[..2];
+        let body = &entry[4..];
+
+        if signature == b"ER" {
+            return true;
+        }
+        if signature == b"CE" && body.len() >= 24 {
+            // Each of the three numbers is stored twice, little-endian first,
+            // so the little half is the one to read.
+            let number =
+                |at: usize| u32::from_le_bytes(body[at..at + 4].try_into().unwrap_or_default());
+            if continuation(number(0), number(8), number(16))
+                .is_some_and(|bytes| has_extension_reference(&bytes))
+            {
+                return true;
+            }
+        }
+        rest = tail;
+    }
+    false
+}
+
+/// Whether an area holds the `ER` entry itself.
+fn has_extension_reference(system_use: &[u8]) -> bool {
+    let mut rest = system_use;
+    while rest.len() >= 4 {
+        let len = rest[2] as usize;
+        if len < 4 || len > rest.len() {
+            break;
+        }
+        if &rest[..2] == b"ER" {
+            return true;
+        }
+        rest = &rest[len..];
+    }
+    false
+}
+
 /// The same System Use area with the name entries replaced.
 ///
 /// Every other entry is copied **verbatim**, because a record can carry
@@ -896,6 +1002,49 @@ mod tests {
         let mut link = None;
         parse_susp_entries(&area, &mut name, &mut posix, &mut link);
         assert_eq!(name.expect("name").as_bytes(), long.as_slice());
+    }
+
+    #[test]
+    fn the_extensions_reference_is_the_size_the_standard_gives_it() {
+        let reference = susp_extensions_reference();
+        // Signature, length and version, then the three length bytes and the
+        // extension's version: 4 + 4, and the text the standard fixes.
+        assert_eq!(&reference[..2], b"ER");
+        assert_eq!(reference[2] as usize, reference.len());
+        assert_eq!(reference.len(), 4 + 4 + 10 + 84 + 135);
+        assert_eq!(reference[4], 10);
+        assert_eq!(&reference[8..18], b"RRIP_1991A");
+    }
+
+    #[test]
+    fn an_extension_reference_is_found_in_the_area_or_in_its_continuation() {
+        let reference = susp_extensions_reference();
+
+        // In the area itself.
+        assert!(susp_names_extension(&reference, |_, _, _| None));
+
+        // Or where the area's `CE` says it continues, which is where a writer
+        // that cannot fit it in a record puts it.
+        let mut area = susp_sharing_protocol();
+        area.extend_from_slice(&susp_continuation(42, 0, reference.len() as u32));
+        area.extend_from_slice(&susp_terminator());
+        let mut asked = None;
+        let found = susp_names_extension(&area, |block, offset, size| {
+            asked = Some((block, offset, size));
+            Some(reference.clone())
+        });
+        assert!(found);
+        assert_eq!(asked, Some((42, 0, reference.len() as u32)));
+
+        // An area with no reference in either place is one.
+        let mut names_only = susp_name(b"a name");
+        names_only.extend_from_slice(&susp_terminator());
+        assert!(!susp_names_extension(&names_only, |_, _, _| None));
+        let mut area = susp_sharing_protocol();
+        area.extend_from_slice(&susp_continuation(42, 0, 4));
+        assert!(!susp_names_extension(&area, |_, _, _| {
+            Some(susp_terminator())
+        }));
     }
 
     #[test]

@@ -77,6 +77,14 @@ pub fn read_svd(device: &Arc<dyn BlockDevice>) -> Option<Pvd> {
 // Directory reading
 // ---------------------------------------------------------------------------
 
+/// The most bytes of directory this driver will hold in memory at once.
+///
+/// A directory's size is a field of its record, and the thing that wrote the
+/// record is not this driver: a corrupt one must not be able to ask for an
+/// allocation the size of the address space.  Sixteen mebibytes is far more
+/// than any directory a disc this driver writes has.
+pub const MAX_DIRECTORY_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Read all directory entries from an extent.
 pub fn read_directory(
     device: &Arc<dyn BlockDevice>,
@@ -87,8 +95,7 @@ pub fn read_directory(
     let block_size = block_size as u64;
     let extent_size = extent_size as u64;
 
-    // Cap to a reasonable maximum to avoid OOM on corrupt images.
-    if extent_size > 16 * 1024 * 1024 {
+    if extent_size > MAX_DIRECTORY_BYTES {
         return Err(Error::InvalidArgument);
     }
 
@@ -142,8 +149,7 @@ pub fn read_joliet_directory(
     let block_size = block_size as u64;
     let extent_size = extent_size as u64;
 
-    // Cap to a reasonable maximum to avoid OOM on corrupt images.
-    if extent_size > 16 * 1024 * 1024 {
+    if extent_size > MAX_DIRECTORY_BYTES {
         return Err(Error::InvalidArgument);
     }
 
@@ -627,22 +633,28 @@ pub fn append_record(
     Ok((location, new_size, location as u64 * bs + at))
 }
 
-/// Point a file's record at a new extent, and give it a new length.
+/// The bytes a record's extent-location and data-length fields hold.
 ///
 /// The two fields are adjacent in the record and each is stored twice —
-/// little-endian then big-endian — so one write covers both, and a reader that
-/// checks either half sees the same file.
+/// little-endian then big-endian — so a reader that checks either half sees
+/// the same thing.
+pub fn placement_field(extent_location: u32, length: u32) -> [u8; 16] {
+    let mut field = [0u8; 16];
+    field[..4].copy_from_slice(&extent_location.to_le_bytes());
+    field[4..8].copy_from_slice(&extent_location.to_be_bytes());
+    field[8..12].copy_from_slice(&length.to_le_bytes());
+    field[12..].copy_from_slice(&length.to_be_bytes());
+    field
+}
+
+/// Point a file's record at a new extent, and give it a new length.
 pub fn rewrite_record_placement(
     device: &Arc<dyn BlockDevice>,
     record_offset: u64,
     extent_location: u32,
     length: u32,
 ) -> Result<(), Error> {
-    let mut field = [0u8; 16];
-    field[..4].copy_from_slice(&extent_location.to_le_bytes());
-    field[4..8].copy_from_slice(&extent_location.to_be_bytes());
-    field[8..12].copy_from_slice(&length.to_le_bytes());
-    field[12..].copy_from_slice(&length.to_be_bytes());
+    let field = placement_field(extent_location, length);
     write_exact(
         device,
         record_offset + DIR_RECORD_EXTENT_LOCATION_OFFSET as u64,

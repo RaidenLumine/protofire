@@ -110,11 +110,11 @@ The authoritative picture of what exists today is
   that already exists), and what it costs: the allocator appends, so a removal
   reclaims nothing and a growth can pay a copy.  Entries can be renamed and
   moved as well, which is the same two halves as one operation.  What is left
-  of ISO 9660 is the `ER` entry that tells a reader the name entries are Rock
-  Ridge at all — until it is written, a reader is entitled to read the mangled
-  identifiers instead — and the free-space scan that would let a removal
-  reclaim what it freed.  NTFS is the prize and the largest step; its RFC has
-  to decide its harness before its writes.
+  of ISO 9660 is the free-space scan that would let a removal reclaim what it
+  freed.  The volume also declares the extension those entries belong to, which
+  a writable open writes once by rebuilding the root directory's extent.
+  NTFS is the prize and the largest step; its RFC has to decide its harness
+  before its writes.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

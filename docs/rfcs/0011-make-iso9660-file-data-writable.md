@@ -171,17 +171,28 @@ ISO 9660's tests already build a full image:
 - **Is NTFS's harness the demo disk or a fixture image?**  Whichever it is, it
   is a prerequisite for NTFS's own RFC, and it is what that RFC should decide
   first.
-- **Where does the `ER` entry go, and when is it written?**  Rock Ridge says
-  the root directory's own "." record carries it, because the root record
-  embedded in the volume descriptor is a fixed 34 bytes with no room for a
-  System Use area.  That record is the first thing in the root directory's
-  extent, so writing it there **relays out** the extent — the entry is some
-  250 bytes of the standard's own description, and every record after it moves
-  — which is a change to make with nothing else in flight, and only where the
-  image does not already carry one.  Until then a reader that requires `ER`
-  before it believes any other entry sees the mangled identifiers rather than
-  the names; this driver's own reader does not require it, which is what the
-  round-trip tests rest on.
+- **Where does the `ER` entry go, and when is it written?**  *Decided when
+  stage 3f landed*, and the entry needed a mechanism the first draft of this
+  question did not have.  Rock Ridge puts it in the root directory's own "."
+  record, because the root record embedded in the volume descriptor is a fixed
+  34 bytes; but the entry's mandated text makes it **237 bytes** and a
+  directory record's length is one byte, so it cannot go in the record at all.
+  What the format has for that is a **continuation area**: the record carries
+  an `SP` marker and a `CE` entry naming a block, and the reference goes
+  there.  The evidence that this is what conforming writers do is not a
+  reading of a specification but the layout itself — `xorriso`'s image and a
+  released distribution ISO both begin their root directory with a 132-byte
+  "." record holding `SP`, `PX`, `TF` and a `CE` pointing at 237 bytes of
+  `ER`.
+
+  **When** is the other half, and it is why this is at `open`: adding the area
+  grows the "." record, which moves every record after it, which invalidates
+  every record offset a node has already been handed.  The node that holds one
+  is what `set_len` writes through, so an upgrade in the middle of a session
+  would make it write a length into some other file's record.  At `open` there
+  are no nodes.  It also means a writable mount **writes**, which is the price
+  of the retrofit and is stated where the driver's own documentation is: a
+  real writer builds the entry in, and this one can only add it afterwards.
 
 ## What landed
 
@@ -411,5 +422,41 @@ removal reclaim what it freed.
   System Use area starts where each parity of identifier length says; and a
   name longer than one entry is carried in several.
 
-**What that leaves.**  The `ER` entry, and the free-space scan that would let a
-removal reclaim what it freed.
+**Stage 3f — the extension, which is what makes the names believed.**
+
+- A volume whose System Use areas carry Rock Ridge entries is required to say
+  so, in an `ER` entry; a reader is otherwise entitled to ignore every one of
+  them.  This driver had been writing such entries since names stopped having
+  to be ISO 9660 identifiers, so the volume it wrote was one whose own entries
+  a strict reader could set aside.
+- The entry cannot fit in the record that has to carry it: its mandated text
+  makes it 237 bytes and a record's length is one byte.  The root's own "."
+  record therefore carries an **`SP`** marker and a **`CE`** naming a
+  **continuation area** — a block of its own, where the reference goes — which
+  is the shape `xorriso` writes and a released distribution ISO has.
+- It is written **at open**, on a writable device and only where the volume
+  does not already declare it.  The reason is offsets: the "." record grows by
+  the area, every record after it moves, and a node that already holds a record
+  offset — the thing `set_len` writes through — would be pointing at another
+  file's bytes.  At open no node exists.  The cost is a writable mount that
+  writes, once, and that cost is written down rather than implied.
+- The new root is built **elsewhere** and the volume repointed at it: the
+  descriptor's own root record first, then the path tables, which name the root
+  too.  A crash anywhere leaves either the old root or the new one, whole —
+  the same shape a file takes when it grows by moving, and the same cost, since
+  the blocks the old root held are not reclaimed.
+- Best-effort, deliberately: a volume with no room for the continuation block,
+  or with a root size that is a lie, still mounts.  Reading the disc is the
+  larger thing not to lose, and an entry written without the reference is still
+  one this driver's reader reads.  The size a broken descriptor can claim is
+  bounded by the same ceiling a directory read puts on it.
+- Seven tests: a writable open declares the extension, with the area's four
+  entries in order and the reference's own shape on the medium; opening it
+  again adds nothing; a read-only volume is untouched; the rebuilt root still
+  lists what it listed and the tables name its new address; a medium with no
+  room for the continuation block still mounts and still takes a create; a
+  descriptor whose root size is `0xFFFF_FFFF` opens without allocating it; and
+  the reference is found in a continuation as well as in an area directly.
+
+**What that leaves.**  The free-space scan that would let a removal reclaim
+what it freed.

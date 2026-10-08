@@ -13,8 +13,14 @@
 //!             "."  (35), ".." (35), "NOTES.TXT;1" (45)
 //! sector 30 : HELLO.TXT content
 //! sector 31 : NOTES.TXT content
-//! sector 32-39: spare, which the volume does not claim and growth allocates
+//! sector 32-47: spare, which the volume does not claim and growth allocates
 //! ```
+//!
+//! An image opened on a *writable* device is not the image above any more: the
+//! open declares the extension its System Use areas need, which puts the
+//! reference in sector 32, rebuilds the root extent in sector 33, and moves
+//! the path tables' root entry — so a test that looks at the medium asks the
+//! descriptor where the root is rather than assuming sector 20.
 //!
 //! The boot-catalog tests additionally splice in a Boot Record descriptor
 //! (sector 18), a volume descriptor terminator (sector 19), and an El
@@ -33,7 +39,6 @@ use crate::Error;
 use super::fs;
 use super::types::parse_boot_catalog;
 use super::types::DIR_RECORD_DATA_LENGTH_OFFSET;
-use super::types::DIR_RECORD_EXTENT_LOCATION_OFFSET;
 use super::types::PVD_SECTOR;
 use super::types::SECTOR_SIZE;
 use super::Iso9660Volume;
@@ -41,8 +46,10 @@ use super::Iso9660Volume;
 // ── Image geometry ──────────────────────────────────────────────────────
 
 /// Sectors in the image.  The volume claims the first 32 and the rest is the
-/// room a growth allocates into.
-const IMAGE_SECTORS: usize = 40;
+/// room a growth allocates into.  Opening it for writing rebuilds the root
+/// extent and adds the block the extension reference continues in, so the
+/// room the write tests grow into is a little smaller than the image.
+const IMAGE_SECTORS: usize = 48;
 /// Blocks the volume *claims*, which is what its descriptor says.
 const VOLUME_BLOCKS: u32 = 32;
 
@@ -428,28 +435,66 @@ fn a_directory_refuses_a_write() {
 
 // ─── Creating and removing files (RFC 0011, stage 3b) ──────────────────
 
-/// The identifiers the root directory's records carry, in the order they sit
-/// on the medium.
-fn root_identifiers(device: &Arc<MemoryBlockDevice>) -> Vec<Vec<u8>> {
+/// The root directory's extent, as the descriptor names it.
+///
+/// A writable volume's open rebuilds that extent elsewhere, so a test that
+/// looks at the medium has to ask where it is rather than assume the address
+/// the fixture was built with.
+fn root_extent(device: &Arc<MemoryBlockDevice>) -> (u32, u32) {
     let as_device: Arc<dyn BlockDevice> = device.clone();
-    let mut data = vec![0u8; SECTOR_SIZE];
+    let pvd = fs::read_pvd(&as_device).expect("read pvd");
+    let (root, _) = super::types::DirRecord::parse(&pvd.root_dir_record, 0).expect("root record");
+    (root.extent_location, root.extent_size)
+}
+
+/// A directory's records, read off the medium.
+fn records_in(
+    device: &Arc<MemoryBlockDevice>,
+    extent_location: u32,
+    extent_size: u32,
+) -> Vec<super::types::DirRecord> {
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let mut data = vec![0u8; extent_size as usize];
     fs::read_extent(
         &as_device,
         SECTOR_SIZE as u16,
-        ROOT_EXTENT_SECTOR as u32,
-        SECTOR_SIZE as u32,
+        extent_location,
+        extent_size,
         0,
         &mut data,
     )
-    .expect("read the root extent");
+    .expect("read the extent");
 
-    let mut identifiers = Vec::new();
+    let mut records = Vec::new();
     let mut at = 0usize;
     while let Some((record, next)) = super::types::DirRecord::parse(&data, at) {
-        identifiers.push(record.identifier);
+        records.push(record);
         at = next;
     }
-    identifiers
+    records
+}
+
+/// One record of a directory, by its identifier.
+fn record_named(
+    device: &Arc<MemoryBlockDevice>,
+    extent_location: u32,
+    extent_size: u32,
+    identifier: &[u8],
+) -> super::types::DirRecord {
+    records_in(device, extent_location, extent_size)
+        .into_iter()
+        .find(|record| record.identifier == identifier)
+        .unwrap_or_else(|| panic!("no record for {identifier:?}"))
+}
+
+/// The identifiers the root directory's records carry, in the order they sit
+/// on the medium.
+fn root_identifiers(device: &Arc<MemoryBlockDevice>) -> Vec<Vec<u8>> {
+    let (location, size) = root_extent(device);
+    records_in(device, location, size)
+        .into_iter()
+        .map(|record| record.identifier)
+        .collect()
 }
 
 #[test]
@@ -487,10 +532,7 @@ fn a_created_file_can_be_written_and_read_back() {
 #[test]
 fn a_created_file_makes_its_directory_longer() {
     let (device, volume) = writable_volume();
-    assert_eq!(
-        volume.lookup("/").expect("root").size(),
-        ROOT_EXTENT_SIZE as usize
-    );
+    let before = volume.lookup("/").expect("root").size();
 
     volume.create_file("/NEW.TXT").expect("create");
 
@@ -499,7 +541,7 @@ fn a_created_file_makes_its_directory_longer() {
     let reopened = open_volume(device);
     assert_eq!(
         reopened.lookup("/").expect("root again").size(),
-        ROOT_EXTENT_SIZE as usize + 42 + 36 + 12 + 4
+        before + 42 + 36 + 12 + 4
     );
 }
 
@@ -589,6 +631,7 @@ fn a_name_too_long_for_one_record_is_refused() {
 #[test]
 fn removing_a_file_takes_its_record_out_of_the_directory() {
     let (device, volume) = writable_volume();
+    let before = volume.lookup("/").expect("root").size();
     volume.remove_path("/HELLO.TXT").expect("remove");
     assert!(matches!(volume.lookup("/HELLO.TXT"), Err(Error::NotFound)));
     assert!(volume.lookup("/SUB/NOTES.TXT").is_ok());
@@ -601,10 +644,7 @@ fn removing_a_file_takes_its_record_out_of_the_directory() {
         Err(Error::NotFound)
     ));
     assert!(reopened.lookup("/SUB/NOTES.TXT").is_ok());
-    assert_eq!(
-        reopened.lookup("/").expect("root").size(),
-        ROOT_EXTENT_SIZE as usize - 45
-    );
+    assert_eq!(reopened.lookup("/").expect("root").size(), before - 45);
 }
 
 #[test]
@@ -723,6 +763,8 @@ fn assert_path_tables_name(device: &Arc<MemoryBlockDevice>, expected: &[(Vec<u8>
 #[test]
 fn a_created_directory_is_empty_and_findable() {
     let (device, volume) = writable_volume();
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let extent = fs::volume_blocks(&as_device).expect("volume size");
     volume.create_dir("/NEWDIR").expect("create dir");
 
     let node = volume.lookup("/newdir").expect("lookup");
@@ -738,9 +780,9 @@ fn a_created_directory_is_empty_and_findable() {
     assert_path_tables_name(
         &device,
         &[
-            (vec![0x00], ROOT_EXTENT_SECTOR as u32),
+            (vec![0x00], root_extent(&device).0),
             (b"SUB".to_vec(), SUB_EXTENT_SECTOR as u32),
-            (b"NEWDIR".to_vec(), VOLUME_BLOCKS),
+            (b"NEWDIR".to_vec(), extent),
         ],
     );
     let reopened = open_volume(device);
@@ -792,13 +834,15 @@ fn the_path_table_orders_siblings_by_identifier() {
 #[test]
 fn removing_an_empty_directory_takes_it_out_of_the_tree_and_the_tables() {
     let (device, volume) = writable_volume();
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let extent = fs::volume_blocks(&as_device).expect("volume size");
     volume.create_dir("/gone").expect("create dir");
     assert_path_tables_name(
         &device,
         &[
-            (vec![0x00], ROOT_EXTENT_SECTOR as u32),
+            (vec![0x00], root_extent(&device).0),
             (b"SUB".to_vec(), SUB_EXTENT_SECTOR as u32),
-            (b"GONE".to_vec(), VOLUME_BLOCKS),
+            (b"GONE".to_vec(), extent),
         ],
     );
 
@@ -809,7 +853,7 @@ fn removing_an_empty_directory_takes_it_out_of_the_tree_and_the_tables() {
     assert_path_tables_name(
         &device,
         &[
-            (vec![0x00], ROOT_EXTENT_SECTOR as u32),
+            (vec![0x00], root_extent(&device).0),
             (b"SUB".to_vec(), SUB_EXTENT_SECTOR as u32),
         ],
     );
@@ -823,6 +867,194 @@ fn a_read_only_device_refuses_a_created_directory() {
     let device = MemoryBlockDevice::new("iso-ro", build_test_image(), true);
     let volume = open_volume(device);
     assert!(volume.create_dir("/NEWDIR").is_err());
+}
+
+// ─── The extensions reference (RFC 0011, stage 3f) ─────────────────────
+
+/// The signatures a System Use area's entries carry, in the order they sit.
+fn area_entries(system_use: &[u8]) -> Vec<Vec<u8>> {
+    let mut signatures = Vec::new();
+    let mut rest = system_use;
+    while rest.len() >= 4 {
+        let len = rest[2] as usize;
+        if len < 4 || len > rest.len() {
+            break;
+        }
+        signatures.push(rest[..2].to_vec());
+        rest = &rest[len..];
+    }
+    signatures
+}
+
+/// The bytes a System Use area's `CE` entry names, read off the medium.
+fn area_continuation(device: &Arc<MemoryBlockDevice>, system_use: &[u8]) -> Vec<u8> {
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let mut rest = system_use;
+    while rest.len() >= 4 {
+        let len = rest[2] as usize;
+        if len < 4 || len > rest.len() {
+            break;
+        }
+        if &rest[..2] == b"CE" {
+            let number =
+                |at: usize| u32::from_le_bytes(rest[at..at + 4].try_into().expect("four bytes"));
+            let (block, offset, size) = (number(4), number(12), number(20));
+            let mut bytes = vec![0u8; size as usize];
+            fs::read_extent(
+                &as_device,
+                SECTOR_SIZE as u16,
+                block,
+                offset + size,
+                u64::from(offset),
+                &mut bytes,
+            )
+            .expect("read the continuation");
+            return bytes;
+        }
+        rest = &rest[len..];
+    }
+    panic!("no continuation entry");
+}
+
+#[test]
+fn opening_a_writable_volume_declares_the_extension() {
+    let (device, _volume) = writable_volume();
+    let (location, size) = root_extent(&device);
+
+    // The root's own "." record is where a volume says what its System Use
+    // areas are: `SP` that they are SUSP's at all, `PX` for its attributes,
+    // and `CE` naming where the reference continues — the entry is far longer
+    // than a record can hold.
+    let first = record_named(&device, location, size, &[0x00]);
+    assert_eq!(
+        area_entries(&first.system_use),
+        vec![
+            b"SP".to_vec(),
+            b"PX".to_vec(),
+            b"CE".to_vec(),
+            b"ST".to_vec()
+        ]
+    );
+
+    let reference = area_continuation(&device, &first.system_use);
+    assert_eq!(&reference[..2], b"ER");
+    assert_eq!(reference[2] as usize, reference.len());
+    assert_eq!(&reference[8..18], b"RRIP_1991A");
+}
+
+#[test]
+fn the_extension_is_declared_once() {
+    let (device, _volume) = writable_volume();
+    let (location, size) = root_extent(&device);
+    let first = record_named(&device, location, size, &[0x00]).record_len;
+
+    // Opening a volume already says what its entries are adds nothing to it.
+    drop(open_volume(device.clone()));
+
+    let (location, size) = root_extent(&device);
+    assert_eq!(
+        record_named(&device, location, size, &[0x00]).record_len,
+        first
+    );
+}
+
+#[test]
+fn a_read_only_volume_is_left_as_it_was() {
+    let device = MemoryBlockDevice::new("iso-ro", build_test_image(), true);
+    let volume = open_volume(device.clone());
+    assert!(volume.lookup("/HELLO.TXT").is_ok());
+
+    // Nothing was written: the root is the fixture's own extent, its "." record
+    // has no System Use area at all, and the volume claims what it claimed.
+    assert_eq!(
+        root_extent(&device),
+        (ROOT_EXTENT_SECTOR as u32, ROOT_EXTENT_SIZE)
+    );
+    let (location, size) = root_extent(&device);
+    // The fixture's own "." record is a byte longer than the format's, so the
+    // area it appears to have is one zero byte — and no entries.
+    assert!(area_entries(&record_named(&device, location, size, &[0x00]).system_use).is_empty());
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    assert_eq!(
+        fs::volume_blocks(&as_device).expect("volume size"),
+        VOLUME_BLOCKS
+    );
+}
+
+#[test]
+fn the_rebuilt_root_still_lists_what_it_listed() {
+    let (device, volume) = writable_volume();
+
+    // The upgrade builds the root elsewhere; every entry is still there, a
+    // second mount agrees, and the path tables name the new address.
+    assert!(volume.lookup("/HELLO.TXT").is_ok());
+    assert!(volume.lookup("/SUB/NOTES.TXT").is_ok());
+    let root = root_extent(&device).0;
+    assert_path_tables_name(
+        &device,
+        &[
+            (vec![0x00], root),
+            (b"SUB".to_vec(), SUB_EXTENT_SECTOR as u32),
+        ],
+    );
+
+    // The root's own ".." names the root and the subdirectory's names its
+    // parent, so both follow the move: a reader that goes back up lands on the
+    // extent the volume now points at, not the one it left.
+    assert_eq!(parent_record_extent(&device, root), root);
+    assert_eq!(
+        parent_record_extent(&device, SUB_EXTENT_SECTOR as u32),
+        root
+    );
+
+    let reopened = open_volume(device);
+    assert!(reopened.lookup("/HELLO.TXT").is_ok());
+    assert!(reopened.lookup("/SUB/NOTES.TXT").is_ok());
+    assert_eq!(reopened.read_dir("/", 0).expect("first entry").name, "sub");
+}
+
+#[test]
+fn a_volume_with_no_room_for_the_reference_still_mounts() {
+    // A medium that is exactly the volume: the block the reference would
+    // continue in is not there, so the volume is left as it was.
+    let tight = build_test_image()[..VOLUME_BLOCKS as usize * SECTOR_SIZE].to_vec();
+    let device = MemoryBlockDevice::new("iso-tight", tight, false);
+    let volume = open_volume(device.clone());
+
+    assert_eq!(
+        root_extent(&device),
+        (ROOT_EXTENT_SECTOR as u32, ROOT_EXTENT_SIZE)
+    );
+    assert!(volume.lookup("/HELLO.TXT").is_ok());
+
+    // And it is still writable: a create is a record appended to a directory
+    // that already has the room for it.
+    volume.create_file("/after.bin").expect("create");
+    let reopened = open_volume(device);
+    assert!(reopened.lookup("/after.bin").is_ok());
+}
+
+#[test]
+fn a_broken_root_size_does_not_stop_a_writable_open() {
+    // The root's size is a field of the descriptor's own root record, so it is
+    // the first thing a broken image can lie about — and the upgrade would
+    // allocate what it says.  It is bounded the way a directory read is, and
+    // the volume opens without it.
+    let mut image = build_test_image();
+    let field = PVD_SECTOR as usize * SECTOR_SIZE + 156 + DIR_RECORD_DATA_LENGTH_OFFSET;
+    image[field..field + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+    image[field + 4..field + 8].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+
+    let device = MemoryBlockDevice::new("iso-lying", image, false);
+    let _volume = open_volume(device.clone());
+
+    // Nothing was written for it, and the volume claims what it claimed.
+    assert_eq!(root_extent(&device).1, 0xFFFF_FFFF);
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    assert_eq!(
+        fs::volume_blocks(&as_device).expect("volume size"),
+        VOLUME_BLOCKS
+    );
 }
 
 // ─── Renaming and moving (RFC 0011, stage 3d) ──────────────────────────
@@ -1035,21 +1267,25 @@ fn a_directory_that_moves_takes_its_childrens_parent_with_it() {
 
 // ─── Changing a file's length (RFC 0011, stage 2) ──────────────────────
 
-/// Where `HELLO.TXT;1`'s directory record sits inside the root extent: the
-/// records before it are `.` (35), `..` (35) and `SUB` (37).
-const HELLO_RECORD_OFFSET: usize = 35 + 35 + 37;
+/// A named record's eight-byte data-length field, read off the medium rather
+/// than through the parser: the format stores the length twice, and a reader
+/// is free to check either half.
+fn record_length_field(device: &Arc<MemoryBlockDevice>, identifier: &[u8]) -> [u8; 8] {
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let (location, size) = root_extent(device);
+    let mut data = vec![0u8; size as usize];
+    fs::read_extent(&as_device, SECTOR_SIZE as u16, location, size, 0, &mut data)
+        .expect("read the root extent");
 
-/// Where `NOTES.TXT;1`'s record sits inside the subdirectory's extent: the
-/// records before it are `.` (35) and `..` (35).
-const SUB_NOTES_RECORD_OFFSET: usize = 35 + 35;
-
-/// The `HELLO.TXT;1` record's data-length field, read off the medium.
-fn hello_record_length(device: &Arc<MemoryBlockDevice>) -> [u8; 8] {
-    let mut sector = vec![0u8; SECTOR_SIZE];
-    let lba = ROOT_EXTENT_SECTOR * (SECTOR_SIZE as u64) / crate::fs::block::BLOCK_SIZE as u64;
-    device.read_blocks(lba, &mut sector).expect("read record");
-    let at = HELLO_RECORD_OFFSET + DIR_RECORD_DATA_LENGTH_OFFSET;
-    sector[at..at + 8].try_into().expect("eight bytes")
+    let mut at = 0usize;
+    while let Some((record, next)) = super::types::DirRecord::parse(&data, at) {
+        if record.identifier == identifier {
+            let field = at + DIR_RECORD_DATA_LENGTH_OFFSET;
+            return data[field..field + 8].try_into().expect("eight bytes");
+        }
+        at = next;
+    }
+    panic!("no record for {identifier:?}");
 }
 
 #[test]
@@ -1070,7 +1306,7 @@ fn truncating_a_file_rewrites_the_length_its_record_carries() {
 
     // The field carries it in both halves: the format stores it twice and a
     // reader is free to check either.
-    let field = hello_record_length(&device);
+    let field = record_length_field(&device, b"HELLO.TXT;1");
     assert_eq!(u32::from_le_bytes(field[..4].try_into().unwrap()), 5);
     assert_eq!(u32::from_be_bytes(field[4..].try_into().unwrap()), 5);
 
@@ -1101,8 +1337,9 @@ fn growing_a_file_stays_inside_the_block_it_already_has() {
     );
 
     // Nothing was allocated for it: the file is still where it was.
+    let (location, size) = root_extent(&device);
     assert_eq!(
-        record_extent_location(&device, HELLO_SECTOR - 10, HELLO_RECORD_OFFSET),
+        record_named(&device, location, size, b"HELLO.TXT;1").extent_location,
         HELLO_SECTOR as u32,
         "an in-block growth must not move the file"
     );
@@ -1113,29 +1350,22 @@ fn growing_a_file_stays_inside_the_block_it_already_has() {
     );
 }
 
-/// The extent-location field of the record at `offset` inside the directory
-/// extent that starts at `dir_sector`.
-fn record_extent_location(device: &Arc<MemoryBlockDevice>, dir_sector: u64, offset: usize) -> u32 {
-    let mut sector = vec![0u8; SECTOR_SIZE];
-    let lba = dir_sector * (SECTOR_SIZE as u64) / crate::fs::block::BLOCK_SIZE as u64;
-    device.read_blocks(lba, &mut sector).expect("read record");
-    let at = offset + DIR_RECORD_EXTENT_LOCATION_OFFSET;
-    u32::from_le_bytes(sector[at..at + 4].try_into().expect("four bytes"))
-}
-
 #[test]
 fn growing_past_the_block_moves_a_file_that_has_something_after_it() {
     let (device, volume) = writable_volume();
     let node = volume.lookup("/HELLO.TXT").expect("lookup");
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let end = fs::volume_blocks(&as_device).expect("volume size");
 
     // HELLO's extent is one block and NOTES begins in the next one, and an
     // extent is one contiguous run — so the file moves to the end of the
     // volume, which is where this allocator hands out blocks.
     node.set_len(2 * SECTOR_SIZE as u64).expect("grow");
     assert_eq!(node.size(), 2 * SECTOR_SIZE);
+    let (location, size) = root_extent(&device);
     assert_eq!(
-        record_extent_location(&device, ROOT_EXTENT_SECTOR, HELLO_RECORD_OFFSET),
-        VOLUME_BLOCKS,
+        record_named(&device, location, size, b"HELLO.TXT;1").extent_location,
+        end,
         "the record must point at the space the file moved to"
     );
 
@@ -1164,30 +1394,43 @@ fn growing_past_the_block_moves_a_file_that_has_something_after_it() {
 #[test]
 fn growing_past_the_block_extends_the_last_file_in_place() {
     let (device, volume) = writable_volume();
-    let node = volume.lookup("/SUB/NOTES.TXT").expect("lookup");
-
-    // NOTES is the last extent the volume holds, so the blocks it needs are
-    // the ones that follow it and it grows where it is — no copy.
-    node.set_len(2 * SECTOR_SIZE as u64).expect("grow");
-    assert_eq!(node.size(), 2 * SECTOR_SIZE);
+    // The file a create makes is empty and points at where the volume's space
+    // ends — the upgrade that opened this volume took the block after NOTES —
+    // so the blocks that follow it belong to no one, and growing it takes them
+    // where it is, with no copy.
+    let node = volume.create_file("/last.bin").expect("create");
+    let as_device: Arc<dyn BlockDevice> = device.clone();
+    let end = fs::volume_blocks(&as_device).expect("volume size");
+    let (location, size) = root_extent(&device);
     assert_eq!(
-        record_extent_location(&device, SUB_EXTENT_SECTOR, SUB_NOTES_RECORD_OFFSET),
-        NOTES_SECTOR as u32,
+        record_named(&device, location, size, b"LAST.BIN;1").extent_location,
+        end,
+        "an empty file starts where the volume's space ends"
+    );
+
+    node.set_len(SECTOR_SIZE as u64).expect("grow");
+    assert_eq!(node.size(), SECTOR_SIZE);
+    let (location, size) = root_extent(&device);
+    assert_eq!(
+        record_named(&device, location, size, b"LAST.BIN;1").extent_location,
+        end,
         "a file that is already last must not move"
     );
-    let as_device: Arc<dyn BlockDevice> = device.clone();
     assert_eq!(
         fs::volume_blocks(&as_device).expect("volume size"),
-        VOLUME_BLOCKS + 1,
+        end + 1,
         "the volume grew over the block the file took"
     );
 
     let reopened = open_volume(device);
-    let again = reopened.lookup("/SUB/NOTES.TXT").expect("relookup");
-    assert_eq!(again.size(), 2 * SECTOR_SIZE);
+    let again = reopened.lookup("/last.bin").expect("relookup");
+    assert_eq!(again.size(), SECTOR_SIZE);
     let mut buf = vec![0u8; again.size()];
     assert_eq!(again.read(0, &mut buf).expect("read again"), again.size());
-    assert_eq!(&buf[..NOTES.len()], NOTES);
+    assert!(
+        buf.iter().all(|byte| *byte == 0),
+        "the blocks it grew into were the medium's own"
+    );
 }
 
 #[test]

@@ -33,9 +33,11 @@
 //! - A created or renamed entry carries a Rock Ridge **name** entry, so its
 //!   name is the caller's — lower case, spaces, anything a record has room for
 //!   — and the identifier beside it is the mangled form a reader that ignores
-//!   Rock Ridge sees.  No `ER` entry is written yet, so such a reader is
-//!   entitled to ignore the name entry; a name too long for the 255-byte record
-//!   that has to hold it is refused rather than stored in part.
+//!   Rock Ridge sees.  A *writable* volume is given the `ER` entry those
+//!   entries need when it is opened, which is the only moment the root's own
+//!   record can move without invalidating an offset a node already holds; a
+//!   name too long for the 255-byte record that has to hold it is refused
+//!   rather than stored in part.
 //! - No multi-extent files (ISO 9660 Level 3 interleave).
 //! - XA attributes are ignored.
 //! - Sector size is always assumed to be 2048 bytes.
@@ -128,13 +130,172 @@ impl Iso9660Volume {
             (pvd_volume_label(&pvd), None, false)
         };
 
-        Ok(Self {
+        let volume = Self {
             device,
             block_size,
             volume_label: joliet_label,
             joliet_root,
             has_joliet,
-        })
+        };
+
+        // A volume this driver is going to write entries into has to say which
+        // extension they belong to, and a read-only device is not one to do it
+        // on (`declare_extension` explains why it happens here).
+        if !volume.device.is_read_only() {
+            let _ = volume.declare_extension();
+        }
+
+        Ok(volume)
+    }
+
+    /// Read the area a `CE` entry continues into.
+    ///
+    /// The three numbers are a logical block, a byte offset into it, and how
+    /// many bytes of continuation there are.  The entry that names it is the
+    /// volume's, not this driver's, so its length is bounded the way a
+    /// directory's is: a broken one must not become an allocation.
+    fn continuation(&self, block: u32, offset: u32, size: u32) -> Option<Vec<u8>> {
+        if u64::from(size) > fs::MAX_DIRECTORY_BYTES {
+            return None;
+        }
+        let end = offset.checked_add(size)?;
+        let mut bytes = alloc::vec![0u8; size as usize];
+        fs::read_extent(
+            &self.device,
+            self.block_size,
+            block,
+            end,
+            u64::from(offset),
+            &mut bytes,
+        )
+        .ok()?;
+        Some(bytes)
+    }
+
+    /// Make a writable volume say which extension its entries belong to.
+    ///
+    /// A volume whose System Use areas carry Rock Ridge entries is required to
+    /// name the extension in an `ER` entry, or a reader is entitled to ignore
+    /// every one of them — and this driver has been *writing* such entries
+    /// since names stopped having to be ISO 9660 identifiers.  The entry's own
+    /// mandated text makes it 237 bytes, and a directory record's length is one
+    /// byte, so the root's own "." record carries an `SP` marker and a `CE`
+    /// naming a **continuation area** in a block of its own, where the entry
+    /// goes.
+    ///
+    /// This runs **at open**, because the root's "." record grows by the area
+    /// above and every record after it moves: a node that had already been
+    /// handed a record offset would then point at the wrong bytes, and at open
+    /// no node exists yet.
+    ///
+    /// The root is built **elsewhere** and the volume repointed at it — the
+    /// descriptor first, then the path tables, which name it too — so a crash
+    /// leaves either the old root or the new one, whole.  That is the shape a
+    /// file takes when it grows by moving, and it costs the same thing: the
+    /// blocks the old root held are not reclaimed, because the allocator
+    /// appends.  A failure between those two writes leaves the tables naming
+    /// the extent the root left, which still holds exactly the entries it
+    /// held, so a reader that follows a table reads the old list rather than a
+    /// broken one ([RFC
+    /// 0011](../../docs/rfcs/0011-make-iso9660-file-data-writable.md)).
+    ///
+    /// It is best-effort.  A volume this cannot be written to still mounts:
+    /// reading the disc is the larger thing not to lose, and an entry written
+    /// without the reference is still one this driver's own reader reads.
+    fn declare_extension(&self) -> Result<()> {
+        let pvd = fs::read_pvd(&self.device)?;
+        let (root, _next) =
+            DirRecord::parse(&pvd.root_dir_record, 0).ok_or(Error::InvalidArgument)?;
+        if u64::from(root.extent_size) > fs::MAX_DIRECTORY_BYTES {
+            return Err(Error::InvalidArgument);
+        }
+        let mut extent = alloc::vec![0u8; root.extent_size as usize];
+        fs::read_extent(
+            &self.device,
+            self.block_size,
+            root.extent_location,
+            root.extent_size,
+            0,
+            &mut extent,
+        )?;
+        let (first, first_len) = DirRecord::parse(&extent, 0).ok_or(Error::InvalidArgument)?;
+
+        let declared = types::susp_names_extension(&first.system_use, |block, offset, size| {
+            self.continuation(block, offset, size)
+        });
+        if declared {
+            return Ok(());
+        }
+
+        // The continuation area first: nothing names it until the record below
+        // does, so a failure or a crash here changes nothing that is read.
+        let reference = types::susp_extensions_reference();
+        let continuation = fs::allocate_blocks(&self.device, self.block_size, 1)?;
+        fs::write_exact(
+            &self.device,
+            continuation as u64 * self.block_size as u64,
+            &reference,
+        )?;
+
+        // The root, rebuilt whole: its "." record grows by the area above and
+        // every record after it moves, so the extent is written somewhere else
+        // rather than edited where it is.
+        let area = root_extension_area(continuation, reference.len() as u32);
+        let tail = &extent[first_len..];
+        // A record's length does not depend on the length it reports, so one
+        // built with no size is what says how long the real one will be.
+        let first_record_len =
+            directory_record(&[0x00], root.extent_location, 0, true, &area)?.len();
+        let new_size = u32::try_from(first_record_len + tail.len()).map_err(|_| Error::NoSpace)?;
+        let new_blocks = (new_size as u64).div_ceil(self.block_size as u64) as u32;
+        let location = fs::allocate_blocks(&self.device, self.block_size, new_blocks)?;
+
+        let record = directory_record(&[0x00], location, new_size, true, &area)?;
+        let mut rebuilt = Vec::with_capacity(new_size as usize);
+        rebuilt.extend_from_slice(&record);
+        rebuilt.extend_from_slice(tail);
+        debug_assert_eq!(rebuilt.len(), new_size as usize);
+
+        // The root's own ".." names the root, and the root has moved: the copy
+        // above took the record that said the old address.
+        let placement = fs::placement_field(location, new_size);
+        let mut at = record.len();
+        while let Some((entry, next)) = DirRecord::parse(&rebuilt, at) {
+            if entry.identifier == [0x01] {
+                rebuilt[at + types::DIR_RECORD_EXTENT_LOCATION_OFFSET..][..16]
+                    .copy_from_slice(&placement);
+                break;
+            }
+            at = next;
+        }
+
+        fs::write_exact(
+            &self.device,
+            location as u64 * self.block_size as u64,
+            &rebuilt,
+        )?;
+
+        // Every directory the root holds names it in its own ".." record too,
+        // and those records are in *other* extents — the copy above did not
+        // touch them.  This is the same work [`Iso9660Volume::append_to_directory`]
+        // does when a directory grows into a move, and for the same reason.
+        for child in subdirectories(&extent, first_len) {
+            let child_parent = self.parent_record_of(child.extent_location, child.extent_size)?;
+            fs::rewrite_record_placement(&self.device, child_parent, location, new_size)?;
+        }
+
+        // The commit: one write of the descriptor's own root record, which is
+        // the thing that says where the root is.
+        fs::rewrite_record_placement(
+            &self.device,
+            types::PVD_SECTOR * self.block_size as u64
+                + core::mem::offset_of!(types::Pvd, root_dir_record) as u64,
+            location,
+            new_size,
+        )?;
+        // The tables name the root too, and a reader may follow them instead of
+        // walking the tree; rebuilding them is what the tree above decides.
+        self.rewrite_path_tables()
     }
 
     /// Return the volume label.
@@ -893,6 +1054,22 @@ fn is_self_or_parent(record: &DirRecord) -> bool {
     record.identifier.len() == 1 && (record.identifier[0] == 0x00 || record.identifier[0] == 0x01)
 }
 
+/// The directories an extent holds, read out of bytes already in memory.
+///
+/// A directory's own "." and ".." are not children of it, so they are not
+/// among the records a move has to correct.
+fn subdirectories(extent: &[u8], from: usize) -> Vec<DirRecord> {
+    let mut children = Vec::new();
+    let mut at = from;
+    while let Some((record, next)) = DirRecord::parse(extent, at) {
+        if record.is_dir() && !is_self_or_parent(&record) {
+            children.push(record);
+        }
+        at = next;
+    }
+    children
+}
+
 /// The bytes an empty directory's extent holds: its own two records, which
 /// have one-byte identifiers and so are 34 bytes each.
 const EMPTY_DIRECTORY_BYTES: u32 = 2 * (33 + 1);
@@ -1041,6 +1218,21 @@ fn rock_ridge_area(name: &str, posix: (u32, u32, u32, u32)) -> Vec<u8> {
     let (mode, links, uid, gid) = posix;
     let mut area = types::susp_posix(mode, links, uid, gid);
     area.extend_from_slice(&types::susp_name(name.as_bytes()));
+    area.extend_from_slice(&types::susp_terminator());
+    area
+}
+
+/// The System Use area the root directory's own "." record carries.
+///
+/// It is the one record that declares what the volume's areas are: `SP` says
+/// they are SUSP's at all, `PX` gives the root its attributes, and `CE` names
+/// the block the extension reference continues in — because that entry does
+/// not fit in a record, whose own length is one byte.
+fn root_extension_area(continuation: u32, reference_size: u32) -> Vec<u8> {
+    let (mode, links, uid, gid) = default_posix(true);
+    let mut area = types::susp_sharing_protocol();
+    area.extend_from_slice(&types::susp_posix(mode, links, uid, gid));
+    area.extend_from_slice(&types::susp_continuation(continuation, 0, reference_size));
     area.extend_from_slice(&types::susp_terminator());
     area
 }
