@@ -285,50 +285,22 @@ what stage 1's record serialisation is for.
   on the way — a cache that could hold a record in the shape the checker calls
   torn, and a grown value patched field by field into the end of a sector — is
   in stage 17 as well.
-- **A split whose node above is a *block* runs and then stops.**  A leaf two
-  levels down that fills needs its middle key promoted into the node above,
-  and that node is a block rather than the index root.  Removing the guard that
-  refuses it makes the split *run* — the promoted key is built, the allocation
-  and the bitmap are asked for a block — and then it answers `NoSpace` from
-  somewhere **before** the node above is written; the steps in between are the
-  growth of `$INDEX_ALLOCATION`, the bitmap's bit and the new block, and which
-  of them it is, is the first question of the next attempt.  The run that wrote
-  everything (the window harness's own last window) is what showed it.
-
-- **Where does the dirty flag live, and what does Windows need from it?**  A
-  volume's `$Volume` carries volume information with a dirty bit, and this
-  driver does not read `$Volume` at all.  Stage 1 has to settle which field
-  it is, when it goes up, and when it comes down — and whether a volume left
-  clean needs anything written into `$LogFile` for a replay to be a no-op.
-- **Is case folding a stage of its own?**  *Stage 3a answered this.*  Reading
-  `$UpCase` is one attribute in a system record, and using it is a rule in
-  every name comparison — and it turned out to be load-bearing for a *write*
-  and not only for a lookup, because where a new name goes in an index is
-  decided by the same table.  The fixture carries a table of its own for it.
-- **The index allocation.**  A directory whose entries do not fit its index
-  root keeps them in a `$INDEX_ALLOCATION` the root points at, with an index
-  bitmap.  *The measurement behind stage 0 settled part of this*: a directory
-  with children has that shape and nothing else — the volume `mkntfs` makes
-  holds even one file's entry in the allocation, with the index root reduced
-  to a node that points at it — so walking a directory the way a real volume
-  stores one is stage 0's work, not a later stage's.  *Stages 3a and 3b built
-  the insertion*: a node is rewritten as a run with the new entry where its
-  name sorts, and an index *root* — which is a value inside a record — grows
-  into the record's own free space when a name does not fit.  What is still
-  open is the other answer to a name that does not fit: a record with no room
-  gets an allocation block of its own, and with it the index bitmap's bits.
-  *Stage 4b* makes such a record's *room* by moving another attribute into an
-  extension record, which is enough while the record has one to spare — and
-  *stage 5* answers the other half: a directory whose entries do not fit the
-  record the root moved to keeps them in a block, with the index bitmap's
-  bits, and the root reduced to the node that points at it.
-- **Compressed, encrypted and sparse `$DATA`.**  `docs/status.md` records
-  that they are not covered.  Writing one is a different problem from writing
-  a plain runlist — compression units, EFS metadata, and runs that name no
-  cluster — and this RFC does not decide them.
-  *[RFC 0013](0013-refuse-the-ntfs-streams-this-driver-cannot-read.md)
-  decides them*: a compressed or encrypted stream is refused rather than
-  misread, and a sparse one reads and fills as a hole should.
+- **A split whose node above is a *block* landed; the chain above it has
+  not.**  *Stage 18 landed the split itself.*  Filling a leaf two levels down
+  splits it and promotes its middle key into the block above that leaf — a
+  **block** and not the index root — the bitmap gains its bit, and a second
+  mount walks the deeper tree and finds every name.  The first attempt at this
+  looked like a `NoSpace` from inside the split and was not: the test spent the
+  fixture's MFT on names short enough that the leaf needed thirty creations to
+  fill.  Names long enough to fill it in a handful put the split where the
+  budget is.
+- **What is still not built is the recursion.**  When the node above a leaf is
+  a block and *that* block has no room for the promoted key, the block is the
+  thing that has to be split in turn — its own middle key going up from there —
+  and no fixture can drive it today: filling a block above a leaf means filling
+  the leaves under it many times over, which the fixture's MFT cannot afford.
+  A fixture that carries a block already full is what that stage needs, and
+  until it exists the case answers `NoSpace` rather than being written wrongly.
 
 ## What landed
 
@@ -1186,3 +1158,27 @@ being something a partial write can ignore.
   `a_record_or_block_whose_sectors_disagree_is_refused`, which flips the
   number in one sector's tail and requires the record and the block to be
   refused — is what a reader can run without the fixture's whole scenario.
+
+**Stage 18 — a split reaches the block above a leaf.**
+
+- Filling a leaf two levels down splits it, and what the split promotes its
+  middle key *into* is a **block** rather than the index root: the node above a
+  leaf in a deep tree is one of the tree's own blocks.  The guard that refused
+  that case is gone, the room the key needs is measured against the node it is
+  actually written into (a record's index root can grow into its record, a
+  block has what is left of itself), and the node above is written from where
+  it lies rather than from the record its root lives in.
+- What the first attempt looked like is worth keeping.  It answered `NoSpace`,
+  and every step inside the split was probed in turn — the allocation, the
+  bitmap's bit, the cluster claim, the new block, the node above, the old block
+  — with **none** of them firing.  The `NoSpace` came from outside the split:
+  the test spent the fixture's MFT on names short enough that filling the leaf
+  took thirty creations, and the fixture's MFT affords one growth.  Names long
+  enough to fill a leaf in a handful of creations put the split where the
+  budget is, and the split works: the bitmap gains its bit, and a second mount
+  walks the deeper tree and finds every name.
+- Still owed, and named in the unresolved questions above: when the block above
+  a leaf is *itself* full, it is that block which has to be split in turn.  No
+  fixture can drive it yet — filling a block above a leaf means filling the
+  leaves under it many times over — so the case answers `NoSpace` rather than
+  being written wrongly.

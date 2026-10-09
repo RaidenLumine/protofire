@@ -1932,11 +1932,6 @@ impl NtfsFs {
             let IndexHome::Block { .. } = &leaf.home else {
                 return Err(Error::InvalidArgument);
             };
-            let IndexHome::Record { holder } = parent.home else {
-                // A leaf that hangs from a block is a tree deeper than this
-                // driver writes; `index_leaf` refuses it, so this is a guard.
-                return Err(Error::NotImplemented);
-            };
             let (block_size, cluster_size, sector_size) = {
                 let info = self.info.lock();
                 (
@@ -2001,10 +1996,13 @@ impl NtfsFs {
                 return Err(Error::InvalidArgument);
             }
 
-            // The room the key needs, measured the way the node above is
-            // written: its value may grow into the record, and a record with no
-            // room makes room first and the split is worked out again.
-            let needed = {
+            // The room the key needs.  A node above that is a **record**'s
+            // index root may grow into the record, and a record with no room
+            // makes room first and the split is worked out again; a node above
+            // that is a **block** has what is left of that block, which the
+            // write below measures and refuses by itself — and a block that is
+            // full is the case the node above *it* is for.
+            if let IndexHome::Record { holder } = parent.home {
                 let entries_offset = u32::from_le_bytes([
                     parent.buffer[parent.node],
                     parent.buffer[parent.node + 1],
@@ -2022,15 +2020,16 @@ impl NtfsFs {
                     .into_iter()
                     .find(|attribute| attribute.attr_type == ATTR_TYPE_INDEX_ROOT)
                     .ok_or(Error::InvalidArgument)?;
-                16 + used > root.content.len() + (record.len() - bytes_in_use(&record))
-            };
-            if needed {
-                if attempt == 0 {
-                    self.make_room(holder, ATTR_TYPE_INDEX_ROOT)?;
-                    derived = None;
-                    continue;
+                let needed =
+                    16 + used > root.content.len() + (record.len() - bytes_in_use(&record));
+                if needed {
+                    if attempt == 0 {
+                        self.make_room(holder, ATTR_TYPE_INDEX_ROOT)?;
+                        derived = None;
+                        continue;
+                    }
+                    return Err(Error::NoSpace);
                 }
-                return Err(Error::NoSpace);
             }
 
             // The clusters the block lives in.  A block that was already the
@@ -2092,7 +2091,15 @@ impl NtfsFs {
             // walk started with: growing the allocation above may have moved
             // the attribute the root lives in, and a record written from that
             // copy would undo the growth and the bitmap bit with it.
-            let (mut parent_buffer, parent_node) = self.index_root_node(holder)?;
+            //
+            // A node above that is a *record*'s index root is read again,
+            // because growing the allocation below may have moved it; one that
+            // is a *block* is where the walk found it, because nothing in this
+            // split writes it before this point.
+            let (mut parent_buffer, parent_node) = match &parent.home {
+                IndexHome::Record { holder } => self.index_root_node(*holder)?,
+                IndexHome::Block { .. } => (parent.buffer.clone(), parent.node),
+            };
             self.write_index_leaf(
                 parent_record,
                 &mut parent_buffer,

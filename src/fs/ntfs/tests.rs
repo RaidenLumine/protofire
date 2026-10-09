@@ -1830,38 +1830,56 @@ fn a_tree_deeper_than_a_level_of_blocks_is_changed_where_the_names_are() {
     );
 }
 
-/// A block two levels down that fills refuses a split, rather than being
-/// written wrongly.
+/// A leaf two levels down that fills **splits**, and its middle key is
+/// promoted into the block above it.
 #[test]
-fn a_block_two_levels_down_that_fills_refuses_a_split() {
-    // The split this driver writes promotes a key into the node *above* a leaf
-    // block, and today it knows the index root there.  A leaf whose node above
-    // is itself a block is the case that is left, so a leaf two levels down
-    // that fills answers `NotImplemented` — before it writes anything, since
-    // the refusal comes before the split's first write.
+fn a_block_two_levels_down_that_fills_splits_into_the_block_above() {
+    // The split the driver writes promotes a key into the node *above* a leaf
+    // block, and in a tree deeper than one level of blocks that node is itself
+    // a block.  This is that case: filling the leaf splits it, the key between
+    // the halves becomes an entry of the block above, and a second mount walks
+    // the deeper tree and finds every name.
     let fixture = build_volume(FRACTIONAL);
-    let (_device, fs_handle) = writable(&fixture);
-    let pad = "p".repeat(60);
+    let (device, fs_handle) = writable(&fixture);
+    assert_eq!(
+        index_blocks_in_use(&fs_handle, DEEP_DIRECTORY),
+        3,
+        "the tree's three blocks to start with"
+    );
+
+    let pad = "p".repeat(240);
     let mut created: Vec<String> = Vec::new();
-    let mut refused = None;
     for index in 0..40 {
         let name = alloc::format!("deep-{index:03}-{pad}.txt");
-        match fs_handle.create_file(&alloc::format!("/deep/{name}")) {
-            Ok(_) => created.push(name),
-            Err(error) => {
-                refused = Some(error);
-                break;
-            }
+        fs_handle
+            .create_file(&alloc::format!("/deep/{name}"))
+            .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
+        created.push(name);
+        if index_blocks_in_use(&fs_handle, DEEP_DIRECTORY) > 3 {
+            break;
         }
     }
     assert_eq!(
-        refused,
-        Some(Error::NotImplemented),
-        "a split whose node above is a block"
+        index_blocks_in_use(&fs_handle, DEEP_DIRECTORY),
+        4,
+        "the block the split made"
     );
-    assert!(!created.is_empty(), "and the names before it landed");
-    for name in &created {
-        fs_handle
+
+    let again = remount(&device);
+    let mut expected: Vec<String> = alloc::vec![
+        String::from("deep-alpha.txt"),
+        String::from("deep-middle.txt"),
+        String::from("deep-omega.txt"),
+    ];
+    expected.extend(created);
+    expected.sort();
+    assert_eq!(
+        the_listing(&again, "/deep"),
+        expected,
+        "every name, the promoted key among them, in the tree's order"
+    );
+    for name in &expected {
+        again
             .lookup(&alloc::format!("/deep/{name}"))
             .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
     }
