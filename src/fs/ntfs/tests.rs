@@ -656,7 +656,8 @@ fn an_attribute_that_outgrows_its_room_moves_and_takes_its_neighbours_with_it() 
         header.usa_offset as usize,
         header.usa_count as usize,
         sector,
-    );
+    )
+    .expect("a record the fixture packed itself reads back");
     let attributes = super::fs::parse_attributes(&raw[header.size() as usize..]);
     let data = attributes
         .iter()
@@ -4638,5 +4639,50 @@ fn a_child_pointer_is_read_from_the_end_of_its_entry() {
         separator.name.as_ref().map(|name| name.name.as_str()),
         Some("middle.txt"),
         "a keyed pointer carries a real key"
+    );
+}
+#[test]
+fn a_record_or_block_whose_sectors_disagree_is_refused() {
+    // A write that stops between two sectors leaves the ones it reached
+    // carrying the number the array names and the rest carrying the one
+    // before: that is what the update sequence is for, and a reader that
+    // patched those bytes back without looking — which this one did — would
+    // answer with a record that is half new and half old.  Both shapes are
+    // checked here: a record, and an index block.
+    let fixture = build_volume(FRACTIONAL);
+    let bytes = fixture.shape.bytes_per_sector as usize;
+
+    // A record: its second sector's tail is left behind, exactly as a write
+    // that stopped there would.
+    let at = fixture.record_offset(RESIDENT_FILE) as usize;
+    let mut torn = fixture.image.clone();
+    torn[at + 2 * bytes - 2] ^= 0xff;
+    let device = crate::fs::block::MemoryBlockDevice::new("torn", torn, false);
+    let fs_handle = super::NtfsFs::new(device).expect("the volume itself still mounts");
+    assert!(
+        matches!(
+            fs_handle.read_mft_record(RESIDENT_FILE),
+            Err(Error::InvalidArgument)
+        ),
+        "a record whose sector disagrees with its array is refused"
+    );
+
+    // And a block: the same thing one sector in, in the directory whose
+    // entries are in a tree.
+    let attributes = fs_handle
+        .attributes_of(TREE_DIRECTORY)
+        .expect("the attributes");
+    let mut torn = fixture.image.clone();
+    let block = fs_handle
+        .read_index_block(&attributes, 0)
+        .expect("read the block");
+    assert!(block.len() > 2 * bytes);
+    let at = fixture.tree_blocks as usize * fixture.cluster_size() as usize;
+    torn[at + 2 * bytes - 2] ^= 0xff;
+    let device = crate::fs::block::MemoryBlockDevice::new("torn", torn, false);
+    let fs_handle = super::NtfsFs::new(device).expect("the volume itself still mounts");
+    assert!(
+        fs_handle.read_dir("/tree", 0).is_err(),
+        "a block whose sector disagrees with its array is refused"
     );
 }

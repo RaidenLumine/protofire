@@ -344,16 +344,27 @@ pub struct NtfsFs {
     /// is another handle to them.
     info: Arc<Mutex<fs::NtfsInfo>>,
     mft_cache: Arc<Mutex<BTreeMap<u64, Vec<u8>>>>,
+    /// The volume's sector size, which is where a record's update sequence
+    /// numbers sit.
+    ///
+    /// Kept beside the device rather than read out of `info` on every record,
+    /// because a *read* of a cached record has to check those numbers, and
+    /// taking the info lock there would be taking it inside a caller that
+    /// already holds it — the lock the reader is documented to keep *outside*
+    /// the reads below it.
+    sector_size: usize,
 }
 
 impl NtfsFs {
     pub fn new(device: Arc<dyn BlockDevice>) -> Result<Self> {
         let bs = fs::read_boot_sector(&device)?;
+        let sector_size = bs.bytes_per_sector as usize;
         let info = fs::NtfsInfo::new(bs);
         Ok(Self {
             device,
             info: Arc::new(Mutex::new(info)),
             mft_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            sector_size,
         })
     }
 
@@ -368,7 +379,20 @@ impl NtfsFs {
     pub fn read_mft_record(&self, record_number: u64) -> Result<Vec<u8>> {
         let mut cache = self.mft_cache.lock();
         if let Some(cached_record) = cache.get(&record_number) {
-            return Ok(cached_record.clone());
+            // A cached record is kept the way the **volume** holds it — its
+            // sectors ending in the sequence number — so reading it is unpacking
+            // it, and a record whose sectors disagree with its own array is one
+            // a write did not finish: refused here rather than handed over as
+            // bytes that are half new and half old.
+            let mut record = cached_record.clone();
+            let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+            fs::apply_usa_fixup(
+                &mut record,
+                header.usa_offset as usize,
+                header.usa_count as usize,
+                self.sector_size,
+            )?;
+            return Ok(record);
         }
 
         let mut info = self.info.lock();
@@ -384,18 +408,18 @@ impl NtfsFs {
         }
         fs::read_from_runs(&self.device, &info, &runs, data_size, offset, &mut record)?;
 
-        // Apply USA fixup if present
-        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        if header.usa_count > 0 {
-            fs::apply_usa_fixup(
-                &mut record,
-                header.usa_offset as usize,
-                header.usa_count as usize,
-                info.bs.bytes_per_sector as usize,
-            );
-        }
-
+        // The cache keeps the volume's form of the record; the caller gets the
+        // record's own bytes, which is the same bytes with each sector's
+        // sequence number put back — and a record whose sectors disagree with
+        // that array is one a write did not finish, so it is refused here.
         cache.insert(record_number, record.clone());
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        fs::apply_usa_fixup(
+            &mut record,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            self.sector_size,
+        )?;
         Ok(record)
     }
 
@@ -832,7 +856,6 @@ impl NtfsFs {
 
         let info = self.info.lock();
         let record_at = self.record_offset(&info, holder)?;
-        let attr_at = record_at + (base + data.offset) as u64;
         let mut raw = record.clone();
 
         if runs.len() > data.data_runs.len() {
@@ -840,7 +863,6 @@ impl NtfsFs {
             let room = data.attr_len - runs_relative;
             let mut field = alloc::vec![0u8; room];
             field[..encoded.len()].copy_from_slice(&encoded);
-            fs::write_device_bytes(&self.device, attr_at + runs_relative as u64, &field)?;
             let at = base + data.offset + runs_relative;
             raw[at..at + room].copy_from_slice(&field);
 
@@ -853,24 +875,34 @@ impl NtfsFs {
                 zeros,
             )?;
 
-            let mut allocated_field = [0u8; 8];
-            allocated_field.copy_from_slice(&u64::from(allocated).to_le_bytes());
-            fs::write_device_bytes(&self.device, attr_at + 40, &allocated_field)?;
-            raw[base + data.offset + 40..base + data.offset + 48].copy_from_slice(&allocated_field);
+            raw[base + data.offset + 40..base + data.offset + 48]
+                .copy_from_slice(&u64::from(allocated).to_le_bytes());
             let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
-            fs::write_device_bytes(&self.device, attr_at + 24, &last_vcn.to_le_bytes())?;
             raw[base + data.offset + 24..base + data.offset + 32]
                 .copy_from_slice(&last_vcn.to_le_bytes());
         }
 
         // The data size and the initialized size, adjacent in a non-resident
         // header: a shorter file has no initialized bytes beyond its length.
-        let mut sizes = [0u8; 16];
-        sizes[..8].copy_from_slice(&u64::from(length).to_le_bytes());
-        sizes[8..].copy_from_slice(&u64::from(length).to_le_bytes());
-        fs::write_device_bytes(&self.device, attr_at + 48, &sizes)?;
-        raw[base + data.offset + 48..base + data.offset + 64].copy_from_slice(&sizes);
+        raw[base + data.offset + 48..base + data.offset + 56]
+            .copy_from_slice(&u64::from(length).to_le_bytes());
+        raw[base + data.offset + 56..base + data.offset + 64]
+            .copy_from_slice(&u64::from(length).to_le_bytes());
 
+        // Written **whole**, and its sequence array packed again.  Each field
+        // here lives in the record's own bytes, and a run list long enough to
+        // reach the end of a sector would write over the number that says which
+        // write put that sector there — the one thing the reader checks, and
+        // what this function's own field-at-a-time writes were doing.
+        let header = MftRecordHeader::parse(&raw).ok_or(Error::InvalidArgument)?;
+        fs::pack_usa(
+            &mut raw,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            info.bs.bytes_per_sector as usize,
+        );
+        drop(info);
+        fs::write_device_bytes(&self.device, record_at, &raw)?;
         self.mft_cache.lock().insert(holder, raw);
         Ok(())
     }
@@ -1076,7 +1108,7 @@ impl NtfsFs {
             usa_offset,
             usa_count,
             info.bs.bytes_per_sector as usize,
-        );
+        )?;
         Ok(block)
     }
 
@@ -3792,6 +3824,16 @@ impl VNode for NtfsVnode {
             // behind would answer with the bytes it had.
             let at = header.size() as usize + data.offset + data.value_offset + start;
             record[at..at + take].copy_from_slice(&buffer[..take]);
+            // The cache keeps the volume's form of the record, which is the one a
+            // reader checks: its sectors end with the sequence number, so a copy
+            // held the other way round would fail the check that a torn write is
+            // caught by.
+            fs::pack_usa(
+                &mut record,
+                header.usa_offset as usize,
+                header.usa_count as usize,
+                info.bs.bytes_per_sector as usize,
+            );
             self.fs.mft_cache.lock().insert(number, record);
             return Ok(take);
         }
@@ -4095,6 +4137,7 @@ impl Clone for NtfsFs {
             device: self.device.clone(),
             info: self.info.clone(),
             mft_cache: self.mft_cache.clone(),
+            sector_size: self.sector_size,
         }
     }
 }

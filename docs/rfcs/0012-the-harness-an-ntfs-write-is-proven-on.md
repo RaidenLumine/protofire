@@ -1138,3 +1138,37 @@ being something a partial write can ignore.
   bytes, and the attribute is resident again with the volume's `$Bitmap`
   showing the cluster back; a second mount reads the four bytes it kept and
   writes into the record the value is in.
+
+**Stage 17 — a torn write is refused, not read.**
+
+- A 4096-byte index block reaches the device as eight sector writes, so a
+  machine that stops between two of them leaves half the block new and half of
+  it old.  The format's answer is the **update sequence**, and both halves of
+  it are built now: `pack_usa` moves the number on with every write, so the
+  sectors a write did not reach still carry the one before, and
+  `apply_usa_fixup` **checks** each sector against it and refuses the buffer
+  (`InvalidArgument`) instead of writing the array's bytes back without
+  looking.  A torn record or block is now something a reader can tell apart
+  from a finished one, which is the difference between a mount that says "this
+  is torn" and a walk that lists half a name.
+- That check found two more of the same kind, and both are fixed.  The record
+  cache holds the **volume's** form of a record — its sectors ending in the
+  sequence number — and a reader unpacks a copy, which is what makes a cached
+  record checkable at all; `read_mft_record` did the opposite on one path and
+  the resident write did on another, so a record could be cached in the form
+  the checker calls torn.  And `write_grown_data` patched a grown value
+  **field by field**, which is right until the room a run list grows into
+  reaches the end of a sector: it writes the record whole now, packed again,
+  like every other writer.  (This RFC's own stage 1 said a field write never
+  reaches a sector's end; a run list long enough does.)
+- A harness found the tear — a device that stops writing after its Nth write
+  and lets the driver run on as if nothing had happened, so the image is
+  exactly what a crash there leaves: at the sixteenth write of a fill, the
+  tree's block held an entry whose name stopped at byte 512 and a walk listed
+  it.  That harness is **not kept**: its window invariants still have two
+  loose ends (one name-accounting bug of my own, and one image at which the
+  root refuses to read and which I have not yet told apart from a further
+  defect), and what a reader has instead is a gate over the same fact —
+  `a_record_or_block_whose_sectors_disagree_is_refused` flips the number in
+  one sector's tail of a fixture volume and requires the record and the block
+  to be refused, with the volume itself still mounting.

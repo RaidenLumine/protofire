@@ -90,7 +90,7 @@ impl NtfsInfo {
                 header.usa_offset as usize,
                 header.usa_count as usize,
                 self.bs.bytes_per_sector as usize,
-            );
+            )?;
         }
         let attributes = parse_attributes(&record[header.size() as usize..]);
         let data = attributes
@@ -492,7 +492,14 @@ pub fn pack_usa(buf: &mut [u8], usa_offset: usize, usa_count: usize, sector_size
     if sector_size == 0 || usa_count == 0 || usa_offset + usa_count * 2 > buf.len() {
         return;
     }
-    let sequence = u16::from_le_bytes([buf[usa_offset], buf[usa_offset + 1]]);
+    // The number **moves on every write**, and that is the whole point of it:
+    // the sectors a write did not reach still carry the one before, so a record
+    // or a block whose sectors disagree with the array is one a reader can
+    // refuse instead of reading as half new and half old.  A number that never
+    // changed could not tell the two apart.
+    let sequence = u16::from_le_bytes([buf[usa_offset], buf[usa_offset + 1]]).wrapping_add(1);
+    buf[usa_offset..usa_offset + 2].copy_from_slice(&sequence.to_le_bytes());
+    buf[usa_offset..usa_offset + 2].copy_from_slice(&sequence.to_le_bytes());
     for i in 1..usa_count {
         let sector_end = i * sector_size;
         if sector_end >= 2 && sector_end <= buf.len() && usa_offset + i * 2 + 1 < buf.len() {
@@ -506,25 +513,48 @@ pub fn pack_usa(buf: &mut [u8], usa_offset: usize, usa_count: usize, sector_size
 }
 
 /// Undo an update sequence array, so the bytes a record's sectors end with are
-/// the ones they held before the write that put the sequence number there.
+/// the ones they held before the write that put the sequence number there —
+/// and **check that the write reached every sector** while doing it.
+///
+/// Each sector ends with a copy of the number the array names, which is how a
+/// write that stopped between two sectors is told apart from one that finished:
+/// a sector that still carries the number *before* it is a sector the write did
+/// not reach, and a record or block like that is refused (`InvalidArgument`)
+/// rather than read as half new and half old.  A reader that patched the array
+/// back without looking — which this one did — turns a torn write into bytes
+/// that are not the file's, and a caller cannot tell.
 ///
 /// The sector size is the *volume's*, from the boot sector, not the device's:
 /// an NTFS record's sectors are `bytes_per_sector` bytes, and a volume whose
 /// sectors are not 512 would otherwise have its records unpacked at the wrong
 /// offsets.
-pub fn apply_usa_fixup(buf: &mut [u8], usa_offset: usize, usa_count: usize, sector_size: usize) {
-    if sector_size == 0 || usa_count == 0 || usa_offset + usa_count * 2 > buf.len() {
-        return;
+pub fn apply_usa_fixup(
+    buf: &mut [u8],
+    usa_offset: usize,
+    usa_count: usize,
+    sector_size: usize,
+) -> Result<(), Error> {
+    if usa_count == 0 {
+        return Ok(());
     }
+    if sector_size == 0 || usa_offset + usa_count * 2 > buf.len() || usa_offset < 2 {
+        return Err(Error::InvalidArgument);
+    }
+    let sequence = [buf[usa_offset], buf[usa_offset + 1]];
     for i in 1..usa_count {
         let sector_end = i * sector_size;
-        if sector_end >= 2 && sector_end <= buf.len() && usa_offset + i * 2 + 1 < buf.len() {
-            let low = buf[usa_offset + i * 2];
-            let high = buf[usa_offset + i * 2 + 1];
-            buf[sector_end - 2] = low;
-            buf[sector_end - 1] = high;
+        if sector_end < 2 || sector_end > buf.len() || usa_offset + i * 2 + 1 >= buf.len() {
+            return Err(Error::InvalidArgument);
         }
+        if buf[sector_end - 2..sector_end] != sequence {
+            // The sector is not the one the array was written with: the write
+            // that named this buffer stopped before it reached here.
+            return Err(Error::InvalidArgument);
+        }
+        buf[sector_end - 2] = buf[usa_offset + i * 2];
+        buf[sector_end - 1] = buf[usa_offset + i * 2 + 1];
     }
+    Ok(())
 }
 
 /// Parse data runs from a buffer.
