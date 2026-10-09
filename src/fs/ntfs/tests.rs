@@ -1509,24 +1509,51 @@ fn a_directory_whose_index_is_a_tree_lists_in_tree_order() {
 }
 
 #[test]
-fn a_tree_directory_is_read_but_not_written() {
-    // Routing an insertion by key and splitting a full block are the stage
-    // after reading a tree, so a directory whose index is one refuses a change
-    // rather than writing into the wrong block.
+fn a_tree_directory_takes_a_name_where_it_belongs() {
+    // A tree routes by key, so an insertion reaches the block the name belongs
+    // in: a name below the promoted key goes to the block that holds the lesser
+    // ones, and a name above it to the one with no key over it.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle.create_file("/tree/aardvark.txt").expect("below");
+    fs_handle.create_file("/tree/zulu.txt").expect("above");
+    fs_handle
+        .remove_path("/tree/omega.txt")
+        .expect("a leaf's name comes out");
+
+    // A second mount lists them in the tree's order — the promoted key still in
+    // the middle of it — and finds each name by its path.
+    let again = remount(&device);
+    assert_eq!(
+        the_listing(&again, "/tree"),
+        [
+            String::from("aardvark.txt"),
+            String::from("alpha.txt"),
+            String::from("middle.txt"),
+            String::from("zulu.txt"),
+        ],
+        "in the order the tree keeps them"
+    );
+    for name in ["aardvark.txt", "middle.txt", "zulu.txt"] {
+        again
+            .lookup(&alloc::format!("/tree/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+    }
+    assert!(matches!(
+        again.lookup("/tree/omega.txt"),
+        Err(Error::NotFound)
+    ));
+}
+
+#[test]
+fn a_promoted_key_is_a_name_no_change_can_take() {
+    // The name a split promoted lives in the node above the blocks, and taking
+    // it out is the tree deletion the stage after reading one does not have: a
+    // removal refuses rather than leaving its block unreachable.
     let fixture = build_volume(FRACTIONAL);
     let (_device, fs_handle) = writable(&fixture);
     assert_eq!(
-        fs_handle.create_file("/tree/new.txt").err(),
-        Some(Error::NotImplemented)
-    );
-    assert_eq!(
-        fs_handle.remove_path("/tree/alpha.txt").err(),
-        Some(Error::NotImplemented)
-    );
-    assert_eq!(
-        fs_handle
-            .rename("/tree/alpha.txt", "/tree/renamed.txt")
-            .err(),
+        fs_handle.remove_path("/tree/middle.txt").err(),
         Some(Error::NotImplemented)
     );
     assert_eq!(

@@ -185,9 +185,12 @@ The authoritative picture of what exists today is
   **tree** is *read* now: an internal node holds a key and the child it points
   at, so a promoted key — one that lives in the node above and in no block — is
   a name like any other, and a walk takes each child and then its key, which is
-  the order the names sort in.  Writing one is what is left: routing an
-  insertion by key, splitting a block that is full, and the index bitmap's own
-  growth when the blocks outnumber its bits.
+  the order the names sort in.  A change is *routed* now too: it reaches the
+  block the name's key belongs in, so a name can be created while its block has
+  room and a leaf's name removed, and a name that *is* a key — the one a split
+  promoted — refuses a change.  What is left of the stage is the split itself: a
+  block that is full, its middle key promoted into the node above, and the index
+  bitmap's own growth when the blocks outnumber its bits.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

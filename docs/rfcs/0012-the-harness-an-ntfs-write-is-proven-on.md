@@ -170,8 +170,9 @@ never from `make verify`: the gates do not depend on a host tool.
    it can take content.
 8. **An index that is a tree.**  A directory whose entries outgrow one block
    keeps them in several, with the keys that separate them in the node above —
-   read first, so a directory of many names reads here, and then written, which
-   is routing an insertion by key and splitting a block that is full.
+   read first, so a directory of many names reads here, then **routed**, which
+   is a change reaching the block its key belongs in, and then *split*, which is
+   a block that is full.
 
 ### The journal, decided once
 
@@ -868,3 +869,29 @@ being something a partial write can ignore.
   and a rename, with nothing it holds moved.
 - What is left is the writer: routing by key, splitting a full block, and the
   index bitmap's own growth when the blocks outnumber its bits.
+
+**Stage 9 — routing a change to the block its key names.**
+
+- A tree's keys are what decide where a name goes: an internal node's entry
+  carries a key and the child it points at, that child keeps the keys **less
+  than** the key, and the last entry has no key and takes the largest ones.  So
+  a change reaches the block that holds the name by taking the first key
+  *greater* than it, and the last (keyless) child when no key is — which is what
+  `index_leaf` now does, with the name it is asked about.
+- A name that is a key **is** the node above the blocks — that is what a split
+  promotes — so a change that finds it there answers for itself: an insertion
+  says it is already there (`AlreadyExists`), and a removal refuses
+  (`NotImplemented`), because taking a promoted key out is the tree *deletion*
+  this stage does not have: the entry carries the child whose keys are less than
+  it, and dropping it would leave that child unreachable.
+- An insertion therefore lands in the right block while that block has room, and
+  a **block that is full still refuses** (`NoSpace`): splitting it, promoting
+  its middle key into the node above and giving the new block a bit in the index
+  bitmap is the stage after this one.  A removal of a name a *leaf* holds works
+  the same way it did for one block — the leaf is routed to, and the entry
+  leaves it.
+- Two tests: a name below the promoted key and a name above it are both created,
+  a leaf's name is removed, and a second mount lists them in the tree's order
+  with the promoted key still in the middle of it and finds each by its path;
+  and the promoted key itself refuses a removal, with nothing the directory
+  holds moved.

@@ -1242,7 +1242,18 @@ impl NtfsFs {
     /// children, which is where this descends to; the buffer comes back with
     /// the node's place and its room, so a change to the entries can be
     /// written back where they belong.
-    fn index_leaf(&self, parent_record: u64) -> Result<(Vec<u8>, usize, IndexHome)> {
+    /// A tree routes by key: an internal node's entry carries a key and the
+    /// child it points at, that child holds the keys *less than* the entry's,
+    /// and the last entry has no key and points at the child with the largest
+    /// ones.  A name that *is* a key lives in the node above the blocks, which
+    /// is where a promoted key goes when a block is split, and that is the one
+    /// answer this walk does not give.
+    fn index_leaf(
+        &self,
+        parent_record: u64,
+        name: &str,
+    ) -> Result<Option<(Vec<u8>, usize, IndexHome)>> {
+        let upcase = self.upcase_table();
         let attributes = self.attributes_of(parent_record)?;
         let root = attributes
             .iter()
@@ -1272,24 +1283,31 @@ impl NtfsFs {
                 return Err(Error::InvalidArgument);
             }
             depth += 1;
-            // A node that points at more than one child is a *tree*, and this
-            // driver writes only the one-block tree it made: routing an
-            // insertion by key and splitting a full block are the stage after
-            // reading one.
             let parsed = parse_index_node(&buffer, node);
-            if parsed
-                .entries
-                .iter()
-                .filter(|entry| entry.child.is_some())
-                .count()
-                > 1
-            {
-                return Err(Error::NotImplemented);
+            // The first child whose key is *greater* than the name holds it:
+            // that child keeps the keys less than its key.  A name equal to a
+            // key is that key, and lives here in the node.
+            let mut chosen = None;
+            for entry in &parsed.entries {
+                let Some(key) = &entry.name else { continue };
+                if compare_names(&key.name, name, &upcase).is_gt() {
+                    chosen = entry.child;
+                    break;
+                }
+                if compare_names(&key.name, name, &upcase).is_eq() {
+                    return Ok(None);
+                }
             }
-            let pointer = parsed
-                .entries
-                .iter()
-                .find_map(|entry| entry.child)
+            // Nothing greater: the last child, the one with no key, holds the
+            // largest names.
+            let pointer = chosen
+                .or_else(|| {
+                    parsed
+                        .entries
+                        .iter()
+                        .filter_map(|entry| entry.child)
+                        .next_back()
+                })
                 .ok_or(Error::InvalidArgument)?;
             let allocation = attributes
                 .iter()
@@ -1310,7 +1328,7 @@ impl NtfsFs {
             node = 24;
             buffer = block;
         }
-        Ok((buffer, node, home))
+        Ok(Some((buffer, node, home)))
     }
 
     /// Write a directory's index entries back where they live.
@@ -1464,7 +1482,11 @@ impl NtfsFs {
         // record of its own — and that changes the node's place, so the whole
         // insertion is worked out again.
         for attempt in 0..2 {
-            let (mut buffer, node, home) = self.index_leaf(parent_record)?;
+            let Some((mut buffer, node, home)) = self.index_leaf(parent_record, name)? else {
+                // The name is one of the node's own keys, which is where a
+                // promoted key lives: it is there.
+                return Err(Error::AlreadyExists);
+            };
             let parsed = parse_index_node(&buffer, node);
             let Some((terminator, rest)) = parsed.entries.split_last() else {
                 return Err(Error::InvalidArgument);
@@ -1940,7 +1962,12 @@ impl NtfsFs {
     /// wrong one.
     fn index_remove(&self, parent_record: u64, name: &str, reference: u64) -> Result<()> {
         let upcase = self.upcase_table();
-        let (mut buffer, node, home) = self.index_leaf(parent_record)?;
+        let Some((mut buffer, node, home)) = self.index_leaf(parent_record, name)? else {
+            // A name that is a node's own key is one a split promoted, and
+            // taking it out is the tree deletion the stage after reading one
+            // does not have.
+            return Err(Error::NotImplemented);
+        };
         let parsed = parse_index_node(&buffer, node);
         let last = parsed.entries.len().saturating_sub(1);
 
