@@ -2867,6 +2867,80 @@ fn record(shape: &Shape, number: u64, flags: u16, attributes: &[u8]) -> Vec<u8> 
     record
 }
 
+#[test]
+#[ignore = "driven by scripts/check-ntfs-image.sh, which makes the volume it needs"]
+fn a_volume_mkntfs_wrote_is_read_and_written_back() {
+    // Every other test here mounts a volume this driver built.  This one mounts
+    // a volume **`mkntfs` built**: the host injects a file the driver knows
+    // nothing about, the driver reads it, creates one of its own, and the
+    // image it leaves is handed to `ntfs-3g`'s own reader by the script that
+    // runs this test.  The fixture's format facts were measured against such a
+    // volume by hand; this is what holds them there.
+    //
+    // Ignored, so `cargo test` alone does not demand an image and the tools
+    // that make one; the check drives it with the three paths it needs and
+    // fails outright if any of them is missing, which is the direction a
+    // skipped test cannot go.
+    // The trait, through the path the rest of this file's helpers use: the
+    // census of cross-module edges counts a spelling, and this one is already
+    // in it.
+    use crate::fs::block::BlockDevice as _;
+
+    let path = std::env::var("PROTOFIRE_NTFS_IMAGE")
+        .expect("the check runs this test with a volume to mount");
+    let expected =
+        std::env::var("PROTOFIRE_NTFS_CONTENT").expect("the check names the content it injected");
+    let content =
+        std::env::var("PROTOFIRE_NTFS_WRITE").expect("the check names the content to write");
+    let out =
+        std::env::var("PROTOFIRE_NTFS_OUT").expect("the check names where the written volume goes");
+
+    let image = std::fs::read(&path).expect("the volume mkntfs made");
+    let device = crate::fs::block::MemoryBlockDevice::new("real", image, false);
+    let fs_handle = super::NtfsFs::new(device.clone()).expect("mount it");
+
+    // What the host put there: a name and bytes this driver never wrote.
+    let listed = the_listing(&fs_handle, "/");
+    assert!(
+        listed.contains(&String::from("hello.txt")),
+        "the host's file is listed: {listed:?}"
+    );
+    let node = fs_handle.lookup("/hello.txt").expect("the host's file");
+    assert_eq!(node.size(), expected.len(), "and its length");
+    let mut bytes = alloc::vec![0u8; node.size() as usize];
+    assert_eq!(node.read(0, &mut bytes).expect("read it"), bytes.len());
+    assert_eq!(bytes, expected.as_bytes(), "and its bytes");
+
+    // And what the driver writes: a file of its own, and the volume it is in.
+    let made = fs_handle
+        .create_file("/written.txt")
+        .expect("a file of the driver's own");
+    assert_eq!(
+        made.write(0, content.as_bytes()).expect("write it"),
+        content.len()
+    );
+    fs_handle.sync().expect("settle the volume");
+
+    let mut written = alloc::vec![0u8; (device.block_count() * 512) as usize];
+    device
+        .read_blocks(0, &mut written)
+        .expect("read the volume");
+    std::fs::write(&out, &written).expect("leave it where the check can judge it");
+
+    // A **second mount** of what this one left, reading back through the
+    // reader: the same proof every other test here ends with, on a volume
+    // `mkntfs` made rather than on the fixture.
+    let again = super::NtfsFs::new(crate::fs::block::MemoryBlockDevice::new(
+        "written", written, false,
+    ))
+    .expect("mount what was written");
+    let reread = again.lookup("/written.txt").expect("the file it made");
+    assert_eq!(reread.size(), content.len());
+    let mut bytes = alloc::vec![0u8; reread.size() as usize];
+    assert_eq!(reread.read(0, &mut bytes).expect("read it"), bytes.len());
+    assert_eq!(bytes, content.as_bytes());
+}
+
 /// A fixture volume, and where the parts a test asks about are.
 struct Fixture {
     image: Vec<u8>,

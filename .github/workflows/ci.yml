@@ -103,6 +103,38 @@ jobs:
         env:
           CARGO: cargo
 
+  ntfs-image:
+    # A job of its own because it needs a package the others do not: the
+    # ntfs-3g tools (mkntfs, ntfscp, ntfsls, ntfscat, ntfsfix).  What it proves
+    # is the NTFS driver on a volume it did not build — mkntfs makes the
+    # volume, the host injects a file with ntfscp, the driver reads it and
+    # writes one of its own, and ntfs-3g's own reader judges the result — which
+    # no other gate does: every NTFS test elsewhere mounts a fixture the driver
+    # wrote itself.
+    name: NTFS on a real volume
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "nightly-2026-08-24"
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install the ntfs-3g tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ntfs-3g
+
+      - name: Mount a volume mkntfs made
+        run: make check-ntfs-image
+        env:
+          CARGO: cargo
+
   smp-runtime:
     # The only gate that starts the kernel more than once — and the only one
     # that starts it on more than one CPU, which is the only way the AP

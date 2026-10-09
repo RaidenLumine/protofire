@@ -210,14 +210,13 @@ The authoritative picture of what exists today is
   root, an index bitmap that is a file of its own, and the allocation's own
   shrink, which this driver does not do at all: a kept block costs nothing to
   use again.
-  What no gate covers yet is a **real volume**: every NTFS test is host-side
-  and over a fixture this driver built itself, and the format facts that
-  fixture rests on were measured against a volume `mkntfs` wrote by hand.  A
-  check that attaches such an image the way
-  [`scripts/check-nvme-disk.sh`](scripts/check-nvme-disk.sh) attaches one for
-  the native filesystem — boot, mount, read, write, and mount what was written
-  again — would be the first thing to prove this driver on a volume it did not
-  build.
+  A **real volume** is a gate now: `make check-ntfs-image` makes a volume with
+  `mkntfs`, injects a file with `ntfscp`, has the driver read it and write one
+  of its own, and hands the result to `ntfs-3g`'s own reader — so the format is
+  proven on a volume this driver did not build.  What is still open is the
+  *boot* path: mounting NTFS at boot needs the zone dispatch in
+  [`src/fs/filesystem/`](src/fs/filesystem) to know the type, which is a step
+  of its own.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

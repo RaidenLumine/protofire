@@ -160,6 +160,7 @@ run_p3() {
     run_make_step "make check-payload-relocations" check-payload-relocations
     run_make_step "make check-dead-code-allows" check-dead-code-allows
     run_make_step "make check-status-rows" check-status-rows
+    run_make_step "make check-ntfs-image" check-ntfs-image
     # And every configuration the manifest declares, which is the one gate
     # that builds the switches no boot hands to a `check-*` target.
     run_make_step "make check-feature-matrix" check-feature-matrix

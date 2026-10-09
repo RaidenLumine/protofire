@@ -158,6 +158,7 @@ help:
 		'  make check-abi-frozen-payload         - boot the pre-built frozen payload, which this build does not recompile' \
 		'  make check-abi-frozen-payload-aarch64 - the same frozen payload on aarch64' \
 		'  make check-abi-frozen-payload-riscv64 - the same frozen payload on riscv64' \
+		'  make check-ntfs-image                 - mount a volume `mkntfs` made, write to it, and have ntfs-3g'"'"'s own reader judge what came out' \
 		'' \
 		'Runtime gates:' \
 		'  make check-perf-baseline              - boot the demo and compare its measured work to the baseline' \
@@ -325,7 +326,8 @@ test-service:
 	check-arch-fanout check-dead-code-allows check-status-rows \
 	check-feature-matrix \
 	check-abi-mirror check-abi-frozen-payload \
-	check-abi-frozen-payload-aarch64 check-abi-frozen-payload-riscv64
+	check-abi-frozen-payload-aarch64 check-abi-frozen-payload-riscv64 \
+	check-ntfs-image
 
 # A `git commit` that is interrupted while it writes objects can leave a ref or
 # the index naming something that is not there, and the first symptom is a
@@ -446,6 +448,16 @@ check-dead-code-allows:
 # (`sh scripts/check-status-rows.sh --record`), so the numbers only fall.
 check-status-rows:
 	sh ./scripts/check-status-rows.sh
+
+# Every other NTFS test mounts a fixture this driver wrote itself; this one
+# mounts a volume `mkntfs` made, reads a file the host injected with `ntfscp`,
+# creates one of its own, and lets `ntfs-3g`'s own reader — `ntfsls`,
+# `ntfscat` and `ntfsfix -n` — judge what came out.  It is what holds the
+# fixture's format facts to a real volume, and it needs the ntfs-3g tools
+# rather than QEMU, so it runs where the rest of the static gates do.
+check-ntfs-image:
+	CARGO="$(CARGO)" PROFILE="$(PROFILE)" CRATE="$(CRATE)" \
+		sh ./scripts/check-ntfs-image.sh
 
 # Every configuration `Cargo.toml` declares, built: the shipped `demo-disk`
 # build plus each switch the manifest names, and then all of them at once.  The

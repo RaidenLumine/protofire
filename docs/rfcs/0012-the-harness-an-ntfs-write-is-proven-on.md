@@ -244,6 +244,18 @@ what stage 1's record serialisation is for.
   same reason: the code under test is the code that just wrote.
 - A **second mount** after every write in stages 1 to 3: a fresh `NtfsFs` on
   the same device, asked the same questions.
+- A **volume this driver did not build**: `make check-ntfs-image` makes one
+  with `mkntfs`, injects a file with `ntfscp` — a name and bytes the driver
+  never wrote — and runs
+  `a_volume_mkntfs_wrote_is_read_and_written_back` over it.  The driver reads
+  the host's file, creates one of its own, and the script then hands the volume
+  it left to `ntfs-3g`'s own reader: `ntfsls` lists both names, `ntfscat`
+  reads both files back, and `ntfsfix -n` walks the metadata.  This is the
+  harness's answer to the fixture being the driver's own work — the format
+  facts the fixture encodes are held against a foreign implementation, on a
+  volume neither side built.  It needs the ntfs-3g tools rather than QEMU, so
+  it runs in the static tier; what it does **not** prove is the boot path,
+  which would need the zone dispatch to know the type.
 - The real-volume script for the format facts it is worth asking about, and
   the probe in the Motivation as the case stage 0 has to make stop being
   true: a record number answers with the record that has that number.
