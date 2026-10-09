@@ -306,26 +306,29 @@ fn a_directory_lists_what_its_index_holds() {
     assert_eq!(
         names,
         [
-            "$MFT",
-            "$MFTMirr",
-            "$LogFile",
-            "$Volume",
+            // The volume's order, not the records': a name goes through
+            // `$UpCase` and sorts there, which is the order a split's promoted
+            // key separates the halves of a block by.
             "$AttrDef",
             "$Bitmap",
+            "$LogFile",
+            "$MFT",
+            "$MFTMirr",
             "$UpCase",
-            "resident.txt",
-            "two-runs.bin",
-            "tight.bin",
-            "full.bin",
-            "full-dir",
-            "split.bin",
-            "moved.bin",
-            "tree",
-            "sub",
-            "named.bin",
-            "running-index",
+            "$Volume",
             "deep",
             "encrypted.bin",
+            "full-dir",
+            "full.bin",
+            "moved.bin",
+            "named.bin",
+            "resident.txt",
+            "running-index",
+            "split.bin",
+            "sub",
+            "tight.bin",
+            "tree",
+            "two-runs.bin",
         ],
         "the root's entries, without its own \".\""
     );
@@ -344,14 +347,14 @@ fn a_directory_lists_what_its_index_holds() {
     ));
 
     // A file and a directory are listed as what they are.
-    let resident = fs_handle.read_dir("/", 7).expect("resident.txt");
+    let resident = fs_handle.read_dir("/", 13).expect("resident.txt");
     assert_eq!(resident.kind, NodeKind::File);
     assert_eq!(resident.size, 5);
-    let tight = fs_handle.read_dir("/", 9).expect("tight.bin");
+    let tight = fs_handle.read_dir("/", 17).expect("tight.bin");
     assert_eq!(tight.kind, NodeKind::File);
     let full = fs_handle.read_dir("/", 10).expect("full.bin");
     assert_eq!(full.kind, NodeKind::File);
-    let sub = fs_handle.read_dir("/", 15).expect("sub");
+    let sub = fs_handle.read_dir("/", 16).expect("sub");
     assert_eq!(sub.kind, NodeKind::Directory);
 }
 
@@ -2990,6 +2993,35 @@ fn is_in_use(number: u64, spares_in_use: bool) -> bool {
     is_named(number, spares_in_use) || EXTENSION_RECORDS.contains(&number)
 }
 
+/// Compare two names the way the volume's index does, spelled out here rather
+/// than asked of the driver: the fixture's own `$UpCase` table folds Latin
+/// letters up and leaves everything else alone, and the names go in that
+/// order, a prefix before what it is a prefix of.
+fn fold_order(left: &str, right: &str) -> core::cmp::Ordering {
+    let folded = |code: u16| {
+        if (0x61..=0x7a).contains(&code) {
+            code - 0x20
+        } else {
+            code
+        }
+    };
+    let mut left = left.encode_utf16();
+    let mut right = right.encode_utf16();
+    loop {
+        match (left.next(), right.next()) {
+            (Some(a), Some(b)) => {
+                let (a, b) = (folded(a), folded(b));
+                if a != b {
+                    return a.cmp(&b);
+                }
+            }
+            (None, Some(_)) => return core::cmp::Ordering::Less,
+            (Some(_), None) => return core::cmp::Ordering::Greater,
+            (None, None) => return core::cmp::Ordering::Equal,
+        }
+    }
+}
+
 /// The name a record takes when the fixture makes every record in use.
 ///
 /// A record that is in use is a record some directory names, so the ones a
@@ -4402,6 +4434,12 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                 }
                             }
                         }
+                        // A volume keeps a directory's names in the order its
+                        // index does — folded through `$UpCase`, code unit by
+                        // code unit — and the driver leans on that: a block
+                        // that fills is split in half, and the key it promotes
+                        // separates the halves only while the names are sorted.
+                        let mut named: Vec<(String, Vec<u8>)> = Vec::new();
                         for record in listed {
                             let (name, directory, size): (&str, bool, u64) = match record {
                                 0 => ("$MFT", false, 0),
@@ -4426,9 +4464,16 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                 SUBDIRECTORY => ("sub", true, 0),
                                 _ => (spare_name(record), false, 0),
                             };
-                            entries.extend_from_slice(&index_entry(record, name, directory, size));
+                            named.push((
+                                String::from(name),
+                                index_entry(record, name, directory, size),
+                            ));
                         }
-                        entries.extend_from_slice(&index_entry(ROOT_RECORD, ".", true, 0));
+                        named.push((String::from("."), index_entry(ROOT_RECORD, ".", true, 0)));
+                        named.sort_by(|left, right| fold_order(&left.0, &right.0));
+                        for (_, entry) in named {
+                            entries.extend_from_slice(&entry);
+                        }
                     } else {
                         entries.extend_from_slice(&index_entry(
                             SUBDIRECTORY_FILE,
