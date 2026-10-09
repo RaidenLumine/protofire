@@ -175,6 +175,80 @@ compressed file unless `-C` is passed, and no sparse one at all.
   `NotImplemented` from both a read and a write of its bytes.  The volume and
   the file are the host's, so this is the same fact as the probe above, on a
   volume the driver did not build.
+- **The encrypted half is gated too, now.**  No tool on this host can make an
+  EFS file, so the fixture carries the shape: `ENCRYPTED_FILE` holds a `$DATA`
+  whose flags say it is encrypted — what its runs hold is ciphertext — and
+  `an_encrypted_stream_is_refused_and_a_plain_one_beside_it_is_not` requires
+  the name to be listed, the length to be answered from the record, the read
+  and the write to be `NotImplemented`, and a **plain** file beside it to read
+  its runs, which is what keeps the refusal from being a blanket one.
+- Stage 2 (filling a hole) is not built: a write that lands in a sparse run is
+  still refused, and the census row says so rather than claiming the fill.  A
+  later stage's decompressor will be judged against `ntfscat` on a
+  `mkntfs -C` volume, which is where the refusal's other half is proven today.
+
+## Alternatives
+
+- **Return the bitstream and document it.**  Rejected: a read that succeeds
+  and is wrong is the one failure a filesystem cannot report to its caller,
+  and RFC 0012 exists because a reader that answered with the wrong record
+  went unnoticed for months.
+- **Refuse the whole volume at mount.**  Rejected: one compressed file does
+  not make a directory unreadable, and the census the driver keeps is per
+  file.  A volume is a tree of names; a stream is bytes someone asks for.
+- **Decompress LZNT1 now.**  Rejected for *this* RFC, not forever: LZNT1 is a
+  bitstream with a window and a unit size, which is an argument of its own
+  with its own measurement (`ntfscat` on a `mkntfs -C` volume is the
+  reference).  The refusal is what makes landing it later safe: no build of
+  this driver has ever answered a compressed read with something wrong.
+- **Convert a compressed file to uncompressed when it is written.**  Rejected:
+  it is a real NTFS behaviour, but silently changing a layout the user chose
+  is a surprise, and it needs the same spare space a rewrite does.  A
+  refusal is the honest half of it for now.
+- **Decrypt EFS with a volume key.**  Rejected: there is no such key.  EFS's
+  keys are per user, held outside the volume, and no boot has a user yet.
+- **Leave a sparse write refused** (today's behaviour).  Rejected: a hole is
+  the one of the three that is already readable, and refusing the write
+  leaves a file that can be read and not filled, for no reason the format
+  gives.
+
+## Drawbacks
+
+- A compressed file cannot be read at all until the LZNT1 stage lands, where
+  today it can be read *wrongly*.  That is the point, and it is still a
+  capability the tree does not have.
+- Two more branches on the read and write paths, and one more field in a
+  parsed attribute — the price of never misreading a stream.
+- A sparse write that allocates can fail with `NoSpace` where the caller
+  might have hoped for a hole; there is no answer that both keeps the hole
+  and stores the bytes.
+- The census grows by one distinction per file: readable, or refused and
+  named.  A reader of `docs/status.md` has one more thing to hold in mind.
+
+## Compatibility and migration
+
+Nothing on disk changes and no format moves: this is about what the driver
+does with flags it already reads past.  The behaviour change is from *wrong
+bytes* to `NotImplemented`, and a caller cannot have depended on the wrong
+bytes — they were not the file's.  No fixture carries a compressed, encrypted
+or sparse stream yet, so no test changes for stage 1.
+
+The status row moves in the change that lands each stage, and
+`make check-ntfs-image` is unaffected: a volume `mkntfs` makes carries no
+compressed file unless `-C` is passed, and no sparse one at all.
+
+## How this is proven
+
+- **Stage 1, as it landed**: `scripts/check-ntfs-image.sh` makes a second
+  volume with `mkntfs -C`, injects a compressible file with `ntfscp`, and
+  requires that the tool made it compressed (`ntfsinfo` must report the
+  compressed attribute flag, so that a file that came out *plain* fails the
+  check instead of proving nothing), and
+  `a_compressed_stream_on_a_real_volume_is_refused` mounts it, requires the
+  file to still be listed and to have its length, and requires
+  `NotImplemented` from both a read and a write of its bytes.  The volume and
+  the file are the host's, so this is the same fact as the probe above, on a
+  volume the driver did not build.
 - **Still owed**: the fixture carries no stream with these flags, so the
   **encrypted** refusal — the same code path, decided by the same check — is
   implemented and not yet exercised by a gate.  No tool here can make an EFS

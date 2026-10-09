@@ -325,6 +325,7 @@ fn a_directory_lists_what_its_index_holds() {
             "named.bin",
             "running-index",
             "deep",
+            "encrypted.bin",
         ],
         "the root's entries, without its own \".\""
     );
@@ -2888,6 +2889,9 @@ const DEEP_ALPHA: u64 = 44;
 /// which is what a split of a leaf block promotes.
 const DEEP_MIDDLE: u64 = 45;
 const DEEP_OMEGA: u64 = 46;
+/// A file whose `$DATA` carries the **encrypted** flag: the shape RFC 0013
+/// refuses, and the one no tool on this host can make.
+const ENCRYPTED_FILE: u64 = 47;
 /// A directory whose index is a **tree**: two blocks, and the root's node
 /// holding the key that separates them — the shape a directory of many names
 /// has, measured on a volume `mkntfs` makes.  Its children are named in the
@@ -2898,7 +2902,7 @@ const TREE_ALPHA: u64 = 36;
 /// block, which is what a promoted key is.
 const TREE_MIDDLE: u64 = 37;
 const TREE_OMEGA: u64 = 38;
-const RECORDS: u64 = 47;
+const RECORDS: u64 = 48;
 
 /// How many blocks the tree directory's allocation has room for.
 ///
@@ -2951,6 +2955,7 @@ fn is_named(number: u64, spares_in_use: bool) -> bool {
         || number == DEEP_ALPHA
         || number == DEEP_MIDDLE
         || number == DEEP_OMEGA
+        || number == ENCRYPTED_FILE
         || number == TREE_DIRECTORY
         || TREE_CHILDREN.contains(&number)
         // An extension record is not a name of its own, so making every record
@@ -3635,6 +3640,8 @@ struct Fixture {
     /// Where a two-level tree's three blocks are: the internal one first, then
     /// the two the names are in.
     deep_blocks: u64,
+    /// Where the encrypted file's bytes are, which nothing reads.
+    encrypted_runs: (u64, u64),
 }
 
 impl Fixture {
@@ -3719,8 +3726,10 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let running_block = take(2 * index_block_clusters);
     let running_bitmap = (take(1), 1);
     let deep_blocks = take(3 * index_block_clusters);
-    // Free clusters, each alone: a growth claims a run it fits in, and a claim
-    // of several clusters has none — which is what the refusal tests rely on.
+    let encrypted_first = take(1);
+    take(1); // a gap, so the encrypted file's run is one cluster of its own
+             // Free clusters, each alone: a growth claims a run it fits in, and a claim
+             // of several clusters has none — which is what the refusal tests rely on.
     let mut spare_used = Vec::new();
     for _ in 0..16 {
         take(1); // free, and alone
@@ -3753,6 +3762,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         running_block,
         running_bitmap,
         deep_blocks,
+        encrypted_runs: (encrypted_first, 1),
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -3773,6 +3783,9 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         fixture.used[cluster as usize] = 1;
     }
     fixture.used[running_bitmap.0 as usize] = 1;
+    for cluster in encrypted_first..encrypted_first + 2 {
+        fixture.used[cluster as usize] = 1;
+    }
     for cluster in deep_blocks..deep_blocks + 3 * index_block_clusters {
         fixture.used[cluster as usize] = 1;
     }
@@ -3909,6 +3922,13 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             DEEP_ALPHA => (DEEP_DIRECTORY, "deep-alpha.txt", false, 0, Vec::new()),
             DEEP_MIDDLE => (DEEP_DIRECTORY, "deep-middle.txt", false, 0, Vec::new()),
             DEEP_OMEGA => (DEEP_DIRECTORY, "deep-omega.txt", false, 0, Vec::new()),
+            ENCRYPTED_FILE => (
+                ROOT_RECORD,
+                "encrypted.bin",
+                false,
+                cluster_size,
+                Vec::new(),
+            ),
             TREE_ALPHA => (TREE_DIRECTORY, "alpha.txt", false, 0, Vec::new()),
             TREE_MIDDLE => (TREE_DIRECTORY, "middle.txt", false, 0, Vec::new()),
             TREE_OMEGA => (TREE_DIRECTORY, "omega.txt", false, 0, Vec::new()),
@@ -4234,6 +4254,17 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 DEEP_ALPHA | DEEP_MIDDLE | DEEP_OMEGA => {
                     attributes.extend(attribute(0x80, "", &[], None, 0));
                 }
+                ENCRYPTED_FILE => {
+                    // A `$DATA` whose flags say it is **encrypted**: what its
+                    // runs hold is ciphertext, so a reader that ignored the flag
+                    // would answer with bytes that are not the file's.  No tool
+                    // on this host can make an EFS file, so the fixture carries
+                    // the shape and RFC 0013's refusal is what is proven.
+                    let mut data =
+                        attribute(0x80, "", &[], Some(&[fixture.encrypted_runs]), cluster_size);
+                    put_u16_le(&mut data, 12, super::types::ATTR_FLAG_ENCRYPTED);
+                    attributes.extend(data);
+                }
                 TREE_DIRECTORY => {
                     // A directory whose index is a *tree*: two blocks with a
                     // separator key between them, which is the shape a
@@ -4336,6 +4367,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                             NAMED_FILE,
                             RUNNING_INDEX_DIRECTORY,
                             DEEP_DIRECTORY,
+                            ENCRYPTED_FILE,
                         ];
                         if spares_in_use {
                             // Every record in use is a record some directory
@@ -4371,6 +4403,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                 NAMED_FILE => ("named.bin", false, 0),
                                 RUNNING_INDEX_DIRECTORY => ("running-index", true, 0),
                                 DEEP_DIRECTORY => ("deep", true, 0),
+                                ENCRYPTED_FILE => ("encrypted.bin", false, 0),
                                 TREE_DIRECTORY => ("tree", true, 0),
                                 SUBDIRECTORY => ("sub", true, 0),
                                 _ => (spare_name(record), false, 0),
@@ -4915,4 +4948,41 @@ fn a_record_or_block_whose_sectors_disagree_is_refused() {
         fs_handle.read_dir("/tree", 0).is_err(),
         "a block whose sector disagrees with its array is refused"
     );
+}
+/// RFC 0013's refusal on the one shape this tree can carry: an **encrypted**
+/// `$DATA`, beside a plain one that still reads.
+#[test]
+fn an_encrypted_stream_is_refused_and_a_plain_one_beside_it_is_not() {
+    // No tool here can make an EFS file, so the fixture carries a `$DATA` whose
+    // flags say it is encrypted: what its runs hold is ciphertext, and a reader
+    // that ignored the flag would answer with bytes that are not the file's.
+    // The name is still a name — a volume is a tree of names, and a stream is
+    // bytes someone asks for — and the plain file beside it still reads, which
+    // is what keeps the refusal from being a blanket one.
+    let fixture = build_volume(FRACTIONAL);
+    let (_device, fs_handle) = writable(&fixture);
+    let listed = the_listing(&fs_handle, "/");
+    assert!(
+        listed.contains(&String::from("encrypted.bin")),
+        "the encrypted file is listed like any other: {listed:?}"
+    );
+    let node = fs_handle
+        .lookup("/encrypted.bin")
+        .expect("and resolves by its path");
+    assert!(node.size() > 0, "and its length is in its record");
+    let mut buf = [0u8; 8];
+    assert!(
+        matches!(node.read(0, &mut buf), Err(Error::NotImplemented)),
+        "a read of it is refused rather than answered with ciphertext"
+    );
+    assert!(
+        matches!(node.write(0, b"x"), Err(Error::NotImplemented)),
+        "and so is a write"
+    );
+
+    // The file whose stream is plain is the control: the refusal is about the
+    // flag, not about the directory.
+    let plain = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
+    let mut buf = alloc::vec![0u8; 8];
+    assert_eq!(plain.read(0, &mut buf).expect("read"), 8);
 }
