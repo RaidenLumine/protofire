@@ -1091,3 +1091,29 @@ being something a partial write can ignore.
   that went gives its bit back, and a second mount lists every name in the
   tree's order; and a leaf that fills two levels down refuses the split it
   would need, with every name taken before it still there.
+
+**Stage 16 — a value that comes back into its record.**
+
+- Stage 7 made a resident value take runs when it outgrows its record, and
+  said the conversion did not run the other way: a file that shrank kept the
+  runs it had, so a file written long and cut short held clusters nothing used.
+  It runs both ways now.  A value that shrinks **small enough for the record
+  to hold it** becomes resident again — the run list it no longer needs is
+  room the value takes — and the clusters come back to the volume.
+- The order is the difference between a leak and a volume that reads another
+  file's bytes.  The record goes first and the clusters second: the write drops
+  the run list, which leaves clusters nothing names if it stops in between,
+  while freeing them first would leave an attribute naming clusters the volume
+  has handed out again.  A value the record cannot hold stays where it is
+  (`NoSpace`), an attribute an `$ATTRIBUTE_LIST` split across records is no one
+  record's to rewrite (`NotImplemented`), and a **sparse** stream keeps its
+  runs — its holes are not something a record can say.
+- What lies past a value's **initialized size** was never written and reads as
+  zeros, and a record that holds the value has no way to say that: those bytes
+  are made explicit in the conversion rather than left as whatever the
+  clusters happened to hold.  That is why `ParsedAttr` carries the initialized
+  size now.
+- One test: a file written past its record takes clusters, is cut to four
+  bytes, and the attribute is resident again with the volume's `$Bitmap`
+  showing the cluster back; a second mount reads the four bytes it kept and
+  writes into the record the value is in.

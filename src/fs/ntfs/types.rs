@@ -243,6 +243,11 @@ pub struct ParsedAttr {
     pub data_runs_offset: Option<usize>,
     pub data_runs: Vec<DataRun>,
     pub data_size: u32,
+    /// How much of a non-resident value has ever been **written**: the format
+    /// says what lies past it reads as zeros, which a record that holds the
+    /// value has no way to say — so a conversion has to make those bytes
+    /// explicit.
+    pub initialized_size: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -611,6 +616,7 @@ mod tests {
             data_runs_offset: None,
             data_runs: Vec::new(),
             data_size: 0,
+            initialized_size: 0,
         };
         let win32 = ParsedAttr {
             attr_type: ATTR_TYPE_FILENAME,
@@ -625,6 +631,7 @@ mod tests {
             data_runs_offset: None,
             data_runs: Vec::new(),
             data_size: 0,
+            initialized_size: 0,
         };
         let best = get_best_filename(&[dos.clone(), win32]).expect("best filename");
         assert_eq!(best.name, "hello.txt");

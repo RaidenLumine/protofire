@@ -412,6 +412,18 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
             data_runs_offset,
             data_runs,
             data_size: content_size,
+            // A resident value is one whose bytes are all there; a
+            // non-resident one says how much of itself was ever written.
+            initialized_size: if non_resident {
+                u32::from_le_bytes([
+                    buf[offset + 56],
+                    buf[offset + 57],
+                    buf[offset + 58],
+                    buf[offset + 59],
+                ])
+            } else {
+                content_size
+            },
         });
 
         offset += attr_len as usize;

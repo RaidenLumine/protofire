@@ -3921,6 +3921,22 @@ impl NtfsVnode {
         }
 
         let mut runs = data.data_runs.clone();
+        // A value that has come back **into the record** keeps nothing in
+        // clusters: the attribute becomes one whose bytes are in the record
+        // again — the run list it no longer needs is room the value takes —
+        // and the clusters it held go back to the volume.  This is the order
+        // the two writes go in: the other one leaves an attribute naming
+        // clusters the volume has handed out again, and this one leaves
+        // clusters nothing names if it stops in between, which is a leak and
+        // the harmless direction.  A value the record cannot hold stays where
+        // it is (`NoSpace`), and a sparse stream keeps its runs.
+        if length < current && data.flags & ATTR_FLAG_SPARSE == 0 {
+            match self.convert_to_resident(data, length) {
+                Ok(()) => return Ok(()),
+                Err(Error::NoSpace) | Err(Error::NotImplemented) => {}
+                Err(error) => return Err(error),
+            }
+        }
         let allocated = {
             let clusters: u64 = data.data_runs.iter().map(|run| run.cluster_count).sum();
             let mut allocated = clusters * cluster_size;
@@ -3940,6 +3956,61 @@ impl NtfsVnode {
         };
         self.fs
             .write_grown_data(holder, data, &runs, allocated, length, &zeros)
+    }
+
+    /// Take a value that has come back into its record: the bytes the runs
+    /// held are written where the record keeps its values, and the clusters
+    /// they were in go back to the volume.
+    ///
+    /// The record goes first and the clusters second, because the two orders
+    /// leave different things behind: writing the record drops the run list (so
+    /// the clusters are named by nothing), and freeing them first would leave
+    /// an attribute naming clusters the volume has handed out again — a
+    /// leak in the first case, and a volume that reads another file's bytes
+    /// in the second.
+    ///
+    /// A record with no room for the value refuses (`NoSpace`) and the caller
+    /// leaves the value where it is; an attribute an `$ATTRIBUTE_LIST` split
+    /// across records is no one record's to rewrite (`NotImplemented`).
+    fn convert_to_resident(&self, data: &ParsedAttr, length: u32) -> Result<()> {
+        let holder = data.holder;
+        if holder == u64::MAX {
+            return Err(Error::NotImplemented);
+        }
+
+        // What lies past the **initialized** size was never written, and the
+        // format says it reads as zeros: a record that holds the value has no
+        // way to say that, so those bytes are made explicit here rather than
+        // left as whatever the clusters happened to hold.
+        let written = length.min(data.initialized_size);
+        let mut value = alloc::vec![0u8; length as usize];
+        {
+            let info = self.fs.info.lock();
+            fs::read_from_runs(
+                &self.fs.device,
+                &info,
+                &data.data_runs,
+                u64::from(data.data_size),
+                0,
+                &mut value[..written as usize],
+            )?;
+        }
+
+        let resident = fs::resident_attribute(
+            ATTR_TYPE_DATA,
+            data.name.as_deref().unwrap_or(""),
+            data.instance,
+            &value,
+        );
+        let record = self.fs.read_mft_record(holder)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let at = header.size() as usize + data.offset;
+        self.fs
+            .replace_attribute(holder, at, data.attr_len, &resident)?;
+
+        // And the clusters, now that nothing names them.
+        self.fs.free_clusters(&data.data_runs)?;
+        Ok(())
     }
 
     /// Give a resident `$DATA` runs, which is what a value that has outgrown

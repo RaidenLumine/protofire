@@ -1692,6 +1692,16 @@ fn fill_the_running_index(fs_handle: &super::NtfsFs) -> Vec<String> {
     names
 }
 
+/// How many clusters the volume's `$Bitmap` says are in use.
+fn clusters_in_use(fs_handle: &super::NtfsFs) -> u64 {
+    fs_handle
+        .read_bitmap()
+        .expect("the volume's bitmap")
+        .iter()
+        .map(|byte| u64::from(byte.count_ones()))
+        .sum()
+}
+
 /// How many bytes of blocks a directory's `$INDEX_ALLOCATION` holds.
 fn index_allocation_size(fs_handle: &super::NtfsFs, record: u64) -> u64 {
     fs_handle
@@ -2207,6 +2217,62 @@ fn a_pair_that_still_needs_two_blocks_is_not_merged() {
         names,
         "every other name is still there, in the tree's order"
     );
+}
+
+/// A file that shrinks back into its record gives the clusters it held back.
+#[test]
+fn a_file_that_shrinks_into_its_record_gives_its_clusters_back() {
+    // The conversion a growth makes — a value that outgrows its record takes
+    // runs — runs the other way when the value gets small enough again: the
+    // bytes come back into the record, the run list it no longer needs is room
+    // the value takes, and the clusters go back to the volume.  It is what
+    // keeps a file that was written long and cut short from holding space
+    // nothing uses.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let node = fs_handle.create_file("/shrink.bin").expect("create a file");
+    let (number, _) = fs_handle.resolve("/shrink.bin").expect("resolve");
+    let content = alloc::vec![0x5Au8; 2000];
+    assert_eq!(node.write(0, &content).expect("write"), content.len());
+    let with_runs = clusters_in_use(&fs_handle);
+    assert!(
+        fs_handle
+            .attributes_of(number)
+            .expect("the attributes")
+            .iter()
+            .find(|attribute| attribute.attr_type == 0x80)
+            .expect("the data")
+            .data_runs_offset
+            .is_some(),
+        "the value has outgrown its record"
+    );
+
+    node.set_len(4).expect("cut it short");
+
+    let attributes = fs_handle.attributes_of(number).expect("the attributes");
+    let data = attributes
+        .iter()
+        .find(|attribute| attribute.attr_type == 0x80)
+        .expect("the data");
+    assert!(
+        data.data_runs_offset.is_none(),
+        "and the value is back where the record keeps it"
+    );
+    assert!(
+        clusters_in_use(&fs_handle) < with_runs,
+        "the cluster it held is the volume's again"
+    );
+
+    // A second mount reads the bytes it kept, and writing again leaves from the
+    // record — the value can outgrow it once more.
+    let again = remount(&device);
+    let reread = again.lookup("/shrink.bin").expect("relookup");
+    assert_eq!(reread.size(), 4);
+    let mut buf = [0u8; 4];
+    assert_eq!(reread.read(0, &mut buf).expect("read"), 4);
+    assert_eq!(&buf, &content[..4], "and they are the bytes it had");
+    assert_eq!(reread.write(0, b"z").expect("write"), 1);
+    assert_eq!(reread.size(), 4);
 }
 
 #[test]
@@ -4442,6 +4508,7 @@ fn get_best_filename_prefers_win32_over_dos() {
         data_runs_offset: None,
         data_runs: Vec::new(),
         data_size: 0,
+        initialized_size: 0,
     };
     let win32 = ParsedAttr {
         attr_type: ATTR_TYPE_FILENAME,
@@ -4456,6 +4523,7 @@ fn get_best_filename_prefers_win32_over_dos() {
         data_runs_offset: None,
         data_runs: Vec::new(),
         data_size: 0,
+        initialized_size: 0,
     };
     let best = get_best_filename(&[dos.clone(), win32]).expect("best filename");
     assert_eq!(best.name, "hello.txt");
