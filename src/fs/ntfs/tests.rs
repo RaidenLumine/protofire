@@ -1271,6 +1271,202 @@ fn a_small_directory_that_fills_a_moved_root_fills_a_block_next() {
 }
 
 #[test]
+fn a_file_can_be_renamed_where_it_is() {
+    // A name lives twice: in the parent's index and in the record's own
+    // `$FILE_NAME`.  A rename moves both, and a second mount is what says so.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle
+        .rename("/resident.txt", "/renamed.txt")
+        .expect("rename");
+
+    let again = remount(&device);
+    let node = again.lookup("/renamed.txt").expect("the new name");
+    assert_eq!(node.name(), "renamed.txt");
+    let mut buf = vec![0u8; 5];
+    assert_eq!(node.read(0, &mut buf).expect("read"), 5);
+    assert_eq!(&buf, b"hello", "the file is the file it was");
+    assert!(matches!(
+        again.lookup("/resident.txt"),
+        Err(Error::NotFound)
+    ));
+    let listed = the_listing(&again, "/");
+    assert!(listed.contains(&String::from("renamed.txt")), "{listed:?}");
+    assert!(
+        !listed.contains(&String::from("resident.txt")),
+        "{listed:?}"
+    );
+
+    // The record's own name is the new one, and the parent it names is the
+    // record it is still in.
+    let attributes = again.attributes_of(RESIDENT_FILE).expect("the attributes");
+    let name = super::fs::get_best_filename(&attributes).expect("the record's name");
+    assert_eq!(name.name, "renamed.txt");
+    assert_eq!(name.parent_directory & 0xFFFF_FFFF_FFFF, ROOT_RECORD);
+}
+
+#[test]
+fn a_file_can_be_moved_to_another_directory() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle
+        .rename("/resident.txt", "/sub/moved.txt")
+        .expect("move it");
+
+    let again = remount(&device);
+    let node = again.lookup("/sub/moved.txt").expect("its new path");
+    let mut buf = vec![0u8; 5];
+    assert_eq!(node.read(0, &mut buf).expect("read"), 5);
+    assert_eq!(&buf, b"hello");
+    assert!(matches!(
+        again.lookup("/resident.txt"),
+        Err(Error::NotFound)
+    ));
+    assert!(!the_listing(&again, "/").contains(&String::from("resident.txt")));
+    assert!(the_listing(&again, "/sub").contains(&String::from("moved.txt")));
+
+    // The record names the directory it moved into.
+    let attributes = again.attributes_of(RESIDENT_FILE).expect("the attributes");
+    let name = super::fs::get_best_filename(&attributes).expect("the record's name");
+    assert_eq!(name.name, "moved.txt");
+    assert_eq!(name.parent_directory & 0xFFFF_FFFF_FFFF, SUBDIRECTORY);
+}
+
+#[test]
+fn a_directory_can_be_renamed_with_what_it_holds_untouched() {
+    // A directory's number does not change, so nothing inside it moves: the
+    // name it is listed by is the only thing that does.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle.rename("/sub", "/renamed").expect("rename it");
+
+    let again = remount(&device);
+    assert_eq!(
+        again.lookup("/renamed").expect("the new name").kind(),
+        NodeKind::Directory
+    );
+    let leaf = again.lookup("/renamed/leaf.txt").expect("its child");
+    assert_eq!(leaf.size(), 4);
+    assert!(matches!(again.lookup("/sub"), Err(Error::NotFound)));
+    let listed = the_listing(&again, "/");
+    assert!(listed.contains(&String::from("renamed")), "{listed:?}");
+    assert!(!listed.contains(&String::from("sub")), "{listed:?}");
+}
+
+#[test]
+fn a_name_that_is_taken_is_not_renamed_onto() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    assert_eq!(
+        fs_handle.rename("/resident.txt", "/two-runs.bin"),
+        Err(Error::AlreadyExists)
+    );
+
+    // And nothing moved: the file is where it was, and the name it did not
+    // take still names the record it did.
+    let again = remount(&device);
+    assert_eq!(
+        again.lookup("/resident.txt").expect("still there").size(),
+        5
+    );
+    assert_eq!(
+        again.lookup("/two-runs.bin").expect("untouched").size(),
+        3 * fixture.cluster_size() as usize
+    );
+}
+
+#[test]
+fn a_change_of_spelling_is_a_change_of_name() {
+    // Two names that fold together are one key in the index, so the old
+    // spelling has to leave before the new one arrives — and the record's own
+    // name carries the spelling the caller asked for.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle
+        .rename("/resident.txt", "/RESIDENT.TXT")
+        .expect("respell it");
+
+    let again = remount(&device);
+    assert_eq!(
+        again
+            .lookup("/RESIDENT.TXT")
+            .expect("the new spelling")
+            .size(),
+        5
+    );
+    let listed = the_listing(&again, "/");
+    assert!(listed.contains(&String::from("RESIDENT.TXT")), "{listed:?}");
+    assert!(
+        !listed.contains(&String::from("resident.txt")),
+        "{listed:?}"
+    );
+    let attributes = again.attributes_of(RESIDENT_FILE).expect("the attributes");
+    assert_eq!(
+        super::fs::get_best_filename(&attributes)
+            .expect("the record's name")
+            .name,
+        "RESIDENT.TXT"
+    );
+}
+
+#[test]
+fn a_directory_is_not_moved_into_itself() {
+    let fixture = build_volume(FRACTIONAL);
+    let (_device, fs_handle) = writable(&fixture);
+    assert_eq!(
+        fs_handle.rename("/sub", "/sub/inside"),
+        Err(Error::InvalidArgument),
+        "a tree no walk can leave"
+    );
+    assert_eq!(
+        fs_handle.rename("/resident.txt", "/two-runs.bin/inner"),
+        Err(Error::InvalidArgument),
+        "and a name is not put in a file"
+    );
+    assert_eq!(
+        fs_handle.rename("/resident.txt", "/two-runs.bin"),
+        Err(Error::AlreadyExists),
+        "and a name another record has is taken"
+    );
+    assert_eq!(
+        fs_handle.rename("/", "/elsewhere"),
+        Err(Error::InvalidArgument),
+        "the root has no name to change"
+    );
+}
+
+#[test]
+fn a_name_too_long_for_its_record_makes_room() {
+    // The record is full, so the record's own name has nowhere to grow: the
+    // largest attribute that is not the name moves into a record of its own,
+    // and the name follows into the room it left.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let long = "a-name-so-long-that-the-record-cannot-hold-it.txt";
+    fs_handle
+        .rename("/full.bin", &alloc::format!("/{long}"))
+        .expect("rename it");
+
+    let again = remount(&device);
+    assert_eq!(
+        again
+            .lookup(&alloc::format!("/{long}"))
+            .expect("the new name")
+            .size(),
+        2 * fixture.cluster_size() as usize
+    );
+    assert!(matches!(again.lookup("/full.bin"), Err(Error::NotFound)));
+    let base_record = again.read_mft_record(FULL_FILE).expect("the record");
+    let base_header = super::types::MftRecordHeader::parse(&base_record).expect("a header");
+    assert!(
+        super::fs::parse_attributes(&base_record[base_header.size() as usize..])
+            .iter()
+            .any(|attr| attr.attr_type == 0x20),
+        "the record made room by the route that leaves a list"
+    );
+}
+
+#[test]
 fn a_created_directory_is_on_the_volume() {
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);

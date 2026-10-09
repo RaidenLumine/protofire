@@ -160,6 +160,10 @@ never from `make verify`: the gates do not depend on a host tool.
    record's index root keeps them in an **`$INDEX_ALLOCATION` block**, with the
    bitmap that says which of the blocks are in use, and the root's node keeps
    only the pointer to the first one.
+6. **Renaming.**  A name lives twice — in the parent's index and in the
+   record's own `$FILE_NAME` — so a rename moves both, in the order that leaves
+   every window a mount can read; a record's number does not change, which is
+   what lets a directory be renamed with everything inside it untouched.
 
 ### The journal, decided once
 
@@ -755,3 +759,41 @@ being something a partial write can ignore.
   bytes they held the moment before the root's last write, and a mount lists the
   names the root's value still holds.  And a small directory whose root begins in
   its own record fills it the same way, one name at a time.
+
+**Stage 6 — a name that moves.**
+
+- A name lives in **two places**: the parent's index, which is what a walk
+  reads, and the record's own `$FILE_NAME`, which is where the record knows the
+  name and the parent it has.  A rename moves both, and `rename` is the two
+  index changes plus the record's own value rewritten where it lies
+  (`replace_value`: a value that has grown shifts what follows it, so the record
+  goes back whole with its update sequence array packed again).
+- **The order is what a crash leaves.**  The new index entry goes in first, the
+  record's own name follows it, and the old entry leaves last: a window then
+  holds two names for one record — which a walk reads — rather than a record no
+  directory names.  The one order that cannot hold to that is a change of
+  *spelling*: two names that fold together are one key in the index, so the old
+  spelling has to leave before the new one arrives, and that window is the one
+  that can leave a file nothing names.
+- **A record does not move and its number does not change**, so renaming a
+  directory touches nothing inside it: its children name it by the reference in
+  their own `$FILE_NAME` — the only link from a child to its parent, which is
+  also what makes *moving a directory into itself* a refusal (`is_inside` walks
+  those references upward, bounded).
+- A name that does not fit the record's own room makes room the way any growth
+  does — stage 4c's move, its largest attribute that is not the name going into
+  a record of its own — and the test that proves it is `full.bin`, whose record
+  is exactly full.
+- **What is refused**: the root, which has no name in a directory to change; a
+  name another record already has (`AlreadyExists`); a name to be put in a
+  record that is not a directory, or a move into itself or into something below
+  it (`InvalidArgument`); and a record whose `$FILE_NAME` is *split* across
+  records (`NotImplemented`).
+- Seven tests: a file renamed where it is, with the new name found by a second
+  mount, the old one gone, the bytes the same, and the record's own name and
+  parent checked; a file moved into another directory, with the record naming
+  the directory it moved to; a directory renamed with its child still found by
+  path; a name that is taken refused with nothing moved; a change of spelling,
+  where the listing and the record carry the spelling the caller asked for; the
+  three refusals, including a directory moved into itself; and a name too long
+  for its record, which makes room and leaves a list behind.

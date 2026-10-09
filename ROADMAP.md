@@ -171,6 +171,12 @@ The authoritative picture of what exists today is
   index bitmap would have to grow with it — and the two shapes the fixture does
   not carry: a record that is itself an extension, and a record where even
   moving everything leaves no room for the list.
+  A **name moves** too: a rename is the two index changes and the record's own
+  `$FILE_NAME`, in the order that leaves two names rather than none, and a
+  record's number never changes, so a directory is renamed with everything
+  inside it untouched.  What is left of the stage is a `$FILE_NAME` that lives
+  in a record of its own, and the resident-to-non-resident conversion that a
+  file created empty needs before it can take content.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

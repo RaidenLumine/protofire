@@ -63,6 +63,13 @@ const FIRST_FREE_RECORD: u64 = 16;
 /// pointer from being a loop.
 const MAX_INDEX_DEPTH: u32 = 8;
 
+/// How far up a parent chain this driver will walk.
+///
+/// A name's `$FILE_NAME` is the only link from a record to the record it is in,
+/// so a walk upward is a walk of those — and the bound is what keeps a loop
+/// written by something else from being this driver's loop.
+const MAX_ANCESTORS: u32 = 64;
+
 /// A path's last segment, and the directory it is in.
 ///
 /// A path here begins at the root and is separated by one byte, so the last
@@ -1754,6 +1761,116 @@ impl NtfsFs {
         Ok(())
     }
 
+    /// Refuse a record a name cannot be put in: one that is not a directory.
+    fn check_directory(&self, record_number: u64) -> Result<()> {
+        let record = self.read_mft_record(record_number)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        if !header.is_dir() {
+            return Err(Error::InvalidArgument);
+        }
+        Ok(())
+    }
+
+    /// Whether `ancestor` is the record `start` is inside.
+    ///
+    /// The only link from a record to its parent is the parent's reference in
+    /// its own `$FILE_NAME`, so this walks those up — which is what makes
+    /// moving a directory into itself a refusal rather than a tree no walk can
+    /// leave.
+    fn is_inside(&self, ancestor: u64, start: u64) -> Result<bool> {
+        let mut at = start;
+        for _ in 0..MAX_ANCESTORS {
+            if at == ancestor {
+                return Ok(true);
+            }
+            if at == ROOT_RECORD {
+                return Ok(false);
+            }
+            let attributes = self.attributes_of(at)?;
+            let name = own_attribute(at, &attributes, ATTR_TYPE_FILENAME)?;
+            if name.content.len() < 8 {
+                return Err(Error::InvalidArgument);
+            }
+            let parent = u64::from_le_bytes([
+                name.content[0],
+                name.content[1],
+                name.content[2],
+                name.content[3],
+                name.content[4],
+                name.content[5],
+                name.content[6],
+                name.content[7],
+            ]) & 0x0000_FFFF_FFFF_FFFF;
+            if parent == at {
+                // A record that names itself is a root, and a root has no
+                // parent to walk to.
+                return Ok(false);
+            }
+            at = parent;
+        }
+        Err(Error::InvalidArgument)
+    }
+
+    /// Replace a resident attribute's value in the record that holds it, and
+    /// write the record whole.
+    ///
+    /// A value that has grown shifts everything after it up by the difference,
+    /// which crosses sector ends — so the record goes back in one piece, with
+    /// its update sequence array packed again.  A record with no room for the
+    /// shift refuses (`NoSpace`), which is where the caller makes room; a value
+    /// that lives in another record is patched there, and one that is split
+    /// across records is not this writer's to patch at all.
+    fn replace_value(&self, record_number: u64, attr_type: u32, value: &[u8]) -> Result<()> {
+        let attributes = self.attributes_of(record_number)?;
+        let attribute = attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == attr_type)
+            .ok_or(Error::NotFound)?;
+        if attribute.holder == u64::MAX || attribute.data_runs_offset.is_some() {
+            return Err(Error::NotImplemented);
+        }
+        let holder = attribute.holder;
+        let record = self.read_mft_record(holder)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let base = header.size() as usize;
+        let attr_at = base + attribute.offset;
+
+        let mut bytes = record[attr_at..attr_at + attribute.attr_len].to_vec();
+        let attr_len = (attribute.value_offset + value.len()).next_multiple_of(8);
+        bytes.resize(attr_len, 0);
+        bytes[4..8].copy_from_slice(&(attr_len as u32).to_le_bytes());
+        bytes[16..20].copy_from_slice(&(value.len() as u32).to_le_bytes());
+        bytes[attribute.value_offset..attribute.value_offset + value.len()].copy_from_slice(value);
+
+        let end = bytes_in_use(&record);
+        let mut rebuilt = record[..attr_at].to_vec();
+        rebuilt.extend_from_slice(&bytes);
+        rebuilt.extend_from_slice(&record[attr_at + attribute.attr_len..end]);
+        let used = rebuilt.len();
+        if used + 8 > record.len() {
+            return Err(Error::NoSpace);
+        }
+        rebuilt.resize(record.len(), 0);
+        rebuilt[24..28].copy_from_slice(&(used as u32).to_le_bytes());
+
+        let (at, sector) = {
+            let info = self.info.lock();
+            (
+                self.record_offset(&info, holder)?,
+                usize::from(info.bs.bytes_per_sector),
+            )
+        };
+        fs::pack_usa(
+            &mut rebuilt,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            sector,
+        );
+        fs::write_device_bytes(&self.device, at, &rebuilt)?;
+        self.mft_cache.lock().insert(holder, rebuilt);
+        Ok(())
+    }
+
     /// Take a name out of a directory's index.
     ///
     /// The entry that goes is the one that names this record *and* this name:
@@ -2386,9 +2503,110 @@ impl FileSystem for NtfsFs {
         Ok(DirectoryEntry::new(kind, size, name))
     }
 
+    /// Give a file or a directory another name, in the directory it is in or
+    /// another one.
+    ///
+    /// A name lives in two places and both move: the parent's **index** gains
+    /// the new name and loses the old, and the record's own **`$FILE_NAME`**
+    /// takes the name and the parent it now has.  The new name goes in first
+    /// and the old one leaves last, so a crash between the two leaves two names
+    /// for one record — which a walk reads — rather than a file nothing names.
+    /// The one order that cannot hold to that is a change of *spelling*: two
+    /// names that fold together are one key, so the old one has to go before
+    /// the new one arrives.
+    ///
+    /// The record itself does not move and its number does not change, which is
+    /// what lets a directory be renamed with nothing inside it touched.
     fn rename(&self, _old_path: &str, _new_path: &str) -> Result<()> {
-        // NTFS rename is complex - for now, just return not implemented
-        Err(Error::NotImplemented)
+        if _old_path == _new_path {
+            return Ok(());
+        }
+        let (old_parent_path, old_name) = split_parent(_old_path);
+        let (new_parent_path, new_name) = split_parent(_new_path);
+        if old_name.is_empty() || new_name.is_empty() || new_name.encode_utf16().count() > 255 {
+            return Err(Error::InvalidArgument);
+        }
+
+        let (record_number, _) = self.resolve(_old_path)?;
+        if record_number == ROOT_RECORD {
+            return Err(Error::InvalidArgument);
+        }
+        let record = self.read_mft_record(record_number)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let directory = header.is_dir();
+
+        // The name it is going to have, or the same record under a different
+        // spelling, or a name already taken.
+        let spelling = match self.resolve(_new_path) {
+            Ok((existing, _)) if existing == record_number => true,
+            Ok(_) => return Err(Error::AlreadyExists),
+            Err(Error::NotFound) => false,
+            Err(error) => return Err(error),
+        };
+
+        let (new_parent, _) = self.resolve(new_parent_path)?;
+        self.check_directory(new_parent)?;
+        if directory && self.is_inside(record_number, new_parent)? {
+            // Moving a directory into itself would make a tree no walk can
+            // leave.
+            return Err(Error::InvalidArgument);
+        }
+
+        // The flag goes up before the change, and before the reads below:
+        // setting it reads a record.
+        self.set_dirty(true)?;
+
+        let (old_parent, _) = self.resolve(old_parent_path)?;
+        let sequence = u16::from_le_bytes([record[16], record[17]]);
+        let reference = record_number | (u64::from(sequence) << 48);
+        let size = if directory {
+            0
+        } else {
+            self.data_size(record_number)
+        };
+        let new_parent_sequence = {
+            let parent = self.read_mft_record(new_parent)?;
+            u16::from_le_bytes([parent[16], parent[17]])
+        };
+        let name = fs::file_name_value(
+            new_parent | (u64::from(new_parent_sequence) << 48),
+            new_name,
+            directory,
+            size,
+        );
+
+        if spelling {
+            self.index_remove(old_parent, old_name, record_number)?;
+            self.index_insert(new_parent, new_name, reference, directory, size)?;
+        } else {
+            self.index_insert(new_parent, new_name, reference, directory, size)?;
+        }
+        // The record's own name follows the name that is now its, and the old
+        // index entry — the one copy that now disagrees — goes last.  A name
+        // that does not fit the record makes room the way any growth does, the
+        // largest attribute that is not the name moving into a record of its
+        // own.
+        let mut attempt = 0;
+        loop {
+            match self.replace_value(record_number, ATTR_TYPE_FILENAME, &name) {
+                Ok(()) => break,
+                Err(Error::NoSpace) if attempt == 0 => {
+                    let holder = self
+                        .attributes_of(record_number)?
+                        .iter()
+                        .find(|attribute| attribute.attr_type == ATTR_TYPE_FILENAME)
+                        .map(|attribute| attribute.holder)
+                        .unwrap_or(record_number);
+                    self.make_room(holder, ATTR_TYPE_FILENAME)?;
+                    attempt += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if !spelling {
+            self.index_remove(old_parent, old_name, record_number)?;
+        }
+        Ok(())
     }
 
     /// Make a file: a record from the MFT's free space, and its name in the
