@@ -259,29 +259,41 @@ what stage 1's record serialisation is for.
 - The real-volume script for the format facts it is worth asking about, and
   the probe in the Motivation as the case stage 0 has to make stop being
   true: a record number answers with the record that has that number.
+- **Every window of a change**, for the two changes the write orders in
+  `src/fs/ntfs/mod.rs` argue about most: `PowerCut` in
+  `src/fs/ntfs/tests.rs` is a device that stops writing after its Nth write
+  and **says the rest succeeded**, so the driver runs on the healthy path and
+  the image is exactly what a crash in that window leaves — one device write
+  is one block, so a 4096-byte index block really does go down in eight of
+  them.  `every_window_is_readable` mounts every one of those images and
+  requires: the volume mounts; and a directory it *can* read holds every name
+  it had (less the ones the change may remove), nothing the change could not
+  have put there, no name twice, and every name it lists resolving to a
+  readable record.  A window that **refuses** a read is an answer rather than
+  a failure — a write cut between two sectors is what the update sequence is
+  for — and the run that wrote *everything* is checked too, so a harness that
+  refused every window could not pass by saying nothing.  The two scenarios
+  are a creation that fills a block until it splits, and a rename, whose
+  promise is that no window holds neither of the record's two names.
 
 ## Unresolved questions
 
-- **A torn write is not detected, and it is not silent.**  A 4096-byte index
-  block reaches the device as eight sector writes, so a machine that stops
-  between two of them leaves half the block new and half of it old.  The
-  format's answer is the **update sequence**: every sector ends with a copy of
-  the number the array holds, so a block whose sectors disagree is one a reader
-  can refuse.  Neither half of that is built — `pack_usa`
-  (`src/fs/ntfs/fs.rs`) copies the number and never changes it, and
-  `apply_usa_fixup` in the same file writes the array's bytes back into the
-  sector ends **without comparing them first**.  It was measured by stopping
-  the driver's device after each of its own writes: after the sixteenth write
-  of a fill that splits a block, the tree's block holds an entry whose name
-  stops at byte 512 — `many-001-pppppp`, then zeros for the two hundred bytes
-  the entry claims — and a walk lists that as a name.  A **third** half is the
-  same problem: several writers insert the *packed* buffer into `mft_cache`, so
-  a record whose attribute spans a sector end is held in the cache with two
-  bytes of sequence where its payload should be.  What the fix has to be is
-  one change and not three: the sequence changes on every write, a read
-  refuses a buffer whose sectors disagree with it, and the cache holds the
-  buffer the way the record's own bytes read rather than the way the volume
-  stores them.
+- **A torn write was not detected, and it was not silent.**  *Stage 17 answered
+  this.*  A 4096-byte block reaches the device as eight sector writes, and the
+  update sequence is what tells a torn one from a finished one: the number
+  moves on with every write, and the reader checks it.  What that check found
+  on the way — a cache that could hold a record in the shape the checker calls
+  torn, and a grown value patched field by field into the end of a sector — is
+  in stage 17 as well.
+- **A split whose node above is a *block* runs and then stops.**  A leaf two
+  levels down that fills needs its middle key promoted into the node above,
+  and that node is a block rather than the index root.  Removing the guard that
+  refuses it makes the split *run* — the promoted key is built, the allocation
+  and the bitmap are asked for a block — and then it answers `NoSpace` from
+  somewhere **before** the node above is written; the steps in between are the
+  growth of `$INDEX_ALLOCATION`, the bitmap's bit and the new block, and which
+  of them it is, is the first question of the next attempt.  The run that wrote
+  everything (the window harness's own last window) is what showed it.
 
 - **Where does the dirty flag live, and what does Windows need from it?**  A
   volume's `$Volume` carries volume information with a dirty bit, and this
@@ -1165,10 +1177,12 @@ being something a partial write can ignore.
   and lets the driver run on as if nothing had happened, so the image is
   exactly what a crash there leaves: at the sixteenth write of a fill, the
   tree's block held an entry whose name stopped at byte 512 and a walk listed
-  it.  That harness is **not kept**: its window invariants still have two
-  loose ends (one name-accounting bug of my own, and one image at which the
-  root refuses to read and which I have not yet told apart from a further
-  defect), and what a reader has instead is a gate over the same fact —
-  `a_record_or_block_whose_sectors_disagree_is_refused` flips the number in
-  one sector's tail of a fixture volume and requires the record and the block
-  to be refused, with the volume itself still mounting.
+  it.  The harness is kept, in `src/fs/ntfs/tests.rs`, and the two loose ends
+  it had are closed: the name accounting counted a name the change *removes*
+  against it, and a window that refuses a read of `/` is right rather than
+  wrong, because the root's own first read goes through record 0 and the
+  MFT's growth rewrites that one.  What it checks is named in "How this is
+  proven" below; the narrower gate over the same fact —
+  `a_record_or_block_whose_sectors_disagree_is_refused`, which flips the
+  number in one sector's tail and requires the record and the block to be
+  refused — is what a reader can run without the fixture's whole scenario.

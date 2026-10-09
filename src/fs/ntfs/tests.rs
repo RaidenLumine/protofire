@@ -3367,6 +3367,236 @@ fn a_compressed_stream_on_a_real_volume_is_refused() {
     );
 }
 
+/// A device that stops writing after a chosen number of writes and keeps the
+/// image as it was at that moment: what a machine that lost power in the middle
+/// of a change leaves behind.
+///
+/// A write past the cut never reaches the volume and still **says it did**, so
+/// the driver's control flow is the healthy one and the image is exactly the
+/// one a crash would leave.  The boundaries are the driver's own device writes,
+/// which is the granularity the write orders in `src/fs/ntfs/mod.rs` argue
+/// about — and one device write is one block, so a 4096-byte index block really
+/// does go down in eight of them.
+struct PowerCut {
+    inner: alloc::sync::Arc<crate::fs::block::MemoryBlockDevice>,
+    writes: core::sync::atomic::AtomicUsize,
+    allowed: usize,
+}
+
+impl PowerCut {
+    fn new(inner: alloc::sync::Arc<crate::fs::block::MemoryBlockDevice>, allowed: usize) -> Self {
+        Self {
+            inner,
+            writes: core::sync::atomic::AtomicUsize::new(0),
+            allowed,
+        }
+    }
+}
+
+impl crate::fs::block::BlockDevice for PowerCut {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn block_count(&self) -> u64 {
+        self.inner.block_count()
+    }
+
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> crate::Result<()> {
+        self.inner.read_blocks(lba, buffer)
+    }
+
+    fn write_blocks(&self, lba: u64, data: &[u8]) -> crate::Result<()> {
+        if self
+            .writes
+            .fetch_add(1, core::sync::atomic::Ordering::SeqCst)
+            < self.allowed
+        {
+            self.inner.write_blocks(lba, data)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> crate::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Run a scenario against a copy of the fixture's volume with the device cut
+/// off after `allowed` writes, and answer how many writes it makes and the
+/// image the volume is left as.
+fn run_with_a_cut(
+    fixture: &Fixture,
+    allowed: usize,
+    scenario: &dyn Fn(&super::NtfsFs),
+) -> (usize, Vec<u8>) {
+    use crate::fs::block::BlockDevice as _;
+
+    let device = crate::fs::block::MemoryBlockDevice::new("cut", fixture.image.clone(), false);
+    let cut = alloc::sync::Arc::new(PowerCut::new(device.clone(), allowed));
+    let fs_handle = super::NtfsFs::new(cut.clone()).expect("mount the fixture");
+    scenario(&fs_handle);
+    let writes = cut.writes.load(core::sync::atomic::Ordering::SeqCst);
+    let mut image = alloc::vec![0u8; (device.block_count() * 512) as usize];
+    device.read_blocks(0, &mut image).expect("the volume");
+    (writes, image)
+}
+
+/// Every window of a change, checked: stop the volume after each of the
+/// driver's own writes and mount what is left.
+///
+/// What the change's write order promises, at every one of those boundaries:
+/// the volume **mounts**; and a directory it *can* read holds every name it had
+/// (less the ones the change may remove), nothing the change could not have put
+/// there, no name twice, and every name it lists resolves to a readable record.
+///
+/// A window where a directory **cannot** be read is an answer rather than a
+/// failure — a write cut between two sectors is exactly what the update
+/// sequence is for — but a window that answers with names that are not the
+/// file's is the failure this harness exists for.  The run that wrote
+/// *everything* is checked too, so a harness that refused every window could
+/// not pass by saying nothing.
+fn every_window_is_readable(
+    fixture: &Fixture,
+    path: &str,
+    added: &[String],
+    removed: &[String],
+    scenario: &dyn Fn(&super::NtfsFs),
+    promised: &dyn Fn(usize, &[String]),
+) {
+    let before = the_listing(&writable_of(fixture), path);
+    let (writes, _) = run_with_a_cut(fixture, usize::MAX, scenario);
+    assert!(writes > 3, "the change writes more than a handful of times");
+
+    for allowed in 0..=writes {
+        let (_, image) = run_with_a_cut(fixture, allowed, scenario);
+        let again = super::NtfsFs::new(crate::fs::block::MemoryBlockDevice::new(
+            "cut", image, false,
+        ))
+        .unwrap_or_else(|error| {
+            panic!("a crash after {allowed} writes left a volume that does not mount: {error:?}")
+        });
+
+        // A directory whose block was cut in half is refused, and so is one
+        // whose *record* was: what must never happen is an answer made of
+        // half-old bytes.  (A read of the root goes through record 0 on its
+        // first entry, and the MFT's growth rewrites that one, so a window can
+        // refuse a read of `/` even when no name in the root was changing.)
+        let mut listed: Vec<String> = Vec::new();
+        let mut refused = false;
+        for index in 0.. {
+            match again.read_dir(path, index) {
+                Ok(entry) => listed.push(entry.name),
+                Err(Error::NotFound) => break,
+                Err(_) => {
+                    assert!(
+                        allowed < writes,
+                        "the run that wrote everything left {path} unreadable"
+                    );
+                    refused = true;
+                    break;
+                }
+            }
+        }
+        if refused {
+            continue;
+        }
+
+        let mut seen: Vec<String> = Vec::new();
+        for name in &listed {
+            assert!(
+                !seen.contains(name),
+                "a crash after {allowed} writes listed {name} twice: {listed:?}"
+            );
+            seen.push(name.clone());
+            assert!(
+                before.contains(name) || added.contains(name),
+                "after {allowed} writes, {name} is a name the change could not have made: {listed:?}"
+            );
+            again
+                .lookup(&alloc::format!("{path}/{name}"))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "after {allowed} writes, {name} is listed and does not resolve: {error:?}"
+                    )
+                });
+        }
+        for name in &before {
+            assert!(
+                seen.contains(name) || removed.contains(name),
+                "after {allowed} writes, {name} is gone and the change does not remove it: {listed:?}"
+            );
+        }
+        promised(allowed, &listed);
+    }
+}
+
+/// The fixture's volume, mounted, for the names a test starts from.
+fn writable_of(fixture: &Fixture) -> super::NtfsFs {
+    let device =
+        crate::fs::block::MemoryBlockDevice::new("names-before", fixture.image.clone(), false);
+    super::NtfsFs::new(device).expect("mount the fixture")
+}
+
+#[test]
+fn every_window_of_a_block_that_fills_leaves_a_volume_a_mount_can_read() {
+    // A creation in a directory whose index is a tree fills a block, and the
+    // fill splits it: the allocation grows, the bitmap gains a bit, the new
+    // block is written, the node above is rewritten, and the old block is
+    // rewritten last.  Each of those is a window a machine can stop in — and
+    // the block itself goes down a sector at a time, so a window can fall
+    // inside one, which is what the update sequence is for.
+    let fixture = build_volume(FRACTIONAL);
+    let pad = "p".repeat(60);
+    let names: Vec<String> = (0..20)
+        .map(|index| alloc::format!("many-{index:03}-{pad}.txt"))
+        .collect();
+    let scenario = |fs_handle: &super::NtfsFs| {
+        for name in &names {
+            let _ = fs_handle.create_file(&alloc::format!("/tree/{name}"));
+        }
+    };
+    every_window_is_readable(
+        &fixture,
+        "/tree",
+        &names,
+        &[],
+        &scenario,
+        &|_allowed, _listed| {},
+    );
+}
+
+#[test]
+fn every_window_of_a_rename_leaves_the_record_a_name() {
+    // A rename writes the new name into the parent's index, then the record's
+    // own `$FILE_NAME`, and takes the old name out last: the promise is that no
+    // window holds *neither* name, which is why the old one goes last.
+    let fixture = build_volume(FRACTIONAL);
+    let added = alloc::vec![String::from("renamed.txt")];
+    let removed = alloc::vec![String::from("resident.txt")];
+    let scenario = |fs_handle: &super::NtfsFs| {
+        let _ = fs_handle.rename("/resident.txt", "/renamed.txt");
+    };
+    every_window_is_readable(
+        &fixture,
+        "/",
+        &added,
+        &removed,
+        &scenario,
+        &|allowed, listed| {
+            assert!(
+                listed.contains(&String::from("resident.txt"))
+                    || listed.contains(&String::from("renamed.txt")),
+                "after {allowed} writes the record has neither of its names: {listed:?}"
+            );
+        },
+    );
+}
+
 /// A fixture volume, and where the parts a test asks about are.
 struct Fixture {
     image: Vec<u8>,
