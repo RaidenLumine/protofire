@@ -302,6 +302,23 @@ what stage 1's record serialisation is for.
   the room every level would have, all of it settled **before** the split
   claims anything: a claim cannot be handed back, because shrinking an
   allocation is a step this driver does not take.
+- **A growth zeroes bytes that are the file's.**  *Found while stage 19 was
+  built; not fixed.*  What a growth writes as zeros is the region the caller
+  hands it, and `grow_data` measures that region from the file's **length**
+  rather than from the end of what the file already had: for a file three
+  clusters long grown to three clusters and a hundred bytes, the zeros are a
+  whole cluster long and are written starting at `length - 4096`, which is
+  3996 bytes inside the file's own length.  A read of the file then answers
+  zeros where it used to answer its own bytes.  The probe: shorten
+  `two-runs.bin` to two clusters, grow it back past three, and read — the
+  first zero byte is at 8292 of 12388, which is `length` less one cluster, and
+  the bytes before it that were the file's are gone.  What the region *should*
+  be is the part of the newly claimed clusters that is inside the new length —
+  `[old allocation, length)` — and the write's own offset in
+  `write_grown_data` (`length` less the zeros' length) is right once the
+  length is.  The old allocation is what the size fields beside the runs are
+  for; stage 16's shrink keeps those bytes on purpose, which is what a
+  grow-back reads back.
 
 ## What landed
 
