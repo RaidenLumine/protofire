@@ -207,9 +207,8 @@ The authoritative picture of what exists today is
   block the index bitmap says is free before it grows the allocation, so a
   directory's index stops claiming clusters for blocks nothing is stored in.
   What is left of the tree is a tree deeper than one level of blocks under the
-  root, an index bitmap that is a file of its own, and the allocation's own
-  shrink, which this driver does not do at all: a kept block costs nothing to
-  use again.
+  root, and the allocation's own shrink, which this driver does not do at all:
+  a kept block costs nothing to use again.
   A **real volume** is a gate now: `make check-ntfs-image` makes a volume with
   `mkntfs`, injects a file with `ntfscp`, has the driver read it and write one
   of its own, and hands the result to `ntfs-3g`'s own reader — so the format is

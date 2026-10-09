@@ -323,6 +323,7 @@ fn a_directory_lists_what_its_index_holds() {
             "tree",
             "sub",
             "named.bin",
+            "running-index",
         ],
         "the root's entries, without its own \".\""
     );
@@ -1644,6 +1645,52 @@ fn a_name_too_long_for_its_record_makes_room() {
     );
 }
 
+/// The index bitmap of the directory whose bitmap is a **file**, read where its
+/// runs say: which blocks the directory's own bits name as in use.
+fn running_index_bits(fs_handle: &super::NtfsFs) -> Vec<u8> {
+    let bitmap = fs_handle
+        .attributes_of(RUNNING_INDEX_DIRECTORY)
+        .expect("the attributes")
+        .into_iter()
+        .find(|attribute| attribute.attr_type == 0xb0)
+        .expect("the index bitmap");
+    assert!(
+        bitmap.data_runs_offset.is_some(),
+        "the fixture's bitmap is a file"
+    );
+    let info = fs_handle.info().lock();
+    let mut bits = alloc::vec![0u8; bitmap.data_size as usize];
+    super::fs::read_from_runs(
+        fs_handle.device(),
+        &info,
+        &bitmap.data_runs,
+        u64::from(bitmap.data_size),
+        0,
+        &mut bits,
+    )
+    .expect("read the bitmap where its runs say");
+    bits
+}
+
+/// Create names in that directory until its block fills and splits, and answer
+/// the names made.
+fn fill_the_running_index(fs_handle: &super::NtfsFs) -> Vec<String> {
+    let pad = "p".repeat(60);
+    let mut names = Vec::new();
+    let before = running_index_bits(fs_handle)[0].count_ones();
+    for index in 0..60 {
+        let name = alloc::format!("rune-{index:03}-{pad}.txt");
+        fs_handle
+            .create_file(&alloc::format!("/running-index/{name}"))
+            .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
+        names.push(name);
+        if running_index_bits(fs_handle)[0].count_ones() > before {
+            break;
+        }
+    }
+    names
+}
+
 /// How many bytes of blocks a directory's `$INDEX_ALLOCATION` holds.
 fn index_allocation_size(fs_handle: &super::NtfsFs, record: u64) -> u64 {
     fs_handle
@@ -1779,6 +1826,64 @@ fn a_tree_directory_takes_a_name_where_it_belongs() {
         again.lookup("/tree/omega.txt"),
         Err(Error::NotFound)
     ));
+}
+
+#[test]
+fn an_index_bitmap_that_is_a_file_holds_the_directory_s_blocks() {
+    // A directory's index bitmap is a value in its record until it outgrows
+    // one, and then it is a **file** of its own.  The fixture's directory is
+    // that shape, and the bits are read where its runs say both times a change
+    // asks: looking for a block a split can take again, and setting the bit the
+    // block it made needs.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    assert_eq!(
+        running_index_bits(&fs_handle)[0] & 0b1,
+        0b1,
+        "the fixture's one block is in use, in a bitmap with runs"
+    );
+    assert_eq!(
+        the_listing(&fs_handle, "/running-index"),
+        [String::from("rune.txt")],
+        "and the block the root points at is the one read"
+    );
+
+    // Filling it splits it: the split looks for a free block in the bitmap —
+    // the file's bit 0 is set, so there is none to take — appends the block
+    // after the allocation's own, and sets that block's bit where the runs say.
+    let created = fill_the_running_index(&fs_handle);
+    assert_eq!(
+        running_index_bits(&fs_handle)[0] & 0b11,
+        0b11,
+        "the block the split made, in the bitmap that is a file"
+    );
+
+    let again = remount(&device);
+    let mut expected = created;
+    expected.push(String::from("rune.txt"));
+    expected.sort();
+    assert_eq!(
+        the_listing(&again, "/running-index"),
+        expected,
+        "every name is still there, read through the second block"
+    );
+
+    // And a bit past the value it has: the bitmap is one byte, the block
+    // numbered eight needs the second, and the growth goes through the runs
+    // that hold it — one cluster's worth of room, which is what a file's
+    // clusters are for.
+    let blocks = index_allocation_size(&fs_handle, RUNNING_INDEX_DIRECTORY);
+    fs_handle
+        .set_index_block_bit(RUNNING_INDEX_DIRECTORY, 8, true)
+        .expect("a bit past the last byte");
+    let bits = running_index_bits(&fs_handle);
+    assert_eq!(bits.len(), 2, "the byte the bit needed");
+    assert_eq!(bits[1] & 0b1, 0b1, "and the bit in it");
+    assert_eq!(
+        index_allocation_size(&fs_handle, RUNNING_INDEX_DIRECTORY),
+        blocks,
+        "the bitmap's own growth did not touch the allocation's blocks"
+    );
 }
 
 #[test]
@@ -2597,6 +2702,11 @@ const MOVED_FILE_EXT: u64 = 34;
 /// rename has to write the name in — there, and not in the base record.
 const NAMED_FILE: u64 = 39;
 const NAMED_FILE_EXT: u64 = 40;
+/// A directory whose index bitmap is a **file** of its own: the shape a real
+/// volume's directory reaches when the bitmap outgrows its record, and the one
+/// whose bits have to be read and written where its runs say.
+const RUNNING_INDEX_DIRECTORY: u64 = 41;
+const RUNNING_INDEX_FILE: u64 = 42;
 /// A directory whose index is a **tree**: two blocks, and the root's node
 /// holding the key that separates them — the shape a directory of many names
 /// has, measured on a volume `mkntfs` makes.  Its children are named in the
@@ -2607,7 +2717,7 @@ const TREE_ALPHA: u64 = 36;
 /// block, which is what a promoted key is.
 const TREE_MIDDLE: u64 = 37;
 const TREE_OMEGA: u64 = 38;
-const RECORDS: u64 = 41;
+const RECORDS: u64 = 43;
 
 /// How many blocks the tree directory's allocation has room for.
 ///
@@ -2648,6 +2758,8 @@ fn is_named(number: u64, spares_in_use: bool) -> bool {
         || number == LISTED_FILE
         || number == MOVED_FILE
         || number == NAMED_FILE
+        || number == RUNNING_INDEX_DIRECTORY
+        || number == RUNNING_INDEX_FILE
         || number == TREE_DIRECTORY
         || TREE_CHILDREN.contains(&number)
         // An extension record is not a name of its own, so making every record
@@ -3094,6 +3206,11 @@ struct Fixture {
     list_runs: [(u64, u64); 1],
     /// Where the tree directory's two index blocks are, one after the other.
     tree_blocks: u64,
+    /// The block a directory's entries are in when its index bitmap is a file,
+    /// and the runs of that bitmap — a cluster of its own, which is what makes
+    /// it a file rather than a value in the record.
+    running_block: u64,
+    running_bitmap: (u64, u64),
 }
 
 impl Fixture {
@@ -3173,6 +3290,10 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let moved_second = take(1);
     let list_at = take(1);
     let tree_blocks = take(TREE_ALLOCATION_BLOCKS * index_block_clusters);
+    // A directory whose index bitmap is a file of its own: one cluster holds
+    // its block, and one holds the bitmap — which is what makes it a file.
+    let running_block = take(2 * index_block_clusters);
+    let running_bitmap = (take(1), 1);
     // Free clusters, each alone: a growth claims a run it fits in, and a claim
     // of several clusters has none — which is what the refusal tests rely on.
     let mut spare_used = Vec::new();
@@ -3204,6 +3325,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         moved_runs: [(moved_first, 1), (moved_second, 1)],
         list_runs: [(list_at, 1)],
         tree_blocks,
+        running_block,
+        running_bitmap,
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -3220,6 +3343,10 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     for cluster in tree_blocks..tree_blocks + TREE_ALLOCATION_BLOCKS * index_block_clusters {
         fixture.used[cluster as usize] = 1;
     }
+    for cluster in running_block..running_block + 2 * index_block_clusters {
+        fixture.used[cluster as usize] = 1;
+    }
+    fixture.used[running_bitmap.0 as usize] = 1;
     for cluster in &spare_used {
         fixture.used[*cluster as usize] = 1;
     }
@@ -3347,6 +3474,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             // it went.
             NAMED_FILE | NAMED_FILE_EXT => (ROOT_RECORD, "named.bin", false, 0, Vec::new()),
             TREE_DIRECTORY => (ROOT_RECORD, "tree", true, 0, Vec::new()),
+            RUNNING_INDEX_DIRECTORY => (ROOT_RECORD, "running-index", true, 0, Vec::new()),
+            RUNNING_INDEX_FILE => (RUNNING_INDEX_DIRECTORY, "rune.txt", false, 0, Vec::new()),
             TREE_ALPHA => (TREE_DIRECTORY, "alpha.txt", false, 0, Vec::new()),
             TREE_MIDDLE => (TREE_DIRECTORY, "middle.txt", false, 0, Vec::new()),
             TREE_OMEGA => (TREE_DIRECTORY, "omega.txt", false, 0, Vec::new()),
@@ -3580,6 +3709,40 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                         0,
                     ));
                 }
+                RUNNING_INDEX_DIRECTORY => {
+                    // The index root points at **one** block, and the bitmap
+                    // that names the blocks is a *file*: one byte, in clusters
+                    // of its own, which is where the split's bit has to land.
+                    attributes.extend(attribute(
+                        0x90,
+                        "$I30",
+                        &index_root(&node_pointer(0), true),
+                        None,
+                        0,
+                    ));
+                    attributes.extend(attribute(
+                        0xa0,
+                        "$I30",
+                        &[],
+                        Some(&[(fixture.running_block, 2 * index_block_clusters)]),
+                        shape.index_block_size() as u64,
+                    ));
+                    let mut bitmap =
+                        attribute(0xb0, "$I30", &[], Some(&[fixture.running_bitmap]), 1);
+                    put_u64_le(&mut bitmap, 40, cluster_size); // allocated size
+                    attributes.extend(bitmap);
+
+                    // And the block the root points at, with the name it
+                    // holds: one entry, so filling it is what a test does.
+                    let mut entries = index_entry(RUNNING_INDEX_FILE, "rune.txt", false, 0);
+                    entries.extend_from_slice(&index_end_entry());
+                    let block = index_block(&shape, 0, &node(&entries, false, 40));
+                    let at = fixture.running_block as usize * cluster_size as usize;
+                    fixture.image[at..at + block.len()].copy_from_slice(&block);
+                }
+                RUNNING_INDEX_FILE => {
+                    attributes.extend(attribute(0x80, "", &[], None, 0));
+                }
                 TREE_DIRECTORY => {
                     // A directory whose index is a *tree*: two blocks with a
                     // separator key between them, which is the shape a
@@ -3680,6 +3843,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                             TREE_DIRECTORY,
                             SUBDIRECTORY,
                             NAMED_FILE,
+                            RUNNING_INDEX_DIRECTORY,
                         ];
                         if spares_in_use {
                             // Every record in use is a record some directory
@@ -3712,6 +3876,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                 LISTED_FILE => ("split.bin", false, 3 * cluster_size),
                                 MOVED_FILE => ("moved.bin", false, 2 * cluster_size),
                                 NAMED_FILE => ("named.bin", false, 0),
+                                RUNNING_INDEX_DIRECTORY => ("running-index", true, 0),
                                 TREE_DIRECTORY => ("tree", true, 0),
                                 SUBDIRECTORY => ("sub", true, 0),
                                 _ => (spare_name(record), false, 0),
@@ -3779,7 +3944,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         let directory = number == ROOT_RECORD
             || number == SUBDIRECTORY
             || number == FULL_DIRECTORY
-            || number == TREE_DIRECTORY;
+            || number == TREE_DIRECTORY
+            || number == RUNNING_INDEX_DIRECTORY;
         let flags = if named {
             if directory {
                 0x03
@@ -3845,6 +4011,11 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     // And the entries of the list that is a file of its own.
     let at = fixture.list_runs[0].0 as usize * cluster_size as usize;
     fixture.image[at..at + moved_list.len()].copy_from_slice(&moved_list);
+
+    // The bitmap a directory's index bitmap is: one byte, with the block its
+    // root points at already in use, written where its runs say.
+    let at = fixture.running_bitmap.0 as usize * cluster_size as usize;
+    fixture.image[at] = 0b1;
 
     // The `$UpCase` table: every code unit folded the way a real volume folds
     // it — the Latin letters up, everything else as it is — so the fixture's

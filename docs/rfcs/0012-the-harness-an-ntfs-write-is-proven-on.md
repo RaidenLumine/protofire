@@ -1038,3 +1038,25 @@ being something a partial write can ignore.
 - What is left of the tree is a tree **deeper** than one level of blocks under
   the root — which `index_leaf` refuses — and an index bitmap that is a file of
   its own.
+
+**Stage 14 — the index bitmap is a file too.**
+
+- A directory's index bitmap is a value in its record until it outgrows one;
+  where it is a **file**, its bits are read and written where its runs say.
+  Stage 11's two functions — the search for a block a split can take again and
+  the bit that block needs — go through one reader and one writer now, so the
+  shape of the bitmap is not something either of them has to know about.
+- A bit past the value's last byte **grows** it: the value's data size moves,
+  the bytes between the old length and the new are written as zeros (a
+  bitmap's unwritten bytes are blocks nothing is in), and the clusters behind
+  it are the runs' own where they are there and are claimed where they are
+  not — the same growth `write_grown_data` does for any other file.
+- The fixture carries the shape: a directory whose index bitmap is one byte in
+  a cluster of its own, with its index root pointing at one block.  Filling
+  that block splits it, and both the search for a free block and the bit the
+  new block sets go through the runs; a second mount lists every name.
+- One test runs that end to end, and a direct one behind it: a bit past the
+  value grows the bitmap's bytes where its runs say, and the allocation's own
+  blocks do not move.
+- What is left of the tree is a tree **deeper** than one level of blocks under
+  the root, which `index_leaf` still refuses.

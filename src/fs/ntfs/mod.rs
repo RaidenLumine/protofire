@@ -1570,20 +1570,26 @@ impl NtfsFs {
                 .into_iter()
                 .find(|attribute| attribute.attr_type == ATTR_TYPE_BITMAP)
                 .ok_or(Error::NotFound)?;
-            if bitmap.data_runs_offset.is_some() {
-                return Err(Error::NotImplemented);
-            }
-            if byte >= bitmap.content.len() && !in_use {
+            let mut bits = self.index_bitmap_bytes(&bitmap)?;
+            if byte >= bits.len() && !in_use {
                 return Ok(());
             }
-            let mut bits = bitmap.content.clone();
-            if byte >= bits.len() {
+            let grew = byte >= bits.len();
+            if grew {
                 bits.resize(byte + 1, 0);
             }
             if in_use {
                 bits[byte] |= mask;
             } else {
                 bits[byte] &= !mask;
+            }
+            if bitmap.data_runs_offset.is_some() {
+                // A bitmap that is a **file** of its own: the bit goes where
+                // its runs say, and a byte it did not have grows the value and
+                // its sizes with it — taking clusters for it when the runs it
+                // has are full.
+                self.write_index_bitmap(&bitmap, &bits, grew)?;
+                return Ok(());
             }
             match self.replace_value(parent_record, ATTR_TYPE_BITMAP, &bits) {
                 Ok(()) => return Ok(()),
@@ -1599,6 +1605,85 @@ impl NtfsFs {
         Err(Error::NoSpace)
     }
 
+    /// A directory's index bitmap, as the attribute holds it: the value in the
+    /// record, or the bytes where the runs of a bitmap that is a file say.
+    fn index_bitmap_bytes(&self, bitmap: &ParsedAttr) -> Result<Vec<u8>> {
+        if bitmap.data_runs_offset.is_none() {
+            return Ok(bitmap.content.clone());
+        }
+        let info = self.info.lock();
+        let mut bits = alloc::vec![0u8; bitmap.data_size as usize];
+        fs::read_from_runs(
+            &self.device,
+            &info,
+            &bitmap.data_runs,
+            u64::from(bitmap.data_size),
+            0,
+            &mut bits,
+        )?;
+        Ok(bits)
+    }
+
+    /// Write an index bitmap that is a file back where its runs say, growing
+    /// the value — and the clusters behind it — when it needs a byte it did
+    /// not have.
+    ///
+    /// A growth takes clusters of its own when the runs the bitmap has cannot
+    /// hold the new length: the bitmap is a file like any other, so its run
+    /// list is extended the way [`Self::write_grown_data`] extends one, and the
+    /// bytes between the old length and the new are written as zeros — a
+    /// bitmap's bytes are its bits, so what it never wrote reads as free.
+    fn write_index_bitmap(&self, bitmap: &ParsedAttr, bits: &[u8], grew: bool) -> Result<()> {
+        let cluster_size = u64::from(self.info.lock().cluster_size);
+        if !grew {
+            // The same length: the value as it is, back where it lives.
+            return self.write_index_bitmap_bytes(bitmap, bits);
+        }
+
+        let held: u64 = bitmap
+            .data_runs
+            .iter()
+            .map(|run| run.cluster_count)
+            .sum::<u64>();
+        let wanted = (bits.len() as u64).div_ceil(cluster_size);
+        let mut runs = bitmap.data_runs.clone();
+        if wanted > held {
+            let claim = wanted - held;
+            let first = self.claim_clusters(claim)?;
+            let continues = runs
+                .last()
+                .is_some_and(|last| last.lcn >= 0 && last.lcn as u64 + last.cluster_count == first);
+            if continues {
+                runs.last_mut()
+                    .expect("a last run that was just looked at")
+                    .cluster_count += claim;
+            } else {
+                runs.push(DataRun {
+                    lcn: first as i64,
+                    cluster_count: claim,
+                });
+            }
+        }
+        let allocated = (held.max(wanted) * cluster_size) as u32;
+        let zeros = alloc::vec![0u8; bits.len() - bitmap.data_size as usize];
+        self.write_grown_data(
+            bitmap.holder,
+            bitmap,
+            &runs,
+            allocated,
+            bits.len() as u32,
+            &zeros,
+        )?;
+        self.write_index_bitmap_bytes(bitmap, bits)
+    }
+
+    /// Put the bitmap's bytes where its runs say.
+    fn write_index_bitmap_bytes(&self, bitmap: &ParsedAttr, bits: &[u8]) -> Result<()> {
+        let info = self.info.lock();
+        fs::write_to_runs(&self.device, &info, &bitmap.data_runs, 0, bits)?;
+        Ok(())
+    }
+
     /// The first block the directory's index bitmap says is **free**, among the
     /// blocks its allocation has.
     ///
@@ -1609,8 +1694,8 @@ impl NtfsFs {
     /// A byte the bitmap does not have names no block, and a block nothing
     /// names is free.
     ///
-    /// A bitmap that is a *file* of its own would be read where its runs say,
-    /// which is a step of its own (`NotImplemented`).
+    /// The bitmap is read where it lives: the value in the record, or the bytes
+    /// a bitmap that is a *file* of its own keeps where its runs say.
     fn first_free_index_block(&self, parent_record: u64, blocks: u64) -> Result<Option<u64>> {
         let Some(bitmap) = self
             .attributes_of(parent_record)?
@@ -1619,12 +1704,10 @@ impl NtfsFs {
         else {
             return Ok(None);
         };
-        if bitmap.data_runs_offset.is_some() {
-            return Err(Error::NotImplemented);
-        }
+        let bits = self.index_bitmap_bytes(&bitmap)?;
         for block in 0..blocks {
             let byte = (block / 8) as usize;
-            if byte >= bitmap.content.len() || bitmap.content[byte] & (1 << (block % 8)) == 0 {
+            if byte >= bits.len() || bits[byte] & (1 << (block % 8)) == 0 {
                 return Ok(Some(block));
             }
         }
