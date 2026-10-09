@@ -245,10 +245,14 @@ struct IndexLeaf {
     node: usize,
     /// Where that buffer lives, so the change can be written back.
     home: IndexHome,
-    /// The node the leaf hangs from, when it is a block: the index *root*'s
-    /// node, and the entry the walk went through — a split puts the key it
-    /// promotes *before* that entry.
-    parent: Option<IndexParent>,
+    /// The nodes the walk went through, from the index **root** down: the last
+    /// is the one the leaf hangs from, and a node above a *block* is the shape
+    /// a tree deeper than one level of blocks has.
+    ancestors: Vec<IndexParent>,
+    /// The name the walk is about, where a node holds it as a **key** rather
+    /// than the leaf holding it as an entry: any node on the way down can, and
+    /// the node that does is the one a change takes it out of.
+    key: Option<IndexKey>,
 }
 
 /// The node above a leaf block, and the entry the walk descended through.
@@ -261,6 +265,20 @@ struct IndexParent {
     /// Where the parent's buffer lives, so its growth is written back the same
     /// way any index node's is.
     home: IndexHome,
+}
+
+/// The name a change is about, where a node holds it as a key.
+#[derive(Clone)]
+struct IndexKey {
+    /// The node's bytes, and where its node begins in them.
+    buffer: Vec<u8>,
+    node: usize,
+    /// Where those bytes live, so the change can be written back.
+    home: IndexHome,
+    /// Where the entry that carries the name begins in the buffer, and how long
+    /// it is — the entry a change replaces or drops.
+    offset: usize,
+    length: usize,
 }
 
 /// What a new record is for, which is what decides what it holds.
@@ -1358,7 +1376,7 @@ impl NtfsFs {
         Ok((record, node))
     }
 
-    fn index_leaf(&self, parent_record: u64, name: &str) -> Result<Option<IndexLeaf>> {
+    fn index_leaf(&self, parent_record: u64, name: &str) -> Result<IndexLeaf> {
         let upcase = self.upcase_table();
         let attributes = self.attributes_of(parent_record)?;
         let root = attributes
@@ -1375,7 +1393,7 @@ impl NtfsFs {
         }
         let (mut buffer, mut node) = self.index_root_node(holder)?;
         let mut home = IndexHome::Record { holder };
-        let mut parent = None;
+        let mut ancestors: Vec<IndexParent> = Vec::new();
 
         let mut depth = 0;
         while parse_index_node(&buffer, node).has_children {
@@ -1383,12 +1401,6 @@ impl NtfsFs {
                 return Err(Error::InvalidArgument);
             }
             depth += 1;
-            // A leaf that hangs from another *block* is a tree deeper than this
-            // driver writes: a split promotes into the node above, and that is
-            // the index root here.
-            if matches!(home, IndexHome::Block { .. }) {
-                return Err(Error::NotImplemented);
-            }
             let parsed = parse_index_node(&buffer, node);
             // The first child whose key is *greater* than the name holds it:
             // that child keeps the keys less than its key.  A name equal to a
@@ -1401,7 +1413,24 @@ impl NtfsFs {
                     break;
                 }
                 if compare_names(&key.name, name, &upcase).is_eq() {
-                    return Ok(None);
+                    // The name is this node's own key: it lives here, above the
+                    // blocks, and the walk does not go past it.  Where that is
+                    // is what a change needs, so the node comes back with the
+                    // entry it carries.
+                    let key = IndexKey {
+                        buffer: buffer.clone(),
+                        node,
+                        home: home.clone(),
+                        offset: entry.offset,
+                        length: entry.length,
+                    };
+                    return Ok(IndexLeaf {
+                        ancestors,
+                        buffer,
+                        node,
+                        home,
+                        key: Some(key),
+                    });
                 }
             }
             // Nothing greater: the last child, the one with no key, holds the
@@ -1418,7 +1447,7 @@ impl NtfsFs {
                 }
             };
             let pointer = pointer.ok_or(Error::InvalidArgument)?;
-            parent = Some(IndexParent {
+            ancestors.push(IndexParent {
                 buffer: buffer.clone(),
                 node,
                 before,
@@ -1429,12 +1458,13 @@ impl NtfsFs {
             node = 24;
             buffer = block;
         }
-        Ok(Some(IndexLeaf {
+        Ok(IndexLeaf {
             buffer,
             node,
             home,
-            parent,
-        }))
+            ancestors,
+            key: None,
+        })
     }
 
     /// Write a directory's index entries back where they live.
@@ -1754,11 +1784,12 @@ impl NtfsFs {
         // record of its own — and that changes the node's place, so the whole
         // insertion is worked out again.
         for attempt in 0..2 {
-            let Some(mut leaf) = self.index_leaf(parent_record, name)? else {
-                // The name is one of the node's own keys, which is where a
+            let mut leaf = self.index_leaf(parent_record, name)?;
+            if leaf.key.is_some() {
+                // The name is one of the nodes' own keys, which is where a
                 // promoted key lives: it is there.
                 return Err(Error::AlreadyExists);
-            };
+            }
             let parsed = parse_index_node(&leaf.buffer, leaf.node);
             let Some((terminator, rest)) = parsed.entries.split_last() else {
                 return Err(Error::InvalidArgument);
@@ -1855,12 +1886,15 @@ impl NtfsFs {
         for attempt in 0..2 {
             let leaf = match &derived {
                 Some(leaf) => leaf.clone(),
-                None => match self.index_leaf(parent_record, name)? {
-                    Some(leaf) => leaf,
-                    None => return Err(Error::AlreadyExists),
-                },
+                None => {
+                    let leaf = self.index_leaf(parent_record, name)?;
+                    if leaf.key.is_some() {
+                        return Err(Error::AlreadyExists);
+                    }
+                    leaf
+                }
             };
-            let Some(parent) = &leaf.parent else {
+            let Some(parent) = leaf.ancestors.last() else {
                 return Err(Error::InvalidArgument);
             };
             let IndexHome::Block { .. } = &leaf.home else {
@@ -2470,19 +2504,29 @@ impl NtfsFs {
     /// then be one the tree does not have to keep — see
     /// [`Self::merge_block_if_it_fits`].
     fn index_remove(&self, parent_record: u64, name: &str, reference: u64) -> Result<()> {
-        let Some(leaf) = self.index_leaf(parent_record, name)? else {
-            return self.remove_index_key(parent_record, name);
-        };
+        let leaf = self.index_leaf(parent_record, name)?;
+        if let Some(key) = leaf.key.clone() {
+            return self.remove_index_key(parent_record, &key);
+        }
         let raws = self.entries_without(&leaf.buffer, leaf.node, name, reference)?;
         let mut buffer = leaf.buffer.clone();
         self.write_index_leaf(parent_record, &mut buffer, leaf.node, &raws, &leaf.home)?;
 
-        // The node above the entries is a *record*: an index root has nothing
-        // to be merged with, and a block has the block next to it.
+        // The entries are in the index root itself when the directory has no
+        // blocks: a record has nothing to be merged with, and a block has the
+        // node above it, wherever that node lives.
         let IndexHome::Block { vcn, .. } = leaf.home else {
             return Ok(());
         };
-        self.merge_block_if_it_fits(parent_record, vcn)
+        // The node above, read now: the write above touched the block and not
+        // it, and reading it here is what keeps a change from starting at a
+        // copy some other write has already gone past.
+        let Some(parent_home) = leaf.ancestors.last().map(|parent| parent.home.clone()) else {
+            return Ok(());
+        };
+        let attributes = self.attributes_of(parent_record)?;
+        let parent = self.index_node_above(&attributes, &parent_home, vcn)?;
+        self.merge_block_if_it_fits(parent_record, parent, vcn)
     }
 
     /// One node's entries with one name taken out of them, and the node's
@@ -2545,28 +2589,13 @@ impl NtfsFs {
     /// A key whose child holds **nothing** is the case where the entry can go
     /// as it is: the child has no names that would be left behind, and the
     /// block it is in is given back.
-    fn remove_index_key(&self, parent_record: u64, name: &str) -> Result<()> {
-        let upcase = self.upcase_table();
+    fn remove_index_key(&self, parent_record: u64, key: &IndexKey) -> Result<()> {
         let attributes = self.attributes_of(parent_record)?;
-        let root = attributes
-            .iter()
-            .find(|attribute| attribute.attr_type == ATTR_TYPE_INDEX_ROOT)
-            .ok_or(Error::NotFound)?;
-        let holder = root.holder;
-        if holder == u64::MAX {
-            return Err(Error::NotImplemented);
-        }
-        let (parent_buffer, parent_node) = self.index_root_node(holder)?;
-        let parsed = parse_index_node(&parent_buffer, parent_node);
+        let parsed = parse_index_node(&key.buffer, key.node);
         let position = parsed
             .entries
             .iter()
-            .position(|entry| {
-                entry
-                    .name
-                    .as_ref()
-                    .is_some_and(|key| compare_names(name, &key.name, &upcase).is_eq())
-            })
+            .position(|entry| entry.offset == key.offset && entry.length == key.length)
             .ok_or(Error::NotFound)?;
         let child = parsed.entries[position]
             .child
@@ -2590,29 +2619,37 @@ impl NtfsFs {
                 }
                 continue;
             }
-            parent_entries.push(parent_buffer[entry.offset..entry.offset + entry.length].to_vec());
+            parent_entries.push(key.buffer[entry.offset..entry.offset + entry.length].to_vec());
         }
 
         // A predecessor whose name is longer than the one that goes makes the
         // node above longer, and a record with no room makes room first — which
         // moves the node, so the write is worked out again from where it is now.
+        // A *block* has what is left of itself, and a name that does not fit one
+        // is refused rather than moved anywhere.
         let mut written = false;
         for attempt in 0..2 {
-            let (mut buffer, node) = self.index_root_node(holder)?;
+            let (mut buffer, node) = match &key.home {
+                IndexHome::Record { holder } => self.index_root_node(*holder)?,
+                IndexHome::Block { .. } => (key.buffer.clone(), key.node),
+            };
             match self.write_index_leaf(
                 parent_record,
                 &mut buffer,
                 node,
                 &parent_entries,
-                &IndexHome::Record { holder },
+                &key.home,
             ) {
                 Ok(()) => {
                     written = true;
                     break;
                 }
-                Err(Error::NoSpace) if attempt == 0 => {
-                    self.make_room(holder, ATTR_TYPE_INDEX_ROOT)?;
-                }
+                Err(Error::NoSpace) if attempt == 0 => match &key.home {
+                    IndexHome::Record { holder } => {
+                        self.make_room(*holder, ATTR_TYPE_INDEX_ROOT)?;
+                    }
+                    IndexHome::Block { .. } => return Err(Error::NoSpace),
+                },
                 Err(error) => return Err(error),
             }
         }
@@ -2631,7 +2668,44 @@ impl NtfsFs {
             self.entries_without(&block, 24, &predecessor_name.name, predecessor.reference)?;
         let mut buffer = block;
         self.write_index_leaf(parent_record, &mut buffer, 24, &raws, &home)?;
-        self.merge_block_if_it_fits(parent_record, child)
+        // The node the key was in, **read again**: the swing above wrote it,
+        // and a merge that started from the copy the walk made would put the
+        // key it replaced back — the same staleness a split's node above has
+        // when the allocation it names grows.
+        let parent = self.index_node_above(&attributes, &key.home, child)?;
+        self.merge_block_if_it_fits(parent_record, parent, child)
+    }
+
+    /// The node a block hangs from, read **now**, with the entry the block is
+    /// the child of: a record's index root from its record, and a block from
+    /// the bytes its runs name.
+    fn index_node_above(
+        &self,
+        attributes: &[ParsedAttr],
+        home: &IndexHome,
+        child: u64,
+    ) -> Result<IndexParent> {
+        let (buffer, node, home) = match home {
+            IndexHome::Record { holder } => {
+                let (buffer, node) = self.index_root_node(*holder)?;
+                (buffer, node, home.clone())
+            }
+            IndexHome::Block { vcn, .. } => {
+                let (buffer, home) = self.read_index_block_home(attributes, *vcn)?;
+                (buffer, 24, home)
+            }
+        };
+        let before = parse_index_node(&buffer, node)
+            .entries
+            .iter()
+            .find(|entry| entry.child == Some(child))
+            .map_or(0, |entry| entry.offset);
+        Ok(IndexParent {
+            buffer,
+            node,
+            before,
+            home,
+        })
     }
 
     /// Merge a block with the one next to it, when what the two hold still fits
@@ -2657,18 +2731,18 @@ impl NtfsFs {
     /// bitmap last, which is what gives the block back — the clusters stay part
     /// of the allocation, a free block inside it, because taking the tail of an
     /// allocation back is a step of its own.
-    fn merge_block_if_it_fits(&self, parent_record: u64, vcn: u64) -> Result<()> {
+    fn merge_block_if_it_fits(
+        &self,
+        parent_record: u64,
+        parent: IndexParent,
+        vcn: u64,
+    ) -> Result<()> {
+        // The node the block hangs from, from the walk that found it: the index
+        // root for a directory of one level, and a *block* for a tree deeper
+        // than that.  Nothing here reads the directory's own record to find it,
+        // which is what makes both shapes the same job.
         let attributes = self.attributes_of(parent_record)?;
-        let root = attributes
-            .iter()
-            .find(|attribute| attribute.attr_type == ATTR_TYPE_INDEX_ROOT)
-            .ok_or(Error::NotFound)?;
-        let holder = root.holder;
-        if holder == u64::MAX {
-            return Err(Error::NotImplemented);
-        }
-        let (parent_buffer, parent_node) = self.index_root_node(holder)?;
-        let parsed = parse_index_node(&parent_buffer, parent_node);
+        let parsed = parse_index_node(&parent.buffer, parent.node);
         let Some(position) = parsed
             .entries
             .iter()
@@ -2697,7 +2771,7 @@ impl NtfsFs {
             .child
             .ok_or(Error::InvalidArgument)?;
         let at = parsed.entries[left_at].offset;
-        let separator = parent_buffer[at..at + parsed.entries[left_at].length].to_vec();
+        let separator = parent.buffer[at..at + parsed.entries[left_at].length].to_vec();
         let separator = fs::index_leaf_entry(&separator)?;
 
         let (left_block, left_home) = self.read_index_block_home(&attributes, left)?;
@@ -2737,7 +2811,7 @@ impl NtfsFs {
             if index == left_at {
                 continue;
             }
-            let mut bytes = parent_buffer[entry.offset..entry.offset + entry.length].to_vec();
+            let mut bytes = parent.buffer[entry.offset..entry.offset + entry.length].to_vec();
             if index == right_at {
                 // The entry that pointed at the block that went points at the
                 // one that stayed.  A child's number ends the entry, keyed or
@@ -2747,13 +2821,19 @@ impl NtfsFs {
             }
             parent_entries.push(bytes);
         }
-        let mut parent_buffer = parent_buffer;
+        // Written from a fresh read when it is a record's index root — a
+        // growth of this change's may have moved it — and where it is when the
+        // node is a block.
+        let (mut parent_buffer, parent_node) = match &parent.home {
+            IndexHome::Record { holder } => self.index_root_node(*holder)?,
+            IndexHome::Block { .. } => (parent.buffer.clone(), parent.node),
+        };
         self.write_index_leaf(
             parent_record,
             &mut parent_buffer,
             parent_node,
             &parent_entries,
-            &IndexHome::Record { holder },
+            &parent.home,
         )?;
 
         let bit = right / self.clusters_per_index_block().max(1);

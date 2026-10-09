@@ -1060,3 +1060,34 @@ being something a partial write can ignore.
   blocks do not move.
 - What is left of the tree is a tree **deeper** than one level of blocks under
   the root, which `index_leaf` still refuses.
+
+**Stage 15 — a tree deeper than one level of blocks.**
+
+- The shape stage 8 reads and stage 9 could not write — a root whose node
+  points at a block that points at blocks — is a shape a **change** reaches
+  now.  The walk that finds the leaf keeps the nodes it went through, from the
+  index root down, instead of only the last one, and the name it is looking
+  for is located on the way: a name a node holds as a *key* comes back with the
+  node and the entry that carries it, which is what a removal needs and what
+  the old walk threw away by answering "not a leaf".
+- Two things fell out of that and are the reason the change is worth its size.
+  A **merge** now takes the node above the block from the walk rather than
+  reading the directory's own record, so a block two levels down merges with
+  its neighbour through the *block* that holds the key between them, and a
+  removal in a deep tree collapses the two leaves into one.  And the node a
+  key is in is written from a **fresh** read of that node, which is the same
+  staleness stage 10 found in a split: a merge starting from the copy the walk
+  made put back the key the swing had just replaced, and a test caught it.
+- What is left is the **split** of a leaf whose node above is a block: a split
+  promotes its middle key into the node above, and when that node is a block
+  the promotion may fill it in turn.  That is a stage of its own, and until it
+  is built a leaf two levels down that fills answers `NotImplemented` — before
+  it writes anything, since the refusal comes first.
+- The fixture carries the shape: a directory whose index root points at an
+  internal block, that block holds the key between two blocks of names, and
+  the bitmap says all three are in use.
+- Two tests: names are created in the block each one's key belongs in, a name
+  is removed, the two leaves merge through the block above them, the block
+  that went gives its bit back, and a second mount lists every name in the
+  tree's order; and a leaf that fills two levels down refuses the split it
+  would need, with every name taken before it still there.

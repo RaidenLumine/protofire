@@ -12,16 +12,20 @@
 #
 # The rule is a budget per row, measured in bytes of the line itself:
 # no row of a per-module table in `docs/status.md` may be longer than BUDGET,
-# except the rows recorded in `scripts/status-row-baseline.txt`, and those may
-# be no longer than the number recorded there.  A row that grows past its
-# number, and a row not in the baseline that grows past the budget, both fail.
-# A row that is shortened **lowers its number in the same change**
-# (`--record`), which is what makes the baseline the truth about the file and
-# keeps the excess shrinking instead of being renewed.
+# except the rows recorded in `scripts/status-row-baseline.txt`, which have to
+# be **exactly** the length recorded there.  A row that changes without its
+# number moving, and a row not in the baseline that grows past the budget, both
+# fail — so a row that is shortened **lowers its number in the same change**
+# (`--record`), and the baseline is the truth about the file rather than a
+# licence that can be spent twice.
 #
-# The rows in the baseline carry prose that has not been moved to where it
-# belongs yet.  Each of them is a census that still tells a story: shortening
-# one is a change of its own, and this gate is what keeps the count falling.
+# A row in the baseline is over the budget for one of two reasons, and either
+# way the excess is argued for here rather than in the file: most of them still
+# tell the story of what landed in their subsystem, which belongs in an RFC,
+# and shortening one is a change of its own.  The largest driver's row is the
+# other case — every item in it is a distinct capability, not a story, and the
+# census of a driver with this much surface is simply longer than one that is
+# a paragraph.  This gate is what keeps the total falling.
 #
 # Usage:
 #   sh scripts/check-status-rows.sh             # check against the baseline
@@ -118,8 +122,8 @@ LC_ALL=C awk -v budget="$BUDGET" -v baseline="$BASELINE" "$ROW_NAME"'
         if (name == "" || name ~ /^-+$/) next
         bytes = length($0)
         if (name in allowed) {
-            if (bytes > allowed[name]) {
-                printf "  %s grew to %d bytes, past the %d recorded\n", \
+            if (bytes != allowed[name]) {
+                printf "  %s is %d bytes, not the %d recorded\n", \
                     name, bytes, allowed[name] > "/dev/stderr"
                 bad = 1
             }
