@@ -306,9 +306,9 @@ fn a_directory_lists_what_its_index_holds() {
     assert_eq!(
         names,
         [
-            // The volume's order, not the records': a name goes through
-            // `$UpCase` and sorts there, which is the order a split's promoted
-            // key separates the halves of a block by.
+            // The volume's order, not the records': names go through `$UpCase`
+            // and sort there, which is the order a split's promoted key
+            // separates the halves of a block by.
             "$AttrDef",
             "$Bitmap",
             "$LogFile",
@@ -318,6 +318,7 @@ fn a_directory_lists_what_its_index_holds() {
             "$Volume",
             "deep",
             "encrypted.bin",
+            "full-deep",
             "full-dir",
             "full.bin",
             "moved.bin",
@@ -347,14 +348,14 @@ fn a_directory_lists_what_its_index_holds() {
     ));
 
     // A file and a directory are listed as what they are.
-    let resident = fs_handle.read_dir("/", 13).expect("resident.txt");
+    let resident = fs_handle.read_dir("/", 14).expect("resident.txt");
     assert_eq!(resident.kind, NodeKind::File);
     assert_eq!(resident.size, 5);
-    let tight = fs_handle.read_dir("/", 17).expect("tight.bin");
+    let tight = fs_handle.read_dir("/", 18).expect("tight.bin");
     assert_eq!(tight.kind, NodeKind::File);
-    let full = fs_handle.read_dir("/", 10).expect("full.bin");
+    let full = fs_handle.read_dir("/", 11).expect("full.bin");
     assert_eq!(full.kind, NodeKind::File);
-    let sub = fs_handle.read_dir("/", 16).expect("sub");
+    let sub = fs_handle.read_dir("/", 17).expect("sub");
     assert_eq!(sub.kind, NodeKind::Directory);
 }
 
@@ -1888,6 +1889,97 @@ fn a_block_two_levels_down_that_fills_splits_into_the_block_above() {
     }
 }
 
+/// A leaf two levels down that fills, under a block that is **full itself**:
+/// the key its split promotes has nowhere to go, so the block above it is what
+/// splits in turn.
+#[test]
+fn a_full_block_above_a_leaf_splits_in_its_turn() {
+    // The fixture's `full-deep` directory is the shape this needs: an internal
+    // block whose keys are long enough that six of them all but fill it, and
+    // seven leaves under it that hold nothing yet.  A name that fills one of
+    // those leaves splits it, the key between the halves has no room in the
+    // block above, and that block is halved in its turn — its own key going
+    // into the record's index root, which is the node above *it*.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let before = index_blocks_in_use(&fs_handle, FULL_DEEP_DIRECTORY);
+    assert_eq!(before, 8, "the eight blocks the fixture gave it");
+
+    let pad = "p".repeat(240);
+    let mut created: Vec<String> = Vec::new();
+    for index in 0..40 {
+        let name = alloc::format!("pd-{index:03}-{pad}.txt");
+        fs_handle
+            .create_file(&alloc::format!("/full-deep/{name}"))
+            .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
+        created.push(name);
+        // The split of the leaf takes one block and the split of the block
+        // above it takes another; the two can land in the same creation.
+        if index_blocks_in_use(&fs_handle, FULL_DEEP_DIRECTORY) >= before + 2 {
+            break;
+        }
+    }
+    assert_eq!(
+        index_blocks_in_use(&fs_handle, FULL_DEEP_DIRECTORY),
+        before + 2,
+        "the block the leaf's split made, and the one the block above it took"
+    );
+
+    // The node above the blocks is the record's index root, and it holds the
+    // key the block's split promoted: the entries are that key, with the child
+    // it goes with, and then the block with the greatest names.
+    let attributes = fs_handle
+        .attributes_of(FULL_DEEP_DIRECTORY)
+        .expect("the attributes");
+    let root = attributes
+        .iter()
+        .find(|attribute| attribute.attr_type == 0x90)
+        .expect("the index root");
+    let node = parse_index_node(&root.content, 16);
+    assert!(node.has_children, "and it points at blocks");
+    assert_eq!(
+        node.entries.len(),
+        2,
+        "the key the split promoted, and the block it left behind"
+    );
+    assert!(node.entries[0].name.is_some(), "the key");
+    assert!(
+        node.entries[1].name.is_none(),
+        "the block with the greater names"
+    );
+    assert!(
+        node.entries[0].child.is_some() && node.entries[1].child.is_some(),
+        "each of them points at a block"
+    );
+    let allocation = attributes
+        .iter()
+        .find(|attribute| attribute.attr_type == 0xa0)
+        .expect("the allocation");
+    assert_eq!(
+        allocation.data_size as u64,
+        (before as u64 + 2) * u64::from(fixture.shape.index_block_size()),
+        "and the allocation grew by the two blocks"
+    );
+
+    // A second mount walks the deeper tree: every name the directory holds —
+    // the fixture's own keys, wherever the split put them, and every name the
+    // creations made — is listed once and resolves to a record.
+    let again = remount(&device);
+    let mut expected: Vec<String> = (0..FULL_DEEP_KEYS.len()).map(key_name).collect();
+    expected.extend(created);
+    expected.sort();
+    assert_eq!(
+        the_listing(&again, "/full-deep"),
+        expected,
+        "every name, the promoted key among them, in the tree's order"
+    );
+    for name in &expected {
+        again
+            .lookup(&alloc::format!("/full-deep/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+    }
+}
+
 #[test]
 fn a_directory_whose_index_is_a_tree_lists_in_tree_order() {
     // A directory whose index is a **tree**: two blocks with the key that
@@ -2748,7 +2840,15 @@ fn a_creation_grows_the_mft_when_no_record_is_free() {
     let bitmap = again.read_bitmap().expect("the volume's bitmap");
     let taken: usize = bitmap.iter().map(|byte| byte.count_ones() as usize).sum();
     let was: usize = fixture.used.iter().filter(|used| **used != 0).count();
-    assert_eq!(taken, was + 1, "the one cluster the growth claimed");
+    // Two clusters, not one: the MFT's growth takes the first, and the name
+    // that growth made room for is one the root's index block had none for —
+    // this fixture's records are all spoken for because its root lists every
+    // one of them, so its block is all but full and the name fills it.
+    assert_eq!(
+        taken,
+        was + 2,
+        "the cluster the MFT grew into and the block the root's index took"
+    );
 
     // The growth made room for more than one record: the next name lands right
     // after the first, with no second growth.
@@ -2913,6 +3013,16 @@ const DEEP_OMEGA: u64 = 46;
 /// A file whose `$DATA` carries the **encrypted** flag: the shape RFC 0013
 /// refuses, and the one no tool on this host can make.
 const ENCRYPTED_FILE: u64 = 47;
+/// A directory whose index is a tree **three levels deep with its internal
+/// block nearly full**: the root points at a block whose entries hold keys and
+/// point at seven leaf blocks, and the keys are long enough that six of them
+/// almost fill it — so one more has nowhere to go.  It is the shape a leaf's
+/// split needs: promoting a key into that block has nowhere to go, so the block
+/// is what has to split in turn.
+const FULL_DEEP_DIRECTORY: u64 = 48;
+/// The keys that fill it: their names live in the internal block and in no
+/// leaf.
+const FULL_DEEP_KEYS: [u64; 6] = [49, 50, 51, 52, 53, 54];
 /// A directory whose index is a **tree**: two blocks, and the root's node
 /// holding the key that separates them — the shape a directory of many names
 /// has, measured on a volume `mkntfs` makes.  Its children are named in the
@@ -2923,7 +3033,7 @@ const TREE_ALPHA: u64 = 36;
 /// block, which is what a promoted key is.
 const TREE_MIDDLE: u64 = 37;
 const TREE_OMEGA: u64 = 38;
-const RECORDS: u64 = 48;
+const RECORDS: u64 = 55;
 
 /// How many blocks the tree directory's allocation has room for.
 ///
@@ -2941,6 +3051,10 @@ const TREE_CHILDREN: [u64; 3] = [TREE_ALPHA, TREE_MIDDLE, TREE_OMEGA];
 /// not what makes it in use.
 const OTHER_DIRECTORY_CHILDREN: [u64; 4] =
     [RUNNING_INDEX_FILE, DEEP_ALPHA, DEEP_MIDDLE, DEEP_OMEGA];
+
+/// The keys of the deep tree whose internal block is nearly full, which the
+/// internal block names and no other directory does.
+const FULL_DEEP_CHILDREN: [u64; 6] = FULL_DEEP_KEYS;
 
 /// The records that hold another record's attributes.
 const EXTENSION_RECORDS: [u64; 3] = [LISTED_FILE_EXT, MOVED_FILE_EXT, NAMED_FILE_EXT];
@@ -2977,6 +3091,8 @@ fn is_named(number: u64, spares_in_use: bool) -> bool {
         || number == DEEP_MIDDLE
         || number == DEEP_OMEGA
         || number == ENCRYPTED_FILE
+        || number == FULL_DEEP_DIRECTORY
+        || FULL_DEEP_KEYS.contains(&number)
         || number == TREE_DIRECTORY
         || TREE_CHILDREN.contains(&number)
         // An extension record is not a name of its own, so making every record
@@ -3652,6 +3768,12 @@ fn every_window_of_a_rename_leaves_the_record_a_name() {
     );
 }
 
+/// A key of the deep tree whose internal block is full, long enough that seven
+/// of them are what fills it.
+fn key_name(index: usize) -> String {
+    alloc::format!("kd{index}-{}", "k".repeat(240))
+}
+
 /// A fixture volume, and where the parts a test asks about are.
 struct Fixture {
     image: Vec<u8>,
@@ -3692,6 +3814,9 @@ struct Fixture {
     deep_blocks: u64,
     /// Where the encrypted file's bytes are, which nothing reads.
     encrypted_runs: (u64, u64),
+    /// Where the deep tree's nine blocks are: the internal one whose entries
+    /// hold the keys, then the eight leaves they point at.
+    full_deep_blocks: u64,
 }
 
 impl Fixture {
@@ -3778,8 +3903,9 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let deep_blocks = take(3 * index_block_clusters);
     let encrypted_first = take(1);
     take(1); // a gap, so the encrypted file's run is one cluster of its own
-             // Free clusters, each alone: a growth claims a run it fits in, and a claim
-             // of several clusters has none — which is what the refusal tests rely on.
+    let full_deep_blocks = take(8 * index_block_clusters);
+    // Free clusters, each alone: a growth claims a run it fits in, and a claim
+    // of several clusters has none — which is what the refusal tests rely on.
     let mut spare_used = Vec::new();
     for _ in 0..16 {
         take(1); // free, and alone
@@ -3813,6 +3939,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         running_bitmap,
         deep_blocks,
         encrypted_runs: (encrypted_first, 1),
+        full_deep_blocks,
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -3834,6 +3961,9 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     }
     fixture.used[running_bitmap.0 as usize] = 1;
     for cluster in encrypted_first..encrypted_first + 2 {
+        fixture.used[cluster as usize] = 1;
+    }
+    for cluster in full_deep_blocks..full_deep_blocks + 8 * index_block_clusters {
         fixture.used[cluster as usize] = 1;
     }
     for cluster in deep_blocks..deep_blocks + 3 * index_block_clusters {
@@ -3979,6 +4109,14 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 cluster_size,
                 Vec::new(),
             ),
+            FULL_DEEP_DIRECTORY => (ROOT_RECORD, "full-deep", true, 0, Vec::new()),
+            // The keys the internal block holds.  The name a *record* carries
+            // here is only its own `$FILE_NAME`: what a walk lists for these is
+            // the internal block's keys, which are longer and are built where
+            // the block is.
+            number if FULL_DEEP_KEYS.contains(&number) => {
+                (FULL_DEEP_DIRECTORY, "full-deep-key", false, 0, Vec::new())
+            }
             TREE_ALPHA => (TREE_DIRECTORY, "alpha.txt", false, 0, Vec::new()),
             TREE_MIDDLE => (TREE_DIRECTORY, "middle.txt", false, 0, Vec::new()),
             TREE_OMEGA => (TREE_DIRECTORY, "omega.txt", false, 0, Vec::new()),
@@ -4315,6 +4453,65 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     put_u16_le(&mut data, 12, super::types::ATTR_FLAG_ENCRYPTED);
                     attributes.extend(data);
                 }
+                FULL_DEEP_DIRECTORY => {
+                    // A tree three levels deep whose internal block is **nearly
+                    // full**: seven keys, each long enough that seven of them
+                    // fill it, and eight leaf blocks that hold nothing yet.  It
+                    // is what a leaf's split needs — promoting a key into that
+                    // block has nowhere to go, so the block is what has to be
+                    // split in turn.
+                    attributes.extend(attribute(
+                        0x90,
+                        "$I30",
+                        &index_root(&node_pointer(0), true),
+                        None,
+                        0,
+                    ));
+                    attributes.extend(attribute(
+                        0xa0,
+                        "$I30",
+                        &[],
+                        Some(&[(fixture.full_deep_blocks, 8 * index_block_clusters)]),
+                        8 * shape.index_block_size() as u64,
+                    ));
+                    // Eight blocks, one byte of bits: all of them in use.
+                    let mut bits = alloc::vec![0u8; 1];
+                    bits[0] = 0xff;
+                    attributes.extend(attribute(0xb0, "$I30", &bits, None, 0));
+
+                    let at = fixture.full_deep_blocks as usize * cluster_size as usize;
+                    let step = index_block_clusters as usize * cluster_size as usize;
+
+                    let mut inner: Vec<u8> = Vec::new();
+                    for (index, key) in FULL_DEEP_KEYS.iter().enumerate() {
+                        let name = key_name(index);
+                        let mut entry = index_entry(*key, &name, false, 0);
+                        let length = (entry.len() + 8).div_ceil(8) * 8;
+                        entry.resize(length, 0);
+                        put_u16_le(&mut entry, 8, length as u16);
+                        put_u32_le(&mut entry, 12, 0x0000_0001); // points at a node
+                        put_u64_le(
+                            &mut entry,
+                            length - 8,
+                            (index as u64 + 1) * index_block_clusters,
+                        );
+                        inner.extend_from_slice(&entry);
+                    }
+                    inner.extend_from_slice(&node_pointer(7 * index_block_clusters));
+                    let block = index_block(&shape, 0, &node(&inner, true, 40));
+                    fixture.image[at..at + block.len()].copy_from_slice(&block);
+
+                    // The seven blocks the keys point at, holding nothing yet.
+                    for leaf in 1..=7u64 {
+                        let empty = node(&index_end_entry(), false, 40);
+                        let block = index_block(&shape, leaf * index_block_clusters, &empty);
+                        let offset = at + leaf as usize * step;
+                        fixture.image[offset..offset + block.len()].copy_from_slice(&block);
+                    }
+                }
+                number if FULL_DEEP_KEYS.contains(&number) => {
+                    attributes.extend(attribute(0x80, "", &[], None, 0));
+                }
                 TREE_DIRECTORY => {
                     // A directory whose index is a *tree*: two blocks with a
                     // separator key between them, which is the shape a
@@ -4418,6 +4615,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                             RUNNING_INDEX_DIRECTORY,
                             DEEP_DIRECTORY,
                             ENCRYPTED_FILE,
+                            FULL_DEEP_DIRECTORY,
                         ];
                         if spares_in_use {
                             // Every record in use is a record some directory
@@ -4429,6 +4627,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                     && !EXTENSION_RECORDS.contains(&record)
                                     && !TREE_CHILDREN.contains(&record)
                                     && !OTHER_DIRECTORY_CHILDREN.contains(&record)
+                                    && !FULL_DEEP_CHILDREN.contains(&record)
                                 {
                                     listed.push(record);
                                 }
@@ -4460,6 +4659,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                 RUNNING_INDEX_DIRECTORY => ("running-index", true, 0),
                                 DEEP_DIRECTORY => ("deep", true, 0),
                                 ENCRYPTED_FILE => ("encrypted.bin", false, 0),
+                                FULL_DEEP_DIRECTORY => ("full-deep", true, 0),
                                 TREE_DIRECTORY => ("tree", true, 0),
                                 SUBDIRECTORY => ("sub", true, 0),
                                 _ => (spare_name(record), false, 0),
@@ -4536,7 +4736,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             || number == FULL_DIRECTORY
             || number == TREE_DIRECTORY
             || number == RUNNING_INDEX_DIRECTORY
-            || number == DEEP_DIRECTORY;
+            || number == DEEP_DIRECTORY
+            || number == FULL_DEEP_DIRECTORY;
         let flags = if named {
             if directory {
                 0x03

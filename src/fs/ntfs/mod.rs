@@ -267,6 +267,27 @@ struct IndexParent {
     home: IndexHome,
 }
 
+/// A node above a leaf, with one more entry in it: the key a split promotes,
+/// where the node's own order puts it.
+///
+/// The key goes **before** the entry the walk descended through, because that
+/// entry keeps the greater names: the child a keyed entry points at holds the
+/// keys *less* than the one the entry carries.  `false` is the answer when the
+/// entry the walk came through is not in the node at all — the buffers are
+/// stale, and the change has to be worked out again.
+fn node_entries_with(parent: &IndexParent, separator: &[u8]) -> Result<(Vec<Vec<u8>>, bool)> {
+    let mut entries: Vec<Vec<u8>> = Vec::new();
+    let mut inserted = false;
+    for entry in parse_index_node(&parent.buffer, parent.node).entries {
+        if !inserted && entry.offset >= parent.before {
+            entries.push(separator.to_vec());
+            inserted = true;
+        }
+        entries.push(parent.buffer[entry.offset..entry.offset + entry.length].to_vec());
+    }
+    Ok((entries, inserted))
+}
+
 /// The name a change is about, where a node holds it as a key.
 #[derive(Clone)]
 struct IndexKey {
@@ -858,15 +879,21 @@ impl NtfsFs {
         let record_at = self.record_offset(&info, holder)?;
         let mut raw = record.clone();
 
-        if runs.len() > data.data_runs.len() {
-            // The run list, in the room the attribute has for it.
-            let room = data.attr_len - runs_relative;
-            let mut field = alloc::vec![0u8; room];
-            field[..encoded.len()].copy_from_slice(&encoded);
-            let at = base + data.offset + runs_relative;
-            raw[at..at + room].copy_from_slice(&field);
+        // The run list, in the room the attribute has for it — written whether
+        // or not the *number* of runs changed.  A claim that lands in the
+        // cluster beside the last run extends that run: the list is as long as
+        // it was and says more, and a record that kept the shorter one would
+        // name less of the allocation than the sizes beside it claim.
+        let room = data.attr_len - runs_relative;
+        let mut field = alloc::vec![0u8; room];
+        field[..encoded.len()].copy_from_slice(&encoded);
+        let at = base + data.offset + runs_relative;
+        raw[at..at + room].copy_from_slice(&field);
 
-            // The clusters the file just took have never held its bytes.
+        // The clusters the file just took have never held its bytes.  A run
+        // the caller *added* is where they are — an allocation that grew inside
+        // a run it already had has no new clusters and nothing to zero.
+        if runs.len() > data.data_runs.len() {
             fs::write_to_runs(
                 &self.device,
                 &info,
@@ -874,13 +901,15 @@ impl NtfsFs {
                 u64::from(length) - zeros.len() as u64,
                 zeros,
             )?;
-
-            raw[base + data.offset + 40..base + data.offset + 48]
-                .copy_from_slice(&u64::from(allocated).to_le_bytes());
-            let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
-            raw[base + data.offset + 24..base + data.offset + 32]
-                .copy_from_slice(&last_vcn.to_le_bytes());
         }
+
+        // What the runs add up to: the last cluster number the attribute
+        // covers, and the room its runs are said to have.
+        let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
+        raw[base + data.offset + 24..base + data.offset + 32]
+            .copy_from_slice(&last_vcn.to_le_bytes());
+        raw[base + data.offset + 40..base + data.offset + 48]
+            .copy_from_slice(&u64::from(allocated).to_le_bytes());
 
         // The data size and the initialized size, adjacent in a non-resident
         // header: a shorter file has no initialized bytes beyond its length.
@@ -1408,6 +1437,43 @@ impl NtfsFs {
         Ok((record, node))
     }
 
+    /// The record a directory's index root lives in, which an
+    /// `$ATTRIBUTE_LIST` can have made an extension record of the directory's.
+    fn index_root_holder(&self, parent_record: u64) -> Result<u64> {
+        Ok(self
+            .attributes_of(parent_record)?
+            .into_iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_INDEX_ROOT)
+            .ok_or(Error::NotFound)?
+            .holder)
+    }
+
+    /// Whether the record an index root lives in has the room for the entries
+    /// the node would hold: the value's own bytes, and what the record has
+    /// left.
+    ///
+    /// This is [`Self::write_index_leaf`]'s measurement, taken on its own so a
+    /// split can settle it **before** it claims anything.
+    fn index_root_has_room(
+        &self,
+        holder: u64,
+        buffer: &[u8],
+        node: usize,
+        entries: &[Vec<u8>],
+    ) -> Result<bool> {
+        let entries_offset = u32::from_le_bytes([
+            buffer[node],
+            buffer[node + 1],
+            buffer[node + 2],
+            buffer[node + 3],
+        ]) as usize;
+        let used = entries_offset + entries.iter().map(|entry| entry.len()).sum::<usize>();
+        let record = self.read_mft_record(holder)?;
+        let attributes = self.attributes_of(holder)?;
+        let root = own_attribute(holder, &attributes, ATTR_TYPE_INDEX_ROOT)?;
+        Ok(16 + used <= root.content.len() + (record.len() - bytes_in_use(&record)))
+    }
+
     fn index_leaf(&self, parent_record: u64, name: &str) -> Result<IndexLeaf> {
         let upcase = self.upcase_table();
         let attributes = self.attributes_of(parent_record)?;
@@ -1543,8 +1609,7 @@ impl NtfsFs {
                         .try_fold(0usize, |total, entry| total.checked_add(entry.len()))
                         .ok_or(Error::InvalidArgument)?;
                 let value_len = 16 + used;
-                let room = buffer.len() - bytes_in_use(buffer);
-                if value_len > root.content.len() + room {
+                if !self.index_root_has_room(*holder, buffer, node, entries)? {
                     return Err(Error::NoSpace);
                 }
 
@@ -1901,227 +1966,301 @@ impl NtfsFs {
     /// node's keys *greater* than it — and the index bitmap gains a bit for the
     /// new block.
     ///
+    /// A node above that cannot hold the key is the node above's own turn: a
+    /// **record**'s index root with no room makes room in its record, and a
+    /// **block** with no room is split in turn, which is
+    /// [`Self::split_a_block`] called on it.
+    fn split_index_block(&self, parent_record: u64, name: &str, entries: &[Vec<u8>]) -> Result<()> {
+        for attempt in 0..2 {
+            // The walk is done again for the second attempt rather than kept:
+            // making room moves the attributes the record holds, and with them
+            // every offset the walk's buffers were read at.
+            let leaf = self.index_leaf(parent_record, name)?;
+            if leaf.key.is_some() {
+                return Err(Error::AlreadyExists);
+            }
+            let IndexHome::Block { .. } = &leaf.home else {
+                return Err(Error::InvalidArgument);
+            };
+            match self.room_above(&leaf, entries)? {
+                None => return self.split_a_block(parent_record, &leaf, entries),
+                Some(holder) if attempt == 0 => {
+                    self.make_room(holder, ATTR_TYPE_INDEX_ROOT)?;
+                }
+                Some(_) => return Err(Error::NoSpace),
+            }
+        }
+        Err(Error::NoSpace)
+    }
+
+    /// Whether the split will have the room it needs **above** the leaf — and
+    /// which record has to make room when it will not.
+    ///
+    /// A split promotes one entry per level: the leaf's middle key goes into
+    /// the node above it, and a node above that is a **block** with no room is
+    /// split in turn, so *its* middle key goes into the node above that, and so
+    /// on up.  What each level would hold is therefore known before anything is
+    /// written — the level's own entries, and the one key it takes from below —
+    /// and so is whether it fits.
+    ///
+    /// This is asked **before** the split claims anything, because a claim is
+    /// not something this driver can hand back: shrinking an allocation is a
+    /// step it does not take.  A **record**'s index root with no room is that
+    /// record's, which the caller makes room in before the split is worked out
+    /// again.
+    fn room_above(&self, leaf: &IndexLeaf, entries: &[Vec<u8>]) -> Result<Option<u64>> {
+        let Some((_, names)) = entries.split_last() else {
+            return Err(Error::InvalidArgument);
+        };
+        if names.is_empty() {
+            return Err(Error::NoSpace);
+        }
+        let mut promoted = names[names.len() / 2].clone();
+        for parent in leaf.ancestors.iter().rev() {
+            // Its own entries, and the key this split would put in it.  The
+            // key's own bytes are what the room is measured in, so the child it
+            // points at does not matter here.
+            let separator = fs::index_separator(&promoted, 0)?;
+            let (wanted, inserted) = node_entries_with(parent, &separator)?;
+            if !inserted {
+                return Err(Error::InvalidArgument);
+            }
+            let fits = match &parent.home {
+                IndexHome::Record { holder } => {
+                    let (buffer, node) = self.index_root_node(*holder)?;
+                    self.index_root_has_room(*holder, &buffer, node, &wanted)?
+                }
+                IndexHome::Block { .. } => {
+                    let entries_offset = u32::from_le_bytes([
+                        parent.buffer[parent.node],
+                        parent.buffer[parent.node + 1],
+                        parent.buffer[parent.node + 2],
+                        parent.buffer[parent.node + 3],
+                    ]) as usize;
+                    entries_offset + wanted.iter().map(|entry| entry.len()).sum::<usize>()
+                        <= parent.buffer.len() - 24
+                }
+            };
+            if fits {
+                return Ok(None);
+            }
+            match &parent.home {
+                IndexHome::Record { holder } => return Ok(Some(*holder)),
+                // A block that does not fit is split in turn, and the key *it*
+                // promotes is the middle of what it would have held.
+                IndexHome::Block { .. } => {
+                    let Some((_, names)) = wanted.split_last() else {
+                        return Err(Error::InvalidArgument);
+                    };
+                    if names.is_empty() {
+                        return Err(Error::NoSpace);
+                    }
+                    promoted = names[names.len() / 2].clone();
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// The split itself: the block `leaf` is in is halved, its middle key goes
+    /// to the node above it, and a node above that is a full **block** is split
+    /// in turn — the key it promotes is carried up into the node above *it*.
+    ///
     /// The writes are ordered by what a crash leaves, and every window is one a
     /// mount reads.  The allocation and the bitmap first: a block nothing
     /// points at is a leak, the harmless direction.  The new block next,
     /// still unreachable, so its entries are in the old block *too* and a
     /// listing shows each name once (one name, one record) while a lookup
     /// finds the copy that is reachable.  The node above after that, whose
-    /// new key is what makes the new block reachable.  The old block last,
-    /// with the half that stayed in it.
+    /// new key is what makes the new block reachable; a node above that is
+    /// itself split carries this block's key in its entries, so this block's
+    /// new block stays unreachable until the whole chain above it is written.
+    /// The old block last, with the half that stayed in it.
     ///
-    /// A node above that cannot hold the key refuses (`NoSpace`); it is the
-    /// index root here, and a record with no room makes room first, which is
-    /// why the whole split is worked out again when that happens.
-    fn split_index_block(&self, parent_record: u64, name: &str, entries: &[Vec<u8>]) -> Result<()> {
-        let mut derived: Option<IndexLeaf> = None;
-        for attempt in 0..2 {
-            let leaf = match &derived {
-                Some(leaf) => leaf.clone(),
-                None => {
-                    let leaf = self.index_leaf(parent_record, name)?;
-                    if leaf.key.is_some() {
-                        return Err(Error::AlreadyExists);
-                    }
-                    leaf
-                }
-            };
-            let Some(parent) = leaf.ancestors.last() else {
-                return Err(Error::InvalidArgument);
-            };
-            let IndexHome::Block { .. } = &leaf.home else {
-                return Err(Error::InvalidArgument);
-            };
-            let (block_size, cluster_size, sector_size) = {
-                let info = self.info.lock();
-                (
-                    info.index_block_size,
-                    info.cluster_size,
-                    usize::from(info.bs.bytes_per_sector),
-                )
-            };
-            let per_block = u64::from(block_size / cluster_size.max(1));
-            if per_block == 0 {
-                return Err(Error::NotImplemented);
-            }
-
-            // The names, and the terminator that is not one.  The entry between
-            // the halves is the key the node above learns, and it leaves both.
-            let Some((terminator, names)) = entries.split_last() else {
-                return Err(Error::InvalidArgument);
-            };
-            if names.is_empty() {
-                return Err(Error::NoSpace);
-            }
-            let middle = names.len() / 2;
-            let promoted = names[middle].clone();
-
-            // Where the half that leaves goes: a block the bitmap says is free
-            // is one a deletion gave back, and the tree takes it before the
-            // allocation grows.  With none to take, the block is the
-            // allocation's *next*, which is the number its size names — the
-            // leaf's own number plus one is that only while the leaf is the last
-            // block, and a tree's blocks are reached in key order, which need
-            // not be number order.
-            let allocation = self
-                .attributes_of(parent_record)?
-                .into_iter()
-                .find(|attribute| {
-                    attribute.attr_type == ATTR_TYPE_INDEX_ALLOC && !attribute.data_runs.is_empty()
-                })
-                .ok_or(Error::NotFound)?;
-            if u64::from(allocation.data_size) % u64::from(block_size) != 0 {
-                return Err(Error::InvalidArgument);
-            }
-            let blocks = u64::from(allocation.data_size) / u64::from(block_size);
-            let taken = self.first_free_index_block(parent_record, blocks)?;
-            let new_vcn = taken.map_or(blocks * per_block, |block| block * per_block);
-            let bit = new_vcn / per_block;
-            let separator = fs::index_separator(&promoted, new_vcn)?;
-
-            // The node above, with the key where its own order puts it: before
-            // the entry the walk went through, which keeps the greater names.
-            let parsed = parse_index_node(&parent.buffer, parent.node);
-            let mut parent_entries: Vec<Vec<u8>> = Vec::new();
-            let mut inserted = false;
-            for entry in &parsed.entries {
-                if !inserted && entry.offset >= parent.before {
-                    parent_entries.push(separator.clone());
-                    inserted = true;
-                }
-                parent_entries
-                    .push(parent.buffer[entry.offset..entry.offset + entry.length].to_vec());
-            }
-            if !inserted {
-                return Err(Error::InvalidArgument);
-            }
-
-            // The room the key needs.  A node above that is a **record**'s
-            // index root may grow into the record, and a record with no room
-            // makes room first and the split is worked out again; a node above
-            // that is a **block** has what is left of that block, which the
-            // write below measures and refuses by itself — and a block that is
-            // full is the case the node above *it* is for.
-            if let IndexHome::Record { holder } = parent.home {
-                let entries_offset = u32::from_le_bytes([
-                    parent.buffer[parent.node],
-                    parent.buffer[parent.node + 1],
-                    parent.buffer[parent.node + 2],
-                    parent.buffer[parent.node + 3],
-                ]) as usize;
-                let used = entries_offset
-                    + parent_entries
-                        .iter()
-                        .map(|entry| entry.len())
-                        .sum::<usize>();
-                let record = self.read_mft_record(holder)?;
-                let root = self
-                    .attributes_of(holder)?
-                    .into_iter()
-                    .find(|attribute| attribute.attr_type == ATTR_TYPE_INDEX_ROOT)
-                    .ok_or(Error::InvalidArgument)?;
-                let needed =
-                    16 + used > root.content.len() + (record.len() - bytes_in_use(&record));
-                if needed {
-                    if attempt == 0 {
-                        self.make_room(holder, ATTR_TYPE_INDEX_ROOT)?;
-                        derived = None;
-                        continue;
-                    }
-                    return Err(Error::NoSpace);
-                }
-            }
-
-            // The clusters the block lives in.  A block that was already the
-            // allocation's has them; one past the end of it takes a block's
-            // worth from the volume and moves the allocation with it.
-            let runs = match taken {
-                Some(_) => allocation.data_runs.clone(),
-                None => {
-                    let first = self.claim_clusters(per_block)?;
-                    let mut runs = allocation.data_runs.clone();
-                    let merged = runs.last().is_some_and(|last| {
-                        last.lcn >= 0 && last.lcn as u64 + last.cluster_count == first
-                    });
-                    if merged {
-                        runs.last_mut()
-                            .expect("the last run that was just looked at")
-                            .cluster_count += per_block;
-                    } else {
-                        runs.push(DataRun {
-                            lcn: first as i64,
-                            cluster_count: per_block,
-                        });
-                    }
-                    let grown = allocation.data_size + block_size;
-                    self.write_grown_data(
-                        allocation.holder,
-                        &allocation,
-                        &runs,
-                        grown,
-                        grown,
-                        &[],
-                    )?;
-                    runs
-                }
-            };
-
-            // The bitmap's bit for the block, which is the block's own number.
-            self.set_index_block_bit(parent_record, bit, true)?;
-
-            // The new block, with the half that left and its own terminator.
-            let mut left: Vec<Vec<u8>> = names[..middle].to_vec();
-            left.push(terminator.clone());
-            let block =
-                fs::index_allocation_block(block_size as usize, sector_size, new_vcn, &left)?;
-            {
-                let info = self.info.lock();
-                fs::write_to_runs(
-                    &self.device,
-                    &info,
-                    &runs,
-                    new_vcn * u64::from(cluster_size),
-                    &block,
-                )?;
-            }
-
-            // The node above, whose key makes the new block reachable.
-            //
-            // It is written from a fresh read of its record, not the copy the
-            // walk started with: growing the allocation above may have moved
-            // the attribute the root lives in, and a record written from that
-            // copy would undo the growth and the bitmap bit with it.
-            //
-            // A node above that is a *record*'s index root is read again,
-            // because growing the allocation below may have moved it; one that
-            // is a *block* is where the walk found it, because nothing in this
-            // split writes it before this point.
-            let (mut parent_buffer, parent_node) = match &parent.home {
-                IndexHome::Record { holder } => self.index_root_node(*holder)?,
-                IndexHome::Block { .. } => (parent.buffer.clone(), parent.node),
-            };
-            self.write_index_leaf(
-                parent_record,
-                &mut parent_buffer,
-                parent_node,
-                &parent_entries,
-                &parent.home,
-            )?;
-
-            // And the block that stayed, with the half that stayed in it.
-            let mut right: Vec<Vec<u8>> = names[middle + 1..].to_vec();
-            right.push(terminator.clone());
-            let mut leaf_buffer = leaf.buffer.clone();
-            self.write_index_leaf(
-                parent_record,
-                &mut leaf_buffer,
-                leaf.node,
-                &right,
-                &leaf.home,
-            )?;
-            return Ok(());
+    /// The room the key needs is settled **before** anything is claimed: what
+    /// this claims it cannot hand back, because shrinking an allocation is a
+    /// step this driver does not take.  A node above that is a **record**'s
+    /// index root makes room in its record first when it has none; a block is
+    /// split in turn, and the key *it* promotes is the next level's problem.
+    fn split_a_block(
+        &self,
+        parent_record: u64,
+        leaf: &IndexLeaf,
+        entries: &[Vec<u8>],
+    ) -> Result<()> {
+        let Some(parent) = leaf.ancestors.last() else {
+            return Err(Error::InvalidArgument);
+        };
+        let (block_size, cluster_size, sector_size) = {
+            let info = self.info.lock();
+            (
+                info.index_block_size,
+                info.cluster_size,
+                usize::from(info.bs.bytes_per_sector),
+            )
+        };
+        let per_block = u64::from(block_size / cluster_size.max(1));
+        if per_block == 0 {
+            return Err(Error::NotImplemented);
         }
-        Err(Error::NoSpace)
+
+        // The names, and the terminator that is not one.  The entry between
+        // the halves is the key the node above learns, and it leaves both.
+        let Some((terminator, names)) = entries.split_last() else {
+            return Err(Error::InvalidArgument);
+        };
+        if names.is_empty() {
+            return Err(Error::NoSpace);
+        }
+        let middle = names.len() / 2;
+        let promoted = names[middle].clone();
+
+        // Where the half that leaves goes: a block the bitmap says is free
+        // is one a deletion gave back, and the tree takes it before the
+        // allocation grows.  With none to take, the block is the
+        // allocation's *next*, which is the number its size names — the
+        // leaf's own number plus one is that only while the leaf is the last
+        // block, and a tree's blocks are reached in key order, which need
+        // not be number order.
+        let allocation = self
+            .attributes_of(parent_record)?
+            .into_iter()
+            .find(|attribute| {
+                attribute.attr_type == ATTR_TYPE_INDEX_ALLOC && !attribute.data_runs.is_empty()
+            })
+            .ok_or(Error::NotFound)?;
+        if u64::from(allocation.data_size) % u64::from(block_size) != 0 {
+            return Err(Error::InvalidArgument);
+        }
+        let blocks = u64::from(allocation.data_size) / u64::from(block_size);
+        let taken = self.first_free_index_block(parent_record, blocks)?;
+        let new_vcn = taken.map_or(blocks * per_block, |block| block * per_block);
+        let bit = new_vcn / per_block;
+        let separator = fs::index_separator(&promoted, new_vcn)?;
+
+        // The node above, with the key where its own order puts it.  Its room
+        // is what the caller settled before anything here was claimed, so what
+        // the write below does with it is a write and not a measurement.
+        let (parent_entries, inserted) = node_entries_with(parent, &separator)?;
+        if !inserted {
+            return Err(Error::InvalidArgument);
+        }
+
+        // The clusters the block lives in.  A block that was already the
+        // allocation's has them; one past the end of it takes a block's
+        // worth from the volume and moves the allocation with it.
+        let runs = match taken {
+            Some(_) => allocation.data_runs.clone(),
+            None => {
+                let first = self.claim_clusters(per_block)?;
+                let mut runs = allocation.data_runs.clone();
+                let merged = runs.last().is_some_and(|last| {
+                    last.lcn >= 0 && last.lcn as u64 + last.cluster_count == first
+                });
+                if merged {
+                    runs.last_mut()
+                        .expect("the last run that was just looked at")
+                        .cluster_count += per_block;
+                } else {
+                    runs.push(DataRun {
+                        lcn: first as i64,
+                        cluster_count: per_block,
+                    });
+                }
+                let grown = allocation.data_size + block_size;
+                self.write_grown_data(allocation.holder, &allocation, &runs, grown, grown, &[])?;
+                runs
+            }
+        };
+
+        // The bitmap's bit for the block, which is the block's own number.
+        self.set_index_block_bit(parent_record, bit, true)?;
+
+        // The new block, with the half that left and its own terminator.
+        let mut left: Vec<Vec<u8>> = names[..middle].to_vec();
+        // Which terminator that is depends on what the node is.  A leaf ends
+        // with an entry that points at nothing, and both halves can carry that
+        // one along.  A **block** split in turn is an internal node, and there
+        // the entry between the halves is a key *and* a child: that child holds
+        // the names between the two halves, so the new block ends with a
+        // pointer to it — the same entry with its key taken off.
+        left.push(match fs::index_entry_child(&promoted) {
+            Some(child) => fs::index_child_pointer(child),
+            None => terminator.clone(),
+        });
+        let block = fs::index_allocation_block(block_size as usize, sector_size, new_vcn, &left)?;
+        {
+            let info = self.info.lock();
+            fs::write_to_runs(
+                &self.device,
+                &info,
+                &runs,
+                new_vcn * u64::from(cluster_size),
+                &block,
+            )?;
+        }
+
+        // The node above, whose key makes the new block reachable.
+        //
+        // It is written from a fresh read of its record, not the copy the
+        // walk started with: growing the allocation above may have moved
+        // the attribute the root lives in, and a record written from that
+        // copy would undo the growth and the bitmap bit with it.
+        //
+        // A node above that is a *record*'s index root is read again,
+        // because growing the allocation below may have moved it; one that
+        // is a *block* is where the walk found it, because nothing in this
+        // split writes it before this point.
+        let (mut parent_buffer, parent_node, parent_home) = match &parent.home {
+            IndexHome::Record { .. } => {
+                let holder = self.index_root_holder(parent_record)?;
+                let (buffer, node) = self.index_root_node(holder)?;
+                (buffer, node, IndexHome::Record { holder })
+            }
+            IndexHome::Block { .. } => (parent.buffer.clone(), parent.node, parent.home.clone()),
+        };
+        match self.write_index_leaf(
+            parent_record,
+            &mut parent_buffer,
+            parent_node,
+            &parent_entries,
+            &parent_home,
+        ) {
+            Ok(()) => {}
+            // A node above that is a **block** with no room for the key is
+            // split in turn, and the entries it would have held — this
+            // split's key among them — are what it is split by.  The node
+            // above *it* is one level further up the same walk, so that is
+            // where its own key has to go; a record up there with no room
+            // is the caller's to make room in, like any other.
+            Err(Error::NoSpace) if matches!(parent_home, IndexHome::Block { .. }) => {
+                let above = IndexLeaf {
+                    buffer: parent.buffer.clone(),
+                    node: parent.node,
+                    home: parent.home.clone(),
+                    ancestors: leaf.ancestors[..leaf.ancestors.len() - 1].to_vec(),
+                    key: None,
+                };
+                // And the block that stayed **below** this one is still
+                // written last, all the same: the half that stayed in it is
+                // the only copy which is not already on the volume.
+                self.split_a_block(parent_record, &above, &parent_entries)?;
+            }
+            Err(error) => return Err(error),
+        }
+
+        // And the block that stayed, with the half that stayed in it.
+        let mut right: Vec<Vec<u8>> = names[middle + 1..].to_vec();
+        right.push(terminator.clone());
+        let mut leaf_buffer = leaf.buffer.clone();
+        self.write_index_leaf(
+            parent_record,
+            &mut leaf_buffer,
+            leaf.node,
+            &right,
+            &leaf.home,
+        )?;
+        Ok(())
     }
 
     /// This is the format's answer to a root that cannot grow in any record —

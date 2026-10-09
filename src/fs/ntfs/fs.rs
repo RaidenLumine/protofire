@@ -863,25 +863,12 @@ pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
             buf[at + 7],
         ]);
 
-        let points_at_a_node = flags & 0x01 != 0;
         // A child's virtual cluster number *ends* the entry, where the format
-        // puts it — the padding a key of any length leaves sits between the
-        // key and it — and the reference field is the *key's* record, which a
+        // puts it, and the reference field is the *key's* record, which a
         // keyless last entry leaves zero.  An internal node's entry therefore
         // carries a key and a child, and that child holds the keys less than
         // the one the entry carries.
-        let child = (points_at_a_node && entry_length >= 24).then(|| {
-            u64::from_le_bytes([
-                buf[at + entry_length - 8],
-                buf[at + entry_length - 7],
-                buf[at + entry_length - 6],
-                buf[at + entry_length - 5],
-                buf[at + entry_length - 4],
-                buf[at + entry_length - 3],
-                buf[at + entry_length - 2],
-                buf[at + entry_length - 1],
-            ])
-        });
+        let child = index_entry_child(&buf[at..at + entry_length]);
         // The upper sixteen bits of a reference are a sequence number.
         let reference = reference & 0x0000_FFFF_FFFF_FFFF;
         let name = if stream_length >= 66 && at + 16 + stream_length <= buf.len() {
@@ -1093,6 +1080,34 @@ pub fn index_child_pointer(vcn: u64) -> Vec<u8> {
     put_u32_le(&mut entry, 12, 0x0000_0003); // points at a node, and is last
     put_u64_le(&mut entry, 16, vcn);
     entry
+}
+
+/// The child an index entry points at, when it points at one.
+///
+/// The flag at the entry's own offset says whether there is a child, and the
+/// child's virtual cluster number is the entry's *last* eight bytes — the
+/// padding a key of any length leaves sits between the key and it.  This is
+/// [`index_child_pointer`]'s other direction, for a caller that has the entry's
+/// bytes and nothing parsed.
+pub fn index_entry_child(entry: &[u8]) -> Option<u64> {
+    if entry.len() < 24 {
+        return None;
+    }
+    let flags = u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]);
+    if flags & 0x1 == 0 {
+        return None;
+    }
+    let at = entry.len() - 8;
+    Some(u64::from_le_bytes([
+        entry[at],
+        entry[at + 1],
+        entry[at + 2],
+        entry[at + 3],
+        entry[at + 4],
+        entry[at + 5],
+        entry[at + 6],
+        entry[at + 7],
+    ]))
 }
 
 /// A non-resident attribute, named or not, whose value lies in runs.

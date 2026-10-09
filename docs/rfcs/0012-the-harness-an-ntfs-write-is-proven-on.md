@@ -294,13 +294,14 @@ what stage 1's record serialisation is for.
   fixture's MFT on names short enough that the leaf needed thirty creations to
   fill.  Names long enough to fill it in a handful put the split where the
   budget is.
-- **What is still not built is the recursion.**  When the node above a leaf is
-  a block and *that* block has no room for the promoted key, the block is the
-  thing that has to be split in turn — its own middle key going up from there —
-  and no fixture can drive it today: filling a block above a leaf means filling
-  the leaves under it many times over, which the fixture's MFT cannot afford.
-  A fixture that carries a block already full is what that stage needs, and
-  until it exists the case answers `NoSpace` rather than being written wrongly.
+- **The chain above a leaf's split is built.**  *Stage 19 answered this.*  A
+  leaf that fills promotes its middle key into the node above it, and when that
+  node is a **block** with no room for the key, that block is halved in its
+  turn — its own middle key going one level further up — until a level has the
+  room or the key reaches the record's index root.  What it needed first was
+  the room every level would have, all of it settled **before** the split
+  claims anything: a claim cannot be handed back, because shrinking an
+  allocation is a step this driver does not take.
 
 ## What landed
 
@@ -1177,8 +1178,55 @@ being something a partial write can ignore.
   enough to fill a leaf in a handful of creations put the split where the
   budget is, and the split works: the bitmap gains its bit, and a second mount
   walks the deeper tree and finds every name.
-- Still owed, and named in the unresolved questions above: when the block above
-  a leaf is *itself* full, it is that block which has to be split in turn.  No
-  fixture can drive it yet — filling a block above a leaf means filling the
-  leaves under it many times over — so the case answers `NoSpace` rather than
-  being written wrongly.
+- What stage 18 owed and answered with a refusal — the block above a leaf being
+  *itself* full — is stage 19's.
+
+**Stage 19 — a full block above a leaf splits in its turn.**
+
+- The recursion stage 18 left owed.  A leaf two levels down that fills promotes
+  its middle key into the block above it, and a block with no room for that key
+  is halved in its turn: half its entries move to a block of their own, its own
+  middle key goes into the node above *that*, and the key it was handed ends up
+  in whichever half it sorts into.  One creation can therefore take two blocks
+  — the leaf's split and the block's — and the write order of stage 10 holds
+  through both: each new half is written while nothing points at it, the node
+  above is written after, and the leaf's old block is written last of all.
+- The room every level needs is settled **before** anything is claimed, and
+  that is what the change is really about.  A split claims a block and grows
+  the allocation it belongs to, and a claim is not something this driver can
+  hand back, because shrinking an allocation is a step it does not take.  So
+  the chain is measured first: the key each level would be given, and whether
+  that level has the room for it.  A **record**'s index root that has none
+  makes room — the root moving into a record of its own, which is what stage
+  5's room-making is for — and the whole split is worked out again from the
+  walk down, because making room moves the offsets every buffer the walk made
+  was read at.
+- That last sentence is the one the first attempt got wrong, and it cost the
+  work: the room was made in the middle of the split instead, and the copy of
+  the allocation the split had already read went stale — the claim that
+  followed wrote a run list at an offset the attribute's move had shifted, and
+  the record's attribute chain no longer parsed.  A `NoSpace` from a later
+  creation was the first symptom; the record's own bytes were the evidence.
+- Two defects the new path found, both older than it.  `write_grown_data` wrote
+  the run list only when a run was *added*: a claim that lands in the cluster
+  beside the allocation's last run extends that run, so the number of runs is
+  unchanged and the record went on naming the shorter one — an allocation whose
+  sizes and whose runs disagreed, which the fixture's own layout (free clusters
+  each alone) had never provoked.  And the half that leaves a block in a split
+  was written with the node's own terminator, which for an **internal** node is
+  a pointer to the child with the greatest names: the new block pointed at its
+  sibling's names instead of at the child of the key it promoted, and a listing
+  came back out of order with the names under it twice.
+- The fixture carries the shape now: `full-deep` is a directory whose index
+  root points at an internal block whose six keys all but fill it, with seven
+  leaves under them.  Its keys are built where the block is rather than in the
+  records they name — a record's own `$FILE_NAME` is only what a walk of *that*
+  record would list — which is what makes the block's entries long enough for
+  the fill to reach the recursion.
+- `a_full_block_above_a_leaf_splits_in_its_turn` is the gate: names long enough
+  that the leaf fills in seven creations are created until the directory's
+  bitmap has two more blocks; the record's index root node is required to hold
+  the key the block's split promoted, with the child it points at and then the
+  block with the greatest names; the allocation is required to have grown by
+  the two blocks; and a second mount lists every name — the promoted key among
+  them — once, and resolves each to a record.
