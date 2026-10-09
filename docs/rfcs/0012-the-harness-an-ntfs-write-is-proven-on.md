@@ -262,6 +262,27 @@ what stage 1's record serialisation is for.
 
 ## Unresolved questions
 
+- **A torn write is not detected, and it is not silent.**  A 4096-byte index
+  block reaches the device as eight sector writes, so a machine that stops
+  between two of them leaves half the block new and half of it old.  The
+  format's answer is the **update sequence**: every sector ends with a copy of
+  the number the array holds, so a block whose sectors disagree is one a reader
+  can refuse.  Neither half of that is built — `pack_usa`
+  (`src/fs/ntfs/fs.rs`) copies the number and never changes it, and
+  `apply_usa_fixup` in the same file writes the array's bytes back into the
+  sector ends **without comparing them first**.  It was measured by stopping
+  the driver's device after each of its own writes: after the sixteenth write
+  of a fill that splits a block, the tree's block holds an entry whose name
+  stops at byte 512 — `many-001-pppppp`, then zeros for the two hundred bytes
+  the entry claims — and a walk lists that as a name.  A **third** half is the
+  same problem: several writers insert the *packed* buffer into `mft_cache`, so
+  a record whose attribute spans a sector end is held in the cache with two
+  bytes of sequence where its payload should be.  What the fix has to be is
+  one change and not three: the sequence changes on every write, a read
+  refuses a buffer whose sectors disagree with it, and the cache holds the
+  buffer the way the record's own bytes read rather than the way the volume
+  stores them.
+
 - **Where does the dirty flag live, and what does Windows need from it?**  A
   volume's `$Volume` carries volume information with a dirty bit, and this
   driver does not read `$Volume` at all.  Stage 1 has to settle which field
