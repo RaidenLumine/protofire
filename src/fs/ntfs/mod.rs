@@ -1506,6 +1506,57 @@ impl NtfsFs {
         Ok(())
     }
 
+    /// Move one bit of a directory's `$INDEX_ALLOCATION` bitmap, which is the
+    /// list of which of its blocks hold a node in use.
+    ///
+    /// A block a split makes needs a bit the bitmap may not have a *byte* for:
+    /// the bitmap names eight blocks per byte, so the block numbered `bit`
+    /// needs `bit / 8 + 1` bytes of it.  A bitmap that is short **grows** to
+    /// what the bit needs — the value longer where it lives — and the record
+    /// that holds it makes room for the growth when it has none, the way any
+    /// record with no room does.  A bitmap that is a *file* of its own would be
+    /// grown by a step of its own, and refuses (`NotImplemented`).
+    ///
+    /// Lowering a bit is the same walk without the growth: a byte the bitmap
+    /// does not have names no block, so there is nothing there to lower.
+    fn set_index_block_bit(&self, parent_record: u64, bit: u64, in_use: bool) -> Result<()> {
+        let byte = (bit / 8) as usize;
+        let mask = 1u8 << (bit % 8);
+        for attempt in 0..2 {
+            let bitmap = self
+                .attributes_of(parent_record)?
+                .into_iter()
+                .find(|attribute| attribute.attr_type == ATTR_TYPE_BITMAP)
+                .ok_or(Error::NotFound)?;
+            if bitmap.data_runs_offset.is_some() {
+                return Err(Error::NotImplemented);
+            }
+            if byte >= bitmap.content.len() && !in_use {
+                return Ok(());
+            }
+            let mut bits = bitmap.content.clone();
+            if byte >= bits.len() {
+                bits.resize(byte + 1, 0);
+            }
+            if in_use {
+                bits[byte] |= mask;
+            } else {
+                bits[byte] &= !mask;
+            }
+            match self.replace_value(parent_record, ATTR_TYPE_BITMAP, &bits) {
+                Ok(()) => return Ok(()),
+                Err(Error::NoSpace) if attempt == 0 => {
+                    // The value is longer than the record has room for: the
+                    // record makes room, and the bit goes in where the value
+                    // landed.
+                    self.make_room(bitmap.holder, ATTR_TYPE_BITMAP)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(Error::NoSpace)
+    }
+
     /// Put a name into a directory's index, where the index's order puts it.
     ///
     /// The entries a node holds are rewritten as a run, with the new one in
@@ -1777,17 +1828,7 @@ impl NtfsFs {
 
             // The bitmap's bit for the block, which is the block's own number.
             let bit = new_vcn / per_block;
-            let bitmap = self
-                .attributes_of(parent_record)?
-                .into_iter()
-                .find(|attribute| attribute.attr_type == ATTR_TYPE_BITMAP)
-                .ok_or(Error::NotFound)?;
-            if bitmap.data_runs_offset.is_some() || bit / 8 >= bitmap.content.len() as u64 {
-                return Err(Error::NotImplemented);
-            }
-            let mut bits = bitmap.content.clone();
-            bits[bit as usize / 8] |= 1 << (bit % 8);
-            self.replace_value(parent_record, ATTR_TYPE_BITMAP, &bits)?;
+            self.set_index_block_bit(parent_record, bit, true)?;
 
             // The new block, with the half that left and its own terminator.
             let mut left: Vec<Vec<u8>> = names[..middle].to_vec();

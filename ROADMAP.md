@@ -195,8 +195,10 @@ The authoritative picture of what exists today is
   number is the one the allocation's own size names, which is the leaf's number
   plus one only while the leaf is the last block.  What is left of the stage is
   the tree's *deletion* — a promoted key cannot be taken out, and two
-  half-empty blocks cannot be merged — and the index bitmap's own growth when
-  the blocks outnumber its bits.
+  half-empty blocks cannot be merged.  The index bitmap **grows** now too: a bit
+  past the last byte of the value extends it, and the record it lives in makes
+  room for the growth when it has none — so a ninth block does not go unnamed
+  because the bitmap the tree started with was one byte long.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

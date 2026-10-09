@@ -1603,7 +1603,15 @@ fn a_full_block_splits_and_promotes_its_middle_key() {
         .iter()
         .find(|attr| attr.attr_type == 0xb0)
         .expect("the index bitmap");
-    assert_eq!(bitmap.content[0] & 0b100, 0b100, "and its bit");
+    // The tree's bitmap was one byte, and the block the split made is the
+    // allocation's ninth: its bit needs a byte the value did not have, so the
+    // value grew rather than the bit being dropped.
+    assert_eq!(
+        bitmap.content.len(),
+        2,
+        "the byte the new block's bit needs"
+    );
+    assert_eq!(bitmap.content[1] & 0b1, 0b1, "and its bit");
 
     // A second mount lists every name in the tree's order — the key the split
     // promoted among them — and finds each of them by its path.
@@ -2243,6 +2251,14 @@ const TREE_MIDDLE: u64 = 37;
 const TREE_OMEGA: u64 = 38;
 const RECORDS: u64 = 39;
 
+/// How many blocks the tree directory's allocation has room for.
+///
+/// Its tree holds two of them; the rest are blocks the allocation *has* and
+/// the index bitmap says are free — the shape a directory reaches when
+/// deletions have left blocks behind, and the one that makes a split need a
+/// byte of the bitmap rather than a bit in a byte it already has.
+const TREE_ALLOCATION_BLOCKS: u64 = 8;
+
 /// The records the tree directory names, which no other directory does.
 const TREE_CHILDREN: [u64; 3] = [TREE_ALPHA, TREE_MIDDLE, TREE_OMEGA];
 
@@ -2679,7 +2695,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let moved_first = take(1);
     let moved_second = take(1);
     let list_at = take(1);
-    let tree_blocks = take(2 * index_block_clusters);
+    let tree_blocks = take(TREE_ALLOCATION_BLOCKS * index_block_clusters);
     // Free clusters, each alone: a growth claims a run it fits in, and a claim
     // of several clusters has none — which is what the refusal tests rely on.
     let mut spare_used = Vec::new();
@@ -2724,7 +2740,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     for cluster in index_block_at..index_block_at + index_block_clusters {
         fixture.used[cluster as usize] = 1;
     }
-    for cluster in tree_blocks..tree_blocks + 2 * index_block_clusters {
+    for cluster in tree_blocks..tree_blocks + TREE_ALLOCATION_BLOCKS * index_block_clusters {
         fixture.used[cluster as usize] = 1;
     }
     for cluster in &spare_used {
@@ -3099,11 +3115,17 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                         0xa0,
                         "$I30",
                         &[],
-                        Some(&[(fixture.tree_blocks, 2 * index_block_clusters)]),
-                        2 * shape.index_block_size() as u64,
+                        Some(&[(
+                            fixture.tree_blocks,
+                            TREE_ALLOCATION_BLOCKS * index_block_clusters,
+                        )]),
+                        TREE_ALLOCATION_BLOCKS * shape.index_block_size() as u64,
                     ));
-                    let mut bits = vec![0u8; 8];
-                    bits[0] = 0b11; // both blocks are in use
+                    // One byte names eight blocks, and the tree uses two of
+                    // them: the six between are the blocks the allocation has
+                    // and nothing holds.
+                    let mut bits = vec![0u8; 1];
+                    bits[0] = 0b11;
                     attributes.extend(attribute(0xb0, "$I30", &bits, None, 0));
                 }
                 TREE_ALPHA | TREE_MIDDLE | TREE_OMEGA => {

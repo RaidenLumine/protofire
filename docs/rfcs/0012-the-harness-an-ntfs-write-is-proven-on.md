@@ -932,3 +932,26 @@ being something a partial write can ignore.
   half-empty blocks back is the same stage.  The index bitmap's own *growth*,
   for a set of blocks that outnumbers its bits, is not built either — a split
   needs the bit it sets to already have room.
+
+**Stage 11 — the index bitmap grows.**
+
+- The index bitmap names eight blocks per byte, so the block a split makes can
+  need a byte the bitmap does **not** have.  A bitmap that is short grows to
+  what the bit needs — the value longer where it lives, and the record that
+  holds it making room the way any record with no room does — rather than the
+  bit being dropped and the block left unnamed.
+- One place moves a bit now (`set_index_block_bit`), and both directions go
+  through it: raising one for a block a split made, and lowering one for a
+  block a deletion gives back.  A byte the bitmap does not have names no block,
+  so lowering past the end of the value is nothing to do rather than an error.
+- The fixture's tree directory carries an allocation with room for **eight**
+  blocks and an index bitmap of **one** byte, with two of the blocks holding
+  the tree: the shape a directory reaches when earlier deletions left blocks
+  behind, and the one where the next split's bit is past the last byte.
+- The split test is what proves it: the block the split makes is the
+  allocation's ninth, the bitmap's value is two bytes afterwards, and the bit
+  in the second byte is set.  Before this stage that split was `NotImplemented`,
+  which is what the bit running off the end of the value used to mean.
+- A bitmap that is a **file** of its own would be grown by a step of its own —
+  its size and its run list moving together — and still refuses
+  (`NotImplemented`).
