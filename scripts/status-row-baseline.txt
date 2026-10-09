@@ -1,0 +1,20 @@
+# Rows of docs/status.md that are longer than the census budget,
+# read by scripts/check-status-rows.sh.
+#
+# Each row is `<row name> <bytes>`: the length of the line the row
+# is, as the check measures it.  The check fails when a row grows
+# past its number here, and when a row that is not listed grows
+# past the budget; a row that is *shortened* has to be re-recorded
+# in the same change (`sh scripts/check-status-rows.sh --record`),
+# so the numbers below only ever fall.
+#
+# These rows say more than a census should: each one still tells
+# the story of what landed in its subsystem.  The story belongs in
+# the RFC that decided it and the mechanism in docs/kernel/;
+# shortening a row is a change of its own, and this file is what
+# keeps the total falling rather than being renewed.
+#
+ISO 9660 3222
+xHCI 3267
+Block cache 1787
+Boot-work baseline 3777

@@ -152,6 +152,7 @@ help:
 		'  make check-layering                   - fail if a module gained a dependency the census does not have' \
 		'  make check-arch-fanout                - fail if the architecture census outside `src/arch/` grew' \
 		'  make check-dead-code-allows           - fail if a file-level allow(dead_code) has no reason' \
+		'  make check-status-rows                - fail if a row of the census in docs/status.md grew past what one may be' \
 		'  make check-feature-matrix             - build every configuration the manifest declares' \
 		'  make check-abi-mirror                 - fail if the user-space ABI copy drifts from the kernel'"'"'s' \
 		'  make check-abi-frozen-payload         - boot the pre-built frozen payload, which this build does not recompile' \
@@ -321,7 +322,8 @@ test-service:
 .PHONY: check-repo-integrity check-docs check-make-targets check-rfcs \
 	check-payload-relocations check-reproducible-build \
 	check-unsafe-comments check-user-access-windows check-layering \
-	check-arch-fanout check-dead-code-allows check-feature-matrix \
+	check-arch-fanout check-dead-code-allows check-status-rows \
+	check-feature-matrix \
 	check-abi-mirror check-abi-frozen-payload \
 	check-abi-frozen-payload-aarch64 check-abi-frozen-payload-riscv64
 
@@ -431,6 +433,19 @@ check-arch-fanout:
 # allows in this tree outlived their reasons before it existed.
 check-dead-code-allows:
 	sh ./scripts/check-dead-code-allows.sh
+
+# Hold the line on how long one row of the census may get.  `docs/status.md` is
+# the per-module census, and a row that grows into the story of what landed in
+# its subsystem stops being one: the stages are `docs/rfcs/`'s to tell and the
+# mechanism is `docs/kernel/`'s.  The NTFS row reached 9,787 bytes in one line
+# before this gate existed — a diff no reviewer reads, and a line every change
+# to it had to be made by a script that matched the whole line.
+# `scripts/status-row-baseline.txt` records the rows still over the budget,
+# each of which may be no longer than its number there; a row that is
+# *shortened* has to be re-recorded in the same change
+# (`sh scripts/check-status-rows.sh --record`), so the numbers only fall.
+check-status-rows:
+	sh ./scripts/check-status-rows.sh
 
 # Every configuration `Cargo.toml` declares, built: the shipped `demo-disk`
 # build plus each switch the manifest names, and then all of them at once.  The

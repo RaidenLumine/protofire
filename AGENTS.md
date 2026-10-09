@@ -45,7 +45,11 @@ and what the code says about itself (`check-unsafe-comments`,
 `check-user-access-windows`, `check-dead-code-allows`), the ABI
 (`check-abi-mirror`, `check-abi-frozen-payload`, one per architecture), the
 repository itself (`check-repo-integrity`, `check-reproducible-build`), and
-the work a boot does (`check-perf-baseline`).
+the work a boot does (`check-perf-baseline`).  `docs/status.md` has one of its
+own: `check-status-rows` refuses a census row that has grown past what a row
+may be, because the story of what landed in a subsystem is the RFC's and the
+mechanism is `docs/kernel/`'s.  Meeting that gate — or any other — by recording
+a new number is a change that argues for it in the baseline's own prose.
 
 Fast loops are `make run-x8664`, `run-aarch64` and `run-riscv64` (add
 `-headless` to keep the serial console off the terminal); the smokes are

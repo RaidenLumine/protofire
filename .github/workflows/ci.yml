@@ -52,6 +52,8 @@ jobs:
             command: make check-payload-relocations
           - name: dead-code-allows
             command: make check-dead-code-allows
+          - name: status-rows
+            command: make check-status-rows
           # Every configuration the manifest declares, not just the ones a
           # runtime gate boots: a switch whose code has rotted is otherwise
           # invisible until somebody builds it.
