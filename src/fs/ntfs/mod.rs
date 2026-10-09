@@ -1579,6 +1579,38 @@ impl NtfsFs {
         Err(Error::NoSpace)
     }
 
+    /// The first block the directory's index bitmap says is **free**, among the
+    /// blocks its allocation has.
+    ///
+    /// A block that a deletion gave back is a block the tree takes again before
+    /// it grows the allocation: a directory whose index only ever grew would
+    /// keep the volume's clusters claimed for blocks that nothing is stored in,
+    /// and a block that is already the allocation's costs nothing to use again.
+    /// A byte the bitmap does not have names no block, and a block nothing
+    /// names is free.
+    ///
+    /// A bitmap that is a *file* of its own would be read where its runs say,
+    /// which is a step of its own (`NotImplemented`).
+    fn first_free_index_block(&self, parent_record: u64, blocks: u64) -> Result<Option<u64>> {
+        let Some(bitmap) = self
+            .attributes_of(parent_record)?
+            .into_iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_BITMAP)
+        else {
+            return Ok(None);
+        };
+        if bitmap.data_runs_offset.is_some() {
+            return Err(Error::NotImplemented);
+        }
+        for block in 0..blocks {
+            let byte = (block / 8) as usize;
+            if byte >= bitmap.content.len() || bitmap.content[byte] & (1 << (block % 8)) == 0 {
+                return Ok(Some(block));
+            }
+        }
+        Ok(None)
+    }
+
     /// Put a name into a directory's index, where the index's order puts it.
     ///
     /// The entries a node holds are rewritten as a run, with the new one in
@@ -1760,9 +1792,11 @@ impl NtfsFs {
             let middle = names.len() / 2;
             let promoted = names[middle].clone();
 
-            // The block the half that leaves goes into is the allocation's
-            // *next* virtual cluster number, which is what its size names: the
-            // leaf's own number plus one is that only when the leaf is the last
+            // Where the half that leaves goes: a block the bitmap says is free
+            // is one a deletion gave back, and the tree takes it before the
+            // allocation grows.  With none to take, the block is the
+            // allocation's *next*, which is the number its size names — the
+            // leaf's own number plus one is that only while the leaf is the last
             // block, and a tree's blocks are reached in key order, which need
             // not be number order.
             let allocation = self
@@ -1776,7 +1810,9 @@ impl NtfsFs {
                 return Err(Error::InvalidArgument);
             }
             let blocks = u64::from(allocation.data_size) / u64::from(block_size);
-            let new_vcn = blocks * per_block;
+            let taken = self.first_free_index_block(parent_record, blocks)?;
+            let new_vcn = taken.map_or(blocks * per_block, |block| block * per_block);
+            let bit = new_vcn / per_block;
             let separator = fs::index_separator(&promoted, new_vcn)?;
 
             // The node above, with the key where its own order puts it: before
@@ -1828,28 +1864,41 @@ impl NtfsFs {
                 return Err(Error::NoSpace);
             }
 
-            // The clusters the new block lives in: one block's worth from the
-            // volume, named by the allocation the block is addressed through.
-            let first = self.claim_clusters(per_block)?;
-            let mut runs = allocation.data_runs.clone();
-            let merged = runs
-                .last()
-                .is_some_and(|last| last.lcn >= 0 && last.lcn as u64 + last.cluster_count == first);
-            if merged {
-                runs.last_mut()
-                    .expect("the last run that was just looked at")
-                    .cluster_count += per_block;
-            } else {
-                runs.push(DataRun {
-                    lcn: first as i64,
-                    cluster_count: per_block,
-                });
-            }
-            let grown = allocation.data_size + block_size;
-            self.write_grown_data(allocation.holder, &allocation, &runs, grown, grown, &[])?;
+            // The clusters the block lives in.  A block that was already the
+            // allocation's has them; one past the end of it takes a block's
+            // worth from the volume and moves the allocation with it.
+            let runs = match taken {
+                Some(_) => allocation.data_runs.clone(),
+                None => {
+                    let first = self.claim_clusters(per_block)?;
+                    let mut runs = allocation.data_runs.clone();
+                    let merged = runs.last().is_some_and(|last| {
+                        last.lcn >= 0 && last.lcn as u64 + last.cluster_count == first
+                    });
+                    if merged {
+                        runs.last_mut()
+                            .expect("the last run that was just looked at")
+                            .cluster_count += per_block;
+                    } else {
+                        runs.push(DataRun {
+                            lcn: first as i64,
+                            cluster_count: per_block,
+                        });
+                    }
+                    let grown = allocation.data_size + block_size;
+                    self.write_grown_data(
+                        allocation.holder,
+                        &allocation,
+                        &runs,
+                        grown,
+                        grown,
+                        &[],
+                    )?;
+                    runs
+                }
+            };
 
             // The bitmap's bit for the block, which is the block's own number.
-            let bit = new_vcn / per_block;
             self.set_index_block_bit(parent_record, bit, true)?;
 
             // The new block, with the half that left and its own terminator.

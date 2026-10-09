@@ -994,3 +994,32 @@ being something a partial write can ignore.
 - What is left of the tree is **reusing** a block a deletion gave back, the
   allocation's own shrink, and a tree deeper than one level of blocks under the
   root, which `index_leaf` refuses.
+
+**Stage 13 — a block a deletion gives back is taken again.**
+
+- A split no longer always grows the allocation.  The block it needs is the
+  first the index bitmap says is **free** — a block a merge gave back — and only
+  when the bitmap names none is it the allocation's *next*, which is the one
+  that grows the allocation.  A directory whose index only ever grew would keep
+  the volume's clusters claimed for blocks that nothing is stored in.
+- A byte the bitmap does not have names no block, and a block nothing names is
+  free, which is the same rule that lowering a bit follows.
+- A block the bitmap says is **in use** but that the node above does not point
+  at is left alone.  That is the shape this driver's own split leaves between
+  its two writes (the bitmap first, the node above last), and telling a leaked
+  block from a live one is a walk of the whole tree — a repair, not a write.
+- The fixture's tree directory carries that shape: its one-byte bitmap names
+  eight blocks and its node points at two of them.  A split therefore has
+  nothing free to take and appends, which is what keeps stage 11's growth proven
+  end to end; and a merge that gives a block back leaves the next split
+  something to take, which is what proves this stage.
+- The allocation is **not** shrunk when its tail runs out of blocks.  A kept
+  block costs nothing to use again, and a shrink that the next split undoes is
+  worse than a block left over; taking the tail of an allocation back is a step
+  of its own.
+- One test: a block that a merge gave back is the block the next split takes,
+  with the allocation's size unchanged, the bit set again, and a second mount
+  listing every name the directory holds.
+- What is left of the tree is a tree **deeper** than one level of blocks under
+  the root — which `index_leaf` refuses — and an index bitmap that is a file of
+  its own.

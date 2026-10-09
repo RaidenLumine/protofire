@@ -203,9 +203,13 @@ The authoritative picture of what exists today is
   the halves and the block that went being given back, and a name the node above
   holds — a key a split promoted — comes out by its *predecessor*, the child's
   largest name taking the key's place so that no child is left unreachable.
-  What is left of the tree is *reusing* a block a deletion gave back, the
-  allocation's own shrink, and a tree deeper than one level of blocks under the
-  root.
+  And a block a deletion gives back is taken again: a split takes the first
+  block the index bitmap says is free before it grows the allocation, so a
+  directory's index stops claiming clusters for blocks nothing is stored in.
+  What is left of the tree is a tree deeper than one level of blocks under the
+  root, an index bitmap that is a file of its own, and the allocation's own
+  shrink, which this driver does not do at all: a kept block costs nothing to
+  use again.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

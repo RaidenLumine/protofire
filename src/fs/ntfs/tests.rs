@@ -1489,8 +1489,20 @@ fn tree_bitmap(fs_handle: &super::NtfsFs) -> Vec<u8> {
         .content
 }
 
+/// How many blocks the tree directory's index bitmap says are in use.
+///
+/// One rises with every split and falls with every block a deletion gives back,
+/// which is what makes it the signal a test can watch: the allocation's own
+/// size does not move when the split takes a block that was already there.
+fn tree_blocks_in_use(fs_handle: &super::NtfsFs) -> u32 {
+    tree_bitmap(fs_handle)
+        .iter()
+        .map(|byte| byte.count_ones())
+        .sum()
+}
+
 /// Create names in the tree directory until one of its blocks fills and splits,
-/// and answer every name the directory holds.
+/// and answer the names it made.
 ///
 /// The names are long on purpose.  An index entry is mostly its name, so long
 /// ones fill a block after a handful of creations — and a handful the fixture's
@@ -1499,19 +1511,15 @@ fn tree_bitmap(fs_handle: &super::NtfsFs) -> Vec<u8> {
 /// room, so the split would never be reached.
 fn fill_the_tree(fs_handle: &super::NtfsFs) -> Vec<String> {
     let pad = "p".repeat(60);
-    let mut names = alloc::vec![
-        String::from("alpha.txt"),
-        String::from("middle.txt"),
-        String::from("omega.txt"),
-    ];
-    let before = tree_allocation_size(fs_handle);
+    let mut names = Vec::new();
+    let before = tree_blocks_in_use(fs_handle);
     for index in 0..60 {
         let name = alloc::format!("many-{index:03}-{pad}.txt");
         fs_handle
             .create_file(&alloc::format!("/tree/{name}"))
             .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
         names.push(name);
-        if tree_allocation_size(fs_handle) > before {
+        if tree_blocks_in_use(fs_handle) > before {
             break;
         }
     }
@@ -1624,15 +1632,67 @@ fn a_full_block_splits_and_promotes_its_middle_key() {
     // promoted among them — and finds each of them by its path.
     let again = remount(&device);
     let listed = the_listing(&again, "/tree");
-    assert_eq!(listed.len(), names.len(), "{listed:?}");
-    let mut sorted = names.clone();
+    let mut every = names.clone();
+    every.extend([
+        String::from("alpha.txt"),
+        String::from("middle.txt"),
+        String::from("omega.txt"),
+    ]);
+    assert_eq!(listed.len(), every.len(), "{listed:?}");
+    let mut sorted = every;
     sorted.sort();
     assert_eq!(listed, sorted, "the tree's order is the names' order");
-    for name in &names {
+    for name in &listed {
         again
             .lookup(&alloc::format!("/tree/{name}"))
             .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
     }
+}
+
+#[test]
+fn a_block_a_deletion_gave_back_is_taken_again() {
+    // A block that a merge gave back is not left to waste.  The next split takes
+    // it rather than growing the allocation, because a block that is already the
+    // allocation's is one the volume's clusters are already claimed for — and a
+    // directory whose index only ever grew would keep claiming clusters for
+    // blocks nothing is stored in.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let before = tree_allocation_size(&fs_handle);
+    assert_eq!(
+        tree_blocks_in_use(&fs_handle),
+        8,
+        "the fixture's eight bits"
+    );
+
+    // The name in the tree's second block comes out, the block is empty, and
+    // the two merge: one bit in the index bitmap goes with the block.
+    fs_handle
+        .remove_path("/tree/omega.txt")
+        .expect("a block's name comes out");
+    assert_eq!(tree_bitmap(&fs_handle)[0] & 0b11, 0b01, "the bit came back");
+    assert_eq!(tree_blocks_in_use(&fs_handle), 7, "one block fewer");
+
+    // Filling a block again splits, and the block that went is the one the tree
+    // takes: the allocation does not grow, and the bit is set again.
+    let made = fill_the_tree(&fs_handle);
+    assert_eq!(
+        tree_allocation_size(&fs_handle),
+        before,
+        "the allocation did not grow"
+    );
+    assert_eq!(tree_bitmap(&fs_handle)[0] & 0b11, 0b11, "the block is back");
+
+    // And a second mount lists every name the directory holds, in order.
+    let again = remount(&device);
+    let mut expected = made;
+    expected.extend([String::from("alpha.txt"), String::from("middle.txt")]);
+    expected.sort();
+    assert_eq!(
+        the_listing(&again, "/tree"),
+        expected,
+        "every name is still there"
+    );
 }
 
 #[test]
@@ -1715,6 +1775,11 @@ fn a_pair_that_still_needs_two_blocks_is_not_merged() {
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
     let mut names = fill_the_tree(&fs_handle);
+    names.extend([
+        String::from("alpha.txt"),
+        String::from("middle.txt"),
+        String::from("omega.txt"),
+    ]);
     assert_eq!(
         tree_bitmap(&fs_handle)[0] & 0b11,
         0b11,
@@ -3220,11 +3285,15 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                         )]),
                         TREE_ALLOCATION_BLOCKS * shape.index_block_size() as u64,
                     ));
-                    // One byte names eight blocks, and the tree uses two of
-                    // them: the six between are the blocks the allocation has
-                    // and nothing holds.
+                    // One byte names eight blocks, and the tree's node points
+                    // at two of them.  The other six are the shape this
+                    // driver's own split leaves between its two writes: the
+                    // blocks are the allocation's and the bitmap says they hold
+                    // a node, but the node above has not been written yet — so
+                    // the tree does not grow past them, and it does not take
+                    // them back either.
                     let mut bits = vec![0u8; 1];
-                    bits[0] = 0b11;
+                    bits[0] = 0b1111_1111;
                     attributes.extend(attribute(0xb0, "$I30", &bits, None, 0));
                 }
                 TREE_ALPHA | TREE_MIDDLE | TREE_OMEGA => {
