@@ -468,7 +468,6 @@ pub fn encode_runs(runs: &[DataRun]) -> Vec<u8> {
     out
 }
 
-/// Undo an update sequence array, so the bytes a record's sectors end with are
 /// Put the update sequence array back, which is what makes a rewritten record
 /// one a reader can unpack.
 ///
@@ -493,6 +492,7 @@ pub fn pack_usa(buf: &mut [u8], usa_offset: usize, usa_count: usize, sector_size
     }
 }
 
+/// Undo an update sequence array, so the bytes a record's sectors end with are
 /// the ones they held before the write that put the sequence number there.
 ///
 /// The sector size is the *volume's*, from the boot sector, not the device's:
@@ -987,6 +987,95 @@ pub fn index_entry(name: &str, reference: u64, parent: u64, directory: bool, siz
     entry.resize(length, 0);
     put_u16_le(&mut entry, 8, length as u16);
     entry
+}
+
+/// The entry a node ends with when it has a child: no name, the last-entry
+/// flag, and the child block's virtual cluster number — which is the entry's
+/// *last* eight bytes, where the format puts it, and not the reference field
+/// a name entry keeps its record in: a real volume's pointer entries leave
+/// that zero.
+pub fn index_child_pointer(vcn: u64) -> Vec<u8> {
+    let mut entry = vec![0u8; 24];
+    put_u16_le(&mut entry, 8, 24); // its own length
+    put_u32_le(&mut entry, 12, 0x0000_0003); // points at a node, and is last
+    put_u64_le(&mut entry, 16, vcn);
+    entry
+}
+
+/// A non-resident attribute, named or not, whose value lies in runs.
+///
+/// This is what a `$DATA` with runs, an `$INDEX_ALLOCATION`, or a list that
+/// is a file of its own is: a sixty-four-byte header, the name between it and
+/// the mapping pairs, and the three sizes that say how much of the value is
+/// spoken for.  The last virtual cluster number is what the runs add up to,
+/// less one — the number of the last cluster the attribute covers.
+pub fn non_resident_attribute(
+    attr_type: u32,
+    name: &str,
+    instance: u16,
+    runs: &[DataRun],
+    allocated: u64,
+    data_size: u64,
+    initialized: u64,
+) -> Vec<u8> {
+    let name_bytes: Vec<u8> = name.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let name_offset = 64usize;
+    let runs_offset = name_offset + name_bytes.len();
+    let mut attr = vec![0u8; runs_offset];
+    put_u32_le(&mut attr, 0, attr_type);
+    attr[8] = 1; // non-resident
+    attr[9] = (name_bytes.len() / 2) as u8;
+    put_u16_le(&mut attr, 10, name_offset as u16);
+    put_u16_le(&mut attr, 14, instance);
+    let clusters: u64 = runs.iter().map(|run| run.cluster_count).sum();
+    put_u64_le(&mut attr, 24, clusters.saturating_sub(1)); // last VCN
+    put_u16_le(&mut attr, 32, runs_offset as u16);
+    put_u64_le(&mut attr, 40, allocated);
+    put_u64_le(&mut attr, 48, data_size);
+    put_u64_le(&mut attr, 56, initialized);
+    // The name's own bytes, between the header and the mapping pairs: a
+    // named attribute keeps them there, and a list entry that names it is
+    // matched by them.
+    attr[name_offset..runs_offset].copy_from_slice(&name_bytes);
+    attr.extend_from_slice(&encode_runs(runs));
+    let length = attr.len().div_ceil(8) * 8;
+    attr.resize(length, 0);
+    put_u32_le(&mut attr, 4, length as u32);
+    attr
+}
+
+/// An index allocation block: `INDX`, its own update sequence array, the
+/// virtual cluster number it sits at, and the entries the node inside it
+/// holds.
+///
+/// The node begins twenty-four bytes in, and its entries begin forty bytes
+/// into *the node* — the room the block's update sequence array takes, which
+/// an entries offset of sixteen would write the entries into.  The node's
+/// allocated size is what the block has past its own header, which is what
+/// [`write_index_entries`] fills and what a real volume's blocks declare.
+/// A set of entries that does not fit one block refuses (`NoSpace`): the
+/// format's answer to a full block is a split, which is not built.
+pub fn index_allocation_block(
+    index_block_size: usize,
+    sector_size: usize,
+    vcn: u64,
+    entries: &[Vec<u8>],
+) -> Result<Vec<u8>, Error> {
+    if index_block_size <= 64 {
+        return Err(Error::InvalidArgument);
+    }
+    let mut block = vec![0u8; index_block_size];
+    block[..4].copy_from_slice(b"INDX");
+    put_u16_le(&mut block, 4, 40); // where the update sequence array is
+    let usa_count = 1 + index_block_size / sector_size.max(1);
+    put_u16_le(&mut block, 6, usa_count as u16);
+    put_u64_le(&mut block, 16, vcn);
+    put_u32_le(&mut block, 24, 40); // where the node's entries begin
+    write_index_entries(&mut block, 24, index_block_size - 24, entries)?;
+
+    put_u16_le(&mut block, 40, 0x0401); // the update sequence's own number
+    pack_usa(&mut block, 40, usa_count, sector_size);
+    Ok(block)
 }
 
 /// A resident attribute, with the value its own header points at.

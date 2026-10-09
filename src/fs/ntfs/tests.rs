@@ -8,6 +8,7 @@
 //! public API — `list_xattrs` etc. — which the current `NtfsFs`/`NtfsVnode`
 //! driver does not expose; those tests were dropped with that API.)
 
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -1017,6 +1018,255 @@ fn a_name_a_full_record_has_no_room_for_makes_its_own_room() {
             .filter(|entry| entry.attr_type == 0xe0)
             .all(|entry| entry.holder == FULL_DIRECTORY),
         "while the filler stayed"
+    );
+}
+
+/// Every name a directory lists, in the order it lists them.
+fn the_listing(fs_handle: &super::NtfsFs, path: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for index in 0.. {
+        match fs_handle.read_dir(path, index) {
+            Ok(entry) => names.push(entry.name),
+            Err(_) => break,
+        }
+    }
+    names
+}
+
+/// A record's bytes as the volume holds them — packed, the update sequence
+/// still at every sector's end — which is what a crash leaves and what a test
+/// that recreates one writes back.
+fn record_as_the_volume_holds_it(
+    fs_handle: &super::NtfsFs,
+    device: &alloc::sync::Arc<crate::fs::block::MemoryBlockDevice>,
+    number: u64,
+) -> Vec<u8> {
+    let (at, size) = {
+        let info = fs_handle.info().lock();
+        (
+            fs_handle
+                .record_offset(&info, number)
+                .expect("the record's offset"),
+            info.mft_record_size as usize,
+        )
+    };
+    let mut bytes = alloc::vec![0u8; size];
+    let as_device: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> = device.clone();
+    super::fs::read_device_bytes(&as_device, at, &mut bytes).expect("read the record");
+    bytes
+}
+
+#[test]
+fn entries_that_filled_two_records_leave_for_a_block() {
+    // A directory whose record is full moves its index root into a record of
+    // its own — the way a file's attribute moves — and when *that* record
+    // fills with entries too, the format's answer is the allocation block:
+    // every entry leaves for a block of their own, and the root's node keeps
+    // only the pointer to it.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+
+    // Names until the flip, keeping the bytes of the two records as they were
+    // the moment before it: those bytes are what a crash between the flip's
+    // own writes leaves.
+    let mut names: Vec<String> = Vec::new();
+    let mut before_the_flip: Option<(Vec<u8>, Vec<u8>)> = None;
+    for index in 0..40 {
+        let name = alloc::format!("filled-{index:02}.txt");
+        let holder = fs_handle
+            .attributes_of(FULL_DIRECTORY)
+            .expect("the attributes")
+            .iter()
+            .find(|attr| attr.attr_type == 0x90)
+            .expect("the index root")
+            .holder;
+        let before = (
+            record_as_the_volume_holds_it(&fs_handle, &device, FULL_DIRECTORY),
+            record_as_the_volume_holds_it(&fs_handle, &device, holder),
+        );
+        fs_handle
+            .create_file(&alloc::format!("/full-dir/{name}"))
+            .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
+        names.push(name);
+        let flipped = fs_handle
+            .attributes_of(FULL_DIRECTORY)
+            .expect("the attributes")
+            .iter()
+            .any(|attr| attr.attr_type == 0xa0 && !attr.data_runs.is_empty());
+        if flipped {
+            before_the_flip = Some(before);
+            break;
+        }
+    }
+    let Some((base_before, holder_before)) = before_the_flip else {
+        panic!("the entries left for a block within forty names");
+    };
+
+    // Two more names land in the block, and one of them goes again.
+    fs_handle.create_file("/full-dir/after-a.txt").expect("a");
+    fs_handle.create_file("/full-dir/after-b.txt").expect("b");
+    fs_handle
+        .remove_path("/full-dir/after-a.txt")
+        .expect("a goes");
+    names.push(String::from("after-b.txt"));
+
+    // A second mount lists every name that is still there, and finds each by
+    // its path: the walk descends the root's pointer into the block.
+    let again = remount(&device);
+    for name in &names {
+        again
+            .lookup(&alloc::format!("/full-dir/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+    }
+    let listed = the_listing(&again, "/full-dir");
+    assert_eq!(listed.len(), names.len(), "{listed:?}");
+
+    // The volume's own shape: the two attributes that describe the allocation
+    // live in a record of their own, the base's list names them there, and
+    // the index bitmap says the one block is in use.
+    let attributes = again.attributes_of(FULL_DIRECTORY).expect("the attributes");
+    let holder = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0x90)
+        .expect("the root")
+        .holder;
+    let allocation = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0xa0)
+        .expect("the allocation");
+    let bitmap = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0xb0)
+        .expect("the index bitmap");
+    assert_ne!(holder, FULL_DIRECTORY, "the root left the base record");
+    assert_ne!(
+        allocation.holder, holder,
+        "the allocation is not where the root is"
+    );
+    assert_eq!(allocation.holder, bitmap.holder, "the two are together");
+    assert_eq!(bitmap.content.first(), Some(&1), "the one block's bit");
+    let block_size = again.info().lock().index_block_size as u64;
+    assert_eq!(allocation.data_size as u64, block_size, "one block");
+    let base_record = again.read_mft_record(FULL_DIRECTORY).expect("the base");
+    let base_header = super::types::MftRecordHeader::parse(&base_record).expect("a header");
+    let list = super::fs::parse_attributes(&base_record[base_header.size() as usize..])
+        .into_iter()
+        .find(|attr| attr.attr_type == 0x20)
+        .expect("the list");
+    for attr_type in [0xa0, 0xb0] {
+        let entry = super::fs::parse_attribute_list(&list.content)
+            .into_iter()
+            .find(|entry| entry.attr_type == attr_type)
+            .unwrap_or_else(|| panic!("the list names {attr_type:#x}"));
+        assert_eq!(entry.holder, allocation.holder, "where the two went");
+    }
+
+    // The crash a listing survives: the two records as they were before the
+    // flip are the state between the flip's writes — the record and the block
+    // down, the list not yet naming them, the root's node not yet pointing —
+    // and a mount lists the names the root's value still holds.  The records
+    // the names had claimed stay claimed, which is the leak the order was
+    // chosen for.
+    {
+        let info = again.info().lock();
+        let base_at = again
+            .record_offset(&info, FULL_DIRECTORY)
+            .expect("the base");
+        let holder_at = again.record_offset(&info, holder).expect("the holder");
+        drop(info);
+        let as_device: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> = device.clone();
+        super::fs::write_device_bytes(&as_device, base_at, &base_before).expect("the base back");
+        super::fs::write_device_bytes(&as_device, holder_at, &holder_before)
+            .expect("the holder back");
+    }
+    let recovered = remount(&device);
+    let flipping_name = names
+        .iter()
+        .rev()
+        .find(|name| name.starts_with("filled-"))
+        .expect("the flipping name")
+        .clone();
+    let still_there: Vec<String> = names
+        .iter()
+        .filter(|name| **name != flipping_name && **name != "after-b.txt")
+        .cloned()
+        .collect();
+    let relisted = the_listing(&recovered, "/full-dir");
+    assert_eq!(relisted.len(), still_there.len(), "{relisted:?}");
+    for name in &still_there {
+        assert!(relisted.contains(name), "{name} missing: {relisted:?}");
+    }
+    assert!(!relisted.contains(&flipping_name), "{relisted:?}");
+}
+
+#[test]
+fn a_small_directory_that_fills_a_moved_root_fills_a_block_next() {
+    // The subdirectory's entries begin in its index root, and a name at a
+    // time grows that value until its record is full — the root moves into a
+    // record of its own, which is the way a file's attribute moves — and the
+    // record fills with entries in its turn.  What a volume does then is keep
+    // the entries in an allocation block, and so does this one.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+
+    let mut names = vec![String::from("leaf.txt")];
+    let mut flipped = false;
+    for index in 0..40 {
+        let name = alloc::format!("grown-{index:02}.txt");
+        fs_handle
+            .create_file(&alloc::format!("/sub/{name}"))
+            .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
+        names.push(name);
+        flipped = fs_handle
+            .attributes_of(SUBDIRECTORY)
+            .expect("the attributes")
+            .iter()
+            .any(|attr| attr.attr_type == 0xa0 && !attr.data_runs.is_empty());
+        if flipped {
+            break;
+        }
+    }
+    assert!(flipped, "the entries left for a block within forty names");
+
+    // A second mount finds every name — the last few through the root's
+    // pointer into the block — and the shape the volume now keeps: the base
+    // record holds the list and nothing of the index but that, and the root
+    // and the two attributes that describe the allocation are in records of
+    // their own.
+    let again = remount(&device);
+    for name in &names {
+        again
+            .lookup(&alloc::format!("/sub/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+    }
+    let listed = the_listing(&again, "/sub");
+    assert_eq!(listed.len(), names.len(), "{listed:?}");
+
+    let attributes = again.attributes_of(SUBDIRECTORY).expect("the attributes");
+    let holder = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0x90)
+        .expect("the root")
+        .holder;
+    let allocation = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0xa0)
+        .expect("the allocation");
+    assert_ne!(holder, SUBDIRECTORY, "the root left the base record");
+    assert_ne!(allocation.holder, SUBDIRECTORY, "and so did the allocation");
+    assert_ne!(allocation.holder, holder, "each in a record of its own");
+    let base_record = again.read_mft_record(SUBDIRECTORY).expect("the base");
+    let base_header = super::types::MftRecordHeader::parse(&base_record).expect("a header");
+    let inline = super::fs::parse_attributes(&base_record[base_header.size() as usize..]);
+    assert!(
+        !inline.iter().any(|attr| {
+            attr.attr_type == 0x90 || attr.attr_type == 0xa0 || attr.attr_type == 0xb0
+        }),
+        "the index left the base record entirely: {inline:?}"
+    );
+    assert!(
+        inline.iter().any(|attr| attr.attr_type == 0x20),
+        "the list is what stayed"
     );
 }
 

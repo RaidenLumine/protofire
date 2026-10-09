@@ -167,6 +167,45 @@ fn bytes_in_use(record: &[u8]) -> usize {
     u32::from_le_bytes([record[24], record[25], record[26], record[27]]) as usize
 }
 
+/// The value of a record's `$ATTRIBUTE_LIST`, with an entry added for the
+/// attribute that is about to join an extension record of its own — and one
+/// for the index bitmap beside it — each where its own type sorts.
+///
+/// `home` is the record the two new entries name, which is only known for
+/// certain once the record has been claimed; the measurement that decides
+/// whether it can be claimed builds the value around a placeholder, because
+/// the entries' lengths do not depend on the record they name.
+fn allocation_list_value(listed: &[fs::AttributeListEntry], instance: u16, home: u64) -> Vec<u8> {
+    let allocation = fs::list_entry(ATTR_TYPE_INDEX_ALLOC, "$I30", instance, 0, home);
+    let bitmap = fs::list_entry(ATTR_TYPE_BITMAP, "$I30", instance.wrapping_add(1), 0, home);
+    let mut value = Vec::new();
+    let (mut named_allocation, mut named_bitmap) = (false, false);
+    for entry in listed {
+        if !named_allocation && entry.attr_type > ATTR_TYPE_INDEX_ALLOC {
+            value.extend_from_slice(&allocation);
+            named_allocation = true;
+        }
+        if !named_bitmap && entry.attr_type > ATTR_TYPE_BITMAP {
+            value.extend_from_slice(&bitmap);
+            named_bitmap = true;
+        }
+        value.extend_from_slice(&fs::list_entry(
+            entry.attr_type,
+            entry.name.as_deref().unwrap_or(""),
+            entry.instance,
+            entry.lowest_vcn,
+            entry.holder | (u64::from(entry.sequence) << 48),
+        ));
+    }
+    if !named_allocation {
+        value.extend_from_slice(&allocation);
+    }
+    if !named_bitmap {
+        value.extend_from_slice(&bitmap);
+    }
+    value
+}
+
 /// The attributes a new record holds.
 /// What a new record is for, which is what decides what it holds.
 enum NewRecord<'a> {
@@ -398,8 +437,7 @@ impl NtfsFs {
         if u16::from_le_bytes([record[16], record[17]]) != entry.sequence {
             return Err(Error::InvalidArgument);
         }
-        let attributes = parse_attributes(&record[header.size() as usize..]);
-        let mut attributes = attributes;
+        let mut attributes = parse_attributes(&record[header.size() as usize..]);
         for attribute in &mut attributes {
             attribute.holder = entry.holder;
         }
@@ -665,11 +703,6 @@ impl NtfsFs {
         Ok(())
     }
 
-    /// The extension records a record's `$ATTRIBUTE_LIST` puts its attributes
-    /// in.
-    /// Make room in a record by moving one of its attributes into a record of
-    /// its own.
-    ///
     /// Write a grown `$DATA` where it lives: the run list, the allocated, data
     /// and initialized sizes, and the last virtual cluster number, in the
     /// record that holds the attribute.
@@ -1353,9 +1386,17 @@ impl NtfsFs {
     /// The entries a node holds are rewritten as a run, with the new one in
     /// the place its folded name sorts to and the node's terminator last: an
     /// index is ordered, and an entry that breaks the order is not one a real
-    /// NTFS would have written.  A node that has no room for the entry refuses
-    /// (`NoSpace`) rather than writing past what it owns — the format's answer
-    /// to a full node is to split it, which this driver does not do yet.
+    /// NTFS would have written.  A node that has no room for the entry
+    /// refuses (`NoSpace`) rather than writing past what it owns.
+    ///
+    /// What answers that refusal is the shape of the node.  A root whose
+    /// record has something to spare moves into a record of its own
+    /// ([`Self::make_room`]), and the insertion is worked out again there.  A
+    /// root that cannot grow in *any* record — one already in a record of its
+    /// own, or one that filled the record it was moved to — hands its entries
+    /// to an [`Self::entries_leave_for_a_block`] of their own, and the
+    /// insertion lands in the block.  A *block* with no room is a split,
+    /// which is not built, and refuses.
     fn index_insert(
         &self,
         parent_record: u64,
@@ -1412,12 +1453,305 @@ impl NtfsFs {
                         IndexHome::Record { holder } => holder,
                         IndexHome::Block { .. } => return Err(Error::NoSpace),
                     };
+                    if self.base_record(holder).is_some() {
+                        // The root already lives in a record of its own, and
+                        // no extension extends another: the entries leave for
+                        // a block, which is the format's answer to a root
+                        // that cannot grow anywhere.
+                        self.entries_leave_for_a_block(parent_record, &raws)?;
+                        return Ok(());
+                    }
                     self.make_room(holder, ATTR_TYPE_INDEX_ROOT)?;
+                }
+                Err(Error::NoSpace) if attempt == 1 => {
+                    match home {
+                        IndexHome::Record { .. } => {
+                            // The root moved into a record of its own and
+                            // filled that too: the entries leave for a block.
+                            self.entries_leave_for_a_block(parent_record, &raws)?;
+                            return Ok(());
+                        }
+                        IndexHome::Block { .. } => return Err(Error::NoSpace),
+                    }
                 }
                 Err(error) => return Err(error),
             }
         }
         Err(Error::NoSpace)
+    }
+
+    /// The entries of a full index root, moved into an `$INDEX_ALLOCATION`
+    /// block of their own.
+    ///
+    /// This is the format's answer to a root that cannot grow in any record —
+    /// the one a record full of *entries* needs, where the root's move into a
+    /// record of its own has already been spent.  Every entry leaves the
+    /// root's value for a **block**; the two attributes that describe the
+    /// allocation — the runs and the bitmap of the blocks, both named `$I30`
+    /// — go into an extension record of their own, the base's
+    /// `$ATTRIBUTE_LIST` names them where they went, and the root's node
+    /// keeps only the pointer to the block, whose virtual cluster number is
+    /// the pointer's last eight bytes.
+    ///
+    /// The writes are ordered by what a crash between them leaves, and every
+    /// window is one a mount reads.  The record and the block go down first —
+    /// a record in use that nothing names and a block nothing points at are
+    /// leaks, the harmless direction.  The base's list second: the root still
+    /// holds its entries as a value, so a listing reads them where they were.
+    /// The root's node last, and that write is the one that turns the index
+    /// into a tree.
+    ///
+    /// A block smaller than a cluster is one no virtual cluster number can
+    /// address (`NotImplemented`), a set of entries that does not fit one
+    /// block refuses (`NoSpace`), and so does a base whose list cannot take
+    /// two more entries — refused before anything is claimed, so nothing is
+    /// half-spent.
+    fn entries_leave_for_a_block(&self, parent_record: u64, entries: &[Vec<u8>]) -> Result<()> {
+        let (index_block_size, cluster_size, sector_size) = {
+            let info = self.info.lock();
+            (
+                info.index_block_size,
+                info.cluster_size,
+                usize::from(info.bs.bytes_per_sector),
+            )
+        };
+        let clusters = u64::from(index_block_size / cluster_size.max(1));
+        if clusters == 0 {
+            return Err(Error::NotImplemented);
+        }
+
+        let attributes = self.attributes_of(parent_record)?;
+        let root = attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_INDEX_ROOT)
+            .ok_or(Error::NotFound)?;
+        // A root still in its own record is one the move answers: the block is
+        // for a root whose move has been spent, which is the only way this is
+        // reached.
+        let holder = root.holder;
+        if holder == u64::MAX || holder == parent_record {
+            return Err(Error::NotImplemented);
+        }
+        if attributes.iter().any(|attribute| {
+            attribute.attr_type == ATTR_TYPE_INDEX_ALLOC && !attribute.data_runs.is_empty()
+        }) {
+            return Err(Error::InvalidArgument);
+        }
+
+        // The base's list is what says where the root went, so it is what will
+        // say where the two attributes went — a list that is a file of its own
+        // is grown by a step of its own, and is refused here.
+        let mut base = self.read_mft_record(parent_record)?;
+        let mut base_header = MftRecordHeader::parse(&base).ok_or(Error::InvalidArgument)?;
+        let base_at = base_header.size() as usize;
+        let mut base_attributes = parse_attributes(&base[base_at..]);
+        let mut list = base_attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
+            .ok_or(Error::InvalidArgument)?
+            .clone();
+        if list.data_runs_offset.is_some() {
+            return Err(Error::NotImplemented);
+        }
+        let mut listed = self.list_entries(&list)?;
+        let instance = u16::from_le_bytes([base[40], base[41]]);
+
+        // The base as the list will leave it: two entries longer than it is
+        // now, each where its own type sorts.  The entries' lengths do not
+        // depend on the record they name, so the fit is measured against a
+        // list built around a placeholder before anything is claimed — and a
+        // base that cannot hold the growth makes room first, its largest
+        // attribute that is not the list moving into a record of its own,
+        // which is what the list's entry for it then names.
+        let measured = |listed: &[fs::AttributeListEntry], value_offset: usize| -> usize {
+            let value = allocation_list_value(listed, instance, 0);
+            (value_offset + value.len()).div_ceil(8) * 8
+        };
+        let mut room = measured(&listed, list.value_offset);
+        let mut new_used = bytes_in_use(&base) + room - list.attr_len;
+        if new_used + 8 > base.len() {
+            let largest = base_attributes
+                .iter()
+                .filter(|attribute| attribute.attr_type != ATTR_TYPE_ATTRIBUTE_LIST)
+                .max_by_key(|attribute| attribute.attr_len)
+                .ok_or(Error::NoSpace)?;
+            let growing = largest.attr_type;
+            self.make_room(parent_record, growing)?;
+            base = self.read_mft_record(parent_record)?;
+            base_header = MftRecordHeader::parse(&base).ok_or(Error::InvalidArgument)?;
+            base_attributes = parse_attributes(&base[base_at..]);
+            list = base_attributes
+                .iter()
+                .find(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
+                .ok_or(Error::InvalidArgument)?
+                .clone();
+            listed = self.list_entries(&list)?;
+            room = measured(&listed, list.value_offset);
+            new_used = bytes_in_use(&base) + room - list.attr_len;
+            if new_used + 8 > base.len() {
+                return Err(Error::NoSpace);
+            }
+        }
+
+        // What the block and its two attributes are, and where: the clusters
+        // first, then the block's own bytes, then the record that carries the
+        // two attributes — each of the three refused with what it took given
+        // straight back.
+        let first = match self.claim_clusters(clusters) {
+            Ok(first) => first,
+            Err(error) => {
+                return Err(error);
+            }
+        };
+        let runs = alloc::vec![DataRun {
+            lcn: first as i64,
+            cluster_count: clusters,
+        }];
+        let block =
+            match fs::index_allocation_block(index_block_size as usize, sector_size, 0, entries) {
+                Ok(block) => block,
+                Err(error) => {
+                    self.free_clusters(&runs)?;
+                    return Err(error);
+                }
+            };
+        let allocation = fs::non_resident_attribute(
+            ATTR_TYPE_INDEX_ALLOC,
+            "$I30",
+            instance,
+            &runs,
+            u64::from(index_block_size),
+            u64::from(index_block_size),
+            u64::from(index_block_size),
+        );
+        let mut bits = alloc::vec![0u8; 8];
+        bits[0] = 1; // the one block is in use
+        let bitmap =
+            fs::resident_attribute(ATTR_TYPE_BITMAP, "$I30", instance.wrapping_add(1), &bits);
+        let (home_of_the_two, _) = match self.claim_record(NewRecord::Extension {
+            base: parent_record,
+            attributes: alloc::vec![allocation, bitmap],
+        }) {
+            Ok(claimed) => claimed,
+            Err(error) => {
+                self.free_clusters(&runs)?;
+                return Err(error);
+            }
+        };
+        {
+            let info = self.info.lock();
+            fs::write_to_runs(&self.device, &info, &runs, 0, &block)?;
+        }
+
+        // The base's list, with the entries that name where the two
+        // attributes went.  The root still holds the entries as a value, so a
+        // mount here lists them where they were.
+        let home_reference = {
+            let record = self.read_mft_record(home_of_the_two)?;
+            let sequence = u16::from_le_bytes([record[16], record[17]]);
+            home_of_the_two | (u64::from(sequence) << 48)
+        };
+        let list_value = allocation_list_value(&listed, instance, home_reference);
+        let at = base_at + list.offset;
+        let mut new_list = base[at..at + list.attr_len].to_vec();
+        new_list.resize(room, 0);
+        new_list[4..8].copy_from_slice(&(room as u32).to_le_bytes());
+        new_list[16..20].copy_from_slice(&(list_value.len() as u32).to_le_bytes());
+        new_list[list.value_offset..list.value_offset + list_value.len()]
+            .copy_from_slice(&list_value);
+
+        let mut rebuilt_base = base[..base_at].to_vec();
+        for attribute in &base_attributes {
+            let at = base_at + attribute.offset;
+            if attribute.offset == list.offset {
+                rebuilt_base.extend_from_slice(&new_list);
+            } else {
+                rebuilt_base.extend_from_slice(&base[at..at + attribute.attr_len]);
+            }
+        }
+        rebuilt_base.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        let used = rebuilt_base.len();
+        rebuilt_base.resize(base.len(), 0);
+        rebuilt_base[24..28].copy_from_slice(&(used as u32).to_le_bytes());
+        rebuilt_base[40..42].copy_from_slice(&instance.wrapping_add(2).to_le_bytes());
+        {
+            let (at, sector) = {
+                let info = self.info.lock();
+                (
+                    self.record_offset(&info, parent_record)?,
+                    usize::from(info.bs.bytes_per_sector),
+                )
+            };
+            fs::pack_usa(
+                &mut rebuilt_base,
+                base_header.usa_offset as usize,
+                base_header.usa_count as usize,
+                sector,
+            );
+            fs::write_device_bytes(&self.device, at, &rebuilt_base)?;
+            self.mft_cache.lock().insert(parent_record, rebuilt_base);
+        }
+
+        // The root, reduced to the node that points at the block: its own
+        // header is the value's first sixteen bytes and stays, and the node's
+        // only entry is the pointer, whose last eight bytes are where the
+        // format puts the child's virtual cluster number.  This write is what
+        // turns the index into a tree, so it is the last.
+        let home = self.read_mft_record(holder)?;
+        let home_header = MftRecordHeader::parse(&home).ok_or(Error::InvalidArgument)?;
+        let home_at = home_header.size() as usize;
+        let home_attributes = parse_attributes(&home[home_at..]);
+        let root_here = home_attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_INDEX_ROOT)
+            .ok_or(Error::InvalidArgument)?;
+        let attr_len = root_here.value_offset + 56;
+        let mut new_root = home
+            [home_at + root_here.offset..home_at + root_here.offset + root_here.attr_len]
+            .to_vec();
+        new_root.resize(attr_len, 0);
+        new_root[4..8].copy_from_slice(&(attr_len as u32).to_le_bytes());
+        new_root[16..20].copy_from_slice(&56u32.to_le_bytes());
+        let value_at = root_here.value_offset;
+        new_root[value_at + 16..value_at + 20].copy_from_slice(&16u32.to_le_bytes());
+        new_root[value_at + 20..value_at + 24].copy_from_slice(&40u32.to_le_bytes());
+        new_root[value_at + 24..value_at + 28].copy_from_slice(&40u32.to_le_bytes());
+        new_root[value_at + 28..value_at + 32].copy_from_slice(&1u32.to_le_bytes());
+        new_root[value_at + 32..value_at + 56].copy_from_slice(&fs::index_child_pointer(0));
+
+        let mut rebuilt_home = home[..home_at].to_vec();
+        for attribute in &home_attributes {
+            let at = home_at + attribute.offset;
+            if attribute.offset == root_here.offset {
+                rebuilt_home.extend_from_slice(&new_root);
+            } else {
+                rebuilt_home.extend_from_slice(&home[at..at + attribute.attr_len]);
+            }
+        }
+        rebuilt_home.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        // The value only ever *shrinks* here, so the record it leaves has the
+        // room by construction; the sizes follow the layout all the same.
+        let used = rebuilt_home.len();
+        rebuilt_home.resize(home.len(), 0);
+        rebuilt_home[24..28].copy_from_slice(&(used as u32).to_le_bytes());
+        {
+            let (at, sector) = {
+                let info = self.info.lock();
+                (
+                    self.record_offset(&info, holder)?,
+                    usize::from(info.bs.bytes_per_sector),
+                )
+            };
+            fs::pack_usa(
+                &mut rebuilt_home,
+                home_header.usa_offset as usize,
+                home_header.usa_count as usize,
+                sector,
+            );
+            fs::write_device_bytes(&self.device, at, &rebuilt_home)?;
+            self.mft_cache.lock().insert(holder, rebuilt_home);
+        }
+        Ok(())
     }
 
     /// Take a name out of a directory's index.

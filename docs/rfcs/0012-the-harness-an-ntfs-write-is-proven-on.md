@@ -156,6 +156,10 @@ never from `make verify`: the gates do not depend on a host tool.
    **extension record** of its own, named by an `$ATTRIBUTE_LIST` — read
    first, so that a volume taken apart by another writer reads here, and then
    written, which is what lets a record that is *full* grow.
+5. **The index allocation.**  A directory whose entries do not fit any
+   record's index root keeps them in an **`$INDEX_ALLOCATION` block**, with the
+   bitmap that says which of the blocks are in use, and the root's node keeps
+   only the pointer to the first one.
 
 ### The journal, decided once
 
@@ -256,9 +260,10 @@ what stage 1's record serialisation is for.
   open is the other answer to a name that does not fit: a record with no room
   gets an allocation block of its own, and with it the index bitmap's bits.
   *Stage 4b* makes such a record's *room* by moving another attribute into an
-  extension record, which is enough while the record has one to spare; the
-  block of its own — a record full of index entries and nothing else — is not
-  built.
+  extension record, which is enough while the record has one to spare — and
+  *stage 5* answers the other half: a directory whose entries do not fit the
+  record the root moved to keeps them in a block, with the index bitmap's
+  bits, and the root reduced to the node that points at it.
 - **Compressed, encrypted and sparse `$DATA`.**  `docs/status.md` records
   that they are not covered.  Writing one is a different problem from writing
   a plain runlist — compression units, EFS metadata, and runs that name no
@@ -703,3 +708,50 @@ being something a partial write can ignore.
   that arrives moves the index root out of it and grows it there.  Both keep
   what stage 4b proved: the second mount, the length, the listing, and a writer
   that can still change the file afterwards.
+
+**Stage 5 — the entries leave for a block.**
+
+- The answer a directory needs when a *name* does not fit anywhere: its entries
+  leave the index root's value for an **`$INDEX_ALLOCATION` block**; the two
+  attributes that describe the allocation — the runs, and the bitmap of the
+  blocks, both named `$I30` — go into a record of their own, whose base
+  reference names the directory and which the base's `$ATTRIBUTE_LIST` names in
+  turn, exactly the way stage 4 leaves things; and the root's node keeps only
+  the pointer to the block.
+- **When** it happens: the root has already left the base record — stage 4c
+  moved it, or the name would not have fitted — and the record it moved *to* is
+  full of entries in its turn.  The entries then have nowhere to grow, which is
+  what the block is for; a base whose record still has something to spare makes
+  room by the route stage 4c built.
+- **The block** is `INDX`, its own update sequence array, the virtual cluster
+  number it holds, and a node twenty-four bytes in whose entries begin forty
+  bytes into *the node* — the array sits in front of them — with the node's
+  allocated size what the block has past its header.  A real volume's block is
+  the same shape: measured on one `mkntfs` made, the node's entries offset is
+  40 and its allocated size the block less 24.
+- **The root**, reduced: its node's entries become the one pointer entry, whose
+  virtual cluster number is the entry's **last** eight bytes and whose reference
+  field is left zero — the fact the pointer fix added to stage 0's list of what
+  the fixture had wrong.  Measured, the root's value is then 56 bytes: its node's
+  entries offset 16, its index length and allocated size 40, its flags 1.
+- **The writes are ordered by what a crash leaves**, and every window is one a
+  mount reads: the record that carries the two attributes and the block itself
+  first — a record in use that nothing names, and a block nothing points at, are
+  leaks, the harmless direction — the base's list second, because the root still
+  holds its entries as a value and a listing reads them where they were, and the
+  root's node **last**, which is the write that turns the index into a tree.
+- **What is refused**: a block smaller than a cluster, which no virtual cluster
+  number can address (`NotImplemented`); a set of entries that does not fit one
+  block (`NoSpace`, the format's answer to a full block being a split, which is
+  not built); a base whose `$ATTRIBUTE_LIST` is a file of its own
+  (`NotImplemented`, growing one is a step of its own); and a base that cannot
+  hold the two new list entries even after making room (`NoSpace`).
+- Two tests: a directory whose record is full runs names in until the root has
+  moved into a record of its own and filled *that*, and the entries then leave
+  for a block — a second mount lists every name and finds each by its path, the
+  shape is checked attribute by attribute (where the root, the allocation and
+  the bitmap live, the one bit the index bitmap sets, the two list entries), and
+  the crash window above is **replayed**: the two records are rewound to the
+  bytes they held the moment before the root's last write, and a mount lists the
+  names the root's value still holds.  And a small directory whose root begins in
+  its own record fills it the same way, one name at a time.

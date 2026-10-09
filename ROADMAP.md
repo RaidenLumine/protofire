@@ -161,10 +161,16 @@ The authoritative picture of what exists today is
   record that is *full* grows.  The attribute that needs the room is the one
   that moves — as the format's own writer does — the largest others go with it
   when the list needs more, and a list the record already has is *extended*
-  rather than refused.  What is left of the stage is the `$INDEX_ALLOCATION` a
-  directory full of entries needs, and the two shapes the fixture does not
-  carry: a record that is itself an extension, and one where even moving
-  everything leaves no room for the list.
+  rather than refused.  And a directory whose entries do not fit any record's
+  index root keeps them in an **`$INDEX_ALLOCATION` block**: the entries leave
+  the root's value, the runs and the `$I30` bitmap of the blocks go into a
+  record of their own that the base's list names, and the root's node keeps only
+  the pointer — written after the record and the block, so every window between
+  the writes is one a mount reads.  What is left of the stage is a *second*
+  index block — an entries set that does not fit one block is a split, and the
+  index bitmap would have to grow with it — and the two shapes the fixture does
+  not carry: a record that is itself an extension, and a record where even
+  moving everything leaves no room for the list.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped
