@@ -293,6 +293,9 @@ what stage 1's record serialisation is for.
   that they are not covered.  Writing one is a different problem from writing
   a plain runlist — compression units, EFS metadata, and runs that name no
   cluster — and this RFC does not decide them.
+  *[RFC 0013](0013-refuse-the-ntfs-streams-this-driver-cannot-read.md)
+  decides them*: a compressed or encrypted stream is refused rather than
+  misread, and a sparse one reads and fills as a hole should.
 
 ## What landed
 
