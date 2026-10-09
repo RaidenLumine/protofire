@@ -2941,6 +2941,50 @@ fn a_volume_mkntfs_wrote_is_read_and_written_back() {
     assert_eq!(bytes, content.as_bytes());
 }
 
+/// A **compressed** stream on a volume `mkntfs` made, refused rather than
+/// misread: [RFC
+/// 0013](../../docs/rfcs/0013-refuse-the-ntfs-streams-this-driver-cannot-read.
+/// md)'s first stage, on a volume this driver did not build and with a file no
+/// part of it wrote.
+#[test]
+#[ignore = "driven by scripts/check-ntfs-image.sh, which makes the volumes it needs"]
+fn a_compressed_stream_on_a_real_volume_is_refused() {
+    // `mkntfs -C` makes a volume whose files are compressed, so the `$DATA` of
+    // the file `ntfscp` puts in it carries the compressed flag and its runs
+    // name clusters holding an LZNT1 bitstream.  The reader answered a read of
+    // it with those bytes, at the file's own length, which a caller cannot
+    // tell from the file's bytes; it refuses now, and the file stays listed,
+    // because a name is not a stream.
+    let path = std::env::var("PROTOFIRE_NTFS_COMPRESSED")
+        .expect("the check runs this test with a compressed volume");
+    let name = std::env::var("PROTOFIRE_NTFS_COMPRESSED_NAME")
+        .expect("the check names the compressed file it injected");
+
+    let image = std::fs::read(&path).expect("the volume mkntfs -C made");
+    let device = crate::fs::block::MemoryBlockDevice::new("compressed", image, false);
+    let fs_handle = super::NtfsFs::new(device).expect("mount it");
+
+    let listed = the_listing(&fs_handle, "/");
+    assert!(
+        listed.contains(&String::from(name.trim_start_matches('/'))),
+        "the compressed file is still listed: {listed:?}"
+    );
+    let node = fs_handle.lookup(&name).expect("the compressed file");
+    assert!(
+        node.size() > 0,
+        "and it has a length, which is in its record"
+    );
+    let mut bytes = alloc::vec![0u8; 64];
+    assert!(
+        matches!(node.read(0, &mut bytes), Err(Error::NotImplemented)),
+        "a read of it is refused rather than answered with the bitstream"
+    );
+    assert!(
+        matches!(node.write(0, b"x"), Err(Error::NotImplemented)),
+        "and so is a write"
+    );
+}
+
 /// A fixture volume, and where the parts a test asks about are.
 struct Fixture {
     image: Vec<u8>,
@@ -3904,6 +3948,7 @@ fn get_best_filename_prefers_win32_over_dos() {
     let dos = ParsedAttr {
         attr_type: ATTR_TYPE_FILENAME,
         instance: 2,
+        flags: 0,
         holder: 24,
         name: None,
         offset: 0,
@@ -3917,6 +3962,7 @@ fn get_best_filename_prefers_win32_over_dos() {
     let win32 = ParsedAttr {
         attr_type: ATTR_TYPE_FILENAME,
         instance: 3,
+        flags: 0,
         holder: 24,
         name: None,
         offset: 0,

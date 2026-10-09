@@ -109,3 +109,33 @@ grep -q 'processed successfully' "$work/ntfsfix.log" ||
     fail "ntfsfix -n finished without accepting the volume"
 
 printf 'ntfs image check passed: mounted a volume mkntfs made, read the host'"'"'s file, and a foreign reader accepts what the driver wrote\n'
+
+# ── A compressed stream, refused rather than misread ────────────────────
+#
+# `mkntfs -C` makes a volume whose files are compressed, so this is a
+# compressed `$DATA` that no part of this driver wrote.  Its runs name
+# clusters holding an LZNT1 bitstream, and the reader used to answer a read of
+# it with those bytes — at the file's own length, which a caller cannot tell
+# from the file.  RFC 0013 decides the refusal; this is where it is proven on
+# a volume the driver did not build.
+compressed="$work/compressed.ntfs"
+dd if=/dev/zero of="$compressed" bs=1M count=16 status=none
+if ! mkntfs -F -q -C -L protofire-compressed "$compressed" >"$work/mkntfs-compressed.log" 2>&1; then
+    cat "$work/mkntfs-compressed.log" >&2
+    fail "mkntfs could not make the compressed volume"
+fi
+content_name='/big.txt'
+yes 'the quick brown fox jumps over the lazy dog' | head -600 >"$work/big.txt"
+ntfscp -f "$compressed" "$work/big.txt" "$content_name" ||
+    fail "could not inject the compressible file"
+ntfsinfo -F "$content_name" "$compressed" 2>/dev/null |
+    grep -q 'Attribute flags:.*0x0001' ||
+    fail "the file the check injected is not compressed, so it proves nothing"
+
+PROTOFIRE_NTFS_COMPRESSED="$compressed" \
+PROTOFIRE_NTFS_COMPRESSED_NAME="$content_name" \
+    "$CARGO" test --offline --lib -- \
+    --ignored --exact "fs::ntfs::tests::a_compressed_stream_on_a_real_volume_is_refused" ||
+    fail "a compressed stream was not refused, or the file was not listed"
+
+printf 'ntfs image check passed (compressed): a compressed stream is refused, not misread\n'

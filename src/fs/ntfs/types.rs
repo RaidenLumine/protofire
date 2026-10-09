@@ -149,6 +149,16 @@ pub const ATTR_TYPE_EA_INFORMATION: u32 = 0xD0;
 pub const ATTR_TYPE_REPARSE_POINT: u32 = 0xC0;
 pub const ATTR_TYPE_END: u32 = 0xFFFF_FFFF;
 
+/// An attribute's flags: the stream is **compressed** — its runs name clusters
+/// that hold an LZNT1 bitstream, one compression unit at a time.
+pub const ATTR_FLAG_COMPRESSED: u16 = 0x0001;
+/// The stream is **encrypted** (EFS): what its runs name is ciphertext, and
+/// the key is the user's, not the volume's.
+pub const ATTR_FLAG_ENCRYPTED: u16 = 0x4000;
+/// The stream is **sparse**: a run may name no cluster at all, and the bytes
+/// there are zeros.
+pub const ATTR_FLAG_SPARSE: u16 = 0x8000;
+
 /// NTFS reparse tag: symbolic link.
 pub const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000_000C;
 /// NTFS reparse tag: junction point (directory mount point).
@@ -197,6 +207,15 @@ pub struct ParsedAttr {
     /// up: a record can hold two attributes of the same type, so an
     /// `$ATTRIBUTE_LIST` names one by its name *and* by this.
     pub instance: u16,
+    /// The attribute's own flags: whether its stream is compressed,
+    /// encrypted or sparse.
+    ///
+    /// A reader has to ask before it reads: a compressed stream's runs name
+    /// clusters that hold an LZNT1 bitstream, so reading them as bytes answers
+    /// a caller with something that looks like the file and is not.  See
+    /// [RFC 0013](../../docs/rfcs/
+    /// 0013-refuse-the-ntfs-streams-this-driver-cannot-read.md).
+    pub flags: u16,
     /// The attribute's name, when it has one.
     pub name: Option<String>,
     /// The record whose bytes the attribute is *wholly* in, or `u64::MAX` when
@@ -582,6 +601,7 @@ mod tests {
         let dos = ParsedAttr {
             attr_type: ATTR_TYPE_FILENAME,
             instance: 2,
+            flags: 0,
             holder: 24,
             name: None,
             offset: 0,
@@ -595,6 +615,7 @@ mod tests {
         let win32 = ParsedAttr {
             attr_type: ATTR_TYPE_FILENAME,
             instance: 3,
+            flags: 0,
             holder: 24,
             name: None,
             offset: 0,

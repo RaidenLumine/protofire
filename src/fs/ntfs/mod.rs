@@ -175,6 +175,26 @@ fn bytes_in_use(record: &[u8]) -> usize {
     u32::from_le_bytes([record[24], record[25], record[26], record[27]]) as usize
 }
 
+/// Refuse a stream this driver cannot read, rather than returning bytes that
+/// are not the file's.
+///
+/// A `$DATA` whose flags say it is **compressed** has runs that name clusters
+/// holding an LZNT1 bitstream, and one whose flags say it is **encrypted**
+/// holds ciphertext; either read as a plain runlist answers a caller with
+/// something file-shaped and false, and a read that succeeds and is wrong is
+/// the one failure a filesystem cannot report.  `NotImplemented` can be
+/// reported, and [RFC
+/// 0013](../../docs/rfcs/0013-refuse-the-ntfs-streams-this-driver-cannot-read.
+/// md) decides it is the answer: the file stays listed — its name and sizes are
+/// in its parent's index — and the operation that asks for its bytes is what
+/// fails.
+fn refuse_a_stream_this_driver_cannot_read(attribute: &ParsedAttr) -> Result<()> {
+    if attribute.flags & (ATTR_FLAG_COMPRESSED | ATTR_FLAG_ENCRYPTED) != 0 {
+        return Err(Error::NotImplemented);
+    }
+    Ok(())
+}
+
 /// The value of a record's `$ATTRIBUTE_LIST`, with an entry added for the
 /// attribute that is about to join an extension record of its own — and one
 /// for the index bitmap beside it — each where its own type sorts.
@@ -3526,6 +3546,7 @@ impl VNode for NtfsVnode {
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
             .ok_or(Error::NotFound)?;
+        refuse_a_stream_this_driver_cannot_read(data_attr)?;
 
         let file_size = data_attr.data_size as u64;
         let data_runs = &data_attr.data_runs;
@@ -3583,6 +3604,7 @@ impl VNode for NtfsVnode {
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
             .ok_or(Error::NotFound)?;
+        refuse_a_stream_this_driver_cannot_read(data)?;
 
         if data.data_runs_offset.is_none() {
             // A resident file's bytes are in the record itself, so the field
@@ -3640,6 +3662,7 @@ impl VNode for NtfsVnode {
             .find(|attribute| attribute.attr_type == ATTR_TYPE_DATA)
             .ok_or(Error::NotFound)?
             .clone();
+        refuse_a_stream_this_driver_cannot_read(&data)?;
 
         // A growth's clusters are taken **before** the record is touched:
         // claiming reads and writes the volume's bitmap, which are record

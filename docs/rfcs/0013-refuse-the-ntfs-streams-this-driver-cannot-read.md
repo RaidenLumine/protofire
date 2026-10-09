@@ -165,19 +165,24 @@ compressed file unless `-C` is passed, and no sparse one at all.
 
 ## How this is proven
 
-- **Stage 1**: the fixture gains a record whose `$DATA` carries the
-  compressed flag and one that carries the encrypted flag, and the tests
-  `a_compressed_stream_is_refused_rather_than_misread` and
-  `an_encrypted_stream_is_refused` read and write both and require
-  `NotImplemented` with the file still listed; a third,
-  `a_plain_stream_whose_flags_say_sparse_still_reads_its_runs`, is what keeps
-  the check from becoming a blanket refusal.
-- **The same fact on a real volume**: `mkntfs -C` plus `ntfscp` makes a
-  compressed `$DATA` with no help from this driver — that is where the
-  bitstream above came from — and `scripts/check-ntfs-image.sh` is where it
-  belongs: mount that volume, ask for the compressed file, and require the
-  refusal rather than 26,400 bytes of bitstream.  `ntfscat` on the same image
-  is what a later stage's decompressor will be judged against.
+- **Stage 1, as it landed**: `scripts/check-ntfs-image.sh` makes a second
+  volume with `mkntfs -C`, injects a compressible file with `ntfscp`, and
+  requires that the tool made it compressed (`ntfsinfo` must report the
+  compressed attribute flag, so that a file that came out *plain* fails the
+  check instead of proving nothing), and
+  `a_compressed_stream_on_a_real_volume_is_refused` mounts it, requires the
+  file to still be listed and to have its length, and requires
+  `NotImplemented` from both a read and a write of its bytes.  The volume and
+  the file are the host's, so this is the same fact as the probe above, on a
+  volume the driver did not build.
+- **Still owed**: the fixture carries no stream with these flags, so the
+  **encrypted** refusal — the same code path, decided by the same check — is
+  implemented and not yet exercised by a gate.  No tool here can make an EFS
+  file (only Windows can), so the fixture is where it has to be proven:
+  a record whose `$DATA` carries the encrypted flag, read and written, with
+  the file still listed, beside a record whose flags are plain and which still
+  reads its runs.  `ntfscat` on a `mkntfs -C` volume is what a later stage's
+  decompressor will be judged against.
 - **Stage 2**: the fixture's sparse file (a hole between two real runs), the
   test `a_hole_reads_as_zeros_and_a_write_into_it_allocates`, a second mount
   reading the bytes back, and `$Bitmap` showing the clusters the write

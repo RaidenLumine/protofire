@@ -402,6 +402,7 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
         attrs.push(ParsedAttr {
             attr_type,
             instance,
+            flags: u16::from_le_bytes([buf[offset + 12], buf[offset + 13]]),
             name,
             holder: u64::MAX,
             offset,
