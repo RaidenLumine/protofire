@@ -164,6 +164,10 @@ never from `make verify`: the gates do not depend on a host tool.
    record's own `$FILE_NAME` — so a rename moves both, in the order that leaves
    every window a mount can read; a record's number does not change, which is
    what lets a directory be renamed with everything inside it untouched.
+7. **A value that outgrows its record.**  A resident `$DATA` grows into its
+   record's own room and, when it has none left, **converts** to one whose
+   value is where runs say — which is what a file created empty needs before
+   it can take content.
 
 ### The journal, decided once
 
@@ -797,3 +801,35 @@ being something a partial write can ignore.
   where the listing and the record carry the spelling the caller asked for; the
   three refusals, including a directory moved into itself; and a name too long
   for its record, which makes room and leaves a list behind.
+
+**Stage 7 — a value that outgrows its record.**
+
+- A resident `$DATA` **grows into its record's own room**: the value's bytes
+  extend by the growth, which shifts everything after the attribute and is
+  written the way any resident value is (`replace_value`, the record whole with
+  its update sequence array packed again).  A file created empty therefore
+  takes a small write exactly where it is, still resident.
+- A growth the record has **no room** for is the conversion: clusters are
+  claimed for the whole length, and the attribute — which keeps its instance
+  number — becomes one whose value is where the runs say, with the allocated,
+  data and initialized sizes after it.  The bytes the record held are written
+  into the first cluster and the rest read as zeros, which is what the growth
+  means.  A record without the room for the *longer header* makes room the way
+  any record does: stage 4c's move, its largest attribute that is not the data
+  going into a record of its own, and the conversion is tried again.
+- The conversion is not reversible here: a file that shrinks keeps the runs it
+  had, and a value that would fit a record again stays where it is.  The
+  reverse conversion is what a *reclaiming* stage would need, and it is not
+  built.
+- **The volume's own state is shared.**  A vnode is handed a clone of the
+  filesystem, and a cache and an `NtfsInfo` that each clone kept to itself were
+  two views of one volume: a write through a vnode left the mount that made it
+  answering with the record it *had*.  The record cache and the volume's state
+  are `Arc`s now, so every handle to a mount is a handle to the same two locks
+  — the same invariant the earlier stages had to keep by hand, made structural.
+  The test that found it is the one above: a growth *on one mount*, read back
+  *on the same mount*.
+- Two tests: a file made empty takes a small write and the value is still in
+  its record; and a file that outgrows its record converts — a second mount
+  reads the bytes back, the attribute has runs, the cluster it took is the
+  volume's no more, and the file then grows again the way a file with runs does.

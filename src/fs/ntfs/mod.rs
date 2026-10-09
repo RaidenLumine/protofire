@@ -268,8 +268,15 @@ fn record_attributes(
 
 pub struct NtfsFs {
     device: Arc<dyn BlockDevice>,
-    info: Mutex<fs::NtfsInfo>,
-    mft_cache: Mutex<BTreeMap<u64, Vec<u8>>>,
+    /// The mount's own state, **shared by every clone of it**.
+    ///
+    /// A vnode is handed a clone of the filesystem, so a cache and a record
+    /// size that each clone kept to itself would be two views of one volume:
+    /// a write through a vnode would leave the mount that made it answering
+    /// with the record it had.  The locks are the shared things, and a clone
+    /// is another handle to them.
+    info: Arc<Mutex<fs::NtfsInfo>>,
+    mft_cache: Arc<Mutex<BTreeMap<u64, Vec<u8>>>>,
 }
 
 impl NtfsFs {
@@ -278,8 +285,8 @@ impl NtfsFs {
         let info = fs::NtfsInfo::new(bs);
         Ok(Self {
             device,
-            info: Mutex::new(info),
-            mft_cache: Mutex::new(BTreeMap::new()),
+            info: Arc::new(Mutex::new(info)),
+            mft_cache: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
 
@@ -1832,9 +1839,10 @@ impl NtfsFs {
         let holder = attribute.holder;
         let record = self.read_mft_record(holder)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        let base = header.size() as usize;
-        let attr_at = base + attribute.offset;
+        let attr_at = header.size() as usize + attribute.offset;
 
+        // The attribute as it should be: its own header, and the value where
+        // that header points.
         let mut bytes = record[attr_at..attr_at + attribute.attr_len].to_vec();
         let attr_len = (attribute.value_offset + value.len()).next_multiple_of(8);
         bytes.resize(attr_len, 0);
@@ -1842,10 +1850,35 @@ impl NtfsFs {
         bytes[16..20].copy_from_slice(&(value.len() as u32).to_le_bytes());
         bytes[attribute.value_offset..attribute.value_offset + value.len()].copy_from_slice(value);
 
+        self.replace_attribute(holder, attr_at, attribute.attr_len, &bytes)
+    }
+
+    /// Put bytes where one of a record's attributes is, and write the record
+    /// whole.
+    ///
+    /// `at` is where the attribute begins in the record, and `old_len` what it
+    /// occupies now.  The bytes may be longer or shorter than those, which
+    /// shifts everything after them — so the record goes back in one piece, its
+    /// update sequence array packed again; a record with no room for the shift
+    /// refuses (`NoSpace`), which is where the caller makes room, and a record
+    /// that cannot be addressed at all refuses too.
+    fn replace_attribute(
+        &self,
+        holder: u64,
+        at: usize,
+        old_len: usize,
+        replacement: &[u8],
+    ) -> Result<()> {
+        let record = self.read_mft_record(holder)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        if at < header.size() as usize || at + old_len > bytes_in_use(&record) {
+            return Err(Error::InvalidArgument);
+        }
+
         let end = bytes_in_use(&record);
-        let mut rebuilt = record[..attr_at].to_vec();
-        rebuilt.extend_from_slice(&bytes);
-        rebuilt.extend_from_slice(&record[attr_at + attribute.attr_len..end]);
+        let mut rebuilt = record[..at].to_vec();
+        rebuilt.extend_from_slice(replacement);
+        rebuilt.extend_from_slice(&record[at + old_len..end]);
         let used = rebuilt.len();
         if used + 8 > record.len() {
             return Err(Error::NoSpace);
@@ -1853,7 +1886,7 @@ impl NtfsFs {
         rebuilt.resize(record.len(), 0);
         rebuilt[24..28].copy_from_slice(&(used as u32).to_le_bytes());
 
-        let (at, sector) = {
+        let (device_at, sector) = {
             let info = self.info.lock();
             (
                 self.record_offset(&info, holder)?,
@@ -1866,7 +1899,7 @@ impl NtfsFs {
             header.usa_count as usize,
             sector,
         );
-        fs::write_device_bytes(&self.device, at, &rebuilt)?;
+        fs::write_device_bytes(&self.device, device_at, &rebuilt)?;
         self.mft_cache.lock().insert(holder, rebuilt);
         Ok(())
     }
@@ -2965,16 +2998,29 @@ impl NtfsVnode {
             u64::from(info.cluster_size)
         };
 
-        let mut runs = data.data_runs.clone();
-        let allocated = if data.data_runs_offset.is_none() {
-            // A resident value can only shrink: growing it would need the
-            // record's own room and its bookkeeping, which is the
-            // resident-to-non-resident conversion.
-            if length > current {
-                return Err(Error::NoSpace);
+        if data.data_runs_offset.is_none() {
+            // A resident value *shrinks* where it lies, and grows into the
+            // record's own room — and a growth the record has no room for is
+            // what the conversion is for: the value leaves the record for runs
+            // of its own, which is where a file that has outgrown its record
+            // lives.
+            if length <= current {
+                return self
+                    .fs
+                    .write_grown_data(holder, data, &[], current, length, &[]);
             }
-            current
-        } else {
+            let mut value = data.content.clone();
+            value.resize(length as usize, 0);
+            match self.fs.replace_value(holder, ATTR_TYPE_DATA, &value) {
+                Ok(()) => return Ok(()),
+                Err(Error::NoSpace) => {}
+                Err(error) => return Err(error),
+            }
+            return self.convert_to_runs(holder, data, length, current, cluster_size);
+        }
+
+        let mut runs = data.data_runs.clone();
+        let allocated = {
             let clusters: u64 = data.data_runs.iter().map(|run| run.cluster_count).sum();
             let mut allocated = clusters * cluster_size;
             if let Some((needed, first)) = claim {
@@ -2986,7 +3032,7 @@ impl NtfsVnode {
             }
             allocated as u32
         };
-        let zeros = if data.data_runs_offset.is_some() && allocated > current {
+        let zeros = if allocated > current {
             alloc::vec![0u8; (u64::from(allocated) - u64::from(current)) as usize]
         } else {
             Vec::new()
@@ -2994,14 +3040,89 @@ impl NtfsVnode {
         self.fs
             .write_grown_data(holder, data, &runs, allocated, length, &zeros)
     }
+
+    /// Give a resident `$DATA` runs, which is what a value that has outgrown
+    /// its record takes.
+    ///
+    /// The clusters are claimed for the whole length, the value's own bytes are
+    /// written into them, and the attribute — which keeps its instance number —
+    /// becomes one whose value is where the runs say.  The record that holds it
+    /// has to have the room for the longer header, and one that has not makes
+    /// room the way any record does, its largest attribute that is not the data
+    /// moving into a record of its own.
+    fn convert_to_runs(
+        &self,
+        holder: u64,
+        data: &ParsedAttr,
+        length: u32,
+        current: u32,
+        cluster_size: u64,
+    ) -> Result<()> {
+        let clusters = u64::from(length).div_ceil(cluster_size);
+        let first = self.fs.claim_clusters(clusters)?;
+        let runs = alloc::vec![DataRun {
+            lcn: first as i64,
+            cluster_count: clusters,
+        }];
+        let allocated = clusters * cluster_size;
+        let value = data.content.clone();
+
+        let mut attempt = 0;
+        loop {
+            let attributes = self.fs.attributes_of(holder)?;
+            let attribute = attributes
+                .iter()
+                .find(|attribute| {
+                    attribute.attr_type == ATTR_TYPE_DATA
+                        && attribute.instance == data.instance
+                        && attribute.data_runs_offset.is_none()
+                })
+                .ok_or(Error::NotFound)?;
+            let record = self.fs.read_mft_record(attribute.holder)?;
+            let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+            let at = header.size() as usize + attribute.offset;
+
+            let replacement = fs::non_resident_attribute(
+                ATTR_TYPE_DATA,
+                "",
+                attribute.instance,
+                &runs,
+                allocated,
+                u64::from(length),
+                u64::from(length),
+            );
+            match self
+                .fs
+                .replace_attribute(attribute.holder, at, attribute.attr_len, &replacement)
+            {
+                Ok(()) => break,
+                Err(Error::NoSpace) if attempt == 0 => {
+                    self.fs.make_room(attribute.holder, ATTR_TYPE_DATA)?;
+                    attempt += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        // The value the record held is the file's first bytes; the clusters
+        // past the length have never held anything, and read as zeros.
+        let mut content = alloc::vec![0u8; allocated as usize];
+        let held = (current as usize).min(content.len());
+        content[..held].copy_from_slice(&value[..held.min(value.len())]);
+        let info = self.fs.info.lock();
+        fs::write_to_runs(&self.fs.device, &info, &runs, 0, &content)?;
+        Ok(())
+    }
 }
 
 impl Clone for NtfsFs {
+    /// Another handle to the same mount: the device, the volume's own state
+    /// and the record cache are the ones every handle shares.
     fn clone(&self) -> Self {
         Self {
             device: self.device.clone(),
-            info: Mutex::new((*self.info.lock()).clone()),
-            mft_cache: Mutex::new(self.mft_cache.lock().clone()),
+            info: self.info.clone(),
+            mft_cache: self.mft_cache.clone(),
         }
     }
 }

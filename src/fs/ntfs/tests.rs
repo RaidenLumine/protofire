@@ -1467,6 +1467,81 @@ fn a_name_too_long_for_its_record_makes_room() {
 }
 
 #[test]
+fn a_file_made_empty_takes_a_small_write_where_it_lies() {
+    // A file made empty is *resident*: its bytes are in its record, which is
+    // where an empty file lives.  A small write grows that value where it
+    // lies, so the file takes content without ever leaving the record.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let node = fs_handle.create_file("/made.txt").expect("create a file");
+    assert_eq!(node.size(), 0);
+    assert_eq!(node.write(0, b"hello").expect("write"), 5);
+    assert_eq!(node.size(), 5);
+
+    let again = remount(&device);
+    let reread = again.lookup("/made.txt").expect("relookup");
+    assert_eq!(reread.size(), 5);
+    let mut buf = [0u8; 5];
+    assert_eq!(reread.read(0, &mut buf).expect("read"), 5);
+    assert_eq!(&buf, b"hello");
+
+    let (number, _) = again.resolve("/made.txt").expect("resolve");
+    let attributes = again.attributes_of(number).expect("the attributes");
+    assert!(
+        attributes
+            .iter()
+            .find(|attr| attr.attr_type == 0x80)
+            .expect("the data")
+            .data_runs_offset
+            .is_none(),
+        "and the value is still in the record"
+    );
+}
+
+#[test]
+fn a_file_that_outgrows_its_record_takes_runs_under_its_value() {
+    // Past the record's own room the value *converts*: the file's bytes leave
+    // the record for clusters the volume hands out, which is what a file that
+    // has outgrown its record lives in.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let node = fs_handle.create_file("/big.txt").expect("create a file");
+    let content = vec![0x5Au8; 2000];
+    assert_eq!(node.write(0, &content).expect("write"), content.len());
+    assert_eq!(node.size(), content.len());
+
+    let again = remount(&device);
+    let reread = again.lookup("/big.txt").expect("relookup");
+    assert_eq!(reread.size(), content.len());
+    let mut buf = vec![0u8; content.len()];
+    assert_eq!(reread.read(0, &mut buf).expect("read"), buf.len());
+    assert!(
+        buf.iter().all(|byte| *byte == 0x5A),
+        "the bytes are its own"
+    );
+
+    // The attribute has runs now, and the clusters it took are the volume's no
+    // more: one cluster, which is what 2000 bytes needs.
+    let (number, _) = again.resolve("/big.txt").expect("resolve");
+    let attributes = again.attributes_of(number).expect("the attributes");
+    let data = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0x80)
+        .expect("the data");
+    assert!(data.data_runs_offset.is_some(), "the value left the record");
+    assert_eq!(u64::from(data.data_size), content.len() as u64);
+    let bitmap = again.read_bitmap().expect("the volume's bitmap");
+    let taken: usize = bitmap.iter().map(|byte| byte.count_ones() as usize).sum();
+    let was: usize = fixture.used.iter().filter(|used| **used != 0).count();
+    assert_eq!(taken, was + 1, "the one cluster it took");
+
+    // And it can grow again, now the way a file with runs does.
+    let grown = reread.set_len(4000);
+    assert!(grown.is_ok(), "{grown:?}");
+    assert_eq!(again.lookup("/big.txt").expect("relookup").size(), 4000);
+}
+
+#[test]
 fn a_created_directory_is_on_the_volume() {
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);

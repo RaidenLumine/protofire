@@ -174,9 +174,14 @@ The authoritative picture of what exists today is
   A **name moves** too: a rename is the two index changes and the record's own
   `$FILE_NAME`, in the order that leaves two names rather than none, and a
   record's number never changes, so a directory is renamed with everything
-  inside it untouched.  What is left of the stage is a `$FILE_NAME` that lives
-  in a record of its own, and the resident-to-non-resident conversion that a
-  file created empty needs before it can take content.
+  inside it untouched.  A resident value that outgrows its record **converts**
+  to one whose value is where runs say, so a file created empty takes content,
+  and the volume's own state is shared by every handle to a mount — a clone of
+  the record cache let a write through a vnode leave the mount that made it
+  answering with the old record.  What is left of the stage is a `$FILE_NAME`
+  that lives in a record of its own, the reverse conversion that a file
+  shrinking back into its record would need, a *second* index block, and the
+  compressed, sparse and encrypted streams this RFC never decided.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped
