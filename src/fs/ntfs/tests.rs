@@ -242,7 +242,11 @@ fn the_fixture_keeps_its_own_invariants() {
     // The records that carry an `$ATTRIBUTE_LIST` agree with it: every entry
     // names an attribute the record it points at really holds, and the record
     // it points at is an extension of the one that listed it.
-    for (base, extension) in [(LISTED_FILE, LISTED_FILE_EXT), (MOVED_FILE, MOVED_FILE_EXT)] {
+    for (base, extension) in [
+        (LISTED_FILE, LISTED_FILE_EXT),
+        (MOVED_FILE, MOVED_FILE_EXT),
+        (NAMED_FILE, NAMED_FILE_EXT),
+    ] {
         let record = fixture.record(base);
         let header = super::types::MftRecordHeader::parse(record).expect("a record header");
         let attributes = super::fs::parse_attributes(&record[header.size() as usize..]);
@@ -318,6 +322,7 @@ fn a_directory_lists_what_its_index_holds() {
             "moved.bin",
             "tree",
             "sub",
+            "named.bin",
         ],
         "the root's entries, without its own \".\""
     );
@@ -1458,6 +1463,74 @@ fn a_name_in_a_tree_moves_with_its_record() {
     }
 }
 
+/// Take the name a record's index entry gives, and the name its **own** bytes
+/// carry, so a rename can be checked in both places.
+fn the_name_the_record_carries(fs_handle: &super::NtfsFs, record: u64) -> String {
+    let name = fs_handle
+        .attributes_of(record)
+        .expect("the attributes")
+        .into_iter()
+        .find(|attribute| attribute.attr_type == 0x30)
+        .expect("the record's own name");
+    super::types::FileName::parse(&name.content)
+        .expect("a name value")
+        .name
+}
+
+#[test]
+fn a_rename_writes_a_name_that_an_attribute_list_moved() {
+    // A record's own `$FILE_NAME` is not always in the record: one that filled
+    // up moves the name into an extension record, and an `$ATTRIBUTE_LIST`
+    // says where it went.  A rename writes the name **there** — the record the
+    // list names, not the one the file is — and the index entry with it, so a
+    // second mount finds the new name by its path and reads the new name out
+    // of the extension record.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let holder = fs_handle
+        .attributes_of(NAMED_FILE)
+        .expect("the attributes")
+        .into_iter()
+        .find(|attribute| attribute.attr_type == 0x30)
+        .expect("the name")
+        .holder;
+    assert_eq!(
+        holder, NAMED_FILE_EXT,
+        "the name is in the extension record"
+    );
+    assert_eq!(
+        the_name_the_record_carries(&fs_handle, NAMED_FILE),
+        "named.bin"
+    );
+
+    fs_handle
+        .rename("/named.bin", "/renamed.bin")
+        .expect("rename it");
+
+    let again = remount(&device);
+    assert_eq!(
+        again.resolve("/renamed.bin").expect("the new name").0,
+        NAMED_FILE
+    );
+    assert!(matches!(again.lookup("/named.bin"), Err(Error::NotFound)));
+    assert_eq!(
+        the_name_the_record_carries(&again, NAMED_FILE),
+        "renamed.bin",
+        "and the name it carries is the new one"
+    );
+    assert!(
+        again
+            .attributes_of(NAMED_FILE)
+            .expect("the attributes")
+            .into_iter()
+            .find(|attribute| attribute.attr_type == 0x30)
+            .expect("the name")
+            .holder
+            == NAMED_FILE_EXT,
+        "still where the list says it is"
+    );
+}
+
 #[test]
 fn a_name_that_is_taken_is_not_renamed_onto() {
     let fixture = build_volume(FRACTIONAL);
@@ -2519,6 +2592,11 @@ const LISTED_FILE_EXT: u64 = 32;
 /// shape a directory's `$INDEX_ROOT` takes on a volume taken apart above.
 const MOVED_FILE: u64 = 33;
 const MOVED_FILE_EXT: u64 = 34;
+/// A file whose `$FILE_NAME` an `$ATTRIBUTE_LIST` moved into an extension
+/// record: the shape a record that filled up leaves behind, and the one a
+/// rename has to write the name in — there, and not in the base record.
+const NAMED_FILE: u64 = 39;
+const NAMED_FILE_EXT: u64 = 40;
 /// A directory whose index is a **tree**: two blocks, and the root's node
 /// holding the key that separates them — the shape a directory of many names
 /// has, measured on a volume `mkntfs` makes.  Its children are named in the
@@ -2529,7 +2607,7 @@ const TREE_ALPHA: u64 = 36;
 /// block, which is what a promoted key is.
 const TREE_MIDDLE: u64 = 37;
 const TREE_OMEGA: u64 = 38;
-const RECORDS: u64 = 39;
+const RECORDS: u64 = 41;
 
 /// How many blocks the tree directory's allocation has room for.
 ///
@@ -2543,7 +2621,7 @@ const TREE_ALLOCATION_BLOCKS: u64 = 8;
 const TREE_CHILDREN: [u64; 3] = [TREE_ALPHA, TREE_MIDDLE, TREE_OMEGA];
 
 /// The records that hold another record's attributes.
-const EXTENSION_RECORDS: [u64; 2] = [LISTED_FILE_EXT, MOVED_FILE_EXT];
+const EXTENSION_RECORDS: [u64; 3] = [LISTED_FILE_EXT, MOVED_FILE_EXT, NAMED_FILE_EXT];
 
 /// How long a `$UpCase` table is: 65,536 code units.
 const UPCASE_BYTES: u64 = 0x1_0000 * 2;
@@ -2569,6 +2647,7 @@ fn is_named(number: u64, spares_in_use: bool) -> bool {
         || number == SUBDIRECTORY_FILE
         || number == LISTED_FILE
         || number == MOVED_FILE
+        || number == NAMED_FILE
         || number == TREE_DIRECTORY
         || TREE_CHILDREN.contains(&number)
         // An extension record is not a name of its own, so making every record
@@ -3208,6 +3287,14 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         list_entry(0x80, "", 1, MOVED_FILE_EXT, 0),
     ]
     .concat();
+    // A list that names the *name* where it went: the base record holds no
+    // `$FILE_NAME` at all, and the extension record holds nothing else.
+    let named_list: Vec<u8> = [
+        list_entry(0x10, "", 1, NAMED_FILE, 0),
+        list_entry(0x30, "", 1, NAMED_FILE_EXT, 0),
+        list_entry(0x80, "", 1, NAMED_FILE, 0),
+    ]
+    .concat();
 
     for number in 0..RECORDS {
         let (parent, name, directory, size, data): (u64, &str, bool, u64, Vec<u8>) = match number {
@@ -3255,6 +3342,10 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 2 * cluster_size,
                 Vec::new(),
             ),
+            // The name belongs to the file and lives in the extension record,
+            // which is why both records carry it: the list is what says where
+            // it went.
+            NAMED_FILE | NAMED_FILE_EXT => (ROOT_RECORD, "named.bin", false, 0, Vec::new()),
             TREE_DIRECTORY => (ROOT_RECORD, "tree", true, 0, Vec::new()),
             TREE_ALPHA => (TREE_DIRECTORY, "alpha.txt", false, 0, Vec::new()),
             TREE_MIDDLE => (TREE_DIRECTORY, "middle.txt", false, 0, Vec::new()),
@@ -3287,13 +3378,18 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             // directory to list.
             if named {
                 attributes.extend(attribute(0x10, "", &standard, None, 0));
-                attributes.extend(attribute(
-                    0x30,
-                    "",
-                    &file_name(parent, name, directory, size),
-                    None,
-                    0,
-                ));
+                // One record's name is not in it: an `$ATTRIBUTE_LIST` moved
+                // it into an extension record, which is what its own arm below
+                // builds.
+                if number != NAMED_FILE {
+                    attributes.extend(attribute(
+                        0x30,
+                        "",
+                        &file_name(parent, name, directory, size),
+                        None,
+                        0,
+                    ));
+                }
             }
             match number {
                 0 => {
@@ -3469,6 +3565,21 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     put_u64_le(&mut list, 40, cluster_size); // allocated size
                     attributes.extend(list);
                 }
+                NAMED_FILE => {
+                    // The record's own bytes hold the list and the file's
+                    // data, and no name: the name is the extension record's.
+                    attributes.extend(attribute(0x20, "", &named_list, None, 0));
+                    attributes.extend(attribute(0x80, "", &[], None, 0));
+                }
+                NAMED_FILE_EXT => {
+                    attributes.extend(attribute(
+                        0x30,
+                        "",
+                        &file_name(parent, name, directory, size),
+                        None,
+                        0,
+                    ));
+                }
                 TREE_DIRECTORY => {
                     // A directory whose index is a *tree*: two blocks with a
                     // separator key between them, which is the shape a
@@ -3568,6 +3679,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                             MOVED_FILE,
                             TREE_DIRECTORY,
                             SUBDIRECTORY,
+                            NAMED_FILE,
                         ];
                         if spares_in_use {
                             // Every record in use is a record some directory
@@ -3599,6 +3711,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                 FULL_DIRECTORY => ("full-dir", true, 0),
                                 LISTED_FILE => ("split.bin", false, 3 * cluster_size),
                                 MOVED_FILE => ("moved.bin", false, 2 * cluster_size),
+                                NAMED_FILE => ("named.bin", false, 0),
                                 TREE_DIRECTORY => ("tree", true, 0),
                                 SUBDIRECTORY => ("sub", true, 0),
                                 _ => (spare_name(record), false, 0),
@@ -3685,6 +3798,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             // has one has no name and no link to count.
             let base = if number == LISTED_FILE_EXT {
                 LISTED_FILE
+            } else if number == NAMED_FILE_EXT {
+                NAMED_FILE
             } else {
                 MOVED_FILE
             };
