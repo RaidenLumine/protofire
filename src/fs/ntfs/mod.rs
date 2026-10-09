@@ -3324,11 +3324,11 @@ impl FileSystem for NtfsFs {
         );
 
         if spelling {
+            // The spelling's own order, for the reason the doc above gives: two
+            // names that fold together are one key, so the old one goes first.
             self.index_remove(old_parent, old_name, record_number)?;
-            self.index_insert(new_parent, new_name, reference, directory, size)?;
-        } else {
-            self.index_insert(new_parent, new_name, reference, directory, size)?;
         }
+        self.index_insert(new_parent, new_name, reference, directory, size)?;
         // The record's own name follows the name that is now its, and the old
         // index entry — the one copy that now disagrees — goes last.  A name
         // that does not fit the record makes room the way any growth does, the

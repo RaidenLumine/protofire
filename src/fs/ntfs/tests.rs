@@ -1269,6 +1269,66 @@ fn a_small_directory_that_fills_a_moved_root_fills_a_block_next() {
         inline.iter().any(|attr| attr.attr_type == 0x20),
         "the list is what stayed"
     );
+
+    // And the block fills in its turn.  This is the split's own case with the
+    // node above the blocks living in a record of its own — a different record
+    // from the directory's — so the key the split promotes is written there and
+    // the block it makes is a block of the allocation.
+    let before = index_blocks_in_use(&fs_handle, SUBDIRECTORY);
+    let pad = "p".repeat(60);
+    for index in 0..40 {
+        let name = alloc::format!("split-{index:03}-{pad}.txt");
+        fs_handle
+            .create_file(&alloc::format!("/sub/{name}"))
+            .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
+        names.push(name);
+        if index_blocks_in_use(&fs_handle, SUBDIRECTORY) > before {
+            break;
+        }
+    }
+    assert_eq!(
+        index_blocks_in_use(&fs_handle, SUBDIRECTORY),
+        before + 1,
+        "the block split within forty names"
+    );
+
+    let again = remount(&device);
+    for name in &names {
+        again
+            .lookup(&alloc::format!("/sub/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+    }
+    assert_eq!(
+        the_listing(&again, "/sub").len(),
+        names.len(),
+        "every name is listed once"
+    );
+
+    // A name comes back out with the node above in that record too: the same
+    // walk — the entry's own block, or the key the split promoted — with the
+    // node above where the list put it.
+    let gone = names.pop().expect("the name the split made last");
+    fs_handle
+        .remove_path(&alloc::format!("/sub/{gone}"))
+        .expect("a name comes out again");
+    let again = remount(&device);
+    assert!(
+        matches!(
+            again.lookup(&alloc::format!("/sub/{gone}")),
+            Err(Error::NotFound)
+        ),
+        "the name that went is not there"
+    );
+    for name in &names {
+        again
+            .lookup(&alloc::format!("/sub/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+    }
+    assert_eq!(
+        the_listing(&again, "/sub").len(),
+        names.len(),
+        "and nothing else moved"
+    );
 }
 
 #[test]
@@ -1352,6 +1412,50 @@ fn a_directory_can_be_renamed_with_what_it_holds_untouched() {
     let listed = the_listing(&again, "/");
     assert!(listed.contains(&String::from("renamed")), "{listed:?}");
     assert!(!listed.contains(&String::from("sub")), "{listed:?}");
+}
+
+#[test]
+fn a_name_in_a_tree_moves_with_its_record() {
+    // A rename is the two index changes and the record's own `$FILE_NAME`, and
+    // a directory whose index is a tree is no different: the new name is routed
+    // to the block its key belongs in, and the old one comes out of whichever
+    // node holds it — a promoted key included, which is the entry a split put
+    // in the node above.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    // A name a block holds.
+    fs_handle
+        .rename("/tree/alpha.txt", "/tree/zebra.txt")
+        .expect("a name a block holds");
+    // And the promoted key itself, which lives in the node above.
+    fs_handle
+        .rename("/tree/middle.txt", "/tree/native.txt")
+        .expect("a name the node above holds");
+
+    let again = remount(&device);
+    assert_eq!(
+        the_listing(&again, "/tree"),
+        [
+            String::from("native.txt"),
+            String::from("omega.txt"),
+            String::from("zebra.txt"),
+        ],
+        "the names a rename left, in the tree's order"
+    );
+    for name in ["native.txt", "omega.txt", "zebra.txt"] {
+        again
+            .lookup(&alloc::format!("/tree/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+    }
+    for gone in ["alpha.txt", "middle.txt"] {
+        assert!(
+            matches!(
+                again.lookup(&alloc::format!("/tree/{gone}")),
+                Err(Error::NotFound)
+            ),
+            "{gone} is not a name any more"
+        );
+    }
 }
 
 #[test]
@@ -1467,10 +1571,10 @@ fn a_name_too_long_for_its_record_makes_room() {
     );
 }
 
-/// How many bytes of blocks the tree directory's `$INDEX_ALLOCATION` holds.
-fn tree_allocation_size(fs_handle: &super::NtfsFs) -> u64 {
+/// How many bytes of blocks a directory's `$INDEX_ALLOCATION` holds.
+fn index_allocation_size(fs_handle: &super::NtfsFs, record: u64) -> u64 {
     fs_handle
-        .attributes_of(TREE_DIRECTORY)
+        .attributes_of(record)
         .expect("the attributes")
         .iter()
         .find(|attribute| attribute.attr_type == 0xa0)
@@ -1478,10 +1582,10 @@ fn tree_allocation_size(fs_handle: &super::NtfsFs) -> u64 {
         .data_size as u64
 }
 
-/// The tree directory's index bitmap, as the record holds it.
-fn tree_bitmap(fs_handle: &super::NtfsFs) -> Vec<u8> {
+/// A directory's index bitmap, as the record holds it.
+fn index_bitmap(fs_handle: &super::NtfsFs, record: u64) -> Vec<u8> {
     fs_handle
-        .attributes_of(TREE_DIRECTORY)
+        .attributes_of(record)
         .expect("the attributes")
         .into_iter()
         .find(|attribute| attribute.attr_type == 0xb0)
@@ -1489,13 +1593,13 @@ fn tree_bitmap(fs_handle: &super::NtfsFs) -> Vec<u8> {
         .content
 }
 
-/// How many blocks the tree directory's index bitmap says are in use.
+/// How many blocks a directory's index bitmap says are in use.
 ///
 /// One rises with every split and falls with every block a deletion gives back,
 /// which is what makes it the signal a test can watch: the allocation's own
 /// size does not move when the split takes a block that was already there.
-fn tree_blocks_in_use(fs_handle: &super::NtfsFs) -> u32 {
-    tree_bitmap(fs_handle)
+fn index_blocks_in_use(fs_handle: &super::NtfsFs, record: u64) -> u32 {
+    index_bitmap(fs_handle, record)
         .iter()
         .map(|byte| byte.count_ones())
         .sum()
@@ -1512,14 +1616,14 @@ fn tree_blocks_in_use(fs_handle: &super::NtfsFs) -> u32 {
 fn fill_the_tree(fs_handle: &super::NtfsFs) -> Vec<String> {
     let pad = "p".repeat(60);
     let mut names = Vec::new();
-    let before = tree_blocks_in_use(fs_handle);
+    let before = index_blocks_in_use(fs_handle, TREE_DIRECTORY);
     for index in 0..60 {
         let name = alloc::format!("many-{index:03}-{pad}.txt");
         fs_handle
             .create_file(&alloc::format!("/tree/{name}"))
             .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
         names.push(name);
-        if tree_blocks_in_use(fs_handle) > before {
+        if index_blocks_in_use(fs_handle, TREE_DIRECTORY) > before {
             break;
         }
     }
@@ -1611,17 +1715,17 @@ fn a_full_block_splits_and_promotes_its_middle_key() {
     // the node above, and the index bitmap gains a bit for the new block.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
-    let before = tree_allocation_size(&fs_handle);
+    let before = index_allocation_size(&fs_handle, TREE_DIRECTORY);
     let names = fill_the_tree(&fs_handle);
 
     // One more block, and its bit in the index bitmap.
     let block_size = fs_handle.info().lock().index_block_size as u64;
     assert_eq!(
-        tree_allocation_size(&fs_handle),
+        index_allocation_size(&fs_handle, TREE_DIRECTORY),
         before + block_size,
         "the block the split made"
     );
-    let bitmap = tree_bitmap(&fs_handle);
+    let bitmap = index_bitmap(&fs_handle, TREE_DIRECTORY);
     // The tree's bitmap was one byte, and the block the split made is the
     // allocation's ninth: its bit needs a byte the value did not have, so the
     // value grew rather than the bit being dropped.
@@ -1658,9 +1762,9 @@ fn a_block_a_deletion_gave_back_is_taken_again() {
     // blocks nothing is stored in.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
-    let before = tree_allocation_size(&fs_handle);
+    let before = index_allocation_size(&fs_handle, TREE_DIRECTORY);
     assert_eq!(
-        tree_blocks_in_use(&fs_handle),
+        index_blocks_in_use(&fs_handle, TREE_DIRECTORY),
         8,
         "the fixture's eight bits"
     );
@@ -1670,18 +1774,30 @@ fn a_block_a_deletion_gave_back_is_taken_again() {
     fs_handle
         .remove_path("/tree/omega.txt")
         .expect("a block's name comes out");
-    assert_eq!(tree_bitmap(&fs_handle)[0] & 0b11, 0b01, "the bit came back");
-    assert_eq!(tree_blocks_in_use(&fs_handle), 7, "one block fewer");
+    assert_eq!(
+        index_bitmap(&fs_handle, TREE_DIRECTORY)[0] & 0b11,
+        0b01,
+        "the bit came back"
+    );
+    assert_eq!(
+        index_blocks_in_use(&fs_handle, TREE_DIRECTORY),
+        7,
+        "one block fewer"
+    );
 
     // Filling a block again splits, and the block that went is the one the tree
     // takes: the allocation does not grow, and the bit is set again.
     let made = fill_the_tree(&fs_handle);
     assert_eq!(
-        tree_allocation_size(&fs_handle),
+        index_allocation_size(&fs_handle, TREE_DIRECTORY),
         before,
         "the allocation did not grow"
     );
-    assert_eq!(tree_bitmap(&fs_handle)[0] & 0b11, 0b11, "the block is back");
+    assert_eq!(
+        index_bitmap(&fs_handle, TREE_DIRECTORY)[0] & 0b11,
+        0b11,
+        "the block is back"
+    );
 
     // And a second mount lists every name the directory holds, in order.
     let again = remount(&device);
@@ -1731,7 +1847,7 @@ fn a_promoted_key_comes_out_and_its_block_gives_way() {
     // it, and what the two blocks hold fits one again: the block next to it is
     // given back, and its bit in the index bitmap goes with it.
     assert_eq!(
-        tree_bitmap(&again)[0] & 0b11,
+        index_bitmap(&again, TREE_DIRECTORY)[0] & 0b11,
         0b01,
         "the block that went back"
     );
@@ -1760,7 +1876,7 @@ fn a_block_that_empties_moves_its_key_down_and_gives_its_bit_back() {
         Err(Error::NotFound)
     ));
     assert_eq!(
-        tree_bitmap(&again)[0] & 0b11,
+        index_bitmap(&again, TREE_DIRECTORY)[0] & 0b11,
         0b01,
         "the block that went back"
     );
@@ -1781,7 +1897,7 @@ fn a_pair_that_still_needs_two_blocks_is_not_merged() {
         String::from("omega.txt"),
     ]);
     assert_eq!(
-        tree_bitmap(&fs_handle)[0] & 0b11,
+        index_bitmap(&fs_handle, TREE_DIRECTORY)[0] & 0b11,
         0b11,
         "the tree's two blocks are in use"
     );
@@ -1796,7 +1912,7 @@ fn a_pair_that_still_needs_two_blocks_is_not_merged() {
         .remove_path("/tree/aardvark.txt")
         .expect("and out again");
     assert_eq!(
-        tree_bitmap(&fs_handle)[0] & 0b11,
+        index_bitmap(&fs_handle, TREE_DIRECTORY)[0] & 0b11,
         0b11,
         "neither block was given back: the pair still needs two"
     );
