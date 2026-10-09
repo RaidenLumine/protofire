@@ -923,48 +923,64 @@ impl NtfsFs {
     /// one node.
     fn directory_entries(&self, record_number: u64) -> Result<Vec<(String, u64)>> {
         let attributes = self.attributes_of(record_number)?;
-
-        let index_root = attributes
+        let root = attributes
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_INDEX_ROOT)
             .ok_or(Error::NotFound)?;
-        let mut node = parse_index_node(&index_root.content, 16);
+        let mut found: Vec<(FileName, u64)> = Vec::new();
+        self.walk_index(&attributes, &root.content, 16, 0, &mut found)?;
 
-        let mut depth = 0;
-        while node.has_children && depth < MAX_INDEX_DEPTH {
-            let pointer = match node.entries.iter().find(|entry| entry.points_at_a_node) {
-                Some(pointer) => pointer,
-                None => break,
-            };
-            let block = self.read_index_block(&attributes, pointer.reference)?;
-            node = parse_index_node(&block, 24);
-            depth += 1;
-        }
-
-        // A directory's entries are its *children*: a volume may keep a "." of
-        // its own (the one `mkntfs` makes does), "." and ".." are a
-        // directory's own links rather than things in it, and one file can
-        // have more than one name — a short one and a long one, of which the
-        // listing keeps the preferred one.
-        let mut best: Vec<(String, u64)> = Vec::new();
-        for entry in &node.entries {
-            let Some(name) = &entry.name else { continue };
-            if name.name == "." || name.name == ".." {
-                continue;
-            }
-            match best
-                .iter()
-                .position(|(_, record)| *record == entry.reference)
-            {
+        // One file can have more than one name — a short one and a long one —
+        // and the listing keeps the preferred of them.
+        let mut best: Vec<(FileName, u64)> = Vec::new();
+        for (name, record) in found {
+            match best.iter().position(|(_, held)| *held == record) {
                 Some(index) => {
-                    if name.preferred_namespace() {
-                        best[index] = (name.name.clone(), entry.reference);
+                    if name.preferred_namespace() && !best[index].0.preferred_namespace() {
+                        best[index] = (name, record);
                     }
                 }
-                None => best.push((name.name.clone(), entry.reference)),
+                None => best.push((name, record)),
             }
         }
-        Ok(best)
+        Ok(best
+            .into_iter()
+            .map(|(name, record)| (name.name, record))
+            .collect())
+    }
+
+    /// Every name an index node holds, in the order the tree keeps them.
+    ///
+    /// A node's entries hold its children between its own keys: an entry that
+    /// points at a child carries a key, that child holds the keys *less than*
+    /// it, and the key is the child's successor — so a walk takes the child
+    /// first and the key after it, which is the order the names sort in.  The
+    /// last entry of an internal node has no key and points at the child with
+    /// the largest names.  A directory's own "." and ".." are links and not
+    /// names in it, whichever of them a volume stores.
+    fn walk_index(
+        &self,
+        attributes: &[ParsedAttr],
+        buffer: &[u8],
+        node: usize,
+        depth: u32,
+        found: &mut Vec<(FileName, u64)>,
+    ) -> Result<()> {
+        if depth > MAX_INDEX_DEPTH {
+            return Err(Error::InvalidArgument);
+        }
+        for entry in parse_index_node(buffer, node).entries {
+            if let Some(child) = entry.child {
+                let block = self.read_index_block(attributes, child)?;
+                self.walk_index(attributes, &block, 24, depth + 1, found)?;
+            }
+            if let Some(name) = entry.name {
+                if name.name != "." && name.name != ".." {
+                    found.push((name, entry.reference));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Read the index allocation block a virtual cluster number names.
@@ -1256,11 +1272,24 @@ impl NtfsFs {
                 return Err(Error::InvalidArgument);
             }
             depth += 1;
-            let pointer = parse_index_node(&buffer, node)
+            // A node that points at more than one child is a *tree*, and this
+            // driver writes only the one-block tree it made: routing an
+            // insertion by key and splitting a full block are the stage after
+            // reading one.
+            let parsed = parse_index_node(&buffer, node);
+            if parsed
                 .entries
                 .iter()
-                .find(|entry| entry.points_at_a_node)
-                .map(|entry| entry.reference)
+                .filter(|entry| entry.child.is_some())
+                .count()
+                > 1
+            {
+                return Err(Error::NotImplemented);
+            }
+            let pointer = parsed
+                .entries
+                .iter()
+                .find_map(|entry| entry.child)
                 .ok_or(Error::InvalidArgument)?;
             let allocation = attributes
                 .iter()

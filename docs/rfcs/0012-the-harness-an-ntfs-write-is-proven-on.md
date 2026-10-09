@@ -168,6 +168,10 @@ never from `make verify`: the gates do not depend on a host tool.
    record's own room and, when it has none left, **converts** to one whose
    value is where runs say — which is what a file created empty needs before
    it can take content.
+8. **An index that is a tree.**  A directory whose entries outgrow one block
+   keeps them in several, with the keys that separate them in the node above —
+   read first, so a directory of many names reads here, and then written, which
+   is routing an insertion by key and splitting a block that is full.
 
 ### The journal, decided once
 
@@ -833,3 +837,34 @@ being something a partial write can ignore.
   its record; and a file that outgrows its record converts — a second mount
   reads the bytes back, the attribute has runs, the cluster it took is the
   volume's no more, and the file then grows again the way a file with runs does.
+
+**Stage 8 — reading a directory whose index is a tree.**
+
+- A directory whose entries outgrow one block keeps them in several, and the
+  shape was **measured** on a volume `mkntfs` made with eighty names in one
+  directory: the root's node holds an entry per child but the last, and that
+  entry carries a **key** *and* the child — the key's record in the first eight
+  bytes, the child's virtual cluster number right-aligned in the *last* eight,
+  with the padding a key of any length leaves between them — and the last entry
+  has no key at all.
+- The child holds the keys **less than** the entry's key, so the entry's key is
+  that child's successor, and it is a real name: the measured tree's
+  `name-018.txt` lives in the root's node and in **no** block, because a split
+  *promotes* it.  A walk therefore takes each child first and the entry's own
+  key after it — which is the order the names sort in — and `walk_index` is
+  that walk.  `directory_entries` is it, so a listing of a tree holds the
+  promoted keys like any other name and `lookup` finds a name whichever node
+  holds it.
+- **The writer half is not built.**  A node that points at more than one child
+  refuses (`NotImplemented`) — routing an insertion by key and splitting a full
+  block are the stage after reading one — so a tree directory is read and not
+  changed, and the refusal is what keeps an insertion from landing in the wrong
+  block.
+- The fixture carries the shape: a directory whose index is two blocks with one
+  promoted key between them, and the key's own record.
+- Two tests: the listing is the tree's order (`alpha.txt`, the promoted
+  `middle.txt`, `omega.txt`), and every name is found by its path and answers
+  with the record it names; and a tree directory refuses a creation, a removal
+  and a rename, with nothing it holds moved.
+- What is left is the writer: routing by key, splitting a full block, and the
+  index bitmap's own growth when the blocks outnumber its bits.

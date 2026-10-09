@@ -316,6 +316,7 @@ fn a_directory_lists_what_its_index_holds() {
             "full-dir",
             "split.bin",
             "moved.bin",
+            "tree",
             "sub",
         ],
         "the root's entries, without its own \".\""
@@ -342,7 +343,7 @@ fn a_directory_lists_what_its_index_holds() {
     assert_eq!(tight.kind, NodeKind::File);
     let full = fs_handle.read_dir("/", 10).expect("full.bin");
     assert_eq!(full.kind, NodeKind::File);
-    let sub = fs_handle.read_dir("/", 14).expect("sub");
+    let sub = fs_handle.read_dir("/", 15).expect("sub");
     assert_eq!(sub.kind, NodeKind::Directory);
 }
 
@@ -1467,6 +1468,75 @@ fn a_name_too_long_for_its_record_makes_room() {
 }
 
 #[test]
+fn a_directory_whose_index_is_a_tree_lists_in_tree_order() {
+    // A directory whose index is a **tree**: two blocks with the key that
+    // separates them in the root's node — the shape a directory of many names
+    // has, measured on a volume `mkntfs` makes.  The key's own record lives in
+    // the root and in no block, because a split promotes it, so a walk has to
+    // take the children *and* the keys, in the order they sort in.
+    let fixture = build_volume(FRACTIONAL);
+    let fs_handle = open(&fixture);
+    assert_eq!(
+        the_listing(&fs_handle, "/tree"),
+        [
+            String::from("alpha.txt"),
+            String::from("middle.txt"),
+            String::from("omega.txt"),
+        ],
+        "the tree's names, in the order the tree keeps them"
+    );
+
+    // Every name is found, whichever node holds it — and the promoted key is a
+    // name like any other, with its own record.
+    for (name, record) in [
+        ("alpha.txt", TREE_ALPHA),
+        ("middle.txt", TREE_MIDDLE),
+        ("omega.txt", TREE_OMEGA),
+    ] {
+        let node = fs_handle
+            .lookup(&alloc::format!("/tree/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+        assert_eq!(node.kind(), NodeKind::File);
+        assert_eq!(
+            fs_handle
+                .resolve(&alloc::format!("/tree/{name}"))
+                .expect("resolve")
+                .0,
+            record,
+            "the name names the record it names"
+        );
+    }
+}
+
+#[test]
+fn a_tree_directory_is_read_but_not_written() {
+    // Routing an insertion by key and splitting a full block are the stage
+    // after reading a tree, so a directory whose index is one refuses a change
+    // rather than writing into the wrong block.
+    let fixture = build_volume(FRACTIONAL);
+    let (_device, fs_handle) = writable(&fixture);
+    assert_eq!(
+        fs_handle.create_file("/tree/new.txt").err(),
+        Some(Error::NotImplemented)
+    );
+    assert_eq!(
+        fs_handle.remove_path("/tree/alpha.txt").err(),
+        Some(Error::NotImplemented)
+    );
+    assert_eq!(
+        fs_handle
+            .rename("/tree/alpha.txt", "/tree/renamed.txt")
+            .err(),
+        Some(Error::NotImplemented)
+    );
+    assert_eq!(
+        the_listing(&fs_handle, "/tree").len(),
+        3,
+        "and nothing it holds moved"
+    );
+}
+
+#[test]
 fn a_file_made_empty_takes_a_small_write_where_it_lies() {
     // A file made empty is *resident*: its bytes are in its record, which is
     // where an empty file lives.  A small write grows that value where it
@@ -2059,7 +2129,20 @@ const LISTED_FILE_EXT: u64 = 32;
 /// shape a directory's `$INDEX_ROOT` takes on a volume taken apart above.
 const MOVED_FILE: u64 = 33;
 const MOVED_FILE_EXT: u64 = 34;
-const RECORDS: u64 = 35;
+/// A directory whose index is a **tree**: two blocks, and the root's node
+/// holding the key that separates them — the shape a directory of many names
+/// has, measured on a volume `mkntfs` makes.  Its children are named in the
+/// tree and in no other directory.
+const TREE_DIRECTORY: u64 = 35;
+const TREE_ALPHA: u64 = 36;
+/// The separator key's own record: its name lives in the root's node and in no
+/// block, which is what a promoted key is.
+const TREE_MIDDLE: u64 = 37;
+const TREE_OMEGA: u64 = 38;
+const RECORDS: u64 = 39;
+
+/// The records the tree directory names, which no other directory does.
+const TREE_CHILDREN: [u64; 3] = [TREE_ALPHA, TREE_MIDDLE, TREE_OMEGA];
 
 /// The records that hold another record's attributes.
 const EXTENSION_RECORDS: [u64; 2] = [LISTED_FILE_EXT, MOVED_FILE_EXT];
@@ -2088,6 +2171,8 @@ fn is_named(number: u64, spares_in_use: bool) -> bool {
         || number == SUBDIRECTORY_FILE
         || number == LISTED_FILE
         || number == MOVED_FILE
+        || number == TREE_DIRECTORY
+        || TREE_CHILDREN.contains(&number)
         // An extension record is not a name of its own, so making every record
         // in use does not name one.
         || (spares_in_use && number < RECORDS && !EXTENSION_RECORDS.contains(&number))
@@ -2412,6 +2497,8 @@ struct Fixture {
     moved_runs: [(u64, u64); 2],
     /// Where the entries of a *non-resident* `$ATTRIBUTE_LIST` are.
     list_runs: [(u64, u64); 1],
+    /// Where the tree directory's two index blocks are, one after the other.
+    tree_blocks: u64,
 }
 
 impl Fixture {
@@ -2490,6 +2577,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let moved_first = take(1);
     let moved_second = take(1);
     let list_at = take(1);
+    let tree_blocks = take(2 * index_block_clusters);
     let total_clusters = cursor + 2;
 
     let mut fixture = Fixture {
@@ -2513,6 +2601,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         split_runs: [(split_first, 1), (split_second, 2)],
         moved_runs: [(moved_first, 1), (moved_second, 1)],
         list_runs: [(list_at, 1)],
+        tree_blocks,
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -2524,6 +2613,9 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         fixture.used[cluster as usize] = 1;
     }
     for cluster in index_block_at..index_block_at + index_block_clusters {
+        fixture.used[cluster as usize] = 1;
+    }
+    for cluster in tree_blocks..tree_blocks + 2 * index_block_clusters {
         fixture.used[cluster as usize] = 1;
     }
     for &(lcn, clusters) in fixture
@@ -2637,6 +2729,10 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 2 * cluster_size,
                 Vec::new(),
             ),
+            TREE_DIRECTORY => (ROOT_RECORD, "tree", true, 0, Vec::new()),
+            TREE_ALPHA => (TREE_DIRECTORY, "alpha.txt", false, 0, Vec::new()),
+            TREE_MIDDLE => (TREE_DIRECTORY, "middle.txt", false, 0, Vec::new()),
+            TREE_OMEGA => (TREE_DIRECTORY, "omega.txt", false, 0, Vec::new()),
             SUBDIRECTORY => (ROOT_RECORD, "sub", true, 0, Vec::new()),
             SUBDIRECTORY_FILE => (
                 SUBDIRECTORY,
@@ -2847,6 +2943,60 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     put_u64_le(&mut list, 40, cluster_size); // allocated size
                     attributes.extend(list);
                 }
+                TREE_DIRECTORY => {
+                    // A directory whose index is a *tree*: two blocks with a
+                    // separator key between them, which is the shape a
+                    // directory of many names has — and the key's own record
+                    // lives in the root's node and in no block, because a
+                    // split promotes it.
+                    let at = fixture.tree_blocks as usize * cluster_size as usize;
+                    let mut first = index_entry(TREE_ALPHA, "alpha.txt", false, 0);
+                    first.extend_from_slice(&index_end_entry());
+                    let block = index_block(&shape, 0, &node(&first, false, 40));
+                    fixture.image[at..at + block.len()].copy_from_slice(&block);
+                    let at = at + index_block_clusters as usize * cluster_size as usize;
+                    let mut second = index_entry(TREE_OMEGA, "omega.txt", false, 0);
+                    second.extend_from_slice(&index_end_entry());
+                    let block =
+                        index_block(&shape, index_block_clusters, &node(&second, false, 40));
+                    fixture.image[at..at + block.len()].copy_from_slice(&block);
+
+                    let key = file_name(TREE_DIRECTORY, "middle.txt", false, 0);
+                    let mut separator = vec![0u8; 16];
+                    put_u64_le(&mut separator, 0, (1u64 << 48) | TREE_MIDDLE);
+                    put_u16_le(&mut separator, 10, key.len() as u16);
+                    put_u32_le(&mut separator, 12, 1); // points at a node
+                    separator.extend_from_slice(&key);
+                    // Its child's number ends the entry: the padding the key
+                    // leaves sits between the two.
+                    let length = (separator.len() + 8).div_ceil(8) * 8;
+                    separator.resize(length, 0);
+                    put_u16_le(&mut separator, 8, length as u16);
+                    put_u64_le(&mut separator, length - 8, 0);
+
+                    let mut root_entries = separator;
+                    root_entries.extend_from_slice(&node_pointer(index_block_clusters));
+                    attributes.extend(attribute(
+                        0x90,
+                        "$I30",
+                        &index_root(&root_entries, true),
+                        None,
+                        0,
+                    ));
+                    attributes.extend(attribute(
+                        0xa0,
+                        "$I30",
+                        &[],
+                        Some(&[(fixture.tree_blocks, 2 * index_block_clusters)]),
+                        2 * shape.index_block_size() as u64,
+                    ));
+                    let mut bits = vec![0u8; 8];
+                    bits[0] = 0b11; // both blocks are in use
+                    attributes.extend(attribute(0xb0, "$I30", &bits, None, 0));
+                }
+                TREE_ALPHA | TREE_MIDDLE | TREE_OMEGA => {
+                    attributes.extend(attribute(0x80, "", &[], None, 0));
+                }
                 MOVED_FILE_EXT => {
                     attributes.extend(attribute(
                         0x80,
@@ -2880,6 +3030,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                             FULL_DIRECTORY,
                             LISTED_FILE,
                             MOVED_FILE,
+                            TREE_DIRECTORY,
                             SUBDIRECTORY,
                         ];
                         if spares_in_use {
@@ -2890,6 +3041,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                 if !listed.contains(&record)
                                     && record != ROOT_RECORD
                                     && !EXTENSION_RECORDS.contains(&record)
+                                    && !TREE_CHILDREN.contains(&record)
                                 {
                                     listed.push(record);
                                 }
@@ -2911,6 +3063,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                 FULL_DIRECTORY => ("full-dir", true, 0),
                                 LISTED_FILE => ("split.bin", false, 3 * cluster_size),
                                 MOVED_FILE => ("moved.bin", false, 2 * cluster_size),
+                                TREE_DIRECTORY => ("tree", true, 0),
                                 SUBDIRECTORY => ("sub", true, 0),
                                 _ => (spare_name(record), false, 0),
                             };
@@ -2974,7 +3127,10 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             }
         }
 
-        let directory = number == ROOT_RECORD || number == SUBDIRECTORY || number == FULL_DIRECTORY;
+        let directory = number == ROOT_RECORD
+            || number == SUBDIRECTORY
+            || number == FULL_DIRECTORY
+            || number == TREE_DIRECTORY;
         let flags = if named {
             if directory {
                 0x03
@@ -3330,7 +3486,9 @@ fn a_child_pointer_is_read_from_the_end_of_its_entry() {
     // its record in is left zero: the child block's virtual cluster number is
     // the entry's *last* eight bytes.  A reader that took the child's address
     // from the reference field found zero there — which is the right block
-    // only while the child is the volume's first.
+    // only while the child is the volume's first.  A pointer *with* a key is
+    // the same entry with the key filled in: an internal node's entry carries
+    // both, which is what makes a tree walk possible.
     let mut entry = vec![0u8; 24];
     put_u16_le(&mut entry, 8, 24);
     put_u32_le(&mut entry, 12, 3);
@@ -3349,8 +3507,46 @@ fn a_child_pointer_is_read_from_the_end_of_its_entry() {
     let pointer = node
         .entries
         .iter()
-        .find(|entry| entry.points_at_a_node)
+        .find(|entry| entry.child.is_some())
         .expect("the pointer entry");
-    assert_eq!(pointer.reference, 7);
+    assert_eq!(
+        pointer.child,
+        Some(7),
+        "the child is the entry's last eight bytes"
+    );
+    assert_eq!(pointer.reference, 0, "and a keyless entry names no record");
     assert!(pointer.name.is_none());
+
+    // The same entry with a key: the record comes from the first eight bytes
+    // and the child from the last ones.
+    let key = file_name(TREE_DIRECTORY, "middle.txt", false, 0);
+    let mut entry = vec![0u8; 16];
+    put_u64_le(&mut entry, 0, (1u64 << 48) | TREE_MIDDLE);
+    put_u16_le(&mut entry, 10, key.len() as u16);
+    put_u32_le(&mut entry, 12, 1); // points at a node
+    entry.extend_from_slice(&key);
+    // The child's number ends the entry, so the padding a key of any length
+    // leaves sits between the key and it.
+    let length = (entry.len() + 8).div_ceil(8) * 8;
+    entry.resize(length, 0);
+    put_u16_le(&mut entry, 8, length as u16);
+    put_u64_le(&mut entry, length - 8, 3);
+
+    let mut buf = vec![0u8; 16];
+    put_u16_le(&mut buf, 0, 16);
+    let length = (16 + entry.len()) as u16;
+    put_u16_le(&mut buf, 4, length);
+    put_u16_le(&mut buf, 8, length);
+    buf[12] = 1;
+    buf.extend_from_slice(&entry);
+
+    let node = parse_index_node(&buf, 0);
+    let separator = node.entries.first().expect("the separator entry");
+    assert_eq!(separator.reference, TREE_MIDDLE, "the key's record");
+    assert_eq!(separator.child, Some(3), "and its child");
+    assert_eq!(
+        separator.name.as_ref().map(|name| name.name.as_str()),
+        Some("middle.txt"),
+        "a keyed pointer carries a real key"
+    );
 }

@@ -737,13 +737,16 @@ pub fn parse_attribute_list(buf: &[u8]) -> Vec<AttributeListEntry> {
 
 /// One entry of an index node.
 pub struct IndexEntry {
-    /// The record the entry names — or, when it points at a child node, that
-    /// node's virtual cluster number.
+    /// The record the entry's key names, or zero when the entry has no key.
     pub reference: u64,
-    /// The name the entry carries, when it names a file.
+    /// The child node this entry points at, when it does: the child's virtual
+    /// cluster number is the entry's *last* eight bytes, which is where the
+    /// format puts it, and an internal node's entry carries a key *and* a
+    /// child.
+    pub child: Option<u64>,
+    /// The key the entry carries, when it has one: a leaf's name, or an
+    /// internal node's separator.
     pub name: Option<FileName>,
-    /// Whether the entry points at a child node rather than naming a file.
-    pub points_at_a_node: bool,
     /// Where the entry begins in the buffer it was parsed from, and how long
     /// it is: an entry is rebuilt from the bytes it already has, so a writer
     /// has to be able to name them.
@@ -818,12 +821,13 @@ pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
         ]);
 
         let points_at_a_node = flags & 0x01 != 0;
-        // A pointer entry has no key, and the reference field a name entry
-        // keeps its record in is left zero: the child block's virtual cluster
-        // number is the entry's *last* eight bytes.  A reader that took the
-        // child's address from the reference field found zero there — which is
-        // the right block only while the child is the volume's first.
-        let reference = if points_at_a_node && entry_length >= 24 {
+        // A child's virtual cluster number *ends* the entry, where the format
+        // puts it — the padding a key of any length leaves sits between the
+        // key and it — and the reference field is the *key's* record, which a
+        // keyless last entry leaves zero.  An internal node's entry therefore
+        // carries a key and a child, and that child holds the keys less than
+        // the one the entry carries.
+        let child = (points_at_a_node && entry_length >= 24).then(|| {
             u64::from_le_bytes([
                 buf[at + entry_length - 8],
                 buf[at + entry_length - 7],
@@ -834,19 +838,18 @@ pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
                 buf[at + entry_length - 2],
                 buf[at + entry_length - 1],
             ])
-        } else {
-            // The upper sixteen bits of a reference are a sequence number.
-            reference & 0x0000_FFFF_FFFF_FFFF
-        };
-        let name = if !points_at_a_node && at + 16 + stream_length <= buf.len() {
+        });
+        // The upper sixteen bits of a reference are a sequence number.
+        let reference = reference & 0x0000_FFFF_FFFF_FFFF;
+        let name = if stream_length >= 66 && at + 16 + stream_length <= buf.len() {
             FileName::parse(&buf[at + 16..at + 16 + stream_length])
         } else {
             None
         };
         entries.push(IndexEntry {
             reference,
+            child,
             name,
-            points_at_a_node,
             offset: at,
             length: entry_length,
         });

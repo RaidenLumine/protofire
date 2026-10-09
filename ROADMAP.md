@@ -180,8 +180,14 @@ The authoritative picture of what exists today is
   the record cache let a write through a vnode leave the mount that made it
   answering with the old record.  What is left of the stage is a `$FILE_NAME`
   that lives in a record of its own, the reverse conversion that a file
-  shrinking back into its record would need, a *second* index block, and the
-  compressed, sparse and encrypted streams this RFC never decided.
+  shrinking back into its record would need, and the compressed, sparse and
+  encrypted streams this RFC never decided.  A directory whose index is a
+  **tree** is *read* now: an internal node holds a key and the child it points
+  at, so a promoted key — one that lives in the node above and in no block — is
+  a name like any other, and a walk takes each child and then its key, which is
+  the order the names sort in.  Writing one is what is left: routing an
+  insertion by key, splitting a block that is full, and the index bitmap's own
+  growth when the blocks outnumber its bits.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped
