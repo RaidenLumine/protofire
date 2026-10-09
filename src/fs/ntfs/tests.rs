@@ -1546,6 +1546,81 @@ fn a_tree_directory_takes_a_name_where_it_belongs() {
 }
 
 #[test]
+fn a_full_block_splits_and_promotes_its_middle_key() {
+    // A block that fills with names is what the format splits: half its entries
+    // go to a block of their own, the entry between the halves becomes a key of
+    // the node above, and the index bitmap gains a bit for the new block.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let blocks = |handle: &super::NtfsFs| -> u64 {
+        handle
+            .attributes_of(TREE_DIRECTORY)
+            .expect("the attributes")
+            .iter()
+            .find(|attr| attr.attr_type == 0xa0)
+            .expect("the allocation")
+            .data_size as u64
+    };
+    let before = blocks(&fs_handle);
+    // The names are long on purpose.  An index entry is mostly its name, so
+    // long ones fill a block after a handful of creations — and a handful the
+    // fixture's own MFT has free records for.  Short names would need some
+    // thirty-five creations to fill the same block, and this volume runs out
+    // of records before the block runs out of room, so the split under test
+    // would never be reached.
+    let pad = "p".repeat(60);
+    let mut names = alloc::vec![
+        String::from("alpha.txt"),
+        String::from("middle.txt"),
+        String::from("omega.txt"),
+    ];
+    for index in 0..60 {
+        let name = alloc::format!("many-{index:03}-{pad}.txt");
+        fs_handle
+            .create_file(&alloc::format!("/tree/{name}"))
+            .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
+        names.push(name);
+        if blocks(&fs_handle) > before {
+            break;
+        }
+    }
+
+    // One more block, and its bit in the index bitmap.
+    let attributes = fs_handle
+        .attributes_of(TREE_DIRECTORY)
+        .expect("the attributes");
+    let allocation = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0xa0)
+        .expect("the allocation");
+    let block_size = fs_handle.info().lock().index_block_size as u64;
+    assert_eq!(
+        u64::from(allocation.data_size),
+        before + block_size,
+        "the block the split made"
+    );
+    let bitmap = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0xb0)
+        .expect("the index bitmap");
+    assert_eq!(bitmap.content[0] & 0b100, 0b100, "and its bit");
+
+    // A second mount lists every name in the tree's order — the key the split
+    // promoted among them — and finds each of them by its path.
+    let again = remount(&device);
+    let listed = the_listing(&again, "/tree");
+    assert_eq!(listed.len(), names.len(), "{listed:?}");
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(listed, sorted, "the tree's order is the names' order");
+    for name in &names {
+        again
+            .lookup(&alloc::format!("/tree/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+    }
+}
+
+#[test]
 fn a_promoted_key_is_a_name_no_change_can_take() {
     // The name a split promoted lives in the node above the blocks, and taking
     // it out is the tree deletion the stage after reading one does not have: a
@@ -2605,6 +2680,13 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let moved_second = take(1);
     let list_at = take(1);
     let tree_blocks = take(2 * index_block_clusters);
+    // Free clusters, each alone: a growth claims a run it fits in, and a claim
+    // of several clusters has none — which is what the refusal tests rely on.
+    let mut spare_used = Vec::new();
+    for _ in 0..16 {
+        take(1); // free, and alone
+        spare_used.push(take(1)); // given out, so the next one is alone too
+    }
     let total_clusters = cursor + 2;
 
     let mut fixture = Fixture {
@@ -2644,6 +2726,9 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     }
     for cluster in tree_blocks..tree_blocks + 2 * index_block_clusters {
         fixture.used[cluster as usize] = 1;
+    }
+    for cluster in &spare_used {
+        fixture.used[*cluster as usize] = 1;
     }
     for &(lcn, clusters) in fixture
         .file_runs

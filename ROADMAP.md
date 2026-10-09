@@ -189,8 +189,14 @@ The authoritative picture of what exists today is
   block the name's key belongs in, so a name can be created while its block has
   room and a leaf's name removed, and a name that *is* a key — the one a split
   promoted — refuses a change.  What is left of the stage is the split itself: a
-  block that is full, its middle key promoted into the node above, and the index
-  bitmap's own growth when the blocks outnumber its bits.
+  block that is full now **splits**: half its entries move to a block of their
+  own, the entry between the halves is promoted into the node above as its key,
+  and the index bitmap gains a bit for the new block — whose virtual cluster
+  number is the one the allocation's own size names, which is the leaf's number
+  plus one only while the leaf is the last block.  What is left of the stage is
+  the tree's *deletion* — a promoted key cannot be taken out, and two
+  half-empty blocks cannot be merged — and the index bitmap's own growth when
+  the blocks outnumber its bits.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped

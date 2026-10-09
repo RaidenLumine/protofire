@@ -895,3 +895,40 @@ being something a partial write can ignore.
   with the promoted key still in the middle of it and finds each by its path;
   and the promoted key itself refuses a removal, with nothing the directory
   holds moved.
+
+**Stage 10 — a full block splits.**
+
+- A block with no room for a name is what the format **splits**: half its
+  entries move to a block of their own, the entry *between* the halves becomes
+  a key of the node above — the entry the walk came through keeps the keys
+  greater than it — and the index bitmap gains a bit for the new block.
+- The new block's virtual cluster number is the **allocation's next**, which is
+  the number its own size names: `$INDEX_ALLOCATION`'s data size divided by the
+  block size, times the clusters a block is.  The leaf's own number plus one is
+  that only while the leaf is the *last* block, and a tree's blocks are reached
+  in key order, which need not be number order — a split beside a middle block
+  would have written over the block that already lived at the next number.
+- The node above is written from a **fresh read of its record**, not from the
+  copy the walk started with, because growing the allocation can *move* the
+  root: the run list that outgrows the room its attribute has moves that
+  attribute to the end of the record, and the root's node goes with it.  A node
+  written back at the offset the walk once measured would put the record back
+  the way it was — undoing the growth and the bitmap bit with it, which is what
+  the test caught before this was fixed: the allocation grew, and the write
+  that followed put the old bytes back.
+- The writes keep stage 9's order, one every window a mount reads survives:
+  the allocation and the bitmap first (a block nothing points at is a leak),
+  the new block next (still unreachable, and its half of the entries is in the
+  old block *too*, so a listing shows each name once), the node above after
+  that (whose key is what makes the new block reachable), and the old block
+  last, with the half that stayed in it.
+- One test: a tree directory whose block fills by a handful of names — the
+  names are long, because an entry is mostly its name and the fixture's own MFT
+  has only so many free records to create with — splits once, and a second
+  mount finds one more block, its bit in the index bitmap, every name in the
+  tree's order, and each name by its path.
+- What is left of the tree is its **deletion**: taking a promoted key out would
+  leave the child whose keys are less than it unreachable, and merging two
+  half-empty blocks back is the same stage.  The index bitmap's own *growth*,
+  for a set of blocks that outnumbers its bits, is not built either — a split
+  needs the bit it sets to already have room.

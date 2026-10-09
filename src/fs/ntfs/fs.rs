@@ -992,6 +992,30 @@ pub fn index_entry(name: &str, reference: u64, parent: u64, directory: bool, siz
     entry
 }
 
+/// The entry a split promotes: a name entry's key and record, and the child
+/// whose keys are *less* than that key.
+///
+/// An internal node's entry carries both — the key in the entry's own bytes,
+/// the child's virtual cluster number right-aligned at its end, which is where
+/// a reader looks for it — so the name a split takes out of a block becomes the
+/// node above's entry with the block it left as the child below it.
+pub fn index_separator(entry: &[u8], child: u64) -> Result<Vec<u8>, Error> {
+    if entry.len() < 24 {
+        return Err(Error::InvalidArgument);
+    }
+    let key_length = u16::from_le_bytes([entry[10], entry[11]]) as usize;
+    if key_length < 66 || 16 + key_length > entry.len() {
+        return Err(Error::InvalidArgument);
+    }
+    let mut separator = entry[..16 + key_length].to_vec();
+    let length = (separator.len() + 8).div_ceil(8) * 8;
+    separator.resize(length, 0);
+    put_u16_le(&mut separator, 8, length as u16);
+    put_u32_le(&mut separator, 12, 0x0000_0001); // points at a node
+    put_u64_le(&mut separator, length - 8, child);
+    Ok(separator)
+}
+
 /// The entry a node ends with when it has a child: no name, the last-entry
 /// flag, and the child block's virtual cluster number — which is the entry's
 /// *last* eight bytes, where the format puts it, and not the reference field
