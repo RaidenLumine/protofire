@@ -4125,9 +4125,17 @@ impl NtfsVnode {
                 Err(error) => return Err(error),
             }
         }
+        // What the runs hold **now**, and what they will: the clusters the file
+        // already had are where its bytes are, and a claim adds the ones that
+        // have never held them.
+        let held: u64 = data
+            .data_runs
+            .iter()
+            .map(|run| run.cluster_count)
+            .sum::<u64>()
+            * cluster_size;
         let allocated = {
-            let clusters: u64 = data.data_runs.iter().map(|run| run.cluster_count).sum();
-            let mut allocated = clusters * cluster_size;
+            let mut allocated = held;
             if let Some((needed, first)) = claim {
                 runs.push(DataRun {
                     lcn: first as i64,
@@ -4137,8 +4145,15 @@ impl NtfsVnode {
             }
             allocated as u32
         };
-        let zeros = if allocated > current {
-            alloc::vec![0u8; (u64::from(allocated) - u64::from(current)) as usize]
+        // The zeros are what the claim added **that the length reaches**, which
+        // is `[held, length)` — not the whole claim, and not a region measured
+        // back from the length.  The bytes below `held` are the file's own: a
+        // shrink leaves them there on purpose (they are what a growth back
+        // reads), and a growth that zeroed them would answer a read with zeros
+        // where the file's bytes were.  The writer puts the zeros at `length`
+        // less their own length, which is `held`.
+        let zeros = if u64::from(length) > held {
+            alloc::vec![0u8; (u64::from(length) - held) as usize]
         } else {
             Vec::new()
         };

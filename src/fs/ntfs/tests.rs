@@ -491,6 +491,53 @@ fn a_file_can_be_as_long_as_the_runs_it_has() {
 }
 
 #[test]
+fn a_growth_zeroes_only_the_clusters_it_claimed() {
+    // A growth writes zeros where it claimed clusters, because those have never
+    // held the file's bytes — and **only** there.  The bytes below the
+    // allocation the file had are its own: a shrink leaves them in place, and a
+    // growth that measured its zeros back from the file's *length* rather than
+    // forward from the allocation's end would overwrite them.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size() as usize;
+    let node = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
+    assert_eq!(node.size(), 3 * cluster, "three clusters in two runs");
+
+    // A length that is not a whole number of clusters past what the runs hold:
+    // the claim is one cluster, and the zeros are the hundred bytes of it that
+    // the length reaches.
+    node.set_len(3 * cluster as u64 + 100).expect("grow");
+    let mut buf = vec![0u8; node.size()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(
+        buf[..cluster].iter().all(|byte| *byte == 0x11),
+        "the first run's bytes"
+    );
+    assert!(
+        buf[cluster..3 * cluster].iter().all(|byte| *byte == 0x22),
+        "and the second run's, which the claim's zeros must not reach"
+    );
+    assert!(
+        buf[3 * cluster..].iter().all(|byte| *byte == 0),
+        "what the claim reached reads as the zero a new byte is"
+    );
+
+    // A second mount answers the same: the zero went down where the volume
+    // holds it, not only into the record's sizes.
+    let again = remount(&device);
+    let node = again.lookup("/two-runs.bin").expect("relookup");
+    assert_eq!(node.size(), 3 * cluster + 100);
+    let mut buf = vec![0u8; node.size()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(
+        buf[..cluster].iter().all(|byte| *byte == 0x11)
+            && buf[cluster..3 * cluster].iter().all(|byte| *byte == 0x22),
+        "the file's own bytes are still the file's"
+    );
+    assert!(buf[3 * cluster..].iter().all(|byte| *byte == 0));
+}
+
+#[test]
 fn a_growth_claims_clusters_and_says_so_in_the_bitmap() {
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
