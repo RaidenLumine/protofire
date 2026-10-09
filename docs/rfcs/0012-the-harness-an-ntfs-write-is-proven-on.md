@@ -955,3 +955,42 @@ being something a partial write can ignore.
 - A bitmap that is a **file** of its own would be grown by a step of its own —
   its size and its run list moving together — and still refuses
   (`NotImplemented`).
+
+**Stage 12 — a name comes back out of the tree.**
+
+- A name a **block** holds comes out of the block, and the block it leaves may
+  be one the tree no longer has to keep: what that block and the one next to it
+  hold is **merged** back into one when it fits, the key that separated the pair
+  moving *down* between the two halves, and the block that lost its names is
+  given back — its bit in the index bitmap lowered.  A pair that still needs two
+  blocks is left as it is, which is an answer (`Ok(())`) rather than a refusal,
+  and it is what a removal that left a block *nearly* full hits.
+- A name the node **above** the blocks holds is a key a split promoted, and it
+  is the case that used to refuse (`NotImplemented`).  A key's entry carries the
+  child whose keys are *less* than it, so the entry cannot simply go: what takes
+  its place is the key's **predecessor**, the largest name that child holds,
+  which keeps the child where it is and leaves the name that is going nowhere at
+  all.  The predecessor is then taken out of its block, which is the removal a
+  block's name takes — and that block may itself be merged back.  A key whose
+  child holds **nothing** is the case where the entry goes as it is, the block
+  it pointed at being given back with it.
+- The node above is written **first** in that walk.  Written with the
+  predecessor's key in it, the removed name is gone and the predecessor appears
+  twice — in the node and still in the block — which a walk reads as one name,
+  because both copies name the same record.  The other order would leave the
+  name in neither.  The merge's own order is the same idea: the merged block
+  first (its names reachable twice, counted once), the node above next (after
+  which the block that lost its names is not reachable at all), and its bit
+  last, which is what gives the block back.
+- The clusters of a block that goes back stay part of the allocation, a free
+  block inside it.  Taking the tail of an allocation back is a step of its own,
+  and the block a split takes is the allocation's *next* rather than the first
+  free bit it holds, so a freed block is not reused yet either.
+- Three tests: a promoted key is removed and its predecessor takes the key's
+  place while the emptied block merges back; a block whose last name comes out
+  moves the key that separated it down into the block before it and gives its
+  bit back; and the two halves of a split that are still too full to be one keep
+  their shape, with neither block's bit given back.
+- What is left of the tree is **reusing** a block a deletion gave back, the
+  allocation's own shrink, and a tree deeper than one level of blocks under the
+  root, which `index_leaf` refuses.

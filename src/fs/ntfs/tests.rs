@@ -1467,6 +1467,57 @@ fn a_name_too_long_for_its_record_makes_room() {
     );
 }
 
+/// How many bytes of blocks the tree directory's `$INDEX_ALLOCATION` holds.
+fn tree_allocation_size(fs_handle: &super::NtfsFs) -> u64 {
+    fs_handle
+        .attributes_of(TREE_DIRECTORY)
+        .expect("the attributes")
+        .iter()
+        .find(|attribute| attribute.attr_type == 0xa0)
+        .expect("the allocation")
+        .data_size as u64
+}
+
+/// The tree directory's index bitmap, as the record holds it.
+fn tree_bitmap(fs_handle: &super::NtfsFs) -> Vec<u8> {
+    fs_handle
+        .attributes_of(TREE_DIRECTORY)
+        .expect("the attributes")
+        .into_iter()
+        .find(|attribute| attribute.attr_type == 0xb0)
+        .expect("the index bitmap")
+        .content
+}
+
+/// Create names in the tree directory until one of its blocks fills and splits,
+/// and answer every name the directory holds.
+///
+/// The names are long on purpose.  An index entry is mostly its name, so long
+/// ones fill a block after a handful of creations — and a handful the fixture's
+/// own MFT has free records for.  Short names would need some thirty-five
+/// creations, and this volume runs out of records before the block runs out of
+/// room, so the split would never be reached.
+fn fill_the_tree(fs_handle: &super::NtfsFs) -> Vec<String> {
+    let pad = "p".repeat(60);
+    let mut names = alloc::vec![
+        String::from("alpha.txt"),
+        String::from("middle.txt"),
+        String::from("omega.txt"),
+    ];
+    let before = tree_allocation_size(fs_handle);
+    for index in 0..60 {
+        let name = alloc::format!("many-{index:03}-{pad}.txt");
+        fs_handle
+            .create_file(&alloc::format!("/tree/{name}"))
+            .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
+        names.push(name);
+        if tree_allocation_size(fs_handle) > before {
+            break;
+        }
+    }
+    names
+}
+
 #[test]
 fn a_directory_whose_index_is_a_tree_lists_in_tree_order() {
     // A directory whose index is a **tree**: two blocks with the key that
@@ -1552,66 +1603,22 @@ fn a_full_block_splits_and_promotes_its_middle_key() {
     // the node above, and the index bitmap gains a bit for the new block.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
-    let blocks = |handle: &super::NtfsFs| -> u64 {
-        handle
-            .attributes_of(TREE_DIRECTORY)
-            .expect("the attributes")
-            .iter()
-            .find(|attr| attr.attr_type == 0xa0)
-            .expect("the allocation")
-            .data_size as u64
-    };
-    let before = blocks(&fs_handle);
-    // The names are long on purpose.  An index entry is mostly its name, so
-    // long ones fill a block after a handful of creations — and a handful the
-    // fixture's own MFT has free records for.  Short names would need some
-    // thirty-five creations to fill the same block, and this volume runs out
-    // of records before the block runs out of room, so the split under test
-    // would never be reached.
-    let pad = "p".repeat(60);
-    let mut names = alloc::vec![
-        String::from("alpha.txt"),
-        String::from("middle.txt"),
-        String::from("omega.txt"),
-    ];
-    for index in 0..60 {
-        let name = alloc::format!("many-{index:03}-{pad}.txt");
-        fs_handle
-            .create_file(&alloc::format!("/tree/{name}"))
-            .unwrap_or_else(|error| panic!("create {name}: {error:?}"));
-        names.push(name);
-        if blocks(&fs_handle) > before {
-            break;
-        }
-    }
+    let before = tree_allocation_size(&fs_handle);
+    let names = fill_the_tree(&fs_handle);
 
     // One more block, and its bit in the index bitmap.
-    let attributes = fs_handle
-        .attributes_of(TREE_DIRECTORY)
-        .expect("the attributes");
-    let allocation = attributes
-        .iter()
-        .find(|attr| attr.attr_type == 0xa0)
-        .expect("the allocation");
     let block_size = fs_handle.info().lock().index_block_size as u64;
     assert_eq!(
-        u64::from(allocation.data_size),
+        tree_allocation_size(&fs_handle),
         before + block_size,
         "the block the split made"
     );
-    let bitmap = attributes
-        .iter()
-        .find(|attr| attr.attr_type == 0xb0)
-        .expect("the index bitmap");
+    let bitmap = tree_bitmap(&fs_handle);
     // The tree's bitmap was one byte, and the block the split made is the
     // allocation's ninth: its bit needs a byte the value did not have, so the
     // value grew rather than the bit being dropped.
-    assert_eq!(
-        bitmap.content.len(),
-        2,
-        "the byte the new block's bit needs"
-    );
-    assert_eq!(bitmap.content[1] & 0b1, 0b1, "and its bit");
+    assert_eq!(bitmap.len(), 2, "the byte the new block's bit needs");
+    assert_eq!(bitmap[1] & 0b1, 0b1, "and its bit");
 
     // A second mount lists every name in the tree's order — the key the split
     // promoted among them — and finds each of them by its path.
@@ -1629,20 +1636,112 @@ fn a_full_block_splits_and_promotes_its_middle_key() {
 }
 
 #[test]
-fn a_promoted_key_is_a_name_no_change_can_take() {
+fn a_promoted_key_comes_out_and_its_block_gives_way() {
     // The name a split promoted lives in the node above the blocks, and taking
-    // it out is the tree deletion the stage after reading one does not have: a
-    // removal refuses rather than leaving its block unreachable.
+    // it out is a key coming out of a node that has children.  Its entry
+    // carries the child whose keys are less than it, so the entry cannot simply
+    // go: what takes its place is that child's **last** name, the key's
+    // predecessor, which is then taken out of the block — and the block it
+    // leaves may be one the tree no longer has to keep.
     let fixture = build_volume(FRACTIONAL);
-    let (_device, fs_handle) = writable(&fixture);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle
+        .remove_path("/tree/middle.txt")
+        .expect("a promoted key comes out");
+
+    // Every other name is where it was, the one that went is not there, and a
+    // second mount agrees.
+    let again = remount(&device);
     assert_eq!(
-        fs_handle.remove_path("/tree/middle.txt").err(),
-        Some(Error::NotImplemented)
+        the_listing(&again, "/tree"),
+        [String::from("alpha.txt"), String::from("omega.txt")],
+        "the predecessor took the key's place and stayed a name"
     );
+    for name in ["alpha.txt", "omega.txt"] {
+        again
+            .lookup(&alloc::format!("/tree/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+    }
+    assert!(matches!(
+        again.lookup("/tree/middle.txt"),
+        Err(Error::NotFound)
+    ));
+
+    // The block the key's child was in held nothing once the predecessor left
+    // it, and what the two blocks hold fits one again: the block next to it is
+    // given back, and its bit in the index bitmap goes with it.
     assert_eq!(
-        the_listing(&fs_handle, "/tree").len(),
-        3,
-        "and nothing it holds moved"
+        tree_bitmap(&again)[0] & 0b11,
+        0b01,
+        "the block that went back"
+    );
+}
+
+#[test]
+fn a_block_that_empties_moves_its_key_down_and_gives_its_bit_back() {
+    // A block whose last name comes out holds nothing, and the key that
+    // separated it from the block before it moves *down* into that block: the
+    // name stays a name, the tree keeps its order, and the empty block is given
+    // back.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    fs_handle
+        .remove_path("/tree/omega.txt")
+        .expect("a block's name comes out");
+
+    let again = remount(&device);
+    assert_eq!(
+        the_listing(&again, "/tree"),
+        [String::from("alpha.txt"), String::from("middle.txt")],
+        "the key moved down and is still a name"
+    );
+    assert!(matches!(
+        again.lookup("/tree/omega.txt"),
+        Err(Error::NotFound)
+    ));
+    assert_eq!(
+        tree_bitmap(&again)[0] & 0b11,
+        0b01,
+        "the block that went back"
+    );
+}
+
+#[test]
+fn a_pair_that_still_needs_two_blocks_is_not_merged() {
+    // A block is merged back with its neighbour only when what the two hold
+    // fits one block: after a split the two halves are nearly full, and taking
+    // one name out of them is not enough for that — so the tree keeps its shape
+    // and neither block's bit is given back.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let mut names = fill_the_tree(&fs_handle);
+    assert_eq!(
+        tree_bitmap(&fs_handle)[0] & 0b11,
+        0b11,
+        "the tree's two blocks are in use"
+    );
+
+    // A name that sorts below every one the split made goes into the block the
+    // promoted key points at, and taking it out again leaves that block and its
+    // neighbour as full as they were — too full for the two to be one.
+    fs_handle
+        .create_file("/tree/aardvark.txt")
+        .expect("a name below the split's");
+    fs_handle
+        .remove_path("/tree/aardvark.txt")
+        .expect("and out again");
+    assert_eq!(
+        tree_bitmap(&fs_handle)[0] & 0b11,
+        0b11,
+        "neither block was given back: the pair still needs two"
+    );
+
+    let again = remount(&device);
+    names.sort();
+    assert_eq!(
+        the_listing(&again, "/tree"),
+        names,
+        "every other name is still there, in the tree's order"
     );
 }
 

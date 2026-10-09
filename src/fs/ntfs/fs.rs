@@ -1016,6 +1016,29 @@ pub fn index_separator(entry: &[u8], child: u64) -> Result<Vec<u8>, Error> {
     Ok(separator)
 }
 
+/// The name entry a **keyed** entry carries: the key and the record it names,
+/// without the child a node's entry keeps at its end.
+///
+/// This is [`index_separator`]'s other direction.  A key moves back *down* into
+/// a block when a block is merged with the one next to it, and what it becomes
+/// there is a leaf entry: the same key and record, the child's eight bytes gone
+/// and the flag that said it pointed at a node cleared.
+pub fn index_leaf_entry(entry: &[u8]) -> Result<Vec<u8>, Error> {
+    if entry.len() < 24 {
+        return Err(Error::InvalidArgument);
+    }
+    let key_length = u16::from_le_bytes([entry[10], entry[11]]) as usize;
+    if key_length < 66 || 16 + key_length > entry.len() {
+        return Err(Error::InvalidArgument);
+    }
+    let mut leaf = entry[..16 + key_length].to_vec();
+    let length = leaf.len().div_ceil(8) * 8;
+    leaf.resize(length, 0);
+    put_u16_le(&mut leaf, 8, length as u16);
+    put_u32_le(&mut leaf, 12, 0); // a leaf entry points at no node
+    Ok(leaf)
+}
+
 /// The entry a node ends with when it has a child: no name, the last-entry
 /// flag, and the child block's virtual cluster number — which is the entry's
 /// *last* eight bytes, where the format puts it, and not the reference field

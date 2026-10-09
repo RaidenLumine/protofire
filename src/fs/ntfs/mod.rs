@@ -1042,6 +1042,42 @@ impl NtfsFs {
         Ok(block)
     }
 
+    /// One of a directory's index blocks, and the home a change to its entries
+    /// is written back through.
+    fn read_index_block_home(
+        &self,
+        attributes: &[ParsedAttr],
+        vcn: u64,
+    ) -> Result<(Vec<u8>, IndexHome)> {
+        let allocation = attributes
+            .iter()
+            .find(|attribute| {
+                attribute.attr_type == ATTR_TYPE_INDEX_ALLOC && !attribute.data_runs.is_empty()
+            })
+            .ok_or(Error::NotFound)?;
+        // A block's node begins after `INDX`, its update sequence array and its
+        // virtual cluster number, and it has the rest of the block.
+        let block = self.read_index_block(attributes, vcn)?;
+        let usa_offset = u16::from_le_bytes([block[4], block[5]]) as usize;
+        let usa_count = u16::from_le_bytes([block[6], block[7]]) as usize;
+        Ok((
+            block,
+            IndexHome::Block {
+                vcn,
+                runs: allocation.data_runs.clone(),
+                usa_offset,
+                usa_count,
+            },
+        ))
+    }
+
+    /// How many clusters one index block is, which is what a block's virtual
+    /// cluster number counts in.
+    fn clusters_per_index_block(&self) -> u64 {
+        let info = self.info.lock();
+        u64::from(info.index_block_size / info.cluster_size.max(1))
+    }
+
     /// The record a path names, from the root down, and the name it has.
     ///
     /// A name is matched the way the volume's index orders names: through the
@@ -1368,22 +1404,8 @@ impl NtfsFs {
                 before,
                 home: home.clone(),
             });
-            let allocation = attributes
-                .iter()
-                .find(|attr| attr.attr_type == ATTR_TYPE_INDEX_ALLOC && !attr.data_runs.is_empty())
-                .ok_or(Error::NotFound)?;
-
-            // A block's node begins after `INDX`, its update sequence array
-            // and its virtual cluster number, and it has the rest of the block.
-            let block = self.read_index_block(&attributes, pointer)?;
-            let usa_offset = u16::from_le_bytes([block[4], block[5]]) as usize;
-            let usa_count = u16::from_le_bytes([block[6], block[7]]) as usize;
-            home = IndexHome::Block {
-                vcn: pointer,
-                runs: allocation.data_runs.clone(),
-                usa_offset,
-                usa_count,
-            };
+            let (block, block_home) = self.read_index_block_home(&attributes, pointer)?;
+            home = block_home;
             node = 24;
             buffer = block;
         }
@@ -2289,21 +2311,45 @@ impl NtfsFs {
     /// The entry that goes is the one that names this record *and* this name:
     /// a file can have more than one name, and a number alone would take the
     /// wrong one.
+    ///
+    /// A name the *node above* the blocks holds is a key a split promoted, and
+    /// it comes out the way a key does — see [`Self::remove_index_key`].  A
+    /// name a block holds comes out of the block, and the block it left may
+    /// then be one the tree does not have to keep — see
+    /// [`Self::merge_block_if_it_fits`].
     fn index_remove(&self, parent_record: u64, name: &str, reference: u64) -> Result<()> {
-        let upcase = self.upcase_table();
-        let Some(mut leaf) = self.index_leaf(parent_record, name)? else {
-            // A name that is a node's own key is one a split promoted, and
-            // taking it out is the tree deletion the stage after reading one
-            // does not have.
-            return Err(Error::NotImplemented);
+        let Some(leaf) = self.index_leaf(parent_record, name)? else {
+            return self.remove_index_key(parent_record, name);
         };
-        let parsed = parse_index_node(&leaf.buffer, leaf.node);
+        let raws = self.entries_without(&leaf.buffer, leaf.node, name, reference)?;
+        let mut buffer = leaf.buffer.clone();
+        self.write_index_leaf(parent_record, &mut buffer, leaf.node, &raws, &leaf.home)?;
+
+        // The node above the entries is a *record*: an index root has nothing
+        // to be merged with, and a block has the block next to it.
+        let IndexHome::Block { vcn, .. } = leaf.home else {
+            return Ok(());
+        };
+        self.merge_block_if_it_fits(parent_record, vcn)
+    }
+
+    /// One node's entries with one name taken out of them, and the node's
+    /// terminator still last.
+    fn entries_without(
+        &self,
+        buffer: &[u8],
+        node: usize,
+        name: &str,
+        reference: u64,
+    ) -> Result<Vec<Vec<u8>>> {
+        let upcase = self.upcase_table();
+        let parsed = parse_index_node(buffer, node);
         let last = parsed.entries.len().saturating_sub(1);
 
         let mut raws: Vec<Vec<u8>> = Vec::new();
         let mut removed = false;
         for (index, entry) in parsed.entries.iter().enumerate() {
-            let bytes = leaf.buffer[entry.offset..entry.offset + entry.length].to_vec();
+            let bytes = buffer[entry.offset..entry.offset + entry.length].to_vec();
             if index == last {
                 // The terminator stays, wherever the removal left it.
                 raws.push(bytes);
@@ -2323,14 +2369,243 @@ impl NtfsFs {
         if !removed {
             return Err(Error::NotFound);
         }
+        Ok(raws)
+    }
 
+    /// Take out a name that lives in the node **above** the blocks, which is a
+    /// key a split promoted.
+    ///
+    /// A key's entry carries the child whose keys are *less* than it, so the
+    /// entry cannot simply go: that child would be left unreachable.  What
+    /// takes its place is the key's **predecessor**, the largest name the child
+    /// holds — which keeps the child where it is, keeps every other name where
+    /// it was, and leaves the name that is going nowhere at all.  The
+    /// predecessor is then taken out of the block it came from, which is the
+    /// removal a block's name takes, and that block may then be one the tree
+    /// does not have to keep.
+    ///
+    /// The node above goes first.  Written with the predecessor's key in it,
+    /// the removed name is gone and the predecessor appears **twice** — in the
+    /// node and still in the block — which a walk reads as one name, because
+    /// both copies name the same record.  Taking it out of the block is the
+    /// write that follows, and the other order would leave the name in neither.
+    ///
+    /// A key whose child holds **nothing** is the case where the entry can go
+    /// as it is: the child has no names that would be left behind, and the
+    /// block it is in is given back.
+    fn remove_index_key(&self, parent_record: u64, name: &str) -> Result<()> {
+        let upcase = self.upcase_table();
+        let attributes = self.attributes_of(parent_record)?;
+        let root = attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_INDEX_ROOT)
+            .ok_or(Error::NotFound)?;
+        let holder = root.holder;
+        if holder == u64::MAX {
+            return Err(Error::NotImplemented);
+        }
+        let (parent_buffer, parent_node) = self.index_root_node(holder)?;
+        let parsed = parse_index_node(&parent_buffer, parent_node);
+        let position = parsed
+            .entries
+            .iter()
+            .position(|entry| {
+                entry
+                    .name
+                    .as_ref()
+                    .is_some_and(|key| compare_names(name, &key.name, &upcase).is_eq())
+            })
+            .ok_or(Error::NotFound)?;
+        let child = parsed.entries[position]
+            .child
+            .ok_or(Error::InvalidArgument)?;
+
+        let (block, home) = self.read_index_block_home(&attributes, child)?;
+        let picked = parse_index_node(&block, 24)
+            .entries
+            .into_iter()
+            .rev()
+            .find(|entry| entry.name.is_some());
+        let predecessor = picked
+            .as_ref()
+            .map(|entry| block[entry.offset..entry.offset + entry.length].to_vec());
+
+        let mut parent_entries: Vec<Vec<u8>> = Vec::new();
+        for (index, entry) in parsed.entries.iter().enumerate() {
+            if index == position {
+                if let Some(predecessor) = &predecessor {
+                    parent_entries.push(fs::index_separator(predecessor, child)?);
+                }
+                continue;
+            }
+            parent_entries.push(parent_buffer[entry.offset..entry.offset + entry.length].to_vec());
+        }
+
+        // A predecessor whose name is longer than the one that goes makes the
+        // node above longer, and a record with no room makes room first — which
+        // moves the node, so the write is worked out again from where it is now.
+        let mut written = false;
+        for attempt in 0..2 {
+            let (mut buffer, node) = self.index_root_node(holder)?;
+            match self.write_index_leaf(
+                parent_record,
+                &mut buffer,
+                node,
+                &parent_entries,
+                &IndexHome::Record { holder },
+            ) {
+                Ok(()) => {
+                    written = true;
+                    break;
+                }
+                Err(Error::NoSpace) if attempt == 0 => {
+                    self.make_room(holder, ATTR_TYPE_INDEX_ROOT)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if !written {
+            return Err(Error::NoSpace);
+        }
+
+        let Some(predecessor) = picked else {
+            // The child held nothing, so the block the key pointed at holds
+            // nothing either: nothing points at it now, and its bit goes.
+            let bit = child / self.clusters_per_index_block().max(1);
+            return self.set_index_block_bit(parent_record, bit, false);
+        };
+        let predecessor_name = predecessor.name.expect("a name that was looked for");
+        let raws =
+            self.entries_without(&block, 24, &predecessor_name.name, predecessor.reference)?;
+        let mut buffer = block;
+        self.write_index_leaf(parent_record, &mut buffer, 24, &raws, &home)?;
+        self.merge_block_if_it_fits(parent_record, child)
+    }
+
+    /// Merge a block with the one next to it, when what the two hold still fits
+    /// one block again.
+    ///
+    /// A block that has lost names is a block the tree does not have to keep,
+    /// and the key that separated the pair is what goes with it: it moves
+    /// **down** into the merged node, where it belongs between the two halves —
+    /// every name the two hold is on one side of it or the other — and the
+    /// entry that carried it is dropped.  What stays is the block whose key
+    /// order came first, so the entry *after* the one that goes is the entry
+    /// that points at it afterwards, with its own key unchanged.
+    ///
+    /// A pair that does not fit one block is not merged, and that is an answer
+    /// rather than a refusal (`Ok(())`): the block keeps its names and the tree
+    /// keeps its shape, which is what a removal that left a block *nearly* full
+    /// should do.
+    ///
+    /// The writes are ordered by what a crash leaves.  The merged block first:
+    /// its names are then reachable twice, and a walk counts them once because
+    /// both copies name the same record.  The node above next, after which the
+    /// block that lost its names is not reachable at all.  Its bit in the index
+    /// bitmap last, which is what gives the block back — the clusters stay part
+    /// of the allocation, a free block inside it, because taking the tail of an
+    /// allocation back is a step of its own.
+    fn merge_block_if_it_fits(&self, parent_record: u64, vcn: u64) -> Result<()> {
+        let attributes = self.attributes_of(parent_record)?;
+        let root = attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_INDEX_ROOT)
+            .ok_or(Error::NotFound)?;
+        let holder = root.holder;
+        if holder == u64::MAX {
+            return Err(Error::NotImplemented);
+        }
+        let (parent_buffer, parent_node) = self.index_root_node(holder)?;
+        let parsed = parse_index_node(&parent_buffer, parent_node);
+        let Some(position) = parsed
+            .entries
+            .iter()
+            .position(|entry| entry.child == Some(vcn))
+        else {
+            // The node above does not point at the block: nothing to merge.
+            return Ok(());
+        };
+        // The pair, and which of the two keeps its block: the entry whose child
+        // is the block that came first, and the entry after it.  A block that
+        // is the *last* child has no entry after it, and the pair is the one
+        // before it.
+        let (left_at, right_at) = if position + 1 < parsed.entries.len() {
+            (position, position + 1)
+        } else if position > 0 {
+            (position - 1, position)
+        } else {
+            // A node with one child and no keys has no pair to merge, and a
+            // tree of one block is a tree.
+            return Ok(());
+        };
+        let left = parsed.entries[left_at]
+            .child
+            .ok_or(Error::InvalidArgument)?;
+        let right = parsed.entries[right_at]
+            .child
+            .ok_or(Error::InvalidArgument)?;
+        let at = parsed.entries[left_at].offset;
+        let separator = parent_buffer[at..at + parsed.entries[left_at].length].to_vec();
+        let separator = fs::index_leaf_entry(&separator)?;
+
+        let (left_block, left_home) = self.read_index_block_home(&attributes, left)?;
+        let (right_block, _) = self.read_index_block_home(&attributes, right)?;
+
+        // What the merged block holds, in the order the tree keeps them: the
+        // left block's names, the key that separated the pair, the right
+        // block's names, and the terminator the left block already ended with.
+        let mut merged: Vec<Vec<u8>> = Vec::new();
+        let mut terminator = None;
+        for entry in parse_index_node(&left_block, 24).entries {
+            let bytes = left_block[entry.offset..entry.offset + entry.length].to_vec();
+            if entry.name.is_some() {
+                merged.push(bytes);
+            } else {
+                terminator = Some(bytes);
+            }
+        }
+        merged.push(separator);
+        for entry in parse_index_node(&right_block, 24).entries {
+            if entry.name.is_some() {
+                merged.push(right_block[entry.offset..entry.offset + entry.length].to_vec());
+            }
+        }
+        merged.push(terminator.ok_or(Error::InvalidArgument)?);
+
+        let mut buffer = left_block;
+        match self.write_index_leaf(parent_record, &mut buffer, 24, &merged, &left_home) {
+            Ok(()) => {}
+            // The two still do not fit one block: the tree keeps its shape.
+            Err(Error::NoSpace) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+
+        let mut parent_entries: Vec<Vec<u8>> = Vec::new();
+        for (index, entry) in parsed.entries.iter().enumerate() {
+            if index == left_at {
+                continue;
+            }
+            let mut bytes = parent_buffer[entry.offset..entry.offset + entry.length].to_vec();
+            if index == right_at {
+                // The entry that pointed at the block that went points at the
+                // one that stayed.  A child's number ends the entry, keyed or
+                // not, which is where a reader looks for it.
+                let at = bytes.len() - 8;
+                bytes[at..].copy_from_slice(&left.to_le_bytes());
+            }
+            parent_entries.push(bytes);
+        }
+        let mut parent_buffer = parent_buffer;
         self.write_index_leaf(
             parent_record,
-            &mut leaf.buffer,
-            leaf.node,
-            &raws,
-            &leaf.home,
-        )
+            &mut parent_buffer,
+            parent_node,
+            &parent_entries,
+            &IndexHome::Record { holder },
+        )?;
+
+        let bit = right / self.clusters_per_index_block().max(1);
+        self.set_index_block_bit(parent_record, bit, false)
     }
 
     /// Put a new file's record into the MFT's first free slot, and answer its

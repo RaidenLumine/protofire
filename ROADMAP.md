@@ -188,17 +188,24 @@ The authoritative picture of what exists today is
   the order the names sort in.  A change is *routed* now too: it reaches the
   block the name's key belongs in, so a name can be created while its block has
   room and a leaf's name removed, and a name that *is* a key — the one a split
-  promoted — refuses a change.  What is left of the stage is the split itself: a
-  block that is full now **splits**: half its entries move to a block of their
-  own, the entry between the halves is promoted into the node above as its key,
+  promoted — comes out by its predecessor.  A block that is full now
+  **splits**: half its entries move to a block of their own, the entry between
+  the halves is promoted into the node above as its key,
   and the index bitmap gains a bit for the new block — whose virtual cluster
   number is the one the allocation's own size names, which is the leaf's number
-  plus one only while the leaf is the last block.  What is left of the stage is
-  the tree's *deletion* — a promoted key cannot be taken out, and two
-  half-empty blocks cannot be merged.  The index bitmap **grows** now too: a bit
-  past the last byte of the value extends it, and the record it lives in makes
+  plus one only while the leaf is the last block.  The index bitmap **grows**
+  now too: a bit past the last byte of the value extends it, and the record it
+  lives in makes
   room for the growth when it has none — so a ninth block does not go unnamed
-  because the bitmap the tree started with was one byte long.
+  because the bitmap the tree started with was one byte long.  And a name
+  **comes back out**: a block that has lost names is merged with the one next to
+  it when the two fit one again, the key that separated them moving down between
+  the halves and the block that went being given back, and a name the node above
+  holds — a key a split promoted — comes out by its *predecessor*, the child's
+  largest name taking the key's place so that no child is left unreachable.
+  What is left of the tree is *reusing* a block a deletion gave back, the
+  allocation's own shrink, and a tree deeper than one level of blocks under the
+  root.
 - **Real-hardware bring-up.** Validate on bare-metal x86_64 boards and AArch64
   SoCs, not just QEMU; harden the device-tree probe path accordingly.  The
   assumptions a port has to remove — a fixed memory pool, `virt`-shaped
