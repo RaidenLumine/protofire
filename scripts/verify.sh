@@ -151,6 +151,15 @@ run_p3() {
     # three architectures has a smoke of its own, so no target's kernel can go
     # un-booted.  They stay opt-in because they are slow and need QEMU.
     run_p2
+    # The suites that have a target of their own and had no tier that called
+    # them: a test target outside every gate is a target that rots, and this is
+    # not hypothetical — `syscall_abi_golden` sat red for a release because no
+    # tier ran it, and `make test` was the only thing that could have seen it.
+    run_make_step "make test-fs-locking" test-fs-locking
+    run_make_step "make test-service" test-service
+    run_make_step "make test-usb" test-usb
+    run_make_step "make test-gpu" test-gpu
+    run_make_step "make test-parsers" test-parsers
     run_make_step "make clippy" clippy
     run_make_step "make clippy-targets" clippy-targets
     run_make_step "make check-unsafe-comments" check-unsafe-comments

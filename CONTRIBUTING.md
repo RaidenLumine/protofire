@@ -163,7 +163,7 @@ least the full gate before it can be merged:
 | `make verify-p0` | repo integrity + documentation citations + fmt-check + host/x86_64 checks + aarch64 check + x86_64/aarch64 build + source header coverage |
 | `make verify-p1` | p0 + host unit tests (`test-lib`, concurrency, fast regressions) |
 | `make verify-p2` | p1 + storage/recovery/fault-matrix regressions (`test-storage`) |
-| `make verify-p3` | p2 + clippy (all targets) + the optional QEMU smokes and the boot-work baseline |
+| `make verify-p3` | p2 + the suites whose own targets no other tier calls (locking, service, USB, GPU, parsers) + clippy (all targets) + the optional QEMU smokes and the boot-work baseline |
 
 CI runs `make check`, `make verify-p0`, and `make clippy` on every push and
 pull request (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).

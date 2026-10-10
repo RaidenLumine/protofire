@@ -293,13 +293,13 @@ test-lib:
 	$(CARGO) test $(CARGO_FLAGS) --lib --features demo-disk
 
 test-fast:
-	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test io --test path --test fs_entries --test install --test syscall_abi_golden
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test io --test path --test fs_entries --test install --test syscall_abi_golden --test syscall_fuzz
 
 test-concurrency:
-	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test scheduler --test condvar --test console --test keyboard
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test scheduler --test condvar --test console --test keyboard --test process_stress
 
 test-storage:
-	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fs_maintenance --test memory_manager --test page_table --test simplefs --test simplefs_recovery --test simplefs_fault_matrix --test simplefs_undo_property --test fat32
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fs_maintenance --test memory_manager --test page_table --test simplefs --test simplefs_recovery --test simplefs_fault_matrix --test simplefs_undo_property --test fat32 --test simplefs_property --test memory_pressure
 
 test-fs-locking:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test sync_lock
@@ -314,7 +314,7 @@ test-gpu:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test virgl_demo
 
 test-parsers:
-	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test parser_fuzz
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test parser_fuzz --test net_fuzz
 
 test-service:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test servicefs
