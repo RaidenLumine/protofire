@@ -721,6 +721,12 @@ impl OpenFile {
         self.inner.lock().set_len(length)
     }
 
+    /// Punch a hole in the file: the range reads as zeros, and the storage the
+    /// filesystem can give back for it is released.  The length does not move.
+    pub fn punch_hole(&self, offset: u64, length: u64) -> Result<()> {
+        self.inner.lock().punch_hole(offset, length)
+    }
+
     pub(crate) fn sync(&self) -> Result<()> {
         self.inner.lock().sync()
     }

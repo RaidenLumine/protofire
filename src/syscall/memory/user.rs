@@ -1254,6 +1254,8 @@ const SYSCALL_POINTER_SPECS: &[&[SyscallPointerSpec]] = &[
     &[],
     // 192 InstallPackage           — arg0=package path (in), arg1=len
     &[SyscallPointerSpec::input(0, Some(1), None)],
+    // 193 fallocate                — no pointers (fd/mode/offset/length)
+    &[],
 ];
 
 /// Pre-validate every user-memory pointer declared in the syscall's

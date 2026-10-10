@@ -9,9 +9,9 @@
 //! SYSCALL_COUNT).
 
 pub const SYSCALL_ABI_VERSION_MAJOR: u32 = 1;
-pub const SYSCALL_ABI_VERSION_MINOR: u32 = 3;
+pub const SYSCALL_ABI_VERSION_MINOR: u32 = 4;
 
-pub const SYSCALL_COUNT: usize = 193;
+pub const SYSCALL_COUNT: usize = 194;
 pub const MAX_SYSCALLS: usize = 256;
 
 // ── Status encoding ──────────────────────────────────────────────────
@@ -258,6 +258,14 @@ pub const SYS_SERVICE_START_ALL: usize = 191;
 /// program can install exactly what it can read and exactly where it can write.
 pub const SYS_INSTALL_PACKAGE: usize = 192;
 
+/// `fallocate` — punch a hole in a file: the range reads as zeros, and the
+/// clusters behind it go back to the volume.  `mode` must be exactly
+/// [`super::fs::FALLOC_FL_PUNCH_HOLE`] | [`super::fs::FALLOC_FL_KEEP_SIZE`],
+/// so the length of the file does not move.  [RFC
+/// 0016](../../../docs/rfcs/0016-punch-a-hole-in-an-ntfs-file.md) has the
+/// argument.
+pub const SYS_FALLOCATE: usize = 193;
+
 // ── Stability classification ────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -405,6 +413,7 @@ pub const fn syscall_name(number: usize) -> Option<&'static str> {
         119 => Some("epoll_ctl"),
         120 => Some("epoll_wait"),
         121 => Some("tls_connect"),
+        193 => Some("fallocate"),
         122 => Some("filter_add_rule"),
         123 => Some("filter_remove_rule"),
         124 => Some("filter_set_default_action"),
@@ -491,6 +500,7 @@ mod tests {
     use super::SYSCALL_COUNT;
     use super::SYS_ABI_INFO;
     use super::SYS_DUP2;
+    use super::SYS_FALLOCATE;
     use super::SYS_GPU_DEVICE_INFO;
     use super::SYS_INSTALL_PACKAGE;
     use super::SYS_OPEN;
@@ -499,7 +509,7 @@ mod tests {
     use super::SYS_WRITE;
 
     #[test]
-    fn syscall_numbers_are_dense_in_0_192() {
+    fn syscall_numbers_are_dense_in_0_193() {
         // Every number in [0, SYSCALL_COUNT) must have a name; SYSCALL_COUNT must not.
         for i in 0..SYSCALL_COUNT {
             assert!(syscall_name(i).is_some(), "syscall {i} missing name");
@@ -521,6 +531,7 @@ mod tests {
             Some("service_start_all")
         );
         assert_eq!(syscall_name(SYS_INSTALL_PACKAGE), Some("install_package"));
+        assert_eq!(syscall_name(SYS_FALLOCATE), Some("fallocate"));
     }
 
     #[test]
@@ -536,14 +547,14 @@ mod tests {
         assert_eq!(SYSCALL_ABI_VERSION_MAJOR, 1);
         // Minor 1 added the service numbers at the end of the experimental
         // range; minor 2 changed `service_declare` to take a declaration file's
-        // path rather than its text; minor 3 added `install_package`.  The
-        // frozen range below 120 did not move.
-        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 3);
+        // path rather than its text; minor 3 added `install_package`; minor 4
+        // added `fallocate`.  The frozen range below 120 did not move.
+        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 4);
     }
 
     #[test]
     fn count_checks() {
-        assert_eq!(SYSCALL_COUNT, 193);
+        assert_eq!(SYSCALL_COUNT, 194);
         assert_eq!(MAX_SYSCALLS, 256);
     }
 }

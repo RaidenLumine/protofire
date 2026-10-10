@@ -39,6 +39,29 @@ pub(super) fn set_length(context: &mut super::SyscallContext) -> Result<super::S
     complete_current_process_fd(fd, |process, fd| io::set_len(process, fd, length))
 }
 
+/// `fallocate` — punch a hole: the range reads as zeros, and the clusters
+/// behind it go back to the volume.
+///
+/// The only mode defined is `FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE` — the
+/// pair Linux requires for a punch too — so the length of the file does not
+/// move.  A mode with any other bit set is `NotImplemented`: it is a mode this
+/// kernel does not define, which is a different answer from a bad argument.
+/// [RFC 0016](../../docs/rfcs/0016-punch-a-hole-in-an-ntfs-file.md) decides it.
+pub(super) fn fallocate(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
+    let fd = context.arg(0);
+    let mode = context.arg(1);
+    let offset = context.arg(2) as u64;
+    let length = context.arg(3) as u64;
+    super::validate_zeroed_args(context, 4)?;
+
+    if mode != crate::abi::fs::FALLOC_FL_PUNCH_HOLE | crate::abi::fs::FALLOC_FL_KEEP_SIZE {
+        return Err(crate::Error::NotImplemented);
+    }
+    complete_current_process_fd(fd, |process, fd| {
+        io::punch_hole(process, fd, offset, length)
+    })
+}
+
 pub(super) fn read(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let fd = context.arg(0);
     let buffer_ptr = context.arg(1) as *mut u8;
@@ -314,6 +337,58 @@ pub(super) fn poll(context: &mut super::SyscallContext) -> Result<super::Syscall
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_os = "none"))]
+    #[test]
+    fn fallocate_refuses_a_mode_it_does_not_define() {
+        use super::super::SyscallContext;
+        use super::super::SyscallNumber;
+        let punch = crate::abi::fs::FALLOC_FL_PUNCH_HOLE | crate::abi::fs::FALLOC_FL_KEEP_SIZE;
+        for mode in [0, crate::abi::fs::FALLOC_FL_PUNCH_HOLE, punch | 0x10] {
+            let mut context =
+                SyscallContext::new(SyscallNumber::Fallocate as usize, [3, mode, 0, 4096, 0, 0]);
+            assert_eq!(
+                super::fallocate(&mut context),
+                Err(crate::Error::NotImplemented),
+                "mode {mode:#x} is not the punch this kernel defines"
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "none"))]
+    #[test]
+    fn fallocate_reaches_the_file_a_descriptor_names() {
+        use super::super::SyscallContext;
+        use super::super::SyscallNumber;
+        let punch = crate::abi::fs::FALLOC_FL_PUNCH_HOLE | crate::abi::fs::FALLOC_FL_KEEP_SIZE;
+        // A mode this kernel defines goes on to the descriptor, and a
+        // descriptor with no file behind it is not one: the point is that the
+        // call gets that far rather than answering the mode question.
+        let (_guard, _scheduler, _process) =
+            super::super::test_support::locked_scheduled_current_process("fallocate-fd");
+        let mut context = SyscallContext::new(
+            SyscallNumber::Fallocate as usize,
+            [99, punch, 0, 4096, 0, 0],
+        );
+        assert!(
+            super::fallocate(&mut context).is_err(),
+            "a descriptor with no file behind it is not one to punch"
+        );
+    }
+
+    #[cfg(not(target_os = "none"))]
+    #[test]
+    fn fallocate_rejects_reserved_args() {
+        use super::super::SyscallContext;
+        use super::super::SyscallNumber;
+        let punch = crate::abi::fs::FALLOC_FL_PUNCH_HOLE | crate::abi::fs::FALLOC_FL_KEEP_SIZE;
+        let mut context =
+            SyscallContext::new(SyscallNumber::Fallocate as usize, [3, punch, 0, 4096, 1, 0]);
+        assert_eq!(
+            super::fallocate(&mut context),
+            Err(crate::Error::InvalidArgument)
+        );
+    }
+
     #[cfg(not(target_os = "none"))]
     use super::super::test_support;
     use super::close as close_fd;

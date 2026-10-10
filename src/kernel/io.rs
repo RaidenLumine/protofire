@@ -84,6 +84,14 @@ pub fn set_len(process: &Process, fd: FileDescriptor, length: u64) -> Result<u64
     with_file_io_entry(process, fd, HANDLE_RIGHT_WRITE, |file| file.set_len(length))
 }
 
+/// Punch a hole in a file: the range reads as zeros, and the clusters behind it
+/// go back to the volume where the filesystem has them to give.
+pub fn punch_hole(process: &Process, fd: FileDescriptor, offset: u64, length: u64) -> Result<()> {
+    with_file_io_entry(process, fd, HANDLE_RIGHT_WRITE, |file| {
+        file.punch_hole(offset, length)
+    })
+}
+
 pub fn duplicate(process: &Process, fd: FileDescriptor) -> Result<usize> {
     process.duplicate_fd(fd)
 }

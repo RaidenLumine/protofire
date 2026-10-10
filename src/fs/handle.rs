@@ -142,6 +142,12 @@ impl FileHandle {
         Ok(length)
     }
 
+    /// Punch a hole: the range reads as zeros, the clusters behind it go back
+    /// where the filesystem can give them back, and the length does not move.
+    pub fn punch_hole(&mut self, offset: u64, length: u64) -> Result<()> {
+        self.vnode.punch_hole(offset, length)
+    }
+
     pub fn sync(&self) -> Result<()> {
         self.vnode.sync()
     }

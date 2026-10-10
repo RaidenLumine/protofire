@@ -472,9 +472,12 @@ pub enum SyscallNumber {
     /// (#191).
     ServiceStartAll = 191,
     InstallPackage = 192,
+    /// fallocate — punch a hole in a file: the range reads as zeros and its
+    /// clusters go back to the volume (#193).
+    Fallocate = 193,
 }
 
-pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::InstallPackage as u32 + 1;
+pub(crate) const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::Fallocate as u32 + 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SyscallContext {
@@ -1069,6 +1072,7 @@ const SYSCALL_REGISTRY: &[(usize, SyscallHandler)] = &[
         SyscallNumber::InstallPackage as usize,
         install_handler::install,
     ),
+    (SyscallNumber::Fallocate as usize, io_fd::fallocate),
 ];
 
 impl Default for Table {
@@ -1223,10 +1227,7 @@ mod tests {
             );
         }
 
-        assert_eq!(
-            PUBLIC_SYSCALL_COUNT,
-            SyscallNumber::InstallPackage as u32 + 1
-        );
+        assert_eq!(PUBLIC_SYSCALL_COUNT, SyscallNumber::Fallocate as u32 + 1);
         assert!(table.entries[PUBLIC_SYSCALL_COUNT as usize].is_none());
     }
 

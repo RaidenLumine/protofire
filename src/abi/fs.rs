@@ -164,6 +164,13 @@ pub const FD_CLOEXEC: usize = 1;
 /// Non-blocking I/O status flag (Linux `O_NONBLOCK` value 0o4000).
 pub const O_NONBLOCK: usize = 0o4000;
 
+// ── fallocate modes ─────────────────────────────────────────────────
+
+/// The range reads as zeros, and the clusters behind it go back to the volume.
+pub const FALLOC_FL_PUNCH_HOLE: usize = 0x02;
+/// The length of the file does not change.
+pub const FALLOC_FL_KEEP_SIZE: usize = 0x01;
+
 // ── File flags (SetFileFlags / GetFileFlags) ─────────────────────────
 
 /// Per-file transparent compression (SimpleFs V4+).

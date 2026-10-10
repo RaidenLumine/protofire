@@ -160,13 +160,18 @@ own).
   (`InvalidArgument`), and a punch on a file that cannot hold the longer run
   list (`NoSpace`, with the volume's `$Bitmap` unchanged — the gate for §4's
   order).
-- **The syscall itself** — *still owed, and named as such*: the number, the
-  mode flags and the refusal of a mode with any other bit set are the ABI's own
-  checklist for a new call ([docs/fmts/syscall-abi.md](../fmts/syscall-abi.md)),
-  plus the table's tests (`PUBLIC_SYSCALL_COUNT`) and a call-level test that
-  punches a range through the interface and reads zeros back through it.  As
-  landed, `punch_hole` is reachable from inside the kernel and not yet from a
-  caller.
+- **The syscall, as it landed**: `fallocate` is number **193** — the first free
+  slot above the experimental range, with `SYSCALL_COUNT` and the ABI's minor
+  version (4) moved with it — and its only mode is
+  `FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE`: both bits, or the answer is
+  `NotImplemented` rather than a bad argument.  It reaches a file through the
+  descriptor, the way `set_len` does (`kernel::io::punch_hole`, `OpenFile`,
+  `FileHandle`, `VNode`), its pointer spec is the empty one (four integers), and
+  its tests are the mode refusals, the reserved-argument refusal, and a
+  descriptor with no file behind it.  What is still owed is the **end-to-end**
+  test: no gate punches a range through the interface and reads zeros back
+  through it, because the volume the punchable filesystem lives on is the
+  fixture's and the interface's own gate would have to mount it.
 - **A punch whose run list cannot be held** — *still owed*: the gate for §4's
   order needs a file whose record has no room for the longer list **and** a
   volume that cannot make room, and the fixture's record-full file does not
