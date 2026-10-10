@@ -600,12 +600,20 @@ pub fn parse_data_runs(buf: &[u8]) -> Vec<DataRun> {
         offset += off_bytes;
 
         if cluster_count > 0 {
-            let lcn = if off_delta == 0 {
-                -1 // Sparse run
+            // A run with **no offset at all** is the sparse one: it names no
+            // cluster, and — this is the part that is easy to get wrong and
+            // was — it does not move the place the next run's delta is measured
+            // from.  The reference (Linux's `ntfs3`, whose decoder carries the
+            // same `prev_lcn`) leaves the carried LCN alone here; a reader that
+            // took the hole for a cluster puts every run after it at the wrong
+            // place.
+            let lcn = if off_bytes == 0 {
+                -1
             } else {
-                prev_lcn + off_delta
+                let lcn = prev_lcn + off_delta;
+                prev_lcn = lcn;
+                lcn
             };
-            prev_lcn = lcn;
             runs.push(DataRun { lcn, cluster_count });
         }
     }

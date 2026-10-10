@@ -105,9 +105,14 @@ what would change it.
 - **Stage 1 — refuse what is not read.**  `ParsedAttr.flags`, the check on the
   read and write paths, the fixture's two streams, and the tests below.
   Nothing else changes: every file the driver reads today it still reads.
-- **Stage 2 — fill a hole.**  The write path allocates into a sparse run, the
-  fixture gains a file with a hole between two real runs, and the extension
-  is proved by a second mount and by the volume's `$Bitmap`.
+- **Stage 2 — fill a hole.**  *Landed.*  The write path claims the clusters a
+  write into a sparse run reaches, splits the hole around them, and writes the
+  run list back with the room the new clusters add; the fixture carries a file
+  with a hole between two of its runs, and the work is proved by a second mount
+  and by the volume's `$Bitmap`.  The fixture found a defect in the **reader**
+  on the way: a sparse run does not move the LCN the next run's delta is
+  measured from, and the parser was moving it, which put every run after a hole
+  in the wrong place.
 - **Unbuilt, and named as such**: LZNT1 decompression (a reader for a
   compressed stream), compression on write, making a hole, EFS, and the
   compression of a *directory's* index — which is a different stream under
@@ -257,10 +262,21 @@ compressed file unless `-C` is passed, and no sparse one at all.
   the file still listed, beside a record whose flags are plain and which still
   reads its runs.  `ntfscat` on a `mkntfs -C` volume is what a later stage's
   decompressor will be judged against.
-- **Stage 2**: the fixture's sparse file (a hole between two real runs), the
-  test `a_hole_reads_as_zeros_and_a_write_into_it_allocates`, a second mount
-  reading the bytes back, and `$Bitmap` showing the clusters the write
-  claimed.
+- **Stage 2, as it landed**: the fixture carries `/sub/sparse.bin`, four
+  clusters long with a hole of two between its first run and its last, and
+  `a_hole_reads_as_zeros_and_a_write_into_it_allocates` requires the hole to
+  read as zeros, a hundred-byte write inside it to leave the file's length
+  alone, a second mount to read the write back with the hole's other cluster
+  still a hole and the file's own bytes untouched on either side, the volume's
+  `$Bitmap` to have one cluster more spoken for, and the attribute's `allocated`
+  field to name the three clusters that are *behind* the file rather than the
+  four the run list covers.
+- **The sparse run's own encoding** is a unit gate of its own:
+  `a_sparse_run_does_not_move_the_next_run` encodes a run, a hole, and a run,
+  and requires the reader to answer the same three.  The reference for the
+  shape is Linux's `ntfs3`, whose decoder carries its `prev_lcn` through a
+  hole untouched — which is what this tree's encoder already did and its
+  reader did not.
 
 ## Unresolved questions
 

@@ -21,6 +21,7 @@ use super::types::ATTR_TYPE_FILENAME;
 use super::types::IO_REPARSE_TAG_SYMLINK;
 use crate::fs::ntfs::fs::get_best_filename;
 use crate::fs::ntfs::fs::parse_index_node;
+use crate::fs::ntfs::types::DataRun;
 use crate::fs::vfs::FileSystem as VfsFileSystem;
 use crate::fs::vfs::NodeKind;
 use crate::Error;
@@ -342,8 +343,12 @@ fn a_directory_lists_what_its_index_holds() {
     assert_eq!(leaf.name, "leaf.txt");
     assert_eq!(leaf.kind, NodeKind::File);
     assert_eq!(leaf.size, 4);
+    let sparse = fs_handle.read_dir("/sub", 1).expect("the file with a hole");
+    assert_eq!(sparse.name, "sparse.bin");
+    assert_eq!(sparse.kind, NodeKind::File);
+    assert_eq!(sparse.size, (4 * fixture.cluster_size()) as usize);
     assert!(matches!(
-        fs_handle.read_dir("/sub", 1),
+        fs_handle.read_dir("/sub", 2),
         Err(Error::NotFound)
     ));
 
@@ -535,6 +540,169 @@ fn a_growth_zeroes_only_the_clusters_it_claimed() {
         "the file's own bytes are still the file's"
     );
     assert!(buf[3 * cluster..].iter().all(|byte| *byte == 0));
+}
+
+/// A file with a hole between two of its runs: the hole reads as zeros, and a
+/// write into it claims the clusters the bytes touch.
+/// A run list with a **hole** in it: the hole does not move the place the next
+/// run's offset is measured from.
+///
+/// The format writes a sparse run with no offset bytes at all, and the LCN the
+/// next run's delta is relative to is the last run that *had* a cluster.  A
+/// reader that took the hole as a cluster puts every run after it somewhere
+/// else, which is what the fixture's own file caught.
+#[test]
+fn a_sparse_run_does_not_move_the_next_run() {
+    let runs = [
+        DataRun {
+            lcn: 40,
+            cluster_count: 2,
+        },
+        DataRun {
+            lcn: -1,
+            cluster_count: 3,
+        },
+        DataRun {
+            lcn: 60,
+            cluster_count: 1,
+        },
+    ];
+    let encoded = super::fs::encode_runs(&runs);
+    let parsed: Vec<(i64, u64)> = super::fs::parse_data_runs(&encoded)
+        .iter()
+        .map(|run| (run.lcn, run.cluster_count))
+        .collect();
+    assert_eq!(parsed, [(40, 2), (-1, 3), (60, 1)]);
+}
+
+#[test]
+fn a_hole_reads_as_zeros_and_a_write_into_it_allocates() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size() as usize;
+    let node = fs_handle.lookup("/sub/sparse.bin").expect("sparse.bin");
+    assert_eq!(
+        node.size(),
+        4 * cluster,
+        "four clusters, two of them a hole"
+    );
+
+    let mut buf = vec![0u8; node.size()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(
+        buf[..cluster].iter().all(|byte| *byte == 0x44),
+        "the first run's bytes"
+    );
+    assert!(
+        buf[cluster..3 * cluster].iter().all(|byte| *byte == 0),
+        "and the hole between the runs reads as the zeros nothing holds"
+    );
+    assert!(
+        buf[3 * cluster..].iter().all(|byte| *byte == 0x55),
+        "the run after the hole"
+    );
+
+    // A write inside the hole, in its first cluster: the cluster the bytes
+    // *touch* is claimed, and what the write does not cover stays zeros —
+    // which is what the hole read as anyway.
+    let written = vec![0x7e; 100];
+    assert_eq!(
+        node.write(cluster as u64 + 10, &written).expect("write"),
+        100,
+        "the write lands in the file, which does not get any longer"
+    );
+
+    // A second mount, and the shape the file now has: the same length, the
+    // hole's other cluster still a hole, and the write where it was put.
+    let again = remount(&device);
+    let node = again.lookup("/sub/sparse.bin").expect("relookup");
+    assert_eq!(node.size(), 4 * cluster);
+    let mut buf = vec![0u8; node.size()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(buf[..cluster].iter().all(|byte| *byte == 0x44));
+    assert!(
+        buf[cluster..cluster + 10].iter().all(|byte| *byte == 0)
+            && buf[cluster + 110..3 * cluster]
+                .iter()
+                .all(|byte| *byte == 0),
+        "the zeros the hole had, on both sides of the write"
+    );
+    assert!(
+        buf[cluster + 10..cluster + 110]
+            .iter()
+            .all(|byte| *byte == 0x7e),
+        "and the write itself"
+    );
+    assert!(buf[3 * cluster..].iter().all(|byte| *byte == 0x55));
+
+    // The volume's bitmap says one cluster more is spoken for, and the file's
+    // own run list says so too: the hole was split, and one cluster of it is
+    // real now.
+    let bitmap = again.read_bitmap().expect("the volume's bitmap");
+    let taken: usize = bitmap.iter().map(|byte| byte.count_ones() as usize).sum();
+    let was: usize = fixture.used.iter().filter(|used| **used != 0).count();
+    assert_eq!(taken, was + 1, "the one cluster the write claimed");
+
+    let attributes = again.attributes_of(SPARSE_FILE).expect("the attributes");
+    let data = attributes
+        .iter()
+        .find(|attr| attr.attr_type == 0x80)
+        .expect("the data");
+    assert_eq!(
+        data.data_size as u64,
+        4 * cluster as u64,
+        "and the file is as long as it was"
+    );
+    let runs: Vec<(i64, u64)> = data
+        .data_runs
+        .iter()
+        .map(|run| (run.lcn, run.cluster_count))
+        .collect();
+    assert_eq!(
+        runs.iter().map(|(_, count)| count).sum::<u64>(),
+        4,
+        "the run list still covers four clusters"
+    );
+    assert_eq!(
+        runs.iter()
+            .filter(|(lcn, _)| *lcn < 0)
+            .map(|(_, count)| count)
+            .sum::<u64>(),
+        1,
+        "one of them is still the hole the write did not reach"
+    );
+    assert_eq!(
+        runs.iter()
+            .filter(|(lcn, _)| *lcn >= 0)
+            .map(|(_, count)| count)
+            .sum::<u64>(),
+        3,
+        "and three are behind the file"
+    );
+
+    // The room the record says the runs have is the clusters behind them, not
+    // the hole: a volume's own reader is told what the file occupies.
+    let holder = data.holder;
+    let record = again
+        .read_mft_record(holder)
+        .expect("the attribute's record");
+    let header = super::types::MftRecordHeader::parse(&record).expect("a header");
+    let at = header.size() as usize + data.offset + 40;
+    let allocated = u64::from_le_bytes([
+        record[at],
+        record[at + 1],
+        record[at + 2],
+        record[at + 3],
+        record[at + 4],
+        record[at + 5],
+        record[at + 6],
+        record[at + 7],
+    ]);
+    assert_eq!(
+        allocated,
+        3 * cluster as u64,
+        "three clusters: the two it had and the one claimed"
+    );
 }
 
 #[test]
@@ -1270,7 +1438,7 @@ fn a_small_directory_that_fills_a_moved_root_fills_a_block_next() {
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
 
-    let mut names = vec![String::from("leaf.txt")];
+    let mut names = vec![String::from("leaf.txt"), String::from("sparse.bin")];
     let mut flipped = false;
     for index in 0..40 {
         let name = alloc::format!("grown-{index:02}.txt");
@@ -3080,7 +3248,12 @@ const TREE_ALPHA: u64 = 36;
 /// block, which is what a promoted key is.
 const TREE_MIDDLE: u64 = 37;
 const TREE_OMEGA: u64 = 38;
-const RECORDS: u64 = 55;
+/// A file with a **hole** between two of its runs: two clusters behind it,
+/// two clusters of nothing, and a third cluster of bytes after the hole.  The
+/// bytes a hole covers are zeros, and no cluster holds them — which is what a
+/// run with no LCN says.
+const SPARSE_FILE: u64 = 55;
+const RECORDS: u64 = 56;
 
 /// How many blocks the tree directory's allocation has room for.
 ///
@@ -3139,6 +3312,7 @@ fn is_named(number: u64, spares_in_use: bool) -> bool {
         || number == DEEP_OMEGA
         || number == ENCRYPTED_FILE
         || number == FULL_DEEP_DIRECTORY
+        || number == SPARSE_FILE
         || FULL_DEEP_KEYS.contains(&number)
         || number == TREE_DIRECTORY
         || TREE_CHILDREN.contains(&number)
@@ -3211,13 +3385,17 @@ fn spare_name(number: u64) -> &'static str {
     }
 }
 
+/// A run's LCN when it names no cluster at all: a **hole**, which the format
+/// spells as a run whose offset bytes are absent and whose previous LCN is
+/// left where it was.  The fixture's runs are `(lcn, clusters)` pairs, and this
+/// is how the one that is not a cluster is written.
+const NO_CLUSTER: u64 = u64::MAX;
+
 /// A runlist, from absolute `(lcn, clusters)` runs.
 fn runlist(runs: &[(u64, u64)]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut previous = 0i64;
     for &(lcn, clusters) in runs {
-        let delta = lcn as i64 - previous;
-        previous = lcn as i64;
         let mut length = Vec::new();
         let mut count = clusters;
         while count > 0 {
@@ -3225,13 +3403,17 @@ fn runlist(runs: &[(u64, u64)]) -> Vec<u8> {
             count >>= 8;
         }
         let mut offset = Vec::new();
-        let mut value = delta;
-        loop {
-            offset.push((value & 0xff) as u8);
-            value >>= 8;
-            let done = (delta >= 0 && value == 0) || (delta < 0 && value == -1);
-            if done {
-                break;
+        if lcn != NO_CLUSTER {
+            let delta = lcn as i64 - previous;
+            previous = lcn as i64;
+            let mut value = delta;
+            loop {
+                offset.push((value & 0xff) as u8);
+                value >>= 8;
+                let done = (delta >= 0 && value == 0) || (delta < 0 && value == -1);
+                if done {
+                    break;
+                }
             }
         }
         out.push(((offset.len() as u8) << 4) | length.len() as u8);
@@ -3864,6 +4046,10 @@ struct Fixture {
     /// Where the deep tree's nine blocks are: the internal one whose entries
     /// hold the keys, then the eight leaves they point at.
     full_deep_blocks: u64,
+    /// The two clusters the sparse file's runs are in: what lies between them
+    /// is a hole and is in no cluster at all.
+    sparse_first: u64,
+    sparse_second: u64,
 }
 
 impl Fixture {
@@ -3958,6 +4144,11 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         take(1); // free, and alone
         spare_used.push(take(1)); // given out, so the next one is alone too
     }
+    // The sparse file's two runs, at the end of the layout so that nothing
+    // before them moves: what lies between them is a hole, which is no cluster
+    // and is spelled by the run list rather than by the layout.
+    let sparse_first = take(1);
+    let sparse_second = take(1);
     let total_clusters = cursor + 2;
 
     let mut fixture = Fixture {
@@ -3987,6 +4178,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         deep_blocks,
         encrypted_runs: (encrypted_first, 1),
         full_deep_blocks,
+        sparse_first,
+        sparse_second,
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -4011,6 +4204,9 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         fixture.used[cluster as usize] = 1;
     }
     for cluster in full_deep_blocks..full_deep_blocks + 8 * index_block_clusters {
+        fixture.used[cluster as usize] = 1;
+    }
+    for cluster in [sparse_first, sparse_second] {
         fixture.used[cluster as usize] = 1;
     }
     for cluster in deep_blocks..deep_blocks + 3 * index_block_clusters {
@@ -4168,6 +4364,13 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             TREE_MIDDLE => (TREE_DIRECTORY, "middle.txt", false, 0, Vec::new()),
             TREE_OMEGA => (TREE_DIRECTORY, "omega.txt", false, 0, Vec::new()),
             SUBDIRECTORY => (ROOT_RECORD, "sub", true, 0, Vec::new()),
+            SPARSE_FILE => (
+                SUBDIRECTORY,
+                "sparse.bin",
+                false,
+                4 * cluster_size,
+                Vec::new(),
+            ),
             SUBDIRECTORY_FILE => (
                 SUBDIRECTORY,
                 "leaf.txt",
@@ -4279,6 +4482,27 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 }
                 RESIDENT_FILE | SUBDIRECTORY_FILE => {
                     attributes.extend(attribute(0x80, "", &data, None, 0));
+                }
+                SPARSE_FILE => {
+                    // A file four clusters long with two of them behind it: the
+                    // run list says where the hole is, and the sizes say what
+                    // the file *is*, which is the pair a hole is the difference
+                    // between.
+                    let mut sparse = attribute(
+                        0x80,
+                        "",
+                        &[],
+                        Some(&[
+                            (fixture.sparse_first, 1),
+                            (NO_CLUSTER, 2),
+                            (fixture.sparse_second, 1),
+                        ]),
+                        4 * cluster_size,
+                    );
+                    put_u16_le(&mut sparse, 12, super::types::ATTR_FLAG_SPARSE);
+                    put_u64_le(&mut sparse, 24, 3); // the last virtual cluster
+                    put_u64_le(&mut sparse, 40, 2 * cluster_size); // behind it
+                    attributes.extend(sparse);
                 }
                 TWO_RUN_FILE => {
                     // A writer leaves an attribute room to grow, and this one's
@@ -4675,6 +4899,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                     && !TREE_CHILDREN.contains(&record)
                                     && !OTHER_DIRECTORY_CHILDREN.contains(&record)
                                     && !FULL_DEEP_CHILDREN.contains(&record)
+                                    && record != SPARSE_FILE
                                 {
                                     listed.push(record);
                                 }
@@ -4727,6 +4952,12 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                             "leaf.txt",
                             false,
                             4,
+                        ));
+                        entries.extend_from_slice(&index_entry(
+                            SPARSE_FILE,
+                            "sparse.bin",
+                            false,
+                            4 * cluster_size,
                         ));
                         entries.extend_from_slice(&index_entry(SUBDIRECTORY, ".", true, 0));
                     }
@@ -4825,6 +5056,14 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let at = second_lcn as usize * cluster_size as usize;
     for byte in &mut fixture.image[at..at + second_clusters as usize * cluster_size as usize] {
         *byte = 0x22;
+    }
+    // And the sparse file's two runs: the hole between them is no cluster at
+    // all, so there is nothing there to write.
+    for (lcn, value) in [(fixture.sparse_first, 0x44), (fixture.sparse_second, 0x55)] {
+        let at = lcn as usize * cluster_size as usize;
+        for byte in &mut fixture.image[at..at + cluster_size as usize] {
+            *byte = value;
+        }
     }
     for &(lcn, clusters) in fixture.tight_runs.iter().chain(&fixture.full_runs) {
         let at = lcn as usize * cluster_size as usize;

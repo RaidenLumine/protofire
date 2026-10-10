@@ -903,9 +903,13 @@ impl NtfsFs {
             )?;
         }
 
-        // What the runs add up to: the last cluster number the attribute
-        // covers, and the room its runs are said to have.
-        let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
+        // What the runs add up to: the last **virtual** cluster number the
+        // attribute covers, which is the length of the run list in clusters,
+        // and the room its **real** clusters are said to have.  A sparse run
+        // is virtual room with no cluster behind it, so for a file with a hole
+        // in it the two are not the same number.
+        let spanned: u64 = runs.iter().map(|run| run.cluster_count).sum();
+        let last_vcn = spanned.saturating_sub(1);
         raw[base + data.offset + 24..base + data.offset + 32]
             .copy_from_slice(&last_vcn.to_le_bytes());
         raw[base + data.offset + 40..base + data.offset + 48]
@@ -3984,6 +3988,22 @@ impl VNode for NtfsVnode {
             return Ok(take);
         }
 
+        // A **hole** the write reaches is filled first: what a sparse run names
+        // is no cluster at all, so the bytes have to be given some.  The
+        // attributes come back afterwards, because the claim put a run where
+        // the hole was and the bytes go where the runs now say.
+        let attributes = if data.data_runs.iter().any(|run| run.lcn < 0)
+            && self.fill_the_holes(number, data, offset, end)?
+        {
+            self.fs.attributes_of(number)?
+        } else {
+            attributes
+        };
+        let data = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?;
+
         let info = self.fs.info.lock();
         let written = fs::write_to_runs(&self.fs.device, &info, &data.data_runs, offset, buffer)?;
         Ok(written)
@@ -4125,12 +4145,19 @@ impl NtfsVnode {
                 Err(error) => return Err(error),
             }
         }
-        // What the runs hold **now**, and what they will: the clusters the file
-        // already had are where its bytes are, and a claim adds the ones that
-        // have never held them.
+        // What the runs hold **now**, and what they will: what the length can
+        // live in is the whole run list, sparse runs included, and the room the
+        // attribute is *said* to have is only the clusters behind it.
+        let spanned: u64 = data
+            .data_runs
+            .iter()
+            .map(|run| run.cluster_count)
+            .sum::<u64>()
+            * cluster_size;
         let held: u64 = data
             .data_runs
             .iter()
+            .filter(|run| run.lcn >= 0)
             .map(|run| run.cluster_count)
             .sum::<u64>()
             * cluster_size;
@@ -4146,19 +4173,128 @@ impl NtfsVnode {
             allocated as u32
         };
         // The zeros are what the claim added **that the length reaches**, which
-        // is `[held, length)` — not the whole claim, and not a region measured
-        // back from the length.  The bytes below `held` are the file's own: a
-        // shrink leaves them there on purpose (they are what a growth back
-        // reads), and a growth that zeroed them would answer a read with zeros
-        // where the file's bytes were.  The writer puts the zeros at `length`
-        // less their own length, which is `held`.
-        let zeros = if u64::from(length) > held {
-            alloc::vec![0u8; (u64::from(length) - held) as usize]
+        // is `[the run list's end, length)` — not the whole claim, and not a
+        // region measured back from the length.  The bytes below that are the
+        // file's own: a shrink leaves them there on purpose (they are what a
+        // growth back reads), and a growth that zeroed them would answer a read
+        // with zeros where the file's bytes were.  The writer puts the zeros at
+        // `length` less their own length, which is where the run list ended.
+        let zeros = if u64::from(length) > spanned {
+            alloc::vec![0u8; (u64::from(length) - spanned) as usize]
         } else {
             Vec::new()
         };
         self.fs
             .write_grown_data(holder, data, &runs, allocated, length, &zeros)
+    }
+
+    /// Fill the **holes** a write reaches, and answer whether it filled any.
+    ///
+    /// A sparse run names no cluster: its bytes read as zeros and a write that
+    /// lands in it has nowhere to go.  What the format does is make the part
+    /// the write reaches real — the clusters those bytes *touch* are claimed
+    /// from the volume, the sparse run is split into the hole before the claim,
+    /// the claim, and the hole after it, and the run list goes back with the
+    /// room the new clusters add.  A cluster is claimed **whole**: a hole is
+    /// zeros throughout, so the rest of the cluster is those zeros.
+    ///
+    /// The order is the growth path's.  The clusters are claimed — and written
+    /// as zeros, because nothing has ever put a byte there — **before** the
+    /// record names them, so a machine that stops in between leaves clusters
+    /// nothing points at rather than a file whose bytes are not its own.
+    fn fill_the_holes(
+        &self,
+        number: u64,
+        data: &ParsedAttr,
+        offset: u64,
+        end: u64,
+    ) -> Result<bool> {
+        let cluster_size = u64::from(self.fs.info.lock().cluster_size);
+        let mut runs: Vec<DataRun> = Vec::new();
+        let mut filled = false;
+        let mut start = 0u64;
+        for run in &data.data_runs {
+            let run_start = start;
+            let run_end = run_start + run.cluster_count * cluster_size;
+            start = run_end;
+            if run.lcn >= 0 || run_end <= offset || run_start >= end {
+                runs.push(run.clone());
+                continue;
+            }
+            // The part of the hole the write reaches, in whole clusters: what
+            // is left of it on either side stays a hole.
+            let from = offset.max(run_start) / cluster_size * cluster_size;
+            let to = end.min(run_end).div_ceil(cluster_size) * cluster_size;
+            let before = (from - run_start) / cluster_size;
+            let took = (to - from) / cluster_size;
+            let after = (run_end - to) / cluster_size;
+            if before > 0 {
+                runs.push(DataRun {
+                    lcn: -1,
+                    cluster_count: before,
+                });
+            }
+            let first = self.fs.claim_clusters(took)?;
+            let claim = DataRun {
+                lcn: first as i64,
+                cluster_count: took,
+            };
+            // Clusters the volume has never written hold whatever an earlier
+            // file left there; what this file's hole reads as is zeros, so
+            // they go down before the record names them.
+            let zeros = alloc::vec![0u8; (took * cluster_size) as usize];
+            {
+                let info = self.fs.info.lock();
+                fs::write_to_runs(
+                    &self.fs.device,
+                    &info,
+                    core::slice::from_ref(&claim),
+                    0,
+                    &zeros,
+                )?;
+            }
+            runs.push(claim);
+            if after > 0 {
+                runs.push(DataRun {
+                    lcn: -1,
+                    cluster_count: after,
+                });
+            }
+            filled = true;
+        }
+        if !filled {
+            return Ok(false);
+        }
+
+        // The record, with the longer run list and the room its real clusters
+        // add.  The length does not move: a write into a hole is a write inside
+        // the file, which is what makes a hole a hole.  A record with no room
+        // for the list makes room first, which is the growth path's answer too.
+        let length = data.data_size;
+        let allocated = runs
+            .iter()
+            .filter(|run| run.lcn >= 0)
+            .map(|run| run.cluster_count)
+            .sum::<u64>()
+            * cluster_size;
+        let mut attributes = self.fs.attributes_of(number)?;
+        loop {
+            let data = attributes
+                .iter()
+                .find(|attribute| attribute.attr_type == ATTR_TYPE_DATA)
+                .ok_or(Error::NotFound)?;
+            match self
+                .fs
+                .write_grown_data(data.holder, data, &runs, allocated as u32, length, &[])
+            {
+                Ok(()) => return Ok(true),
+                Err(Error::NoSpace) if data.holder == number => {
+                    self.fs.make_room(number, ATTR_TYPE_DATA)?;
+                    attributes = self.fs.attributes_of(number)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     /// Take a value that has come back into its record: the bytes the runs
