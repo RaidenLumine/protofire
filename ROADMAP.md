@@ -111,10 +111,16 @@ The authoritative picture of what exists today is
      writing it to a stick, is the first thing the day needs; the second is
      knowing which console a machine with no serial port draws on.
   2. **The disk.**  A machine's disk is the one its installer made, and that
-     is a **GPT** — the tree parses MBR only (`src/fs/partition.rs`), so a real
-     volume is a disk the kernel cannot see.  A GPT parser is self-contained,
-     gateable from an image the host's own tools made, and the largest of the
-     three: it is the item this list exists for.
+     is a **GPT** — the tree parsed MBR only, so a real volume was a disk the
+     kernel half-believed: a protective MBR's one entry became the system
+     slot and the boot fell through to a layout the disk did not have.
+     [RFC 0018](docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md) reads both
+     tables now, and a GPT partition is a zone of this kernel's only when its
+     type GUID says so, which means a **machine's own disk** answers no zones
+     and the boot says so rather than mounting a stranger's partition at the
+     wrong offset.  What is left is the writer: `mkimage` writes an MBR, and a
+     bootable GPT demo image — the same zones in the other format — is what
+     the end-to-end gate waits on.
   3. **The memory the machine reports.**  The frame pool is a fixed array
      inside the image and the platform's answer is clamped to it
      ([memory.md](docs/kernel/memory.md)), which is a decision about what a

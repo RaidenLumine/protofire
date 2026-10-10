@@ -95,13 +95,18 @@ impl PlannedSecurityDescriptorUpdate {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BootDiskLayoutSource {
-    MbrPartitions,
+    /// The zones came from the disk's own partition table.  `gpt` says which
+    /// table it was, which is what a boot's line about it names
+    /// ([RFC 0018](../../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)).
+    Partitions {
+        gpt: bool,
+    },
     FixedZoneFallback,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StorageInitReport {
-    BootDiskMbrPartitions,
+    BootDiskPartitions,
     BootDiskFixedZoneFallback,
     // Constructed only on host / demo-disk / test builds; on any bare-metal
     // non-demo boot (x86_64 / aarch64 / riscv64) the variant is never built.

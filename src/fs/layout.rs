@@ -45,6 +45,24 @@ pub const DEMO_MBR_SYSTEM_PARTITION_TYPE: u8 = 0xa1;
 pub const DEMO_MBR_APPS_PARTITION_TYPE: u8 = 0xa2;
 pub const DEMO_MBR_DATA_PARTITION_TYPE: u8 = 0xa3;
 
+/// The GPT type GUIDs of the same three zones.
+///
+/// A type GUID is how a GPT partition says what it is, and these are this
+/// kernel's own rather than a distribution's: the volumes behind them are
+/// SimpleFs volumes no installer knows, and borrowing a familiar GUID would
+/// claim a meaning the type does not have.  They are the GPT half of the
+/// vocabulary above — where an MBR disk says `0xa1`, a GPT disk says this
+/// ([RFC 0018](../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)).
+pub const DEMO_GPT_SYSTEM_TYPE_GUID: [u8; 16] = [
+    0x50, 0x52, 0x54, 0x4f, 0x46, 0x49, 0x52, 0x45, 0xa1, 0x00, 0x53, 0x79, 0x73, 0x74, 0x65, 0x6d,
+];
+pub const DEMO_GPT_APPS_TYPE_GUID: [u8; 16] = [
+    0x50, 0x52, 0x54, 0x4f, 0x46, 0x49, 0x52, 0x45, 0xa2, 0x00, 0x41, 0x70, 0x70, 0x73, 0x00, 0x00,
+];
+pub const DEMO_GPT_DATA_TYPE_GUID: [u8; 16] = [
+    0x50, 0x52, 0x54, 0x4f, 0x46, 0x49, 0x52, 0x45, 0xa3, 0x00, 0x44, 0x61, 0x74, 0x61, 0x00, 0x00,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StorageZone {
     System,
@@ -145,6 +163,22 @@ impl StorageZone {
             Self::System => DEMO_MBR_SYSTEM_PARTITION_TYPE,
             Self::Apps => DEMO_MBR_APPS_PARTITION_TYPE,
             Self::Data => DEMO_MBR_DATA_PARTITION_TYPE,
+        }
+    }
+
+    /// The GPT type GUID this zone's partitions carry.
+    ///
+    /// Note that these are **not** RFC 4122-shaped: a GPT type GUID is sixteen
+    /// bytes compared byte for byte, and the format's own types are recorded
+    /// with a mixed-endian field order that has to be un-swapped to print them
+    /// as text.  Nothing here prints them, so they are simply this kernel's own
+    /// sixteen bytes, and a GUID that were also *formatted* somewhere would
+    /// want the byte order written down first.
+    pub const fn gpt_type_guid(self) -> [u8; 16] {
+        match self {
+            Self::System => DEMO_GPT_SYSTEM_TYPE_GUID,
+            Self::Apps => DEMO_GPT_APPS_TYPE_GUID,
+            Self::Data => DEMO_GPT_DATA_TYPE_GUID,
         }
     }
 

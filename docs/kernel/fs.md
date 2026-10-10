@@ -86,10 +86,11 @@ filesystem lock then snapshot, never the reverse.
 ## What a running machine mounts
 
 `FileSystem::init_with_boot_disk` (`src/fs/filesystem/init.rs`) is the boot
-path.  Given a boot disk it reads the MBR with `read_mbr_partitions`
-(`src/fs/partition.rs`), which validates the signature and hands back the
-present entries, and requires every expected zone partition to be there;
-failing that it falls back to the fixed zone offsets in `src/fs/layout.rs`;
+path.  Given a boot disk it reads the disk's partition table with
+`read_partitions` (`src/fs/partition.rs`) — the MBR the disk's own builder
+wrote, or the GPT a machine's disk carries — and requires every expected zone
+partition to be there; failing that it falls back to the fixed zone offsets in
+`src/fs/layout.rs`;
 failing that, on a build that has the demo disk, it mounts an in-memory MBR
 image, and otherwise reports a failed storage init.  The result is recorded
 as a `StorageInitReport`, and `install_default_layout` then adds the mounts
@@ -427,10 +428,20 @@ nothing on a machine as shipped.
 
 ## Partitions and the system pair
 
-`src/fs/partition.rs` parses an MBR: signature checked, four fixed-size
-entries, overlap rejected, 32-bit LBA fields.  Protofire's own partition
-types mark the system, apps and data zones, and slot 0 and slot 3 both carry
-the system type because they are the two halves of a pair.
+`src/fs/partition.rs` parses two tables.  An **MBR**: the signature checked,
+four fixed-size entries, 32-bit LBA fields, and Protofire's own type bytes
+marking the system, apps and data zones — slot 0 and slot 3 both carry the
+system type, because they are the two halves of a pair.  And a **GPT**
+([RFC 0018](../rfcs/0018-read-a-disk-whose-table-is-gpt.md)): a protective MBR
+leads to the header at LBA 1, the header's own CRC-32 and the entry array's are
+both verified, the array is bounded by a constant rather than by the disk's
+claim, and a partition is one of this kernel's zones only when its **type
+GUID** is that zone's — the index an MBR disk is read by is the machine's
+choice on a machine's disk, not this kernel's.  A protective MBR whose GPT
+cannot be read is **no table**, never the MBR view: its one entry is a promise,
+not a partition.  `read_partitions` is the entry point both the boot and the
+system pair go through, and it answers a `PartitionTable` — either table's
+entries, with the same `start_block`/`block_count`/kind view on top.
 
 The pair is `src/fs/system_image.rs`'s subject.  Each system volume carries a
 build marker at `/etc/build` (`SYSTEM_BUILD_MARKER_PATH`) written in a fixed
@@ -494,7 +505,7 @@ volume on a memory device instead.
 | `src/fs/filesystem/` | Boot layout, mount and resolve, open, I/O, rename, overlay, security, profiler |
 | `src/fs/simplefs/` | SimpleFs: superblock, tables, transactions, recovery, staging, xattrs |
 | `src/fs/layout.rs` | Zones, mount flags and the fixed fallback disk ranges |
-| `src/fs/partition.rs`, `src/fs/system_image.rs` | MBR parsing, and the system A/B pair |
+| `src/fs/partition.rs`, `src/fs/system_image.rs` | MBR and GPT parsing, the zone vocabulary in both tables' words, and the system A/B pair |
 | `src/kernel/block.rs`, `src/fs/block_cache.rs` | The block interface and the cache |
 | `src/fs/devfs.rs`, `src/fs/servicefs.rs`, `src/kernel/procfs.rs` | The synthetic views |
 | `src/fs/fuse/` | The userspace-served filesystem and its wire format |

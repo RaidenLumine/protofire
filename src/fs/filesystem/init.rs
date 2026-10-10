@@ -80,12 +80,13 @@ impl FileSystem {
         // Prefer a real boot disk layout when available, but keep the kernel
         // usable by falling back to the in-memory demo volumes.
         let report = match boot_layout {
-            Some(BootDiskLayoutSource::MbrPartitions) => {
+            Some(BootDiskLayoutSource::Partitions { gpt }) => {
                 crate::print!(
-                    "[fs    ] mounted MBR-partitioned {} volumes from ATA boot disk\n",
+                    "[fs    ] mounted {}-partitioned {} volumes from ATA boot disk\n",
+                    if gpt { "GPT" } else { "MBR" },
                     fs_label
                 );
-                StorageInitReport::BootDiskMbrPartitions
+                StorageInitReport::BootDiskPartitions
             }
             Some(BootDiskLayoutSource::FixedZoneFallback) => {
                 crate::print!(

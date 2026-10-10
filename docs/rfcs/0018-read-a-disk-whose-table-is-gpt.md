@@ -191,10 +191,24 @@ until the change that gives it a GPT, and both are read as what they are.
   (`sgdisk`) carrying none of this kernel's zone GUIDs, over the same block
   device the gates use, answering no zones — and the boot falling back exactly
   as it does today for a disk with no table.
-- **The end to end**: a GPT demo image the host `mkimage` writes with the zone
-  GUIDs, booted over USB by `scripts/check-x8664-usb-disk.sh`'s second pass,
-  requiring the boot's own line that says which table it mounted from and a
-  program loaded out of `/apps` on it.
+**What landed with this RFC.**  The two tables, the uniform view, and the boot
+path that goes through it: `read_partitions` answers either table,
+`PartitionTable::zone_partitions` answers by type GUID on a GPT and by slot on
+an MBR, `system_slots` takes the pair from whichever table the disk carries,
+and the boot's own line names the table it mounted from.  The tests are the
+hand-built image with its checksums, the two system volumes found by type in
+the array's order, a foreign type GUID (an EFI system partition's) answering no
+zone, each way a GPT can be unreadable answering "no table", the MBR answers
+the change may not move, and the parsers' fuzz harness, which now drives
+`read_partitions` rather than the MBR reader alone — the comment in it had said
+"an MBR or GPT" since before there was a GPT to read.
+
+- **The last item, still owed**: the **end to end**, which wants a host tool
+  that writes a GPT with these GUIDs — `mkimage` writes an MBR today — and a
+  second pass of `scripts/check-x8664-usb-disk.sh` that boots it, requires the
+  boot's own line naming the GPT, and loads a program out of `/apps` on it.
+  Its input is the same zone table in the other format, so it is the writer
+  that is missing rather than the kernel half.
 
 ## Unresolved questions
 

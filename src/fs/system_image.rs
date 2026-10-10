@@ -30,7 +30,7 @@ use super::block::BlockDevice;
 use super::block::BlockSliceDevice;
 use super::block::MemoryBlockDevice;
 use super::block::BLOCK_SIZE;
-use super::partition::read_mbr_partitions;
+use super::partition::read_partitions;
 use super::simplefs::SimpleFs;
 use super::simplefs::SimpleFsVolume;
 use super::vfs::FileSystem as VfsFileSystem;
@@ -41,12 +41,14 @@ pub const SYSTEM_BUILD_MARKER_PATH: &str = "/etc/build";
 /// The first marker's format word.
 const SYSTEM_BUILD_FORMAT: &str = "protofire-system-build-1";
 
-/// The MBR slots the two system volumes live in.
+/// The slots the two system volumes live in on an **MBR** disk.
 ///
 /// A is the slot `StorageZone::System` has always used, so a disk built before
-/// the pair existed is a disk with only A.
-pub const SYSTEM_SLOT_A: usize = 0;
-pub const SYSTEM_SLOT_B: usize = 3;
+/// the pair existed is a disk with only A.  A GPT disk answers the pair by type
+/// GUID instead, which is why the slots it reports are whatever the array holds
+/// ([RFC 0018](../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)).
+pub const SYSTEM_SLOT_A: usize = super::partition::MBR_SYSTEM_SLOT_A;
+pub const SYSTEM_SLOT_B: usize = super::partition::MBR_SYSTEM_SLOT_B;
 
 /// The build a system volume holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,8 +59,13 @@ pub struct SystemBuild {
 
 /// One system slot, as a boot sees it.
 pub struct SystemSlot {
-    /// The MBR slot this volume is in (A or B).
+    /// The table slot this volume was found at, as the table numbered it.
     pub slot: usize,
+    /// Which half of the pair this is: `"a"` for the first, `"b"` for the
+    /// second.  It is the *order* rather than the slot number, because the two
+    /// tables number their slots differently and a boot's line has to name the
+    /// same half on both.
+    pub name: &'static str,
     /// The volume's block device.
     pub device: Arc<dyn BlockDevice>,
     /// The build it is committed as, when it carries a marker.
@@ -111,21 +118,15 @@ pub fn parse_build_marker(text: &str) -> Option<SystemBuild> {
 /// `read_only` is the caller's: the boot mounts `/system` read-only, and the
 /// update path has to be able to write the slot it is installing into.
 pub fn system_slots(disk: &Arc<dyn BlockDevice>, read_only: bool) -> Result<Vec<SystemSlot>> {
-    let Some(partitions) = read_mbr_partitions(disk.as_ref())? else {
+    let Some(table) = read_partitions(disk.as_ref())? else {
         return Ok(Vec::new());
     };
 
-    let mut slots = Vec::new();
-    for slot in [SYSTEM_SLOT_A, SYSTEM_SLOT_B] {
-        let Some(partition) = partitions[slot] else {
-            continue;
-        };
-
+    let mut slots = Vec::with_capacity(2);
+    for (order, (slot, partition)) in table.system_partitions().into_iter().enumerate() {
+        let name = if order == 0 { "a" } else { "b" };
         let device = BlockSliceDevice::new(
-            &format!(
-                "system-slot-{}",
-                if slot == SYSTEM_SLOT_A { "a" } else { "b" }
-            ),
+            &format!("system-slot-{name}"),
             disk.clone(),
             partition.start_block,
             partition.block_count,
@@ -135,6 +136,7 @@ pub fn system_slots(disk: &Arc<dyn BlockDevice>, read_only: bool) -> Result<Vec<
         let build = read_build(&device);
         slots.push(SystemSlot {
             slot,
+            name,
             device,
             build,
         });
@@ -396,10 +398,15 @@ mod tests {
 
     /// The data zone of a test disk, as a volume.
     fn data_volume(disk: &Arc<dyn BlockDevice>) -> SimpleFsVolume {
-        let partitions = read_mbr_partitions(disk.as_ref())
-            .expect("read the MBR")
-            .expect("an MBR");
-        let data = partitions[2].expect("a data partition");
+        let table = read_partitions(disk.as_ref())
+            .expect("read the table")
+            .expect("a table");
+        let data = table
+            .zone_partitions(crate::fs::layout::StorageZone::Data)
+            .into_iter()
+            .next()
+            .expect("a data partition")
+            .1;
         let device: Arc<dyn BlockDevice> = BlockSliceDevice::new(
             "data",
             disk.clone(),

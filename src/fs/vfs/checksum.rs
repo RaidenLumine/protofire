@@ -26,6 +26,15 @@
 
 use crate::Error;
 
+/// The kernel's CRC-32 (IEEE 802.3), where the filesystem layer reaches it.
+///
+/// It is re-exported here rather than imported by each reader because this is
+/// the layer that *verifies* a filesystem's checksums: a driver, and the
+/// partition reader whose GPT header carries two of them
+/// ([RFC 0018](../../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)),
+/// names the layer's own door instead of the kernel module underneath it.
+pub use crate::kernel::crypto::crc32;
+
 // ── ChecksumPolicy ─────────────────────────────────────────────────────────
 
 /// Controls how the system reacts to a checksum mismatch.
@@ -91,7 +100,7 @@ pub trait ChecksumVerifier {
         if self.checksum_policy() == ChecksumPolicy::Off {
             return Ok(());
         }
-        let computed = crate::kernel::crypto::crc32(data);
+        let computed = crc32(data);
         if computed == expected {
             return Ok(());
         }

@@ -19,7 +19,7 @@ use super::super::devfs;
 use super::super::layout::StorageZone;
 use super::super::layout::DEFAULT_ZONES;
 use super::super::layout::{self};
-use super::super::partition::read_mbr_partitions;
+use super::super::partition::read_partitions;
 use super::super::servicefs;
 use super::super::simplefs::SimpleFs;
 use super::super::simplefs::SimpleFsVolume;
@@ -174,8 +174,8 @@ impl FileSystem {
                 false,
             ));
 
-        match self.boot_disk_zone_devices_from_mbr(disk)? {
-            Some(devices) => self.install_zone_devices(devices),
+        match self.boot_disk_zone_devices_from_partitions(disk)? {
+            Some((devices, _)) => self.install_zone_devices(devices),
             None => Err(crate::Error::InvalidArgument),
         }
     }
@@ -193,9 +193,11 @@ impl FileSystem {
         let boot_disk = crate::kernel::block::counting_device(boot_disk);
         // Prefer explicit partition discovery first, then fall back to the
         // legacy fixed zone layout for older disk images.
-        if let Some(zone_devices) = self.boot_disk_zone_devices_from_mbr(boot_disk.clone())? {
+        if let Some((zone_devices, gpt)) =
+            self.boot_disk_zone_devices_from_partitions(boot_disk.clone())?
+        {
             self.install_zone_devices(zone_devices)?;
-            return Ok(BootDiskLayoutSource::MbrPartitions);
+            return Ok(BootDiskLayoutSource::Partitions { gpt });
         }
 
         let zone_devices = self.boot_disk_zone_devices_from_fixed_layout(boot_disk);
@@ -203,13 +205,14 @@ impl FileSystem {
         Ok(BootDiskLayoutSource::FixedZoneFallback)
     }
 
-    pub(crate) fn boot_disk_zone_devices_from_mbr(
+    pub(crate) fn boot_disk_zone_devices_from_partitions(
         &self,
         boot_disk: Arc<dyn BlockDevice>,
-    ) -> Result<Option<ZoneDeviceBindings>> {
-        let Some(partitions) = read_mbr_partitions(boot_disk.as_ref())? else {
+    ) -> Result<Option<(ZoneDeviceBindings, bool)>> {
+        let Some(table) = read_partitions(boot_disk.as_ref())? else {
             return Ok(None);
         };
+        let gpt = matches!(table, crate::fs::partition::PartitionTable::Gpt(_));
 
         // The system zone is a *pair* when the disk carries two system volumes:
         // the boot takes the newest committed one, and falls back to the other
@@ -221,11 +224,7 @@ impl FileSystem {
         };
         crate::println!(
             "[fs    ] system: slot {} active{}",
-            if system.slot == crate::fs::system_image::SYSTEM_SLOT_A {
-                "a"
-            } else {
-                "b"
-            },
+            system.name,
             system
                 .build
                 .map_or_else(alloc::string::String::new, |build| alloc::format!(
@@ -244,7 +243,7 @@ impl FileSystem {
                 continue;
             }
 
-            let Some(partition) = partitions[zone.partition_slot()] else {
+            let Some((_, partition)) = table.zone_partitions(zone).into_iter().next() else {
                 return Ok(None);
             };
 
@@ -260,7 +259,7 @@ impl FileSystem {
             ));
         }
 
-        Ok(Some(zone_devices))
+        Ok(Some((zone_devices, gpt)))
     }
 
     pub(crate) fn boot_disk_zone_devices_from_fixed_layout(
