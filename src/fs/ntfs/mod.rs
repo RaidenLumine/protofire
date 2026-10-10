@@ -1122,6 +1122,12 @@ impl NtfsFs {
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_INDEX_ALLOC && !attr.data_runs.is_empty())
             .ok_or(Error::NotFound)?;
+        // A **compressed** (or encrypted) index is the same flag a file's
+        // `$DATA` carries, and what its runs hold is not index blocks: it is
+        // an LZNT1 stream, so a reader that followed them would answer with
+        // blocks that are not there.  RFC 0013 named the question and left it;
+        // the answer is the stream's own — refuse it, rather than misread it.
+        refuse_a_stream_this_driver_cannot_read(allocation)?;
         let mut block = alloc::vec![0u8; info.index_block_size as usize];
         fs::read_from_runs(
             &self.device,

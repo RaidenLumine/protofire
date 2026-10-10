@@ -286,10 +286,16 @@ compressed file unless `-C` is passed, and no sparse one at all.
   answered this*: nothing here trims, punches or deallocates a range, so a file
   this driver writes is dense, and the call that makes one — a
   `fallocate`-shaped punch — is that RFC's own decision.
-- **Is a compressed *directory* the same problem?**  NTFS compresses an index
-  the same way it compresses a stream, and the flag lives in the same place;
-  `$INDEX_ROOT` and `$INDEX_ALLOCATION` are a different reader, and this RFC
-  does not decide whether they refuse the same way or grow the same reader.
+- **Is a compressed *directory* the same problem?**  *Answered: it refuses the
+  same way.*  NTFS compresses an index the same way it compresses a stream and
+  the flag lives in the same place, but `$INDEX_ROOT`/`$INDEX_ALLOCATION` are a
+  different reader: what its runs hold is a stream, not index blocks, and this
+  tree followed them anyway — a directory answered with blocks that were not
+  there.  The block reader refuses the flag now, the way a `$DATA` stream is
+  refused, and `a_compressed_index_is_refused_rather_than_read` is the gate:
+  the name is listed like any other and reading *into* it is `NotImplemented`
+  rather than a listing of something else.  Whether the index grows a reader of
+  its own is still open.
 - **What is a write to a compressed file worth?**  Refusing is honest today.
   Whether the answer should be "convert to uncompressed", "compress the unit
   again", or a `NotImplemented` that never moves, is a decision for the RFC

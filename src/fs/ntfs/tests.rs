@@ -337,18 +337,21 @@ fn a_directory_lists_what_its_index_holds() {
 
     // The subdirectory's entries are in its index *root*, which is the other
     // shape a directory has.
-    let leaf = fs_handle
+    let cindex = fs_handle
         .read_dir("/sub", 0)
-        .expect("the subdirectory's entry");
+        .expect("the subdirectory's first entry");
+    assert_eq!(cindex.name, "cindex");
+    assert_eq!(cindex.kind, NodeKind::Directory);
+    let leaf = fs_handle.read_dir("/sub", 1).expect("leaf.txt");
     assert_eq!(leaf.name, "leaf.txt");
     assert_eq!(leaf.kind, NodeKind::File);
     assert_eq!(leaf.size, 4);
-    let sparse = fs_handle.read_dir("/sub", 1).expect("the file with a hole");
+    let sparse = fs_handle.read_dir("/sub", 2).expect("the file with a hole");
     assert_eq!(sparse.name, "sparse.bin");
     assert_eq!(sparse.kind, NodeKind::File);
     assert_eq!(sparse.size, (4 * fixture.cluster_size()) as usize);
     assert!(matches!(
-        fs_handle.read_dir("/sub", 2),
+        fs_handle.read_dir("/sub", 3),
         Err(Error::NotFound)
     ));
 
@@ -573,6 +576,31 @@ fn a_sparse_run_does_not_move_the_next_run() {
         .map(|run| (run.lcn, run.cluster_count))
         .collect();
     assert_eq!(parsed, [(40, 2), (-1, 3), (60, 1)]);
+}
+
+/// A directory whose index is compressed: the blocks a reader would follow are
+/// an LZNT1 stream, so the walk refuses rather than answering with blocks that
+/// are not there.
+#[test]
+fn a_compressed_index_is_refused_rather_than_read() {
+    let fixture = build_volume(FRACTIONAL);
+    let fs_handle = open(&fixture);
+
+    // The directory is a name like any other — its parent's index is not the
+    // compressed one — and reading *into* it is what refuses.
+    let listed = the_listing(&fs_handle, "/sub");
+    assert!(
+        listed.contains(&String::from("cindex")),
+        "the name is still listed: {listed:?}"
+    );
+    assert!(matches!(
+        fs_handle.read_dir("/sub/cindex", 0),
+        Err(Error::NotImplemented)
+    ));
+    assert!(matches!(
+        fs_handle.lookup("/sub/cindex/anything.txt"),
+        Err(Error::NotImplemented)
+    ));
 }
 
 #[test]
@@ -1138,7 +1166,7 @@ fn a_name_added_to_a_directory_grows_its_index_root() {
     let (device, fs_handle) = writable(&fixture);
     assert_eq!(
         fs_handle
-            .read_dir("/sub", 0)
+            .read_dir("/sub", 1)
             .expect("the entry it had")
             .name,
         "leaf.txt"
@@ -1438,7 +1466,11 @@ fn a_small_directory_that_fills_a_moved_root_fills_a_block_next() {
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
 
-    let mut names = vec![String::from("leaf.txt"), String::from("sparse.bin")];
+    let mut names = vec![
+        String::from("cindex"),
+        String::from("leaf.txt"),
+        String::from("sparse.bin"),
+    ];
     let mut flipped = false;
     for index in 0..40 {
         let name = alloc::format!("grown-{index:02}.txt");
@@ -3253,7 +3285,11 @@ const TREE_OMEGA: u64 = 38;
 /// bytes a hole covers are zeros, and no cluster holds them — which is what a
 /// run with no LCN says.
 const SPARSE_FILE: u64 = 55;
-const RECORDS: u64 = 56;
+/// A directory whose index **allocation** carries the compressed flag: what
+/// its runs hold is an LZNT1 stream and not index blocks, which is the shape
+/// RFC 0013 left undecided and this driver used to follow anyway.
+const COMPRESSED_INDEX_DIRECTORY: u64 = 56;
+const RECORDS: u64 = 57;
 
 /// How many blocks the tree directory's allocation has room for.
 ///
@@ -3313,6 +3349,7 @@ fn is_named(number: u64, spares_in_use: bool) -> bool {
         || number == ENCRYPTED_FILE
         || number == FULL_DEEP_DIRECTORY
         || number == SPARSE_FILE
+        || number == COMPRESSED_INDEX_DIRECTORY
         || FULL_DEEP_KEYS.contains(&number)
         || number == TREE_DIRECTORY
         || TREE_CHILDREN.contains(&number)
@@ -4050,6 +4087,9 @@ struct Fixture {
     /// is a hole and is in no cluster at all.
     sparse_first: u64,
     sparse_second: u64,
+    /// The one block the compressed index's allocation names, which is never
+    /// read: the flag says its bytes are a stream.
+    compressed_index_block: u64,
 }
 
 impl Fixture {
@@ -4149,6 +4189,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     // and is spelled by the run list rather than by the layout.
     let sparse_first = take(1);
     let sparse_second = take(1);
+    let compressed_index_block = take(index_block_clusters);
     let total_clusters = cursor + 2;
 
     let mut fixture = Fixture {
@@ -4180,6 +4221,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         full_deep_blocks,
         sparse_first,
         sparse_second,
+        compressed_index_block,
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -4207,6 +4249,9 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         fixture.used[cluster as usize] = 1;
     }
     for cluster in [sparse_first, sparse_second] {
+        fixture.used[cluster as usize] = 1;
+    }
+    for cluster in compressed_index_block..compressed_index_block + index_block_clusters {
         fixture.used[cluster as usize] = 1;
     }
     for cluster in deep_blocks..deep_blocks + 3 * index_block_clusters {
@@ -4371,6 +4416,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 4 * cluster_size,
                 Vec::new(),
             ),
+            COMPRESSED_INDEX_DIRECTORY => (SUBDIRECTORY, "cindex", true, 0, Vec::new()),
             SUBDIRECTORY_FILE => (
                 SUBDIRECTORY,
                 "leaf.txt",
@@ -4482,6 +4528,32 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 }
                 RESIDENT_FILE | SUBDIRECTORY_FILE => {
                     attributes.extend(attribute(0x80, "", &data, None, 0));
+                }
+                COMPRESSED_INDEX_DIRECTORY => {
+                    // A directory whose index is a **tree** whose blocks are a
+                    // compressed stream: the root points at a block, and the
+                    // attribute's own flag says the bytes it would read are an
+                    // LZNT1 stream.  The block itself is never read, so what
+                    // the fixture puts there does not matter.
+                    attributes.extend(attribute(
+                        0x90,
+                        "$I30",
+                        &index_root(&node_pointer(0), true),
+                        None,
+                        0,
+                    ));
+                    let mut allocation = attribute(
+                        0xa0,
+                        "$I30",
+                        &[],
+                        Some(&[(fixture.compressed_index_block, index_block_clusters)]),
+                        shape.index_block_size() as u64,
+                    );
+                    put_u16_le(&mut allocation, 12, super::types::ATTR_FLAG_COMPRESSED);
+                    attributes.extend(allocation);
+                    let mut bits = vec![0u8; 1];
+                    bits[0] = 1; // the one block is in use
+                    attributes.extend(attribute(0xb0, "$I30", &bits, None, 0));
                 }
                 SPARSE_FILE => {
                     // A file four clusters long with two of them behind it: the
@@ -4900,6 +4972,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                     && !OTHER_DIRECTORY_CHILDREN.contains(&record)
                                     && !FULL_DEEP_CHILDREN.contains(&record)
                                     && record != SPARSE_FILE
+                                    && record != COMPRESSED_INDEX_DIRECTORY
                                 {
                                     listed.push(record);
                                 }
@@ -4947,6 +5020,12 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                             entries.extend_from_slice(&entry);
                         }
                     } else {
+                        entries.extend_from_slice(&index_entry(
+                            COMPRESSED_INDEX_DIRECTORY,
+                            "cindex",
+                            true,
+                            0,
+                        ));
                         entries.extend_from_slice(&index_entry(
                             SUBDIRECTORY_FILE,
                             "leaf.txt",
@@ -5015,7 +5094,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             || number == TREE_DIRECTORY
             || number == RUNNING_INDEX_DIRECTORY
             || number == DEEP_DIRECTORY
-            || number == FULL_DEEP_DIRECTORY;
+            || number == FULL_DEEP_DIRECTORY
+            || number == COMPRESSED_INDEX_DIRECTORY;
         let flags = if named {
             if directory {
                 0x03
