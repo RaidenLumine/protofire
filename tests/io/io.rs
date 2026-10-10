@@ -9,6 +9,10 @@ use protofire::drivers::keyboard;
 use protofire::drivers::serial;
 use protofire::fs::FileSystem;
 use protofire::fs::OPEN_ALWAYS;
+use protofire::fs::SEEK_CUR;
+use protofire::fs::SEEK_DATA;
+use protofire::fs::SEEK_END;
+use protofire::fs::SEEK_HOLE;
 use protofire::fs::SEEK_SET;
 use protofire::fs::{self};
 use protofire::kernel::console;
@@ -202,6 +206,86 @@ fn generic_seek_repositions_an_open_file_descriptor() {
     assert_eq!(first, second);
     assert_eq!(reset, 0);
     assert_eq!(&buffer[..second], b"System v");
+}
+
+/// Asking a file where its data and its holes are: `lseek`'s other two `whence`
+/// values ([RFC 0017](../../docs/rfcs/0017-ask-a-file-where-its-holes-are.md)),
+/// answered by the node, followed by the cursor, and refused where the file has
+/// no such thing to answer with.
+#[test]
+fn seeking_to_data_and_to_a_hole_answers_from_the_file() {
+    let _guard = test_lock();
+    let fs = install_test_fs();
+    let scheduler = Scheduler::new();
+    let thread = scheduler.spawn_named("extents", 0x1000);
+    let process = thread.process().clone();
+
+    let file = fs
+        .lock()
+        .open_from(
+            "/system/runtime/README.txt",
+            &process.current_working_dir(),
+            0,
+        )
+        .expect("open file");
+    let fd = process
+        .open_file_descriptor("/system/runtime/README.txt", file, HANDLE_RIGHT_READ)
+        .expect("open process file descriptor");
+
+    let size = io::seek(process.as_ref(), fd, 0, SEEK_END).expect("the file's length");
+
+    // A node that reports a size and has no holes is data from zero to that
+    // size, and its hole is where it ends.
+    assert_eq!(
+        io::seek(process.as_ref(), fd, 0, SEEK_DATA).expect("where the data is"),
+        0
+    );
+    assert_eq!(
+        io::seek(process.as_ref(), fd, 0, SEEK_CUR).expect("the cursor"),
+        0,
+        "an answer moves the cursor, which is what a seek is for"
+    );
+
+    let middle = size / 2;
+    assert_eq!(
+        io::seek(process.as_ref(), fd, middle as i64, SEEK_DATA).expect("data inside the file"),
+        middle
+    );
+    assert_eq!(
+        io::seek(process.as_ref(), fd, 0, SEEK_CUR).expect("the cursor followed it"),
+        middle
+    );
+    assert_eq!(
+        io::seek(process.as_ref(), fd, 0, SEEK_HOLE).expect("the hole is the end"),
+        size
+    );
+
+    // There is no data at the end of a file — POSIX's `ENXIO` — and the cursor
+    // stays where the last answer put it, the way a refusal does.
+    assert_eq!(
+        io::seek(process.as_ref(), fd, size as i64, SEEK_DATA),
+        Err(Error::NotFound)
+    );
+    assert_eq!(
+        io::seek(process.as_ref(), fd, 0, SEEK_CUR).expect("the cursor"),
+        size
+    );
+
+    // Past the end there is no file to ask about, a negative offset is not a
+    // place in one, and a `whence` this kernel does not define is refused as it
+    // always was.
+    assert_eq!(
+        io::seek(process.as_ref(), fd, size as i64 + 1, SEEK_DATA),
+        Err(Error::InvalidArgument)
+    );
+    assert_eq!(
+        io::seek(process.as_ref(), fd, -1, SEEK_HOLE),
+        Err(Error::InvalidArgument)
+    );
+    assert_eq!(
+        io::seek(process.as_ref(), fd, 0, 5),
+        Err(Error::InvalidArgument)
+    );
 }
 
 #[test]

@@ -117,9 +117,13 @@ pub(crate) fn publish_mount_snapshot(entries: Vec<MountInfo>) {
 }
 
 // ── Public constants ──
-pub const SEEK_SET: usize = 0;
-pub const SEEK_CUR: usize = 1;
-pub const SEEK_END: usize = 2;
+// The `whence` values `lseek` takes are the shared ABI record's, since a
+// program passes them; this is the one definition of them.
+pub use crate::abi::fs::SEEK_CUR;
+pub use crate::abi::fs::SEEK_DATA;
+pub use crate::abi::fs::SEEK_END;
+pub use crate::abi::fs::SEEK_HOLE;
+pub use crate::abi::fs::SEEK_SET;
 pub const OPEN_EXISTING: u32 = 0;
 pub const CREATE_NEW: u32 = 1;
 pub const OPEN_ALWAYS: u32 = 2;

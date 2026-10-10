@@ -8,6 +8,7 @@ use crate::kernel::security::SecurityToken;
 use crate::Result;
 
 use super::filesystem::access_helpers::mount_allows_write_for_security_token;
+use super::vfs::ExtentKind;
 use super::vfs::Metadata;
 use super::vfs::MetadataAccessQueryContext;
 use super::vfs::NodeKind;
@@ -17,7 +18,9 @@ use super::vfs::SecurityDescriptorMutationSupport;
 use super::vfs::VNode;
 use super::ACCESS_WRITE_BIT;
 use super::SEEK_CUR;
+use super::SEEK_DATA;
 use super::SEEK_END;
+use super::SEEK_HOLE;
 use super::SEEK_SET;
 
 pub struct FileHandle {
@@ -110,6 +113,28 @@ impl FileHandle {
     }
 
     pub fn seek(&mut self, offset: i64, whence: usize) -> Result<u64> {
+        // The two extent questions are not distances from anywhere: their
+        // offset is absolute, and the answer is the node's, so they do not go
+        // through the arithmetic below.  Where the answer is "there is none",
+        // the cursor stays where it was, the way a refusal does.
+        let extent = match whence {
+            SEEK_DATA => Some(ExtentKind::Data),
+            SEEK_HOLE => Some(ExtentKind::Hole),
+            _ => None,
+        };
+        if let Some(kind) = extent {
+            let offset = u64::try_from(offset).map_err(|_| crate::Error::InvalidArgument)?;
+            if offset > self.vnode.size() as u64 {
+                return Err(crate::Error::InvalidArgument);
+            }
+            let at = self
+                .vnode
+                .next_extent(offset, kind)?
+                .ok_or(crate::Error::NotFound)?;
+            self.position = at;
+            return Ok(at);
+        }
+
         let base = match whence {
             SEEK_SET => 0_i128,
             SEEK_CUR => self.position as i128,

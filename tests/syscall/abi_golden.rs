@@ -34,7 +34,7 @@ use protofire::user::shared::abi::syscall::SYSCALL_ABI_VERSION_MINOR;
 use protofire::user::shared::abi::syscall::SYSCALL_COUNT;
 
 /// The ABI version this table was recorded against.
-const GOLDEN_ABI_VERSION: (u32, u32) = (1, 3);
+const GOLDEN_ABI_VERSION: (u32, u32) = (1, 5);
 
 /// The last number in the frozen range: `syscall_stability` calls everything
 /// up to and including this one `Stable`, and everything above it
@@ -236,6 +236,7 @@ const GOLDEN: &[(usize, &str)] = &[
     (190, "service_declare"),
     (191, "service_start_all"),
     (192, "install_package"),
+    (193, "fallocate"),
 ];
 
 #[test]

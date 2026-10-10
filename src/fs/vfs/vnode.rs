@@ -11,6 +11,20 @@ use super::types::XattrEntry;
 use crate::Error;
 use crate::Result;
 
+/// Which of the two extents a file is made of a caller is asking for.
+///
+/// A file is data and holes ([RFC 0017](../../../docs/rfcs/
+/// 0017-ask-a-file-where-its-holes-are.md)): a hole is a range that reads as
+/// zeros and whose storage the filesystem does not hold, and the end of a file
+/// counts as one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtentKind {
+    /// The first byte at or after an offset that is data.
+    Data,
+    /// The first byte at or after an offset that is a hole.
+    Hole,
+}
+
 /// Virtual Node trait - represents a file, directory, or device in the VFS
 /// All filesystem objects implement this trait to provide a unified interface
 ///
@@ -64,6 +78,27 @@ pub trait VNode: Send + Sync {
     /// says [`Error::NotImplemented`].
     fn punch_hole(&self, _offset: u64, _length: u64) -> Result<()> {
         Err(Error::PermissionDenied)
+    }
+
+    /// Where the next data or hole at or after `offset` begins, or `None` when
+    /// there is none — POSIX's `ENXIO`, which the caller answers `NotFound`
+    /// with.
+    ///
+    /// The default implementation is **exact for a node that has no holes**:
+    /// every byte below [`size`](Self::size) of a node that does not override
+    /// this is data, so `Data` answers the offset it was given and `Hole` the
+    /// end of the file.  A filesystem whose bytes include holes overrides it;
+    /// one that cannot say where its holes are refuses with
+    /// [`Error::NotImplemented`], which is a different claim from "there are
+    /// none".  An `offset` past the end is the caller's refusal, not this
+    /// method's.
+    fn next_extent(&self, offset: u64, kind: ExtentKind) -> Result<Option<u64>> {
+        let size = self.size() as u64;
+        match kind {
+            ExtentKind::Data if offset < size => Ok(Some(offset)),
+            ExtentKind::Hole => Ok(Some(size)),
+            _ => Ok(None),
+        }
     }
 
     /// Read the target path of this symlink into `buf`.

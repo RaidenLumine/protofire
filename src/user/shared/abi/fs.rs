@@ -172,6 +172,25 @@ pub const FALLOC_FL_PUNCH_HOLE: usize = 0x02;
 /// The length of the file does not change.
 pub const FALLOC_FL_KEEP_SIZE: usize = 0x01;
 
+// ── lseek whence values ─────────────────────────────────────────────
+
+/// The offset is absolute.
+pub const SEEK_SET: usize = 0;
+/// The offset is taken from the current position.
+pub const SEEK_CUR: usize = 1;
+/// The offset is taken from the end of the file.
+pub const SEEK_END: usize = 2;
+/// The offset is absolute, and the answer is the first byte of **data** at or
+/// after it; `NotFound` when there is none.
+///
+/// The two extents a file is made of are [RFC 0017](../../docs/rfcs/
+/// 0017-ask-a-file-where-its-holes-are.md)'s: a hole is a range that reads as
+/// zeros and is not held, and the end of a file is a hole.
+pub const SEEK_DATA: usize = 3;
+/// The offset is absolute, and the answer is the first byte of a **hole** at
+/// or after it.
+pub const SEEK_HOLE: usize = 4;
+
 // ── File flags (SetFileFlags / GetFileFlags) ─────────────────────────
 
 /// Per-file transparent compression (SimpleFs V4+).

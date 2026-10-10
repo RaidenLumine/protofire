@@ -9,6 +9,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::fs::block::BlockDevice;
+use crate::fs::vfs::ExtentKind;
 use crate::Error;
 
 use super::types::size_from_exponent;
@@ -182,6 +183,70 @@ pub fn read_from_runs(
         cluster_start = run_end;
     }
     Ok(total)
+}
+
+/// Where the next data or hole at or after `offset` begins in a stream laid out
+/// by `runs`, or `None` when the stream has no more of that extent.
+///
+/// The map is the run list and the two lengths the attribute declares: a run
+/// that names a cluster is data, a **sparse** run is a hole, and the bytes past
+/// `initialized_size` are a hole too — they were never written, and the format
+/// says they read as zeros ([RFC 0017](../../../docs/rfcs/
+/// 0017-ask-a-file-where-its-holes-are.md)).  Bytes the runs do not reach
+/// inside a length that claims them are a hole for the same reason: there is
+/// nothing there.  The end of the file counts as a hole, which is what
+/// `SEEK_HOLE` at the end answers.
+pub fn next_extent_in_runs(
+    info: &NtfsInfo,
+    runs: &[DataRun],
+    initialized_size: u64,
+    file_size: u64,
+    offset: u64,
+    kind: ExtentKind,
+) -> Option<u64> {
+    let cluster = u64::from(info.cluster_size);
+    let valid = initialized_size.min(file_size);
+    let mut at: u64 = 0;
+    let mut next = 0;
+
+    while at < file_size {
+        // Past the runs there is nothing: a hole that reaches the end of the
+        // file, whether the runs stopped short of it or the bytes were never
+        // written.
+        let (holds_data, end) = match runs.get(next) {
+            Some(run) => (run.lcn >= 0, at + run.cluster_count * cluster),
+            None => (false, file_size),
+        };
+        next += 1;
+
+        let hi = end.min(file_size);
+        if offset < hi {
+            let lo = at.max(offset);
+            // Data ends where the run ends, where the initialized bytes do, or
+            // where the file does — whichever comes first.
+            let data_end = if holds_data { hi.min(valid) } else { lo };
+            let answer = match kind {
+                ExtentKind::Data if lo < data_end => Some(lo),
+                ExtentKind::Hole if lo >= data_end => Some(lo),
+                // A real run whose bytes stop being initialized before it ends:
+                // the hole starts where the initialized bytes do.
+                ExtentKind::Hole if data_end < hi => Some(data_end),
+                _ => None,
+            };
+            if let Some(answer) = answer {
+                return Some(answer);
+            }
+        }
+        if hi >= file_size {
+            break;
+        }
+        at = hi;
+    }
+
+    match kind {
+        ExtentKind::Data => None,
+        ExtentKind::Hole => Some(file_size),
+    }
 }
 
 // ── MFT record reading ──────────────────────────────────────────────────

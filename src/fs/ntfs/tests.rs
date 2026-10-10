@@ -22,6 +22,7 @@ use super::types::IO_REPARSE_TAG_SYMLINK;
 use crate::fs::ntfs::fs::get_best_filename;
 use crate::fs::ntfs::fs::parse_index_node;
 use crate::fs::ntfs::types::DataRun;
+use crate::fs::vfs::ExtentKind;
 use crate::fs::vfs::FileSystem as VfsFileSystem;
 use crate::fs::vfs::NodeKind;
 use crate::Error;
@@ -747,6 +748,124 @@ fn a_punch_refuses_what_it_cannot_make_zeros_of() {
         encrypted.punch_hole(0, 10),
         Err(Error::NotImplemented),
         "a stream this driver cannot read is not one it can write zeros in"
+    );
+}
+
+/// Asking where the data and the holes are: the fixture's file with a run, two
+/// clusters of hole and a run after it, whose answers come from the run list
+/// and the lengths the attribute declares
+/// ([RFC 0017](../../docs/rfcs/0017-ask-a-file-where-its-holes-are.md)).
+#[test]
+fn the_hole_question_follows_the_run_list() {
+    let fixture = build_volume(FRACTIONAL);
+    let (_device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+    let node = fs_handle.lookup("/sub/sparse.bin").expect("sparse.bin");
+    assert_eq!(node.size(), (4 * cluster) as usize);
+
+    // Data from the start, the hole where the run list names no cluster, and
+    // data again where the next run begins.
+    assert_eq!(node.next_extent(0, ExtentKind::Data), Ok(Some(0)));
+    assert_eq!(node.next_extent(0, ExtentKind::Hole), Ok(Some(cluster)));
+    assert_eq!(
+        node.next_extent(cluster, ExtentKind::Data),
+        Ok(Some(3 * cluster)),
+        "the answer is the far side of the hole"
+    );
+    assert_eq!(
+        node.next_extent(cluster + 100, ExtentKind::Hole),
+        Ok(Some(cluster + 100)),
+        "an offset already inside the hole is its own answer"
+    );
+    assert_eq!(
+        node.next_extent(3 * cluster, ExtentKind::Data),
+        Ok(Some(3 * cluster))
+    );
+
+    // The end of the file is a hole, and past it there is no data: the two
+    // answers at the last byte are the two halves of what a hole is.
+    assert_eq!(
+        node.next_extent(3 * cluster, ExtentKind::Hole),
+        Ok(Some(4 * cluster))
+    );
+    assert_eq!(node.next_extent(4 * cluster, ExtentKind::Data), Ok(None));
+    assert_eq!(
+        node.next_extent(4 * cluster, ExtentKind::Hole),
+        Ok(Some(4 * cluster))
+    );
+
+    // And the answers are the bytes rather than a second claim about them: what
+    // the walk reports as a hole is the range the file's own read answers with
+    // zeros.
+    let mut buf = vec![0u8; node.size()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    let mut at = 0u64;
+    while at < node.size() as u64 {
+        let hole = node
+            .next_extent(at, ExtentKind::Hole)
+            .expect("a hole at or after an offset inside the file")
+            .expect("the end of the file is one");
+        let end = match node.next_extent(hole, ExtentKind::Data) {
+            Ok(Some(next)) => next,
+            _ => node.size() as u64,
+        };
+        assert!(
+            buf[hole as usize..end as usize]
+                .iter()
+                .all(|byte| *byte == 0),
+            "the range reported as a hole reads as zeros: {hole}..{end}"
+        );
+        at = end;
+    }
+}
+
+/// What the hole question refuses: a directory and a stream this driver has no
+/// bytes of — and it does *not* refuse a file that simply has no holes, whose
+/// answer is the trait's own default rather than a refusal.
+#[test]
+fn the_hole_question_refuses_what_it_cannot_answer() {
+    let fixture = build_volume(FRACTIONAL);
+    let (_device, fs_handle) = writable(&fixture);
+
+    let sub = fs_handle.lookup("/sub").expect("the subdirectory");
+    assert_eq!(
+        sub.next_extent(0, ExtentKind::Hole),
+        Err(Error::InvalidArgument),
+        "a directory has no stream to be asked about"
+    );
+
+    let encrypted = fs_handle.lookup("/encrypted.bin").expect("encrypted.bin");
+    assert_eq!(
+        encrypted.next_extent(0, ExtentKind::Data),
+        Err(Error::NotImplemented),
+        "no bytes, so no map of them either"
+    );
+
+    let two_runs = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
+    let size = two_runs.size() as u64;
+    assert_eq!(
+        two_runs.next_extent(0, ExtentKind::Data),
+        Ok(Some(0)),
+        "a file with no holes is data from its start"
+    );
+    assert_eq!(
+        two_runs.next_extent(0, ExtentKind::Hole),
+        Ok(Some(size)),
+        "and its hole is where it ends"
+    );
+    assert_eq!(two_runs.next_extent(size, ExtentKind::Data), Ok(None));
+
+    // A resident value is the same shape from the other side: its bytes are all
+    // there, and its initialized size is its size.
+    let resident = fs_handle.lookup("/resident.txt").expect("resident.txt");
+    let resident_size = resident.size() as u64;
+    assert_eq!(
+        resident.next_extent(resident_size - 1, ExtentKind::Data),
+        Ok(Some(resident_size - 1))
+    );
+    assert_eq!(
+        resident.next_extent(0, ExtentKind::Hole),
+        Ok(Some(resident_size))
     );
 }
 
@@ -4042,6 +4161,19 @@ fn a_compressed_stream_on_a_real_volume_is_read() {
         expected.len()
     );
     assert_eq!(whole, expected, "the file's own bytes, decoded");
+
+    // The hole question refuses on the same file: its runs are in compression
+    // units, so where its holes are is the unit walk's to say, and an answer
+    // that guessed would be a caller skipping bytes that are the file's.
+    assert_eq!(
+        node.next_extent(0, ExtentKind::Hole),
+        Err(Error::NotImplemented),
+        "a compressed stream does not say where its holes are"
+    );
+    assert_eq!(
+        node.next_extent(0, ExtentKind::Data),
+        Err(Error::NotImplemented)
+    );
 
     // A read that *starts* in the middle is the walk's other half: the units
     // before it are skipped by their headers, and what comes back is what

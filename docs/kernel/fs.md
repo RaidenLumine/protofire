@@ -25,11 +25,13 @@ Backends implement the `FileSystem` trait in `src/fs/vfs/filesystem.rs`:
 `rename`, `swap_paths`, `check_and_repair`, the security-descriptor methods,
 the xattr methods and the profiler snapshot.  Nodes implement `VNode`
 (`src/fs/vfs/vnode.rs`): `kind`, `size`, `metadata`, `read`, `write`,
-`set_len`, `punch_hole`, `readlink`, `sync`.  The defaults are the
-interesting part — `VNode::write`, `VNode::set_len` and `VNode::punch_hole`
-answer `PermissionDenied` unless a node overrides them, so a node that only
-produces bytes is read-only because it declares nothing, not because a flag
-was remembered.
+`set_len`, `punch_hole`, `next_extent`, `readlink`, `sync`.  The defaults are
+the interesting part, and they are of two kinds: `VNode::write`,
+`VNode::set_len` and `VNode::punch_hole` answer `PermissionDenied` unless a
+node overrides them — so a node that only produces bytes is read-only because
+it declares nothing, not because a flag was remembered — while
+`VNode::next_extent` answers *exactly* for a node with no holes, which is
+every node that does not override it.
 
 `ReadOnlyFileSystem` (`src/fs/vfs/filesystem.rs`) is the same idea one level
 up.  A view implements `lookup`, `read_dir` and optionally `stat`, and a
@@ -128,6 +130,14 @@ the mount flags and a cursor.  `read` and `write` move bytes through the node
 and advance the cursor; `seek` takes `SEEK_SET`, `SEEK_CUR` or `SEEK_END`;
 `set_len` truncates or extends and clamps the cursor.  Handle numbers come
 from `alloc_handles`, which reserves a consecutive run in one atomic step.
+
+`seek` takes two more values, and they ask a question rather than moving a
+cursor.  `SEEK_DATA` and `SEEK_HOLE` ([RFC
+0017](../rfcs/0017-ask-a-file-where-its-holes-are.md)) answer with the first
+byte at or after an absolute offset that is data, or inside a hole, and the
+answer *becomes* the cursor, the way any other `lseek` answer does.  A node
+answers from `VNode::next_extent`; the caller refuses an offset past the end
+of the file, and "there is none" is `NotFound`, which is POSIX's `ENXIO`.
 
 `punch_hole` is the other shape a length and a file's bytes can disagree in:
 the range becomes zeros and the length does not move, which is `fallocate` with

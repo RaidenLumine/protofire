@@ -1,6 +1,6 @@
 # RFC 0017: Ask a file where its holes are
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-10
 - **Supersedes:** none

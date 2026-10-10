@@ -124,7 +124,7 @@ and its status says which of the two happened.
 | [0014](0014-read-the-ntfs-streams-lznt1-compressed.md) | Implemented | Read the NTFS streams LZNT1 compressed |
 | [0015](0015-compress-an-ntfs-stream-on-write.md) | Implemented | Compress an NTFS stream on write |
 | [0016](0016-punch-a-hole-in-an-ntfs-file.md) | Accepted | Punch a hole in an NTFS file |
-| [0017](0017-ask-a-file-where-its-holes-are.md) | Accepted | Ask a file where its holes are |
+| [0017](0017-ask-a-file-where-its-holes-are.md) | Implemented | Ask a file where its holes are |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —

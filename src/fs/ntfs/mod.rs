@@ -12,6 +12,7 @@ use crate::fs::block::BlockDevice;
 use crate::fs::vfs::filesystem::FileSystem;
 use crate::fs::vfs::types::DirectoryEntry;
 use crate::fs::vfs::types::NodeKind;
+use crate::fs::vfs::vnode::ExtentKind;
 use crate::fs::vfs::vnode::VNode;
 use crate::kernel::sync::Mutex;
 use crate::kernel::sync::SpinLock;
@@ -4698,6 +4699,45 @@ impl VNode for NtfsVnode {
             return Err(Error::NotImplemented);
         }
         self.fs.punch_a_hole(number, data, offset, length)
+    }
+
+    fn next_extent(&self, offset: u64, kind: ExtentKind) -> Result<Option<u64>> {
+        if self.kind() == NodeKind::Directory {
+            return Err(Error::InvalidArgument);
+        }
+        let number = *self.mft_record_number.lock();
+        let attributes = self.fs.attributes_of(number)?;
+        let data = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?;
+        if data.flags & (ATTR_FLAG_COMPRESSED | ATTR_FLAG_ENCRYPTED) != 0 {
+            // A compressed stream's runs are in compression units, so the byte
+            // arithmetic a hole question needs is the unit walk's, and a hole
+            // inside a unit is the unit's own business; an encrypted one has no
+            // bytes this driver has, so it has no map of them either.
+            return Err(Error::NotImplemented);
+        }
+        if data.data_runs_offset.is_none() {
+            // A resident value's bytes are all there — its initialized size is
+            // its size — so it has no holes, and the trait's own default is the
+            // answer.
+            let size = u64::from(data.data_size);
+            return Ok(match kind {
+                ExtentKind::Data if offset < size => Some(offset),
+                ExtentKind::Hole => Some(size),
+                _ => None,
+            });
+        }
+        let info = self.fs.info.lock();
+        Ok(fs::next_extent_in_runs(
+            &info,
+            &data.data_runs,
+            u64::from(data.initialized_size),
+            u64::from(data.data_size),
+            offset,
+            kind,
+        ))
     }
 
     /// Change how long a file is, claiming clusters for a growth and moving

@@ -9,7 +9,7 @@
 //! SYSCALL_COUNT).
 
 pub const SYSCALL_ABI_VERSION_MAJOR: u32 = 1;
-pub const SYSCALL_ABI_VERSION_MINOR: u32 = 4;
+pub const SYSCALL_ABI_VERSION_MINOR: u32 = 5;
 
 pub const SYSCALL_COUNT: usize = 194;
 pub const MAX_SYSCALLS: usize = 256;
@@ -413,7 +413,6 @@ pub const fn syscall_name(number: usize) -> Option<&'static str> {
         119 => Some("epoll_ctl"),
         120 => Some("epoll_wait"),
         121 => Some("tls_connect"),
-        193 => Some("fallocate"),
         122 => Some("filter_add_rule"),
         123 => Some("filter_remove_rule"),
         124 => Some("filter_set_default_action"),
@@ -485,6 +484,7 @@ pub const fn syscall_name(number: usize) -> Option<&'static str> {
         190 => Some("service_declare"),
         191 => Some("service_start_all"),
         192 => Some("install_package"),
+        193 => Some("fallocate"),
         _ => None,
     }
 }
@@ -548,8 +548,11 @@ mod tests {
         // Minor 1 added the service numbers at the end of the experimental
         // range; minor 2 changed `service_declare` to take a declaration file's
         // path rather than its text; minor 3 added `install_package`; minor 4
-        // added `fallocate`.  The frozen range below 120 did not move.
-        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 4);
+        // added `fallocate`; minor 5 added `lseek`'s `SEEK_DATA` and
+        // `SEEK_HOLE`.  The frozen range below 120 did not move: the two
+        // numbers are values an existing call newly accepts, which is the
+        // additive optional behaviour that range permits.
+        assert_eq!(SYSCALL_ABI_VERSION_MINOR, 5);
     }
 
     #[test]
