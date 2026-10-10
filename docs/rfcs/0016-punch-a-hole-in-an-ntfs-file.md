@@ -136,6 +136,18 @@ break a caller.
 
 ## How this is proven
 
+**The `VNode` half and the NTFS half, as they landed.**  `punch_hole` is an
+optional operation on `VNode` — its default refuses the way `set_len`'s does
+(`PermissionDenied`, not `NotImplemented`: the error the tree already uses for
+an operation a node does not have) — and the NTFS driver implements it: the
+whole clusters inside the range become a sparse run and go back, the clusters
+the range only partly covers are written as zeros, the run list is built and its
+room settled before a cluster is freed, and the stream is marked sparse with the
+flag the format keeps for exactly that.  A compressed or encrypted `$DATA`, and
+a directory, refuse with their own answers, and a resident value refuses too
+(`NotImplemented`: a hole in a value that lives in the record is a shape of its
+own).
+
 - **The fixture's file, punched**: a range inside a file's runs read back as
   zeros, the volume's `$Bitmap` showing exactly the clusters the punch gave
   back, the file's length unchanged, and a second mount reading the same
@@ -148,9 +160,20 @@ break a caller.
   (`InvalidArgument`), and a punch on a file that cannot hold the longer run
   list (`NoSpace`, with the volume's `$Bitmap` unchanged — the gate for §4's
   order).
-- **The syscall itself**: the ABI's own checklist for a new number, plus the
-  table's tests (`PUBLIC_SYSCALL_COUNT`) and a call-level test that punches a
-  range through the interface and reads zeros back through it.
+- **The syscall itself** — *still owed, and named as such*: the number, the
+  mode flags and the refusal of a mode with any other bit set are the ABI's own
+  checklist for a new call ([docs/fmts/syscall-abi.md](../fmts/syscall-abi.md)),
+  plus the table's tests (`PUBLIC_SYSCALL_COUNT`) and a call-level test that
+  punches a range through the interface and reads zeros back through it.  As
+  landed, `punch_hole` is reachable from inside the kernel and not yet from a
+  caller.
+- **A punch whose run list cannot be held** — *still owed*: the gate for §4's
+  order needs a file whose record has no room for the longer list **and** a
+  volume that cannot make room, and the fixture's record-full file does not
+  provide the second half: every record in use still lets `make_room` grow the
+  MFT once, which is why the refusal is not reachable there yet.  What the tests
+  do cover is the other direction — a punch that succeeds gives its clusters
+  back, and the ones a partial cluster covers are not handed back at all.
 
 ## Unresolved questions
 

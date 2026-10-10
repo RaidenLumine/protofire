@@ -545,6 +545,142 @@ fn a_growth_zeroes_only_the_clusters_it_claimed() {
     assert!(buf[3 * cluster..].iter().all(|byte| *byte == 0));
 }
 
+/// Punching a hole: the range reads as zeros, the clusters it wholly covers go
+/// back to the volume, and the clusters it only partly covers are written as
+/// the zeros the hole reads as.
+#[test]
+fn a_punch_makes_a_hole_and_gives_the_clusters_back() {
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+    let node = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
+    assert_eq!(node.size(), (3 * cluster) as usize);
+
+    // The range covers the middle cluster whole, and ten bytes of each of its
+    // neighbours: one cluster goes back, and those twenty bytes are zeros.
+    node.punch_hole(10, 2 * cluster).expect("punch");
+    let mut buf = vec![0u8; node.size()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert_eq!(
+        node.size(),
+        (3 * cluster) as usize,
+        "the length does not move"
+    );
+    assert!(
+        buf[..10].iter().all(|byte| *byte == 0x11),
+        "the bytes before the range are the file's"
+    );
+    assert!(
+        buf[10..2 * cluster as usize].iter().all(|byte| *byte == 0),
+        "the hole reads as zeros"
+    );
+    assert!(
+        buf[2 * cluster as usize..2 * cluster as usize + 10]
+            .iter()
+            .all(|byte| *byte == 0),
+        "and so does the part of the cluster after it"
+    );
+    assert!(
+        buf[2 * cluster as usize + 10..]
+            .iter()
+            .all(|byte| *byte == 0x22),
+        "with the rest of the file as it was"
+    );
+
+    // The volume's own bitmap said one cluster less is spoken for, and the
+    // attribute says a hole is possible at all.
+    let taken: usize = fs_handle
+        .read_bitmap()
+        .expect("the volume's bitmap")
+        .iter()
+        .map(|byte| byte.count_ones() as usize)
+        .sum();
+    let was: usize = fixture.used.iter().filter(|used| **used != 0).count();
+    assert_eq!(taken, was - 1, "the cluster the hole gave back");
+    let data = fs_handle
+        .attributes_of(TWO_RUN_FILE)
+        .expect("the attributes")
+        .into_iter()
+        .find(|attribute| attribute.attr_type == 0x80)
+        .expect("the data");
+    assert!(
+        data.flags & 0x8000 != 0,
+        "the stream says a hole is possible"
+    );
+
+    // A second mount reads it the same way.
+    let again = remount(&device);
+    let node = again.lookup("/two-runs.bin").expect("relookup");
+    assert_eq!(node.size(), (3 * cluster) as usize);
+    let mut buf = vec![0u8; node.size()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(buf[10..2 * cluster as usize].iter().all(|byte| *byte == 0));
+    assert!(buf[2 * cluster as usize + 10..]
+        .iter()
+        .all(|byte| *byte == 0x22));
+}
+
+/// A punch inside one cluster makes no hole at all — there is nothing to give
+/// back — and the bytes it covers are zeros.
+#[test]
+fn a_punch_inside_one_cluster_writes_zeros_and_frees_nothing() {
+    let fixture = build_volume(FRACTIONAL);
+    let (_device, fs_handle) = writable(&fixture);
+    let node = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
+    node.punch_hole(100, 100).expect("punch");
+
+    let mut buf = vec![0u8; node.size()];
+    assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
+    assert!(buf[..100].iter().all(|byte| *byte == 0x11));
+    assert!(buf[100..200].iter().all(|byte| *byte == 0));
+    assert!(buf[200..fixture.cluster_size() as usize]
+        .iter()
+        .all(|byte| *byte == 0x11));
+    assert!(buf[2 * fixture.cluster_size() as usize..]
+        .iter()
+        .all(|byte| *byte == 0x22));
+
+    let taken: usize = fs_handle
+        .read_bitmap()
+        .expect("the volume's bitmap")
+        .iter()
+        .map(|byte| byte.count_ones() as usize)
+        .sum();
+    let was: usize = fixture.used.iter().filter(|used| **used != 0).count();
+    assert_eq!(taken, was, "a partial cluster is not handed back");
+}
+
+/// The things a punch refuses: a range past the end of the file, a directory,
+/// and a stream this driver does not have the bytes of.  (The mode bits and a
+/// run list that cannot be held are the syscall's and a fixture this one does
+/// not have: RFC 0016 names both as still owed.)
+#[test]
+fn a_punch_refuses_what_it_cannot_make_zeros_of() {
+    let fixture = build_volume(FRACTIONAL);
+    let (_device, fs_handle) = writable(&fixture);
+    let node = fs_handle.lookup("/two-runs.bin").expect("two-runs.bin");
+    let size = node.size() as u64;
+    assert_eq!(
+        node.punch_hole(size, 10),
+        Err(Error::InvalidArgument),
+        "a range past the end has nothing to make zeros of"
+    );
+
+    let sub = fs_handle.lookup("/sub").expect("the subdirectory");
+    assert_eq!(
+        sub.punch_hole(0, 10),
+        Err(Error::InvalidArgument),
+        "not a file"
+    );
+
+    let encrypted = fs_handle.lookup("/encrypted.bin").expect("encrypted.bin");
+    assert_eq!(
+        encrypted.punch_hole(0, 10),
+        Err(Error::NotImplemented),
+        "a stream this driver cannot read is not one it can write zeros in"
+    );
+}
+
 /// A file with a hole between two of its runs: the hole reads as zeros, and a
 /// write into it claims the clusters the bytes touch.
 /// A run list with a **hole** in it: the hole does not move the place the next

@@ -1177,6 +1177,197 @@ impl NtfsFs {
         Ok(held)
     }
 
+    /// Punch a hole in a file: the range reads as zeros, and the clusters it
+    /// wholly covers go back to the volume
+    /// ([RFC 0016](../../docs/rfcs/0016-punch-a-hole-in-an-ntfs-file.md)).
+    ///
+    /// The clusters the range only **partly** covers cannot go back — the bytes
+    /// beside the range are the file's — so those are written as the zeros the
+    /// hole reads as.  What the file *is* does not change: its length stays,
+    /// and its length is why a punch takes `KEEP_SIZE` with it.
+    ///
+    /// The order is stage 19's lesson: a punch **adds** runs to the list, so
+    /// the list it will have is built and its room settled before a single
+    /// cluster is freed — a freed cluster cannot be taken again in the same
+    /// operation, and a refusal that spends the volume's space is worse
+    /// than one that does not.  The zeros go down first, the record names
+    /// the runs second, and the clusters the hole replaced go last.
+    fn punch_a_hole(&self, number: u64, data: &ParsedAttr, offset: u64, length: u64) -> Result<()> {
+        let cluster = u64::from(self.info.lock().cluster_size);
+        let file_size = u64::from(data.data_size);
+        if length == 0 {
+            return Ok(());
+        }
+        if offset >= file_size {
+            // There is nothing there to make zeros of.
+            return Err(Error::InvalidArgument);
+        }
+        let end = offset
+            .checked_add(length)
+            .ok_or(Error::InvalidArgument)?
+            .min(file_size);
+        if data.data_runs_offset.is_none() {
+            // A resident value's bytes are in the record, and a hole in it is
+            // not a run list: that is a shape of its own.
+            return Err(Error::NotImplemented);
+        }
+
+        // The whole clusters inside the range, and the ends a cluster only
+        // partly covers.
+        let whole_from = offset.div_ceil(cluster) * cluster;
+        let whole_to = end / cluster * cluster;
+        let head = offset..whole_from.min(end);
+        let tail = whole_to.max(whole_from)..end;
+
+        // The zeros: only the clusters *behind* the file have bytes to zero, so
+        // each run's own part of the range is what is written.
+        let mut zeros: Vec<u8> = Vec::new();
+        for range in [head, tail] {
+            if range.start >= range.end {
+                continue;
+            }
+            zeros.resize((range.end - range.start) as usize, 0);
+            let mut vcn = 0u64;
+            for run in &data.data_runs {
+                let run_start = vcn * cluster;
+                let run_end = run_start + run.cluster_count * cluster;
+                let from = range.start.max(run_start);
+                let to = range.end.min(run_end);
+                if to > from && run.lcn >= 0 {
+                    let at = run.lcn as u64 * cluster + (from - run_start);
+                    let take = (to - from) as usize;
+                    fs::write_device_bytes(&self.device, at, &zeros[..take])?;
+                }
+                vcn += run.cluster_count;
+            }
+        }
+
+        // The runs the file has afterwards: each run split into what is outside
+        // the range and a hole where the range is.
+        let mut runs: Vec<DataRun> = Vec::new();
+        let mut freed: Vec<DataRun> = Vec::new();
+        let mut vcn = 0u64;
+        for run in &data.data_runs {
+            let run_start = vcn * cluster;
+            let run_end = run_start + run.cluster_count * cluster;
+            let from = whole_from.max(run_start);
+            let to = whole_to.min(run_end);
+            if whole_to <= whole_from || to <= from {
+                runs.push(run.clone());
+                vcn += run.cluster_count;
+                continue;
+            }
+            let before = (from - run_start) / cluster;
+            let hole = (to - from) / cluster;
+            let after = (run_end - to) / cluster;
+            if before > 0 {
+                runs.push(DataRun {
+                    lcn: run.lcn,
+                    cluster_count: before,
+                });
+            }
+            if run.lcn >= 0 {
+                freed.push(DataRun {
+                    lcn: run.lcn + before as i64,
+                    cluster_count: hole,
+                });
+            }
+            runs.push(DataRun {
+                lcn: -1,
+                cluster_count: hole,
+            });
+            if after > 0 {
+                runs.push(DataRun {
+                    lcn: if run.lcn >= 0 {
+                        run.lcn + (before + hole) as i64
+                    } else {
+                        -1
+                    },
+                    cluster_count: after,
+                });
+            }
+            vcn += run.cluster_count;
+        }
+        if freed.is_empty() {
+            // A range that is inside one cluster makes no hole at all: the
+            // zeros are the whole of it.
+            return Ok(());
+        }
+
+        let allocated = runs
+            .iter()
+            .filter(|run| run.lcn >= 0)
+            .map(|run| run.cluster_count)
+            .sum::<u64>()
+            * cluster;
+        let length_field = data.data_size;
+        let mut attributes = self.attributes_of(number)?;
+        loop {
+            let data = attributes
+                .iter()
+                .find(|attribute| attribute.attr_type == ATTR_TYPE_DATA)
+                .ok_or(Error::NotFound)?;
+            match self.write_grown_data(
+                data.holder,
+                data,
+                &runs,
+                allocated as u32,
+                length_field,
+                &[],
+            ) {
+                Ok(()) => break,
+                Err(Error::NoSpace) => {
+                    self.make_room(number, ATTR_TYPE_DATA)?;
+                    attributes = self.attributes_of(number)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        // The stream says a hole is possible, which is what the flag is for.
+        self.set_stream_sparse(number)?;
+
+        self.free_clusters(&freed)?;
+        Ok(())
+    }
+
+    /// Mark a file's `$DATA` as **sparse**: the flag that says a run may name
+    /// no cluster.  The record goes back whole, its sectors' numbers packed
+    /// again.
+    fn set_stream_sparse(&self, number: u64) -> Result<()> {
+        let data = self
+            .attributes_of(number)?
+            .into_iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?;
+        if data.flags & ATTR_FLAG_SPARSE != 0 {
+            return Ok(());
+        }
+        let mut record = self.read_mft_record(data.holder)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let at = header.size() as usize + data.offset + 12;
+        if at + 2 > record.len() {
+            return Err(Error::InvalidArgument);
+        }
+        let flags = u16::from_le_bytes([record[at], record[at + 1]]) | ATTR_FLAG_SPARSE;
+        record[at..at + 2].copy_from_slice(&flags.to_le_bytes());
+        let (where_at, sector) = {
+            let info = self.info.lock();
+            (
+                self.record_offset(&info, data.holder)?,
+                info.bs.bytes_per_sector as usize,
+            )
+        };
+        fs::pack_usa(
+            &mut record,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            sector,
+        );
+        fs::write_device_bytes(&self.device, where_at, &record)?;
+        self.mft_cache.lock().insert(data.holder, record);
+        Ok(())
+    }
+
     /// Write a compressed attribute's **compressed size** — the fourth of the
     /// four sizes a non-resident attribute carries, and the one a reader bounds
     /// the stream by.  The record goes back whole, its sectors' numbers packed
@@ -4483,6 +4674,30 @@ impl VNode for NtfsVnode {
         let info = self.fs.info.lock();
         let written = fs::write_to_runs(&self.fs.device, &info, &data.data_runs, offset, buffer)?;
         Ok(written)
+    }
+
+    /// Punch a hole a caller asked for: the zeros, and the clusters the range
+    /// wholly covers back to the volume.
+    ///
+    /// A stream this driver does not have the bytes of — compressed or
+    /// encrypted — is one it cannot make zeros in, and so is a directory: both
+    /// refuse with the answer their own kind gives.
+    fn punch_hole(&self, offset: u64, length: u64) -> Result<()> {
+        if self.kind() == NodeKind::Directory {
+            return Err(Error::InvalidArgument);
+        }
+        let number = *self.mft_record_number.lock();
+        let attributes = self.fs.attributes_of(number)?;
+        let data = attributes
+            .iter()
+            .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?;
+        if data.flags & (ATTR_FLAG_COMPRESSED | ATTR_FLAG_ENCRYPTED) != 0 {
+            // A hole in a compressed stream is the stream's own shape again,
+            // and an encrypted one has no bytes this driver has.
+            return Err(Error::NotImplemented);
+        }
+        self.fs.punch_a_hole(number, data, offset, length)
     }
 
     /// Change how long a file is, claiming clusters for a growth and moving

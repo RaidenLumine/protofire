@@ -54,6 +54,18 @@ pub trait VNode: Send + Sync {
         Err(Error::PermissionDenied)
     }
 
+    /// Punch a hole in this node: the range reads as zeros, and the storage the
+    /// filesystem can give back for it is released.
+    ///
+    /// The length of the node does not change — that is what a punch is, as
+    /// against a truncation — and neither does anything else about it.  The
+    /// default implementation refuses with [`Error::PermissionDenied`], for the
+    /// same reason as [`Self::write`]; a filesystem that does not make holes
+    /// says [`Error::NotImplemented`].
+    fn punch_hole(&self, _offset: u64, _length: u64) -> Result<()> {
+        Err(Error::PermissionDenied)
+    }
+
     /// Read the target path of this symlink into `buf`.
     fn readlink(&self) -> Result<Vec<u8>> {
         Err(Error::InvalidArgument)
