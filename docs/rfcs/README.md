@@ -122,6 +122,7 @@ and its status says which of the two happened.
 | [0012](0012-the-harness-an-ntfs-write-is-proven-on.md) | Accepted | Decide the harness an NTFS write is proven on |
 | [0013](0013-refuse-the-ntfs-streams-this-driver-cannot-read.md) | Accepted | Refuse the NTFS streams this driver cannot read |
 | [0014](0014-read-the-ntfs-streams-lznt1-compressed.md) | Accepted | Read the NTFS streams LZNT1 compressed |
+| [0015](0015-compress-an-ntfs-stream-on-write.md) | Accepted | Compress an NTFS stream on write |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —
