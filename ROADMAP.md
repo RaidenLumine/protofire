@@ -95,6 +95,47 @@ The authoritative picture of what exists today is
   the codec was told "one channel" and played a stereo stream's interleaved
   samples in sequence.  What is left is the shell generator's own rounding,
   under a percent, and a codec that is not QEMU's.
+- **A real machine.**  Every boot this kernel has ever done was in an emulator,
+  in three shapes: a Multiboot2 payload and a PVH `-kernel` on the PC, an arm64
+  `Image` with QEMU's device tree, and OpenSBI's hand-off on RISC-V
+  ([boot.md](docs/kernel/boot.md) has each contract).  Emulation is not the
+  weaker test — it is the test that can be repeated, checked and bisected —
+  but it is also a machine that was built to describe itself the way this
+  kernel asks, and a real one is where the asking is tried.  The order worth
+  doing is by what is blocking rather than by what is interesting:
+
+  1. **A medium.**  The linker already carries a Multiboot2 header and
+     `iso/boot/grub/grub.cfg` already exists, so a GRUB-bootable stick is the
+     shortest path to a real PC — and no target builds one (`README.md` and
+     `make doctor` both say so).  A bootable image target, and the recipe for
+     writing it to a stick, is the first thing the day needs; the second is
+     knowing which console a machine with no serial port draws on.
+  2. **The disk.**  A machine's disk is the one its installer made, and that
+     is a **GPT** — the tree parses MBR only (`src/fs/partition.rs`), so a real
+     volume is a disk the kernel cannot see.  A GPT parser is self-contained,
+     gateable from an image the host's own tools made, and the largest of the
+     three: it is the item this list exists for.
+  3. **The memory the machine reports.**  The frame pool is a fixed array
+     inside the image and the platform's answer is clamped to it
+     ([memory.md](docs/kernel/memory.md)), which is a decision about what a
+     frame *is* rather than a defect — but it is the decision a machine with a
+     map of its own, memory above 4 GiB and holes for its devices is exactly
+     the shape to test.  It wants its own RFC before it wants code, and that
+     RFC is the third item here.
+  4. **Everything the machine has instead.**  A keyboard that is not PS/2, a
+     GPU that is not QEMU's, a network card that is not virtio, a hub behind a
+     hub.  Each is a driver or a driver's assumption, each is named in
+     [docs/status.md](docs/status.md) as "QEMU only", and none of them is
+     worth doing before the three above: a machine that cannot boot a disk it
+     recognises is a machine that cannot tell you which of them is wrong.
+
+  What can be done *before* the hardware is the part worth planning for, and
+  this tree already knows the shape: a firmware table can be **captured** from
+  a real machine and replayed as a fixture, the way `check-ntfs-image` hands
+  the driver a volume `mkntfs` made instead of one this tree built.  An ACPI
+  dump of a real laptop, a GPT image made by `sgdisk` and `mkfs`, a
+  device tree from a real board: each becomes a parser gate that a real
+  machine would otherwise be the first to exercise.
 
 ## Mid Term (6–18 months)
 
