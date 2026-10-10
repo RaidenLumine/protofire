@@ -125,7 +125,10 @@ if ! mkntfs -F -q -C -L protofire-compressed "$compressed" >"$work/mkntfs-compre
     fail "mkntfs could not make the compressed volume"
 fi
 content_name='/big.txt'
-yes 'the quick brown fox jumps over the lazy dog' | head -600 >"$work/big.txt"
+# Long enough to cross several **compression units**: a volume compresses
+# sixteen clusters at a time, and a file inside one unit is not the shape a
+# unit boundary is proved by.
+yes 'the quick brown fox jumps over the lazy dog' | head -5000 >"$work/big.txt"
 ntfscp -f "$compressed" "$work/big.txt" "$content_name" ||
     fail "could not inject the compressible file"
 ntfsinfo -F "$content_name" "$compressed" 2>/dev/null |

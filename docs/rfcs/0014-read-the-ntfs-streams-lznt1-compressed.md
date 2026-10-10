@@ -11,9 +11,9 @@ A `$DATA` whose flags say **compressed** is refused today — its runs hold an
 LZNT1 bitstream, and reading them as a plain runlist answers with something
 file-shaped and false, so [RFC 0013](0013-refuse-the-ntfs-streams-this-driver-cannot-read.md)
 decided the operation is `NotImplemented` rather than wrong.  This decides the
-other half of that: the driver **decompresses** the stream, one 4096-byte
-*unit* at a time, and answers with the bytes the file has.  A stream this
-decoder cannot account for stays refused (`InvalidArgument`); a **write** to a
+other half of that: the driver **decompresses** the stream, one compression
+unit at a time, and answers with the bytes the file has.  A stream this decoder
+cannot account for stays refused (`InvalidArgument`); a **write** to a
 compressed file stays refused; a compressed **index** is not covered.
 
 ## Motivation
@@ -45,9 +45,15 @@ compressed (`ntfsinfo`) and the driver to refuse it.
 
 ## Design
 
-**1. The stream, as the format writes it.**  A compressed `$DATA` is a
-sequence of **units** of at most 4096 bytes, and each unit is a 16-bit
-little-endian header followed by its payload:
+**1. The stream, as the format writes it.**  A volume compresses a
+**compression unit** at a time — sixteen clusters by the standard's own
+maximum, and the exponent is a byte of the `$DATA` attribute itself — and inside
+one of those the bytes are a sequence of 4096-byte LZNT1 **chunks**.  What a
+squeezed compression unit did not need of its clusters is left a **sparse run**,
+so a unit's bytes are at the unit's own place in the stream and the units are
+not contiguous; a unit whose squeezed bytes were no smaller is stored **as it
+is**, which the run list says: its real clusters cover it whole.  Each chunk is
+a 16-bit little-endian header followed by its payload:
 
 | Field | Meaning |
 | --- | --- |
@@ -69,16 +75,17 @@ unit's end, is a stream that does not add up.  The reference is Linux's
 `fs/ntfs3/lznt.c` (`decompress_chunk` and the `s_max_off` table it indexes
 with), whose only differences are choices of error numbers.
 
-**2. What a read does.**  Units are independent — nothing is carried across a
-unit boundary — so a read needs exactly the units its range touches, and the
-only thing it has to walk is the **headers** before them: from the stream's
-first unit, `2 + (header & 0x0FFF)` bytes at a time, until the unit that holds
-the requested offset.  A read of `n` bytes therefore decompresses at most
-`2 + n / 4096` units and skips the rest by their headers, which is a walk
-bounded by `data_size / 4096` and costs two bytes a step.  No table is kept
-between reads and no unit is cached: a measurement of what a boot's reads cost
-is what would argue for a cache, and this document does not have that
-measurement.
+**2. What a read does.**  Chunks are independent — nothing is carried across a
+chunk boundary — and units are too, so a read needs exactly the compression unit
+its range touches: which unit that is, is a **count** (`offset / unit bytes`),
+because a unit's bytes are at the unit's own place, and inside it the chunks
+follow each other, so the walk steps over their headers, `2 + (header &
+0x0FFF)` bytes at a time, until it reaches the chunk that holds the offset.  A
+unit stored as it is has no headers to walk at all: it is read outright.  A read
+of `n` bytes therefore decodes at most one compression unit's worth of chunks
+plus the bytes it was asked for, and nothing is kept between reads: a
+measurement of what a boot's reads cost is what would argue for a cache, and
+this document does not have that measurement.
 
 **3. What the bytes are.**  The attribute's `data_size` is the length the
 file has, and the units are read until it is answered; the last unit's output

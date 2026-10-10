@@ -1130,6 +1130,61 @@ impl NtfsFs {
     /// A stream that ends before it has answered its length is
     /// `InvalidArgument`: a read that succeeds and is wrong is the one failure
     /// this driver does not have.
+    /// The **compression unit** a compressed attribute's stream is divided
+    /// into, in bytes.
+    ///
+    /// A volume compresses a *unit* at a time — sixteen clusters by the
+    /// standard's own maximum, and the exponent is a byte of the attribute
+    /// itself — and inside it the bytes are a sequence of 4096-byte LZNT1
+    /// **chunks**.  What a squeezed unit did not need of its clusters is left a
+    /// **sparse run**, so a unit's bytes are at the unit's own place in the
+    /// stream: the 4096 bytes above is the chunk, not the unit.
+    fn compression_unit_bytes(&self, data: &ParsedAttr) -> Result<u64> {
+        let record = self.read_mft_record(data.holder)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let at = header.size() as usize + data.offset + 34;
+        let exponent = *record.get(at).ok_or(Error::InvalidArgument)?;
+        if exponent == 0 || exponent > 8 {
+            return Err(Error::InvalidArgument);
+        }
+        let info = self.info.lock();
+        Ok((1u64 << exponent) * u64::from(info.cluster_size))
+    }
+
+    /// How many clusters each compression unit of a compressed attribute has
+    /// behind it: the runs read in the unit's own numbering, which is how a
+    /// reader tells a squeezed unit from one that was stored as it is — the
+    /// latter covers the whole unit with real clusters.
+    fn compression_units_held(&self, data: &ParsedAttr, unit_clusters: u64) -> Result<Vec<u64>> {
+        let mut held: Vec<u64> = Vec::new();
+        let mut vcn = 0u64;
+        for run in &data.data_runs {
+            let mut left = run.cluster_count;
+            while left > 0 {
+                let index = (vcn / unit_clusters) as usize;
+                let room = unit_clusters - vcn % unit_clusters;
+                let take = left.min(room);
+                while held.len() <= index {
+                    held.push(0);
+                }
+                if run.lcn >= 0 {
+                    held[index] += take;
+                }
+                vcn += take;
+                left -= take;
+            }
+        }
+        Ok(held)
+    }
+
+    /// Read a stream the volume **compressed**, one compression unit at a time.
+    ///
+    /// A unit stored **as it is** — its real clusters cover it whole — is
+    /// copied outright, and a squeezed one is decoded chunk by chunk.  The unit
+    /// a range begins in is a count rather than a walk, because a unit's bytes
+    /// are at the unit's own place.  A stream that ends before it has answered
+    /// its length is `InvalidArgument`: a read that succeeds and is wrong is
+    /// the one failure this driver does not have.
     fn read_a_compressed_stream(
         &self,
         data: &ParsedAttr,
@@ -1142,45 +1197,68 @@ impl NtfsFs {
         if wanted == 0 {
             return Ok(0);
         }
-
+        let unit_bytes = self.compression_unit_bytes(data)?;
         let info = self.info.lock();
-        let clusters: u64 = data.data_runs.iter().map(|run| run.cluster_count).sum();
-        if clusters == 0 {
+        let cluster = u64::from(info.cluster_size);
+        let unit_clusters = unit_bytes / cluster;
+        if unit_clusters == 0 {
+            return Err(Error::InvalidArgument);
+        }
+        let spanned: u64 = data.data_runs.iter().map(|run| run.cluster_count).sum();
+        if spanned == 0 {
             // A stream with no cluster at all is a file of zeros: it is the
             // shape the reference's encoder leaves for an input that was all
             // zeros, and there is nothing to walk.
             buffer[..wanted].fill(0);
             return Ok(wanted);
         }
-        let stream = clusters * u64::from(info.cluster_size);
+        let stream = spanned * cluster;
+        let held = self.compression_units_held(data, unit_clusters)?;
 
         let mut expanded = alloc::vec![0u8; lznt1::UNIT_SIZE];
         let mut read = 0usize;
-        let mut at = 0u64;
-        let mut file_at = 0u64;
+        let mut file_at = offset / unit_bytes * unit_bytes;
+        let mut at = file_at;
         while read < wanted {
+            let index = (file_at / unit_bytes) as usize;
+            let unit_end = (file_at / unit_bytes + 1) * unit_bytes;
+            if held.get(index).copied().unwrap_or(0) == unit_clusters {
+                // Stored as it is: its bytes are the file's, and the file's
+                // length is what says how many of them there are.
+                let from = file_at.max(offset);
+                let to = end.min(unit_end).min(file_size);
+                if to > from {
+                    let start = (from - file_at) as usize;
+                    let want = (to - from) as usize;
+                    fs::read_from_runs(
+                        &self.device,
+                        &info,
+                        &data.data_runs,
+                        stream,
+                        at + start as u64,
+                        &mut buffer[read..read + want],
+                    )?;
+                    read += want;
+                }
+                file_at = unit_end.min(file_size);
+                at = unit_end;
+                continue;
+            }
             if at + 2 > stream {
                 return Err(Error::InvalidArgument);
             }
             let mut bytes = [0u8; 2];
             fs::read_from_runs(&self.device, &info, &data.data_runs, stream, at, &mut bytes)?;
             if lznt1::is_padding(bytes) {
-                // The padding an encoder leaves after its last unit, with the
+                // The padding an encoder leaves after its last chunk, with the
                 // file still wanting bytes: the stream is short.
                 return Err(Error::InvalidArgument);
             }
-            let unit = lznt1::parse_unit(bytes);
+            let chunk = lznt1::parse_unit(bytes);
             let payload_at = at + 2;
-            let payload_len = unit.length - 2;
+            let payload_len = chunk.length - 2;
             if payload_at + payload_len as u64 > stream {
                 return Err(Error::InvalidArgument);
-            }
-            if file_at + lznt1::UNIT_SIZE as u64 <= offset {
-                // Nothing of this unit is wanted, and a unit's bytes are the
-                // format's 4096: the walk skips it without decoding it.
-                file_at += lznt1::UNIT_SIZE as u64;
-                at = payload_at + payload_len as u64;
-                continue;
             }
             let mut payload = alloc::vec![0u8; payload_len];
             fs::read_from_runs(
@@ -1191,18 +1269,27 @@ impl NtfsFs {
                 payload_at,
                 &mut payload,
             )?;
-            let produced = lznt1::expand(&unit, &payload, &mut expanded)?;
-            let unit_end = file_at + produced as u64;
-            if unit_end > offset {
+            let produced = lznt1::expand(&chunk, &payload, &mut expanded)?;
+            if produced == 0 {
+                return Err(Error::InvalidArgument);
+            }
+            let chunk_end = file_at + produced as u64;
+            if chunk_end > offset {
                 let from = offset.max(file_at);
-                let to = end.min(unit_end);
+                let to = end.min(chunk_end);
                 let start = (from - file_at) as usize;
                 let take = ((to - from) as usize).min(produced - start);
                 buffer[read..read + take].copy_from_slice(&expanded[start..start + take]);
                 read += take;
             }
-            file_at = unit_end;
-            at = payload_at + payload_len as u64;
+            file_at = chunk_end;
+            // Within a unit the chunks follow each other; the next unit is at
+            // its own place, because the rest of this one is a sparse run.
+            at = if file_at >= unit_end {
+                unit_end
+            } else {
+                payload_at + payload_len as u64
+            };
         }
         Ok(read)
     }
