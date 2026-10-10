@@ -44,6 +44,12 @@ jobs:
             command: make clippy-targets
           - name: unsafe-comments
             command: make check-unsafe-comments
+          # The other half of "what the code says about itself": the one
+          # window a read of user memory may be opened in.  It was a step of
+          # `make verify-p3` and of no CI job, so a change that opened a second
+          # one was caught by whoever happened to run the local floor.
+          - name: user-access-windows
+            command: make check-user-access-windows
           - name: layering
             command: make check-layering
           - name: arch-fanout
@@ -73,6 +79,13 @@ jobs:
           # target silently skippable.
           - name: make-targets
             command: make check-make-targets
+          # The release property: the same source, built twice in two clean
+          # trees, has to come out byte for byte the same — otherwise a
+          # signature over one release certifies a build nobody can
+          # reproduce.  It is the slowest entry here because it builds
+          # everything twice, which is why it had stayed a local step.
+          - name: reproducible-build
+            command: make check-reproducible-build
 
     steps:
       - name: Checkout

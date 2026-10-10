@@ -165,8 +165,28 @@ least the full gate before it can be merged:
 | `make verify-p2` | p1 + storage/recovery/fault-matrix regressions (`test-storage`) |
 | `make verify-p3` | p2 + the suites whose own targets no other tier calls (locking, service, USB, GPU, parsers) + clippy (all targets) + the optional QEMU smokes and the boot-work baseline |
 
-CI runs `make check`, `make verify-p0`, and `make clippy` on every push and
-pull request (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+CI runs, on every push and pull request
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+
+- `make verify-p0` — repository integrity, format, citations, the RFC index,
+  the build matrix and header coverage;
+- every other static gate of `make verify-p3` — clippy in each configuration,
+  the ratchets (layering, architecture fanout, unsafe comments, user-access
+  windows, dead-code allows, census rows, payload relocations), the ABI
+  mirror, the feature matrix and the reproducible build — each as its own job
+  of the matrix, so a red one names the gate rather than the tier;
+- the host test suite (`make test`) and the three bare-metal cross-builds on
+  every supported host: Linux, Windows and Intel macOS, with Linux arm64
+  type-checking the same tree without the suite, which needs an x86_64 host;
+- the NTFS driver on a volume `mkntfs` made, because that job needs a package
+  the others do not; and
+- the QEMU smokes — four CPUs, the frozen payloads, the USB, NVMe, hub and
+  HDA devices, and the RISC-V AIA and PCIe boots.
+
+What CI does not run is the boot-work baseline, which compares counters and
+wants a host that is not otherwise busy.  `make verify VERIFY_TIER=p3` remains
+the floor — it runs everything above in one sequence — and CI is what keeps
+the floor from being the only thing that ever looks.
 
 For kernel-behaviour changes, also boot the demo-disk shell under QEMU on the
 affected architecture to confirm runtime behaviour:
