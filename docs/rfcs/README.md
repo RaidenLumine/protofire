@@ -125,6 +125,7 @@ and its status says which of the two happened.
 | [0015](0015-compress-an-ntfs-stream-on-write.md) | Implemented | Compress an NTFS stream on write |
 | [0016](0016-punch-a-hole-in-an-ntfs-file.md) | Accepted | Punch a hole in an NTFS file |
 | [0017](0017-ask-a-file-where-its-holes-are.md) | Implemented | Ask a file where its holes are |
+| [0018](0018-read-a-disk-whose-table-is-gpt.md) | Accepted | Read a disk whose table is GPT |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —
