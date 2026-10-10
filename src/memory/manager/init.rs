@@ -62,8 +62,13 @@ impl MemoryManager {
 
         self.initialized = true;
 
+        // The pool, and only the pool: what the machine has is reported by
+        // `report_machine_memory` ([RFC
+        // 0019](../../docs/rfcs/0019-what-a-frame-is.md)), which is also where
+        // the answer is checked.  A number that wore both names is what that
+        // report exists to remove.
         println!(
-            "Memory manager initialized: {} MiB physical, {} KiB heap free",
+            "Memory manager initialized: {} MiB pool, {} KiB heap free",
             memory_size / 1024 / 1024,
             self.heap_allocator.remaining() / 1024
         );

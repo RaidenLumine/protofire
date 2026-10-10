@@ -18,11 +18,15 @@ answers `None` and `detect_memory` always answers
 `frame::physical_pool_size()`.  The machine is not asked today, and the number
 the memory manager prints is the pool's own size.
 
-[RFC 0019](../rfcs/0019-what-a-frame-is.md) decides what happens to that:
-the pool stays the kernel's memory, the parsers are wired so the machine *is*
-asked, the boot verifies that the kernel's image lies in RAM the map calls
-usable — a loader is free to put it anywhere — and the line names the
-machine's number and the pool's separately, because they are two facts.
+[RFC 0019](../rfcs/0019-what-a-frame-is.md) decides what happens to that, and
+`memory::report_machine_memory` is the code: the parsers are wired, the boot
+prints the machine's number beside the pool's, checks the pool against the
+window `phys_addr_of` answers for, and — on a machine, where the linker's
+symbols exist — checks the kernel's **image** against the map, because a loader
+is free to put it anywhere and a kernel over RAM the firmware withheld is
+already broken.  x86_64 asks before the manager is built (its walk allocates
+nothing, so the pool is sized from the answer); the device-tree machines ask
+after their parse, which needs the heap the manager provides.
 
 ## Frames
 

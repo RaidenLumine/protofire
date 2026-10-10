@@ -168,19 +168,42 @@ is a machine that was already broken.
 
 ## How this is proven
 
-- **The parsers, on a map built for them**: the Multiboot2 tag walk and the
-  device tree's `/memory` window driven over constructed inputs, so the
-  "ask the machine" half is a unit test rather than a claim about a boot.
-  Where a parser reads a hand-off address from a global, the test drives the
-  address-taking function and the global is a wrapper around it.
-- **The check, on the three answers**: a map that contains the image (boots),
-  a map that excludes it (refuses, with both ranges in the message), and no
-  map (continues, and says so) — each a function's answer rather than a
-  boot's behaviour.
-- **The window check**: a pool range that ends outside `phys_addr_of`'s
-  window refuses, and the real one does not.
-- **The boot line**: the smoke boots' logs name both the machine's number and
-  the pool's, which is what makes the number a reader sees attributable.
+**What landed with this RFC.**  The machine is asked, and its answer has a job:
+`multiboot2_usable_regions_at` walks a Multiboot2 map into `(base, length)`
+entries with the hand-off address as a parameter (so a test drives it over a
+block it built), the device tree's `/memory` window is answered by
+`PlatformInfo` through `platform::described_memory_window`, and
+`memory::record_machine_memory` records the total in the atomic that had no
+writer.  `report_machine_memory` prints the machine's number and the pool's,
+checks the pool against the window `phys_addr_of` answers for, and — on a
+machine — checks the kernel's own image against the map, refusing with both
+ranges when the loader put it somewhere the firmware withheld.  The manager's
+own line prints the pool and only the pool, because the number that wore both
+names is what this removes.
+
+- **The parser, over a map built for it**: an mmap tag with an available entry
+  and a reserved one, the reserved one not counted, and a truncated block
+  answering `None` rather than reading past what the header claims.
+- **The check, in its three shapes**: a range inside a region the machine
+  called usable, one byte past it, and an empty range — with no regions at all
+  as the fourth answer.
+- **A boot of each machine**: x86_64's report runs **before** the memory
+  manager — its walk needs no allocation — and a device-tree machine's runs
+  after the platform is described, which is after the manager, because that
+  parse allocates.  The aarch64 smoke prints `machine reports 1024 MiB in 1
+  region(s); the kernel's pool is 512 MiB` and `the kernel's image
+  [0x40080000, 0x646612d0) is in usable RAM`, which is the placement check
+  answering on a device tree rather than a fixture.
+- **The no-map answer**, which is the one every gate here exercises: the
+  emulated boots reach the kernel through `-kernel` (PVH, or QEMU's arm64
+  `Image` hand-off), and PVH carries no Multiboot block, so the line they print
+  is `the machine described no memory map; the kernel's pool is 512 MiB` — the
+  third row of the table above, working.
+- **Still owed**: a boot that *has* a loader map — which means a bootable image
+  and a loader that speaks Multiboot2 (the real-machine list's first item), so
+  the map path is a unit test today; and the device-tree machines' answer
+  reaching the manager's *sizing* rather than its report, which needs a read of
+  the blob that allocates nothing (a change of its own).
 
 ## Unresolved questions
 

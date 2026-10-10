@@ -3,6 +3,8 @@
 //! Architecture-neutral boot protocol and handoff descriptors.
 
 use alloc::string::String;
+#[cfg(target_arch = "x86_64")]
+use alloc::vec::Vec;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
@@ -108,13 +110,17 @@ pub fn multiboot2_command_line() -> Option<String> {
     }
 }
 
-/// Parse the Multiboot2 memory-map tag and return total usable RAM in bytes.
+/// The machine's usable RAM, as a Multiboot2 memory map describes it: one
+/// `(base, length)` per entry whose type says the region is available.
 ///
-/// Sums entries with `type == 1` (available RAM).  Returns `None` if no
-/// memory-map tag is present or the handoff address is not set.
+/// The hand-off address is a parameter rather than a read of the global so that
+/// a test can drive this walk over a tag block it built
+/// ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md));
+/// [`multiboot2_usable_regions`] is the wrapper that reads what the loader
+/// recorded.  `None` means the machine described no map at all, which is not
+/// the same as describing an empty one.
 #[cfg(target_arch = "x86_64")]
-pub fn multiboot2_memory_map() -> Option<usize> {
-    let addr = handoff_address();
+pub fn multiboot2_usable_regions_at(addr: usize) -> Option<Vec<(usize, usize)>> {
     if addr == 0 {
         return None;
     }
@@ -123,7 +129,7 @@ pub fn multiboot2_memory_map() -> Option<usize> {
     // the loop condition bounds every later read by it.
     let total_size = unsafe { *(addr as *const u32) } as usize;
     let mut offset = 8;
-    let mut total_ram: usize = 0;
+    let mut regions: Vec<(usize, usize)> = Vec::new();
 
     while offset + 8 <= total_size {
         // SAFETY: bounded by the loop condition above, as in the first pass
@@ -154,8 +160,6 @@ pub fn multiboot2_memory_map() -> Option<usize> {
             // An entry carries `base_addr`, `length`, `type`, and a reserved
             // word — 24 bytes of fields, which is what the reads below cover.
             // A bootloader that claims a smaller entry is refused rather than
-            // SAFETY: as the entry-size read above; it is the last word of the
-            // tag's fixed header.
             // trusted: the tag is bounded, so the type read would otherwise
             // take bytes from whatever follows.
             if entry_size < 24 {
@@ -164,33 +168,27 @@ pub fn multiboot2_memory_map() -> Option<usize> {
             // SAFETY: the loop the comment above describes has already bounded the entry,
             // so this reads the entry's version word inside the tag.
             let _entry_version = unsafe { *((addr + offset + 12) as *const u32) };
-            // SAFETY: the entry loop's condition keeps a whole
-            // `entry_size`-byte entry inside the tag, and entry sizes below the
-            // 24 bytes of fields were refused above.
+
             let entries_start = offset + 16;
-            // SAFETY: as the entry's base address — the same entry, whose
-            // fields the loop condition has shown to be present.
             let entries_end = offset + tag_size;
-            // SAFETY: the entry's type word, inside the same bounded entry; this is the
-            // field the 24-byte minimum exists for.
 
             let mut entry_off = entries_start;
             while entry_off + entry_size <= entries_end {
                 // SAFETY: `entry_off + entry_size` is still inside the tag (the loop
-                // condition), so the entry's first word is a byte of the blob.
-                let _base = unsafe { *((addr + entry_off) as *const u64) };
+                // condition), so each word below is a byte of the blob.
+                let base = unsafe { *((addr + entry_off) as *const u64) };
                 // SAFETY: as above — the length word of the same entry.
                 let length = unsafe { *((addr + entry_off + 8) as *const u64) };
                 // SAFETY: as above — the type word of the same entry.
                 let entry_type = unsafe { *((addr + entry_off + 16) as *const u32) };
 
-                if entry_type == MULTIBOOT2_MMAP_AVAILABLE {
-                    total_ram = total_ram.saturating_add(length as usize);
+                if entry_type == MULTIBOOT2_MMAP_AVAILABLE && length > 0 {
+                    regions.push((base as usize, length as usize));
                 }
 
                 entry_off += entry_size;
             }
-            return Some(total_ram);
+            return Some(regions);
         }
 
         // Tags are 8-byte aligned.
@@ -199,6 +197,26 @@ pub fn multiboot2_memory_map() -> Option<usize> {
     }
 
     None
+}
+
+/// The machine's usable RAM, from the block the loader handed over.
+#[cfg(target_arch = "x86_64")]
+pub fn multiboot2_usable_regions() -> Option<Vec<(usize, usize)>> {
+    multiboot2_usable_regions_at(handoff_address())
+}
+
+/// Parse the Multiboot2 memory-map tag and return total usable RAM in bytes.
+///
+/// Sums the entries [`multiboot2_usable_regions`] answers with.  Returns `None`
+/// if no memory-map tag is present or the hand-off address is not set.
+#[cfg(target_arch = "x86_64")]
+pub fn multiboot2_memory_map() -> Option<usize> {
+    let regions = multiboot2_usable_regions()?;
+    Some(
+        regions
+            .iter()
+            .fold(0usize, |total, (_, length)| total.saturating_add(*length)),
+    )
 }
 
 /// Extract the `init=<path>` value from a kernel command line.
@@ -331,7 +349,14 @@ pub const fn from_riscv64_qemu_direct(device_tree_blob: usize) -> BootInfo {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_arch = "x86_64")]
+    use alloc::vec;
+    #[cfg(target_arch = "x86_64")]
+    use alloc::vec::Vec;
+
     use super::current_architecture;
+    #[cfg(target_arch = "x86_64")]
+    use super::multiboot2_usable_regions_at;
     use super::BootInfo;
     use super::BootProtocol;
 
@@ -356,5 +381,61 @@ mod tests {
     #[test]
     fn current_architecture_reports_host_for_host_targets() {
         assert_eq!(current_architecture(), "host");
+    }
+
+    /// The Multiboot2 walk, over a block built the way the protocol lays one
+    /// out: the header, one memory-map tag, and the entries in it.  The
+    /// answer is the regions the machine calls usable
+    /// ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)); an entry that is
+    /// reserved is not one of them.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn a_multiboot_map_answers_the_regions_it_calls_usable() {
+        let entries: [(u64, u64, u32); 3] = [
+            (0x1000, 0x9_f000, 1),
+            (0x10_0000, 0x1000_0000, 1),
+            (0x2000_0000, 0x1000, 2),
+        ];
+        let tag_size = 16 + entries.len() * 24;
+        let total = 8 + tag_size + 8;
+
+        let mut block: Vec<u8> = Vec::new();
+        block.extend_from_slice(&(total as u32).to_le_bytes());
+        block.extend_from_slice(&0_u32.to_le_bytes());
+        block.extend_from_slice(&6_u32.to_le_bytes());
+        block.extend_from_slice(&(tag_size as u32).to_le_bytes());
+        block.extend_from_slice(&24_u32.to_le_bytes());
+        block.extend_from_slice(&0_u32.to_le_bytes());
+        for (base, length, kind) in entries {
+            block.extend_from_slice(&base.to_le_bytes());
+            block.extend_from_slice(&length.to_le_bytes());
+            block.extend_from_slice(&kind.to_le_bytes());
+            block.extend_from_slice(&0_u32.to_le_bytes());
+        }
+        block.extend_from_slice(&0_u32.to_le_bytes());
+        block.extend_from_slice(&8_u32.to_le_bytes());
+
+        let at = block.as_ptr() as usize;
+        assert_eq!(
+            multiboot2_usable_regions_at(at),
+            Some(vec![(0x1000, 0x9_f000), (0x10_0000, 0x1000_0000)]),
+            "the reserved entry is not a region to place a kernel in"
+        );
+        assert_eq!(
+            multiboot2_usable_regions_at(0),
+            None,
+            "no hand-off address is no map, which is not an empty one"
+        );
+    }
+
+    /// A total size the block does not have bounds every read: the walk stops
+    /// rather than reading whatever follows.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn a_truncated_map_answers_nothing() {
+        let mut block: Vec<u8> = Vec::new();
+        block.extend_from_slice(&8_u32.to_le_bytes());
+        let at = block.as_ptr() as usize;
+        assert_eq!(multiboot2_usable_regions_at(at), None);
     }
 }

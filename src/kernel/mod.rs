@@ -161,6 +161,7 @@ impl Kernel {
         let tick = || self.scheduler.current_tick();
 
         let t0 = tick();
+
         self.memory.init();
         // SAFETY: the kernel owns the memory manager for the lifetime of the
         // running system, and `MemoryManager::drop` clears the global slot

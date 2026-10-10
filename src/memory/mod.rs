@@ -33,6 +33,7 @@ pub mod swap;
 mod tests;
 
 pub use arch::detected_memory;
+pub use arch::report_machine_memory;
 pub use arch::store_detected_memory;
 pub use diagnostics::*;
 pub use dma::phys_addr_of;

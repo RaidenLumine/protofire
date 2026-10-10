@@ -23,6 +23,18 @@ struct PhysicalPool([u8; PHYSICAL_POOL_SIZE]);
 static PHYSICAL_POOL: SyncUnsafeCell<PhysicalPool> =
     SyncUnsafeCell::new(PhysicalPool([0; PHYSICAL_POOL_SIZE]));
 
+/// The address range of the pool array itself: where the kernel's memory is.
+///
+/// The pool is a static array inside the image, so this is the image's own
+/// address range as far as the allocator is concerned — which is what makes a
+/// frame's address its physical address, and what a boot checks against the
+/// map a machine described ([RFC
+/// 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+pub fn pool_range() -> (usize, usize) {
+    let base = PHYSICAL_POOL.get() as *mut u8 as usize;
+    (base, base + PHYSICAL_POOL_SIZE)
+}
+
 pub const fn physical_pool_size() -> usize {
     PHYSICAL_POOL_SIZE
 }
