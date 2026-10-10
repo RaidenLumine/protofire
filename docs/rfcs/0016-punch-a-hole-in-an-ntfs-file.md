@@ -172,13 +172,23 @@ own).
   test: no gate punches a range through the interface and reads zeros back
   through it, because the volume the punchable filesystem lives on is the
   fixture's and the interface's own gate would have to mount it.
-- **A punch whose run list cannot be held** — *still owed*: the gate for §4's
-  order needs a file whose record has no room for the longer list **and** a
-  volume that cannot make room, and the fixture's record-full file does not
-  provide the second half: every record in use still lets `make_room` grow the
-  MFT once, which is why the refusal is not reachable there yet.  What the tests
-  do cover is the other direction — a punch that succeeds gives its clusters
-  back, and the ones a partial cluster covers are not handed back at all.
+- **A punch whose run list cannot be held, as it landed**: the fixture carries
+  `/sub/full-long.bin` — one run of three clusters, in a record with no room —
+  so a punch of the middle cluster is a hole with a real cluster on either side
+  of it, three runs where there was one.  The test fills the volume first, by
+  writing files until neither a cluster nor a record is left (the last growth of
+  the MFT leaves records behind, so those are taken too), and then requires
+  `NoSpace` with the volume's `$Bitmap` unchanged.  The order §4 argues about is
+  what makes that the answer: the list is built and its room asked for before
+  anything is freed, and the refusal spends nothing.
+  Getting there found a defect **below** the punch, in `encode_runs`: a run
+  list's offset is a signed field, and a *positive* distance of 128 or more was
+  written without the byte that says it is positive — so a reader that
+  sign-extends read the run as a *negative* one, which the driver's own reader
+  answers as a sparse run.  The fixture's own file is what made it visible (its
+  run is at cluster 129), and the gate is
+  `a_positive_delta_that_looks_negative_round_trips`: an encoder and a decoder
+  held to each other across the sign bit.
 
 ## Unresolved questions
 

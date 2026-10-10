@@ -342,16 +342,20 @@ fn a_directory_lists_what_its_index_holds() {
         .expect("the subdirectory's first entry");
     assert_eq!(cindex.name, "cindex");
     assert_eq!(cindex.kind, NodeKind::Directory);
-    let leaf = fs_handle.read_dir("/sub", 1).expect("leaf.txt");
+    let full_long = fs_handle.read_dir("/sub", 1).expect("full-long.bin");
+    assert_eq!(full_long.name, "full-long.bin");
+    assert_eq!(full_long.kind, NodeKind::File);
+    assert_eq!(full_long.size, (3 * fixture.cluster_size()) as usize);
+    let leaf = fs_handle.read_dir("/sub", 2).expect("leaf.txt");
     assert_eq!(leaf.name, "leaf.txt");
     assert_eq!(leaf.kind, NodeKind::File);
     assert_eq!(leaf.size, 4);
-    let sparse = fs_handle.read_dir("/sub", 2).expect("the file with a hole");
+    let sparse = fs_handle.read_dir("/sub", 3).expect("the file with a hole");
     assert_eq!(sparse.name, "sparse.bin");
     assert_eq!(sparse.kind, NodeKind::File);
     assert_eq!(sparse.size, (4 * fixture.cluster_size()) as usize);
     assert!(matches!(
-        fs_handle.read_dir("/sub", 3),
+        fs_handle.read_dir("/sub", 4),
         Err(Error::NotFound)
     ));
 
@@ -620,6 +624,71 @@ fn a_punch_makes_a_hole_and_gives_the_clusters_back() {
         .all(|byte| *byte == 0x22));
 }
 
+/// A punch whose run list cannot be held: the hole would add two runs to a
+/// record that has no room for them, and a volume with no free cluster left
+/// cannot make room for a record that would hold them either.
+#[test]
+fn a_punch_that_cannot_be_held_refuses_and_frees_nothing() {
+    let fixture = build_volume_with(FRACTIONAL, true);
+    let (device, fs_handle) = writable(&fixture);
+    let cluster = fixture.cluster_size();
+
+    // Fill the volume by writing files into it, one cluster at a time, until
+    // neither a record nor a cluster is left, and then take the records a
+    // growth of the MFT may have left behind.
+    let mut index = 0u32;
+    loop {
+        let name = alloc::format!("/fill-{index}");
+        let Ok(node) = fs_handle.create_file(&name) else {
+            break;
+        };
+        if node.write(0, &alloc::vec![0x5a; cluster as usize]).is_err() {
+            break;
+        }
+        index += 1;
+    }
+    loop {
+        let name = alloc::format!("/fill-{index}");
+        if fs_handle.create_file(&name).is_err() {
+            break;
+        }
+        index += 1;
+    }
+
+    let before: usize = fs_handle
+        .read_bitmap()
+        .expect("the volume's bitmap")
+        .iter()
+        .map(|byte| byte.count_ones() as usize)
+        .sum();
+    {
+        use crate::fs::block::BlockDevice as _;
+        let clusters = (device.block_count() * 512) / cluster;
+        assert_eq!(
+            before as u64, clusters,
+            "every cluster is spoken for before the punch"
+        );
+    }
+    let node = fs_handle
+        .lookup("/sub/full-long.bin")
+        .expect("full-long.bin");
+    assert_eq!(node.size(), (3 * cluster) as usize);
+    assert_eq!(
+        node.punch_hole(cluster, cluster),
+        Err(Error::NoSpace),
+        "the hole is two runs the record cannot hold, on a volume that cannot \
+         make room for one that could"
+    );
+
+    let after: usize = fs_handle
+        .read_bitmap()
+        .expect("the volume's bitmap")
+        .iter()
+        .map(|byte| byte.count_ones() as usize)
+        .sum();
+    assert_eq!(after, before, "and the refusal frees nothing");
+}
+
 /// A punch inside one cluster makes no hole at all — there is nothing to give
 /// back — and the bytes it covers are zeros.
 #[test]
@@ -737,6 +806,30 @@ fn a_compressed_index_is_refused_rather_than_read() {
         fs_handle.lookup("/sub/cindex/anything.txt"),
         Err(Error::NotImplemented)
     ));
+}
+
+/// A run whose distance from the last one has its top bit set: the field is
+/// signed, so it takes a byte after that one, or a reader that sign-extends
+/// reads a positive distance as a negative one — which is not a wrong file but
+/// a *different* one: a run that names no cluster at all.
+#[test]
+fn a_positive_delta_that_looks_negative_round_trips() {
+    let runs = [
+        DataRun {
+            lcn: 129,
+            cluster_count: 2,
+        },
+        DataRun {
+            lcn: 300,
+            cluster_count: 1,
+        },
+    ];
+    let encoded = super::fs::encode_runs(&runs);
+    let parsed: Vec<(i64, u64)> = super::fs::parse_data_runs(&encoded)
+        .iter()
+        .map(|run| (run.lcn, run.cluster_count))
+        .collect();
+    assert_eq!(parsed, [(129, 2), (300, 1)]);
 }
 
 #[test]
@@ -1302,7 +1395,7 @@ fn a_name_added_to_a_directory_grows_its_index_root() {
     let (device, fs_handle) = writable(&fixture);
     assert_eq!(
         fs_handle
-            .read_dir("/sub", 1)
+            .read_dir("/sub", 2)
             .expect("the entry it had")
             .name,
         "leaf.txt"
@@ -1604,6 +1697,7 @@ fn a_small_directory_that_fills_a_moved_root_fills_a_block_next() {
 
     let mut names = vec![
         String::from("cindex"),
+        String::from("full-long.bin"),
         String::from("leaf.txt"),
         String::from("sparse.bin"),
     ];
@@ -3425,7 +3519,11 @@ const SPARSE_FILE: u64 = 55;
 /// its runs hold is an LZNT1 stream and not index blocks, which is the shape
 /// RFC 0013 left undecided and this driver used to follow anyway.
 const COMPRESSED_INDEX_DIRECTORY: u64 = 56;
-const RECORDS: u64 = 57;
+/// A file whose `$DATA` is **one run of three clusters** in a record with no
+/// room at all: a punch of the middle cluster wants a list two runs longer than
+/// the one it has, and there is nowhere for it.
+const FULL_LONG_FILE: u64 = 57;
+const RECORDS: u64 = 58;
 
 /// How many blocks the tree directory's allocation has room for.
 ///
@@ -3486,6 +3584,7 @@ fn is_named(number: u64, spares_in_use: bool) -> bool {
         || number == FULL_DEEP_DIRECTORY
         || number == SPARSE_FILE
         || number == COMPRESSED_INDEX_DIRECTORY
+        || number == FULL_LONG_FILE
         || FULL_DEEP_KEYS.contains(&number)
         || number == TREE_DIRECTORY
         || TREE_CHILDREN.contains(&number)
@@ -3579,11 +3678,19 @@ fn runlist(runs: &[(u64, u64)]) -> Vec<u8> {
         if lcn != NO_CLUSTER {
             let delta = lcn as i64 - previous;
             previous = lcn as i64;
+            // A signed field: the byte that finishes it is the one whose top
+            // bit is the sign, so a positive delta whose last byte has that bit
+            // set takes one more byte with it clear.
             let mut value = delta;
             loop {
-                offset.push((value & 0xff) as u8);
+                let byte = (value & 0xff) as u8;
+                offset.push(byte);
                 value >>= 8;
-                let done = (delta >= 0 && value == 0) || (delta < 0 && value == -1);
+                let done = if delta >= 0 {
+                    value == 0 && byte & 0x80 == 0
+                } else {
+                    value == -1 && byte & 0x80 != 0
+                };
                 if done {
                     break;
                 }
@@ -4282,6 +4389,8 @@ struct Fixture {
     /// The one block the compressed index's allocation names, which is never
     /// read: the flag says its bytes are a stream.
     compressed_index_block: u64,
+    /// The three clusters of the full record's one run.
+    full_long_runs: [(u64, u64); 1],
 }
 
 impl Fixture {
@@ -4382,6 +4491,10 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let sparse_first = take(1);
     let sparse_second = take(1);
     let compressed_index_block = take(index_block_clusters);
+    // Three clusters in one run, so a punch of the middle one has a hole with
+    // real clusters on either side of it: three runs where there was one.
+    let full_long_first = take(3);
+    let full_long_runs = [(full_long_first, 3)];
     let total_clusters = cursor + 2;
 
     let mut fixture = Fixture {
@@ -4414,6 +4527,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         sparse_first,
         sparse_second,
         compressed_index_block,
+        full_long_runs,
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -4445,6 +4559,11 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     }
     for cluster in compressed_index_block..compressed_index_block + index_block_clusters {
         fixture.used[cluster as usize] = 1;
+    }
+    for &(lcn, clusters) in &full_long_runs {
+        for cluster in lcn..lcn + clusters {
+            fixture.used[cluster as usize] = 1;
+        }
     }
     for cluster in deep_blocks..deep_blocks + 3 * index_block_clusters {
         fixture.used[cluster as usize] = 1;
@@ -4609,6 +4728,13 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 Vec::new(),
             ),
             COMPRESSED_INDEX_DIRECTORY => (SUBDIRECTORY, "cindex", true, 0, Vec::new()),
+            FULL_LONG_FILE => (
+                SUBDIRECTORY,
+                "full-long.bin",
+                false,
+                3 * cluster_size,
+                Vec::new(),
+            ),
             SUBDIRECTORY_FILE => (
                 SUBDIRECTORY,
                 "leaf.txt",
@@ -4779,6 +4905,21 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     put_u32_le(&mut data, 4, length + 16);
                     data.extend_from_slice(&[0u8; 16]);
                     attributes.extend(data);
+                }
+                FULL_LONG_FILE => {
+                    // One run of three clusters, and a record with no room at
+                    // all: a punch of the middle cluster — a hole with a real
+                    // cluster on either side of it — is a list two runs longer
+                    // than the one the record holds.
+                    attributes.extend(attribute(
+                        0x80,
+                        "",
+                        &[],
+                        Some(&fixture.full_long_runs),
+                        3 * cluster_size,
+                    ));
+                    let room = 1024 - 8 - 56 - attributes.len() - 24;
+                    attributes.extend(attribute(0xe0, "", &alloc::vec![0u8; room], None, 0));
                 }
                 FULL_FILE => {
                     // A two-run `$DATA` with no room, and then an attribute
@@ -5165,6 +5306,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                                     && !FULL_DEEP_CHILDREN.contains(&record)
                                     && record != SPARSE_FILE
                                     && record != COMPRESSED_INDEX_DIRECTORY
+                                    && record != FULL_LONG_FILE
                                 {
                                     listed.push(record);
                                 }
@@ -5217,6 +5359,12 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                             "cindex",
                             true,
                             0,
+                        ));
+                        entries.extend_from_slice(&index_entry(
+                            FULL_LONG_FILE,
+                            "full-long.bin",
+                            false,
+                            3 * cluster_size,
                         ));
                         entries.extend_from_slice(&index_entry(
                             SUBDIRECTORY_FILE,
@@ -5337,7 +5485,12 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             *byte = value;
         }
     }
-    for &(lcn, clusters) in fixture.tight_runs.iter().chain(&fixture.full_runs) {
+    for &(lcn, clusters) in fixture
+        .tight_runs
+        .iter()
+        .chain(&fixture.full_runs)
+        .chain(&fixture.full_long_runs)
+    {
         let at = lcn as usize * cluster_size as usize;
         for byte in &mut fixture.image[at..at + clusters as usize * cluster_size as usize] {
             *byte = 0x33;

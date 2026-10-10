@@ -462,11 +462,21 @@ pub fn encode_runs(runs: &[DataRun]) -> Vec<u8> {
         if run.lcn >= 0 {
             let delta = run.lcn - previous;
             previous = run.lcn;
+            // A signed field: what says it is finished is the *sign* the
+            // bytes carry, not the value being zero.  A positive delta whose
+            // last byte has its top bit set needs one more byte with it clear,
+            // or a reader that sign-extends reads the same bytes as a negative
+            // number — which is not a wrong file, it is a different one.
             let mut value = delta;
             loop {
-                offset.push((value & 0xff) as u8);
+                let byte = (value & 0xff) as u8;
+                offset.push(byte);
                 value >>= 8;
-                let done = (delta >= 0 && value == 0) || (delta < 0 && value == -1);
+                let done = if delta >= 0 {
+                    value == 0 && byte & 0x80 == 0
+                } else {
+                    value == -1 && byte & 0x80 != 0
+                };
                 if done {
                     break;
                 }
