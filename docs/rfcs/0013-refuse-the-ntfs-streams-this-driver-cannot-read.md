@@ -114,7 +114,9 @@ what would change it.
   measured from, and the parser was moving it, which put every run after a hole
   in the wrong place.
 - **Unbuilt, and named as such**: LZNT1 decompression (a reader for a
-  compressed stream), compression on write, making a hole, EFS, and the
+  compressed stream — [RFC 0014](0014-read-the-ntfs-streams-lznt1-compressed.md)
+  decides its shape and is where it lands), compression on write, making a
+  hole, EFS, and the
   compression of a *directory's* index — which is a different stream under
   the same flag and is not covered by either stage.
 
