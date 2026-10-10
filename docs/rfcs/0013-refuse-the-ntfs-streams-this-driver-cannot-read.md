@@ -116,7 +116,7 @@ what would change it.
 - **Unbuilt, and named as such**: LZNT1 decompression (a reader for a
   compressed stream — [RFC 0014](0014-read-the-ntfs-streams-lznt1-compressed.md)
   decides its shape and is where it lands), compression on write, making a
-  hole, EFS, and the
+  hole ([RFC 0016](0016-punch-a-hole-in-an-ntfs-file.md)), EFS, and the
   compression of a *directory's* index — which is a different stream under
   the same flag and is not covered by either stage.
 
@@ -282,10 +282,10 @@ compressed file unless `-C` is passed, and no sparse one at all.
 
 ## Unresolved questions
 
-- **How does a hole get made?**  Nothing here trims, punches or deallocates a
-  range, so a file this driver writes is dense.  Whether this kernel grows a
-  `fallocate`-shaped call, and what it does to a file's dense runs, is a
-  syscall-visible decision and an RFC of its own.
+- **How does a hole get made?**  *[RFC 0016](0016-punch-a-hole-in-an-ntfs-file.md)
+  answered this*: nothing here trims, punches or deallocates a range, so a file
+  this driver writes is dense, and the call that makes one — a
+  `fallocate`-shaped punch — is that RFC's own decision.
 - **Is a compressed *directory* the same problem?**  NTFS compresses an index
   the same way it compresses a stream, and the flag lives in the same place;
   `$INDEX_ROOT` and `$INDEX_ALLOCATION` are a different reader, and this RFC
