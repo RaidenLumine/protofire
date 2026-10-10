@@ -1,6 +1,6 @@
 # RFC 0015: Compress an NTFS stream on write
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-10
 - **Supersedes:** none
@@ -42,16 +42,21 @@ one — one that finds fewer matches writes a **bigger** file, never a wrong one
 
 ## Design
 
-**1. What is rewritten, and what is not.**  A compressed stream is a packed
-sequence of units, so a unit's compressed length is not its uncompressed
-length: inserting bytes into a unit shifts every byte after it.  The units
-**before** the write keep their bytes and their positions; the units from the
-one the write touches **to the end of the stream** are decoded and encoded
-again, one unit at a time, so the work is bounded by the file's tail and the
-driver holds one unit of 4096 bytes at a time and never the whole file.  A
-sequential write is therefore cheap and a random write near the start of a
-large file is not; that cost is a *measurement* this design asks for rather
-than a claim it makes.
+**1. What is rewritten, and what is not.**  A volume compresses a
+**compression unit** at a time — sixteen clusters by the standard's own
+maximum, and the exponent is a byte of the `$DATA` attribute itself — and inside
+one of those the bytes are a sequence of 4096-byte LZNT1 **chunks**.  What a
+squeezed unit did not need of its clusters is left a **sparse run**, so a unit's
+stored bytes are as long as they came out and the units after a change move.
+The units **before** the write keep their bytes and their positions; the units
+from the one the write touches **to the end of the file** are decoded and
+encoded again, one at a time, so the work is bounded by the file's tail and the
+driver holds one unit — the compression unit, the format's own granularity —
+and never the whole file.  A unit that squeezing did not make smaller is stored
+**as it is**, which is what the run list then says about it: its real clusters
+cover the unit whole.  A sequential write is therefore cheap and a random write
+near the start of a large file is not; that cost is a *measurement* this design
+asks for rather than a claim it makes.
 
 **2. The encoder.**  One unit at a time: the split of a 16-bit pair at
 `12 - index` bits, the distance table the index is found in (0x10, 0x20 …
@@ -74,16 +79,21 @@ reference answers with *nothing at all* (its `compress_lznt` returns 0 for an
 input that was all zeros), which is the shape RFC 0014 already reads as zeros;
 the writer keeps it, and a file written to zeros loses its clusters entirely.
 
-**4. The stream's clusters.**  The suffix's new length is not the old one, so
-the allocation moves with it: clusters are claimed for the bytes the new
-suffix needs and the ones the old suffix held are given back
-(`free_clusters`), and the run list goes back through the same writer
-`grow_data` uses, so a list that no longer fits the record is relocated or the
-record makes room — **settled before any cluster is freed**, because what is
-given back cannot be taken again in the same operation.  Bytes go down first
-and the record names them second, which is the order the hole-filling write
-already uses; freed clusters go last, after the record has stopped naming them,
-which is the order the shrink path already uses.
+**4. The stream's clusters, and its four sizes.**  The suffix's new length is
+not the old one, so the allocation moves with it: clusters are claimed for the
+bytes the new units need — each unit's clusters are the whole unit when it is
+stored as it is, and less when it is squeezed, with the rest a sparse run — and
+the ones the old units held are given back (`free_clusters`).  The run list goes
+back through the same writer `grow_data` uses, so a list that no longer fits the
+record is relocated or the record makes room.  Bytes go down first and the
+record names them second, which is the order the hole-filling write already
+uses; freed clusters go last, after the record has stopped naming them, which is
+the order the shrink path already uses.
+A compressed attribute carries **four** sizes and they are not three: what the
+attribute is *said* to have is the virtual, unit-aligned size; the length does
+not move; and the **compressed size** — the fourth, which a reader bounds the
+stream by — is what the runs really hold, which is a field the growth path does
+not know and this write sets on its own, the record going back whole.
 
 **5. Why a wrong encoder cannot answer with wrong bytes.**  A compressor's
 bugs are of two kinds and both are caught by construction.  A matcher that

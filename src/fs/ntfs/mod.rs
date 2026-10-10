@@ -1177,6 +1177,271 @@ impl NtfsFs {
         Ok(held)
     }
 
+    /// Write a compressed attribute's **compressed size** — the fourth of the
+    /// four sizes a non-resident attribute carries, and the one a reader bounds
+    /// the stream by.  The record goes back whole, its sectors' numbers packed
+    /// again, like every other writer here.
+    fn set_compressed_size(&self, number: u64, bytes: u64) -> Result<()> {
+        let data = self
+            .attributes_of(number)?
+            .into_iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_DATA)
+            .ok_or(Error::NotFound)?;
+        let mut record = self.read_mft_record(data.holder)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let at = header.size() as usize + data.offset + 64;
+        if at + 8 > record.len() {
+            return Err(Error::InvalidArgument);
+        }
+        record[at..at + 8].copy_from_slice(&bytes.to_le_bytes());
+        let (where_at, sector) = {
+            let info = self.info.lock();
+            (
+                self.record_offset(&info, data.holder)?,
+                info.bs.bytes_per_sector as usize,
+            )
+        };
+        fs::pack_usa(
+            &mut record,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            sector,
+        );
+        fs::write_device_bytes(&self.device, where_at, &record)?;
+        self.mft_cache.lock().insert(data.holder, record);
+        Ok(())
+    }
+
+    /// Write into a stream the volume **compressed**
+    /// ([RFC 0015](../../docs/rfcs/0015-compress-an-ntfs-stream-on-write.md)).
+    ///
+    /// A compressed stream is not a byte sequence a write can patch: a
+    /// compression unit's stored bytes are as long as they came out, and what a
+    /// squeezed unit did not need of its clusters is a sparse run, so the units
+    /// after a change move.  What this does is rewrite **whole compression
+    /// units** from the one the write lands in to the end of the file: decode
+    /// the unit, splice the bytes in, encode it into chunks — or store it as it
+    /// is, when squeezing does not pay — and write its clusters where they were
+    /// claimed.  The units before it keep their bytes and their places.
+    ///
+    /// Growing the file is a length change as well, and that is not built: a
+    /// write past the end is `NotImplemented`, and so is one into a file whose
+    /// stream is nothing but zeros.
+    fn write_to_a_compressed_stream(
+        &self,
+        number: u64,
+        data: &ParsedAttr,
+        offset: u64,
+        buffer: &[u8],
+    ) -> Result<usize> {
+        let cluster = u64::from(self.info.lock().cluster_size);
+        let file_size = u64::from(data.data_size);
+        if offset + buffer.len() as u64 > file_size {
+            return Err(Error::NotImplemented);
+        }
+        if data.data_runs.is_empty() {
+            return Err(Error::NotImplemented);
+        }
+        let unit_bytes = self.compression_unit_bytes(data)?;
+        let unit_clusters = unit_bytes / cluster;
+        if unit_clusters == 0 {
+            return Err(Error::InvalidArgument);
+        }
+        let stream: u64 = data
+            .data_runs
+            .iter()
+            .map(|run| run.cluster_count)
+            .sum::<u64>()
+            * cluster;
+        let held = self.compression_units_held(data, unit_clusters)?;
+
+        // The units before the write keep their clusters; the ones from it on
+        // are rewritten, and their old clusters go back once nothing names them.
+        let first_unit = offset / unit_bytes;
+        let boundary = first_unit * unit_clusters;
+        let mut runs: Vec<DataRun> = Vec::new();
+        let mut vcn = 0u64;
+        for run in &data.data_runs {
+            if vcn >= boundary {
+                break;
+            }
+            let take = (boundary - vcn).min(run.cluster_count);
+            runs.push(DataRun {
+                lcn: run.lcn,
+                cluster_count: take,
+            });
+            vcn += take;
+        }
+        let mut old: Vec<DataRun> = Vec::new();
+        let mut vcn = 0u64;
+        for run in &data.data_runs {
+            let run_end = vcn + run.cluster_count;
+            if run_end > boundary {
+                let skip = boundary.saturating_sub(vcn);
+                old.push(DataRun {
+                    lcn: run.lcn,
+                    cluster_count: run.cluster_count - skip,
+                });
+            }
+            vcn = run_end;
+        }
+
+        // The worst the units can be is every one of them stored as it is, and
+        // what the encoding does not need goes back at the end.
+        let units = file_size.div_ceil(unit_bytes);
+        let worst = (units - first_unit) * unit_clusters;
+        let first = self.claim_clusters(worst)?;
+
+        let mut plain = alloc::vec![0u8; unit_bytes as usize];
+        let mut stored: Vec<u8> = Vec::new();
+        let mut encoded: Vec<u8> = Vec::new();
+        let mut block = alloc::vec![0u8; cluster as usize];
+        let mut went = 0u64;
+        let mut real_bytes = 0u64;
+        let mut unit = first_unit;
+        while unit < units {
+            let plain_len = (file_size - unit * unit_bytes).min(unit_bytes) as usize;
+            let bytes_at = unit * unit_bytes;
+            // What the unit holds: stored as it is, or the chunks of a squeezed
+            // one, which follow each other from the unit's own place.
+            if held.get(unit as usize).copied().unwrap_or(0) == unit_clusters {
+                let info = self.info.lock();
+                fs::read_from_runs(
+                    &self.device,
+                    &info,
+                    &data.data_runs,
+                    stream,
+                    bytes_at,
+                    &mut plain[..plain_len],
+                )?;
+            } else {
+                let mut at = bytes_at;
+                let mut got = 0usize;
+                while got < plain_len {
+                    let info = self.info.lock();
+                    let mut header = [0u8; 2];
+                    fs::read_from_runs(
+                        &self.device,
+                        &info,
+                        &data.data_runs,
+                        stream,
+                        at,
+                        &mut header,
+                    )?;
+                    if lznt1::is_padding(header) {
+                        return Err(Error::InvalidArgument);
+                    }
+                    let chunk = lznt1::parse_unit(header);
+                    let payload_at = at + 2;
+                    let payload_len = chunk.length - 2;
+                    let mut payload = alloc::vec![0u8; payload_len];
+                    fs::read_from_runs(
+                        &self.device,
+                        &info,
+                        &data.data_runs,
+                        stream,
+                        payload_at,
+                        &mut payload,
+                    )?;
+                    drop(info);
+                    let produced = lznt1::expand(&chunk, &payload, &mut plain[got..])?;
+                    if produced == 0 {
+                        return Err(Error::InvalidArgument);
+                    }
+                    got += produced.min(plain_len - got);
+                    at = payload_at + payload_len as u64;
+                }
+            }
+            // The write's bytes, where they belong in this unit.
+            let from = offset.max(bytes_at);
+            let to = (offset + buffer.len() as u64).min(bytes_at + plain_len as u64);
+            if to > from {
+                let start = (from - bytes_at) as usize;
+                let take = (to - from) as usize;
+                plain[start..start + take]
+                    .copy_from_slice(&buffer[(from - offset) as usize..][..take]);
+            }
+
+            // Encode it: the unit's chunks, or the unit as it is.
+            stored.clear();
+            let mut chunk_at = 0usize;
+            while chunk_at < plain_len {
+                let take = (plain_len - chunk_at).min(lznt1::UNIT_SIZE);
+                encoded.clear();
+                lznt1::compress_unit(&plain[chunk_at..chunk_at + take], &mut encoded)?;
+                stored.extend_from_slice(&encoded);
+                chunk_at += take;
+            }
+            let raw = unit_clusters * cluster;
+            let real = if stored.len() as u64 >= raw {
+                stored.clear();
+                stored.extend_from_slice(&plain[..plain_len]);
+                unit_clusters
+            } else {
+                (stored.len() as u64).div_ceil(cluster)
+            };
+            let mut wrote = 0u64;
+            while wrote < real {
+                let at = (wrote * cluster) as usize;
+                let take = (stored.len().saturating_sub(at)).min(cluster as usize);
+                block.fill(0);
+                block[..take].copy_from_slice(&stored[at..at + take]);
+                fs::write_device_bytes(&self.device, (first + went + wrote) * cluster, &block)?;
+                wrote += 1;
+            }
+            runs.push(DataRun {
+                lcn: (first + went) as i64,
+                cluster_count: real,
+            });
+            if unit_clusters > real {
+                runs.push(DataRun {
+                    lcn: -1,
+                    cluster_count: unit_clusters - real,
+                });
+            }
+            went += real;
+            real_bytes += real * cluster;
+            unit += 1;
+        }
+        if went < worst {
+            self.free_clusters(&[DataRun {
+                lcn: (first + went) as i64,
+                cluster_count: worst - went,
+            }])?;
+        }
+
+        // The record: the units before the write as they were, the ones from it
+        // on as the runs above say.  The size the attribute is *said* to have is
+        // the virtual, unit-aligned one; the length does not move; and the
+        // fourth size — what the stream really holds — is written after, because
+        // it is not one of the fields the growth path knows.
+        let virtual_size = units * unit_bytes;
+        let length = data.data_size;
+        let mut attributes = self.attributes_of(number)?;
+        loop {
+            let data = attributes
+                .iter()
+                .find(|attribute| attribute.attr_type == ATTR_TYPE_DATA)
+                .ok_or(Error::NotFound)?;
+            match self.write_grown_data(data.holder, data, &runs, virtual_size as u32, length, &[])
+            {
+                Ok(()) => break,
+                Err(Error::NoSpace) => {
+                    self.make_room(number, ATTR_TYPE_DATA)?;
+                    attributes = self.attributes_of(number)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        self.set_compressed_size(number, real_bytes)?;
+
+        // And the clusters the old units held, once nothing names them.
+        if !old.is_empty() {
+            self.free_clusters(&old)?;
+        }
+        Ok(buffer.len())
+    }
+
     /// Read a stream the volume **compressed**, one compression unit at a time.
     ///
     /// A unit stored **as it is** — its real clusters cover it whole — is
@@ -4145,7 +4410,22 @@ impl VNode for NtfsVnode {
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
             .ok_or(Error::NotFound)?;
-        refuse_a_stream_this_driver_cannot_read(data)?;
+        if data.flags & ATTR_FLAG_ENCRYPTED != 0 {
+            return Err(Error::NotImplemented);
+        }
+        if data.flags & ATTR_FLAG_COMPRESSED != 0 {
+            // A compressed stream is a shape of its own, so the bytes go through
+            // the encoder rather than through the runs
+            // ([RFC 0015](../../docs/rfcs/0015-compress-an-ntfs-stream-on-write.md)).
+            if end > u64::from(data.data_size) {
+                // Growing one is a length change as well, and that is not built:
+                // `set_len` refuses a compressed attribute.
+                return Err(Error::NotImplemented);
+            }
+            return self
+                .fs
+                .write_to_a_compressed_stream(number, data, offset, buffer);
+        }
 
         if data.data_runs_offset.is_none() {
             // A resident file's bytes are in the record itself, so the field

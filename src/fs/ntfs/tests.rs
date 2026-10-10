@@ -3782,7 +3782,7 @@ fn a_compressed_stream_on_a_real_volume_is_read() {
 
     let image = std::fs::read(&path).expect("the volume mkntfs -C made");
     let device = crate::fs::block::MemoryBlockDevice::new("compressed", image, false);
-    let fs_handle = super::NtfsFs::new(device).expect("mount it");
+    let fs_handle = super::NtfsFs::new(device.clone()).expect("mount it");
 
     let listed = the_listing(&fs_handle, "/");
     assert!(
@@ -3812,12 +3812,52 @@ fn a_compressed_stream_on_a_real_volume_is_read() {
     );
     assert_eq!(middle, expected[at..at + 1000], "and where it belongs");
 
-    // A write is still refused: compressing one is RFC 0015's, and that is not
-    // built yet.
-    assert!(
-        matches!(node.write(0, b"x"), Err(Error::NotImplemented)),
-        "a write to a compressed file is still refused"
+    // A write into the middle of it: the compression units before the write
+    // keep their clusters and their bytes, the units from that one on are
+    // decoded, spliced and encoded again, and the answer has to be the file with
+    // the write in it — which is what the check then hands to `ntfscat`.
+    let at = 1000usize;
+    let pattern = vec![b'Z'; 5000];
+    assert_eq!(
+        node.write(at as u64, &pattern)
+            .expect("a write into a compressed file"),
+        pattern.len()
     );
+    let mut expected = std::fs::read(&source).expect("the file the check injected");
+    expected[at..at + pattern.len()].copy_from_slice(&pattern);
+    if let Ok(where_the_answer_goes) = std::env::var("PROTOFIRE_NTFS_COMPRESSED_EXPECTED") {
+        std::fs::write(&where_the_answer_goes, &expected).expect("the expected answer");
+    }
+
+    // The driver's own read is the first check: the whole file, with the write
+    // where it was put and every other byte as it was.
+    let mut after = alloc::vec![0u8; expected.len()];
+    assert_eq!(
+        again_read(&fs_handle, &name, &mut after),
+        expected.len(),
+        "the file is as long as it was"
+    );
+    assert_eq!(after, expected, "and holds what it should");
+
+    // The volume's own clean state, which is what another reader needs: the
+    // driver sets the dirty flag on its way to the first write, and a volume
+    // still marked dirty is one `ntfs-3g` refuses to mount at all.
+    fs_handle.sync().expect("settle the volume");
+
+    if let Ok(out) = std::env::var("PROTOFIRE_NTFS_COMPRESSED_OUT") {
+        use crate::fs::block::BlockDevice as _;
+        let mut written = alloc::vec![0u8; (device.block_count() * 512) as usize];
+        device
+            .read_blocks(0, &mut written)
+            .expect("the volume the driver wrote");
+        std::fs::write(&out, &written).expect("leave it where the check can judge it");
+    }
+}
+
+/// Read a file whole, through a fresh lookup, and answer how much came back.
+fn again_read(fs_handle: &super::NtfsFs, name: &str, buffer: &mut [u8]) -> usize {
+    let node = fs_handle.lookup(name).expect("the file");
+    node.read(0, buffer).expect("a read")
 }
 
 /// A device that stops writing after a chosen number of writes and keeps the

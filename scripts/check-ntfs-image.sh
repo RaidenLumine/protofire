@@ -138,8 +138,21 @@ ntfsinfo -F "$content_name" "$compressed" 2>/dev/null |
 PROTOFIRE_NTFS_COMPRESSED="$compressed" \
 PROTOFIRE_NTFS_COMPRESSED_NAME="$content_name" \
 PROTOFIRE_NTFS_COMPRESSED_SOURCE="$work/big.txt" \
+PROTOFIRE_NTFS_COMPRESSED_EXPECTED="$work/expected.txt" \
+PROTOFIRE_NTFS_COMPRESSED_OUT="$work/written-compressed.ntfs" \
     "$CARGO" test --offline --lib -- \
     --ignored --exact "fs::ntfs::tests::a_compressed_stream_on_a_real_volume_is_read" ||
     fail "a compressed stream was not read, or the file was not listed"
+
+# And the driver *wrote* into the compressed file: a judge this tree did not
+# write reads it back, and what it answers has to be the file with that write in
+# it.  This is what an encoder of ours cannot prove on its own.
+NTFSCAT_OUT="$work/from-ntfs3g.txt"
+ntfscat "$work/written-compressed.ntfs" "$content_name" >"$NTFSCAT_OUT" ||
+    fail "ntfs-3g could not read the compressed file the driver wrote"
+if ! cmp -s "$NTFSCAT_OUT" "$work/expected.txt"; then
+    cmp -l "$work/expected.txt" "$NTFSCAT_OUT" 2>&1 | head -5 >&2
+    fail "ntfs-3g reads other bytes than the compressed file should hold"
+fi
 
 printf 'ntfs image check passed (compressed): the driver decoded the file the host injected back\n'
