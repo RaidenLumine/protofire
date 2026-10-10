@@ -40,14 +40,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match args.next().as_deref() {
         Some("mkimage") => {
-            let output = args
-                .next()
-                .unwrap_or_else(|| "target/protofire-demo-disk.img".to_string());
+            // `mkimage [gpt] [path]`: the table is the argument that matters,
+            // because both images carry the same zones
+            // ([RFC 0018](../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)).
+            let first = args.next();
+            let (table, output) = match first.as_deref() {
+                Some("gpt") => (
+                    DemoDiskTable::Gpt,
+                    args.next()
+                        .unwrap_or_else(|| "target/protofire-demo-gpt.img".to_string()),
+                ),
+                Some(path) => (DemoDiskTable::Mbr, path.to_string()),
+                None => (
+                    DemoDiskTable::Mbr,
+                    "target/protofire-demo-disk.img".to_string(),
+                ),
+            };
             if args.next().is_some() {
                 print_host_usage_and_exit(2);
             }
 
-            write_demo_disk_image(Path::new(&output))?;
+            write_demo_disk_image(Path::new(&output), table)?;
         }
         Some("sign-release") => {
             let artifact = args.next().unwrap_or_else(|| {
@@ -93,7 +106,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             println!("Build the bare-metal kernel with `make build`.");
             println!("Host commands:");
-            println!("  mkimage [path]  Build the MBR-partitioned ATA demo disk image.");
+            println!(
+                "  mkimage [gpt] [path]  Build the ATA demo disk image (MBR by default, GPT on request)."
+            );
             println!(
                 "  sign-release <artifact> <key-id> [dir]  Sign an artifact with a fresh one-time key."
             );
@@ -106,13 +121,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Which partition table a demo image the host writes carries.
 #[cfg(not(target_os = "none"))]
-fn write_demo_disk_image(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DemoDiskTable {
+    Mbr,
+    Gpt,
+}
+
+#[cfg(not(target_os = "none"))]
+fn write_demo_disk_image(
+    path: &Path,
+    table: DemoDiskTable,
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    let image = protofire::fs::build_demo_disk_image();
+    let image = match table {
+        DemoDiskTable::Mbr => protofire::fs::build_demo_disk_image(),
+        DemoDiskTable::Gpt => protofire::fs::build_demo_gpt_disk_image(),
+    };
     fs::write(path, &image)?;
     println!("wrote {} bytes to {}", image.len(), path.display());
     Ok(())

@@ -118,9 +118,12 @@ The authoritative picture of what exists today is
      tables now, and a GPT partition is a zone of this kernel's only when its
      type GUID says so, which means a **machine's own disk** answers no zones
      and the boot says so rather than mounting a stranger's partition at the
-     wrong offset.  What is left is the writer: `mkimage` writes an MBR, and a
-     bootable GPT demo image — the same zones in the other format — is what
-     the end-to-end gate waits on.
+     wrong offset.  The writer followed: `mkimage gpt` builds the demo disk's
+     zones as a GPT, and `make check-x8664-usb-disk` boots it — the same zones
+     in the other table, over USB, with the boot's own line naming the GPT and
+     a program read out of `/apps` on it.  What a real machine still needs is
+     an **installation** path: the tool writes an image file, and putting the
+     zones on a disk a machine already has is the installer's job.
   3. **The memory the machine reports.**  The frame pool is a fixed array
      inside the image and the platform's answer is clamped to it
      ([memory.md](docs/kernel/memory.md)), which is a decision about what a

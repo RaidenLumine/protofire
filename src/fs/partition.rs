@@ -156,6 +156,16 @@ const GPT_ENTRY_SIZE_MIN: usize = 128;
 /// the disk rather than about this kernel's arithmetic.
 const GPT_ENTRY_SIZE_MAX: usize = 4096;
 
+/// How many entries the images this tree writes carry: the format's usual
+/// table.
+const GPT_ENTRY_COUNT: usize = 128;
+
+/// The blocks a GPT reserves at each end of a disk: the header and the entry
+/// array, whose usual array is 32 blocks.  A disk whose zones reach its last
+/// block cannot hold the backup copy, which is a size the writer has to plan
+/// for rather than a check to fail.
+pub const GPT_RESERVED_BLOCKS: u64 = 33;
+
 /// How much of a table a boot will read.  The usual table is 128 entries of
 /// 128 bytes — 16 KiB — and this bound is four times that, so no disk's own
 /// header can make the boot read a volume's worth of entries.
@@ -435,6 +445,132 @@ pub fn read_gpt_partitions(device: &dyn BlockDevice) -> Result<Option<Vec<GptPar
     Ok(Some(entries))
 }
 
+/// Write a GPT over `disk`, with the partitions given as
+/// `(slot, type GUID, first block, block count)`.
+///
+/// This is the **host tool's** half of RFC 0018 — the kernel reads a table, and
+/// the thing that makes a disk bootable is the tool that wrote its GUIDs — so
+/// it writes what a reader checks: the protective MBR, the entry array and its
+/// checksum in both copies, the primary header at LBA 1 and the backup at the
+/// last block, each with its own checksum over itself.
+pub fn write_gpt_partitions(
+    disk: &mut [u8],
+    partitions: &[(usize, [u8; 16], u64, u64)],
+) -> Result<()> {
+    if disk.len() < BLOCK_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
+    // The format's own minimum: a header and an entry array at each end.
+    if total_blocks < 2 * GPT_RESERVED_BLOCKS + 1 {
+        return Err(Error::InvalidArgument);
+    }
+    let last_block = total_blocks - 1;
+
+    // The protective MBR: the format's signature, and one entry of the
+    // protective type covering the disk from the header's own LBA.  The rest of
+    // the sector is zeroed, because a boot sector that keeps an old table is a
+    // boot sector a reader may believe.
+    disk[..BLOCK_SIZE].fill(0);
+    disk[MBR_SIGNATURE_OFFSET] = MBR_SIGNATURE[0];
+    disk[MBR_SIGNATURE_OFFSET + 1] = MBR_SIGNATURE[1];
+    let covered = u32::try_from(last_block.min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
+    let protective = &mut disk[MBR_PARTITION_TABLE_OFFSET..MBR_PARTITION_TABLE_OFFSET + 16];
+    protective[4] = MBR_PROTECTIVE_TYPE;
+    protective[8..12].copy_from_slice(&(GPT_HEADER_LBA as u32).to_le_bytes());
+    protective[12..16].copy_from_slice(&covered.to_le_bytes());
+
+    // The entry array, in the block after the header.
+    let entries_lba = GPT_HEADER_LBA + 1;
+    let array_bytes = GPT_ENTRY_COUNT * GPT_ENTRY_SIZE_MIN;
+    let array_blocks = array_bytes / BLOCK_SIZE;
+    let backup_entries_lba = last_block - array_blocks as u64;
+
+    let mut array = vec![0_u8; array_bytes];
+    for &(slot, type_guid, first_block, block_count) in partitions {
+        if slot >= GPT_ENTRY_COUNT || block_count == 0 {
+            return Err(Error::InvalidArgument);
+        }
+        let last = first_block + block_count - 1;
+        if last > backup_entries_lba {
+            return Err(Error::InvalidArgument);
+        }
+        let at = slot * GPT_ENTRY_SIZE_MIN;
+        array[at..at + 16].copy_from_slice(&type_guid);
+        array[at + 32..at + 40].copy_from_slice(&first_block.to_le_bytes());
+        array[at + 40..at + 48].copy_from_slice(&last.to_le_bytes());
+    }
+    let array_crc = crc32(&array);
+
+    let primary_at = entries_lba as usize * BLOCK_SIZE;
+    disk[primary_at..primary_at + array_bytes].copy_from_slice(&array);
+    let backup_at = backup_entries_lba as usize * BLOCK_SIZE;
+    disk[backup_at..backup_at + array_bytes].copy_from_slice(&array);
+
+    let last_usable_lba = backup_entries_lba - 1;
+    let header = gpt_header(
+        GPT_HEADER_LBA,
+        last_block,
+        entries_lba,
+        array_crc,
+        last_usable_lba,
+    );
+    let at = GPT_HEADER_LBA as usize * BLOCK_SIZE;
+    disk[at..at + BLOCK_SIZE].copy_from_slice(&header);
+    let backup = gpt_header(
+        last_block,
+        GPT_HEADER_LBA,
+        backup_entries_lba,
+        array_crc,
+        last_usable_lba,
+    );
+    let at = last_block as usize * BLOCK_SIZE;
+    disk[at..at + BLOCK_SIZE].copy_from_slice(&backup);
+
+    Ok(())
+}
+
+/// One GPT header, checksummed the way [`read_gpt_partitions`] verifies it: the
+/// CRC covers the header with its own CRC field taken as zero.
+fn gpt_header(
+    my_lba: u64,
+    alternate_lba: u64,
+    entries_lba: u64,
+    entries_crc: u32,
+    last_usable_lba: u64,
+) -> [u8; BLOCK_SIZE] {
+    let mut header = [0_u8; BLOCK_SIZE];
+    header[..GPT_SIGNATURE.len()].copy_from_slice(GPT_SIGNATURE);
+    // Revision 1.0, and the 92-byte header the format defines.
+    header[8..12].copy_from_slice(&0x0001_0000_u32.to_le_bytes());
+    header[12..16].copy_from_slice(&(GPT_HEADER_SIZE_MIN as u32).to_le_bytes());
+    header[24..32].copy_from_slice(&my_lba.to_le_bytes());
+    header[32..40].copy_from_slice(&alternate_lba.to_le_bytes());
+    // What a partition may use: everything between the two reserved ends, which
+    // is the same span in both copies of the header.
+    header[40..48].copy_from_slice(&(GPT_RESERVED_BLOCKS + 1).to_le_bytes());
+    header[48..56].copy_from_slice(&last_usable_lba.to_le_bytes());
+    // A disk GUID of this tree's own; nothing prints it, and the format only
+    // wants it to be a GUID.
+    header[56..72].copy_from_slice(&[
+        0x50, 0x52, 0x54, 0x4f, 0x46, 0x49, 0x52, 0x45, 0x00, 0x00, 0x44, 0x69, 0x73, 0x6b, 0x00,
+        0x00,
+    ]);
+    header[GPT_ENTRIES_LBA_OFFSET..GPT_ENTRIES_LBA_OFFSET + 8]
+        .copy_from_slice(&entries_lba.to_le_bytes());
+    header[GPT_ENTRY_COUNT_OFFSET..GPT_ENTRY_COUNT_OFFSET + 4]
+        .copy_from_slice(&(GPT_ENTRY_COUNT as u32).to_le_bytes());
+    header[GPT_ENTRY_SIZE_OFFSET..GPT_ENTRY_SIZE_OFFSET + 4]
+        .copy_from_slice(&(GPT_ENTRY_SIZE_MIN as u32).to_le_bytes());
+    header[GPT_ENTRIES_CRC_OFFSET..GPT_ENTRIES_CRC_OFFSET + 4]
+        .copy_from_slice(&entries_crc.to_le_bytes());
+
+    let crc = crc32(&header[..GPT_HEADER_SIZE_MIN]);
+    header[GPT_HEADER_CRC_OFFSET..GPT_HEADER_CRC_OFFSET + 4].copy_from_slice(&crc.to_le_bytes());
+    header
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::sync::Arc;
@@ -666,6 +802,44 @@ mod tests {
             .copy_from_slice(&4096_u32.to_le_bytes());
         let device = MemoryBlockDevice::new("test-huge-table", broken, true);
         assert_eq!(read_partitions(device.as_ref()).unwrap(), None);
+    }
+
+    /// The writer and the reader are held to each other: a GPT this tree writes
+    /// is a GPT this tree reads, with the zones it was given.
+    #[test]
+    fn a_written_gpt_reads_back_as_the_zones_it_was_given() {
+        let mut image = vec![0_u8; 200 * BLOCK_SIZE];
+        let given = [
+            (0, StorageZone::System.gpt_type_guid(), 34, 100),
+            (1, StorageZone::Apps.gpt_type_guid(), 140, 20),
+            (2, StorageZone::Data.gpt_type_guid(), 160, 6),
+        ];
+        super::write_gpt_partitions(&mut image, &given).unwrap();
+
+        let device = MemoryBlockDevice::new("written-gpt", image, true);
+        let table = read_partitions(device.as_ref())
+            .unwrap()
+            .expect("a GPT this tree wrote is one it reads");
+        assert_eq!(table.label(), "GPT");
+
+        let system = table.system_partitions();
+        assert_eq!(system.len(), 1, "one system volume was written");
+        assert_eq!(
+            (system[0].1.start_block, system[0].1.block_count),
+            (34, 100)
+        );
+        let apps = table.zone_partitions(StorageZone::Apps);
+        assert_eq!((apps[0].1.start_block, apps[0].1.block_count), (140, 20));
+        let data = table.zone_partitions(StorageZone::Data);
+        assert_eq!((data[0].1.start_block, data[0].1.block_count), (160, 6));
+
+        // A disk too small to carry the two reserved ends is refused rather
+        // than written half a table.
+        let mut small = vec![0_u8; 16 * BLOCK_SIZE];
+        assert_eq!(
+            super::write_gpt_partitions(&mut small, &[]),
+            Err(Error::InvalidArgument)
+        );
     }
 
     /// An MBR disk is read exactly as it was: the same entries, and the same

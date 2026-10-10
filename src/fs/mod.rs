@@ -24,6 +24,8 @@ pub mod demo;
 pub use demo::build_demo_disk_image;
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
 pub use demo::build_demo_disk_image_with_key;
+#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
+pub use demo::build_demo_gpt_disk_image;
 pub mod devfs;
 pub mod erofs;
 pub mod exfat;

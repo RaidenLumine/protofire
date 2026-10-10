@@ -203,12 +203,20 @@ the change may not move, and the parsers' fuzz harness, which now drives
 `read_partitions` rather than the MBR reader alone — the comment in it had said
 "an MBR or GPT" since before there was a GPT to read.
 
-- **The last item, still owed**: the **end to end**, which wants a host tool
-  that writes a GPT with these GUIDs — `mkimage` writes an MBR today — and a
-  second pass of `scripts/check-x8664-usb-disk.sh` that boots it, requires the
-  boot's own line naming the GPT, and loads a program out of `/apps` on it.
-  Its input is the same zone table in the other format, so it is the writer
-  that is missing rather than the kernel half.
+- **The writer, and the end to end that needed it**: `write_gpt_partitions`
+  writes what a reader checks — the protective MBR, the entry array with its
+  checksum in both copies, and a header at each end of the disk with its own —
+  and `mkimage gpt` builds the demo disk's zones as a GPT
+  (`build_demo_gpt_disk_image`).  A GPT reserves a header and an array at
+  *each* end, so the same zones need 33 blocks past the last one, which is the
+  size the writer plans for rather than a check it fails.  The proof is
+  `scripts/check-x8664-usb-disk.sh`'s second pass: the same zones in the other
+  table, booted from a USB disk, requiring the boot's own line naming the GPT,
+  the same `system: slot b active (build 2)` the MBR image gives, and a program
+  loaded out of `/apps` on it.
+- **The writer and the reader held to each other**: the round-trip test builds
+  a GPT with the writer and reads it back through `read_partitions`, which is
+  where a checksum or an offset that only one of them believes would show.
 
 ## Unresolved questions
 

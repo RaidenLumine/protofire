@@ -29,7 +29,6 @@ use super::block::BLOCK_SIZE;
 use super::layout::StorageZone;
 use super::layout::DEFAULT_ZONES;
 use super::layout::DEMO_DISK_TOTAL_BLOCKS_WITH_SYSTEM_PAIR;
-use super::layout::DEMO_MBR_SYSTEM_PARTITION_TYPE;
 use super::layout::DEMO_SYSTEM_SLOT_A_GENERATION;
 use super::layout::DEMO_SYSTEM_SLOT_B_GENERATION;
 use super::layout::SYSTEM_SLOT_B_DISK_RANGE;
@@ -174,9 +173,41 @@ fn build_fallback_zone_image(zone: StorageZone) -> Vec<u8> {
     }
 }
 
+/// Which table the demo disk's zones are described by.
+///
+/// The demo disk has always been an MBR one, and it is the disk every boot gate
+/// uses; the GPT variant exists so that the *other* table has a disk built by
+/// this tree to be read, which is what the USB check boots
+/// ([RFC 0018](../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemoTable {
+    Mbr,
+    Gpt,
+}
+
 pub fn build_demo_disk_image() -> Vec<u8> {
-    let mut disk = vec![0_u8; DEMO_DISK_TOTAL_BLOCKS_WITH_SYSTEM_PAIR as usize * BLOCK_SIZE];
-    let mut partitions: MbrPartitionTable = [None; 4];
+    build_demo_disk_image_with_table(DemoTable::Mbr)
+}
+
+/// The same zones, in the other table: the GPT a host tool writes.
+pub fn build_demo_gpt_disk_image() -> Vec<u8> {
+    build_demo_disk_image_with_table(DemoTable::Gpt)
+}
+
+fn build_demo_disk_image_with_table(table: DemoTable) -> Vec<u8> {
+    // A GPT keeps a header and an entry array at each end of the disk, so the
+    // same zones need the backup's room past the last one; an MBR disk has
+    // nothing to reserve.
+    let trailing = match table {
+        DemoTable::Mbr => 0,
+        DemoTable::Gpt => crate::fs::partition::GPT_RESERVED_BLOCKS,
+    };
+    let blocks = DEMO_DISK_TOTAL_BLOCKS_WITH_SYSTEM_PAIR + trailing;
+    let mut disk = vec![0_u8; blocks as usize * BLOCK_SIZE];
+    // Each zone's place on the disk: `(slot, start, count)`.  The two tables
+    // are written from the same list, because the layout is the disk's and the
+    // table is only how it is spelled.
+    let mut places: Vec<(usize, u64, u64)> = Vec::with_capacity(4);
 
     // The demo disk uses a fixed partition layout so boot code and tests can
     // discover the same zones through MBR parsing without depending on a host
@@ -198,9 +229,8 @@ pub fn build_demo_disk_image() -> Vec<u8> {
     }
     let system_b_offset = system_b_start as usize * BLOCK_SIZE;
     disk[system_b_offset..system_b_offset + system_b.len()].copy_from_slice(&system_b);
-    partitions[crate::fs::system_image::SYSTEM_SLOT_B] = Some(MbrPartitionEntry::new(
-        false,
-        DEMO_MBR_SYSTEM_PARTITION_TYPE,
+    places.push((
+        crate::fs::system_image::SYSTEM_SLOT_B,
         system_b_start,
         system_b_blocks,
     ));
@@ -232,23 +262,64 @@ pub fn build_demo_disk_image() -> Vec<u8> {
         }
 
         disk[start..start + zone_image.len()].copy_from_slice(&zone_image);
-        // Mark only the system zone bootable; the other zones are still normal
-        // partitions but should not be treated as firmware entry points.
-        partitions[zone.partition_slot()] = Some(MbrPartitionEntry::new(
-            zone == StorageZone::System,
-            zone.mbr_partition_type(),
-            start_block,
-            block_count,
-        ));
+        places.push((zone.partition_slot(), start_block, block_count));
     }
 
-    if let Err(error) = write_mbr_partitions(&mut disk[..BLOCK_SIZE], &partitions) {
+    let written = match table {
+        DemoTable::Mbr => {
+            // Only the system zone is marked bootable; the other zones are
+            // normal partitions but not firmware entry points.
+            let mut partitions: MbrPartitionTable = [None; 4];
+            for &(slot, start_block, block_count) in &places {
+                let bootable = slot == StorageZone::System.partition_slot();
+                partitions[slot] = Some(MbrPartitionEntry::new(
+                    bootable,
+                    zone_of_slot(slot).mbr_partition_type(),
+                    start_block,
+                    block_count,
+                ));
+            }
+            write_mbr_partitions(&mut disk[..BLOCK_SIZE], &partitions)
+        }
+        DemoTable::Gpt => {
+            let entries: Vec<(usize, [u8; 16], u64, u64)> = places
+                .iter()
+                .map(|&(slot, start_block, block_count)| {
+                    (
+                        slot,
+                        zone_of_slot(slot).gpt_type_guid(),
+                        start_block,
+                        block_count,
+                    )
+                })
+                .collect();
+            crate::fs::partition::write_gpt_partitions(&mut disk, &entries)
+        }
+    };
+
+    if let Err(error) = written {
         crate::println!(
-            "[fs    ] failed to write demo MBR partition table: {}",
+            "[fs    ] failed to write the demo {} partition table: {}",
+            match table {
+                DemoTable::Mbr => "MBR",
+                DemoTable::Gpt => "GPT",
+            },
             error.as_str()
         );
     }
     disk
+}
+
+/// The zone a demo slot holds: the system pair is two slots of one zone, and
+/// every other slot is its own zone's.
+fn zone_of_slot(slot: usize) -> StorageZone {
+    if slot == crate::fs::system_image::SYSTEM_SLOT_B {
+        return StorageZone::System;
+    }
+    DEFAULT_ZONES
+        .into_iter()
+        .find(|zone| zone.partition_slot() == slot)
+        .unwrap_or(StorageZone::Data)
 }
 
 /// Variant of [`build_demo_disk_image`] kept for callers that historically

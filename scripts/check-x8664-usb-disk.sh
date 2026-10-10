@@ -33,6 +33,9 @@
 #   * the shell wrote a marker into `/data` — through `open`/`write`, the
 #     filesystem API, not the boot's own repair step — read it back with `cat`,
 #     and the *same bytes* are in the image on the host afterwards.
+#   * and then the same zones in a **GPT**, written by the same host tool and
+#     booted the same way, which is the table a machine's own disk carries
+#     ([RFC 0018](../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)).
 #
 # Usage:
 #   sh scripts/check-x8664-usb-disk.sh
@@ -232,3 +235,55 @@ fi
 printf 'x86_64 USB disk check passed: image mounted, payload loaded, %s written through the\n' \
     "$write_path"
 printf '  filesystem and read back, and the marker is in the image on the host\n'
+
+# ── The same zones, in the other partition table ────────────────────────
+#
+# What this pass adds is the table and not the path: the host tool writes the
+# same zones as a **GPT**, the kernel reads it, and a boot that took the
+# protective MBR's single entry for a partition — the whole disk as the system
+# slot — fails here, which is what a machine's own disk did before
+# ([RFC 0018](../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)).  The
+# typed write is not repeated: that is the same filesystem and the same rings
+# the pass above exercises; the table under them is what is new.
+gpt_image="$work/demo-gpt.img"
+gpt_log="$work/boot-gpt.log"
+"$CARGO" run --offline --quiet -- mkimage gpt "$gpt_image"
+: >"$gpt_log"
+
+set +e
+timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine q35 \
+    -cpu max \
+    -smp 1 \
+    -m 1G \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -no-reboot \
+    -no-shutdown \
+    -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 \
+    -drive "file=$gpt_image,if=none,id=usbdisk,format=raw" \
+    -device usb-storage,drive=usbdisk,bus=xhci.0 \
+    -serial "file:$gpt_log" >/dev/null 2>&1
+status=$?
+set -e
+
+case "$status" in
+    0|124) ;;
+    *)
+        printf 'x86_64 USB disk check (GPT) failed with exit status %s\n' "$status" >&2
+        printf '  full log preserved at: %s\n' "$gpt_log" >&2
+        exit "$status"
+        ;;
+esac
+
+# The assertions read the GPT boot's log from here on.
+log="$gpt_log"
+
+require_log_line "[driver] detected boot disk: usb-msd"
+require_log_line "[fs    ] system: slot b active (build 2)"
+require_log_line "[fs    ] mounted GPT-partitioned SimpleFs volumes from ATA boot disk"
+require_log_absent_line "[fs    ] failed to mount SimpleFs volumes from ATA boot disk"
+require_log_line "[user  ] loaded /apps/packages/shell/bin/shell.elf"
+
+printf 'x86_64 USB disk check (GPT) passed: the same zones in the other table,\n'
+printf '  mounted, and a program loaded out of /apps on it\n'
