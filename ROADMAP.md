@@ -129,8 +129,15 @@ The authoritative picture of what exists today is
      ([memory.md](docs/kernel/memory.md)), which is a decision about what a
      frame *is* rather than a defect — but it is the decision a machine with a
      map of its own, memory above 4 GiB and holes for its devices is exactly
-     the shape to test.  It wants its own RFC before it wants code, and that
-     RFC is the third item here.
+     the shape to test.
+     [RFC 0019](docs/rfcs/0019-what-a-frame-is.md) decides it: the pool stays
+     the kernel's memory, the two parsers of the machine's map are wired (they
+     had no callers at all, so the machine was never asked and the boot
+     printed the pool's size under the machine's name), and the boot now
+     verifies that the kernel's image lies in RAM the firmware calls usable —
+     a loader may put it anywhere — and says which memory is whose.  Adopting
+     the machine's regions as frames is the change a board port would make,
+     and it is named in that RFC rather than half-built.
   4. **Everything the machine has instead.**  A keyboard that is not PS/2, a
      GPU that is not QEMU's, a network card that is not virtio, a hub behind a
      hub.  Each is a driver or a driver's assumption, each is named in

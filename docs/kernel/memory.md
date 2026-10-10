@@ -8,16 +8,21 @@ live under `src/arch/<machine>/paging` (x86_64) and `src/arch/<machine>/mmu`
 
 ## What the machine says
 
-Early in boot the architecture records how much RAM the platform reported —
-the Multiboot2 memory map on x86_64, a device tree's `/memory` node on the
-other two — into one atomic in `src/memory/arch.rs`:
+Two parsers read how much RAM the platform reported — the Multiboot2 memory
+map (`multiboot2_memory_map`, `src/arch/boot.rs`) and a device tree's
+`/memory` window (`PlatformInfo::memory_base`/`memory_size`,
+`src/arch/fdt/parse.rs`) — and **nothing calls either of them yet**: the
+atomic they would fill, `src/memory/arch.rs`'s, is written by
+`store_detected_memory`, which has no caller, so `detected_memory` always
+answers `None` and `detect_memory` always answers
+`frame::physical_pool_size()`.  The machine is not asked today, and the number
+the memory manager prints is the pool's own size.
 
-- `store_detected_memory` writes it once, before `MemoryManager::init`.
-- `detected_memory` reads it, and answers `None` when nothing has run — an
-  atomic that was never written is not a machine with no memory, and the
-  difference matters.
-- `detect_memory` is the fallback: the platform's answer, or the size of the
-  kernel's own backing pool when there is none.
+[RFC 0019](../rfcs/0019-what-a-frame-is.md) decides what happens to that:
+the pool stays the kernel's memory, the parsers are wired so the machine *is*
+asked, the boot verifies that the kernel's image lies in RAM the map calls
+usable — a loader is free to put it anywhere — and the line names the
+machine's number and the pool's separately, because they are two facts.
 
 ## Frames
 
