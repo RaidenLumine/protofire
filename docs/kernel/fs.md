@@ -25,10 +25,11 @@ Backends implement the `FileSystem` trait in `src/fs/vfs/filesystem.rs`:
 `rename`, `swap_paths`, `check_and_repair`, the security-descriptor methods,
 the xattr methods and the profiler snapshot.  Nodes implement `VNode`
 (`src/fs/vfs/vnode.rs`): `kind`, `size`, `metadata`, `read`, `write`,
-`set_len`, `readlink`, `sync`.  The defaults are the interesting part —
-`VNode::write` and `VNode::set_len` answer `PermissionDenied` unless a node
-overrides them, so a node that only produces bytes is read-only because it
-declares nothing, not because a flag was remembered.
+`set_len`, `punch_hole`, `readlink`, `sync`.  The defaults are the
+interesting part — `VNode::write`, `VNode::set_len` and `VNode::punch_hole`
+answer `PermissionDenied` unless a node overrides them, so a node that only
+produces bytes is read-only because it declares nothing, not because a flag
+was remembered.
 
 `ReadOnlyFileSystem` (`src/fs/vfs/filesystem.rs`) is the same idea one level
 up.  A view implements `lookup`, `read_dir` and optionally `stat`, and a
@@ -127,6 +128,12 @@ the mount flags and a cursor.  `read` and `write` move bytes through the node
 and advance the cursor; `seek` takes `SEEK_SET`, `SEEK_CUR` or `SEEK_END`;
 `set_len` truncates or extends and clamps the cursor.  Handle numbers come
 from `alloc_handles`, which reserves a consecutive run in one atomic step.
+
+`punch_hole` is the other shape a length and a file's bytes can disagree in:
+the range becomes zeros and the length does not move, which is `fallocate` with
+`FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE` and the only mode that call
+answers.  A backend that has no hole to give refuses it the way it refuses
+`set_len` — `PermissionDenied`, from the trait's own default.
 
 Authorization is descriptor-based and the descriptor depends on where the
 path is.  `default_security_descriptor_for_path`

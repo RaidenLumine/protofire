@@ -67,6 +67,12 @@ if ! mkntfs -F -q -L protofire-ntfs "$volume" >"$work/mkntfs.log" 2>&1; then
     fail "mkntfs could not make the volume"
 fi
 
+# A file more than a record holds, so its bytes live in runs and a punch has a
+# run list to change: the interface's own gate punches this one.
+head -c 4096 /dev/zero | tr '\000' 'A' >"$work/punched.bin"
+ntfscp -f "$volume" "$work/punched.bin" /punched.bin ||
+    fail "could not inject the file the punch test writes a hole in"
+
 content='hello from the host'
 write='written by the driver'
 printf '%s\n' "$content" >"$work/hello.txt"
@@ -109,6 +115,34 @@ grep -q 'processed successfully' "$work/ntfsfix.log" ||
     fail "ntfsfix -n finished without accepting the volume"
 
 printf 'ntfs image check passed: mounted a volume mkntfs made, read the host'"'"'s file, and a foreign reader accepts what the driver wrote\n'
+
+# ── A punch, through the interface ──────────────────────────────────────
+#
+# The filesystem's own gate punches a fixture's file; this reaches the same
+# hole the way a program does — open, fallocate, read — and leaves the volume
+# for a reader this tree did not write to judge.  What it proves is the part
+# no unit test can: the interface, the zeros it reaches down to, and a hole a
+# foreign reader agrees is one.  The test is `#[ignore]`d the way the driver's
+# volume tests are — the volume it wants is this check's — and `--ignored` is
+# what turns it on.
+punched="$work/punched.ntfs"
+PROTOFIRE_NTFS_IMAGE="$under_test" \
+PROTOFIRE_NTFS_PUNCHED="$punched" \
+    "$CARGO" test --offline --test fallocate -- \
+    --ignored --exact a_hole_punched_through_the_interface_reads_as_zeros ||
+    fail "the interface's punch did not read its own zeros back"
+
+# The first quarter of the file the interface made is a hole now, and the rest
+# is the pattern it was: an empty range reading as zeros is what a punch means
+# to a reader, and the bytes beside it are the control.
+head -c 1024 /dev/zero >"$work/punched-expected"
+head -c 3072 /dev/zero | tr '\000' 'A' >>"$work/punched-expected"
+ntfscat "$punched" /punched.bin >"$work/punched-actual" ||
+    fail "ntfs-3g could not read the volume the interface punched"
+cmp -s "$work/punched-expected" "$work/punched-actual" ||
+    fail "ntfs-3g reads other bytes than the punched file should hold"
+
+printf 'ntfs image check passed (punch): the interface made a hole and ntfs-3g read it back\n'
 
 # ── A compressed stream, decoded ────────────────────────────────────────
 #

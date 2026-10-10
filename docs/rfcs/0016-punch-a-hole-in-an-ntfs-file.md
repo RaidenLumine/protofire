@@ -168,10 +168,16 @@ own).
   descriptor, the way `set_len` does (`kernel::io::punch_hole`, `OpenFile`,
   `FileHandle`, `VNode`), its pointer spec is the empty one (four integers), and
   its tests are the mode refusals, the reserved-argument refusal, and a
-  descriptor with no file behind it.  What is still owed is the **end-to-end**
-  test: no gate punches a range through the interface and reads zeros back
-  through it, because the volume the punchable filesystem lives on is the
-  fixture's and the interface's own gate would have to mount it.
+  descriptor with no file behind it.
+- **The punch, through the interface, as it landed**:
+  `tests/syscall/fallocate.rs` mounts a volume `mkntfs` made, opens the file
+  the check injected into it, punches its first quarter through that call, and
+  reads the zeros back through `read` — a page at a time, because a read that
+  crosses a page is the caller's to split.  The check then hands the volume to
+  `ntfscat`, which reads the same quarter as zeros and the bytes beside it as
+  they were: a reader this tree did not write is what makes it a hole rather
+  than a driver agreeing with itself, and the volume is the interface's own
+  because the filesystem whose holes are real is the one a program mounts.
 - **A punch whose run list cannot be held, as it landed**: the fixture carries
   `/sub/full-long.bin` — one run of three clusters, in a record with no room —
   so a punch of the middle cluster is a hole with a real cluster on either side
