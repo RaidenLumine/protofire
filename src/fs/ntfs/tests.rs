@@ -3764,20 +3764,21 @@ fn a_volume_mkntfs_wrote_is_read_and_written_back() {
 /// misread: [RFC
 /// 0013](../../docs/rfcs/0013-refuse-the-ntfs-streams-this-driver-cannot-read.
 /// md)'s first stage, on a volume this driver did not build and with a file no
-/// part of it wrote.
+/// A volume `mkntfs -C` compressed: a compressed `$DATA` that no part of this
+/// driver wrote, decoded and held against the host's own file.
+///
+/// The runs of a compressed attribute hold LZNT1 units (RFC 0014), and the
+/// judge is the file the check injected: the driver's answer has to be that
+/// file, byte for byte, from the start and from the middle.
 #[test]
-#[ignore = "driven by scripts/check-ntfs-image.sh, which makes the volumes it needs"]
-fn a_compressed_stream_on_a_real_volume_is_refused() {
-    // `mkntfs -C` makes a volume whose files are compressed, so the `$DATA` of
-    // the file `ntfscp` puts in it carries the compressed flag and its runs
-    // name clusters holding an LZNT1 bitstream.  The reader answered a read of
-    // it with those bytes, at the file's own length, which a caller cannot
-    // tell from the file's bytes; it refuses now, and the file stays listed,
-    // because a name is not a stream.
+#[ignore = "driven by scripts/check-ntfs-image.sh, which makes the volume it needs"]
+fn a_compressed_stream_on_a_real_volume_is_read() {
     let path = std::env::var("PROTOFIRE_NTFS_COMPRESSED")
         .expect("the check runs this test with a compressed volume");
     let name = std::env::var("PROTOFIRE_NTFS_COMPRESSED_NAME")
         .expect("the check names the compressed file it injected");
+    let source = std::env::var("PROTOFIRE_NTFS_COMPRESSED_SOURCE")
+        .expect("the check names the file it injected");
 
     let image = std::fs::read(&path).expect("the volume mkntfs -C made");
     let device = crate::fs::block::MemoryBlockDevice::new("compressed", image, false);
@@ -3789,18 +3790,33 @@ fn a_compressed_stream_on_a_real_volume_is_refused() {
         "the compressed file is still listed: {listed:?}"
     );
     let node = fs_handle.lookup(&name).expect("the compressed file");
-    assert!(
-        node.size() > 0,
-        "and it has a length, which is in its record"
+    let expected = std::fs::read(&source).expect("the file the check injected");
+
+    let mut whole = alloc::vec![0u8; expected.len()];
+    assert_eq!(
+        node.read(0, &mut whole)
+            .expect("a read of a compressed stream"),
+        expected.len()
     );
-    let mut bytes = alloc::vec![0u8; 64];
-    assert!(
-        matches!(node.read(0, &mut bytes), Err(Error::NotImplemented)),
-        "a read of it is refused rather than answered with the bitstream"
+    assert_eq!(whole, expected, "the file's own bytes, decoded");
+
+    // A read that *starts* in the middle is the walk's other half: the units
+    // before it are skipped by their headers, and what comes back is what
+    // belongs at that offset.
+    let at = expected.len() / 2;
+    let mut middle = alloc::vec![0u8; 1000];
+    assert_eq!(
+        node.read(at as u64, &mut middle)
+            .expect("a read in the middle"),
+        1000
     );
+    assert_eq!(middle, expected[at..at + 1000], "and where it belongs");
+
+    // A write is still refused: compressing one is RFC 0015's, and that is not
+    // built yet.
     assert!(
         matches!(node.write(0, b"x"), Err(Error::NotImplemented)),
-        "and so is a write"
+        "a write to a compressed file is still refused"
     );
 }
 

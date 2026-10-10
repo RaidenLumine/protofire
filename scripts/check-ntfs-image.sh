@@ -110,14 +110,14 @@ grep -q 'processed successfully' "$work/ntfsfix.log" ||
 
 printf 'ntfs image check passed: mounted a volume mkntfs made, read the host'"'"'s file, and a foreign reader accepts what the driver wrote\n'
 
-# ── A compressed stream, refused rather than misread ────────────────────
+# ── A compressed stream, decoded ────────────────────────────────────────
 #
 # `mkntfs -C` makes a volume whose files are compressed, so this is a
 # compressed `$DATA` that no part of this driver wrote.  Its runs name
-# clusters holding an LZNT1 bitstream, and the reader used to answer a read of
-# it with those bytes — at the file's own length, which a caller cannot tell
-# from the file.  RFC 0013 decides the refusal; this is where it is proven on
-# a volume the driver did not build.
+# clusters holding an LZNT1 bitstream.  RFC 0013 refused to read them rather
+# than answer with the bitstream; RFC 0014 decodes them, and this is where that
+# is proven on a volume the driver did not build: the file this script injected
+# is what the driver's bytes are held against, whole and from the middle.
 compressed="$work/compressed.ntfs"
 dd if=/dev/zero of="$compressed" bs=1M count=16 status=none
 if ! mkntfs -F -q -C -L protofire-compressed "$compressed" >"$work/mkntfs-compressed.log" 2>&1; then
@@ -134,8 +134,9 @@ ntfsinfo -F "$content_name" "$compressed" 2>/dev/null |
 
 PROTOFIRE_NTFS_COMPRESSED="$compressed" \
 PROTOFIRE_NTFS_COMPRESSED_NAME="$content_name" \
+PROTOFIRE_NTFS_COMPRESSED_SOURCE="$work/big.txt" \
     "$CARGO" test --offline --lib -- \
-    --ignored --exact "fs::ntfs::tests::a_compressed_stream_on_a_real_volume_is_refused" ||
-    fail "a compressed stream was not refused, or the file was not listed"
+    --ignored --exact "fs::ntfs::tests::a_compressed_stream_on_a_real_volume_is_read" ||
+    fail "a compressed stream was not read, or the file was not listed"
 
-printf 'ntfs image check passed (compressed): a compressed stream is refused, not misread\n'
+printf 'ntfs image check passed (compressed): the driver decoded the file the host injected back\n'

@@ -23,6 +23,7 @@ use crate::fs::ntfs::fs::parse_index_node;
 use crate::fs::ntfs::types::*;
 
 mod fs;
+mod lznt1;
 #[cfg(test)]
 mod tests;
 pub(crate) mod types;
@@ -1116,6 +1117,96 @@ impl NtfsFs {
     }
 
     /// Read the index allocation block a virtual cluster number names.
+    /// Read a stream the volume **compressed**, one LZNT1 unit at a time
+    /// ([RFC 0014](../../docs/rfcs/0014-read-the-ntfs-streams-lznt1-compressed.
+    /// md)).
+    ///
+    /// The units are independent, so a read needs only the units its range
+    /// touches: the walk reads each unit's two-byte header, skips its payload
+    /// by the length that header gives, and decodes from the unit the range
+    /// begins in.  A unit holds 4096 bytes of the file, which is what makes
+    /// the skip a count rather than a guess.
+    ///
+    /// A stream that ends before it has answered its length is
+    /// `InvalidArgument`: a read that succeeds and is wrong is the one failure
+    /// this driver does not have.
+    fn read_a_compressed_stream(
+        &self,
+        data: &ParsedAttr,
+        offset: u64,
+        buffer: &mut [u8],
+    ) -> Result<usize> {
+        let file_size = u64::from(data.data_size);
+        let end = (offset + buffer.len() as u64).min(file_size);
+        let wanted = end.saturating_sub(offset) as usize;
+        if wanted == 0 {
+            return Ok(0);
+        }
+
+        let info = self.info.lock();
+        let clusters: u64 = data.data_runs.iter().map(|run| run.cluster_count).sum();
+        if clusters == 0 {
+            // A stream with no cluster at all is a file of zeros: it is the
+            // shape the reference's encoder leaves for an input that was all
+            // zeros, and there is nothing to walk.
+            buffer[..wanted].fill(0);
+            return Ok(wanted);
+        }
+        let stream = clusters * u64::from(info.cluster_size);
+
+        let mut expanded = alloc::vec![0u8; lznt1::UNIT_SIZE];
+        let mut read = 0usize;
+        let mut at = 0u64;
+        let mut file_at = 0u64;
+        while read < wanted {
+            if at + 2 > stream {
+                return Err(Error::InvalidArgument);
+            }
+            let mut bytes = [0u8; 2];
+            fs::read_from_runs(&self.device, &info, &data.data_runs, stream, at, &mut bytes)?;
+            if lznt1::is_padding(bytes) {
+                // The padding an encoder leaves after its last unit, with the
+                // file still wanting bytes: the stream is short.
+                return Err(Error::InvalidArgument);
+            }
+            let unit = lznt1::parse_unit(bytes);
+            let payload_at = at + 2;
+            let payload_len = unit.length - 2;
+            if payload_at + payload_len as u64 > stream {
+                return Err(Error::InvalidArgument);
+            }
+            if file_at + lznt1::UNIT_SIZE as u64 <= offset {
+                // Nothing of this unit is wanted, and a unit's bytes are the
+                // format's 4096: the walk skips it without decoding it.
+                file_at += lznt1::UNIT_SIZE as u64;
+                at = payload_at + payload_len as u64;
+                continue;
+            }
+            let mut payload = alloc::vec![0u8; payload_len];
+            fs::read_from_runs(
+                &self.device,
+                &info,
+                &data.data_runs,
+                stream,
+                payload_at,
+                &mut payload,
+            )?;
+            let produced = lznt1::expand(&unit, &payload, &mut expanded)?;
+            let unit_end = file_at + produced as u64;
+            if unit_end > offset {
+                let from = offset.max(file_at);
+                let to = end.min(unit_end);
+                let start = (from - file_at) as usize;
+                let take = ((to - from) as usize).min(produced - start);
+                buffer[read..read + take].copy_from_slice(&expanded[start..start + take]);
+                read += take;
+            }
+            file_at = unit_end;
+            at = payload_at + payload_len as u64;
+        }
+        Ok(read)
+    }
+
     fn read_index_block(&self, attributes: &[ParsedAttr], vcn: u64) -> Result<Vec<u8>> {
         let info = self.info.lock();
         let allocation = attributes
@@ -3897,7 +3988,19 @@ impl VNode for NtfsVnode {
             .iter()
             .find(|attr| attr.attr_type == ATTR_TYPE_DATA)
             .ok_or(Error::NotFound)?;
-        refuse_a_stream_this_driver_cannot_read(data_attr)?;
+        // A stream this driver cannot read is refused rather than answered with
+        // bytes that are not the file's: an **encrypted** one is ciphertext
+        // (RFC 0013), and a **compressed** one is the units of RFC 0014, which
+        // are decoded rather than refused.
+        if data_attr.flags & ATTR_FLAG_ENCRYPTED != 0 {
+            return Err(Error::NotImplemented);
+        }
+        if data_attr.flags & ATTR_FLAG_COMPRESSED != 0 {
+            // The lock is the driver's own, and the walk takes it: it is let go
+            // before the stream is read.
+            drop(info);
+            return self.fs.read_a_compressed_stream(data_attr, offset, buffer);
+        }
 
         let file_size = data_attr.data_size as u64;
         let data_runs = &data_attr.data_runs;
