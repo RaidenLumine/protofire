@@ -80,9 +80,28 @@ pub fn range_is_in_usable_memory(range: (usize, usize), regions: &[(usize, usize
     if end <= start {
         return false;
     }
-    regions
-        .iter()
-        .any(|(base, length)| start >= *base && end <= base.saturating_add(*length))
+
+    // The range is walked from its start, and every step has to land inside
+    // some region — **pieces may come from different regions**, because a
+    // machine's map is granular: a real UEFI boot describes RAM in several
+    // entries, and a kernel image is one range that spans them.  Asking one
+    // region to contain the whole range is what refused a perfectly good EFI
+    // boot, on a map whose regions were each smaller than the image.
+    let mut at = start;
+    while at < end {
+        let mut progressed = false;
+        for (base, length) in regions {
+            let region_end = base.saturating_add(*length);
+            if *base <= at && at < region_end {
+                at = region_end.min(end);
+                progressed = true;
+            }
+        }
+        if !progressed {
+            return false;
+        }
+    }
+    true
 }
 
 /// The kernel's own image, as the linker placed it.
@@ -358,5 +377,36 @@ mod tests {
         assert!(!range_is_in_usable_memory((0x500, 0x2000), &regions));
         assert!(!range_is_in_usable_memory((0x2000, 0x2000), &regions));
         assert!(!range_is_in_usable_memory((0x2000, 0x3000), &[]));
+    }
+
+    /// A range that spans several regions is in usable memory when the pieces
+    /// join up, and is not when there is a gap between them.
+    ///
+    /// This is the shape a real UEFI boot describes: the machine's RAM in
+    /// several entries, and one kernel image across them
+    /// ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+    #[test]
+    fn a_range_spanning_regions_is_covered_piece_by_piece() {
+        // The image one EFI boot refused: 2 MiB up to 570 MiB, over a map
+        // whose usable regions are 1 MiB, 7 MiB and then the rest.
+        let image = (0x20_0000_usize, 0x24_895a10_usize);
+        let usable = [
+            (0x100000_usize, 0x700000_usize),
+            (0x800000_usize, 0x24_100000_usize),
+        ];
+        assert!(range_is_in_usable_memory(image, &usable));
+
+        // The same range over a map with a hole in the middle of it.
+        let holed = [
+            (0x100000_usize, 0x700000_usize),
+            (0x900000_usize, 0x24_100000_usize),
+        ];
+        assert!(!range_is_in_usable_memory(image, &holed));
+
+        // A single byte in the hole is enough to refuse.
+        assert!(!range_is_in_usable_memory((0x800000, 0x800001), &holed));
+        // And regions may be given in any order.
+        let reversed = [(usable[1].0, usable[1].1), (usable[0].0, usable[0].1)];
+        assert!(range_is_in_usable_memory(image, &reversed));
     }
 }
