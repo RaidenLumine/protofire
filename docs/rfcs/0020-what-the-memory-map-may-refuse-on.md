@@ -155,8 +155,26 @@ address still refuses, and that boot was already broken.
 
 ## Unresolved questions
 
-- **A UEFI pass for the ISO check**: OVMF is what shows the granular map, and
-  the check runs BIOS today.  The pass wants the firmware's paths found or
-  skipped loudly, the way the other gates treat their tools.
+- **A UEFI pass for the ISO check, and what it found**: the pass was written,
+  run, and *not* kept, because it does not pass — and what it says is worth
+  more than the pass.  The UEFI boot faults writing a page the kernel's own plan
+  made read-only:
+
+  ```
+  [FATAL] page fault addr=0x00000000004ed388 access=write reason=protection-violation
+          prepared_perms=r-- plan=kernel-rodata
+          rip=0x000000000046d596
+  ```
+
+  and both addresses name the same thing: the instruction is
+  `core::sync::atomic::atomic_or`, the address is
+  `protofire::arch::x86_64::paging::pcid::PCID_BITMAP_STORE`.  That static is in
+  `.rodata` (`nm` marks it `r`) and the PCID path **writes** it through an
+  atomic, so the write lands in a section the page plan is right to make
+  read-only.  The BIOS boot has not hit it; the UEFI one does, at a different
+  point in bring-up — which is exactly what a second firmware pass is for.  The
+  fix is one of two shapes and neither is written here: the static moves to a
+  writable section, or the plan learns that this page is a mutable one.  Once
+  it is fixed, the pass lands with the assertions it was written for.
 - **The pool as `.bss`** — the reason the image is 570 MiB and spans regions at
   all — is RFC 0019's decision to keep and a board port's to revisit.
