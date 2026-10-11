@@ -1363,6 +1363,26 @@ fn leaf_is_present(virtual_address: usize) -> bool {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn report_kernel_map_coverage() {
     static REPORTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    // Where the kernel's own memory is, and what this architecture's plan makes
+    // of each piece of it: the frame pool, and the free-PCID bitmap — whose
+    // page is the one a boot's behaviour changed with ([RFC
+    // 0020](../../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md)).
+    if let Some(facts) = crate::memory::map_facts::get() {
+        let (pool_start, pool_end) = crate::memory::frame::pool_range();
+        let bitmap = crate::arch::x86_64::paging::pcid::bitmap_address();
+        let class = |address: usize| {
+            facts
+                .classify(address)
+                .map(|kind| alloc::format!("{kind:?}"))
+        };
+        crate::println!(
+            "[mem   ] plan: pool {}/{} bitmap {:#x} ({})",
+            class(pool_start).unwrap_or_else(|| alloc::string::String::from("no-region")),
+            class(pool_end - 1).unwrap_or_else(|| alloc::string::String::from("no-region")),
+            bitmap,
+            class(bitmap).unwrap_or_else(|| alloc::string::String::from("no-region"))
+        );
+    }
     let Some(facts) = crate::memory::map_facts::get() else {
         return;
     };

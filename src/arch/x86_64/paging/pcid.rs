@@ -74,6 +74,14 @@ struct PcidBitmapStore([u64; PCID_BITMAP_WORDS]);
 
 static PCID_BITMAP_STORE: PcidBitmapStore = PcidBitmapStore([0u64; PCID_BITMAP_WORDS]);
 
+/// Where the free-PCID bitmap is, so a boot can say what the page plan makes
+/// of the page it lives in ([RFC
+/// 0020](../../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md) is
+/// chasing exactly that).
+pub fn bitmap_address() -> usize {
+    PCID_BITMAP_STORE.0.as_ptr() as usize
+}
+
 /// Monotonically-increasing PCID counter fallback, used when the free bitmap
 /// is empty.
 static NEXT_PCID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);

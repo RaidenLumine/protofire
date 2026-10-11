@@ -189,6 +189,17 @@ address still refuses, and that boot was already broken.
   | the fix | `[0x484e000, 0x2484e000)` | `.bss`, `0x24891350` (outside the pool) | stalls after the init path |
   | the fix, with the KASLR list regenerated | same | same | still stalls |
 
+  And the measurement that came out of it is a correlation with the *class* the
+  plan gives the bitmap's page, consistent across every pair of builds:
+
+  | the bitmap's page is | the boot |
+  | --- | --- |
+  | `Rodata` (as it is) | reaches the shell |
+  | `Bss` (with the fix) | stalls after the init path |
+
+  which is the opposite of what writability would predict — a read-only page
+  the kernel writes is fine, and a writable one is not — so the page's class is
+  where the next probe goes, not the page's permissions.
   So the pool does not move, the bitmap is inside nothing, and the KASLR
   relocation list — a build artifact this tree *ignores* in git and writes with
   `make gen-kaslr-relocs`, a target no build runs — is not the cause either:
@@ -196,14 +207,15 @@ address still refuses, and that boot was already broken.
   is left is the static's *own* address: `0x24891350` is in the region after
   the frame pool, and the one thing that is special about that region is that
   the kernel's page plan has to have named it.  The next probe is the plan's
-  own report for that page in the two builds (`active paging check` prints the
-  class and permissions of the pages it is asked about), because a write that
-  neither faults nor does what the code means is what a page mapped for
-  something else looks like.
+  own report for that page in the two builds — which the boot prints now, for
+  both pieces of memory the kernel owns: `[mem   ] plan: pool Bss/Bss bitmap
+  0x4f1cf0 (Rodata)` for the tree as it is, and `bitmap 0x488f070 (Bss)` for
+  the version whose storage changed.  The comparison no longer needs a symbol
+  table, and it is the measurement: the bitmap's *class* is the only thing
+  consistently different between a boot that reaches the shell and one that
+  stalls — and the direction is backwards, `Rodata` (a page the kernel writes)
+  booting and `Bss` (a page it may write) not.
 - **What the pass waits on**: for the boot to reach
-  `[user  ] loaded /apps/packages/shell/bin/shell.elf` on both firmwares again
-  with whatever fixes the placement, at which point the pass lands with the
-  assertions it was written for.- **What the pass waits on**: for the boot to reach
   `[user  ] loaded /apps/packages/shell/bin/shell.elf` on both firmwares again
   with whatever fixes the placement, at which point the pass lands with the
   assertions it was written for.
