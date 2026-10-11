@@ -215,6 +215,24 @@ address still refuses, and that boot was already broken.
   consistently different between a boot that reaches the shell and one that
   stalls — and the direction is backwards, `Rodata` (a page the kernel writes)
   booting and `Bss` (a page it may write) not.
+- **Three more refutations, and what is left**: the search has now ruled out
+  every explanation that was cheap to test.
+
+  | Question | Answer |
+  | --- | --- |
+  | is it the atomic *type*? | no: a variant that keeps the original `u64` array and the pointer cast, with the storage only *moved* to `.bss`, stalls identically |
+  | is `.bss` handed over non-zero? | no: a `.bss` object nothing writes reads back `0x0 0x0 0x0 0x0` at the point the plan is up |
+  | is the KASLR list stale? | no: regenerating it and booting the unchanged kernel reaches the shell, and the changed kernel still stalls with a fresh one |
+
+  What is left is the one thing every measurement agrees on: **which section the
+  static lives in**.  A boot whose PCID bitmap sits in `.rodata` reaches the
+  shell; the same code with the same (zeroed, writable) storage in `.bss`
+  stalls after the init path, on both firmwares, with the pool in the same place
+  and the bitmap in nobody else's range.  The next questions are about that
+  page rather than that symbol: what else maps it (a late dump of the page
+  table entry, and of the bitmap's first words, at the point the boot stops),
+  and whether its neighbour — the frame pool's first page — is the thing that
+  matters.
 - **What the pass waits on**: for the boot to reach
   `[user  ] loaded /apps/packages/shell/bin/shell.elf` on both firmwares again
   with whatever fixes the placement, at which point the pass lands with the
