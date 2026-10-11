@@ -33,6 +33,9 @@ const MULTIBOOT2_TAG_MMAP: u32 = 6;
 /// Memory-map entry type: available RAM.
 #[cfg(target_arch = "x86_64")]
 const MULTIBOOT2_MMAP_AVAILABLE: u32 = 1;
+/// The tag a loader that set a graphics mode passes.
+#[cfg(target_arch = "x86_64")]
+const MULTIBOOT2_TAG_FRAMEBUFFER: u32 = 8;
 
 /// Parse the kernel command line from the Multiboot2 info structure.
 ///
@@ -47,6 +50,24 @@ const MULTIBOOT2_MMAP_AVAILABLE: u32 = 1;
 /// loader and its info block first existed).
 static BOOT_COMMAND_LINE: crate::kernel::sync::SpinLock<Option<String>> =
     crate::kernel::sync::SpinLock::new(None);
+
+/// The framebuffer the loader described, captured while its block was
+/// reachable — the same rule the command line follows, for the same reason:
+/// x86_64's runtime tables do not map the loader's block, so it is read once,
+/// early, and never again.
+static LOADER_FRAMEBUFFER: crate::kernel::sync::SpinLock<Option<LoaderFramebuffer>> =
+    crate::kernel::sync::SpinLock::new(None);
+
+/// Record the loader's framebuffer, once, before its block becomes
+/// unreachable.
+pub fn store_framebuffer(framebuffer: Option<LoaderFramebuffer>) {
+    *LOADER_FRAMEBUFFER.lock() = framebuffer;
+}
+
+/// The loader's framebuffer, as captured at boot.
+pub fn loader_framebuffer() -> Option<LoaderFramebuffer> {
+    *LOADER_FRAMEBUFFER.lock()
+}
 
 /// Record the command line, once, before the info block becomes unreachable.
 pub fn store_command_line(line: Option<String>) {
@@ -218,6 +239,97 @@ pub fn multiboot2_usable_regions_at(addr: usize) -> Option<Vec<(usize, usize)>> 
     }
 
     None
+}
+
+/// The linear framebuffer a loader handed over, as its tag describes it.
+///
+/// A loader that set a graphics mode passes the mode it set — address, pitch,
+/// size and depth — which is the one framebuffer on a machine this kernel did
+/// not have to switch on itself: a real PC's display comes from the firmware,
+/// and until this tag was read the only framebuffers this tree knew how to use
+/// were the ones its own device drivers (virtio-gpu, bochs-display) owned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoaderFramebuffer {
+    /// Where the framebuffer is, in the machine's own address space.
+    pub address: usize,
+    pub pitch: u32,
+    pub width: u32,
+    pub height: u32,
+    pub bits_per_pixel: u8,
+    /// The format's own kind byte: 1 is a direct RGB colour framebuffer.
+    pub kind: u8,
+}
+
+/// The framebuffer tag of a Multiboot2 map, if it has one.
+///
+/// The address is a parameter for the same reason the memory map's is: a test
+/// drives the walk over a block it built.
+#[cfg(target_arch = "x86_64")]
+pub fn multiboot2_framebuffer_at(addr: usize) -> Option<LoaderFramebuffer> {
+    if addr == 0 {
+        return None;
+    }
+
+    // SAFETY: the first word of the hand-off structure, as in the walks above;
+    // the loop condition bounds every later read by it.
+    let total_size = unsafe { *(addr as *const u32) } as usize;
+    let mut offset = 8;
+
+    while offset + 8 <= total_size {
+        // SAFETY: the loop condition keeps these two words inside the block.
+        let tag_type = unsafe { *((addr + offset) as *const u32) };
+        // SAFETY: as above — the tag's size word.
+        let tag_size = unsafe { *((addr + offset + 4) as *const u32) } as usize;
+
+        if tag_type == MULTIBOOT2_TAG_END {
+            break;
+        }
+        if tag_size < 8 {
+            break;
+        }
+
+        if tag_type == MULTIBOOT2_TAG_FRAMEBUFFER {
+            // The tag is a fixed 32 bytes: the address, the pitch, the two
+            // dimensions, the depth, the kind and a reserved word.
+            if tag_size < 32 {
+                break;
+            }
+            // SAFETY: `tag_size` was checked to be at least the tag's own
+            // fields, so every read below is inside the block's tag.
+            let address = unsafe { *((addr + offset + 8) as *const u64) } as usize;
+            // SAFETY: as above — the pitch word of the same tag.
+            let pitch = unsafe { *((addr + offset + 16) as *const u32) };
+            // SAFETY: as above — the width word of the same tag.
+            let width = unsafe { *((addr + offset + 20) as *const u32) };
+            // SAFETY: as above — the height word of the same tag.
+            let height = unsafe { *((addr + offset + 24) as *const u32) };
+            // SAFETY: as above — the depth byte of the same tag.
+            let bits_per_pixel = unsafe { *((addr + offset + 28) as *const u8) };
+            // SAFETY: as above — the kind byte of the same tag.
+            let kind = unsafe { *((addr + offset + 29) as *const u8) };
+            if address == 0 || pitch == 0 || width == 0 || height == 0 {
+                return None;
+            }
+            return Some(LoaderFramebuffer {
+                address,
+                pitch,
+                width,
+                height,
+                bits_per_pixel,
+                kind,
+            });
+        }
+
+        offset += (tag_size + 7) & !7;
+    }
+
+    None
+}
+
+/// The framebuffer the loader described, read from the block it handed over.
+#[cfg(target_arch = "x86_64")]
+pub fn multiboot2_framebuffer() -> Option<LoaderFramebuffer> {
+    multiboot2_framebuffer_at(handoff_address())
 }
 
 /// The machine's usable RAM, from the block the loader handed over.

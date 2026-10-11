@@ -187,6 +187,11 @@ impl Kernel {
         // where they do not — at boot, rather than from a fault later.
         crate::memory::arch::check_kernel_map_coverage();
 
+        // The display a loader set up, if it set one up: a machine's screen is
+        // the firmware's, and this is the only framebuffer a real PC has
+        // ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)'s list).
+        crate::arch::platform::install_loader_framebuffer();
+
         let t1 = tick();
         boot.record_subsystem(
             "memory",

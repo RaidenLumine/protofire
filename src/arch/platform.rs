@@ -30,6 +30,7 @@ pub(crate) fn capture_early_state() {
         // so everything read out of it is read here: the command line, and the
         // ACPI tag the discovery below looks for.
         crate::arch::boot::store_command_line(crate::arch::boot::multiboot2_command_line());
+        crate::arch::boot::store_framebuffer(crate::arch::boot::multiboot2_framebuffer());
         let aps = crate::arch::x86_64::acpi::discover_aps(handoff);
         crate::arch::x86_64::acpi::store_early_aps(aps);
         // Discover NUMA topology from ACPI SRAT/SLIT (before page-table
@@ -135,6 +136,66 @@ pub(crate) fn described_memory_regions() -> Option<alloc::vec::Vec<(usize, usize
     )))]
     {
         None
+    }
+}
+
+/// Install the framebuffer a loader handed over, when it handed one over.
+///
+/// A machine's display is the firmware's, and the loader is what knows where
+/// the frame is: on a PC with no display device this kernel drives, the tag is
+/// the only way its own console ever reaches the screen.  The mapping comes
+/// first because the loader's address is a physical one and may sit outside
+/// the window the kernel identity-maps — QEMU's `-vga std` puts it in the PCI
+/// hole above 3 GiB — which is why this runs after the runtime tables exist
+/// ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)'s list, first item).
+pub(crate) fn install_loader_framebuffer() {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use crate::drivers::framebuffer_console::install_console;
+        use crate::drivers::framebuffer_protocol::FramebufferInfo;
+
+        let Some(fb) = crate::arch::boot::loader_framebuffer() else {
+            return;
+        };
+        if fb.kind != 1 || !matches!(fb.bits_per_pixel, 24 | 32) {
+            crate::println!(
+                "[fb    ] the loader's framebuffer is kind {} at {} bpp, which this console does not draw in",
+                fb.kind,
+                fb.bits_per_pixel
+            );
+            return;
+        }
+
+        let size = (fb.pitch as usize).saturating_mul(fb.height as usize);
+        // SAFETY: the physical range comes from the tag the loader wrote, and
+        // the mapping it asks for is a device window of that size; the pointer
+        // it answers with is the only way this code touches the frame.
+        let Some(ptr) = (unsafe { crate::arch::mmu::map_device_mmio(fb.address as u64, size) })
+        else {
+            crate::println!("[fb    ] the loader's framebuffer could not be mapped");
+            return;
+        };
+
+        let info = FramebufferInfo {
+            physical_address: fb.address,
+            size,
+            width: fb.width as u16,
+            height: fb.height as u16,
+            bpp: fb.bits_per_pixel as u16,
+            pitch: fb.pitch,
+        };
+        // SAFETY: the mapping above is a writable linear framebuffer of
+        // `info.size` bytes that stays mapped for the kernel's lifetime, which
+        // is what the console's contract asks for.
+        unsafe {
+            install_console(ptr, info);
+        }
+        crate::println!(
+            "[fb    ] console installed from the loader's framebuffer ({}x{}x{})",
+            fb.width,
+            fb.height,
+            fb.bits_per_pixel
+        );
     }
 }
 
