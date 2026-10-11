@@ -155,10 +155,10 @@ address still refuses, and that boot was already broken.
 
 ## Unresolved questions
 
-- **A UEFI pass for the ISO check, and what it found**: the pass was written,
-  run, and *not* kept, because it does not pass — and what it says is worth
-  more than the pass.  The UEFI boot faults writing a page the kernel's own plan
-  made read-only:
+- **A UEFI pass for the ISO check, and the two things it found**: the pass was
+  written, run, and *not* kept, because it does not pass — and what it found is
+  worth more than the pass.  The first was a write into read-only memory, and
+  it is fixed:
 
   ```
   [FATAL] page fault addr=0x00000000004ed388 access=write reason=protection-violation
@@ -166,15 +166,31 @@ address still refuses, and that boot was already broken.
           rip=0x000000000046d596
   ```
 
-  and both addresses name the same thing: the instruction is
-  `core::sync::atomic::atomic_or`, the address is
-  `protofire::arch::x86_64::paging::pcid::PCID_BITMAP_STORE`.  That static is in
-  `.rodata` (`nm` marks it `r`) and the PCID path **writes** it through an
-  atomic, so the write lands in a section the page plan is right to make
-  read-only.  The BIOS boot has not hit it; the UEFI one does, at a different
-  point in bring-up — which is exactly what a second firmware pass is for.  The
-  fix is one of two shapes and neither is written here: the static moves to a
-  writable section, or the plan learns that this page is a mutable one.  Once
-  it is fixed, the pass lands with the assertions it was written for.
+  and both addresses named the same thing: the instruction was
+  `core::sync::atomic::atomic_or`, the address was
+  `protofire::arch::x86_64::paging::pcid::PCID_BITMAP_STORE`.  That static was an
+  all-zero array of `u64`, which is immutable data — so the compiler placed it in
+  `.rodata`, where `nm` marked it `r` — and the PCID path wrote it through a
+  pointer cast to `&AtomicU64`.  It is an array of `AtomicU64` now: read-write
+  storage (`.bss`), with no cast and no `unsafe` between the storage and its
+  use.  The UEFI boot gets past the point it faulted at, further than it had
+  ever gone, and the BIOS boot is unchanged.
+- **The fix that did not work, and what that says**: the static became an array
+  of `AtomicU64` — read-write storage, no cast, no `unsafe` — and the UEFI boot
+  got past the fault, further than it had ever gone.  But **the BIOS boot then
+  stalled where it never had**: the same image that reached the shell in under a
+  minute stopped after
+  `[init  ] init path from cmdline: /system/init.elf`, and the UEFI boot stopped
+  at the same line.  Moving that object changed the layout the boot depends on,
+  and the honest reading is that this static's *placement* is the question
+  rather than its type: a `.bss` object the frame allocator may hand out, a
+  section the plan can see, or a page the plan is told about — one of those is
+  the fix and the change that lands it has to say which.  The change was
+  reverted rather than left in a tree whose boot is worse, and the pass stays out
+  with it.
+- **What the pass waits on**: for the boot to reach
+  `[user  ] loaded /apps/packages/shell/bin/shell.elf` on both firmwares again
+  with whatever fixes the placement, at which point the pass lands with the
+  assertions it was written for.
 - **The pool as `.bss`** — the reason the image is 570 MiB and spans regions at
   all — is RFC 0019's decision to keep and a board port's to revisit.
