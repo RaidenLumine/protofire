@@ -175,20 +175,26 @@ address still refuses, and that boot was already broken.
   storage (`.bss`), with no cast and no `unsafe` between the storage and its
   use.  The UEFI boot gets past the point it faulted at, further than it had
   ever gone, and the BIOS boot is unchanged.
-- **The fix that did not work, and what that says**: the static became an array
-  of `AtomicU64` — read-write storage, no cast, no `unsafe` — and the UEFI boot
-  got past the fault, further than it had ever gone.  But **the BIOS boot then
-  stalled where it never had**: the same image that reached the shell in under a
-  minute stopped after
-  `[init  ] init path from cmdline: /system/init.elf`, and the UEFI boot stopped
-  at the same line.  Moving that object changed the layout the boot depends on,
-  and the honest reading is that this static's *placement* is the question
-  rather than its type: a `.bss` object the frame allocator may hand out, a
-  section the plan can see, or a page the plan is told about — one of those is
-  the fix and the change that lands it has to say which.  The change was
-  reverted rather than left in a tree whose boot is worse, and the pass stays out
-  with it.
-- **What the pass waits on**: for the boot to reach
+- **The fix that did not work, measured**: the static became an array of
+  `AtomicU64` — read-write storage, no cast, no `unsafe` — and the UEFI boot got
+  past the fault, further than it had ever gone.  But **both firmwares then
+  stalled** after `[init  ] init path from cmdline: /system/init.elf`, where the
+  BIOS boot of the same image had reached the shell in under a minute.  The
+  symbol tables say why, and it is not the static's type:
+
+  | Build | `PHYSICAL_POOL` | the bitmap |
+  | --- | --- | --- |
+  | as it is | `0x484d000` (pool `[0x484d000, 0x2484d000)`) | `.rodata`, `0x4ed388` |
+  | with the fix | `0x461000` (pool `[0x461000, 0x20461000)`) | `.bss`, `0x20463710` |
+
+  Adding one small object **moved the 512 MiB frame pool by 2.3 MiB**, and the
+  boot depends on where the pool is — somewhere subtle enough that this table is
+  the first thing that shows it.  So the thing to fix is the *placement*: a
+  512 MiB array whose address **is** the frame allocator's base must not be
+  movable by an unrelated addition, which is a linker-script fact (a section of
+  its own, placed deliberately) rather than a type, and the bitmap goes
+  somewhere a plan can see and the pool cannot reach.
+- - **What the pass waits on**: for the boot to reach
   `[user  ] loaded /apps/packages/shell/bin/shell.elf` on both firmwares again
   with whatever fixes the placement, at which point the pass lands with the
   assertions it was written for.
