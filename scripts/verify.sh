@@ -160,6 +160,9 @@ run_p3() {
     run_make_step "make test-usb" test-usb
     run_make_step "make test-gpu" test-gpu
     run_make_step "make test-parsers" test-parsers
+    # The one boot that goes through a loader rather than QEMU's own hand-off:
+    # the Multiboot2 memory map, and the ELF a real loader will accept.
+    run_make_step "make check-x8664-iso" check-x8664-iso
     run_make_step "make clippy" clippy
     run_make_step "make clippy-targets" clippy-targets
     run_make_step "make check-unsafe-comments" check-unsafe-comments

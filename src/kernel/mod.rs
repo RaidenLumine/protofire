@@ -472,7 +472,10 @@ impl Kernel {
         // The distribution (protofire-os) passes `init=/system/init.elf` via
         // the bootloader (e.g. GRUB config).  Falls back to DEFAULT_INIT_PATH
         // when no command line is present.
-        let cmdline = crate::arch::boot::multiboot2_command_line();
+        // Captured at boot, while the loader's block was still mapped;
+        // reading it from here would fault ([RFC
+        // 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+        let cmdline = crate::arch::boot::boot_command_line();
         let init_path = match cmdline {
             Some(ref cl) => {
                 let path = crate::arch::boot::init_path_from_command_line(cl, DEFAULT_INIT_PATH);

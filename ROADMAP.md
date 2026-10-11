@@ -104,12 +104,16 @@ The authoritative picture of what exists today is
   kernel asks, and a real one is where the asking is tried.  The order worth
   doing is by what is blocking rather than by what is interesting:
 
-  1. **A medium.**  The linker already carries a Multiboot2 header and
-     `iso/boot/grub/grub.cfg` already exists, so a GRUB-bootable stick is the
-     shortest path to a real PC — and no target builds one (`README.md` and
-     `make doctor` both say so).  A bootable image target, and the recipe for
-     writing it to a stick, is the first thing the day needs; the second is
-     knowing which console a machine with no serial port draws on.
+  1. **A medium.**  `make iso` builds one and `make check-x8664-iso` boots it:
+     GRUB hands the kernel over on Multiboot2, which is the first boot in this
+     tree that went through a loader rather than QEMU's own `-kernel`, and the
+     first with a memory map at all.  Asking for one found two things no
+     emulated boot could: the ELF had to lose the relocation sections
+     `--emit-relocs` keeps for KASLR (GRUB refuses an ELF with relocs), and
+     x86_64 had never recorded the loader's info block, so its tag walk — the
+     memory map and ACPI's RSDP alike — had always read address 0.  What is
+     left is the recipe for writing the image to a stick, and the console
+     question: a machine with no serial port has to draw on its display.
   2. **The disk.**  A machine's disk is the one its installer made, and that
      is a **GPT** — the tree parsed MBR only, so a real volume was a disk the
      kernel half-believed: a protective MBR's one entry became the system

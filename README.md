@@ -84,7 +84,9 @@ files already pin are not repeated here.
 QEMU provides `qemu-system-x86_64`, `qemu-system-aarch64` and
 `qemu-system-riscv64`, and only the run targets and
 `make check-aarch64-runtime` need it. `grub-mkrescue` and `xorriso` are
-optional — no target builds a bootable ISO image yet.
+needed by `make iso`, which builds a GRUB-bootable ISO image and by
+`make check-x8664-iso`, which boots it — the one boot in the tree that goes
+through a real loader rather than QEMU's own hand-off.
 
 ### Host requirements
 

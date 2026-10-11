@@ -169,6 +169,7 @@ help:
 		'  make check-x8664-runtime              - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-init-no-start        - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-usb-disk             - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
+		'  make check-x8664-iso                  - boot the kernel from a GRUB ISO and check the loader hand-off and its memory map' \
 		'  make check-x8664-usb-hotplug          - plug a device into a hub after boot and check it is seen then' \
 		'  make check-x8664-nvme                 - boot a real SimpleFs image on an NVMe device and check the controller mounts it' \
 		'  make check-aarch64-nvme               - the same NVMe disk on the device-tree machine, through its PCIe window' \
@@ -188,6 +189,7 @@ help:
 		'Builds:' \
 		'  make build-x8664                      - build the bare-metal kernel ELF (PROFILE=debug|release)' \
 		'  make build                            - build the bare-metal kernel ELF (PROFILE=debug|release)' \
+		'  make iso                              - build a GRUB-bootable ISO image of the x86_64 kernel' \
 		'  make build-x8664-demo                 - build x86_64 kernel with the in-memory demo disk (shell)' \
 		'  make build-aarch64                    - build the aarch64 bare-metal kernel ELF for QEMU virt' \
 		'  make build-aarch64-image              - build the aarch64 kernel as the bootable arm64 Image (device tree)' \
@@ -509,7 +511,7 @@ check-abi-frozen-payload-riscv64:
 .PHONY: check-perf-baseline check-perf-baseline-smp check-perf-baseline-disk \
 	check-perf-baseline-numa check-perf-baseline-net \
 	check-x8664-runtime check-x8664-init-no-start check-x8664-usb-disk \
-	check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
+	check-x8664-iso check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
 	check-riscv64-nvme check-x8664-hda check-aarch64-hda check-x8664-churn \
 	check-riscv64-churn check-aarch64-runtime check-riscv64-runtime \
 	check-riscv64-aia-runtime check-riscv64-pci-runtime \
@@ -632,6 +634,12 @@ check-x8664-init-no-start:
 # The reads wrap the controller's event and transfer rings several times, which
 # the single sector `check-x8664-runtime` reads never does; see the script for
 # what the reuse bug did when only that sector was checked.
+check-x8664-iso:
+	@printf '==> check-x8664-iso\n'
+	@env PROFILE="$(PROFILE)" \
+		CARGO="$(CARGO)" \
+		sh ./scripts/check-x8664-iso.sh
+
 check-x8664-usb-disk:
 	PROFILE="$(PROFILE)" \
 		CRATE="$(CRATE)" \
@@ -787,7 +795,7 @@ check-riscv64-smp-runtime:
 # ── Builds ────────────────────────────────────────────────────────────
 .PHONY: build-x8664 build build-x8664-demo build-aarch64 \
 	build-aarch64-image build-aarch64-image-plain build-aarch64-demo \
-	build-riscv64 build-riscv64-demo gen-kaslr-relocs release
+	build-riscv64 build-riscv64-demo gen-kaslr-relocs release iso
 
 # Kernel build targets.  Ring3 ELF payload wrappers are built in-kernel
 # (src/user/demo/); where the demo volume still needs a ring3 binary that no
@@ -797,6 +805,33 @@ build-x8664:
 	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target $(TARGET) --bin $(CRATE)
 
 build: build-x8664
+
+# ── Bootable images ────────────────────────────────────────────────────
+#
+# A medium a machine can start from.  GRUB speaks Multiboot2 and the ELF
+# already carries a header for it, so an image is the kernel and the
+# configuration in `iso/` and nothing else — and no target built one until
+# now, which is why every boot this tree ran went through QEMU's own
+# `-kernel` hand-off ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)
+# names the boot a real loader gives as the one the emulated boots could not).
+ISO ?= target/protofire.iso
+ISO_STAGE ?= target/iso
+
+iso: build-x8664-demo
+	rm -rf $(ISO_STAGE)
+	mkdir -p $(ISO_STAGE)/boot/grub
+	cp iso/boot/grub/grub.cfg $(ISO_STAGE)/boot/grub/grub.cfg
+	# The kernel is linked with `--emit-relocs`, because the KASLR table it
+	# carries is generated from them (`tools/gen-kaslr-relocs`) — and GRUB's
+	# multiboot2 loader refuses an ELF that still has relocations ("ELF files
+	# with relocs are not supported yet"), which is the first thing a real
+	# loader ever told this tree.  The generated table is compiled in, so the
+	# copy a loader is given is the same kernel with the relocation sections
+	# taken off.
+	strip -o $(ISO_STAGE)/boot/protofire.elf \
+		$(TARGET_DIR)/x86_64-unknown-none/$(PROFILE)/$(CRATE)
+	grub-mkrescue -o $(ISO) $(ISO_STAGE)
+	@printf 'bootable image: %s\n' "$(ISO)"
 
 # Like build-x8664 but links the in-memory demo disk, so `make run` boots the
 # interactive ring-3 shell over -serial stdio instead of idling.

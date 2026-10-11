@@ -199,11 +199,19 @@ names is what this removes.
   `Image` hand-off), and PVH carries no Multiboot block, so the line they print
   is `the machine described no memory map; the kernel's pool is 512 MiB` — the
   third row of the table above, working.
-- **Still owed**: a boot that *has* a loader map — which means a bootable image
-  and a loader that speaks Multiboot2 (the real-machine list's first item), so
-  the map path is a unit test today; and the device-tree machines' answer
-  reaching the manager's *sizing* rather than its report, which needs a read of
-  the blob that allocates nothing (a change of its own).
+- **The boot that has a loader map**, which arrived with the bootable image:
+  `make check-x8664-iso` boots the kernel from a GRUB ISO, and what it requires
+  is this RFC's own line — `machine reports 1023 MiB in 2 region(s); the
+  kernel's pool is 512 MiB`, then `the kernel's image [0x200000, 0x24893838)
+  is in usable RAM` — which no emulated boot could give, because QEMU's own
+  hand-off carries no map.  Asking a real loader for the kernel found two
+  things first: the ELF had to lose the relocation sections `--emit-relocs`
+  keeps for KASLR, because GRUB refuses them, and the loader's info block had
+  never been recorded on x86_64 at all, so the tag walk (the map *and* ACPI's
+  RSDP) had always read address 0.
+- **Still owed**: the device-tree machines' answer reaching the manager's
+  *sizing* rather than its report, which needs a read of the blob that
+  allocates nothing (a change of its own).
 
 ## Unresolved questions
 

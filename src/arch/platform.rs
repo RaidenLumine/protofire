@@ -26,6 +26,10 @@ pub(crate) fn capture_early_state() {
     {
         crate::arch::x86_64::smp::save_boot_cr3();
         let handoff = crate::arch::boot::handoff_address();
+        // The loader's info block is reachable now and not after the switch,
+        // so everything read out of it is read here: the command line, and the
+        // ACPI tag the discovery below looks for.
+        crate::arch::boot::store_command_line(crate::arch::boot::multiboot2_command_line());
         let aps = crate::arch::x86_64::acpi::discover_aps(handoff);
         crate::arch::x86_64::acpi::store_early_aps(aps);
         // Discover NUMA topology from ACPI SRAT/SLIT (before page-table

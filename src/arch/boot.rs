@@ -37,6 +37,27 @@ const MULTIBOOT2_MMAP_AVAILABLE: u32 = 1;
 /// Parse the kernel command line from the Multiboot2 info structure.
 ///
 /// Returns `None` if no boot handoff address is available or the command-line
+/// The command line the loader passed, read while its block was reachable.
+///
+/// x86_64's runtime page tables do not map the loader's info block — the
+/// bootstrap identity map did — so a read of it after the switch faults.  The
+/// boot captures the command line in `capture_early_state`, which runs while
+/// the bootstrap map is still active, and the late caller reads this copy
+/// ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)'s boot, where a real
+/// loader and its info block first existed).
+static BOOT_COMMAND_LINE: crate::kernel::sync::SpinLock<Option<String>> =
+    crate::kernel::sync::SpinLock::new(None);
+
+/// Record the command line, once, before the info block becomes unreachable.
+pub fn store_command_line(line: Option<String>) {
+    *BOOT_COMMAND_LINE.lock() = line;
+}
+
+/// The command line the loader passed, as captured at boot.
+pub fn boot_command_line() -> Option<String> {
+    BOOT_COMMAND_LINE.lock().clone()
+}
+
 /// tag is not present in the Multiboot2 info.
 ///
 /// On non-x86_64 architectures the handoff address holds a device-tree blob
@@ -329,7 +350,15 @@ const fn current_arch_boot_info(
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub const fn from_x86_64_multiboot2(multiboot_magic: u32, multiboot_info: u32) -> BootInfo {
+pub fn from_x86_64_multiboot2(multiboot_magic: u32, multiboot_info: u32) -> BootInfo {
+    // The loader's info block is recorded here, the way the device-tree
+    // machines record their blob: everything that reads a Multiboot2 tag —
+    // the memory map, `multiboot2_usable_regions`, and the ACPI discovery that
+    // looks for the RSDP in a tag before falling back to a BIOS scan — reads
+    // it through `handoff_address`, and on x86_64 nothing had ever stored it.
+    // ACPI's BIOS scan covered the loss, which is why it went unnoticed
+    // ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+    store_handoff_address(multiboot_info as usize);
     current_arch_boot_info(
         BootProtocol::Multiboot2,
         multiboot_magic,

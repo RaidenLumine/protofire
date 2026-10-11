@@ -38,7 +38,7 @@ fi
 printf 'target: %s\n' "$TARGET"
 printf 'required: cargo, rustup and the three pinned Rust targets\n'
 printf 'optional: QEMU for the run targets, timeout for the smoke checks,\n'
-printf '          grub-mkrescue and xorriso for ISO images\n'
+printf '          grub-mkrescue and xorriso for ISO images (make iso)\n'
 
 check_tool required cargo "Rust package manager"
 check_tool required rustup "Rust toolchain manager"
@@ -46,7 +46,7 @@ check_tool optional qemu-system-x86_64 "Required for make run"
 check_tool optional qemu-system-aarch64 "Required for make run-aarch64 and make check-aarch64-runtime"
 check_tool optional qemu-system-riscv64 "Required for make run-riscv64"
 check_tool optional timeout "Required for bounded QEMU smoke checks"
-check_tool optional grub-mkrescue "Used for bootable ISO images (no make target uses it yet)"
+check_tool optional grub-mkrescue "Used by `make iso` and `make check-x8664-iso`"
 check_tool optional xorriso "Usually required by grub-mkrescue"
 
 # rust-toolchain.toml installs the three bare-metal targets with the toolchain,
