@@ -12,6 +12,10 @@
 #                    comes up and keeps making progress.  Every other gate
 #                    runs on one CPU, where the cross-CPU paths cannot execute
 #                    at all.
+#   iso            - boot the kernel from a GRUB ISO: the one job whose boot
+#                    goes through a real loader and therefore has a Multiboot2
+#                    memory map, because QEMU's own hand-off carries none.  It
+#                    needs the GRUB tools, which no other job does.
 #   commit-message - the commit-msg hook over every PR commit
 
 name: ci
@@ -145,6 +149,39 @@ jobs:
 
       - name: Mount a volume mkntfs made
         run: make check-ntfs-image
+        env:
+          CARGO: cargo
+
+  iso:
+    # A job of its own because it needs tools the others do not: the GRUB ones
+    # (`grub-mkrescue` is Debian's/Ubuntu's `grub2-common` and `grub-pc-bin`,
+    # and it shells out to `xorriso` and `mtools`).  What it proves is the boot
+    # a real machine gives: a loader hands the kernel over on Multiboot2 —
+    # which is also the only hand-off here that carries a memory map, so the
+    # map path and the placement check that reads it are exercised by nothing
+    # else (`docs/rfcs/0019-what-a-frame-is.md`).
+    name: boot from a GRUB ISO
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "nightly-2026-08-24"
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install the loader and the emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            grub-pc-bin grub2-common xorriso mtools qemu-system-x86
+
+      - name: Boot the ISO GRUB made
+        run: make check-x8664-iso
         env:
           CARGO: cargo
 

@@ -179,7 +179,10 @@ CI runs, on every push and pull request
   every supported host: Linux, Windows and Intel macOS, with Linux arm64
   type-checking the same tree without the suite, which needs an x86_64 host;
 - the NTFS driver on a volume `mkntfs` made, because that job needs a package
-  the others do not; and
+  the others do not;
+- the kernel booted from a GRUB ISO — the one boot that goes through a real
+  loader (and therefore the one with a Multiboot2 memory map), which needs the
+  GRUB tools and the emulator; and
 - the QEMU smokes — four CPUs, the frozen payloads, the USB, NVMe, hub and
   HDA devices, and the RISC-V AIA and PCIe boots.
 
