@@ -115,10 +115,11 @@ pub(crate) fn described_memory_window() -> Option<(usize, usize)> {
 /// 0019](../../docs/rfcs/0019-what-a-frame-is.md)).  `None` is a machine that
 /// described nothing — a hand-off with no map tag — which is not the same as a
 /// machine with no memory.
-pub(crate) fn described_memory_regions() -> Option<alloc::vec::Vec<(usize, usize)>> {
+pub(crate) fn described_memory_regions() -> Option<alloc::vec::Vec<crate::arch::boot::MemoryRegion>>
+{
     #[cfg(target_arch = "x86_64")]
     {
-        crate::arch::boot::multiboot2_usable_regions()
+        crate::arch::boot::multiboot2_memory_regions()
     }
 
     #[cfg(any(
@@ -126,7 +127,16 @@ pub(crate) fn described_memory_regions() -> Option<alloc::vec::Vec<(usize, usize
         all(target_arch = "riscv64", target_os = "none")
     ))]
     {
-        described_memory_window().map(|window| alloc::vec![window])
+        described_memory_window().map(|(base, length)| {
+            alloc::vec![crate::arch::boot::MemoryRegion {
+                base,
+                length,
+                // A device tree describes the RAM it describes and says
+                // nothing about the rest: the one kind it can be is the
+                // format's available.
+                kind: crate::arch::boot::MEMORY_REGION_AVAILABLE,
+            }]
+        })
     }
 
     #[cfg(not(any(

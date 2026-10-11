@@ -1,6 +1,6 @@
 # RFC 0020: What the memory map may refuse on
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-11
 - **Supersedes:** 0019
@@ -144,8 +144,14 @@ address still refuses, and that boot was already broken.
   continues), the same image with its first byte outside every entry (refused),
   and a range overlapping a defective entry (refused).
 - **The boot**: `make check-x8664-iso` boots a loader's map on the BIOS path,
-  and the UEFI pass it is owed will be the one that covers the granular map
-  this RFC exists for.
+  and the UEFI boot this RFC exists for was run by hand — with OVMF, the same
+  ISO, and the map that used to refuse it:
+  `machine reports 1017 MiB in 20 region(s)` followed by `the kernel's image
+  [0x200000, 0x24894058) is described: 0 KiB in no entry, 0 KiB reserved`, no
+  refusal, and the boot continuing into its drivers.  What that boot does not
+  give is the *framebuffer* tag the ISO work is after: on UEFI this GRUB passes
+  none at all, and on BIOS it passes an EGA text one, so the framebuffer a
+  loader hands over is still unwitnessed.
 
 ## Unresolved questions
 

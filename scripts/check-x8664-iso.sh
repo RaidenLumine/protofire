@@ -127,7 +127,10 @@ require_log_line "[boot:loader] arch=x86_64 protocol=multiboot2"
 # check that reads it.
 require_log_line "[mem   ] machine reports "
 require_log_line " region(s); the kernel's pool is "
-require_log_line "is in usable RAM"
+# The boot says how its own image sits in the map it was given: described, and
+# how much of it the map does not name ([RFC
+# 0020](../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md)).
+require_log_line "is described:"
 require_log_absent_line "the machine described no memory map"
 require_log_absent_line "FATAL"
 
@@ -136,4 +139,4 @@ require_log_absent_line "FATAL"
 require_log_line "[user  ] loaded /apps/packages/shell/bin/shell.elf"
 
 printf 'x86_64 ISO check passed: GRUB handed over on Multiboot2, the loader'"'"'s map\n'
-printf '  was read, the kernel'"'"'s image is in usable RAM, and the shell loaded\n'
+printf '  was read, the kernel'"'"'s image is described by it, and the shell loaded\n'

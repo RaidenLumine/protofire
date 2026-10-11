@@ -32,7 +32,6 @@ const MULTIBOOT2_TAG_MMAP: u32 = 6;
 
 /// Memory-map entry type: available RAM.
 #[cfg(target_arch = "x86_64")]
-const MULTIBOOT2_MMAP_AVAILABLE: u32 = 1;
 /// The tag a loader that set a graphics mode passes.
 #[cfg(target_arch = "x86_64")]
 const MULTIBOOT2_TAG_FRAMEBUFFER: u32 = 8;
@@ -152,8 +151,37 @@ pub fn multiboot2_command_line() -> Option<String> {
     }
 }
 
-/// The machine's usable RAM, as a Multiboot2 memory map describes it: one
-/// `(base, length)` per entry whose type says the region is available.
+/// One memory region a Multiboot2 map describes.
+///
+/// The **kind** is the map's own word about the memory — the format's types —
+/// and it is kept because a correct map reserves the memory the loader loaded
+/// the image into, so "inside a region" and "inside an *available* region" are
+/// different questions ([RFC
+/// 0020](../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryRegion {
+    pub base: usize,
+    pub length: usize,
+    /// The Multiboot2 type: 1 available, 2 reserved, 3 ACPI reclaimable,
+    /// 4 preserved across hibernation, 5 defective.
+    pub kind: u32,
+}
+
+impl MemoryRegion {
+    pub const fn end(&self) -> usize {
+        self.base.saturating_add(self.length)
+    }
+}
+
+/// The format's first type: RAM free for the taking.
+pub const MEMORY_REGION_AVAILABLE: u32 = 1;
+/// Memory the firmware or the loader keeps.  A kernel image lives here.
+pub const MEMORY_REGION_RESERVED: u32 = 2;
+/// The format's worst type: memory the firmware has declared broken.
+pub const MEMORY_REGION_DEFECTIVE: u32 = 5;
+
+/// The machine's memory, as a Multiboot2 memory map describes it: one entry per
+/// range the map has, with the kind it gives it.
 ///
 /// The hand-off address is a parameter rather than a read of the global so that
 /// a test can drive this walk over a tag block it built
@@ -162,7 +190,7 @@ pub fn multiboot2_command_line() -> Option<String> {
 /// recorded.  `None` means the machine described no map at all, which is not
 /// the same as describing an empty one.
 #[cfg(target_arch = "x86_64")]
-pub fn multiboot2_usable_regions_at(addr: usize) -> Option<Vec<(usize, usize)>> {
+pub fn multiboot2_memory_regions_at(addr: usize) -> Option<Vec<MemoryRegion>> {
     if addr == 0 {
         return None;
     }
@@ -171,7 +199,7 @@ pub fn multiboot2_usable_regions_at(addr: usize) -> Option<Vec<(usize, usize)>> 
     // the loop condition bounds every later read by it.
     let total_size = unsafe { *(addr as *const u32) } as usize;
     let mut offset = 8;
-    let mut regions: Vec<(usize, usize)> = Vec::new();
+    let mut regions: Vec<MemoryRegion> = Vec::new();
 
     while offset + 8 <= total_size {
         // SAFETY: bounded by the loop condition above, as in the first pass
@@ -224,8 +252,12 @@ pub fn multiboot2_usable_regions_at(addr: usize) -> Option<Vec<(usize, usize)>> 
                 // SAFETY: as above — the type word of the same entry.
                 let entry_type = unsafe { *((addr + entry_off + 16) as *const u32) };
 
-                if entry_type == MULTIBOOT2_MMAP_AVAILABLE && length > 0 {
-                    regions.push((base as usize, length as usize));
+                if length > 0 {
+                    regions.push(MemoryRegion {
+                        base: base as usize,
+                        length: length as usize,
+                        kind: entry_type,
+                    });
                 }
 
                 entry_off += entry_size;
@@ -332,10 +364,24 @@ pub fn multiboot2_framebuffer() -> Option<LoaderFramebuffer> {
     multiboot2_framebuffer_at(handoff_address())
 }
 
-/// The machine's usable RAM, from the block the loader handed over.
+/// The memory regions a Multiboot2 map describes, from the block the loader
+/// handed over.
 #[cfg(target_arch = "x86_64")]
-pub fn multiboot2_usable_regions() -> Option<Vec<(usize, usize)>> {
-    multiboot2_usable_regions_at(handoff_address())
+pub fn multiboot2_memory_regions() -> Option<Vec<MemoryRegion>> {
+    multiboot2_memory_regions_at(handoff_address())
+}
+
+/// The RAM a map calls available, in bytes.
+///
+/// This is the number the boot reports as the machine's own; everything else a
+/// map describes is memory that is not free for the taking, which is why the
+/// regions above carry their kind rather than being filtered here.
+#[cfg(target_arch = "x86_64")]
+pub fn available_bytes(regions: &[MemoryRegion]) -> usize {
+    regions
+        .iter()
+        .filter(|region| region.kind == MEMORY_REGION_AVAILABLE)
+        .fold(0usize, |total, region| total.saturating_add(region.length))
 }
 
 /// Parse the Multiboot2 memory-map tag and return total usable RAM in bytes.
@@ -344,12 +390,8 @@ pub fn multiboot2_usable_regions() -> Option<Vec<(usize, usize)>> {
 /// if no memory-map tag is present or the hand-off address is not set.
 #[cfg(target_arch = "x86_64")]
 pub fn multiboot2_memory_map() -> Option<usize> {
-    let regions = multiboot2_usable_regions()?;
-    Some(
-        regions
-            .iter()
-            .fold(0usize, |total, (_, length)| total.saturating_add(*length)),
-    )
+    let regions = multiboot2_memory_regions()?;
+    Some(available_bytes(&regions))
 }
 
 /// Extract the `init=<path>` value from a kernel command line.
@@ -495,11 +537,19 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     use alloc::vec::Vec;
 
+    #[cfg(target_arch = "x86_64")]
+    use super::available_bytes;
     use super::current_architecture;
     #[cfg(target_arch = "x86_64")]
-    use super::multiboot2_usable_regions_at;
+    use super::multiboot2_memory_regions_at;
     use super::BootInfo;
     use super::BootProtocol;
+    #[cfg(target_arch = "x86_64")]
+    use super::MemoryRegion;
+    #[cfg(target_arch = "x86_64")]
+    use super::MEMORY_REGION_AVAILABLE;
+    #[cfg(target_arch = "x86_64")]
+    use super::MEMORY_REGION_RESERVED;
 
     #[test]
     fn boot_protocol_labels_are_stable() {
@@ -557,13 +607,35 @@ mod tests {
         block.extend_from_slice(&8_u32.to_le_bytes());
 
         let at = block.as_ptr() as usize;
+        let regions = multiboot2_memory_regions_at(at).expect("a map");
         assert_eq!(
-            multiboot2_usable_regions_at(at),
-            Some(vec![(0x1000, 0x9_f000), (0x10_0000, 0x1000_0000)]),
-            "the reserved entry is not a region to place a kernel in"
+            regions,
+            vec![
+                MemoryRegion {
+                    base: 0x1000,
+                    length: 0x9_f000,
+                    kind: MEMORY_REGION_AVAILABLE,
+                },
+                MemoryRegion {
+                    base: 0x10_0000,
+                    length: 0x1000_0000,
+                    kind: MEMORY_REGION_AVAILABLE,
+                },
+                MemoryRegion {
+                    base: 0x2000_0000,
+                    length: 0x1000,
+                    kind: MEMORY_REGION_RESERVED,
+                },
+            ],
+            "every entry the map has, with the kind it gives it"
         );
         assert_eq!(
-            multiboot2_usable_regions_at(0),
+            available_bytes(&regions),
+            0x9_f000 + 0x1000_0000,
+            "only the available entry counts as the machine's RAM"
+        );
+        assert_eq!(
+            multiboot2_memory_regions_at(0),
             None,
             "no hand-off address is no map, which is not an empty one"
         );
@@ -577,6 +649,6 @@ mod tests {
         let mut block: Vec<u8> = Vec::new();
         block.extend_from_slice(&8_u32.to_le_bytes());
         let at = block.as_ptr() as usize;
-        assert_eq!(multiboot2_usable_regions_at(at), None);
+        assert_eq!(multiboot2_memory_regions_at(at), None);
     }
 }

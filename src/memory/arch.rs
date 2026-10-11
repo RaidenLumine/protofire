@@ -4,6 +4,10 @@
 //! install/unmap, memory detection, and bootstrap/prepared/planned translation
 //! probes.  These are thin wrappers around arch-specific MMU primitives.
 
+use crate::arch::boot::MemoryRegion;
+use crate::arch::boot::MEMORY_REGION_AVAILABLE;
+use crate::arch::boot::MEMORY_REGION_DEFECTIVE;
+use crate::arch::boot::MEMORY_REGION_RESERVED;
 use alloc::vec::Vec;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
@@ -55,53 +59,102 @@ pub fn detected_memory() -> Option<usize> {
 ///
 /// `None` means the machine described nothing (a bare hand-off with no map
 /// tag, or a host build), which is not the same as describing no usable RAM.
-pub fn record_machine_memory() -> Option<Vec<(usize, usize)>> {
+pub fn record_machine_memory() -> Option<Vec<MemoryRegion>> {
     // Which machine is running, and how it describes its memory, is the
     // architecture's answer rather than this layer's.
     let regions = crate::arch::platform::described_memory_regions()?;
+    // The number the boot reports as the machine's is the RAM it calls
+    // available; the regions keep every kind, because the checks below need to
+    // tell "reserved by the loader that put us here" from "defective".
     let total = regions
         .iter()
-        .fold(0usize, |total, (_, length)| total.saturating_add(*length));
+        .filter(|region| region.kind == MEMORY_REGION_AVAILABLE)
+        .fold(0usize, |total, region| total.saturating_add(region.length));
     store_detected_memory(total);
     Some(regions)
 }
 
-/// Whether `range` lies inside one of the regions the machine called usable.
+// The checks below only run on a machine: a host build's "image" is a test
+// binary.  The host tests drive them directly, which is the one place a host
+// asks them.
+
+/// Whether the map **describes** where `range` is.
 ///
-/// This is the check a loader cannot make for itself: the loader is free to
-/// place the kernel anywhere, and a kernel whose own memory is a region the
-/// firmware withheld is a kernel that corrupts whatever that region belongs to.
-// The check below only runs on a machine: a host build's "image" is a test
-// binary.  The host test drives it directly, which is the one place the
-// predicate is asked on a host.
+/// The question is not "is this memory free" — a loader reserves exactly the
+/// memory it loaded the image into, so the answer to that is always no — but
+/// "does the map name the address at all".  A map silent about the address the
+/// kernel is running from is a map this kernel cannot trust about anything else
+/// ([RFC 0020](../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md)).
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
-pub fn range_is_in_usable_memory(range: (usize, usize), regions: &[(usize, usize)]) -> bool {
+pub fn range_is_described(range: (usize, usize), regions: &[MemoryRegion]) -> bool {
     let (start, end) = range;
     if end <= start {
         return false;
     }
+    let describes = |address: usize| {
+        regions
+            .iter()
+            .any(|region| region.base <= address && address < region.end())
+    };
+    // The first byte and the last: what lies between them may be holes, which
+    // are the loader's own reservations rather than a failure to describe us.
+    describes(start) && describes(end - 1)
+}
 
-    // The range is walked from its start, and every step has to land inside
-    // some region — **pieces may come from different regions**, because a
-    // machine's map is granular: a real UEFI boot describes RAM in several
-    // entries, and a kernel image is one range that spans them.  Asking one
-    // region to contain the whole range is what refused a perfectly good EFI
-    // boot, on a map whose regions were each smaller than the image.
+/// Whether any byte of `range` lands in memory the map calls **defective**.
+///
+/// This is the one kind that is a refusal rather than a report: the firmware
+/// has already said those pages are broken, and a kernel whose `.bss` runs into
+/// them is broken in a way no later symptom would name as clearly.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+pub fn range_touches_defective_memory(range: (usize, usize), regions: &[MemoryRegion]) -> bool {
+    let (start, end) = range;
+    if end <= start {
+        return false;
+    }
+    regions.iter().any(|region| {
+        region.kind == MEMORY_REGION_DEFECTIVE && region.base < end && start < region.end()
+    })
+}
+
+/// The number of bytes of `range` no region describes, and the number it calls
+/// reserved.
+///
+/// Both are reported rather than refused: a loader reserves the memory it
+/// loaded the kernel into, so this is what memory the kernel runs from looks
+/// like from outside.
+// Called from the check that only runs on a machine; the host tests drive the
+// two questions themselves.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+fn undescribed_and_reserved_bytes(
+    range: (usize, usize),
+    regions: &[MemoryRegion],
+) -> (usize, usize) {
+    let (start, end) = range;
+    let mut undescribed = 0usize;
+    let mut reserved = 0usize;
     let mut at = start;
     while at < end {
-        let mut progressed = false;
-        for (base, length) in regions {
-            let region_end = base.saturating_add(*length);
-            if *base <= at && at < region_end {
-                at = region_end.min(end);
-                progressed = true;
+        let covering = regions
+            .iter()
+            .filter(|region| region.base <= at && at < region.end())
+            .max_by_key(|region| region.end());
+        match covering {
+            Some(region) => {
+                let next = region.end().min(end);
+                if region.kind == MEMORY_REGION_RESERVED {
+                    reserved = reserved.saturating_add(next - at);
+                }
+                at = next;
+            }
+            None => {
+                let step = crate::memory::paging::PAGE_SIZE.min(end - at);
+                undescribed = undescribed.saturating_add(step);
+                at += step;
             }
         }
-        if !progressed {
-            return false;
-        }
     }
-    true
+    (undescribed, reserved)
 }
 
 /// The kernel's own image, as the linker placed it.
@@ -186,27 +239,43 @@ pub fn report_machine_memory() {
 
         if let Some(regions) = &regions {
             let image = kernel_image_range();
-            if range_is_in_usable_memory(image, regions) {
+            if range_touches_defective_memory(image, regions) {
                 crate::println!(
-                    "[mem   ] the kernel's image [{:#x}, {:#x}) is in usable RAM",
+                    "[mem   ] FATAL: the kernel's image [{:#x}, {:#x}) overlaps memory the machine calls defective",
                     image.0,
                     image.1
                 );
-            } else {
+                panic!("the kernel was loaded into defective memory");
+            }
+            if !range_is_described(image, regions) {
                 crate::println!(
-                    "[mem   ] FATAL: the kernel's image [{:#x}, {:#x}) is in no region the machine calls usable",
+                    "[mem   ] FATAL: the kernel's image [{:#x}, {:#x}) is in no region the machine describes",
                     image.0,
                     image.1
                 );
-                for (base, length) in regions {
+                for region in regions {
                     crate::println!(
-                        "[mem   ]   the machine offered [{:#x}, {:#x})",
-                        base,
-                        base + length
+                        "[mem   ]   the machine offered [{:#x}, {:#x}) kind {}",
+                        region.base,
+                        region.end(),
+                        region.kind
                     );
                 }
-                panic!("the kernel was loaded outside the machine's usable memory");
+                panic!("the kernel was loaded where the machine describes no memory");
             }
+
+            // Reported rather than refused: a loader reserves the memory it
+            // loaded the kernel into, so holes and reserved ranges inside the
+            // image are what a *correct* map looks like ([RFC
+            // 0020](../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md)).
+            let (undescribed, reserved) = undescribed_and_reserved_bytes(image, regions);
+            crate::println!(
+                "[mem   ] the kernel's image [{:#x}, {:#x}) is described: {} KiB in no entry, {} KiB reserved",
+                image.0,
+                image.1,
+                undescribed / 1024,
+                reserved / 1024
+            );
         }
     }
 }
@@ -355,58 +424,54 @@ pub(crate) fn check_kernel_map_coverage() {
 
 #[cfg(test)]
 mod tests {
-    use super::range_is_in_usable_memory;
+    use super::range_is_described;
+    use super::range_touches_defective_memory;
+    use crate::arch::boot::MemoryRegion;
+    use crate::arch::boot::MEMORY_REGION_AVAILABLE;
+    use crate::arch::boot::MEMORY_REGION_DEFECTIVE;
+    use crate::arch::boot::MEMORY_REGION_RESERVED;
 
-    /// The check a loader cannot make for itself, in its three shapes: inside a
-    /// region the machine called usable, outside every one of them, and a
-    /// question with no regions to answer it.
-    #[test]
-    fn the_placement_check_answers_in_usable_memory_or_not() {
-        let regions = [(0x1000_usize, 0x1000_0000_usize)];
-        let region_end = 0x1000 + 0x1000_0000;
-
-        assert!(range_is_in_usable_memory((0x2000, 0x3000), &regions));
-        assert!(
-            range_is_in_usable_memory((0x1000, region_end), &regions),
-            "a range that ends exactly where the region does is inside it"
-        );
-        assert!(
-            !range_is_in_usable_memory((0x2000, region_end + 1), &regions),
-            "one byte past the region is outside it"
-        );
-        assert!(!range_is_in_usable_memory((0x500, 0x2000), &regions));
-        assert!(!range_is_in_usable_memory((0x2000, 0x2000), &regions));
-        assert!(!range_is_in_usable_memory((0x2000, 0x3000), &[]));
+    fn region(base: usize, length: usize, kind: u32) -> MemoryRegion {
+        MemoryRegion { base, length, kind }
     }
 
-    /// A range that spans several regions is in usable memory when the pieces
-    /// join up, and is not when there is a gap between them.
-    ///
-    /// This is the shape a real UEFI boot describes: the machine's RAM in
-    /// several entries, and one kernel image across them
-    /// ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+    /// The two questions a boot asks about its own placement, over the map a
+    /// real UEFI boot produced ([RFC
+    /// 0020](../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md)): the
+    /// image is **described** — the loader reserved the memory it put it in,
+    /// which is a correct map rather than a failure — and it is not in
+    /// defective memory.
     #[test]
-    fn a_range_spanning_regions_is_covered_piece_by_piece() {
-        // The image one EFI boot refused: 2 MiB up to 570 MiB, over a map
-        // whose usable regions are 1 MiB, 7 MiB and then the rest.
-        let image = (0x20_0000_usize, 0x24_895a10_usize);
-        let usable = [
-            (0x100000_usize, 0x700000_usize),
-            (0x800000_usize, 0x24_100000_usize),
+    fn a_loader_reserved_image_is_described_rather_than_refused() {
+        // Seven entries, the shape OVMF described: the payload's own range
+        // marked reserved, and holes between the firmware's regions.
+        let regions = [
+            region(0x0, 0xa_0000, MEMORY_REGION_AVAILABLE),
+            region(0x10_0000, 0x700000, MEMORY_REGION_RESERVED),
+            region(0x80_8000, 0x3000, MEMORY_REGION_RESERVED),
+            region(0x90_0000, 0x3e_43f000, MEMORY_REGION_AVAILABLE),
         ];
-        assert!(range_is_in_usable_memory(image, &usable));
+        let image = (0x20_0000, 0x24_895a10);
 
-        // The same range over a map with a hole in the middle of it.
-        let holed = [
-            (0x100000_usize, 0x700000_usize),
-            (0x900000_usize, 0x24_100000_usize),
-        ];
-        assert!(!range_is_in_usable_memory(image, &holed));
+        assert!(range_is_described(image, &regions));
+        assert!(!range_is_described((0x60_0000, 0x70_0000), &[]));
+        assert!(
+            !range_is_described((0x81_5000, 0x81_6000), &regions),
+            "an address the map says nothing about is not described: 0x814000 to 0x900000 is a hole on this boot"
+        );
+        assert!(!range_touches_defective_memory(image, &regions));
 
-        // A single byte in the hole is enough to refuse.
-        assert!(!range_is_in_usable_memory((0x800000, 0x800001), &holed));
-        // And regions may be given in any order.
-        let reversed = [(usable[1].0, usable[1].1), (usable[0].0, usable[0].1)];
-        assert!(range_is_in_usable_memory(image, &reversed));
+        // The same image, one of its pages declared broken.
+        let mut defective = regions.to_vec();
+        defective.push(region(0x20_0000, 0x1000, MEMORY_REGION_DEFECTIVE));
+        assert!(range_touches_defective_memory(image, &defective));
+        assert!(
+            !range_touches_defective_memory((0x20_0000, 0x20_0000), &defective),
+            "an empty range touches nothing"
+        );
+        assert!(
+            !range_touches_defective_memory((0x30_0000, 0x40_0000), &defective),
+            "a range past the defective page does not touch it"
+        );
     }
 }
