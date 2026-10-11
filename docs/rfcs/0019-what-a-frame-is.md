@@ -1,9 +1,10 @@
 # RFC 0019: Make a frame an address in the kernel's own memory
 
-- **Status:** Accepted
+- **Status:** Superseded
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-11
 - **Supersedes:** none
+- **Superseded by:** [0020](0020-what-the-memory-map-may-refuse-on.md) (its placement check asked a question a correct memory map can never answer; everything else it decided stands)
 
 ## Summary
 
