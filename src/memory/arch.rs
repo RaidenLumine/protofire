@@ -215,6 +215,15 @@ pub fn report_machine_memory() {
         );
     }
 
+    // Where the pool *is*, because that is the address every frame the kernel
+    // hands out is measured from — and because a boot that moves it is a boot
+    // whose behaviour is worth being able to compare ([RFC
+    // 0020](../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md) found
+    // that moving it stalls the boot, and this line is how the two builds are
+    // told apart).
+    let (pool_start, pool_end) = crate::memory::frame::pool_range();
+    crate::println!("[mem   ] the pool is [{:#x}, {:#x})", pool_start, pool_end);
+
     // The answer is a machine's; a host build asks it and does not enforce it.
     let pool_addressable = pool_is_addressable_by_a_device();
 
