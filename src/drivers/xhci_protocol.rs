@@ -368,6 +368,61 @@ impl SetupPacket {
     }
 }
 
+/// A hub's class descriptor, as the hub reports it, with the fields a driver
+/// acts on read out.
+///
+/// The descriptor is **variable-length** — seven bytes plus two per port — and
+/// the two fields beyond the port count are why it is parsed rather than
+/// indexed: whether power is switched per port, and `bPwrOn2PwrGood`, how long
+/// a hub may take to bring a port up after its power is switched on.  QEMU's
+/// hub answers zero for the second and comes up at once, which is why a driver
+/// that read a port's status immediately worked there and would not on a hub
+/// that is not QEMU's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HubDescriptor {
+    /// `bNbrPorts`: how many downstream ports the hub has.
+    pub ports: u8,
+    /// Whether the hub switches power **per port** rather than ganging it.
+    ///
+    /// The low two bits of `wHubCharacteristics`: 0 is ganged, 1 per port, 2
+    /// is reserved and used by hubs in the field to mean per port, 3 is per
+    /// port with over-current reporting.  Everything but ganged switches.
+    pub per_port_power: bool,
+    /// `bPwrOn2PwrGood`, in the units the field is written in: **2 ms each**.
+    pub power_on_delay_units: u8,
+    /// `bHubContrCurrent`, in milliamps.
+    pub max_current_ma: u8,
+}
+
+impl HubDescriptor {
+    /// Read the descriptor's bytes, or `None` when this is not a hub's.
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
+        // Seven bytes is the descriptor's fixed part: length, type, ports, the
+        // characteristics, the power-on delay and the current it draws.  The
+        // per-port entries after them are the ports' own power masks, which
+        // this kernel asks the hub about one port at a time instead.
+        if bytes.len() < 7 {
+            return None;
+        }
+        let ports = bytes[2];
+        if ports == 0 {
+            return None;
+        }
+        let characteristics = u16::from_le_bytes([bytes[3], bytes[4]]);
+        Some(Self {
+            ports,
+            per_port_power: characteristics & 0x0003 != 0,
+            power_on_delay_units: bytes[5],
+            max_current_ma: bytes[6],
+        })
+    }
+
+    /// How long a port may take to come up, in milliseconds.
+    pub const fn power_on_delay_ms(self) -> u32 {
+        (self.power_on_delay_units as u32) * 2
+    }
+}
+
 // ---------------------------------------------------------------------------
 // TRB and data structures
 // ---------------------------------------------------------------------------
@@ -750,6 +805,54 @@ mod tests {
         // A release with nothing outstanding is a no-op, not an underflow.
         room.release(99);
         assert_eq!(room.outstanding(), 0);
+    }
+
+    /// The hub descriptor, in the two shapes that decide what a driver does: a
+    /// hub that comes up at once with its ports' power ganged (what QEMU's
+    /// answers), and a hub that switches power per port and needs time — which
+    /// is every hub a real machine has, and the shape a driver that read a port
+    /// immediately was never asked about.
+    #[test]
+    fn a_hub_descriptor_answers_the_fields_a_driver_acts_on() {
+        // QEMU's: eight bytes, ganged power, no delay.
+        let qemu = [0x09, 0x29, 0x08, 0x00, 0x00, 0x00, 0x00, 0xff];
+        let parsed = HubDescriptor::parse(&qemu).expect("a hub");
+        assert_eq!(parsed.ports, 8);
+        assert!(!parsed.per_port_power, "the low bits say ganged");
+        assert_eq!(parsed.power_on_delay_units, 0);
+        assert_eq!(parsed.power_on_delay_ms(), 0);
+
+        // A seven-port hub that switches power per port and takes 100 ms: the
+        // descriptor is 7 + 2 * 7 = 21 bytes, and the driver reads the fields
+        // the same way whatever the length is.
+        let mut real = alloc::vec![0u8; 21];
+        real[0] = 0x09;
+        real[1] = 0x29;
+        real[2] = 7;
+        real[3] = 0x01; // per-port power switching
+        real[4] = 0x00;
+        real[5] = 50; // 50 * 2 ms
+        real[6] = 100; // 100 mA
+        let parsed = HubDescriptor::parse(&real).expect("a hub");
+        assert_eq!(parsed.ports, 7);
+        assert!(parsed.per_port_power);
+        assert_eq!(parsed.power_on_delay_ms(), 100);
+        assert_eq!(parsed.max_current_ma, 100);
+
+        // The reserved-but-used mode means per port too, and the truncated and
+        // portless shapes are not a hub's descriptor at all.
+        let mut reserved = real.clone();
+        reserved[3] = 0x02;
+        assert!(
+            HubDescriptor::parse(&reserved)
+                .expect("a hub")
+                .per_port_power
+        );
+        assert_eq!(HubDescriptor::parse(&[0x09, 0x29, 0x04]), None);
+        assert_eq!(
+            HubDescriptor::parse(&[0x09, 0x29, 0x00, 0x00, 0x00, 0x00, 0x00]),
+            None
+        );
     }
 
     #[test]

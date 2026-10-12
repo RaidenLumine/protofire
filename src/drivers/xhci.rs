@@ -39,6 +39,19 @@ const PORT_CONNECT_SETTLE_SPINS: usize = 100_000;
 /// How many times to ask a hub whether a port's reset has finished.
 const HUB_PORT_RESET_SPINS: usize = 100_000;
 
+/// How many port reads a hub gets per unit of `bPwrOn2PwrGood` — one unit is
+/// 2 ms — while a port it has just powered comes up.
+///
+/// A **budget, not a measurement**: each read is a control transfer on the
+/// hub's own EP0, so the wait is spun out on the CPU and the hub is asked
+/// **once per unit** rather than thousands of times: a real hub that takes
+/// 100 ms to bring a port up costs one read per 2 ms, and a port with nothing
+/// on it costs the same wait and the same reads.  A **budget, not a
+/// measurement** — a timer-based wait is what would replace it — but a
+/// generous one, because waiting is a slower boot and not waiting is a device
+/// that is never seen.
+const HUB_POWER_ON_SPIN_LOOPS_PER_UNIT: usize = 200_000;
+
 /// How many times to ask the controller whether a root port's reset has
 /// finished.
 const PORT_RESET_SPINS: usize = 100_000;
@@ -60,8 +73,9 @@ struct HubState {
     root_port: u8,
     /// The route string the hub itself was found at.
     route: u32,
-    /// How many downstream ports it reports.
-    ports: u8,
+    /// What the hub described about itself: its ports, whether it switches
+    /// power per port, and how long a port may take to come up.
+    descriptor: HubDescriptor,
     /// The status-change interrupt IN endpoint, as the HID devices configure
     /// theirs — the reports differ, the ring does not.
     ep: HidEndpointInfo,
@@ -71,9 +85,6 @@ struct HubState {
     ///
     /// `wHubCharacteristics`' low two bits say how it does it, and a hub that
     /// switches all of its ports together — or none — is not asked to power
-    /// them individually: a class request a hub does not implement is answered
-    /// with a stall, and a stall halts the endpoint it arrived on.
-    per_port_power: bool,
     /// A completed report that has not been run yet.
     ///
     /// A report leads to *requests* — a port status read, a reset, an
@@ -2247,28 +2258,36 @@ impl XhciController {
                 println!("[xhci  ] hub at slot {}: no hub descriptor", slot_id);
                 return;
             }
-            // bNbrPorts is the third byte of the hub descriptor, and
-            // wHubCharacteristics follows it: its low two bits are the power
-            // switching mode, and only the individual-port modes (1 and 3, and
-            // the reserved 2 that hubs in the field use for "switched") are
-            // told to power a port.
-            let ports = descriptor[2];
-            let characteristics = u16::from_le_bytes([descriptor[3], descriptor[4]]);
-            let per_port_power = characteristics & 0x0003 != 0;
+            let Some(descriptor) = HubDescriptor::parse(&descriptor) else {
+                println!(
+                    "[xhci  ] hub at slot {}: no ports in its descriptor",
+                    slot_id
+                );
+                return;
+            };
             println!(
-                "[xhci  ] hub at slot {}: {} downstream port(s), route {:#x}",
-                slot_id, ports, route
+                "[xhci  ] hub at slot {}: {} downstream port(s), route {:#x}{}",
+                slot_id,
+                descriptor.ports,
+                route,
+                if descriptor.power_on_delay_units == 0 {
+                    alloc::string::String::new()
+                } else {
+                    alloc::format!(
+                        ", ports up {} ms after their power comes on",
+                        descriptor.power_on_delay_ms()
+                    )
+                }
             );
 
             // The status-change endpoint comes first, so the changes this pass
             // produces already have somewhere to be reported.
-            if let Some(state) =
-                self.configure_hub_endpoint(slot_id, root_port, route, ports, per_port_power)
+            if let Some(state) = self.configure_hub_endpoint(slot_id, root_port, route, descriptor)
             {
                 self.hubs.push(state);
             }
 
-            self.scan_hub_ports(slot_id, root_port, route, ports, per_port_power);
+            self.scan_hub_ports(slot_id, root_port, route, descriptor);
         }
     }
 
@@ -2287,8 +2306,7 @@ impl XhciController {
         slot_id: u8,
         root_port: u8,
         route: u32,
-        ports: u8,
-        per_port_power: bool,
+        descriptor: HubDescriptor,
     ) -> Option<HubState> {
         use crate::drivers::usb_hid;
 
@@ -2339,10 +2357,9 @@ impl XhciController {
                 slot_id,
                 root_port,
                 route,
-                ports,
+                descriptor,
                 ep,
                 report_buf,
-                per_port_power,
                 pending: None,
             };
             self.arm_hid_read(
@@ -2354,7 +2371,7 @@ impl XhciController {
             .ok()?;
             println!(
                 "[xhci  ] hub at slot {}: status-change endpoint watching {} port(s)",
-                slot_id, ports
+                slot_id, descriptor.ports
             );
             Some(state)
         }
@@ -2370,15 +2387,14 @@ impl XhciController {
         slot_id: u8,
         root_port: u8,
         route: u32,
-        ports: u8,
-        per_port_power: bool,
+        descriptor: HubDescriptor,
     ) {
-        for port in 1..=ports {
+        for port in 1..=descriptor.ports {
             // SAFETY: the hub is on a slot this controller addressed, and
             // every request for its port goes out through this controller's
             // own EP0 ring.
             unsafe {
-                self.bring_up_hub_port(slot_id, root_port, route, port, per_port_power);
+                self.bring_up_hub_port(slot_id, root_port, route, port, descriptor);
             }
         }
     }
@@ -2400,7 +2416,7 @@ impl XhciController {
         root_port: u8,
         route: u32,
         port: u8,
-        per_port_power: bool,
+        descriptor: HubDescriptor,
     ) {
         // SAFETY: as `configure_hub` — the hub's own port requests, through
         // this controller's own EP0 ring.
@@ -2408,7 +2424,7 @@ impl XhciController {
             // Power first, where the hub switches power per port: a port that
             // is off reports nothing else, and a hub that switches all of its
             // ports together has already powered this one.
-            if per_port_power {
+            if descriptor.per_port_power {
                 let _ = self.control_transfer(
                     slot_id,
                     &SetupPacket::hub_set_port_feature(port, HUB_PORT_POWER),
@@ -2416,7 +2432,26 @@ impl XhciController {
                     false,
                 );
             }
-            let Some(status) = self.hub_port_status(slot_id, port) else {
+            // A hub that has just switched a port's power on does not report
+            // the device for `bPwrOn2PwrGood`, and a port read before then says
+            // "nothing here" — which is how a device behind a real hub would be
+            // skipped.  QEMU's hub answers zero for that field and comes up at
+            // once, so the single read this used to do was right there and
+            // wrong for a hub that is not QEMU's.
+            let mut status = self.hub_port_status(slot_id, port);
+            for _ in 0..descriptor.power_on_delay_units {
+                let Some(value) = status else { break };
+                if value & u32::from(HUB_PORT_STATUS_CONNECTION) != 0 {
+                    break;
+                }
+                // One unit of the hub's own estimate, spent on the CPU rather
+                // than on its control endpoint.
+                for _ in 0..HUB_POWER_ON_SPIN_LOOPS_PER_UNIT {
+                    core::hint::spin_loop();
+                }
+                status = self.hub_port_status(slot_id, port);
+            }
+            let Some(status) = status else {
                 return;
             };
             if status & u32::from(HUB_PORT_STATUS_CONNECTION) == 0 {
@@ -2531,7 +2566,7 @@ impl XhciController {
                 let transferred = hub.ep.report_len.saturating_sub(residual as usize);
                 let len = core::cmp::min(transferred, report.len());
                 core::ptr::copy_nonoverlapping(hub.report_buf.as_ptr(), report.as_mut_ptr(), len);
-                (hub.root_port, hub.route, hub.ports, len)
+                (hub.root_port, hub.route, hub.descriptor.ports, len)
             };
 
             for (byte, bits) in report.iter().enumerate().take(transferred) {
@@ -2606,10 +2641,19 @@ impl XhciController {
     ) -> bool {
         // SAFETY: as `configure_hub` — the hub's own port requests.
         unsafe {
-            let per_port_power = self
+            // A hub the watch list does not know: the port work below asks
+            // only whether power is switched per port and how long a port may
+            // take to come up, and "neither" is what the driver assumed before
+            // it kept descriptors at all.
+            let descriptor = self
                 .hub_index(slot_id)
-                .map(|index| self.hubs[index].per_port_power)
-                .unwrap_or(false);
+                .map(|index| self.hubs[index].descriptor)
+                .unwrap_or(HubDescriptor {
+                    ports: 0,
+                    per_port_power: false,
+                    power_on_delay_units: 0,
+                    max_current_ma: 0,
+                });
             let Some(status) = self.hub_port_status(slot_id, port) else {
                 return false;
             };
@@ -2618,7 +2662,7 @@ impl XhciController {
 
             if change & (1 << (HUB_C_PORT_CONNECTION - 16)) != 0 {
                 if state & HUB_PORT_STATUS_CONNECTION != 0 {
-                    self.bring_up_hub_port(slot_id, root_port, route, port, per_port_power);
+                    self.bring_up_hub_port(slot_id, root_port, route, port, descriptor);
                 } else {
                     // Everything behind this port, not just the device on it:
                     // a hub that leaves takes its children's slots with it.
