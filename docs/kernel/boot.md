@@ -62,6 +62,16 @@ loader's magic, and the hand-off address.  The hand-off address is stored where
 later stages can find it — ACPI table access and AP bring-up both need a
 pointer the bootloader chose.
 
+**Only a Multiboot2 block is one.**  The PC's two hand-offs arrive through the
+same entry symbol, and their blocks are not the same thing: GRUB leaves the
+Multiboot2 magic and a tag block, while a direct QEMU boot leaves a pointer to
+Xen's `start_info`, whose fields are not tags.  The magic decides, and a boot
+whose magic is not Multiboot2 records **no** hand-off address — so every reader
+of a tag (the memory map, the command line, the framebuffer, ACPI's RSDP
+lookup) answers "there is none" rather than reading a struct that merely looks
+like one.  A framebuffer read out of the wrong block is a range mapped and
+drawn on that was never a display.
+
 ## The Rust entry
 
 `src/arch/entry.rs` holds the three `kernel_entry*` functions and the one

@@ -49,12 +49,13 @@ machine.
 ## Current state
 
 - `src/memory/arch.rs`: `record_machine_memory`, `range_is_in_usable_memory`
-  (which now walks a range piecewise across regions, because a granular map
-  cannot contain it in one), `report_machine_memory`, and the two checks it
-  makes before the memory manager is built.
+  (a range walked piecewise across regions, because a granular map cannot
+  contain it in one), `report_machine_memory`, and the two checks it makes
+  before the memory manager is built.
 - `src/arch/boot.rs`: `multiboot2_usable_regions_at` collects entries whose
   **type is 1** — available — and drops the type with them, so the check cannot
-  tell "reserved by the loader" from "defective".
+  tell "reserved by the loader" from "defective" ([RFC
+  0019](0019-what-a-frame-is.md)'s walk, as it landed).
 - `src/arch/platform.rs`: `described_memory_regions`, which answers the same
   shape for a device tree's single `/memory` window.
 - The image's range is the linker's own symbols
@@ -138,158 +139,58 @@ address still refuses, and that boot was already broken.
 
 - **The types survive the walk**: the Multiboot2 parser's test asserts the
   region list for a map with an available entry, a reserved one and a defective
-  one — the three that decide the two questions.
-- **The questions, on the map that found this**: the seven-entry OVMF map of
-  the boot above, as a fixture — the image described but not available (the boot
+  one — the three kinds the two questions turn on.
+- **The questions, on the map that found this**: the OVMF map of the boot below,
+  as a fixture — an image the map describes but does not call available (the boot
   continues), the same image with its first byte outside every entry (refused),
   and a range overlapping a defective entry (refused).
-- **The boot**: `make check-x8664-iso` boots a loader's map on the BIOS path,
-  and the UEFI boot this RFC exists for was run by hand — with OVMF, the same
-  ISO, and the map that used to refuse it:
-  `machine reports 1017 MiB in 20 region(s)` followed by `the kernel's image
-  [0x200000, 0x24894058) is described: 0 KiB in no entry, 0 KiB reserved`, no
-  refusal, and the boot continuing into its drivers.  What that boot does not
-  give is the *framebuffer* tag the ISO work is after: on UEFI this GRUB passes
-  none at all, and on BIOS it passes an EGA text one, so the framebuffer a
-  loader hands over is still unwitnessed.
+- **The boot that has a map at all**: `make check-x8664-iso` boots the image
+  through BIOS *and* through OVMF, requiring the loader's hand-off, the
+  machine's own map, the image described in it, no refusal, and the shell.  The
+  UEFI half is the map this RFC exists for: a granular one, whose payload the
+  map calls **reserved**, which is what the refused boot taught.
+
+**What that pass found, and fixed.**  Two defects, both of which only a second
+firmware could have shown:
+
+- The kernel **wrote a page its own plan had made read-only**.  The free-PCID
+  bitmap was an all-zero array of `u64` — immutable data, so the compiler placed
+  it in `.rodata` — and the PCID path wrote it through a pointer cast to
+  `&AtomicU64`.  It is an array of `AtomicU64` now: writable storage, with no
+  cast and no `unsafe` between the storage and its use.
+- Underneath it, a **hang**.  The bitmap search skipped the bits it must not
+  hand out (PCID 0 belongs to the kernel) while its compare-exchange still
+  expected the *masked* word, so it could never succeed: a spin with interrupts
+  off.  The timer tick stopped with it, the console's serial bridge lives in the
+  tick, and typed input stopped reaching the shell — which is what made
+  `make check-x8664-runtime` red.  The compare-exchange expects the value that is
+  in memory now, the search's own half is a pure function with a test, and that
+  gate runs in CI.
+
+**Four explanations the search refuted**, each by measurement rather than
+argument: the pool moving, the bitmap overlapping the pool, a stale KASLR
+relocation list, and `.bss` being handed over non-zero.  They are worth not
+repeating, and this paragraph is where they are named rather than the design.
 
 ## Unresolved questions
 
-- **A UEFI pass for the ISO check, and the two things it found**: the pass was
-  written, run, and *not* kept, because it does not pass — and what it found is
-  worth more than the pass.  The first was a write into read-only memory, and
-  it is fixed:
-
-  ```
-  [FATAL] page fault addr=0x00000000004ed388 access=write reason=protection-violation
-          prepared_perms=r-- plan=kernel-rodata
-          rip=0x000000000046d596
-  ```
-
-  and both addresses named the same thing: the instruction was
-  `core::sync::atomic::atomic_or`, the address was
-  `protofire::arch::x86_64::paging::pcid::PCID_BITMAP_STORE`.  That static was an
-  all-zero array of `u64`, which is immutable data — so the compiler placed it in
-  `.rodata`, where `nm` marked it `r` — and the PCID path wrote it through a
-  pointer cast to `&AtomicU64`.  It is an array of `AtomicU64` now: read-write
-  storage (`.bss`), with no cast and no `unsafe` between the storage and its
-  use.  The UEFI boot gets past the point it faulted at, further than it had
-  ever gone, and the BIOS boot is unchanged.
-- **What the UEFI pass found, and what it cost**: the pass was written, run,
-  and — with the two fixes this section is about — **landed**: the check boots
-  the image through BIOS *and* through OVMF, and its head bounds the memory map
-  it was given.  Getting there took four refuted explanations and two real
-  defects.
-
-  The first defect is the one the pass itself hit: the kernel **wrote a page its
-  own plan had made read-only** (`plan=kernel-rodata`, `access=write`), and the
-  page was the free-PCID bitmap — an all-zero immutable array, which the
-  compiler is entitled to place in `.rodata`, with `bitmap_word` casting a
-  pointer to it into `&AtomicU64` and writing through it.  The storage is an
-  array of atomics now, in writable memory, with no cast and no `unsafe`.
-
-  The second was underneath it, and only a stall could have shown it: with the
-  storage moved, the boot **hung in `allocate_pcid`** — a real UEFI boot needed
-  a QEMU monitor to say so, and the RIP named the loop.  Its condition was
-  `while word != 0`, and its body could not clear the bits it refused: `pcid ==
-  0` (the kernel's own, which `init_pcid` sets *in this bitmap*) and anything
-  past this machine's `PCID_MAX` were skipped and then offered again by the
-  re-read, forever.  The word is masked to the bits the loop may hand out
-  before the loop sees it, so no stray bit can spin it — and the four refuted
-  explanations (the pool moving, the bitmap overlapping the pool, a stale KASLR
-  relocation list, the atomic *type*, `.bss` not being zeroed) are all recorded
-  in this RFC's history because each was worth not repeating.
-
-- **What is owed now**: the UEFI pass runs on the machine that has OVMF; CI's
-  ISO job installs it (`ovmf`), so the pass is the one that would have found
-  both defects anywhere.  The frame pool's own placement — a 512 MiB array
-  whose address is the allocator's base, movable by any unrelated static — is
-  left as it is: it is no longer a suspect, and pinning it is a change that
-  should argue for itself.
-
-## Unresolved questions
-
-- **A UEFI pass for the ISO check, and the two things it found**: the pass was
-  written, run, and *not* kept, because it does not pass — and what it found is
-  worth more than the pass.  The first was a write into read-only memory, and
-  it is fixed:
-
-  ```
-  [FATAL] page fault addr=0x00000000004ed388 access=write reason=protection-violation
-          prepared_perms=r-- plan=kernel-rodata
-          rip=0x000000000046d596
-  ```
-
-  and both addresses named the same thing: the instruction was
-  `core::sync::atomic::atomic_or`, the address was
-  `protofire::arch::x86_64::paging::pcid::PCID_BITMAP_STORE`.  That static was an
-  all-zero array of `u64`, which is immutable data — so the compiler placed it in
-  `.rodata`, where `nm` marked it `r` — and the PCID path wrote it through a
-  pointer cast to `&AtomicU64`.  It is an array of `AtomicU64` now: read-write
-  storage (`.bss`), with no cast and no `unsafe` between the storage and its
-  use.  The UEFI boot gets past the point it faulted at, further than it had
-  ever gone, and the BIOS boot is unchanged.
-- **The fix that did not work, measured**: the static became an array of
-  `AtomicU64` — read-write storage, no cast, no `unsafe` — and the UEFI boot got
-  past the fault, further than it had ever gone.  But **both firmwares then
-  stalled** after `[init  ] init path from cmdline: /system/init.elf`, where the
-  BIOS boot of the same image reached the shell in under a minute.  Two rounds
-  of measurement narrowed it, and each one refuted a story that had looked
-  obvious:
-
-  | Build | pool | the bitmap | boot |
-  | --- | --- | --- | --- |
-  | as it is | `[0x484e000, 0x2484e000)` | `.rodata` | reaches the shell |
-  | the fix | `[0x484e000, 0x2484e000)` | `.bss`, `0x24891350` (outside the pool) | stalls after the init path |
-  | the fix, with the KASLR list regenerated | same | same | still stalls |
-
-  And the measurement that came out of it is a correlation with the *class* the
-  plan gives the bitmap's page, consistent across every pair of builds:
-
-  | the bitmap's page is | the boot |
-  | --- | --- |
-  | `Rodata` (as it is) | reaches the shell |
-  | `Bss` (with the fix) | stalls after the init path |
-
-  which is the opposite of what writability would predict — a read-only page
-  the kernel writes is fine, and a writable one is not — so the page's class is
-  where the next probe goes, not the page's permissions.
-  So the pool does not move, the bitmap is inside nothing, and the KASLR
-  relocation list — a build artifact this tree *ignores* in git and writes with
-  `make gen-kaslr-relocs`, a target no build runs — is not the cause either:
-  regenerating it and booting the **unchanged** kernel reaches the shell.  What
-  is left is the static's *own* address: `0x24891350` is in the region after
-  the frame pool, and the one thing that is special about that region is that
-  the kernel's page plan has to have named it.  The next probe is the plan's
-  own report for that page in the two builds — which the boot prints now, for
-  both pieces of memory the kernel owns: `[mem   ] plan: pool Bss/Bss bitmap
-  0x4f1cf0 (Rodata)` for the tree as it is, and `bitmap 0x488f070 (Bss)` for
-  the version whose storage changed.  The comparison no longer needs a symbol
-  table, and it is the measurement: the bitmap's *class* is the only thing
-  consistently different between a boot that reaches the shell and one that
-  stalls — and the direction is backwards, `Rodata` (a page the kernel writes)
-  booting and `Bss` (a page it may write) not.
-- **Three more refutations, and what is left**: the search has now ruled out
-  every explanation that was cheap to test.
-
-  | Question | Answer |
-  | --- | --- |
-  | is it the atomic *type*? | no: a variant that keeps the original `u64` array and the pointer cast, with the storage only *moved* to `.bss`, stalls identically |
-  | is `.bss` handed over non-zero? | no: a `.bss` object nothing writes reads back `0x0 0x0 0x0 0x0` at the point the plan is up |
-  | is the KASLR list stale? | no: regenerating it and booting the unchanged kernel reaches the shell, and the changed kernel still stalls with a fresh one |
-
-  What is left is the one thing every measurement agrees on: **which section the
-  static lives in**.  A boot whose PCID bitmap sits in `.rodata` reaches the
-  shell; the same code with the same (zeroed, writable) storage in `.bss`
-  stalls after the init path, on both firmwares, with the pool in the same place
-  and the bitmap in nobody else's range.  The next questions are about that
-  page rather than that symbol: what else maps it (a late dump of the page
-  table entry, and of the bitmap's first words, at the point the boot stops),
-  and whether its neighbour — the frame pool's first page — is the thing that
-  matters.
-- **What the pass waits on**: for the boot to reach
-  `[user  ] loaded /apps/packages/shell/bin/shell.elf` on both firmwares again
-  with whatever fixes the placement, at which point the pass lands with the
-  assertions it was written for.
-- **The pool as `.bss`** — the reason the image is 570 MiB and spans regions at
-  all — is RFC 0019's decision to keep and a board port's to revisit.
+- **Adopting the machine's regions as frames** (RFC 0019's question, carried
+  forward here): a frame table over the usable entries, those regions mapped
+  into the kernel's window, and the image reserved out of them.  The argument
+  for it would be a measurement.
+- **RAM above 4 GiB, and the width of a device's address**: a frame above the
+  first 4 GiB is memory a 32-bit DMA engine cannot reach, which is a
+  bounce-buffer decision or an IOMMU one, and neither exists here.
+- **The pool's size per target, and where it sits**: one constant for three
+  machines is a default rather than a fact, and the array is *movable* — one
+  small static shifted it twice during this RFC's own work.  Pinning an address
+  that a frame allocator measures everything from is a change that should argue
+  for itself.
+- **What "refuse to boot" means**: the tree's panic policy is
+  `docs/fmts/unsafe-and-safety.md`'s, and whether this is a halt with a message
+  or a panic is that document's to say.
+- **The device polling that lives in the timer tick**: the UART, xHCI and
+  virtio-input polls all run inside the tick handler, so a spin there takes the
+  machine's input with it.  The fix is a real UART interrupt path — the driver's
+  interrupt-enable register is written to zero today — and it is named here
+  rather than half-built.
