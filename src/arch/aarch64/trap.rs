@@ -782,6 +782,23 @@ fn handle_irq(frame: &mut TrapFrame) {
         }
     }
 
+    // ── Wire-driven (SPI) dispatch ─────────────────────────────────
+    // A wired interrupt is an identity too, and the console UART claims its
+    // own in the registry before it is armed.  An SPI nobody claimed falls
+    // through to the disposition below, whose warn path names it.
+    if let Some(acknowledge) = acknowledge.as_ref() {
+        let intid = super::interrupt_controller::interrupt_id(*acknowledge);
+        if intid >= super::SPI_HANDLER_BASE
+            && crate::arch::irq_handlers::dispatch(super::SPI_HANDLER_BASE, intid)
+        {
+            crate::kernel::irq_stats::record_irq(intid);
+            super::interrupt_controller::acknowledge(*acknowledge);
+            deliver_consumed_tick(frame, pending_tick);
+            advance_past_idle_wfi(frame);
+            return;
+        }
+    }
+
     match exception::classify_irq_disposition(
         acknowledge.is_some(),
         pending_tick,

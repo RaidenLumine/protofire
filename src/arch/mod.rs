@@ -681,6 +681,25 @@ pub mod serial {
         super::x86_64::serial::init();
     }
 
+    /// Let the console UART raise its received-data interrupt.
+    ///
+    /// Called once the interrupt controller is up
+    /// ([`crate::arch::interrupt_controller::init`]) and the machine has a
+    /// destination for the line: arming it earlier would let a byte raise an
+    /// interrupt nothing answers.  A machine whose controller cannot carry its
+    /// UART's wire interrupt — an AIA machine, whose APLIC this kernel does not
+    /// drive — does nothing here and keeps the tick's poll.
+    pub fn enable_rx_interrupt() {
+        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+        super::x86_64::serial::enable_rx_interrupt();
+
+        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+        super::aarch64::serial::enable_rx_interrupt();
+
+        #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+        super::riscv64::serial::enable_rx_interrupt();
+    }
+
     /// Whether this machine's console UART delivers received bytes by
     /// interrupt.
     ///
@@ -694,7 +713,24 @@ pub mod serial {
             true
         }
 
-        #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+        {
+            true
+        }
+
+        #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+        {
+            // The UART's wire interrupt is the PLIC's to carry, and an AIA
+            // machine replaces the PLIC with an APLIC this kernel does not
+            // drive.
+            !super::riscv64::aia_imsic::has_aia_imsic()
+        }
+
+        #[cfg(not(any(
+            all(target_arch = "x86_64", target_os = "none"),
+            all(target_arch = "aarch64", target_os = "none"),
+            all(target_arch = "riscv64", target_os = "none")
+        )))]
         {
             false
         }

@@ -256,6 +256,11 @@ require_log_line "adastra:/apps/packages/shell\$ "
 require_log_line "[abi   ] shell payload: $PAYLOAD_SOURCE "
 require_log_line "adastra shell (ring 3) builtins:"
 require_log_exact_line "ring3-shell-answered"
+# And the typed answers rode the UART's own interrupt, not the timer tick's
+# poll: this line is printed once, by the RX handler, so it is the evidence
+# that the 16550's interrupt mask, the PLIC source and the claim dispatch all
+# ran.
+require_log_line "[serial] RX interrupt carries input"
 # The service manager's provenance, read back by a ring-3 program: which
 # declaration file the kernel read the shell's definition from, and the SHA-256
 # of that file's bytes.  Both answers come from `/service`, so a boot whose

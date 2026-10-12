@@ -403,6 +403,16 @@ fn handle_interrupt(frame: &mut TrapFrame) {
                         let _ = preempted;
                     }
 
+                    // A claimed source is an identity: run the handler it was
+                    // claimed with.  A source nobody claimed is counted as
+                    // spurious, the same answer the message paths give.
+                    if !crate::arch::irq_handlers::dispatch(
+                        super::interrupt_controller::PLIC_HANDLER_BASE,
+                        claim,
+                    ) {
+                        crate::kernel::irq_stats::record_spurious();
+                    }
+
                     // End of interrupt.
                     super::interrupt_controller::PLIC_CONTROLLER.end_of_interrupt(claim);
 

@@ -128,6 +128,13 @@ pub mod user_access;
 pub(crate) mod smp;
 pub mod tlb;
 
+/// The identity window the wire-driven interrupts (SPIs) occupy in the
+/// handler registry.
+///
+/// A GIC SPI's id is 32 plus its number, and the registry indexes from the
+/// base its caller names, so 32 is what maps the SPI range onto the table.
+pub(crate) const SPI_HANDLER_BASE: u32 = 32;
+
 pub mod interrupt_controller {
     use core::sync::atomic::AtomicBool;
     use core::sync::atomic::AtomicU8;
@@ -184,7 +191,7 @@ pub mod interrupt_controller {
     const GICD_ISENABLER0: usize = 0x100;
     const GICD_ICPENDR0: usize = 0x280;
     const GICD_IPRIORITYR: usize = 0x400;
-    const GICD_ITARGETSR: usize = 0x1800;
+    const GICD_ITARGETSR: usize = 0x800;
     const GICD_SGIR: usize = 0xF00;
 
     /// Peripheral ID 2 at the two addresses the two revisions put it at.
@@ -206,6 +213,15 @@ pub mod interrupt_controller {
 
     const GIC_ENABLE_GROUP0: u32 = 1 << 0;
     const GIC_ENABLE_GROUP1: u32 = 1 << 1;
+    /// `GICC_CTLR.AckCtl`: a Secure read of `GICC_IAR` sees Group 1
+    /// interrupts too.
+    ///
+    /// This kernel drives everything as Group 1, and a machine without the
+    /// security extensions presents the interface as Secure — without this,
+    /// an acknowledge returns 1022 and no interrupt is ever claimed.  The
+    /// timer hid the gap because its tick is read from the counter's own
+    /// status; the console UART is the first interrupt that needs the claim.
+    const GIC_CTLR_ACK_CTL: u32 = 1 << 2;
     const SPURIOUS_INTERRUPT_ID_START: u32 = 1020;
 
     fn distributor_register(offset: usize) -> *mut u32 {
@@ -332,7 +348,10 @@ pub mod interrupt_controller {
             }
 
             distributor_write(GICD_CTLR, GIC_ENABLE_GROUP0 | GIC_ENABLE_GROUP1);
-            cpu_interface_write(GICC_CTLR, GIC_ENABLE_GROUP0 | GIC_ENABLE_GROUP1);
+            cpu_interface_write(
+                GICC_CTLR,
+                GIC_ENABLE_GROUP0 | GIC_ENABLE_GROUP1 | GIC_CTLR_ACK_CTL,
+            );
         }
 
         fn end_of_interrupt(&self, acknowledge: u32) {
@@ -406,7 +425,10 @@ pub mod interrupt_controller {
             _ => {
                 cpu_interface_write(GICC_PMR, 0xFF);
                 cpu_interface_write(GICC_BPR, 0);
-                cpu_interface_write(GICC_CTLR, GIC_ENABLE_GROUP0 | GIC_ENABLE_GROUP1);
+                cpu_interface_write(
+                    GICC_CTLR,
+                    GIC_ENABLE_GROUP0 | GIC_ENABLE_GROUP1 | GIC_CTLR_ACK_CTL,
+                );
                 true
             }
         }
@@ -527,6 +549,9 @@ pub mod serial {
     use super::Write;
 
     const PL011_UART_BASE: usize = 0x0900_0000;
+    /// QEMU `virt` wires the PL011 to GIC SPI 1, whose interrupt id is 33;
+    /// the device tree's own `interrupts` property overrides it.
+    const DEFAULT_UART_IRQ: u32 = 33;
 
     fn pl011_uart_base() -> usize {
         crate::arch::fdt::platform_info()
@@ -549,6 +574,8 @@ pub mod serial {
     const CR_RXE: u32 = 1 << 9;
     const LCRH_FEN: u32 = 1 << 4;
     const LCRH_WLEN_8BIT: u32 = 0b11 << 5;
+    /// The receive interrupt, which `try_read_byte`'s drain clears.
+    const IMSC_RXIM: u32 = 1 << 4;
 
     struct Pl011Uart {
         base: usize,
@@ -614,6 +641,18 @@ pub mod serial {
 
             Some(self.read(DR_OFFSET) as u8)
         }
+
+        /// Let the UART raise its receive interrupt.
+        fn enable_rx_interrupt(&mut self) {
+            if !self.initialized {
+                self.init();
+            }
+
+            // `IMSC` is the mask *set/clear* register: a written 1 sets that
+            // mask, and a 0 leaves it alone — so this turns RXIM on without
+            // disturbing the other sources.
+            self.write(IMSC_OFFSET, IMSC_RXIM);
+        }
     }
 
     impl Write for Pl011Uart {
@@ -636,6 +675,38 @@ pub mod serial {
         let mut uart = SERIAL0.lock();
         uart.base = pl011_uart_base();
         uart.init();
+    }
+
+    /// Let the console UART raise its received-data interrupt.
+    ///
+    /// Called once the interrupt controller is up (see
+    /// [`crate::arch::interrupt_controller::init`]).  The SPI is claimed in
+    /// the handler registry, put in Group 1 for this kernel, given a priority
+    /// and enabled — and only then is the UART's own mask bit set, because a
+    /// byte that arrived earlier would raise a line no handler owned.
+    pub fn enable_rx_interrupt() {
+        let interrupt_id = crate::arch::fdt::platform_info()
+            .uart_irq
+            .unwrap_or(DEFAULT_UART_IRQ);
+        let handler: crate::arch::irq_handlers::IrqHandler = alloc::sync::Arc::new(|_| {
+            crate::drivers::serial::handle_rx_interrupt();
+        });
+        let _ = crate::arch::irq_handlers::claim(
+            super::SPI_HANDLER_BASE,
+            interrupt_id,
+            interrupt_id,
+            1,
+            handler,
+        );
+        // A shared peripheral interrupt needs a target CPU; a private one does
+        // not, which is why the timer's arming has no counterpart to this
+        // line.  The boot CPU is the one this runs on.
+        super::interrupt_controller::set_irq_affinity(interrupt_id, 0);
+        super::interrupt_controller::set_group1(interrupt_id);
+        crate::arch::interrupt_controller::set_priority(interrupt_id, 0x80);
+        crate::arch::interrupt_controller::enable_interrupt(interrupt_id);
+
+        SERIAL0.lock().enable_rx_interrupt();
     }
 
     pub fn write_str(message: &str) {

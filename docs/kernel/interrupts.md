@@ -28,6 +28,12 @@ out of the table first so a handler that registers another identity cannot
 deadlock on the registry's own lock.  An identity nobody claimed is
 distinguished from a spurious interrupt by the caller, and both are counted.
 
+A wire can be an identity too.  AArch64's console UART claims its SPI in the
+registry (`SPI_HANDLER_BASE`, `src/arch/aarch64/mod.rs`) and the trap path runs
+it there, so a wired interrupt and a translated message take the same lookup;
+RISC-V's PLIC sources are dispatched the same way (`PLIC_HANDLER_BASE`,
+`src/arch/riscv64/mod.rs`).
+
 ## The controllers
 
 ### x86_64
@@ -55,6 +61,10 @@ GICv2 or GICv3, chosen by reading the distributor's identification registers
 GICv2 the CPU interface is a frame and the SGI/PPI bank is in the distributor,
 while in GICv3 the interface is the `ICC_*` system registers and each PE has
 its own redistributor carrying its SGI/PPI bank.  SGIs are sent by affinity.
+The CPU interface acknowledges Group 1 (`GICC_CTLR.AckCtl`): the kernel drives
+every interrupt as Group 1, and a machine without the security extensions
+presents the interface as Secure, where a clear bit hides every Group 1
+interrupt from `GICC_IAR` and nothing is ever claimed.
 
 Message interrupts go further: the GICv3 **ITS** (`src/arch/aarch64/its.rs`)
 translates a device's device-id/event-id into an LPI and a *collection*, and a

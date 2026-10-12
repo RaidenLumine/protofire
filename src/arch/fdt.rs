@@ -81,6 +81,11 @@ pub struct PlatformInfo {
     pub memory_base: Option<usize>,
     /// Physical memory size in bytes (from `/memory` node `reg` property).
     pub memory_size: Option<usize>,
+    /// The interrupt the console UART's received-data condition is wired to,
+    /// in the number the machine's controller uses: a GIC interrupt id (SPI
+    /// number plus 32) or a PLIC source number.  From the UART node's
+    /// `interrupts` property; absent when the tree does not describe one.
+    pub uart_irq: Option<u32>,
     /// Minimum CPU frequency in Hz, from the OPP table referenced by a CPU
     /// node (`operating-points-v2`) or a legacy `operating-points` tuple.
     pub cpu_freq_min_hz: Option<u64>,
@@ -118,6 +123,7 @@ impl PlatformInfo {
             cpu_count: 0,
             memory_base: None,
             memory_size: None,
+            uart_irq: None,
             cpu_freq_min_hz: None,
             cpu_freq_max_hz: None,
             cpu_clock_rate_hz: None,

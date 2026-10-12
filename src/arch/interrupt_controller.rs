@@ -92,6 +92,11 @@ pub fn init() {
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
     riscv64::aia_imsic::init_from_fdt();
     controller().init();
+    // The console UART is armed last: the controller is up and the machine's
+    // routing is in place, so a byte that arrives now has a destination.  A
+    // machine whose controller cannot carry its UART's wire interrupt says so
+    // and keeps the tick's poll ([`serial::rx_is_interrupt_driven`]).
+    super::serial::enable_rx_interrupt();
 }
 
 pub fn end_of_interrupt(vector: u32) {

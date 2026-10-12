@@ -189,11 +189,12 @@ impl Scheduler {
             *self.simulated_ticks.lock() = ticks;
         }
 
-        // The machines whose console UART has no interrupt path wired (the
-        // device-tree ones) still need the tick to poll it; x86_64's COM1
-        // delivers its bytes itself (`drivers::serial::handle_rx_interrupt`),
-        // so input there no longer depends on this tick running.  Which kind
-        // of UART this is, is the machine's answer.
+        // A machine whose console UART delivers its bytes by interrupt needs
+        // no poll here — x86_64's COM1, the aarch64 PL011 and the riscv64
+        // 16550 all do (`drivers::serial::handle_rx_interrupt`) — so input no
+        // longer depends on this tick running.  One machine has no such path:
+        // an AIA machine's wire interrupts arrive through an APLIC this kernel
+        // does not drive.  Which kind of UART this is, is the machine's answer.
         if !crate::arch::serial::rx_is_interrupt_driven() {
             let _ = serial::poll_hardware_rx();
         }

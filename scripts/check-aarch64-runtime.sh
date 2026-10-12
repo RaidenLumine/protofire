@@ -440,6 +440,10 @@ require_log_line "service(s) registered; leaving the start to init"
 # record the install wrote names the version it made active.
 require_log_exact_line "catalog = \"../catalog/demo-installed@1.0.0.toml\""
 require_log_exact_line "ring3-shell-answered"
+# And the typed answers rode the UART's own interrupt, not the timer tick's
+# poll: this line is printed once, by the RX handler, so it is the evidence
+# that the PL011's mask bit, the GIC SPI and the SPI dispatch all ran.
+require_log_line "[serial] RX interrupt carries input"
 # The service manager's provenance, read back by a ring-3 program: which
 # declaration file the kernel read the shell's definition from, and the SHA-256
 # of that file's bytes.  Both answers come from `/service`, so a boot whose

@@ -325,12 +325,12 @@ pub fn poll_hardware_rx() -> usize {
 /// the same path — bytes into the device queue, bytes bridged to the console
 /// TTY, the waiters woken — and the *first* interrupt says so once, which is
 /// the boot log's evidence that input arrived this way and not through the
-/// timer tick, whose x86_64 poll this replaced.
+/// timer tick, whose poll a machine with a UART interrupt no longer needs.
 pub fn handle_rx_interrupt() -> usize {
     static ANNOUNCED: AtomicBool = AtomicBool::new(false);
 
     if !ANNOUNCED.swap(true, Ordering::AcqRel) {
-        crate::println!("[serial] COM1 RX interrupt carries input");
+        crate::println!("[serial] RX interrupt carries input");
     }
 
     poll_hardware_rx()

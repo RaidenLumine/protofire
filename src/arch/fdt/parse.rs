@@ -357,6 +357,25 @@ fn join_cells(cells: &[u8]) -> u64 {
     value
 }
 
+/// The interrupt identity a node's `interrupts` cells name, in the number the
+/// controller this kernel drives on the machine uses.
+///
+/// A specifier's shape is its parent controller's: the GIC writes
+/// `(type, number, flags)` — type 0 is a shared peripheral interrupt and type 1
+/// a private one — while the PLIC writes a bare source number.  A one-cell
+/// specifier is therefore a source id, and a multi-cell one whose type is 0 or
+/// 1 is a GIC interrupt whose identity is the number's offset into that type's
+/// range.  `None` is a specifier of neither shape, which is a machine this
+/// kernel cannot name an interrupt for rather than one it guesses at.
+fn interrupt_source_from_cells(cells: &[u32]) -> Option<u32> {
+    match cells {
+        [source] if *source != 0 => Some(*source),
+        [0, number, ..] => number.checked_add(32),
+        [1, number, ..] => number.checked_add(16),
+        _ => None,
+    }
+}
+
 /// The memory window a PCI host bridge's `ranges` describes, if it describes
 /// one.
 ///
@@ -437,6 +456,13 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let mut current_is_gicv3: bool = false;
     let mut current_is_its: bool = false;
     let mut current_is_memory_node: bool = false;
+    // The current node's `interrupts` cells, and whether its `reg` matched
+    // the console UART's window.  A node writes its properties in whatever
+    // order the machine chose, so whichever of the two is seen second is what
+    // settles `uart_irq`.
+    let mut current_interrupts: [u32; 4] = [0; 4];
+    let mut current_interrupts_len: usize = 0;
+    let mut current_is_uart: bool = false;
     // ── NUMA tracking ──────────────────────────────────────────────────
     let mut fdt_numa = FdtNumaInfo::empty();
     // Index of the current CPU node (-1 = not in a CPU node).
@@ -581,6 +607,9 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 node_clock_mult = 0;
                 node_clock_div = 0;
                 node_clock_parent = None;
+                // Reset the per-node interrupt state; each node starts clean.
+                current_interrupts_len = 0;
+                current_is_uart = false;
             }
 
             FDT_END_NODE => {
@@ -875,6 +904,12 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                                 || (0x1000_0000..0x1000_1000).contains(&addr)
                             {
                                 info.uart_base = Some(addr as usize);
+                                current_is_uart = true;
+                                if current_interrupts_len > 0 {
+                                    info.uart_irq = interrupt_source_from_cells(
+                                        &current_interrupts[..current_interrupts_len],
+                                    );
+                                }
                             }
                             // RTC (PL031): QEMU virt places it at 0x0901_0000.
                             // RTC (Goldfish): RISC-V virt at 0x0010_1000.
@@ -936,6 +971,25 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             if value.word(pair * 8 + 4) == Some(RISCV_SUPERVISOR_EXTERNAL_CAUSE) {
                                 current_wired_to_supervisor_external = true;
                             }
+                        }
+                    }
+                    // A node's wired interrupt specifier.  The kernel asks it
+                    // only of the console UART, whose `reg` may arrive before
+                    // or after this property, so the cells are remembered per
+                    // node and settled once both have been seen.
+                    Some("interrupts") => {
+                        let mut count = 0;
+                        while count < current_interrupts.len() {
+                            let Some(cell) = value.word(count * 4) else {
+                                break;
+                            };
+                            current_interrupts[count] = cell;
+                            count += 1;
+                        }
+                        current_interrupts_len = count;
+                        if current_is_uart {
+                            info.uart_irq =
+                                interrupt_source_from_cells(&current_interrupts[..count]);
                         }
                     }
                     Some("bus-range") if value_len >= 8 => {
@@ -1653,6 +1707,17 @@ mod tests {
         sblock.extend_from_slice(&be32(0x0000_0000));
         sblock.extend_from_slice(&be32(0x0000_1000));
 
+        // interrupts = <0x0 0x1 0x4> — GIC SPI 1, whose INTID is 33.  After
+        // `reg` on purpose: the other order is what QEMU writes, and both have
+        // to settle the UART's interrupt.
+        let off_uart_interrupts = str_off("interrupts");
+        sblock.extend_from_slice(&be32(FDT_PROP));
+        sblock.extend_from_slice(&be32(12));
+        sblock.extend_from_slice(&off_uart_interrupts.to_be_bytes());
+        sblock.extend_from_slice(&be32(0x0000_0000));
+        sblock.extend_from_slice(&be32(0x0000_0001));
+        sblock.extend_from_slice(&be32(0x0000_0004));
+
         sblock.extend_from_slice(&be32(FDT_END_NODE));
 
         // -- pl031@9010000 node --
@@ -1925,6 +1990,7 @@ mod tests {
         assert_eq!(info.gicd_base, Some(0x0800_0000));
         assert_eq!(info.gicc_base, Some(0x0801_0000));
         assert_eq!(info.uart_base, Some(0x0900_0000));
+        assert_eq!(info.uart_irq, Some(33));
         assert_eq!(info.rtc_base, Some(0x0901_0000));
         assert_eq!(info.plic_base, Some(0x0C00_0000));
         assert_eq!(info.virtio_mmio_base, Some(0x0A00_0000));
@@ -2726,5 +2792,50 @@ mod tests {
             emit_node(sblock, "serial@10000000", str_off, &[]);
         });
         assert_eq!(memory_window(blob.as_ptr() as usize), None);
+    }
+
+    /// The console UART's interrupt is settled whichever order the node's
+    /// properties arrive in, and in the number the machine's controller uses:
+    /// the GIC's specifier is `(type, number, flags)` and the PLIC's is a bare
+    /// source number.
+    #[test]
+    fn parse_fdt_reads_the_uart_interrupt_specifier() {
+        // The GIC, with `interrupts` before `reg` — the order QEMU writes.
+        let gic_reg = [be32(0), be32(0x0900_0000), be32(0), be32(0x1000)].concat();
+        let gic_interrupts = [be32(0), be32(1), be32(4)].concat();
+        let gic = build_small_fdt(|sblock, str_off| {
+            emit_node(
+                sblock,
+                "pl011@9000000",
+                str_off,
+                &[
+                    ("compatible", b"arm,pl011"),
+                    ("interrupts", &gic_interrupts),
+                    ("reg", &gic_reg),
+                ],
+            );
+        });
+        let info = parse_fdt(gic.as_ptr() as usize);
+        assert_eq!(info.uart_base, Some(0x0900_0000));
+        assert_eq!(info.uart_irq, Some(33));
+
+        // The PLIC, whose specifier is the source number alone.
+        let plic_reg = [be32(0), be32(0x1000_0000), be32(0), be32(0x100)].concat();
+        let plic_interrupts = [be32(10)].concat();
+        let plic = build_small_fdt(|sblock, str_off| {
+            emit_node(
+                sblock,
+                "serial@10000000",
+                str_off,
+                &[
+                    ("compatible", b"ns16550a"),
+                    ("interrupts", &plic_interrupts),
+                    ("reg", &plic_reg),
+                ],
+            );
+        });
+        let info = parse_fdt(plic.as_ptr() as usize);
+        assert_eq!(info.uart_base, Some(0x1000_0000));
+        assert_eq!(info.uart_irq, Some(10));
     }
 }

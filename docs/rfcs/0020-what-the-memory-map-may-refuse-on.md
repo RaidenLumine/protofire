@@ -188,15 +188,27 @@ initialized`), and the manager's line names the pool's size rather than the
 machine's number that sized it.
 
 **What landed from the questions below.**  The UART half of the tick's device
-polling is a real interrupt now: the IOAPIC routes IRQ 4 to `COM1_VECTOR`,
-`ioapic_setup_isa_irqs` arms the 16550's received-data interrupt once that
-route exists, and the handler drains the FIFO through
+polling is a real interrupt now, on every machine whose controller can carry
+one: the handler drains the FIFO through
 `drivers::serial::handle_rx_interrupt` — the same drain-and-bridge path the
-tick used to call, now with input no longer depending on the tick running at
-all.  `make check-x8664-runtime` types at the shell and asserts the handler's
-own one-time line, so the path is a gate rather than a code path.  xHCI and
-virtio-input still poll from the tick, and so do the device-tree machines'
-UARTs, which is what the question below now covers.
+tick used to call — and each machine routes and arms its own line once the
+interrupt controller is up (`arch::interrupt_controller::init`): the IOAPIC's
+IRQ 4 to `COM1_VECTOR` on x86_64, the GIC's SPI 33 for the PL011 on aarch64,
+and the PLIC's source 10 for the 16550 on riscv64.  All three runtime checks
+type at the shell and assert the handler's own one-time line, so each path is
+a gate rather than a code path.  xHCI and virtio-input still poll from the
+tick, and so does an AIA machine's UART (its wire interrupts arrive through an
+APLIC this kernel does not drive), which is what the question below now
+covers.
+
+Wiring the two device-tree machines found two defects in the aarch64 GICv2
+path that nothing had reached before, because the timer was its only interrupt
+and the timer's tick is read from the counter's own status rather than from a
+claim: `GICD_ITARGETSR` was at the wrong offset (0x1800 for 0x800, so the
+first SPI routing aborted), and the CPU interface was not acknowledging Group
+1 (`GICC_CTLR.AckCtl`), which hides every Group 1 interrupt from a Secure
+`GICC_IAR` read with 1022.  Both are fixed where they were found, and the
+device-tree machines' input now arrives by interrupt.
 
 ## Unresolved questions
 
@@ -216,7 +228,7 @@ UARTs, which is what the question below now covers.
   `docs/fmts/unsafe-and-safety.md`'s, and whether this is a halt with a message
   or a panic is that document's to say.
 - **The device polling that lives in the timer tick**: xHCI and virtio-input
-  still poll from the tick handler, and so do the device-tree machines' UARTs,
-  so a spin there takes their input with it.  x86_64's UART half landed (see
-  above); the other machines' interrupt paths and the two USB/input polls are
+  still poll from the tick handler, and so does an AIA machine's UART, so a
+  spin there takes their input with it.  The UART half landed on the other
+  three machines (see above); the two USB/input polls and an APLIC driver are
   the part still named rather than half-built.

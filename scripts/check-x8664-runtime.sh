@@ -348,7 +348,7 @@ require_log_line "adastra:/apps/packages/shell\$ "
 # printed once, by the handler, and tells an interrupt-driven input path from
 # the timer tick's old stop-gap poll.  The tick's x86_64 poll is gone, so the
 # typed answers would not exist without the whole path.
-require_log_line "[serial] COM1 RX interrupt carries input"
+require_log_line "[serial] RX interrupt carries input"
 
 # ── The shell answered what was typed at it ────────────────────────────
 #

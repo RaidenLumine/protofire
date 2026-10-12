@@ -122,6 +122,13 @@ pub mod interrupt_controller {
     const PLIC_QEMU_VIRT_BASE: usize = 0x0C00_0000;
     const PLIC_MAX_INTERRUPT_ID: u32 = 128;
 
+    /// The identity window PLIC sources occupy in the handler registry.
+    ///
+    /// A PLIC source is a small number and the registry indexes from the base
+    /// its caller names, so the window starts at zero — the base the IMSIC
+    /// also uses, on the machine where that controller exists instead.
+    pub(crate) const PLIC_HANDLER_BASE: u32 = 0;
+
     /// Return the PLIC base address, preferring FDT-discovered address.
     fn plic_base() -> usize {
         crate::arch::fdt::platform_info()
@@ -197,9 +204,24 @@ pub mod interrupt_controller {
                 // Leave all priority registers at 0 (disabled by default).
             }
 
-            // Per-CPU init: set threshold for the current CPU's PLIC context.
+            // Per-CPU init: set threshold for the current CPU's PLIC context,
+            // and open this hart's supervisor external interrupt.  The PLIC
+            // forwards a source as a supervisor *external* interrupt, and a
+            // hart that never set SEIE never sees one — the AIA machine sets
+            // it for itself when an IMSIC exists, and this is the PLIC
+            // machine's half.
             let ctx = current_plic_context();
             plic_write(plic_threshold_addr(ctx), 0);
+            // SAFETY: `csrs sie` sets this hart's own supervisor
+            // external-interrupt bit; the register form is used because bit 9
+            // is past `csrsi`'s immediate range.
+            unsafe {
+                core::arch::asm!(
+                    "csrs sie, {seie}",
+                    seie = in(reg) 1u64 << 9,
+                    options(nomem, nostack, preserves_flags)
+                );
+            }
         }
 
         fn end_of_interrupt(&self, interrupt_id: u32) {
@@ -281,6 +303,9 @@ pub mod serial {
 
     // QEMU `virt` platform: NS16550A UART at 0x1000_0000.
     const UART_QEMU_VIRT_BASE: usize = 0x1000_0000;
+    /// QEMU `virt` wires the UART to PLIC source 10; the device tree's own
+    /// `interrupts` property overrides it.
+    const DEFAULT_UART_IRQ: u32 = 10;
 
     fn uart_base() -> usize {
         crate::arch::fdt::platform_info()
@@ -302,6 +327,7 @@ pub mod serial {
 
     const LSR_THRE: u8 = 1 << 5; // Transmitter Holding Register Empty
     const LSR_DR: u8 = 1 << 0; // Data Ready
+    const IER_RX_DATA: u8 = 1 << 0; // Received Data Available interrupt
 
     const LCR_DLAB: u8 = 1 << 7; // Divisor Latch Access Bit
     const LCR_8N1: u8 = 0b11; // 8 data bits, no parity, 1 stop bit
@@ -385,6 +411,15 @@ pub mod serial {
 
             Some(self.read_u8(RBR_OFFSET))
         }
+
+        /// Let the UART raise its received-data interrupt.
+        fn enable_rx_interrupt(&mut self) {
+            if !self.initialized {
+                self.init();
+            }
+
+            self.write_u8(IER_OFFSET, IER_RX_DATA);
+        }
     }
 
     impl Write for Ns16550a {
@@ -405,6 +440,42 @@ pub mod serial {
         let mut uart = SERIAL0.lock();
         uart.base = uart_base();
         uart.init();
+    }
+
+    /// Let the console UART raise its received-data interrupt.
+    ///
+    /// Called once the interrupt controller is up (see
+    /// [`crate::arch::interrupt_controller::init`]).  The PLIC source is
+    /// claimed in the handler registry, given a priority and enabled — and
+    /// only then is the UART's own interrupt mask set, because a byte that
+    /// arrived earlier would raise a line no handler owned.
+    ///
+    /// An AIA machine is the exception: its wire interrupts arrive through an
+    /// APLIC this kernel does not drive, so the UART stays masked there and
+    /// input keeps riding the timer tick
+    /// ([`super::aia_imsic::has_aia_imsic`]).
+    pub fn enable_rx_interrupt() {
+        if super::aia_imsic::has_aia_imsic() {
+            return;
+        }
+
+        let interrupt_id = crate::arch::fdt::platform_info()
+            .uart_irq
+            .unwrap_or(DEFAULT_UART_IRQ);
+        let handler: crate::arch::irq_handlers::IrqHandler = alloc::sync::Arc::new(|_| {
+            crate::drivers::serial::handle_rx_interrupt();
+        });
+        let _ = crate::arch::irq_handlers::claim(
+            super::interrupt_controller::PLIC_HANDLER_BASE,
+            interrupt_id,
+            interrupt_id,
+            1,
+            handler,
+        );
+        crate::arch::interrupt_controller::set_priority(interrupt_id, 1);
+        crate::arch::interrupt_controller::enable_interrupt(interrupt_id);
+
+        SERIAL0.lock().enable_rx_interrupt();
     }
 
     pub fn write_str(message: &str) {

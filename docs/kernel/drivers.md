@@ -97,11 +97,14 @@ not have yet is a second claimant, because the drivers that would be one
 ## Input and console
 
 The serial UART is the console on every machine (with RISC-V falling back to
-the SBI console when it has no UART).  The PC's COM1 delivers received bytes by
-interrupt — `COM1_VECTOR` in `src/arch/x86_64/interrupts.rs`, armed once the
-IOAPIC routes IRQ 4 to it — so input there does not depend on the timer tick.
-The device-tree machines' UARTs have no interrupt path wired, so their bytes
-still arrive through the tick's poll (`src/kernel/process/scheduler/timer.rs`).
+the SBI console when it has no UART).  Its received bytes arrive by interrupt
+on all three machines — COM1's vector 36, the PL011's GIC SPI 33 (claimed in
+the interrupt registry), the NS16550A's PLIC source 10 (claimed the same way)
+— routed and armed once the controller is up
+(`arch::interrupt_controller::init`), so console input does not depend on the
+timer tick.  An AIA machine is the exception: its wire interrupts arrive
+through an APLIC this kernel does not drive, so its UART keeps the tick's poll
+(`src/kernel/process/scheduler/timer.rs`).
 The PS/2 keyboard and mouse are PC
 hardware; a device-tree machine uses `virtio-input`, whose events are injected
 into the same keyboard core so both routes end in one decoder.  A Linear
