@@ -65,11 +65,13 @@ impl MemoryManager {
         // The pool, and only the pool: what the machine has is reported by
         // `report_machine_memory` ([RFC
         // 0019](../../docs/rfcs/0019-what-a-frame-is.md)), which is also where
-        // the answer is checked.  A number that wore both names is what that
-        // report exists to remove.
+        // the answer is checked.  `memory_size` above is what *sizes* the
+        // allocator — the machine's answer, clamped by `FrameAllocator::init`
+        // to the pool — and it is not the pool's size; printing it here is how
+        // one number used to wear both names.
         println!(
             "Memory manager initialized: {} MiB pool, {} KiB heap free",
-            memory_size / 1024 / 1024,
+            crate::memory::frame::physical_pool_size() / 1024 / 1024,
             self.heap_allocator.remaining() / 1024
         );
     }

@@ -1250,6 +1250,102 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     info
 }
 
+/// The RAM window a blob's `/memory` node describes, read without allocating.
+///
+/// This is the read the memory manager's *sizing* needs before the manager
+/// exists: `MemoryManager::init` sizes the frame allocator from the machine's
+/// answer, so the answer cannot wait for the heap and the full parse
+/// ([`parse_fdt`]) that runs later for everything else the tree describes.
+/// The walk touches nothing but the blob and allocates nothing, which is what
+/// lets it run from the boot entry, before either exists.
+///
+/// It answers the first `/memory` child of the root and the first `reg` entry
+/// that node has; `None` is a null, malformed or memory-less blob, the same
+/// "the machine described nothing" answer `PlatformInfo`'s empty fields give.
+pub fn memory_window(fdt_addr: usize) -> Option<(usize, usize)> {
+    let blob = Blob::from_addr(fdt_addr)?;
+    let mut walk = StructWalk::new(blob);
+
+    // `#address-cells`/`#size-cells` are the node's own, inherited from the
+    // parent; the root's defaults are the 64-bit ones, exactly as the full
+    // parse starts.
+    let mut address_cells = [2u32; 16];
+    let mut size_cells = [2u32; 16];
+    // Number of open nodes, root included — the same depth the full parse
+    // tracks, so a `/memory` node is a child of the root at depth 1.
+    let mut depth: usize = 0;
+    let mut memory_node = false;
+
+    while let Some(token) = walk.token() {
+        match token {
+            FDT_BEGIN_NODE => {
+                let Some(name) = walk.node_name() else {
+                    break;
+                };
+                memory_node = depth == 1 && name.starts_with("memory");
+                depth += 1;
+                if depth < address_cells.len() {
+                    address_cells[depth] = address_cells[depth - 1];
+                    size_cells[depth] = size_cells[depth - 1];
+                }
+            }
+
+            FDT_END_NODE => {
+                if depth == 2 {
+                    memory_node = false;
+                }
+                depth = depth.saturating_sub(1);
+            }
+
+            FDT_PROP => {
+                let Some((nameoff, value)) = walk.property() else {
+                    break;
+                };
+                let Some(value) = value else { continue };
+                match walk.string(nameoff) {
+                    Some("#address-cells") => {
+                        if depth < address_cells.len() {
+                            if let Some(cells) = value.word(0) {
+                                address_cells[depth] = cells;
+                            }
+                        }
+                    }
+                    Some("#size-cells") => {
+                        if depth < size_cells.len() {
+                            if let Some(cells) = value.word(0) {
+                                size_cells[depth] = cells;
+                            }
+                        }
+                    }
+                    // The node's `reg`, in the cells the node itself and its
+                    // parent declare.  The first entry that is not empty is
+                    // the machine's RAM window.
+                    Some("reg") if memory_node && depth == 2 => {
+                        let address = address_cells[depth] as usize;
+                        let size = size_cells[depth] as usize;
+                        let entry_bytes = (address + size) * 4;
+                        if address == 0 || size == 0 || value.len() < entry_bytes {
+                            continue;
+                        }
+                        let base = join_cells(&value.bytes[..address * 4]);
+                        let length = join_cells(&value.bytes[address * 4..entry_bytes]);
+                        if length != 0 {
+                            return Some((base as usize, length as usize));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            FDT_END => break,
+
+            _ => {}
+        }
+    }
+
+    None
+}
+
 /// Walk the flattened device tree at `fdt_addr` and build a table of device
 /// nodes with the properties drivers use to probe devices (compatible string,
 /// MMIO `reg` entries, interrupt specifier, phandle, status).
@@ -2564,5 +2660,71 @@ mod tests {
         let blob = build_opp_fdt(None);
         let info = parse_fdt(blob.as_ptr() as usize);
         assert_eq!(info.cpu_clock_rate_hz, None);
+    }
+
+    // ── The non-allocating early read ───────────────────────────────────
+
+    /// The walk answers from the `/memory` node and nothing else: the device
+    /// node before it has a `reg` too, and a walk that answered the first `reg`
+    /// it saw would name the wrong window.
+    #[test]
+    fn memory_window_reads_the_memory_node_without_the_full_parse() {
+        let serial_reg = [be32(0), be32(0x1000_0000), be32(0), be32(0x100)].concat();
+        let memory_reg = [be32(0), be32(0x8000_0000), be32(0), be32(0x2000_0000)].concat();
+        let blob = build_small_fdt(|sblock, str_off| {
+            emit_node(sblock, "serial@10000000", str_off, &[("reg", &serial_reg)]);
+            emit_node(
+                sblock,
+                "memory@80000000",
+                str_off,
+                &[("device_type", b"memory"), ("reg", &memory_reg)],
+            );
+        });
+
+        assert_eq!(
+            memory_window(blob.as_ptr() as usize),
+            Some((0x8000_0000, 0x2000_0000))
+        );
+    }
+
+    /// The cells a `reg` is written in are the node's own, inherited from the
+    /// root; one cell each is the shape a 32-bit `/memory` node uses.
+    #[test]
+    fn memory_window_honours_the_memory_nodes_own_cells() {
+        let memory_reg = [be32(0x8000_0000), be32(0x1000_0000)].concat();
+        let blob = build_small_fdt(|sblock, str_off| {
+            emit_node(
+                sblock,
+                "memory@80000000",
+                str_off,
+                &[
+                    ("#address-cells", &be32(1)),
+                    ("#size-cells", &be32(1)),
+                    ("device_type", b"memory"),
+                    ("reg", &memory_reg),
+                ],
+            );
+        });
+
+        assert_eq!(
+            memory_window(blob.as_ptr() as usize),
+            Some((0x8000_0000, 0x1000_0000))
+        );
+    }
+
+    /// A null address, a blob with no valid header, and a valid tree with no
+    /// `/memory` node all answer `None` — the boot's "the machine described
+    /// nothing", never a guess.
+    #[test]
+    fn memory_window_is_none_for_a_missing_or_malformed_blob() {
+        assert_eq!(memory_window(0), None);
+
+        let junk = [0u8; 64];
+        assert_eq!(memory_window(junk.as_ptr() as usize), None);
+
+        let blob = build_small_fdt(|sblock, str_off| {
+            emit_node(sblock, "serial@10000000", str_off, &[]);
+        });
+        assert_eq!(memory_window(blob.as_ptr() as usize), None);
     }
 }

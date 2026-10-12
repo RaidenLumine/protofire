@@ -210,9 +210,12 @@ names is what this removes.
   keeps for KASLR, because GRUB refuses them, and the loader's info block had
   never been recorded on x86_64 at all, so the tag walk (the map *and* ACPI's
   RSDP) had always read address 0.
-- **Still owed**: the device-tree machines' answer reaching the manager's
-  *sizing* rather than its report, which needs a read of the blob that
-  allocates nothing (a change of its own).
+- **Landed later**: the device-tree machines' answer reaching the manager's
+  *sizing* rather than its report, through a read of the blob that allocates
+  nothing.  `fdt::memory_window` is that read — a pointer walk over the
+  structure block for the `/memory` node's `reg` — and every machine is now
+  asked before the memory manager is built; the full parse still runs later
+  for the rest of the tree.
 
 ## Unresolved questions
 

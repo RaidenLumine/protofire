@@ -377,6 +377,13 @@ access=execute
 [service] demo-launcher-rust stopped
 EOF
 
+# The machine's memory is read from the device tree before the memory manager
+# sizes its pool from it: the report line has to come first, and the manager's
+# own line then names the pool rather than the machine.  This is the order
+# RFC 0019's still-owed early read changed.
+require_log_line "[mem   ] machine reports "
+require_log_line_order "[mem   ] machine reports " "Memory manager initialized"
+
 # The payload's syndrome lines are the three-write ones the helper above
 # exists for, so they are asserted as fragments rather than in the list.
 require_log_fragments "[user  ] aarch64-rust wait-vector:" "0x0000000000000020" 2

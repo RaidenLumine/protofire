@@ -183,6 +183,23 @@ pub fn platform_info() -> PlatformInfo {
     *PLATFORM_INFO.lock()
 }
 
+/// The `/memory` window a blob describes, read without allocating.
+///
+/// The walk is the device-tree machines' — and the host tests', which parse
+/// synthetic blobs — so it lives beside the parser; a machine with no device
+/// tree has no blob to walk and answers `None`.
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
+pub use parse::memory_window;
+
+/// The `/memory` window a blob describes, read without allocating.
+///
+/// This machine has no device tree, so there is no blob to walk and no window
+/// to answer.
+#[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64", test)))]
+pub fn memory_window(_fdt_addr: usize) -> Option<(usize, usize)> {
+    None
+}
+
 /// Return the number of CPU cores discovered from the FDT `/cpus` node.
 ///
 /// Returns 0 if no FDT was parsed or no CPU nodes were found.

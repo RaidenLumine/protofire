@@ -64,22 +64,27 @@ pub(crate) fn describe_platform() {
     {
         let blob = crate::arch::boot::handoff_address();
         crate::arch::fdt::boot_parse_fdt(blob);
-        // The machine's memory window is one of the things that blob
-        // described, and the parse above is what made it readable; the answer
-        // is recorded and checked here ([RFC
-        // 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
-        crate::memory::report_machine_memory();
+        // The memory window this blob describes was already asked and reported
+        // from the blob's own walk, before the memory manager was built
+        // ([`crate::memory::report_machine_memory`]); this parse is for
+        // everything else the tree describes.
     }
 }
 
 /// The RAM window the platform described, when it described one.
 ///
 /// The device-tree machines are told where their memory is and how much of it
-/// there is ([`PlatformInfo::memory_base`](crate::arch::fdt::PlatformInfo));
-/// x86_64 has no such node, and its answer comes from the loader's memory map
-/// instead ([`crate::arch::boot::multiboot2_usable_regions`]).  `None` is a
-/// machine that described nothing, which is a different answer from a machine
-/// with no memory ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+/// there is; x86_64 has no such node, and its answer comes from the loader's
+/// memory map instead ([`crate::arch::boot::multiboot2_memory_regions`]).
+/// `None` is a machine that described nothing, which is a different answer
+/// from a machine with no memory ([RFC
+/// 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+///
+/// The answer is read from the blob directly
+/// ([`crate::arch::fdt::memory_window`]) rather than from `PlatformInfo`:
+/// `MemoryManager::init` sizes the frame allocator from it, which happens
+/// before the full parse that fills `PlatformInfo` runs, and the walk allocates
+/// nothing — the read RFC 0019's "still owed" named.
 #[cfg(any(
     all(target_arch = "aarch64", target_os = "none"),
     all(target_arch = "riscv64", target_os = "none")
@@ -90,11 +95,7 @@ pub(crate) fn described_memory_window() -> Option<(usize, usize)> {
         all(target_arch = "riscv64", target_os = "none")
     ))]
     {
-        let info = crate::arch::fdt::platform_info();
-        match (info.memory_base, info.memory_size) {
-            (Some(base), Some(size)) if size > 0 => Some((base, size)),
-            _ => None,
-        }
+        crate::arch::fdt::memory_window(crate::arch::boot::handoff_address())
     }
 
     #[cfg(not(any(

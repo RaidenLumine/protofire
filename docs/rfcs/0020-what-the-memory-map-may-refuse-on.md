@@ -98,9 +98,11 @@ question, because the answer to it is always "no".**
 **5. What carries over from RFC 0019.**  Everything else: a frame is an address
 in the kernel's own memory; the pool is the machine's memory as far as this
 kernel is concerned; the machine is asked, and its answer is recorded, printed
-and checked against — never allocated from; x86_64 asks before the memory
-manager is built, the device-tree machines after their parse; and the boot line
-names the machine's number and the pool's separately.
+and checked against — never allocated from; every machine asks before the memory
+manager is built — x86_64's map is a walk over the loader's block, and a device
+tree's `/memory` window is a walk over the blob, and neither allocates — and the
+boot line names the machine's number and the pool's separately.  A device
+tree's full parse still runs later, for the rest of what the tree describes.
 
 ## Alternatives
 
@@ -171,6 +173,19 @@ firmware could have shown:
 argument: the pool moving, the bitmap overlapping the pool, a stale KASLR
 relocation list, and `.bss` being handed over non-zero.  They are worth not
 repeating, and this paragraph is where they are named rather than the design.
+
+**What landed after it.**  RFC 0019's still-owed read — the device-tree
+machines' answer reaching the manager's *sizing* — is `fdt::memory_window`: a
+pointer walk over the blob's structure block for the first `/memory` node's
+first `reg`, inheriting `#address-cells`/`#size-cells` from the root, with no
+allocation and no `PlatformInfo`.  The boot entry calls
+`report_machine_memory` for all three machines before `Kernel::new`, so the
+manager is sized from the machine's answer and the report is printed before
+the manager's own line; a device tree's full parse keeps its place for
+everything else the tree describes.  The aarch64 and riscv64 runtime checks
+assert the order (`[mem   ] machine reports …` before `Memory manager
+initialized`), and the manager's line names the pool's size rather than the
+machine's number that sized it.
 
 ## Unresolved questions
 

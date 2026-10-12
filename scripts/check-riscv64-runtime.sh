@@ -231,6 +231,13 @@ require_log_line "[user  ] process-root root=0x"
 require_log_line "[init  ] starting idle process"
 require_log_line "protofire kernel running"
 
+# The machine's memory is read from the device tree before the memory manager
+# sizes its pool from it: the report line has to come first, and the manager's
+# own line then names the pool rather than the machine.  This is the order
+# RFC 0019's still-owed early read changed.
+require_log_line "[mem   ] machine reports "
+require_log_line_order "[mem   ] machine reports " "Memory manager initialized"
+
 # ── The shell is ring-3 code, and it answered what was typed at it ─────
 #
 # `adastra ring3 shell` is the shell payload's own banner; the in-kernel host

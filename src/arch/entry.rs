@@ -75,13 +75,11 @@ impl BootStage {
 fn boot_kernel(boot_info: arch::boot::BootInfo) -> ! {
     util::debug::init();
     print_banner();
-    // x86_64's memory map is a pointer walk over the loader's own block and
-    // needs no allocation, so the machine is asked here — before the kernel is
-    // built and before the memory manager sizes its pool from the answer
-    // ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)).  A device tree is
-    // different: its parse allocates, so that answer comes after the heap
-    // exists, in `platform::describe_platform`.
-    #[cfg(target_arch = "x86_64")]
+    // The machine's memory is asked before the kernel is built, so the memory
+    // manager sizes its pool from the answer: x86_64's map is a pointer walk
+    // over the loader's block and a device tree's `/memory` window is a pointer
+    // walk over the blob, and neither walk allocates ([RFC
+    // 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
     crate::memory::report_machine_memory();
     announce(BootStage::Bootloader, boot_info.protocol().as_str());
     println!(
