@@ -23,16 +23,34 @@ deliver *numbers* rather than wires, and both need the same three things — a
 window of identities a device may own, one handler per identity, and a lookup
 that runs the handler for the number that arrived.  `claim` and `claim_each`
 allocate a run of identities (the second taking one handler per identity, which
-is what a multi-queue device wants), and `dispatch` runs the handler, taking it
-out of the table first so a handler that registers another identity cannot
-deadlock on the registry's own lock.  An identity nobody claimed is
+is what a multi-queue device wants), and `dispatch` runs the handler, cloned
+out of the table so a handler that registers another identity cannot deadlock on
+the registry's own lock.  An identity nobody claimed is
 distinguished from a spurious interrupt by the caller, and both are counted.
+
+Each *base* gets a window of its own, with its own slots.  That is not
+tidiness: a slot is `identity - base`, so two bases answer to the same slot
+number by arithmetic — an LPI 8193 (AArch64's `LPI_BASE`, 8192) and the console
+UART's wired SPI 33 (`SPI_HANDLER_BASE`, 32) are both slot 1.  While one table
+served every base, the first claim to arrive took the slot and the second was
+refused; on a GICv3 boot the ITS registered the block device's LPIs before the
+console's SPI was claimed, the UART's claim failed into a discarded result, and
+a delivered 33 ran the *block driver's* handler — a typed byte announced as
+`[virtio-blk] queue MSI (irq 33)`.  Each base now opens a window at its first
+claim, and a claim that finds no window is refused rather than sharing one.
 
 A wire can be an identity too.  AArch64's console UART claims its SPI in the
 registry (`SPI_HANDLER_BASE`, `src/arch/aarch64/mod.rs`) and the trap path runs
 it there, so a wired interrupt and a translated message take the same lookup;
 RISC-V's PLIC sources are dispatched the same way (`PLIC_HANDLER_BASE`,
 `src/arch/riscv64/mod.rs`).
+
+What the console UART's arm actually achieved is the machine's answer, not an
+assumption: the device-tree machines set a flag once their claim succeeded (the
+controller writes follow it, in the same function), and the timer tick polls a
+UART whose flag is clear.  A refused claim therefore costs an interrupt rather
+than typing — the failure mode the collision above produced, which is why the
+poll is wired to the outcome.
 
 ## The controllers
 

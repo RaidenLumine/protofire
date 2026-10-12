@@ -300,6 +300,8 @@ pub mod serial {
     use super::write_volatile;
     use super::SpinLock;
     use super::Write;
+    use core::sync::atomic::AtomicBool;
+    use core::sync::atomic::Ordering;
 
     // QEMU `virt` platform: NS16550A UART at 0x1000_0000.
     const UART_QEMU_VIRT_BASE: usize = 0x1000_0000;
@@ -436,6 +438,14 @@ pub mod serial {
 
     static SERIAL0: SpinLock<Ns16550a> = SpinLock::new(Ns16550a::new(UART_QEMU_VIRT_BASE));
 
+    /// Whether the console UART's source really is the machine's to deliver.
+    ///
+    /// Set only once the identity is claimed and the controller armed, for the
+    /// same reason aarch64's flag is: a refused claim leaves the UART's bytes
+    /// in its FIFO, and "does this machine need the tick's poll" has to be
+    /// answered by what happened rather than by what was intended.
+    static RX_INTERRUPT_ARMED: AtomicBool = AtomicBool::new(false);
+
     pub fn init() {
         let mut uart = SERIAL0.lock();
         uart.base = uart_base();
@@ -465,17 +475,34 @@ pub mod serial {
         let handler: crate::arch::irq_handlers::IrqHandler = alloc::sync::Arc::new(|_| {
             crate::drivers::serial::handle_rx_interrupt();
         });
-        let _ = crate::arch::irq_handlers::claim(
+        let claimed = crate::arch::irq_handlers::claim(
             super::interrupt_controller::PLIC_HANDLER_BASE,
             interrupt_id,
             interrupt_id,
             1,
             handler,
         );
+        if claimed.is_err() {
+            crate::println!(
+                "[serial] console UART interrupt {} could not be claimed; the tick will poll it",
+                interrupt_id
+            );
+            return;
+        }
         crate::arch::interrupt_controller::set_priority(interrupt_id, 1);
         crate::arch::interrupt_controller::enable_interrupt(interrupt_id);
 
         SERIAL0.lock().enable_rx_interrupt();
+        RX_INTERRUPT_ARMED.store(true, Ordering::Release);
+    }
+
+    /// Whether this machine's console UART delivers its bytes by interrupt.
+    ///
+    /// The PLIC machine's does once the source above is claimed; an AIA
+    /// machine's does not, so its input rides the tick — as does a machine
+    /// whose claim was refused, which is why this answers what happened.
+    pub fn rx_is_interrupt_driven() -> bool {
+        RX_INTERRUPT_ARMED.load(Ordering::Acquire)
     }
 
     pub fn write_str(message: &str) {

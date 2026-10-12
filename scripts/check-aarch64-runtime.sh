@@ -595,25 +595,40 @@ fi
 # drivers claiming identities from their own MSI-X tables rather than one.  A
 # blank disk is enough — what is being checked is the claim and the placement,
 # and the filesystem rejects the image either way.
+#
+# This boot is typed at as well, and that is what the last assertions below
+# read: the console UART's SPI is carried by this machine's controller, and a
+# boot that merely *starts* on a GICv3 has shown the routing but not the
+# delivery.  The typed line is the one the first segment types, so both
+# segments are held to the same evidence on different controllers; the byte
+# reaching the shell at all is the SPI dispatch having run, because the tick
+# no longer polls a UART that has a line of its own.
 gicv3_log="$(mktemp)"
 gicv3_blk="$(mktemp)"
 dd if=/dev/zero of="$gicv3_blk" bs=1m count=8 2>/dev/null \
     || dd if=/dev/zero of="$gicv3_blk" bs=1048576 count=8 2>/dev/null
+# `-serial stdio` with the feeder on stdin, the same configuration as the
+# first segment: `-serial file:` can only listen, and what this boot has to
+# show is a byte arriving from outside the machine.
+gicv3_shell_commands() {
+    sh ./scripts/feed-shell-console.sh "$gicv3_log" "$TIMEOUT_SECONDS" \
+        'echo ring3-shell-answered'
+}
 set +e
-timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
+gicv3_shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -machine virt,gic-version=3 \
     -cpu max \
     -smp 2 \
     -m "$QEMU_RAM" \
     -kernel "$KERNEL_BIN" \
     -display none \
-    -serial "file:$gicv3_log" \
+    -serial stdio \
     -no-reboot \
     -no-shutdown \
     -global virtio-mmio.force-legacy=false \
     -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
     -drive file="$gicv3_blk",if=none,id=blk0 \
-    -device virtio-blk-pci,drive=blk0 >/dev/null 2>&1
+    -device virtio-blk-pci,drive=blk0 >"$gicv3_log" 2>>"$gicv3_log"
 set -e
 
 # The assertions below all read `$log_file`, so point it at this boot while
@@ -706,6 +721,14 @@ require_log_line "[its   ] self-test delivered LPI 8192"
 require_log_absent_line "[its   ] self-test could not be set up"
 require_log_absent_line "no ITS on this machine"
 require_log_absent_line "not programmed"
+# The typed line came back, and it could only have arrived one way: this
+# machine's tick does not poll a UART that has a line of its own, so the shell
+# read a byte the PL011's receive interrupt had drained — which means its mask
+# bit, the GICv3 SPI 33, the IROUTER affinity the claim set and the SPI
+# dispatch all ran.  The handler's own one-time line says the interrupt fired;
+# the shell's exact answer says the byte it carried reached the reader.
+require_log_line "[serial] RX interrupt carries input"
+require_log_exact_line "ring3-shell-answered"
 # An interrupt the trap claimed and did not recognise is the shape of a
 # delivery path that half works, which is worse than one that does not.
 require_log_absent_line "aarch64 irq intid="

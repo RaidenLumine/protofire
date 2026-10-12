@@ -706,7 +706,10 @@ pub mod serial {
     /// A machine whose UART does needs no poll from the timer tick; one whose
     /// UART has no interrupt path wired does.  The answer belongs here rather
     /// than in the scheduler, which should not have to name an architecture to
-    /// know whether to poll.
+    /// know whether to poll.  A machine that *tried* to arm its UART and could
+    /// not — a claim that lost its identity, a controller without the line —
+    /// answers `false` too, and that is the point: a machine with no path must
+    /// keep the poll, or typing dies with the claim.
     pub fn rx_is_interrupt_driven() -> bool {
         #[cfg(all(target_arch = "x86_64", target_os = "none"))]
         {
@@ -715,15 +718,12 @@ pub mod serial {
 
         #[cfg(all(target_arch = "aarch64", target_os = "none"))]
         {
-            true
+            super::aarch64::serial::rx_is_interrupt_driven()
         }
 
         #[cfg(all(target_arch = "riscv64", target_os = "none"))]
         {
-            // The UART's wire interrupt is the PLIC's to carry, and an AIA
-            // machine replaces the PLIC with an APLIC this kernel does not
-            // drive.
-            !super::riscv64::aia_imsic::has_aia_imsic()
+            super::riscv64::serial::rx_is_interrupt_driven()
         }
 
         #[cfg(not(any(

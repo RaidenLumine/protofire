@@ -547,6 +547,8 @@ pub mod serial {
     use super::write_volatile;
     use super::SpinLock;
     use super::Write;
+    use core::sync::atomic::AtomicBool;
+    use core::sync::atomic::Ordering;
 
     const PL011_UART_BASE: usize = 0x0900_0000;
     /// QEMU `virt` wires the PL011 to GIC SPI 1, whose interrupt id is 33;
@@ -671,6 +673,15 @@ pub mod serial {
 
     static SERIAL0: SpinLock<Pl011Uart> = SpinLock::new(Pl011Uart::new(PL011_UART_BASE));
 
+    /// Whether the console UART's SPI really is the machine's to deliver.
+    ///
+    /// Set only after the identity is claimed *and* the controller has been
+    /// told about it, because that is what "this machine's UART delivers by
+    /// interrupt" means — a claim that lost its identity to another window
+    /// leaves the UART's bytes in the FIFO, and the tick's poll has to know
+    /// rather than assume ([`super::super::serial::rx_is_interrupt_driven`]).
+    static RX_INTERRUPT_ARMED: AtomicBool = AtomicBool::new(false);
+
     pub fn init() {
         let mut uart = SERIAL0.lock();
         uart.base = pl011_uart_base();
@@ -684,6 +695,11 @@ pub mod serial {
     /// the handler registry, put in Group 1 for this kernel, given a priority
     /// and enabled — and only then is the UART's own mask bit set, because a
     /// byte that arrived earlier would raise a line no handler owned.
+    ///
+    /// A claim that fails is reported rather than swallowed: it means the
+    /// machine has a wired console with nowhere to deliver it, and the tick
+    /// keeps polling the FIFO so typing still works
+    /// ([`RX_INTERRUPT_ARMED`] is what the poll asks).
     pub fn enable_rx_interrupt() {
         let interrupt_id = crate::arch::fdt::platform_info()
             .uart_irq
@@ -691,13 +707,21 @@ pub mod serial {
         let handler: crate::arch::irq_handlers::IrqHandler = alloc::sync::Arc::new(|_| {
             crate::drivers::serial::handle_rx_interrupt();
         });
-        let _ = crate::arch::irq_handlers::claim(
+        let claimed = crate::arch::irq_handlers::claim(
             super::SPI_HANDLER_BASE,
             interrupt_id,
             interrupt_id,
             1,
             handler,
         );
+        if claimed.is_err() {
+            crate::println!(
+                "[serial] console UART interrupt {} could not be claimed; the tick will poll it",
+                interrupt_id
+            );
+            return;
+        }
+
         // A shared peripheral interrupt needs a target CPU; a private one does
         // not, which is why the timer's arming has no counterpart to this
         // line.  The boot CPU is the one this runs on.
@@ -707,6 +731,12 @@ pub mod serial {
         crate::arch::interrupt_controller::enable_interrupt(interrupt_id);
 
         SERIAL0.lock().enable_rx_interrupt();
+        RX_INTERRUPT_ARMED.store(true, Ordering::Release);
+    }
+
+    /// Whether this machine's console UART delivers its bytes by interrupt.
+    pub fn rx_is_interrupt_driven() -> bool {
+        RX_INTERRUPT_ARMED.load(Ordering::Acquire)
     }
 
     pub fn write_str(message: &str) {

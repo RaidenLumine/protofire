@@ -102,9 +102,12 @@ on all three machines — COM1's vector 36, the PL011's GIC SPI 33 (claimed in
 the interrupt registry), the NS16550A's PLIC source 10 (claimed the same way)
 — routed and armed once the controller is up
 (`arch::interrupt_controller::init`), so console input does not depend on the
-timer tick.  An AIA machine is the exception: its wire interrupts arrive
-through an APLIC this kernel does not drive, so its UART keeps the tick's poll
-(`src/kernel/process/scheduler/timer.rs`).
+timer tick.  Two cases keep the tick's poll rather than lose the input: an AIA
+machine, whose wire interrupts arrive through an APLIC this kernel does not
+drive, and a machine whose claim was *refused* — the device-tree machines
+answer `serial::rx_is_interrupt_driven` from the claim's outcome, so a console
+that could not be armed is polled
+(`src/kernel/process/scheduler/timer.rs`) instead of silently deaf.
 The PS/2 keyboard and mouse are PC
 hardware; a device-tree machine uses `virtio-input`, whose events are injected
 into the same keyboard core so both routes end in one decoder.  A Linear

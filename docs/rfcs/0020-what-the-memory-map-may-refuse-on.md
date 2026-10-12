@@ -201,6 +201,19 @@ tick, and so does an AIA machine's UART (its wire interrupts arrive through an
 APLIC this kernel does not drive), which is what the question below now
 covers.
 
+A refused claim no longer costs input silently either.  The device-tree
+machines set `rx_is_interrupt_driven` from what the claim and the controller
+write actually did, so a console UART that could not be armed keeps the tick's
+poll — and the claim that loses its identity is *reported*, not discarded into
+a `let _ =`.  That is what the GICv3 segment of `make check-aarch64-runtime`
+found the moment it was typed at: the registry indexed every window by
+`identity - base`, so the LPI 8193 an ITS had registered and the wired SPI 33
+the console claimed were the same slot, the UART's claim was refused in
+silence, and a byte typed at the console ran the block driver's handler.  Each
+base has a window of its own now (`src/arch/irq_handlers.rs`), the aarch64
+segment types at the shell and asserts the UART's own line, and the second
+controller's delivery is a gate rather than an assumption.
+
 Wiring the two device-tree machines found two defects in the aarch64 GICv2
 path that nothing had reached before, because the timer was its only interrupt
 and the timer's tick is read from the counter's own status rather than from a
