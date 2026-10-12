@@ -240,9 +240,9 @@ device-tree machines' input now arrives by interrupt.
 - **What "refuse to boot" means**: the tree's panic policy is
   `docs/fmts/unsafe-and-safety.md`'s, and whether this is a halt with a message
   or a panic is that document's to say.
-- **The device polling that lives in the timer tick**: xHCI and virtio-input
-  still poll from the tick handler, so a spin there takes their input with it.
-  The UART half has landed on every machine — including an AIA machine, whose
-  wire interrupts are carried by the supervisor APLIC domain
-  (`src/arch/riscv64/aplic.rs`, and the section above) — so what the question
-  still names is the two USB/input polls alone.
+- **The device polling that lives in the timer tick**: answered by
+  [RFC 0021](0021-what-the-timer-tick-still-polls.md).  Both remaining polls
+  stay, for different reasons — xHCI's tick drain because the ring's lock
+  means an interrupt that acknowledges cannot always drain, so the tick is
+  what drains what it left, and `virtio-input`'s because the MMIO transport
+  has no identity to claim — and that document names what would reopen each.

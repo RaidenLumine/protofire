@@ -111,7 +111,12 @@ that could not be claimed or armed is polled
 (`src/kernel/process/scheduler/timer.rs`) instead of silently deaf.
 The PS/2 keyboard and mouse are PC
 hardware; a device-tree machine uses `virtio-input`, whose events are injected
-into the same keyboard core so both routes end in one decoder.  A Linear
+into the same keyboard core so both routes end in one decoder.  That driver's
+completions are drained by the timer tick, and that is the MMIO transport's
+shape rather than a missing interrupt: the transport carries no identity a
+claim could own, so there is nothing for a handler to run for, and no gate
+attaches the device — the path is cold on every measured machine
+([RFC 0021](../rfcs/0021-what-the-timer-tick-still-polls.md)).  A Linear
 framebuffer — bochs-display — is a second console target next to the UART, with
 its register map and display record in `drivers/framebuffer_protocol.rs` so a
 driver and its consumers share the shape.
@@ -187,8 +192,12 @@ extending what [RFC 0004](../rfcs/0004-reuse-the-xhci-rings-by-cycle-state.md)
 decided after a mount over USB was found to stop completing transfers.  The controller
 **claims a vector of its own** and the interrupt drains the event ring, taken
 with `try_lock` so an interrupt never waits on the ring's owner; the timer tick
-still drains as the fallback, for the case where the lock is held and for a
-machine where the claim was refused.  A **root port** is watched too, and by
+still drains as the fallback, and the lock is why that is an edge rather than
+caution: the handler has already acknowledged the message the controller will
+not raise again for the ring it left, so the tick is what drains a report that
+arrived under a transfer's wait — and a machine whose claim was refused has no
+handler at all
+([RFC 0021](../rfcs/0021-what-the-timer-tick-still-polls.md)).  A **root port** is watched too, and by
 the other mechanism: the controller posts a Port Status Change Event naming the
 port, `PORTSC`'s change bits say whether a device arrived or left, and the bits
 are cleared — once after the boot's scan, because a change bit that is still

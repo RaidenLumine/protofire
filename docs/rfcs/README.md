@@ -128,6 +128,7 @@ and its status says which of the two happened.
 | [0018](0018-read-a-disk-whose-table-is-gpt.md) | Accepted | Read a disk whose table is GPT |
 | [0019](0019-what-a-frame-is.md) | Superseded | Make a frame an address in the kernel's own memory |
 | [0020](0020-what-the-memory-map-may-refuse-on.md) | Implemented | What the memory map may refuse on |
+| [0021](0021-what-the-timer-tick-still-polls.md) | Accepted | What the timer tick still polls |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —
