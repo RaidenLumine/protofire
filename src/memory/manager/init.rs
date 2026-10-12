@@ -9,7 +9,6 @@ use crate::memory::paging::PagePermissions;
 use crate::println;
 use crate::Result;
 
-use super::super::arch::detect_memory;
 use super::MemoryManager;
 use crate::kernel::topology::NUMA_NODE_NONE;
 
@@ -43,10 +42,16 @@ impl MemoryManager {
             return;
         }
 
-        let memory_size = detect_memory();
-        // Initialise node 0 with the full detected memory (default single-node
+        // How much of the pool is real: the machine's description walked from
+        // the pool's start (`managed_pool_bytes`), not "how much RAM the
+        // machine has" — the pool lives at an address of its own, so its
+        // usable length is the distance from there to the first address the
+        // machine does not describe.  A machine whose RAM ends inside the
+        // pool manages the part that is there rather than writing past RAM.
+        let managed_pool = crate::memory::arch::managed_pool_bytes();
+        // Initialise node 0 with the pool's managed span (default single-node
         // configuration; callers may later subdivide with set_node_range).
-        self.frame_allocators[0].init(memory_size);
+        self.frame_allocators[0].init(managed_pool);
         self.num_nodes = 1;
         self.page_table.init();
         self.init_kernel_heap();
@@ -62,16 +67,14 @@ impl MemoryManager {
 
         self.initialized = true;
 
-        // The pool, and only the pool: what the machine has is reported by
-        // `report_machine_memory` ([RFC
-        // 0019](../../docs/rfcs/0019-what-a-frame-is.md)), which is also where
-        // the answer is checked.  `memory_size` above is what *sizes* the
-        // allocator — the machine's answer, clamped by `FrameAllocator::init`
-        // to the pool — and it is not the pool's size; printing it here is how
-        // one number used to wear both names.
+        // The pool's *managed* span is what the allocator was sized with: the
+        // pool itself is a fixed reservation of the kernel's address space,
+        // and on a machine whose RAM ends inside it the two differ — so this
+        // line names the memory the kernel can actually hand out, and the
+        // `[mem   ]` lines above it name both when they are not the same.
         println!(
             "Memory manager initialized: {} MiB pool, {} KiB heap free",
-            crate::memory::frame::physical_pool_size() / 1024 / 1024,
+            crate::memory::arch::managed_pool_bytes() / 1024 / 1024,
             self.heap_allocator.remaining() / 1024
         );
     }

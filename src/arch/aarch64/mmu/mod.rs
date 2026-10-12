@@ -1600,14 +1600,28 @@ pub fn active_runtime_kernel_page_table_check(
 
 static DEMO_SLOT_TAKEN: AtomicU64 = AtomicU64::new(0);
 
-/// Return the raw pointer to a demo slot region (carved top-down from the
-/// end of the RAM window).
+extern "C" {
+    static __demo_slots_start: u8;
+    static __demo_slots_end: u8;
+}
+
+/// Return the raw pointer to a demo slot region.
+///
+/// The slots are a reserved span of the kernel's own address space, placed by
+/// the linker between `.bss` and the frame pool, and carved top-down so a
+/// slot's index keeps its meaning if the span ever grows: region `n` is the
+/// `n`-th from the top.  They used to be carved from the top of the RAM
+/// *window* (`KERNEL_TEXT_END`), which is a window the kernel has no RAM
+/// under on a small machine — the fixed 0x7fe0_0000 address a payload load
+/// used to write is what took a 640 MiB boot off the air.
 fn demo_user_region_ptr(slot_index: usize) -> Option<*mut u8> {
     if slot_index >= USER_DEMO_SLOT_COUNT {
         return None;
     }
-    let region = KERNEL_TEXT_END - (slot_index + 1) * USER_DEMO_REGION_SIZE;
-    Some(region as *mut u8)
+    let slots_end = core::ptr::addr_of!(__demo_slots_end) as usize;
+    let slots_start = core::ptr::addr_of!(__demo_slots_start) as usize;
+    let region = slots_end.checked_sub((slot_index + 1) * USER_DEMO_REGION_SIZE)?;
+    (region >= slots_start).then_some(region as *mut u8)
 }
 
 /// Claim a demo slot index.
@@ -1700,7 +1714,9 @@ fn aslr_offset(slot_index: usize) -> usize {
 pub fn demo_user_slot_layout(slot_index: usize) -> Option<DemoUserSlotLayout> {
     let region = demo_user_region_ptr(slot_index)? as usize;
     let region_end = region.checked_add(USER_DEMO_REGION_SIZE)?;
-    if region < KERNEL_TEXT_BASE || region_end > KERNEL_TEXT_END {
+    let slots_start = core::ptr::addr_of!(__demo_slots_start) as usize;
+    let slots_end = core::ptr::addr_of!(__demo_slots_end) as usize;
+    if region < slots_start || region_end > slots_end {
         return None;
     }
     if !region.is_multiple_of(USER_DEMO_REGION_SIZE) {

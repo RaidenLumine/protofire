@@ -28,12 +28,28 @@ rest of what the tree describes.
 ## Frames
 
 `src/memory/frame.rs` holds the frame allocator, and the first thing to say
-about it is what backs it: a static array inside the kernel image
-(`PHYSICAL_POOL`, sized by `PHYSICAL_POOL_SIZE`, both in that file).  The
-allocator manages that array, not the machine's RAM.  `init` clamps the
-platform's reported size to it, so a machine with more memory than the pool has
-the excess unmanaged, and a machine with less has the pool overhang ignored
-rather than used.  A board port is where that changes.
+about it is what backs it: a **reserved span** of the kernel's own address
+space, placed by each linker script between the image's initialised data and
+the end of the kernel (`__pool_start`..`__pool_end`, sized by `POOL_SIZE`).
+It is not a section: nothing is loaded there, no loadable segment covers it,
+and no boot clears it — the allocator makes a frame zero when it hands one
+out, which is the guarantee that was always the real one.  A frame's address
+is therefore its physical address, and the pool is the memory the allocator
+manages rather than the machine's RAM ([RFC
+0019](../rfcs/0019-what-a-frame-is.md)).
+
+What the allocator may manage inside that span is the machine's answer:
+`memory::arch::managed_pool_bytes` walks the regions the machine describes
+from the pool's start and answers how much of the span is really there, and
+`MemoryManager::init` sizes the node-0 allocator with it.  The pool's length
+is thus a ceiling — a machine with more memory than the span has the excess
+unmanaged, and a machine whose RAM ends inside the span manages only the part
+that exists.  A boot where the two differ says so
+(`the machine has N MiB of the pool's span`), so one number cannot wear two
+names in a log ([RFC
+0020](../rfcs/0020-what-the-memory-map-may-refuse-on.md) is the measurement
+that took the pool out of the boot's clear).  A board port is where the span
+becomes a decision about the machine's memory rather than the kernel's.
 
 Allocation is a bump pointer plus a free list: the allocator hands out from the
 high-water mark when nothing smaller fits, and a `BTreeMap` of freed ranges

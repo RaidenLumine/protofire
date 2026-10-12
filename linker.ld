@@ -7,6 +7,12 @@ ENTRY(_start)
 
 KERNEL_LOAD_ADDRESS = 0x200000;
 
+/* The frame pool's span, in bytes.  It is reserved address space, not
+   storage: nothing is loaded there and no clear loop walks it — the
+   allocator zeroes a frame when it hands one out.  See
+   `src/memory/frame.rs`. */
+POOL_SIZE = 512M;
+
 SECTIONS
 {
     . = KERNEL_LOAD_ADDRESS;
@@ -74,6 +80,26 @@ SECTIONS
         *(.lbss .lbss.*)
         *(COMMON)
     }
+    /* Where the loaded content ends: everything before this is the kernel the
+       loader places and this boot clears, everything after is reserved
+       address space (below).  The boot's memory check asks about this range
+       rather than the whole image, because a machine is not required to have
+       RAM under memory the kernel reserves and never loads. */
+    __image_end = .;
+
+    /* The frame pool is reserved **address space**, not a section: the
+       location counter advances over it and no input section fills it, so no
+       loadable segment covers the span.  A loader zeroes a segment's
+       `p_memsz`, and a 512 MiB pool inside one made every boot pay a
+       half-gigabyte clear — and made an ELF with more `p_memsz` than the
+       machine has RAM fail to load at all.  The pool is memory the allocator
+       zeroes a frame at a time, so it is the allocator's, not the loader's.
+       See `src/memory/frame.rs` and
+       `docs/rfcs/0020-what-the-memory-map-may-refuse-on.md`. */
+    . = ALIGN(4K);
+    __pool_start = .;
+    . += POOL_SIZE;
+    __pool_end = .;
     __bss_end = .;
     __kernel_end = .;
 

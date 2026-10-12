@@ -6,37 +6,83 @@
 //! insertion and removal, replacing the previous `Vec<FrameRange>` which
 //! required O(n) element shifting on every insert/remove.
 
-use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 use alloc::collections::BTreeMap;
 
 use crate::memory::alloc_profiler::AllocProfiler;
 
 pub const FRAME_SIZE: usize = 4096;
 pub const MAX_NODES: usize = 8;
-// Backing pool for host/bare-metal frame simulation; allocation is
-// frame-granular.
-const PHYSICAL_POOL_SIZE: usize = 512 * 1024 * 1024;
 
-#[repr(C, align(4096))]
-struct PhysicalPool([u8; PHYSICAL_POOL_SIZE]);
-
-static PHYSICAL_POOL: SyncUnsafeCell<PhysicalPool> =
-    SyncUnsafeCell::new(PhysicalPool([0; PHYSICAL_POOL_SIZE]));
-
-/// The address range of the pool array itself: where the kernel's memory is.
+/// The host build's pool backing store, in bytes.
 ///
-/// The pool is a static array inside the image, so this is the image's own
-/// address range as far as the allocator is concerned — which is what makes a
-/// frame's address its physical address, and what a boot checks against the
-/// map a machine described ([RFC
-/// 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
-pub fn pool_range() -> (usize, usize) {
-    let base = PHYSICAL_POOL.get() as *mut u8 as usize;
-    (base, base + PHYSICAL_POOL_SIZE)
+/// On a machine the pool's span is the linker's (`POOL_SIZE` in each linker
+/// script, between `__pool_start` and `__pool_end`) and nothing is loaded
+/// there; this constant is what a host build — the unit tests — backs its
+/// span with, because the host has no linker script and its allocator needs
+/// real memory to hand out.
+#[cfg(not(target_os = "none"))]
+const HOST_POOL_SIZE: usize = 512 * 1024 * 1024;
+
+/// The pool's bounds on this machine.
+///
+/// On a machine this is **reserved address space** rather than storage: the
+/// linker script places the span after the kernel's BSS, nothing is loaded
+/// there, no boot clears it, and the allocator makes a frame zero when it
+/// hands one out — the guarantee that is actually needed.  It used to be a
+/// 512 MiB array in `.bss` that the boot cleared, and that clear ran past the
+/// end of RAM on a small machine: measured, a 528 MiB machine printed
+/// **nothing at all**, where 640 MiB booted, because that is where the last
+/// store of the clear landed inside RAM.
+///
+/// The span is also a *ceiling*: the manager hands the allocator the machine's
+/// answer, clamped to this, so a machine whose RAM ends inside the span
+/// manages only the frames that are really there
+/// ([`crate::memory::arch::managed_pool_bytes`]).
+#[cfg(target_os = "none")]
+fn pool_bounds() -> (usize, usize) {
+    extern "C" {
+        static __pool_start: u8;
+        static __pool_end: u8;
+    }
+    // The addresses of the linker's own symbols that bracket the span; neither
+    // is dereferenced here, and taking one is safe.
+    (
+        core::ptr::addr_of!(__pool_start) as usize,
+        core::ptr::addr_of!(__pool_end) as usize,
+    )
 }
 
-pub const fn physical_pool_size() -> usize {
-    PHYSICAL_POOL_SIZE
+/// A host build's pool: the same shape, backed by a real array.
+#[cfg(not(target_os = "none"))]
+fn pool_bounds() -> (usize, usize) {
+    use crate::util::sync_unsafe_cell::SyncUnsafeCell;
+
+    #[repr(C, align(4096))]
+    struct PhysicalPool([u8; HOST_POOL_SIZE]);
+
+    static PHYSICAL_POOL: SyncUnsafeCell<PhysicalPool> =
+        SyncUnsafeCell::new(PhysicalPool([0; HOST_POOL_SIZE]));
+
+    let base = PHYSICAL_POOL.get() as *mut u8 as usize;
+    (base, base + HOST_POOL_SIZE)
+}
+
+/// The address range of the pool: where the kernel's memory is.
+///
+/// A frame's address is its physical address, and the pool is the memory the
+/// allocator manages, so this is the range a boot checks against the map a
+/// machine described ([RFC
+/// 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+pub fn pool_range() -> (usize, usize) {
+    pool_bounds()
+}
+
+/// The pool's span, in bytes — read from the span itself rather than written
+/// down a second time, so the linker's reservation is the one source of the
+/// number on a machine.
+pub fn physical_pool_size() -> usize {
+    let (start, end) = pool_bounds();
+    end.saturating_sub(start)
 }
 
 pub struct FrameAllocator {
@@ -71,10 +117,15 @@ impl FrameAllocator {
     }
 
     pub fn init(&mut self, total_size: usize) {
-        self.base = PHYSICAL_POOL.get() as *mut u8 as usize;
-        // Clamp callers to the simulated pool and ignore any tail smaller than
-        // one frame so raw byte counts remain acceptable.
-        self.total_frames = total_size.min(PHYSICAL_POOL_SIZE) / FRAME_SIZE;
+        let (pool_base, pool_end) = pool_bounds();
+        self.base = pool_base;
+        // Clamp callers to the pool's own span and ignore any tail smaller
+        // than one frame so raw byte counts remain acceptable.  The span is a
+        // ceiling, and a machine whose RAM ends before it manages less: the
+        // caller passes the machine's answer, and the pool's end is only
+        // reached when the machine really has that much.
+        let pool_size = pool_end.saturating_sub(pool_base);
+        self.total_frames = total_size.min(pool_size) / FRAME_SIZE;
         self.next_frame = 0;
         self.free_ranges.clear();
     }
@@ -85,7 +136,7 @@ impl FrameAllocator {
     /// the physical pool.  The range is `[start_frame, end_frame)`.
     /// `node_id` is stored for diagnostic / profiling use.
     pub fn set_node_range(&mut self, node_id: u8, start_frame: usize, end_frame: usize) {
-        let pool_base = PHYSICAL_POOL.get() as *mut u8 as usize;
+        let (pool_base, _) = pool_bounds();
         self.base = pool_base + start_frame * FRAME_SIZE;
         self.total_frames = end_frame.saturating_sub(start_frame);
         self.next_frame = 0;

@@ -15,13 +15,25 @@ use core::sync::atomic::Ordering;
 use super::diagnostics::BootstrapTranslation;
 use super::diagnostics::PlannedKernelRegion;
 use super::diagnostics::PreparedTranslation;
-use super::frame;
 use super::paging;
 
 /// Detected total physical RAM in bytes, populated during early boot by parsing
 /// the bootloader memory map (Multiboot2 / FDT).  Zero means "not yet
 /// detected"; callers fall back to the static pool size.
 static DETECTED_PHYSICAL_MEMORY: AtomicU64 = AtomicU64::new(0);
+
+/// Where the machine's description of RAM stops being contiguous with the
+/// pool's start, populated beside [`DETECTED_PHYSICAL_MEMORY`].
+///
+/// The frame pool is a fixed span of the kernel's address space now, and on a
+/// machine whose RAM ends inside that span the frames past RAM end are memory
+/// that is not there: writing one is a fault, not an allocation.  This is the
+/// address the allocator may not cross, walked from the pool's start over the
+/// regions the machine *describes* (any kind but defective, since a loader's
+/// reservation is still RAM).  Zero means the machine described nothing —
+/// then there is no answer to clamp with and the span is the bound, which is
+/// what a boot with no map had before there was a pool to size.
+static POOL_RAM_END: AtomicU64 = AtomicU64::new(0);
 
 /// Store the detected physical memory size (in bytes).
 ///
@@ -71,7 +83,63 @@ pub fn record_machine_memory() -> Option<Vec<MemoryRegion>> {
         .filter(|region| region.kind == MEMORY_REGION_AVAILABLE)
         .fold(0usize, |total, region| total.saturating_add(region.length));
     store_detected_memory(total);
+    store_pool_ram_end(pool_ram_end_from(&regions));
     Some(regions)
+}
+
+/// Walk from the pool's start over the regions the machine describes.
+///
+/// Coverage has to be **contiguous**: a frame the allocator hands out is
+/// written as a physical address, so the first address past what the machine
+/// has described is the first address the allocator may not cross.  Every
+/// kind but defective counts as described — a loader's reservation is still
+/// RAM the machine owns, and refusing to cross it would strand the memory
+/// behind it.
+fn pool_ram_end_from(regions: &[MemoryRegion]) -> usize {
+    let (pool_start, pool_end) = crate::memory::frame::pool_range();
+    let mut end = pool_start;
+    loop {
+        let next = regions
+            .iter()
+            .filter(|region| {
+                region.kind != MEMORY_REGION_DEFECTIVE && region.base <= end && end < region.end()
+            })
+            .map(|region| region.end())
+            .max();
+        match next {
+            Some(region_end) if region_end > end => {
+                end = region_end.min(pool_end);
+                if end >= pool_end {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    end
+}
+
+/// Store the walk's answer (in bytes as an address).
+fn store_pool_ram_end(end: usize) {
+    POOL_RAM_END.store(end as u64, Ordering::Release);
+}
+
+/// How much of the frame pool's span lies in memory the machine has.
+///
+/// This is the number the frame allocator is sized with, and it is the reason
+/// the pool can be a fixed span of the kernel's address space without the
+/// kernel writing past the end of RAM on a small machine.  A machine that
+/// described nothing answers the whole span, which is the shape a boot with
+/// no map has always had.
+pub fn managed_pool_bytes() -> usize {
+    let (pool_start, pool_end) = crate::memory::frame::pool_range();
+    let ram_end = POOL_RAM_END.load(Ordering::Acquire) as usize;
+    let end = if ram_end > pool_start {
+        ram_end.min(pool_end)
+    } else {
+        pool_end
+    };
+    end.saturating_sub(pool_start)
 }
 
 // The checks below only run on a machine: a host build's "image" is a test
@@ -161,16 +229,25 @@ fn undescribed_and_reserved_bytes(
 ///
 /// Only a bare-metal build has these symbols; a host build's "image" is the
 /// test binary, which is not a kernel and is not a kernel's question.
+///
+/// The range stops at `__image_end` rather than at `__kernel_end`, because
+/// the demo slots and the frame pool are **reservations** — the tail of the
+/// kernel's address space that nothing is loaded into and the boot does not
+/// clear — and a machine is not required to have RAM under a span the kernel
+/// reserves but never touches.  What the checks below ask about is the part
+/// of the kernel the loader loaded: that is the part that has to be RAM.  How
+/// much of the pool the machine actually has is [`managed_pool_bytes`]'s
+/// answer.
 #[cfg(target_os = "none")]
 pub fn kernel_image_range() -> (usize, usize) {
     extern "C" {
         static __kernel_start: u8;
-        static __kernel_end: u8;
+        static __image_end: u8;
     }
     // The addresses of the linker's own symbols for the image this code is
     // running from; neither is dereferenced, and taking one is safe.
     let start = core::ptr::addr_of!(__kernel_start) as usize;
-    let end = core::ptr::addr_of!(__kernel_end) as usize;
+    let end = core::ptr::addr_of!(__image_end) as usize;
     (start, end)
 }
 
@@ -224,6 +301,20 @@ pub fn report_machine_memory() {
     let (pool_start, pool_end) = crate::memory::frame::pool_range();
     crate::println!("[mem   ] the pool is [{:#x}, {:#x})", pool_start, pool_end);
 
+    // The pool is a *span* the kernel reserves; what it manages is the part of
+    // that span the machine has.  The two are the same on every machine this
+    // kernel was measured on before a small-RAM boot was asked for, so the
+    // line appears only where they differ — which is exactly the boot a
+    // reader would otherwise misread as "the kernel has 512 MiB".
+    let managed = managed_pool_bytes();
+    if managed < pool_end - pool_start {
+        crate::println!(
+            "[mem   ] the machine has {} MiB of the pool's span; frames stop at {:#x}",
+            managed / (1024 * 1024),
+            pool_start + managed
+        );
+    }
+
     // The answer is a machine's; a host build asks it and does not enforce it.
     let pool_addressable = pool_is_addressable_by_a_device();
 
@@ -247,6 +338,18 @@ pub fn report_machine_memory() {
         }
 
         if let Some(regions) = &regions {
+            // A machine that described its memory but whose RAM does not reach
+            // the pool's start is a machine with no frames at all: the boot
+            // would run and fail somewhere unrelated, so it refuses here with
+            // the answer it has.
+            if managed < crate::memory::frame::FRAME_SIZE {
+                crate::println!(
+                    "[mem   ] FATAL: the pool starts at {:#x}, past the memory the machine describes",
+                    pool_start
+                );
+                panic!("the frame pool lies outside the machine's memory");
+            }
+
             let image = kernel_image_range();
             if range_touches_defective_memory(image, regions) {
                 crate::println!(
@@ -344,7 +447,7 @@ pub(crate) fn ensure_identity_mapped_range(address: usize, byte_len: usize) {
         // for.  A target without such a guard answers that there is nothing
         // to restore.
         unsafe { crate::arch::mmu::restore_page(address + offset) };
-        offset += super::frame::FRAME_SIZE;
+        offset += crate::memory::frame::FRAME_SIZE;
     }
 }
 
@@ -390,15 +493,6 @@ pub(crate) fn stack_window() -> Option<(usize, usize)> {
 pub(crate) fn unmap_user_page_arch(virtual_address: usize) -> bool {
     // SAFETY: the caller is removing a mapping it owns.
     unsafe { crate::arch::mmu::unmap_page(virtual_address) }
-}
-
-pub(crate) fn detect_memory() -> usize {
-    let detected = DETECTED_PHYSICAL_MEMORY.load(Ordering::Acquire);
-    if detected > 0 {
-        detected as usize
-    } else {
-        frame::physical_pool_size()
-    }
 }
 
 pub(crate) fn bootstrap_translation(virtual_address: usize) -> Option<BootstrapTranslation> {

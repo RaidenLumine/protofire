@@ -11,10 +11,11 @@
 //!   [0x0000_0000, 0x8000_0000)  PGD[0..1]  device / MMIO window (UART, PLIC,
 //!                                            CLINT, virtio)
 //!   [0x8000_0000, 0xC000_0000)  PGD[2]     RAM window (kernel text, static
-//!                                            .bss — incl. the 512 MiB
-//!                                            physical pool and heap — plus
-//!                                            demo user slots carved top-down)
-//!                                            under a 1 GiB QEMU `virt` RAM.
+//!                                            .bss — the 16 MiB heap — plus
+//!                                            the demo slots and the frame
+//!                                            pool the linker reserves after
+//!                                            it) under a 1 GiB QEMU `virt`
+//!                                            RAM.
 //!   [0xC000_0000, 0xC400_0000)  PGD[3]     stack window (kernel stacks, one
 //!                                            leaf per usable page, guards left
 //!                                            unfilled)
@@ -50,11 +51,14 @@ const TRANSLATION_GRANULE_SIZE: usize = 4096;
 /// Number of entries in every Sv39 translation table.
 const TABLE_ENTRY_COUNT: usize = 512;
 
-/// RAM window covered by the runtime tables (kernel image, static `.bss` and
-/// the demo user slots all live here).  The linker places the 512 MiB
-/// `PHYSICAL_POOL` and the 16 MiB `KERNEL_HEAP` statics in `.bss` just above
-/// the text/data, so the window must span a full GiB of QEMU `virt` RAM
-/// (`-m 1G`, RAM at [0x8000_0000, 0xC000_0000)).
+/// RAM window covered by the runtime tables (kernel image, static `.bss`, the
+/// demo slots and the frame pool all live here).  The linker places the
+/// 16 MiB `KERNEL_HEAP` static in `.bss` and reserves the demo slots and the
+/// frame pool after it (`__demo_slots_start`..`__kernel_end`), so the window
+/// spans a full GiB of QEMU `virt` RAM (`-m 1G`, RAM at
+/// [0x8000_0000, 0xC000_0000)).  On a machine with less RAM the pool's span
+/// extends past the RAM that exists; nothing is loaded there and the
+/// allocator only reaches what the machine has (`managed_pool_bytes`).
 /// Base of the RAM window the runtime tables map identity.  `pub(crate)` so
 /// the DMA translation can answer for the same window this file maps.
 pub(crate) const KERNEL_RAM_BASE: usize = 0x8000_0000;
@@ -1193,14 +1197,26 @@ pub fn active_runtime_kernel_page_table_check(
 
 static DEMO_SLOT_TAKEN: AtomicU64 = AtomicU64::new(0);
 
-/// Return the raw pointer to a demo slot region (carved top-down from the
-/// end of the RAM window).
+extern "C" {
+    static __demo_slots_start: u8;
+    static __demo_slots_end: u8;
+}
+
+/// Return the raw pointer to a demo slot region.
+///
+/// The slots are a reserved span of the kernel's own address space, placed by
+/// the linker between `.bss` and the frame pool, and carved top-down so a
+/// slot's index keeps its meaning if the span ever grows: region `n` is the
+/// `n`-th from the top.  They used to be carved from the top of the RAM
+/// *window*, an address the machine has no RAM under on a small boot.
 fn demo_user_region_ptr(slot_index: usize) -> Option<*mut u8> {
     if slot_index >= USER_DEMO_SLOT_COUNT {
         return None;
     }
-    let region = KERNEL_RAM_BASE + KERNEL_RAM_LENGTH - (slot_index + 1) * USER_DEMO_REGION_SIZE;
-    Some(region as *mut u8)
+    let slots_end = core::ptr::addr_of!(__demo_slots_end) as usize;
+    let slots_start = core::ptr::addr_of!(__demo_slots_start) as usize;
+    let region = slots_end.checked_sub((slot_index + 1) * USER_DEMO_REGION_SIZE)?;
+    (region >= slots_start).then_some(region as *mut u8)
 }
 
 /// Claim a demo slot index.
@@ -1251,13 +1267,14 @@ fn synchronize_user_code(_entry_point: usize, _payload_len: usize) {
 fn synchronize_user_code(_entry_point: usize, _payload_len: usize) {}
 
 pub fn demo_user_slot_layout(slot_index: usize) -> Option<DemoUserSlotLayout> {
-    let region_base =
-        KERNEL_RAM_BASE + KERNEL_RAM_LENGTH - (slot_index + 1) * USER_DEMO_REGION_SIZE;
+    let region_base = demo_user_region_ptr(slot_index)? as usize;
     let region = region_base;
     let region_end = region.checked_add(USER_DEMO_REGION_SIZE)?;
 
-    // Verify the region is within kernel RAM.
-    if region < KERNEL_RAM_BASE || region_end > KERNEL_RAM_BASE + KERNEL_RAM_LENGTH {
+    // Verify the region is within the slots' reserved span.
+    let slots_start = core::ptr::addr_of!(__demo_slots_start) as usize;
+    let slots_end = core::ptr::addr_of!(__demo_slots_end) as usize;
+    if region < slots_start || region_end > slots_end {
         return None;
     }
     if !region.is_multiple_of(USER_DEMO_REGION_SIZE) {

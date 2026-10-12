@@ -11,9 +11,10 @@ CRATE="${CRATE:-protofire}"
 CARGO="${CARGO:-cargo}"
 TARGET_DIR="${TARGET_DIR:-target}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
-# The kernel embeds a 512 MiB physical-frame pool as a static BSS array, so the
-# loaded image spans ~1.6 GiB of address space.  QEMU's `-kernel` loader refuses
-# to fit it into the default 512 MiB, so default to 2 GiB (override via QEMU_RAM).
+# The frame pool is a reserved span of the kernel's own address space now, not
+# a 512 MiB array the boot clears, so the loaded image is a few megabytes and
+# QEMU's `-kernel` loader fits it anywhere — 2 GiB used to be required only
+# because the pool sat inside a loadable segment (`p_memsz` said 576 MiB).
 QEMU_RAM="${QEMU_RAM:-2G}"
 QEMU_AARCH64="${QEMU_AARCH64:-qemu-system-aarch64}"
 KERNEL_BIN="${TARGET_DIR}/aarch64-unknown-none/${PROFILE}/${CRATE}.img"
@@ -741,5 +742,45 @@ require_log_line "protofire kernel running"
 log_file="$main_log"
 rm -f "$gicv3_log"
 rm -f "$gicv3_blk"
+
+# ── The same kernel on a machine with 512 MiB of RAM ──────────────────
+#
+# The frame pool used to be a 512 MiB array inside `.bss` that the boot
+# cleared, so a machine whose RAM ended inside the image took its first fault
+# in the clear — before the console existed, which is why the two segments
+# above boot with 2 GiB.  Measured on this kernel: at 528 MiB it printed
+# **nothing at all**; 640 MiB booted.  The pool is reserved address space now,
+# outside every loadable segment and outside the boot's clear, and what the
+# allocator manages is the machine's answer — so this boot is the gate for
+# both halves: a machine smaller than the pool's span boots, and it *says*
+# which part of the span it has.
+small_ram_log="$(mktemp)"
+set +e
+timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
+    -machine virt \
+    -cpu max \
+    -smp 1 \
+    -m 512M \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -serial "file:$small_ram_log" \
+    -no-reboot \
+    -no-shutdown \
+    -global virtio-mmio.force-legacy=false \
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 >/dev/null 2>>"$small_ram_log"
+set -e
+
+log_file="$small_ram_log"
+require_log_line "[mem   ] machine reports 512 MiB "
+# The pool's span is 512 MiB and the machine has less of it: the boot must
+# report the part that exists rather than one number wearing both names.
+require_log_line "[mem   ] the machine has "
+require_log_line " frames stop at "
+require_log_line "Memory manager initialized: "
+require_log_absent_line "[FATAL"
+require_log_line "adastra ring3 shell"
+require_log_line "protofire kernel running"
+log_file="$main_log"
+rm -f "$small_ram_log"
 
 printf 'aarch64 runtime check passed at current metadata/fault/wait boundary\n'

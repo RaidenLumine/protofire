@@ -516,6 +516,54 @@ done
 
 service_lines="$(count_log_line "[service]")"
 
+# ── The same kernel on a machine with 512 MiB of RAM ──────────────────
+#
+# The frame pool used to be a 512 MiB array inside `.bss`, which put it inside
+# a loadable segment: the ELF said 576 MiB of `p_memsz`, so a machine smaller
+# than that could not load the kernel at all — which is why this check boots
+# 1 GiB.  The pool is reserved address space now, outside every loadable
+# segment and outside the boot's clear, so the ELF is a few megabytes and the
+# same machine boots.  What this segment pins is the load and the boot on the
+# smallest memory any check uses; the 512 MiB number is not a new floor this
+# kernel promises, it is the machine the defect was measured on.
+#
+# A PVH boot describes no memory map, so this machine cannot report which part
+# of the pool's span it has — that answer exists only where the machine has a
+# map, and the assertion for it lives in the aarch64 and riscv64 checks.
+small_ram_log="$(mktemp)"
+set +e
+timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine q35 \
+    -cpu max \
+    -smp 1 \
+    -m 512M \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -serial "file:$small_ram_log" \
+    -no-reboot \
+    -no-shutdown \
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 >/dev/null 2>>"$small_ram_log"
+status=$?
+set -e
+case "$status" in
+    0|124) ;;
+    *)
+        printf 'x86_64 runtime check failed with exit status %s on the 512 MiB machine\n' "$status" >&2
+        cat "$small_ram_log" >&2
+        rm -f "$small_ram_log"
+        exit "$status"
+        ;;
+esac
+
+main_log="$log_file"
+log_file="$small_ram_log"
+require_log_line "[mem   ] the machine described no memory map; the kernel's pool is 512 MiB"
+require_log_line "Memory manager initialized: "
+require_log_line "adastra ring3 shell"
+require_log_absent_line "[FATAL"
+log_file="$main_log"
+rm -f "$small_ram_log"
+
 if [ "$remove_log_on_exit" = "0" ]; then
     printf 'x86_64 runtime log saved to %s\n' "$log_file"
 fi

@@ -29,9 +29,14 @@ _start:
     /* Set up the boot stack. */
     la sp, __boot_stack_top
 
-    /* Clear BSS. */
+    /* Clear the kernel's initialised data, stopping before the demo slots and
+       the frame pool.  Both are *reserved address space*: nothing is loaded
+       there, the allocator makes a frame zero when it hands one out, and a
+       payload load zeroes the slot it uses.  Clearing either would run past
+       the end of RAM on a small machine.  See `src/memory/frame.rs` and the
+       linker's `DEMO_SLOTS_SIZE`/`POOL_SIZE`. */
     la t0, __bss_start
-    la t1, __bss_end
+    la t1, __demo_slots_start
 .Lclear_bss:
     bge t0, t1, .Lbss_done
     sd zero, 0(t0)

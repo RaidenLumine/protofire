@@ -59,8 +59,11 @@ machine.
 - `src/arch/platform.rs`: `described_memory_regions`, which answers the same
   shape for a device tree's single `/memory` window.
 - The image's range is the linker's own symbols
-  (`memory::arch::kernel_image_range`), and it is 570 MiB because
-  `frame::PHYSICAL_POOL` lives in `.bss`.
+  (`memory::arch::kernel_image_range`).  When this document was written it was
+  570 MiB because `frame::PHYSICAL_POOL` was a 512 MiB array in `.bss`; the
+  pool is a reservation after `__image_end` now, so the range the check asks
+  about is the loaded content (see "The pool's size per target" below for what
+  the measurement found and changed).
 
 ## Design
 
@@ -184,8 +187,16 @@ manager is sized from the machine's answer and the report is printed before
 the manager's own line; a device tree's full parse keeps its place for
 everything else the tree describes.  The aarch64 and riscv64 runtime checks
 assert the order (`[mem   ] machine reports …` before `Memory manager
-initialized`), and the manager's line names the pool's size rather than the
-machine's number that sized it.
+initialized`).
+
+The pool's own placement followed from the measurement above: it is reserved
+address space now, outside the boot's clear and outside every loadable
+segment, and `managed_pool_bytes` is the walk that turns the machine's
+regions into the length the allocator is sized with.  The manager's line
+therefore names the **managed** span — on every machine measured before the
+small-RAM work those numbers were the same, and a boot where they differ
+prints both, so the line and the machine's report cannot disagree without
+saying so.
 
 **What landed from the questions below.**  The UART half of the tick's device
 polling is a real interrupt now, on every machine whose controller can carry
@@ -232,14 +243,29 @@ device-tree machines' input now arrives by interrupt.
 - **RAM above 4 GiB, and the width of a device's address**: a frame above the
   first 4 GiB is memory a 32-bit DMA engine cannot reach, which is a
   bounce-buffer decision or an IOMMU one, and neither exists here.
-- **The pool's size per target, and where it sits**: one constant for three
-  machines is a default rather than a fact, and the array is *movable* — one
-  small static shifted it twice during this RFC's own work.  Pinning an address
-  that a frame allocator measures everything from is a change that should argue
-  for itself.
+- **The pool's size per target, and where it sits**: answered by measurement.
+  The pool was a 512 MiB array in `.bss` that the boot cleared, and the clear
+  is what a small machine died of: asked for a smaller RAM than the image
+  spanned, the aarch64 check's own kernel printed **nothing at all** at 528
+  MiB and booted at 640 — the fault was the clear's first store past RAM,
+  before the console existed.  Worse, the pool inside a loadable segment made
+  a smaller machine fail *earlier* on riscv64, where the loader refused the
+  ELF outright (`No enough memory to place DTB after kernel/initrd`, because
+  five hundred megabytes of the image were a segment's `p_memsz`).  The pool
+  is reserved address space now, placed by each linker script after the
+  initialised data and outside every loadable segment, and what the allocator
+  manages inside it is the machine's answer
+  (`memory::arch::managed_pool_bytes`); the boot prints both when they differ,
+  and 512 MiB boots a shell on all three machines where it used to die.  The
+  span is still one constant for three machines — a board port's decision —
+  and a PVH boot with no map at all still manages the whole span, which is the
+  boot the report names rather than a silent one.
 - **What "refuse to boot" means**: the tree's panic policy is
   `docs/fmts/unsafe-and-safety.md`'s, and whether this is a halt with a message
-  or a panic is that document's to say.
+  or a panic is that document's to say.  The small-RAM work gave it a second
+  subject: a pool that starts past everything the machine describes is a boot
+  with no frames at all, and it refuses at `[mem   ]` with its answer rather
+  than faulting somewhere unrelated.
 - **The device polling that lives in the timer tick**: answered by
   [RFC 0021](0021-what-the-timer-tick-still-polls.md).  Both remaining polls
   stay, for different reasons — xHCI's tick drain because the ring's lock

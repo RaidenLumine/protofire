@@ -62,8 +62,15 @@ _start:
     b 3b
 4:  mov x10, x1                     /* the copy, when there was one */
 
+    /* Clear the kernel's initialised data, stopping before the demo slots and
+       the frame pool.  Both are *reserved address space*: nothing is loaded
+       there, the allocator makes a frame zero when it hands one out, and a
+       payload load zeroes the slot it uses.  Clearing either is what took a
+       machine whose RAM ended inside the image off the air before the console
+       existed — measured, a 528 MiB machine printed nothing at all.  See
+       `src/memory/frame.rs` and the linker's `DEMO_SLOTS_SIZE`/`POOL_SIZE`. */
     ldr x1, =__bss_start
-    ldr x2, =__bss_end
+    ldr x2, =__demo_slots_start
 
 5:
     cmp x1, x2
