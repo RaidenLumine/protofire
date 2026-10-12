@@ -59,6 +59,13 @@ pub struct PlatformInfo {
     /// RISC-V AIA IMSIC group base address (first hart's IMSIC file),
     /// discovered from a `riscv,imsic` node's `reg` property.
     pub imsic_base: Option<usize>,
+    /// RISC-V AIA APLIC base address — the **supervisor-level** domain, the
+    /// one that takes a wired source and delivers it as an MSI.  Discovered
+    /// from the `riscv,aplic` node that does not delegate to children; the
+    /// machine-level domain that *does* delegate is not this kernel's to
+    /// program, and QEMU `virt` gives the two different addresses (0xc000000
+    /// and 0xd000000).
+    pub aplic_base: Option<usize>,
     /// PCIe ECAM (MMCONFIG) base address, discovered from
     /// `compatible = "pci-host-ecam-generic"`.
     pub ecam_base: Option<usize>,
@@ -110,6 +117,7 @@ impl PlatformInfo {
             rtc_base: None,
             plic_base: None,
             imsic_base: None,
+            aplic_base: None,
             ecam_base: None,
             pcie_mmio_base: None,
             pcie_mmio_size: None,

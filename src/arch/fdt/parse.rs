@@ -55,6 +55,14 @@ const COMPAT_RISCV_PLIC0: &str = "riscv,plic0";
 /// alone does not say which one this kernel may use; the interrupt it is wired
 /// to does (see the `interrupts-extended` arm below).
 const COMPAT_RISCV_IMSICS: &str = "riscv,imsics";
+/// The AIA platform-level controller, which is the *wired* half of an AIA
+/// machine: a source's line is turned into the MSI an IMSIC receives.  A
+/// machine describes one domain per privilege level — the machine-level one
+/// holds the wires and delegates them to a supervisor-level child — and the
+/// child is the one this kernel may program.  Which node that is comes from
+/// the node's own properties: the delegating domain names its children
+/// (`riscv,children`), and the domain that delivers has none.
+const COMPAT_RISCV_APLIC: &str = "riscv,aplic";
 /// The interrupt cause that names the supervisor external interrupt — the one
 /// an IMSIC serving supervisor mode is wired to (RISC-V privileged spec).
 const RISCV_SUPERVISOR_EXTERNAL_CAUSE: u32 = 9;
@@ -372,6 +380,11 @@ fn interrupt_source_from_cells(cells: &[u32]) -> Option<u32> {
         [source] if *source != 0 => Some(*source),
         [0, number, ..] => number.checked_add(32),
         [1, number, ..] => number.checked_add(16),
+        // An APLIC's specifier is `(source, trigger-type)`: its first cell is
+        // the source number itself, which is why the two GIC forms above have
+        // to be consumed first — they are the only encodings whose first cell
+        // is zero or one, and a source is never one of those.
+        [source, _, ..] if *source > 1 => Some(*source),
         _ => None,
     }
 }
@@ -447,6 +460,12 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     // that says which mode it serves (`interrupts-extended`) is read.
     let mut current_is_imsic: bool = false;
     let mut current_is_plic: bool = false;
+    // An APLIC node and whether it delegates to children (`riscv,children`).
+    // On QEMU `virt` the delegating machine-level node writes that property
+    // *before* the `compatible` that identifies it, so both facts are kept
+    // per node and settled at the end, like the PLIC/IMSIC pair above.
+    let mut current_is_aplic: bool = false;
+    let mut current_has_aplic_children: bool = false;
     // A node's own address, and whether it is wired to the supervisor external
     // interrupt.  Both are properties of the node, and properties arrive in
     // whatever order the machine wrote them — `compatible` comes *after* `reg`
@@ -610,6 +629,8 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 // Reset the per-node interrupt state; each node starts clean.
                 current_interrupts_len = 0;
                 current_is_uart = false;
+                current_is_aplic = false;
+                current_has_aplic_children = false;
             }
 
             FDT_END_NODE => {
@@ -661,8 +682,20 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         info.plic_base = Some(addr);
                     }
                 }
+                // An APLIC that delegates its sources is the machine-level
+                // domain; the supervisor-level child (one with no children of
+                // its own) is the one this kernel programs.  A machine with
+                // only one APLIC node gives the delegating one nowhere to
+                // point, so the node that *is* the domain is the fallback.
+                if current_is_aplic && !current_has_aplic_children {
+                    if let Some(addr) = current_node_addr {
+                        info.aplic_base = Some(addr);
+                    }
+                }
                 current_is_imsic = false;
                 current_is_plic = false;
+                current_is_aplic = false;
+                current_has_aplic_children = false;
                 current_node_addr = None;
                 current_wired_to_supervisor_external = false;
                 current_is_gicv3 = false;
@@ -807,6 +840,14 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             // what decides it, and that is settled at the end
                             // of the node (the property order is the machine's).
                             current_is_plic = true;
+                        } else if compatible.contains(COMPAT_RISCV_APLIC) {
+                            // Which APLIC this is — the delegating domain or
+                            // the child that delivers — is settled at the end
+                            // of the node, where `riscv,children` has been
+                            // seen.  A wire-to-MSI domain is not a PLIC and
+                            // must not be written as one: they share an
+                            // address on QEMU `virt`.
+                            current_is_aplic = true;
                         } else if compatible.contains(COMPAT_RISCV_IMSICS) {
                             // Which of the machine's IMSIC files this is depends
                             // on the interrupt it is wired to, which is a
@@ -959,6 +1000,16 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                                 virtio_mmio_idx += 1;
                             }
                         }
+                    }
+                    // An APLIC domain that names children delegates its
+                    // sources to them.  The property's presence is what makes
+                    // this the machine-level domain rather than the child the
+                    // kernel should program; the phandles themselves are not
+                    // needed, since QEMU `virt` describes one child per
+                    // socket and the supervisor domain is the one this machine
+                    // reachable.
+                    Some("riscv,children") => {
+                        current_has_aplic_children = true;
                     }
                     // Which interrupt an IMSIC is wired to says which mode it
                     // serves: cause 9 is the supervisor external interrupt and
@@ -2838,5 +2889,84 @@ mod tests {
         let info = parse_fdt(plic.as_ptr() as usize);
         assert_eq!(info.uart_base, Some(0x1000_0000));
         assert_eq!(info.uart_irq, Some(10));
+
+        // The APLIC, whose specifier is `(source, trigger-type)` — the shape
+        // QEMU `virt` writes for `-machine virt,aia=aplic-imsic`, where the
+        // UART hangs off the supervisor domain and not off a PLIC.
+        let aplic_interrupts = [be32(10), be32(4)].concat();
+        let aplic = build_small_fdt(|sblock, str_off| {
+            emit_node(
+                sblock,
+                "serial@10000000",
+                str_off,
+                &[
+                    ("compatible", b"ns16550a"),
+                    ("interrupts", &aplic_interrupts),
+                    ("reg", &plic_reg),
+                ],
+            );
+        });
+        let info = parse_fdt(aplic.as_ptr() as usize);
+        assert_eq!(info.uart_base, Some(0x1000_0000));
+        assert_eq!(info.uart_irq, Some(10));
+    }
+
+    /// An AIA machine describes two APLIC domains — the machine-level one
+    /// holds the wires and delegates each source (`riscv,children`), and its
+    /// supervisor-level child turns a delegated source into a message.  Only
+    /// the child is this kernel's to program, and the two are told apart by
+    /// the property, not by their addresses or their names: both nodes are
+    /// called `interrupt-controller@…` and both claim `riscv,aplic`.
+    #[test]
+    fn parse_fdt_takes_the_aplic_child_and_not_the_delegating_domain() {
+        // QEMU `virt`'s order inside each node: the delegating one writes
+        // `riscv,children` before its `reg`, the child only `reg` and
+        // `compatible`, and the child node comes first in the tree.
+        let child_reg = [be32(0), be32(0x0D00_0000), be32(0), be32(0x8000)].concat();
+        let parent_reg = [be32(0), be32(0x0C00_0000), be32(0), be32(0x8000)].concat();
+        let children = [be32(0x06)].concat();
+        let blob = build_small_fdt(|sblock, str_off| {
+            emit_node(
+                sblock,
+                "interrupt-controller@d000000",
+                str_off,
+                &[
+                    ("compatible", b"qemu,aplic\0riscv,aplic"),
+                    ("reg", &child_reg),
+                    ("msi-parent", &be32(4)),
+                ],
+            );
+            emit_node(
+                sblock,
+                "interrupt-controller@c000000",
+                str_off,
+                &[
+                    ("riscv,children", &children),
+                    ("reg", &parent_reg),
+                    ("compatible", b"qemu,aplic\0riscv,aplic"),
+                ],
+            );
+        });
+
+        let info = parse_fdt(blob.as_ptr() as usize);
+        assert_eq!(info.aplic_base, Some(0x0D00_0000));
+
+        // And a machine whose only APLIC delegates has no child to program:
+        // the driver must be told there is nothing rather than handed the
+        // machine-level domain's address.
+        let parent_only = build_small_fdt(|sblock, str_off| {
+            emit_node(
+                sblock,
+                "interrupt-controller@c000000",
+                str_off,
+                &[
+                    ("riscv,children", &children),
+                    ("reg", &parent_reg),
+                    ("compatible", b"qemu,aplic\0riscv,aplic"),
+                ],
+            );
+        });
+        let info = parse_fdt(parent_only.as_ptr() as usize);
+        assert_eq!(info.aplic_base, None);
     }
 }

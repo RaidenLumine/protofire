@@ -43,7 +43,9 @@ A wire can be an identity too.  AArch64's console UART claims its SPI in the
 registry (`SPI_HANDLER_BASE`, `src/arch/aarch64/mod.rs`) and the trap path runs
 it there, so a wired interrupt and a translated message take the same lookup;
 RISC-V's PLIC sources are dispatched the same way (`PLIC_HANDLER_BASE`,
-`src/arch/riscv64/mod.rs`).
+`src/arch/riscv64/mod.rs`).  On an AIA machine the wire arrives as a message in
+the first place: the APLIC composes it, and the IMSIC's claim dispatches it
+like any other identity.
 
 What the console UART's arm actually achieved is the machine's answer, not an
 assumption: the device-tree machines set a flag once their claim succeeded (the
@@ -102,6 +104,29 @@ controller: each hart has an MSI-write page and a file whose `stopei` register
 answers with the identity on top and claims it in the same read.  The default
 machine has no IMSIC, so the PLIC is the external controller there and the IMSIC
 only appears on a machine that describes it.
+
+An AIA machine has no PLIC at all, and its wire interrupts do not stop being
+wires: they are carried by an **APLIC** domain (`src/arch/riscv64/aplic.rs`),
+which watches a source's line and, in MSI mode, delivers it to an IMSIC file as
+the message a PCIe device's MSI-X table would write.  QEMU `virt` describes
+two domains — a machine-level one that holds the wires and delegates each
+source to a child (`riscv,children`), and the supervisor-level child that
+turns a delegated source into a message — and only the child is the kernel's
+to program; `PlatformInfo::aplic_base` is the node the parser settles on (the
+one *without* children).  What is measured on QEMU 10.2.1's bundled OpenSBI is
+the split the driver assumes: firmware has already delegated the sources and
+pointed the child's messages at the supervisor IMSIC (`SMSICFGADDR`), while
+every source in the child is inactive, so arming one is exactly the gap the
+count.  The identity a source's message carries is the source number itself,
+which is what keeps a PLIC machine and an AIA machine answering through the
+same registry window.
+
+An AIA machine is also why the balancer's answer is the controller's:
+`irq_balance::is_routable` refuses every source there, because the
+destination of a message is decided where the message is *composed* — the
+APLIC's own target register, whose firmware-written address fields name no
+hart — and because the address a PLIC's enable bits sit at is, on that
+machine, the supervisor APLIC's register block.
 
 ## Message-signalled interrupts
 
@@ -168,7 +193,12 @@ entry, a GIC SPI's affinity and a PLIC context enable are all controller-side
 routing, and the balancer can rewrite any of them.  A message-signalled
 interrupt has no such entry — its destination was chosen when the message or the
 translation was written — so `pin_irq` is how a driver says "not this one", and
-a device's own spread is the placement's doing rather than the balancer's.
+a device's own spread is the placement's doing rather than the balancer's.  An
+AIA machine answers "not migratable" for every source
+(`irq_balance::is_routable`), because none of its wire interrupts arrives
+through routing the balancer could rewrite, and because the addresses a PLIC's
+enable bits sit at name the machine's **machine-level** APLIC — firmware's
+domain, whose registers do not mean what a PLIC's do.
 
 ## What is counted
 
@@ -187,7 +217,7 @@ program can ask which CPU has been taking the machine's interrupts.
 | `src/arch/irq_placement.rs` | Which CPU a claimed entry is delivered to |
 | `src/arch/x86_64/apic.rs`, `interrupts.rs`, `ioapic.rs`, `msi.rs` | LAPIC, IDT and vectors, IOAPIC routing, message composition |
 | `src/arch/aarch64/gicv3.rs`, `its.rs` | GICv2/GICv3, LPIs, and the ITS translation |
-| `src/arch/riscv64/mod.rs`, `aia_imsic.rs` | PLIC per-hart contexts, IMSIC files |
+| `src/arch/riscv64/mod.rs`, `aia_imsic.rs`, `aplic.rs` | PLIC per-hart contexts, IMSIC files, the APLIC domain that turns a wire into a message |
 | `src/arch/platform.rs` | `pci_claim_msix`, `program_device_msix`, the arming order |
 | `src/kernel/nmi.rs` | The unmaskable path and its handlers |
 | `src/kernel/irq_balance.rs` | Migrating the interrupts a controller can re-route |

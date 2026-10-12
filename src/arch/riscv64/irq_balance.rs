@@ -6,6 +6,16 @@
 //! per-context enable bits — the PLIC only forwards an interrupt to a
 //! context that has it enabled.  Timer and software (IPI) interrupts are
 //! per-hart and never migratable.
+//!
+//! An AIA machine has nothing this can move.  Its wire interrupts arrive as
+//! *messages*: the destination is written where the message is composed — a
+//! device's MSI-X table entry, or the APLIC's target register — and this
+//! machine's firmware leaves the APLIC's message-address fields with no hart
+//! index bits at all, so every message lands in hart 0's IMSIC file whatever a
+//! target says.  Answering "routable" there would send the balancer into the
+//! PLIC's register addresses, which on an AIA machine are the **machine-level**
+//! APLIC's window — firmware's domain, not this kernel's, and one whose
+//! registers do not mean what a PLIC's do.
 
 /// Highest PLIC interrupt id considered routable (matches the controller's
 /// `PLIC_MAX_INTERRUPT_ID` cap of 128).
@@ -13,6 +23,9 @@ const PLIC_MAX_INTERRUPT_ID: u32 = 128;
 
 /// PLIC external sources (1..=127) can be routed to any hart.
 pub fn is_routable(vector: u32) -> bool {
+    if super::aia_imsic::has_aia_imsic() {
+        return false;
+    }
     (1..PLIC_MAX_INTERRUPT_ID).contains(&vector)
 }
 

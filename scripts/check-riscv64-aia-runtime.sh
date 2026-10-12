@@ -25,6 +25,12 @@
 #     message a device would write into its own MSI page, and reads the
 #     identity back out of `stopei`.  That covers the page address, the
 #     bare-identity data word, the enable bit, the pending bit and the claim.
+#   * the console UART's line reaches the kernel through the APLIC.  On this
+#     machine nothing is a PLIC source: the supervisor APLIC domain turns the
+#     UART's line into the MSI that carries identity 10, and the IMSIC's
+#     claim hands it to the console's handler.  The check types at the shell
+#     and asserts the handler's one-time line, because a boot that merely
+#     configures the domain would pass without the delivery.
 #   * and the machine still comes up: the demo reaches its shell with no fatal
 #     error, which is what says the IMSIC took over the external-interrupt path
 #     without breaking anything else.
@@ -86,20 +92,27 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 printf 'riscv64 AIA check: 1 cpu, timeout %ss, qemu %s\n' "$TIMEOUT_SECONDS" "$QEMU_RISCV64"
-printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU_RISCV64 -machine virt,aia=aplic-imsic ... -serial file:$log_file"
+printf '  %s\n' "shell_commands | timeout ${TIMEOUT_SECONDS}s $QEMU_RISCV64 -machine virt,aia=aplic-imsic ... -serial stdio"
+# The console is typed at, the way the PLIC machine's check types at it: the
+# wire interrupt is the APLIC's now, and a boot that merely starts shows the
+# configuration but not the delivery.
+shell_commands() {
+    sh ./scripts/feed-shell-console.sh "$log_file" "$TIMEOUT_SECONDS" \
+        'echo ring3-shell-answered'
+}
 set +e
-timeout "${TIMEOUT_SECONDS}s" "$QEMU_RISCV64" \
+shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU_RISCV64" \
     -machine virt,aia=aplic-imsic \
     -cpu rv64 \
     -smp 1 \
     -m "$QEMU_RAM" \
     -kernel "$KERNEL_BIN" \
     -display none \
-    -serial "file:$log_file" \
+    -serial stdio \
     -no-reboot \
     -no-shutdown \
     -global virtio-mmio.force-legacy=false \
-    -netdev user,id=net0 -device virtio-net-device,netdev=net0 >/dev/null 2>>"$log_file"
+    -netdev user,id=net0 -device virtio-net-device,netdev=net0 >"$log_file" 2>>"$log_file"
 status=$?
 set -e
 
@@ -128,6 +141,13 @@ require_log_line() {
     fi
 }
 
+require_log_exact_line() {
+    line="$1"
+    if ! grep -F -x "$line" "$log_file" >/dev/null 2>&1; then
+        fail_with_log "missing log line (whole line): $line"
+    fi
+}
+
 require_log_absent_line() {
     pattern="$1"
     if grep -F "$pattern" "$log_file" >/dev/null 2>&1; then
@@ -153,8 +173,20 @@ require_log_line "[init  ] starting idle process"
 # `protofire shell (user)`.  The FATAL assertion below is what makes this check
 # more than "the boot printed something".
 require_log_line "adastra ring3 shell"
+
+# And the wire path works end to end.  The UART's line is not a PLIC source on
+# this machine: the supervisor APLIC turns it into the MSI that carries
+# identity 10, and the IMSIC's claim hands it to the handler the console
+# claimed.  The three lines are the three halves — the domain took the
+# configuration, the handler's own one-time line says the message arrived as
+# an interrupt, and the shell's exact answer says the byte it carried reached
+# the reader that typed the line.
+require_log_line "[aplic ] source 10 armed at 0x"
+require_log_line "[serial] RX interrupt carries input"
+require_log_exact_line "ring3-shell-answered"
 require_log_absent_line "[FATAL] riscv64 trap"
 require_log_absent_line "self-test delivered nothing"
+require_log_absent_line "could not be armed"
 
 if [ "$remove_log_on_exit" = "0" ]; then
     printf 'riscv64 AIA log saved to %s\n' "$log_file"

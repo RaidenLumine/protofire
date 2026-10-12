@@ -194,12 +194,12 @@ one: the handler drains the FIFO through
 tick used to call — and each machine routes and arms its own line once the
 interrupt controller is up (`arch::interrupt_controller::init`): the IOAPIC's
 IRQ 4 to `COM1_VECTOR` on x86_64, the GIC's SPI 33 for the PL011 on aarch64,
-and the PLIC's source 10 for the 16550 on riscv64.  All three runtime checks
+the PLIC's source 10 for the 16550 on riscv64, and on an AIA machine the same
+source through the supervisor APLIC domain, which composes the MSI that
+carries identity 10 into the IMSIC.  All four runtime checks
 type at the shell and assert the handler's own one-time line, so each path is
 a gate rather than a code path.  xHCI and virtio-input still poll from the
-tick, and so does an AIA machine's UART (its wire interrupts arrive through an
-APLIC this kernel does not drive), which is what the question below now
-covers.
+tick, which is what the question below now covers.
 
 A refused claim no longer costs input silently either.  The device-tree
 machines set `rx_is_interrupt_driven` from what the claim and the controller
@@ -241,7 +241,8 @@ device-tree machines' input now arrives by interrupt.
   `docs/fmts/unsafe-and-safety.md`'s, and whether this is a halt with a message
   or a panic is that document's to say.
 - **The device polling that lives in the timer tick**: xHCI and virtio-input
-  still poll from the tick handler, and so does an AIA machine's UART, so a
-  spin there takes their input with it.  The UART half landed on the other
-  three machines (see above); the two USB/input polls and an APLIC driver are
-  the part still named rather than half-built.
+  still poll from the tick handler, so a spin there takes their input with it.
+  The UART half has landed on every machine — including an AIA machine, whose
+  wire interrupts are carried by the supervisor APLIC domain
+  (`src/arch/riscv64/aplic.rs`, and the section above) — so what the question
+  still names is the two USB/input polls alone.

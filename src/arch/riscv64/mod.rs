@@ -92,6 +92,7 @@ pub mod interrupts {
 }
 
 pub mod aia_imsic;
+pub mod aplic;
 pub mod context;
 pub mod cpufreq;
 #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
@@ -455,20 +456,27 @@ pub mod serial {
     /// Let the console UART raise its received-data interrupt.
     ///
     /// Called once the interrupt controller is up (see
-    /// [`crate::arch::interrupt_controller::init`]).  The PLIC source is
-    /// claimed in the handler registry, given a priority and enabled — and
-    /// only then is the UART's own interrupt mask set, because a byte that
-    /// arrived earlier would raise a line no handler owned.
+    /// [`crate::arch::interrupt_controller::init`]).  One thing is common to
+    /// both kinds of machine: the source is claimed in the handler registry,
+    /// and only then is the UART's own interrupt mask set, because a byte that
+    /// arrived earlier would raise a line no handler owned.  How the line
+    /// reaches a handler differs:
     ///
-    /// An AIA machine is the exception: its wire interrupts arrive through an
-    /// APLIC this kernel does not drive, so the UART stays masked there and
-    /// input keeps riding the timer tick
-    /// ([`super::aia_imsic::has_aia_imsic`]).
+    /// * a PLIC machine enables the source in the per-context enable bits — a
+    ///   wire, delivered as the supervisor external interrupt the PLIC raises
+    ///   for it;
+    /// * an AIA machine's PLIC is an APLIC, which turns the line into a
+    ///   *message*: the source is armed in the domain with an identity and a
+    ///   target hart, the identity is enabled in the IMSIC that receives it,
+    ///   and a byte arrives the same way a PCIe device's completion does
+    ///   ([`super::aplic::arm_source`]).
+    ///
+    /// Either way the answer a caller reads back is what happened, not what
+    /// was intended: the flag below is set only after the machine's half ran,
+    /// and a refused claim or an APLIC that took none of its configuration
+    /// leaves it clear, so the tick keeps polling the FIFO rather than the
+    /// machine losing its console.
     pub fn enable_rx_interrupt() {
-        if super::aia_imsic::has_aia_imsic() {
-            return;
-        }
-
         let interrupt_id = crate::arch::fdt::platform_info()
             .uart_irq
             .unwrap_or(DEFAULT_UART_IRQ);
@@ -489,6 +497,26 @@ pub mod serial {
             );
             return;
         }
+
+        if super::aia_imsic::has_aia_imsic() {
+            // The identity is where the message lands, so it is enabled
+            // first; the domain is what sends it, and the UART's own mask
+            // goes last.  The target hart is 0 — the boot hart, whose IMSIC
+            // file this machine's firmware addresses every message to.
+            crate::arch::interrupt_controller::enable_interrupt(interrupt_id);
+            if let Err(error) = super::aplic::arm_source(interrupt_id, 0) {
+                crate::println!(
+                    "[serial] console UART interrupt {} could not be armed; the tick will poll it ({})",
+                    interrupt_id,
+                    error.as_str()
+                );
+                return;
+            }
+            SERIAL0.lock().enable_rx_interrupt();
+            RX_INTERRUPT_ARMED.store(true, Ordering::Release);
+            return;
+        }
+
         crate::arch::interrupt_controller::set_priority(interrupt_id, 1);
         crate::arch::interrupt_controller::enable_interrupt(interrupt_id);
 
@@ -498,9 +526,10 @@ pub mod serial {
 
     /// Whether this machine's console UART delivers its bytes by interrupt.
     ///
-    /// The PLIC machine's does once the source above is claimed; an AIA
-    /// machine's does not, so its input rides the tick — as does a machine
-    /// whose claim was refused, which is why this answers what happened.
+    /// True once the source above reaches a handler — the PLIC's enable bit
+    /// or the APLIC's armed source, whichever this machine has.  A machine
+    /// that could not get there (a refused claim, an APLIC that took none of
+    /// its configuration) answers `false` and keeps the tick's poll.
     pub fn rx_is_interrupt_driven() -> bool {
         RX_INTERRUPT_ARMED.load(Ordering::Acquire)
     }
