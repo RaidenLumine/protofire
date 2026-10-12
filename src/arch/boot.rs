@@ -504,17 +504,35 @@ const fn current_arch_boot_info(
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+const MULTIBOOT2_BOOT_MAGIC: u32 = 0x36D7_6289;
+
+/// The PC's hand-off, whichever of the two it is.
+///
+/// The same entry symbol serves both: a Multiboot2 loader leaves its magic and
+/// a tag block, and a direct QEMU boot (the PVH protocol) leaves theirs — a
+/// pointer to **Xen's start_info**, whose fields are not tags at all.  So the
+/// magic decides what the block is, and **only a Multiboot2 block is recorded
+/// as the one to read tags from**: a boot that stores the other one hands every
+/// reader — the memory map, the command line, the framebuffer, and the ACPI
+/// discovery that looks for the RSDP in a tag before falling back to a BIOS
+/// scan — a struct that merely looks like tags, and a framebuffer read out of
+/// bytes that mean something else is a range mapped and drawn on that was never
+/// a display ([RFC
+/// 0020](../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md):
+/// this is the defect that made the x86_64 runtime gate's shell die in ring 3
+/// while every Multiboot2 boot was fine).
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn from_x86_64_multiboot2(multiboot_magic: u32, multiboot_info: u32) -> BootInfo {
-    // The loader's info block is recorded here, the way the device-tree
-    // machines record their blob: everything that reads a Multiboot2 tag —
-    // the memory map, `multiboot2_usable_regions`, and the ACPI discovery that
-    // looks for the RSDP in a tag before falling back to a BIOS scan — reads
-    // it through `handoff_address`, and on x86_64 nothing had ever stored it.
-    // ACPI's BIOS scan covered the loss, which is why it went unnoticed
-    // ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
-    store_handoff_address(multiboot_info as usize);
+    let multiboot2 = multiboot_magic == MULTIBOOT2_BOOT_MAGIC;
+    if multiboot2 {
+        store_handoff_address(multiboot_info as usize);
+    }
     current_arch_boot_info(
-        BootProtocol::Multiboot2,
+        if multiboot2 {
+            BootProtocol::Multiboot2
+        } else {
+            BootProtocol::QemuDirect
+        },
         multiboot_magic,
         multiboot_info as usize,
     )

@@ -352,7 +352,11 @@ require_log_line "adastra:/apps/packages/shell\$ "
 # the line at `[rsp]` — the return address — and `ret` jumped to the command
 # bytes.  A boot that is never typed at cannot tell those two apart, so this
 # check does type.
-require_log_line "adastra shell (ring 3) builtins:"
+# The shell's own banner, as it prints it: the feeder above waits for the same
+# string, and this assertion had been left behind by the change that reworded it
+# — which is why this gate sat red while the product was fine.  Both places have
+# to name the same line, and the *feeder's* is the one that must be right.
+require_log_line "adastra ring3 shell"
 require_log_exact_line "ring3-shell-answered"
 # The service manager's provenance, read back by a ring-3 program: which
 # declaration file the kernel read the shell's definition from, and the SHA-256
