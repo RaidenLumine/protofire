@@ -254,6 +254,11 @@ jobs:
       # reads wrap the controller's rings several times.  `check-x8664-runtime`
       # reads a single sector of a USB disk, which never fills a ring, so the
       # ring reuse this boot exercises is a code path no other gate takes.
+      - name: Boot the demo disk and type at the shell
+        run: make check-x8664-runtime
+        env:
+          CARGO: cargo
+
       - name: Boot a filesystem image on the USB disk
         run: make check-x8664-usb-disk
 

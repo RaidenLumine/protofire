@@ -217,6 +217,22 @@ pub(crate) fn pcid_enabled() -> bool {
     false
 }
 
+/// The next bit of `word` this search may hand out, or `None` when the only
+/// bits left in it are ones it must not take.
+///
+/// Pure, and tested, because the loop that uses it is a bare-metal one whose
+/// failure is a hang: what a test can hold still is exactly this half — which
+/// bits the search may take, and that taking them one at a time runs out
+/// instead of offering the same one again.
+fn next_handable_bit(word: u64, allowed: u64) -> Option<u32> {
+    let handable = word & allowed;
+    if handable == 0 {
+        None
+    } else {
+        Some(handable.trailing_zeros())
+    }
+}
+
 /// Allocate a PCID for a new process address space.
 ///
 /// Prefers recycled PCIDs from the free bitmap.  When the bitmap is empty
@@ -228,13 +244,18 @@ pub(crate) fn pcid_enabled() -> bool {
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn allocate_pcid() -> u64 {
     // The bits this word may hand out.  PCID 0 belongs to the kernel — and the
-    // reservation is a bit set *in this bitmap* — so it is masked out of the
-    // search rather than skipped inside it: a bit the loop cannot clear is a
-    // bit that word would offer again on every pass, and the pass before this
-    // one spun forever on exactly that ([RFC
-    // 0020](../../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md): the
-    // boot hung in this function, and a hang is what a loop that re-reads the
-    // word it cannot change looks like).
+    // reservation is a bit set *in this bitmap* — so it is never handed out.
+    //
+    // It is cleared in the loop's **local copy** of the word, never in the
+    // value the compare-exchange expects: a word that goes out of range of
+    // what this search may take has to be re-read, and the value it will be
+    // re-read as is the one that is *in memory*, bits and all.  Expecting the
+    // masked word instead is a compare-exchange that can never succeed — the
+    // reservation bit alone guarantees it — and the boot hung inside this
+    // function on exactly that: a spin with interrupts off, so the timer tick
+    // stopped, the console's serial bridge stopped with it, and the typed
+    // bytes sat in the UART's FIFO where nothing would take them
+    // ([RFC 0020](../../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md)).
     let handable = |word_idx: usize| -> u64 {
         if word_idx == 0 {
             !1u64
@@ -246,23 +267,33 @@ pub(crate) fn allocate_pcid() -> u64 {
     // Try the free bitmap first.
     for word_idx in 0..PCID_BITMAP_WORDS {
         let allowed = handable(word_idx);
-        let mut word = bitmap_word(word_idx).load(Ordering::Acquire) & allowed;
-        while word != 0 {
-            let bit = word.trailing_zeros() as usize;
+        let mut word = bitmap_word(word_idx).load(Ordering::Acquire);
+        while let Some(bit) = next_handable_bit(word, allowed) {
+            let bit = bit as usize;
             let pcid = word_idx * 64 + bit;
             let mask = 1u64 << bit;
-            if (pcid as u64) <= PCID_MAX
-                && bitmap_word(word_idx)
-                    .compare_exchange(word, word & !mask, Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok()
-            {
-                return pcid as u64;
+            if (pcid as u64) <= PCID_MAX {
+                match bitmap_word(word_idx).compare_exchange(
+                    word,
+                    word & !mask,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => return pcid as u64,
+                    // Another CPU took it, or wrote the word meanwhile: the
+                    // value to expect is the one that is there now.
+                    Err(actual) => {
+                        word = actual;
+                        continue;
+                    }
+                }
             }
 
-            // Another CPU took it, or the bit is past what this machine has —
-            // either way the word is re-read, with only the bits we may hand
-            // out in it.
-            word = bitmap_word(word_idx).load(Ordering::Acquire) & allowed;
+            // The bit is past what this machine has: drop it from the copy
+            // this search is looking at, and let the next pass take the next
+            // one.  The memory is not touched — that bit is not this search's
+            // to clear.
+            word &= !mask;
         }
     }
 
@@ -372,6 +403,54 @@ pub(crate) fn cr3_with_pcid(root_table_address: usize, pcid: u64) -> usize {
 
 #[cfg(test)]
 mod tests {
+    /// The free bitmap's search, as the loop's own shape: it may take only the
+    /// bits it is allowed to, and walking a word this way **runs out** rather
+    /// than offering the same bit again.
+    ///
+    /// That second half is the defect this replaced: a search that skipped a
+    /// bit it could not take, re-read the word, and found the same bit every
+    /// time — a compare-exchange that could never succeed, spinning with
+    /// interrupts off until the timer tick, the console's serial bridge and
+    /// everything else that waited on it stopped with it.
+    #[test]
+    fn the_bitmap_search_takes_only_its_own_bits_and_runs_out() {
+        // Word 0, where PCID 0 is the kernel's and must never be handed out.
+        let allowed = !1u64;
+        assert_eq!(super::next_handable_bit(0, allowed), None);
+        assert_eq!(
+            super::next_handable_bit(1, allowed),
+            None,
+            "with only the reservation set, there is nothing to hand out"
+        );
+        assert_eq!(
+            super::next_handable_bit(0b11, allowed),
+            Some(1),
+            "the reservation bit is skipped, not taken"
+        );
+        assert_eq!(super::next_handable_bit(u64::MAX, allowed), Some(1));
+
+        // The loop's own walk: clear the bit locally, look again, and count
+        // what a full word is worth — 63 bits, because the first is the
+        // kernel's — instead of spinning forever on the first one.
+        let mut word = u64::MAX;
+        let mut taken = 0;
+        while let Some(bit) = super::next_handable_bit(word, allowed) {
+            word &= !(1u64 << bit);
+            taken += 1;
+        }
+        assert_eq!(taken, 63);
+
+        // A later word has no reservation in it, so all 64 bits are the
+        // search's.
+        let mut word = u64::MAX;
+        let mut taken = 0;
+        while let Some(bit) = super::next_handable_bit(word, !0u64) {
+            word &= !(1u64 << bit);
+            taken += 1;
+        }
+        assert_eq!(taken, 64);
+    }
+
     use super::*;
 
     #[test]
