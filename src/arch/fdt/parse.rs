@@ -867,10 +867,11 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                                 s
                             };
 
-                            // /memory node: capture base and size for physical RAM detection.
+                            // A /memory node's window, in the cells the node
+                            // and its parent declare.  This walk remembers it
+                            // for NUMA; `memory_window` reads the same node
+                            // earlier, before the heap and the manager exist.
                             if current_is_memory_node {
-                                info.memory_base = Some(addr as usize);
-                                info.memory_size = Some(entry_size as usize);
                                 node_pending_memory_base = addr;
                                 node_pending_memory_size = entry_size;
                                 node_has_memory_reg = true;
