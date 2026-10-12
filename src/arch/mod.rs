@@ -681,6 +681,25 @@ pub mod serial {
         super::x86_64::serial::init();
     }
 
+    /// Whether this machine's console UART delivers received bytes by
+    /// interrupt.
+    ///
+    /// A machine whose UART does needs no poll from the timer tick; one whose
+    /// UART has no interrupt path wired does.  The answer belongs here rather
+    /// than in the scheduler, which should not have to name an architecture to
+    /// know whether to poll.
+    pub fn rx_is_interrupt_driven() -> bool {
+        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+        {
+            true
+        }
+
+        #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+        {
+            false
+        }
+    }
+
     /// Write a string to the serial port.
     ///
     /// # Parameters

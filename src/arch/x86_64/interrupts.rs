@@ -19,6 +19,11 @@ use crate::kernel::process;
 // the master/slave PIC offsets.
 pub const TIMER_VECTOR: u8 = 32;
 pub const KEYBOARD_VECTOR: u8 = 33;
+/// The console UART's received-data interrupt: ISA IRQ 4, whose vector is the
+/// PIC's mapping (32 + 4) so the legacy and APIC paths name it the same.  The
+/// IOAPIC routes pin 4 here and the UART is armed for it once that route
+/// exists (`super::ioapic::ioapic_setup_isa_irqs`).
+pub const COM1_VECTOR: u8 = 36;
 
 // ─── MSI-X vectors for device drivers ────────────────────────────
 // These are allocated from the free range 34-127 (non-exception,
@@ -95,6 +100,12 @@ pub(crate) fn handle_irq(vector: u8, _allow_preemption: bool) {
         KEYBOARD_VECTOR => {
             let scancode = read_keyboard_scancode();
             keyboard::handle_scancode(scancode);
+        }
+        COM1_VECTOR => {
+            // The console UART's received-data interrupt: drain what arrived
+            // and bridge it to the console, which is what input used to depend
+            // on the timer tick to do.
+            crate::drivers::serial::handle_rx_interrupt();
         }
         #[cfg(all(target_arch = "x86_64", target_os = "none"))]
         v if v == nvme::NVME_ADMIN_VECTOR || v == nvme::NVME_IO_VECTOR => {

@@ -187,6 +187,17 @@ assert the order (`[mem   ] machine reports …` before `Memory manager
 initialized`), and the manager's line names the pool's size rather than the
 machine's number that sized it.
 
+**What landed from the questions below.**  The UART half of the tick's device
+polling is a real interrupt now: the IOAPIC routes IRQ 4 to `COM1_VECTOR`,
+`ioapic_setup_isa_irqs` arms the 16550's received-data interrupt once that
+route exists, and the handler drains the FIFO through
+`drivers::serial::handle_rx_interrupt` — the same drain-and-bridge path the
+tick used to call, now with input no longer depending on the tick running at
+all.  `make check-x8664-runtime` types at the shell and asserts the handler's
+own one-time line, so the path is a gate rather than a code path.  xHCI and
+virtio-input still poll from the tick, and so do the device-tree machines'
+UARTs, which is what the question below now covers.
+
 ## Unresolved questions
 
 - **Adopting the machine's regions as frames** (RFC 0019's question, carried
@@ -204,8 +215,8 @@ machine's number that sized it.
 - **What "refuse to boot" means**: the tree's panic policy is
   `docs/fmts/unsafe-and-safety.md`'s, and whether this is a halt with a message
   or a panic is that document's to say.
-- **The device polling that lives in the timer tick**: the UART, xHCI and
-  virtio-input polls all run inside the tick handler, so a spin there takes the
-  machine's input with it.  The fix is a real UART interrupt path — the driver's
-  interrupt-enable register is written to zero today — and it is named here
-  rather than half-built.
+- **The device polling that lives in the timer tick**: xHCI and virtio-input
+  still poll from the tick handler, and so do the device-tree machines' UARTs,
+  so a spin there takes their input with it.  x86_64's UART half landed (see
+  above); the other machines' interrupt paths and the two USB/input polls are
+  the part still named rather than half-built.

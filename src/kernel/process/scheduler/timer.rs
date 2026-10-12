@@ -171,7 +171,8 @@ impl Scheduler {
     ///
     /// Performs per-tick bookkeeping:
     /// - Updates per-thread CPU-ticks and scheduler stats.
-    /// - Polls serial and USB HID hardware (stop-gap until IRQ wiring).
+    /// - Polls USB HID hardware (stop-gap until IRQ wiring), and the serial
+    ///   UART on the machines whose interrupt path is not wired.
     /// - Drives network stack periodic maintenance.
     /// - Boosts starved Normal-priority threads.
     /// - Checks expired timerfds.
@@ -188,10 +189,14 @@ impl Scheduler {
             *self.simulated_ticks.lock() = ticks;
         }
 
-        // Until a dedicated serial IRQ path exists, fold UART RX polling into
-        // the timer tick so serial waits can observe hardware input and reuse
-        // the existing device wait queue.
-        let _ = serial::poll_hardware_rx();
+        // The machines whose console UART has no interrupt path wired (the
+        // device-tree ones) still need the tick to poll it; x86_64's COM1
+        // delivers its bytes itself (`drivers::serial::handle_rx_interrupt`),
+        // so input there no longer depends on this tick running.  Which kind
+        // of UART this is, is the machine's answer.
+        if !crate::arch::serial::rx_is_interrupt_driven() {
+            let _ = serial::poll_hardware_rx();
+        }
         // Poll the xHCI event ring for USB HID keyboard reports.
         // This is a stop-gap until MSI-X interrupt wiring is in place.
         let _ = crate::drivers::xhci::xhci_poll();

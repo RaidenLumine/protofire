@@ -264,6 +264,7 @@ pub fn ioapic_mask_irq(irq: u8) {
 /// - IRQ 0 (timer)  → vector 32
 /// - IRQ 1 (keyboard) → vector 33
 /// - IRQ 2 (cascade, typically unused on APIC systems)
+/// - IRQ 4 (COM1) → vector 36, and arms the UART's received-data interrupt
 ///
 /// After routing, the IOAPIC entries are unmasked so interrupts can
 /// be delivered.
@@ -284,6 +285,14 @@ pub fn ioapic_setup_isa_irqs() {
     // Route IRQ 1 (keyboard) to vector 33.
     ioapic_route_irq(1, 33);
     ioapic_unmask_irq(1);
+
+    // Route IRQ 4 (COM1) to its own vector and arm the UART's received-data
+    // interrupt.  Arming happens here rather than in `serial::init` on
+    // purpose: this is the point at which the line is routed, and a byte that
+    // arrived while it was masked would raise it for nobody.
+    ioapic_route_irq(4, super::interrupts::COM1_VECTOR);
+    ioapic_unmask_irq(4);
+    super::serial::enable_rx_interrupt();
 
     // IRQ 2 is the cascade from the slave PIC; we don't route it.
     // Other IRQs remain masked until a driver explicitly enables them.

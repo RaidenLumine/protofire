@@ -343,6 +343,13 @@ require_log_line "[abi   ] shell payload: $PAYLOAD_SOURCE "
 # have this line.
 require_log_line "adastra:/apps/packages/shell\$ "
 
+# The typed commands above are answered only if input reached the shell, and
+# the console UART's input arrives on COM1's own interrupt now — this line is
+# printed once, by the handler, and tells an interrupt-driven input path from
+# the timer tick's old stop-gap poll.  The tick's x86_64 poll is gone, so the
+# typed answers would not exist without the whole path.
+require_log_line "[serial] COM1 RX interrupt carries input"
+
 # ── The shell answered what was typed at it ────────────────────────────
 #
 # The lines above come from the shell's own start-up.  They are also printed by

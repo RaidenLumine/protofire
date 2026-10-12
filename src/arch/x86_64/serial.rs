@@ -81,6 +81,24 @@ impl SerialPort {
         self.initialized = true;
     }
 
+    /// Let the UART raise a received-data interrupt.
+    ///
+    /// The interrupt-enable register stays zero through [`init`](Self::init)
+    /// on purpose: the line is not routed until the interrupt controller is
+    /// up, so a byte that arrives before that would raise a line nothing
+    /// answers.  The controller arms this once it has routed COM1's IRQ.
+    fn enable_rx_interrupt(&mut self) {
+        if !self.initialized {
+            self.init();
+        }
+
+        // SAFETY: the interrupt-enable register of the UART this driver owns;
+        // bit 0 is the received-data interrupt whose handler drains the FIFO.
+        unsafe {
+            self.interrupt_enable.write(0x01);
+        }
+    }
+
     fn can_transmit(&mut self) -> bool {
         // SAFETY: the line-status register of the same UART, read for the
         // transmit-ready bit.
@@ -149,6 +167,15 @@ static SERIAL1: SpinLock<SerialPort> = SpinLock::new(SerialPort::new(COM1));
 
 pub fn init() {
     SERIAL1.lock().init();
+}
+
+/// Let COM1 raise its received-data interrupt.
+///
+/// Called once the interrupt controller has routed the line — see
+/// [`crate::arch::x86_64::interrupts::COM1_VECTOR`] — because arming it
+/// earlier would let a byte raise a line nothing has a destination for.
+pub fn enable_rx_interrupt() {
+    SERIAL1.lock().enable_rx_interrupt();
 }
 
 pub fn write_str(message: &str) {

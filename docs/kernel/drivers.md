@@ -97,7 +97,12 @@ not have yet is a second claimant, because the drivers that would be one
 ## Input and console
 
 The serial UART is the console on every machine (with RISC-V falling back to
-the SBI console when it has no UART).  The PS/2 keyboard and mouse are PC
+the SBI console when it has no UART).  The PC's COM1 delivers received bytes by
+interrupt — `COM1_VECTOR` in `src/arch/x86_64/interrupts.rs`, armed once the
+IOAPIC routes IRQ 4 to it — so input there does not depend on the timer tick.
+The device-tree machines' UARTs have no interrupt path wired, so their bytes
+still arrive through the tick's poll (`src/kernel/process/scheduler/timer.rs`).
+The PS/2 keyboard and mouse are PC
 hardware; a device-tree machine uses `virtio-input`, whose events are injected
 into the same keyboard core so both routes end in one decoder.  A Linear
 framebuffer — bochs-display — is a second console target next to the UART, with

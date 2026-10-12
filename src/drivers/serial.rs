@@ -7,6 +7,8 @@
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
 
 use crate::arch;
 use crate::kernel::console;
@@ -315,6 +317,23 @@ pub fn poll_hardware_rx() -> usize {
     global_device()
         .map(|device| device.poll_hardware_rx())
         .unwrap_or(0)
+}
+
+/// Handle the console UART's received-data interrupt.
+///
+/// The interrupt half of [`poll_hardware_rx`]: it drains the hardware through
+/// the same path — bytes into the device queue, bytes bridged to the console
+/// TTY, the waiters woken — and the *first* interrupt says so once, which is
+/// the boot log's evidence that input arrived this way and not through the
+/// timer tick, whose x86_64 poll this replaced.
+pub fn handle_rx_interrupt() -> usize {
+    static ANNOUNCED: AtomicBool = AtomicBool::new(false);
+
+    if !ANNOUNCED.swap(true, Ordering::AcqRel) {
+        crate::println!("[serial] COM1 RX interrupt carries input");
+    }
+
+    poll_hardware_rx()
 }
 
 pub fn inject_rx_bytes(bytes: &[u8]) -> usize {
