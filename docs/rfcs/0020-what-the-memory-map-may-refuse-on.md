@@ -175,6 +175,60 @@ address still refuses, and that boot was already broken.
   storage (`.bss`), with no cast and no `unsafe` between the storage and its
   use.  The UEFI boot gets past the point it faulted at, further than it had
   ever gone, and the BIOS boot is unchanged.
+- **What the UEFI pass found, and what it cost**: the pass was written, run,
+  and — with the two fixes this section is about — **landed**: the check boots
+  the image through BIOS *and* through OVMF, and its head bounds the memory map
+  it was given.  Getting there took four refuted explanations and two real
+  defects.
+
+  The first defect is the one the pass itself hit: the kernel **wrote a page its
+  own plan had made read-only** (`plan=kernel-rodata`, `access=write`), and the
+  page was the free-PCID bitmap — an all-zero immutable array, which the
+  compiler is entitled to place in `.rodata`, with `bitmap_word` casting a
+  pointer to it into `&AtomicU64` and writing through it.  The storage is an
+  array of atomics now, in writable memory, with no cast and no `unsafe`.
+
+  The second was underneath it, and only a stall could have shown it: with the
+  storage moved, the boot **hung in `allocate_pcid`** — a real UEFI boot needed
+  a QEMU monitor to say so, and the RIP named the loop.  Its condition was
+  `while word != 0`, and its body could not clear the bits it refused: `pcid ==
+  0` (the kernel's own, which `init_pcid` sets *in this bitmap*) and anything
+  past this machine's `PCID_MAX` were skipped and then offered again by the
+  re-read, forever.  The word is masked to the bits the loop may hand out
+  before the loop sees it, so no stray bit can spin it — and the four refuted
+  explanations (the pool moving, the bitmap overlapping the pool, a stale KASLR
+  relocation list, the atomic *type*, `.bss` not being zeroed) are all recorded
+  in this RFC's history because each was worth not repeating.
+
+- **What is owed now**: the UEFI pass runs on the machine that has OVMF; CI's
+  ISO job installs it (`ovmf`), so the pass is the one that would have found
+  both defects anywhere.  The frame pool's own placement — a 512 MiB array
+  whose address is the allocator's base, movable by any unrelated static — is
+  left as it is: it is no longer a suspect, and pinning it is a change that
+  should argue for itself.
+
+## Unresolved questions
+
+- **A UEFI pass for the ISO check, and the two things it found**: the pass was
+  written, run, and *not* kept, because it does not pass — and what it found is
+  worth more than the pass.  The first was a write into read-only memory, and
+  it is fixed:
+
+  ```
+  [FATAL] page fault addr=0x00000000004ed388 access=write reason=protection-violation
+          prepared_perms=r-- plan=kernel-rodata
+          rip=0x000000000046d596
+  ```
+
+  and both addresses named the same thing: the instruction was
+  `core::sync::atomic::atomic_or`, the address was
+  `protofire::arch::x86_64::paging::pcid::PCID_BITMAP_STORE`.  That static was an
+  all-zero array of `u64`, which is immutable data — so the compiler placed it in
+  `.rodata`, where `nm` marked it `r` — and the PCID path wrote it through a
+  pointer cast to `&AtomicU64`.  It is an array of `AtomicU64` now: read-write
+  storage (`.bss`), with no cast and no `unsafe` between the storage and its
+  use.  The UEFI boot gets past the point it faulted at, further than it had
+  ever gone, and the BIOS boot is unchanged.
 - **The fix that did not work, measured**: the static became an array of
   `AtomicU64` — read-write storage, no cast, no `unsafe` — and the UEFI boot got
   past the fault, further than it had ever gone.  But **both firmwares then

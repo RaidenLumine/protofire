@@ -178,7 +178,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            grub-pc-bin grub2-common xorriso mtools qemu-system-x86
+            grub-pc-bin grub2-common xorriso mtools qemu-system-x86 ovmf
 
       - name: Boot the ISO GRUB made
         run: make check-x8664-iso

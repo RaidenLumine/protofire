@@ -72,14 +72,18 @@ const INVPCID_TYPE_ALL_NON_GLOBAL: u64 = 2;
 #[repr(C, align(8))]
 struct PcidBitmapStore([u64; PCID_BITMAP_WORDS]);
 
-static PCID_BITMAP_STORE: PcidBitmapStore = PcidBitmapStore([0u64; PCID_BITMAP_WORDS]);
+/// The backing store, wrapped so that it is **read-write** storage rather than
+/// immutable data the compiler may place in `.rodata`.  The access pattern is
+/// the one this file always had, with the storage in `.bss` instead.
+static PCID_BITMAP_STORE: crate::util::sync_unsafe_cell::SyncUnsafeCell<PcidBitmapStore> =
+    crate::util::sync_unsafe_cell::SyncUnsafeCell::new(PcidBitmapStore([0u64; PCID_BITMAP_WORDS]));
 
 /// Where the free-PCID bitmap is, so a boot can say what the page plan makes
 /// of the page it lives in ([RFC
 /// 0020](../../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md) is
 /// chasing exactly that).
 pub fn bitmap_address() -> usize {
-    PCID_BITMAP_STORE.0.as_ptr() as usize
+    PCID_BITMAP_STORE.get() as *const PcidBitmapStore as usize
 }
 
 /// Monotonically-increasing PCID counter fallback, used when the free bitmap
@@ -108,7 +112,8 @@ fn bitmap_word(word_idx: usize) -> &'static core::sync::atomic::AtomicU64 {
     // The static storage is valid for the lifetime of the program.  No other
     // mutable reference aliases these bytes.
     unsafe {
-        &*(&PCID_BITMAP_STORE.0[word_idx] as *const u64 as *const core::sync::atomic::AtomicU64)
+        let store = PCID_BITMAP_STORE.get();
+        &*(&(*store).0[word_idx] as *const u64 as *const core::sync::atomic::AtomicU64)
     }
 }
 
@@ -222,15 +227,31 @@ pub(crate) fn pcid_enabled() -> bool {
 /// Returns the allocated PCID (always > 0).
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn allocate_pcid() -> u64 {
+    // The bits this word may hand out.  PCID 0 belongs to the kernel — and the
+    // reservation is a bit set *in this bitmap* — so it is masked out of the
+    // search rather than skipped inside it: a bit the loop cannot clear is a
+    // bit that word would offer again on every pass, and the pass before this
+    // one spun forever on exactly that ([RFC
+    // 0020](../../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md): the
+    // boot hung in this function, and a hang is what a loop that re-reads the
+    // word it cannot change looks like).
+    let handable = |word_idx: usize| -> u64 {
+        if word_idx == 0 {
+            !1u64
+        } else {
+            !0u64
+        }
+    };
+
     // Try the free bitmap first.
     for word_idx in 0..PCID_BITMAP_WORDS {
-        let mut word = bitmap_word(word_idx).load(Ordering::Acquire);
+        let allowed = handable(word_idx);
+        let mut word = bitmap_word(word_idx).load(Ordering::Acquire) & allowed;
         while word != 0 {
             let bit = word.trailing_zeros() as usize;
             let pcid = word_idx * 64 + bit;
             let mask = 1u64 << bit;
-            if pcid > 0
-                && (pcid as u64) <= PCID_MAX
+            if (pcid as u64) <= PCID_MAX
                 && bitmap_word(word_idx)
                     .compare_exchange(word, word & !mask, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
@@ -238,8 +259,10 @@ pub(crate) fn allocate_pcid() -> u64 {
                 return pcid as u64;
             }
 
-            // CAS failed or PCID out of range — refresh and retry.
-            word = bitmap_word(word_idx).load(Ordering::Acquire);
+            // Another CPU took it, or the bit is past what this machine has —
+            // either way the word is re-read, with only the bits we may hand
+            // out in it.
+            word = bitmap_word(word_idx).load(Ordering::Acquire) & allowed;
         }
     }
 
