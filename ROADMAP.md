@@ -157,6 +157,17 @@ The authoritative picture of what exists today is
   device tree from a real board: each becomes a parser gate that a real
   machine would otherwise be the first to exercise.
 
+  The ACPI half has a recipe and a prerequisite.  It needs root **once**, on a
+  machine that is not a consequence of this tree: `sudo cp
+  /sys/firmware/acpi/tables/* fixtures/acpi/`, and the file that matters most is
+  `APIC` — the MADT of a real firmware, with its x2APIC entries, its
+  interrupt-source overrides and its holes, where this tree has only ever parsed
+  QEMU's.  The gate then looks like the NTFS one: the captured tables in the
+  tree as data, a test that parses them, and a boot that reads them where
+  `check-aarch64-runtime` reads a device tree.  (`/sys/firmware/acpi/tables/*`
+  is readable by root alone, which is why this is a recipe rather than a change
+  someone can land from a terminal without it.)
+
 ## Mid Term (6–18 months)
 
 - **Write support for more filesystems.** The read-only drivers — NTFS,

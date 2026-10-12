@@ -541,9 +541,13 @@ mod tests {
     use super::available_bytes;
     use super::current_architecture;
     #[cfg(target_arch = "x86_64")]
+    use super::multiboot2_framebuffer_at;
+    #[cfg(target_arch = "x86_64")]
     use super::multiboot2_memory_regions_at;
     use super::BootInfo;
     use super::BootProtocol;
+    #[cfg(target_arch = "x86_64")]
+    use super::LoaderFramebuffer;
     #[cfg(target_arch = "x86_64")]
     use super::MemoryRegion;
     #[cfg(target_arch = "x86_64")]
@@ -639,6 +643,72 @@ mod tests {
             None,
             "no hand-off address is no map, which is not an empty one"
         );
+    }
+
+    /// The framebuffer tag: the mode a loader set, which is the only display a
+    /// machine with no driver of this kernel's own has ([RFC
+    /// 0019](../../docs/rfcs/0019-what-a-frame-is.md)'s list, first item).
+    ///
+    /// The parser's job is to say what the loader said — including the kinds
+    /// the console does not draw in, which the *caller* refuses — and to say
+    /// nothing about a block that does not carry the tag.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn a_loader_framebuffer_answers_the_mode_it_set() {
+        // type(4) size(4) address(8) pitch(4) width(4) height(4) bpp(1) kind(1)
+        // reserved(2)
+        fn block(address: u64, pitch: u32, width: u32, height: u32, bpp: u8, kind: u8) -> Vec<u8> {
+            let tag_size = 32usize;
+            let total = 8 + tag_size + 8;
+            let mut block: Vec<u8> = Vec::new();
+            block.extend_from_slice(&(total as u32).to_le_bytes());
+            block.extend_from_slice(&0_u32.to_le_bytes());
+            block.extend_from_slice(&8_u32.to_le_bytes());
+            block.extend_from_slice(&(tag_size as u32).to_le_bytes());
+            block.extend_from_slice(&address.to_le_bytes());
+            block.extend_from_slice(&pitch.to_le_bytes());
+            block.extend_from_slice(&width.to_le_bytes());
+            block.extend_from_slice(&height.to_le_bytes());
+            block.push(bpp);
+            block.push(kind);
+            block.extend_from_slice(&0_u16.to_le_bytes());
+            block.extend_from_slice(&0_u32.to_le_bytes());
+            block.extend_from_slice(&8_u32.to_le_bytes());
+            block
+        }
+
+        let graphics = block(0x8000_0000, 4096, 1024, 768, 32, 1);
+        let at = graphics.as_ptr() as usize;
+        assert_eq!(
+            multiboot2_framebuffer_at(at),
+            Some(LoaderFramebuffer {
+                address: 0x8000_0000,
+                pitch: 4096,
+                width: 1024,
+                height: 768,
+                bits_per_pixel: 32,
+                kind: 1,
+            })
+        );
+
+        // A text mode is answered too, and by its own kind: what the loader set
+        // is the parser's to report, and the console's to refuse.
+        let text = block(0x000b_8000, 160, 80, 25, 16, 2);
+        assert_eq!(
+            multiboot2_framebuffer_at(text.as_ptr() as usize).map(|fb| fb.kind),
+            Some(2)
+        );
+
+        // No address, no framebuffer: a loader that described a mode of nothing
+        // described nothing.
+        let empty = block(0, 4096, 1024, 768, 32, 1);
+        assert_eq!(multiboot2_framebuffer_at(empty.as_ptr() as usize), None);
+
+        // And a block with no tag at all, or no block, answers nothing.
+        assert_eq!(multiboot2_framebuffer_at(0), None);
+        let mut bare: Vec<u8> = Vec::new();
+        bare.extend_from_slice(&8_u32.to_le_bytes());
+        assert_eq!(multiboot2_framebuffer_at(bare.as_ptr() as usize), None);
     }
 
     /// A total size the block does not have bounds every read: the walk stops
