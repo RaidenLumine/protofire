@@ -8,7 +8,6 @@
 //! page tables replace the bootstrap identity map — the tables live at physical
 //! addresses the identity map covers and the runtime map may not.
 
-#[cfg(target_os = "none")]
 use alloc::vec::Vec;
 
 // ── ACPI structures (minimal — only what MADT parsing needs) ────────────
@@ -56,6 +55,10 @@ struct Madt {
     flags: u32,
     // entries follow
 }
+
+// The two statements of the same layout have to agree.
+#[cfg(target_os = "none")]
+const _: () = assert!(core::mem::size_of::<Madt>() == MADT_HEADER_BYTES);
 
 /// Parsed local APIC entry from the MADT.
 #[derive(Debug, Clone, Copy)]
@@ -213,63 +216,85 @@ unsafe fn read_phys_u32(addr: usize) -> u32 {
     b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
 }
 
-/// Parse the MADT and return a list of enabled local APIC entries.
-#[cfg(target_os = "none")]
-unsafe fn parse_madt(madt_addr: usize) -> Vec<LocalApicEntry> {
+/// The most bytes a MADT may span before the boot distrusts it.
+///
+/// The header's length field is 32 bits, so firmware can claim a table of
+/// four gigabytes.  A real MADT is a few hundred bytes — the fixture in this
+/// tree, from a laptop's own firmware, is 476 — and even a machine with
+/// sixty-five thousand processors would need one megabyte of sixteen-byte
+/// `x2APIC` entries to outgrow this bound, so a length past it is a length
+/// not to trust.  The number is deliberately far above what any machine
+/// describes: the bound exists to bound the slice, not to model a machine.
+const MADT_MAX_BYTES: usize = 0x10_0000;
+
+/// Bytes before a MADT's entry list: an SDT header (36) plus the local-APIC
+/// address and the flags word.  The `Madt` struct states the same layout for
+/// the bare-metal path; this is the number the byte parser uses, because it
+/// has to be the same on a host build that never defines that struct.
+const MADT_HEADER_BYTES: usize = 44;
+
+/// Parse a MADT out of its own bytes, and answer its local APIC entries.
+///
+/// Pure over the table's bytes so the parse is host-testable: the capture in
+/// `fixtures/acpi/APIC` is a real firmware's MADT (a laptop's, with the
+/// processor IDs, the disabled `0xff` entries and the interrupt-source
+/// overrides QEMU's machines never describe), and
+/// `real_firmware_madt_parses` walks it.  Entry types other than the
+/// processor local APIC's are skipped by their length, which is what keeps
+/// the walk landing on entry boundaries whatever a firmware puts between
+/// them.
+pub fn parse_madt_bytes(table: &[u8]) -> Vec<LocalApicEntry> {
     let mut entries = Vec::new();
+    if !(MADT_HEADER_BYTES..=MADT_MAX_BYTES).contains(&table.len()) {
+        return entries;
+    }
 
-    // SAFETY: the MADT address comes from the RSDT walk, which read the table's
-    // own header; the header is what this line reads, and it is mapped because
-    // every ACPI table is in the identity-mapped region at boot.
-    let header = unsafe { &*(madt_addr as *const Madt) };
-    let table_end = madt_addr + header.header.length as usize;
-
-    // Entries start right after the flags field.
-    let mut offset = madt_addr + core::mem::size_of::<Madt>();
-
-    while offset + 2 <= table_end {
-        // SAFETY: the loop condition keeps two bytes from `offset`, and both
-        // are inside the table because `offset + 2 <= table_end`.
-        let entry_type = unsafe { read_phys_u8(offset) };
-        // SAFETY: as above — the second of those two bytes.
-        let entry_len = unsafe { read_phys_u8(offset + 1) } as usize;
-
-        if entry_len < 2 || offset + entry_len > table_end {
+    let mut offset = MADT_HEADER_BYTES;
+    while offset + 2 <= table.len() {
+        let entry_type = table[offset];
+        let entry_len = table[offset + 1] as usize;
+        if entry_len < 2 || offset + entry_len > table.len() {
             break;
         }
-
-        match entry_type {
-            0 if entry_len >= 8 => {
-                // Processor Local APIC
-                // SAFETY: the arm's `entry_len >= 8` guard says the entry
-                // covers the six bytes read here, and the length check above
-                // says the entry is inside the table.
-                let acpi_processor_id = unsafe { read_phys_u8(offset + 2) };
-                // SAFETY: as above.
-                let apic_id = unsafe { read_phys_u8(offset + 3) };
-                // SAFETY: as above — the flags pair is the last of the six
-                // bytes the arm's guard covers.
-                let flags = unsafe {
-                    let lo = read_phys_u8(offset + 4) as u32;
-                    let hi = read_phys_u8(offset + 5) as u32;
-                    lo | (hi << 8)
-                };
-                let enabled = (flags & 0x1) != 0;
-                entries.push(LocalApicEntry {
-                    acpi_processor_id,
-                    apic_id,
-                    enabled,
-                });
-            }
-            _ => {
-                // Skip other entry types or entries that are too short.
-            }
+        if entry_type == 0 && entry_len >= 8 {
+            let acpi_processor_id = table[offset + 2];
+            let apic_id = table[offset + 3];
+            let flags = table[offset + 4] as u32 | ((table[offset + 5] as u32) << 8);
+            entries.push(LocalApicEntry {
+                acpi_processor_id,
+                apic_id,
+                enabled: (flags & 0x1) != 0,
+            });
         }
-
         offset += entry_len;
     }
 
     entries
+}
+
+/// Parse the MADT at a physical address and return its enabled local APIC
+/// entries.
+///
+/// The address comes from the RSDT walk, which read the table's own header;
+/// the table is mapped because every ACPI table is in the identity-mapped
+/// region at boot.  The read is a byte slice over that mapping rather than a
+/// copy, which is why the wrapper checks the header's length first: the
+/// slice exists before the parser can re-check it.
+#[cfg(target_os = "none")]
+unsafe fn parse_madt(madt_addr: usize) -> Vec<LocalApicEntry> {
+    // SAFETY: the MADT address comes from the RSDT walk, which read the
+    // table's own header, and byte 4 of an SDT header is the length field's
+    // first byte — inside the mapped table.
+    let length = unsafe { read_phys_u32(madt_addr + 4) } as usize;
+    if !(MADT_HEADER_BYTES..=MADT_MAX_BYTES).contains(&length) {
+        return Vec::new();
+    }
+    // SAFETY: `length` is the length the table's own header declares, bounded
+    // above by `MADT_MAX_BYTES`, and the table is the mapped range the RSDT
+    // named — so the slice covers exactly that table.  Nothing writes
+    // through it, and ACPI tables are never written by software.
+    let table = unsafe { core::slice::from_raw_parts(madt_addr as *const u8, length) };
+    parse_madt_bytes(table)
 }
 
 /// Discover AP LAPIC IDs from the ACPI MADT.
@@ -732,4 +757,101 @@ pub fn take_early_numa() -> Option<EarlyNumaData> {
     // SAFETY: the only reader of the cell, after the single store in
     // `discover_numa`.
     unsafe { (*EARLY_NUMA.get()).take() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_madt_bytes;
+    use alloc::vec::Vec;
+
+    /// A laptop's own firmware's MADT, captured once from
+    /// `/sys/firmware/acpi/tables/APIC` and checked in under
+    /// `fixtures/acpi/` (the recipe is its README).  Every other MADT this
+    /// tree has ever parsed was QEMU's; this is the first one the parse runs
+    /// on that no part of this tree produced.
+    const REAL_MADT: &[u8] = include_bytes!("../../../fixtures/acpi/APIC");
+
+    /// The real firmware's table, parsed whole.
+    ///
+    /// A Raptor Lake-P machine's MADT: 32 processor local APIC entries of
+    /// which 12 are enabled — the enabled APIC IDs are the real hybrid
+    /// topology (`0/1`, `8/9`, `16/17`, `24/25` are the SMT pairs, `40/42/`
+    /// `44/46` the efficiency cores) and the other 20 are the disabled
+    /// placeholders real firmware writes with APIC ID `0xff`.  QEMU's MADTs
+    /// have neither placeholders nor this many entries, so a parse that
+    /// mistook a placeholder for a processor, or stopped at the first entry
+    /// type it did not know, would have gone unnoticed until a board.
+    #[test]
+    fn real_firmware_madt_parses() {
+        let entries = parse_madt_bytes(REAL_MADT);
+
+        assert_eq!(entries.len(), 32, "the table's processor entries, in order");
+
+        let enabled: Vec<u8> = entries
+            .iter()
+            .filter(|entry| entry.enabled)
+            .map(|entry| entry.apic_id)
+            .collect();
+        assert_eq!(
+            enabled,
+            [0, 1, 8, 9, 16, 17, 24, 25, 40, 42, 44, 46],
+            "the enabled APIC IDs are the machine's real topology"
+        );
+
+        let disabled = entries.iter().filter(|entry| !entry.enabled).count();
+        assert_eq!(disabled, 20, "the firmware's disabled placeholders");
+        assert!(
+            entries
+                .iter()
+                .filter(|entry| !entry.enabled)
+                .all(|entry| entry.apic_id == 0xff),
+            "every disabled placeholder carries the 0xff APIC ID"
+        );
+    }
+
+    /// The real table carries entry types the processor arm does not know —
+    /// an IOAPIC, two interrupt-source overrides, 24 NMI entries — and the
+    /// walk has to step over each by its length exactly: a misstep lands
+    /// mid-entry and every later parse is noise.  The last processor entry
+    /// being the 32nd and the disabled ones still reading as `0xff` says the
+    /// walk stayed on boundaries through all of them.
+    #[test]
+    fn the_walk_survives_entry_types_it_skips() {
+        let entries = parse_madt_bytes(REAL_MADT);
+        assert_eq!(entries.last().map(|entry| entry.apic_id), Some(0xff));
+        // The processor IDs are contiguous 0..32 in the real table, which a
+        // walk that misparsed an override as a processor would break.
+        let processor_ids: Vec<u8> = entries
+            .iter()
+            .map(|entry| entry.acpi_processor_id)
+            .collect();
+        assert_eq!(processor_ids, (0..32).collect::<Vec<u8>>());
+    }
+
+    /// Bytes that are not a table: short, truncated, or with an entry length
+    /// that leaves the table.  None may panic, and none may read past its
+    /// slice.
+    #[test]
+    fn malformed_madts_answer_nothing_and_never_panic() {
+        // Shorter than a MADT header.
+        assert!(parse_madt_bytes(&[]).is_empty());
+        assert!(parse_madt_bytes(&[0u8; 43]).is_empty());
+        // A header with a truncated entry: type 0, length 8, one byte
+        // missing.
+        let mut table = alloc::vec![0u8; 44];
+        table[0..4].copy_from_slice(b"APIC");
+        table.extend_from_slice(&[0, 8, 1, 2, 1, 0, 0]);
+        assert!(parse_madt_bytes(&table).is_empty());
+        // An entry length below the two header bytes stops the walk rather
+        // than looping in place.
+        let mut table = alloc::vec![0u8; 44];
+        table[0..4].copy_from_slice(b"APIC");
+        table.extend_from_slice(&[0, 1]);
+        assert!(parse_madt_bytes(&table).is_empty());
+        // An entry that claims to run past the table is dropped.
+        let mut table = alloc::vec![0u8; 44];
+        table[0..4].copy_from_slice(b"APIC");
+        table.extend_from_slice(&[0, 255, 1, 2, 1, 0, 0, 0]);
+        assert!(parse_madt_bytes(&table).is_empty());
+    }
 }

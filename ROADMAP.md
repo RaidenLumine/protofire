@@ -184,16 +184,20 @@ The authoritative picture of what exists today is
   device tree from a real board: each becomes a parser gate that a real
   machine would otherwise be the first to exercise.
 
-  The ACPI half has a recipe and a prerequisite.  It needs root **once**, on a
-  machine that is not a consequence of this tree: `sudo cp
-  /sys/firmware/acpi/tables/* fixtures/acpi/`, and the file that matters most is
-  `APIC` — the MADT of a real firmware, with its x2APIC entries, its
-  interrupt-source overrides and its holes, where this tree has only ever parsed
-  QEMU's.  The gate then looks like the NTFS one: the captured tables in the
-  tree as data, a test that parses them, and a boot that reads them where
-  `check-aarch64-runtime` reads a device tree.  (`/sys/firmware/acpi/tables/*`
-  is readable by root alone, which is why this is a recipe rather than a change
-  someone can land from a terminal without it.)
+  The ACPI half has landed its first step and kept its recipe.  The capture is
+  in the tree: `fixtures/acpi/APIC` is a real laptop's MADT — 32 processor
+  entries of which 12 are enabled, twenty disabled `0xff` placeholders, an
+  IOAPIC, interrupt-source overrides and one NMI entry per processor, none of
+  which any QEMU machine describes — and the unit tests in
+  `src/arch/x86_64/acpi.rs` parse it (`parse_madt_bytes` is a pure function
+  over a table's bytes, and every other MADT this tree has ever parsed was
+  QEMU's).  `fixtures/acpi/README.md` carries the recipe for more (`sudo cp
+  /sys/firmware/acpi/tables/APIC fixtures/acpi/APIC`, root once, on a machine
+  that is not a consequence of this tree), because `/sys/firmware/acpi/tables/*`
+  is readable by root alone.  What is still open is the *boot* that reads them
+  where `check-aarch64-runtime` reads a device tree: a QEMU boot whose MADT is
+  the captured one, so the discovery path — RSDP, RSDT, the AP bring-up built
+  from it — runs on a board's shape rather than a parser's unit test alone.
 
 ## Mid Term (6–18 months)
 
