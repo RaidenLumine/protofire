@@ -63,11 +63,27 @@
 //! in the table); and it boots a 128 MiB machine, which has no room for the
 //! copy, to require the refusal and a shell at the link address.
 //!
-//! Not verified: a loader that does **not** place the kernel at its link
-//! address, which the relocator assumes (every loader this tree has used
-//! does), and placement on a machine whose usable RAM has holes the window
-//! cannot avoid — the candidate search checks the regions, but no gate boots
-//! such a machine.
+//! The candidate search itself — which base the machine's region list leaves
+//! — lives in [`crate::arch::x86_64::kaslr_placement`] as a pure function
+//! over region lists, precisely so the case no boot can reach is driven by
+//! unit tests: a machine whose usable RAM has holes that leave no room for
+//! the copy and the pool together.  No QEMU machine this kernel boots
+//! describes that shape: a `q35` machine is contiguous available RAM up to
+//! just under 2 GiB, and the placement ceiling this search works under is
+//! 768 MiB — so there is no gate to boot, the search's hole branches are
+//! tests instead, and the boot's refusal branch is the 128 MiB boot above.
+//!
+//! Assumed: a loader that places the kernel at its **link address**, which is
+//! what the table's offsets are measured from.  The assumption is a property
+//! of the image rather than of any loader: every `PT_LOAD` states
+//! `p_paddr == p_vaddr`, the ELF is `ET_EXEC` (so nothing invites a dynamic
+//! loader to move it), and the entry the loader is told to jump to is the
+//! linked `_start`.  `make check-x8664-kaslr-runtime` asserts all three on
+//! the image it boots, so a loader that honours the ELF's own addresses —
+//! which is both of this tree's PC loaders, GRUB's Multiboot2 and QEMU's PVH
+//! hand-off — loads it where the table expects.  A loader that relocates the
+//! image anyway is out of scope: it would break every non-relocatable kernel,
+//! including this one without KASLR.
 
 #[cfg(feature = "kaslr")]
 use core::ptr;
@@ -241,10 +257,10 @@ unsafe fn apply_relocations(base: usize, delta: usize) {
 /// can be, on RAM the machine calls available, drawn from the time-stamp
 /// counter so two boots of one binary can differ.
 ///
-/// The bounds are the four in the module comment, in the order they can
-/// exclude: the copy starts after the running image, the whole kernel span
-/// stays below the stack window and below `KERNEL_IDENTITY_MEMORY_END`, and
-/// both the copy and the pool's new start land in available regions.
+/// This is the machine's half — the hand-off walk and the two bounds this
+/// boot knows — around
+/// [`crate::arch::x86_64::kaslr_placement::select_placement`], which is the
+/// search itself and lives with its tests where a host build compiles it.
 #[cfg(feature = "kaslr")]
 fn choose_placement(
     magic: u32,
@@ -254,15 +270,18 @@ fn choose_placement(
     image_end: usize,
     pool_start: usize,
 ) -> Option<usize> {
-    use crate::arch::boot::MemoryRegion;
-    use crate::arch::boot::MEMORY_REGION_AVAILABLE;
+    use crate::arch::x86_64::kaslr_placement::select_placement;
+    use crate::arch::x86_64::kaslr_placement::PlacementRequest;
     use crate::arch::x86_64::paging::KERNEL_IDENTITY_MEMORY_END;
     use crate::arch::x86_64::paging::X86_STACK_WINDOW_BASE;
 
+    /// The alignment each candidate base is placed on.  2 MiB is the
+    /// granularity of the relocator's own copy and of the runtime page
+    /// tables' large pages, and it is what makes the number of candidates in
+    /// a window a count-of-pages rather than a sweep of bytes.
     const STEP: usize = 2 * 1024 * 1024;
 
-    let regions: alloc::vec::Vec<MemoryRegion> =
-        crate::arch::boot::memory_regions_for_handoff(magic, info)?;
+    let regions = crate::arch::boot::memory_regions_for_handoff(magic, info)?;
 
     let copy_span = image_end - kernel_start;
     let total_span = kernel_end - kernel_start;
@@ -272,38 +291,20 @@ fn choose_placement(
     // nearer is the ceiling for the *end* of the kernel's span.
     let ceiling = X86_STACK_WINDOW_BASE.min(KERNEL_IDENTITY_MEMORY_END);
     let bottom = image_end.next_multiple_of(STEP);
-    let top = ceiling.checked_sub(total_span)? & !(STEP - 1);
-    if top < bottom {
-        return None;
-    }
-    let candidates = (top - bottom) / STEP + 1;
 
-    let inside_available = |start: usize, end: usize| {
-        regions.iter().any(|region| {
-            region.kind == MEMORY_REGION_AVAILABLE && region.base <= start && end <= region.end()
-        })
-    };
-
-    let seed = entropy();
-    for index in 0..candidates {
-        let base = bottom + ((seed + index) % candidates) * STEP;
-        if !inside_available(base, base + copy_span) {
-            continue;
-        }
-        // The pool moves with the kernel (its bounds are linker symbols the
-        // table patches), and it must still have a frame the allocator may
-        // manage: its start has to sit inside real RAM, or the boot refuses
-        // at `[mem   ]` with "the pool starts past the memory the machine
-        // describes".
-        if !inside_available(
-            base + pool_offset,
-            base + pool_offset + crate::memory::frame::FRAME_SIZE,
-        ) {
-            continue;
-        }
-        return Some(base);
-    }
-    None
+    select_placement(
+        &PlacementRequest {
+            bottom,
+            ceiling,
+            step: STEP,
+            copy_span,
+            total_span,
+            pool_offset,
+            pool_check_span: crate::memory::frame::FRAME_SIZE,
+            seed: entropy(),
+        },
+        &regions,
+    )
 }
 
 /// Entropy for the placement: the time-stamp counter, mixed so its low bits

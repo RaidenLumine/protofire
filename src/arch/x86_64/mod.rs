@@ -52,6 +52,14 @@ pub mod signal;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub mod kaslr;
 
+// Where the relocator may put its copy: the candidate search over the
+// machine's region list.  Compiled where it is used — the kaslr build and
+// the host tests — because the case it decides that no boot can reach (a
+// machine whose usable RAM has holes that leave no room for the copy and the
+// pool together) is driven by a unit test instead of by a gate.
+#[cfg(any(test, feature = "kaslr"))]
+pub mod kaslr_placement;
+
 use core::arch::asm;
 
 use crate::arch::Arch;

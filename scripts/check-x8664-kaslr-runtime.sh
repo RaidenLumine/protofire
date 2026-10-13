@@ -70,6 +70,17 @@ if ! command -v "$QEMU" >/dev/null 2>&1; then
     exit 1
 fi
 
+# The placed-as-linked assertion reads the image's program headers, its type,
+# its entry and its `_start` symbol with the binutils the build already
+# depends on.  Say which is missing rather than failing mid-assertion with a
+# parse error that reads as an image defect.
+for tool in readelf nm objdump; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        printf '%s is not installed; the KASLR check asserts the image format.\n' "$tool" >&2
+        exit 1
+    fi
+done
+
 case "$PROFILE" in
     release) profile_flag="--release" ;;
     *) profile_flag="" ;;
@@ -117,6 +128,48 @@ if [ -z "$scanned" ] || [ "$scanned" -eq 0 ]; then
 fi
 printf '  the scan carried %s pointer(s) with no relocation record\n' "$scanned"
 rm -f "$fresh" "$gen_log"
+
+# The relocator assumes the loader placed the kernel at its link address: the
+# table's offsets are measured from there, and the copy's sites are patched by
+# the delta between the two.  The assumption is a property of the image, not
+# of a loader, and it holds for any loader that honours the ELF's own
+# addresses — so what this asserts is exactly those properties, on the image
+# the boot below runs: every PT_LOAD maps its physical address at its virtual
+# address (an ELF a loader would have to move somewhere else would say
+# otherwise), the ELF is ET_EXEC (nothing invites a dynamic relocation pass),
+# and the entry the loader jumps to is `_start`'s linked address.
+pt_mismatch="$(
+    LC_ALL=C readelf -lW "$KERNEL_BIN" \
+        | awk '$1 == "LOAD" && $3 != $4 { print; exit }'
+)"
+if [ -n "$pt_mismatch" ]; then
+    printf 'x86_64 KASLR check failed: a PT_LOAD maps p_paddr != p_vaddr:\n%s\n' "$pt_mismatch" >&2
+    printf 'the relocator assumes the loader placed the kernel at its link address\n' >&2
+    exit 1
+fi
+elf_type="$(LC_ALL=C readelf -h "$KERNEL_BIN" | awk -F: '/Type:/ { gsub(/^[ \t]+/, "", $2); print $2 }')"
+case "$elf_type" in
+    EXEC*|*EXEC*) ;;
+    *)
+        printf 'x86_64 KASLR check failed: %s is %s, not ET_EXEC\n' "$KERNEL_BIN" "$elf_type" >&2
+        printf 'the relocator assumes a loader that does not run a relocation pass of its own\n' >&2
+        exit 1
+        ;;
+esac
+entry="$(LC_ALL=C readelf -h "$KERNEL_BIN" | awk -F: '/Entry point address/ { gsub(/^[ \t]+/, "", $2); print $2 }')"
+start_addr="$(nm "$KERNEL_BIN" 2>/dev/null | awk '$3 == "_start" { print $1; exit }')"
+if [ -z "$entry" ] || [ -z "$start_addr" ]; then
+    printf 'x86_64 KASLR check failed: could not read the entry point from %s\n' "$KERNEL_BIN" >&2
+    exit 1
+fi
+entry_num="$(printf '%d' "0x${entry#0x}")"
+start_num="$(printf '%d' "0x${start_addr#0x}")"
+if [ "$entry_num" != "$start_num" ]; then
+    printf 'x86_64 KASLR check failed: entry is %s, _start is %s\n' "$entry" "$start_addr" >&2
+    printf 'the boot stub entered is not the linked _start the relocator measured from\n' >&2
+    exit 1
+fi
+printf '  the kernel is placed-as-linked: ET_EXEC, every LOAD p_paddr == p_vaddr, entry == _start\n'
 
 # And the build identity is isolated from everything the table describes.
 # Its *content* follows git state (`git describe --dirty`), and this
