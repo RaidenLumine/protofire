@@ -65,7 +65,7 @@ pub(crate) unsafe fn alloc_runtime_pt_page() -> Option<usize> {
 
 /// Check whether a physical address range overlaps the kernel image (text,
 /// rodata, data, bss).  Used as a safety net in [`map_device_mmio`] — PCI
-/// BAR addresses are in the high MMIO space (>1 GiB) and should never overlap
+/// BAR addresses are in the high MMIO space and should never overlap
 /// the kernel, but a debug-assertion here catches driver bugs early.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) fn overlaps_kernel(phys: usize, size: usize) -> bool {

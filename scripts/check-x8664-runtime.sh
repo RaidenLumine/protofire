@@ -629,6 +629,57 @@ require_log_absent_line "[FATAL"
 log_file="$main_log"
 rm -f "$small_ram_log"
 
+# ── The same kernel on a machine whose firmware tables sit high ────────
+#
+# A machine with more than a gigabyte of RAM is where QEMU stops fitting its
+# ACPI tables into the first gigabyte: measured on `q35`, the RSDT is at
+# 0x3ffe2351 with 1 GiB and at 0x7ffe2351 with 2 GiB.  The boot reads those
+# tables (RSDT, then MADT/SRAT/SLIT) before the runtime page tables exist, so
+# a bootstrap identity map that stopped at 1 GiB faulted on the first table
+# entry — "page fault ... plan=outside-kernel-plan" before the console had
+# said anything else — and every check above boots 1 GiB, which is why nothing
+# saw it.  The map is four gigabytes now, and this segment boots the smallest
+# machine that puts its tables above the old bound.
+#
+# 2 GiB rather than 8: the boundary the firmware moves its tables across is
+# one gigabyte, and the smallest machine past it is the sharpest version of
+# the case.  The MADT line is the assertion that matters — it is printed after
+# the RSDT entry walk that used to fault — and the shell is the assertion that
+# the rest of the boot still runs at that size.
+high_ram_log="$(mktemp)"
+set +e
+timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine q35 \
+    -cpu max \
+    -smp 1 \
+    -m 2G \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -serial "file:$high_ram_log" \
+    -no-reboot \
+    -no-shutdown \
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 >/dev/null 2>>"$high_ram_log"
+status=$?
+set -e
+case "$status" in
+    0|124) ;;
+    *)
+        printf 'x86_64 runtime check failed with exit status %s on the 2 GiB machine\n' "$status" >&2
+        cat "$high_ram_log" >&2
+        rm -f "$high_ram_log"
+        exit "$status"
+        ;;
+esac
+
+log_file="$high_ram_log"
+require_log_line "[mem   ] machine reports 2047 MiB "
+require_log_line "[smp   ] RSDT at 0x"
+require_log_line "[smp   ] MADT at 0x"
+require_log_line "adastra ring3 shell"
+require_log_absent_line "[FATAL"
+log_file="$main_log"
+rm -f "$high_ram_log"
+
 if [ "$remove_log_on_exit" = "0" ]; then
     printf 'x86_64 runtime log saved to %s\n' "$log_file"
 fi

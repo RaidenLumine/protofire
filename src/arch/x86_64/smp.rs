@@ -60,7 +60,7 @@ static AP_STACKS: crate::util::sync_unsafe_cell::SyncUnsafeCell<[ApStack; MAX_AP
 /// ap_entry)
 #[repr(C)]
 struct TrampolineData {
-    cr3: u64,             // 0x00 — boot page-table root (identity-maps first 1 GiB)
+    cr3: u64,             // 0x00 — boot page-table root (identity-maps first 4 GiB)
     stack_top: u64,       // 0x08 — read by trampoline via `mov rsp, [0x9008]`
     entry_point: u64,     // 0x10 — read by trampoline via `mov rax, [0x9010]`
     cpu_id: u64,          // 0x18 — read by trampoline via `mov edi, [0x9018]`
@@ -86,8 +86,9 @@ impl TrampolineData {
 /// [`crate::arch::mmu::activate_prepared_runtime_kernel_page_tables`]
 /// switches away from the bootstrap identity map, and read back when an AP
 /// starts: the trampoline runs on the boot tables, which identity-map the
-/// first 1 GiB with 2 MiB pages and so cover all of its code and data
-/// (0x8000–0xA000) and any ACPI table below 1 GiB.
+/// first 4 GiB with 2 MiB pages and so cover all of its code and data
+/// (0x8000–0xA000) as well as the firmware's tables, wherever a machine put
+/// them.
 pub(crate) static BOOT_CR3: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// Save the current CR3 value (the boot page-table root) for AP startup.
@@ -477,7 +478,7 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     let started = Box::new(AtomicBool::new(false));
     let started_ptr = Box::into_raw(started);
 
-    // Use the saved boot CR3 (identity-maps first 1 GiB) rather than the
+    // Use the saved boot CR3 (identity-maps the first 4 GiB) rather than the
     // runtime kernel page-table root, which may not identity-map low memory.
     let cr3 = BOOT_CR3.load(Ordering::Acquire);
 

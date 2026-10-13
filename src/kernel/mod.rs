@@ -174,7 +174,7 @@ impl Kernel {
         // The bootstrap identity map is still active at this point, so
         // ACPI tables at arbitrary physical addresses are readable.
         // Also save the boot CR3 before we switch page tables — the AP
-        // trampoline needs the bootstrap identity map (first 1 GiB).
+        // trampoline needs the bootstrap identity map (first 4 GiB).
         // ── Platform state the kernel needs before it switches tables ──
         // What has to be saved, and what the machine describes about itself,
         // are the machine's answers; the order they are asked in is here.

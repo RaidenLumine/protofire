@@ -3,7 +3,7 @@
 /* Purpose: AP startup trampoline — 16-bit → 32-bit → 64-bit transition.    */
 /*                                                                          */
 /* Trampoline data at physical 0x9000 (each field u64, 8-byte aligned):     */
-/*   0x00: boot_cr3        — boot page-table root (identity-maps 0–1 GiB)   */
+/*   0x00: boot_cr3        — boot page-table root (identity-maps 0–4 GiB)   */
 /*   0x08: stack_top       — initial kernel stack pointer (virtual)         */
 /*   0x10: entry_point     — virtual address of ap_entry()                  */
 /*   0x18: cpu_id          — logical CPU ID (1st argument)                  */
@@ -50,7 +50,7 @@ ap_trampoline_prot_mode:
     add eax, 0x8000
     lgdt [eax]
 
-    /* Load boot CR3 (identity-maps first 1 GiB). */
+    /* Load boot CR3 (identity-maps the first 4 GiB). */
     mov esi, 0x9000
     mov eax, [esi]
     mov cr3, eax
@@ -110,7 +110,7 @@ ap_trampoline_long_mode:
     fninit
 
     /* Read trampoline data while still under the boot CR3 (identity-maps
-     * 0–1 GiB).  Values are stashed in registers that survive the CR3 switch;
+     * 0–4 GiB).  Values are stashed in registers that survive the CR3 switch;
      * the runtime page tables may not identity-map the data page at 0x9000. */
     mov rbx, 0x9000
     mov rsp, [rbx + 0x08]       /* stack_top           → rsp */

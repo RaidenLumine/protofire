@@ -260,7 +260,21 @@ device-tree machines' input now arrives by interrupt.
   for it would be a measurement.
 - **RAM above 4 GiB, and the width of a device's address**: a frame above the
   first 4 GiB is memory a 32-bit DMA engine cannot reach, which is a
-  bounce-buffer decision or an IOMMU one, and neither exists here.
+  bounce-buffer decision or an IOMMU one, and neither exists here.  What the
+  first measurement of a bigger machine found is one layer below this
+  question: the PC could not *boot* on RAM above 1 GiB at all.  The firmware
+  moves its ACPI tables above the first gigabyte once there is more RAM
+  (measured on `q35`: the RSDT is at 0x3ffe2351 with 1 GiB, 0x7ffe2351 with
+  2 GiB), the boot parses RSDT → MADT → SRAT/SLIT before the runtime page
+  tables exist, and the bootstrap identity map covered exactly 1 GiB — so the
+  first table entry faulted before the console had said anything else.  Every
+  gate booted 1 GiB, so no check had ever met the shape.  The bootstrap map
+  is four gigabytes now (`BOOTSTRAP_IDENTITY_MAP_LENGTH`) and
+  `check-x8664-runtime` boots 2 GiB as a segment of its own; what remains of
+  *this* question is the DMA width — where a device's reachable window ends,
+  and what a frame outside it costs.  That measurement wants a device that can
+  be told where to DMA (a queue's base register, not a polled register file),
+  and the frame pool's own span is what it would be measured against.
 - **The pool's size per target, and where it sits**: answered by measurement.
   The pool was a 512 MiB array in `.bss` that the boot cleared, and the clear
   is what a small machine died of: asked for a smaller RAM than the image

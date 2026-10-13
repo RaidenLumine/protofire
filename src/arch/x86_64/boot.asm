@@ -56,16 +56,38 @@ _start:
     push eax
     retf
 
+/* Identity-map the first four gigabytes: PML4[0] -> PDPT, PDPT[0..3] -> four
+ * page directories of 2 MiB entries.
+ *
+ * The window is four gigabytes because the machine's own tables sit where its
+ * firmware placed them.  On RAM above 1 GiB, QEMU puts its ACPI tables above
+ * the first gigabyte (measured on `q35`: RSDT at 0x3ffe2362 with 1 GiB of RAM,
+ * 0x7ffe2351 with 2 GiB), and the boot reads them - RSDT, then MADT/SRAT/SLIT
+ * - before the runtime page tables exist.  A one-gigabyte window faulted on
+ * the first table entry of such a machine; see
+ * `BOOTSTRAP_IDENTITY_MAP_LENGTH` in `paging/types.rs`, which must agree with
+ * this count. */
 setup_page_tables:
     lea eax, [boot_pdpt]
     or eax, 0x03
     mov dword ptr [boot_pml4], eax
     mov dword ptr [boot_pml4 + 4], 0
 
+    xor ecx, ecx
+
+fill_pdpt_loop:
     lea eax, [boot_pd]
+    mov edx, ecx
+    shl edx, 12                  /* ecx * 4096: this window's PD page */
+    add eax, edx
     or eax, 0x03
-    mov dword ptr [boot_pdpt], eax
-    mov dword ptr [boot_pdpt + 4], 0
+    mov edx, ecx
+    shl edx, 3                   /* PDPT entries are 8 bytes apart */
+    mov dword ptr [boot_pdpt + edx], eax
+    mov dword ptr [boot_pdpt + edx + 4], 0
+    inc ecx
+    cmp ecx, 4
+    jne fill_pdpt_loop
 
     xor ecx, ecx
 
@@ -76,7 +98,7 @@ fill_pd_loop:
     mov dword ptr [boot_pd + ecx * 8], eax
     mov dword ptr [boot_pd + ecx * 8 + 4], 0
     inc ecx
-    cmp ecx, 512
+    cmp ecx, 2048
     jne fill_pd_loop
 
     ret
@@ -145,8 +167,10 @@ boot_pml4:
     .skip 4096
 boot_pdpt:
     .skip 4096
+/* Four page directories, one per gigabyte of the bootstrap window; the fill
+   loop above indexes them as one 2048-entry array from `boot_pd`. */
 boot_pd:
-    .skip 4096
+    .skip 16384
 
 .align 16
 boot_stack_bottom:

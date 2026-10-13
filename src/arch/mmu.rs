@@ -51,11 +51,17 @@ pub use super::x86_64::paging::*;
 pub fn phys_addr_of(virtual_address: usize) -> Option<usize> {
     #[cfg(target_arch = "x86_64")]
     {
-        // The kernel is identity-mapped inside the 0 – 1 GiB bootstrap
-        // region (see `BOOTSTRAP_IDENTITY_MAP_END`), and the frame
-        // allocator's pool lives inside it, so the two addresses are the
-        // same number.
-        if virtual_address < 0x4000_0000 {
+        // Where the kernel's own memory is, this machine lays it out below
+        // the first gigabyte: the linker puts the image at 0x200000
+        // (`linker.ld`), the heap is a 16 MiB array inside its .bss, and the
+        // frame pool — the only memory `DmaBuffer` allocates from — starts
+        // near the image and spans 512 MiB, so it ends around 585 MiB.  The
+        // runtime tables identity-map those windows, which is what makes an
+        // address in this range its own physical address.  This is *not*
+        // `BOOTSTRAP_IDENTITY_MAP_END`: that window is four gigabytes so the
+        // boot can read a machine's ACPI tables where firmware put them, and
+        // its extent says nothing about what the runtime tables map.
+        if virtual_address < super::x86_64::paging::KERNEL_IDENTITY_MEMORY_END {
             return Some(virtual_address);
         }
         None

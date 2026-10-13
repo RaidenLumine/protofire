@@ -37,7 +37,7 @@ pub(crate) const MAX_USER_PT_WINDOWS: usize = 64;
 /// registers after the runtime page tables replace the bootstrap identity
 /// mapping.  Each tuple is (base_address, size_in_bytes).
 ///
-/// NOTE: addresses above BOOTSTRAP_IDENTITY_MAP_END (1 GiB) cannot be
+/// NOTE: addresses above `STATIC_KERNEL_TABLES_END` (1 GiB) cannot be
 /// statically pre-mapped here; they must be dynamically mapped at runtime
 /// via `map_device_mmio` or `map_device_mmio_page`.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
@@ -84,13 +84,41 @@ pub(crate) const TABLE_ENTRY_FLAGS: u64 = PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITAB
 pub(crate) const USER_TABLE_ENTRY_FLAGS: u64 =
     PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE | PAGE_ENTRY_USER;
 
-// Early boot keeps a 1 GiB identity map using 2 MiB pages until the runtime
-// page tables are fully prepared and activated.
+// Early boot keeps a four-gigabyte identity map using 2 MiB pages until the
+// runtime page tables are fully prepared and activated.
+//
+// Four rather than one because of where a machine puts its own tables: the
+// boot reads ACPI (RSDP, RSDT, then MADT/SRAT/SLIT) before the runtime tables
+// exist, and on RAM above 1 GiB QEMU places them above the first gigabyte
+// (measured: RSDT at 0x3ffe2362 with 1 GiB, 0x7ffe2351 with 2 GiB).  A
+// one-gigabyte window faulted on the first table entry of such a machine, so
+// the bootstrap window has to cover wherever the firmware put its tables —
+// and the value has to keep agreeing with `boot.asm`'s PDPT/PD fill counts,
+// which are what actually build the tables.
 pub const BOOTSTRAP_PAGE_SIZE: usize = 2 * 1024 * 1024;
 pub const BOOTSTRAP_IDENTITY_MAP_START: usize = 0;
-pub const BOOTSTRAP_IDENTITY_MAP_LENGTH: usize = 512 * BOOTSTRAP_PAGE_SIZE;
+pub const BOOTSTRAP_IDENTITY_MAP_LENGTH: usize = 2048 * BOOTSTRAP_PAGE_SIZE;
 pub const BOOTSTRAP_IDENTITY_MAP_END: usize =
     BOOTSTRAP_IDENTITY_MAP_START + BOOTSTRAP_IDENTITY_MAP_LENGTH;
+
+/// The extent the kernel lays *its own* memory out inside, on this machine.
+///
+/// `linker.ld` puts the image at `0x200000`; the heap is a 16 MiB array in its
+/// `.bss`; the frame pool is a reserved span right after it
+/// (`__pool_start`..`__pool_end`, `POOL_SIZE`); and the kernel's stack window
+/// sits at `0x3000_0000`.  All of that is below the first gigabyte, and the
+/// runtime tables identity-map those windows — which is what
+/// `arch::mmu::phys_addr_of` means when it answers that an address is its own
+/// physical address.
+///
+/// This is deliberately not [`BOOTSTRAP_IDENTITY_MAP_END`]: that window is
+/// four gigabytes so the boot can read a machine's firmware tables wherever
+/// they were placed, and it says nothing about what the runtime tables
+/// identity-map.  A change that moves the kernel's own memory above this
+/// bound (a board port, or adopting the machine's regions as frames) moves
+/// this constant with it.
+pub const KERNEL_IDENTITY_MEMORY_END: usize = 1024 * 1024 * 1024;
+
 pub const X86_64_USER_CANONICAL_END: usize = 0x0000_8000_0000_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -18,10 +18,24 @@ a Xen ELF note of type 18, `XEN_ELFNOTE_PHYS32_ENTRY` — that note is what lets
 QEMU boot this kernel directly with `-kernel` through the PVH protocol.
 
 `_start` runs in 32-bit protected mode.  It saves the loader's magic and info
-pointer, stands up a boot stack, builds a four-level identity map of low memory
-with 2 MiB pages, and turns long mode on (`CR4.PAE`, `IA32_EFER.LME` and `.NXE`,
-then `CR0.PG`).  It then reloads the segment registers from the 64-bit GDT and
-calls `kernel_entry(multiboot_magic, multiboot_info)`.
+pointer, stands up a boot stack, builds a four-level identity map of the first
+four gigabytes with 2 MiB pages, and turns long mode on (`CR4.PAE`,
+`IA32_EFER.LME` and `.NXE`, then `CR0.PG`).  It then reloads the segment
+registers from the 64-bit GDT and calls `kernel_entry(multiboot_magic,
+multiboot_info)`.
+
+The window is four gigabytes — `BOOTSTRAP_IDENTITY_MAP_LENGTH`,
+`src/arch/x86_64/paging/types.rs`, and the same count in the assembly — because
+of where a machine puts its own description: the boot reads ACPI (RSDP, RSDT,
+then MADT/SRAT/SLIT) before the runtime page tables exist, and on RAM above
+1 GiB the firmware places those tables above the first gigabyte (measured on
+`q35`: the RSDT is at `0x3ffe2351` with 1 GiB and `0x7ffe2351` with 2 GiB).  A
+one-gigabyte window faulted on the first RSDT entry of such a machine.  The
+runtime tables are a different, narrower thing — the static ones name the
+kernel's own memory below 1 GiB (`KERNEL_IDENTITY_MEMORY_END`, same file) and
+everything above is mapped on demand (`map_device_mmio`, `apic.rs`'s
+LAPIC/IOAPIC pages) — which is why the two bounds are separate constants
+rather than one.
 
 ### AArch64
 

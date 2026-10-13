@@ -11,6 +11,25 @@ use crate::memory::paging::PagePermissions;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
+/// The extent the *static* runtime kernel tables can describe.
+///
+/// [`super::runtime::install_runtime_kernel_page_tables`] hangs one page
+/// directory off `KERNEL_PDPT[0]` — `PML4[0] → KERNEL_PDPT[0] → KERNEL_PD` —
+/// and `KERNEL_PD` holds 512 two-megabyte entries, so the tables those
+/// functions build name exactly the first gigabyte.  Everything above it
+/// (the LAPIC and IOAPIC at 3–4 GiB, PCI BARs) is mapped dynamically on the
+/// live tree by `map_device_mmio`, which grows its own PDPT entries.
+///
+/// The guards in this file use this bound rather than the bootstrap map's
+/// extent.  Those two are different numbers on purpose: the bootstrap map is
+/// four gigabytes, because the boot has to read the firmware's ACPI tables
+/// wherever a machine with more than a gigabyte of RAM puts them
+/// (`BOOTSTRAP_IDENTITY_MAP_LENGTH` in `types.rs`), while what a *window*
+/// can be built in is still the first gigabyte — a window accepted between
+/// the two would get a nine-bit PD index that wraps back onto the first
+/// gigabyte, which is a collision rather than a window.
+const STATIC_KERNEL_TABLES_END: usize = GIGANTIC_PAGE_SIZE;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KernelPageTableSpec {
     pub(crate) windows: Vec<PageTableWindowSpec>,
@@ -99,8 +118,8 @@ impl KernelPageTableSpec {
         let mut huge_pdpt_entries: BTreeMap<usize, u64> = BTreeMap::new();
         for pdpt_index in 0..PAGE_TABLE_ENTRY_COUNT {
             let base = pdpt_index * GIGANTIC_PAGE_SIZE;
-            if base >= BOOTSTRAP_IDENTITY_MAP_END {
-                break; // Runtime kernel tables only cover the identity map.
+            if base >= STATIC_KERNEL_TABLES_END {
+                break; // Only the tables' own extent is eligible.
             }
             if let Some(region) = plan.classify(base) {
                 if region.start <= base && region.end >= base.checked_add(GIGANTIC_PAGE_SIZE)? {
@@ -296,7 +315,7 @@ impl KernelPageTableSpec {
     }
 
     fn ensure_window(&mut self, base_address: usize) -> Option<()> {
-        if base_address >= BOOTSTRAP_IDENTITY_MAP_END
+        if base_address >= STATIC_KERNEL_TABLES_END
             || base_address & (PAGE_DIRECTORY_WINDOW_SIZE - 1) != 0
         {
             return None;
