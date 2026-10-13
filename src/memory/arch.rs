@@ -265,6 +265,62 @@ pub fn pool_is_addressable_by_a_device() -> bool {
         && crate::arch::mmu::phys_addr_of(end - 1).is_some()
 }
 
+/// What the boot decides about its own placement, from the machine's answer
+/// and the kernel's own ranges.
+///
+/// The four refusals are the ones [RFC
+/// 0020](../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md) decided,
+/// and they are named here rather than spelled as a `panic!` inside
+/// [`report_machine_memory`] so that each branch has a test that drives it
+/// with a map built for it: no machine this tree boots produces a map that
+/// refuses, so every refusal is a path no boot exercises.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlacementVerdict {
+    /// The machine's answer and the kernel agree.
+    Accepted,
+    /// The pool is outside the window a device address can name.
+    PoolNotAddressable,
+    /// The machine described its memory and the pool starts past all of it.
+    PoolPastMachineMemory,
+    /// The kernel's image touches memory the machine calls defective.
+    ImageInDefectiveMemory,
+    /// The kernel's image is in no region the machine describes.
+    ImageUndescribed,
+}
+
+/// Judge the kernel's placement against the machine's answer.
+///
+/// The order is the order the boot checks in, and it is load-bearing: the
+/// addressability question is the kernel's own ([`super::mmu::phys_addr_of`])
+/// and is asked even when the machine described nothing, while the other
+/// three are questions *about* a described map and are skipped when there is
+/// none — a protocol that describes nothing is not a machine whose memory is
+/// unusable (RFC 0019's third answer).
+pub(crate) fn judge_placement(
+    pool_addressable: bool,
+    managed_pool_bytes: usize,
+    frame_size: usize,
+    image: (usize, usize),
+    regions: Option<&[crate::arch::boot::MemoryRegion]>,
+) -> PlacementVerdict {
+    if !pool_addressable {
+        return PlacementVerdict::PoolNotAddressable;
+    }
+    let Some(regions) = regions else {
+        return PlacementVerdict::Accepted;
+    };
+    if managed_pool_bytes < frame_size {
+        return PlacementVerdict::PoolPastMachineMemory;
+    }
+    if range_touches_defective_memory(image, regions) {
+        return PlacementVerdict::ImageInDefectiveMemory;
+    }
+    if !range_is_described(image, regions) {
+        return PlacementVerdict::ImageUndescribed;
+    }
+    PlacementVerdict::Accepted
+}
+
 /// Ask the machine, record its answer, check the kernel against it, and say
 /// what it said.
 ///
@@ -318,40 +374,49 @@ pub fn report_machine_memory() {
     // The answer is a machine's; a host build asks it and does not enforce it.
     let pool_addressable = pool_is_addressable_by_a_device();
 
-    // The two checks below are bare-metal questions: a host build's "image" is
-    // a test binary and its pool is not a machine's memory.
+    // The verdict is computed in both configurations and *enforced* only on
+    // bare metal, where the questions are a machine's: a host build's "image"
+    // is the test binary and its pool is not a machine's memory, so the two
+    // are judged with a placeholder range and the answer is dropped.  The
+    // verdict is what the four refusals below answer to; `judge_placement`
+    // and each of its arms carry the tests (no boot this tree runs produces a
+    // refusing map).
+    #[cfg(target_os = "none")]
+    let image = kernel_image_range();
     #[cfg(not(target_os = "none"))]
-    {
-        let _ = pool_addressable;
-    }
+    let image = (0usize, 0usize);
+    let verdict = judge_placement(
+        pool_addressable,
+        managed,
+        crate::memory::frame::FRAME_SIZE,
+        image,
+        regions.as_deref(),
+    );
+
+    #[cfg(not(target_os = "none"))]
+    let _ = verdict;
 
     #[cfg(target_os = "none")]
     {
-        if !pool_addressable {
-            let (start, end) = crate::memory::frame::pool_range();
-            crate::println!(
-                "[mem   ] FATAL: the pool [{:#x}, {:#x}) is outside the window a device address can name",
-                start,
-                end
-            );
-            panic!("the kernel's own memory is not addressable by a device");
-        }
-
-        if let Some(regions) = &regions {
-            // A machine that described its memory but whose RAM does not reach
-            // the pool's start is a machine with no frames at all: the boot
-            // would run and fail somewhere unrelated, so it refuses here with
-            // the answer it has.
-            if managed < crate::memory::frame::FRAME_SIZE {
+        match verdict {
+            PlacementVerdict::Accepted => {}
+            PlacementVerdict::PoolNotAddressable => {
+                let (start, end) = crate::memory::frame::pool_range();
+                crate::println!(
+                    "[mem   ] FATAL: the pool [{:#x}, {:#x}) is outside the window a device address can name",
+                    start,
+                    end
+                );
+                panic!("the kernel's own memory is not addressable by a device");
+            }
+            PlacementVerdict::PoolPastMachineMemory => {
                 crate::println!(
                     "[mem   ] FATAL: the pool starts at {:#x}, past the memory the machine describes",
                     pool_start
                 );
                 panic!("the frame pool lies outside the machine's memory");
             }
-
-            let image = kernel_image_range();
-            if range_touches_defective_memory(image, regions) {
+            PlacementVerdict::ImageInDefectiveMemory => {
                 crate::println!(
                     "[mem   ] FATAL: the kernel's image [{:#x}, {:#x}) overlaps memory the machine calls defective",
                     image.0,
@@ -359,23 +424,27 @@ pub fn report_machine_memory() {
                 );
                 panic!("the kernel was loaded into defective memory");
             }
-            if !range_is_described(image, regions) {
+            PlacementVerdict::ImageUndescribed => {
                 crate::println!(
                     "[mem   ] FATAL: the kernel's image [{:#x}, {:#x}) is in no region the machine describes",
                     image.0,
                     image.1
                 );
-                for region in regions {
-                    crate::println!(
-                        "[mem   ]   the machine offered [{:#x}, {:#x}) kind {}",
-                        region.base,
-                        region.end(),
-                        region.kind
-                    );
+                if let Some(regions) = &regions {
+                    for region in regions {
+                        crate::println!(
+                            "[mem   ]   the machine offered [{:#x}, {:#x}) kind {}",
+                            region.base,
+                            region.end(),
+                            region.kind
+                        );
+                    }
                 }
                 panic!("the kernel was loaded where the machine describes no memory");
             }
+        }
 
+        if let Some(regions) = &regions {
             // Reported rather than refused: a loader reserves the memory it
             // loaded the kernel into, so holes and reserved ranges inside the
             // image are what a *correct* map looks like ([RFC
@@ -575,6 +644,79 @@ mod tests {
         assert!(
             !range_touches_defective_memory((0x30_0000, 0x40_0000), &defective),
             "a range past the defective page does not touch it"
+        );
+    }
+
+    /// Every arm of the boot's judgment, driven with a map built for it.
+    ///
+    /// The four refusals cannot be reached from a boot — no machine this tree
+    /// runs produces a map that refuses — so each is driven here instead, and
+    /// the verdict enum is what makes that possible: the branch that panics is
+    /// a `match` over an answer these tests produce directly.
+    #[test]
+    fn each_placement_refusal_is_reachable_from_its_own_answer() {
+        use super::judge_placement;
+        use super::PlacementVerdict;
+        use crate::memory::frame::FRAME_SIZE;
+
+        let image = (0x20_0000, 0x24_895a10);
+        let good = [
+            region(0x10_0000, 0x700000, MEMORY_REGION_RESERVED),
+            region(0x90_0000, 0x3e_43f000, MEMORY_REGION_AVAILABLE),
+        ];
+
+        // The machine's map and the kernel agree.
+        assert_eq!(
+            judge_placement(true, 512 * 1024 * 1024, FRAME_SIZE, image, Some(&good)),
+            PlacementVerdict::Accepted
+        );
+        // A machine that describes nothing is booted through: RFC 0019's third
+        // answer, and it is the one every refusal below must *not* swallow.
+        assert_eq!(
+            judge_placement(true, 512 * 1024 * 1024, FRAME_SIZE, image, None),
+            PlacementVerdict::Accepted
+        );
+
+        // 1. The pool is outside the window a device address can name.
+        assert_eq!(
+            judge_placement(false, 512 * 1024 * 1024, FRAME_SIZE, image, Some(&good)),
+            PlacementVerdict::PoolNotAddressable
+        );
+        assert_eq!(
+            judge_placement(false, 512 * 1024 * 1024, FRAME_SIZE, image, None),
+            PlacementVerdict::PoolNotAddressable,
+            "the addressability question is the kernel's own and is asked even when the machine described nothing"
+        );
+
+        // 2. The pool starts past everything the machine describes.
+        assert_eq!(
+            judge_placement(true, FRAME_SIZE - 1, FRAME_SIZE, image, Some(&good)),
+            PlacementVerdict::PoolPastMachineMemory
+        );
+        assert_eq!(
+            judge_placement(true, FRAME_SIZE, FRAME_SIZE, image, Some(&good)),
+            PlacementVerdict::Accepted,
+            "one whole frame is the first answer that is a pool at all"
+        );
+
+        // 3. The image touches memory the machine calls defective.
+        let mut defective = good.to_vec();
+        defective.push(region(0x24_0000, 0x1000, MEMORY_REGION_DEFECTIVE));
+        assert_eq!(
+            judge_placement(true, 512 * 1024 * 1024, FRAME_SIZE, image, Some(&defective)),
+            PlacementVerdict::ImageInDefectiveMemory
+        );
+
+        // 4. The image is in no region the machine describes.
+        let hole = [region(0x0, 0x10_0000, MEMORY_REGION_AVAILABLE)];
+        assert_eq!(
+            judge_placement(true, 512 * 1024 * 1024, FRAME_SIZE, image, Some(&hole)),
+            PlacementVerdict::ImageUndescribed
+        );
+        assert_eq!(
+            judge_placement(true, 512 * 1024 * 1024, FRAME_SIZE, (0, 0), Some(&hole)),
+            PlacementVerdict::ImageUndescribed,
+            "a range with no bytes is described by nothing: the question asks containment for the first and last byte, and an empty range has neither"
         );
     }
 }
