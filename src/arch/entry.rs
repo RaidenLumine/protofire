@@ -176,7 +176,20 @@ const fn fixed_width_id(raw: &str) -> [u8; BUILD_ID_WIDTH] {
     id
 }
 
-const BUILD_ID: [u8; BUILD_ID_WIDTH] = fixed_width_id(env!("PROTOFIRE_BUILD_ID"));
+/// The identity lives in a section of its own, and the isolation is the
+/// point rather than tidiness: the KASLR relocation table describes one
+/// layout, and a constant's *content* moves layout in this toolchain even at
+/// a fixed width — rustc hashes a constant's bytes into the symbol names it
+/// generates for it, and the hashed names order the items around it
+/// (measured: two 16-byte identities with different content generated tables
+/// that differed at 19 sites, all of them `.rodata`-relative).  Putting the
+/// value in its own named section, placed by the linker script where nothing
+/// the table describes can move, is what makes its content free; the fixed
+/// width keeps its *size* free of the same effect.  x86_64 only: the other
+/// machines have no relocation table, and their linker scripts do not place
+/// this section.
+#[cfg_attr(target_arch = "x86_64", link_section = ".kaslr_id")]
+static BUILD_ID: [u8; BUILD_ID_WIDTH] = fixed_width_id(env!("PROTOFIRE_BUILD_ID"));
 
 fn print_banner() {
     // The field is ASCII by `build.rs`'s construction; the fallback exists

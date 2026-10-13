@@ -99,6 +99,18 @@ SECTIONS
     }
     __data_end = .;
 
+    /* The banner's build identity, in a section of its own.  A constant's
+       content orders the items rustc generates around it (it hashes the bytes
+       into their symbol names), and this image's layout is what the KASLR
+       relocation table describes — so a value that changed with git state
+       moved table sites even at a fixed width.  Isolating it here, sized at a
+       fixed 16 bytes, makes the value's content and length both irrelevant to
+       every byte the table names.  See `src/arch/entry.rs`. */
+    . = ALIGN(16);
+    .kaslr_id : {
+        KEEP(*(.kaslr_id))
+    }
+
     . = ALIGN(4K);
     __bss_start = .;
     .bss : {
