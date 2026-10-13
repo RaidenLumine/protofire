@@ -17,10 +17,13 @@ out a pointer that every caller (a kernel stack, a pipe buffer, a user page)
 writes through directly, and `ensure_identity_mapped_range` exists to keep the
 mapping for that pointer alive.  So "frames from the machine's regions" is a
 change to an **invariant that spans the tree**, and this document's job is to
-say which invariant, what it costs, and what would have to be measured before
-it is worth doing.  It does *not* decide to do it; it decides what doing it
-means, and it is honest that the measurement the argument needs has not been
-taken.
+say which invariant, what it costs, and what has to be measured before it is
+worth doing.  It does *not* decide to do it; it decides what doing it means.
+Half the measurement is in: one binary boots a 1 GiB machine and a 16 GiB
+machine to the same boot-work line, counter for counter, because the extra
+15 GiB is never touched — so today's pool costs a big machine nothing and
+gives it nothing.  The other half, what a direct map costs once the memory is
+used, needs the change to exist and is named below rather than assumed.
 
 ## Motivation
 
@@ -193,12 +196,20 @@ checklist rather than its evidence.**  In the order they would have to hold:
   `make check-riscv64-nvme` boot a SimpleFs image on an NVMe namespace
   (`scripts/check-nvme-disk.sh`), and the virtio block and net drivers have
   runtime checks of their own.
-- **The measurement that is owed first**: how much *practical* memory the
-  change buys on the largest machine this project can boot, and what the
-  direct map costs in tables and in boot time.  `check-perf-baseline`
-  (`src/kernel/perf_baseline.rs`) counts the boot's work, and the map's table
-  pages are countable the same way.  Without that number the argument is
-  "16 GiB is a big number", which is not a measurement.
+- **The measurement that is owed**: how much *practical* memory the change
+  buys, and what the direct map costs.  Its first half is taken and it is
+  blunt.  One `perf_baseline` binary on `q35` at 1 GiB and at 16 GiB prints
+  the same boot-work line, counter for counter — `frames=23`,
+  `frame-zero-bytes=610304`, `pt-maps=1064`, `pt-lookups=1067`,
+  `fs-reads=1447`, `blk-reads=201`, `irqs` 527 vs 526, `heap-bytes` 26691072
+  vs 26689424 (the last two differ only by scheduling jitter).  So the extra
+  15 GiB costs this kernel **nothing at all today** — and buys it nothing
+  either: not one frame, not one page table, not one worked byte.  That is
+  the number the change is against: 512 MiB used of 16 GiB, at zero cost,
+  because the memory is never touched.  What is still owed is the other
+  side — what the direct map costs *when* the memory is used (the table
+  pages and the entries to build them, countable with the same
+  `perf_baseline` line) — and that cannot be measured without the change.
 
 ## Unresolved questions
 
