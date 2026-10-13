@@ -14,7 +14,27 @@ multiboot_header_start:
     .long MULTIBOOT2_ARCH
     .long MULTIBOOT2_HEADER_LENGTH
     .long MULTIBOOT2_CHECKSUM
+
+/* Framebuffer request (header tag 5).  This is what makes a loader set a
+ * graphical mode and hand the frame over as an info tag; without it GRUB's
+ * multiboot2 loader keeps the machine in EGA text (its `fbtag == NULL`
+ * branch calls `set_console(EGA_TEXT)` and `grub_video_set_mode("text")`),
+ * so `install_loader_framebuffer` had nothing to install and the console
+ * only ever reached a screen through this kernel's own PCI probe — which
+ * is the one display a real machine does not have.  Type 5, flags 0
+ * (optional: a firmware with no graphics mode still gets to boot), size 20,
+ * then the requested geometry.  Width and height non-zero is what makes
+ * GRUB read them (its `if (depth && width && height)` branch); zero would
+ * mean "the loader's choice". */
+    .short 5
     .short 0
+    .long 20
+    .long 1024
+    .long 768
+    .long 32
+    .long 0             /* pad to the 8-byte alignment every tag needs */
+
+    .short 0            /* end tag */
     .short 0
     .long 8
 multiboot_header_end:

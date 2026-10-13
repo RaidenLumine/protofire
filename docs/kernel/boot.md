@@ -17,6 +17,18 @@ way: a Multiboot2 header (GRUB, and anything else that speaks the protocol) and
 a Xen ELF note of type 18, `XEN_ELFNOTE_PHYS32_ENTRY` — that note is what lets
 QEMU boot this kernel directly with `-kernel` through the PVH protocol.
 
+The Multiboot2 header asks for a framebuffer — header tag 5, geometry
+1024x768x32, flags 0 so a firmware with no graphics mode still boots.  The
+request is load-bearing rather than declarative: GRUB's multiboot2 loader
+only calls `set_console(FRAMEBUFFER)` (and so `set_video_mode`) when the
+kernel's header carries that tag, and without it it keeps the machine in EGA
+text and hands over a text framebuffer tag — measured, both before the tag
+existed (`kind 2 at 16 bpp`) and after (`console installed from the loader's
+framebuffer (1024x768x32)`), which is why `install_loader_framebuffer` had
+never run and the ISO gate asserts the line now.  A machine whose firmware
+and GPU this kernel has no driver for is exactly the machine that path
+exists for.
+
 `_start` runs in 32-bit protected mode.  It saves the loader's magic and info
 pointer, stands up a boot stack, builds a four-level identity map of the first
 four gigabytes with 2 MiB pages, and turns long mode on (`CR4.PAE`,

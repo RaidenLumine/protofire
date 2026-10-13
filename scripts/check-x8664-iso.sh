@@ -26,6 +26,10 @@
 #   * the machine's memory map was found and read out of the tag block
 #     (`machine reports … region(s)`);
 #   * the kernel's own image is inside a region the map calls usable;
+#   * the framebuffer the header *requested* was installed: the loader set a
+#     graphical mode and the kernel drew on the frame it was handed, which is
+#     the console path a machine with no serial port and no display device
+#     this kernel can probe depends on;
 #   * the boot reached the shell and loaded a program out of `/apps`.
 #
 # Usage:
@@ -124,6 +128,15 @@ require_log_absent_line() {
 # writes a header for.
 require_log_line "[boot:loader] arch=x86_64 protocol=multiboot2"
 
+# And the framebuffer the header *asks* for.  The request (Multiboot2 header
+# tag 5) is what makes GRUB set a graphical mode at all: without it GRUB's
+# loader keeps EGA text (`fbtag == NULL` in its mbi2 code) and the kernel's
+# loader-framebuffer console — the one display path a machine with no driver
+# for its GPU has — never installs.  The kernel says which frame it drew on,
+# and that the runtime probe yielded to it rather than racing it.
+require_log_line "[fb    ] console installed from the loader's framebuffer ("
+require_log_line "[fb    ] console already installed; skipping bochs-display"
+
 # The map a real loader gives, read out of the Multiboot2 tag block — the
 # other PC hand-off's map comes from the PVH block's own E820 table now, so
 # what this asserts is that *this* boot's answer came from the tags (the
@@ -219,6 +232,10 @@ esac
 log="$uefi_log"
 
 require_log_line "[boot:loader] arch=x86_64 protocol=multiboot2"
+# The same loader request has to hold on the firmware's path: GRUB's EFI
+# build reads the same header tags, so the frame the kernel draws on is the
+# one the loader set.
+require_log_line "[fb    ] console installed from the loader's framebuffer ("
 require_log_line "[mem   ] machine reports "
 require_log_line "is described:"
 require_log_absent_line "FATAL"
