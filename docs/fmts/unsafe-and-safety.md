@@ -317,6 +317,33 @@ Consequently:
   in [code-style.md §7](code-style.md#7-error-handling). Assertions about data
   from outside the kernel are not.
 
+### Refusing to boot
+
+The one place the first bullet cannot apply literally is the boot path:
+there is no caller to return an `Error` to, and some answers — a machine
+whose memory map does not contain the kernel's own image — leave nothing to
+continue with.  A **refusal** is the shape for that, at two levels:
+
+- **The machine cannot boot.**  The refusal prints the machine's answer,
+  names the range it refused, and stops the machine on the panic path:
+  `panic = "abort"` is the only terminal-with-message path there is, and a
+  second, silent way to stop a boot is what this forbids.  It runs **only in
+  the boot path, before the scheduler starts** — once anything but the boot
+  can produce a value, `Result` is required.  The four refusals in
+  `src/memory/arch.rs` (a pool no device can address, a pool past everything
+  the machine describes, an image over defective memory, an image in no
+  described region) are the named example.
+- **A core cannot join.**  An AP that finds no per-CPU block, no
+  redistributor or no scheduler prints its own `[smp   ] FATAL` line and
+  parks that core; the machine keeps running on the cores that did come up.
+  The refusal is the core's, and it says so rather than taking the machine
+  down for a CPU it can do without.
+
+A refusal is not an assertion: it reports what the machine said rather than
+claiming an invariant was violated, and its diagnostic carries the value the
+machine gave.  The bullet above is not relaxed by it — a refusal is the
+boot's error path, not a licence to panic on external data later.
+
 ---
 
 ## 10. Review checklist
@@ -333,6 +360,8 @@ For every `unsafe` block in the diff:
 - [ ] For an `unsafe impl`: the argument covers what is shared, how it is
       serialised, and why the accessors preserve it.
 - [ ] No `panic!`/`unwrap` reachable on external input.
+- [ ] A boot refusal (if any) follows §9's shape: it prints the machine's
+      answer, names the range, and lives only in the boot path.
 - [ ] User memory is validated through the `user_memory` helpers, with
       validation outside the SMAP/PAN/SUM guard.
 - [ ] MMIO accesses are volatile, correctly sized, and ordered where required.

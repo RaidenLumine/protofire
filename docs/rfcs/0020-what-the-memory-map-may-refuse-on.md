@@ -340,12 +340,15 @@ device-tree machines' input now arrives by interrupt.
   scripts' own prose.  A
   hand-off that describes nothing at all still manages the whole span, which
   is the boot the report names rather than a silent one.
-- **What "refuse to boot" means**: the tree's panic policy is
-  `docs/fmts/unsafe-and-safety.md`'s, and whether this is a halt with a message
-  or a panic is that document's to say.  The small-RAM work gave it a second
-  subject: a pool that starts past everything the machine describes is a boot
-  with no frames at all, and it refuses at `[mem   ]` with its answer rather
-  than faulting somewhere unrelated.
+- **What "refuse to boot" means**: answered by
+  `docs/fmts/unsafe-and-safety.md` §9 — a terminal halt with a message, on
+  the panic path (the only terminal-with-message path there is), living only
+  in the boot path and printing the machine's answer before it stops; a core
+  that cannot join reports and parks rather than stopping the machine.  The
+  small-RAM work gave the question its second subject: a pool that starts
+  past everything the machine describes is a boot with no frames at all, and
+  it refuses at `[mem   ]` with its answer rather than faulting somewhere
+  unrelated.
 - **The device polling that lives in the timer tick**: answered by
   [RFC 0021](0021-what-the-timer-tick-still-polls.md).  Both remaining polls
   stay, for different reasons — xHCI's tick drain because the ring's lock
