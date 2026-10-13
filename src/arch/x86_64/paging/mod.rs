@@ -66,7 +66,7 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_identity_map_covers_first_gib() {
+    fn bootstrap_identity_map_covers_four_gigabytes() {
         let mapping = bootstrap_identity_mapping();
 
         assert_eq!(mapping.page_size, BOOTSTRAP_PAGE_SIZE);
@@ -75,6 +75,10 @@ mod tests {
         assert!(mapping.contains(0));
         assert!(mapping.contains(BOOTSTRAP_IDENTITY_MAP_END - 1));
         assert!(!mapping.contains(BOOTSTRAP_IDENTITY_MAP_END));
+        // The extent exists so a machine's firmware tables stay readable; the
+        // measured RSDT address of a 2 GiB machine (0x7ffe2351) is the case
+        // that motivated it, so the map has to contain one of those.
+        assert!(mapping.contains(0x7ffe_2351));
     }
 
     #[test]
@@ -199,12 +203,15 @@ mod tests {
     }
 
     #[test]
-    fn kernel_page_table_spec_rejects_regions_outside_bootstrap_identity_map() {
+    fn kernel_page_table_spec_rejects_regions_outside_the_static_tables() {
+        // A region past the tables' own extent: the static runtime tables name
+        // only the first gigabyte, so a window there would wrap a nine-bit PD
+        // index back onto the first gigabyte rather than get a table of its
+        // own (see `STATIC_KERNEL_TABLES_END`).  The bootstrap identity map is
+        // larger than that bound — it is where firmware tables live — which is
+        // why this case names the tables' bound and not the map's.
         let plan = KernelPagePlan::from_ranges(
-            (
-                BOOTSTRAP_IDENTITY_MAP_END,
-                BOOTSTRAP_IDENTITY_MAP_END + 0x1000,
-            ),
+            (STATIC_KERNEL_TABLES_END, STATIC_KERNEL_TABLES_END + 0x1000),
             (0x210000, 0x220000),
             (0x220000, 0x230000),
             (0x230000, 0x260000),

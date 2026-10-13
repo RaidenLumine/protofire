@@ -28,7 +28,7 @@ use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 /// can be built in is still the first gigabyte — a window accepted between
 /// the two would get a nine-bit PD index that wraps back onto the first
 /// gigabyte, which is a collision rather than a window.
-const STATIC_KERNEL_TABLES_END: usize = GIGANTIC_PAGE_SIZE;
+pub(crate) const STATIC_KERNEL_TABLES_END: usize = GIGANTIC_PAGE_SIZE;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KernelPageTableSpec {

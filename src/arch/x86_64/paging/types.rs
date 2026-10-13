@@ -119,6 +119,20 @@ pub const BOOTSTRAP_IDENTITY_MAP_END: usize =
 /// this constant with it.
 pub const KERNEL_IDENTITY_MEMORY_END: usize = 1024 * 1024 * 1024;
 
+// The three bounds answer three questions, and each pair's relation is a
+// load-time fact rather than a hope: the boot window has to reach past the
+// firmware's tables (measured at 0x7ffe2351 on a 2 GiB `q35` machine) and
+// past the kernel's own memory, and what the static runtime tables can name
+// (`STATIC_KERNEL_TABLES_END`, one page directory off `KERNEL_PDPT[0]`)
+// cannot be narrower than the kernel's own memory.  Collapsing any two of
+// them is the mistake these assert against — a window between the tables'
+// bound and the boot window would wrap a nine-bit PD index onto the first
+// gigabyte, and a boot window that stopped at the kernel's own memory would
+// fault on a machine whose firmware placed its tables higher.
+const _: () = assert!(BOOTSTRAP_IDENTITY_MAP_END > KERNEL_IDENTITY_MEMORY_END);
+const _: () = assert!(BOOTSTRAP_IDENTITY_MAP_END > GIGANTIC_PAGE_SIZE);
+const _: () = assert!(GIGANTIC_PAGE_SIZE >= KERNEL_IDENTITY_MEMORY_END);
+
 pub const X86_64_USER_CANONICAL_END: usize = 0x0000_8000_0000_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
