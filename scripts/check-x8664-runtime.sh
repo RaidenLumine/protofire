@@ -151,7 +151,14 @@ printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU $* -serial stdio >$log_file"
 # `help` proves the command path end to end — read, split, dispatch, write — and
 # `echo` prints a line that the console's echo of the typed line cannot imitate:
 # the echo puts the command's own words on that line, so the check below matches
-# the answer as a whole line rather than as a substring.  The last two read the
+# the answer as a whole line rather than as a substring.  That whole-line match
+# is also why this assertion keeps its shape where the payload lines further
+# down became fragment assertions: the echo builtin writes the word and the
+# newline separately, so a preempted shell could in principle have its answer
+# split — but no log has shown that, and a fragment match would let the typed
+# line's own echo satisfy the check, which is the discriminator this assertion
+# exists for.  Halves of the answer in one log, with another line between them,
+# are what would force that rework.  The last two read the
 # service manager's own record of where the shell's declaration came from: a
 # ring-3 program reading a kernel-served file, so the answer is the boot's
 # registry and not the payload's memory.  The feeder waits for the shell's
@@ -273,6 +280,53 @@ require_log_matching() {
     pattern="$1"
     if ! grep -E "$pattern" "$log_file" >/dev/null 2>&1; then
         fail_with_log "no log line matches: $pattern"
+    fi
+}
+
+# Assert that a value the ring-3 payloads print arrived with its prefix.
+#
+# The demo payloads print a prefixed line with `write_prefixed_bytes`, which is
+# three separate writes — the prefix, the value, the newline — and the console
+# serialises each *write*, not each line, so a preempted payload can have
+# another CPU's whole line land between its prefix and its value.  A check that
+# matched the joined line was red once in the field with the log reading
+#
+#     [user  ] rust app-id: [user  ] argv0: demo-launcher
+#
+# — every byte of the payload's own output present, on two lines.  What the
+# three-write shape *does* guarantee is that the prefix arrives whole (it is
+# one write) and that its value follows it, on the same line when nothing
+# interleaved and on a later one when something did.  That is what this
+# asserts — the prefix was seen, and its value rode it — and the callers below
+# say which values this boot has to produce.
+#
+# The count is "at least once" rather than exact on purpose: how many prefixes
+# this boot holds is the demo disk's inventory (measured: nine `app-id` lines,
+# four of them the fault launcher's — one run and `MAX_SERVICE_RESTARTS`
+# restarts — and one `rust app-id` line), and a check whose value is "the
+# program ran" should not go red because the payload set grew or the restart
+# budget moved.  Multiplicity is asserted where it means something, by the user
+# -exit count below.
+require_log_value_follows_prefix() {
+    prefix="$1"
+    value="$2"
+    stats="$(
+        awk -v prefix="$prefix" -v value="$value" '
+            index($0, prefix) > 0 {
+                seen += 1
+                rest = substr($0, index($0, prefix))
+                if (index(rest, value) > 0) { matched += 1; pending = 0 }
+                else { pending = 1 }
+                next
+            }
+            pending && index($0, value) > 0 { matched += 1; pending = 0 }
+            END { print seen + 0, matched + 0 }
+        ' "$log_file"
+    )"
+    seen="${stats% *}"
+    matched="${stats#* }"
+    if [ "$seen" -lt 1 ] || [ "$matched" -lt 1 ]; then
+        fail_with_log "no output carried '$value' after '$prefix' (prefix seen $seen time(s), value followed $matched)"
     fi
 }
 
@@ -464,8 +518,13 @@ fi
 # supervisor giving up on the fault launcher after its restart budget — the
 # last line the demo prints.  None of them appears if the machine stops at the
 # hand-off, which is what makes them the assertion that this boot ran.
-require_log_line "[user  ] app-id: demo-launcher-fault"
-require_log_line "[user  ] rust app-id: demo-launcher-rust-io"
+#
+# The two `app-id` lines go through `require_log_value_follows_prefix`: they
+# are printed by a payload writing three pieces, so a preempted writer can have
+# its line split by another CPU's output, and matching the joined line made
+# this check red for a reason that was not a defect (see the helper).
+require_log_value_follows_prefix "[user  ] app-id: " "demo-launcher-fault"
+require_log_value_follows_prefix "[user  ] rust app-id: " "demo-launcher-rust-io"
 require_log_line "[abi   ] demo-launcher-rust-io payload: $PAYLOAD_SOURCE "
 # The second program the disk can freeze: the launcher's own child.  Both
 # lines are asserted, so a run with the frozen feature has to ship *both*
