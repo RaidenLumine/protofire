@@ -62,7 +62,7 @@ the syscall interface.
 | VirtIO (block) | Block | Full read/write, on the virtio-mmio bus and on PCIe | QEMU only; the virtio-mmio transport has no vectors of its own, so only the PCIe path claims an identity per queue |
 | VirtIO (net) | Network | Full RX/TX, modern and legacy transports; on all three machines each queue claims its own MSI-X identity, so a queue's completion wakes that queue's waiter; a boot with no NIC can initialize the stack on the loopback device instead (`net_loopback`), which is what `make check-perf-baseline-net` boots | No throughput baseline against a peer: what is gated is one datagram to itself (`nw-*`), not traffic through a NIC |
 | VirtIO (GPU) | Display | 2D mode-setting (x86_64 PCI + AArch64/RISC-V device-tree MMIO) and the VIRGL 3D userspace interface (#181-189), driven by the demo renderer (`src/user/demo/virgl_renderer.rs`) | QEMU only |
-| NVMe | Block | Controller bring-up (admin queues, Identify, I/O queue pair), single-block read/write, and boot-disk probe, on all three machines; `make check-x8664-nvme`, `check-aarch64-nvme` and `check-riscv64-nvme` boot the host's own SimpleFs image on a namespace with no other disk attached and assert that the controller comes up, is chosen as the boot disk, and mounts the volume | The driver polls for completions: its MSI-X vector constants and acknowledge handler are not wired to a programmed table; QEMU only |
+| NVMe | Block | Controller bring-up (admin queues, Identify, I/O queue pair), single-block read/write, and boot-disk probe, on all three machines; the completion queue **claims one MSI-X table entry** (the entry the controller's own admin completions share, because `Create I/O Completion Queue` fixes a queue's vector before any table can be programmed) and the driver's waits park on it once the platform arms the claim, a machine that refused the claim or cannot arm it still polling; `make check-x8664-nvme`, `check-aarch64-nvme` and `check-riscv64-nvme` boot the host's own SimpleFs image on a namespace with no other disk attached and assert that the controller comes up, is chosen as the boot disk, mounts the volume, and — on each machine's message-capable configuration (the local APIC's window, a GICv3 ITS, the AIA IMSIC) — that a completion MSI reached the driver's own handler | QEMU only; the claim is one entry for the whole controller, so an I/O queue and the admin queue share the interrupt |
 | xHCI | USB host | Controller reset and start, command and event rings, device enumeration (Enable Slot, Address Device, GET_DESCRIPTOR), a HID interrupt endpoint per device, and **root ports**: a port change (the change bits of `PORTSC`, read once the controller raises a Port Status Change Event) resets the port and enumerates a device that arrived, and releases the slots of one that left — the device and everything behind it — with the bits cleared after the boot's scan — a port whose connect change is still set from the boot says nothing when its device is pulled; **hubs**: a hub's descriptor is read for its port count and its power-switching mode (a ganged hub is not told to power a port at a time — a class request a hub does not implement is answered with a stall, which halts the endpoint it came in on), its own status-change endpoint is configured and armed, its ports are powered and reset, and the device on one is addressed by the *route string* the controller walks to find it — so a device behind a hub works like one on a root port, one tier down, and one plugged in *after* the boot's scan is enumerated when the hub says so, for every hub found (the watches are a list, not a table, and a hub behind a hub is one of them); the command, control, interrupt and bulk rings each carry a Link TRB with its Toggle Cycle bit and flip their producer cycle state at the wrap, with the link at the slot the lap ends in rather than pinned to the segment's end (a link the consumer cannot reach is a wrap that never happens), the event ring is consumed against the segment size the ERST states with no Link TRB in it, and a completion is matched to the TRB the event names; a claimed MSI-X vector whose interrupt drains the event ring when the rings are free; `make check-x8664-usb-hotplug` plugs a mouse into a hub's port, unplugs it, plugs it back in, pulls the keyboard out of its root port and plugs a mouse into a free one while the guest runs, and requires all of it to be seen, and `make check-x8664-runtime` boots a keyboard on a root port beside a mouse behind a hub, presses a key through QEMU's monitor, and offers the USB disk | The producer rings hold **one TD in flight per ring**: every submit path waits for its completion, and the work an event asks for — a hub's report, a root port's change — is run from the event-ring drain rather than under a transfer's wait, because that work is itself requests and would otherwise put a second TD on a ring whose first is still outstanding; and a submit asks its ring's `RingRoom` first — the TRBs submitted and not yet completed, which is the only honest measure, since the controller writes its dequeue back into an endpoint's context only when the endpoint stops or faults — refusing with `Busy` rather than letting the producer's next lap overwrite a TRB the controller has not read (no caller here can reach that refusal; a pipelining one would); the timer tick still drains the ring as the fallback; the controller is tens of kilobytes and is built into its own allocation, because the boot runs on a 64 KiB stack and a by-value construction would hold two copies of it; x86_64 only; QEMU only (see [RFC 0006](rfcs/0006-end-a-producer-ring-lap-where-its-work-ends.md)) |
 | USB HID | HID (keyboard) | A HID interrupt endpoint is configured on the enumerated device, its reports are decoded into the same keyboard core the PS/2 and VirtIO paths feed, and `make check-x8664-runtime` types a command on the USB keyboard and asserts the shell's answer | The report deshuffling is the boot's evidence rather than a synthetic matrix; a HID device behind a hub is enumerated when the hub reports the port (see the xHCI row) |
 | USB MSD | Storage | Bulk-only transport and SCSI command blocks; `make check-x8664-runtime` attaches a disk whose first sector carries a pattern, and the driver enumerates it, identifies it (INQUIRY), reads its capacity and reads that sector back, with the pattern in the log as the evidence; `make check-x8664-usb-disk` boots the host's own SimpleFs image on a USB disk, and the shell *writes* a marker through `open`/`write` into the volume, reads it back with `cat`, and the host finds those bytes in the image afterwards | QEMU only |
@@ -77,8 +77,9 @@ the syscall interface.
 input, mostly verified under QEMU.
 
 - **Storage**: AHCI (SATA), ATA PIO, VirtIO, and NVMe provide independent block
-  backends; the NVMe driver polls for completions (see its row above), and the
-  VirtIO block driver's interrupts are the transport's, not a per-queue claim.
+  backends; the NVMe driver's completion queue claims its own interrupt and its
+  waits park on it, and the VirtIO block driver's interrupts are its queue's
+  claim through the same path.
 - **Network**: the VirtIO network driver is multi-queue ready, and on the two
   PCIe machines its queues are interrupt-driven — one MSI-X identity per queue,
   so a completion wakes the queue that caused it.
@@ -181,15 +182,18 @@ input, mostly verified under QEMU.
   and a second claimant is refused rather than silently replacing a handler
   somebody waits on. AArch64 reaches the same place by its own road: the GICv3
   controller (`src/arch/aarch64/gicv3.rs`) receives LPIs, and the ITS
-  (`src/arch/aarch64/its.rs`) translates the messages that become them. What is
-  still missing: the classes that poll — NVMe, which mounts a namespace here
-  (`make check-aarch64-nvme`), and HDA, which plays a tone here
-  (`make check-aarch64-hda`) — ask the platform for a window and claim no
-  identity, so the interrupt path has only ever been exercised by a device
-  that has to be woken.  What is *not* missing is the class itself: the same
-  files the PC compiles drive the device-tree machine, which is what makes a
-  second PCIe device *class* work here rather than a second device of the
-  same class.
+  (`src/arch/aarch64/its.rs`) translates the messages that become them. NVMe
+  claims through the same path now — its completion queue takes one entry, on
+  every machine whose controller can carry the message, so the class that has
+  to be *woken* rather than one that also polls is what exercises the claim
+  path here (`make check-aarch64-nvme` boots a GICv3 machine and asserts a
+  completion MSI reached the driver's handler).  What is still missing: HDA,
+  which plays a tone here (`make check-aarch64-hda`), asks the platform for a
+  window and claims no identity — its controller has no MSI-X at all, so
+  there is no table to claim.  What is *not* missing is the class itself: the
+  same files the PC compiles drive the device-tree machine, which is what
+  makes a second PCIe device *class* work here rather than a second device of
+  the same class.
 - **Verified under QEMU only**: no real-device validation on bare-metal
   hardware yet.
 
@@ -458,7 +462,7 @@ disk-backed swap, compression, and defragmentation.
 | Common interrupt abstraction | `InterruptController` trait | — |
 | Thread exception handling | Page fault recovery, signal delivery | — |
 | PAN/SMAP emulation | AArch64 PSTATE.PAN, x86_64 SMAP, RISC-V SUM | Nothing known: the window is opened in one module, the guard restores what it found, and the paths that can wait stage first (`make check-user-access-windows`) |
-| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64; a vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64; a claim takes one identity per **table entry the driver names**, and every entry it does not name is written masked, so a device takes the vectors its work needs rather than the ones its table has ([RFC 0005](rfcs/0005-claim-the-msix-entries-a-driver-names.md)) | On the device-tree machines the PCIe virtio-net and virtio-blk drivers each claim their own identities, and the classes whose drivers poll — NVMe and HDA — do not claim one; on x86_64 the PCIe virtio-net and xHCI controllers claim, and NVMe's fixed vectors are still wired by constant rather than claimed |
+| MSI/MSI-X programming | Message composition, fixed vector numbers and an acknowledge handler on x86_64; a vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; AIA IMSIC with per-device claims on RISC-V; GICv3 ITS with per-device claims on AArch64; a claim takes one identity per **table entry the driver names**, and every entry it does not name is written masked, so a device takes the vectors its work needs rather than the ones its table has ([RFC 0005](rfcs/0005-claim-the-msix-entries-a-driver-names.md)); a claim enables MSI-X with the **function mask set** and arming clears it — the order a device that consults the capability while being configured (NVMe's `Create I/O Completion Queue`) needs | The PCIe virtio-net, virtio-blk and NVMe drivers each claim their own identities on the machines whose controllers can carry them; HDA's controller has no MSI-X (QEMU's offers classic MSI only) and keeps polling |
 | NMI handling | x86_64 dedicated vector path, AArch64 SError/FIQ dedicated path, handler registry | No architectural NMI source on RISC-V, so that entry stays dormant |
 | Interrupt load balancing (SMP) | IOAPIC redirection re-target, GIC SPI affinity, PLIC per-context enable | Runs from the tick; no routing-latency measurement |
 | Interrupt stats interface | Per-CPU/per-vector counters, NMI/IPI totals, balancer state (SystemInfo #9) | — |
@@ -490,24 +494,27 @@ programs a device's table, NMI handling, and load balancing.
 
 **Weaknesses:**
 
-- **Message-signalled interrupts are two drivers deep on AArch64, and the
+- **Message-signalled interrupts are three drivers deep on AArch64, and the
   bus carries four device classes.** The ITS maps a collection and an LPI
   pending table per CPU, and a device's entries are placed round-robin over
   the CPUs that can receive, so the PCIe virtio-net driver's queues are
   completed by different cores, and the PCIe virtio-blk driver beside it
   claims a range of its own under its own DeviceID. What that buys is
   evidence: the placement is a property of the machine rather than of one
-  driver. What is still missing: the two classes whose drivers poll — NVMe,
-  which mounts a namespace through the same ECAM window
-  (`make check-aarch64-nvme`), and HDA, which plays a tone through it
-  (`make check-aarch64-hda`) — are driven here but claim no interrupt, so the
-  bus's fourth class is still a device that has to signal
-  ([RFC 0001](rfcs/0001-spread-message-signalled-interrupts.md) is the
-  design the placement follows).
-- **MSI-X on RISC-V is one driver deep**: the AIA IMSIC is wired and a device's
-  table is programmed, but only the virtio-net PCIe driver claims interrupts
-  through it; the default machine has no IMSIC at all, so the PLIC remains the
-  external-interrupt controller there.
+  driver. NVMe joined them: its completion queue claims one entry under its
+  own DeviceID, and `make check-aarch64-nvme` now boots a GICv3 machine and
+  asserts that a completion MSI reached the driver's own handler. What is
+  still missing: HDA, which plays a tone through the same ECAM window
+  (`make check-aarch64-hda`), claims no interrupt because its controller has
+  none to claim — QEMU's `intel-hda` offers classic MSI, which this tree does
+  not compose.  ([RFC 0001](rfcs/0001-spread-message-signalled-interrupts.md)
+  is the design the placement follows.)
+- **MSI-X on RISC-V is two drivers deep**: the AIA IMSIC is wired and a
+  device's table is programmed; the virtio-net PCIe driver and NVMe's
+  completion queue claim interrupts through it (`make check-riscv64-nvme`
+  boots an `aia=aplic-imsic` machine and asserts delivery); the default
+  machine has no IMSIC at all, so the PLIC remains the external-interrupt
+  controller there, and NVMe on it polls.
 - **No architectural NMI source on RISC-V**: the S-mode dispatch entry stays
   dormant (it would need an M-mode or `smnmi` path).
 - **GIC/PLIC verified under emulation only**: no real-hardware routing or

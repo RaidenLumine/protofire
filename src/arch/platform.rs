@@ -274,6 +274,12 @@ pub(crate) fn program_device_msix() {
 }
 
 /// A PCIe function's registers, as this platform can reach them.
+///
+/// A descriptor: every field is a number the enumeration decoded, so a driver
+/// may hold one, copy it, and claim through it more than once — the xHCI
+/// controller's probe does exactly that, and NVMe keeps one to claim with
+/// after its driver has decided the device is the one it wants.
+#[derive(Clone, Copy)]
 #[cfg(target_os = "none")]
 pub(crate) struct PciRegisterWindow {
     /// Vendor and device of the function the window belongs to.

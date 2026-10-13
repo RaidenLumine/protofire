@@ -16,6 +16,14 @@
 //! an alias.  The driver asks for a window and never sees which machine it is
 //! on — which is what makes this the second PCIe device *class* the
 //! device-tree machines drive.
+//!
+//! The completion path is the same seam: the driver claims one MSI-X table
+//! entry ([`NVME_CQ_ENTRY`]) and the platform programs it on whatever receiver
+//! the machine has — the local APIC's vector window, the ITS's LPIs, or the
+//! IMSIC's identities — so a completion wakes a waiter instead of being
+//! polled for.  A machine that gives no claim (no MSI-X, no receiver, or a
+//! claim refused because somebody owns the table) polls, which is what this
+//! driver always did.
 
 use crate::drivers::Driver;
 use crate::drivers::DriverCategory;
@@ -32,26 +40,127 @@ use core::sync::atomic::Ordering;
 pub use crate::drivers::nvme_protocol::*;
 
 // ─── Interrupts ───────────────────────────────────────────────────────
+//
+// The controller's completions are message-signalled like every other PCIe
+// device's: the driver claims one MSI-X table entry, the platform programs
+// the table once the machine can receive, and a completion then wakes the
+// waiter instead of being polled for.  Until the claim is armed — a machine
+// with no MSI receiver, or a boot before the controller is up — the same
+// waits poll, which is the path every driver here kept.
+//
+// The entry is 0, and the controller's admin queue shares it, because of
+// *when* a completion queue's vector is fixed: `Create I/O Completion Queue`
+// writes it once, while the controller is being brought up and long before
+// the interrupt controller programs the table, and a controller refuses a
+// non-zero vector while MSI-X is still disabled — QEMU answers `Invalid IRQ
+// Vector` and the queue is never created.  Entry 0 is the one entry that is
+// valid at that moment, and it is the entry the controller itself delivers
+// its admin completions on.  One identity for both queues: a vector is a
+// wakeup here, and the queue is where the answer is read.
 
-/// The fixed IDT vector an x86_64 build reserves for admin-queue completions.
+/// The MSI-X table entry this driver's completion queue delivers on.
+const NVME_CQ_ENTRY: u16 = 0;
+
+/// How long one I/O parks on the controller's interrupt before re-reading the
+/// completion queue.  Short: the queue is the answer, and the wait only saves
+/// the spin.
+const NVME_MSI_WAIT_TICKS: u64 = 2;
+
+/// What the controller's interrupt handler and the I/O path share.
 ///
-/// The driver polls, so nothing claims these and no machine programs a table
-/// with them: they are the numbers `arch/x86_64/interrupts.rs` still assigns
-/// the class, and wiring them into the claim registry is a follow-up
-/// ([docs/status.md](../../docs/status.md) records the gap).
-pub const NVME_ADMIN_VECTOR: u8 = 44;
-/// The fixed IDT vector an x86_64 build reserves for I/O-queue completions.
-pub const NVME_IO_VECTOR: u8 = 45;
+/// The same shape as the PCIe block driver's signal: the count is what a wait
+/// re-checks after a timeout, so an interrupt that lands between the count
+/// check and the park cannot be lost.
+struct NvmeSignal {
+    lock: crate::kernel::sync::Mutex<()>,
+    ready: crate::kernel::process::wait::Condvar,
+    count: core::sync::atomic::AtomicUsize,
+}
+
+impl NvmeSignal {
+    fn new() -> Self {
+        Self {
+            lock: crate::kernel::sync::Mutex::new(()),
+            ready: crate::kernel::process::wait::Condvar::new(),
+            count: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Wait for the controller to interrupt, up to `timeout_ticks`.
+    ///
+    /// Returns whether anything arrived; the caller re-reads its own queue
+    /// either way, because a wakeup is a condition and not the answer.
+    fn wait(&self, timeout_ticks: u64) -> bool {
+        let guard = self.lock.lock();
+        let seen = self.count.load(core::sync::atomic::Ordering::Relaxed);
+        let wait = self.ready.wait_timeout(guard, timeout_ticks);
+        !wait.timed_out() || self.count.load(core::sync::atomic::Ordering::Relaxed) != seen
+    }
+}
+
+/// The controller, once its interrupts are its own.
+struct NvmeInterrupts {
+    claim: crate::arch::platform::DeviceInterrupts,
+    signal: Arc<NvmeSignal>,
+}
+
+static NVME_INTERRUPTS: Mutex<Option<Arc<NvmeInterrupts>>> = Mutex::new(None);
+
+/// The handler the completion queue's own MSI-X entry runs.
+fn nvme_msi_handler(signal: &Arc<NvmeSignal>) -> crate::arch::irq_handlers::IrqHandler {
+    let signal = signal.clone();
+    Arc::new(move |irq| {
+        let seen = signal.count.fetch_add(1, Ordering::Relaxed) + 1;
+        if seen <= 2 {
+            crate::println!("[nvme  ] completion MSI (irq {})", irq);
+        }
+        signal.ready.notify_all();
+    })
+}
+
+/// Wait for the controller's claimed interrupt, when it can signal yet.
+///
+/// The same guards as the block driver's wait: a machine whose claim was
+/// never armed polls, and a caller running with interrupts masked cannot be
+/// woken by the timer, so it polls too.
+fn wait_for_nvme_interrupt(timeout_ticks: u64) -> bool {
+    if !crate::arch::interrupts::are_enabled() {
+        return false;
+    }
+    let Some(device) = NVME_INTERRUPTS.lock().clone() else {
+        return false;
+    };
+    if !device.claim.is_armed() {
+        return false;
+    }
+    device.signal.wait(timeout_ticks)
+}
+
+/// One step of a completion wait that parks on the claimed interrupt.
+///
+/// The caller re-checks its queue around this: a wakeup is a condition, not
+/// the answer.  A machine whose claim was never armed — or a caller that
+/// cannot take an interrupt — spins, exactly as before any claim existed.
+fn wait_step(polls: &mut u32) -> crate::Result<()> {
+    *polls += 1;
+    if *polls > COMPLETION_POLL_LIMIT {
+        return Err(crate::Error::TimedOut);
+    }
+    if !wait_for_nvme_interrupt(NVME_MSI_WAIT_TICKS) {
+        core::hint::spin_loop();
+    }
+    Ok(())
+}
 
 static NVME_PROBED: AtomicBool = AtomicBool::new(false);
 
-/// The platform-mapped controller registers of the first NVMe function found
-/// during enumeration, held for `probe_boot_disk` to initialise later.
+/// The platform-mapped function of the first NVMe controller found during
+/// enumeration, held for `probe_boot_disk` to initialise and claim later.
 ///
-/// It is stored as an address rather than a pointer because the static is
-/// shared: the mapping itself lives as long as the machine does, and only the
-/// boot-disk probe dereferences it.
-static NVME_BAR0: Mutex<Option<usize>> = Mutex::new(None);
+/// It is the whole window rather than the BAR alone because the BAR is only
+/// half of what the probe needs: the register window drives the controller,
+/// and the function is what its interrupts are claimed through.
+static NVME_WINDOW: Mutex<Option<crate::arch::platform::PciRegisterWindow>> = Mutex::new(None);
 
 /// NVMe's class: mass storage (0x01), NVM subsystem (0x08).  The programming
 /// interface byte distinguishes an NVMe controller from the other things a
@@ -107,15 +216,6 @@ impl Driver for NvmeDriver {
 pub fn driver() -> Arc<dyn Driver> {
     Arc::new(NvmeDriver)
 }
-
-/// Handle an NVMe MSI-X interrupt.
-///
-/// The NVMe driver is poll-based: completions are reaped synchronously inside
-/// `admin_submit_and_wait` / `io_submit_and_wait`, so there is no pending
-/// queue state to service from the interrupt path.  This handler exists to
-/// acknowledge the interrupt; the phase-bit / doorbell logic runs in the
-/// polling loops, which will observe the completion on their next iteration.
-pub fn nvme_irq_handler() {}
 
 // ─── NVMe controller ──────────────────────────────────────────────────
 
@@ -205,14 +305,15 @@ impl NvmeController {
     ///
     /// # Safety
     ///
-    /// `bar0_phys` must be the physical base address of the NVMe controller's
-    /// PCI BAR0, obtained from PCI enumeration.
-    /// # Safety
-    ///
     /// `bar0` must be the platform's mapping of this controller's BAR0, at
     /// least `NVME_BAR0_BYTES` long, and the caller must keep it mapped for as
     /// long as the controller lives.
-    unsafe fn init(bar0: *mut u8) -> crate::Result<Self> {
+    ///
+    /// `interrupt_enabled` puts the interrupt-enable bit in the I/O completion
+    /// queue's flags; it is set only when the driver holds a claim, so a
+    /// machine whose claim was refused creates a queue that never raises an
+    /// interrupt — the same queue it always had.
+    unsafe fn init(bar0: *mut u8, interrupt_enabled: bool) -> crate::Result<Self> {
         // SAFETY: the caller's contract is that `bar0` is the controller's own
         // BAR0 mapping, so the range is live MMIO; every register this body
         // touches is one the NVMe specification puts inside those 8 KiB.
@@ -383,8 +484,14 @@ impl NvmeController {
             let mut sqe = NvmeSqe::zeroed();
             sqe.set_opcode(ADMIN_CREATE_IOCQ);
             sqe.set_prp1(iocq_phys);
-            sqe.set_cdw(((iocq_entries - 1) << 16) | 1, 1, 0);
-            // DW11[0] = PC (physically contiguous), DW11[1] = EN (enabled)
+            // DW10[15:0] = CQID, DW10[31:16] = queue size - 1.  DW11[0] = PC
+            // (physically contiguous), DW11[1] = IEN (raise a completion
+            // interrupt), DW11[31:16] = IV 0 — the MSI-X table entry this
+            // driver claimed.  The IEN bit is set only when a claim was
+            // taken; a machine that refused one builds the same queue it
+            // always had, and the waits poll it.
+            let cq_flags: u32 = 1 | if interrupt_enabled { 2 } else { 0 };
+            sqe.set_cdw(((iocq_entries - 1) << 16) | 1, cq_flags, 0);
             let cqe = ctrl.admin_submit_and_wait(&sqe)?;
             if !cqe.is_success() {
                 return Err(crate::Error::NotFound);
@@ -483,11 +590,23 @@ impl NvmeController {
     }
 
     /// Submit a command on the I/O SQ and poll for completion.
+    ///
+    /// This one spins rather than parking, and the reason is its lock: the
+    /// queue state is held across the whole wait because this command's
+    /// completion is not one the slot table can attribute — a *queued* read
+    /// is matched by the command identifier the completion names, and only
+    /// this loop's own `want` check answers for a synchronous one — so a
+    /// wait that released the lock could see another poller reap and drop
+    /// the completion it is waiting for.  And the lock masks interrupts for
+    /// as long as it is held, so parking under it would silence the very
+    /// interrupt that ends the wait.  Spinning is what the flush path did
+    /// before the claim existed and what it keeps: the command is on the
+    /// device, and the spin is bounded like every other wait here.
     fn io_submit_and_wait(&self, sqe: &NvmeSqe) -> crate::Result<NvmeCqe> {
         let mut state = self.io_state.lock();
         self.io_submit(&mut state, sqe);
 
-        // Spin for *this* command's completion.  Reaping completes any queued
+        // Wait for *this* command's completion.  Reaping completes any queued
         // read whose data has arrived on the way, so a queued read this driver
         // is holding does not have to finish before a synchronous one starts.
         let cid = sqe.command_id();
@@ -836,13 +955,7 @@ impl BlockDevice for NvmeController {
             let mut polls = 0u32;
             loop {
                 match self.poll(ticket) {
-                    RequestState::Pending => {
-                        polls += 1;
-                        if polls > COMPLETION_POLL_LIMIT {
-                            return Err(crate::Error::TimedOut);
-                        }
-                        core::hint::spin_loop();
-                    }
+                    RequestState::Pending => wait_step(&mut polls)?,
                     RequestState::Done(result) => {
                         result?;
                         break;
@@ -882,13 +995,7 @@ impl BlockDevice for NvmeController {
             let mut polls = 0u32;
             loop {
                 match self.poll(ticket) {
-                    RequestState::Pending => {
-                        polls += 1;
-                        if polls > COMPLETION_POLL_LIMIT {
-                            return Err(crate::Error::TimedOut);
-                        }
-                        core::hint::spin_loop();
-                    }
+                    RequestState::Pending => wait_step(&mut polls)?,
                     RequestState::Done(result) => {
                         result?;
                         break;
@@ -937,7 +1044,7 @@ fn probe_nvme() -> crate::Result<()> {
         window.bar_address,
         window.bar_size / 1024
     );
-    *NVME_BAR0.lock() = Some(window.bar_address);
+    *NVME_WINDOW.lock() = Some(window);
     Ok(())
 }
 
@@ -950,26 +1057,54 @@ fn probe_nvme() -> crate::Result<()> {
 pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
     use crate::println;
 
-    let bar0 = {
-        let stored = NVME_BAR0.lock();
-        (*stored)?
+    // The claim is taken before the controller runs: the I/O completion
+    // queue's interrupt-enable bit is a field of the `Create I/O Completion
+    // Queue` command, so whether completions will interrupt has to be known
+    // when the queue is created — and a controller refuses a non-zero vector
+    // while MSI-X is still disabled, which it is until the interrupt
+    // controller arms the table.  Entry 0 is the entry that is valid then,
+    // and it is the entry the controller already delivers admin completions
+    // on.  None of this is hardware access: a claim registers the handler and
+    // hands the platform the table to program later.
+    let (window, claim, signal) = {
+        let stored = NVME_WINDOW.lock();
+        let window = (*stored)?;
+        let signal = Arc::new(NvmeSignal::new());
+        let named = [(NVME_CQ_ENTRY, nvme_msi_handler(&signal))];
+        let claim = crate::arch::platform::pci_claim_msix(&window, &named);
+        (window, claim, signal)
     };
 
     println!(
         "[nvme  ] initialising NVMe controller at BAR={:#x}...",
-        bar0
+        window.bar_address
     );
-    // SAFETY: `bar0` is the platform's mapping of this function's BAR0, which
-    // `probe_nvme` stored and which lives as long as the machine does.
-    let controller = match unsafe { NvmeController::init(bar0 as *mut u8) } {
-        Ok(ctrl) => ctrl,
-        Err(e) => {
-            println!("[nvme  ] NVMe init failed: {}", e.as_str());
-            // Clear the stored BAR0 so subsequent probes don't retry.
-            *NVME_BAR0.lock() = None;
-            return None;
-        }
-    };
+    // SAFETY: `window.bar_address` is the platform's mapping of this
+    // function's BAR0, which `probe_nvme` stored and which lives as long as
+    // the machine does.
+    let controller =
+        match unsafe { NvmeController::init(window.bar_address as *mut u8, claim.is_some()) } {
+            Ok(ctrl) => ctrl,
+            Err(e) => {
+                println!("[nvme  ] NVMe init failed: {}", e.as_str());
+                // Clear the stored window so subsequent probes don't retry.
+                *NVME_WINDOW.lock() = None;
+                return None;
+            }
+        };
+
+    if let Some(claim) = claim {
+        // The wait path reads this to decide whether parking is worth it, so
+        // it is published before the device can be used — and the claim is
+        // armed later, by the platform, once the interrupt controller can
+        // carry the message.
+        println!(
+            "[nvme  ] completion interrupts claimed: irq {}+; waits park on them once the \
+             controller programs the table",
+            claim.first_irq()
+        );
+        *NVME_INTERRUPTS.lock() = Some(Arc::new(NvmeInterrupts { claim, signal }));
+    }
 
     println!(
         "[nvme  ] NVMe ready: {} blocks × {} bytes",
@@ -980,7 +1115,7 @@ pub fn probe_boot_disk() -> Option<Arc<dyn BlockDevice>> {
         device.name(),
         "nvme",
         crate::drivers::DriverCategory::Storage,
-        Some(bar0),
+        Some(window.bar_address),
     );
     Some(device)
 }

@@ -112,7 +112,7 @@ and its status says which of the two happened.
 | [0002](0002-signal-frame-carries-the-context.md) | Implemented | Carry the interrupted context in the signal frame |
 | [0003](0003-program-the-msix-table-on-x86_64.md) | Superseded | Program a device's MSI-X table on x86_64 |
 | [0004](0004-reuse-the-xhci-rings-by-cycle-state.md) | Superseded | Reuse the xHCI rings by cycle state |
-| [0005](0005-claim-the-msix-entries-a-driver-names.md) | Implemented | Claim the MSI-X entries a driver names |
+| [0005](0005-claim-the-msix-entries-a-driver-names.md) | Superseded | Claim the MSI-X entries a driver names |
 | [0006](0006-end-a-producer-ring-lap-where-its-work-ends.md) | Implemented | End a producer ring's lap where its work ends |
 | [0007](0007-hold-a-second-request-on-a-device.md) | Implemented | Hold a second request on a device |
 | [0008](0008-keep-a-sequential-miss-in-one-request.md) | Accepted | Keep a sequential miss in one request |
@@ -130,6 +130,7 @@ and its status says which of the two happened.
 | [0020](0020-what-the-memory-map-may-refuse-on.md) | Implemented | What the memory map may refuse on |
 | [0021](0021-what-the-timer-tick-still-polls.md) | Accepted | What the timer tick still polls |
 | [0022](0022-adopt-the-machines-memory-as-frames.md) | Draft | Adopt the machine's memory as frames |
+| [0023](0023-enable-msix-when-the-claim-is-taken.md) | Implemented | Enable MSI-X when the claim is taken |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —

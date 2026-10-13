@@ -191,12 +191,26 @@ controller with sixteen interrupters takes one identity rather than sixteen —
 decision, and it is the successor to RFC 0003's per-entry claim.
 
 What is claimed today: the PCIe `virtio-net` driver (one identity per queue),
-`virtio-blk` (one, for its one queue), and xHCI (one, for its one interrupter),
-on the machines that have the controller to carry them.  Everything else —
-NVMe and HDA, the classes whose drivers poll their own completion rings — asks
-the platform for a register window (`arch::platform::pci_register_window`) and
-claims no identity through this path, because there is no interrupt for it to
-wait on.
+`virtio-blk` (one, for its one queue), xHCI (one, for its one interrupter), and
+NVMe (one, for its completion queue — the entry the controller's own admin
+completions share, because a queue's vector is fixed by the `Create I/O
+Completion Queue` command that runs before any table can be programmed), on
+the machines that have the controller to carry them.  A driver whose claim the
+machine refuses or never programs — a GICv2 with no ITS, a PLIC machine with
+no IMSIC — polls instead, and says so at probe time.  What still polls on
+every boot is HDA, whose controller has no MSI-X at all (QEMU's `intel-hda`
+offers classic MSI, which this tree does not compose) and which asks the
+platform for a register window and claims nothing.
+
+One subtlety a device that *consults* the capability introduces: the claim
+enables MSI-X **with the function mask set** (the same order Linux arrives at
+through `pci_alloc_irq_vectors`), so a device that reads Message Control while
+it is being configured — NVMe's `Create I/O Completion Queue` decides whether
+that queue will interrupt from it — sees the capability as on, while nothing
+can be delivered because the mask holds every entry back and the table is
+still the all-masked one it reset to.  Arming is the step that programs the
+table and clears the mask, and only that step makes the device able to
+signal.
 
 ## Where an interrupt is placed
 

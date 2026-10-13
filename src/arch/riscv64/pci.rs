@@ -217,13 +217,16 @@ pub fn pci_enable_msix(
 
     let first_irq = aia_imsic::configure_msix(table_phys, table_size, base_irq, entries, targets)?;
 
-    // Enable MSI-X (bit 15) and leave the *function mask* (bit 14) set: the
-    // table is programmed, but the device may not signal yet.  Whichever side
-    // owns the identities unmasks it — see [`msix_unmask`] — so a device's
-    // first interrupt can never arrive before something is registered to
-    // receive it, which is the difference between an interrupt the kernel can
-    // attribute and one it counts as spurious.
-    let new_control = msix.message_control | (1u16 << 15) | (1u16 << 14);
+    // Enable MSI-X and leave the *function mask* set: the table is
+    // programmed, but the device may not signal yet.  Whichever side owns the
+    // identities unmasks it — see [`msix_unmask`] — so a device's first
+    // interrupt can never arrive before something is registered to receive
+    // it, which is the difference between an interrupt the kernel can
+    // attribute and one it counts as spurious.  (The enable bit is already
+    // set by the claim, which takes the capability this way from the start so
+    // a device that consults it while being configured — an NVMe controller
+    // at `Create I/O Completion Queue` — sees it as on.)
+    let new_control = crate::arch::pci::claimed_control(msix.message_control);
     // SAFETY: the message-control half of the MSI-X capability the walk found,
     // inside this function's configuration space.
     unsafe {
@@ -481,6 +484,14 @@ impl MsixClaim {
 /// later by [`program_device_msix`].  Answers [`crate::Error::AlreadyExists`]
 /// when the function's MSI-X is already enabled — see [`msix_enabled`] — and
 /// [`crate::Error::NotImplemented`] when the function has no MSI-X at all.
+///
+/// The claim **enables MSI-X with the function mask set** (see
+/// [`crate::arch::pci::claimed_control`]): the capability reads as on, which a
+/// device may consult while it is being configured — an NVMe controller does
+/// when `Create I/O Completion Queue` names its vector — while nothing can be
+/// delivered, because the mask holds every table entry back and the table is
+/// still the all-masked one it reset to.  [`MsixClaim::arm`] is where the
+/// table is programmed and the mask cleared, once the IMSIC is up.
 pub fn claim_msix(
     region: &EcamRegion,
     bus: u8,
@@ -490,11 +501,17 @@ pub fn claim_msix(
 ) -> Result<MsixClaim, crate::Error> {
     use crate::arch::riscv64::aia_imsic;
 
-    if msix_enabled(region, bus, device, function) {
+    // Everything fallible happens before the identities are taken: a claim
+    // that refused after allocating them would leak the run it took.
+    let cap_off = pci_capability_find(region, bus, device, function, cap_id::MSI_X)
+        .ok_or(crate::Error::NotImplemented)?;
+    // SAFETY: `cap_off` is the offset of the MSI-X capability the walk just
+    // found on this function.
+    let capability = unsafe { pci_capability_msix(region, bus, device, function, cap_off) };
+    if capability.message_control & crate::arch::pci::MSIX_ENABLE != 0 {
         return Err(crate::Error::AlreadyExists);
     }
-    let count =
-        msix_entry_count(region, bus, device, function).ok_or(crate::Error::NotImplemented)?;
+    let count = ((capability.message_control & 0x07FF) as u32) + 1;
     // One identity per entry the driver names, and none for the rest: the
     // programming step writes those entries masked, so an identity the device
     // could deliver with nobody registered for it does not exist.
@@ -503,6 +520,15 @@ pub fn claim_msix(
     let first_irq = aia_imsic::claim_device_irqs_each(&handlers)?;
     // Table entry `entries[i]` is delivered on identity `first_irq + i`.
     let entries: Vec<u16> = named.iter().map(|(entry, _)| *entry).collect();
+
+    // Let the device see the capability as enabled, with everything held
+    // back.  The message-control half of the MSI-X capability the walk found,
+    // inside this function's own configuration space.
+    let control = crate::arch::pci::claimed_control(capability.message_control);
+    // SAFETY: as the read above — the same capability, on the write side.
+    unsafe {
+        region.write_u16(bus, device, function, cap_off as u16 + 2, control);
+    }
 
     Ok(MsixClaim {
         inner: alloc::sync::Arc::new(MsixClaimInner {

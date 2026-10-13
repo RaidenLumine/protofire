@@ -144,12 +144,14 @@ use crate::Error;
 pub const MSIX_VECTOR_BASE: u8 = 0x60;
 /// The last vector a device's table may name.
 ///
-/// The window is sized for more than one device at a time, and for the widest
-/// table QEMU's controllers have: an xHCI controller's MSI-X table has
-/// sixteen entries, and a claim takes one identity per entry, so a window that
-/// only fit one of those would leave the NIC beside it unclaimed.  The top of
-/// the window is the top of the range `interrupts.rs` reserves for device
+/// The window is sized for more than one claim at a time: a claim takes one
+/// identity per table entry its driver *names* ([RFC 0005], which left every
+/// unnamed entry unable to deliver), and the machine's claimants — a NIC's
+/// two queues, a block device's one — name a handful between them.  The top
+/// of the window is the top of the range `interrupts.rs` reserves for device
 /// vectors.
+///
+/// [RFC 0005]: ../../../docs/rfcs/0005-claim-the-msix-entries-a-driver-names.md
 pub const MSIX_VECTOR_LAST: u8 = 0x7F;
 // The window belongs inside the range `interrupts.rs` reserves for device
 // vectors (34-127) and above the fixed assignments, or a device's message
@@ -162,13 +164,16 @@ const _: () = assert!(MSIX_VECTOR_LAST > MSIX_VECTOR_BASE);
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) const MSIX_HANDLER_BASE: u32 = MSIX_VECTOR_BASE as u32;
 
-/// Message Control: the MSI-X Enable bit.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-const MSIX_ENABLE: u16 = 1 << 15;
-/// Message Control: the function mask, which holds every entry back even when
-/// the table is programmed.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-const MSIX_FUNCTION_MASK: u16 = 1 << 14;
+// The two control words a claim passes through live in `crate::arch::pci`,
+// because the same order has to hold on every machine that programs an MSI-X
+// table — and this is one of them.  Every use is the claim path (or its
+// tests), which a host build does not compile.
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+use crate::arch::pci::armed_control;
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+use crate::arch::pci::claimed_control;
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "none")))]
+use crate::arch::pci::MSIX_ENABLE;
 
 /// Whether `vector` is one a device's MSI-X table may deliver.
 pub const fn is_msix_vector(vector: u8) -> bool {
@@ -177,12 +182,14 @@ pub const fn is_msix_vector(vector: u8) -> bool {
 
 /// A PCIe function's claim on the vectors its MSI-X table will deliver.
 ///
-/// The claim is taken at probe time, where the device is in hand, but the
-/// table can only be programmed once the local APIC is up — so the claim is
-/// what holds the two halves together.  [`Self::arm`] writes the identities
-/// into the function's table and lets it signal; [`Self::is_armed`] is how the
-/// owner tells the difference, so a completion path waits on the device only
-/// once the device can say something.
+/// The claim is taken at probe time, where the device is in hand, and does
+/// two things then: it registers the handlers in the identity registry and it
+/// enables the capability with the function mask set (see [`claimed_control`]).
+/// The table can only be programmed once the local APIC is up — so the claim
+/// is what holds the two halves together.  [`Self::arm`] writes the identities
+/// into the function's table and clears the mask; [`Self::is_armed`] is how
+/// the owner tells the difference, so a completion path waits on the device
+/// only once the device can say something.
 #[derive(Clone)]
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub(crate) struct MsixClaim {
@@ -274,11 +281,14 @@ impl MsixClaim {
         }
         core::sync::atomic::fence(Ordering::SeqCst);
 
-        // Enable MSI-X and clear the function mask: the two bits between a
-        // programmed table and a device that may signal.  Both belong to the
-        // capability's message-control half, not to a table entry, which is why
-        // they are the last thing this does.
-        let control = (self.inner.message_control | MSIX_ENABLE) & !MSIX_FUNCTION_MASK;
+        // Clear the function mask: the one bit between a programmed table and
+        // a device that may signal.  MSI-X itself was enabled when the claim
+        // was taken (see `claimed_control`), so this is the second half of
+        // that step, not an enable — the entries are unmasked and the table
+        // read back before it, and it belongs to the capability's
+        // message-control half rather than to a table entry, which is why it
+        // is the last thing this does.
+        let control = armed_control(self.inner.message_control);
         // SAFETY: the message-control half of the MSI-X capability this claim
         // located, inside the function's own configuration space.
         unsafe {
@@ -294,12 +304,33 @@ impl MsixClaim {
     }
 }
 
+/// Whether a claim that names `entries` table entries fits the vector window.
+///
+/// The bound is on the entries the driver names, because the identities are
+/// what consume vectors — one per named entry.  It is deliberately *not* a
+/// bound on the table's size: an unnamed entry is written masked by
+/// [`MsixClaim::arm`], so a table wider than the window (an NVMe controller's
+/// has sixty-five entries against the window's thirty-two vectors) can still
+/// be claimed for the one entry a completion queue uses.  This was a
+/// table-width bound once, and it refused the NVMe claimant outright.
+pub const fn claim_window_fits(entries: usize) -> bool {
+    entries <= (MSIX_VECTOR_LAST - MSIX_VECTOR_BASE + 1) as usize
+}
+
 /// Claim the vectors this function's MSI-X table will deliver.
 ///
 /// Answers [`Error::NotImplemented`] when the function has no MSI-X capability,
 /// [`Error::AlreadyExists`] when somebody has already enabled it, and
 /// [`Error::NoSpace`] when the vector window cannot hold the run — in every one
 /// of those the caller stays on the polling path it has today.
+///
+/// The claim **enables MSI-X with the function mask set**: from here the
+/// capability reads as on — which a device may consult while it is being
+/// configured, and an NVMe controller does when a `Create I/O Completion
+/// Queue` command names its vector — while nothing can be delivered, because
+/// the mask holds every table entry back and the table itself is still the
+/// masked one it reset to.  [`MsixClaim::arm`] is where the table is
+/// programmed and the mask cleared, once the machine can receive.
 ///
 /// # Safety
 ///
@@ -318,8 +349,7 @@ pub(crate) unsafe fn claim_msix(
     }
 
     let count = ((capability.message_control & 0x07FF) as u32) + 1;
-    let window = (MSIX_VECTOR_LAST - MSIX_VECTOR_BASE + 1) as u32;
-    if count > window || named.len() as u32 > window {
+    if !claim_window_fits(named.len()) {
         return Err(Error::InvalidArgument);
     }
 
@@ -362,6 +392,19 @@ pub(crate) unsafe fn claim_msix(
     // table lies inside it.
     let table = unsafe { crate::arch::mmu::map_device_mmio(table_phys, table_bytes) }
         .ok_or(Error::DeviceError)? as *mut MsixTableEntry;
+
+    // Let the device see the capability as enabled, with everything held back.
+    // This is the last fallible step's aftermath, so a claim that failed above
+    // leaves the function exactly as it found it.
+    // SAFETY: the message-control half of the MSI-X capability located above,
+    // inside the function's own configuration space.
+    unsafe {
+        pci_config_write_u16(
+            address,
+            offset + 2,
+            claimed_control(capability.message_control),
+        );
+    }
 
     Ok(MsixClaim {
         inner: Arc::new(MsixClaimInner {
@@ -577,5 +620,47 @@ mod tests {
             crate::arch::x86_64::idt::types::msix_window_stub(MSIX_VECTOR_BASE as usize - 1)
                 .is_none()
         );
+    }
+
+    /// The window bounds the entries a driver *names*, not the table's size.
+    ///
+    /// The two were the same check once, and the table's width was what it
+    /// weighed — so a controller whose table is wider than the window could
+    /// not be claimed at all even for the one entry its driver used, which is
+    /// exactly what an NVMe controller is (65 entries, one completion queue).
+    #[test]
+    fn msix_window_bounds_named_entries_not_the_table() {
+        assert!(claim_window_fits(1));
+        assert!(claim_window_fits(32));
+        assert!(!claim_window_fits(33));
+    }
+
+    /// The two message-control words a claim passes through.
+    ///
+    /// `claimed_control` turns MSI-X on with the function mask set — the
+    /// state a device reads while it is being configured (an NVMe controller
+    /// decides a completion queue's interrupt behaviour `Create I/O
+    /// Completion Queue` time) while nothing can be delivered — and
+    /// `armed_control` clears the mask, which is the only bit between a
+    /// programmed table and a signalling device.
+    #[test]
+    fn msix_claim_control_words_enable_without_delivering() {
+        use crate::arch::pci::MSIX_FUNCTION_MASK;
+
+        assert_eq!(claimed_control(0), MSIX_ENABLE | MSIX_FUNCTION_MASK);
+        assert_eq!(armed_control(0), MSIX_ENABLE);
+        // Other capability bits (the table's size, for one) survive both.
+        assert_eq!(
+            claimed_control(0x0400),
+            0x0400 | MSIX_ENABLE | MSIX_FUNCTION_MASK
+        );
+        assert_eq!(armed_control(0x0400), 0x0400 | MSIX_ENABLE);
+        // Either word from either starting state ends enabled; only the mask
+        // separates them.
+        assert_eq!(
+            claimed_control(MSIX_ENABLE),
+            MSIX_ENABLE | MSIX_FUNCTION_MASK
+        );
+        assert_eq!(armed_control(MSIX_FUNCTION_MASK), MSIX_ENABLE);
     }
 }

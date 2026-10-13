@@ -1,11 +1,20 @@
 # RFC 0005: Claim the MSI-X entries a driver names
 
-- **Status:** Implemented
+- **Status:** Superseded
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-06
 - **Supersedes:** 0003
+- **Superseded by:** [0023](0023-enable-msix-when-the-claim-is-taken.md) (its arming step: the enable bit is written when the claim is taken rather than when the table is programmed; everything else it decided — one identity per named entry, unnamed entries masked, the identity registry — stands)
 
 ## Summary
+
+> **One part of this RFC was superseded by
+> [RFC 0023](0023-enable-msix-when-the-claim-is-taken.md)**: the enable bit is
+> written when the *claim* is taken (with the Function Mask holding delivery
+> back until arming), because a device may consult Message Control while it
+> is being configured — NVMe's `Create I/O Completion Queue` does.  Everything
+> else here — one identity per named entry, unnamed entries masked, the
+> identity registry indexed by identity — stands and is what the code does.
 
 A claim on a device's MSI-X table is sized by the table, not by the driver: it
 allocates one interrupt identity per *entry the table has* and gives every

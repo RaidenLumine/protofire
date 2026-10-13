@@ -672,8 +672,6 @@ fn ensure_initialized() -> Result<usize, Error> {
 const MSIX_ENTRY_BYTES: usize = 16;
 /// The Vector Control mask bit: set, the entry cannot deliver.
 const MSIX_VECTOR_MASK: u32 = 1;
-const MSIX_ENABLE: u16 = 1 << 15;
-const MSIX_FUNCTION_MASK: u16 = 1 << 14;
 
 /// Where the kernel reaches a device's MSI-X table.
 ///
@@ -848,19 +846,6 @@ fn msix_capability(
     Some(capability)
 }
 
-/// Whether the function's MSI-X is already enabled.
-fn msix_enabled(region: &pci::EcamRegion, bus: u8, device: u8, function: u8) -> bool {
-    msix_capability(region, bus, device, function)
-        .map(|capability| capability.message_control & MSIX_ENABLE != 0)
-        .unwrap_or(false)
-}
-
-/// How many entries the function's MSI-X table has.
-fn msix_entry_count(region: &pci::EcamRegion, bus: u8, device: u8, function: u8) -> Option<u32> {
-    msix_capability(region, bus, device, function)
-        .map(|capability| ((capability.message_control & 0x07ff) as u32) + 1)
-}
-
 /// The DeviceID the ITS knows a PCIe function by.
 ///
 /// It is the requester ID the function's messages carry: the bus, the device
@@ -875,6 +860,14 @@ fn device_id_of(bus: u8, device: u8, function: u8) -> u32 {
 /// is left for whoever programs its table, and its owner stays on the polling
 /// path — and [`Error::AlreadyExists`] when the function's MSI-X is already
 /// enabled, which means somebody else owns it.
+///
+/// The claim **enables MSI-X with the function mask set** (see
+/// [`crate::arch::pci::claimed_control`]): the capability reads as on, which a
+/// device may consult while it is being configured — an NVMe controller does
+/// when `Create I/O Completion Queue` names its vector — while nothing can be
+/// delivered, because the mask holds every table entry back and the table is
+/// still the all-masked one it reset to.  [`MsixClaim::arm`] is where the
+/// table is programmed and the mask cleared, once the machine can receive.
 pub(crate) fn claim_msix(
     region: &pci::EcamRegion,
     bus: u8,
@@ -885,11 +878,13 @@ pub(crate) fn claim_msix(
     if its_base().is_none() {
         return Err(Error::NotImplemented);
     }
-    if msix_enabled(region, bus, device, function) {
+    // Read the capability first: finding out after the identities are taken
+    // that there is nothing to claim would leak them.
+    let capability = msix_capability(region, bus, device, function).ok_or(Error::NotImplemented)?;
+    if capability.message_control & crate::arch::pci::MSIX_ENABLE != 0 {
         return Err(Error::AlreadyExists);
     }
-
-    let count = msix_entry_count(region, bus, device, function).ok_or(Error::NotImplemented)?;
+    let count = ((capability.message_control & 0x07ff) as u32) + 1;
     if count == 0 || count > EVENT_COUNT {
         return Err(Error::InvalidArgument);
     }
@@ -907,6 +902,19 @@ pub(crate) fn claim_msix(
     )?;
     // Table entry `entries[i]` is delivered on LPI `first_lpi + i`.
     let entries: Vec<u16> = named.iter().map(|(entry, _)| *entry).collect();
+
+    // Let the device see the capability as enabled, with everything held back.
+    // SAFETY: the message-control half of the MSI-X capability located above,
+    // inside this function's own configuration space.
+    unsafe {
+        region.write_u16(
+            bus,
+            device,
+            function,
+            capability.offset as u16 + 2,
+            crate::arch::pci::claimed_control(capability.message_control),
+        );
+    }
 
     Ok(MsixClaim {
         inner: Arc::new(MsixClaimInner {
@@ -993,9 +1001,11 @@ fn program_msix_table(inner: &MsixClaimInner, translater: usize) -> Result<(), E
         }
     }
 
-    // Enable MSI-X and clear the function mask, the two bits that stand
-    // between a programmed table and a device that may signal.
-    let control = (capability.message_control | MSIX_ENABLE) & !MSIX_FUNCTION_MASK;
+    // Clear the function mask: the one bit between a programmed table and a
+    // device that may signal.  MSI-X itself was enabled when the claim was
+    // taken (see [`crate::arch::pci::claimed_control`]), so this is the
+    // second half of that step, not an enable.
+    let control = crate::arch::pci::armed_control(capability.message_control);
     // SAFETY: the message-control half of the MSI-X capability found above,
     // inside this function's configuration space.
     unsafe {

@@ -42,7 +42,9 @@ The authoritative picture of what exists today is
   per queue now, with each entry placed on a hart in turn; NVMe is a second
   device class on this bus, driven by the same file the PC compiles — which
   also made `arch::mmu::phys_addr_of` answer here, since its queues are DMA
-  buffers and this machine's RAM window is identity-mapped.  What remains is
+  buffers and this machine's RAM window is identity-mapped — and its
+  completion queue claims an entry of its own, so a completion arrives as an
+  interrupt from the IMSIC (`make check-riscv64-nvme`).  What remains is
   another class still, and broader device-tree driver coverage.
 - **AArch64 PCIe.** The ECAM window is found, its buses enumerated, its BARs
   assigned, and its `virtio-net-pci` driven — the same code as riscv64 with a
@@ -57,11 +59,15 @@ The authoritative picture of what exists today is
   are driven here as well, both by the files the PC compiles: NVMe, so
   `make check-aarch64-nvme` mounts a real filesystem from a namespace on this
   bus, and HDA, so `make check-aarch64-hda` plays a tone through the
-  controller and reads the samples out of the host's WAV backend.  What is
-  left is the first class that has to *claim an interrupt of its own*: both
-  NVMe and HDA poll their own completion rings, so neither of the two classes
-  added on top of virtio has yet exercised the ITS through a driver that must
-  be woken.
+  controller and reads the samples out of the host's WAV backend.  NVMe now
+  *claims an interrupt of its own*: its completion queue takes one MSI-X
+  entry under its own DeviceID, and `make check-aarch64-nvme` boots a GICv3
+  machine and asserts that a completion MSI reached the driver's handler —
+  so the class that has to be woken is exercised through the ITS.  HDA is
+  the one class left, and it is left for a measured reason: its controller
+  has no MSI-X at all (QEMU's `intel-hda` offers classic MSI, which this
+  tree does not compose), so unlike NVMe it cannot use the claim path at
+  all.
   [RFC 0001](docs/rfcs/0001-spread-message-signalled-interrupts.md) is the
   design the placement follows.
 - **USB host (xHCI) completion.** Storage and HID work end to end, and a

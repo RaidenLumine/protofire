@@ -10,8 +10,6 @@ use core::sync::atomic::Ordering;
 use super::port::Port;
 use crate::arch::interrupt_controller;
 use crate::drivers::keyboard;
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-use crate::drivers::nvme;
 use crate::kernel::process;
 
 // IRQ vector assignments.  When the APIC is active these are routed
@@ -27,7 +25,10 @@ pub const COM1_VECTOR: u8 = 36;
 
 // ─── MSI-X vectors for device drivers ────────────────────────────
 // These are allocated from the free range 34-127 (non-exception,
-// non-IPI, non-syscall).  NVMe uses 44-45; VirtIO uses 46-47.
+// non-IPI, non-syscall).  VirtIO uses 46-47; NVMe's completions are
+// message-signalled like the other PCIe devices' now, so its driver
+// claims a vector out of the MSI-X window instead of naming a constant
+// here (the 44-45 pair the class used before the claim existed).
 
 /// MSI-X vector for VirtIO config-space change notifications.
 pub const VIRTIO_CONFIG_VECTOR: u8 = 46;
@@ -106,10 +107,6 @@ pub(crate) fn handle_irq(vector: u8, _allow_preemption: bool) {
             // and bridge it to the console, which is what input used to depend
             // on the timer tick to do.
             crate::drivers::serial::handle_rx_interrupt();
-        }
-        #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-        v if v == nvme::NVME_ADMIN_VECTOR || v == nvme::NVME_IO_VECTOR => {
-            nvme::nvme_irq_handler();
         }
         VIRTIO_CONFIG_VECTOR | VIRTIO_QUEUE_VECTOR => {
             VIRTIO_IRQ_FIRED.store(true, Ordering::Release);

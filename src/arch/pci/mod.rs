@@ -157,6 +157,43 @@ pub mod cap_id {
     pub const POWER_MANAGEMENT: u8 = 0x01;
 }
 
+/// Message Control (MSI-X): the enable bit.
+///
+/// `MSI-X Enable` is what makes a device treat the capability as on; it is
+/// distinct from the function mask below, which holds delivery back even when
+/// the table is programmed.
+pub const MSIX_ENABLE: u16 = 1 << 15;
+/// Message Control (MSI-X): the function mask, which holds every table entry
+/// back regardless of its own mask bit.
+pub const MSIX_FUNCTION_MASK: u16 = 1 << 14;
+
+/// Message Control for a function whose MSI-X a claim has taken but not yet
+/// armed.
+///
+/// MSI-X is **enabled with the function mask set**: the capability reads as on
+/// — which a device may consult while it is being configured — while nothing
+/// can leave it, because the mask holds every table entry back and the table
+/// is still the all-masked one it reset to.  It is what lets a claim be taken
+/// before the interrupt controller is up.
+///
+/// The order matters to a device whose completion queue's vector is written
+/// through a command rather than a register: NVMe's `Create I/O Completion
+/// Queue` decides whether that queue raises interrupts by what the capability
+/// says *then* — QEMU's model marks the vector used only if MSI-X is enabled
+/// at the command, and an unmarked vector is never delivered — and the
+/// command runs before the machine can receive.  Linux reaches the same place
+/// through `pci_alloc_irq_vectors`, which enables the capability with the
+/// table masked and unmasks at `request_irq`; this is that order, with the
+/// mask clearing spread across [`armed_control`].
+pub const fn claimed_control(found: u16) -> u16 {
+    (found & !(MSIX_ENABLE | MSIX_FUNCTION_MASK)) | MSIX_ENABLE | MSIX_FUNCTION_MASK
+}
+
+/// Message Control once a claim is armed: enabled, function mask cleared.
+pub const fn armed_control(found: u16) -> u16 {
+    (found & !(MSIX_ENABLE | MSIX_FUNCTION_MASK)) | MSIX_ENABLE
+}
+
 /// A parsed MSI capability structure.
 #[derive(Debug, Clone, Copy)]
 pub struct MsiCapability {

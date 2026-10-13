@@ -56,7 +56,7 @@ architecture: `drivers::nvme` exists everywhere, and only its body differs.
 | ATA (PIO) | Polling | The driver is the legacy path: programmed I/O, no DMA, no interrupt |
 | AHCI (SATA) | Polling | Discovers controllers through PCI; the driver's own note says it is polling only — no MSI/MSI-X |
 | VirtIO block | The transport's | Modern and legacy transports, on the virtio-mmio bus and on PCIe; the boot-disk chain's `virt` path |
-| NVMe | Polling | The driver's own comment says it is poll-based: completions are reaped inside the submit-and-wait helpers, and the vector constants and handler exist without a programmed table behind them.  The driver is machine-neutral — it asks the platform for a register window — so all three machines compile the same file, and each of them mounts a filesystem from a namespace in its own gate |
+| NVMe | Claimed, waits park | The completion queue claims one MSI-X table entry — the entry the controller's own admin completions share, because `Create I/O Completion Queue` fixes a queue's vector before any table can be programmed — and the driver's waits park on it once the platform arms the claim; a machine that refused one polls, exactly as before.  The driver is machine-neutral — it asks the platform for a register window — so all three machines compile the same file, and each boots a message-capable configuration in its own gate (`check-x8664-nvme` on the local APIC's vector window, `check-aarch64-nvme` on a GICv3 ITS, `check-riscv64-nvme` on the AIA IMSIC) |
 | USB mass storage | Not reachable | Bulk-only transport and SCSI command blocks are implemented; nothing can reach them until xHCI can drive a bus |
 
 ## Network
@@ -90,9 +90,12 @@ Two drivers do this on the device-tree machines — `virtio_net` and the block
 driver — and the point of the second one is that the identities are the
 *device's*: the pair do not share a claim, a DeviceID, or an LPI range.  x86_64
 claims the same way through a window of its own IDT
-([rfcs/0003](../rfcs/0003-program-the-msix-table-on-x86_64.md)); what it does
-not have yet is a second claimant, because the drivers that would be one
-(NVMe, xHCI) build their interrupts from constants instead.
+([rfcs/0003](../rfcs/0003-program-the-msix-table-on-x86_64.md)), with the NIC,
+the block driver and the xHCI controller as its claimants; NVMe joined them on
+all three machines, and it is the class whose driver has to be *woken* rather
+than one that also stopped polling — a completion that has no other reason to
+be checked, which is what makes the claim path a property of the machine
+instead of one driver's shape.
 
 ## Input and console
 
