@@ -261,9 +261,12 @@ device-tree machines' input now arrives by interrupt.
   address-equals-physical invariant that `phys_addr_of`, the block layer and
   every frame consumer rest on — so a direct map becomes part of it.  That
   document states what the change costs, keeps the kernel's own memory where
-  it is, and names the measurement it still owes: what a big machine actually
-  gains, in frames and in boot work.  The argument for doing it is still a
-  measurement, and it has not been taken.
+  it is, and names what is still owed: what the direct map costs once the
+  machine's memory is actually used.  The other half of the measurement —
+  what a big machine gains *today* — is taken and is blunt: nothing, because
+  nothing beyond the pool is ever touched ([RFC
+  0022](0022-adopt-the-machines-memory-as-frames.md)'s own revision is where
+  that number lives).
 - **RAM above 4 GiB, and the width of a device's address**: measured, and
   latent rather than live.  **No frame the allocator can hand out is above
   the first 4 GiB**, and the reason is structural: the pool is the kernel's
@@ -275,9 +278,10 @@ device-tree machines' input now arrives by interrupt.
   drifts by the image's size — the 2 GiB boot two commits earlier read
   `0x4898000` — which is the linker moving `__pool_end`, not the machine; a
   reader comparing two logs should expect that.)  The device-tree machines
-  are the same shape: at 16 GiB the pool is `[0x45800000, 0x65800000)` on
-  aarch64's `virt` and `[0x85600000, 0xa5600000)` on riscv64's, each right
-  after its image.  Every one of those ends below the 4 GiB a 32-bit engine
+  are the same shape: at 16 GiB the pool is `[0x45800000, 0x75800000)` on
+  aarch64's `virt` and `[0x85600000, 0xb5600000)` on riscv64's, each right
+  after its image (the 768 MiB the derived span buys them).  Every one of
+  those ends below the 4 GiB a 32-bit engine
   can name, so there is nothing to bounce today, and no code should pretend
   otherwise.
   The question becomes live with the *first* item above, and only with it:
@@ -328,10 +332,12 @@ device-tree machines' input now arrives by interrupt.
   each linker script states the window the pool lives in and the margin it
   must leave (`POOL_SIZE`, `POOL_MARGIN`, `RAM_WINDOW_END` /
   `STACK_WINDOW_BASE`), and an `ASSERT` refuses a link whose pool would cross
-  it — 768 MiB on the device-tree machines, whose windows end at 0xC000_0000,
-  and 512 MiB on the PC, where the kernel's stack window at 0x3000_0000 is the
-  nearer bound.  A board port changes three linker constants and the ASSERT
-  says whether the change fits; the policy is the scripts' own prose.  A
+  it — 768 MiB on both device-tree machines (riscv64's window ends at
+  0xC000_0000, aarch64's at 0x8000_0000, and the 128 MiB margin fits at that
+  size), and 512 MiB on the PC, where the kernel's stack window at
+  0x3000_0000 is the nearer bound.  A board port changes three linker
+  constants and the ASSERT says whether the change fits; the policy is the
+  scripts' own prose.  A
   hand-off that describes nothing at all still manages the whole span, which
   is the boot the report names rather than a silent one.
 - **What "refuse to boot" means**: the tree's panic policy is

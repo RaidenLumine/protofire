@@ -305,7 +305,7 @@ pub fn report_machine_memory() {
     // that span the machine has.  The two are the same on every machine this
     // kernel was measured on before a small-RAM boot was asked for, so the
     // line appears only where they differ — which is exactly the boot a
-    // reader would otherwise misread as "the kernel has 512 MiB".
+    // reader would otherwise misread as "the kernel has its whole span".
     let managed = managed_pool_bytes();
     if managed < pool_end - pool_start {
         crate::println!(

@@ -34,15 +34,18 @@ _start:
 1:  ldr x1, =__boot_stack_top
     mov sp, x1
 
-    /* Park the device tree before the BSS clear below can reach it.
+    /* Park the device tree before anything else can reach it.
        On this machine the kernel is handed an arm64 `Image` boot, so QEMU
-       supplies a device tree — and places it inside the kernel's own BSS,
-       where the 512 MiB frame pool lives.  Clearing BSS would erase the blob
-       before the kernel ever reads it, which is exactly what used to happen:
-       the kernel saw `x0 = 0` on the ELF path and a wiped blob on the Image
-       path, and fell back to hardcoded platform constants either way.  Copy it
-       into the reserved buffer instead, clamped to the buffer's size, and hand
-       that copy to Rust.  `x10` carries the address across the clear. */
+       supplies a device tree — and places it just past the loaded image, in
+       RAM that is the kernel's own: measured at 0x48000000, inside the frame
+       pool's reserved span, on both a 512 MiB and a 1 GiB machine.  That span
+       is memory the allocator hands out and zeroes, and it used to be a `.bss`
+       array the boot cleared — which is what actually happened: the blob was
+       wiped on the Image path before Rust could read it, and the kernel saw
+       `x0 = 0` on the ELF path, falling back to hardcoded platform constants
+       either way.  Copy it into the reserved buffer instead, clamped to the
+       buffer's size, and hand that copy to Rust.  `x10` carries the address
+       across the clear. */
     mov x10, xzr                    /* 0: no device tree to hand over */
     cbz x0, 4f
     ldr w2, [x0, #4]                /* FDT totalsize, big-endian */

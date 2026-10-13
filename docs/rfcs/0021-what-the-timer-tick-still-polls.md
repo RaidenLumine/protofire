@@ -7,10 +7,10 @@
 
 ## Summary
 
-Two device polls are left in the timer tick — xHCI's event-ring drain and
-`virtio-input`'s event-queue poll — and [RFC
-0020](0020-what-the-memory-map-may-refuse-on.md)'s open question named them
-without deciding them.  This decides: **both stay**, for reasons that are
+Two device polls are left in the timer tick beyond the console UART's
+fallback — xHCI's event-ring drain and `virtio-input`'s event-queue poll — and
+[RFC 0020](0020-what-the-memory-map-may-refuse-on.md)'s open question named
+them without deciding them.  This decides: **both stay**, for reasons that are
 different, and the tree says what each one is for.  xHCI's tick drain is the
 *fallback the ring's own lock requires* — the interrupt acknowledges and
 cannot wait, so the tick is what drains the ring a busy transfer left — and
@@ -102,9 +102,9 @@ load-bearing in three cases:
   raise — and arming the table does not re-offer a message for a pending bit
   that is already set.  The tick drains the ring; nothing else would.
 
-So the documents stop calling it a fallback and name what it catches, and
-RFC 0020's question — which called it one of "the two USB/input polls" — is
-answered by this document rather than left open.
+So the documents and the comments beside the poll name what it catches
+instead of leaving it a bare stop-gap, and RFC 0020's question is answered by
+this document rather than left open.
 
 **2. virtio-input's MMIO poll stays, and is named as the transport's shape.**
 A completion with no identity has nothing the handler registry could own, so

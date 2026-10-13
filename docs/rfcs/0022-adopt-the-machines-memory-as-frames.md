@@ -31,10 +31,13 @@ used, needs the change to exist and is named below rather than assumed.
 and the reason is real: a machine's map has holes and RAM above 4 GiB, and this
 kernel's pool is a few hundred megabytes of the kernel's own image — 768 MiB on
 the device-tree machines, 512 MiB on the PC.  A machine with 16 GiB manages
-one number whether it needs it or not: on the PC the boot says
-`machine reports 16384 MiB in 1 region(s); the kernel's pool is 512 MiB`
-(measured; the lines are in every recent log), and the device-tree machines
-say 768.  (Those two numbers are what the linker's pool policy arrived at —
+one number whether it needs it or not: on the PC the boot says `machine
+reports 16383 MiB in 10 region(s); the kernel's pool is 512 MiB` and on each
+device-tree machine `machine reports 16384 MiB in 1 region(s); the kernel's
+pool is 768 MiB` (measured at 16 GiB; the PC's E820-shaped table has ten
+entries and calls the top of RAM reserved, which is why its number is 16383
+rather than 16384).  (Those two numbers are what the linker's pool policy
+arrived at —
 `POOL_SIZE` per script, with an `ASSERT` against the window it lives in; see
 RFC 0020's "The pool's size per target" for how.)
 
@@ -135,8 +138,8 @@ region it does not adopt, and the boot says how much it left.
 - **Keep the identity and require RAM below 4 GiB.**  That is what the tree
   does today, and it is coherent: the pool is low, devices are 64-bit,
   `phys_addr_of` is trivial.  Rejected as a *permanent* position because a
-  machine with 16 GiB would use 512 MiB of it forever, and because a real
-  board's RAM is not arranged to suit the kernel.
+  machine with 16 GiB would use 768 MiB of it forever (512 MiB on the PC),
+  and because a real board's RAM is not arranged to suit the kernel.
 - **Adopt only the regions below the DMA bound.**  On the measured 16 GiB
   `q35` that is its `[0, 0x7ffdf000)` range and nothing above 4 GiB: about
   2 GiB instead of 512 MiB, and every frame a 32-bit device could reach.  It
@@ -203,7 +206,7 @@ checklist rather than its evidence.**  In the order they would have to hold:
   (`scripts/check-nvme-disk.sh`), and the virtio block and net drivers have
   runtime checks of their own.
 - **The measurement that is owed**: how much *practical* memory the change
-  buys, and what the direct map costs.  Its first half is taken and it is
+  buys, and what the direct map costs.  The first half is taken and it is
   blunt.  One `perf_baseline` binary on `q35` at 1 GiB and at 16 GiB prints
   the same boot-work line, counter for counter — `frames=23`,
   `frame-zero-bytes=610304`, `pt-maps=1064`, `pt-lookups=1067`,

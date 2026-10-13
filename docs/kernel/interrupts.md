@@ -126,7 +126,9 @@ An AIA machine is also why the balancer's answer is the controller's:
 destination of a message is decided where the message is *composed* — the
 APLIC's own target register, whose firmware-written address fields name no
 hart — and because the address a PLIC's enable bits sit at is, on that
-machine, the supervisor APLIC's register block.
+machine, the machine-level APLIC's register block (the kernel programs the
+supervisor domain at 0xd000_0000; the PLIC fallback address sits in the
+machine-level window at 0xc000_0000).
 
 ## Message-signalled interrupts
 

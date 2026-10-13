@@ -171,8 +171,11 @@ impl Scheduler {
     ///
     /// Performs per-tick bookkeeping:
     /// - Updates per-thread CPU-ticks and scheduler stats.
-    /// - Polls USB HID hardware (stop-gap until IRQ wiring), and the serial
-    ///   UART on the machines whose interrupt path is not wired.
+    /// - Drains the xHCI event ring (the interrupt acknowledges and cannot wait
+    ///   on the rings' owner), polls the MMIO virtio-input keyboard (its
+    ///   transport has no identity to claim), and polls the serial UART on the
+    ///   machines whose interrupt path could not be armed.  Neither poll is a
+    ///   missing interrupt; the comments below and RFC 0021 say why.
     /// - Drives network stack periodic maintenance.
     /// - Boosts starved Normal-priority threads.
     /// - Checks expired timerfds.

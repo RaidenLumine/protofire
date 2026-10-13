@@ -234,7 +234,9 @@ names is what this removes.
   bounce-buffer decision or an IOMMU one, and neither exists here.
 - **The pool's size per target**: one constant for three machines is a
   default rather than a fact, and the embedded target's answer would be a
-  different number.
+  different number.  Answered by measurement since: the size is derived per
+  machine in the linker scripts, each with an `ASSERT` against the window it
+  lives in (RFC 0020's "The pool's size per target").
 - **What "refuse to boot" means**: the tree's panic policy is
   `docs/fmts/unsafe-and-safety.md`'s, and whether this is a halt with a
   message or a panic is a detail that document decides rather than this one.

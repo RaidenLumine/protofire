@@ -47,11 +47,14 @@ their slot — that table is how PSCI-less bring-up and the kernel's own SMP pat
 meet.
 
 The boot CPU sets its stack, **parks the device tree**, clears BSS, and calls
-`kernel_entry_aarch64(parked_blob)`.  The parking is not tidiness: the blob QEMU
-supplies is placed inside the kernel's own BSS, where the frame pool lives, so
-clearing BSS would erase the blob before Rust could read it.  The
-linker script reserves `.dtb_copy` for the copy, and the address Rust is handed
-is the copy.
+`kernel_entry_aarch64(parked_blob)`.  The parking is not tidiness: QEMU places
+the blob just past the loaded image, which on this machine is inside the frame
+pool's reserved span (measured at 0x48000000, pool
+`[0x45800000, 0x75800000)`) — memory the allocator hands out and zeroes, and
+before the pool became a reserved span it was the `.bss` array the boot
+cleared, which wiped the blob on the Image path before Rust could read it.
+The linker script reserves `.dtb_copy` for the copy, and the address Rust is
+handed is the copy.
 
 The blob exists only because the kernel is booted as an arm64 `Image`: QEMU
 installs a device tree for the Linux boot path.  A bare-metal ELF gets `x0 = 0`
