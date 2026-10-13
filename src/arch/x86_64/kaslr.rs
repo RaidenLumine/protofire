@@ -57,14 +57,17 @@
 //! and requires it to equal the tracked one (so the table describes the image
 //! it is compiled into), boots the result and asserts the relocation line
 //! with a nonzero delta, the image and pool ranges at their relocated
-//! addresses, the demo shell and a typed answer; then it boots a four-CPU
-//! machine and requires the AP refusal above, out loud.
+//! addresses, the demo shell and a typed answer; it boots a four-CPU machine
+//! and requires the APs to come online in the copy and dispatch threads (the
+//! trampoline's one link-time value is `ap_entry`'s address, and that site is
+//! in the table); and it boots a 128 MiB machine, which has no room for the
+//! copy, to require the refusal and a shell at the link address.
 //!
-//! Not verified: more than one CPU — `bring_up_aps` refuses to start APs
-//! from a relocated kernel, because the trampoline enters the link-time
-//! address and would run the abandoned image; and a loader that does **not**
-//! place the kernel at its link address, which the relocator assumes (every
-//! loader this tree has used does).
+//! Not verified: a loader that does **not** place the kernel at its link
+//! address, which the relocator assumes (every loader this tree has used
+//! does), and placement on a machine whose usable RAM has holes the window
+//! cannot avoid — the candidate search checks the regions, but no gate boots
+//! such a machine.
 
 #[cfg(feature = "kaslr")]
 use core::ptr;

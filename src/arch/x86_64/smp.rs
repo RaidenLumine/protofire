@@ -377,20 +377,21 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
 /// Called from `Kernel::init` on the BSP after per-CPU data and the LAPIC
 /// are initialised.
 pub fn bring_up_aps(aps: &[(u32, u8)]) {
-    // A relocated kernel refuses APs instead of starting them into the
-    // abandoned image: the trampoline's entry point is the link-time address
-    // of `ap_entry`, so an AP that took it would run the *old* image's code
-    // and write its statics while this CPU runs the copy's — two kernels in
-    // one machine with one set of devices.  One CPU under KASLR is the
-    // verified shape (`make check-x8664-kaslr-runtime` boots one); teaching
-    // the trampoline the copy's address is what would lift this.
-    if crate::arch::x86_64::kaslr::is_relocated() {
-        crate::println!(
-            "[smp   ] the kernel was relocated; AP bring-up is not implemented under KASLR — running single-CPU"
-        );
-        return;
-    }
-
+    // AP bring-up works under KASLR, and that is a measurement rather than an
+    // assumption either way.  The trampoline's one link-time value is
+    // `ap_entry`'s address, materialised as an absolute immediate
+    // (`movq $0x200dc0, ...`) — and that site is in the relocation table, so
+    // the copy's immediate names the *copy's* `ap_entry`.  Everything else the
+    // trampoline carries is a runtime value: the stack top and per-CPU block
+    // are allocations, `runtime_cr3` is read from CR3, `ap_started_flag` is a
+    // heap pointer, and the trampoline's own GDT descriptor is an
+    // assembly-time difference plus the fixed 0x8000 it is copied to.  So an
+    // AP that enters the trampoline enters the copy's code, and
+    // `make check-x8664-kaslr-runtime` boots four CPUs to hold that: all three
+    // APs online, each dispatching its first thread.  (A previous revision
+    // refused APs here on the argument that the entry point would run the
+    // abandoned image; the argument was wrong, and the refusal it produced
+    // was a single-CPU kernel for no reason.)
     if aps.is_empty() {
         crate::println!("[smp   ] no APs to bring up — running single-CPU");
         return;

@@ -33,9 +33,13 @@
 #     the table, so this is the end-to-end check that the sites were patched.
 #   * the demo reaches its shell and answers a typed line — the copy's code,
 #     its strings, and its dispatch slots all work.
-#   * a machine with several CPUs is refused, not broken: AP bring-up enters
-#     the trampoline's link-time address and would run the abandoned image,
-#     so the kernel says so and keeps running on the boot CPU.
+#   * a machine with several CPUs brings those CPUs up *in the copy*: the
+#     trampoline's only link-time value is `ap_entry`'s address, it is a
+#     relocated site, and every other field it reads is a runtime value — so
+#     the assertion is that the APs come online and dispatch threads, which
+#     is what a boot that ran an AP into the abandoned image could not do.
+#   * a machine too small for the copy refuses a placement and boots at the
+#     link address, which is the branch a small machine really takes.
 
 set -eu
 
@@ -218,10 +222,14 @@ require_log_line "adastra ring3 shell"
 require_log_exact_line "ring3-shell-answered"
 require_log_absent_line "[FATAL"
 
-# ── Several CPUs: the refusal, not a broken machine ───────────────────
-# AP bring-up enters the trampoline at its link-time address, so a relocated
-# kernel refuses it out loud and keeps booting on this CPU.  The boot above
-# and this one differ only in `-smp`.
+# ── Several CPUs: the APs really come up in the copy ──────────────────
+# The trampoline's one link-time value is `ap_entry`'s address, and the
+# relocation table carries that site, so the copy's immediate names the
+# copy's entry; every other field the trampoline reads is a runtime value.
+# That is a measurement, not an argument: this boot differs from the one
+# above only in `-smp`, and it requires the APs to come online and dispatch
+# threads — a machine that ran an AP into the abandoned image would fault or
+# hang there rather than reach the assertions below.
 smp_log="$(mktemp)"
 printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU -machine q35 -smp 4 -m 1G ... -serial file:"
 set +e
@@ -247,12 +255,26 @@ case "$status" in
         exit "$status"
         ;;
 esac
-if ! grep -a -F "AP bring-up is not implemented under KASLR" "$smp_log" >/dev/null 2>&1; then
-    printf 'x86_64 KASLR check failed: the relocated kernel did not refuse AP bring-up\n' >&2
+online="$(grep -a -c 'AP cpu_id=[0-9]* lapic_id=[0-9]* online' "$smp_log" || true)"
+if [ "${online:-0}" -lt 3 ]; then
+    printf 'x86_64 KASLR check failed: only %s AP(s) came online of 3 under relocation\n' "$online" >&2
     cat "$smp_log" >&2
     rm -f "$smp_log"
     exit 1
 fi
+if ! grep -a -F "cpu=1 dispatched its first thread" "$smp_log" >/dev/null 2>&1; then
+    printf 'x86_64 KASLR check failed: an AP came online but never dispatched a thread\n' >&2
+    cat "$smp_log" >&2
+    rm -f "$smp_log"
+    exit 1
+fi
+if grep -a -F "SMP: bringing up 0 AP" "$smp_log" >/dev/null 2>&1; then
+    printf 'x86_64 KASLR check failed: the relocated kernel skipped AP bring-up\n' >&2
+    cat "$smp_log" >&2
+    rm -f "$smp_log"
+    exit 1
+fi
+printf '  %s APs online in the copy, threads dispatching\n' "$online"
 if ! grep -a -F "adastra ring3 shell" "$smp_log" >/dev/null 2>&1; then
     printf 'x86_64 KASLR check failed: the SMP machine did not reach the shell\n' >&2
     cat "$smp_log" >&2
@@ -328,4 +350,4 @@ rm -f "$small_log"
 if [ "$remove_log_on_exit" = "0" ]; then
     printf 'x86_64 KASLR log saved to %s\n' "$log_file"
 fi
-printf 'x86_64 KASLR check passed: table fresh, relocated boot reached a typed shell, APs refused, small machine refused a placement and booted\n'
+printf 'x86_64 KASLR check passed: table fresh, relocated boot reached a typed shell, APs online, small machine refused a placement and booted\n'
