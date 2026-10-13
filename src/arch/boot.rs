@@ -366,6 +366,23 @@ pub fn pvh_start_info_address() -> usize {
     PVH_START_INFO.load(Ordering::Acquire)
 }
 
+/// The machine's memory, as whichever PC hand-off block the loader left.
+///
+/// The two blocks are not the same struct, so the magic decides which walk to
+/// run — the same decision [`from_x86_64_multiboot2`] makes, made here for
+/// callers that run before that constructor exists.  The KASLR relocator is
+/// the caller today: it runs in `kernel_entry`, before anything has
+/// recorded what the hand-off is, and needs the map to choose where the
+/// kernel may be copied to.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn memory_regions_for_handoff(magic: u32, info: usize) -> Option<Vec<MemoryRegion>> {
+    if magic == MULTIBOOT2_BOOT_MAGIC {
+        multiboot2_memory_regions_at(info)
+    } else {
+        pvh_memory_regions_at(info)
+    }
+}
+
 /// The machine's memory, as a PVH start-of-day block describes it.
 ///
 /// The block points at an E820-shaped table (`memmap_paddr`, `memmap_entries`)

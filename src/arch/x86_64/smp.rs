@@ -377,6 +377,20 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
 /// Called from `Kernel::init` on the BSP after per-CPU data and the LAPIC
 /// are initialised.
 pub fn bring_up_aps(aps: &[(u32, u8)]) {
+    // A relocated kernel refuses APs instead of starting them into the
+    // abandoned image: the trampoline's entry point is the link-time address
+    // of `ap_entry`, so an AP that took it would run the *old* image's code
+    // and write its statics while this CPU runs the copy's — two kernels in
+    // one machine with one set of devices.  One CPU under KASLR is the
+    // verified shape (`make check-x8664-kaslr-runtime` boots one); teaching
+    // the trampoline the copy's address is what would lift this.
+    if crate::arch::x86_64::kaslr::is_relocated() {
+        crate::println!(
+            "[smp   ] the kernel was relocated; AP bring-up is not implemented under KASLR — running single-CPU"
+        );
+        return;
+    }
+
     if aps.is_empty() {
         crate::println!("[smp   ] no APs to bring up — running single-CPU");
         return;

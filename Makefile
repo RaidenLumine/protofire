@@ -168,6 +168,7 @@ help:
 		'  make check-perf-baseline-numa         - the same on four CPUs arranged as two NUMA nodes' \
 		'  make check-perf-baseline-net          - the same on the loopback, with no NIC and no host' \
 		'  make check-x8664-runtime              - run the headless single-CPU QEMU x86_64 demo smoke check' \
+		'  make check-x8664-kaslr-runtime        - boot a relocated kernel and check the table and the copy' \
 		'  make check-x8664-init-no-start        - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-usb-disk             - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
 		'  make check-x8664-iso                  - boot the kernel from a GRUB ISO and check the loader hand-off and its memory map' \
@@ -190,6 +191,7 @@ help:
 		'' \
 		'Builds:' \
 		'  make build-x8664                      - build the bare-metal kernel ELF (PROFILE=debug|release)' \
+		'  make build-x8664-kaslr                - the same with the KASLR relocator (a relocated boot)' \
 		'  make build                            - build the bare-metal kernel ELF (PROFILE=debug|release)' \
 		'  make iso                              - build a GRUB-bootable ISO image of the x86_64 kernel' \
 		'  make build-x8664-demo                 - build x86_64 kernel with the in-memory demo disk (shell)' \
@@ -526,7 +528,8 @@ check-abi-frozen-payload-riscv64:
 # ── Runtime gates ─────────────────────────────────────────────────────
 .PHONY: check-perf-baseline check-perf-baseline-smp check-perf-baseline-disk \
 	check-perf-baseline-numa check-perf-baseline-net \
-	check-x8664-runtime check-x8664-init-no-start check-x8664-usb-disk \
+	check-x8664-runtime check-x8664-kaslr-runtime check-x8664-init-no-start \
+	check-x8664-usb-disk \
 	check-x8664-iso check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
 	check-riscv64-nvme check-x8664-hda check-aarch64-hda check-x8664-churn \
 	check-riscv64-churn check-aarch64-runtime check-riscv64-runtime \
@@ -631,6 +634,21 @@ check-x8664-runtime:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-runtime.sh
+
+# A relocated kernel: `kernel_entry` copies the image to a base the machine's
+# memory allows and continues in the copy, patching the compiled-in
+# relocation table by the delta.  Two things make that worth a gate of its
+# own — the table has to describe the image it is compiled into (it is
+# generated, so this target regenerates and compares before it boots), and
+# the copy has to be patched everywhere the image holds an address, which is
+# not the same set as "everywhere a relocation record exists" (the fmt/alloc
+# dispatch slots in `.data` have none; the boot died at `Formatter::pad`'s
+# link-time address until the generator scanned for them).
+check-x8664-kaslr-runtime:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-kaslr-runtime.sh
 
 # The other half of the boot hand-off, and the only boot that reaches it: the
 # disk's init program reads the declarations and asks for nothing to be
@@ -825,7 +843,7 @@ check-riscv64-smp-runtime:
 # ── Builds ────────────────────────────────────────────────────────────
 .PHONY: build-x8664 build build-x8664-demo build-aarch64 \
 	build-aarch64-image build-aarch64-image-plain build-aarch64-demo \
-	build-riscv64 build-riscv64-demo gen-kaslr-relocs release iso
+	build-riscv64 build-riscv64-demo build-x8664-kaslr gen-kaslr-relocs release iso
 
 # Kernel build targets.  Ring3 ELF payload wrappers are built in-kernel
 # (src/user/demo/); where the demo volume still needs a ring3 binary that no
@@ -855,10 +873,10 @@ iso: build-x8664-demo
 	# generated from them (`tools/gen-kaslr-relocs`; `make check-kaslr-relocs`
 	# proves it) — and GRUB's multiboot2 loader refuses an ELF that still has
 	# relocations ("ELF files with relocs are not supported yet"), which is
-	# the first thing a real loader ever told this tree.  The generated table
-	# is not compiled in yet (`src/arch/x86_64/kaslr.rs` lists what enabling
-	# it needs), so the copy a loader is given is the same kernel with the
-	# relocation sections and the symbols taken off.
+	# the first thing a real loader ever told this tree.  This build does not
+	# enable `kaslr`, so the table is not compiled in here; the copy a loader
+	# is given is the same kernel with the relocation sections and the
+	# symbols taken off.
 	strip -o $(ISO_STAGE)/boot/protofire.elf \
 		$(TARGET_DIR)/x86_64-unknown-none/$(PROFILE)/$(CRATE)
 	grub-mkrescue -o $(ISO) $(ISO_STAGE)
@@ -906,17 +924,25 @@ build-riscv64:
 build-riscv64-demo:
 	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target riscv64gc-unknown-none-elf --bin $(CRATE) --features demo-disk
 
-# Rebuild KASLR relocations after the kernel is built.
-# Run `make build` twice for a fully self-consistent result:
-#   Pass 1: build with existing relocs, generate new relocs.
-#   Pass 2: rebuild with fresh relocs.
+# Regenerate the KASLR relocation table from the image that will carry it.
+#
+# The build has to be the `kaslr` one — that is the image whose sites the
+# table describes, and its relocator adds sites the plain build does not have
+# — so this builds that configuration first and generates from it.  The
+# rebuild that makes the table current is the caller's next `make
+# build-x8664-demo-kaslr` (or `make check-x8664-kaslr-runtime`, which does
+# the whole cycle and requires the result to be a fixed point: the table's
+# array has a fixed length, so a second generation equals the first —
+# measured, and that is what makes this target safe to run once).
+KASLR_FEATURES = demo-disk,kaslr
 gen-kaslr-relocs:
-	@if [ -f "$(KERNEL_ELF)" ]; then \
-		$(CARGO) run $(CARGO_FLAGS) -p gen-kaslr-relocs -- \
-			"$(KERNEL_ELF)" "$(KASLR_RELOCS)"; \
-	else \
-		echo "KASLR relocs: $(KERNEL_ELF) not found — skip gen (first build)"; \
-	fi
+	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target $(TARGET) --bin $(CRATE) --features $(KASLR_FEATURES)
+	$(CARGO) run $(CARGO_FLAGS) -p gen-kaslr-relocs -- \
+		"$(KERNEL_ELF)" "$(KASLR_RELOCS)"
+
+# The kernel the relocation table is generated from and compiled into.
+build-x8664-kaslr:
+	$(CARGO) build $(CARGO_FLAGS) $(CARGO_PROFILE_FLAG) --target $(TARGET) --bin $(CRATE) --features $(KASLR_FEATURES)
 
 # A release is the source, the artifacts, and the ability to check one against
 # the other.  This builds the four artifacts the reproducibility gate builds,

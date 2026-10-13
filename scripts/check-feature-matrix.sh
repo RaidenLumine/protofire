@@ -40,11 +40,14 @@ BASE_FEATURES="${BASE_FEATURES:-demo-disk}"
 # Features the matrix does not build, each with the reason.  A feature belongs
 # here when it is not part of a kernel build at all, and the reason has to say
 # where it is built instead.
-EXCLUDED="runtime"
+EXCLUDED="runtime kaslr"
 excluded_reason() {
     case "$1" in
         runtime)
             printf '%s' 'the standalone ring-3 runtime bridge, which the kernel build never enables (the kernel carries its own bridge); its configuration is the payload build, not this one'
+            ;;
+        kaslr)
+            printf '%s' 'a relocated boot, which needs a relocation table generated from a build that already has this feature on; `make check-x8664-kaslr-runtime` is where it is built and booted, and the matrix cannot bootstrap that fixed point'
             ;;
         *) printf '%s' 'no reason recorded' ;;
     esac

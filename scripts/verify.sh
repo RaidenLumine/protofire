@@ -54,12 +54,20 @@ check_source_headers() {
     # and a blank line must separate the whole `//!` header block from the
     # first body line (the convention requested by the maintainer).
     #
-    # "In the repository" leaves out what `.gitignore` covers: `target/` is the
-    # case this always had to skip, and a generated source file under `src/`
-    # (`make gen-kaslr-relocs` writes one) is the same case.  A file that is not
-    # added yet is still checked, because that is where a missing header is.
+    # "In the repository" leaves out what `.gitignore` covers — `target/` is
+    # the case this always had to skip — and one generated file that is
+    # tracked rather than ignored: the KASLR relocation table
+    # (`src/arch/x86_64/kaslr_relocs.generated.rs`).  It is written by
+    # `make gen-kaslr-relocs`, compiled in by the `kaslr` build, and compared
+    # against a fresh generation by `make check-x8664-kaslr-runtime`; a
+    # hand-written header is not something a generator can meaningfully carry,
+    # and the gate that keeps it honest is the comparison, not this one.  A
+    # file that is not added yet is still checked, because that is where a
+    # missing header is.
     files="$(git ls-files -z --cached --others --exclude-standard -- '*.rs' \
-        | tr '\0' '\n' | sort)"
+        | tr '\0' '\n' \
+        | grep -v -x 'src/arch/x86_64/kaslr_relocs.generated.rs' \
+        | sort)"
     for file in $files; do
         [ -f "$file" ] || continue
         total_files=$((total_files + 1))
@@ -208,6 +216,10 @@ run_p3() {
     fi
     if [ "$RUN_X86_64_RUNTIME" = "1" ]; then
         run_make_step "make check-x8664-runtime" check-x8664-runtime
+        # And the same kernel relocated: the KASLR table is generated, so
+        # this is the only gate that proves it still describes the image it
+        # is compiled into, and the only boot that runs the copy.
+        run_make_step "make check-x8664-kaslr-runtime" check-x8664-kaslr-runtime
         # The same machine with a real filesystem image on its USB disk rather
         # than a single sector: the reads fill and refill the controller's
         # rings, which is where the ring-reuse defect lived, and the boot's own

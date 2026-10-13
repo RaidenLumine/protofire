@@ -261,6 +261,12 @@ jobs:
       # ring reuse this boot exercises is a code path no other gate takes.
       - name: Boot the demo disk and type at the shell
         run: make check-x8664-runtime
+
+      # And the same kernel relocated to a base the machine chose: the
+      # relocation table is generated rather than compiled, so this is what
+      # keeps it describing the image it is built into.
+      - name: Boot the relocated kernel
+        run: make check-x8664-kaslr-runtime
         env:
           CARGO: cargo
 

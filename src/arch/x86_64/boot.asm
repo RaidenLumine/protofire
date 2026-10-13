@@ -124,15 +124,24 @@ enable_long_mode:
     ret
 
 .align 8
+.global gdt64
+.global gdt64_descriptor
 gdt64:
     .quad 0x0000000000000000
     .quad 0x00AF9A000000FFFF
     .quad 0x00AF92000000FFFF
 gdt64_end:
 
+/* The descriptor is the 10-byte form `lgdt` reads in 64-bit mode — a 2-byte
+ * limit and an 8-byte base — and it is deliberately also readable by the
+ * 32-bit `lgdt` above, which reads the first 6 bytes: the limit and the low
+ * four bytes of a base that is below 4 GiB at that point.  One layout, both
+ * modes, and the same field the relocator rewrites when it copies the image
+ * (a descriptor naming the abandoned copy is a GDTR the first segment reload
+ * after the runtime tables replace the bootstrap map would fault on). */
 gdt64_descriptor:
     .word gdt64_end - gdt64 - 1
-    .long gdt64
+    .quad gdt64
 
 .code64
 long_mode_start:
@@ -173,6 +182,13 @@ boot_pd:
     .skip 16384
 
 .align 16
+/* The boot stack is inside the image's `.bss`, so a relocated copy carries
+   one of its own; `boot_stack_top` is global for the relocator, which has to
+   move `rsp` into the new copy before control leaves the old one — after the
+   runtime page tables replace the bootstrap map, the old copy's pages are no
+   longer mapped (see `src/arch/x86_64/kaslr.rs`). */
+.global boot_stack_bottom
+.global boot_stack_top
 boot_stack_bottom:
     .skip 65536
 boot_stack_top:

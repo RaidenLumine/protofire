@@ -31,6 +31,22 @@ const R_X86_64_32S: u32 = 11; // S + A (32-bit signed)
 /// Everything below this is firmware / bootstrap data.
 const KERNEL_VADDR_MIN: u64 = 0x200000;
 
+/// The array's length in the generated file, whatever the entry count is.
+///
+/// It is fixed so that the table's *size* does not depend on how many entries
+/// it holds, and that is what makes a KASLR build reach a fixed point in two
+/// passes.  The table is compiled in, so compiling it moves every site that
+/// comes after it in the image; if the array's length changed with the count
+/// — and compiling the table in changes the count, because the code that
+/// reads the table has address relocations of its own — every pass would move
+/// the sites, the next table would describe the previous layout, and no pass
+/// would ever describe the image that carries it.  With a fixed length the
+/// layout is stable from the first pass that compiles the table in, and the
+/// second pass's table describes the image it is compiled into.  Unused slots
+/// are `(0, 0, 0)` and are never applied (`KASLR_RELOCATION_COUNT` bounds the
+/// loop).
+const RELOCATION_CAPACITY: usize = 40000;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 struct Elf64Ehdr {
@@ -741,6 +757,110 @@ fn main() -> io::Result<()> {
         }
     }
 
+    // ── Pointers the linker resolved without leaving a record ──────────
+    // The copy has to be patched everywhere the loaded image holds an
+    // address, and "everywhere" is not the same set as "everywhere a
+    // relocation record exists": a `.data` dispatch slot the linker resolved
+    // to a code address can have no record in any `.rela.*` section
+    // (measured: the fmt/alloc dispatch slots, called through with `call
+    // *0x603078(%rip)` — forty-eight code pointers, and not one `.rela.data`
+    // record among them).  A table built only from records leaves those
+    // naming the abandoned image, and the first indirect call through one
+    // faults at the link-time address — measured, with a reclaimed IP of
+    // `Formatter::pad` before any shell.
+    //
+    // So the proven records are the table's spine and this scan is its
+    // complement: every aligned pointer-sized value in an allocated,
+    // **writable** section (`.data`; `.bss` is NOBITS and holds nothing to
+    // scan) that lands inside a section marked executable and is not already
+    // covered by a proven record.  The range test is what keeps it honest —
+    // a `.data` word that names code is a code pointer on this image, which
+    // has no ASLR-independent encodings — and each addition is counted and
+    // named so the gate's log shows exactly what the scan added.
+    let mut scanned = 0usize;
+    {
+        use std::collections::HashSet;
+        let mut covered: HashSet<u64> = HashSet::new();
+        for &(offset, _, r_type) in &validated {
+            let width: u64 = if r_type == R_X86_64_64 { 8 } else { 4 };
+            for byte in 0..width {
+                covered.insert(offset + byte);
+            }
+        }
+
+        let mut executable: Vec<(u64, u64)> = Vec::new();
+        let mut writable_data: Vec<(u64, u64, u64, u64)> = Vec::new();
+        for i in 0..shdr_count {
+            let shdr = read_shdr(&data, (shdr_off + i * shdr_entsize) as u64)
+                .expect("invalid section header");
+            const SHF_WRITE: u64 = 0x1;
+            const SHF_ALLOC: u64 = 0x2;
+            const SHF_EXECINSTR: u64 = 0x4;
+            if shdr.sh_flags & SHF_ALLOC == 0 || shdr.sh_type != 1 {
+                continue;
+            }
+            if shdr.sh_flags & SHF_EXECINSTR != 0 {
+                executable.push((shdr.sh_addr, shdr.sh_addr + shdr.sh_size));
+            } else if shdr.sh_flags & SHF_WRITE != 0 {
+                writable_data.push((
+                    shdr.sh_addr,
+                    shdr.sh_offset,
+                    shdr.sh_size,
+                    shdr.sh_addralign,
+                ));
+            }
+        }
+
+        for &(addr, offset, size, _) in &writable_data {
+            let mut at = 0u64;
+            while at + 8 <= size {
+                let site = addr + at;
+                // Aligned, inside the kernel, and not already an entry.
+                if site.is_multiple_of(8)
+                    && site >= KERNEL_VADDR_MIN
+                    && site <= valid_end
+                    && !covered.contains(&site)
+                {
+                    let file_at = (offset + at) as usize;
+                    if file_at + 8 <= data.len() {
+                        let value =
+                            u64::from_le_bytes(data[file_at..file_at + 8].try_into().unwrap());
+                        if executable
+                            .iter()
+                            .any(|&(start, end)| start <= value && value < end)
+                        {
+                            scanned += 1;
+                            if explain && scanned <= 20 {
+                                eprintln!(
+                                    "  scanned pointer: site={:#x} -> code {:#x}",
+                                    site, value
+                                );
+                            }
+                            validated.push((site, 0, R_X86_64_64));
+                        }
+                    }
+                }
+                at += 8;
+            }
+        }
+    }
+    let total = validated.len();
+    eprintln!(
+        "scanned: {} absolute pointer(s) with no relocation record in writable data",
+        scanned
+    );
+
+    // The generated array has a fixed length; a count past it is a table the
+    // tool cannot represent, and silently writing a shorter one would be the
+    // same class of loss this file exists to prevent.
+    if total > RELOCATION_CAPACITY {
+        eprintln!(
+            "error: {} entries do not fit the table's fixed capacity of {}; raise RELOCATION_CAPACITY",
+            total, RELOCATION_CAPACITY
+        );
+        std::process::exit(1);
+    }
+
     // Sort by offset for reliable processing.
     validated.sort_by_key(|&(offset, _, _)| offset);
 
@@ -750,6 +870,11 @@ fn main() -> io::Result<()> {
     writeln!(out, "// Auto-generated by gen-kaslr-relocs — DO NOT EDIT")?;
     writeln!(out, "// Source ELF: {}", elf_path)?;
     writeln!(out, "// Total entries: {}", total)?;
+    writeln!(
+        out,
+        "// Capacity: {} (fixed, so compiling the table in does not move the sites after it)",
+        RELOCATION_CAPACITY
+    )?;
     writeln!(out)?;
     writeln!(
         out,
@@ -767,8 +892,16 @@ fn main() -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "pub(crate) const KASLR_RELOCATIONS: [(usize, isize, u8); {}] = [",
-        total
+        "/// The first KASLR_RELOCATION_COUNT are real; the rest are padding."
+    )?;
+    // A `static` rather than a `const`: the table is a megabyte by the time
+    // it is padded to the fixed capacity, and `const` would have the compiler
+    // inline a value that large at its one use.  The table holds offsets
+    // relative to the kernel's start, so it needs no relocation of its own.
+    writeln!(
+        out,
+        "pub(crate) static KASLR_RELOCATIONS: [(usize, isize, u8); {}] = [",
+        RELOCATION_CAPACITY
     )?;
 
     let kernel_base = KERNEL_VADDR_MIN;
@@ -776,6 +909,9 @@ fn main() -> io::Result<()> {
         let rela_off = offset - kernel_base;
         let width: u8 = if r_type == R_X86_64_64 { 8 } else { 4 };
         writeln!(out, "    ({:#x}, {}, {}),", rela_off, addend, width)?;
+    }
+    for _ in total..RELOCATION_CAPACITY {
+        writeln!(out, "    (0, 0, 0),")?;
     }
 
     writeln!(out, "];")?;
