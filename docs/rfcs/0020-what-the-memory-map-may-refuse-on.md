@@ -258,23 +258,52 @@ device-tree machines' input now arrives by interrupt.
   forward here): a frame table over the usable entries, those regions mapped
   into the kernel's window, and the image reserved out of them.  The argument
   for it would be a measurement.
-- **RAM above 4 GiB, and the width of a device's address**: a frame above the
-  first 4 GiB is memory a 32-bit DMA engine cannot reach, which is a
-  bounce-buffer decision or an IOMMU one, and neither exists here.  What the
-  first measurement of a bigger machine found is one layer below this
-  question: the PC could not *boot* on RAM above 1 GiB at all.  The firmware
-  moves its ACPI tables above the first gigabyte once there is more RAM
-  (measured on `q35`: the RSDT is at 0x3ffe2351 with 1 GiB, 0x7ffe2351 with
-  2 GiB), the boot parses RSDT → MADT → SRAT/SLIT before the runtime page
-  tables exist, and the bootstrap identity map covered exactly 1 GiB — so the
-  first table entry faulted before the console had said anything else.  Every
-  gate booted 1 GiB, so no check had ever met the shape.  The bootstrap map
-  is four gigabytes now (`BOOTSTRAP_IDENTITY_MAP_LENGTH`) and
-  `check-x8664-runtime` boots 2 GiB as a segment of its own; what remains of
-  *this* question is the DMA width — where a device's reachable window ends,
-  and what a frame outside it costs.  That measurement wants a device that can
-  be told where to DMA (a queue's base register, not a polled register file),
-  and the frame pool's own span is what it would be measured against.
+- **RAM above 4 GiB, and the width of a device's address**: measured, and
+  latent rather than live.  **No frame the allocator can hand out is above
+  the first 4 GiB**, and the reason is structural: the pool is the kernel's
+  own reserved span, placed by the linker right after the image, and the
+  runtime tables identity-map the kernel's own windows — so the pool's
+  address does not move when the machine's RAM grows.  Measured with **one
+  binary** on `q35` at 1 GiB, 2 GiB, 8 GiB and 16 GiB: `the pool is
+  [0x489b000, 0x2489b000)` in all four boots.  (Across *builds* the address
+  drifts by the image's size — the 2 GiB boot two commits earlier read
+  `0x4898000` — which is the linker moving `__pool_end`, not the machine; a
+  reader comparing two logs should expect that.)  The device-tree machines
+  are the same shape: at 16 GiB the pool is `[0x45800000, 0x65800000)` on
+  aarch64's `virt` and `[0x85600000, 0xa5600000)` on riscv64's, each right
+  after its image.  Every one of those ends below the 4 GiB a 32-bit engine
+  can name, so there is nothing to bounce today, and no code should pretend
+  otherwise.
+  The question becomes live with the *first* item above, and only with it:
+  frames taken from the machine's regions can land anywhere the machine put
+  RAM, and that is the change that has to decide what a high frame costs.  A
+  board whose loader puts the *kernel* above the window its runtime tables
+  identity-map hits a different bound first, and this machine names it: the
+  static x86_64 tables cover the first gigabyte
+  (`STATIC_KERNEL_TABLES_END`), the device-tree machines map their 1 GiB RAM
+  windows, and `pool_is_addressable_by_a_device` refuses a boot whose pool
+  does not fit, with the range in the message.
+  When the frame-table change lands, the width to honour is **per device**,
+  not one bound for all of them: every device this tree drives writes a
+  64-bit address — NVMe PRP entries (`set_prp1`, and the pair `run_prp`
+  builds as `u64`), virtio's descriptor layout (`drivers/virtio.rs`),
+  xHCI's TRBs (`Trb::link` takes a `u64` in `xhci_protocol.rs`, and the
+  runtime registers go through `reg_write64_lo_hi`), HDA's CORB/RIRB/BDL
+  base registers (written as low and high halves — `HDA_CORBLBASE` beside
+  `HDA_CORBUBASE`, `HDA_SDBDPL` beside `HDA_SDBDPU`) — so a 32-bit-only
+  device would be the trigger, and the
+  allocator would need a per-request reachability the way it has a per-node
+  one.  What the first measurement of a bigger machine *did* find is one
+  layer below this question: the PC could not boot on RAM above 1 GiB at all.
+  The firmware moves its ACPI tables above the first gigabyte once there is
+  more RAM (measured on `q35`: the RSDT is at 0x3ffe2351 with 1 GiB,
+  0x7ffe2351 with 2 GiB), the boot parses RSDT → MADT → SRAT/SLIT before the
+  runtime page tables exist, and the bootstrap identity map covered exactly
+  1 GiB — so the first table entry faulted before the console had said
+  anything else.  Every gate booted 1 GiB, so no check had ever met the
+  shape.  The bootstrap map is four gigabytes now
+  (`BOOTSTRAP_IDENTITY_MAP_LENGTH`) and `check-x8664-runtime` boots 2 GiB as
+  a segment of its own.
 - **The pool's size per target, and where it sits**: answered by measurement.
   The pool was a 512 MiB array in `.bss` that the boot cleared, and the clear
   is what a small machine died of: asked for a smaller RAM than the image
