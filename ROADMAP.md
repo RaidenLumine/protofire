@@ -122,15 +122,19 @@ The authoritative picture of what exists today is
      `--emit-relocs` keeps for KASLR (GRUB refuses an ELF with relocs), and
      x86_64 had never recorded the loader's info block, so its tag walk — the
      memory map and ACPI's RSDP alike — had always read address 0.  What is
-     left is the recipe for writing the image to a stick.  The console
-     question is answered on this path: the Multiboot2 header asks the loader
-     for a framebuffer (header tag 5), GRUB sets a graphical mode and hands
-     the frame over, and the boot installs its console on it — which works
-     on a machine with no serial port and no display device this kernel can
-     probe, because the loader is what knows where the frame is.  The tag
-     was missing until a measurement showed the path had never run: without
-     it GRUB keeps EGA text and the kernel drew on its own PCI-probed
-     display instead, which a machine with no such device does not have.
+     left is what a machine does with the stick *after* it boots, which is
+     the next item's work.  The console question is answered on this path:
+     the Multiboot2 header asks the loader for a framebuffer (header tag 5),
+     GRUB sets a graphical mode and hands the frame over, and the boot
+     installs its console on it — which works on a machine with no serial
+     port and no display device this kernel can probe, because the loader is
+     what knows where the frame is.  (The tag was missing until a
+     measurement showed the path had never run: without it GRUB keeps EGA
+     text and the kernel drew on its own PCI-probed display instead, which a
+     machine with no such device does not have.)  The recipe for writing the
+     image to a stick is in the README next to `make iso`: the image is a
+     hybrid, so the same file burns to a CD and writes to a USB stick with
+     `dd`.
   2. **The disk.**  A machine's disk is the one its installer made, and that
      is a **GPT** — the tree parsed MBR only, so a real volume was a disk the
      kernel half-believed: a protective MBR's one entry became the system

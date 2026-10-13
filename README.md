@@ -88,6 +88,27 @@ needed by `make iso`, which builds a GRUB-bootable ISO image and by
 `make check-x8664-iso`, which boots it — the one boot in the tree that goes
 through a real loader rather than QEMU's own hand-off.
 
+`make iso` writes `target/protofire.iso`, and that image is what a machine
+with no QEMU underneath it boots: it is a hybrid (an ISO 9660 filesystem
+with an MBR/GPT partition table and an EFI system partition), so the same
+file can be burnt to a CD, mounted as a virtual DVD, or **written to a USB
+stick**.  For a stick:
+
+```sh
+make iso
+lsblk                      # find the stick's device — /dev/sdX or /dev/nvmeX
+sudo dd if=target/protofire.iso of=/dev/sdX bs=4M status=progress oflag=sync
+```
+
+`/dev/sdX` is the whole stick, not a partition on it (`/dev/sdX1` would
+overwrite that partition and leave the stick unbootable); `dd` destroys
+whatever is there, so check the name from `lsblk` first.  A machine that
+boots the stick shows the kernel's console on the display — the image's
+Multiboot2 header asks the loader for a framebuffer, so GRUB sets a
+graphical mode and the kernel draws on the frame it was handed, and no
+serial port is needed to see or to use the shell (a machine's PS/2 keyboard
+is the input the kernel expects).
+
 ### Host requirements
 
 The checks and the bare-metal builds are host-independent: the demo disk is
