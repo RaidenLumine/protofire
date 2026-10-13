@@ -11,8 +11,16 @@ use std::env;
 /// banner has to say something either way.  The identity is what tells a
 /// serial log which commit produced the image it is showing, and the `-dirty`
 /// suffix is what marks a build made from a tree with uncommitted changes.
+///
+/// Printable ASCII only: the banner embeds the value, and `src/arch/entry.rs`
+/// places it in a fixed-width array whose width is a *layout* fact (see the
+/// note there — the KASLR relocation table describes one layout, and an id
+/// that changed length when the tree went dirty moved every site in it).
+/// Non-ASCII bytes are not expected in a git description; this is the belt
+/// for the tarball and tag cases, and it is what lets the source side treat
+/// any byte prefix as valid text.
 fn build_id() -> String {
-    std::process::Command::new("git")
+    let raw = std::process::Command::new("git")
         .args(["describe", "--always", "--dirty"])
         .output()
         .ok()
@@ -20,7 +28,11 @@ fn build_id() -> String {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|text| text.trim().to_string())
         .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| String::from("unknown"))
+        .unwrap_or_else(|| String::from("unknown"));
+
+    raw.chars()
+        .map(|ch| if ch.is_ascii_graphic() { ch } else { '?' })
+        .collect()
 }
 
 fn main() {

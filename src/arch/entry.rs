@@ -143,7 +143,46 @@ fn boot_kernel(boot_info: arch::boot::BootInfo) -> ! {
     kernel.run();
 }
 
+/// How many bytes the banner's identity field occupies, always.
+///
+/// This is a layout fact rather than a formatting preference: the identity is
+/// embedded in the image, and the KASLR relocation table describes exactly
+/// one layout.  A value whose *length* moved with build state — `git describe
+/// --dirty` adds six bytes whenever the tree has uncommitted changes, which
+/// is the state a table is generated in — made a clean checkout of the same
+/// sources build a different layout than the table described; measured,
+/// `make check-x8664-kaslr-runtime` reported `the relocation table is stale`
+/// on a clean tree for that reason.  Fixing the width here, in the source,
+/// is what makes the value's content free (a hash, `-dirty`, a tag) and the
+/// layout fixed.  The padding cannot come from `build.rs`: Cargo trims
+/// trailing spaces from a build script's `rustc-env` value (also measured,
+/// when the padding was done there).
+const BUILD_ID_WIDTH: usize = 16;
+
+/// The build identity, truncated or space-padded to [`BUILD_ID_WIDTH`].
+///
+/// A `const fn` rather than a literal so the width is applied in one place:
+/// `build.rs` emits printable ASCII of any length, and this is what turns it
+/// into bytes of exactly one length.  The array type is the guarantee — a
+/// width that stopped being 16 would fail to compile at the assignment below.
+const fn fixed_width_id(raw: &str) -> [u8; BUILD_ID_WIDTH] {
+    let mut id = [b' '; BUILD_ID_WIDTH];
+    let bytes = raw.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() && index < BUILD_ID_WIDTH {
+        id[index] = bytes[index];
+        index += 1;
+    }
+    id
+}
+
+const BUILD_ID: [u8; BUILD_ID_WIDTH] = fixed_width_id(env!("PROTOFIRE_BUILD_ID"));
+
 fn print_banner() {
+    // The field is ASCII by `build.rs`'s construction; the fallback exists
+    // because `from_utf8` is the checked conversion and a panic is not worth
+    // it for a banner.
+    let build_id = core::str::from_utf8(&BUILD_ID).unwrap_or("unknown");
     println!(
         "{} v{} [{} | {}] {}",
         env!("CARGO_PKG_NAME"),
@@ -154,7 +193,9 @@ fn print_banner() {
         } else {
             "release"
         },
-        env!("PROTOFIRE_BUILD_ID"),
+        // The padding is layout, not text: trimming it here keeps a log line
+        // from ending in spaces a reader cannot see.
+        build_id.trim_end(),
     );
     println!("Protofire kernel prototype starting");
 }
