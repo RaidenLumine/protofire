@@ -268,6 +268,9 @@ run_p3() {
         # The AIA machine: the only boot that reaches the IMSIC, which is what
         # receives MSIs.  The PLIC machine above never touches that path.
         run_make_step "make check-riscv64-aia-runtime" check-riscv64-aia-runtime
+        # And the machine where the APLIC has no IMSIC behind it: it used to
+        # fault in a PLIC write at boot, and no gate booted it.
+        run_make_step "make check-riscv64-aplic-direct-runtime" check-riscv64-aplic-direct-runtime
         # And the machine's PCIe window, which the device-tree parser used to
         # settle when it read `reg` — before `compatible` said the node *was* a
         # host bridge.  No boot had a PCIe device on the bus to notice.

@@ -108,7 +108,11 @@ identity 10 (`src/arch/riscv64/aplic.rs`).  A machine whose arm could not
 happen keeps the tick's poll rather than lose the input: the device-tree
 machines answer `serial::rx_is_interrupt_driven` from the outcome, so a console
 that could not be claimed or armed is polled
-(`src/kernel/process/scheduler/timer.rs`) instead of silently deaf.
+(`src/kernel/process/scheduler/timer.rs`) instead of silently deaf.  That
+includes a **direct-mode** APLIC machine (`aia=aplic`, no IMSIC behind the
+domain): its console's line is refused with the reason, the tick's poll carries
+the bytes, and `make check-riscv64-aplic-direct-runtime` types at the resulting
+shell.
 The PS/2 keyboard and mouse are PC
 hardware; a device-tree machine uses `virtio-input`, whose events are injected
 into the same keyboard core so both routes end in one decoder.  That driver's

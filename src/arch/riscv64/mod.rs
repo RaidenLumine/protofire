@@ -261,6 +261,40 @@ pub mod interrupt_controller {
         }
     }
 
+    /// The controller of a machine whose APLIC is in **direct mode** (no
+    /// IMSIC behind it, `-machine virt,aia=aplic`).
+    ///
+    /// Every method is a no-op, and that is the point.  The machine has no
+    /// PLIC, so the PLIC's fallback addresses name no device — measured, the
+    /// boot used to reach `PlicController::init` anyway and die in a store
+    /// access fault at `0xc201000`, the per-context threshold write.  This
+    /// driver does not implement direct mode's own claim path (the supervisor
+    /// APLIC's `topi`/`claimi` registers) either, so what the boot gets
+    /// instead is a machine that runs with wire interrupts undriven: no
+    /// source is enabled and `init` never sets SEIE, so no external interrupt
+    /// can arrive and the claim path cannot run; the console keeps the tick's
+    /// poll ([`super::serial::enable_rx_interrupt`] reports it), and PCI
+    /// MSI-X programming already refuses without an IMSIC
+    /// (`super::pci::program_msix_functions` answers `NotImplemented`).
+    pub static DIRECT_MODE_CONTROLLER: DirectModeController = DirectModeController;
+
+    /// The singleton behind [`DIRECT_MODE_CONTROLLER`].
+    pub struct DirectModeController;
+
+    impl InterruptController for DirectModeController {
+        fn init(&self) {
+            crate::println!(
+                "[irq   ] this machine's APLIC is in direct mode (no IMSIC behind it); wire interrupts are not driven"
+            );
+        }
+
+        fn end_of_interrupt(&self, _interrupt_id: u32) {}
+
+        fn enable_interrupt(&self, _interrupt_id: u32) {}
+
+        fn set_priority(&self, _interrupt_id: u32, _priority: u8) {}
+    }
+
     /// Route an external interrupt to a single target hart.
     ///
     /// The PLIC only forwards an interrupt to a context that has its enable
@@ -493,6 +527,19 @@ pub mod serial {
         if claimed.is_err() {
             crate::println!(
                 "[serial] console UART interrupt {} could not be claimed; the tick will poll it",
+                interrupt_id
+            );
+            return;
+        }
+
+        // A direct-mode APLIC is not a delivery path this kernel drives, and
+        // its machines have no PLIC either: the PLIC branch below would write
+        // addresses no device answers (measured, a store access fault at
+        // 0xc201000).  Say so and keep the poll, the same answer a refused
+        // claim gets.
+        if super::aplic::is_direct_mode() {
+            crate::println!(
+                "[serial] console UART interrupt {} could not be delivered (the APLIC is in direct mode); the tick will poll it",
                 interrupt_id
             );
             return;

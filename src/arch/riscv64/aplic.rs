@@ -99,6 +99,22 @@ pub fn aplic_base() -> Option<usize> {
     crate::arch::fdt::platform_info().aplic_base
 }
 
+/// Whether this machine's wires are an APLIC with **no IMSIC behind it**
+/// (`-machine virt,aia=aplic`): the direct-delivery mode.
+///
+/// Direct mode is a different delivery path — a source is claimed through the
+/// domain's own `topi`/`claimi` registers, not "turned into a message" — and
+/// this driver does not implement it.  What it must not do is let the machine
+/// fall back onto PLIC addresses on a board that has no PLIC: measured on
+/// QEMU 10.2.1 with `aia=aplic`, the boot reached the PLIC controller anyway,
+/// wrote its per-context threshold at `0xc201000` (the fallback base
+/// `0xc000_0000` plus the PLIC's own offsets, an address no device answers
+/// on this machine), and died in a store access fault before the console had
+/// done anything but start.  The machines are told apart here, once.
+pub fn is_direct_mode() -> bool {
+    aplic_base().is_some() && !super::aia_imsic::has_aia_imsic()
+}
+
 /// Arm `source` so its line is delivered as an MSI carrying identity
 /// `source`, received by hart `hart_index`'s IMSIC file.
 ///

@@ -130,6 +130,19 @@ machine, the machine-level APLIC's register block (the kernel programs the
 supervisor domain at 0xd000_0000; the PLIC fallback address sits in the
 machine-level window at 0xc000_0000).
 
+A machine can have an APLIC and **no IMSIC behind it**
+(`-machine virt,aia=aplic`): the domain delivers by its own `topi`/`claimi`
+registers, a path this kernel does not drive, and there is no PLIC to catch
+the wires either.  The controller selection has to know that shape rather
+than fall back: falling back to the PLIC wrote its per-context threshold into
+a window no device answers and faulted the boot (measured, `0xc201000`).
+`aplic::is_direct_mode()` is the discriminator, a direct-mode controller
+replaces the PLIC's, the console's line is refused with its reason and keeps
+the tick's poll, and `make check-riscv64-aplic-direct-runtime` boots the
+machine to a typed shell.  Driving direct mode is open work; what is decided
+is that a machine this kernel cannot deliver interrupts on says so instead of
+dying in a register write.
+
 ## Message-signalled interrupts
 
 A device that signals by writing a message needs three things, and this tree

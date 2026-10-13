@@ -182,6 +182,7 @@ help:
 		'  make check-aarch64-runtime            - run the headless QEMU virt aarch64 fault/wait smoke check' \
 		'  make check-riscv64-runtime            - run the headless QEMU virt riscv64 demo smoke check' \
 		'  make check-riscv64-aia-runtime        - boot riscv64 on the AIA machine and check the IMSIC' \
+		'  make check-riscv64-aplic-direct-runtime - boot the APLIC direct-mode machine and check it lives' \
 		'  make check-riscv64-pci-runtime        - boot riscv64 with a PCIe device and check the device-tree walk' \
 		'  make check-smp-runtime                - run the headless QEMU x86_64 SMP smoke check (SMP, default 4)' \
 		'  make check-aarch64-smp-runtime        - boot aarch64 on several CPUs and check they come up (SMP, default 4)' \
@@ -529,7 +530,8 @@ check-abi-frozen-payload-riscv64:
 	check-x8664-iso check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
 	check-riscv64-nvme check-x8664-hda check-aarch64-hda check-x8664-churn \
 	check-riscv64-churn check-aarch64-runtime check-riscv64-runtime \
-	check-riscv64-aia-runtime check-riscv64-pci-runtime \
+	check-riscv64-aia-runtime check-riscv64-aplic-direct-runtime \
+	check-riscv64-pci-runtime \
 	check-smp-runtime check-aarch64-smp-runtime \
 	check-riscv64-smp-runtime
 
@@ -765,6 +767,19 @@ check-riscv64-aia-runtime:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-riscv64-aia-runtime.sh
+
+# And the third RISCV machine, where the APLIC has no IMSIC behind it: the
+# domain delivers by its own registers and this kernel does not drive that
+# mode.  It used to do worse than not drive it — the controller fell back to
+# the PLIC, whose fallback addresses are backed by no device there, and the
+# boot died in a store access fault before the shell.  This boot asserts the
+# machine is recognised, the console's line is refused with its reason, and
+# the demo still reaches a typed shell over the tick's poll.
+check-riscv64-aplic-direct-runtime:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-riscv64-aplic-direct-runtime.sh
 
 # Boot riscv64 with a PCIe device attached and check the device-tree walk.
 # The window the device tree describes was never reached — the parser settled

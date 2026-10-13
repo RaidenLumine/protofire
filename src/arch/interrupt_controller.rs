@@ -68,10 +68,17 @@ fn controller() -> &'static dyn InterruptController {
 
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 fn controller() -> &'static dyn InterruptController {
-    // With AIA enabled the IMSIC is the MSI receiver; without it the PLIC
-    // remains the external-interrupt source.
+    // With AIA enabled the IMSIC is the MSI receiver; without an IMSIC the
+    // machine is either a PLIC machine or an APLIC in direct mode.  The two
+    // look nothing alike on the wire: a PLIC machine answers at the PLIC
+    // offsets, and a direct-mode APLIC machine has no PLIC at all — falling
+    // back to the PLIC addresses there writes into a window no device
+    // answers (measured: a store access fault at 0xc201000).  Direct mode is
+    // not driven; its controller says so and keeps every wire undriven.
     if riscv64::aia_imsic::has_aia_imsic() {
         &riscv64::aia_imsic::IMSIC_CONTROLLER
+    } else if riscv64::aplic::is_direct_mode() {
+        &riscv64::interrupt_controller::DIRECT_MODE_CONTROLLER
     } else {
         &riscv64::interrupt_controller::PLIC_CONTROLLER
     }

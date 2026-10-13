@@ -309,6 +309,9 @@ jobs:
       - name: Boot RISC-V with the AIA interrupt controller
         run: make check-riscv64-aia-runtime
 
+      - name: APLIC direct mode
+        run: make check-riscv64-aplic-direct-runtime
+
       # And with a PCIe device on the bus: the window the device tree
       # describes is only reached if the walk runs, and nothing else boots a
       # machine that has one.
