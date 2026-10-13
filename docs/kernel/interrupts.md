@@ -200,7 +200,9 @@ machine refuses or never programs — a GICv2 with no ITS, a PLIC machine with
 no IMSIC — polls instead, and says so at probe time.  What still polls on
 every boot is HDA, whose controller has no MSI-X at all (QEMU's `intel-hda`
 offers classic MSI, which this tree does not compose) and which asks the
-platform for a register window and claims nothing.
+platform for a register window and claims nothing
+([RFC 0024](../rfcs/0024-what-the-hda-controller-signals-with.md) is the
+decision and names what would change it).
 
 One subtlety a device that *consults* the capability introduces: the claim
 enables MSI-X **with the function mask set** (the same order Linux arrives at

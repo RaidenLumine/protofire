@@ -66,8 +66,9 @@ The authoritative picture of what exists today is
   so the class that has to be woken is exercised through the ITS.  HDA is
   the one class left, and it is left for a measured reason: its controller
   has no MSI-X at all (QEMU's `intel-hda` offers classic MSI, which this
-  tree does not compose), so unlike NVMe it cannot use the claim path at
-  all.
+  tree does not compose), so unlike NVMe it cannot use the claim path —
+  [RFC 0024](docs/rfcs/0024-what-the-hda-controller-signals-with.md)
+  decides it and names what would change it.
   [RFC 0001](docs/rfcs/0001-spread-message-signalled-interrupts.md) is the
   design the placement follows.
 - **USB host (xHCI) completion.** Storage and HID work end to end, and a
