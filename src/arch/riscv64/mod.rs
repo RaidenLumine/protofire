@@ -264,18 +264,17 @@ pub mod interrupt_controller {
     /// The controller of a machine whose APLIC is in **direct mode** (no
     /// IMSIC behind it, `-machine virt,aia=aplic`).
     ///
-    /// Every method is a no-op, and that is the point.  The machine has no
-    /// PLIC, so the PLIC's fallback addresses name no device — measured, the
-    /// boot used to reach `PlicController::init` anyway and die in a store
-    /// access fault at `0xc201000`, the per-context threshold write.  This
-    /// driver does not implement direct mode's own claim path (the supervisor
-    /// APLIC's `topi`/`claimi` registers) either, so what the boot gets
-    /// instead is a machine that runs with wire interrupts undriven: no
-    /// source is enabled and `init` never sets SEIE, so no external interrupt
-    /// can arrive and the claim path cannot run; the console keeps the tick's
-    /// poll ([`super::serial::enable_rx_interrupt`] reports it), and PCI
-    /// MSI-X programming already refuses without an IMSIC
-    /// (`super::pci::program_msix_functions` answers `NotImplemented`).
+    /// Its wire sources are driven — `enable_rx_interrupt` arms the console's
+    /// line in the domain and the trap claims through `claimi` — but none of
+    /// that goes through this trait: a direct-mode domain has no per-source
+    /// enable bits to rewrite and no message to complete, so the per-hart
+    /// `idelivery` switch and the domain's own claim register are the
+    /// driver's (`super::aplic`), not the controller interface's.  What this
+    /// object therefore owns is the *absence* of a PLIC on the machine: every
+    /// PLIC-shaped operation here is a no-op rather than a write into a
+    /// window no device answers (measured on the fallback path: a store
+    /// access fault at `0xc201000`), and `init` says which machine this is so
+    /// a log records the choice.
     pub static DIRECT_MODE_CONTROLLER: DirectModeController = DirectModeController;
 
     /// The singleton behind [`DIRECT_MODE_CONTROLLER`].
@@ -284,8 +283,24 @@ pub mod interrupt_controller {
     impl InterruptController for DirectModeController {
         fn init(&self) {
             crate::println!(
-                "[irq   ] this machine's APLIC is in direct mode (no IMSIC behind it); wire interrupts are not driven"
+                "[irq   ] this machine's APLIC is in direct mode (no IMSIC behind it); wire sources are claimed through the domain's own claimi register"
             );
+            // The domain raises this hart's supervisor *external* interrupt,
+            // so a hart that never set SEIE never sees a wire — the same
+            // lever the PLIC path pulls in its own `init`, and the reason the
+            // refusal this machine used to get left it livable: no SEIE, no
+            // external trap, no claim path to run.
+            //
+            // SAFETY: `csrs sie` sets this hart's own supervisor external
+            // interrupt bit; the register form is used because bit 9 is past
+            // `csrsi`'s immediate range.
+            unsafe {
+                core::arch::asm!(
+                    "csrs sie, {seie}",
+                    seie = in(reg) 1u64 << 9,
+                    options(nomem, nostack, preserves_flags)
+                );
+            }
         }
 
         fn end_of_interrupt(&self, _interrupt_id: u32) {}
@@ -532,16 +547,24 @@ pub mod serial {
             return;
         }
 
-        // A direct-mode APLIC is not a delivery path this kernel drives, and
-        // its machines have no PLIC either: the PLIC branch below would write
-        // addresses no device answers (measured, a store access fault at
-        // 0xc201000).  Say so and keep the poll, the same answer a refused
-        // claim gets.
+        // A direct-mode APLIC (`aia=aplic`, no IMSIC behind the domain) has
+        // no PLIC either, so this is a third delivery path rather than a
+        // fallback: the source is armed in the domain for this hart's own
+        // delivery window, and the trap claims it by reading that window's
+        // `claimi` register (see `super::aplic::claim_direct`).  The UART's
+        // mask goes last, once the machine's half has taken.
         if super::aplic::is_direct_mode() {
-            crate::println!(
-                "[serial] console UART interrupt {} could not be delivered (the APLIC is in direct mode); the tick will poll it",
-                interrupt_id
-            );
+            let hart_index = crate::kernel::percpu::get().cpu_id;
+            if let Err(error) = super::aplic::arm_source_direct(interrupt_id, hart_index) {
+                crate::println!(
+                    "[serial] console UART interrupt {} could not be armed for direct delivery; the tick will poll it ({})",
+                    interrupt_id,
+                    error.as_str()
+                );
+                return;
+            }
+            SERIAL0.lock().enable_rx_interrupt();
+            RX_INTERRUPT_ARMED.store(true, Ordering::Release);
             return;
         }
 

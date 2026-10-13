@@ -392,6 +392,35 @@ fn handle_interrupt(frame: &mut TrapFrame) {
                     }
                     advance_past_idle_wfi(frame);
                 }
+            } else if super::aplic::is_direct_mode() {
+                // A direct-mode APLIC: the domain raises this hart's
+                // supervisor external interrupt and the hart claims the
+                // source by *reading* its own `claimi` register — there is no
+                // PLIC window on this machine and no message composed either.
+                // The read is the claim; a level-high source whose input is
+                // still asserted is re-pended by the domain itself, so the
+                // handler's drain is what lowers the line.
+                let hart_index = crate::kernel::percpu::get().cpu_id;
+                let claim = super::aplic::claim_direct(hart_index);
+                if claim != 0 {
+                    crate::kernel::irq_stats::record_irq(claim);
+                    let tick = super::timer::prepare_interrupt(claim);
+                    if let Some(ticks) = tick {
+                        let preempted = crate::kernel::process::on_timer_tick(ticks);
+                        let _ = preempted;
+                    }
+
+                    // The source number is the identity, the same shape the
+                    // PLIC and IMSIC paths dispatch by.
+                    if !crate::arch::irq_handlers::dispatch(
+                        super::interrupt_controller::PLIC_HANDLER_BASE,
+                        claim,
+                    ) {
+                        crate::kernel::irq_stats::record_spurious();
+                    }
+
+                    advance_past_idle_wfi(frame);
+                }
             } else {
                 // PLIC external interrupt.
                 let claim = super::interrupt_controller::claim_interrupt();

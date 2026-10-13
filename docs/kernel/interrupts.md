@@ -131,17 +131,33 @@ supervisor domain at 0xd000_0000; the PLIC fallback address sits in the
 machine-level window at 0xc000_0000).
 
 A machine can have an APLIC and **no IMSIC behind it**
-(`-machine virt,aia=aplic`): the domain delivers by its own `topi`/`claimi`
-registers, a path this kernel does not drive, and there is no PLIC to catch
-the wires either.  The controller selection has to know that shape rather
-than fall back: falling back to the PLIC wrote its per-context threshold into
-a window no device answers and faulted the boot (measured, `0xc201000`).
-`aplic::is_direct_mode()` is the discriminator, a direct-mode controller
-replaces the PLIC's, the console's line is refused with its reason and keeps
-the tick's poll, and `make check-riscv64-aplic-direct-runtime` boots the
-machine to a typed shell.  Driving direct mode is open work; what is decided
-is that a machine this kernel cannot deliver interrupts on says so instead of
-dying in a register write.
+(`-machine virt,aia=aplic`): there is no PLIC to catch the wires either, and
+the domain delivers through a different half of the specification — it
+raises the receiving hart's supervisor external interrupt, and the hart
+claims the source by *reading* its own window's `claimi` register.
+`aplic::is_direct_mode()` is the discriminator (an APLIC node and no IMSIC),
+`arm_source_direct`/`claim_direct` are the path, and a direct-mode controller
+replaces the PLIC's so no PLIC-shaped write reaches a window no device
+answers (falling back used to fault the boot at `0xc201000`, measured).
+
+Two details are the whole of the difference and both were measured on the
+machine rather than read off the specification:
+
+* **The claim register is not an identity.**  `claimi` answers with the
+  domain's `topi` word — source number in bits 31:16, priority in bits 7:0 —
+  and the first version of the driver passed that word to the handler
+  registry, which looked for a handler for `0x000a0001`, found none, and
+  left the source re-pended forever: the claim loop outranked the timer tick
+  and starved it.  Decoding the number is what makes the delivery work, and
+  the trap dispatches by it the same way the PLIC and IMSIC paths do.
+* **Nothing else claims or completes.**  Reading the register is the claim,
+  and a level-high source whose input is still asserted is re-pended by the
+  domain, so the handler's drain is what lowers the line — there is no
+  `IDC` completion write in the path.
+
+`make check-riscv64-aplic-direct-runtime` types at the machine's shell and
+asserts the RX-interrupt landmark, which is the same evidence the other
+machines' console paths are held to: arming alone is not delivery.
 
 ## Message-signalled interrupts
 

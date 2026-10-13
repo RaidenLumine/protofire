@@ -26,10 +26,10 @@ The authoritative picture of what exists today is
 
 - **RISC-V 64 → full target support.** The user ABI, interactive demo shell, and
   demo payload are verified on RISC-V 64 under QEMU, and so is the AIA IMSIC —
-  the kernel boots on `aia=aplic-imsic` and walks its own MSI path there (and
-  on `aia=aplic`, whose domain has no IMSIC, it boots with the wires undriven
-  and says so, `make check-riscv64-aplic-direct-runtime`; driving that mode is
-  open work).  The
+  the kernel boots on `aia=aplic-imsic` and walks its own MSI path there, and
+  on `aia=aplic` — whose domain has no IMSIC — its wires are driven through
+  the domain's direct-delivery half (`claimi`), a second path to the same
+  registry (`make check-riscv64-aplic-direct-runtime`).  The
   PCIe window is walked too, now that the device-tree parser settles it at the
   end of the node instead of when it reads `reg`, the kernel's own resource
   pass gives a device's BARs addresses, a `virtio-net-pci` is driven through

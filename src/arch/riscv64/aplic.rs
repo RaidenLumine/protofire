@@ -29,10 +29,12 @@
 //! `target[n]` (hart index and EIID) and `setienum`.
 //!
 //! A machine whose APLIC is in **direct** mode — `-machine virt,aia=aplic`,
-//! where no IMSIC receives messages — is not driven here: direct mode claims
-//! through the domain's own `topi`/`claimi` registers, a different delivery
-//! path, and the console UART keeps the tick's poll there
-//! ([`super::serial::enable_rx_interrupt`] reports and returns).
+//! where no IMSIC receives messages — is driven here too, through a different
+//! half of the specification: the domain raises the receiving hart's
+//! supervisor external interrupt and the hart claims the source by *reading*
+//! its own `claimi` register.  [`arm_source_direct`] and [`claim_direct`] are
+//! that path, and `docs/kernel/interrupts.md` says how the two modes share
+//! one registry (`make check-riscv64-aplic-direct-runtime` is the gate).
 
 use super::read_volatile;
 use super::write_volatile;
@@ -65,6 +67,61 @@ const TARGET_HART_IDX_SHIFT: u32 = 18;
 /// `target.EIID` — the identity the delivered message carries in its data
 /// word, and the bound on the field.
 const TARGET_EIID_MASK: u32 = 0x7ff;
+/// `target.IPRIO` — the source's priority in the domain's own scale, which is
+/// what direct-mode delivery arbitrates by and what a threshold is compared
+/// against.
+const TARGET_IPRIO_MASK: u32 = 0xff;
+/// The priority a source is armed with.  Zero is "no priority" and the domain
+/// replaces it with the lowest nonzero one, so the driver writes the value it
+/// means rather than relying on that: the boot hart's threshold is zero
+/// (every priority passes), and one is therefore enough.
+const TARGET_IPRIO_ARMED: u32 = 1;
+
+// ── Direct mode (`domaincfg.DM == 0`, `-machine virt,aia=aplic`) ────────
+//
+// A direct-mode domain does not compose messages at all: it raises the
+// receiving hart's supervisor external interrupt, and the hart claims the
+// source by **reading** its own `claimi` register.  The registers below are
+// the per-hart delivery window ("IDC") the specification gives each hart of a
+// direct-mode domain, and the semantics measured on QEMU 10.2.1's
+// `riscv_aplic.c` are the ones written down here:
+//
+//   * `target[i]` is `HART_IDX` in bits 31:18 and `IPRIO` in bits 7:0, and the
+//     domain rewrites a zero priority to 1 on the write;
+//   * a hart's delivery is `domaincfg.IE && idelivery[hart] && (topi or
+//     iforce)`, where `topi` is nonzero only when a pending source's target
+//     names this hart and its priority is below `ithreshold`;
+//   * reading `claimi` claims the top source — no separate completion register
+//     — and a level-high source whose input is still asserted is re-pended by
+//     the domain, so it is the handler's drain that lowers the line.
+
+/// The per-hart delivery window's base inside the domain.
+const IDC_BASE: usize = 0x4000;
+/// The stride from one hart's window to the next.
+const IDC_SIZE: usize = 32;
+/// `idelivery[hart]`: this hart accepts interrupts from the domain.
+const IDC_IDELIVERY: usize = 0x00;
+/// `ithreshold[hart]`: priorities at or above it are held back; zero passes
+/// every priority.
+const IDC_ITHRESHOLD: usize = 0x08;
+/// `claimi[hart]`: *reading* it claims the top pending source for this hart.
+const IDC_CLAIMI: usize = 0x1c;
+/// The source number's position in a `topi`/`claimi` word — the index sits at
+/// the top, a priority at the bottom, and the two together are not an
+/// identity any registry indexes by.
+const IDC_TOPI_ID_SHIFT: u32 = 16;
+/// The widest source number those words carry.
+const IDC_TOPI_ID_MASK: u32 = 0x3ff;
+
+/// One of a hart's delivery registers.
+pub(crate) fn idc_register(base: usize, hart_index: u32, offset: usize) -> usize {
+    base + IDC_BASE + hart_index as usize * IDC_SIZE + offset
+}
+
+/// The `target` word that names `hart_index` for `source` in direct mode.
+pub(crate) fn direct_target(hart_index: u32) -> u32 {
+    (hart_index << TARGET_HART_IDX_SHIFT) | TARGET_IPRIO_ARMED
+}
 
 /// Read one domain register.
 fn read(register: usize) -> u32 {
@@ -175,4 +232,140 @@ pub fn arm_source(source: u32, hart_index: u32) -> Result<(), Error> {
         hart_index
     );
     Ok(())
+}
+
+/// Arm `source` in **direct mode**: its line raises hart `hart_index`'s
+/// supervisor external interrupt, and the hart claims it by reading its own
+/// `claimi` register.
+///
+/// The configuration is the same shape as [`arm_source`]'s — `sourcecfg`
+/// first, because `target` is read-only zero while the source is inactive —
+/// and then the three switches the domain delivers through, in the order the
+/// specification gives them: this hart's `idelivery`, its `ithreshold` (zero:
+/// every priority passes), and the domain's own `IE` last, so a source that
+/// went pending meanwhile is delivered by the write that sets it.  Every
+/// write is read back for the same reason [`arm_source`]'s are: a domain that
+/// took none of them would otherwise surface as an interrupt that never
+/// arrives.
+pub fn arm_source_direct(source: u32, hart_index: u32) -> Result<(), Error> {
+    let base = aplic_base().ok_or(Error::NotImplemented)?;
+    if source == 0 || source > TARGET_EIID_MASK {
+        return Err(Error::InvalidArgument);
+    }
+
+    let target = direct_target(hart_index);
+    let target_register = base + TARGET_BASE + (source as usize - 1) * 4;
+    let sourcecfg_register = base + SOURCECFG_BASE + (source as usize - 1) * 4;
+    let idelivery_register = idc_register(base, hart_index, IDC_IDELIVERY);
+    let ithreshold_register = idc_register(base, hart_index, IDC_ITHRESHOLD);
+
+    write(sourcecfg_register, SOURCECFG_SM_LEVEL_HIGH);
+    write(target_register, target);
+    write(base + SETIENUM, source);
+    write(idelivery_register, 1);
+    write(ithreshold_register, 0);
+    write(base + DOMAINCFG, DOMAINCFG_IE);
+    fence_iorw();
+
+    let sourcecfg = read(sourcecfg_register);
+    let read_back = read(target_register);
+    let idelivery = read(idelivery_register);
+    let domaincfg = read(base + DOMAINCFG);
+    if sourcecfg & SOURCECFG_SM_MASK != SOURCECFG_SM_LEVEL_HIGH
+        || read_back != target
+        || idelivery & 1 == 0
+        || domaincfg & DOMAINCFG_IE == 0
+    {
+        crate::println!(
+            "[aplic ] source {} did not take its direct-mode configuration (sourcecfg {:#x}, target {:#x}, idelivery {:#x}, domaincfg {:#x})",
+            source,
+            sourcecfg,
+            read_back,
+            idelivery,
+            domaincfg
+        );
+        return Err(Error::DeviceError);
+    }
+
+    crate::println!(
+        "[aplic ] source {} armed at {:#x}: level-high, direct delivery to hart {} (priority {})",
+        source,
+        base,
+        hart_index,
+        target & TARGET_IPRIO_MASK
+    );
+    Ok(())
+}
+
+/// Claim the highest-priority pending source for `hart_index` in direct mode.
+///
+/// *Reading* `claimi` is the claim — the direct-mode path has no separate
+/// completion register — and the register answers with the domain's `topi`
+/// word, which is **not** the identity the handler registry indexes by:
+/// measured, a boot that passed the raw word along looked for a handler for
+/// `0x000a0001` (source 10, priority 1, in one 32-bit register) and found
+/// none, so the byte was never drained, the line stayed high, and the domain
+/// re-pended the source forever — a claim loop that starved even the timer
+/// tick, because this interrupt outranks it.  The source number is what this
+/// returns, so every path dispatches by the same identity the PLIC and IMSIC
+/// paths use.
+///
+/// A level-high source whose input is still asserted is re-pended by the
+/// domain itself, so the handler's drain is what lowers the line; a source
+/// nobody armed is not claimable and answers zero, which the caller counts as
+/// spurious the way every other path does.
+pub fn claim_direct(hart_index: u32) -> u32 {
+    let Some(base) = aplic_base() else {
+        return 0;
+    };
+    let topi = read(idc_register(base, hart_index, IDC_CLAIMI));
+    (topi >> IDC_TOPI_ID_SHIFT) & IDC_TOPI_ID_MASK
+}
+
+#[cfg(test)]
+mod tests {
+    use super::direct_target;
+    use super::idc_register;
+    use super::IDC_TOPI_ID_MASK;
+    use super::IDC_TOPI_ID_SHIFT;
+    use super::TARGET_IPRIO_ARMED;
+
+    /// The defect this pins: `claimi` answers with `topi`, which packs the
+    /// source number and a priority into one word.  Passing that word along
+    /// as an identity found no handler for `0x000a0001`, so nothing drained
+    /// the FIFO and the domain re-pended source 10 forever (measured on the
+    /// direct-mode machine, where the resulting claim loop starved the timer
+    /// tick).
+    #[test]
+    fn a_topi_word_decodes_to_its_source_number() {
+        let word = (10u32 << IDC_TOPI_ID_SHIFT) | 1;
+        assert_eq!((word >> IDC_TOPI_ID_SHIFT) & IDC_TOPI_ID_MASK, 10);
+        assert_ne!(word, 10, "the raw word is not an identity");
+        assert_eq!((0u32 >> IDC_TOPI_ID_SHIFT) & IDC_TOPI_ID_MASK, 0);
+        assert_eq!(
+            ((0x3ffu32 << IDC_TOPI_ID_SHIFT) >> IDC_TOPI_ID_SHIFT) & IDC_TOPI_ID_MASK,
+            0x3ff,
+            "the field's own bound survives the round trip"
+        );
+    }
+
+    #[test]
+    fn direct_target_names_the_hart_and_carries_a_priority() {
+        let target = direct_target(3);
+        assert_eq!(target >> 18, 3, "the hart index rides bits 31:18");
+        assert_eq!(
+            target & 0xff,
+            TARGET_IPRIO_ARMED,
+            "the priority is nonzero, so the domain stores what it was given rather than substituting 1"
+        );
+    }
+
+    #[test]
+    fn idc_windows_are_one_stride_apart_per_hart() {
+        let base = 0xd00_0000;
+        assert_eq!(idc_register(base, 0, super::IDC_CLAIMI), base + 0x401c);
+        assert_eq!(idc_register(base, 1, super::IDC_CLAIMI), base + 0x403c);
+        assert_eq!(idc_register(base, 2, super::IDC_IDELIVERY), base + 0x4040);
+        assert_eq!(idc_register(base, 3, super::IDC_ITHRESHOLD), base + 0x4068);
+    }
 }

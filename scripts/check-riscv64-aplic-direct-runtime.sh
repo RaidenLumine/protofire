@@ -5,14 +5,17 @@
 # Why this exists
 # ---------------
 # `-machine virt,aia=aplic` puts the PLIC's sources behind an APLIC in
-# **direct mode**: the domain delivers by its own `topi`/`claimi` registers
-# and there is no IMSIC for a message to land in.  This kernel does not drive
-# that mode, and before this gate it did something worse than not driving it:
-# `controller()` fell back to the PLIC, `PlicController::init` wrote the
-# per-context threshold at `0xc201000` — the PLIC fallback base plus the
-# PLIC's own offsets, an address no device answers on this machine — and the
-# boot died in a store access fault before the shell, with the console
-# barely started.  Measured on QEMU 10.2.1.
+# **direct mode**: the domain delivers by raising the receiving hart's
+# supervisor external interrupt, the hart claims by reading its window's
+# `claimi` register, and there is no IMSIC for a message to land in.  Before
+# this gate the kernel did not drive that mode — and did worse than not
+# drive it: `controller()` fell back to the PLIC, `PlicController::init`
+# wrote the per-context threshold at `0xc201000` (the PLIC fallback base
+# plus the PLIC's own offsets, an address no device answers there), and the
+# boot died in a store access fault before the shell.  Measured on QEMU
+# 10.2.1, and again while this gate was written: the first driver to arm the
+# domain dispatched `claimi`'s raw `topi` word instead of the source number
+# it carries, found no handler, and left the line re-pended forever.
 #
 # What the boot has to show now:
 #
@@ -20,14 +23,14 @@
 #     (`[irq   ] this machine's APLIC is in direct mode`), which is also what
 #     makes the choice visible in a log rather than inferred from a clean
 #     boot.
-#   * the console's line is refused, not silently wired: `enable_rx_interrupt`
-#     reports the refusal and leaves the tick's poll in place, so the console
-#     is not deaf for having no interrupt path.
-#   * the machine comes up anyway: the demo reaches its shell, and a typed
-#     line is answered.  The answer is carried by the tick's poll, which the
-#     absence of the RX-interrupt landmark pins down — the one-time line
-#     `[serial] RX interrupt carries input` must *not* appear, because on
-#     this machine no wire interrupt is driven at all.
+#   * the console's line is **armed for direct delivery**: the domain takes
+#     the configuration (`[aplic ] source 10 armed ... direct delivery`), and
+#     the byte really arrives as an interrupt — the one-time landmark
+#     `[serial] RX interrupt carries input` is what says the domain's own
+#     `claimi` path ran, and it is the same line the PLIC and IMSIC machines
+#     are held to.
+#   * the machine comes up: the demo reaches its shell and a typed line is
+#     answered.
 
 set -eu
 
@@ -151,11 +154,12 @@ require_log_absent_line() {
 # that fell back to the PLIC would not print it.
 require_log_line "Protofire kernel prototype starting"
 require_log_line "[mem   ] activated riscv64 kernel page tables"
-require_log_line "[irq   ] this machine's APLIC is in direct mode (no IMSIC behind it); wire interrupts are not driven"
+require_log_line "[irq   ] this machine's APLIC is in direct mode (no IMSIC behind it); wire sources are claimed through the domain's own claimi register"
 
-# The console's line is refused with its identity and reason, and the boot
-# says what carries input instead.
-require_log_line "[serial] console UART interrupt 10 could not be delivered (the APLIC is in direct mode); the tick will poll it"
+# The console's line was armed in the domain for this hart's own delivery
+# window.
+require_log_line "[aplic ] source 10 armed at 0x"
+require_log_line "direct delivery to hart 0"
 
 # And the machine comes up: the shell is reached and a typed line is
 # answered.  The exact answer is the end-to-end evidence — a byte arrived
@@ -164,15 +168,16 @@ require_log_line "[init  ] starting idle process"
 require_log_line "adastra ring3 shell"
 require_log_exact_line "ring3-shell-answered"
 
-# The one-time interrupt landmark must be absent: it is printed by
-# `handle_rx_interrupt`, and on this machine nothing arms a wire, so the
-# answer above cannot have come that way.  This is what pins the poll as the
-# path that carried the byte.
-require_log_absent_line "[serial] RX interrupt carries input"
-require_log_absent_line "[aplic ] source 10 armed"
+# And the delivery really is the domain's: the landmark is printed once, by
+# `handle_rx_interrupt`, and only a claim through `claimi` can reach it on
+# this machine — the PLIC window does not exist here.  This is what separates
+# "armed" from "delivered", which is the difference the first version of this
+# driver got wrong (it dispatched the raw `topi` word, found no handler, and
+# left the line pendng).
+require_log_line "[serial] RX interrupt carries input"
 require_log_absent_line "[FATAL] riscv64 trap"
 
 if [ "$remove_log_on_exit" = "0" ]; then
     printf 'riscv64 APLIC direct-mode log saved to %s\n' "$log_file"
 fi
-printf 'riscv64 APLIC direct-mode check passed: machine booted with wires undriven, input on the poll\n'
+printf 'riscv64 APLIC direct-mode check passed: wire source armed in the domain, input arrived as an interrupt\n'
