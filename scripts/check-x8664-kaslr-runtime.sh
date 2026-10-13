@@ -81,23 +81,38 @@ printf 'x86_64 KASLR check: building with "%s"\n' "$FEATURES"
 # table (the tool's comment argues it, and the fixed-point check in the
 # commit that added this gate measured it).
 fresh="$(mktemp)"
+gen_log="$(mktemp)"
 set +e
-"$CARGO" run --offline -q -p gen-kaslr-relocs -- "$KERNEL_BIN" "$fresh" >/dev/null 2>&1
+"$CARGO" run --offline -q -p gen-kaslr-relocs -- "$KERNEL_BIN" "$fresh" >"$gen_log" 2>&1
 gen_status=$?
 set -e
 if [ "$gen_status" -ne 0 ]; then
     printf 'x86_64 KASLR check failed: the generator could not read %s\n' "$KERNEL_BIN" >&2
-    rm -f "$fresh"
+    rm -f "$fresh" "$gen_log"
     exit 1
 fi
 if ! cmp -s "$fresh" "$TABLE"; then
     printf 'x86_64 KASLR check failed: %s does not describe %s\n' "$TABLE" "$KERNEL_BIN" >&2
     printf 'the relocation table is stale; run `make gen-kaslr-relocs` and rebuild\n' >&2
-    rm -f "$fresh"
+    rm -f "$fresh" "$gen_log"
     exit 1
 fi
-rm -f "$fresh"
 printf '  table is fresh: the checked-in relocation list equals the one this image generates\n'
+
+# And the scan that complements the relocation records has to have found
+# something: those records are the only source for the fmt/alloc dispatch
+# slots, and a scan that silently matched nothing would still produce a table
+# equal to itself — the boot below is what catches that, but naming it here
+# costs one line and points at the cause.
+scanned="$(grep -a -o 'scanned: [0-9]*' "$gen_log" | head -n 1 | awk '{print $2}')"
+if [ -z "$scanned" ] || [ "$scanned" -eq 0 ]; then
+    printf 'x86_64 KASLR check failed: the generator scanned no pointer outside the relocation records (scanned=%s)\n' "$scanned" >&2
+    printf 'the dispatch slots in .data carry no relocation record; without the scan the copy calls into the abandoned image\n' >&2
+    rm -f "$fresh" "$gen_log"
+    exit 1
+fi
+printf '  the scan carried %s pointer(s) with no relocation record\n' "$scanned"
+rm -f "$fresh" "$gen_log"
 
 if [ -n "$X8664_KASLR_LOG" ]; then
     mkdir -p "$(dirname "$X8664_KASLR_LOG")"
@@ -191,7 +206,10 @@ pool_start="$(grep -a -o '\[mem   \] the pool is \[0x[0-9a-f]*' "$log_file" | he
 if [ -z "$pool_start" ]; then
     fail_with_log 'the boot did not report the pool'
 fi
-if [ "$pool_start" \< "$relocated" ] || [ "$pool_start" = "$relocated" ]; then
+# Numeric, not lexical: the two are printed without leading zeros, so a
+# string comparison would call 0x2e387000 smaller than 0xf200000 (it starts
+# with a lower character) and fail a boot that is fine.
+if [ "$((0x$pool_start))" -le "$((0x$relocated))" ]; then
     fail_with_log "the pool (0x$pool_start) did not move with the kernel (0x$relocated)"
 fi
 printf '  the image and the pool report the relocated base: image at 0x%s, pool at 0x%s\n' "$relocated" "$pool_start"
@@ -249,7 +267,65 @@ if grep -a -F "[FATAL" "$smp_log" >/dev/null 2>&1; then
 fi
 rm -f "$smp_log"
 
+# ── A machine too small to hold the copy: the refusal, not a crash ────
+# The window needs `copy + the pool's span` inside available RAM, and a
+# machine small enough has no candidate: the boot says so, stays at the link
+# address and comes up anyway.  That is a branch, not a failure, and it is
+# the one a small machine really takes — so it is booted rather than
+# reasoned about.  The shell line is the assertion that matters: no
+# relocation, no fault.
+small_log="$(mktemp)"
+printf '  %s\n' "timeout ${TIMEOUT_SECONDS}s $QEMU -machine q35 -smp 1 -m 128M ... -serial file: (no placement)"
+set +e
+timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine q35 \
+    -cpu max \
+    -smp 1 \
+    -m 128M \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -serial "file:$small_log" \
+    -no-reboot \
+    -no-shutdown \
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 >/dev/null 2>>"$small_log"
+status=$?
+set -e
+case "$status" in
+    0|124) ;;
+    *)
+        printf 'x86_64 KASLR check failed with exit status %s on the 128 MiB machine\n' "$status" >&2
+        cat "$small_log" >&2
+        rm -f "$small_log"
+        exit "$status"
+        ;;
+esac
+if ! grep -a -F "no placement in the machine's memory" "$small_log" >/dev/null 2>&1; then
+    printf 'x86_64 KASLR check failed: the 128 MiB machine neither relocated nor said it could not\n' >&2
+    cat "$small_log" >&2
+    rm -f "$small_log"
+    exit 1
+fi
+if grep -a -F "[kaslr ] relocated" "$small_log" >/dev/null 2>&1; then
+    printf 'x86_64 KASLR check failed: the 128 MiB machine reports a relocation it cannot hold\n' >&2
+    cat "$small_log" >&2
+    rm -f "$small_log"
+    exit 1
+fi
+if ! grep -a -F "adastra ring3 shell" "$small_log" >/dev/null 2>&1; then
+    printf 'x86_64 KASLR check failed: the 128 MiB machine did not reach the shell at the link address\n' >&2
+    cat "$small_log" >&2
+    rm -f "$small_log"
+    exit 1
+fi
+if grep -a -F "[FATAL" "$small_log" >/dev/null 2>&1; then
+    printf 'x86_64 KASLR check failed: the 128 MiB machine hit a fatal error\n' >&2
+    cat "$small_log" >&2
+    rm -f "$small_log"
+    exit 1
+fi
+rm -f "$small_log"
+
 if [ "$remove_log_on_exit" = "0" ]; then
     printf 'x86_64 KASLR log saved to %s\n' "$log_file"
 fi
-printf 'x86_64 KASLR check passed: table fresh, relocated boot reached a typed shell, APs refused out loud\n'
+printf 'x86_64 KASLR check passed: table fresh, relocated boot reached a typed shell, APs refused, small machine refused a placement and booted\n'

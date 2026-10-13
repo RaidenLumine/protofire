@@ -45,10 +45,12 @@ fn x86_64_boot(multiboot_magic: u32, multiboot_info: u32) -> ! {
 ///
 /// The relocator jumps here **in the copy**, with the copy's base and the
 /// delta it patched sites by in the first two registers.  Everything below
-/// this point runs from the copy, so symbol reads are the copy's own; what
-/// this function still owes the copy is the state the loader left pointing at
-/// the abandoned image — the GDT the boot stub loaded — which the relocator
-/// fixes up with the two numbers it carries.
+/// this point runs from the copy, so symbol reads are the copy's own.  Nothing
+/// of the loader's state has to be re-pointed: the boot stub's GDT descriptor
+/// is only ever read in 32-bit mode (before long mode), and the first thing
+/// the copy's own `init_early` does is load the kernel's GDT
+/// (`gdt::init`), so a GDTR still naming the abandoned image is never used —
+/// measured, by a relocated boot that reached its shell with this call absent.
 #[cfg(all(target_arch = "x86_64", feature = "kaslr"))]
 #[no_mangle]
 pub extern "C" fn kernel_entry_relocated(
@@ -58,7 +60,6 @@ pub extern "C" fn kernel_entry_relocated(
     multiboot_info: u32,
 ) -> ! {
     crate::arch::x86_64::kaslr::record_relocation(base, delta);
-    crate::arch::x86_64::kaslr::point_gdtr_at_the_copy(base);
     x86_64_boot(multiboot_magic, multiboot_info)
 }
 

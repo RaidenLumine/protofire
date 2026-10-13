@@ -124,24 +124,15 @@ enable_long_mode:
     ret
 
 .align 8
-.global gdt64
-.global gdt64_descriptor
 gdt64:
     .quad 0x0000000000000000
     .quad 0x00AF9A000000FFFF
     .quad 0x00AF92000000FFFF
 gdt64_end:
 
-/* The descriptor is the 10-byte form `lgdt` reads in 64-bit mode — a 2-byte
- * limit and an 8-byte base — and it is deliberately also readable by the
- * 32-bit `lgdt` above, which reads the first 6 bytes: the limit and the low
- * four bytes of a base that is below 4 GiB at that point.  One layout, both
- * modes, and the same field the relocator rewrites when it copies the image
- * (a descriptor naming the abandoned copy is a GDTR the first segment reload
- * after the runtime tables replace the bootstrap map would fault on). */
 gdt64_descriptor:
     .word gdt64_end - gdt64 - 1
-    .quad gdt64
+    .long gdt64
 
 .code64
 long_mode_start:

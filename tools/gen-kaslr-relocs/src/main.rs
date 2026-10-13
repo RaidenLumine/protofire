@@ -11,6 +11,7 @@
 //! R_X86_64_32, R_X86_64_32S), and writes a Rust array suitable for
 //! `include!` into the kernel.
 
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -20,6 +21,9 @@ use std::io::{self};
 const EM_X86_64: u16 = 62;
 const SHT_RELA: u32 = 4;
 const SHT_SYMTAB: u32 = 2;
+/// `st_info` low nibble: the symbol is a function, whose `st_value` is an
+/// address code can be entered at.
+const STT_FUNC: u8 = 2;
 const EI_NIDENT: usize = 16; // ELF e_ident size
 
 // Relocation types (x86_64 ABI).
@@ -501,6 +505,15 @@ fn main() -> io::Result<()> {
     const BOUNDARY_SYMBOLS: [&[u8]; 3] = [b"__pool_start", b"__pool_end", b"__image_end"];
     let mut boundary_values: [Option<u64>; 3] = [None; 3];
 
+    // Every function's entry address, for the scan below: a word that names
+    // code names the *start* of a function, because that is the only code
+    // address this kernel can take (`fn` pointers, the dispatch slots).  A
+    // word that merely lands somewhere inside `.text` is data that looks like
+    // an address — the read-only tables below are full of those (measured:
+    // `0x303030` and `0x3f3f3f` appear among `"00"` and `"???"` text), which
+    // is why that test alone cannot be the criterion.
+    let mut function_entries: HashSet<u64> = HashSet::new();
+
     for i in 0..shdr_count {
         let shdr =
             read_shdr(&data, (shdr_off + i * shdr_entsize) as u64).expect("invalid section header");
@@ -534,7 +547,11 @@ fn main() -> io::Result<()> {
         let mut off = sym_off;
         while off + 24 <= sym_off + sym_size {
             let name_off = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+            let st_info = data[off + 4];
             let st_value = u64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
+            if (st_info & 0xf) == STT_FUNC && st_value != 0 {
+                function_entries.insert(st_value);
+            }
             let name: &[u8] = if name_off < strtab.len() {
                 let end = strtab[name_off..]
                     .iter()
@@ -779,7 +796,6 @@ fn main() -> io::Result<()> {
     // named so the gate's log shows exactly what the scan added.
     let mut scanned = 0usize;
     {
-        use std::collections::HashSet;
         let mut covered: HashSet<u64> = HashSet::new();
         for &(offset, _, r_type) in &validated {
             let width: u64 = if r_type == R_X86_64_64 { 8 } else { 4 };
@@ -788,7 +804,6 @@ fn main() -> io::Result<()> {
             }
         }
 
-        let mut executable: Vec<(u64, u64)> = Vec::new();
         let mut writable_data: Vec<(u64, u64, u64, u64)> = Vec::new();
         for i in 0..shdr_count {
             let shdr = read_shdr(&data, (shdr_off + i * shdr_entsize) as u64)
@@ -799,9 +814,7 @@ fn main() -> io::Result<()> {
             if shdr.sh_flags & SHF_ALLOC == 0 || shdr.sh_type != 1 {
                 continue;
             }
-            if shdr.sh_flags & SHF_EXECINSTR != 0 {
-                executable.push((shdr.sh_addr, shdr.sh_addr + shdr.sh_size));
-            } else if shdr.sh_flags & SHF_WRITE != 0 {
+            if shdr.sh_flags & SHF_EXECINSTR == 0 && shdr.sh_flags & SHF_WRITE != 0 {
                 writable_data.push((
                     shdr.sh_addr,
                     shdr.sh_offset,
@@ -825,10 +838,7 @@ fn main() -> io::Result<()> {
                     if file_at + 8 <= data.len() {
                         let value =
                             u64::from_le_bytes(data[file_at..file_at + 8].try_into().unwrap());
-                        if executable
-                            .iter()
-                            .any(|&(start, end)| start <= value && value < end)
-                        {
+                        if function_entries.contains(&value) {
                             scanned += 1;
                             if explain && scanned <= 20 {
                                 eprintln!(

@@ -172,10 +172,73 @@ require_log_exact_line() {
     fi
 }
 
-require_log_matching() {
-    pattern="$1"
-    if ! grep -a -E "$pattern" "$log_file" >/dev/null 2>&1; then
-        fail_with_log "no log line matches: $pattern"
+# The digest the shell answers `cat /service/shell/sha256` with.
+#
+# The console echoes the typed command line before the program runs, so the
+# digest is an answer *at or after that line*; requiring merely that some
+# 64-hex line appears anywhere would pass on a digest another subsystem
+# printed and say nothing about this command having answered.
+# Assert that a value the payload prints arrived with its prefix.
+#
+# The riscv64 payload prints a prefixed line as separate writes — the prefix,
+# the value, the newline — and the console serialises each *write*, not each
+# line, so a preempted payload can have another line land between the prefix
+# and its value.  What the shape guarantees is that the prefix arrives whole
+# and that its value follows, on the same line when nothing interleaved and on
+# a later one when something did.
+#
+# The value has to end at a boundary: a plain substring test would accept
+# `demo-launcher-rust` for the value `demo-launcher`, which is the defect this
+# covers — an id that merely starts with the named program is a different
+# program having run.
+require_log_value_follows_prefix() {
+    prefix="$1"
+    value="$2"
+    stats="$(
+        LC_ALL=C awk -v prefix="$prefix" -v value="$value" '
+            # The value ends at a boundary when what follows it in the haystack
+            # is not another id character: `demo-launcher-rust` must not
+            # satisfy a search for `demo-launcher`.
+            function value_ends_at_boundary(haystack, at, after) {
+                at = index(haystack, value)
+                if (at == 0) return 0
+                after = substr(haystack, at + length(value))
+                return after == "" || after !~ /^[A-Za-z0-9_-]/
+            }
+            index($0, prefix) > 0 {
+                seen += 1
+                if (value_ends_at_boundary(substr($0, index($0, prefix)))) {
+                    matched += 1
+                    pending = 0
+                } else {
+                    pending = 1
+                }
+                next
+            }
+            pending {
+                if (value_ends_at_boundary($0)) {
+                    matched += 1
+                    pending = 0
+                }
+            }
+            END { print seen + 0, matched + 0 }
+        ' "$log_file"
+    )"
+    seen="${stats% *}"
+    matched="${stats#* }"
+    if [ "$seen" -lt 1 ] || [ "$matched" -lt 1 ]; then
+        fail_with_log "no output carried '$value' after '$prefix' (prefix seen $seen time(s), value followed $matched)"
+    fi
+}
+
+require_log_hash_answer() {
+    command="$1"
+    if ! LC_ALL=C awk -v command="$command" '
+        index($0, command) > 0 { pending = 1; next }
+        pending && $0 ~ /^[0-9a-f]{64}$/ { found = 1; exit }
+        END { exit found ? 0 : 1 }
+    ' "$log_file"; then
+        fail_with_log "no sha256 digest line follows the '$command' command line"
     fi
 }
 
@@ -267,7 +330,7 @@ require_log_line "[serial] RX interrupt carries input"
 # of that file's bytes.  Both answers come from `/service`, so a boot whose
 # registry lost track of where its services came from cannot print them.
 require_log_exact_line "/system/rc.d/defaults.toml"
-require_log_matching '^[0-9a-f]{64}$'
+require_log_hash_answer 'cat /service/shell/sha256'
 # The device ledger, read back the same way: the driver that owns the NIC and
 # what kind of device it is.  The boot line says the ledger recorded it; these
 # two say a ring-3 program can see it through `/dev`.
@@ -302,7 +365,7 @@ require_log_line "service(s) registered; leaving the start to init"
 # every line above it is printed before the hand-off, and a machine that stops
 # at the hand-off still has all of them.
 require_log_line "[user  ] riscv64 payload start"
-require_log_line "[user  ] riscv64 app-id: demo-launcher"
+require_log_value_follows_prefix "[user  ] riscv64 app-id: " "demo-launcher"
 require_log_line "[abi   ] demo-launcher payload: $PAYLOAD_SOURCE "
 require_log_line "[user  ] riscv64 payload resume-1"
 require_log_line "[user  ] riscv64 payload resume-2"

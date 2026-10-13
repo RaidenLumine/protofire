@@ -17,6 +17,10 @@
 # command is being read would garble both.  The marker is a command the check
 # types over serial last (`echo serial-done`), so this file waits for that
 # command's *output* — the guest's own evidence that it is back at the prompt.
+# The test is the whole line, not a substring: the console echoes the typed
+# command, and the echo contains `serial-done` too, so a substring wait fires
+# one beat *before* the shell has printed its answer and the keys can garble
+# the command still being read.
 #
 # Usage:
 #   sh scripts/press-usb-keys.sh <log-file> <timeout-seconds> <monitor-socket> <text>
@@ -35,7 +39,7 @@ text="$4"
 
 waited=0
 while [ "$waited" -lt "$timeout_seconds" ]; do
-    if grep -F "serial-done" "$log_file" >/dev/null 2>&1; then
+    if grep -a -F -x "serial-done" "$log_file" >/dev/null 2>&1; then
         break
     fi
     sleep 1

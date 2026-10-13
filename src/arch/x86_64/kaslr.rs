@@ -94,53 +94,6 @@ pub(crate) fn record_relocation(base: usize, delta: usize) {
     RELOCATED_BASE.store(base, Ordering::Release);
 }
 
-/// Point GDTR at the copy's own GDT.
-///
-/// The boot stub loads GDTR before there is any Rust, and the descriptor it
-/// loads holds the *link-time* GDT address — the boot assembly's reference to
-/// its own label, which the relocation table cannot see (it is a descriptor
-/// field, not a compiled site).  The runtime page tables map the copy's
-/// ranges and not the abandoned image's, so a GDTR still naming the old GDT
-/// faults on the first segment reload after the switch — every trap return,
-/// i.e. the first timer tick.  This rewrites the descriptor's base at the
-/// copy's own address and reloads it.
-///
-/// Every address here is a *difference* of symbol addresses plus `base`, and
-/// that is deliberate: the two operands of each difference move by the same
-/// delta (or are the same folded constant), so the difference is the same
-/// number in both images, and adding `base` names the copy's object without
-/// ever asking what the delta was.
-#[cfg(feature = "kaslr")]
-pub(crate) fn point_gdtr_at_the_copy(base: usize) {
-    unsafe extern "C" {
-        static __kernel_start: u8;
-        static gdt64: u8;
-        static gdt64_descriptor: u8;
-    }
-    // `addr_of!` on a linker symbol is safe (nothing is read); the descriptor
-    // below is the only thing dereferenced, through `base`.
-    let anchor = ptr::addr_of!(__kernel_start) as usize;
-    let gdt_offset = ptr::addr_of!(gdt64) as usize - anchor;
-    let descriptor_offset = ptr::addr_of!(gdt64_descriptor) as usize - anchor;
-    let gdt = base + gdt_offset;
-    let descriptor = base + descriptor_offset;
-
-    // SAFETY: `descriptor` is inside the copy, which spans the image the
-    // linker laid out, so it holds the 2-byte limit at +0 and the 8-byte base
-    // at +2 that `boot.asm` assembled (see its comment on the one layout both
-    // `lgdt` forms read).  The write replaces the base with the copy's GDT,
-    // and `lgdt` reloads it before anything can load a segment through the
-    // stale one.
-    unsafe {
-        ptr::write_unaligned((descriptor + 2) as *mut u64, gdt as u64);
-        core::arch::asm!(
-            "lgdt [{descriptor}]",
-            descriptor = in(reg) descriptor,
-            options(nostack, preserves_flags)
-        );
-    }
-}
-
 /// Where this boot runs the kernel, or `None` at the link address.
 pub fn relocated_base() -> Option<usize> {
     match RELOCATED_BASE.load(Ordering::Acquire) {

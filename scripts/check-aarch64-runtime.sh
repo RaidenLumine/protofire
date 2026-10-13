@@ -159,10 +159,20 @@ require_log_exact_line() {
     fi
 }
 
-require_log_matching() {
-    pattern="$1"
-    if ! grep -a -E "$pattern" "$log_file" >/dev/null 2>&1; then
-        printf 'no aarch64 runtime log line matches: %s\n' "$pattern" >&2
+# The digest the shell answers `cat /service/shell/sha256` with.
+#
+# The console echoes the typed command line before the program runs, so the
+# digest is an answer *at or after that line*; requiring merely that some
+# 64-hex line appears anywhere would pass on a digest another subsystem
+# printed and say nothing about this command having answered.
+require_log_hash_answer() {
+    command="$1"
+    if ! LC_ALL=C awk -v command="$command" '
+        index($0, command) > 0 { pending = 1; next }
+        pending && $0 ~ /^[0-9a-f]{64}$/ { found = 1; exit }
+        END { exit found ? 0 : 1 }
+    ' "$log_file"; then
+        printf "no sha256 digest line follows the '%s' command line\n" "$command" >&2
         tail -n 12 "$log_file" >&2
         exit 1
     fi
@@ -450,7 +460,7 @@ require_log_line "[serial] RX interrupt carries input"
 # of that file's bytes.  Both answers come from `/service`, so a boot whose
 # registry lost track of where its services came from cannot print them.
 require_log_exact_line "/system/rc.d/defaults.toml"
-require_log_matching '^[0-9a-f]{64}$'
+require_log_hash_answer 'cat /service/shell/sha256'
 # The device ledger, read back the same way: the driver that owns the NIC and
 # what kind of device it is.  The boot line says the ledger recorded it; these
 # two say a ring-3 program can see it through `/dev`.
