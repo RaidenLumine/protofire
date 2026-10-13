@@ -19,6 +19,7 @@ use std::io::{self};
 // ── ELF64 constants ─────────────────────────────────────────────────────
 const EM_X86_64: u16 = 62;
 const SHT_RELA: u32 = 4;
+const SHT_SYMTAB: u32 = 2;
 const EI_NIDENT: usize = 16; // ELF e_ident size
 
 // Relocation types (x86_64 ABI).
@@ -341,18 +342,103 @@ fn main() -> io::Result<()> {
             }
         }
     }
-    // Symbol table lookup is a more precise source; override if available.
-    // (Currently the symtab parsing encounters a boundary bug, so we use
-    //  the LOAD-segment heuristic which gives a slightly wider range —
-    //  safe because it only PASSES entries, never filters valid ones.)
-    let valid_end = kernel_end;
+    // ── The kernel's end, from the linker's own symbols ───────────────
+    // The window below needs the kernel's *end*, and the LOAD segments no
+    // longer have it: the frame pool is reserved address space, outside
+    // every segment, so the segment walk stops at `__image_end` while the
+    // addresses the kernel stores run on to `__kernel_end` (= `__bss_end`,
+    // both after the pool).  A site holding `__pool_start`, `__pool_end`
+    // or `__image_end` would then be filtered as spurious, and the tool
+    // would write a table that never relocates the pool's own bounds —
+    // silently, because a missing entry changes nothing until KASLR is
+    // enabled and the relocated kernel computes a stale pool.  So read
+    // `st_value` from the symbol table (`.symtab`); the segment walk above
+    // stays as the fallback for a stripped ELF.
+    let mut symtab_end: u64 = 0;
+    let mut symtab_end_name = "";
+    for i in 0..shdr_count {
+        let shdr =
+            read_shdr(&data, (shdr_off + i * shdr_entsize) as u64).expect("invalid section header");
+        if shdr.sh_type != SHT_SYMTAB {
+            continue;
+        }
+        let strtab_ndx = shdr.sh_link as usize;
+        if strtab_ndx >= shdr_count {
+            continue;
+        }
+        let strtab_shdr = read_shdr(&data, (shdr_off + strtab_ndx * shdr_entsize) as u64)
+            .expect("invalid section header");
+        let strtab_off = strtab_shdr.sh_offset as usize;
+        let strtab_size = strtab_shdr.sh_size as usize;
+        if strtab_off + strtab_size > data.len() {
+            continue;
+        }
+        let strtab = &data[strtab_off..strtab_off + strtab_size];
+
+        let sym_off = shdr.sh_offset as usize;
+        let sym_size = shdr.sh_size as usize;
+        let entsize = if shdr.sh_entsize != 0 {
+            shdr.sh_entsize as usize
+        } else {
+            24 // Elf64_Sym
+        };
+        if entsize < 24 || sym_off + sym_size > data.len() {
+            continue;
+        }
+
+        let mut off = sym_off;
+        while off + 24 <= sym_off + sym_size {
+            let name_off = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+            let st_value = u64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
+            let name: &[u8] = if name_off < strtab.len() {
+                let end = strtab[name_off..]
+                    .iter()
+                    .position(|&b| b == 0)
+                    .map(|position| name_off + position)
+                    .unwrap_or(strtab.len());
+                &strtab[name_off..end]
+            } else {
+                &[]
+            };
+            let named = if name == b"__kernel_end" {
+                Some("__kernel_end")
+            } else if name == b"__bss_end" {
+                Some("__bss_end")
+            } else {
+                None
+            };
+            if let Some(named) = named {
+                if st_value > symtab_end {
+                    symtab_end = st_value;
+                    symtab_end_name = named;
+                }
+            }
+            off += entsize;
+        }
+    }
+
+    // The wider of the two sources: the segment walk cannot exceed the
+    // linker's end, so taking the max keeps the window at least as wide as
+    // the image and exactly as wide as the kernel when the symbols exist.
+    let valid_end = kernel_end.max(symtab_end);
+    if symtab_end != 0 {
+        eprintln!("Kernel extent end: {:#x} ({})", valid_end, symtab_end_name);
+    } else {
+        eprintln!(
+            "Kernel extent end: {:#x} (LOAD segments; no linker end symbol)",
+            valid_end
+        );
+    }
 
     // ── Validate each entry by reading the value at the site ──────────
     // `--emit-relocs` preserves relocations from ALL input object files,
     // including many whose site does not actually hold an absolute address.
     // We validate by checking that the current value at `r_offset` is within
-    // [KERNEL_VADDR_MIN, kernel_end).  Entries outside this range are
-    // spurious and are skipped.
+    // [KERNEL_VADDR_MIN, kernel_end].  Entries outside this range are
+    // spurious and are skipped.  The end is inclusive because the linker's
+    // end label is itself a value the kernel stores: `__pool_end` and
+    // `__bss_end` both equal `__kernel_end`, and an exclusive bound would
+    // drop exactly the bounds a relocation has to fix.
     let mut validated: Vec<(u64, i64, u32)> = Vec::new();
     let mut filtered = 0usize;
     for &(r_off, addend, r_type) in &relocations {
@@ -378,7 +464,7 @@ fn main() -> io::Result<()> {
                 // to fall in range (e.g. a relocation at offset 0 that reads
                 // the REX+opcode prefix as part of the "value").
                 let high_bits_ok = width < 8 || (val >> 32) == 0;
-                if val >= KERNEL_VADDR_MIN && val < valid_end && high_bits_ok {
+                if val >= KERNEL_VADDR_MIN && val <= valid_end && high_bits_ok {
                     validated.push((r_off, addend, r_type));
                 } else {
                     filtered += 1;
