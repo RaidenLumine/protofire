@@ -44,7 +44,8 @@ the dependency graph (`check-layering`, `check-arch-fanout`), memory safety
 and what the code says about itself (`check-unsafe-comments`,
 `check-user-access-windows`, `check-dead-code-allows`), the ABI
 (`check-abi-mirror`, `check-abi-frozen-payload`, one per architecture), the
-repository itself (`check-repo-integrity`, `check-reproducible-build`), and
+repository itself (`check-repo-integrity`, `check-reproducible-build`), the
+generated artifacts no build compiles yet (`check-kaslr-relocs`), and
 the work a boot does (`check-perf-baseline`).  `docs/status.md` has one of its
 own: `check-status-rows` refuses a census row that has grown past what a row
 may be, because the story of what landed in a subsystem is the RFC's and the

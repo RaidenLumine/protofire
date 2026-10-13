@@ -7,6 +7,8 @@ dist/
 # the kernel can `include!` it by a path that does not depend on the build
 # directory.  It is generated, 24k lines long, and nothing compiles it yet —
 # so it is ignored rather than left for a `git add -A` to pick up.
+# `make check-kaslr-relocs` proves what a run of the generator produces, so
+# what stands behind the ignored file is a gate rather than a habit.
 src/arch/x86_64/kaslr_relocs.generated.rs
 
 # ISO tree outputs (entirely build artifacts)

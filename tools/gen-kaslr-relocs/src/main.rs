@@ -147,6 +147,100 @@ fn rela_type(r_info: u64) -> u32 {
     (r_info & 0xFFFF_FFFF) as u32
 }
 
+/// Symbol index from r_info (high 32 bits).
+fn rela_symbol(r_info: u64) -> u64 {
+    r_info >> 32
+}
+
+/// The `st_value` of symbol `sym_index` in the symbol table section at
+/// `symtab_index`, and the section the symbol is defined in, or `None` when
+/// any index or offset is out of bounds.
+fn symbol_value(
+    data: &[u8],
+    shdr_off: usize,
+    shdr_entsize: usize,
+    shdr_count: usize,
+    symtab_index: u64,
+    sym_index: u64,
+) -> Option<(u64, u16)> {
+    let symtab_index = symtab_index as usize;
+    if symtab_index >= shdr_count {
+        return None;
+    }
+    let symtab = read_shdr(data, (shdr_off + symtab_index * shdr_entsize) as u64)?;
+    let entsize = if symtab.sh_entsize != 0 {
+        symtab.sh_entsize as usize
+    } else {
+        24 // Elf64_Sym
+    };
+    if entsize < 24 {
+        return None;
+    }
+    let off =
+        (symtab.sh_offset as usize).checked_add((sym_index as usize).checked_mul(entsize)?)?;
+    let symtab_end = symtab.sh_offset as usize + symtab.sh_size as usize;
+    if off + 24 > data.len() || off + 24 > symtab_end {
+        return None;
+    }
+    let st_shndx = u16::from_le_bytes(data[off + 6..off + 8].try_into().ok()?);
+    let st_value = u64::from_le_bytes(data[off + 8..off + 16].try_into().ok()?);
+    Some((st_value, st_shndx))
+}
+
+/// Whether the section `shndx` is one a relocation may name: allocated
+/// (loaded into the image) or an absolute constant.
+///
+/// This is the filter that keeps the proof from being vacuous.  A record
+/// against an unallocated section — a `.debug_*` section symbol, whose
+/// `st_value` is zero — would otherwise "prove" trivially wherever the site
+/// happens to hold zero, which is a coincidence rather than an applied
+/// relocation: the kernel loads no debug section, so it can hold no
+/// reference into one.  `SHN_ABS` (0xfff1) passes because an absolute symbol
+/// is an address the kernel may legitimately store; any other special index
+/// and any out-of-range index does not.
+fn symbol_is_loadable(
+    data: &[u8],
+    shdr_off: usize,
+    shdr_entsize: usize,
+    shdr_count: usize,
+    shndx: u16,
+) -> Option<bool> {
+    const SHN_ABS: u16 = 0xfff1;
+    const SHF_ALLOC: u64 = 0x2;
+    if shndx == SHN_ABS {
+        return Some(true);
+    }
+    let index = shndx as usize;
+    if index == 0 || index >= shdr_count {
+        return None;
+    }
+    let shdr = read_shdr(data, (shdr_off + index * shdr_entsize) as u64)?;
+    Some(shdr.sh_flags & SHF_ALLOC != 0)
+}
+
+/// Whether the ELF carries a symbol table at all.
+///
+/// The proof of a relocation compares a `st_value` from `.symtab` against the
+/// bytes at the site; with no table there is nothing to compare against, and
+/// a run over a stripped ELF would "drop" every record as unresolved and
+/// report a table of zero entries.  The tool refuses that file instead.
+fn symbol_table_present(
+    data: &[u8],
+    shdr_off: usize,
+    shdr_entsize: usize,
+    shdr_count: usize,
+) -> bool {
+    for i in 0..shdr_count {
+        let Some(shdr) = read_shdr(data, (shdr_off + i * shdr_entsize) as u64) else {
+            continue;
+        };
+        if shdr.sh_type == SHT_SYMTAB {
+            return true;
+        }
+    }
+    false
+}
+
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
@@ -213,8 +307,20 @@ fn main() -> io::Result<()> {
         String::from_utf8_lossy(&shstrtab[name_off..name_off + end]).to_string()
     };
 
-    // Scan all sections for RELA sections.
-    let mut relocations: Vec<(u64, i64, u32)> = Vec::new();
+    // Scan all sections for RELA sections.  Each entry carries the value of
+    // the symbol it names, resolved through the section's own symbol table —
+    // that value is what the validation below proves the entry against.
+    struct Relocation {
+        /// Where the record applies, a virtual address in the image.
+        site: u64,
+        /// The record's addend.
+        addend: i64,
+        /// `R_X86_64_64`, `_32` or `_32S`.
+        r_type: u32,
+        /// The named symbol's `st_value` and section index, when it resolves.
+        symbol: Option<(u64, u16)>,
+    }
+    let mut relocations: Vec<Relocation> = Vec::new();
 
     for i in 0..shdr_count {
         let shdr =
@@ -254,12 +360,25 @@ fn main() -> io::Result<()> {
                 let r_type = rela_type(rela.r_info);
 
                 match r_type {
-                    // Only keep entries whose target is within the kernel
-                    // image range.
+                    // Keep the absolute kinds; whether an entry is real is
+                    // decided below, where its symbol value is known.
                     R_X86_64_64 | R_X86_64_32 | R_X86_64_32S
                         if rela.r_offset >= KERNEL_VADDR_MIN =>
                     {
-                        relocations.push((rela.r_offset, rela.r_addend, r_type));
+                        let sym_value = symbol_value(
+                            &data,
+                            shdr_off,
+                            shdr_entsize,
+                            shdr_count,
+                            u64::from(shdr.sh_link),
+                            rela_symbol(rela.r_info),
+                        );
+                        relocations.push(Relocation {
+                            site: rela.r_offset,
+                            addend: rela.r_addend,
+                            r_type,
+                            symbol: sym_value,
+                        });
                         count += 1;
                     }
                     _ => {} // skip PC-relative, PLT, and other relocations
@@ -356,6 +475,16 @@ fn main() -> io::Result<()> {
     // stays as the fallback for a stripped ELF.
     let mut symtab_end: u64 = 0;
     let mut symtab_end_name = "";
+
+    // The symbols the kernel's address space cannot lose: the pool's two ends
+    // and the image's end.  The kernel stores each of them as a value, so a
+    // relocation over each of them has to be in the table — and when the pool
+    // moved out of the load segments, 45 such entries were dropped with no
+    // line saying so.  They are counted and reported below, and the
+    // `check-kaslr-relocs` gate requires each count to stay non-zero.
+    const BOUNDARY_SYMBOLS: [&[u8]; 3] = [b"__pool_start", b"__pool_end", b"__image_end"];
+    let mut boundary_values: [Option<u64>; 3] = [None; 3];
+
     for i in 0..shdr_count {
         let shdr =
             read_shdr(&data, (shdr_off + i * shdr_entsize) as u64).expect("invalid section header");
@@ -413,6 +542,11 @@ fn main() -> io::Result<()> {
                     symtab_end_name = named;
                 }
             }
+            for (slot, boundary) in BOUNDARY_SYMBOLS.iter().enumerate() {
+                if name == *boundary && boundary_values[slot].is_none() {
+                    boundary_values[slot] = Some(st_value);
+                }
+            }
             off += entsize;
         }
     }
@@ -430,53 +564,182 @@ fn main() -> io::Result<()> {
         );
     }
 
-    // ── Validate each entry by reading the value at the site ──────────
-    // `--emit-relocs` preserves relocations from ALL input object files,
-    // including many whose site does not actually hold an absolute address.
-    // We validate by checking that the current value at `r_offset` is within
-    // [KERNEL_VADDR_MIN, kernel_end].  Entries outside this range are
-    // spurious and are skipped.  The end is inclusive because the linker's
-    // end label is itself a value the kernel stores: `__pool_end` and
-    // `__bss_end` both equal `__kernel_end`, and an exclusive bound would
-    // drop exactly the bounds a relocation has to fix.
+    // ── Validate each entry against the symbol it names ───────────────
+    // `--emit-relocs` preserves relocations from ALL input object files, and
+    // not every record is a reference the link actually applied: the site can
+    // hold instruction bytes that merely look like an address.  The filter
+    // used to guess — "the value at the site is a plausible kernel address" —
+    // which cannot tell an applied relocation from a coincidence, and its
+    // own comment admitted that false positives could remain.  With the
+    // symbol value in hand the question has a proof: a record is a real
+    // relocation exactly when the symbol it names links to the value at its
+    // site, `site == (st_value + addend) mod 2^width`.  A record that fails
+    // is one the linker did not apply, and each drop is counted by reason so
+    // the numbers can be read rather than trusted.
     let mut validated: Vec<(u64, i64, u32)> = Vec::new();
-    let mut filtered = 0usize;
-    for &(r_off, addend, r_type) in &relocations {
+    let mut unresolved = 0usize;
+    let mut unreadable = 0usize;
+    let mut not_loadable = 0usize;
+    let mut mismatch = 0usize;
+    let mut out_of_extent = 0usize;
+    let mut boundary_kept = [0usize; BOUNDARY_SYMBOLS.len()];
+    // `KASLR_RELOCS_EXPLAIN=1` reports what was dropped and why: a count
+    // alone cannot be acted on, and the failure paths of the check that runs
+    // this tool need the entries, not just the totals.
+    let explain = std::env::var_os("KASLR_RELOCS_EXPLAIN").is_some();
+    let mut explained = 0usize;
+    for relocation in &relocations {
+        let Relocation {
+            site: r_off,
+            addend,
+            r_type,
+            symbol,
+        } = *relocation;
         let width: u64 = if r_type == R_X86_64_64 { 8 } else { 4 };
-        if let Some(file_off) = vma_to_offset(r_off) {
-            if (file_off + width) as usize <= data.len() {
-                let val = if width == 8 {
-                    u64::from_le_bytes(
-                        data[file_off as usize..file_off as usize + 8]
-                            .try_into()
-                            .unwrap(),
-                    )
-                } else {
-                    u32::from_le_bytes(
-                        data[file_off as usize..file_off as usize + 4]
-                            .try_into()
-                            .unwrap(),
-                    ) as u64
-                };
-                // Additional check for 8-byte entries: valid kernel addresses
-                // fit in 32 bits (kernel < 4 GiB).  If upper 32 bits are set,
-                // the value is NOT a pointer but instruction bytes that happen
-                // to fall in range (e.g. a relocation at offset 0 that reads
-                // the REX+opcode prefix as part of the "value").
-                let high_bits_ok = width < 8 || (val >> 32) == 0;
-                if val >= KERNEL_VADDR_MIN && val <= valid_end && high_bits_ok {
-                    validated.push((r_off, addend, r_type));
-                } else {
-                    filtered += 1;
+        // The symbol the record names has to resolve: without it the entry
+        // cannot be proven, and an unprovable entry is not emitted.
+        let Some((sym_value, sym_shndx)) = symbol else {
+            unresolved += 1;
+            if explain && explained < 20 {
+                explained += 1;
+                eprintln!("  dropped unresolved: site={:#x} addend={}", r_off, addend);
+            }
+            continue;
+        };
+        // A record into a section the kernel never loads — a `.debug_*`
+        // section symbol, whose value is zero — proves nothing: the site
+        // holding zero would "match" by coincidence, and the kernel stores
+        // no reference into a section it does not have.
+        match symbol_is_loadable(&data, shdr_off, shdr_entsize, shdr_count, sym_shndx) {
+            Some(true) => {}
+            Some(false) => {
+                not_loadable += 1;
+                if explain && explained < 20 {
+                    explained += 1;
+                    eprintln!(
+                        "  dropped not-loadable: site={:#x} symbol-shndx={} value={:#x}",
+                        r_off, sym_shndx, sym_value
+                    );
                 }
+                continue;
+            }
+            None => {
+                unresolved += 1;
+                if explain && explained < 20 {
+                    explained += 1;
+                    eprintln!(
+                        "  dropped unresolved section: site={:#x} symbol-shndx={}",
+                        r_off, sym_shndx
+                    );
+                }
+                continue;
             }
         }
+        // The measurement itself: the applied value and the recorded symbol
+        // address have to be the same number at the site's width.
+        let Some(file_off) = vma_to_offset(r_off) else {
+            unreadable += 1;
+            if explain && explained < 20 {
+                explained += 1;
+                eprintln!("  dropped unreadable site: site={:#x}", r_off);
+            }
+            continue;
+        };
+        if (file_off + width) as usize > data.len() {
+            unreadable += 1;
+            if explain && explained < 20 {
+                explained += 1;
+                eprintln!("  dropped unreadable site (past EOF): site={:#x}", r_off);
+            }
+            continue;
+        }
+        let val = if width == 8 {
+            u64::from_le_bytes(
+                data[file_off as usize..file_off as usize + 8]
+                    .try_into()
+                    .unwrap(),
+            )
+        } else {
+            u32::from_le_bytes(
+                data[file_off as usize..file_off as usize + 4]
+                    .try_into()
+                    .unwrap(),
+            ) as u64
+        };
+        let mask: u64 = if width == 8 { u64::MAX } else { 0xffff_ffff };
+        let expected = sym_value.wrapping_add(addend as u64) & mask;
+        if val != expected {
+            mismatch += 1;
+            if explain && explained < 20 {
+                explained += 1;
+                eprintln!(
+                    "  dropped value mismatch: site={:#x} holds {:#x}, symbol {:#x} + {} expects {:#x}",
+                    r_off, val, sym_value, addend, expected
+                );
+            }
+            continue;
+        }
+        // The symbol is the anchor: a record the kernel applies names an
+        // address inside the kernel's extent, and the extent's end is
+        // inclusive because the linker's end label is itself a value the
+        // kernel stores (`__pool_end` and `__bss_end` equal `__kernel_end`).
+        // The value at the site is *not* checked against the extent: it is
+        // `symbol + addend`, and the addend legitimately points past the end —
+        // the kernel stores `__bss_end + 0xfff` (page-align-up's operand) and
+        // `__bss_end + 0x1000` (the heap's rounded end), and both have to
+        // move with the kernel.  An earlier version of this check compared
+        // the site value too and dropped exactly those records, which is the
+        // same class of loss the segment-derived bound had.
+        let in_extent = |address: u64| (KERNEL_VADDR_MIN..=valid_end).contains(&address);
+        if !in_extent(sym_value) {
+            out_of_extent += 1;
+            if explain && explained < 20 {
+                explained += 1;
+                eprintln!(
+                    "  dropped out of extent: site={:#x} symbol-value={:#x} (shndx {}) site-value={:#x}",
+                    r_off, sym_value, sym_shndx, val
+                );
+            }
+            continue;
+        }
+        for (slot, boundary_value) in boundary_values.iter().enumerate() {
+            if *boundary_value == Some(sym_value) {
+                boundary_kept[slot] += 1;
+            }
+        }
+        validated.push((r_off, addend, r_type));
     }
+
+    // A stripped ELF has no symbol table, and without it no record can be
+    // proven — every one of them would come out "unresolved" and the tool
+    // would write an empty table and report success.  The table's whole value
+    // is that it is complete, so refuse instead: a caller that stripped the
+    // ELF passed the wrong file.
+    if !symbol_table_present(&data, shdr_off, shdr_entsize, shdr_count) {
+        eprintln!(
+            "error: {elf_path} has no symbol table; the relocation table cannot be proven against it"
+        );
+        std::process::exit(1);
+    }
+
     let total = validated.len();
     eprintln!(
-        "Validated KASLR relocation entries: {} (filtered {} spurious)",
-        total, filtered
+        "KASLR relocs: {} kept, {} dropped ({} unresolved symbol, {} unreadable site, {} not loadable, {} value mismatch, {} out of extent)",
+        total,
+        unresolved + unreadable + not_loadable + mismatch + out_of_extent,
+        unresolved,
+        unreadable,
+        not_loadable,
+        mismatch,
+        out_of_extent
     );
+    for (slot, boundary) in BOUNDARY_SYMBOLS.iter().enumerate() {
+        let name = String::from_utf8_lossy(boundary);
+        match boundary_values[slot] {
+            Some(_) => eprintln!("boundary {}: {} kept", name, boundary_kept[slot]),
+            None => eprintln!("boundary {}: not in the symbol table", name),
+        }
+    }
 
     // Sort by offset for reliable processing.
     validated.sort_by_key(|&(offset, _, _)| offset);

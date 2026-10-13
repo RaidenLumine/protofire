@@ -2,29 +2,38 @@
 //!
 //! Kernel Address Space Layout Randomisation for x86_64.
 //!
-//! This module provides kernel self-relocation at boot time.
+//! This module is where kernel self-relocation at boot time would live; it is
+//! a stub today (see Current status).
 //!
 //! ## Current status
 //!
-//! KASLR is **disabled** in debug builds because:
+//! KASLR is **disabled**: [`try_relocate`] and [`is_relocated`] answer "not
+//! relocated" and nothing calls them, and the relocation loop is not
+//! restored.  What enabling it needs:
 //!
-//! 1. The kernel's BSS is ~52 MiB in debug builds (contains large embedded
-//!    payloads).  Relocating the full image causes the destination range to
-//!    overlap with the source, requiring BSS to be skipped and re-zeroed.
+//! 1. A large image.  A debug build's `.bss` is 67.5 MiB (measured), so
+//!    relocating the full image makes the destination range overlap the source
+//!    and BSS has to be skipped and re-zeroed at the new base.
 //!
-//! 2. The relocation table generated from `--emit-relocs` contains entries for
-//!    non-address values (instruction immediates, constants) that happen to
-//!    fall in the kernel physical address range. Applying these corrupts the
-//!    relocated image.  A build-time filter (checking each entry's site value
-//!    against the kernel extent) removes most, but some false positives remain.
+//! 2. The relocation table is proven but not applied anywhere.  The generator
+//!    keeps a record only when the bytes at its site are the symbol's
+//!    `st_value` plus the record's addend, reports what it drops by reason, and
+//!    `make check-kaslr-relocs` fails when an address the kernel stores — the
+//!    frame pool's two ends, the image's end — is missing from the table.  What
+//!    no gate covers is the runtime half: copying an image, applying the table,
+//!    and booting the result.
 //!
-//! 3. After relocation the kernel's page-table setup must map the *new*
-//!    physical base, not the link-time base.  The current page-table code reads
-//!    the kernel base from the link-time symbol `__kernel_start` which the
-//!    compiler constant-folds to 0x200000, defeating runtime detection of the
-//!    relocation.
+//! 3. A delta the entry path can know.  The kernel's own ranges come from
+//!    link-time symbols, and the compiler folds their addresses into immediates
+//!    — `runtime_kernel_page_plan` contains `mov $0x2489c000,%rax`, an
+//!    immediate the table itself lists as `__bss_end + 0x1000` (both measured).
+//!    The relocation table rewrites such values, but no symbol can tell the
+//!    boot what to rewrite them *by*: every symbol moves with the image.  The
+//!    relocator has to pass the base it chose, and the bootstrap identity map
+//!    has to cover both the link-time and the relocated address until the
+//!    switch.
 //!
-//! When these issues are resolved, enable KASLR by restoring the body of
+//! When those are resolved, enable KASLR by restoring the body of
 //! `try_relocate` and the relocation loop.
 //!
 //! ## Architecture
@@ -36,11 +45,12 @@
 //! `kernel_entry`.  The identity map (active during early boot) must cover
 //! both the original and new locations.
 //!
-//! The relocation table is pre-validated at build time: every entry's site
-//! value was checked to be a plausible kernel-absolute address within
-//! [KERNEL_LOAD_ADDRESS, kernel_end).  The gen-kaslr-relocs tool also
-//! filters overlapping entries (e.g. R_X86_64_64 at both the instruction
-//! prefix and the immediate operand of the same `movabs`).
+//! The relocation table is proven at generation time rather than filtered by
+//! guess: `tools/gen-kaslr-relocs` keeps a record only when the bytes at its
+//! site are the named symbol's `st_value` plus the record's addend — a record
+//! the linker did not apply cannot pass that equality, whatever its bytes
+//! look like — and `make check-kaslr-relocs` holds the table to that proof
+//! and to the addresses the kernel stores.
 
 // ── Public API ──────────────────────────────────────────────────────────
 

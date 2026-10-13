@@ -146,6 +146,7 @@ help:
 		'  make check-make-targets               - fail if the targets, `.PHONY` and this list disagree' \
 		'  make check-rfcs                       - fail if an RFC number, status or the generated index is wrong' \
 		'  make check-payload-relocations        - fail if a demo payload refers outside itself' \
+		'  make check-kaslr-relocs               - fail if the KASLR table loses an address the kernel stores' \
 		'  make check-reproducible-build         - rebuild every artifact twice and compare bytes' \
 		'  make check-unsafe-comments            - fail if any configuration gained an undocumented `unsafe` block' \
 		'  make check-user-access-windows        - fail if a module outside `syscall/memory/user.rs` opens a user-access window' \
@@ -323,7 +324,7 @@ test-service:
 
 # ── Static gates ──────────────────────────────────────────────────────
 .PHONY: check-repo-integrity check-docs check-make-targets check-rfcs \
-	check-payload-relocations check-reproducible-build \
+	check-payload-relocations check-kaslr-relocs check-reproducible-build \
 	check-unsafe-comments check-user-access-windows check-layering \
 	check-arch-fanout check-dead-code-allows check-status-rows \
 	check-feature-matrix \
@@ -375,6 +376,20 @@ check-rfcs:
 check-payload-relocations:
 	$(MAKE) build-x8664-demo
 	sh ./scripts/check-payload-relocations.sh
+
+# The KASLR table is generated, not compiled in — so nothing else would
+# notice it losing an entry.  That is exactly what happened when the frame
+# pool moved out of the load segments: 45 records whose value was
+# `__pool_start`, `__pool_end` or `__image_end` were dropped as spurious, and
+# the loss was invisible until an audit read the tool.  This runs the
+# generator over the built ELF and requires what it prints to hold: every
+# record proven against the symbol it names, nothing dropped for a reason
+# that means a broken table, and each of the three addresses the kernel
+# stores present at least once.  The generator is what KASLR would apply the
+# day it is enabled, so the table it writes has to stay whole.
+check-kaslr-relocs:
+	$(MAKE) build-x8664-demo
+	sh ./scripts/check-kaslr-relocs.sh "$(KERNEL_ELF)"
 
 # A release is only worth signing if someone else can rebuild it and get the
 # same bytes, so the tree has to keep building the same bytes twice in a row.
@@ -821,13 +836,14 @@ iso: build-x8664-demo
 	rm -rf $(ISO_STAGE)
 	mkdir -p $(ISO_STAGE)/boot/grub
 	cp iso/boot/grub/grub.cfg $(ISO_STAGE)/boot/grub/grub.cfg
-	# The kernel is linked with `--emit-relocs`, because the KASLR table it
-	# carries is generated from them (`tools/gen-kaslr-relocs`) — and GRUB's
-	# multiboot2 loader refuses an ELF that still has relocations ("ELF files
-	# with relocs are not supported yet"), which is the first thing a real
-	# loader ever told this tree.  The generated table is compiled in, so the
-	# copy a loader is given is the same kernel with the relocation sections
-	# taken off.
+	# The kernel is linked with `--emit-relocs`, because the KASLR table is
+	# generated from them (`tools/gen-kaslr-relocs`; `make check-kaslr-relocs`
+	# proves it) — and GRUB's multiboot2 loader refuses an ELF that still has
+	# relocations ("ELF files with relocs are not supported yet"), which is
+	# the first thing a real loader ever told this tree.  The generated table
+	# is not compiled in yet (`src/arch/x86_64/kaslr.rs` lists what enabling
+	# it needs), so the copy a loader is given is the same kernel with the
+	# relocation sections and the symbols taken off.
 	strip -o $(ISO_STAGE)/boot/protofire.elf \
 		$(TARGET_DIR)/x86_64-unknown-none/$(PROFILE)/$(CRATE)
 	grub-mkrescue -o $(ISO) $(ISO_STAGE)

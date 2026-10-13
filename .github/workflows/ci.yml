@@ -60,6 +60,11 @@ jobs:
             command: make check-arch-fanout
           - name: payload-relocations
             command: make check-payload-relocations
+          # And the generated table beside it: `gen-kaslr-relocs` output is
+          # not compiled in, so nothing else notices it losing an entry, and
+          # the pool's move out of the load segments silently cost it 45.
+          - name: kaslr-relocs
+            command: make check-kaslr-relocs
           - name: dead-code-allows
             command: make check-dead-code-allows
           - name: status-rows

@@ -170,6 +170,11 @@ run_p3() {
     run_make_step "make check-layering" check-layering
     run_make_step "make check-arch-fanout" check-arch-fanout
     run_make_step "make check-payload-relocations" check-payload-relocations
+    # And the generated table beside it: the KASLR relocations are what a
+    # relocated image would be rewritten with, they are not compiled in, and
+    # nothing else in the tree looks at them — the pool's move out of the
+    # load segments silently cost the table 45 entries no gate could see.
+    run_make_step "make check-kaslr-relocs" check-kaslr-relocs
     run_make_step "make check-dead-code-allows" check-dead-code-allows
     run_make_step "make check-status-rows" check-status-rows
     run_make_step "make check-ntfs-image" check-ntfs-image
