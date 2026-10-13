@@ -71,11 +71,47 @@ const TARGET_EIID_MASK: u32 = 0x7ff;
 /// what direct-mode delivery arbitrates by and what a threshold is compared
 /// against.
 const TARGET_IPRIO_MASK: u32 = 0xff;
-/// The priority a source is armed with.  Zero is "no priority" and the domain
-/// replaces it with the lowest nonzero one, so the driver writes the value it
-/// means rather than relying on that: the boot hart's threshold is zero
-/// (every priority passes), and one is therefore enough.
-const TARGET_IPRIO_ARMED: u32 = 1;
+
+// ── The priority policy ─────────────────────────────────────────────────
+//
+// Direct-mode delivery arbitrates by one number per source, and the
+// specification is explicit about its direction: "Smaller priority numbers
+// convey higher priority", "Only values 1 through 2^IPRIOLEN - 1 are allowed
+// for IPRIO, not zero", and a threshold of P holds back "priority numbers P
+// and higher".  So a source's IPRIO *is* the order it is served in — the
+// claim register answers with the highest-priority pending source — and a
+// policy is a choice from `1..=TARGET_IPRIO_MASK`, made once here rather
+// than at each call site.
+
+/// The console's priority, and the policy's answer to "what must never
+/// wait": input was moved off the timer tick on every machine so a person's
+/// keystroke does not ride on a stall, and it must not wait behind a device's
+/// wire either.  It is the scale's most urgent value, so no source can
+/// outrank the console while both are pending.
+pub const PRIORITY_CONSOLE: u32 = 1;
+
+/// Every other wired source.  Below the console and above nothing: a device's
+/// completion may be slower than a keystroke, and no machine here arms one
+/// yet — the constant is where such a driver's number comes from, so the
+/// order between roles is decided in this block rather than in a driver.
+pub const PRIORITY_DEVICE: u32 = 2;
+
+/// The hart's `ithreshold`.  Zero is the value that makes the ordering above
+/// the whole policy: any nonzero threshold P would mute every source whose
+/// priority is P or higher — a threshold of `PRIORITY_CONSOLE` would mute the
+/// console itself — so a machine that wanted to hold device wires back while
+/// the console is pending would have to raise this deliberately, and the
+/// raised value is what would say so.
+pub const THRESHOLD_ACCEPT_ALL: u32 = 0;
+
+// The policy's relations as build-time facts, so a later edit that flips the
+// scale's direction or lets a role be zero fails the build rather than the
+// machine: the specification's "smaller conveys higher priority", its "only
+// values 1 through the field's maximum", and this file's own "the console
+// outranks a device".
+const _: () = assert!(PRIORITY_CONSOLE < PRIORITY_DEVICE);
+const _: () = assert!(PRIORITY_CONSOLE >= 1);
+const _: () = assert!(PRIORITY_DEVICE <= TARGET_IPRIO_MASK);
 
 // ── Direct mode (`domaincfg.DM == 0`, `-machine virt,aia=aplic`) ────────
 //
@@ -118,9 +154,10 @@ pub(crate) fn idc_register(base: usize, hart_index: u32, offset: usize) -> usize
     base + IDC_BASE + hart_index as usize * IDC_SIZE + offset
 }
 
-/// The `target` word that names `hart_index` for `source` in direct mode.
-pub(crate) fn direct_target(hart_index: u32) -> u32 {
-    (hart_index << TARGET_HART_IDX_SHIFT) | TARGET_IPRIO_ARMED
+/// The `target` word that names `hart_index` and priority `priority` for a
+/// source in direct mode.
+pub(crate) fn direct_target(hart_index: u32, priority: u32) -> u32 {
+    (hart_index << TARGET_HART_IDX_SHIFT) | (priority & TARGET_IPRIO_MASK)
 }
 
 /// Read one domain register.
@@ -241,19 +278,29 @@ pub fn arm_source(source: u32, hart_index: u32) -> Result<(), Error> {
 /// The configuration is the same shape as [`arm_source`]'s — `sourcecfg`
 /// first, because `target` is read-only zero while the source is inactive —
 /// and then the three switches the domain delivers through, in the order the
-/// specification gives them: this hart's `idelivery`, its `ithreshold` (zero:
-/// every priority passes), and the domain's own `IE` last, so a source that
-/// went pending meanwhile is delivered by the write that sets it.  Every
-/// write is read back for the same reason [`arm_source`]'s are: a domain that
-/// took none of them would otherwise surface as an interrupt that never
-/// arrives.
-pub fn arm_source_direct(source: u32, hart_index: u32) -> Result<(), Error> {
+/// specification gives them: this hart's `idelivery`, its `ithreshold` (the
+/// policy's, [`THRESHOLD_ACCEPT_ALL`] by default), and the domain's own `IE`
+/// last, so a source that went pending meanwhile is delivered by the write
+/// that sets it.  Every write is read back for the same reason
+/// [`arm_source`]'s are: a domain that took none of them would otherwise
+/// surface as an interrupt that never arrives.
+///
+/// `priority` is the caller's choice from the scale the policy block above
+/// describes — [`PRIORITY_CONSOLE`] for the console, [`PRIORITY_DEVICE`] for
+/// a device's wire — and zero is refused rather than substituted, because the
+/// domain's own substitution ("a write of zero is set to 1 instead", the
+/// specification) would turn a caller's missing answer into the most urgent
+/// priority there is.
+pub fn arm_source_direct(source: u32, hart_index: u32, priority: u32) -> Result<(), Error> {
     let base = aplic_base().ok_or(Error::NotImplemented)?;
     if source == 0 || source > TARGET_EIID_MASK {
         return Err(Error::InvalidArgument);
     }
+    if priority == 0 || priority > TARGET_IPRIO_MASK {
+        return Err(Error::InvalidArgument);
+    }
 
-    let target = direct_target(hart_index);
+    let target = direct_target(hart_index, priority);
     let target_register = base + TARGET_BASE + (source as usize - 1) * 4;
     let sourcecfg_register = base + SOURCECFG_BASE + (source as usize - 1) * 4;
     let idelivery_register = idc_register(base, hart_index, IDC_IDELIVERY);
@@ -263,7 +310,7 @@ pub fn arm_source_direct(source: u32, hart_index: u32) -> Result<(), Error> {
     write(target_register, target);
     write(base + SETIENUM, source);
     write(idelivery_register, 1);
-    write(ithreshold_register, 0);
+    write(ithreshold_register, THRESHOLD_ACCEPT_ALL);
     write(base + DOMAINCFG, DOMAINCFG_IE);
     fence_iorw();
 
@@ -288,11 +335,12 @@ pub fn arm_source_direct(source: u32, hart_index: u32) -> Result<(), Error> {
     }
 
     crate::println!(
-        "[aplic ] source {} armed at {:#x}: level-high, direct delivery to hart {} (priority {})",
+        "[aplic ] source {} armed at {:#x}: level-high, direct delivery to hart {} (priority {} of {})",
         source,
         base,
         hart_index,
-        target & TARGET_IPRIO_MASK
+        priority,
+        TARGET_IPRIO_MASK
     );
     Ok(())
 }
@@ -328,7 +376,10 @@ mod tests {
     use super::idc_register;
     use super::IDC_TOPI_ID_MASK;
     use super::IDC_TOPI_ID_SHIFT;
-    use super::TARGET_IPRIO_ARMED;
+    use super::PRIORITY_CONSOLE;
+    use super::PRIORITY_DEVICE;
+    use super::TARGET_IPRIO_MASK;
+    use super::THRESHOLD_ACCEPT_ALL;
 
     /// The defect this pins: `claimi` answers with `topi`, which packs the
     /// source number and a priority into one word.  Passing that word along
@@ -350,13 +401,43 @@ mod tests {
     }
 
     #[test]
-    fn direct_target_names_the_hart_and_carries_a_priority() {
-        let target = direct_target(3);
+    fn direct_target_names_the_hart_and_carries_the_priority_it_was_given() {
+        let target = direct_target(3, PRIORITY_DEVICE);
         assert_eq!(target >> 18, 3, "the hart index rides bits 31:18");
         assert_eq!(
             target & 0xff,
-            TARGET_IPRIO_ARMED,
-            "the priority is nonzero, so the domain stores what it was given rather than substituting 1"
+            PRIORITY_DEVICE,
+            "the priority is stored as written, not substituted"
+        );
+        assert_ne!(
+            direct_target(3, PRIORITY_CONSOLE) & 0xff,
+            direct_target(3, PRIORITY_DEVICE) & 0xff,
+            "the two roles are told apart in the word the domain arbitrates by"
+        );
+    }
+
+    /// The policy's own relations, which the arbitration leans on: smaller is
+    /// more urgent (the specification: "Smaller priority numbers convey
+    /// higher priority"), the console is the most urgent value the scale has,
+    /// a device sits below it, and zero — "not zero" in the specification — is
+    /// never a role's value.
+    #[test]
+    fn the_priority_policy_is_ordered_and_nonzero() {
+        assert!(
+            PRIORITY_CONSOLE < PRIORITY_DEVICE,
+            "the console must outrank a device"
+        );
+        assert!(
+            PRIORITY_CONSOLE >= 1 && PRIORITY_DEVICE >= 1,
+            "zero is not a priority: the domain substitutes the most urgent one, which would silently promote a role"
+        );
+        assert!(
+            PRIORITY_DEVICE <= TARGET_IPRIO_MASK,
+            "the field is IPRIOLEN bits wide"
+        );
+        assert_eq!(
+            THRESHOLD_ACCEPT_ALL, 0,
+            "a nonzero threshold mutes every source at or above it, which is a different policy than this one"
         );
     }
 

@@ -555,7 +555,11 @@ pub mod serial {
         // mask goes last, once the machine's half has taken.
         if super::aplic::is_direct_mode() {
             let hart_index = crate::kernel::percpu::get().cpu_id;
-            if let Err(error) = super::aplic::arm_source_direct(interrupt_id, hart_index) {
+            if let Err(error) = super::aplic::arm_source_direct(
+                interrupt_id,
+                hart_index,
+                super::aplic::PRIORITY_CONSOLE,
+            ) {
                 crate::println!(
                     "[serial] console UART interrupt {} could not be armed for direct delivery; the tick will poll it ({})",
                     interrupt_id,

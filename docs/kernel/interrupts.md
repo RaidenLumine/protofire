@@ -159,6 +159,14 @@ machine rather than read off the specification:
 asserts the RX-interrupt landmark, which is the same evidence the other
 machines' console paths are held to: arming alone is not delivery.
 
+The mode's `iprio` is the order the domain arbitrates pending sources in —
+"smaller priority numbers convey higher priority", a threshold of P holds
+back P and higher, and zero is not a value the field takes — so the driver
+carries a small policy rather than a number: the console takes the scale's
+most urgent value and a device's wire sits below it, the threshold is zero
+(every armed source passes), and the relations are `const` assertions in
+`aplic.rs` so an edit that flips the scale fails the build.
+
 ## Message-signalled interrupts
 
 A device that signals by writing a message needs three things, and this tree

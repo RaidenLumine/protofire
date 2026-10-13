@@ -160,6 +160,11 @@ require_log_line "[irq   ] this machine's APLIC is in direct mode (no IMSIC behi
 # window.
 require_log_line "[aplic ] source 10 armed at 0x"
 require_log_line "direct delivery to hart 0"
+# And with the console's own priority, out of the scale the policy block in
+# `src/arch/riscv64/aplic.rs` defines: the number is asserted, not just the
+# fact that some number was written, because the arbitration between sources
+# is the number.
+require_log_line "(priority 1 of 255)"
 
 # And the machine comes up: the shell is reached and a typed line is
 # answered.  The exact answer is the end-to-end evidence — a byte arrived
