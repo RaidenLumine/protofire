@@ -106,13 +106,19 @@ pub fn aplic_base() -> Option<usize> {
 /// registries the same shape: a PLIC machine's source *is* its identity, and
 /// this domain is told to send that same number as the message.
 ///
-/// The order matters.  `target` is written before the source can become
-/// pending, `setienum` after the source is configured (the domain ignores an
-/// enable for an inactive source), and the domain's `IE` last — a source that
-/// went pending while `IE` was clear is delivered by the write that sets it,
-/// through the `target` written first.  Every write is read back: a domain
-/// that took none of them would otherwise surface as an interrupt that never
-/// arrives.
+/// The order matters, and `sourcecfg` goes first because the specification
+/// makes `target` read-only zero while the source is inactive: "If interrupt
+/// source i is inactive in this domain, register target[i] is read-only
+/// zero" (the AIA specification's `target[1]-target[1023]` section), so a
+/// `target` written before its `sourcecfg` is a write the domain drops —
+/// QEMU implements the drop from commit `7c96dbdd` (2026-01-09), and the
+/// 10.2.1 this was measured on does not, which is why writing `target` first
+/// used to pass.  Then `setienum` after the source is configured (the domain
+/// ignores an enable for an inactive source), and the domain's `IE` last — a
+/// source that went pending while `IE` was clear is delivered by the write
+/// that sets it, through the `target` written first.  Every write is read
+/// back: a domain that took none of them would otherwise surface as an
+/// interrupt that never arrives.
 pub fn arm_source(source: u32, hart_index: u32) -> Result<(), Error> {
     let base = aplic_base().ok_or(Error::NotImplemented)?;
     if source == 0 || source > TARGET_EIID_MASK {
@@ -122,8 +128,8 @@ pub fn arm_source(source: u32, hart_index: u32) -> Result<(), Error> {
     let target = (hart_index << TARGET_HART_IDX_SHIFT) | source;
     let target_register = base + TARGET_BASE + (source as usize - 1) * 4;
     let sourcecfg_register = base + SOURCECFG_BASE + (source as usize - 1) * 4;
-    write(target_register, target);
     write(sourcecfg_register, SOURCECFG_SM_LEVEL_HIGH);
+    write(target_register, target);
     write(base + SETIENUM, source);
     write(base + DOMAINCFG, DOMAINCFG_IE);
     fence_iorw();
