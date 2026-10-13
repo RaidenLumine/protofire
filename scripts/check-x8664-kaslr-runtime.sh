@@ -118,6 +118,28 @@ fi
 printf '  the scan carried %s pointer(s) with no relocation record\n' "$scanned"
 rm -f "$fresh" "$gen_log"
 
+# And the build identity is isolated from everything the table describes.
+# Its *content* follows git state (`git describe --dirty`), and this
+# toolchain hashes a constant's bytes into the symbol names that order the
+# items around it — measured, two 16-byte identities of different content
+# moved nineteen `.rodata`-relative table sites.  The fix is the section, so
+# the section is what is asserted: a change that moved the value back into
+# `.rodata` would pass this gate while working in the tree that generated
+# the table, and fail on the next clean checkout.
+# `objdump -h` puts the size in a fixed column; `readelf`'s is harder to pick
+# apart from the offset and alignment, which are hex too.
+kaslr_id_size="$(objdump -h "$KERNEL_BIN" 2>/dev/null | awk '$2 == ".kaslr_id" { print $3 }' | head -n 1)"
+if [ -z "$kaslr_id_size" ]; then
+    printf 'x86_64 KASLR check failed: the image has no .kaslr_id section\n' >&2
+    printf 'the build identity must be isolated from the layout the table describes (see src/arch/entry.rs)\n' >&2
+    exit 1
+fi
+if [ "$((0x$kaslr_id_size))" -ne 16 ]; then
+    printf 'x86_64 KASLR check failed: .kaslr_id is %s bytes, not the fixed 16 (see BUILD_ID_WIDTH)\n' "${kaslr_id_size:-0}" >&2
+    exit 1
+fi
+printf '  the build identity is isolated in .kaslr_id (%s bytes)\n' "$kaslr_id_size"
+
 if [ -n "$X8664_KASLR_LOG" ]; then
     mkdir -p "$(dirname "$X8664_KASLR_LOG")"
     log_file="$X8664_KASLR_LOG"

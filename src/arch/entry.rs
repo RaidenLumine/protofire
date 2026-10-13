@@ -185,10 +185,14 @@ const fn fixed_width_id(raw: &str) -> [u8; BUILD_ID_WIDTH] {
 /// that differed at 19 sites, all of them `.rodata`-relative).  Putting the
 /// value in its own named section, placed by the linker script where nothing
 /// the table describes can move, is what makes its content free; the fixed
-/// width keeps its *size* free of the same effect.  x86_64 only: the other
-/// machines have no relocation table, and their linker scripts do not place
-/// this section.
-#[cfg_attr(target_arch = "x86_64", link_section = ".kaslr_id")]
+/// width keeps its *size* free of the same effect.  The bare-metal x86_64
+/// kernel only: the other machines have no relocation table, and their linker
+/// scripts do not place this section — a host build has no linker script at
+/// all.
+#[cfg_attr(
+    all(target_arch = "x86_64", target_os = "none"),
+    link_section = ".kaslr_id"
+)]
 static BUILD_ID: [u8; BUILD_ID_WIDTH] = fixed_width_id(env!("PROTOFIRE_BUILD_ID"));
 
 fn print_banner() {
