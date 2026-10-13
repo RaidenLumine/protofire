@@ -314,15 +314,22 @@ const PVH_MEMMAP_MAX_ENTRIES: usize = 128;
 
 /// How much of the machine the bootstrap identity map covers.
 ///
-/// `boot.asm` builds 512 two-megabyte entries before Rust runs, and the
-/// loader's own block is read through that map — the runtime tables do not
-/// map it, which is why the command line and the framebuffer are captured
-/// before the switch.  An address outside this window cannot be read at all,
-/// so this is what turns a wild hand-off into "the machine described
-/// nothing" instead of a fault with no console behind it.
+/// `boot.asm` builds a four-gigabyte window of two-megabyte entries before
+/// Rust runs, and the loader's own block is read through that map — the
+/// runtime tables do not map it, which is why the command line and the
+/// framebuffer are captured before the switch.  An address outside this
+/// window cannot be read at all, so this is what turns a wild hand-off into
+/// "the machine described nothing" instead of a fault with no console behind
+/// it.
+///
+/// The bound is `BOOTSTRAP_IDENTITY_MAP_END` itself, not a second copy of a
+/// number: the assembly's fill counts are what build the map, and the
+/// constant states the same count for the software that reads it back.  A
+/// hand-off above the old one-gigabyte window is reachable now, and this is
+/// the check that lets the walk follow it there.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn bootstrap_map_limit() -> usize {
-    1 << 30
+    crate::arch::x86_64::paging::BOOTSTRAP_IDENTITY_MAP_END
 }
 
 /// A host build has no identity map: a test drives these walks over blocks in
@@ -378,9 +385,9 @@ pub fn pvh_memory_regions_at(addr: usize) -> Option<Vec<MemoryRegion>> {
     }
 
     // SAFETY: `addr` is inside the bootstrap identity map, which covers the
-    // first gigabyte while the boot runs; the struct is read as the fixed
-    // record Xen defines, and the two fields below are read only after the
-    // version says they exist.
+    // first four gigabytes while the boot runs; the struct is read as the
+    // fixed record Xen defines, and the two fields below are read only after
+    // the version says they exist.
     let magic = unsafe { *(addr as *const u32) };
     if magic != PVH_START_MAGIC {
         return None;
