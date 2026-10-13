@@ -110,17 +110,24 @@ pub(crate) fn described_memory_window() -> Option<(usize, usize)> {
 /// The regions of RAM the machine described, in whichever protocol it speaks
 /// with.
 ///
-/// x86_64's loader hands over a memory map, and the device-tree machines
-/// describe their memory in the blob; both answers end up here so that the
-/// memory layer asks one question ([RFC
+/// x86_64's loader hands over a memory map — a Multiboot2 tag block under
+/// GRUB, or the PVH start-of-day block's own E820 table under a direct QEMU
+/// boot — and the device-tree machines describe their memory in the blob;
+/// both answers end up here so that the memory layer asks one question ([RFC
 /// 0019](../../docs/rfcs/0019-what-a-frame-is.md)).  `None` is a machine that
-/// described nothing — a hand-off with no map tag — which is not the same as a
+/// described nothing — a hand-off with neither — which is not the same as a
 /// machine with no memory.
 pub(crate) fn described_memory_regions() -> Option<alloc::vec::Vec<crate::arch::boot::MemoryRegion>>
 {
     #[cfg(target_arch = "x86_64")]
     {
+        // The two PC hand-offs are not the same block, so neither is the
+        // other's fallback: a Multiboot2 boot has a tag map, a PVH boot has
+        // the start-of-day struct's table, and exactly one of the two was
+        // stored — each walk recognises its own magic and answers `None`
+        // otherwise.
         crate::arch::boot::multiboot2_memory_regions()
+            .or_else(crate::arch::boot::pvh_memory_regions)
     }
 
     #[cfg(any(

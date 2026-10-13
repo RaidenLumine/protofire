@@ -78,17 +78,19 @@ pub fn boot_command_line() -> Option<String> {
     BOOT_COMMAND_LINE.lock().clone()
 }
 
-/// tag is not present in the Multiboot2 info.
+/// The command line from the Multiboot2 tag block, if there is one.
+///
+/// Returns `None` when no boot hand-off address is available or the tag is not
+/// present in the Multiboot2 info.
 ///
 /// On non-x86_64 architectures the handoff address holds a device-tree blob
 /// (aarch64/riscv64 QEMU direct boot) rather than a Multiboot2 info structure,
-/// so this function always returns `None`.
+/// so this function always returns `None` there.
 pub fn multiboot2_command_line() -> Option<String> {
     // Multiboot2 is x86_64-specific.  On aarch64/riscv64 QEMU direct boot
     // the handoff address is a device-tree blob, not a Multiboot2 header.
     #[cfg(not(target_arch = "x86_64"))]
     {
-        // PVH direct boot (magic=0) does not provide a Multiboot2 memory map.
         None
     }
 
@@ -271,6 +273,167 @@ pub fn multiboot2_memory_regions_at(addr: usize) -> Option<Vec<MemoryRegion>> {
     }
 
     None
+}
+
+// ── The PVH hand-off ────────────────────────────────────────────────────
+//
+// A direct QEMU boot on the PC (`-kernel`, the PVH protocol) hands over a
+// different block through the same entry symbol: Xen's `hvm_start_info`,
+// which *does* describe the machine's memory — as an E820-shaped table the
+// struct points at — and whose fields are emphatically not Multiboot2 tags.
+// It is kept in a slot of its own for that reason: the tag readers (the
+// command line, the framebuffer, ACPI's RSDP lookup) read the Multiboot2
+// slot, and only the memory-map walk reads this one ([RFC
+// 0020](../../docs/rfcs/0020-what-the-memory-map-may-refuse-on.md): reading
+// the wrong block as tags is the defect that put a framebuffer over bytes
+// that were never a display).
+
+/// The magic a PVH start-of-day block begins with (Xen's `hvm_start_info`).
+#[cfg(target_arch = "x86_64")]
+const PVH_START_MAGIC: u32 = 0x336e_c578;
+
+/// Fields past `cmdline_paddr` — the RSDP, the memory map — exist only from
+/// this version of the struct on.
+#[cfg(target_arch = "x86_64")]
+const PVH_MMAP_VERSION: u32 = 1;
+
+/// One memory-map entry: address, size, type and a word Xen reserves, which
+/// is E820's shape — and E820's *types*, deliberately: 1 available, 2
+/// reserved, 3 ACPI, 4 NVS, 5 unusable.  The kinds pass through unchanged.
+#[cfg(target_arch = "x86_64")]
+const PVH_MEMMAP_ENTRY_SIZE: usize = 24;
+
+/// The most entries this walk will read from a loader's table.
+///
+/// The struct gives a count and no length, so the count is the only bound
+/// there is; a number past this one is a block this kernel refuses rather
+/// than walks.  Real tables are two orders of magnitude smaller (QEMU writes
+/// nine entries on `q35`).
+#[cfg(target_arch = "x86_64")]
+const PVH_MEMMAP_MAX_ENTRIES: usize = 128;
+
+/// How much of the machine the bootstrap identity map covers.
+///
+/// `boot.asm` builds 512 two-megabyte entries before Rust runs, and the
+/// loader's own block is read through that map — the runtime tables do not
+/// map it, which is why the command line and the framebuffer are captured
+/// before the switch.  An address outside this window cannot be read at all,
+/// so this is what turns a wild hand-off into "the machine described
+/// nothing" instead of a fault with no console behind it.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+fn bootstrap_map_limit() -> usize {
+    1 << 30
+}
+
+/// A host build has no identity map: a test drives these walks over blocks in
+/// its own address space, where nothing bounds them but the blocks.  The
+/// limit is "everything", and it is a value rather than a constant so the
+/// comparison reads the same in both builds.
+#[cfg(all(target_arch = "x86_64", not(target_os = "none")))]
+fn bootstrap_map_limit() -> usize {
+    usize::MAX
+}
+
+/// The PVH `hvm_start_info` block the loader handed over, if it handed one.
+///
+/// Stored apart from [`handoff_address`] because it is not a tag block: the
+/// readers of *that* address walk Multiboot2 tags, and this struct's first
+/// word happens to be a magic rather than a total size — a walk over it is
+/// how a framebuffer ends up reading bytes that were never a display.
+///
+/// x86_64-only, like everything that reads or writes it: the other machines'
+/// hand-off is a device-tree blob, and there is no such block for them to
+/// store or ask about.
+#[cfg(target_arch = "x86_64")]
+static PVH_START_INFO: AtomicUsize = AtomicUsize::new(0);
+
+/// Record the PVH block, once, from the entry path that recognised it.
+#[cfg(target_arch = "x86_64")]
+pub fn store_pvh_start_info(addr: usize) {
+    PVH_START_INFO.store(addr, Ordering::Release);
+}
+
+/// The PVH block's address, or 0 when the loader did not hand one over.
+#[cfg(target_arch = "x86_64")]
+pub fn pvh_start_info_address() -> usize {
+    PVH_START_INFO.load(Ordering::Acquire)
+}
+
+/// The machine's memory, as a PVH start-of-day block describes it.
+///
+/// The block points at an E820-shaped table (`memmap_paddr`, `memmap_entries`)
+/// whose types are E820's, so the regions come out in the same shape the
+/// Multiboot2 walk answers with and the memory layer asks one question
+/// ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+///
+/// `None` means this block is not a start-of-day block, is too old to carry a
+/// map, or carries one too long to trust — all of which are "the machine
+/// described nothing" rather than a guess.
+#[cfg(target_arch = "x86_64")]
+pub fn pvh_memory_regions_at(addr: usize) -> Option<Vec<MemoryRegion>> {
+    // A block outside the bootstrap map cannot be read; a pointer the loader
+    // left behind is not one to fault on.
+    if addr == 0 || addr >= bootstrap_map_limit() {
+        return None;
+    }
+
+    // SAFETY: `addr` is inside the bootstrap identity map, which covers the
+    // first gigabyte while the boot runs; the struct is read as the fixed
+    // record Xen defines, and the two fields below are read only after the
+    // version says they exist.
+    let magic = unsafe { *(addr as *const u32) };
+    if magic != PVH_START_MAGIC {
+        return None;
+    }
+    // SAFETY: the version word is the second word of the same struct.
+    let version = unsafe { *((addr + 4) as *const u32) };
+    if version < PVH_MMAP_VERSION {
+        return None;
+    }
+    // SAFETY: from version 1 on, `memmap_paddr` and `memmap_entries` are
+    // present at their fixed offsets.
+    let memmap_paddr = unsafe { *((addr + 0x28) as *const u64) } as usize;
+    // SAFETY: as above — the count word of the same field pair.
+    let entries = unsafe { *((addr + 0x30) as *const u32) } as usize;
+
+    if memmap_paddr == 0 || entries == 0 || entries > PVH_MEMMAP_MAX_ENTRIES {
+        return None;
+    }
+    // The table must be readable through the same map as the struct it comes
+    // from: a table that runs past the window is not one to walk.
+    let table_bytes = entries.checked_mul(PVH_MEMMAP_ENTRY_SIZE)?;
+    if memmap_paddr.checked_add(table_bytes)? > bootstrap_map_limit() {
+        return None;
+    }
+
+    let mut regions: Vec<MemoryRegion> = Vec::new();
+    for index in 0..entries {
+        let entry = memmap_paddr + index * PVH_MEMMAP_ENTRY_SIZE;
+        // SAFETY: every byte read below lies inside `entries` records of
+        // `PVH_MEMMAP_ENTRY_SIZE`, and the bound above checked that whole
+        // range against the map this code runs under.
+        let base = unsafe { *(entry as *const u64) };
+        // SAFETY: as above — the size word of the same entry.
+        let length = unsafe { *((entry + 8) as *const u64) };
+        // SAFETY: as above — the type word of the same entry.
+        let kind = unsafe { *((entry + 16) as *const u32) };
+
+        if length > 0 {
+            regions.push(MemoryRegion {
+                base: base as usize,
+                length: length as usize,
+                kind,
+            });
+        }
+    }
+
+    Some(regions)
+}
+
+/// The PVH block's memory map, read from the address the entry path stored.
+#[cfg(target_arch = "x86_64")]
+pub fn pvh_memory_regions() -> Option<Vec<MemoryRegion>> {
+    pvh_memory_regions_at(pvh_start_info_address())
 }
 
 /// The linear framebuffer a loader handed over, as its tag describes it.
@@ -526,6 +689,14 @@ pub fn from_x86_64_multiboot2(multiboot_magic: u32, multiboot_info: u32) -> Boot
     let multiboot2 = multiboot_magic == MULTIBOOT2_BOOT_MAGIC;
     if multiboot2 {
         store_handoff_address(multiboot_info as usize);
+    } else if multiboot_info != 0 {
+        // The other hand-off this entry serves is PVH's: `%ebx` points at
+        // Xen's `hvm_start_info`, which describes the machine's memory and
+        // whose fields are not tags.  It goes in its own slot so that a tag
+        // reader cannot be handed it ([the comment on `store_handoff_address`'s
+        // readers above](Self::from_x86_64_multiboot2)); the walk that reads
+        // it checks the magic before trusting a byte of it.
+        store_pvh_start_info(multiboot_info as usize);
     }
     current_arch_boot_info(
         if multiboot2 {
@@ -562,6 +733,8 @@ mod tests {
     use super::multiboot2_framebuffer_at;
     #[cfg(target_arch = "x86_64")]
     use super::multiboot2_memory_regions_at;
+    #[cfg(target_arch = "x86_64")]
+    use super::pvh_memory_regions_at;
     use super::BootInfo;
     use super::BootProtocol;
     #[cfg(target_arch = "x86_64")]
@@ -572,6 +745,10 @@ mod tests {
     use super::MEMORY_REGION_AVAILABLE;
     #[cfg(target_arch = "x86_64")]
     use super::MEMORY_REGION_RESERVED;
+    #[cfg(target_arch = "x86_64")]
+    use super::PVH_MEMMAP_MAX_ENTRIES;
+    #[cfg(target_arch = "x86_64")]
+    use super::PVH_MMAP_VERSION;
 
     #[test]
     fn boot_protocol_labels_are_stable() {
@@ -738,5 +915,112 @@ mod tests {
         block.extend_from_slice(&8_u32.to_le_bytes());
         let at = block.as_ptr() as usize;
         assert_eq!(multiboot2_memory_regions_at(at), None);
+    }
+
+    /// The PVH walk, over a block built the way QEMU lays one out: Xen's
+    /// `hvm_start_info` (magic, version, and the field pair that points at
+    /// the map) followed by an E820-shaped table.
+    ///
+    /// The answer is the same shape the Multiboot2 walk gives — the map's own
+    /// types, in the order the machine wrote them — because the memory layer
+    /// asks one question of either protocol ([RFC
+    /// 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn a_pvh_start_of_day_block_answers_its_memory_map() {
+        // The entries QEMU writes on `q35` with 1 GiB: low RAM available, two
+        // reserved holes, RAM again above 1 MiB, and a reserved hole where the
+        // 32-bit device window is.
+        fn block(version: u32) -> Vec<u8> {
+            let entries: [(u64, u64, u32); 4] = [
+                (0x0, 0x9_fc00, 1),
+                (0x9_fc00, 0x400, 2),
+                (0x10_0000, 0x3ff0_0000, 1),
+                (0xb000_0000, 0x1000_0000, 2),
+            ];
+
+            let mut block: Vec<u8> = Vec::with_capacity(0x38 + entries.len() * 24);
+            block.extend_from_slice(&0x336e_c578_u32.to_le_bytes()); // magic
+            block.extend_from_slice(&version.to_le_bytes()); // version
+            block.extend_from_slice(&0_u32.to_le_bytes()); // flags
+            block.extend_from_slice(&0_u32.to_le_bytes()); // nr_modules
+            block.extend_from_slice(&0_u64.to_le_bytes()); // modlist_paddr
+            block.extend_from_slice(&0_u64.to_le_bytes()); // cmdline_paddr
+            block.extend_from_slice(&0_u64.to_le_bytes()); // rsdp_paddr
+                                                           // The table lives right after the 0x38-byte struct; the two
+                                                           // halves of the pointer are written once the buffer stops moving.
+            let memmap_paddr_offset = block.len();
+            block.extend_from_slice(&0_u64.to_le_bytes());
+            block.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+            block.extend_from_slice(&0_u32.to_le_bytes()); // reserved
+            assert_eq!(memmap_paddr_offset, 0x28, "the field pair's offset");
+            assert_eq!(block.len(), 0x38, "the struct's size");
+
+            for (base, length, kind) in entries {
+                block.extend_from_slice(&base.to_le_bytes());
+                block.extend_from_slice(&length.to_le_bytes());
+                block.extend_from_slice(&kind.to_le_bytes());
+                block.extend_from_slice(&0_u32.to_le_bytes()); // reserved
+            }
+
+            let table = block.as_ptr() as usize + 0x38;
+            block[memmap_paddr_offset..memmap_paddr_offset + 8]
+                .copy_from_slice(&(table as u64).to_le_bytes());
+            block
+        }
+
+        let built = block(PVH_MMAP_VERSION);
+        let regions = pvh_memory_regions_at(built.as_ptr() as usize).expect("a map");
+        assert_eq!(
+            regions,
+            vec![
+                MemoryRegion {
+                    base: 0x0,
+                    length: 0x9_fc00,
+                    kind: MEMORY_REGION_AVAILABLE,
+                },
+                MemoryRegion {
+                    base: 0x9_fc00,
+                    length: 0x400,
+                    kind: MEMORY_REGION_RESERVED,
+                },
+                MemoryRegion {
+                    base: 0x10_0000,
+                    length: 0x3ff0_0000,
+                    kind: MEMORY_REGION_AVAILABLE,
+                },
+                MemoryRegion {
+                    base: 0xb000_0000,
+                    length: 0x1000_0000,
+                    kind: MEMORY_REGION_RESERVED,
+                },
+            ],
+            "the PVH table's entries, with the kinds it gives them"
+        );
+        assert_eq!(
+            available_bytes(&regions),
+            0x9_fc00 + 0x3ff0_0000,
+            "the same count the Multiboot2 walk would give for this machine"
+        );
+
+        // A struct older than the map field pair answers nothing: the bytes
+        // after `rsdp_paddr` are not a pointer on a version-0 block.
+        let mut old = block(0);
+        old.truncate(0x38);
+        assert_eq!(pvh_memory_regions_at(old.as_ptr() as usize), None);
+
+        // A block that is not one — another protocol's hand-off, a null
+        // pointer — answers nothing rather than being read.
+        let mut foreign: Vec<u8> = Vec::new();
+        foreign.extend_from_slice(&8_u32.to_le_bytes());
+        assert_eq!(pvh_memory_regions_at(foreign.as_ptr() as usize), None);
+        assert_eq!(pvh_memory_regions_at(0), None);
+
+        // And a map longer than the walk will trust is refused whole: the
+        // struct gives a count and no length, so the count is the only bound
+        // there is, and a wild one is not a map to read.
+        let mut wild = block(PVH_MMAP_VERSION);
+        wild[0x30..0x34].copy_from_slice(&((PVH_MEMMAP_MAX_ENTRIES + 1) as u32).to_le_bytes());
+        assert_eq!(pvh_memory_regions_at(wild.as_ptr() as usize), None);
     }
 }

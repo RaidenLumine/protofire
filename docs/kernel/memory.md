@@ -8,10 +8,12 @@ live under `src/arch/<machine>/paging` (x86_64) and `src/arch/<machine>/mmu`
 
 ## What the machine says
 
-Two walks answer how much RAM the platform reported — the Multiboot2 memory
-map (`multiboot2_memory_regions`, `src/arch/boot.rs`) and a device tree's
-`/memory` window (`memory_window`, `src/arch/fdt/parse.rs`) — and
-`memory::report_machine_memory` is what asks them: the boot prints the
+Three walks answer how much RAM the platform reported — the Multiboot2 memory
+map (`multiboot2_memory_regions`, `src/arch/boot.rs`), the E820-shaped table a
+PVH `hvm_start_info` block points at (`pvh_memory_regions`, same file, for a
+direct QEMU `-kernel` boot) and a device tree's `/memory` window
+(`memory_window`, `src/arch/fdt/parse.rs`) — and `memory::report_machine_memory`
+is what asks them: the boot prints the
 machine's number beside the pool's, checks the pool against the window
 `phys_addr_of` answers for, and — on a machine, where the linker's symbols
 exist — checks the kernel's **image** against the map, because a loader is
@@ -20,10 +22,10 @@ broken ([RFC 0019](../rfcs/0019-what-a-frame-is.md), [RFC
 0020](../rfcs/0020-what-the-memory-map-may-refuse-on.md)).
 
 Every machine is asked before the memory manager is built, because the manager
-sizes the frame allocator from the answer: x86_64's walk is over the loader's
-block and a device tree's is over the blob itself, and neither walk allocates.
-A device tree's **full** parse still runs later (`boot_parse_fdt`), for the
-rest of what the tree describes.
+sizes the frame allocator from the answer: x86_64's walks are over the
+loader's block and a device tree's is over the blob itself, and no walk
+allocates.  A device tree's **full** parse still runs later
+(`boot_parse_fdt`), for the rest of what the tree describes.
 
 ## Frames
 

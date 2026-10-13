@@ -65,12 +65,20 @@ pointer the bootloader chose.
 **Only a Multiboot2 block is one.**  The PC's two hand-offs arrive through the
 same entry symbol, and their blocks are not the same thing: GRUB leaves the
 Multiboot2 magic and a tag block, while a direct QEMU boot leaves a pointer to
-Xen's `start_info`, whose fields are not tags.  The magic decides, and a boot
+Xen's `hvm_start_info`, whose fields are not tags.  The magic decides, and a boot
 whose magic is not Multiboot2 records **no** hand-off address — so every reader
 of a tag (the memory map, the command line, the framebuffer, ACPI's RSDP
 lookup) answers "there is none" rather than reading a struct that merely looks
 like one.  A framebuffer read out of the wrong block is a range mapped and
 drawn on that was never a display.
+
+The PVH block is not *nothing*, though, and it goes in a slot of its own
+(`store_pvh_start_info`): from `hvm_start_info` version 1 it carries
+`memmap_paddr`/`memmap_entries`, an E820-shaped table of the machine's memory
+that `pvh_memory_regions` walks with its magic checked first.  So every PC
+boot answers "how much RAM" — the tag block under a loader, the block's table
+under QEMU — and only a hand-off with neither is the no-map boot the report
+still names.
 
 ## The Rust entry
 
@@ -186,14 +194,21 @@ init asks for nothing.
 The kernel is written to be told what the machine is, so the parts it takes
 from the platform are worth naming next to the parts it does not ask for:
 
-- **From the device tree or ACPI**: interrupt controllers, the console, the
-  timer's frequency, the PCIe ECAM window and the memory window a bridge
-  describes (`src/arch/fdt.rs`, `src/arch/fdt/parse.rs`, `src/arch/platform.rs`).
-- **Not from the platform**: the frame pool is a fixed array inside the image
-  (`src/memory/frame.rs`), and a machine that describes no controller gets the
-  `virt` layout's constants as a fallback (`src/arch/aarch64/mod.rs`).  Both
-  are the first things a real board would change, and the boot log prints which
-  base it used, so a boot running on the fallbacks says so.
+- **From the platform**: interrupt controllers, the console, the timer's
+  frequency, the PCIe ECAM window and the memory window a bridge describes
+  (`src/arch/fdt.rs`, `src/arch/fdt/parse.rs`, `src/arch/platform.rs`), and on
+  the PC whichever memory map the hand-off carries — a Multiboot2 tag block
+  under a loader, the PVH block's own E820-shaped table under a direct
+  `-kernel` boot (`src/arch/boot.rs`).
+- **Not from the platform**: where the frame pool *is* — a reserved span of
+  the kernel's own address space that the linker places
+  (`src/memory/frame.rs`) — and a machine that describes no controller gets
+  the `virt` layout's constants as a fallback (`src/arch/aarch64/mod.rs`).
+  What the pool is *sized* from is the machine's answer, which is why the
+  memory map is on the list above; the span is a ceiling that a small machine
+  takes only the part of.  A board port is where the span itself becomes a
+  decision, and the boot log prints the pool's base and how much of its span
+  the machine has.
 - **The entry contract is the bootloader's**: a Multiboot2 handshake, an arm64
   `Image` with the blob in `x0`, or OpenSBI's `a0`/`a1`.  A platform that hands
   over something else needs that contract written down first.

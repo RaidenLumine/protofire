@@ -15,15 +15,16 @@
 # that, which is what the ISO exists for
 # ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
 #
-# It is also the only boot that has a Multiboot2 memory map: PVH carries none,
-# so `machine reports … in N region(s)` — and the placement check that reads it
-# — were a unit test until this gate.
+# It is also the boot that goes through a real loader's Multiboot2 tag block,
+# which is where the tag readers — the command line, the framebuffer, ACPI's
+# RSDP — have always found their answers; the PVH block is a different
+# struct and is read only for the memory map its own table describes.
 #
 # What it asserts:
 #   * the loader handed control over the Multiboot2 protocol (`protocol=multiboot2`),
 #     so what ran is the loader path and not QEMU's;
-#   * the machine's memory map was found (`machine reports … region(s)`), which
-#     is the line PVH boots answer instead with "described no memory map";
+#   * the machine's memory map was found and read out of the tag block
+#     (`machine reports … region(s)`);
 #   * the kernel's own image is inside a region the map calls usable;
 #   * the boot reached the shell and loaded a program out of `/apps`.
 #
@@ -123,8 +124,10 @@ require_log_absent_line() {
 # writes a header for.
 require_log_line "[boot:loader] arch=x86_64 protocol=multiboot2"
 
-# The map a real loader gives — which QEMU's own hand-off does not — and the
-# check that reads it.
+# The map a real loader gives, read out of the Multiboot2 tag block — the
+# other PC hand-off's map comes from the PVH block's own E820 table now, so
+# what this asserts is that *this* boot's answer came from the tags (the
+# protocol line above says which hand-off was read).
 require_log_line "[mem   ] machine reports "
 require_log_line " region(s); the kernel's pool is "
 # The boot says how its own image sits in the map it was given: described, and

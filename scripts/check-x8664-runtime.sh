@@ -524,12 +524,9 @@ service_lines="$(count_log_line "[service]")"
 # 1 GiB.  The pool is reserved address space now, outside every loadable
 # segment and outside the boot's clear, so the ELF is a few megabytes and the
 # same machine boots.  What this segment pins is the load and the boot on the
-# smallest memory any check uses; the 512 MiB number is not a new floor this
-# kernel promises, it is the machine the defect was measured on.
-#
-# A PVH boot describes no memory map, so this machine cannot report which part
-# of the pool's span it has — that answer exists only where the machine has a
-# map, and the assertion for it lives in the aarch64 and riscv64 checks.
+# smallest memory any check uses, *and* the PVH block's memory map: the table
+# its struct points at is what lets this boot report the machine's number and
+# clamp the pool's span to it, the same answer the device-tree machines give.
 small_ram_log="$(mktemp)"
 set +e
 timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
@@ -557,7 +554,16 @@ esac
 
 main_log="$log_file"
 log_file="$small_ram_log"
-require_log_line "[mem   ] the machine described no memory map; the kernel's pool is 512 MiB"
+# The PVH block describes the machine's memory too — as the E820-shaped table
+# its struct points at — so this boot answers with the machine's own number,
+# not with "described no memory map" (which it answered until that table was
+# read).  511 rather than 512 is E820's own arithmetic: the top of a 512 MiB
+# machine is reserved, and what the map calls available is what is counted.
+require_log_line "[mem   ] machine reports 511 MiB "
+# And the pool's span is longer than this machine: the boot must say which
+# part of it exists rather than one number wearing both names.
+require_log_line "[mem   ] the machine has "
+require_log_line " frames stop at "
 require_log_line "Memory manager initialized: "
 require_log_line "adastra ring3 shell"
 require_log_absent_line "[FATAL"

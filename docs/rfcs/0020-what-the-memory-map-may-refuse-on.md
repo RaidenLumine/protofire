@@ -198,6 +198,24 @@ small-RAM work those numbers were the same, and a boot where they differ
 prints both, so the line and the machine's report cannot disagree without
 saying so.
 
+**The PC's direct boot answers a map at last.**  The PC's direct hand-off was
+the last one with no answer: its block was read for its magic and nothing
+else, so a direct `-kernel` boot reported "no memory map" and
+`managed_pool_bytes` fell back to the pool's whole span — a machine smaller
+than the span would manage memory that is not there.  Xen's `hvm_start_info`
+carries one from version 1:
+`memmap_paddr`/`memmap_entries`, an E820-shaped table of 24-byte entries whose
+types are E820's, which `arch::boot::pvh_memory_regions` walks after checking
+the block's magic (a hand-off that is not one answers nothing, which is the
+rule every other reader of these blocks follows).  QEMU `q35` writes nine
+entries; the RSS is what is bounded rather than trusted — a table longer than
+the walk will read, or one that runs past the bootstrap map, is refused whole.
+The `check-x8664-runtime` 512 MiB segment asserts both halves now: the machine
+reports its number *and* the boot says which part of the pool's span it has.
+Every boot of every machine answers a map today — a tag block, that table, or
+a device tree's `/memory` — and what still answers "described nothing" is a
+hand-off with none of the three.
+
 **What landed from the questions below.**  The UART half of the tick's device
 polling is a real interrupt now, on every machine whose controller can carry
 one: the handler drains the FIFO through
@@ -258,8 +276,8 @@ device-tree machines' input now arrives by interrupt.
   (`memory::arch::managed_pool_bytes`); the boot prints both when they differ,
   and 512 MiB boots a shell on all three machines where it used to die.  The
   span is still one constant for three machines — a board port's decision —
-  and a PVH boot with no map at all still manages the whole span, which is the
-  boot the report names rather than a silent one.
+  and a hand-off that describes nothing at all still manages the whole span,
+  which is the boot the report names rather than a silent one.
 - **What "refuse to boot" means**: the tree's panic policy is
   `docs/fmts/unsafe-and-safety.md`'s, and whether this is a halt with a message
   or a panic is that document's to say.  The small-RAM work gave it a second

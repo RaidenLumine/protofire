@@ -128,16 +128,19 @@ The authoritative picture of what exists today is
      a program read out of `/apps` on it.  What a real machine still needs is
      an **installation** path: the tool writes an image file, and putting the
      zones on a disk a machine already has is the installer's job.
-  3. **The memory the machine reports.**  The frame pool is a fixed array
-     inside the image and the platform's answer is clamped to it
+  3. **The memory the machine reports.**  The frame pool is a reserved span
+     of the kernel's own address space — placed by the linker, outside every
+     loadable segment and outside the boot's clear — and what the allocator
+     manages inside it is the machine's answer
      ([memory.md](docs/kernel/memory.md)), which is a decision about what a
      frame *is* rather than a defect — but it is the decision a machine with a
      map of its own, memory above 4 GiB and holes for its devices is exactly
      the shape to test.
      [RFC 0019](docs/rfcs/0019-what-a-frame-is.md) decides it: the pool stays
-     the kernel's memory, the two parsers of the machine's map are wired (they
-     had no callers at all, so the machine was never asked and the boot
-     printed the pool's size under the machine's name), and the boot now
+     the kernel's memory, every parser of the machine's map is wired — the
+     Multiboot2 tag block, the PVH block's E820-shaped table, a device tree's
+     `/memory` window, so every boot answers with the machine's own number —
+     and the boot
      verifies that the kernel's image lies in RAM the firmware calls usable —
      a loader may put it anywhere — and says which memory is whose.  Adopting
      the machine's regions as frames is the change a board port would make,

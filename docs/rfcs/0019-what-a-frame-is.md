@@ -195,17 +195,23 @@ names is what this removes.
   region(s); the kernel's pool is 512 MiB` and `the kernel's image
   [0x40080000, 0x646612d0) is in usable RAM`, which is the placement check
   answering on a device tree rather than a fixture.
-- **The no-map answer**, which is the one every gate here exercises: the
-  emulated boots reach the kernel through `-kernel` (PVH, or QEMU's arm64
-  `Image` hand-off), and PVH carries no Multiboot block, so the line they print
-  is `the machine described no memory map; the kernel's pool is 512 MiB` — the
-  third row of the table above, working.
+- **The no-map answer**: a hand-off that describes nothing still prints `the
+  machine described no memory map; the kernel's pool is 512 MiB` — the third
+  row of the table above, working.  When this document was written the
+  emulated `-kernel` boots were its examples, because the PVH block was read
+  for nothing but its magic.  It carries an E820-shaped memory table of its
+  own (`hvm_start_info.memmap_paddr`), and that table is what the PC's direct
+  boots report from now ([RFC
+  0020](0020-what-the-memory-map-may-refuse-on.md) carries that change).  What
+  answers "no map" today is a loader that hands over neither a tag block nor a
+  table.
 - **The boot that has a loader map**, which arrived with the bootable image:
   `make check-x8664-iso` boots the kernel from a GRUB ISO, and what it requires
   is this RFC's own line — `machine reports 1023 MiB in 2 region(s); the
   kernel's pool is 512 MiB`, then `the kernel's image [0x200000, 0x24893838)
-  is in usable RAM` — which no emulated boot could give, because QEMU's own
-  hand-off carries no map.  Asking a real loader for the kernel found two
+  is in usable RAM` — which no emulated boot could give *at the time*, because
+  QEMU's own hand-off's block was read as tags and never as a memory table.
+  Asking a real loader for the kernel found two
   things first: the ELF had to lose the relocation sections `--emit-relocs`
   keeps for KASLR, because GRUB refuses them, and the loader's info block had
   never been recorded on x86_64 at all, so the tag walk (the map *and* ACPI's
