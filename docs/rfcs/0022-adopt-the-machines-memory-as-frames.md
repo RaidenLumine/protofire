@@ -1,6 +1,6 @@
 # RFC 0022: Adopt the machine's memory as frames
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-13
 - **Supersedes:** none
@@ -18,7 +18,8 @@ writes through directly, and `ensure_identity_mapped_range` exists to keep the
 mapping for that pointer alive.  So "frames from the machine's regions" is a
 change to an **invariant that spans the tree**, and this document's job is to
 say which invariant, what it costs, and what has to be measured before it is
-worth doing.  It does *not* decide to do it; it decides what doing it means.
+worth doing.  It does *not* schedule the work; it decides what doing it means
+and when the doing is owed, and the Verdict section below is that decision.
 Half the measurement is in: one binary boots a 1 GiB machine and a 16 GiB
 machine to the same boot-work line, counter for counter, because the extra
 15 GiB is never touched — so today's pool costs a big machine nothing and
@@ -73,11 +74,16 @@ load-bearing:
   `zero_frame_range`, which calls `ensure_identity_mapped_range` before it
   writes — the allocator is what guarantees a frame is *writable at its
   address*, not merely free.
-- `src/memory/arch.rs` — `KERNEL_IDENTITY_MEMORY_END` (where the kernel's own
-  memory is), `managed_pool_bytes` (how much of the pool's span is real, which
-  is how the allocator is sized today), `kernel_image_range`,
-  `pool_is_addressable_by_a_device` and its refusal,
-  `report_machine_memory` and the checks it makes.
+- `src/memory/arch.rs` — `managed_pool_bytes` (how much of the pool's span is
+  real, which is how the allocator is sized today), `kernel_image_range`,
+  `pool_is_addressable_by_a_device` and its refusal, `report_machine_memory`
+  and the checks it makes.  The identity bound itself —
+  `KERNEL_IDENTITY_MEMORY_END`, where the kernel's own memory is — lives in
+  `src/arch/x86_64/paging/types.rs`, because it is the PC's number: the
+  device-tree machines state the same boundary through their RAM window
+  constants (`KERNEL_TEXT_BASE..KERNEL_TEXT_END` on AArch64,
+  `KERNEL_RAM_BASE` plus `KERNEL_RAM_LENGTH` on RISC-V), which is why
+  `phys_addr_of` is where the three meet and `memory/arch.rs` only asks.
 - `src/arch/mmu.rs` — `phys_addr_of`: `Some(address)` for a kernel address that
   is its own physical address, `None` otherwise, and **every caller treats
   `None` as a refusal**.  Three implementations, one per machine, each naming
@@ -219,6 +225,49 @@ checklist rather than its evidence.**  In the order they would have to hold:
   side — what the direct map costs *when* the memory is used (the table
   pages and the entries to build them, countable with the same
   `perf_baseline` line) — and that cannot be measured without the change.
+
+## Verdict
+
+**The design is accepted and the implementation is deferred, on named
+triggers.**  This document replaced "adopting the machine's regions as
+frames" — a sentence RFC 0019 and RFC 0020 both carried as if it were one
+more parser — with a statement of what the change actually is (an invariant
+that spans the tree, a direct map, and a window per machine).  That statement
+is the decision, and it is what an implementer should build from.  The
+implementation itself is not owed now, and the reason is measured rather
+than argued:
+
+- **Nothing in the near-term gates needs it.**  Every gate's machine is one
+  the pool already covers, and the boot-work measurement shows the cost of
+  today's choice on a big machine is zero when the memory is unused.
+- **The measurement that would justify it cannot be taken without it.**  What
+  a direct map costs *when the memory is used* needs the direct map; taking
+  the change in order to measure whether the change is worth making is
+  circular, so the trigger has to come from outside.
+
+The triggers, in the order they are likely to arrive:
+
+1. **A machine whose workload needs more frames than the pool holds.**  The
+   pool is 512 MiB on the PC and 768 MiB on the device-tree machines, and
+   `docs/status.md`'s frame-allocator row records what runs out first.  The
+   next step in that direction is the *cheap* one this RFC names as an
+   alternative: adopting only the regions below the 4 GiB device bound (about
+   2 GiB instead of 512 MiB on the measured 16 GiB `q35`), which is the same
+   invariant move with a smaller window.
+2. **A board port.**  A real board's RAM is not arranged to suit the kernel;
+   when one arrives, this RFC is the document to port from, and
+   `docs/kernel/memory.md` is where the new meaning of a `*mut u8` from the
+   allocator gets written in the same change.
+3. **An answer to the DMA-width question** (RFC 0020's): while every frame is
+   below 4 GiB the question is dormant, and the first adopted region above it
+   makes the choice — bounce buffer, low-only fallback, or refusal — load
+   bearing.  That answer is a prerequisite of the `phys_addr_of` inversion,
+   not a follow-up to it.
+
+Until one of those lands, the tree's behaviour is what RFC 0019/0020 decided:
+a frame is an address in the kernel's own memory, both machines answer with
+the machine's own number, and a big machine's extra RAM is unused — which
+this document measured rather than left implied.
 
 ## Unresolved questions
 

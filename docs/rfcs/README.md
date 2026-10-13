@@ -129,7 +129,7 @@ and its status says which of the two happened.
 | [0019](0019-what-a-frame-is.md) | Superseded | Make a frame an address in the kernel's own memory |
 | [0020](0020-what-the-memory-map-may-refuse-on.md) | Implemented | What the memory map may refuse on |
 | [0021](0021-what-the-timer-tick-still-polls.md) | Accepted | What the timer tick still polls |
-| [0022](0022-adopt-the-machines-memory-as-frames.md) | Draft | Adopt the machine's memory as frames |
+| [0022](0022-adopt-the-machines-memory-as-frames.md) | Accepted | Adopt the machine's memory as frames |
 | [0023](0023-enable-msix-when-the-claim-is-taken.md) | Implemented | Enable MSI-X when the claim is taken |
 | [0024](0024-what-the-hda-controller-signals-with.md) | Accepted | What the HDA controller signals with |
 <!-- rfcs-table:end -->

@@ -155,11 +155,13 @@ The authoritative picture of what exists today is
      a loader may put it anywhere — and says which memory is whose.  Adopting
      the machine's regions as frames is the change a board port would make,
      and [RFC 0022](docs/rfcs/0022-adopt-the-machines-memory-as-frames.md)
-     now states its shape: the pool is no longer "the low part of RAM" but a
-     fixed span, so the change moves the identity between an address and its
-     physical number that `phys_addr_of` and every frame consumer rest on,
-     and it owes a measurement of what a machine actually gains before it is
-     worth its cost.
+     states its shape and its verdict: the pool is no longer "the low part of
+     RAM" but a fixed span, so the change moves the identity between an
+     address and its physical number that `phys_addr_of` and every frame
+     consumer rest on — accepted, and deferred on named triggers (a workload
+     that outgrows the pool, a board port, or the answer to the DMA-width
+     question), because the measurement that would justify it needs the
+     change to exist.
   4. **Everything the machine has instead.**  A keyboard that is not PS/2, a
      GPU that is not QEMU's, a network card that is not virtio, a hub behind a
      hub.  Each is a driver or a driver's assumption, each is named in
