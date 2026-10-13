@@ -630,7 +630,17 @@ gicv3_shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
     -drive file="$gicv3_blk",if=none,id=blk0 \
     -device virtio-blk-pci,drive=blk0 >"$gicv3_log" 2>>"$gicv3_log"
+status=$?
 set -e
+case "$status" in
+    0|124) ;;
+    *)
+        printf 'aarch64 runtime check failed with exit status %s on the GICv3 machine\n' "$status" >&2
+        cat "$gicv3_log" >&2
+        rm -f "$gicv3_log" "$gicv3_blk"
+        exit "$status"
+        ;;
+esac
 
 # The assertions below all read `$log_file`, so point it at this boot while
 # they run and put it back afterwards.
@@ -768,7 +778,17 @@ timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -no-shutdown \
     -global virtio-mmio.force-legacy=false \
     -netdev user,id=net0 -device virtio-net-pci,netdev=net0 >/dev/null 2>>"$small_ram_log"
+status=$?
 set -e
+case "$status" in
+    0|124) ;;
+    *)
+        printf 'aarch64 runtime check failed with exit status %s on the 512 MiB machine\n' "$status" >&2
+        cat "$small_ram_log" >&2
+        rm -f "$small_ram_log"
+        exit "$status"
+        ;;
+esac
 
 log_file="$small_ram_log"
 require_log_line "[mem   ] machine reports 512 MiB "

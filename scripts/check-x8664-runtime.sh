@@ -581,7 +581,7 @@ service_lines="$(count_log_line "[service]")"
 # a loadable segment: the ELF said 576 MiB of `p_memsz`, so a machine smaller
 # than that could not load the kernel at all — which is why this check boots
 # 1 GiB.  The pool is reserved address space now, outside every loadable
-# segment and outside the boot's clear, so the ELF is a few megabytes and the
+# segment and outside the boot's clear, so no segment covers the span and the
 # same machine boots.  What this segment pins is the load and the boot on the
 # smallest memory any check uses, *and* the PVH block's memory map: the table
 # its struct points at is what lets this boot report the machine's number and
