@@ -255,9 +255,15 @@ device-tree machines' input now arrives by interrupt.
 ## Unresolved questions
 
 - **Adopting the machine's regions as frames** (RFC 0019's question, carried
-  forward here): a frame table over the usable entries, those regions mapped
-  into the kernel's window, and the image reserved out of them.  The argument
-  for it would be a measurement.
+  forward here): decided as to *shape* by
+  [RFC 0022](0022-adopt-the-machines-memory-as-frames.md), which found that
+  the change is not "a frame table over the usable entries" but a move of the
+  address-equals-physical invariant that `phys_addr_of`, the block layer and
+  every frame consumer rest on — so a direct map becomes part of it.  That
+  document states what the change costs, keeps the kernel's own memory where
+  it is, and names the measurement it still owes: what a big machine actually
+  gains, in frames and in boot work.  The argument for doing it is still a
+  measurement, and it has not been taken.
 - **RAM above 4 GiB, and the width of a device's address**: measured, and
   latent rather than live.  **No frame the allocator can hand out is above
   the first 4 GiB**, and the reason is structural: the pool is the kernel's

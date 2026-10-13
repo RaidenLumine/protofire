@@ -129,6 +129,7 @@ and its status says which of the two happened.
 | [0019](0019-what-a-frame-is.md) | Superseded | Make a frame an address in the kernel's own memory |
 | [0020](0020-what-the-memory-map-may-refuse-on.md) | Implemented | What the memory map may refuse on |
 | [0021](0021-what-the-timer-tick-still-polls.md) | Accepted | What the timer tick still polls |
+| [0022](0022-adopt-the-machines-memory-as-frames.md) | Draft | Adopt the machine's memory as frames |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —
