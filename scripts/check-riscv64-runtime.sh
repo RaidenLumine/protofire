@@ -30,9 +30,10 @@ CRATE="${CRATE:-protofire}"
 CARGO="${CARGO:-cargo}"
 TARGET_DIR="${TARGET_DIR:-target}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-30}"
-# The kernel embeds a 512 MiB physical-frame pool as a static BSS array, so the
-# demo's user slots sit near the top of a gigabyte of address space; 2 GiB keeps
-# them comfortably inside RAM (`-m 1G` also boots, but with no margin).
+# The frame pool is a reserved span of the kernel's own address space (768 MiB
+# on this machine), and the demo slots sit right after the image — so the
+# loaded content is a few megabytes and 2 GiB is headroom rather than a
+# requirement (`-m 512M` boots too; the check exercises it below).
 QEMU_RAM="${QEMU_RAM:-2G}"
 QEMU_RISCV64="${QEMU_RISCV64:-qemu-system-riscv64}"
 RISCV64_RUNTIME_LOG="${RISCV64_RUNTIME_LOG:-}"
@@ -394,8 +395,8 @@ esac
 main_log="$log_file"
 log_file="$small_ram_log"
 require_log_line "[mem   ] machine reports 512 MiB "
-# The pool's span is 512 MiB and the machine has less of it: the boot must
-# report the part that exists rather than one number wearing both names.
+# The pool's span is larger than this machine: the boot must report the part
+# that exists rather than one number wearing both names.
 require_log_line "[mem   ] the machine has "
 require_log_line " frames stop at "
 require_log_line "Memory manager initialized: "

@@ -10,8 +10,34 @@ KERNEL_LOAD_ADDRESS = 0x200000;
 /* The frame pool's span, in bytes.  It is reserved address space, not
    storage: nothing is loaded there and no clear loop walks it — the
    allocator zeroes a frame when it hands one out.  See
-   `src/memory/frame.rs`. */
+   `src/memory/frame.rs`.
+
+   The size is derived from the window, not picked, and on this machine the
+   window is the *shorter* one: the pool is a reservation inside the kernel's
+   own memory, which the runtime tables identity-map, and what bounds it is
+   not the end of a RAM window but the kernel's stack window — `X86_STACK_WINDOW_BASE`
+   (0x3000_0000, `src/arch/x86_64/paging/runtime.rs`) sits above the image and
+   below everything else.  The policy takes the largest 256 MiB multiple that
+   leaves `POOL_MARGIN` free below that bound: 512 MiB, with the pool ending
+   at 0x2480_0000-ish and the margin before 0x3000_0000.  A 768 MiB pool would
+   run into the stack window.  What the span buys is frames: on a machine with
+   more RAM than the span the excess stays unmanaged
+   (`managed_pool_bytes`).  The policy is enforced by the ASSERT at the end of
+   SECTIONS rather than remembered. */
 POOL_SIZE = 512M;
+
+/* The room the pool must leave below the stack window: the image sits before
+   the pool, so this is how far the image may grow before the pool's own end
+   would reach the window.  More than the image is large today (measured
+   ~73 MiB), which is why it is 128M and not 64M. */
+POOL_MARGIN = 128M;
+
+/* The kernel's stack window's base — the bound the pool must stay below,
+   which on this machine is nearer than any window's end.  Kept in step with
+   `X86_STACK_WINDOW_BASE` in `src/arch/x86_64/paging/runtime.rs`; the linker
+   script cannot read a Rust constant, so the ASSERT below is what makes the
+   two disagree loudly instead of silently. */
+STACK_WINDOW_BASE = 0x30000000;
 
 SECTIONS
 {
@@ -108,4 +134,11 @@ SECTIONS
         *(.eh_frame*)
         *(.note .note.*)
     }
+
+    /* The pool's policy, as a build-time fact: it stays inside the kernel's
+       own memory — below the stack window — and leaves POOL_MARGIN free for
+       the image to grow into.  A pool that grew past this would collide with
+       the stacks. */
+    ASSERT(__pool_end + POOL_MARGIN <= STACK_WINDOW_BASE,
+        "the frame pool must leave the stack window's margin free; lower POOL_SIZE")
 }

@@ -9,8 +9,32 @@ KERNEL_LOAD_ADDRESS = 0x80200000;
 
 /* The frame pool's span, in bytes.  It is reserved address space, not storage:
    nothing is loaded there and no boot clear walks it — the allocator zeroes a
-   frame when it hands one out.  See `src/memory/frame.rs`. */
-POOL_SIZE = 512M;
+   frame when it hands one out.  See `src/memory/frame.rs`.
+
+   The size is derived from the window, not picked: the pool is a reservation
+   inside the RAM window the runtime tables identity-map, so its ceiling is
+   that window's end (`KERNEL_RAM_BASE + KERNEL_RAM_LENGTH`,
+   `src/arch/riscv64/mmu/mod.rs`), and the policy below takes the largest
+   256 MiB multiple that leaves `POOL_MARGIN` free — 768 MiB here, where the
+   window ends at 0xC000_0000 and the pool starts at 0x8560_0000.  What the
+   span buys is frames: on a machine with more RAM than the span the excess
+   stays unmanaged (`managed_pool_bytes`).  The policy is enforced by the
+   ASSERT at the end of SECTIONS rather than remembered. */
+POOL_SIZE = 768M;
+
+/* The room the pool must leave below its window's ceiling: the image sits
+   before the pool, so this is how far the image may grow before the pool's
+   own end would leave the window.  More than the image is large today
+   (measured ~72 MiB), which is why it is 128M and not 64M. */
+POOL_MARGIN = 128M;
+
+/* Where the RAM window the runtime tables identity-map ends — the nearer of
+   the two bounds that matter, the other being the top of the machine's RAM.
+   Kept in step with `KERNEL_RAM_BASE + KERNEL_RAM_LENGTH` in
+   `src/arch/riscv64/mmu/mod.rs`; the linker script cannot read a Rust
+   constant, so the ASSERT below is what makes the two disagree loudly
+   instead of silently. */
+RAM_WINDOW_END = 0xC0000000;
 
 /* The demo slots' span: eight 2 MiB regions a user payload is loaded into,
    reserved the same way and placed before the pool so they lie at the front
@@ -97,4 +121,10 @@ SECTIONS
         *(.eh_frame*)
         *(.note .note.*)
     }
+
+    /* The pool's policy, as a build-time fact: it stays inside the window the
+       runtime tables identity-map and leaves POOL_MARGIN below its ceiling.
+       A pool that grew past this would be frames the kernel cannot map. */
+    ASSERT(__pool_end + POOL_MARGIN <= RAM_WINDOW_END,
+        "the frame pool must leave the RAM window's margin free; lower POOL_SIZE")
 }

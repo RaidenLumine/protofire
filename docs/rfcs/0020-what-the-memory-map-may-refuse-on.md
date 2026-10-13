@@ -323,10 +323,17 @@ device-tree machines' input now arrives by interrupt.
   initialised data and outside every loadable segment, and what the allocator
   manages inside it is the machine's answer
   (`memory::arch::managed_pool_bytes`); the boot prints both when they differ,
-  and 512 MiB boots a shell on all three machines where it used to die.  The
-  span is still one constant for three machines — a board port's decision —
-  and a hand-off that describes nothing at all still manages the whole span,
-  which is the boot the report names rather than a silent one.
+  and 512 MiB boots a shell on all three machines where it used to die.
+  The span's size is now **derived per machine rather than picked in Rust**:
+  each linker script states the window the pool lives in and the margin it
+  must leave (`POOL_SIZE`, `POOL_MARGIN`, `RAM_WINDOW_END` /
+  `STACK_WINDOW_BASE`), and an `ASSERT` refuses a link whose pool would cross
+  it — 768 MiB on the device-tree machines, whose windows end at 0xC000_0000,
+  and 512 MiB on the PC, where the kernel's stack window at 0x3000_0000 is the
+  nearer bound.  A board port changes three linker constants and the ASSERT
+  says whether the change fits; the policy is the scripts' own prose.  A
+  hand-off that describes nothing at all still manages the whole span, which
+  is the boot the report names rather than a silent one.
 - **What "refuse to boot" means**: the tree's panic policy is
   `docs/fmts/unsafe-and-safety.md`'s, and whether this is a halt with a message
   or a panic is that document's to say.  The small-RAM work gave it a second

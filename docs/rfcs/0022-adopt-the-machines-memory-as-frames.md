@@ -29,17 +29,21 @@ used, needs the change to exist and is named below rather than assumed.
 
 `ROADMAP.md`'s "A real machine" list puts the memory the machine reports third,
 and the reason is real: a machine's map has holes and RAM above 4 GiB, and this
-kernel's pool is 512 MiB of the kernel's own image.  A machine with 16 GiB
-manages 512 MiB of it, and the boot says so — `machine reports 16384 MiB in 1
-region(s); the kernel's pool is 512 MiB` (measured; the lines are in every
-recent log).
+kernel's pool is a few hundred megabytes of the kernel's own image — 768 MiB on
+the device-tree machines, 512 MiB on the PC.  A machine with 16 GiB manages
+one number whether it needs it or not: on the PC the boot says
+`machine reports 16384 MiB in 1 region(s); the kernel's pool is 512 MiB`
+(measured; the lines are in every recent log), and the device-tree machines
+say 768.  (Those two numbers are what the linker's pool policy arrived at —
+`POOL_SIZE` per script, with an `ASSERT` against the window it lives in; see
+RFC 0020's "The pool's size per target" for how.)
 
 Two other measurements narrow what the work is:
 
 - The pool's address **does not move when the machine's RAM grows.**  One
   binary on `q35` at 1, 2, 8 and 16 GiB reads `the pool is [0x489b000,
   0x2489b000)` in all four boots; the device-tree machines are the same shape
-  (`[0x45800000, 0x65800000)` on aarch64, `[0x85600000, 0xa5600000)` on
+  (`[0x45800000, 0x75800000)` on aarch64, `[0x85600000, 0xb5600000)` on
   riscv64, at 16 GiB).  So the pool is not "the low part of the machine's
   RAM" — it is a fixed address the linker chose, and the gap between what the
   machine offers and what the kernel takes is the *whole* gap, not an
@@ -120,12 +124,14 @@ region it does not adopt, and the boot says how much it left.
 
 ## Alternatives
 
-- **Grow the pool and stop there.**  Rejected as an answer to *this* question
-  only because it is a different question: a bigger array (or a smaller
-  default per target) buys more frames from the same fixed span, and the
-  machine's regions still go unmanaged.  It is a legitimate separate change —
-  and it is the cheap one a board port would take first, because it needs no
-  invariant to move.
+- **Grow the pool and stop there.**  Taken as far as it goes, and it is not
+  an answer to *this* question: the span is derived per machine now (768 MiB
+  on the device-tree machines, 512 MiB on the PC, each with a link-time
+  `ASSERT` against the window it lives in), which buys more frames from the
+  same fixed span — and a machine's regions still go unmanaged.  It was the
+  cheap step to take first because it needs no invariant to move, and what
+  remains is the change that does: the frames already allocated are still
+  the only ones a big machine will ever see.
 - **Keep the identity and require RAM below 4 GiB.**  That is what the tree
   does today, and it is coherent: the pool is low, devices are 64-bit,
   `phys_addr_of` is trivial.  Rejected as a *permanent* position because a

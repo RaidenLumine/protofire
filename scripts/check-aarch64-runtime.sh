@@ -772,8 +772,8 @@ set -e
 
 log_file="$small_ram_log"
 require_log_line "[mem   ] machine reports 512 MiB "
-# The pool's span is 512 MiB and the machine has less of it: the boot must
-# report the part that exists rather than one number wearing both names.
+# The pool's span is larger than this machine: the boot must report the part
+# that exists rather than one number wearing both names.
 require_log_line "[mem   ] the machine has "
 require_log_line " frames stop at "
 require_log_line "Memory manager initialized: "
