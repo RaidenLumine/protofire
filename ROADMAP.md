@@ -146,9 +146,24 @@ The authoritative picture of what exists today is
      wrong offset.  The writer followed: `mkimage gpt` builds the demo disk's
      zones as a GPT, and `make check-x8664-usb-disk` boots it — the same zones
      in the other table, over USB, with the boot's own line naming the GPT and
-     a program read out of `/apps` on it.  What a real machine still needs is
-     an **installation** path: the tool writes an image file, and putting the
-     zones on a disk a machine already has is the installer's job.
+     a program read out of `/apps` on it.  The **installation** path has
+     landed its disk-side half: `cargo run -- install <disk>` adds this
+     kernel's zones to a disk a machine already has — the table must be a GPT
+     the disk already carries, a zone's slot is the entry with its type GUID
+     or the first free one, every other entry is copied back byte for byte,
+     and a second install writes the same extents in place.  `make
+     check-x8664-install` makes the disk with `sgdisk`, so the table is a
+     partitioning tool's rather than this tree's, keeps a stranger's
+     partition through the install and then *boots* the result.  That gate is
+     also what caught the kernel's CRC-32 table carrying one transcribed
+     entry wrong (`0x5CB30A04` for `0x5CB36A04`): every self-made GPT still
+     round-tripped because writer and reader shared the table, and a real
+     tool's checksums did not verify — so a machine's own disk was exactly
+     the shape this tree could not read, which is what RFC 0018 exists for.
+     What remains on the installation path: a user interface and a
+     confirmation (the disk-side operation is the module), and creating a
+     table on a disk that has none, which is a partitioning decision this
+     kernel deliberately does not make.
   3. **The memory the machine reports.**  The frame pool is a reserved span
      of the kernel's own address space — placed by the linker, outside every
      loadable segment and outside the boot's clear — and what the allocator

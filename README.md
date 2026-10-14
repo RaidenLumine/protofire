@@ -102,7 +102,24 @@ sudo dd if=target/protofire.iso of=/dev/sdX bs=4M status=progress oflag=sync
 
 `/dev/sdX` is the whole stick, not a partition on it (`/dev/sdX1` would
 overwrite that partition and leave the stick unbootable); `dd` destroys
-whatever is there, so check the name from `lsblk` first.  A machine that
+whatever is there, so check the name from `lsblk` first.
+
+A machine that already has a disk does not need the image written over it —
+it needs the kernel *installed* onto it.  `install` adds this kernel's three
+zones to a disk's existing **GPT**, keeping every partition that was already
+there:
+
+```sh
+cp /dev/sdX disk.img            # work on a copy; the install edits in place
+cargo run -- install disk.img
+sudo dd if=disk.img of=/dev/sdX bs=4M status=progress oflag=sync
+```
+
+The disk must already carry a GPT — a disk partitioned by someone else's
+tool is exactly the one this is for, and a disk with no table is refused
+rather than partitioned (`make check-x8664-install` is the gate: it makes
+the disk with `sgdisk`, installs, keeps the disk's own partition, and boots
+the result).  A machine that
 boots the stick shows the kernel's console on the display — the image's
 Multiboot2 header asks the loader for a framebuffer, so GRUB sets a
 graphical mode and the kernel draws on the frame it was handed, and no

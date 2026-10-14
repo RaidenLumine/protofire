@@ -171,6 +171,7 @@ help:
 		'  make check-x8664-kaslr-runtime        - boot a relocated kernel and check the table and the copy' \
 		'  make check-x8664-init-no-start        - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-usb-disk             - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
+		'  make check-x8664-install              - install the zones onto an sgdisk-made disk and boot it' \
 		'  make check-x8664-iso                  - boot the kernel from a GRUB ISO and check the loader hand-off and its memory map' \
 		'  make check-x8664-usb-hotplug          - plug a device into a hub after boot and check it is seen then' \
 		'  make check-x8664-nvme                 - boot a real SimpleFs image on an NVMe device and check the controller mounts it' \
@@ -529,7 +530,7 @@ check-abi-frozen-payload-riscv64:
 .PHONY: check-perf-baseline check-perf-baseline-smp check-perf-baseline-disk \
 	check-perf-baseline-numa check-perf-baseline-net \
 	check-x8664-runtime check-x8664-kaslr-runtime check-x8664-init-no-start \
-	check-x8664-usb-disk \
+	check-x8664-usb-disk check-x8664-install \
 	check-x8664-iso check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
 	check-riscv64-nvme check-x8664-hda check-aarch64-hda check-x8664-churn \
 	check-riscv64-churn check-aarch64-runtime check-riscv64-runtime \
@@ -680,6 +681,18 @@ check-x8664-usb-disk:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-usb-disk.sh
+
+# The install path: zones put onto a disk a *machine* already has, made by
+# `sgdisk` rather than by this tree's own writer — so the table is a
+# stranger's, its partition is one this kernel has no name for, and the
+# checksums are a real partitioning tool's.  That last part is what caught a
+# single wrong entry in the kernel's CRC-32 table: every self-made GPT still
+# round-tripped, and a real tool's did not verify.
+check-x8664-install:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-install.sh
 
 # And the hub's other half: a device that is *not* there at boot.  The disk
 # check above proves a hub is scanned; this one proves it is watched, by

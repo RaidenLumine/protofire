@@ -138,6 +138,9 @@ const GPT_HEADER_LBA: u64 = 1;
 /// The header's own fields, at the offsets the format gives them.
 const GPT_HEADER_SIZE_OFFSET: usize = 12;
 const GPT_HEADER_CRC_OFFSET: usize = 16;
+const GPT_FIRST_USABLE_OFFSET: usize = 40;
+const GPT_LAST_USABLE_OFFSET: usize = 48;
+const GPT_DISK_GUID_OFFSET: usize = 56;
 const GPT_ENTRIES_LBA_OFFSET: usize = 72;
 const GPT_ENTRY_COUNT_OFFSET: usize = 80;
 const GPT_ENTRY_SIZE_OFFSET: usize = 84;
@@ -366,83 +369,25 @@ pub fn read_gpt_partitions(device: &dyn BlockDevice) -> Result<Option<Vec<GptPar
 
     let mut header = [0_u8; BLOCK_SIZE];
     device.read_blocks(GPT_HEADER_LBA, &mut header)?;
-    if &header[..GPT_SIGNATURE.len()] != GPT_SIGNATURE {
+    let Some(info) = gpt_header_info(&header) else {
         return Ok(None);
-    }
-
-    let header_size = u32::from_le_bytes(
-        header[GPT_HEADER_SIZE_OFFSET..GPT_HEADER_SIZE_OFFSET + 4]
-            .try_into()
-            .unwrap(),
-    ) as usize;
-    if !(GPT_HEADER_SIZE_MIN..=BLOCK_SIZE).contains(&header_size) {
-        return Ok(None);
-    }
-
-    let stated_crc = u32::from_le_bytes(
-        header[GPT_HEADER_CRC_OFFSET..GPT_HEADER_CRC_OFFSET + 4]
-            .try_into()
-            .unwrap(),
-    );
-    let mut checked = header;
-    checked[GPT_HEADER_CRC_OFFSET..GPT_HEADER_CRC_OFFSET + 4].fill(0);
-    if crc32(&checked[..header_size]) != stated_crc {
-        return Ok(None);
-    }
-
-    let entries_lba = u64::from_le_bytes(
-        header[GPT_ENTRIES_LBA_OFFSET..GPT_ENTRIES_LBA_OFFSET + 8]
-            .try_into()
-            .unwrap(),
-    );
-    let count = u32::from_le_bytes(
-        header[GPT_ENTRY_COUNT_OFFSET..GPT_ENTRY_COUNT_OFFSET + 4]
-            .try_into()
-            .unwrap(),
-    ) as usize;
-    let entry_size = u32::from_le_bytes(
-        header[GPT_ENTRY_SIZE_OFFSET..GPT_ENTRY_SIZE_OFFSET + 4]
-            .try_into()
-            .unwrap(),
-    ) as usize;
-    let stated_crc = u32::from_le_bytes(
-        header[GPT_ENTRIES_CRC_OFFSET..GPT_ENTRIES_CRC_OFFSET + 4]
-            .try_into()
-            .unwrap(),
-    );
-
-    if count == 0 || !(GPT_ENTRY_SIZE_MIN..=GPT_ENTRY_SIZE_MAX).contains(&entry_size) {
-        return Ok(None);
-    }
-    let array_bytes = count * entry_size;
-    if array_bytes > GPT_ENTRIES_MAX_BYTES {
-        return Ok(None);
-    }
+    };
 
     // The array is read in whole blocks, since that is what a device answers;
     // the checksum covers the entries and not the padding after them.
+    let array_bytes = info.entry_count * info.entry_size;
     let blocks = array_bytes.div_ceil(BLOCK_SIZE);
     let mut raw = vec![0_u8; blocks * BLOCK_SIZE];
-    device.read_blocks(entries_lba, &mut raw)?;
-    if crc32(&raw[..array_bytes]) != stated_crc {
+    device.read_blocks(info.entries_lba, &mut raw)?;
+    if crc32(&raw[..array_bytes]) != info.entries_crc {
         return Ok(None);
     }
 
-    let mut entries = Vec::with_capacity(count);
-    for index in 0..count {
-        let at = index * entry_size;
-        let entry = &raw[at..at + entry_size];
-        let mut type_guid = [0_u8; 16];
-        type_guid.copy_from_slice(&entry[..16]);
-        entries.push(GptPartitionEntry {
-            type_guid,
-            first_lba: u64::from_le_bytes(entry[32..40].try_into().unwrap()),
-            last_lba: u64::from_le_bytes(entry[40..48].try_into().unwrap()),
-            attributes: u64::from_le_bytes(entry[48..56].try_into().unwrap()),
-        });
-    }
-
-    Ok(Some(entries))
+    Ok(Some(parse_gpt_entries(
+        &raw[..array_bytes],
+        info.entry_count,
+        info.entry_size,
+    )))
 }
 
 /// Write a GPT over `disk`, with the partitions given as
@@ -468,18 +413,7 @@ pub fn write_gpt_partitions(
     }
     let last_block = total_blocks - 1;
 
-    // The protective MBR: the format's signature, and one entry of the
-    // protective type covering the disk from the header's own LBA.  The rest of
-    // the sector is zeroed, because a boot sector that keeps an old table is a
-    // boot sector a reader may believe.
-    disk[..BLOCK_SIZE].fill(0);
-    disk[MBR_SIGNATURE_OFFSET] = MBR_SIGNATURE[0];
-    disk[MBR_SIGNATURE_OFFSET + 1] = MBR_SIGNATURE[1];
-    let covered = u32::try_from(last_block.min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
-    let protective = &mut disk[MBR_PARTITION_TABLE_OFFSET..MBR_PARTITION_TABLE_OFFSET + 16];
-    protective[4] = MBR_PROTECTIVE_TYPE;
-    protective[8..12].copy_from_slice(&(GPT_HEADER_LBA as u32).to_le_bytes());
-    protective[12..16].copy_from_slice(&covered.to_le_bytes());
+    write_protective_mbr(disk, total_blocks);
 
     // The entry array, in the block after the header.
     let entries_lba = GPT_HEADER_LBA + 1;
@@ -508,13 +442,13 @@ pub fn write_gpt_partitions(
     let backup_at = backup_entries_lba as usize * BLOCK_SIZE;
     disk[backup_at..backup_at + array_bytes].copy_from_slice(&array);
 
-    let last_usable_lba = backup_entries_lba - 1;
+    let geometry = GptGeometry::fresh(backup_entries_lba - 1);
     let header = gpt_header(
         GPT_HEADER_LBA,
         last_block,
         entries_lba,
         array_crc,
-        last_usable_lba,
+        &geometry,
     );
     let at = GPT_HEADER_LBA as usize * BLOCK_SIZE;
     disk[at..at + BLOCK_SIZE].copy_from_slice(&header);
@@ -523,12 +457,240 @@ pub fn write_gpt_partitions(
         GPT_HEADER_LBA,
         backup_entries_lba,
         array_crc,
-        last_usable_lba,
+        &geometry,
     );
     let at = last_block as usize * BLOCK_SIZE;
     disk[at..at + BLOCK_SIZE].copy_from_slice(&backup);
 
     Ok(())
+}
+
+/// The geometry one disk's pair of GPT headers agrees on: the span a partition
+/// may use, how many entries the array holds and how long each is, and the
+/// disk's own GUID.
+///
+/// It is passed around rather than read from constants because there are two
+/// writers here and only one of them invents the numbers: the demo builder
+/// makes [`GptGeometry::fresh`], and the preserving writer keeps whatever the
+/// disk's own headers stated ([`read_gpt_on_disk`]) so a machine's table
+/// survives an install with everything this kernel does not model — names,
+/// attributes, an array a partitioning tool sized differently — untouched.
+#[derive(Clone, Copy)]
+struct GptGeometry {
+    first_usable_lba: u64,
+    last_usable_lba: u64,
+    entry_count: usize,
+    entry_size: usize,
+    disk_guid: [u8; 16],
+}
+
+impl GptGeometry {
+    /// The geometry the fresh-table writer gives a disk it builds from nothing.
+    const fn fresh(last_usable_lba: u64) -> Self {
+        Self {
+            first_usable_lba: GPT_RESERVED_BLOCKS + 1,
+            last_usable_lba,
+            entry_count: GPT_ENTRY_COUNT,
+            entry_size: GPT_ENTRY_SIZE_MIN,
+            disk_guid: GPT_DISK_GUID,
+        }
+    }
+}
+
+/// The GPT a disk image already carries, parsed and verified, or `None` when
+/// the image holds none.
+///
+/// This is the image-side reading — a byte buffer rather than a
+/// [`BlockDevice`] — because the preserving writer works on the machine's own
+/// disk as bytes, and it is the check that decides whether an install may
+/// proceed: no verified table means nothing to preserve.
+pub fn read_gpt_from_bytes(disk: &[u8]) -> Result<Option<Vec<GptPartitionEntry>>> {
+    let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
+    if total_blocks <= GPT_HEADER_LBA {
+        return Ok(None);
+    }
+    let at = GPT_HEADER_LBA as usize * BLOCK_SIZE;
+    let mut header = [0_u8; BLOCK_SIZE];
+    header.copy_from_slice(&disk[at..at + BLOCK_SIZE]);
+    let Some(info) = gpt_header_info(&header) else {
+        return Ok(None);
+    };
+
+    let array_bytes = info.entry_count * info.entry_size;
+    let array_at = info.entries_lba as usize * BLOCK_SIZE;
+    let Some(raw) = disk.get(array_at..array_at + array_bytes) else {
+        return Ok(None);
+    };
+    if crc32(&raw[..array_bytes]) != info.entries_crc {
+        return Ok(None);
+    }
+
+    Ok(Some(parse_gpt_entries(
+        raw,
+        info.entry_count,
+        info.entry_size,
+    )))
+}
+
+/// The span a GPT image's entries may live in, for a writer that has to plan
+/// inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GptLayout {
+    pub first_usable_lba: u64,
+    pub last_usable_lba: u64,
+}
+
+/// The layout and entries a GPT image carries, or `None` when the image's
+/// first two blocks do not hold a verified table.
+///
+/// [`read_gpt_from_bytes`] answers the entries alone; this answers the usable
+/// span with them, which is what an installer needs to find free space — the
+/// entries say what is *taken*, and the span says where anything may go at
+/// all.
+pub fn read_gpt_layout_from_bytes(
+    disk: &[u8],
+) -> Result<Option<(GptLayout, Vec<GptPartitionEntry>)>> {
+    let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
+    if total_blocks <= GPT_HEADER_LBA {
+        return Ok(None);
+    }
+    let at = GPT_HEADER_LBA as usize * BLOCK_SIZE;
+    let mut header = [0_u8; BLOCK_SIZE];
+    header.copy_from_slice(&disk[at..at + BLOCK_SIZE]);
+    let Some(info) = gpt_header_info(&header) else {
+        return Ok(None);
+    };
+    let Some(entries) = read_gpt_from_bytes(disk)? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        GptLayout {
+            first_usable_lba: info.first_usable_lba,
+            last_usable_lba: info.last_usable_lba,
+        },
+        entries,
+    )))
+}
+
+/// Rewrite `disk`'s GPT so that `zone_entries` replace this kernel's own
+/// zones while every other entry survives.
+///
+/// This is the **installer's** half: a machine's disk carries a table this
+/// kernel did not write — a partitioning tool made it, with names, attributes
+/// and however many entries it sized — and installing means adding three
+/// zones to that table without touching anything else.  What is preserved is
+/// the whole entry: a slot whose entry is not one of the zones being replaced
+/// is copied byte for byte, GUID type, name, attributes and all.  A zone the
+/// disk already carries in the *same type* is replaced rather than
+/// duplicated.
+///
+/// Returns the table it wrote, so a caller can report what the disk carries
+/// now.
+pub fn write_gpt_preserving(
+    disk: &mut [u8],
+    zone_entries: &[([u8; 16], u64, u64)],
+) -> Result<Vec<GptPartitionEntry>> {
+    let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
+    if total_blocks < 2 * GPT_RESERVED_BLOCKS + 1 {
+        return Err(Error::InvalidArgument);
+    }
+    let last_block = total_blocks - 1;
+
+    // A disk with no verified GPT is one this writer does not touch:
+    // installing onto it is a partitioning decision, and a wrong one is not
+    // one this kernel's reader can walk back.
+    if read_gpt_from_bytes(disk)?.is_none() {
+        return Err(Error::NotFound);
+    }
+    let at = GPT_HEADER_LBA as usize * BLOCK_SIZE;
+    let mut header = [0_u8; BLOCK_SIZE];
+    header.copy_from_slice(&disk[at..at + BLOCK_SIZE]);
+    let info = gpt_header_info(&header).ok_or(Error::InvalidArgument)?;
+    let geometry = GptGeometry {
+        first_usable_lba: info.first_usable_lba,
+        last_usable_lba: info.last_usable_lba,
+        entry_count: info.entry_count,
+        entry_size: info.entry_size,
+        disk_guid: info.disk_guid,
+    };
+
+    // The array as the disk holds it.  Everything not claimed below is copied
+    // back byte for byte: a partition this kernel has no name for keeps its
+    // type GUID, its name, its attributes and its extent.
+    let array_bytes = geometry.entry_count * geometry.entry_size;
+    let array_at = info.entries_lba as usize * BLOCK_SIZE;
+    let mut array = vec![0_u8; array_bytes];
+    array.copy_from_slice(&disk[array_at..array_at + array_bytes]);
+
+    // Where each zone lands: an entry already carrying the zone's type GUID is
+    // replaced in place — a reinstall keeps the slots the disk's own table
+    // gave the zones — and a zone the table does not carry takes a free slot.
+    // A slot is free when its type GUID is all zero, and `claimed` keeps this
+    // same call from handing one slot to two zones (the system pair shares a
+    // type GUID).
+    let mut claimed = vec![false; geometry.entry_count];
+    for &(type_guid, first_lba, last_lba) in zone_entries {
+        if first_lba < geometry.first_usable_lba
+            || last_lba > geometry.last_usable_lba
+            || last_lba < first_lba
+            || first_lba < GPT_RESERVED_BLOCKS + 1
+        {
+            return Err(Error::InvalidArgument);
+        }
+        let type_at = |index: usize| {
+            let at = index * geometry.entry_size;
+            &array[at..at + 16]
+        };
+        let is_free = |index: usize| type_at(index) == [0_u8; 16];
+        let slot = (0..geometry.entry_count)
+            .find(|&index| !claimed[index] && !is_free(index) && type_at(index) == type_guid)
+            .or_else(|| (0..geometry.entry_count).find(|&index| !claimed[index] && is_free(index)))
+            .ok_or(Error::NoSpace)?;
+        claimed[slot] = true;
+        let at = slot * geometry.entry_size;
+        array[at..at + 16].copy_from_slice(&type_guid);
+        array[at + 32..at + 40].copy_from_slice(&first_lba.to_le_bytes());
+        array[at + 40..at + 48].copy_from_slice(&last_lba.to_le_bytes());
+    }
+    let array_crc = crc32(&array);
+    disk[array_at..array_at + array_bytes].copy_from_slice(&array);
+
+    // The backup pair: the entry array at whatever LBA the disk's own backup
+    // header names — a table another tool wrote may have placed it somewhere
+    // its own headers agree on, and the install keeps that agreement — and the
+    // backup header at the disk's last block, which is where the format and
+    // the reader both look.  A backup no reader would believe is replaced by
+    // the format's own placement.
+    let backup_header_at = last_block as usize * BLOCK_SIZE;
+    let mut backup_header = [0_u8; BLOCK_SIZE];
+    backup_header.copy_from_slice(&disk[backup_header_at..backup_header_at + BLOCK_SIZE]);
+    let backup_entries_lba = match gpt_header_info(&backup_header) {
+        Some(backup) => backup.entries_lba,
+        None => last_block - (array_bytes / BLOCK_SIZE) as u64,
+    };
+    let backup_array_at = backup_entries_lba as usize * BLOCK_SIZE;
+    disk[backup_array_at..backup_array_at + array_bytes].copy_from_slice(&array);
+
+    let header = gpt_header(
+        GPT_HEADER_LBA,
+        last_block,
+        info.entries_lba,
+        array_crc,
+        &geometry,
+    );
+    disk[at..at + BLOCK_SIZE].copy_from_slice(&header);
+    let backup = gpt_header(
+        last_block,
+        GPT_HEADER_LBA,
+        backup_entries_lba,
+        array_crc,
+        &geometry,
+    );
+    disk[backup_header_at..backup_header_at + BLOCK_SIZE].copy_from_slice(&backup);
+
+    write_protective_mbr(disk, total_blocks);
+
+    read_gpt_from_bytes(disk).map(|entries| entries.unwrap_or_default())
 }
 
 /// One GPT header, checksummed the way [`read_gpt_partitions`] verifies it: the
@@ -538,7 +700,7 @@ fn gpt_header(
     alternate_lba: u64,
     entries_lba: u64,
     entries_crc: u32,
-    last_usable_lba: u64,
+    geometry: &GptGeometry,
 ) -> [u8; BLOCK_SIZE] {
     let mut header = [0_u8; BLOCK_SIZE];
     header[..GPT_SIGNATURE.len()].copy_from_slice(GPT_SIGNATURE);
@@ -549,26 +711,157 @@ fn gpt_header(
     header[32..40].copy_from_slice(&alternate_lba.to_le_bytes());
     // What a partition may use: everything between the two reserved ends, which
     // is the same span in both copies of the header.
-    header[40..48].copy_from_slice(&(GPT_RESERVED_BLOCKS + 1).to_le_bytes());
-    header[48..56].copy_from_slice(&last_usable_lba.to_le_bytes());
-    // A disk GUID of this tree's own; nothing prints it, and the format only
-    // wants it to be a GUID.
-    header[56..72].copy_from_slice(&[
-        0x50, 0x52, 0x54, 0x4f, 0x46, 0x49, 0x52, 0x45, 0x00, 0x00, 0x44, 0x69, 0x73, 0x6b, 0x00,
-        0x00,
-    ]);
+    header[40..48].copy_from_slice(&geometry.first_usable_lba.to_le_bytes());
+    header[48..56].copy_from_slice(&geometry.last_usable_lba.to_le_bytes());
+    header[56..72].copy_from_slice(&geometry.disk_guid);
     header[GPT_ENTRIES_LBA_OFFSET..GPT_ENTRIES_LBA_OFFSET + 8]
         .copy_from_slice(&entries_lba.to_le_bytes());
     header[GPT_ENTRY_COUNT_OFFSET..GPT_ENTRY_COUNT_OFFSET + 4]
-        .copy_from_slice(&(GPT_ENTRY_COUNT as u32).to_le_bytes());
+        .copy_from_slice(&(geometry.entry_count as u32).to_le_bytes());
     header[GPT_ENTRY_SIZE_OFFSET..GPT_ENTRY_SIZE_OFFSET + 4]
-        .copy_from_slice(&(GPT_ENTRY_SIZE_MIN as u32).to_le_bytes());
+        .copy_from_slice(&(geometry.entry_size as u32).to_le_bytes());
     header[GPT_ENTRIES_CRC_OFFSET..GPT_ENTRIES_CRC_OFFSET + 4]
         .copy_from_slice(&entries_crc.to_le_bytes());
 
     let crc = crc32(&header[..GPT_HEADER_SIZE_MIN]);
     header[GPT_HEADER_CRC_OFFSET..GPT_HEADER_CRC_OFFSET + 4].copy_from_slice(&crc.to_le_bytes());
     header
+}
+
+/// One copy of a GPT header, parsed and verified.
+#[derive(Clone, Copy)]
+struct GptHeaderInfo {
+    entries_lba: u64,
+    entry_count: usize,
+    entry_size: usize,
+    entries_crc: u32,
+    first_usable_lba: u64,
+    last_usable_lba: u64,
+    disk_guid: [u8; 16],
+}
+
+/// Parse and verify one copy of a GPT header.
+///
+/// `None` is "these bytes are not a GPT header": no signature, a header that
+/// claims a length outside the sector, a checksum that does not hold, or an
+/// entry array whose size this reader will not believe.  The same checks the
+/// reader has always made — they are stated once here because both the
+/// device-side reader and the image-side one ask them.
+fn gpt_header_info(header: &[u8; BLOCK_SIZE]) -> Option<GptHeaderInfo> {
+    if &header[..GPT_SIGNATURE.len()] != GPT_SIGNATURE {
+        return None;
+    }
+    let header_size = u32::from_le_bytes(
+        header[GPT_HEADER_SIZE_OFFSET..GPT_HEADER_SIZE_OFFSET + 4]
+            .try_into()
+            .ok()?,
+    ) as usize;
+    if !(GPT_HEADER_SIZE_MIN..=BLOCK_SIZE).contains(&header_size) {
+        return None;
+    }
+
+    let stated_crc = u32::from_le_bytes(
+        header[GPT_HEADER_CRC_OFFSET..GPT_HEADER_CRC_OFFSET + 4]
+            .try_into()
+            .ok()?,
+    );
+    let mut checked = *header;
+    checked[GPT_HEADER_CRC_OFFSET..GPT_HEADER_CRC_OFFSET + 4].fill(0);
+    if crc32(&checked[..header_size]) != stated_crc {
+        return None;
+    }
+
+    let entries_lba = u64::from_le_bytes(
+        header[GPT_ENTRIES_LBA_OFFSET..GPT_ENTRIES_LBA_OFFSET + 8]
+            .try_into()
+            .ok()?,
+    );
+    let entry_count = u32::from_le_bytes(
+        header[GPT_ENTRY_COUNT_OFFSET..GPT_ENTRY_COUNT_OFFSET + 4]
+            .try_into()
+            .ok()?,
+    ) as usize;
+    let entry_size = u32::from_le_bytes(
+        header[GPT_ENTRY_SIZE_OFFSET..GPT_ENTRY_SIZE_OFFSET + 4]
+            .try_into()
+            .ok()?,
+    ) as usize;
+    let entries_crc = u32::from_le_bytes(
+        header[GPT_ENTRIES_CRC_OFFSET..GPT_ENTRIES_CRC_OFFSET + 4]
+            .try_into()
+            .ok()?,
+    );
+    if entry_count == 0 || !(GPT_ENTRY_SIZE_MIN..=GPT_ENTRY_SIZE_MAX).contains(&entry_size) {
+        return None;
+    }
+    if entry_count * entry_size > GPT_ENTRIES_MAX_BYTES {
+        return None;
+    }
+
+    let first_usable_lba = u64::from_le_bytes(
+        header[GPT_FIRST_USABLE_OFFSET..GPT_FIRST_USABLE_OFFSET + 8]
+            .try_into()
+            .ok()?,
+    );
+    let last_usable_lba = u64::from_le_bytes(
+        header[GPT_LAST_USABLE_OFFSET..GPT_LAST_USABLE_OFFSET + 8]
+            .try_into()
+            .ok()?,
+    );
+    let mut disk_guid = [0_u8; 16];
+    disk_guid.copy_from_slice(&header[GPT_DISK_GUID_OFFSET..GPT_DISK_GUID_OFFSET + 16]);
+
+    Some(GptHeaderInfo {
+        entries_lba,
+        entry_count,
+        entry_size,
+        entries_crc,
+        first_usable_lba,
+        last_usable_lba,
+        disk_guid,
+    })
+}
+
+/// Parse an entry array: `count` entries of `size` bytes each.
+fn parse_gpt_entries(raw: &[u8], entry_count: usize, entry_size: usize) -> Vec<GptPartitionEntry> {
+    let mut entries = Vec::with_capacity(entry_count);
+    for index in 0..entry_count {
+        let at = index * entry_size;
+        let Some(entry) = raw.get(at..at + entry_size) else {
+            break;
+        };
+        let mut type_guid = [0_u8; 16];
+        type_guid.copy_from_slice(&entry[..16]);
+        entries.push(GptPartitionEntry {
+            type_guid,
+            first_lba: u64::from_le_bytes(entry[32..40].try_into().unwrap()),
+            last_lba: u64::from_le_bytes(entry[40..48].try_into().unwrap()),
+            attributes: u64::from_le_bytes(entry[48..56].try_into().unwrap()),
+        });
+    }
+    entries
+}
+
+/// The disk GUID the writer gives a table it builds from nothing.  Nothing
+/// prints it, and the format only wants it to be a GUID.
+const GPT_DISK_GUID: [u8; 16] = [
+    0x50, 0x52, 0x54, 0x4f, 0x46, 0x49, 0x52, 0x45, 0x00, 0x00, 0x44, 0x69, 0x73, 0x6b, 0x00, 0x00,
+];
+
+/// Write the protective MBR over a disk's first sector: the format's
+/// signature, and one entry of the protective type covering the disk from the
+/// header's own LBA.  The rest of the sector is zeroed, because a boot sector
+/// that keeps an old table is a boot sector a reader may believe.
+fn write_protective_mbr(disk: &mut [u8], total_blocks: u64) {
+    let last_block = total_blocks - 1;
+    disk[..BLOCK_SIZE].fill(0);
+    disk[MBR_SIGNATURE_OFFSET] = MBR_SIGNATURE[0];
+    disk[MBR_SIGNATURE_OFFSET + 1] = MBR_SIGNATURE[1];
+    let covered = u32::try_from(last_block.min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
+    let protective = &mut disk[MBR_PARTITION_TABLE_OFFSET..MBR_PARTITION_TABLE_OFFSET + 16];
+    protective[4] = MBR_PROTECTIVE_TYPE;
+    protective[8..12].copy_from_slice(&(GPT_HEADER_LBA as u32).to_le_bytes());
+    protective[12..16].copy_from_slice(&covered.to_le_bytes());
 }
 
 #[cfg(test)]

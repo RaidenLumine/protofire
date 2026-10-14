@@ -33,6 +33,10 @@ pub mod ext4;
 pub mod f2fs;
 pub mod fat32;
 pub(crate) mod fuse;
+// The install path depends on the demo module for the zone images it
+// writes, so it carries the same gate.
+#[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
+pub mod install;
 pub mod iso9660;
 pub mod layout;
 pub mod lock_timing;

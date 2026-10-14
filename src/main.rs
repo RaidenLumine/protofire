@@ -62,6 +62,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             write_demo_disk_image(Path::new(&output), table)?;
         }
+        Some("install") => {
+            // `install <disk-image>`: put this kernel's zones onto a disk a
+            // machine already has, adding the zones to the disk's own GPT
+            // rather than building an image.  See `protofire::fs::install`.
+            let Some(path) = args.next() else {
+                print_host_usage_and_exit(2);
+            };
+            if args.next().is_some() {
+                print_host_usage_and_exit(2);
+            }
+
+            install_zones_onto_disk(Path::new(&path))?;
+        }
         Some("sign-release") => {
             let artifact = args.next().unwrap_or_else(|| {
                 print_host_usage_and_exit(2);
@@ -110,6 +123,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "  mkimage [gpt] [path]  Build the ATA demo disk image (MBR by default, GPT on request)."
             );
             println!(
+                "  install <disk>        Install this kernel's zones onto a disk that already has a GPT."
+            );
+            println!(
                 "  sign-release <artifact> <key-id> [dir]  Sign an artifact with a fresh one-time key."
             );
             println!(
@@ -144,6 +160,48 @@ fn write_demo_disk_image(
     };
     fs::write(path, &image)?;
     println!("wrote {} bytes to {}", image.len(), path.display());
+    Ok(())
+}
+
+/// Install this kernel's zones onto the GPT disk image at `path`.
+///
+/// The disk is read whole, the install runs in memory, and the result is
+/// written back — which is what makes the operation testable and what makes
+/// a failure leave the disk exactly as it was.  A real installer would write
+/// through the device; this is the same operation with the device being a
+/// file.
+#[cfg(not(target_os = "none"))]
+fn install_zones_onto_disk(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut disk = fs::read(path)?;
+    if disk.len() % 512 != 0 {
+        return Err(format!(
+            "{} is {} bytes, not a whole number of 512-byte blocks",
+            path.display(),
+            disk.len()
+        )
+        .into());
+    }
+
+    let report = protofire::fs::install::install_zones_into_disk_image(&mut disk)
+        .map_err(|error| format!("{}: {}", path.display(), error.as_str()))?;
+
+    fs::write(path, &disk)?;
+
+    println!("installed onto {}", path.display());
+    for zone in &report.zones {
+        println!(
+            "  {} zone: blocks {}..={} ({} blocks, {})",
+            zone.zone.zone_root(),
+            zone.first_block,
+            zone.last_block,
+            zone.last_block - zone.first_block + 1,
+            if zone.reused { "reused" } else { "placed" }
+        );
+    }
+    println!(
+        "  {} entry(ies) in the table after the install",
+        report.entries.len()
+    );
     Ok(())
 }
 

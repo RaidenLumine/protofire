@@ -225,6 +225,11 @@ run_p3() {
         # rings, which is where the ring-reuse defect lived, and the boot's own
         # writes are what show the volume reached the host's image.
         run_make_step "make check-x8664-usb-disk" check-x8664-usb-disk
+        # And the install path: zones put onto a disk `sgdisk` made — a
+        # stranger's table with a partition this kernel has no name for — then
+        # booted.  It is the gate a real machine's disk needs, and the one
+        # that catches a checksum only an outside writer can falsify.
+        run_make_step "make check-x8664-install" check-x8664-install
         # And the case that disk cannot cover: a device plugged into a hub
         # *after* the boot scan, which is what the hub's status-change
         # endpoint exists for.  The plug is QEMU's, so a guest that ignores it
