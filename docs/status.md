@@ -923,7 +923,7 @@ user-memory validation.
 | SMP | Full (MADT + AP bringup; the tick is the boot CPU's) | Full (PSCI + GIC SGI) | Full (SBI HSM + per-hart vector, timer, and PLIC context; a cross-hart wake waits for the target's tick) |
 | Context switch | Full | Full | Full |
 | PAN/SMAP | SMAP (stac/clac) | PSTATE.PAN (set/clear) | SUM (sstatus) |
-| MSI/MSI-X | Composition helpers, fixed vector numbers and installed handlers, but no device's table is programmed, so a PCIe device's interrupts are polled | GICv3 ITS and LPIs, with a collection and a pending table per CPU; the PCIe virtio-net and virtio-blk drivers each claim their own identities, and the NIC's queues are completed by different CPUs | AIA IMSIC; the PCIe virtio-net and virtio-blk drivers each claim their own identities |
+| MSI/MSI-X | A vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; the PCIe virtio-net and NVMe drivers and the xHCI controller each claim their own identities | GICv3 ITS and LPIs, with a collection and a pending table per CPU; the PCIe virtio-net, virtio-blk and NVMe drivers each claim their own identities, and the NIC's queues are completed by different CPUs | AIA IMSIC; the PCIe virtio-net, virtio-blk and NVMe drivers each claim their own identities |
 | PCIe | Full ECAM | Basic probing | Basic probing |
 | ASID allocator | — | Full (bitmap + CAS) | Full (bitmap + CAS) |
 | FDT parsing | — | Full | Full |
@@ -935,15 +935,15 @@ user-memory validation.
 What each target still lacks:
 
 - **x86_64**: no PCID, so a context switch flushes translations; the PIT is
-  routed to one LAPIC, so APs take no timer interrupt; and there is no MSI-X
-  programming path — `src/arch/x86_64/msi.rs` composes entries that nothing
-  writes into a device, so a PCIe device's completions are polled.
+  routed to one LAPIC, so APs take no timer interrupt.
 - **AArch64**: MSI machinery is there — GICv3, LPIs, an ITS, and a placement
-  that spreads a device's entries over the CPUs that can receive — but only
-  one driver claims identities through it.
+  that spreads a device's entries over the CPUs that can receive — and the
+  PCIe virtio-net, virtio-blk and NVMe drivers each claim their own
+  identities through it; a GICv2 machine has no ITS, where the claims are
+  refused and the drivers poll.
 - **RISC-V 64**: the most partial of the three. No architectural NMI source,
   a cross-hart wake waits for the target's next tick, and the default QEMU
-  machine has no IMSIC.
+  machine has no IMSIC, where a claim is refused and the driver polls.
 - **All three**: verified under QEMU only; no bare-metal bring-up yet.
 
 ### Shared User Runtime (`src/user/shared/`)
