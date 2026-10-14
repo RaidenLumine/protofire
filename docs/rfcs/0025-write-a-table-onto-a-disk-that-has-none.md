@@ -14,7 +14,9 @@ becomes a **decision the caller can make**: a second entry point —
 `install --new-table` — that writes a fresh GPT, but only onto a disk that
 carries no partition information *at all*, and refuses everything else
 exactly as before.  The default stays the refusal; the flag, not the disk's
-looks, is the consent.
+looks, is the consent.  The installation path's other owed half lands with
+it: an interface that shows a **plan** before writing and asks for a typed
+confirmation, so the consent is also a person's and not only a script's.
 
 ## Motivation
 
@@ -29,13 +31,14 @@ would believe — is a disk with nothing to preserve, and refusing to ever
 partition it means the installation path can only ever run on disks some
 other tool got to first.
 
-The roadmap lists the remaining installation work as "a user interface and a
+The roadmap listed the remaining installation work as "a user interface and a
 confirmation (the disk-side operation is the module), and creating a table on
 a disk that has none, which is a partitioning decision this kernel
-deliberately does not make" ([ROADMAP.md](../../ROADMAP.md)).  This RFC is
-the second of those, and it keeps the first in mind: a confirmation is a
-caller saying yes, and "which caller said yes to *this*" is part of the
-interface being decided here.
+deliberately does not make" ([ROADMAP.md](../../ROADMAP.md); the passage has
+moved on since).  This RFC is the second of those, and it keeps the first in
+mind: a confirmation is a caller saying yes, and "which caller said yes to
+*this*" is part of the interface being decided here — its own design is
+paragraph 5 below.
 
 ## Current state
 
@@ -113,7 +116,19 @@ preserving writer would have run.  On the CLI the disk is still an in-memory
 image written back only on success, so "writes nothing on refusal" is a
 property of the whole operation rather than of each step.
 
-**5. What stays refused, and why.**  A disk with MBR entries of any type; a
+**5. The plan is the confirmation's material, and it is the install's own
+work.**  `plan_zones_into_disk_image(disk, may_create)` runs the same read,
+the same predicate and the same placement as the install, stopped short of
+every write, and answers an `InstallPlan`: the zones and their extents, the
+entries it would preserve, and whether the table would be created.  The
+command prints that plan, asks for the typed word `yes` (any other answer,
+none, or end of input declines with the disk untouched), and only then calls
+the install — so what a person reads cannot describe a different outcome
+than what is written, and a disk the install cannot help is refused
+*before* anyone is asked about it.  `--yes` skips the question for scripts;
+it is the same consent, written down.
+
+**6. What stays refused, and why.**  A disk with MBR entries of any type; a
 disk whose GPT is present but unverified; a disk whose only structure is a
 protective MBR (which is what a hybrid disk's or a damaged GPT's first
 sector looks like).  All of them carry bytes somebody wrote with intent, and
@@ -127,11 +142,15 @@ belongs to whatever grows a repair path.
   `docs/status.md` records is the feature.  A tool that partitions a disk
   by inspection is a tool that partitions the wrong disk once, and the flag
   costs one word.
-- **An interactive confirmation instead of a flag.**  Not taken *yet*: that
-  is the sibling item on the roadmap, and it belongs to the caller's
-  interface (a host CLI today, an installer screen tomorrow), not to the
-  disk-side operation.  The flag is the same consent written down, and the
-  confirmation will call the function this RFC names.
+- **An interactive confirmation instead of a flag.**  Not taken *instead*:
+  the confirmation landed **with** the flag, on the caller's side.  The
+  install now shows a plan — `plan_zones_into_disk_image`, the same
+  refusals and placements computed without touching the disk — and writes
+  only on a typed `yes`; `--yes` is the scripting form that skips the
+  question rather than answering it.  The flag still carries the
+  partitioning decision, because a confirmation can only ask about what the
+  flag has already allowed; the question adds the person, not the
+  permission.
 - **Overwrite a GPT that failed its checksum.**  Rejected: a damaged table
   may be a whole backup array away from repair (RFC 0018), and the bytes
   still describe somebody's partitions.  `NotFound` for a damaged table is
@@ -196,9 +215,24 @@ and its tests.
   typed answer.  The negative run of this section was measured: with the
   predicate bypassed the gate fails on "a disk with no table was installed
   onto without --new-table".
+- **The plan is the install's own work** (unit test): planning and
+  installing the same bytes produces the plan's zones, preserved set and
+  created-table flag; a plan on a disk writes nothing to it; and a refusal
+  is a refusal in both (the blank disk without the flag, an MBR disk with
+  it).
+- **The confirmation, on the gate**: a fresh `sgdisk` machine disk is
+  offered to the install three times — answered `no`, answered by end of
+  input, answered `yes`.  The first two must fail with the file
+  byte-identical to what it was (a fresh disk, so a reinstall's identical
+  bytes cannot hide a write), the plan must be on screen before the
+  question, and `yes` must leave the stranger's partition in the table.
+  The refusal section requires that the question is **not** asked when the
+  install would refuse.  The negative run was measured: with the answer
+  ignored, the gate fails on "an install answered 'no' reported success".
 - **The existing sections stay green**: the `sgdisk` disk with the
   stranger's partition, the preserved entry, the boot, and the extent-reusing
-  reinstall are unaffected — the change only adds a route.
+  reinstall are unaffected — the change only adds a route, and the
+  scripting form (`--yes`) keeps those sections' installs as they were.
 
 ## Unresolved questions
 

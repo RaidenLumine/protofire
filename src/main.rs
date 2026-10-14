@@ -63,25 +63,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             write_demo_disk_image(Path::new(&output), table)?;
         }
         Some("install") => {
-            // `install [--new-table] <disk-image>`: put this kernel's zones
-            // onto a disk a machine already has, adding the zones to the
-            // disk's own GPT rather than building an image.  `--new-table`
+            // `install [--yes] [--new-table] <disk-image>`: put this kernel's
+            // zones onto a disk a machine already has, adding the zones to
+            // the disk's own GPT rather than building an image.  `--new-table`
             // is the opt-in for a disk that has no table at all — the flag is
-            // the decision, because writing one is partitioning.  See
-            // `protofire::fs::install`.
-            let first = args.next();
-            let (new_table, path) = match first.as_deref() {
-                Some("--new-table") => (true, args.next()),
-                _ => (false, first),
-            };
-            let Some(path) = path else {
-                print_host_usage_and_exit(2);
+            // the decision, because writing one is partitioning — and `--yes`
+            // is the scripting form of the typed confirmation every install
+            // asks for.  See `protofire::fs::install`.
+            let mut new_table = false;
+            let mut assume_yes = false;
+            let path = loop {
+                match args.next().as_deref() {
+                    Some("--new-table") => new_table = true,
+                    Some("--yes") => assume_yes = true,
+                    Some(path) => break path.to_string(),
+                    None => print_host_usage_and_exit(2),
+                }
             };
             if args.next().is_some() {
                 print_host_usage_and_exit(2);
             }
 
-            install_zones_onto_disk(Path::new(&path), new_table)?;
+            install_zones_onto_disk(Path::new(&path), new_table, assume_yes)?;
         }
         Some("sign-release") => {
             let artifact = args.next().unwrap_or_else(|| {
@@ -130,11 +133,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!(
                 "  mkimage [gpt] [path]  Build the ATA demo disk image (MBR by default, GPT on request)."
             );
-            println!("  install [--new-table] <disk>  Install this kernel's zones onto a disk.  A");
             println!(
-                "    disk that already has a GPT keeps every partition it carried; --new-table"
+                "  install [--yes] [--new-table] <disk>  Install this kernel's zones onto a disk."
             );
-            println!("    writes a fresh GPT first, for a disk that has no table at all.");
+            println!("    A disk that already has a GPT keeps every partition it carried;");
+            println!(
+                "    --new-table writes a fresh GPT first, for a disk that has no table at all."
+            );
+            println!("    The install shows what it would do and asks for a typed `yes`; --yes");
+            println!("    skips the question for scripts.");
             println!(
                 "  sign-release <artifact> <key-id> [dir]  Sign an artifact with a fresh one-time key."
             );
@@ -181,10 +188,23 @@ fn write_demo_disk_image(
 /// through the device; this is the same operation with the device being a
 /// file.
 ///
+/// This is the **user interface** half of the installation path, and its
+/// whole shape is: show what would happen, ask, and only then write.  The
+/// plan printed is [`protofire::fs::install::plan_zones_into_disk_image`]'s —
+/// the same read, refusal and placement the install itself runs — so what a
+/// person reads is what would be done, and a refused install is refused
+/// *before* anything is asked.  The answer must be the typed word `yes`;
+/// `assume_yes` is the scripting form, and it skips the question rather than
+/// answering it.  Nothing is written until the answer is in.
+///
 /// `new_table` is the caller's opt-in for a disk that carries no table: with
 /// it the install writes a fresh GPT, without it such a disk is refused.
 #[cfg(not(target_os = "none"))]
-fn install_zones_onto_disk(path: &Path, new_table: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn install_zones_onto_disk(
+    path: &Path,
+    new_table: bool,
+    assume_yes: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut disk = fs::read(path)?;
     if disk.len() % 512 != 0 {
         return Err(format!(
@@ -193,6 +213,15 @@ fn install_zones_onto_disk(path: &Path, new_table: bool) -> Result<(), Box<dyn s
             disk.len()
         )
         .into());
+    }
+
+    // The plan first: a disk this install cannot help is reported here, and
+    // the person is never asked about something that would be refused.
+    let plan = protofire::fs::install::plan_zones_into_disk_image(&disk, new_table)
+        .map_err(|error| format!("{}: {}", path.display(), error.as_str()))?;
+    print_install_plan(path, &disk, &plan);
+    if !assume_yes && !ask_to_write(path)? {
+        return Err(format!("{}: no confirmation; nothing was written", path.display()).into());
     }
 
     let outcome = if new_table {
@@ -228,6 +257,81 @@ fn install_zones_onto_disk(path: &Path, new_table: bool) -> Result<(), Box<dyn s
         report.entries.len()
     );
     Ok(())
+}
+
+/// Print what an install would do to the disk at `path`: the disk and its
+/// size, whether a table would be created, the partitions it would keep, and
+/// each zone with the extent it would take.
+///
+/// The lines say *would* on purpose.  This runs before anything is written,
+/// and the plan is computed from the bytes on hand — the same bytes the
+/// install then runs on — so the two cannot describe different disks.
+#[cfg(not(target_os = "none"))]
+fn print_install_plan(path: &Path, disk: &[u8], plan: &protofire::fs::install::InstallPlan) {
+    let blocks = disk.len() as u64 / 512;
+    if blocks.is_multiple_of(2048) {
+        println!(
+            "installing this kernel's zones onto {} ({} blocks, {} MiB)",
+            path.display(),
+            blocks,
+            blocks / 2048
+        );
+    } else {
+        println!(
+            "installing this kernel's zones onto {} ({} blocks)",
+            path.display(),
+            blocks
+        );
+    }
+    if plan.created_table {
+        println!("  the disk carries no table; a fresh GPT will be written");
+    } else if !plan.preserved.is_empty() {
+        println!(
+            "  the disk's table carries {} partition(s) that are not these zones,",
+            plan.preserved.len()
+        );
+        println!("  each kept byte for byte:");
+        for entry in &plan.preserved {
+            println!("    blocks {}..={}", entry.first_lba, entry.last_lba);
+        }
+    }
+    println!("  the zones to write:");
+    for zone in &plan.zones {
+        println!(
+            "    {}: blocks {}..={}, {} blocks, {}",
+            zone.zone.zone_root(),
+            zone.first_block,
+            zone.last_block,
+            zone.last_block - zone.first_block + 1,
+            if zone.reused {
+                "keeps its entry"
+            } else {
+                "takes free space"
+            }
+        );
+    }
+}
+
+/// Ask the person at the terminal to confirm the write.
+///
+/// Only the typed word `yes` proceeds; every other answer — including no
+/// answer at all, which is what a script with no `--yes` gives — declines,
+/// and declining is a refusal with nothing written rather than a silent
+/// default.  The prompt is written to stdout so it lands in a transcript
+/// beside the plan it is asking about.
+#[cfg(not(target_os = "none"))]
+fn ask_to_write(path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    use std::io::BufRead as _;
+    use std::io::Write as _;
+
+    print!(
+        "write these zones to {}? this cannot be undone; type \"yes\" to proceed: ",
+        path.display()
+    );
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(answer.trim() == "yes")
 }
 
 /// Sign one release artifact, with a key that has never signed anything else.

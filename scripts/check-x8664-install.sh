@@ -116,7 +116,7 @@ dd if=/dev/zero of="$disk" bs=1M count="$DISK_MIB" status=none 2>/dev/null \
 
 # ── The install ─────────────────────────────────────────────────────────
 install_out="$work/install.log"
-if ! "$CARGO" run --offline --quiet -- install "$disk" >"$install_out" 2>&1; then
+if ! "$CARGO" run --offline --quiet -- install --yes "$disk" >"$install_out" 2>&1; then
     cat "$install_out" >&2
     fail "the install did not complete"
 fi
@@ -194,7 +194,7 @@ grep -F "[FATAL]" "$log" >/dev/null 2>&1 && fail "the boot reported a fatal erro
 
 # ── A second install reuses every extent ───────────────────────────────
 second_out="$work/install2.log"
-if ! "$CARGO" run --offline --quiet -- install "$disk" >"$second_out" 2>&1; then
+if ! "$CARGO" run --offline --quiet -- install --yes "$disk" >"$second_out" 2>&1; then
     cat "$second_out" >&2
     fail "the second install did not complete"
 fi
@@ -222,6 +222,9 @@ dd if=/dev/zero of="$blank" bs=1M count="$DISK_MIB" status=none 2>/dev/null \
     || dd if=/dev/zero of="$blank" bs=1048576 count="$DISK_MIB" 2>/dev/null
 
 # The flagless route refuses: exit status non-zero, and a message naming why.
+# The refusal is computed **before** the confirmation, so a disk this install
+# cannot help is never asked about: the question's own prompt must not be in
+# the output.
 if "$CARGO" run --offline --quiet -- install "$blank" >"$work/blank-refusal.log" 2>&1; then
     cat "$work/blank-refusal.log" >&2
     fail "a disk with no table was installed onto without --new-table"
@@ -230,14 +233,72 @@ if ! grep -F "not found" "$work/blank-refusal.log" >/dev/null 2>&1; then
     cat "$work/blank-refusal.log" >&2
     fail "the refusal does not say the disk has no table"
 fi
+if grep -F "type \"yes\" to proceed" "$work/blank-refusal.log" >/dev/null 2>&1; then
+    fail "the refused install asked for a confirmation before refusing"
+fi
 
 blank_log="$work/blank-boot.log"
-if ! "$CARGO" run --offline --quiet -- install --new-table "$blank" >"$work/blank-install.log" 2>&1; then
+if ! "$CARGO" run --offline --quiet -- install --yes --new-table "$blank" >"$work/blank-install.log" 2>&1; then
     cat "$work/blank-install.log" >&2
     fail "the blank-disk install did not complete"
 fi
 grep -F "a fresh GPT was written" "$work/blank-install.log" >/dev/null 2>&1 ||
     fail "the install did not say it wrote a fresh table"
+
+# ── The confirmation, both answers ─────────────────────────────────────
+#
+# The install is a user interface now: it shows the plan, asks, and writes
+# only on a typed `yes`.  Both answers are checked on a fresh machine disk —
+# the plan's content, `no` leaving every byte of the disk as it was, and the
+# end-of-file answer (what a script with no `--yes` gives) declining too,
+# because a silent default that installs is the defect this exists to rule
+# out.
+printf 'x86_64 install check: the confirmation, both answers\n'
+# A **fresh** machine disk, made the same way as the first section's: the
+# already-installed disk would be a reinstall, and a reinstall writes the
+# same extents with the same bytes, so "no" and "yes" would leave the file
+# identical and neither answer could be told from the other.
+confirm="$work/confirm.img"
+dd if=/dev/zero of="$confirm" bs=1M count="$DISK_MIB" status=none 2>/dev/null \
+    || dd if=/dev/zero of="$confirm" bs=1048576 count="$DISK_MIB" 2>/dev/null
+"$SGDISK" -n 1:4096:6143 -t 1:0FC63DAF-8483-4772-8E79-3D69D8477DE4 \
+    -c 1:stranger "$confirm" >"$work/confirm-sgdisk.log" 2>&1 \
+    || { cat "$work/confirm-sgdisk.log" >&2; fail "sgdisk could not make the confirmation disk"; }
+confirm_before="$work/confirm-before.img"
+cp "$confirm" "$confirm_before"
+
+if printf 'no\n' | "$CARGO" run --offline --quiet -- install "$confirm" >"$work/confirm-no.log" 2>&1; then
+    cat "$work/confirm-no.log" >&2
+    fail "an install answered 'no' reported success"
+fi
+cmp -s "$confirm" "$confirm_before" ||
+    fail "an install answered 'no' changed the disk"
+grep -F "nothing was written" "$work/confirm-no.log" >/dev/null 2>&1 ||
+    fail "the declined install does not say nothing was written"
+# The plan was shown first: the question, and the zones it is asking about.
+grep -F 'type "yes" to proceed' "$work/confirm-no.log" >/dev/null 2>&1 ||
+    { cat "$work/confirm-no.log" >&2; fail "the install did not ask for a confirmation"; }
+grep -F "the zones to write:" "$work/confirm-no.log" >/dev/null 2>&1 ||
+    fail "the confirmation was asked without the plan being shown"
+
+# End of input is a decline: a script that forgot --yes must not install.
+if "$CARGO" run --offline --quiet -- install "$confirm" </dev/null >"$work/confirm-eof.log" 2>&1; then
+    cat "$work/confirm-eof.log" >&2
+    fail "an install with no answer at all reported success"
+fi
+cmp -s "$confirm" "$confirm_before" ||
+    fail "an install with no answer changed the disk"
+
+# And the typed `yes` is what writes it.
+if ! printf 'yes\n' | "$CARGO" run --offline --quiet -- install "$confirm" >"$work/confirm-yes.log" 2>&1; then
+    cat "$work/confirm-yes.log" >&2
+    fail "an install answered 'yes' did not complete"
+fi
+if cmp -s "$confirm" "$confirm_before"; then
+    fail "an install answered 'yes' did not change the disk"
+fi
+"$SGDISK" -p "$confirm" 2>&1 | grep -F "stranger" >/dev/null 2>&1 ||
+    fail "the confirmed install lost the stranger's partition"
 
 # The table, read back by sgdisk: a real tool verifies the fresh GPT this
 # kernel wrote, and lists the three zones as its partitions.
@@ -284,5 +345,7 @@ grep -F "[FATAL]" "$blank_log" >/dev/null 2>&1 && fail "the blank-disk boot repo
 
 printf 'x86_64 install check passed: zones installed onto a %s-made disk, the\n' "$SGDISK"
 printf '  stranger partition preserved, the disk booted and answered, and a\n'
-printf '  reinstall reused every extent; and a blank disk was refused without\n'
-printf '  --new-table, given a fresh GPT with it, and the result booted too\n'
+printf '  reinstall reused every extent; a blank disk was refused without\n'
+printf '  --new-table, given a fresh GPT with it, and the result booted too; and\n'
+printf '  the confirmation held: plan shown, no and end-of-input wrote nothing,\n'
+printf '  yes wrote the zones\n'

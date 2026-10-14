@@ -34,8 +34,14 @@
 //! What it deliberately does not do: overwrite a table that is there — a
 //! damaged GPT included — resize a machine's partitions, or write anything
 //! outside the extents the table (or, on a blank disk, the fresh layout) says
-//! are free.  An installer for a real machine would add a user interface and a
-//! confirmation on top; the disk-side operation is this.
+//! are free.
+//!
+//! The user interface is [`plan_zones_into_disk_image`]: the same read, the
+//! same refusal and the same placement, stopped short of every write, so a
+//! caller can show a person what an install *would* do before any of it
+//! happens.  The host command (`src/main.rs`) prints the plan and takes a
+//! typed confirmation; the plan itself is the disk-side half of that
+//! contract, and the one the confirmation rests on.
 
 use alloc::vec::Vec;
 
@@ -188,6 +194,78 @@ const fn align_up(value: u64, align: u64) -> u64 {
     value.div_ceil(align) * align
 }
 
+/// What an install **would** do, computed without writing anything.
+///
+/// This is the confirmation's material: the same reads, the same predicate
+/// and the same placement the install itself runs, so what a caller shows a
+/// person is what would happen rather than a second description that can
+/// drift.  Nothing here touches the disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallPlan {
+    /// Each zone and the extent it would take, in the order it is placed.
+    pub zones: Vec<InstalledZone>,
+    /// Whether the table would be **written** rather than added to: true only
+    /// where the disk carries no partition information (the blank-disk route).
+    pub created_table: bool,
+    /// The in-use entries that are not these zones and would be kept byte for
+    /// byte.  Empty on the fresh-table route, which has no other entry.
+    pub preserved: Vec<GptPartitionEntry>,
+}
+
+/// Plan an install without touching the disk: the reads, the refusal and the
+/// placement of [`install_zones_into_disk_image`], stopped short of every
+/// write.
+///
+/// `may_create` is which route's plan is asked for — `false` refuses a disk
+/// with no table exactly as the flagless install does, `true` plans the fresh
+/// table the flagged route would write.  A plan that answers `Ok` is the
+/// promise the install keeps: the same call on the same bytes writes what the
+/// plan names.
+pub fn plan_zones_into_disk_image(disk: &[u8], may_create: bool) -> Result<InstallPlan> {
+    let (layout, existing, created_table) = read_or_create(disk, may_create)?;
+    let zones = place_zones(&layout, &existing)?;
+    let preserved = existing
+        .iter()
+        .filter(|entry| {
+            !entry.is_unused()
+                && entry.type_guid != StorageZone::System.gpt_type_guid()
+                && entry.type_guid != StorageZone::Apps.gpt_type_guid()
+                && entry.type_guid != StorageZone::Data.gpt_type_guid()
+        })
+        .copied()
+        .collect();
+    Ok(InstallPlan {
+        zones,
+        created_table,
+        preserved,
+    })
+}
+
+/// The table a route would work against: the disk's own verified table, or —
+/// where `may_create` says the caller asked for one — the fresh layout a
+/// blank disk would get.  Everything else is `NotFound`.
+fn read_or_create(
+    disk: &[u8],
+    may_create: bool,
+) -> Result<(GptLayout, Vec<GptPartitionEntry>, bool)> {
+    match read_gpt_layout_from_bytes(disk)? {
+        Some((layout, entries)) => Ok((layout, entries, false)),
+        None => {
+            // A fresh table is for a disk that carries none.  What "carries
+            // none" means is stated by the two partition-side questions:
+            // MBR entries of any type (a protective one included) and a GPT
+            // signature are both something already there, and something
+            // there is the flagless route's refusal to make again — not this
+            // function's to overrule.
+            if !may_create || mbr_has_partitions(disk) || gpt_signature_present(disk) {
+                return Err(Error::NotFound);
+            }
+            let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
+            Ok((fresh_gpt_layout(total_blocks)?, Vec::new(), true))
+        }
+    }
+}
+
 /// Install this kernel's zones onto the GPT disk image in `disk`.
 ///
 /// The disk's table must already carry a verified GPT: this adds zones to a
@@ -220,22 +298,7 @@ pub fn install_zones_into_blank_disk_image(disk: &mut [u8]) -> Result<InstallRep
 /// The one install path both entry points share: `may_create` is whether a
 /// fresh table may be written when the disk carries none.
 fn install_zones(disk: &mut [u8], may_create: bool) -> Result<InstallReport> {
-    let (layout, existing, created_table) = match read_gpt_layout_from_bytes(disk)? {
-        Some((layout, entries)) => (layout, entries, false),
-        None => {
-            // A fresh table is for a disk that carries none.  What "carries
-            // none" means is stated by the two partition-side questions:
-            // MBR entries of any type (a protective one included) and a GPT
-            // signature are both something already there, and something
-            // there is the flagless route's refusal to make again — not this
-            // function's to overrule.
-            if !may_create || mbr_has_partitions(disk) || gpt_signature_present(disk) {
-                return Err(Error::NotFound);
-            }
-            let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
-            (fresh_gpt_layout(total_blocks)?, Vec::new(), true)
-        }
-    };
+    let (layout, existing, created_table) = read_or_create(disk, may_create)?;
 
     let placed = place_zones(&layout, &existing)?;
 
@@ -458,6 +521,63 @@ mod tests {
             assert_eq!(first.last_block, second.last_block);
             assert!(second.reused);
         }
+    }
+
+    /// The plan the confirmation shows is the install it then runs: same
+    /// refusals, same placements, same preserved set.  This is the contract
+    /// the user interface rests on — what a person is shown is what would
+    /// be written — and it is checked by planning and installing the same
+    /// bytes and comparing the two.
+    #[test]
+    fn the_plan_is_what_the_install_does() {
+        // The flagless route, on a machine's disk: refused or planned
+        // together, and the plan names the stranger as preserved.
+        let mut disk = machine_disk();
+        let plan = super::plan_zones_into_disk_image(&disk, false).expect("the plan");
+        assert!(!plan.created_table);
+        assert_eq!(plan.preserved.len(), 1, "the stranger is preserved");
+        assert_eq!(plan.preserved[0].first_lba, STRANGER_FIRST);
+        let report = install_zones_into_disk_image(&mut disk).expect("the install");
+        assert_eq!(plan.zones, report.zones, "the install did what was planned");
+
+        // The flagged route, on a blank disk: the plan says the table would
+        // be created, and the install does.
+        let mut blank = vec![0_u8; DISK_BLOCKS as usize * BLOCK];
+        let plan = super::plan_zones_into_disk_image(&blank, true).expect("the plan");
+        assert!(plan.created_table);
+        assert!(plan.preserved.is_empty(), "a fresh table preserves nothing");
+        let report = install_zones_into_blank_disk_image(&mut blank).expect("the install");
+        assert_eq!(plan.zones, report.zones);
+
+        // And a refusal is a refusal in both: a blank disk without the flag,
+        // and a disk that carries entries even *with* it.  The second is a
+        // plain MBR disk — the flagged route plans a fresh table only for a
+        // disk with no partition information at all.
+        let blank = vec![0_u8; DISK_BLOCKS as usize * BLOCK];
+        assert_eq!(
+            super::plan_zones_into_disk_image(&blank, false),
+            Err(Error::NotFound)
+        );
+        let mut mbr = vec![0_u8; DISK_BLOCKS as usize * BLOCK];
+        let mut table: crate::fs::partition::MbrPartitionTable = [None; 4];
+        table[0] = Some(crate::fs::partition::MbrPartitionEntry::new(
+            false,
+            STRANGER_TYPE[0],
+            STRANGER_FIRST,
+            STRANGER_BLOCKS,
+        ));
+        crate::fs::partition::write_mbr_partitions(&mut mbr[..BLOCK], &table)
+            .expect("the MBR writes");
+        assert_eq!(
+            super::plan_zones_into_disk_image(&mbr, true),
+            Err(Error::NotFound)
+        );
+
+        // The plan touches nothing: the bytes it was computed from are
+        // exactly the bytes a caller read.
+        let untouched = machine_disk();
+        let _ = super::plan_zones_into_disk_image(&untouched, false).expect("the plan");
+        assert_eq!(untouched, machine_disk(), "a plan wrote to the disk");
     }
 
     /// The flagged route is not a licence to repartition: a disk that

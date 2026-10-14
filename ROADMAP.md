@@ -165,9 +165,11 @@ The authoritative picture of what exists today is
      only a disk that carries no partition information — no GPT, no MBR
      entries, no GPT signature — gets the fresh table, and everything else
      is refused exactly as before
-     ([RFC 0025](docs/rfcs/0025-write-a-table-onto-a-disk-that-has-none.md)).  What remains on the installation path:
-     a user interface and a confirmation (the disk-side operation is the
-     module).
+     ([RFC 0025](docs/rfcs/0025-write-a-table-onto-a-disk-that-has-none.md)).  The installation path's user interface has landed
+     too: the install **shows a plan** — the same refusals and placements,
+     computed without touching the disk — and writes only on a typed `yes`
+     (`--yes` for scripts); a refusal is reached before the question, and
+     `no`, no answer and end of input all leave the disk byte-identical.
   3. **The memory the machine reports.**  The frame pool is a reserved span
      of the kernel's own address space — placed by the linker, outside every
      loadable segment and outside the boot's clear — and what the allocator
