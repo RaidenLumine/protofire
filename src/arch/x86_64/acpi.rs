@@ -33,7 +33,7 @@ struct RsdpV2 {
     _reserved: [u8; 3],
 }
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", test))]
 #[repr(C, packed)]
 struct SdtHeader {
     signature: [u8; 4],
@@ -59,6 +59,10 @@ struct Madt {
 // The two statements of the same layout have to agree.
 #[cfg(target_os = "none")]
 const _: () = assert!(core::mem::size_of::<Madt>() == MADT_HEADER_BYTES);
+
+// And the header's two statements, wherever the struct is compiled.
+#[cfg(any(target_os = "none", test))]
+const _: () = assert!(core::mem::size_of::<SdtHeader>() == ACPI_SDT_HEADER_BYTES);
 
 /// Parsed local APIC entry from the MADT.
 #[derive(Debug, Clone, Copy)]
@@ -215,6 +219,28 @@ unsafe fn read_phys_u32(addr: usize) -> u32 {
     let b3 = unsafe { read_phys_u8(addr + 3) } as u32;
     b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
 }
+
+/// Bytes of an ACPI system description table header.
+///
+/// The layout is the specification's fixed one — signature (4), length (4),
+/// revision, checksum, six-byte OEM ID, eight-byte table ID and two
+/// revisions — and [`SdtHeader`] states the same layout where that struct is
+/// compiled.  The walker uses this number so the tests' host build, which
+/// does not compile the struct, still has it; the assert below ties the two
+/// statements together wherever both exist.
+#[cfg(any(target_os = "none", test))]
+const ACPI_SDT_HEADER_BYTES: usize = 36;
+
+/// The most bytes any ACPI table the walker follows may span.
+///
+/// Every table this tree reads is small — the captured real-firmware MADT is
+/// 476 bytes, and even a machine with sixty-five thousand processors needs
+/// only one megabyte of `x2APIC` entries — so a table whose header declares
+/// more is a header not to trust.  The bound exists because the header's
+/// length field is 32 bits of firmware data and every reader of a table
+/// forms a slice from it: a wild length is how a read runs off the map.
+#[cfg(any(target_os = "none", test))]
+const ACPI_TABLE_MAX_BYTES: usize = 0x10_0000;
 
 /// The most bytes a MADT may span before the boot distrusts it.
 ///
@@ -385,40 +411,99 @@ pub fn discover_aps(multiboot_info: usize) -> Vec<(u32, u8)> {
     aps
 }
 
-/// Search the RSDT for a table with the given 4-byte signature.
-#[cfg(target_os = "none")]
-unsafe fn find_table_in_rsdt(rsdt_addr: usize, signature: &[u8; 4]) -> Option<usize> {
-    // SAFETY: the caller passes the RSDT address the RSDP named; its header is
-    // the first structure in the table and the table is mapped at boot.
-    let header = unsafe { &*(rsdt_addr as *const SdtHeader) };
-    let entry_count = (header.length as usize - core::mem::size_of::<SdtHeader>()) / 4;
-    let entry_base = rsdt_addr + core::mem::size_of::<SdtHeader>();
+/// The RSDT walk, over an address space the caller answers for.
+///
+/// `space(addr, len)` names the `len` bytes at `addr`, or `None` when that
+/// address is outside the space — and that one question is the whole of the
+/// addressing: the walk itself is policy over whatever window the caller
+/// hands it.  Two callers do: the boot passes the identity-mapped physical
+/// space (every in-range read answers; the length bounds below are what
+/// bound the reads), and
+/// `rsdt_walk_finds_the_valid_table_behind_a_decoy` passes its own buffer
+/// with *offsets as addresses*, so the whole walk — the entry-array bounds,
+/// the candidate length gate, the signature and the checksum — runs on a
+/// host over the captured firmware table's own bytes.
+///
+/// The walk distrusts everything it reads, because all of it is firmware
+/// data:
+///
+/// * an RSDT whose header is too short to hold an entry array — or longer than
+///   any real one — is refused rather than believed (`length - 36` underflowing
+///   is how a wild length becomes a wild loop);
+/// * a candidate whose own header declares a length outside the same bounds is
+///   stepped over without its body being read;
+/// * only then is the signature matched and the checksum verified over the
+///   table's declared length, which is what keeps "a table the firmware meant"
+///   distinct from "bytes that happen to spell APIC".
+#[cfg(any(target_os = "none", test))]
+fn walk_rsdt<'a, S>(rsdt_addr: usize, signature: &[u8; 4], space: &S) -> Option<usize>
+where
+    S: Fn(usize, usize) -> Option<&'a [u8]>,
+{
+    let header_size = ACPI_SDT_HEADER_BYTES;
+    let u32_at = |addr: usize| -> Option<usize> {
+        let bytes = space(addr, 4)?;
+        let word: [u8; 4] = bytes.try_into().ok()?;
+        Some(u32::from_le_bytes(word) as usize)
+    };
+
+    let rsdt_length = u32_at(rsdt_addr + 4)?;
+    if !(header_size..=ACPI_TABLE_MAX_BYTES).contains(&rsdt_length) {
+        return None;
+    }
+    let entry_count = (rsdt_length - header_size) / 4;
 
     for i in 0..entry_count {
-        // SAFETY: `entry_count` is derived from the RSDT's own length, so index
-        // `i` is inside the entry array the header describes.
-        let table_addr = unsafe { read_phys_u32(entry_base + i * 4) } as usize;
-        if table_addr == 0 {
+        let table_addr = match u32_at(rsdt_addr + header_size + i * 4) {
+            Some(0) | None => continue,
+            Some(addr) => addr,
+        };
+        let table_length = match u32_at(table_addr + 4) {
+            Some(length) if (header_size..=ACPI_TABLE_MAX_BYTES).contains(&length) => length,
+            _ => continue,
+        };
+        let Some(bytes) = space(table_addr, table_length) else {
+            continue;
+        };
+        if &bytes[0..4] != signature {
             continue;
         }
-        // SAFETY: the entry is a physical address of a table whose first
-        // structure is an SDT header; the header is what is read here.
-        let table_header = unsafe { &*(table_addr as *const SdtHeader) };
-        if &table_header.signature == signature {
-            // Verify checksum.
-            // SAFETY: the checksum covers the table's own declared length,
-            // starting at the table's first byte.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(table_addr as *const u8, table_header.length as usize)
-            };
-            let sum: u8 = bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
-            if sum == 0 {
-                return Some(table_addr);
-            }
+        let sum: u8 = bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+        if sum == 0 {
+            return Some(table_addr);
         }
     }
 
     None
+}
+
+/// Search the RSDT for a table with the given 4-byte signature.
+///
+/// Answers the table's physical address.  The walk is [`walk_rsdt`]; this is
+/// the identity-mapped space it runs over at boot, and the closure is where
+/// the one addressing fact lives: a range has to lie inside the bootstrap
+/// identity map, because every address in the walk comes out of firmware
+/// data — a 32-bit table field puts a range's *start* below four gigabytes,
+/// but its end can cross the map's, and a range that crosses is one to
+/// refuse rather than to read.
+#[cfg(target_os = "none")]
+unsafe fn find_table_in_rsdt(rsdt_addr: usize, signature: &[u8; 4]) -> Option<usize> {
+    use crate::arch::x86_64::paging::BOOTSTRAP_IDENTITY_MAP_END;
+
+    walk_rsdt(rsdt_addr, signature, &|addr: usize, len: usize| {
+        // The map is four gigabytes and the addresses are firmware data, so
+        // this is the bound that turns "the firmware named it" into "the
+        // boot can read it".
+        if addr.checked_add(len)? > BOOTSTRAP_IDENTITY_MAP_END {
+            return None;
+        }
+        // SAFETY: the caller passes the RSDT address the RSDP named, and the
+        // check above just bounded the whole range inside the bootstrap
+        // identity map the discovery path runs under — so naming those
+        // bytes is sound for as long as that map is active, which is the
+        // whole of this path.
+        Some(unsafe { core::slice::from_raw_parts(addr as *const u8, len) })
+    })
 }
 
 // ── Early-discovered AP list ───────────────────────────────────────────
@@ -762,6 +847,7 @@ pub fn take_early_numa() -> Option<EarlyNumaData> {
 #[cfg(test)]
 mod tests {
     use super::parse_madt_bytes;
+    use super::walk_rsdt;
     use alloc::vec::Vec;
 
     /// A laptop's own firmware's MADT, captured once from
@@ -826,6 +912,120 @@ mod tests {
             .map(|entry| entry.acpi_processor_id)
             .collect();
         assert_eq!(processor_ids, (0..32).collect::<Vec<u8>>());
+    }
+
+    /// The RSDT walk, over a synthetic root whose entries are the captured
+    /// firmware table, a decoy that spells `APIC` with a broken checksum, a
+    /// candidate whose header declares a wild length, and a slot past the
+    /// end of the space.
+    ///
+    /// The addressing is the point: the walk's `space` answers `(addr, len)`
+    /// with the bytes at that *offset* in the test's buffer, so the whole
+    /// walk — the root's bounds, the candidate gate, the signature, the
+    /// checksum — runs on a host over the real table's own bytes.  The
+    /// firmware's RSDT itself is small (six entries in the measured image),
+    /// so a synthetic one costs nothing and lets the decoys exist.
+    #[test]
+    fn rsdt_walk_finds_the_valid_table_behind_a_decoy() {
+        // Layout: root at 0x20, decoy at 0x200, wild-length candidate at
+        // 0x400, the real table at 0x1000.
+        const ROOT: usize = 0x20;
+        const DECOY: usize = 0x200;
+        const WILD: usize = 0x400;
+        const REAL: usize = 0x1000;
+
+        let real = REAL_MADT;
+        let mut buf: Vec<u8> = alloc::vec![0u8; REAL + real.len()];
+
+        // The decoy: the real table's bytes with its checksum field broken,
+        // so it spells APIC and fails the sum.
+        buf[DECOY..DECOY + real.len()].copy_from_slice(real);
+        buf[DECOY + 9] = buf[DECOY + 9].wrapping_add(1);
+
+        // The wild candidate: a header whose declared length is 4 GiB - 1.
+        buf[WILD..WILD + 4].copy_from_slice(b"APIC");
+        buf[WILD + 4..WILD + 8].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        buf[WILD + 9] = 0; // make-believe checksum byte
+
+        // The real table.
+        buf[REAL..REAL + real.len()].copy_from_slice(real);
+
+        // The root: four entries — the decoy, the wild candidate, a null
+        // slot, and the real table.
+        buf[ROOT..ROOT + 4].copy_from_slice(b"RSDT");
+        // Four entries: 36-byte header plus 16 bytes of addresses.
+        buf[ROOT + 4..ROOT + 8].copy_from_slice(&52u32.to_le_bytes());
+        for (i, entry) in [DECOY as u32, WILD as u32, 0, REAL as u32]
+            .iter()
+            .enumerate()
+        {
+            let at = ROOT + 36 + i * 4;
+            buf[at..at + 4].copy_from_slice(&entry.to_le_bytes());
+        }
+
+        let space =
+            |addr: usize, len: usize| -> Option<&[u8]> { buf.get(addr..addr.checked_add(len)?) };
+        let found = walk_rsdt(ROOT, b"APIC", &space);
+        assert_eq!(
+            found,
+            Some(REAL),
+            "the only candidate left standing is the one the firmware wrote"
+        );
+    }
+
+    /// A root shorter than its own header is refused, not believed.
+    ///
+    /// A 32-bit length of 20 leaves `length - 36` underflowing to nearly
+    /// `usize::MAX`, and an entry count derived from that is a walk off the
+    /// end of every map — this is the branch that keeps a wild length a
+    /// refusal rather than a fault.
+    #[test]
+    fn rsdt_walk_refuses_a_root_shorter_than_its_header() {
+        let mut buf = [0u8; 64];
+        buf[0..4].copy_from_slice(b"RSDT");
+        for length in [0u32, 20, 35] {
+            buf[4..8].copy_from_slice(&length.to_le_bytes());
+            let space = |addr: usize, len: usize| -> Option<&[u8]> { buf.get(addr..addr + len) };
+            assert_eq!(
+                walk_rsdt(0, b"APIC", &space),
+                None,
+                "a root of {length} bytes holds no entry array"
+            );
+        }
+    }
+
+    /// And a root that claims more than any real one is refused too — the
+    /// same bound the candidates get, applied to the root itself.
+    #[test]
+    fn rsdt_walk_refuses_an_unbelievably_long_root() {
+        let mut buf = [0u8; 64];
+        buf[0..4].copy_from_slice(b"RSDT");
+        buf[4..8].copy_from_slice(&0x10_0001u32.to_le_bytes());
+        let space = |addr: usize, len: usize| -> Option<&[u8]> { buf.get(addr..addr + len) };
+        assert_eq!(walk_rsdt(0, b"APIC", &space), None);
+    }
+
+    /// A candidate whose bytes are not reachable at all — the entry points
+    /// past the space the caller answers for — is stepped over, and the walk
+    /// goes on to a later, valid entry.
+    #[test]
+    fn rsdt_walk_steps_over_an_unreachable_candidate() {
+        const ROOT: usize = 0x20;
+        const REAL: usize = 0x200;
+
+        let real = REAL_MADT;
+        let mut buf: Vec<u8> = alloc::vec![0u8; REAL + real.len()];
+        buf[REAL..REAL + real.len()].copy_from_slice(real);
+
+        buf[ROOT..ROOT + 4].copy_from_slice(b"RSDT");
+        buf[ROOT + 4..ROOT + 8].copy_from_slice(&44u32.to_le_bytes());
+        // One entry far outside the buffer, then the real table.
+        buf[ROOT + 36..ROOT + 40].copy_from_slice(&0x8000_0000u32.to_le_bytes());
+        buf[ROOT + 40..ROOT + 44].copy_from_slice(&(REAL as u32).to_le_bytes());
+
+        let space =
+            |addr: usize, len: usize| -> Option<&[u8]> { buf.get(addr..addr.checked_add(len)?) };
+        assert_eq!(walk_rsdt(ROOT, b"APIC", &space), Some(REAL));
     }
 
     /// Bytes that are not a table: short, truncated, or with an entry length

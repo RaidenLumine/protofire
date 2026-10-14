@@ -36,4 +36,9 @@ bytes came from.
 function over a table's bytes, and these tests run it on `APIC` and on
 malformed tables (short, truncated, an entry that runs past the end), where
 the only acceptable answers are a clean parse or an empty one — never a
-panic and never a read past the slice.
+panic and never a read past the slice.  The RSDT walk is driven the same
+way: `rsdt_walk_finds_the_valid_table_behind_a_decoy` builds a synthetic
+root whose entries are the captured table, a decoy that spells `APIC` with
+a broken checksum and a candidate with a wild length, over a space whose
+offsets are the addresses — so the walk's bounds, gate, signature and
+checksum all run on a host.
