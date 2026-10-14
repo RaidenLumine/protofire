@@ -13,9 +13,12 @@
 //!
 //! ## What an install does
 //!
-//! 1. **Read the disk's own table.**  A disk with no verified GPT is refused;
-//!    writing a table onto a disk someone else partitioned is a decision this
-//!    module does not make ([`write_gpt_preserving`] holds the same line).
+//! 1. **Read the disk's own table.**  A disk with no verified GPT is refused by
+//!    [`install_zones_into_disk_image`] — writing a table onto a disk someone
+//!    else partitioned is a decision this module does not make on its own.  It
+//!    makes it on the caller's, for a disk that carries no partition
+//!    information at all: [`install_zones_into_blank_disk_image`] writes a
+//!    fresh GPT over such a disk and then installs onto it.
 //! 2. **Place each zone.**  A zone the table already carries keeps its extent —
 //!    a reinstall is idempotent — and a zone the table does not carry takes the
 //!    first aligned gap between the entries that is big enough.  Zones do not
@@ -23,21 +26,28 @@
 //! 3. **Write the zone volumes into their extents**, zeroing the rest of each
 //!    extent first so a grown or shrunken zone cannot leave a stale tail for a
 //!    reader to believe.
-//! 4. **Rewrite the table**, replacing the zones' entries and copying every
+//! 4. **Rewrite the table** — replacing the zones' entries and copying every
 //!    other entry byte for byte
-//!    ([`crate::fs::partition::write_gpt_preserving`]).
+//!    ([`crate::fs::partition::write_gpt_preserving`]), or writing the fresh
+//!    one from the same placement when there was no table.
 //!
-//! What it deliberately does not do: create a table that is not there, resize
-//! a machine's partitions, or write anything outside the extents the table
-//! says are free.  An installer for a real machine would add a user interface
-//! and a confirmation on top; the disk-side operation is this.
+//! What it deliberately does not do: overwrite a table that is there — a
+//! damaged GPT included — resize a machine's partitions, or write anything
+//! outside the extents the table (or, on a blank disk, the fresh layout) says
+//! are free.  An installer for a real machine would add a user interface and a
+//! confirmation on top; the disk-side operation is this.
 
 use alloc::vec::Vec;
 
 use super::block::BLOCK_SIZE;
 use super::demo::build_zone_image;
 use super::layout::StorageZone;
+use super::partition::fresh_gpt_layout;
+use super::partition::gpt_signature_present;
+use super::partition::mbr_has_partitions;
+use super::partition::read_gpt_from_bytes;
 use super::partition::read_gpt_layout_from_bytes;
+use super::partition::write_gpt_partitions;
 use super::partition::write_gpt_preserving;
 use super::partition::GptLayout;
 use super::partition::GptPartitionEntry;
@@ -70,6 +80,10 @@ pub struct InstallReport {
     pub zones: Vec<InstalledZone>,
     /// The table the disk carries after the install.
     pub entries: Vec<GptPartitionEntry>,
+    /// Whether this install **wrote** the table rather than adding to one:
+    /// true only on the blank-disk route, where the disk carried no partition
+    /// information and the fresh GPT is this install's.
+    pub created_table: bool,
 }
 
 /// The block extent each zone occupies, for a disk it is being installed on.
@@ -180,7 +194,48 @@ const fn align_up(value: u64, align: u64) -> u64 {
 /// disk a machine already has, and inventing a table is not its job.  See the
 /// module comment for the order of operations.
 pub fn install_zones_into_disk_image(disk: &mut [u8]) -> Result<InstallReport> {
-    let (layout, existing) = read_gpt_layout_from_bytes(disk)?.ok_or(Error::NotFound)?;
+    install_zones(disk, false)
+}
+
+/// Install this kernel's zones onto `disk`, writing a **fresh GPT** first
+/// when the disk carries no partition information at all.
+///
+/// This is [`install_zones_into_disk_image`]'s refusal made a decision by the
+/// caller, for the disk a machine has but has never partitioned: one whose
+/// bytes are not a table — no verified GPT, no MBR entries, no GPT signature
+/// — gets a fresh table whose layout, protective MBR and two header copies
+/// are [`crate::fs::partition::write_gpt_partitions`]'s, and the zones are
+/// placed inside it by the same planning the flagless route uses
+/// ([`fresh_gpt_layout`] is the span the writer will state).
+///
+/// It is **not** a licence to repartition: a disk that already carries a
+/// table — entries of any type, a GPT that failed its checksum, even a lone
+/// protective MBR — is refused exactly as the flagless route refuses it.
+/// Erasing a partitioned disk is a decision with no undo, and this module
+/// only ever makes it about bytes that are not one.
+pub fn install_zones_into_blank_disk_image(disk: &mut [u8]) -> Result<InstallReport> {
+    install_zones(disk, true)
+}
+
+/// The one install path both entry points share: `may_create` is whether a
+/// fresh table may be written when the disk carries none.
+fn install_zones(disk: &mut [u8], may_create: bool) -> Result<InstallReport> {
+    let (layout, existing, created_table) = match read_gpt_layout_from_bytes(disk)? {
+        Some((layout, entries)) => (layout, entries, false),
+        None => {
+            // A fresh table is for a disk that carries none.  What "carries
+            // none" means is stated by the two partition-side questions:
+            // MBR entries of any type (a protective one included) and a GPT
+            // signature are both something already there, and something
+            // there is the flagless route's refusal to make again — not this
+            // function's to overrule.
+            if !may_create || mbr_has_partitions(disk) || gpt_signature_present(disk) {
+                return Err(Error::NotFound);
+            }
+            let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
+            (fresh_gpt_layout(total_blocks)?, Vec::new(), true)
+        }
+    };
 
     let placed = place_zones(&layout, &existing)?;
 
@@ -200,12 +255,36 @@ pub fn install_zones_into_disk_image(disk: &mut [u8]) -> Result<InstallReport> {
         zone_entries.push((zone.zone.gpt_type_guid(), zone.first_block, zone.last_block));
     }
 
-    // 4. The table, with everything the install did not claim copied back.
-    let entries = write_gpt_preserving(disk, &zone_entries)?;
+    // 4. The table.  A disk that had one keeps everything the install did not
+    //    claim, byte for byte; a blank disk gets the fresh writer, whose entries
+    //    are the same placement in slots of its own — there is no other entry to
+    //    preserve, and the reader below is what says the writer's bytes are a table
+    //    this kernel verifies.  A fresh table the reader then refuses is this
+    //    function's own contradiction, and it says so rather than reporting an
+    //    install whose entries nobody can read.
+    let entries = if created_table {
+        let table: Vec<(usize, [u8; 16], u64, u64)> = placed
+            .iter()
+            .enumerate()
+            .map(|(slot, zone)| {
+                (
+                    slot,
+                    zone.zone.gpt_type_guid(),
+                    zone.first_block,
+                    zone.last_block - zone.first_block + 1,
+                )
+            })
+            .collect();
+        write_gpt_partitions(disk, &table)?;
+        read_gpt_from_bytes(disk)?.ok_or(Error::InternalError)?
+    } else {
+        write_gpt_preserving(disk, &zone_entries)?
+    };
 
     Ok(InstallReport {
         zones: placed,
         entries,
+        created_table,
     })
 }
 
@@ -214,6 +293,7 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
+    use super::install_zones_into_blank_disk_image;
     use super::install_zones_into_disk_image;
     use crate::fs::layout::StorageZone;
     #[allow(unused_imports)]
@@ -327,7 +407,8 @@ mod tests {
         }
     }
 
-    /// A disk with no verified GPT is refused rather than given one.
+    /// A disk with no verified GPT is refused rather than given one — the
+    /// flagless route's decision, still, now that the flagged route exists.
     #[test]
     fn a_disk_without_a_gpt_is_refused() {
         let mut blank = vec![0_u8; DISK_BLOCKS as usize * BLOCK];
@@ -335,6 +416,136 @@ mod tests {
             install_zones_into_disk_image(&mut blank),
             Err(Error::NotFound)
         );
+    }
+
+    /// The flagged route, on a disk that carries no partition information:
+    /// a fresh GPT is written, the reader verifies it, and a second install
+    /// goes through the ordinary route and reuses every extent — the fresh
+    /// table became the disk's own.
+    #[test]
+    fn a_blank_disk_gets_a_fresh_table_and_then_installs() {
+        let mut blank = vec![0_u8; DISK_BLOCKS as usize * BLOCK];
+        let first = install_zones_into_blank_disk_image(&mut blank).expect("the fresh install");
+        assert!(first.created_table, "and it says it wrote the table");
+        assert_eq!(first.zones.len(), 3);
+
+        // The table is one this kernel's reader verifies, and it carries
+        // exactly the zones — a fresh disk has no stranger to preserve.
+        let (layout, entries) = read_gpt_layout_from_bytes(&blank).unwrap().unwrap();
+        assert_eq!(layout.first_usable_lba, 34);
+        assert_eq!(layout.last_usable_lba, DISK_BLOCKS - 34);
+        assert_eq!(entries.iter().filter(|e| !e.is_unused()).count(), 3);
+
+        for installed in &first.zones {
+            assert!(!installed.reused, "every zone was placed");
+            let entry = entries
+                .iter()
+                .find(|entry| entry.type_guid == installed.zone.gpt_type_guid())
+                .expect("the zone's entry");
+            assert_eq!(entry.first_lba, installed.first_block);
+            assert_eq!(entry.last_lba, installed.last_block);
+            let image = crate::fs::demo::build_zone_image(installed.zone);
+            let at = installed.first_block as usize * BLOCK;
+            assert_eq!(&blank[at..at + image.len()], image.as_slice());
+        }
+
+        // The disk now carries a table, so the next install is the ordinary
+        // route: the extents are kept, not chosen again.
+        let second = install_zones_into_disk_image(&mut blank).expect("the second install");
+        assert!(!second.created_table, "the table was already there");
+        for (first, second) in first.zones.iter().zip(&second.zones) {
+            assert_eq!(first.first_block, second.first_block);
+            assert_eq!(first.last_block, second.last_block);
+            assert!(second.reused);
+        }
+    }
+
+    /// The flagged route is not a licence to repartition: a disk that
+    /// carries MBR entries — a real table's, or a lone protective one, the
+    /// shape a GPT's own first sector is — is refused rather than given a
+    /// fresh table.
+    #[test]
+    fn the_flagged_route_refuses_a_disk_that_carries_entries() {
+        // A plain MBR disk: somebody's partitioning tool put a table there,
+        // and the zones are not this install's to place.
+        let mut mbr = vec![0_u8; DISK_BLOCKS as usize * BLOCK];
+        let mut table: crate::fs::partition::MbrPartitionTable = [None; 4];
+        table[0] = Some(crate::fs::partition::MbrPartitionEntry::new(
+            false,
+            STRANGER_TYPE[0], // any type byte: presence is what refuses
+            STRANGER_FIRST,
+            STRANGER_BLOCKS,
+        ));
+        crate::fs::partition::write_mbr_partitions(&mut mbr[..BLOCK], &table)
+            .expect("the MBR writes");
+        let before = mbr.clone();
+        assert_eq!(
+            install_zones_into_blank_disk_image(&mut mbr),
+            Err(Error::NotFound)
+        );
+        assert_eq!(mbr, before, "a refused install writes nothing");
+
+        // A protective MBR alone: `write_gpt_partitions` writes one, and the
+        // check keeps its first sector before the header makes it a GPT.
+        let mut disk = vec![0_u8; DISK_BLOCKS as usize * BLOCK];
+        write_gpt_partitions(&mut disk, &[]).expect("the table writes");
+        let mut protective_only = disk.clone();
+        // Keep the first sector, take the GPT away: this disk carries an MBR
+        // entry and no verified GPT.
+        protective_only[BLOCK..].fill(0);
+        let before = protective_only.clone();
+        assert_eq!(
+            install_zones_into_blank_disk_image(&mut protective_only),
+            Err(Error::NotFound)
+        );
+        assert_eq!(protective_only, before, "a refused install writes nothing");
+
+        // A GPT whose primary header is damaged: the signature is there, the
+        // disk declares a table, and neither route may write over it.
+        let mut damaged = disk.clone();
+        damaged[BLOCK + 16] ^= 0xFF; // the header's CRC field
+        let before = damaged.clone();
+        assert_eq!(
+            install_zones_into_blank_disk_image(&mut damaged),
+            Err(Error::NotFound)
+        );
+        assert_eq!(damaged, before);
+        assert_eq!(
+            install_zones_into_disk_image(&mut damaged),
+            Err(Error::NotFound)
+        );
+        assert_eq!(damaged, before);
+
+        // A GPT whose **primary end** is destroyed but whose backup is whole:
+        // the MBR and the primary header are gone, and the last block still
+        // spells the signature — which is the backup the format's own reader
+        // would consult, so a fresh table here would overwrite the one copy
+        // a repair could use.  The backup's place is checked for exactly this.
+        let mut backup_only = disk;
+        let first_usable = 34 * BLOCK;
+        backup_only[..first_usable].fill(0);
+        let before = backup_only.clone();
+        assert_eq!(
+            install_zones_into_blank_disk_image(&mut backup_only),
+            Err(Error::NotFound)
+        );
+        assert_eq!(backup_only, before, "a refused install writes nothing");
+    }
+
+    /// A blank disk with room only for two of the three zones is refused
+    /// **before anything is written**, including the table: the fresh table
+    /// is this install's, and an install that cannot finish must leave the
+    /// disk exactly as it was.
+    #[test]
+    fn a_blank_disk_with_no_room_is_refused_before_the_table() {
+        // 1 MiB: past the format's minimum, nowhere near the zones.
+        let mut disk = vec![0_u8; 2 * 1024 * BLOCK];
+        let before = disk.clone();
+        assert_eq!(
+            install_zones_into_blank_disk_image(&mut disk),
+            Err(Error::NoSpace)
+        );
+        assert_eq!(disk, before, "a refused install writes nothing");
     }
 
     /// A disk with a GPT but no room for the zones is refused, and the

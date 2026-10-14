@@ -91,6 +91,54 @@ pub fn read_mbr_partitions(device: &dyn BlockDevice) -> Result<Option<MbrPartiti
     Ok(Some(table))
 }
 
+/// Whether an image's first block carries any MBR **partition entries**.
+///
+/// The same criterion the device-side reader uses — an entry is present when
+/// its boot flag or its type byte is non-zero — because the question is the
+/// reader's: a sector with the signature and four empty entries carries no
+/// partition information, while a protective entry (`0xEE`) is present like
+/// any other.  An image too short for a block, or one whose signature is not
+/// the format's, carries none either.
+///
+/// An installer asks this before writing a **fresh** table: a disk that
+/// carries entries — even ones it cannot interpret — is a disk something
+/// already partitioned, which is the line [`write_gpt_preserving`] and its
+/// callers hold.
+pub fn mbr_has_partitions(disk: &[u8]) -> bool {
+    let Some(sector) = disk.get(..BLOCK_SIZE) else {
+        return false;
+    };
+    if sector[MBR_SIGNATURE_OFFSET..MBR_SIGNATURE_OFFSET + MBR_SIGNATURE.len()] != MBR_SIGNATURE {
+        return false;
+    }
+    (0..MBR_PARTITION_COUNT).any(|index| {
+        let at = MBR_PARTITION_TABLE_OFFSET + index * MBR_PARTITION_ENTRY_SIZE;
+        let entry = &sector[at..at + MBR_PARTITION_ENTRY_SIZE];
+        entry[0] != 0 || entry[4] != 0
+    })
+}
+
+/// Whether an image spells the GPT signature at **either** header's place,
+/// whether or not the header verifies.
+///
+/// [`read_gpt_from_bytes`] answers `None` for a header that fails its
+/// checksum, and that is the wrong question for an installer about to write a
+/// fresh table: bytes that *declare* a GPT are a damaged table — a repair
+/// decision — rather than a disk with nothing on it.  The **backup** header's
+/// place is checked for the same reason both ends exist: a disk whose primary
+/// is destroyed but whose backup is whole still declares a GPT, and the
+/// format's own reader consults the backup (RFC 0018's unresolved question),
+/// so a writer that is not repairing must not claim it saw nothing.
+pub fn gpt_signature_present(disk: &[u8]) -> bool {
+    let says_gpt = |at: usize| {
+        disk.get(at..)
+            .is_some_and(|block| block.starts_with(GPT_SIGNATURE))
+    };
+    let primary_at = GPT_HEADER_LBA as usize * BLOCK_SIZE;
+    let backup_at = disk.len().saturating_sub(BLOCK_SIZE);
+    says_gpt(primary_at) || (backup_at != primary_at && says_gpt(backup_at))
+}
+
 pub fn write_mbr_partitions(sector: &mut [u8], partitions: &MbrPartitionTable) -> Result<()> {
     if sector.len() < BLOCK_SIZE {
         return Err(Error::InvalidArgument);
@@ -407,10 +455,10 @@ pub fn write_gpt_partitions(
     }
 
     let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
-    // The format's own minimum: a header and an entry array at each end.
-    if total_blocks < 2 * GPT_RESERVED_BLOCKS + 1 {
-        return Err(Error::InvalidArgument);
-    }
+    // The span a fresh table gives the disk, from the same function an
+    // installer plans its placements with — so the plan and the table agree
+    // by construction rather than by arithmetic written twice.
+    let layout = fresh_gpt_layout(total_blocks)?;
     let last_block = total_blocks - 1;
 
     write_protective_mbr(disk, total_blocks);
@@ -427,7 +475,10 @@ pub fn write_gpt_partitions(
             return Err(Error::InvalidArgument);
         }
         let last = first_block + block_count - 1;
-        if last > backup_entries_lba {
+        // The span the table is about to state, not one block more: a
+        // partition that reached the backup array's first block would be an
+        // entry the header beside it calls impossible.
+        if first_block < layout.first_usable_lba || last > layout.last_usable_lba {
             return Err(Error::InvalidArgument);
         }
         let at = slot * GPT_ENTRY_SIZE_MIN;
@@ -442,7 +493,7 @@ pub fn write_gpt_partitions(
     let backup_at = backup_entries_lba as usize * BLOCK_SIZE;
     disk[backup_at..backup_at + array_bytes].copy_from_slice(&array);
 
-    let geometry = GptGeometry::fresh(backup_entries_lba - 1);
+    let geometry = GptGeometry::fresh(layout);
     let header = gpt_header(
         GPT_HEADER_LBA,
         last_block,
@@ -485,16 +536,39 @@ struct GptGeometry {
 }
 
 impl GptGeometry {
-    /// The geometry the fresh-table writer gives a disk it builds from nothing.
-    const fn fresh(last_usable_lba: u64) -> Self {
+    /// The geometry the fresh-table writer gives a disk it builds from nothing,
+    /// for the layout [`fresh_gpt_layout`] states.
+    const fn fresh(layout: GptLayout) -> Self {
         Self {
-            first_usable_lba: GPT_RESERVED_BLOCKS + 1,
-            last_usable_lba,
+            first_usable_lba: layout.first_usable_lba,
+            last_usable_lba: layout.last_usable_lba,
             entry_count: GPT_ENTRY_COUNT,
             entry_size: GPT_ENTRY_SIZE_MIN,
             disk_guid: GPT_DISK_GUID,
         }
     }
+}
+
+/// The span a **fresh** GPT gives the disk it is being written onto: what a
+/// disk with no table has once one is written, decided before anything is
+/// placed so the plan and the headers state the same numbers.
+///
+/// This is the one place the fresh numbering lives — the entry array's blocks
+/// at each end are what `last_usable_lba` excludes — and the writer uses it
+/// through [`GptGeometry::fresh`], so an installer that plans inside this
+/// layout cannot disagree with the table it is about to write.  A disk whose
+/// own table already exists keeps *its* geometry instead
+/// ([`read_gpt_layout_from_bytes`]), which is why this is only for the disk
+/// that has none.
+pub fn fresh_gpt_layout(total_blocks: u64) -> Result<GptLayout> {
+    // The format's own minimum: a header and an entry array at each end.
+    if total_blocks < 2 * GPT_RESERVED_BLOCKS + 1 {
+        return Err(Error::InvalidArgument);
+    }
+    Ok(GptLayout {
+        first_usable_lba: GPT_RESERVED_BLOCKS + 1,
+        last_usable_lba: total_blocks - 1 - GPT_RESERVED_BLOCKS,
+    })
 }
 
 /// The GPT a disk image already carries, parsed and verified, or `None` when

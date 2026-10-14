@@ -207,6 +207,82 @@ if ! "$SGDISK" -p "$disk" 2>&1 | grep -F "stranger" >/dev/null 2>&1; then
     fail "the stranger's partition did not survive the second install"
 fi
 
+# ── A disk with no table: refused, then given one on the flag's word ────
+#
+# A machine's disk that was never partitioned has no table to add zones to,
+# and the flagless install refuses it — that refusal is the decision this
+# module does not make on its own.  `--new-table` is the caller making it,
+# and this section is the whole of that route's evidence: the refusal, the
+# fresh table read back by a tool this tree did not write, and a boot from
+# the installed disk — the read path over a table this kernel itself wrote
+# from nothing.
+printf 'x86_64 install check: blank disk, refusal then --new-table\n'
+blank="$work/blank.img"
+dd if=/dev/zero of="$blank" bs=1M count="$DISK_MIB" status=none 2>/dev/null \
+    || dd if=/dev/zero of="$blank" bs=1048576 count="$DISK_MIB" 2>/dev/null
+
+# The flagless route refuses: exit status non-zero, and a message naming why.
+if "$CARGO" run --offline --quiet -- install "$blank" >"$work/blank-refusal.log" 2>&1; then
+    cat "$work/blank-refusal.log" >&2
+    fail "a disk with no table was installed onto without --new-table"
+fi
+if ! grep -F "not found" "$work/blank-refusal.log" >/dev/null 2>&1; then
+    cat "$work/blank-refusal.log" >&2
+    fail "the refusal does not say the disk has no table"
+fi
+
+blank_log="$work/blank-boot.log"
+if ! "$CARGO" run --offline --quiet -- install --new-table "$blank" >"$work/blank-install.log" 2>&1; then
+    cat "$work/blank-install.log" >&2
+    fail "the blank-disk install did not complete"
+fi
+grep -F "a fresh GPT was written" "$work/blank-install.log" >/dev/null 2>&1 ||
+    fail "the install did not say it wrote a fresh table"
+
+# The table, read back by sgdisk: a real tool verifies the fresh GPT this
+# kernel wrote, and lists the three zones as its partitions.
+"$SGDISK" -p "$blank" >"$work/blank-table.log" 2>&1 \
+    || { cat "$work/blank-table.log" >&2; fail "sgdisk cannot read the fresh table"; }
+# The fresh writer writes no partition names, so the count is the check:
+# three partitions, no more.
+partition_count="$("$SGDISK" -p "$blank" 2>/dev/null | awk -F: '/^ +[0-9]+/ { n += 1 } END { print n + 0 }')"
+if [ "$partition_count" -ne 3 ]; then
+    cat "$work/blank-table.log" >&2
+    fail "expected 3 partitions in the fresh table, sgdisk sees $partition_count"
+fi
+
+# And it boots: the same typed-answer boot as the first section, over the
+# table this kernel wrote from nothing.
+set +e
+shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine q35 \
+    -cpu max \
+    -smp 1 \
+    -m 1G \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -no-reboot \
+    -no-shutdown \
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+    -drive "file=$blank,if=none,id=nvme0,format=raw" \
+    -device nvme,drive=nvme0,serial=protofire \
+    -serial stdio >"$blank_log" 2>&1
+status=$?
+set -e
+case "$status" in
+    0|124) ;;
+    *)
+        fail "the blank-disk boot exited with status $status"
+        ;;
+esac
+log="$blank_log"
+require_log_line "[driver] detected boot disk: nvme0"
+require_log_line "[fs    ] mounted GPT-partitioned SimpleFs volumes from ATA boot disk"
+require_log_line "[user  ] loaded /apps/packages/shell/bin/shell.elf"
+require_log_line "install-check-answered"
+grep -F "[FATAL]" "$blank_log" >/dev/null 2>&1 && fail "the blank-disk boot reported a fatal error"
+
 printf 'x86_64 install check passed: zones installed onto a %s-made disk, the\n' "$SGDISK"
 printf '  stranger partition preserved, the disk booted and answered, and a\n'
-printf '  reinstall reused every extent\n'
+printf '  reinstall reused every extent; and a blank disk was refused without\n'
+printf '  --new-table, given a fresh GPT with it, and the result booted too\n'

@@ -160,10 +160,14 @@ The authoritative picture of what exists today is
      round-tripped because writer and reader shared the table, and a real
      tool's checksums did not verify — so a machine's own disk was exactly
      the shape this tree could not read, which is what RFC 0018 exists for.
-     What remains on the installation path: a user interface and a
-     confirmation (the disk-side operation is the module), and creating a
-     table on a disk that has none, which is a partitioning decision this
-     kernel deliberately does not make.
+     A disk with **no table at all** is refused by default, and
+     `install --new-table` is the caller's decision to have one written:
+     only a disk that carries no partition information — no GPT, no MBR
+     entries, no GPT signature — gets the fresh table, and everything else
+     is refused exactly as before
+     ([RFC 0025](docs/rfcs/0025-write-a-table-onto-a-disk-that-has-none.md)).  What remains on the installation path:
+     a user interface and a confirmation (the disk-side operation is the
+     module).
   3. **The memory the machine reports.**  The frame pool is a reserved span
      of the kernel's own address space — placed by the linker, outside every
      loadable segment and outside the boot's clear — and what the allocator

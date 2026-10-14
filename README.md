@@ -116,10 +116,18 @@ sudo dd if=disk.img of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
 The disk must already carry a GPT — a disk partitioned by someone else's
-tool is exactly the one this is for, and a disk with no table is refused
-rather than partitioned (`make check-x8664-install` is the gate: it makes
-the disk with `sgdisk`, installs, keeps the disk's own partition, and boots
-the result).  A machine that
+tool is exactly the one this is for.  A disk with **no table at all** is
+refused unless you ask for one, which the flag makes an explicit decision:
+
+```sh
+cargo run -- install --new-table disk.img
+```
+
+Only a disk that carries no partition information — no GPT, no MBR
+entries, no GPT signature — gets the fresh table; anything else is refused
+either way (`make check-x8664-install` is the gate: it makes the disk with
+`sgdisk`, installs, keeps the disk's own partition, boots the result, and
+boots a blank disk the flag gave a table).  A machine that
 boots the stick shows the kernel's console on the display — the image's
 Multiboot2 header asks the loader for a framebuffer, so GRUB sets a
 graphical mode and the kernel draws on the frame it was handed, and no

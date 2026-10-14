@@ -63,17 +63,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             write_demo_disk_image(Path::new(&output), table)?;
         }
         Some("install") => {
-            // `install <disk-image>`: put this kernel's zones onto a disk a
-            // machine already has, adding the zones to the disk's own GPT
-            // rather than building an image.  See `protofire::fs::install`.
-            let Some(path) = args.next() else {
+            // `install [--new-table] <disk-image>`: put this kernel's zones
+            // onto a disk a machine already has, adding the zones to the
+            // disk's own GPT rather than building an image.  `--new-table`
+            // is the opt-in for a disk that has no table at all — the flag is
+            // the decision, because writing one is partitioning.  See
+            // `protofire::fs::install`.
+            let first = args.next();
+            let (new_table, path) = match first.as_deref() {
+                Some("--new-table") => (true, args.next()),
+                _ => (false, first),
+            };
+            let Some(path) = path else {
                 print_host_usage_and_exit(2);
             };
             if args.next().is_some() {
                 print_host_usage_and_exit(2);
             }
 
-            install_zones_onto_disk(Path::new(&path))?;
+            install_zones_onto_disk(Path::new(&path), new_table)?;
         }
         Some("sign-release") => {
             let artifact = args.next().unwrap_or_else(|| {
@@ -122,9 +130,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!(
                 "  mkimage [gpt] [path]  Build the ATA demo disk image (MBR by default, GPT on request)."
             );
+            println!("  install [--new-table] <disk>  Install this kernel's zones onto a disk.  A");
             println!(
-                "  install <disk>        Install this kernel's zones onto a disk that already has a GPT."
+                "    disk that already has a GPT keeps every partition it carried; --new-table"
             );
+            println!("    writes a fresh GPT first, for a disk that has no table at all.");
             println!(
                 "  sign-release <artifact> <key-id> [dir]  Sign an artifact with a fresh one-time key."
             );
@@ -170,8 +180,11 @@ fn write_demo_disk_image(
 /// a failure leave the disk exactly as it was.  A real installer would write
 /// through the device; this is the same operation with the device being a
 /// file.
+///
+/// `new_table` is the caller's opt-in for a disk that carries no table: with
+/// it the install writes a fresh GPT, without it such a disk is refused.
 #[cfg(not(target_os = "none"))]
-fn install_zones_onto_disk(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn install_zones_onto_disk(path: &Path, new_table: bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut disk = fs::read(path)?;
     if disk.len() % 512 != 0 {
         return Err(format!(
@@ -182,12 +195,24 @@ fn install_zones_onto_disk(path: &Path) -> Result<(), Box<dyn std::error::Error>
         .into());
     }
 
-    let report = protofire::fs::install::install_zones_into_disk_image(&mut disk)
-        .map_err(|error| format!("{}: {}", path.display(), error.as_str()))?;
+    let outcome = if new_table {
+        protofire::fs::install::install_zones_into_blank_disk_image(&mut disk)
+    } else {
+        protofire::fs::install::install_zones_into_disk_image(&mut disk)
+    };
+    let report = outcome.map_err(|error| format!("{}: {}", path.display(), error.as_str()))?;
 
     fs::write(path, &disk)?;
 
-    println!("installed onto {}", path.display());
+    println!(
+        "installed onto {}{}",
+        path.display(),
+        if report.created_table {
+            " (a fresh GPT was written)"
+        } else {
+            ""
+        }
+    );
     for zone in &report.zones {
         println!(
             "  {} zone: blocks {}..={} ({} blocks, {})",
