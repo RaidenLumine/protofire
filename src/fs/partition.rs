@@ -61,9 +61,18 @@ pub fn read_mbr_partitions(device: &dyn BlockDevice) -> Result<Option<MbrPartiti
 
     let mut sector = [0_u8; BLOCK_SIZE];
     device.read_blocks(0, &mut sector)?;
+    Ok(parse_mbr_sector(&sector))
+}
 
+/// Parse a disk's first sector as an MBR, or `None` when it is not one.
+///
+/// This is the half of [`read_mbr_partitions`] that reads no device, so a
+/// caller that already holds the area's first sector — [`read_partitions`],
+/// which asks the same block whether the table is protective — does not read
+/// it a second time.
+fn parse_mbr_sector(sector: &[u8; BLOCK_SIZE]) -> Option<MbrPartitionTable> {
     if sector[MBR_SIGNATURE_OFFSET..MBR_SIGNATURE_OFFSET + MBR_SIGNATURE.len()] != MBR_SIGNATURE {
-        return Ok(None);
+        return None;
     }
 
     let mut table: MbrPartitionTable = [None; MBR_PARTITION_COUNT];
@@ -88,7 +97,22 @@ pub fn read_mbr_partitions(device: &dyn BlockDevice) -> Result<Option<MbrPartiti
         });
     }
 
-    Ok(Some(table))
+    Some(table)
+}
+
+/// Whether a disk's first sector is a **protective** MBR: the format's
+/// signature, and a first entry that is the protective type and starts where
+/// the GPT's header lives.
+///
+/// The sector-taking half of [`read_partitions`]'s question, for the same
+/// reason as [`parse_mbr_sector`].
+fn protective_sector(sector: &[u8; BLOCK_SIZE]) -> bool {
+    let signature = &sector[MBR_SIGNATURE_OFFSET..MBR_SIGNATURE_OFFSET + MBR_SIGNATURE.len()];
+    let entry = &sector[MBR_PARTITION_TABLE_OFFSET..MBR_PARTITION_TABLE_OFFSET + 16];
+    let first_lba = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as u64;
+    signature == MBR_SIGNATURE.as_slice()
+        && entry[4] == MBR_PROTECTIVE_TYPE
+        && first_lba == GPT_HEADER_LBA
 }
 
 /// Whether an image's first block carries any MBR **partition entries**.
@@ -379,28 +403,22 @@ fn mbr_partition(partition: MbrPartitionEntry) -> Partition {
 /// whole disk" — the answer that used to become a system slot
 /// ([RFC 0018](../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)).
 pub fn read_partitions(device: &dyn BlockDevice) -> Result<Option<PartitionTable>> {
-    if protective_mbr(device)? {
-        return Ok(read_gpt_partitions(device)?.map(PartitionTable::Gpt));
-    }
-    Ok(read_mbr_partitions(device)?.map(PartitionTable::Mbr))
-}
-
-/// Whether LBA 0 is a protective MBR: the format's signature, and a first
-/// entry that is the protective type and starts where the GPT's header lives.
-fn protective_mbr(device: &dyn BlockDevice) -> Result<bool> {
     if device.block_size() != BLOCK_SIZE || device.block_count() == 0 {
-        return Ok(false);
+        return Ok(None);
     }
 
+    // LBA 0 answers both questions — whether the table is protective, and what
+    // an MBR's entries are — so it is read **once** and the answers are taken
+    // from the same bytes.  Reading it per question cost the boot two device
+    // reads (this function runs twice per boot), which the boot-work baseline
+    // saw as `blk-reads` 199 -> 201 when the split was introduced.
     let mut sector = [0_u8; BLOCK_SIZE];
     device.read_blocks(0, &mut sector)?;
 
-    let signature = &sector[MBR_SIGNATURE_OFFSET..MBR_SIGNATURE_OFFSET + MBR_SIGNATURE.len()];
-    let entry = &sector[MBR_PARTITION_TABLE_OFFSET..MBR_PARTITION_TABLE_OFFSET + 16];
-    let first_lba = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as u64;
-    Ok(signature == MBR_SIGNATURE.as_slice()
-        && entry[4] == MBR_PROTECTIVE_TYPE
-        && first_lba == GPT_HEADER_LBA)
+    if protective_sector(&sector) {
+        return Ok(read_gpt_partitions(device)?.map(PartitionTable::Gpt));
+    }
+    Ok(parse_mbr_sector(&sector).map(PartitionTable::Mbr))
 }
 
 /// The GPT `device` carries, or `None` when there is none to read.
