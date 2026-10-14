@@ -7,9 +7,9 @@
 //! and `make iso` writes a bootable medium — and neither of those is an
 //! install: a machine's disk carries a table its own partitioning tool wrote,
 //! with partitions this kernel has no name for, and installing means adding
-//! the three zones to that table without touching anything else.  That is what
-//! this module does, over a disk image in memory, so the whole operation is a
-//! host test and a gate boot rather than a privilege.
+//! this kernel's zones to that table without touching anything else.  That is
+//! what this module does, over a disk image in memory, so the whole operation
+//! is a host test and a gate boot rather than a privilege.
 //!
 //! ## What an install does
 //!
@@ -19,13 +19,19 @@
 //!    makes it on the caller's, for a disk that carries no partition
 //!    information at all: [`install_zones_into_blank_disk_image`] writes a
 //!    fresh GPT over such a disk and then installs onto it.
-//! 2. **Place each zone.**  A zone the table already carries keeps its extent —
-//!    a reinstall is idempotent — and a zone the table does not carry takes the
-//!    first aligned gap between the entries that is big enough.  Zones do not
-//!    overlap each other or anything already there.
+//! 2. **Place each zone — the system zone as the pair it is.**  The system zone
+//!    is **two** extents, A and B, committed as the older and newer builds;
+//!    apps and data follow.  A zone the table already carries keeps its extent
+//!    — a reinstall is idempotent, and a disk installed before the pair existed
+//!    gains the missing system slot — and a zone the table does not carry takes
+//!    the first aligned gap between the entries that is big enough. Zones do
+//!    not overlap each other or anything already there.
 //! 3. **Write the zone volumes into their extents**, zeroing the rest of each
 //!    extent first so a grown or shrunken zone cannot leave a stale tail for a
-//!    reader to believe.
+//!    reader to believe.  A system slot's volume carries its build's marker,
+//!    which is what makes the boot take B and `withdraw_active_build` hand the
+//!    machine back to A ([RFC
+//!    0026](../../docs/rfcs/0026-install-the-system-pair-not-one-slot.md)).
 //! 4. **Rewrite the table** — replacing the zones' entries and copying every
 //!    other entry byte for byte
 //!    ([`crate::fs::partition::write_gpt_preserving`]), or writing the fresh
@@ -78,6 +84,12 @@ pub struct InstalledZone {
     /// Whether this install wrote to an extent the table already carried (a
     /// reinstall in place) rather than taking free space.
     pub reused: bool,
+    /// The build **generation** this extent's volume commits, for the system
+    /// zone's two slots: A is older and B newer, so a boot takes B and a
+    /// rollback has A ([RFC
+    /// 0026](../../docs/rfcs/0026-install-the-system-pair-not-one-slot.md)).
+    /// `None` for the zones that carry no build marker.
+    pub build: Option<u64>,
 }
 
 /// What one install did, in the order the zones were placed.
@@ -103,11 +115,30 @@ fn place_zones(layout: &GptLayout, existing: &[GptPartitionEntry]) -> Result<Vec
     use super::layout::DEMO_DISK_APPS_BLOCKS;
     use super::layout::DEMO_DISK_DATA_BLOCKS;
     use super::layout::DEMO_DISK_SYSTEM_BLOCKS;
+    use super::layout::DEMO_SYSTEM_SLOT_A_GENERATION;
+    use super::layout::DEMO_SYSTEM_SLOT_B_GENERATION;
 
-    let wanted: [(StorageZone, u64); 3] = [
-        (StorageZone::System, DEMO_DISK_SYSTEM_BLOCKS),
-        (StorageZone::Apps, DEMO_DISK_APPS_BLOCKS),
-        (StorageZone::Data, DEMO_DISK_DATA_BLOCKS),
+    // The system zone is the **pair** ([RFC
+    // 0026](../../docs/rfcs/0026-install-the-system-pair-not-one-slot.md)):
+    // A commits the older generation and B the newer, in that order, so the
+    // boot's selection takes B and `withdraw_active_build` hands the machine
+    // back to A.  The pair precedes the other zones, and both system entries
+    // are wanted even when the disk carries one — a reinstall adds the
+    // missing slot, which is what gives a machine that has only ever been
+    // installed once a rollback target.
+    let wanted: [(StorageZone, u64, Option<u64>); 4] = [
+        (
+            StorageZone::System,
+            DEMO_DISK_SYSTEM_BLOCKS,
+            Some(DEMO_SYSTEM_SLOT_A_GENERATION),
+        ),
+        (
+            StorageZone::System,
+            DEMO_DISK_SYSTEM_BLOCKS,
+            Some(DEMO_SYSTEM_SLOT_B_GENERATION),
+        ),
+        (StorageZone::Apps, DEMO_DISK_APPS_BLOCKS, None),
+        (StorageZone::Data, DEMO_DISK_DATA_BLOCKS, None),
     ];
 
     // Begin with everything the table already carries, so the free-space
@@ -118,13 +149,31 @@ fn place_zones(layout: &GptLayout, existing: &[GptPartitionEntry]) -> Result<Vec
         .map(|entry| (entry.first_lba, entry.last_lba))
         .collect();
 
+    // Which entries this placement has already handed out.  The system pair
+    // consumes the disk's system entries **in the table's own order** — the
+    // order the boot's `system_partitions` reads them in — so `system_taken`
+    // counts them rather than letting each slot find "the" system entry and
+    // both land on the first.
+    let mut system_taken = 0usize;
+
     let mut placed = Vec::with_capacity(wanted.len());
-    for (zone, blocks) in wanted {
+    for (zone, blocks, build) in wanted {
         // A zone the table already carries keeps its extent — the extent is
         // the disk's decision, not this module's to make twice.
-        let existing_entry = existing
-            .iter()
-            .find(|entry| entry.type_guid == zone.gpt_type_guid());
+        let existing_entry = if zone == StorageZone::System {
+            let entry = existing
+                .iter()
+                .filter(|entry| !entry.is_unused() && entry.type_guid == zone.gpt_type_guid())
+                .nth(system_taken);
+            if entry.is_some() {
+                system_taken += 1;
+            }
+            entry
+        } else {
+            existing
+                .iter()
+                .find(|entry| entry.type_guid == zone.gpt_type_guid())
+        };
         if let Some(entry) = existing_entry {
             if entry.block_count() < blocks {
                 return Err(Error::NoSpace);
@@ -137,6 +186,7 @@ fn place_zones(layout: &GptLayout, existing: &[GptPartitionEntry]) -> Result<Vec
                 // declared is not an install's to do.
                 last_block: entry.last_lba,
                 reused: true,
+                build,
             });
             continue;
         }
@@ -149,6 +199,7 @@ fn place_zones(layout: &GptLayout, existing: &[GptPartitionEntry]) -> Result<Vec
             first_block: extent.0,
             last_block: extent.1,
             reused: false,
+            build,
         });
     }
 
@@ -224,13 +275,18 @@ pub struct InstallPlan {
 pub fn plan_zones_into_disk_image(disk: &[u8], may_create: bool) -> Result<InstallPlan> {
     let (layout, existing, created_table) = read_or_create(disk, may_create)?;
     let zones = place_zones(&layout, &existing)?;
+    // What is kept is every in-use entry the install did not take a placement
+    // on — by **extent**, not by type: a zone's entry is the one its extent
+    // came from, and a second entry of a zone's own type (the system pair is
+    // two, and a third would be neither placed nor a stranger's) is kept
+    // exactly like any stranger's entry it is not.
     let preserved = existing
         .iter()
         .filter(|entry| {
             !entry.is_unused()
-                && entry.type_guid != StorageZone::System.gpt_type_guid()
-                && entry.type_guid != StorageZone::Apps.gpt_type_guid()
-                && entry.type_guid != StorageZone::Data.gpt_type_guid()
+                && !zones.iter().any(|zone| {
+                    zone.first_block == entry.first_lba && zone.last_block == entry.last_lba
+                })
         })
         .copied()
         .collect();
@@ -304,10 +360,16 @@ fn install_zones(disk: &mut [u8], may_create: bool) -> Result<InstallReport> {
 
     // 3. The zone volumes, each zeroing its whole extent before the image lands: a
     //    reinstall reuses the extent, and bytes the previous volume left past the
-    //    new image's length are bytes a reader could believe.
+    //    new image's length are bytes a reader could believe.  A system slot's
+    //    volume is built for the generation the placement names, so A commits the
+    //    older build and B the newer — the marker is what makes the boot take B and
+    //    a rollback find A.
     let mut zone_entries: Vec<([u8; 16], u64, u64)> = Vec::with_capacity(placed.len());
     for zone in &placed {
-        let image = build_zone_image(zone.zone);
+        let image = match zone.build {
+            Some(generation) => super::demo::build_system_zone_image(generation),
+            None => build_zone_image(zone.zone),
+        };
         let capacity = (zone.last_block - zone.first_block + 1) as usize * BLOCK_SIZE;
         if image.len() > capacity {
             return Err(Error::NoSpace);
@@ -410,7 +472,11 @@ mod tests {
             .to_vec();
 
         let report = install_zones_into_disk_image(&mut disk).expect("the install runs");
-        assert_eq!(report.zones.len(), 3, "three zones are installed");
+        assert_eq!(
+            report.zones.len(),
+            4,
+            "four extents: the system pair, apps and data"
+        );
 
         // The stranger's partition: bytes and entry both untouched.
         let after = &disk
@@ -428,15 +494,24 @@ mod tests {
         assert_eq!(stranger.last_lba, STRANGER_FIRST + STRANGER_BLOCKS - 1);
 
         // Each zone: an entry by type GUID at the extent the report names,
-        // and its volume's own bytes at the start of that extent.
+        // and its volume's own bytes at the start of that extent.  A system
+        // slot is checked against the image its **build** names.
         for installed in &report.zones {
+            // The pair shares a type GUID, so the entry is found by the
+            // extent the report names — the same match `preserved` uses —
+            // and the GUID is asserted beside it.
             let entry = entries
                 .iter()
-                .find(|entry| entry.type_guid == installed.zone.gpt_type_guid())
+                .find(|entry| {
+                    entry.first_lba == installed.first_block
+                        && entry.last_lba == installed.last_block
+                })
                 .expect("the zone's entry is in the table");
-            assert_eq!(entry.first_lba, installed.first_block);
-            assert_eq!(entry.last_lba, installed.last_block);
-            let image = crate::fs::demo::build_zone_image(installed.zone);
+            assert_eq!(entry.type_guid, installed.zone.gpt_type_guid());
+            let image = match installed.build {
+                Some(generation) => crate::fs::demo::build_system_zone_image(generation),
+                None => crate::fs::demo::build_zone_image(installed.zone),
+            };
             let at = installed.first_block as usize * BLOCK;
             assert_eq!(
                 &disk[at..at + image.len()],
@@ -490,24 +565,29 @@ mod tests {
         let mut blank = vec![0_u8; DISK_BLOCKS as usize * BLOCK];
         let first = install_zones_into_blank_disk_image(&mut blank).expect("the fresh install");
         assert!(first.created_table, "and it says it wrote the table");
-        assert_eq!(first.zones.len(), 3);
+        assert_eq!(first.zones.len(), 4);
 
         // The table is one this kernel's reader verifies, and it carries
-        // exactly the zones — a fresh disk has no stranger to preserve.
+        // exactly the extents — a fresh disk has no stranger to preserve.
         let (layout, entries) = read_gpt_layout_from_bytes(&blank).unwrap().unwrap();
         assert_eq!(layout.first_usable_lba, 34);
         assert_eq!(layout.last_usable_lba, DISK_BLOCKS - 34);
-        assert_eq!(entries.iter().filter(|e| !e.is_unused()).count(), 3);
+        assert_eq!(entries.iter().filter(|e| !e.is_unused()).count(), 4);
 
         for installed in &first.zones {
             assert!(!installed.reused, "every zone was placed");
             let entry = entries
                 .iter()
-                .find(|entry| entry.type_guid == installed.zone.gpt_type_guid())
+                .find(|entry| {
+                    entry.first_lba == installed.first_block
+                        && entry.last_lba == installed.last_block
+                })
                 .expect("the zone's entry");
-            assert_eq!(entry.first_lba, installed.first_block);
-            assert_eq!(entry.last_lba, installed.last_block);
-            let image = crate::fs::demo::build_zone_image(installed.zone);
+            assert_eq!(entry.type_guid, installed.zone.gpt_type_guid());
+            let image = match installed.build {
+                Some(generation) => crate::fs::demo::build_system_zone_image(generation),
+                None => crate::fs::demo::build_zone_image(installed.zone),
+            };
             let at = installed.first_block as usize * BLOCK;
             assert_eq!(&blank[at..at + image.len()], image.as_slice());
         }
@@ -578,6 +658,111 @@ mod tests {
         let untouched = machine_disk();
         let _ = super::plan_zones_into_disk_image(&untouched, false).expect("the plan");
         assert_eq!(untouched, machine_disk(), "a plan wrote to the disk");
+    }
+
+    /// An install writes the system **pair**: two committed slots whose
+    /// generations are the demo disk's vocabulary — B newer, so a boot takes
+    /// B — and withdrawing B's marker hands the selection back to A.  This is
+    /// what makes a rollback exist on a machine from its first boot, and it
+    /// is checked on the installed bytes through the calls the boot makes.
+    #[test]
+    fn an_install_writes_the_system_pair_and_rolls_back_to_a() {
+        use crate::fs::system_image::select_system_slot;
+        use crate::fs::system_image::system_slots;
+        use crate::fs::system_image::withdraw_active_build;
+
+        let mut disk = machine_disk();
+        install_zones_into_disk_image(&mut disk).expect("the install runs");
+
+        let device: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> =
+            crate::fs::block::MemoryBlockDevice::new("installed", disk.clone(), false);
+        let slots = system_slots(&device, false).expect("the slots");
+        assert_eq!(slots.len(), 2, "both system slots are on the disk");
+        assert!(
+            slots.iter().all(|slot| slot.is_committed()),
+            "and both are committed"
+        );
+        let active = select_system_slot(&slots).expect("a selection");
+        assert_eq!(
+            active.build.map(|build| build.generation),
+            Some(super::super::layout::DEMO_SYSTEM_SLOT_B_GENERATION),
+            "the newer slot is the boot's"
+        );
+        assert_eq!(active.name, "b", "which is B on a fresh install");
+
+        // Rollback: withdrawing the winner's marker is the whole switch, and
+        // the same call the boot path uses now selects A.
+        let withdrawn = withdraw_active_build(&device).expect("withdraw");
+        assert_eq!(
+            withdrawn.generation,
+            super::super::layout::DEMO_SYSTEM_SLOT_B_GENERATION
+        );
+        let slots = system_slots(&device, false).expect("the slots");
+        let active = select_system_slot(&slots).expect("a selection");
+        assert_eq!(
+            active.build.map(|build| build.generation),
+            Some(super::super::layout::DEMO_SYSTEM_SLOT_A_GENERATION),
+            "and the machine is back on A"
+        );
+
+        // The update path has somewhere to land now — the motivation for the
+        // pair: a newer volume installs into the inactive slot and the next
+        // selection takes it.
+        let newer = crate::fs::demo::build_system_zone_image(3);
+        let build = crate::fs::system_image::install_system_build(&device, &newer)
+            .expect("an update on an installed disk");
+        assert_eq!(build.generation, 3);
+        let slots = system_slots(&device, false).expect("the slots");
+        let active = select_system_slot(&slots).expect("a selection");
+        assert_eq!(active.build.map(|build| build.generation), Some(3));
+        assert_eq!(
+            active.name, "b",
+            "the update committed into the inactive slot"
+        );
+    }
+
+    /// A disk installed before the pair existed carries **one** system entry;
+    /// a reinstall keeps its extent and adds the missing slot, which is the
+    /// migration row of the RFC's design: the pair arrives without moving
+    /// the slot that is already there.
+    #[test]
+    fn a_reinstall_gives_a_single_slot_disk_its_second_slot() {
+        use crate::fs::system_image::select_system_slot;
+        use crate::fs::system_image::system_slots;
+
+        // A table with one system entry (slot order 0), apps and data — the
+        // shape an install wrote before the pair existed.
+        let mut disk = vec![0_u8; DISK_BLOCKS as usize * BLOCK];
+        let one_system: Vec<(usize, [u8; 16], u64, u64)> = vec![
+            (0, STRANGER_TYPE, STRANGER_FIRST, STRANGER_BLOCKS),
+            (1, StorageZone::System.gpt_type_guid(), 8192, 256),
+            (2, StorageZone::Apps.gpt_type_guid(), 12288, 512),
+            (3, StorageZone::Data.gpt_type_guid(), 16384, 512),
+        ];
+        write_gpt_partitions(&mut disk, &one_system).expect("the table writes");
+        // And the single system slot is a committed volume, so the reinstall
+        // keeps it rather than treating it as empty space: write A's image
+        // into it.
+        let a_image = crate::fs::demo::build_system_zone_image(1);
+        let at = 8192 * BLOCK;
+        disk[at..at + a_image.len()].copy_from_slice(&a_image);
+
+        let report = install_zones_into_disk_image(&mut disk).expect("the reinstall runs");
+        assert_eq!(report.zones.len(), 4);
+        assert!(report.zones[0].reused, "A keeps the extent it had");
+        assert!(!report.zones[1].reused, "and B takes free space");
+        assert_eq!(
+            report.zones[1].build,
+            Some(super::super::layout::DEMO_SYSTEM_SLOT_B_GENERATION)
+        );
+
+        // And the disk boots into a pair.
+        let device: alloc::sync::Arc<dyn crate::fs::block::BlockDevice> =
+            crate::fs::block::MemoryBlockDevice::new("reinstalled", disk, false);
+        let slots = system_slots(&device, false).expect("the slots");
+        assert_eq!(slots.len(), 2);
+        let active = select_system_slot(&slots).expect("a selection");
+        assert_eq!(active.build.map(|build| build.generation), Some(2));
     }
 
     /// The flagged route is not a licence to repartition: a disk that
@@ -652,7 +837,7 @@ mod tests {
         assert_eq!(backup_only, before, "a refused install writes nothing");
     }
 
-    /// A blank disk with room only for two of the three zones is refused
+    /// A blank disk with room only for some of the extents is refused
     /// **before anything is written**, including the table: the fresh table
     /// is this install's, and an install that cannot finish must leave the
     /// disk exactly as it was.

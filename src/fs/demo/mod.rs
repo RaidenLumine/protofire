@@ -138,17 +138,31 @@ pub fn build_zone_image(zone: StorageZone) -> Vec<u8> {
         );
     }
 
-    match image {
-        Ok(image) => image,
-        Err(error) => {
-            crate::println!(
-                "[fs    ] failed to build demo {} zone image: {}",
-                zone.volume_label(),
-                error.as_str()
-            );
-            build_fallback_zone_image(zone)
-        }
-    }
+    image.unwrap_or_else(|error| zone_image_or_fallback(zone, error))
+}
+
+/// The system zone's volume for a specific build **generation**.
+///
+/// The demo disk commits its two slots at different generations, and an
+/// install writes the same pair with the same vocabulary: A older and B
+/// newer, so a boot takes B and a rollback has A ([RFC
+/// 0026](../../docs/rfcs/0026-install-the-system-pair-not-one-slot.md)).
+/// The volume's only difference per generation is its build marker; the
+/// content is the same system this tree ships.
+pub fn build_system_zone_image(generation: u64) -> Vec<u8> {
+    content::system_zone_image(generation)
+        .unwrap_or_else(|error| zone_image_or_fallback(StorageZone::System, error))
+}
+
+/// A zone image that could not be built degrades to the readable fallback
+/// rather than breaking disk discovery for the whole boot.
+fn zone_image_or_fallback(zone: StorageZone, error: crate::Error) -> Vec<u8> {
+    crate::println!(
+        "[fs    ] failed to build demo {} zone image: {}",
+        zone.volume_label(),
+        error.as_str()
+    );
+    build_fallback_zone_image(zone)
 }
 
 fn build_fallback_zone_image(zone: StorageZone) -> Vec<u8> {

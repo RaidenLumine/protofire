@@ -244,12 +244,16 @@ fn install_zones_onto_disk(
     );
     for zone in &report.zones {
         println!(
-            "  {} zone: blocks {}..={} ({} blocks, {})",
+            "  {} zone: blocks {}..={} ({} blocks, {}{})",
             zone.zone.zone_root(),
             zone.first_block,
             zone.last_block,
             zone.last_block - zone.first_block + 1,
-            if zone.reused { "reused" } else { "placed" }
+            if zone.reused { "reused" } else { "placed" },
+            match zone.build {
+                Some(generation) => format!(", build {generation}"),
+                None => String::new(),
+            }
         );
     }
     println!(
@@ -298,7 +302,7 @@ fn print_install_plan(path: &Path, disk: &[u8], plan: &protofire::fs::install::I
     println!("  the zones to write:");
     for zone in &plan.zones {
         println!(
-            "    {}: blocks {}..={}, {} blocks, {}",
+            "    {}: blocks {}..={}, {} blocks, {}{}",
             zone.zone.zone_root(),
             zone.first_block,
             zone.last_block,
@@ -307,6 +311,12 @@ fn print_install_plan(path: &Path, disk: &[u8], plan: &protofire::fs::install::I
                 "keeps its entry"
             } else {
                 "takes free space"
+            },
+            // The system pair's slots say which build they commit: the newer
+            // one is the boot's, the older is the rollback's.
+            match zone.build {
+                Some(generation) => format!(", build {generation}"),
+                None => String::new(),
             }
         );
     }

@@ -105,9 +105,10 @@ overwrite that partition and leave the stick unbootable); `dd` destroys
 whatever is there, so check the name from `lsblk` first.
 
 A machine that already has a disk does not need the image written over it —
-it needs the kernel *installed* onto it.  `install` adds this kernel's three
-zones to a disk's existing **GPT**, keeping every partition that was already
-there:
+it needs the kernel *installed* onto it.  `install` adds this kernel's zones
+to a disk's existing **GPT**, keeping every partition that was already
+there — the system zone as its A/B **pair**, so the boot takes the newer
+build and a rollback has the older:
 
 ```sh
 cp /dev/sdX disk.img            # work on a copy; the install edits in place

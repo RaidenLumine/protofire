@@ -133,6 +133,7 @@ and its status says which of the two happened.
 | [0023](0023-enable-msix-when-the-claim-is-taken.md) | Implemented | Enable MSI-X when the claim is taken |
 | [0024](0024-what-the-hda-controller-signals-with.md) | Accepted | What the HDA controller signals with |
 | [0025](0025-write-a-table-onto-a-disk-that-has-none.md) | Implemented | Write a table onto a disk that has none |
+| [0026](0026-install-the-system-pair-not-one-slot.md) | Implemented | Install the system pair, not one slot |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —

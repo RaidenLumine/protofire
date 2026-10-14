@@ -160,6 +160,10 @@ The authoritative picture of what exists today is
      round-tripped because writer and reader shared the table, and a real
      tool's checksums did not verify — so a machine's own disk was exactly
      the shape this tree could not read, which is what RFC 0018 exists for.
+     And the system zone is installed as the **pair** it is read as —
+     A older, B newer, both committed, so the boot takes B and a rollback
+     has A, and the update path has a slot to land in
+     ([RFC 0026](docs/rfcs/0026-install-the-system-pair-not-one-slot.md)).
      A disk with **no table at all** is refused by default, and
      `install --new-table` is the caller's decision to have one written:
      only a disk that carries no partition information — no GPT, no MBR

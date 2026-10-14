@@ -8,9 +8,10 @@
 # Every artifact this tree builds is an *image*: `mkimage` writes the demo
 # disk, and the ISO is a bootable medium.  Neither is an install — a machine
 # already has a disk, partitioned by a tool that is not this one, and
-# installing means adding the kernel's three zones to *that* disk.  The
-# installer (`cargo run -- install <disk>`, `src/fs/install.rs`) does that,
-# and this check is the whole of its evidence:
+# installing means adding this kernel's zones to *that* disk — the system
+# zone as its A/B pair, so the boot has a newer build to take and an older
+# one to roll back to.  The installer (`cargo run -- install <disk>`,
+# `src/fs/install.rs`) does that, and this check is the whole of its evidence:
 #
 #   * the disk is made by `sgdisk`, a partitioning tool this tree did not
 #     write, and carries a partition whose type this kernel has no name for —
@@ -120,11 +121,16 @@ if ! "$CARGO" run --offline --quiet -- install --yes "$disk" >"$install_out" 2>&
     cat "$install_out" >&2
     fail "the install did not complete"
 fi
-placed="$(awk '/placed\)/ { n += 1 } END { print n + 0 }' "$install_out")"
-if [ "$placed" -ne 3 ]; then
+placed="$(awk '/placed[,)]/ { n += 1 } END { print n + 0 }' "$install_out")"
+if [ "$placed" -ne 4 ]; then
     cat "$install_out" >&2
-    fail "expected the three zones to be placed, saw $placed placed (the disk should have been empty)"
+    fail "expected the four extents to be placed, saw $placed placed (the disk should have been empty)"
 fi
+# The system zone is the pair: the plan and the report name each slot's build.
+grep -F "build 1" "$install_out" >/dev/null 2>&1 ||
+    fail "the install did not place the older system slot (build 1)"
+grep -F "build 2" "$install_out" >/dev/null 2>&1 ||
+    fail "the install did not place the newer system slot (build 2)"
 
 # The table, read back by the tool that made the disk: the stranger is still
 # there with its name, and the zones are entries beside it.
@@ -185,6 +191,12 @@ require_log_line "[fs    ] mounted GPT-partitioned SimpleFs volumes from ATA boo
 if grep -F "[fs    ] failed to mount SimpleFs volumes from ATA boot disk" "$log" >/dev/null 2>&1; then
     fail "the installed disk did not mount"
 fi
+# The system zone is the **pair** the install wrote: the boot selected the
+# committed slot with the higher generation, which on a fresh install is B
+# (build 2).  A disk with one system slot would read `slot a active` and a
+# pair written but not committed would too, so this line is what says the
+# install produced the shape the boot looks for.
+require_log_line "[fs    ] system: slot b active (build 2)"
 # And a program came off it: a mount alone does not prove the zone's content.
 require_log_line "[user  ] loaded /apps/packages/shell/bin/shell.elf"
 require_log_line "adastra ring3 shell"
@@ -198,10 +210,10 @@ if ! "$CARGO" run --offline --quiet -- install --yes "$disk" >"$second_out" 2>&1
     cat "$second_out" >&2
     fail "the second install did not complete"
 fi
-reused="$(awk '/reused\)/ { n += 1 } END { print n + 0 }' "$second_out")"
-if [ "$reused" -ne 3 ]; then
+reused="$(awk '/reused[,)]/ { n += 1 } END { print n + 0 }' "$second_out")"
+if [ "$reused" -ne 4 ]; then
     cat "$second_out" >&2
-    fail "expected all three zones to be reused on the second install, saw $reused"
+    fail "expected all four extents to be reused on the second install, saw $reused"
 fi
 if ! "$SGDISK" -p "$disk" 2>&1 | grep -F "stranger" >/dev/null 2>&1; then
     fail "the stranger's partition did not survive the second install"
@@ -301,15 +313,15 @@ fi
     fail "the confirmed install lost the stranger's partition"
 
 # The table, read back by sgdisk: a real tool verifies the fresh GPT this
-# kernel wrote, and lists the three zones as its partitions.
+# kernel wrote, and lists the zones — the pair included — as its partitions.
 "$SGDISK" -p "$blank" >"$work/blank-table.log" 2>&1 \
     || { cat "$work/blank-table.log" >&2; fail "sgdisk cannot read the fresh table"; }
 # The fresh writer writes no partition names, so the count is the check:
-# three partitions, no more.
+# four partitions — the pair, apps and data — and no more.
 partition_count="$("$SGDISK" -p "$blank" 2>/dev/null | awk -F: '/^ +[0-9]+/ { n += 1 } END { print n + 0 }')"
-if [ "$partition_count" -ne 3 ]; then
+if [ "$partition_count" -ne 4 ]; then
     cat "$work/blank-table.log" >&2
-    fail "expected 3 partitions in the fresh table, sgdisk sees $partition_count"
+    fail "expected 4 partitions in the fresh table, sgdisk sees $partition_count"
 fi
 
 # And it boots: the same typed-answer boot as the first section, over the
@@ -339,13 +351,14 @@ esac
 log="$blank_log"
 require_log_line "[driver] detected boot disk: nvme0"
 require_log_line "[fs    ] mounted GPT-partitioned SimpleFs volumes from ATA boot disk"
+require_log_line "[fs    ] system: slot b active (build 2)"
 require_log_line "[user  ] loaded /apps/packages/shell/bin/shell.elf"
 require_log_line "install-check-answered"
 grep -F "[FATAL]" "$blank_log" >/dev/null 2>&1 && fail "the blank-disk boot reported a fatal error"
 
 printf 'x86_64 install check passed: zones installed onto a %s-made disk, the\n' "$SGDISK"
-printf '  stranger partition preserved, the disk booted and answered, and a\n'
-printf '  reinstall reused every extent; a blank disk was refused without\n'
-printf '  --new-table, given a fresh GPT with it, and the result booted too; and\n'
-printf '  the confirmation held: plan shown, no and end-of-input wrote nothing,\n'
-printf '  yes wrote the zones\n'
+printf '  stranger partition preserved, the disk booted into the system pair (slot\n'
+printf '  b, build 2) and answered, and a reinstall reused every extent; a blank\n'
+printf '  disk was refused without --new-table, given a fresh GPT with it, and the\n'
+printf '  result booted too; and the confirmation held: plan shown, no and\n'
+printf '  end-of-input wrote nothing, yes wrote the zones\n'
