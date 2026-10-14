@@ -92,8 +92,17 @@ pub(crate) fn expand_history(line: String) -> String {
 mod tests {
     use super::*;
 
+    /// The tests here share the process-wide [`HISTORY`], and each one
+    /// clears it and pushes its own lines — so run in parallel they read
+    /// each other's entries (`add_history_dedupes_and_caps` saw seven
+    /// entries where it pushed four, and `expand_numeric_references` read
+    /// another test's line for `!-2`).  The lock is held for a test's whole
+    /// body so one test's setup is never in flight while another reads.
+    static HISTORY_TEST_LOCK: crate::kernel::sync::Mutex<()> = crate::kernel::sync::Mutex::new(());
+
     #[test]
     fn expand_double_bang_uses_last_command() {
+        let _guard = HISTORY_TEST_LOCK.lock();
         {
             let mut history = HISTORY.lock();
             history.clear();
@@ -106,6 +115,7 @@ mod tests {
 
     #[test]
     fn expand_numeric_references() {
+        let _guard = HISTORY_TEST_LOCK.lock();
         {
             let mut history = HISTORY.lock();
             history.clear();
@@ -122,6 +132,7 @@ mod tests {
 
     #[test]
     fn add_history_dedupes_and_caps() {
+        let _guard = HISTORY_TEST_LOCK.lock();
         {
             let mut history = HISTORY.lock();
             history.clear();
