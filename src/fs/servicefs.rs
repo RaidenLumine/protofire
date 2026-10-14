@@ -428,15 +428,13 @@ mod tests {
     use crate::kernel::service::ServiceDefinition;
     use crate::kernel::service::ServiceKind;
     use crate::kernel::service::ServiceSecurity;
-    use crate::kernel::sync::Mutex;
     use alloc::vec;
 
-    /// Serialises the registry-touching tests in this module.
-    static SERVICE_FS_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-    /// Take the lock and start from an empty registry.
+    /// Take the registry lock — the **one** lock every registry-touching
+    /// test across the tree holds, `src/kernel/service.rs`'s tests included
+    /// — and start from an empty registry.
     fn exclusive_registry() -> crate::kernel::sync::MutexGuard<'static, ()> {
-        let guard = SERVICE_FS_TEST_LOCK.lock();
+        let guard = service::REGISTRY_TEST_LOCK.lock();
         service::reset_registry_for_tests();
         guard
     }

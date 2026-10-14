@@ -169,7 +169,7 @@ fs                           kernel_log                   1
 fs                           memory                       5
 fs                           security                     29
 fs                           service                      5
-fs                           sync                         34
+fs                           sync                         33
 heartbeat                    process                      1
 io                           device                       10
 io                           process                      12

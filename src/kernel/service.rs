@@ -1308,18 +1308,25 @@ pub fn plan_supervision(
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+/// Serialises **every** test that touches the registry, wherever it lives.
+///
+/// The registry is process-global and `cargo test` runs one binary's tests in
+/// parallel, so a test that registers services and then asserts on counts or
+/// snapshots has to hold this for its whole body.  It is one lock rather than
+/// one per module on purpose: `src/fs/servicefs.rs`'s tests register through
+/// the *same* registry and start from it emptied, so two per-module locks can
+/// be held at once while the two `reset_registry_for_tests` calls clear each
+/// other's work — measured at 4 failures in 40 runs of the two modules' tests
+/// together, with the failing assertions reading another test's services
+/// (`["alpha"]` where three names were registered) or none at all.
+#[cfg(test)]
+pub(crate) static REGISTRY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::string::ToString;
     use alloc::vec;
-
-    /// Serialises the registry tests.
-    ///
-    /// The registry is process-global and `cargo test` runs one binary's tests
-    /// in parallel, so a test that registers services and then asserts on
-    /// counts or snapshots has to hold this for its whole body.
-    static REGISTRY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// Take the registry lock and start from an empty registry.
     fn exclusive_registry() -> crate::kernel::sync::MutexGuard<'static, ()> {
