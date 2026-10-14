@@ -198,10 +198,18 @@ The authoritative picture of what exists today is
   QEMU's).  `fixtures/acpi/README.md` carries the recipe for more (`sudo cp
   /sys/firmware/acpi/tables/APIC fixtures/acpi/APIC`, root once, on a machine
   that is not a consequence of this tree), because `/sys/firmware/acpi/tables/*`
-  is readable by root alone.  What is still open is the *boot* that reads them
-  where `check-aarch64-runtime` reads a device tree: a QEMU boot whose MADT is
-  the captured one, so the discovery path — RSDP, RSDT, the AP bring-up built
-  from it — runs on a board's shape rather than a parser's unit test alone.
+  is readable by root alone.  The capture is also read by a *boot* now, in
+  the shape a boot can actually be given: `-smp N,maxcpus=M` makes QEMU's own
+  firmware write a MADT with disabled placeholders for the absent CPUs —
+  the shape the captured laptop table has — and `make check-smp-runtime`
+  asserts the kernel skips exactly those and brings up the present ones.
+  (Booting the captured table *itself* was measured and is not possible:
+  `-acpitable file=` appends to the RSDT rather than replacing an entry —
+  QEMU's monitor shows the injected table last while the kernel reads the
+  first checksum-valid `APIC` entry — so the placeholder shape is the honest
+  way to boot one.)  What is still open is a boot that reads the captured
+  *bytes*: it would need a firmware or loader that puts them in the RSDT
+  itself, and no emulator here does.
 
 ## Mid Term (6–18 months)
 

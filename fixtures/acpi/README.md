@@ -42,3 +42,13 @@ root whose entries are the captured table, a decoy that spells `APIC` with
 a broken checksum and a candidate with a wild length, over a space whose
 offsets are the addresses — so the walk's bounds, gate, signature and
 checksum all run on a host.
+
+A boot cannot be given these *bytes* directly: QEMU's `-acpitable file=`
+appends to the RSDT rather than replacing an entry (measured through its
+monitor: the injected table sits last while the kernel reads the first
+checksum-valid `APIC` entry), and every boot here reads ACPI through the
+firmware's own RSDT.  What can be booted is the *shape* the capture has —
+many possible processors, the absent ones disabled — and it is:
+`make check-smp-runtime` boots `-smp N,maxcpus=M`, QEMU's firmware writes
+the placeholders, and the gate asserts the kernel skips exactly them and
+brings up the present CPUs.

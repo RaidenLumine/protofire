@@ -27,6 +27,11 @@ CRATE="${CRATE:-protofire}"
 CARGO="${CARGO:-cargo}"
 TARGET_DIR="${TARGET_DIR:-target}"
 SMP_CPUS="${SMP_CPUS:-4}"
+# The `-smp` **value** QEMU is given.  It defaults to the plain count, and the
+# placeholder segment below passes `N,maxcpus=M` instead; the parsing and the
+# assertion arithmetic both stay on `SMP_CPUS` so a `maxcpus` run asserts the
+# same AP count as a plain one.
+SMP_ARG="${SMP_ARG:-$SMP_CPUS}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-60}"
 QEMU="${QEMU:-qemu-system-x86_64}"
 SMP_RUNTIME_LOG="${SMP_RUNTIME_LOG:-}"
@@ -113,7 +118,7 @@ trap cleanup EXIT INT TERM
 set -- \
     -machine q35 \
     -cpu max \
-    -smp "$SMP_CPUS" \
+    -smp "$SMP_ARG" \
     -m 1G \
     -kernel "$KERNEL_BIN" \
     -display none \
@@ -325,6 +330,71 @@ fi
 # on two machines.
 accelerator="$(grep -m1 -o "PCID: enabled=true" "$log_file" >/dev/null 2>&1 \
     && printf 'kvm' || printf 'tcg')"
+
+# ── A machine whose MADT carries disabled placeholders ─────────────────
+#
+# Real firmware describes every *possible* processor and marks the absent
+# ones disabled, so a twelve-core laptop writes a thirty-two-entry MADT of
+# which twenty entries are 0xff placeholders — a shape no plain `-smp N`
+# machine produces (measured: its MADT lists exactly the present CPUs).  The
+# captured table in `fixtures/acpi/` has that shape but cannot be booted:
+# every boot here reads ACPI through the RSDT the firmware built, and QEMU's
+# `-acpitable file=` *appends* a captured table to that list rather than
+# replacing the built-in one (measured through QEMU's monitor: the injected
+# table sits last while the kernel reads the first checksum-valid APIC
+# entry).  `-smp N,maxcpus=M` makes the firmware itself write the shape:
+# every possible CPU appears, the absent ones are marked disabled, and the
+# kernel's walk has to skip them and bring up exactly the N present ones.
+#
+# What this segment asserts is therefore the placeholder behaviour on a real
+# boot: the count of skipped entries is `maxcpus - cpus`, the AP count is
+# still `cpus - 1`, and the machine reaches the same liveness markers.
+if [ "$SMP_CPUS" -ge 2 ]; then
+    maxcpus=$((SMP_CPUS + 4))
+    placeholder_log="$(mktemp)"
+    printf 'SMP placeholder check: %s cpus with %s possible (maxcpus)\n' \
+        "$SMP_CPUS" "$maxcpus"
+    set +e
+    timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+        -machine q35 -cpu max -smp "$SMP_CPUS,maxcpus=$maxcpus" -m 1G \
+        -kernel "$KERNEL_BIN" -display none -no-reboot -no-shutdown \
+        -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+        -serial "file:$placeholder_log" >/dev/null 2>>"$placeholder_log"
+    placeholder_status=$?
+    set -e
+
+    placeholder_fail() {
+        printf 'SMP placeholder check failed: %s\n' "$1" >&2
+        tail -n 12 "$placeholder_log" >&2
+        rm -f "$placeholder_log"
+        exit 1
+    }
+
+    case "$placeholder_status" in
+        0|124) ;;
+        *) placeholder_fail "exit status $placeholder_status" ;;
+    esac
+
+    # The firmware wrote the placeholders: one disabled line per absent CPU.
+    disabled_count="$(awk '/disabled, skipping/ { n += 1 } END { print n + 0 }' "$placeholder_log")"
+    if [ "$disabled_count" -ne $((maxcpus - SMP_CPUS)) ]; then
+        placeholder_fail "expected $((maxcpus - SMP_CPUS)) disabled placeholders, saw $disabled_count"
+    fi
+    # And exactly the present CPUs came up.
+    placeholder_started="$(awk '/started successfully/ { n += 1 } END { print n + 0 }' "$placeholder_log")"
+    if [ "$placeholder_started" -lt "$((SMP_CPUS - 1))" ]; then
+        placeholder_fail "expected at least $((SMP_CPUS - 1)) APs to start, saw $placeholder_started"
+    fi
+    if ! grep -F "adastra ring3 shell" "$placeholder_log" >/dev/null 2>&1; then
+        placeholder_fail "the machine with placeholders never reached the shell"
+    fi
+    if grep -F "FATAL" "$placeholder_log" >/dev/null 2>&1; then
+        placeholder_fail "the kernel reported a fatal error"
+    fi
+    rm -f "$placeholder_log"
+    printf '  placeholder check passed: %s skipped, %s APs, shell reached\n' \
+        "$disabled_count" "$placeholder_started"
+fi
 
 printf 'SMP runtime check passed: %s CPUs, %s APs, %s service lines, accelerator=%s\n' \
     "$SMP_CPUS" "$started" "$service_lines" "$accelerator"
