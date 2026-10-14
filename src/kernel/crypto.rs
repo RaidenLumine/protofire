@@ -274,7 +274,7 @@ const CRC32_TABLE: [u32; 256] = [
     0xD6D6A3E8, 0xA1D1937E, 0x38D8C2C4, 0x4FDFF252, 0xD1BB67F1, 0xA6BC5767, 0x3FB506DD, 0x48B2364B,
     0xD80D2BDA, 0xAF0A1B4C, 0x36034AF6, 0x41047A60, 0xDF60EFC3, 0xA867DF55, 0x316E8EEF, 0x4669BE79,
     0xCB61B38C, 0xBC66831A, 0x256FD2A0, 0x5268E236, 0xCC0C7795, 0xBB0B4703, 0x220216B9, 0x5505262F,
-    0xC5BA3BBE, 0xB2BD0B28, 0x2BB45A92, 0x5CB30A04, 0xC2D7FFA7, 0xB5D0CF31, 0x2CD99E8B, 0x5BDEAE1D,
+    0xC5BA3BBE, 0xB2BD0B28, 0x2BB45A92, 0x5CB36A04, 0xC2D7FFA7, 0xB5D0CF31, 0x2CD99E8B, 0x5BDEAE1D,
     0x9B64C2B0, 0xEC63F226, 0x756AA39C, 0x026D930A, 0x9C0906A9, 0xEB0E363F, 0x72076785, 0x05005713,
     0x95BF4A82, 0xE2B87A14, 0x7BB12BAE, 0x0CB61B38, 0x92D28E9B, 0xE5D5BE0D, 0x7CDCEFB7, 0x0BDBDF21,
     0x86D3D2D4, 0xF1D4E242, 0x68DDB3F8, 0x1FDA836E, 0x81BE16CD, 0xF6B9265B, 0x6FB077E1, 0x18B74777,
@@ -3916,6 +3916,56 @@ mod tests {
     fn crc32_known_vector() {
         // CRC-32 (IEEE 802.3, polynomial 0xEDB88320) of "123456789" = 0xCBF43926.
         assert_eq!(super::crc32(b"123456789"), 0xCBF4_3926);
+    }
+
+    /// The table has to be the polynomial's table, computed rather than
+    /// transcribed.
+    ///
+    /// It was transcribed once, and one of its 256 entries was a word off
+    /// (`0x5CB30A04` where the polynomial gives `0x5CB36A04`): every message
+    /// that never indexed that entry checked out — the known vector above is
+    /// one of them, which is why the error lived — while a real firmware's
+    /// GPT (whose 16 KiB entry array indexes entries the demo disks never do)
+    /// failed its CRC and was refused as "no verified table".  A short message
+    /// cannot catch a single wrong entry; this can, by construction.
+    #[test]
+    fn crc32_table_is_the_polynomials_table() {
+        const POLY: u32 = 0xEDB8_8320;
+        for (index, &entry) in super::CRC32_TABLE.iter().enumerate() {
+            let mut computed = index as u32;
+            for _ in 0..8 {
+                computed = if computed & 1 != 0 {
+                    (computed >> 1) ^ POLY
+                } else {
+                    computed >> 1
+                };
+            }
+            assert_eq!(
+                entry, computed,
+                "CRC32_TABLE[{index}] is {entry:#010x}, the polynomial gives {computed:#010x}"
+            );
+        }
+    }
+
+    /// A message long enough to index the whole table, against the same
+    /// polynomial computed bit by bit: the check above pins the table, this
+    /// pins what the function does with it.
+    #[test]
+    fn crc32_matches_a_bitwise_computation_over_every_index() {
+        // Every byte value, repeated so the register walks all 256 states.
+        let data: alloc::vec::Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+        let mut crc: u32 = !0;
+        for &byte in &data {
+            crc ^= byte as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        assert_eq!(super::crc32(&data), !crc);
     }
 
     #[test]
