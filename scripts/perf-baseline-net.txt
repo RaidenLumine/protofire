@@ -36,7 +36,7 @@ ticks 512 12
 frames 23 0
 frame-frees 8 0
 frame-zero-bytes 610304 0
-heap-allocs 22901 256
+heap-allocs 22387 256
 heap-bytes 26673568 262144
 pt-maps 1064 0
 pt-lookups 1067 0
