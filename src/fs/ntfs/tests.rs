@@ -1167,6 +1167,146 @@ fn the_volume_is_dirty_until_it_is_synced() {
     assert!(!dirty_flag(&device, &fs_handle), "and stops saying so");
 }
 
+/// Assert a record's attributes are in ascending **type** order, which the
+/// format requires and a checker enforces: `ntfs-3g` reads the chain until a
+/// type does not ascend and fails the whole record there ("Bad end of MFT
+/// record"), while this tree's own reader accepted any order until a gate on a
+/// volume it had written caught the difference.
+fn assert_attributes_ascend(raw: &[u8], who: &str) {
+    // The callers hold **unpacked** records — the ones `read_mft_record` and
+    // the tests' own fixup leave behind — so the attribute chain is what is
+    // parsed, not the volume's packed bytes.
+    let header = super::types::MftRecordHeader::parse(raw).expect("a record header");
+    let attributes = super::fs::parse_attributes(&raw[header.size() as usize..]);
+    for pair in attributes.windows(2) {
+        assert!(
+            pair[0].attr_type <= pair[1].attr_type,
+            "{who}: attributes out of type order: {:#x} before {:#x}",
+            pair[1].attr_type,
+            pair[0].attr_type
+        );
+    }
+}
+
+/// The volume's whole image, read back off the device.
+fn device_image(device: &alloc::sync::Arc<crate::fs::block::MemoryBlockDevice>) -> Vec<u8> {
+    use crate::fs::block::BlockDevice as _;
+    let mut image = alloc::vec![0u8; (device.block_count() * 512) as usize];
+    device.read_blocks(0, &mut image).expect("read the volume");
+    image
+}
+
+/// The MFT's first [`MIRROR_RECORDS`] records, as the volume holds them.
+fn mft_lead_records(image: &[u8], fixture: &Fixture) -> Vec<u8> {
+    let record = fixture.shape.record_size() as usize;
+    let mut lead = Vec::with_capacity(record * MIRROR_RECORDS as usize);
+    for number in 0..MIRROR_RECORDS {
+        let at = fixture.record_offset(number) as usize;
+        lead.extend_from_slice(&image[at..at + record]);
+    }
+    lead
+}
+
+/// The bytes at the run the `$MFTMirr` names.
+fn mirror_bytes(image: &[u8], fixture: &Fixture) -> Vec<u8> {
+    let record = fixture.shape.record_size() as usize;
+    let (first, _) = fixture.mirror_runs[0];
+    let at = first as usize * fixture.cluster_size() as usize;
+    image[at..at + record * MIRROR_RECORDS as usize].to_vec()
+}
+
+/// Settling the volume is what brings the **`$MFTMirr`** back in step: a mount
+/// that moves one of the MFT's first four records — here record 0, whose run
+/// list grows with the MFT — leaves the volume's copy stale until `sync`, and
+/// `sync` is the moment a checker is allowed to look.
+#[test]
+fn settling_the_volume_brings_the_mirror_in_step() {
+    // Every record spoken for, so the creation *grows* the MFT: record 0's
+    // run list gains a run, which is one of the records the mirror copies.
+    let fixture = build_volume_with(FRACTIONAL, true);
+    let (device, fs_handle) = writable(&fixture);
+
+    // A volume last settled by anything starts in step — the fixture seeds it
+    // the way a real volume leaves it.
+    assert_eq!(
+        mirror_bytes(&device_image(&device), &fixture),
+        mft_lead_records(&device_image(&device), &fixture),
+        "the fixture's mirror starts in step"
+    );
+
+    let node = fs_handle
+        .create_file("/grown.txt")
+        .expect("a creation that grows the MFT");
+    assert_eq!(node.size(), 0);
+
+    // Record 0 moved, and nothing has rewritten the copy: the volume's mirror
+    // disagrees with the records it copies.
+    assert_ne!(
+        mirror_bytes(&device_image(&device), &fixture),
+        mft_lead_records(&device_image(&device), &fixture),
+        "an unsettled volume's mirror is stale"
+    );
+
+    fs_handle.sync().expect("settle the volume");
+    assert_eq!(
+        mirror_bytes(&device_image(&device), &fixture),
+        mft_lead_records(&device_image(&device), &fixture),
+        "settling is what brings the copy in step"
+    );
+
+    // And the volume is clean: the flag a checker reads is down.
+    assert!(
+        !dirty_flag(&device, &fs_handle),
+        "and the volume is settled"
+    );
+}
+
+/// A volume whose `$MFTMirr` record has no non-resident `$DATA` to write — a
+/// shape this driver does not meet on the volumes it builds, and one it must
+/// leave **alone** rather than half-write: the dirty flag still comes down,
+/// and the bytes where a mirror would be are untouched.
+#[test]
+fn a_mirror_this_driver_cannot_write_is_left_alone() {
+    let mut fixture = build_volume(FRACTIONAL);
+    // Turn the mirror's `$DATA` into a *resident* one, the shape the driver
+    // refuses: its value is bytes in the record, not runs to write.
+    let record_size = fixture.shape.record_size() as usize;
+    let at = fixture.record_offset(super::MFT_MIRR_RECORD) as usize;
+    let record = &mut fixture.image[at..at + record_size];
+    let mut offset = u16::from_le_bytes([record[20], record[21]]) as usize;
+    loop {
+        let attr_type = u32::from_le_bytes(record[offset..offset + 4].try_into().unwrap());
+        if attr_type == 0xFFFF_FFFF {
+            panic!("the mirror record has no $DATA to turn resident");
+        }
+        let length =
+            u32::from_le_bytes(record[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        if attr_type == 0x80 {
+            record[offset + 8] = 0; // resident
+            break;
+        }
+        offset += length;
+    }
+    let (device, fs_handle) = writable(&fixture);
+    let before = mirror_bytes(&device_image(&device), &fixture);
+
+    let node = fs_handle.lookup("/resident.txt").expect("resident.txt");
+    node.write(0, b"HELLO").expect("write");
+    fs_handle
+        .sync()
+        .expect("a mirror this driver cannot write is not an error");
+
+    assert!(
+        !dirty_flag(&device, &fs_handle),
+        "the volume is still settled"
+    );
+    assert_eq!(
+        before,
+        mirror_bytes(&device_image(&device), &fixture),
+        "and the bytes where a mirror would be are untouched"
+    );
+}
+
 #[test]
 fn a_field_write_leaves_the_sequence_array_where_it_was() {
     // (Before the relocation test below, which is the one that *does* move the
@@ -1272,6 +1412,7 @@ fn an_attribute_that_outgrows_its_room_moves_and_takes_its_neighbours_with_it() 
         .find(|attr| attr.attr_type == 0xd0)
         .expect("the attribute that followed it");
     assert_eq!(eas.content.len(), 8);
+    assert_attributes_ascend(&raw, "the record whose attribute grew");
 }
 
 #[test]
@@ -1359,6 +1500,8 @@ fn a_record_with_no_room_puts_an_attribute_in_an_extension_record() {
             "and holds what moved"
         );
     }
+    assert_attributes_ascend(&holder, "the extension record");
+    assert_attributes_ascend(&record, "the record the list stayed in");
 
     // The volume has one more record in use than the fixture made.
     let bits = again
@@ -3675,6 +3818,9 @@ const UPCASE_BYTES: u64 = 0x1_0000 * 2;
 /// the fixture's own choice rather than a consequence of the record size.
 const MFT_FIRST_RUN_CLUSTERS: u64 = 4;
 
+/// The records the volume's `$MFTMirr` copies.  The format fixes the count.
+const MIRROR_RECORDS: u64 = 4;
+
 /// Whether a record is one the fixture has in use.
 ///
 /// The records a volume keeps for itself, the folding table, this fixture's
@@ -4100,6 +4246,45 @@ fn a_volume_mkntfs_wrote_is_read_and_written_back() {
         made.write(0, content.as_bytes()).expect("write it"),
         content.len()
     );
+
+    // Enough further files that the MFT has to **grow**: `mkntfs` gives a
+    // volume this size about sixty-five records, and the growth moves record
+    // 0 — whose run list gains a run — which is one of the four records the
+    // `$MFTMirr` copies.  That is the write which leaves the volume's own
+    // recovery copy stale until it is settled, and the gate's `ntfsfix -n`
+    // compares the two: it is the judge of whether they were brought back in
+    // step.
+    //
+    // The volume's record budget is finite — `mkntfs` sizes the MFT from the
+    // volume — so the loop runs until a creation is refused rather than to a
+    // count: what the gate needs is that the MFT *grew* before the volume was
+    // settled, and that is asserted below rather than assumed.
+    let before = {
+        let mut info = fs_handle.info().lock();
+        info.resolve_mft_runs(&fs_handle.device)
+            .expect("the MFT's runs");
+        info.mft_data_size
+    };
+    let mut made = 0;
+    for index in 0..512 {
+        let name = alloc::format!("/filler-{index:03}.txt");
+        match fs_handle.create_file(&name) {
+            Ok(_) => made += 1,
+            Err(Error::NoSpace) => break,
+            Err(error) => panic!("create {name}: {error:?}"),
+        }
+    }
+    let after = {
+        let mut info = fs_handle.info().lock();
+        info.resolve_mft_runs(&fs_handle.device)
+            .expect("the MFT's runs");
+        info.mft_data_size
+    };
+    assert!(
+        after > before,
+        "the volume's own MFT never grew ({before} bytes in {made} creations), \
+         so the mirror was never disturbed and this proves nothing"
+    );
     fs_handle.sync().expect("settle the volume");
 
     let mut written = alloc::vec![0u8; (device.block_count() * 512) as usize];
@@ -4523,6 +4708,9 @@ struct Fixture {
     compressed_index_block: u64,
     /// The three clusters of the full record's one run.
     full_long_runs: [(u64, u64); 1],
+    /// Where the `$MFTMirr`'s copy of the MFT's first four records lives,
+    /// which is the run its own record's `$DATA` names.
+    mirror_runs: [(u64, u64); 1],
 }
 
 impl Fixture {
@@ -4627,6 +4815,13 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     // real clusters on either side of it: three runs where there was one.
     let full_long_first = take(3);
     let full_long_runs = [(full_long_first, 3)];
+    // The **`$MFTMirr`**'s own run: the record the volume keeps a copy of the
+    // MFT's first four records in, as a **non-resident** `$DATA` like a real
+    // volume's.  It sits after everything else so a growth's search (first fit
+    // from low addresses) never lands in it, and the two clusters after the
+    // layout stay free for the refusal tests.
+    let mirror_clusters = (MIRROR_RECORDS * record_size).div_ceil(cluster_size);
+    let mirror_first = take(mirror_clusters);
     let total_clusters = cursor + 2;
 
     let mut fixture = Fixture {
@@ -4660,6 +4855,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         sparse_second,
         compressed_index_block,
         full_long_runs,
+        mirror_runs: [(mirror_first, mirror_clusters)],
     };
     fixture.used[0] = 1;
     let (first_lcn, first_clusters) = fixture.mft_runs[0];
@@ -4696,6 +4892,9 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         for cluster in lcn..lcn + clusters {
             fixture.used[cluster as usize] = 1;
         }
+    }
+    for cluster in mirror_first..mirror_first + mirror_clusters {
+        fixture.used[cluster as usize] = 1;
     }
     for cluster in deep_blocks..deep_blocks + 3 * index_block_clusters {
         fixture.used[cluster as usize] = 1;
@@ -4938,6 +5137,21 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     );
                     put_u64_le(&mut bitmap, 40, cluster_size); // allocated size
                     attributes.extend(bitmap);
+                }
+                1 => {
+                    // The `$MFTMirr`'s `$DATA`: a **non-resident** run, the way a
+                    // real volume's is, whose length is the four records the
+                    // format says the mirror copies.  A driver that moves one of
+                    // the MFT's first records — record 0 when the MFT grows,
+                    // record 3 when the flags change — has a copy to bring back
+                    // in step, which is what `sync` does.
+                    attributes.extend(attribute(
+                        0x80,
+                        "",
+                        &[],
+                        Some(&fixture.mirror_runs),
+                        MIRROR_RECORDS * record_size,
+                    ));
                 }
                 3 => {
                     // The volume's own information: a version, and the flags whose
@@ -5596,6 +5810,19 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
         }
         let at = fixture.record_offset(number) as usize;
         fixture.image[at..at + bytes.len()].copy_from_slice(&bytes);
+    }
+
+    // The mirror starts in step, the way a volume that was last settled by
+    // anything leaves it: the first four records, copied to the run the
+    // `$MFTMirr` names.  A mount that moves one of them makes this stale, and
+    // `sync` is what brings it back.
+    for number in 0..MIRROR_RECORDS {
+        let from = fixture.record_offset(number) as usize;
+        let to =
+            mirror_first as usize * cluster_size as usize + number as usize * record_size as usize;
+        let record = fixture.shape.record_size() as usize;
+        let bytes = fixture.image[from..from + record].to_vec();
+        fixture.image[to..to + record].copy_from_slice(&bytes);
     }
 
     // The file's data, in two runs with a gap between them.

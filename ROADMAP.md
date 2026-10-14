@@ -280,7 +280,10 @@ The authoritative picture of what exists today is
   still holds something refuses to be removed.  A volume whose records are all
   spoken for **grows the MFT**: a cluster comes from the `$Bitmap`, `$MFT`'s
   own run list gains a run, its own bitmap is extended over the records the
-  growth made, and those records are written as zeros so they are free.  The
+  growth made, and those records are written as zeros so they are free.  And
+  a volume that **settles** brings its **`$MFTMirr`** back in step — the copy
+  of the MFT's first four records, which a growth moves — so a checker finds
+  the recovery copy agreeing with the original.  The
   **attribute list** is *read* now: a record whose attributes did not fit one
   record names each attribute and the record that holds it, an attribute can be
   split across records by virtual cluster number, and the reader answers with
@@ -296,11 +299,10 @@ The authoritative picture of what exists today is
   the root's value, the runs and the `$I30` bitmap of the blocks go into a
   record of their own that the base's list names, and the root's node keeps only
   the pointer — written after the record and the block, so every window between
-  the writes is one a mount reads.  What is left of the stage is a *second*
-  index block — an entries set that does not fit one block is a split, and the
-  index bitmap would have to grow with it — and the two shapes the fixture does
-  not carry: a record that is itself an extension, and a record where even
-  moving everything leaves no room for the list.
+  the writes is one a mount reads.  What is left of the stage is the two
+  shapes the fixture does not carry: a record that is itself an extension
+  (`NotImplemented`), and a record where even moving everything leaves no room
+  for the list (`NoSpace`).
   A **name moves** too: a rename is the two index changes and the record's own
   `$FILE_NAME`, in the order that leaves two names rather than none, and a
   record's number never changes, so a directory is renamed with everything
@@ -308,10 +310,11 @@ The authoritative picture of what exists today is
   to one whose value is where runs say, so a file created empty takes content,
   and the volume's own state is shared by every handle to a mount — a clone of
   the record cache let a write through a vnode leave the mount that made it
-  answering with the old record.  What is left of the stage is a `$FILE_NAME`
-  that lives in a record of its own, the reverse conversion that a file
-  shrinking back into its record would need, and the compressed, sparse and
-  encrypted streams this RFC never decided.  A directory whose index is a
+  answering with the old record.  What is left of the stage is a name that
+  does not fit the extension record it lives in, on a rename
+  (`NotImplemented`).  The streams this format also carries — encrypted,
+  compressed, sparse — are decided elsewhere now (RFCs 0013 to 0017): refused,
+  read and written, a hole punched and filled.  A directory whose index is a
   **tree** is *read* now: an internal node holds a key and the child it points
   at, so a promoted key — one that lives in the node above and in no block — is
   a name like any other, and a walk takes each child and then its key, which is
@@ -336,8 +339,7 @@ The authoritative picture of what exists today is
   And a block a deletion gives back is taken again: a split takes the first
   block the index bitmap says is free before it grows the allocation, so a
   directory's index stops claiming clusters for blocks nothing is stored in.
-  What is left of the tree is the **split** of a leaf two levels down, whose
-  node above is a block, and the allocation's own shrink, which this driver
+  What is left of the tree is the allocation's own shrink, which this driver
   does not do at all: a kept block costs nothing to use again.
   A **real volume** is a gate now: `make check-ntfs-image` makes a volume with
   `mkntfs`, injects a file with `ntfscp`, has the driver read it and write one

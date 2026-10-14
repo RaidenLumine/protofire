@@ -43,6 +43,17 @@ const BITMAP_RECORD: u64 = 6;
 /// The `$MFT`'s own record, whose `$DATA` is the records themselves.
 const MFT_RECORD: u64 = 0;
 
+/// The `$MFTMirr`'s record, which the standard fixes at the second.  Its
+/// `$DATA` names where the mirror of the volume's first records lives.
+const MFT_MIRR_RECORD: u64 = 1;
+
+/// How many of the MFT's **first records** the mirror holds.  The format fixes
+/// the count at four; a volume whose record size is a whole number of clusters
+/// mirrors one cluster instead, which is the same four records whenever a
+/// record is a cluster wide, and more bytes than four when it is wider.  This
+/// driver mirrors four records and never claims more.
+const MFT_MIRR_RECORDS: u64 = 4;
+
 /// The volume's `$UpCase` table, which the standard fixes at the tenth.
 const UPCASE_RECORD: u64 = 10;
 
@@ -721,11 +732,24 @@ impl NtfsFs {
         if moved_len + 64 > record.len() {
             return Err(Error::NoSpace);
         }
+        // The attributes the extension record receives, in ascending **type**
+        // order: a record's attributes are kept in that order and a checker
+        // reads the chain until a type does not ascend, extension records
+        // included.  The selection above picks by *size* — the largest first,
+        // because that is what frees the most room — so the order they were
+        // chosen in is not the order they may be written in.
         let mut to_go: Vec<Vec<u8>> = Vec::new();
         for attribute in &moved {
             let at = base + attribute.offset;
             to_go.push(record[at..at + attribute.attr_len].to_vec());
         }
+        to_go.sort_by_key(|bytes| {
+            bytes
+                .get(..4)
+                .and_then(|type_bytes| type_bytes.try_into().ok())
+                .map(u32::from_le_bytes)
+                .unwrap_or(u32::MAX)
+        });
         let (extension, _) = self.claim_record(NewRecord::Extension {
             base: record_number,
             attributes: to_go,
@@ -942,15 +966,24 @@ impl NtfsFs {
         Ok(())
     }
 
-    /// Move an attribute to the end of its record's used area, with a longer
-    /// run list, and write the record whole.
+    /// Give an attribute a longer run list than its room holds, and write the
+    /// record whole.
     ///
     /// A run list that no longer fits the room its attribute has means the
-    /// attribute **moves**: it goes last, and every attribute that followed it
-    /// shifts up by the difference.  The record then changes from end to end,
-    /// so it is written in one piece, with the update sequence array packed
-    /// again — the shift crosses sector ends, and a field write could not leave
-    /// those as they were.
+    /// attribute **grows in place**: the bytes after it shift up by the
+    /// difference, and the record changes from end to end, so it is written in
+    /// one piece with the update sequence array packed again — the shift
+    /// crosses sector ends, and a field write could not leave those as they
+    /// were.
+    ///
+    /// It keeps its **place**, which is not a detail: a record's attributes are
+    /// kept in ascending **type** order and a checker reads the chain until it
+    /// meets a type that does not ascend — `ntfs-3g` failing a record there is
+    /// where this was caught on a volume it had written (`Bad end of MFT
+    /// record`): moving the attribute last put the index allocation after the
+    /// bitmap, and no reader this tree has checks the order.  The attributes
+    /// after the grown one shift, and none of them changes place among
+    /// themselves.
     #[allow(clippy::too_many_arguments)]
     fn relocate_run_list(
         &self,
@@ -968,20 +1001,9 @@ impl NtfsFs {
         let runs_relative = data.data_runs_offset.ok_or(Error::InvalidArgument)? - data.offset;
         let encoded = fs::encode_runs(runs);
 
-        // Every attribute as it is, except this one — which goes last, grown.
-        let attributes = parse_attributes(&record[base..]);
-        let mut rebuilt = record[..base].to_vec();
-        for attribute in &attributes {
-            if attribute.attr_type == data.attr_type
-                && attribute.offset == data.offset
-                && attribute.instance == data.instance
-            {
-                continue;
-            }
-            let at = base + attribute.offset;
-            rebuilt.extend_from_slice(&record[at..at + attribute.attr_len]);
-        }
-
+        // The attribute as it will be, built first so it can be put back
+        // **where it was**: its own header with a longer run list, and the
+        // sizes that follow from what the runs cover.
         let mut grown = record[base + data.offset..base + data.offset + runs_relative].to_vec();
         grown.resize((runs_relative + encoded.len()).div_ceil(8) * 8, 0);
         grown[runs_relative..runs_relative + encoded.len()].copy_from_slice(&encoded);
@@ -992,7 +1014,22 @@ impl NtfsFs {
         grown[56..64].copy_from_slice(&u64::from(length).to_le_bytes());
         let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
         grown[24..32].copy_from_slice(&last_vcn.to_le_bytes());
-        rebuilt.extend_from_slice(&grown);
+
+        // Every attribute as it is — this one grown, the rest shifted by the
+        // difference, and the order untouched.
+        let attributes = parse_attributes(&record[base..]);
+        let mut rebuilt = record[..base].to_vec();
+        for attribute in &attributes {
+            if attribute.attr_type == data.attr_type
+                && attribute.offset == data.offset
+                && attribute.instance == data.instance
+            {
+                rebuilt.extend_from_slice(&grown);
+                continue;
+            }
+            let at = base + attribute.offset;
+            rebuilt.extend_from_slice(&record[at..at + attribute.attr_len]);
+        }
         rebuilt.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
 
         let used = rebuilt.len();
@@ -4489,8 +4526,160 @@ impl FileSystem for NtfsFs {
     /// changes it made, since it writes no `$LogFile`
     /// ([RFC 0012](../../docs/rfcs/0012-the-harness-an-ntfs-write-is-proven-on.
     /// md)).
+    ///
+    /// Settling is also when the **`$MFTMirr`** is brought back in step.  The
+    /// mirror is the volume's own recovery copy of the MFT's first four
+    /// records — the records that say where the rest of them are, so a
+    /// checker that finds them whole can walk the volume — and a driver that
+    /// moves any of them leaves the copy disagreeing with the original until
+    /// something rewrites it.  This driver moves record 0 whenever the MFT
+    /// **grows** (its run list gains a run) and record 3 whenever the volume's
+    /// flags change, and both happen inside a mount that then says it is
+    /// done.  The write goes **last**, after the dirty flag is cleared, for
+    /// the same reason the flag exists: a checker reads the mirror next to
+    /// the MFT, so the one moment it is allowed to look is the moment both
+    /// agree — and a crash before that moment leaves the volume dirty with
+    /// the mirror stale, which is what a checker is told to expect.
+    ///
+    /// A volume whose `$MFTMirr` record is one this driver cannot read — a
+    /// resident value, a list that moved it, fewer than four whole records of
+    /// room — is left alone: the volatile dirty flag is cleared, the mirror
+    /// is not touched, and the mount says so rather than writing a copy that
+    /// does not match.  That is the same shape as every other refusal here:
+    /// what cannot be done whole is not half done.
     fn sync(&self) -> Result<()> {
-        self.set_dirty(false)
+        // The flag comes down **first**: record 3, whose flags these are, is
+        // one of the four records the mirror copies, so a copy taken before
+        // the clear would disagree with the original on the flag byte alone.
+        // The order costs one window — a crash between the two leaves a
+        // volume that reads clean with a stale copy — and a copy that fails
+        // for any other reason puts the flag *back*, so "clean" is only ever
+        // said about a volume whose copy was written or legitimately left.
+        self.set_dirty(false)?;
+        match self.sync_mft_mirror() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = self.set_dirty(true);
+                Err(error)
+            }
+        }
+    }
+}
+
+impl NtfsFs {
+    /// Bring the `$MFTMirr`'s four records in step with the MFT's, when the
+    /// volume's own mirror is one this driver can write.
+    ///
+    /// The bytes written are the volume's **own** record bytes — read back
+    /// through the device, so they are already USA-packed and already what a
+    /// checker compares against — rather than the cache's unpacked copies.
+    /// That matters: the fixup array a record carries is part of what the
+    /// mirror compares, and a mirror written from unpacked bytes would
+    /// disagree with the original on every sector end.
+    fn sync_mft_mirror(&self) -> Result<()> {
+        let (record_size, cluster_size) = {
+            let info = self.info.lock();
+            (
+                u64::from(info.mft_record_size),
+                u64::from(info.cluster_size),
+            )
+        };
+        let mirror_bytes = record_size * MFT_MIRR_RECORDS;
+
+        // Where the mirror is, out of its own record's `$DATA`.  A record
+        // that does not parse — a volume whose mirror record was never
+        // formatted, or one a torn write left — is a shape the driver does
+        // not write: the copy is left alone, and the mount still settles the
+        // volume.  An error *reading* the record is not a shape, and it
+        // propagates: a device that cannot answer is not a volume to call
+        // settled.
+        let attributes = match self.attributes_of(MFT_MIRR_RECORD) {
+            Ok(attributes) => attributes,
+            Err(Error::InvalidArgument) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let Some(data) = attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_DATA)
+        else {
+            return Ok(());
+        };
+        if data.data_runs_offset.is_none() || data.holder != MFT_MIRR_RECORD {
+            // A resident value is bytes in the record, and one an
+            // `$ATTRIBUTE_LIST` moved is not this record's to write.
+            return Ok(());
+        }
+        let held = data
+            .data_runs
+            .iter()
+            .map(|run| run.cluster_count)
+            .sum::<u64>()
+            * cluster_size;
+        if data.data_runs.is_empty()
+            || held < mirror_bytes
+            || u64::from(data.data_size) < mirror_bytes
+            || data.data_runs.iter().any(|run| run.lcn < 0)
+        {
+            // Fewer than four whole records of room, or runs that name holes:
+            // leave the copy alone rather than write a short one or claim
+            // clusters a hole says are not there.
+            return Ok(());
+        }
+
+        // The originals, as the volume holds them, from the first record on —
+        // and the mirror beside them.  Reading through the *device* is what
+        // makes these bytes the packed ones, and it also means a record the
+        // cache is holding unpacked is not what lands here.
+        let (mft_runs, mft_size) = {
+            let mut info = self.info.lock();
+            let runs = info.resolve_mft_runs(&self.device)?;
+            (runs, info.mft_data_size)
+        };
+        if mft_size < mirror_bytes {
+            return Ok(());
+        }
+        let mut originals = alloc::vec![0u8; mirror_bytes as usize];
+        let read = fs::read_from_runs(
+            &self.device,
+            &self.info.lock(),
+            &mft_runs,
+            mft_size,
+            0,
+            &mut originals,
+        )?;
+        if read < originals.len() {
+            return Ok(());
+        }
+
+        // What the volume's copy says now, read through its own runs.  A copy
+        // already in step is **not rewritten**: `sync` is called on every
+        // mounted volume — including one mounted read-only, whose copy is
+        // whatever the last writer left — and a settle that has nothing to
+        // settle must not become a write that can fail.
+        let info = self.info.lock();
+        let mut current = alloc::vec![0u8; originals.len()];
+        let read = fs::read_from_runs(
+            &self.device,
+            &info,
+            &data.data_runs,
+            u64::from(data.data_size),
+            0,
+            &mut current,
+        )?;
+        if read == originals.len() && current == originals {
+            return Ok(());
+        }
+
+        // A copy that really is stale is written whole or not at all: the
+        // run list was checked to hold four whole records, and `write_to_runs`
+        // stops at the end of what it can reach — so a count short of the
+        // copy is a volume that would be left half-mirrored, which the caller
+        // answers by raising the dirty flag again.
+        let written = fs::write_to_runs(&self.device, &info, &data.data_runs, 0, &originals)?;
+        if written != originals.len() {
+            return Err(Error::DeviceError);
+        }
+        Ok(())
     }
 }
 

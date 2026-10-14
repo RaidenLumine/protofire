@@ -250,7 +250,9 @@ what stage 1's record serialisation is for.
   `a_volume_mkntfs_wrote_is_read_and_written_back` over it.  The driver reads
   the host's file, creates one of its own, and the script then hands the volume
   it left to `ntfs-3g`'s own reader: `ntfsls` lists both names, `ntfscat`
-  reads both files back, and `ntfsfix -n` walks the metadata.  This is the
+  reads both files back, and `ntfsfix -n` walks the metadata — including
+  "Comparing `$MFTMirr` to `$MFT`", which is stage 3d's judge on a volume
+  whose MFT the driver grew.  This is the
   harness's answer to the fixture being the driver's own work — the format
   facts the fixture encodes are held against a foreign implementation, on a
   volume neither side built.  It needs the ntfs-3g tools rather than QEMU, so
@@ -319,6 +321,22 @@ what stage 1's record serialisation is for.
   `a_growth_zeroes_only_the_clusters_it_claimed` is the gate: a file grown by
   a hundred bytes past three clusters of runs keeps every byte it had and
   reads the hundred new ones as zeros, on a second mount too.
+- **A record's attributes went out in the order a writer moved them, and no
+  longer do.**  *Found by stage 3d's gate, and fixed with it.*  The format
+  keeps a record's attributes in ascending **type**, and a checker reads the
+  chain until a type does not ascend and fails the record there — `ntfs-3g`:
+  "Bad end of MFT record 5" — while no reader in this tree checks the order,
+  which is how two writers could be wrong without a red test.
+  `relocate_run_list` moved an attribute that had outgrown its run-list room
+  to the *end* of the record, so the root's `$INDEX_ALLOCATION` that grew
+  landed after the `$BITMAP` that sorts behind it (`0xb0` then `0xa0`); it now
+  rebuilds the attribute **where it was**, with the ones after it shifted up.
+  `make_room` chose the attributes that leave for an extension record by
+  *size* — largest first, which is what frees the room — and wrote them in
+  that order; an extension record's chain is read the same way, so the
+  selection is sorted by type before the write.  The tests that walk those
+  paths assert the order now, and the ordering restored to the old shape
+  fails the first with "0x80 before 0xd0".
 
 ## What landed
 
@@ -551,9 +569,10 @@ being something a partial write can ignore.
   comes from the records the volume already has *— stage 3c adds that —*; a
   directory cannot be created or removed *— stage 3b adds that —*; and a file
   created empty is resident, so writing content into it needs the
-  resident-to-non-resident conversion.  `$MFTMirr` is *not* written, and does
-  not need to be: it mirrors the volume's first four records, which this stage
-  never touches.
+  resident-to-non-resident conversion.  `$MFTMirr` is *not* written — and
+  does not need to be at this stage: it mirrors the volume's first four
+  records, which *this* stage never touches.  *(Stage 3c's growth moves the
+  first of them; stage 3d is what brings the copy back in step.)*
 - Seven tests, every write proved by a **second mount**: a created file that
   the fresh mount finds, reads as empty and lists, with `$MFT`'s `$BITMAP`
   naming its record; `$UpCase` folding in a lookup; a new name placed by the
@@ -645,6 +664,57 @@ being something a partial write can ignore.
   landing right after the first, no second growth; a creation on a volume with
   free records that does *not* grow it; and a record the growth made that a
   removal frees, and that the next creation takes back on the same mount.
+
+**Stage 3d — the `$MFTMirr` is brought back in step.**
+
+- Stage 3's list said "`$MFTMirr` when the records it mirrors change", and
+  stage 3c is what made that true: the MFT's **growth** moves record 0, whose
+  run list gains a run, and a volume's flags change record 3 — both of the
+  first four records the volume keeps a copy of.  That copy is the volume's
+  own recovery path: a checker that finds the first records whole can walk
+  the rest from them, which is why `ntfsfix` fails a volume whose copy
+  disagrees: "`$MFTMirr` does not match `$MFT` (record 0)".  The mirror is
+  written at the one moment a checker is allowed to look — **settling** — and
+  the order inside `sync` is what makes the moment real.  The dirty flag is
+  cleared **first** (record 3's own bytes are part of what is copied, so a
+  copy taken before the clear would disagree on the flag alone) and the copy
+  is written after; a copy that fails to write puts the flag **back**, so
+  "clean" is only ever said about a volume whose copy was written or — the
+  refusals below — legitimately left.
+- What is written is the volume's **own** record bytes, read back through the
+  device: already USA-packed, already in the form the checker compares.  A
+  mirror written from the cache's unpacked copies would disagree with the
+  original on every sector end — the fixup array is part of what is compared.
+- A copy already **in step is not rewritten**: `sync` is called on every
+  mounted volume, and a settle that has nothing to settle must not become a
+  write that can fail.  And a volume whose mirror record is one this driver
+  cannot write is left **alone** rather than half-written: a resident `$DATA`,
+  one an `$ATTRIBUTE_LIST` moved out of the record, fewer than four whole
+  records of room, or runs that name holes — the flag still comes down and the
+  bytes where the copy lives are untouched.  That is the same shape as every
+  other refusal here: what cannot be done whole is not half done.  A write
+  that lands short of the copy is a `DeviceError` — the flag goes back up, and
+  the volume is not called settled.
+- The fixture carries the shape: record 1's `$DATA` is a **non-resident** run
+  the way a real volume's is, the run holds four records' worth of clusters,
+  and the region starts seeded with the first four records — a volume last
+  settled by anything.  Two tests: a creation that grows the MFT leaves the
+  copy *stale* (asserted directly, record bytes against copy bytes), `sync`
+  brings it back in step, and the flag is down; and the resident-`$DATA`
+  mirror refuses nothing that matters — the volume still settles, and the
+  bytes where the copy lives are byte-for-byte what they were.
+- The gate on a **real volume** is what proves the copy is written in the
+  form a checker accepts: `a_volume_mkntfs_wrote_is_read_and_written_back`
+  now creates files until the volume's own MFT **grows** (the loop runs until
+  a creation is refused rather than to a count, and asserts the growth
+  happened), and `ntfsfix -n` at the end of `check-ntfs-image.sh` performs
+  "Comparing `$MFTMirr` to `$MFT`" on what the driver left.  With the sync
+  removed from the same build the comparison fails — "`$MFTMirr` does not
+  match `$MFT` (record 0)", exit 1 — so the check is the judge of this stage
+  rather than a passing bystander.  That growth, on the volume `mkntfs` made,
+  is also what exposed the attribute-order defect recorded above: the gate
+  found it, and it is fixed in this same change because the gate cannot be
+  green without it.
 
 **Stage 4a — reading through an `$ATTRIBUTE_LIST`.**
 
