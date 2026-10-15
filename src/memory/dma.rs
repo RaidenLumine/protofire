@@ -66,6 +66,19 @@ impl DmaBuffer {
         })
     }
 
+    /// Allocate enough frames to hold `bytes` whole bytes, zeroed.
+    ///
+    /// A device that states a size in bytes — a controller's page size, a
+    /// ring's segment size — is a device whose driver knows a byte count and
+    /// not a frame count.  Rounding up here keeps the frame arithmetic in the
+    /// module that owns the frame size, so a driver asks for the bytes its
+    /// device described and says nothing about how memory is divided.
+    /// Answers `None` for zero bytes or when [`Self::allocate`] would.
+    #[must_use]
+    pub fn allocate_bytes(bytes: usize) -> Option<Self> {
+        Self::allocate(frames_for_bytes(bytes)?)
+    }
+
     /// Allocate `frame_count` frames whose first byte is `alignment`-aligned.
     ///
     /// Some device registers do not hold a full address: the low bits are not
@@ -182,9 +195,22 @@ fn aligned_start(base: usize, alignment: usize) -> usize {
     base.div_ceil(alignment) * alignment
 }
 
+/// How many whole frames hold `bytes`, or `None` for zero.
+///
+/// The one place a byte count becomes a frame count, so a device's stated
+/// size and the allocator's unit meet in a function that has a test rather
+/// than in each driver's own division.
+fn frames_for_bytes(bytes: usize) -> Option<usize> {
+    if bytes == 0 {
+        return None;
+    }
+    Some(bytes.div_ceil(FRAME_SIZE))
+}
+
 #[cfg(test)]
 mod tests {
     use super::aligned_start;
+    use super::frames_for_bytes;
     use super::FRAME_SIZE;
 
     #[test]
@@ -203,5 +229,24 @@ mod tests {
             // enough.
             assert!(aligned_start(base, 0x1_0000) - base < 0x1_0000);
         }
+    }
+
+    /// A byte count becomes the smallest number of whole frames that holds it.
+    ///
+    /// The device side of the contract: a controller states its page size in
+    /// bytes (a device that declares a 16 KiB page is one a 4 KiB frame does
+    /// not hold), and zero bytes is not a buffer at all.
+    #[test]
+    fn a_byte_count_rounds_up_to_whole_frames() {
+        assert_eq!(frames_for_bytes(0), None);
+        assert_eq!(frames_for_bytes(1), Some(1));
+        assert_eq!(frames_for_bytes(FRAME_SIZE), Some(1));
+        assert_eq!(frames_for_bytes(FRAME_SIZE + 1), Some(2));
+        assert_eq!(frames_for_bytes(3 * FRAME_SIZE), Some(3));
+        // A controller page larger than one frame rounds up rather than down,
+        // which is the direction a truncated scratchpad buffer would not
+        // survive.
+        assert_eq!(frames_for_bytes(4 * FRAME_SIZE), Some(4));
+        assert_eq!(frames_for_bytes(4 * FRAME_SIZE + 1), Some(5));
     }
 }

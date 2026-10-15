@@ -587,6 +587,12 @@ impl XhciController {
             // controller is dropped: returning `None` here looks exactly like
             // "no controller on this machine", and a bring-up log has to be
             // able to tell those two apart.
+            //
+            // One controller page per buffer, and one 64-bit array entry per
+            // buffer.  Both are byte counts a device stated, so they go
+            // through `DmaBuffer::allocate_bytes`, which is where the frame
+            // arithmetic lives: a driver that divided by the frame size would
+            // be a driver that knows how memory is divided.
             let scratchpad_page_bytes = if scratchpad_count == 0 {
                 None
             } else {
@@ -597,24 +603,17 @@ impl XhciController {
                     );
                     return None;
                 };
-                Some(bytes)
+                Some(bytes as usize)
             };
-            // One controller page per buffer, in whole frames; and the array
-            // needs one 64-bit entry per buffer, also in whole frames.
-            let scratchpad_page_frames = scratchpad_page_bytes.map_or(0, |bytes| {
-                (bytes as usize).div_ceil(crate::memory::frame::FRAME_SIZE)
-            });
             let scratchpad_array = if scratchpad_count == 0 {
                 None
             } else {
                 let words = scratchpad_count as usize;
-                let array_frames = (words * core::mem::size_of::<u64>())
-                    .div_ceil(crate::memory::frame::FRAME_SIZE)
-                    .max(1);
-                let Some(array) = DmaBuffer::allocate(array_frames) else {
+                let array_bytes = words * core::mem::size_of::<u64>();
+                let Some(array) = DmaBuffer::allocate_bytes(array_bytes) else {
                     println!(
-                        "[xhci  ] no room to allocate the scratchpad array ({} frame(s)) — skipping this controller",
-                        array_frames
+                        "[xhci  ] no room to allocate the scratchpad array ({} byte(s)) — skipping this controller",
+                        array_bytes
                     );
                     return None;
                 };
@@ -659,12 +658,17 @@ impl XhciController {
                 scratchpad_buffers: {
                     let mut buffers = alloc::vec::Vec::with_capacity(scratchpad_count as usize);
                     for _ in 0..scratchpad_count {
-                        let Some(buffer) = DmaBuffer::allocate(scratchpad_page_frames) else {
+                        // A count above zero implies the page size above was
+                        // read (a register that would not answer that
+                        // question returned early), so the `?` cannot fail
+                        // for the reason those checks exist.
+                        let bytes = scratchpad_page_bytes?;
+                        let Some(buffer) = DmaBuffer::allocate_bytes(bytes) else {
                             println!(
-                                "[xhci  ] no room to allocate scratchpad buffer {} of {} ({} frame(s) each) — skipping this controller",
+                                "[xhci  ] no room to allocate scratchpad buffer {} of {} ({} byte(s) each) — skipping this controller",
                                 buffers.len() + 1,
                                 scratchpad_count,
-                                scratchpad_page_frames
+                                bytes
                             );
                             return None;
                         };
