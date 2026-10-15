@@ -205,8 +205,11 @@ because it decides which devices interrupt at all:
   it into an LPI; the kernel owns that translation.
 - **RISC-V 64** writes the target hart's IMSIC identity into the device's
   MSI-X table; the kernel programs the table.
-- **x86_64** has the message composition and fixed vector numbers, but no path
-  programs a device's table.  A PCIe device's completions are polled there.
+- **x86_64** composes the message and writes it into the device's MSI-X table
+  through the same claim-and-arm path (`arch/x86_64/msi.rs`), with fixed
+  vector numbers out of an IDT window whose stubs dispatch by vector.  A claim
+  that fails leaves its owner polling, which is the path it would have taken
+  on a machine with no MSI-X at all.
 
 ## Per-CPU data
 
