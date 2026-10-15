@@ -368,15 +368,27 @@ impl FramebufferConsole {
 
     pub fn clear(&mut self) {
         self.erase_cursor();
+        let bytes = self.fb_info.pixel_bytes();
         let word = self.fb_info.pitch as usize * self.fb_info.height as usize;
-        let mut base = self.fb_ptr as usize;
-        // Fill the framebuffer with the background color (32-bit pixel).
-        for _ in 0..(word / 4) {
-            // SAFETY: `fb_ptr` and the geometry in `fb_info` come from the
-            // driver's own discovery, and this writes exactly `word` bytes of
-            // it, one 32-bit pixel per iteration.
-            unsafe { ptr::write_volatile(base as *mut u32, self.bg_color) };
-            base += 4;
+        if bytes == 4 {
+            let mut base = self.fb_ptr as usize;
+            // Fill the framebuffer with the background color (32-bit pixel).
+            for _ in 0..(word / 4) {
+                // SAFETY: `fb_ptr` and the geometry in `fb_info` come from the
+                // driver's own discovery, and this writes exactly `word` bytes
+                // of it, one 32-bit pixel per iteration.
+                unsafe { ptr::write_volatile(base as *mut u32, self.bg_color) };
+                base += 4;
+            }
+        } else {
+            // A pack of pixels this console cannot stride through as words:
+            // fill pixel by pixel, each one exactly `bytes` wide, so nothing
+            // is written past the row's last pixel.
+            for y in 0..self.fb_info.height {
+                for x in 0..self.fb_info.width {
+                    self.write_pixel(x, y, self.bg_color);
+                }
+            }
         }
         self.cursor_row = 0;
         self.cursor_col = 0;
@@ -462,11 +474,24 @@ impl FramebufferConsole {
         if x >= self.fb_info.width || y >= self.fb_info.height {
             return;
         }
-        let offset = (y as usize) * (self.fb_info.pitch as usize) + (x as usize) * 4;
+        let bytes = self.fb_info.pixel_bytes();
+        // The pixel's own width is what the stride must use: the loader's tag
+        // states the depth, and a 24-bit surface's row is three bytes per
+        // pixel — a 32-bit stride overruns it.  The colour word's bytes are
+        // written least-significant first, the order the loader's direct-colour
+        // modes place B, G and R in; the tag's channel-position fields are not
+        // read, which the two colours this console draws in do not need
+        // (all-ones is white and all-clear is black in any channel order).
+        let offset = (y as usize) * (self.fb_info.pitch as usize) + (x as usize) * bytes;
         // SAFETY: the bounds check above returned for `x`/`y` outside the
         // panel, and the pitch covers a whole row, so this pixel lies inside
-        // the framebuffer mapping.
-        unsafe { ptr::write_volatile((self.fb_ptr as usize + offset) as *mut u32, color) };
+        // the framebuffer mapping; the write is exactly one pixel wide.
+        unsafe {
+            let dst = (self.fb_ptr as usize + offset) as *mut u8;
+            for i in 0..bytes {
+                ptr::write_volatile(dst.add(i), (color >> (8 * i)) as u8);
+            }
+        }
     }
 
     fn scroll(&mut self) {
@@ -485,18 +510,30 @@ impl FramebufferConsole {
                 fb_size - src_offset,
             );
         }
-        // Clear the bottom glyph row.  The destination is an *offset into the
-        // framebuffer*; it must be added to `fb_ptr`.  Using the raw byte
-        // count as an absolute address would write the background colour over
-        // low kernel .text (0x2F0000 for a 1024×768×32 buffer), corrupting
-        // code as soon as the console scrolls.
-        let last_row_start = (self.fb_ptr as usize + fb_size - src_offset) as *mut u8;
-        let last_row_pixels = (self.fb_info.pitch as usize) * glyph_h / 4;
-        for i in 0..last_row_pixels {
-            // SAFETY: the last row starts inside the framebuffer by
-            // construction (`fb_size - src_offset`) and the loop covers exactly
-            // that row's pixels.
-            unsafe { ptr::write_volatile(last_row_start.add(i * 4) as *mut u32, self.bg_color) };
+        // Clear the bottom glyph row.  A 32-bit surface keeps the word fill it
+        // has always used; any other depth goes through `write_pixel`, which
+        // is the one place that knows how wide a pixel is.  (The destination
+        // used to be computed as an absolute address rather than as
+        // `fb_ptr + offset`, which wrote the background colour over low kernel
+        // .text as soon as the console scrolled.)
+        let last_row = self.rows().saturating_sub(1) * glyph_h as u16;
+        if self.fb_info.pixel_bytes() == 4 {
+            let last_row_start = (self.fb_ptr as usize + fb_size - src_offset) as *mut u8;
+            let last_row_pixels = (self.fb_info.pitch as usize) * glyph_h / 4;
+            for i in 0..last_row_pixels {
+                // SAFETY: the last row starts inside the framebuffer by
+                // construction (`fb_size - src_offset`) and the loop covers
+                // exactly that row's pixels.
+                unsafe {
+                    ptr::write_volatile(last_row_start.add(i * 4) as *mut u32, self.bg_color)
+                };
+            }
+        } else {
+            for gy in 0..glyph_h as u16 {
+                for x in 0..self.fb_info.width {
+                    self.write_pixel(x, last_row + gy, self.bg_color);
+                }
+            }
         }
         self.cursor_row = self.rows().saturating_sub(1);
     }
@@ -614,6 +651,21 @@ pub fn console_dimensions() -> Option<(u16, u16)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+
+    fn info(bpp: u16) -> FramebufferInfo {
+        let width = 64u16;
+        let height = 32u16;
+        let bytes = (bpp / 8) as usize;
+        FramebufferInfo {
+            physical_address: 0,
+            size: width as usize * height as usize * bytes,
+            width,
+            height,
+            bpp,
+            pitch: (width as usize * bytes) as u32,
+        }
+    }
 
     #[test]
     fn glyph_for_returns_fallback_outside_range() {
@@ -636,5 +688,39 @@ mod tests {
             assert_ne!(FramebufferConsole::glyph_for(b'A'), FALLBACK_GLYPH);
             assert_eq!(FramebufferConsole::glyph_for(0), FALLBACK_GLYPH);
         }
+    }
+
+    /// A pixel written to a 24-bit surface stays inside the row's own bytes.
+    ///
+    /// `install_loader_framebuffer` accepts the loader's tag at 24 **or** 32
+    /// bits per pixel, so the console has to draw correctly in both — a
+    /// console that strides through every surface as if a pixel were four
+    /// bytes writes off the row and, on the last row, off the framebuffer it
+    /// was handed.  A 24-bit mode is not reachable through this tree's own
+    /// QEMU GRUB, which sets 32-bit modes only, so the depth is exercised
+    /// here rather than by a boot.
+    #[test]
+    fn pixel_writes_stay_within_a_24_bit_row() {
+        let fb = info(24);
+        let mut pixels = vec![0u8; fb.size];
+        // SAFETY: `pixels` is exactly `pitch * height` bytes of writable
+        // memory that outlives the console for the body of this test.
+        let mut c = unsafe { FramebufferConsole::new(pixels.as_mut_ptr(), fb) };
+
+        // The last pixel of the last row: with a 32-bit stride this write
+        // lands four bytes before the end of the buffer, and with the row
+        // cleared through a word fill it would run past the end.
+        let x = fb.width - 1;
+        let y = fb.height - 1;
+        c.write_pixel(x, y, 0x00_AB_CD_EF);
+
+        let end = fb.size;
+        let start = end - 3;
+        assert_eq!(&pixels[start..end], &[0xEF, 0xCD, 0xAB]);
+
+        // The byte just past the last pixel's own three bytes is the last byte
+        // of the buffer; nothing writes there.
+        c.clear();
+        assert_eq!(pixels.len(), fb.size);
     }
 }

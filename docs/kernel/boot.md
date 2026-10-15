@@ -29,6 +29,15 @@ never run and the ISO gate asserts the line now.  A machine whose firmware
 and GPU this kernel has no driver for is exactly the machine that path
 exists for.
 
+The requested geometry is what the loader is asked *for*, not what it must
+give: a firmware with no 32-bit mode sets whatever it has, and
+`install_loader_framebuffer` takes the tag's own depth — 24 or 32 bits — as
+what the console must draw in.  A 24-bit surface is one pixel every three
+bytes, which is why the console's stride is the depth's and not a fixed word
+(`pixel_writes_stay_within_a_24_bit_row` holds that; the boot here always
+receives 32, so the 24-bit path is the loader's to exercise on a machine
+whose firmware offers it).
+
 `_start` runs in 32-bit protected mode.  It saves the loader's magic and info
 pointer, stands up a boot stack, builds a four-level identity map of the first
 four gigabytes with 2 MiB pages, and turns long mode on (`CR4.PAE`,
