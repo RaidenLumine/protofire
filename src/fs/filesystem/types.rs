@@ -98,15 +98,25 @@ pub(crate) enum BootDiskLayoutSource {
     /// The zones came from the disk's own partition table.  `gpt` says which
     /// table it was, which is what a boot's line about it names
     /// ([RFC 0018](../../../docs/rfcs/0018-read-a-disk-whose-table-is-gpt.md)).
-    Partitions {
-        gpt: bool,
-    },
+    Partitions { gpt: bool },
+    /// The disk carries a partition table that names no zone of this kernel's:
+    /// the table was read, and it said the zones are not there.  Nothing was
+    /// mounted from it, and nothing at the fixed offsets was read either —
+    /// the table gave those bytes to someone else
+    /// ([RFC 0027](../../../docs/rfcs/
+    /// 0027-never-mount-a-fixed-offset-over-a-table.md)).
+    Foreign,
+    /// The disk carries no partition information at all, so the fixed zone
+    /// offsets are the only description of where its zones could be.
     FixedZoneFallback,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StorageInitReport {
     BootDiskPartitions,
+    /// The boot disk had a table and the table was not this kernel's; the
+    /// demo volumes are what mounted, on a build that has them.
+    BootDiskForeign,
     BootDiskFixedZoneFallback,
     // Constructed only on host / demo-disk / test builds; on any bare-metal
     // non-demo boot (x86_64 / aarch64 / riscv64) the variant is never built.

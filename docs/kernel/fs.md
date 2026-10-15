@@ -89,8 +89,12 @@ filesystem lock then snapshot, never the reverse.
 path.  Given a boot disk it reads the disk's partition table with
 `read_partitions` (`src/fs/partition.rs`) — the MBR the disk's own builder
 wrote, or the GPT a machine's disk carries — and requires every expected zone
-partition to be there; failing that it falls back to the fixed zone offsets in
-`src/fs/layout.rs`;
+partition to be there, falling back **only** to the fixed zone offsets in
+`src/fs/layout.rs` when the disk carries no partition information at all: a
+table that names no zone is a disk something partitioned, and its entries say
+those bytes belong to someone else, so the boot leaves it alone and reports
+`BootDiskForeign` rather than reading over it
+([RFC 0027](../rfcs/0027-never-mount-a-fixed-offset-over-a-table.md));
 failing that, on a build that has the demo disk, it mounts an in-memory MBR
 image, and otherwise reports a failed storage init.  The result is recorded
 as a `StorageInitReport`, and `install_default_layout` then adds the mounts

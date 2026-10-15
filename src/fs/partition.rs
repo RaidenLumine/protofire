@@ -135,11 +135,84 @@ pub fn mbr_has_partitions(disk: &[u8]) -> bool {
     if sector[MBR_SIGNATURE_OFFSET..MBR_SIGNATURE_OFFSET + MBR_SIGNATURE.len()] != MBR_SIGNATURE {
         return false;
     }
+    // The signature says the sixteen bytes at each slot are a table's entry
+    // rather than whatever else those bytes are; without it, an entry-like
+    // value is not a table any reader reads, which is why the check above
+    // comes first.
+    let sector: &[u8; BLOCK_SIZE] = sector.try_into().expect("a whole block was checked");
+    sector_has_mbr_entries(sector)
+}
+
+/// Whether one block's MBR slots name any partition.
+///
+/// The sector-taking half of [`mbr_has_partitions`] and of the device-side
+/// [`carries_partition_information`], so the two ask it in the same words.
+fn sector_has_mbr_entries(sector: &[u8; BLOCK_SIZE]) -> bool {
     (0..MBR_PARTITION_COUNT).any(|index| {
         let at = MBR_PARTITION_TABLE_OFFSET + index * MBR_PARTITION_ENTRY_SIZE;
         let entry = &sector[at..at + MBR_PARTITION_ENTRY_SIZE];
         entry[0] != 0 || entry[4] != 0
     })
+}
+
+/// Whether one block spells the GPT signature.
+///
+/// A signature is all this asks: the header's checksums are the *reader's*
+/// business ([`read_gpt_partitions`]), and a writer or a boot deciding
+/// whether the bytes are "something already there" must not believe a
+/// damaged GPT is nothing ([`gpt_signature_present`]).
+fn sector_says_gpt(sector: &[u8]) -> bool {
+    sector.starts_with(GPT_SIGNATURE)
+}
+
+/// Whether `device` carries **any** partition information at all.
+///
+/// The question `install --new-table` asks of a disk's bytes, asked of a
+/// device: the places a table can be are LBA 0 (an MBR's signature and its
+/// entries), LBA 1 (a GPT header — verified or damaged) and the disk's last
+/// block (the backup header a GPT keeps there).  A disk that answers `false`
+/// is described by where the demo builder puts its zones and by nothing else,
+/// which is the only shape the boot may read at those fixed offsets; a disk
+/// that answers `true` is a disk something partitioned, and only a table that
+/// *names this kernel's zones* makes it ours
+/// ([RFC 0027](../../docs/rfcs/0027-never-mount-a-fixed-offset-over-a-table.
+/// md)).
+pub fn carries_partition_information(device: &dyn BlockDevice) -> Result<bool> {
+    if device.block_size() != BLOCK_SIZE || device.block_count() == 0 {
+        return Ok(false);
+    }
+
+    let mut sector = [0_u8; BLOCK_SIZE];
+    device.read_blocks(0, &mut sector)?;
+    if sector[MBR_SIGNATURE_OFFSET..MBR_SIGNATURE_OFFSET + MBR_SIGNATURE.len()] == MBR_SIGNATURE
+        && sector_has_mbr_entries(&sector)
+    {
+        return Ok(true);
+    }
+
+    // The GPT's two ends.  A disk of one block has no LBA 1 to read, and one
+    // whose last block is the header's own place has no separate backup.
+    if device.block_count() <= GPT_HEADER_LBA {
+        return Ok(false);
+    }
+    // The primary is checked whether or not LBA 0 was protective: a disk
+    // whose protective entry was overwritten still declares a GPT, and the
+    // backup is checked for the reason both ends exist — a disk whose
+    // primary is destroyed is a repair case, not a blank one ([RFC 0018]).
+    let mut primary = [0_u8; BLOCK_SIZE];
+    device.read_blocks(GPT_HEADER_LBA, &mut primary)?;
+    if sector_says_gpt(&primary) {
+        return Ok(true);
+    }
+    let last = device.block_count() - 1;
+    if last != GPT_HEADER_LBA {
+        let mut backup = [0_u8; BLOCK_SIZE];
+        device.read_blocks(last, &mut backup)?;
+        if sector_says_gpt(&backup) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether an image spells the GPT signature at **either** header's place,
@@ -962,6 +1035,7 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
+    use super::carries_partition_information;
     use super::crc32;
     use super::read_mbr_partitions;
     use super::read_partitions;
@@ -1309,5 +1383,83 @@ mod tests {
         let device = MemoryBlockDevice::new("test-mbr", sector.to_vec(), false);
         let parsed = read_mbr_partitions(device.as_ref()).unwrap();
         assert_eq!(parsed, Some([None; 4]));
+    }
+
+    /// "Does this disk carry partition information at all" is the question the
+    /// boot asks before it may read the fixed offsets, and every shape a
+    /// *table* has answers yes — entries, a GPT header, a damaged GPT header,
+    /// a backup header, a lone protective MBR, a signature whose entries the
+    /// reader cannot parse.  Only a disk that says nothing at all answers no,
+    /// because only that disk is one the fixed offsets describe
+    /// ([RFC 0027](../../docs/rfcs/
+    /// 0027-never-mount-a-fixed-offset-over-a-table.md)).
+    #[test]
+    fn partition_information_is_everything_a_table_could_be() {
+        // A blank disk: nothing anywhere, so the fixed offsets may be read.
+        let blank = MemoryBlockDevice::new("blank", vec![0_u8; 8 * BLOCK_SIZE], true);
+        assert!(!carries_partition_information(blank.as_ref()).unwrap());
+
+        // An MBR: signature and one entry of a type this kernel has no name
+        // for is still a table something wrote.
+        let mut mbr = vec![0_u8; 8 * BLOCK_SIZE];
+        mbr[MBR_SIGNATURE_OFFSET] = 0x55;
+        mbr[MBR_SIGNATURE_OFFSET + 1] = 0xaa;
+        mbr[MBR_PARTITION_TABLE_OFFSET + 4] = 0x83;
+        let mbr = MemoryBlockDevice::new("mbr", mbr, true);
+        assert!(carries_partition_information(mbr.as_ref()).unwrap());
+
+        // A signature with no entries is not a table: it names no partition,
+        // so nothing was given to anyone and the fixed offsets stand.
+        let mut bare = vec![0_u8; 8 * BLOCK_SIZE];
+        bare[MBR_SIGNATURE_OFFSET] = 0x55;
+        bare[MBR_SIGNATURE_OFFSET + 1] = 0xaa;
+        let bare = MemoryBlockDevice::new("bare", bare, true);
+        assert!(!carries_partition_information(bare.as_ref()).unwrap());
+
+        // A verified GPT, and a GPT whose header is damaged: both declare a
+        // table, and a boot that believed the second was blank would read the
+        // fixed offsets over a disk someone partitioned.
+        let gpt = MemoryBlockDevice::new(
+            "gpt",
+            gpt_image(&[(0, [0x11; 16], 2 + 32, IMAGE_BLOCKS as u64 - 2)]),
+            true,
+        );
+        assert!(carries_partition_information(gpt.as_ref()).unwrap());
+        let damaged = MemoryBlockDevice::new(
+            "damaged-gpt",
+            {
+                let mut image = gpt_image(&[(0, [0x11; 16], 2 + 32, IMAGE_BLOCKS as u64 - 2)]);
+                // The header's CRC field is inside the header; corrupting the
+                // header's own bytes is what makes it damaged rather than
+                // absent.
+                image[BLOCK_SIZE + GPT_HEADER_CRC_OFFSET] ^= 0xFF;
+                image
+            },
+            true,
+        );
+        assert!(carries_partition_information(damaged.as_ref()).unwrap());
+
+        // A protective MBR with no readable GPT is still a disk that declared
+        // a table; the refusal is the reader's answer, not this one's.
+        let mut protective = vec![0_u8; 8 * BLOCK_SIZE];
+        protective[MBR_SIGNATURE_OFFSET] = 0x55;
+        protective[MBR_SIGNATURE_OFFSET + 1] = 0xaa;
+        let entry = &mut protective[MBR_PARTITION_TABLE_OFFSET..MBR_PARTITION_TABLE_OFFSET + 16];
+        entry[4] = MBR_PROTECTIVE_TYPE;
+        entry[8..12].copy_from_slice(&(GPT_HEADER_LBA as u32).to_le_bytes());
+        let protective = MemoryBlockDevice::new("protective", protective, true);
+        assert!(carries_partition_information(protective.as_ref()).unwrap());
+
+        // A lone backup header, primary destroyed: the disk still declares a
+        // GPT at the end where the backup belongs.
+        let mut backup_only = vec![0_u8; 8 * BLOCK_SIZE];
+        let at = backup_only.len() - BLOCK_SIZE;
+        backup_only[at..at + 8].copy_from_slice(GPT_SIGNATURE);
+        let backup_only = MemoryBlockDevice::new("backup-only", backup_only, true);
+        assert!(carries_partition_information(backup_only.as_ref()).unwrap());
+
+        // A disk too small to hold an LBA 1 is not read past its end.
+        let tiny = MemoryBlockDevice::new("tiny", vec![0_u8; BLOCK_SIZE], true);
+        assert!(!carries_partition_information(tiny.as_ref()).unwrap());
     }
 }

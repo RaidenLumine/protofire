@@ -182,3 +182,84 @@ fn creating_a_directory_at_a_mount_point_reports_that_it_exists() {
         .stat_normalized_path("/data/etc/regression-accounts")
         .is_ok());
 }
+
+/// A boot disk whose table names no zone of this kernel's is **left alone**:
+/// the fixed offsets are not read over it, because its table gave those bytes
+/// to whoever the table names ([RFC
+/// 0027](../../../../docs/rfcs/0027-never-mount-a-fixed-offset-over-a-table.
+/// md)).
+///
+/// The disk here is the shape that made the change: the demo image's bytes sit
+/// at the fixed offsets *underneath* a verified GPT whose one entry belongs to
+/// a stranger.  Before the change the boot printed `mounted fixed-zone SimpleFs
+/// volumes` for exactly this disk — a vendor's partition read and writable as
+/// `/apps` and `/data`.  The assertion is on the report the boot recorded,
+/// which is the fact the log line is printed from.
+#[test]
+fn a_foreign_table_is_not_read_at_the_fixed_offsets() {
+    use crate::fs::block::MemoryBlockDevice;
+    use crate::fs::filesystem::types::StorageInitReport;
+    use crate::fs::partition::write_gpt_partitions;
+    use alloc::sync::Arc;
+
+    // The demo image's own bytes: a valid MBR disk whose zones are where the
+    // fixed offsets say.  On this disk the partition path answers too, so the
+    // trap is built by replacing the table while keeping the bytes.
+    let mut disk = crate::fs::build_demo_disk_image();
+
+    // A stranger's table: one entry, a Linux filesystem GUID, in the middle of
+    // the disk.  Written over the demo MBR by the kernel's own GPT writer, so
+    // the bytes are a table this kernel verifies.
+    let stranger_type = [
+        0xaf, 0x3d, 0xc6, 0x0f, 0x83, 0x84, 0x72, 0x47, 0x8e, 0x79, 0x3d, 0x69, 0xd8, 0x47, 0x7d,
+        0xe4,
+    ];
+    // The demo image is small (a few MiB), so the stranger takes a span
+    // well inside it — the point is that the entry exists and is not a
+    // zone, not how big it is.
+    write_gpt_partitions(&mut disk, &[(0, stranger_type, 512, 1024)])
+        .expect("write the stranger's table");
+
+    let device: Arc<dyn crate::fs::block::BlockDevice> =
+        MemoryBlockDevice::new("foreign-gpt", disk, false);
+    let mut fs = FileSystem::new();
+    fs.init_with_boot_disk(Some(device));
+
+    match fs.storage_init_report() {
+        Some(StorageInitReport::BootDiskForeign) => {}
+        other => panic!("expected the foreign-table report, saw {other:?}"),
+    }
+
+    // And nothing off that disk is mounted: `/apps` is the demo volumes' (the
+    // build has them), not a slice of the stranger's partition.
+    let apps = fs.mount_points().into_iter().find(|m| m.path == "/apps");
+    assert!(
+        apps.is_some(),
+        "the demo volumes are the fallback and `/apps` comes from them"
+    );
+}
+
+/// The other half of the same rule: a disk with **no partition information** is
+/// still read at the fixed offsets, because they are the only description of
+/// where its zones are.  Without this the change would have removed the route
+/// instead of narrowing it.
+#[test]
+fn a_table_less_disk_still_reads_the_fixed_offsets() {
+    use crate::fs::block::MemoryBlockDevice;
+    use crate::fs::filesystem::types::StorageInitReport;
+    use alloc::sync::Arc;
+
+    // The demo image with its partition table erased: the zone volumes stay
+    // where they are, and nothing on the disk declares them.
+    let mut disk = crate::fs::build_demo_disk_image();
+    disk[..512].fill(0);
+    let device: Arc<dyn crate::fs::block::BlockDevice> =
+        MemoryBlockDevice::new("table-less", disk, false);
+    let mut fs = FileSystem::new();
+    fs.init_with_boot_disk(Some(device));
+
+    match fs.storage_init_report() {
+        Some(StorageInitReport::BootDiskFixedZoneFallback) => {}
+        other => panic!("expected the fixed-zone fallback, saw {other:?}"),
+    }
+}

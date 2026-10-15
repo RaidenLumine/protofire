@@ -191,13 +191,28 @@ impl FileSystem {
         // its parent's wrapped device down.  See
         // `crate::kernel::block::counting_device`.
         let boot_disk = crate::kernel::block::counting_device(boot_disk);
-        // Prefer explicit partition discovery first, then fall back to the
-        // legacy fixed zone layout for older disk images.
+        // The partition path first: a table that names this kernel's zones is
+        // the disk's own answer about where they are.
         if let Some((zone_devices, gpt)) =
             self.boot_disk_zone_devices_from_partitions(boot_disk.clone())?
         {
             self.install_zone_devices(zone_devices)?;
             return Ok(BootDiskLayoutSource::Partitions { gpt });
+        }
+
+        // The partition path did not answer, and *why* decides what runs next.
+        // A disk that carries partition information — entries, a GPT header at
+        // either end, verified or damaged — is a disk something partitioned,
+        // and its table gave those bytes to someone: reading the fixed offsets
+        // over it would mount a stranger's partition as this kernel's own.
+        // Only a disk that answers "nothing here" is the shape the fixed
+        // offsets describe ([RFC
+        // 0027](../../../docs/rfcs/0027-never-mount-a-fixed-offset-over-a-table.md)).
+        if crate::fs::partition::carries_partition_information(boot_disk.as_ref())? {
+            crate::println!(
+                "[fs    ] the boot disk carries a partition table that names no zone of this kernel's; left alone"
+            );
+            return Ok(BootDiskLayoutSource::Foreign);
         }
 
         let zone_devices = self.boot_disk_zone_devices_from_fixed_layout(boot_disk);
@@ -222,19 +237,9 @@ impl FileSystem {
         let Some(system) = crate::fs::system_image::select_system_slot(&slots) else {
             return Ok(None);
         };
-        crate::println!(
-            "[fs    ] system: slot {} active{}",
-            system.name,
-            system
-                .build
-                .map_or_else(alloc::string::String::new, |build| alloc::format!(
-                    " (build {})",
-                    build.generation
-                ))
-        );
 
         // Require every expected zone partition to exist; a partial partition
-        // table should fall back as a whole instead of mixing layouts.
+        // table is refused as a whole instead of mixing layouts.
         let mut zone_devices = Vec::with_capacity(DEFAULT_ZONES.len());
 
         for zone in DEFAULT_ZONES {
@@ -258,6 +263,22 @@ impl FileSystem {
                 ) as Arc<dyn BlockDevice>,
             ));
         }
+
+        // Said only once the whole table has answered: a line about an active
+        // slot is a claim that the boot has a system volume, and a table with
+        // a system entry but no apps or data is refused below and above —
+        // printing it before the loop was a boot that named a slot it then
+        // did not use.
+        crate::println!(
+            "[fs    ] system: slot {} active{}",
+            system.name,
+            system
+                .build
+                .map_or_else(alloc::string::String::new, |build| alloc::format!(
+                    " (build {})",
+                    build.generation
+                ))
+        );
 
         Ok(Some((zone_devices, gpt)))
     }

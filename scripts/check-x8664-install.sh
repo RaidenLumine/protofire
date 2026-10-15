@@ -356,9 +356,111 @@ require_log_line "[user  ] loaded /apps/packages/shell/bin/shell.elf"
 require_log_line "install-check-answered"
 grep -F "[FATAL]" "$blank_log" >/dev/null 2>&1 && fail "the blank-disk boot reported a fatal error"
 
+# ── A disk whose table is not this kernel's is left alone ───────────────
+#
+# The case a real machine walks into: the boot disk is the machine's own,
+# its partition table is a tool's and names no zone, and the demo image's
+# bytes happen to sit at the fixed offsets underneath.  Reading those offsets
+# would mount the machine's first partition as this kernel's `/apps` and
+# `/data` — writable — so the boot must refuse instead
+# ([RFC 0027](../../docs/rfcs/0027-never-mount-a-fixed-offset-over-a-table.md)).
+foreign="$work/foreign.img"
+dd if=/dev/zero of="$foreign" bs=1M count="$DISK_MIB" status=none 2>/dev/null \
+    || dd if=/dev/zero of="$foreign" bs=1048576 count="$DISK_MIB" 2>/dev/null
+"$CARGO" run --offline --quiet -- mkimage "$work/demo.img" >/dev/null 2>&1
+dd if="$work/demo.img" of="$foreign" conv=notrunc status=none
+# Replace the demo's own table with a stranger's: sgdisk zaps the MBR and
+# writes a fresh GPT whose one entry is a Linux filesystem.
+"$SGDISK" -Z "$foreign" >/dev/null 2>&1
+"$SGDISK" -n 1:2048:+60M -t 1:0FC63DAF-8483-4772-8E79-3D69D8477DE4 \
+    -c 1:stranger "$foreign" >>"$work/sgdisk.log" 2>&1 \
+    || { cat "$work/sgdisk.log" >&2; fail "sgdisk could not make the foreign disk"; }
+
+foreign_log="$work/foreign-boot.log"
+set +e
+timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine q35 \
+    -cpu max \
+    -smp 1 \
+    -m 1G \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -no-reboot \
+    -no-shutdown \
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+    -drive "file=$foreign,if=none,id=nvme0,format=raw" \
+    -device nvme,drive=nvme0,serial=protofire \
+    -serial file:"$foreign_log" >/dev/null 2>&1
+status=$?
+set -e
+case "$status" in
+    0|124) ;;
+    *)
+        fail "the foreign-table boot exited with status $status"
+        ;;
+esac
+log="$foreign_log"
+require_log_line "[driver] detected boot disk: nvme0"
+require_log_line "[fs    ] the boot disk carries a partition table that names no zone of this kernel's; left alone"
+require_log_line "[fs    ] mounted in-memory demo SimpleFs volumes"
+# And the fixed offsets were *not* read: that line is the defect this section
+# exists for, and it is exactly what the boot printed before the change.
+if grep -F "[fs    ] mounted fixed-zone SimpleFs volumes from ATA boot disk" "$foreign_log" >/dev/null 2>&1; then
+    fail "the boot read the fixed offsets over a stranger's table"
+fi
+
+# ── The same bytes with no table at all still take the fixed offsets ────
+#
+# The other half of the rule, and the half a careless fix would have broken:
+# a disk that carries no partition information anywhere is the shape the
+# fixed offsets describe, and it must still boot them.  LBA 0 (the MBR), LBA
+# 1 (the primary GPT header) and the last block (the backup) are zeroed, which
+# is every place a table could be.
+table_less="$work/table-less.img"
+cp "$foreign" "$table_less"
+dd if=/dev/zero of="$table_less" bs=512 count=2 conv=notrunc status=none
+size_bytes="$(stat -c %s "$table_less" 2>/dev/null || stat -f %z "$table_less")"
+dd if=/dev/zero of="$table_less" bs=512 seek=$((size_bytes / 512 - 1)) \
+    count=1 conv=notrunc status=none
+
+table_less_log="$work/table-less-boot.log"
+set +e
+timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine q35 \
+    -cpu max \
+    -smp 1 \
+    -m 1G \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -no-reboot \
+    -no-shutdown \
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+    -drive "file=$table_less,if=none,id=nvme0,format=raw" \
+    -device nvme,drive=nvme0,serial=protofire \
+    -serial file:"$table_less_log" >/dev/null 2>&1
+status=$?
+set -e
+case "$status" in
+    0|124) ;;
+    *)
+        fail "the table-less boot exited with status $status"
+        ;;
+esac
+log="$table_less_log"
+require_log_line "[driver] detected boot disk: nvme0"
+# The fixed-zone route is the discriminator: the in-memory demo volumes print
+# a different line, and the boot must have mounted the disk's own zones.  The
+# `system: slot ...` line is the partition path's and is correctly absent here.
+require_log_line "[fs    ] mounted fixed-zone SimpleFs volumes from ATA boot disk"
+if grep -F "[fs    ] mounted in-memory demo SimpleFs volumes" "$table_less_log" >/dev/null 2>&1; then
+    fail "the table-less disk fell through to the in-memory demo volumes"
+fi
+
 printf 'x86_64 install check passed: zones installed onto a %s-made disk, the\n' "$SGDISK"
 printf '  stranger partition preserved, the disk booted into the system pair (slot\n'
 printf '  b, build 2) and answered, and a reinstall reused every extent; a blank\n'
 printf '  disk was refused without --new-table, given a fresh GPT with it, and the\n'
-printf '  result booted too; and the confirmation held: plan shown, no and\n'
-printf '  end-of-input wrote nothing, yes wrote the zones\n'
+printf '  result booted too; the confirmation held: plan shown, no and\n'
+printf '  end-of-input wrote nothing, yes wrote the zones; and a disk whose table\n'
+printf '  is a stranger s was left alone while the same bytes with no table at all\n'
+printf '  still took the fixed offsets\n'

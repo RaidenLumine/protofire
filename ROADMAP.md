@@ -143,7 +143,9 @@ The authoritative picture of what exists today is
      tables now, and a GPT partition is a zone of this kernel's only when its
      type GUID says so, which means a **machine's own disk** answers no zones
      and the boot says so rather than mounting a stranger's partition at the
-     wrong offset.  The writer followed: `mkimage gpt` builds the demo disk's
+     wrong offset ([RFC
+     0027](docs/rfcs/0027-never-mount-a-fixed-offset-over-a-table.md) makes
+     that the only route for such a disk).  The writer followed: `mkimage gpt` builds the demo disk's
      zones as a GPT, and `make check-x8664-usb-disk` boots it — the same zones
      in the other table, over USB, with the boot's own line naming the GPT and
      a program read out of `/apps` on it.  The **installation** path has

@@ -88,6 +88,38 @@ impl FileSystem {
                 );
                 StorageInitReport::BootDiskPartitions
             }
+            Some(BootDiskLayoutSource::Foreign) => {
+                // The disk's table was read and it named no zone of this
+                // kernel's.  Nothing was mounted from it, and the fixed
+                // offsets were *not* read over it — the table gave those
+                // bytes to someone else ([RFC
+                // 0027](../../../docs/rfcs/0027-never-mount-a-fixed-offset-over-a-table.md)).
+                // The demo volumes are the fallback the rest of the boot
+                // already has, and this line is what names why.
+                #[cfg(any(feature = "demo-disk", test, not(target_os = "none")))]
+                {
+                    match self.install_demo_memory_layout() {
+                        Ok(()) => {
+                            println!("[fs    ] mounted in-memory demo SimpleFs volumes");
+                            StorageInitReport::BootDiskForeign
+                        }
+                        Err(error) => {
+                            println!(
+                                "[fs    ] failed to mount in-memory demo SimpleFs volumes: {}",
+                                error.as_str()
+                            );
+                            StorageInitReport::Failed {
+                                boot_disk_error,
+                                memory_demo_error: error,
+                            }
+                        }
+                    }
+                }
+                #[cfg(not(any(feature = "demo-disk", test, not(target_os = "none"))))]
+                {
+                    StorageInitReport::BootDiskForeign
+                }
+            }
             Some(BootDiskLayoutSource::FixedZoneFallback) => {
                 crate::print!(
                     "[fs    ] mounted fixed-zone {} volumes from ATA boot disk\n",
