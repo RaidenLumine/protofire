@@ -178,12 +178,20 @@ fn sector_says_gpt(sector: &[u8]) -> bool {
 /// ([RFC 0027](../../docs/rfcs/0027-never-mount-a-fixed-offset-over-a-table.
 /// md)).
 pub fn carries_partition_information(device: &dyn BlockDevice) -> Result<bool> {
-    if device.block_size() != BLOCK_SIZE || device.block_count() == 0 {
+    let mut io = DeviceIo::new(device)?;
+    carries_partition_information_io(&mut io)
+}
+
+/// The block-side spelling of [`carries_partition_information`], which the
+/// install path uses so it reads the same places without holding the disk.
+pub fn carries_partition_information_io(io: &mut dyn BlockIo) -> Result<bool> {
+    let blocks = io.block_count();
+    if blocks == 0 {
         return Ok(false);
     }
 
     let mut sector = [0_u8; BLOCK_SIZE];
-    device.read_blocks(0, &mut sector)?;
+    io.read_blocks(0, &mut sector)?;
     if sector[MBR_SIGNATURE_OFFSET..MBR_SIGNATURE_OFFSET + MBR_SIGNATURE.len()] == MBR_SIGNATURE
         && sector_has_mbr_entries(&sector)
     {
@@ -192,7 +200,7 @@ pub fn carries_partition_information(device: &dyn BlockDevice) -> Result<bool> {
 
     // The GPT's two ends.  A disk of one block has no LBA 1 to read, and one
     // whose last block is the header's own place has no separate backup.
-    if device.block_count() <= GPT_HEADER_LBA {
+    if blocks <= GPT_HEADER_LBA {
         return Ok(false);
     }
     // The primary is checked whether or not LBA 0 was protective: a disk
@@ -200,14 +208,14 @@ pub fn carries_partition_information(device: &dyn BlockDevice) -> Result<bool> {
     // backup is checked for the reason both ends exist — a disk whose
     // primary is destroyed is a repair case, not a blank one ([RFC 0018]).
     let mut primary = [0_u8; BLOCK_SIZE];
-    device.read_blocks(GPT_HEADER_LBA, &mut primary)?;
+    io.read_blocks(GPT_HEADER_LBA, &mut primary)?;
     if sector_says_gpt(&primary) {
         return Ok(true);
     }
-    let last = device.block_count() - 1;
+    let last = blocks - 1;
     if last != GPT_HEADER_LBA {
         let mut backup = [0_u8; BLOCK_SIZE];
-        device.read_blocks(last, &mut backup)?;
+        io.read_blocks(last, &mut backup)?;
         if sector_says_gpt(&backup) {
             return Ok(true);
         }
@@ -489,9 +497,229 @@ pub fn read_partitions(device: &dyn BlockDevice) -> Result<Option<PartitionTable
     device.read_blocks(0, &mut sector)?;
 
     if protective_sector(&sector) {
-        return Ok(read_gpt_partitions(device)?.map(PartitionTable::Gpt));
+        let mut gpt = DeviceIo::new(device)?;
+        return Ok(read_gpt_io(&mut gpt)?.map(PartitionTable::Gpt));
     }
     Ok(parse_mbr_sector(&sector).map(PartitionTable::Mbr))
+}
+
+/// Blocks a table's readers and writers need, addressed by block number.
+///
+/// The install path and the boot path both work on a disk whose size is the
+/// disk's own — a machine's volume is hundreds of gigabytes, and a reader
+/// that had to hold it would be a reader that cannot read a machine's disk
+/// ([RFC
+/// 0028](../../docs/rfcs/0028-install-through-a-device-not-an-image.md)).
+/// Everything the format needs is a handful of blocks: LBA 0, LBA 1, the
+/// entry array (16 KiB for the usual table) and the disk's last block.  This
+/// trait is that access, small enough to have two implementations — one over
+/// a device, one over an image a caller already holds.
+pub trait BlockIo {
+    /// The disk's size, in blocks.
+    fn block_count(&self) -> u64;
+    /// Read `buffer.len() / BLOCK_SIZE` blocks starting at `lba`.
+    fn read_blocks(&mut self, lba: u64, buffer: &mut [u8]) -> Result<()>;
+    /// Write `data.len() / BLOCK_SIZE` blocks starting at `lba`.
+    fn write_blocks(&mut self, lba: u64, data: &[u8]) -> Result<()>;
+}
+
+/// A block device as block I/O.
+///
+/// The device's own contract — whole blocks, a run in one call — is the
+/// trait's, so this adds nothing but the spelling.
+pub struct DeviceIo<'a>(&'a dyn BlockDevice);
+
+impl<'a> DeviceIo<'a> {
+    /// As much block I/O as `device` can carry.
+    ///
+    /// A device whose block size is not the format's, or one with no blocks
+    /// at all, is refused here rather than producing a table at the wrong
+    /// granularity.
+    pub fn new(device: &'a dyn BlockDevice) -> Result<Self> {
+        if device.block_size() != BLOCK_SIZE || device.block_count() == 0 {
+            return Err(Error::InvalidArgument);
+        }
+        Ok(Self(device))
+    }
+}
+
+impl BlockIo for DeviceIo<'_> {
+    fn block_count(&self) -> u64 {
+        self.0.block_count()
+    }
+
+    fn read_blocks(&mut self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+        self.0.read_blocks(lba, buffer)
+    }
+
+    fn write_blocks(&mut self, lba: u64, data: &[u8]) -> Result<()> {
+        self.0.write_blocks(lba, data)
+    }
+}
+
+/// An image in memory as block I/O.
+///
+/// This is what `mkimage`, the demo builder and the tests hold, and it is
+/// the same trait the device path speaks: one implementation of the format's
+/// reads and writes runs over both.
+pub struct SliceIo<'a>(&'a mut [u8]);
+
+impl<'a> SliceIo<'a> {
+    /// An image whose length is a whole number of the format's blocks.
+    pub fn new(image: &'a mut [u8]) -> Result<Self> {
+        if image.is_empty() || !image.len().is_multiple_of(BLOCK_SIZE) {
+            return Err(Error::InvalidArgument);
+        }
+        Ok(Self(image))
+    }
+}
+
+/// A read-only image, for the readers.
+///
+/// The byte readers answer "no table" for an image that is not a whole
+/// number of blocks or too short to hold one, which is what they have always
+/// answered; a caller that is *writing* asks [`SliceIo::new`] and gets the
+/// refusal instead.
+pub struct SliceReader<'a>(&'a [u8]);
+
+impl<'a> SliceReader<'a> {
+    /// The image as block I/O, or `None` when it cannot be one.
+    pub fn new(disk: &'a [u8]) -> Option<Self> {
+        if disk.len() < BLOCK_SIZE || !disk.len().is_multiple_of(BLOCK_SIZE) {
+            return None;
+        }
+        Some(Self(disk))
+    }
+}
+
+impl BlockIo for SliceReader<'_> {
+    fn block_count(&self) -> u64 {
+        (self.0.len() / BLOCK_SIZE) as u64
+    }
+
+    fn read_blocks(&mut self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+        if !buffer.len().is_multiple_of(BLOCK_SIZE) {
+            return Err(Error::InvalidArgument);
+        }
+        let at = (lba as usize)
+            .checked_mul(BLOCK_SIZE)
+            .ok_or(Error::InvalidArgument)?;
+        let end = at.checked_add(buffer.len()).ok_or(Error::InvalidArgument)?;
+        let Some(bytes) = self.0.get(at..end) else {
+            return Err(Error::InvalidArgument);
+        };
+        buffer.copy_from_slice(bytes);
+        Ok(())
+    }
+
+    fn write_blocks(&mut self, _lba: u64, _data: &[u8]) -> Result<()> {
+        Err(Error::PermissionDenied)
+    }
+}
+
+impl BlockIo for SliceIo<'_> {
+    fn block_count(&self) -> u64 {
+        (self.0.len() / BLOCK_SIZE) as u64
+    }
+
+    fn read_blocks(&mut self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+        if !buffer.len().is_multiple_of(BLOCK_SIZE) {
+            return Err(Error::InvalidArgument);
+        }
+        let at = (lba as usize)
+            .checked_mul(BLOCK_SIZE)
+            .ok_or(Error::InvalidArgument)?;
+        let end = at.checked_add(buffer.len()).ok_or(Error::InvalidArgument)?;
+        let Some(bytes) = self.0.get(at..end) else {
+            return Err(Error::InvalidArgument);
+        };
+        buffer.copy_from_slice(bytes);
+        Ok(())
+    }
+
+    fn write_blocks(&mut self, lba: u64, data: &[u8]) -> Result<()> {
+        if !data.len().is_multiple_of(BLOCK_SIZE) {
+            return Err(Error::InvalidArgument);
+        }
+        let at = (lba as usize)
+            .checked_mul(BLOCK_SIZE)
+            .ok_or(Error::InvalidArgument)?;
+        let end = at.checked_add(data.len()).ok_or(Error::InvalidArgument)?;
+        let Some(bytes) = self.0.get_mut(at..end) else {
+            return Err(Error::InvalidArgument);
+        };
+        bytes.copy_from_slice(data);
+        Ok(())
+    }
+}
+
+/// The GPT `io` carries, parsed and verified, or `None` when there is none.
+///
+/// The one reader, over whatever block access the caller has.  Both of the
+/// format's checksums are verified — the header's over the header with its
+/// own CRC field taken as zero, and the array's over the entries as they lie
+/// — because the alternative is handing a caller offsets out of bytes nobody
+/// vouched for, and a volume mounted at the wrong offset is the one failure
+/// a filesystem cannot report.  The array's size is bounded by
+/// [`GPT_ENTRIES_MAX_BYTES`], which the slice path got from its own extent
+/// and a device path has to state.
+pub fn read_gpt_io(io: &mut dyn BlockIo) -> Result<Option<Vec<GptPartitionEntry>>> {
+    let total_blocks = io.block_count();
+    if total_blocks <= GPT_HEADER_LBA {
+        return Ok(None);
+    }
+
+    let mut header = [0_u8; BLOCK_SIZE];
+    io.read_blocks(GPT_HEADER_LBA, &mut header)?;
+    let Some(info) = gpt_header_info(&header) else {
+        return Ok(None);
+    };
+
+    let array_bytes = info.entry_count * info.entry_size;
+    if array_bytes > GPT_ENTRIES_MAX_BYTES {
+        return Ok(None);
+    }
+    // The array is read in whole blocks, since that is what both a device
+    // and the format's own layout answer; the checksum covers the entries
+    // and not the padding after them.
+    let blocks = array_bytes.div_ceil(BLOCK_SIZE);
+    let mut raw = vec![0_u8; blocks * BLOCK_SIZE];
+    io.read_blocks(info.entries_lba, &mut raw)?;
+    if crc32(&raw[..array_bytes]) != info.entries_crc {
+        return Ok(None);
+    }
+
+    Ok(Some(parse_gpt_entries(
+        &raw[..array_bytes],
+        info.entry_count,
+        info.entry_size,
+    )))
+}
+
+/// The layout and entries `io` carries, or `None` when its first two blocks
+/// do not hold a verified table.
+pub fn read_gpt_layout_io(
+    io: &mut dyn BlockIo,
+) -> Result<Option<(GptLayout, Vec<GptPartitionEntry>)>> {
+    let total_blocks = io.block_count();
+    if total_blocks <= GPT_HEADER_LBA {
+        return Ok(None);
+    }
+    let mut header = [0_u8; BLOCK_SIZE];
+    io.read_blocks(GPT_HEADER_LBA, &mut header)?;
+    let Some(info) = gpt_header_info(&header) else {
+        return Ok(None);
+    };
+    let Some(entries) = read_gpt_io(io)? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        GptLayout {
+            first_usable_lba: info.first_usable_lba,
+            last_usable_lba: info.last_usable_lba,
+        },
+        entries,
+    )))
 }
 
 /// The GPT `device` carries, or `None` when there is none to read.
@@ -502,31 +730,8 @@ pub fn read_partitions(device: &dyn BlockDevice) -> Result<Option<PartitionTable
 /// nobody vouched for, and a volume mounted at the wrong offset is the one
 /// failure a filesystem cannot report.
 pub fn read_gpt_partitions(device: &dyn BlockDevice) -> Result<Option<Vec<GptPartitionEntry>>> {
-    if device.block_size() != BLOCK_SIZE || device.block_count() <= GPT_HEADER_LBA {
-        return Ok(None);
-    }
-
-    let mut header = [0_u8; BLOCK_SIZE];
-    device.read_blocks(GPT_HEADER_LBA, &mut header)?;
-    let Some(info) = gpt_header_info(&header) else {
-        return Ok(None);
-    };
-
-    // The array is read in whole blocks, since that is what a device answers;
-    // the checksum covers the entries and not the padding after them.
-    let array_bytes = info.entry_count * info.entry_size;
-    let blocks = array_bytes.div_ceil(BLOCK_SIZE);
-    let mut raw = vec![0_u8; blocks * BLOCK_SIZE];
-    device.read_blocks(info.entries_lba, &mut raw)?;
-    if crc32(&raw[..array_bytes]) != info.entries_crc {
-        return Ok(None);
-    }
-
-    Ok(Some(parse_gpt_entries(
-        &raw[..array_bytes],
-        info.entry_count,
-        info.entry_size,
-    )))
+    let mut io = DeviceIo::new(device)?;
+    read_gpt_io(&mut io)
 }
 
 /// Write a GPT over `disk`, with the partitions given as
@@ -541,18 +746,31 @@ pub fn write_gpt_partitions(
     disk: &mut [u8],
     partitions: &[(usize, [u8; 16], u64, u64)],
 ) -> Result<()> {
-    if disk.len() < BLOCK_SIZE {
-        return Err(Error::InvalidArgument);
-    }
+    let mut io = SliceIo::new(disk)?;
+    write_gpt_partitions_io(&mut io, partitions)
+}
 
-    let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
+/// The fresh-table write, over whatever block access the caller has.
+///
+/// [`write_gpt_partitions`] is this over an image a caller holds; the
+/// device-side spelling is the same call with a device's [`BlockIo`], which
+/// is what lets an install onto a machine's disk be one implementation of
+/// the format ([RFC
+/// 0028](../../docs/rfcs/0028-install-through-a-device-not-an-image.md)).
+pub fn write_gpt_partitions_io(
+    io: &mut dyn BlockIo,
+    partitions: &[(usize, [u8; 16], u64, u64)],
+) -> Result<()> {
+    let total_blocks = io.block_count();
     // The span a fresh table gives the disk, from the same function an
     // installer plans its placements with — so the plan and the table agree
     // by construction rather than by arithmetic written twice.
     let layout = fresh_gpt_layout(total_blocks)?;
     let last_block = total_blocks - 1;
 
-    write_protective_mbr(disk, total_blocks);
+    let mut mbr = [0_u8; BLOCK_SIZE];
+    write_protective_mbr(&mut mbr, total_blocks);
+    io.write_blocks(0, &mbr)?;
 
     // The entry array, in the block after the header.
     let entries_lba = GPT_HEADER_LBA + 1;
@@ -579,10 +797,8 @@ pub fn write_gpt_partitions(
     }
     let array_crc = crc32(&array);
 
-    let primary_at = entries_lba as usize * BLOCK_SIZE;
-    disk[primary_at..primary_at + array_bytes].copy_from_slice(&array);
-    let backup_at = backup_entries_lba as usize * BLOCK_SIZE;
-    disk[backup_at..backup_at + array_bytes].copy_from_slice(&array);
+    io.write_blocks(entries_lba, &array)?;
+    io.write_blocks(backup_entries_lba, &array)?;
 
     let geometry = GptGeometry::fresh(layout);
     let header = gpt_header(
@@ -592,8 +808,7 @@ pub fn write_gpt_partitions(
         array_crc,
         &geometry,
     );
-    let at = GPT_HEADER_LBA as usize * BLOCK_SIZE;
-    disk[at..at + BLOCK_SIZE].copy_from_slice(&header);
+    io.write_blocks(GPT_HEADER_LBA, &header)?;
     let backup = gpt_header(
         last_block,
         GPT_HEADER_LBA,
@@ -601,8 +816,7 @@ pub fn write_gpt_partitions(
         array_crc,
         &geometry,
     );
-    let at = last_block as usize * BLOCK_SIZE;
-    disk[at..at + BLOCK_SIZE].copy_from_slice(&backup);
+    io.write_blocks(last_block, &backup)?;
 
     Ok(())
 }
@@ -670,31 +884,11 @@ pub fn fresh_gpt_layout(total_blocks: u64) -> Result<GptLayout> {
 /// disk as bytes, and it is the check that decides whether an install may
 /// proceed: no verified table means nothing to preserve.
 pub fn read_gpt_from_bytes(disk: &[u8]) -> Result<Option<Vec<GptPartitionEntry>>> {
-    let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
-    if total_blocks <= GPT_HEADER_LBA {
-        return Ok(None);
-    }
-    let at = GPT_HEADER_LBA as usize * BLOCK_SIZE;
-    let mut header = [0_u8; BLOCK_SIZE];
-    header.copy_from_slice(&disk[at..at + BLOCK_SIZE]);
-    let Some(info) = gpt_header_info(&header) else {
-        return Ok(None);
+    let mut io = match SliceReader::new(disk) {
+        Some(io) => io,
+        None => return Ok(None),
     };
-
-    let array_bytes = info.entry_count * info.entry_size;
-    let array_at = info.entries_lba as usize * BLOCK_SIZE;
-    let Some(raw) = disk.get(array_at..array_at + array_bytes) else {
-        return Ok(None);
-    };
-    if crc32(&raw[..array_bytes]) != info.entries_crc {
-        return Ok(None);
-    }
-
-    Ok(Some(parse_gpt_entries(
-        raw,
-        info.entry_count,
-        info.entry_size,
-    )))
+    read_gpt_io(&mut io)
 }
 
 /// The span a GPT image's entries may live in, for a writer that has to plan
@@ -715,26 +909,11 @@ pub struct GptLayout {
 pub fn read_gpt_layout_from_bytes(
     disk: &[u8],
 ) -> Result<Option<(GptLayout, Vec<GptPartitionEntry>)>> {
-    let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
-    if total_blocks <= GPT_HEADER_LBA {
-        return Ok(None);
-    }
-    let at = GPT_HEADER_LBA as usize * BLOCK_SIZE;
-    let mut header = [0_u8; BLOCK_SIZE];
-    header.copy_from_slice(&disk[at..at + BLOCK_SIZE]);
-    let Some(info) = gpt_header_info(&header) else {
-        return Ok(None);
+    let mut io = match SliceReader::new(disk) {
+        Some(io) => io,
+        None => return Ok(None),
     };
-    let Some(entries) = read_gpt_from_bytes(disk)? else {
-        return Ok(None);
-    };
-    Ok(Some((
-        GptLayout {
-            first_usable_lba: info.first_usable_lba,
-            last_usable_lba: info.last_usable_lba,
-        },
-        entries,
-    )))
+    read_gpt_layout_io(&mut io)
 }
 
 /// Rewrite `disk`'s GPT so that `zone_entries` replace this kernel's own
@@ -755,7 +934,22 @@ pub fn write_gpt_preserving(
     disk: &mut [u8],
     zone_entries: &[([u8; 16], u64, u64)],
 ) -> Result<Vec<GptPartitionEntry>> {
-    let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
+    let mut io = SliceIo::new(disk)?;
+    write_gpt_preserving_io(&mut io, zone_entries)
+}
+
+/// The preserving write, over whatever block access the caller has.
+///
+/// [`write_gpt_preserving`] is this over an image a caller holds; the
+/// device-side spelling is the same call with a device's [`BlockIo`], which
+/// is what lets an install onto a machine's own disk be one implementation
+/// of the format ([RFC
+/// 0028](../../docs/rfcs/0028-install-through-a-device-not-an-image.md)).
+pub fn write_gpt_preserving_io(
+    io: &mut dyn BlockIo,
+    zone_entries: &[([u8; 16], u64, u64)],
+) -> Result<Vec<GptPartitionEntry>> {
+    let total_blocks = io.block_count();
     if total_blocks < 2 * GPT_RESERVED_BLOCKS + 1 {
         return Err(Error::InvalidArgument);
     }
@@ -764,12 +958,11 @@ pub fn write_gpt_preserving(
     // A disk with no verified GPT is one this writer does not touch:
     // installing onto it is a partitioning decision, and a wrong one is not
     // one this kernel's reader can walk back.
-    if read_gpt_from_bytes(disk)?.is_none() {
+    if read_gpt_io(io)?.is_none() {
         return Err(Error::NotFound);
     }
-    let at = GPT_HEADER_LBA as usize * BLOCK_SIZE;
     let mut header = [0_u8; BLOCK_SIZE];
-    header.copy_from_slice(&disk[at..at + BLOCK_SIZE]);
+    io.read_blocks(GPT_HEADER_LBA, &mut header)?;
     let info = gpt_header_info(&header).ok_or(Error::InvalidArgument)?;
     let geometry = GptGeometry {
         first_usable_lba: info.first_usable_lba,
@@ -783,9 +976,8 @@ pub fn write_gpt_preserving(
     // back byte for byte: a partition this kernel has no name for keeps its
     // type GUID, its name, its attributes and its extent.
     let array_bytes = geometry.entry_count * geometry.entry_size;
-    let array_at = info.entries_lba as usize * BLOCK_SIZE;
     let mut array = vec![0_u8; array_bytes];
-    array.copy_from_slice(&disk[array_at..array_at + array_bytes]);
+    io.read_blocks(info.entries_lba, &mut array)?;
 
     // Where each zone lands: an entry already carrying the zone's type GUID is
     // replaced in place — a reinstall keeps the slots the disk's own table
@@ -818,7 +1010,7 @@ pub fn write_gpt_preserving(
         array[at + 40..at + 48].copy_from_slice(&last_lba.to_le_bytes());
     }
     let array_crc = crc32(&array);
-    disk[array_at..array_at + array_bytes].copy_from_slice(&array);
+    io.write_blocks(info.entries_lba, &array)?;
 
     // The backup pair: the entry array at whatever LBA the disk's own backup
     // header names — a table another tool wrote may have placed it somewhere
@@ -826,15 +1018,13 @@ pub fn write_gpt_preserving(
     // backup header at the disk's last block, which is where the format and
     // the reader both look.  A backup no reader would believe is replaced by
     // the format's own placement.
-    let backup_header_at = last_block as usize * BLOCK_SIZE;
     let mut backup_header = [0_u8; BLOCK_SIZE];
-    backup_header.copy_from_slice(&disk[backup_header_at..backup_header_at + BLOCK_SIZE]);
+    io.read_blocks(last_block, &mut backup_header)?;
     let backup_entries_lba = match gpt_header_info(&backup_header) {
         Some(backup) => backup.entries_lba,
         None => last_block - (array_bytes / BLOCK_SIZE) as u64,
     };
-    let backup_array_at = backup_entries_lba as usize * BLOCK_SIZE;
-    disk[backup_array_at..backup_array_at + array_bytes].copy_from_slice(&array);
+    io.write_blocks(backup_entries_lba, &array)?;
 
     let header = gpt_header(
         GPT_HEADER_LBA,
@@ -843,7 +1033,7 @@ pub fn write_gpt_preserving(
         array_crc,
         &geometry,
     );
-    disk[at..at + BLOCK_SIZE].copy_from_slice(&header);
+    io.write_blocks(GPT_HEADER_LBA, &header)?;
     let backup = gpt_header(
         last_block,
         GPT_HEADER_LBA,
@@ -851,11 +1041,13 @@ pub fn write_gpt_preserving(
         array_crc,
         &geometry,
     );
-    disk[backup_header_at..backup_header_at + BLOCK_SIZE].copy_from_slice(&backup);
+    io.write_blocks(last_block, &backup)?;
 
-    write_protective_mbr(disk, total_blocks);
+    let mut mbr = [0_u8; BLOCK_SIZE];
+    write_protective_mbr(&mut mbr, total_blocks);
+    io.write_blocks(0, &mbr)?;
 
-    read_gpt_from_bytes(disk).map(|entries| entries.unwrap_or_default())
+    read_gpt_io(io).map(|entries| entries.unwrap_or_default())
 }
 
 /// One GPT header, checksummed the way [`read_gpt_partitions`] verifies it: the
@@ -1013,17 +1205,24 @@ const GPT_DISK_GUID: [u8; 16] = [
     0x50, 0x52, 0x54, 0x4f, 0x46, 0x49, 0x52, 0x45, 0x00, 0x00, 0x44, 0x69, 0x73, 0x6b, 0x00, 0x00,
 ];
 
-/// Write the protective MBR over a disk's first sector: the format's
+/// Write the protective MBR into one sector's worth of bytes: the format's
 /// signature, and one entry of the protective type covering the disk from the
 /// header's own LBA.  The rest of the sector is zeroed, because a boot sector
 /// that keeps an old table is a boot sector a reader may believe.
-fn write_protective_mbr(disk: &mut [u8], total_blocks: u64) {
+///
+/// The buffer is a sector rather than the disk for the reason the block path
+/// exists: a writer that had to hold the disk would be a writer that cannot
+/// write a machine's own disk
+/// ([RFC 0028](../../docs/rfcs/0028-install-through-a-device-not-an-image.md)).
+/// `total_blocks` is passed for the entry's covered range, which is the one
+/// field that needs the disk's size.
+fn write_protective_mbr(sector: &mut [u8], total_blocks: u64) {
     let last_block = total_blocks - 1;
-    disk[..BLOCK_SIZE].fill(0);
-    disk[MBR_SIGNATURE_OFFSET] = MBR_SIGNATURE[0];
-    disk[MBR_SIGNATURE_OFFSET + 1] = MBR_SIGNATURE[1];
+    sector[..BLOCK_SIZE].fill(0);
+    sector[MBR_SIGNATURE_OFFSET] = MBR_SIGNATURE[0];
+    sector[MBR_SIGNATURE_OFFSET + 1] = MBR_SIGNATURE[1];
     let covered = u32::try_from(last_block.min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
-    let protective = &mut disk[MBR_PARTITION_TABLE_OFFSET..MBR_PARTITION_TABLE_OFFSET + 16];
+    let protective = &mut sector[MBR_PARTITION_TABLE_OFFSET..MBR_PARTITION_TABLE_OFFSET + 16];
     protective[4] = MBR_PROTECTIVE_TYPE;
     protective[8..12].copy_from_slice(&(GPT_HEADER_LBA as u32).to_le_bytes());
     protective[12..16].copy_from_slice(&covered.to_le_bytes());

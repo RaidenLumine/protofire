@@ -447,6 +447,18 @@ not a partition.  `read_partitions` is the entry point both the boot and the
 system pair go through, and it answers a `PartitionTable` — either table's
 entries, with the same `start_block`/`block_count`/kind view on top.
 
+Every reader and writer here works over **block I/O** (`BlockIo`): the format
+needs a handful of blocks — LBA 0, LBA 1, the entry array, the disk's last
+block — and never the disk, so the same code reads a machine's volume through
+a device (`DeviceIo`) and an image through a slice (`SliceIo`).  The
+installer is where that matters: `install` adds this kernel's zones to a
+disk a machine already has without holding the disk, so it works on a 2 TiB
+volume and on the machine it is installing
+([RFC 0028](../rfcs/0028-install-through-a-device-not-an-image.md)).  What a
+boot does with a table that names no zone of this kernel's is
+[RFC 0027](../rfcs/0027-never-mount-a-fixed-offset-over-a-table.md)'s: it is
+left alone.
+
 The pair is `src/fs/system_image.rs`'s subject.  Each system volume carries a
 build marker at `/etc/build` (`SYSTEM_BUILD_MARKER_PATH`) written in a fixed
 format with a generation.  `system_slots` reads a build from each system

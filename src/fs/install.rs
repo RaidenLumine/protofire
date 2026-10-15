@@ -54,15 +54,16 @@ use alloc::vec::Vec;
 use super::block::BLOCK_SIZE;
 use super::demo::build_zone_image;
 use super::layout::StorageZone;
+use super::partition::carries_partition_information_io;
 use super::partition::fresh_gpt_layout;
-use super::partition::gpt_signature_present;
-use super::partition::mbr_has_partitions;
-use super::partition::read_gpt_from_bytes;
-use super::partition::read_gpt_layout_from_bytes;
-use super::partition::write_gpt_partitions;
-use super::partition::write_gpt_preserving;
+use super::partition::read_gpt_io;
+use super::partition::read_gpt_layout_io;
+use super::partition::write_gpt_partitions_io;
+use super::partition::write_gpt_preserving_io;
+use super::partition::BlockIo;
 use super::partition::GptLayout;
 use super::partition::GptPartitionEntry;
+use super::partition::SliceIo;
 use crate::Error;
 use crate::Result;
 
@@ -273,7 +274,23 @@ pub struct InstallPlan {
 /// promise the install keeps: the same call on the same bytes writes what the
 /// plan names.
 pub fn plan_zones_into_disk_image(disk: &[u8], may_create: bool) -> Result<InstallPlan> {
-    let (layout, existing, created_table) = read_or_create(disk, may_create)?;
+    let mut io = match super::partition::SliceReader::new(disk) {
+        Some(io) => io,
+        None => return Err(Error::NotFound),
+    };
+    plan_zones_into_io(&mut io, may_create)
+}
+
+/// Plan an install over a device: the same reads and the same placement as
+/// [`install_zones_into_device`], stopped short of every write.
+pub fn plan_zones_into_device(io: &mut dyn BlockIo, may_create: bool) -> Result<InstallPlan> {
+    plan_zones_into_io(io, may_create)
+}
+
+/// The one plan both spellings share, over whatever block access the caller
+/// has.
+pub fn plan_zones_into_io(io: &mut dyn BlockIo, may_create: bool) -> Result<InstallPlan> {
+    let (layout, existing, created_table) = read_or_create(io, may_create)?;
     let zones = place_zones(&layout, &existing)?;
     // What is kept is every in-use entry the install did not take a placement
     // on — by **extent**, not by type: a zone's entry is the one its extent
@@ -301,23 +318,22 @@ pub fn plan_zones_into_disk_image(disk: &[u8], may_create: bool) -> Result<Insta
 /// where `may_create` says the caller asked for one — the fresh layout a
 /// blank disk would get.  Everything else is `NotFound`.
 fn read_or_create(
-    disk: &[u8],
+    io: &mut dyn BlockIo,
     may_create: bool,
 ) -> Result<(GptLayout, Vec<GptPartitionEntry>, bool)> {
-    match read_gpt_layout_from_bytes(disk)? {
+    match read_gpt_layout_io(io)? {
         Some((layout, entries)) => Ok((layout, entries, false)),
         None => {
             // A fresh table is for a disk that carries none.  What "carries
-            // none" means is stated by the two partition-side questions:
-            // MBR entries of any type (a protective one included) and a GPT
-            // signature are both something already there, and something
-            // there is the flagless route's refusal to make again — not this
+            // none" means is stated by the partition-side question the boot
+            // asks too: entries, a GPT header at either end, verified or
+            // damaged, are something already there — and something there is
+            // the flagless route's refusal to make again, not this
             // function's to overrule.
-            if !may_create || mbr_has_partitions(disk) || gpt_signature_present(disk) {
+            if !may_create || carries_partition_information_io(io)? {
                 return Err(Error::NotFound);
             }
-            let total_blocks = (disk.len() / BLOCK_SIZE) as u64;
-            Ok((fresh_gpt_layout(total_blocks)?, Vec::new(), true))
+            Ok((fresh_gpt_layout(io.block_count())?, Vec::new(), true))
         }
     }
 }
@@ -328,7 +344,19 @@ fn read_or_create(
 /// disk a machine already has, and inventing a table is not its job.  See the
 /// module comment for the order of operations.
 pub fn install_zones_into_disk_image(disk: &mut [u8]) -> Result<InstallReport> {
-    install_zones(disk, false)
+    let mut io = SliceIo::new(disk)?;
+    install_zones_io(&mut io, false)
+}
+
+/// Install this kernel's zones onto the GPT **device** `io` names.
+///
+/// The device-side spelling of [`install_zones_into_disk_image`], and the
+/// one a machine's own disk takes: the whole install reads and writes blocks
+/// — the table, the extents — so a disk of any size costs a few blocks of
+/// memory rather than the disk ([RFC
+/// 0028](../../docs/rfcs/0028-install-through-a-device-not-an-image.md)).
+pub fn install_zones_into_device(io: &mut dyn BlockIo) -> Result<InstallReport> {
+    install_zones_io(io, false)
 }
 
 /// Install this kernel's zones onto `disk`, writing a **fresh GPT** first
@@ -348,13 +376,20 @@ pub fn install_zones_into_disk_image(disk: &mut [u8]) -> Result<InstallReport> {
 /// Erasing a partitioned disk is a decision with no undo, and this module
 /// only ever makes it about bytes that are not one.
 pub fn install_zones_into_blank_disk_image(disk: &mut [u8]) -> Result<InstallReport> {
-    install_zones(disk, true)
+    let mut io = SliceIo::new(disk)?;
+    install_zones_io(&mut io, true)
+}
+
+/// The blank-disk route over a device, the spelling the host's `install`
+/// uses when `--new-table` is given.
+pub fn install_zones_into_blank_device(io: &mut dyn BlockIo) -> Result<InstallReport> {
+    install_zones_io(io, true)
 }
 
 /// The one install path both entry points share: `may_create` is whether a
 /// fresh table may be written when the disk carries none.
-fn install_zones(disk: &mut [u8], may_create: bool) -> Result<InstallReport> {
-    let (layout, existing, created_table) = read_or_create(disk, may_create)?;
+fn install_zones_io(io: &mut dyn BlockIo, may_create: bool) -> Result<InstallReport> {
+    let (layout, existing, created_table) = read_or_create(io, may_create)?;
 
     let placed = place_zones(&layout, &existing)?;
 
@@ -374,9 +409,19 @@ fn install_zones(disk: &mut [u8], may_create: bool) -> Result<InstallReport> {
         if image.len() > capacity {
             return Err(Error::NoSpace);
         }
-        let at = zone.first_block as usize * BLOCK_SIZE;
-        disk[at..at + capacity].fill(0);
-        disk[at..at + image.len()].copy_from_slice(&image);
+        // The extent is zeroed in whole blocks and the image lands in the
+        // first of them: a grown or shrunken zone cannot leave a stale tail
+        // for a reader to believe, and the write is the same read-then-write
+        // pair whatever the block access is.
+        let blocks = (capacity / BLOCK_SIZE) as u64;
+        let mut run = alloc::vec![0_u8; capacity];
+        run[..image.len()].copy_from_slice(&image);
+        io.write_blocks(zone.first_block, &run)?;
+        // A trailing partial block, when the extent is not a whole number of
+        // them: the format's own tables are block-aligned, so this is the
+        // last block of a zone extent whose size the demo chose.
+        let written = capacity as u64 / BLOCK_SIZE as u64;
+        debug_assert_eq!(blocks, written);
         zone_entries.push((zone.zone.gpt_type_guid(), zone.first_block, zone.last_block));
     }
 
@@ -400,10 +445,10 @@ fn install_zones(disk: &mut [u8], may_create: bool) -> Result<InstallReport> {
                 )
             })
             .collect();
-        write_gpt_partitions(disk, &table)?;
-        read_gpt_from_bytes(disk)?.ok_or(Error::InternalError)?
+        write_gpt_partitions_io(io, &table)?;
+        read_gpt_io(io)?.ok_or(Error::InternalError)?
     } else {
-        write_gpt_preserving(disk, &zone_entries)?
+        write_gpt_preserving_io(io, &zone_entries)?
     };
 
     Ok(InstallReport {
@@ -895,5 +940,69 @@ mod tests {
             report.zones.len() + 1,
             "the stranger plus the zones, and nothing else"
         );
+    }
+
+    /// The device-side install and the image-side install write the same
+    /// bytes.
+    ///
+    /// This is the whole of the change's claim: a machine's disk is read and
+    /// written in blocks, and the result must be the disk the byte API
+    /// produced — same entries, same volumes, same protective MBR.  Anything
+    /// else and the install onto a real disk would be a second layout
+    /// ([RFC 0028](../../../docs/rfcs/
+    /// 0028-install-through-a-device-not-an-image.md)).
+    #[test]
+    fn a_device_install_writes_the_same_bytes_as_an_image_install() {
+        use crate::fs::block::BlockDevice;
+        use crate::fs::block::MemoryBlockDevice;
+
+        // The same starting disk through both paths.
+        let mut by_bytes = machine_disk();
+        let bytes_report = install_zones_into_disk_image(&mut by_bytes).expect("the image install");
+
+        let device = MemoryBlockDevice::new("install-target", machine_disk(), false);
+        let mut io =
+            super::super::partition::DeviceIo::new(device.as_ref()).expect("the device is blocks");
+        let device_report = super::install_zones_into_device(&mut io).expect("the device install");
+
+        assert_eq!(bytes_report.zones, device_report.zones);
+        assert_eq!(bytes_report.entries, device_report.entries);
+        assert!(!bytes_report.created_table && !device_report.created_table);
+
+        // And the bytes: the device's own image, read back, is the image the
+        // byte path left.
+        let mut after = alloc::vec![0_u8; by_bytes.len()];
+        device
+            .read_blocks(0, &mut after)
+            .expect("read the device back");
+        assert_eq!(after, by_bytes, "the two installs produced different disks");
+    }
+
+    /// The blank-disk route is the same claim on the fresh-table path: the
+    /// flagged install onto a device writes what the flagged install onto an
+    /// image writes.
+    #[test]
+    fn a_device_blank_install_writes_the_same_bytes_as_an_image_blank_install() {
+        use crate::fs::block::BlockDevice;
+        use crate::fs::block::MemoryBlockDevice;
+
+        let mut by_bytes = vec![0_u8; DISK_BLOCKS as usize * BLOCK];
+        install_zones_into_blank_disk_image(&mut by_bytes).expect("the image install");
+
+        let device = MemoryBlockDevice::new(
+            "blank-target",
+            vec![0_u8; DISK_BLOCKS as usize * BLOCK],
+            false,
+        );
+        let mut io =
+            super::super::partition::DeviceIo::new(device.as_ref()).expect("the device is blocks");
+        let report = super::install_zones_into_blank_device(&mut io).expect("the device install");
+        assert!(report.created_table);
+
+        let mut after = alloc::vec![0_u8; by_bytes.len()];
+        device
+            .read_blocks(0, &mut after)
+            .expect("read the device back");
+        assert_eq!(after, by_bytes, "the two fresh tables differ");
     }
 }

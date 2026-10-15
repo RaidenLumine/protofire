@@ -111,16 +111,19 @@ there — the system zone as its A/B **pair**, so the boot takes the newer
 build and a rollback has the older:
 
 ```sh
-cp /dev/sdX disk.img            # work on a copy; the install edits in place
-cargo run -- install disk.img   # shows the plan, then asks for a typed `yes`
-sudo dd if=disk.img of=/dev/sdX bs=4M status=progress oflag=sync
+sudo cargo run -- install /dev/sdX   # shows the plan, then asks for a typed `yes`
 ```
+
+The install reads and writes the disk in blocks — a few blocks of table and
+the zones themselves — so it works on a disk of any size and on the machine
+it is installing.  Work on a copy (`cp /dev/sdX disk.img` … `sudo dd
+if=disk.img of=/dev/sdX …`) when you would rather keep the original.
 
 The install never writes before it asks: it prints what it would do — the
 partitions it would keep, each zone and the extent it would take — and
 proceeds only on the typed word `yes`.  A disk it cannot help is refused
 *before* the question, and `no`, an empty answer, or end of input all leave
-the file exactly as it was.  Scripts (and `make check-x8664-install`) use
+the disk exactly as it was.  Scripts (and `make check-x8664-install`) use
 `--yes`, which skips the question rather than answering it.
 
 The disk must already carry a GPT — a disk partitioned by someone else's
@@ -128,7 +131,7 @@ tool is exactly the one this is for.  A disk with **no table at all** is
 refused unless you ask for one, which the flag makes an explicit decision:
 
 ```sh
-cargo run -- install --new-table disk.img
+sudo cargo run -- install --new-table /dev/sdX
 ```
 
 Only a disk that carries no partition information — no GPT, no MBR

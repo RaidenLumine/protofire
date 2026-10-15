@@ -135,6 +135,7 @@ and its status says which of the two happened.
 | [0025](0025-write-a-table-onto-a-disk-that-has-none.md) | Implemented | Write a table onto a disk that has none |
 | [0026](0026-install-the-system-pair-not-one-slot.md) | Implemented | Install the system pair, not one slot |
 | [0027](0027-never-mount-a-fixed-offset-over-a-table.md) | Implemented | Never mount a fixed offset over a table |
+| [0028](0028-install-through-a-device-not-an-image.md) | Implemented | Install through a device, not through an image |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —

@@ -456,6 +456,48 @@ if grep -F "[fs    ] mounted in-memory demo SimpleFs volumes" "$table_less_log" 
     fail "the table-less disk fell through to the in-memory demo volumes"
 fi
 
+# ── A disk too large to hold is installed without holding it ────────────
+#
+# The property the device path exists for: a machine's disk is hundreds of
+# gigabytes, and an install that read it whole failed with `OutOfMemory`
+# long before a zone was placed.  The disk here is 64 GiB and **sparse** —
+# `truncate` makes a file of that length with almost no blocks allocated —
+# so the check can also require that the install did not read or write the
+# whole thing: the file's allocated size stays tiny next to its length
+# ([RFC 0028](../../docs/rfcs/0028-install-through-a-device-not-an-image.md)).
+if command -v du >/dev/null 2>&1; then
+    huge="$work/huge.img"
+    truncate -s 64G "$huge" 2>/dev/null \
+        || { printf 'x86_64 install check: truncate is unavailable; the sparse-disk section cannot run\n' >&2; exit 1; }
+    "$SGDISK" -n 1:4096:6143 -t 1:0FC63DAF-8483-4772-8E79-3D69D8477DE4 \
+        -c 1:stranger "$huge" >>"$work/sgdisk.log" 2>&1 \
+        || { cat "$work/sgdisk.log" >&2; fail "sgdisk could not make the sparse disk"; }
+    huge_out="$work/huge-install.log"
+    if ! "$CARGO" run --offline --quiet -- install --yes "$huge" >"$huge_out" 2>&1; then
+        cat "$huge_out" >&2
+        fail "the install onto a 64 GiB disk did not complete"
+    fi
+    grep -F "65536 MiB" "$huge_out" >/dev/null 2>&1 \
+        || { cat "$huge_out" >&2; fail "the install did not report the disk's own size"; }
+    "$SGDISK" -p "$huge" >"$work/huge-table.log" 2>&1 \
+        || { cat "$work/huge-table.log" >&2; fail "sgdisk cannot read the sparse disk's table"; }
+    grep -F "stranger" "$work/huge-table.log" >/dev/null 2>&1 \
+        || fail "the sparse install lost the stranger's partition"
+    # The zones are on it, in the same shape the machine disk got.
+    huge_partitions="$("$SGDISK" -p "$huge" 2>/dev/null | awk -F: '/^ +[0-9]+/ { n += 1 } END { print n + 0 }')"
+    if [ "$huge_partitions" -ne 5 ]; then
+        cat "$work/huge-table.log" >&2
+        fail "expected 5 partitions on the sparse disk, sgdisk sees $huge_partitions"
+    fi
+    # And it stayed sparse: an install that read or wrote the whole file
+    # would have allocated gigabytes of blocks.
+    allocated_kb="$(du -k "$huge" | awk '{ print $1 }')"
+    if [ "$allocated_kb" -gt 65536 ]; then
+        fail "the sparse disk holds $allocated_kb KiB of blocks: the install touched the whole disk"
+    fi
+    printf 'x86_64 install check: 64 GiB disk installed, %s KiB of blocks allocated\n' "$allocated_kb"
+fi
+
 printf 'x86_64 install check passed: zones installed onto a %s-made disk, the\n' "$SGDISK"
 printf '  stranger partition preserved, the disk booted into the system pair (slot\n'
 printf '  b, build 2) and answered, and a reinstall reused every extent; a blank\n'
@@ -463,4 +505,5 @@ printf '  disk was refused without --new-table, given a fresh GPT with it, and t
 printf '  result booted too; the confirmation held: plan shown, no and\n'
 printf '  end-of-input wrote nothing, yes wrote the zones; and a disk whose table\n'
 printf '  is a stranger s was left alone while the same bytes with no table at all\n'
-printf '  still took the fixed offsets\n'
+printf '  still took the fixed offsets; and a 64 GiB disk was installed without\n'
+printf '  the install holding it or touching more than a few blocks of it\n'

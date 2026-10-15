@@ -205,33 +205,43 @@ fn install_zones_onto_disk(
     new_table: bool,
     assume_yes: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut disk = fs::read(path)?;
-    if disk.len() % 512 != 0 {
-        return Err(format!(
-            "{} is {} bytes, not a whole number of 512-byte blocks",
-            path.display(),
-            disk.len()
-        )
-        .into());
-    }
+    // The disk is opened and read in blocks, never held whole: a machine's
+    // disk is hundreds of gigabytes, and a reader that had to hold it would
+    // be a reader that cannot install onto one ([RFC
+    // 0028](../../docs/rfcs/0028-install-through-a-device-not-an-image.md)).
+    let device: std::sync::Arc<dyn protofire::fs::block::BlockDevice> =
+        std::sync::Arc::new(FileBlockDevice::open(path)?);
+    let blocks = device.block_count();
 
     // The plan first: a disk this install cannot help is reported here, and
-    // the person is never asked about something that would be refused.
-    let plan = protofire::fs::install::plan_zones_into_disk_image(&disk, new_table)
-        .map_err(|error| format!("{}: {}", path.display(), error.as_str()))?;
-    print_install_plan(path, &disk, &plan);
+    // the person is never asked about something that would be refused.  The
+    // borrowing wrapper lives in its own scope so the plan — the whole of
+    // what the question rests on — is computed before the question is asked,
+    // and nothing about the device is held across it.
+    let plan = {
+        let mut io = protofire::fs::partition::DeviceIo::new(device.as_ref())
+            .map_err(|error| format!("{}: {}", path.display(), error.as_str()))?;
+        protofire::fs::install::plan_zones_into_device(&mut io, new_table)
+            .map_err(|error| format!("{}: {}", path.display(), error.as_str()))?
+    };
+    print_install_plan(path, blocks, &plan);
     if !assume_yes && !ask_to_write(path)? {
         return Err(format!("{}: no confirmation; nothing was written", path.display()).into());
     }
 
+    let mut io = protofire::fs::partition::DeviceIo::new(device.as_ref())
+        .map_err(|error| format!("{}: {}", path.display(), error.as_str()))?;
     let outcome = if new_table {
-        protofire::fs::install::install_zones_into_blank_disk_image(&mut disk)
+        protofire::fs::install::install_zones_into_blank_device(&mut io)
     } else {
-        protofire::fs::install::install_zones_into_disk_image(&mut disk)
+        protofire::fs::install::install_zones_into_device(&mut io)
     };
     let report = outcome.map_err(|error| format!("{}: {}", path.display(), error.as_str()))?;
-
-    fs::write(path, &disk)?;
+    // The writes have reached the file's own buffers, which is where a file
+    // device's "stable storage" ends.
+    device
+        .flush()
+        .map_err(|error| format!("{}: {}", path.display(), error.as_str()))?;
 
     println!(
         "installed onto {}{}",
@@ -263,6 +273,104 @@ fn install_zones_onto_disk(
     Ok(())
 }
 
+/// A block device over a host file.
+///
+/// The install path speaks `BlockDevice` — the same trait the kernel's own
+/// disk drivers implement — so this is the host's spelling: a file read and
+/// written in whole 512-byte blocks, with its length as the disk's size.  A
+/// Linux device node (`/dev/sdX`) is such a file, so the same install runs
+/// against a stick, a laptop's disk, or an image without any of them being
+/// held in memory.
+#[cfg(not(target_os = "none"))]
+struct FileBlockDevice {
+    file: std::sync::Mutex<fs::File>,
+    blocks: u64,
+}
+
+#[cfg(not(target_os = "none"))]
+impl FileBlockDevice {
+    /// Open `path` for reading and writing, in whole blocks.
+    ///
+    /// A file whose length is not a whole number of blocks is refused: every
+    /// address the format uses is a block, and a device that answered a
+    /// partial block would be a device this install cannot describe.
+    fn open(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let file = fs::OpenOptions::new().read(true).write(true).open(path)?;
+        let len = file.metadata()?.len();
+        if len == 0 || len % 512 != 0 {
+            return Err(format!(
+                "{} is {} bytes, not a whole number of 512-byte blocks",
+                path.display(),
+                len
+            )
+            .into());
+        }
+        Ok(Self {
+            file: std::sync::Mutex::new(file),
+            blocks: len / 512,
+        })
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+impl protofire::fs::block::BlockDevice for FileBlockDevice {
+    fn name(&self) -> &str {
+        "host-file"
+    }
+
+    fn block_count(&self) -> u64 {
+        self.blocks
+    }
+
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> protofire::Result<()> {
+        use std::io::Read as _;
+        use std::io::Seek as _;
+
+        if !buffer.len().is_multiple_of(512) {
+            return Err(protofire::Error::InvalidArgument);
+        }
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| protofire::Error::DeviceError)?;
+        file.seek(std::io::SeekFrom::Start(lba * 512))
+            .map_err(|_| protofire::Error::DeviceError)?;
+        file.read_exact(buffer)
+            .map_err(|_| protofire::Error::DeviceError)
+    }
+
+    fn write_blocks(&self, lba: u64, data: &[u8]) -> protofire::Result<()> {
+        use std::io::Seek as _;
+        use std::io::Write as _;
+
+        if !data.len().is_multiple_of(512) {
+            return Err(protofire::Error::InvalidArgument);
+        }
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| protofire::Error::DeviceError)?;
+        file.seek(std::io::SeekFrom::Start(lba * 512))
+            .map_err(|_| protofire::Error::DeviceError)?;
+        file.write_all(data)
+            .map_err(|_| protofire::Error::DeviceError)
+    }
+
+    fn flush(&self) -> protofire::Result<()> {
+        use std::io::Write as _;
+
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| protofire::Error::DeviceError)?;
+        file.flush().map_err(|_| protofire::Error::DeviceError)
+    }
+}
+
 /// Print what an install would do to the disk at `path`: the disk and its
 /// size, whether a table would be created, the partitions it would keep, and
 /// each zone with the extent it would take.
@@ -271,8 +379,7 @@ fn install_zones_onto_disk(
 /// and the plan is computed from the bytes on hand — the same bytes the
 /// install then runs on — so the two cannot describe different disks.
 #[cfg(not(target_os = "none"))]
-fn print_install_plan(path: &Path, disk: &[u8], plan: &protofire::fs::install::InstallPlan) {
-    let blocks = disk.len() as u64 / 512;
+fn print_install_plan(path: &Path, blocks: u64, plan: &protofire::fs::install::InstallPlan) {
     if blocks.is_multiple_of(2048) {
         println!(
             "installing this kernel's zones onto {} ({} blocks, {} MiB)",
