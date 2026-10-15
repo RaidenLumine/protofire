@@ -41,6 +41,78 @@ pub const HCSPARAMS1_MAX_PORTS_SHIFT: u32 = 24;
 // HCCPARAMS1 field.
 pub const HCCPARAMS1_CSZ: u32 = 1 << 2; // Context Size (0 = 32 bytes, 1 = 64 bytes)
 
+// HCSPARAMS2 fields.
+//
+// Max Scratchpad Buffers is a ten-bit count split across two five-bit fields
+// (xHCI spec § 5.3.3; Linux `xhci-caps.h`'s `HCS_MAX_SP_HI`/`HCS_MAX_SP_LO`
+// and the `HCS_MAX_SCRATCHPAD` that shifts one over the other).  A controller
+// that declares any of them requires the driver to put a *buffer array* in
+// DCBAA[0] and the buffers themselves in that array before it will leave the
+// Halted state — QEMU's `qemu-xhci` declares zero, which is why a driver that
+// never reads this field still starts on every machine this tree boots.
+pub const HCSPARAMS2_MAX_SP_HI_MASK: u32 = 0x03E0_0000; // bits 25:21
+pub const HCSPARAMS2_MAX_SP_HI_SHIFT: u32 = 21;
+pub const HCSPARAMS2_MAX_SP_LO_MASK: u32 = 0xF800_0000; // bits 31:27
+pub const HCSPARAMS2_MAX_SP_LO_SHIFT: u32 = 27;
+
+/// The scratchpad buffer count HCSPARAMS2 declares.
+///
+/// The two halves are the count's high and low five bits, so the answer is
+/// `hi << 5 | lo` — not the concatenation of the fields' positions.
+pub const fn hcsparams2_scratchpad_count(hcsparams2: u32) -> u32 {
+    let hi = (hcsparams2 & HCSPARAMS2_MAX_SP_HI_MASK) >> HCSPARAMS2_MAX_SP_HI_SHIFT;
+    let lo = (hcsparams2 & HCSPARAMS2_MAX_SP_LO_MASK) >> HCSPARAMS2_MAX_SP_LO_SHIFT;
+    (hi << 5) | lo
+}
+
+/// The controller's page size in bytes, from the PAGESIZE register.
+///
+/// The register holds the page size in 4 KiB units — 1 is 4 KiB, 2 is 8 KiB,
+/// 4 is 16 KiB (xHCI spec § 5.4.3) — and Linux reads it as `value << 12` after
+/// masking with `XHCI_PAGE_SIZE_MASK` (`xhci.c`'s `xhci_hcd_page_size`).  A
+/// value that is not a power of two — zero included — is not a page size, and
+/// Linux substitutes 4 KiB for one; the caller is told instead, because the
+/// scratchpad buffers it allocates have to be the controller's own unit.
+pub const fn page_size_bytes(page_size_register: u32) -> Option<u32> {
+    let units = page_size_register & 0xFFFF;
+    if units == 0 || !units.is_power_of_two() {
+        return None;
+    }
+    Some(units << 12)
+}
+
+/// Lay out the scratchpad buffer array and the DCBAA entry that names it.
+///
+/// A controller that declares scratchpad buffers takes DCBAA[0] as the
+/// physical address of the *array*, not a device slot, and reads each buffer's
+/// address from the array (xHCI spec § 5.3.3 and § 6.1).  Both writes go
+/// through here so the two facts — which entry points where — are one testable
+/// statement rather than a loop in the boot path: QEMU's controller declares
+/// no scratchpad buffers at all (`xhci_cap_read` returns `0x0000000f` for
+/// HCSPARAMS2, its scratchpad count field zero), so no boot this tree can run
+/// ever executes the loop, and a real machine's first execution is where a
+/// wrong offset would become a hang rather than a failed gate.
+///
+/// Answers `false` — writing nothing — when either slice is too short for
+/// what the addresses need; `buffers` is in array order.
+pub fn fill_scratchpad_dcbaa(
+    dcbaa: &mut [u8],
+    array: &mut [u8],
+    array_phys: u64,
+    buffers: &[u64],
+) -> bool {
+    let entry = core::mem::size_of::<u64>();
+    let needed = core::mem::size_of_val(buffers);
+    if dcbaa.len() < entry || array.len() < needed {
+        return false;
+    }
+    dcbaa[..entry].copy_from_slice(&array_phys.to_le_bytes());
+    for (i, phys) in buffers.iter().enumerate() {
+        array[i * entry..(i + 1) * entry].copy_from_slice(&phys.to_le_bytes());
+    }
+    true
+}
+
 // ---------------------------------------------------------------------------
 // xHCI operational registers (offset from BAR0 + CAPLENGTH)
 // ---------------------------------------------------------------------------
@@ -990,5 +1062,116 @@ mod tests {
         assert_eq!(entry.segment_base_low, 0x5678_9ABC);
         assert_eq!(entry.segment_base_high, 0x1234);
         assert_eq!(entry.segment_size, 256);
+    }
+
+    /// The scratchpad count is two five-bit halves, not one field.
+    ///
+    /// QEMU's controller declares zero — the value that made this file's
+    /// driver start on every machine this tree boots without ever reading the
+    /// field — and a real one declares at least one: a driver that read the
+    /// low bits alone would see `1` for a count of 32 and allocate one buffer
+    /// where the controller expects thirty-two, which is a start that hangs
+    /// rather than a start that fails.
+    #[test]
+    fn scratchpad_count_reads_both_halves_of_the_field() {
+        // None declared (QEMU's `qemu-xhci`).
+        assert_eq!(hcsparams2_scratchpad_count(0x0000_0000), 0);
+        // One, the minimum every real controller's firmware tends to declare:
+        // bit 27 is the low field's first bit.
+        assert_eq!(hcsparams2_scratchpad_count(1 << 27), 1);
+        // Thirty-two: the high field's low bit set, the low field clear.
+        assert_eq!(hcsparams2_scratchpad_count(1 << 21), 32);
+        // Thirty-three: both halves name one.
+        assert_eq!(hcsparams2_scratchpad_count((1 << 21) | (1 << 27)), 33);
+        // Sixty-three: the high field one, the low field all ones.
+        assert_eq!(hcsparams2_scratchpad_count((1 << 21) | (0x1F << 27)), 63);
+        // The largest count the field can hold: both halves all ones.
+        assert_eq!(
+            hcsparams2_scratchpad_count(HCSPARAMS2_MAX_SP_HI_MASK | HCSPARAMS2_MAX_SP_LO_MASK),
+            0x3FF
+        );
+        // ERST_MAX (bits 7:4) and the IST nibble live in the same word and
+        // must not leak into the count — a plausible real register value with
+        // the count at one and both of them set.
+        assert_eq!(hcsparams2_scratchpad_count(0x0000_00F1 | (1 << 27)), 1);
+    }
+
+    /// The page-size register is in 4 KiB units.
+    #[test]
+    fn page_size_reads_units_of_four_kibibytes() {
+        assert_eq!(page_size_bytes(1), Some(4096));
+        assert_eq!(page_size_bytes(2), Some(8192));
+        assert_eq!(page_size_bytes(4), Some(16384));
+        // A value that is not a power of two is not a page size, and Linux
+        // substitutes 4 KiB for it rather than guessing.
+        assert_eq!(page_size_bytes(0), None);
+        assert_eq!(page_size_bytes(3), None);
+        assert_eq!(page_size_bytes(0x0001_0000), None);
+        // The upper sixteen bits are reserved; a count there is not one.
+        assert_eq!(page_size_bytes(0x0002_0001), Some(4096));
+    }
+
+    /// The scratchpad array is laid out the way the controller reads it.
+    ///
+    /// No boot this tree can run declares scratchpad buffers, so this is the
+    /// only execution the layout gets before a real machine's; a wrong offset
+    /// there is a controller that reads slot contexts out of an address the
+    /// driver never wrote, which is a hang rather than a failed assertion.
+    #[test]
+    fn scratchpad_layout_names_the_array_from_dcbaa_zero() {
+        let mut dcbaa = [0u8; 4096];
+        let mut array = [0u8; 4096];
+        let buffers = [0x1234_5000u64, 0x1234_6000, 0x1234_7000];
+
+        assert!(fill_scratchpad_dcbaa(
+            &mut dcbaa,
+            &mut array,
+            0xABCD_0000,
+            &buffers
+        ));
+
+        // DCBAA[0] is the array's physical address, little-endian, and
+        // DCBAA[1] — the first device slot — is untouched: the array is what
+        // the controller reads as slot-context pointers in slot 0's place.
+        assert_eq!(
+            u64::from_le_bytes(dcbaa[..8].try_into().unwrap()),
+            0xABCD_0000
+        );
+        assert_eq!(u64::from_le_bytes(dcbaa[8..16].try_into().unwrap()), 0);
+        // Each buffer's address is its own array entry, in order.
+        for (i, phys) in buffers.iter().enumerate() {
+            let entry = i * 8;
+            assert_eq!(
+                u64::from_le_bytes(array[entry..entry + 8].try_into().unwrap()),
+                *phys
+            );
+        }
+        // The array has room for far more than three; what follows them is
+        // still zero rather than a stale address.
+        assert_eq!(&array[24..32], &[0u8; 8]);
+
+        // A DCBAA with no room for entry 0, or an array with no room for the
+        // buffers named, is refused whole and writes nothing.
+        let mut dcbaa = [0xAAu8; 8];
+        let mut array = [0xBBu8; 16];
+        assert!(!fill_scratchpad_dcbaa(
+            &mut dcbaa[..4],
+            &mut array,
+            0xABCD_0000,
+            &buffers
+        ));
+        assert_eq!(dcbaa, [0xAA; 8]);
+        assert!(!fill_scratchpad_dcbaa(
+            &mut dcbaa,
+            &mut array,
+            0xABCD_0000,
+            &buffers
+        ));
+        assert_eq!(array, [0xBB; 16]);
+        // Zero buffers is a fill of nothing but the DCBAA entry; a controller
+        // that declares none never reaches this, and the empty answer is the
+        // one that cannot be mistaken for a claim.
+        assert!(fill_scratchpad_dcbaa(&mut dcbaa, &mut array, 7, &[]));
+        assert_eq!(u64::from_le_bytes(dcbaa[..8].try_into().unwrap()), 7);
     }
 }

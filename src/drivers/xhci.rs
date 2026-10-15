@@ -125,6 +125,18 @@ pub struct XhciController {
     evt_ccs: bool,
     /// DCBAAP DMA buffer.
     dcbaa: DmaBuffer,
+    /// The scratchpad buffer array, when the controller declares scratchpad
+    /// buffers (HCSPARAMS2).  DCBAA[0] points at it instead of a device slot:
+    /// the array holds one physical address per scratchpad buffer, and the
+    /// controller reads and writes those buffers itself.  `None` when the
+    /// count is zero — QEMU's `qemu-xhci` declares none, which is why a
+    /// driver that never provided them still started on every machine this
+    /// tree boots.
+    scratchpad_array: Option<DmaBuffer>,
+    /// The scratchpad buffers themselves, one controller page each, in array
+    /// order.  Held here so they outlive the controller's use of them;
+    /// nothing else reads or writes them.
+    scratchpad_buffers: alloc::vec::Vec<DmaBuffer>,
     /// Per-slot device context DMA buffers.
     device_contexts: [Option<DmaBuffer>; MAX_SLOTS],
     /// Per-slot transfer ring for EP0.
@@ -556,10 +568,69 @@ impl XhciController {
             // Read page size.
             let page_size = read_volatile(op_base.add(XHCI_OP_PAGESIZE / 4));
 
+            // The scratchpad buffers a controller declares are the driver's to
+            // allocate *before* the controller leaves the Halted state, and
+            // DCBAA[0] is the array that names them.  QEMU's `qemu-xhci`
+            // declares none and every machine this tree has ever booted read
+            // zero here, which is exactly why this field went unread: on a
+            // real controller the count is at least one, and a driver that
+            // does not provide the array starts a controller that then reads
+            // slot contexts out of an address the driver never wrote.  The
+            // buffers are one controller page each — PAGESIZE, in the 4 KiB
+            // units the register states.
+            let hcsparams2 = read_volatile(cap.add(XHCI_CAP_HCSPARAMS2 / 4));
+            let scratchpad_count = hcsparams2_scratchpad_count(hcsparams2);
+            // A controller that declares none needs no page size and no
+            // buffers (QEMU's is one), so the page-size register is only
+            // consulted for a controller that does.  A declared count whose
+            // page size will not be read as one is named before this
+            // controller is dropped: returning `None` here looks exactly like
+            // "no controller on this machine", and a bring-up log has to be
+            // able to tell those two apart.
+            let scratchpad_page_bytes = if scratchpad_count == 0 {
+                None
+            } else {
+                let Some(bytes) = page_size_bytes(page_size) else {
+                    println!(
+                        "[xhci  ] the controller declares {} scratchpad buffer(s) but its page-size register reads {:#x}, which is not a page size — skipping this controller",
+                        scratchpad_count, page_size
+                    );
+                    return None;
+                };
+                Some(bytes)
+            };
+            // One controller page per buffer, in whole frames; and the array
+            // needs one 64-bit entry per buffer, also in whole frames.
+            let scratchpad_page_frames = scratchpad_page_bytes.map_or(0, |bytes| {
+                (bytes as usize).div_ceil(crate::memory::frame::FRAME_SIZE)
+            });
+            let scratchpad_array = if scratchpad_count == 0 {
+                None
+            } else {
+                let words = scratchpad_count as usize;
+                let array_frames = (words * core::mem::size_of::<u64>())
+                    .div_ceil(crate::memory::frame::FRAME_SIZE)
+                    .max(1);
+                let Some(array) = DmaBuffer::allocate(array_frames) else {
+                    println!(
+                        "[xhci  ] no room to allocate the scratchpad array ({} frame(s)) — skipping this controller",
+                        array_frames
+                    );
+                    return None;
+                };
+                Some(array)
+            };
+
             println!(
             "[xhci  ] hcsparams1={:#010x} max_slots={} max_ports={} ctx_size={} page_size={:#x}",
             hcsparams1, max_slots, max_ports, context_size, page_size
         );
+            if let Some(bytes) = scratchpad_page_bytes {
+                println!(
+                    "[xhci  ] controller declares {} scratchpad buffer(s) of {} bytes",
+                    scratchpad_count, bytes
+                );
+            }
 
             // The controller is tens of kilobytes — a context and three rings
             // per slot — and the boot runs on a 64 KiB stack.  Returning it by
@@ -584,6 +655,23 @@ impl XhciController {
                 evt_dequeue: 0,
                 evt_ccs: true,
                 dcbaa: DmaBuffer::allocate(1)?, // 4 KiB for DCBAAP
+                scratchpad_array,
+                scratchpad_buffers: {
+                    let mut buffers = alloc::vec::Vec::with_capacity(scratchpad_count as usize);
+                    for _ in 0..scratchpad_count {
+                        let Some(buffer) = DmaBuffer::allocate(scratchpad_page_frames) else {
+                            println!(
+                                "[xhci  ] no room to allocate scratchpad buffer {} of {} ({} frame(s) each) — skipping this controller",
+                                buffers.len() + 1,
+                                scratchpad_count,
+                                scratchpad_page_frames
+                            );
+                            return None;
+                        };
+                        buffers.push(buffer);
+                    }
+                    buffers
+                },
                 device_contexts: [const { None }; MAX_SLOTS],
                 ep0_transfer_rings: [const { None }; MAX_SLOTS],
                 int_transfer_rings: [const { None }; MAX_SLOTS],
@@ -698,6 +786,41 @@ impl XhciController {
             // Zero all entries.
             let dcbaa_slice = self.dcbaa.as_mut_slice();
             dcbaa_slice.fill(0);
+
+            // DCBAA[0] is not a device slot when the controller declared
+            // scratchpad buffers: it is the physical address of the buffer
+            // array, and the array's entries are the buffers'.  Written
+            // before the DCBAAP register is programmed below, so the
+            // controller never reads an array the driver filled late.  The
+            // layout itself is `fill_scratchpad_dcbaa`, which the host tests
+            // exercise on a machine whose controller declares none.
+            if let Some(array) = &mut self.scratchpad_array {
+                let array_phys = array.phys_addr() as u64;
+                let buffers: alloc::vec::Vec<u64> = self
+                    .scratchpad_buffers
+                    .iter()
+                    .map(|buffer| buffer.phys_addr() as u64)
+                    .collect();
+                let array_bytes = array.as_mut_slice();
+                let words = buffers.len();
+                // Both buffers were sized from the same count a few lines up,
+                // so a `false` here is a driver bug rather than a machine's
+                // answer — and proceeding would hand the controller an array
+                // that names fewer buffers than it asked for.  Failing with
+                // the count named is what a bring-up log can attribute.
+                if !fill_scratchpad_dcbaa(dcbaa_slice, array_bytes, array_phys, &buffers) {
+                    println!(
+                        "[xhci  ] the scratchpad array ({} bytes) has no room for {} buffer(s)",
+                        array_bytes.len(),
+                        words
+                    );
+                    return Err(crate::Error::InvalidArgument);
+                }
+                println!(
+                    "[xhci  ] scratchpad array at {:#x} names {} buffer(s)",
+                    array_phys, words
+                );
+            }
 
             reg_write64_lo_hi(
                 self.op_base,

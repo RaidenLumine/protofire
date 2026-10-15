@@ -166,6 +166,22 @@ core the PS/2 and VirtIO paths feed.  The register map and the ring structures
 are in `drivers/xhci_protocol.rs`; the machine's half is `drivers/xhci.rs`, and
 a machine without PCI answers from `xhci_absent.rs`.
 
+**Scratchpad buffers** are the one thing a controller can declare that the
+driver has to provide before it will leave the Halted state: HCSPARAMS2 carries
+a ten-bit count split across two five-bit fields, and a count above zero means
+DCBAA[0] is not a device slot but the physical address of an *array* of buffer
+addresses, each buffer one controller page (`PAGESIZE`).  QEMU's controller
+declares none — its `xhci_cap_read` returns `0x0000000f` for the register, the
+count field zero — so this path has never executed in any boot this tree can
+run, which is why its layout lives in `fill_scratchpad_dcbaa` and is exercised
+by host tests rather than by a machine: a real controller declares at least
+one, and a driver that does not provide the array starts a controller that
+later reads slot contexts out of an address the driver never wrote.  The page
+size is the register's value in 4 KiB units, and a controller whose register
+does not name a power-of-two page size is skipped with its count and the
+register named in the log, because a bring-up cannot otherwise tell that apart
+from "no controller on this machine".
+
 A **hub** is one of those devices, with a class of its own: the driver reads its
 descriptor for the port count, powers and resets a port, and then addresses what
 appears behind it — a device one tier down, which the Slot Context's *route
