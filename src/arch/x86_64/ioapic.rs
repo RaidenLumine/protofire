@@ -258,40 +258,57 @@ pub fn ioapic_mask_irq(irq: u8) {
     write_redirection_entry(irq, lo | INT_MASKED, hi);
 }
 
+/// The I/O APIC pin a bus-relative ISA IRQ reaches, on this machine.
+///
+/// A route is by **global system interrupt**, not by IRQ number: a machine
+/// that puts ISA IRQ 0 on pin 2 — which every PC and both of QEMU's x86
+/// machines do, stated in the MADT's interrupt-source overrides — has nothing
+/// on pin 0, so routing the timer there would leave it silent.  This asks the
+/// MADT's overrides (parsed at boot, [`super::acpi::isa_irq_gsi`]); a machine
+/// that names no override for the IRQ gets the identity map, which is what
+/// this driver assumed before it read them.  A GSI past `u8` is no ISA pin
+/// this driver has a redirection entry for, so it is declined.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+fn isa_irq_pin(irq: u8) -> Option<u8> {
+    u8::try_from(super::acpi::isa_irq_gsi(irq)).ok()
+}
+
 /// Set up ISA IRQ routing through the IOAPIC.
 ///
-/// Routes:
+/// Routes each ISA IRQ to the vector whose handler owns it, on the pin the
+/// machine's MADT says it reaches ([`isa_irq_pin`]):
 /// - IRQ 0 (timer)  → vector 32
 /// - IRQ 1 (keyboard) → vector 33
-/// - IRQ 2 (cascade, typically unused on APIC systems)
 /// - IRQ 4 (COM1) → vector 36, and arms the UART's received-data interrupt
 ///
 /// After routing, the IOAPIC entries are unmasked so interrupts can
-/// be delivered.
+/// be delivered.  IRQ 2, the cascade from the slave PIC, is not routed;
+/// other IRQs stay masked until a driver asks for one.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub fn ioapic_setup_isa_irqs() {
-    // Route the PIT timer to vector 32.  The i8254 PIT output lands on a
-    // different I/O APIC pin depending on the machine model: i440fx exposes
-    // it as ISA IRQ 0 (pin 0), while QEMU's q35 routes it through the LPC
-    // bridge onto pin 2 (GSI 2).  Route both pins to the timer vector so the
-    // 100 Hz tick is delivered regardless of machine type; on i440fx pin 2 is
-    // the (silent on APIC systems) legacy cascade, and on q35 pin 0 has no
-    // attached device, so a single unmasked pin fires in practice.
-    ioapic_route_irq(0, 32);
-    ioapic_unmask_irq(0);
-    ioapic_route_irq(2, 32);
-    ioapic_unmask_irq(2);
+    // Route each ISA IRQ to the vector whose handler owns it, on the pin the
+    // **machine** says it reaches.  The timer is the case that matters most:
+    // its IRQ is 0 but its pin is 2 on a machine that says so, and a route to
+    // the wrong pin is a tick that never comes.
+    if let Some(pin) = isa_irq_pin(0) {
+        ioapic_route_irq(pin, 32);
+        ioapic_unmask_irq(pin);
+    }
 
-    // Route IRQ 1 (keyboard) to vector 33.
-    ioapic_route_irq(1, 33);
-    ioapic_unmask_irq(1);
+    // IRQ 1 (keyboard) to vector 33.
+    if let Some(pin) = isa_irq_pin(1) {
+        ioapic_route_irq(pin, 33);
+        ioapic_unmask_irq(pin);
+    }
 
-    // Route IRQ 4 (COM1) to its own vector.  The UART's received-data
-    // interrupt is armed once the whole controller is up, by
+    // IRQ 4 (COM1) to its own vector.  The UART's received-data interrupt is
+    // armed once the whole controller is up, by
     // `arch::interrupt_controller::init`: this route exists by then, and a
     // byte that arrived before it would raise a line with no destination.
-    ioapic_route_irq(4, super::interrupts::COM1_VECTOR);
-    ioapic_unmask_irq(4);
+    if let Some(pin) = isa_irq_pin(4) {
+        ioapic_route_irq(pin, super::interrupts::COM1_VECTOR);
+        ioapic_unmask_irq(pin);
+    }
 
     // IRQ 2 is the cascade from the slave PIC; we don't route it.
     // Other IRQs remain masked until a driver explicitly enables them.

@@ -298,6 +298,68 @@ pub fn parse_madt_bytes(table: &[u8]) -> Vec<LocalApicEntry> {
     entries
 }
 
+/// A MADT interrupt-source override (ACPI 6.x § 5.2.9, type 2): a statement
+/// that an ISA IRQ does **not** reach the I/O APIC on the pin its number
+/// suggests.
+///
+/// A machine that puts ISA IRQ 0 on GSI 2 — which every PC and QEMU's own
+/// firmware does — says so here rather than by the IRQ number, so a kernel
+/// that routes by IRQ number instead of by the override sends the timer to a
+/// pin with nothing attached.  The flags carry the polarity and trigger mode
+/// the ISA bus does not imply (a PCI link is level-triggered and active-low;
+/// an ISA line is edge-triggered and active-high), which is why an override's
+/// absence and its identity mapping are not the same statement.
+#[cfg(any(target_os = "none", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterruptOverride {
+    /// The bus the source IRQ is on: 0 is ISA.
+    pub bus: u8,
+    /// The bus-relative IRQ the override is about.
+    pub source_irq: u8,
+    /// The global system interrupt (I/O APIC pin) it reaches instead.
+    pub gsi: u32,
+    /// Bits 0-1 polarity (3 = active low), bits 2-3 trigger (1 = level).
+    pub flags: u16,
+}
+
+/// Parse a MADT out of its own bytes and answer its interrupt-source
+/// overrides.
+///
+/// Pure over the table's bytes so the parse is host-testable, the way
+/// [`parse_madt_bytes`] is.  An entry is stepped over by its own length, so a
+/// record type the walk does not read lands the next read on a boundary — the
+/// same rule the processor walk follows.
+#[cfg(any(target_os = "none", test))]
+pub fn parse_madt_interrupt_overrides(table: &[u8]) -> Vec<InterruptOverride> {
+    let mut overrides = Vec::new();
+    if !(MADT_HEADER_BYTES..=MADT_MAX_BYTES).contains(&table.len()) {
+        return overrides;
+    }
+
+    let mut offset = MADT_HEADER_BYTES;
+    while offset + 2 <= table.len() {
+        let entry_type = table[offset];
+        let entry_len = table[offset + 1] as usize;
+        if entry_len < 2 || offset + entry_len > table.len() {
+            break;
+        }
+        if entry_type == 2 && entry_len >= 10 {
+            overrides.push(InterruptOverride {
+                bus: table[offset + 2],
+                source_irq: table[offset + 3],
+                gsi: le_u32(table, offset + 4),
+                // The flags are a **16-bit** field at the record's tail, not a
+                // word: reading four bytes here would take two from whatever
+                // follows the entry.
+                flags: u16::from_le_bytes([table[offset + 8], table[offset + 9]]),
+            });
+        }
+        offset += entry_len;
+    }
+
+    overrides
+}
+
 /// Parse the MADT at a physical address and return its enabled local APIC
 /// entries.
 ///
@@ -321,6 +383,24 @@ unsafe fn parse_madt(madt_addr: usize) -> Vec<LocalApicEntry> {
     // through it, and ACPI tables are never written by software.
     let table = unsafe { core::slice::from_raw_parts(madt_addr as *const u8, length) };
     parse_madt_bytes(table)
+}
+
+/// Parse the interrupt-source overrides of the MADT at a physical address.
+///
+/// As [`parse_madt`]: the same table, bounded by its own declared length and
+/// handed to the pure parser.
+#[cfg(target_os = "none")]
+unsafe fn parse_madt_interrupt_overrides_at(madt_addr: usize) -> Vec<InterruptOverride> {
+    // SAFETY: the MADT address comes from the RSDT walk, which read the
+    // table's own header; the length field's bytes are inside it.
+    let length = unsafe { read_phys_u32(madt_addr + 4) } as usize;
+    if !(MADT_HEADER_BYTES..=MADT_MAX_BYTES).contains(&length) {
+        return Vec::new();
+    }
+    // SAFETY: as `parse_madt` — the declared length, capped, over the mapped
+    // table the RSDT named.
+    let table = unsafe { core::slice::from_raw_parts(madt_addr as *const u8, length) };
+    parse_madt_interrupt_overrides(table)
 }
 
 /// Discover AP LAPIC IDs from the ACPI MADT.
@@ -388,6 +468,17 @@ pub fn discover_aps(multiboot_info: usize) -> Vec<(u32, u8)> {
         madt_addr,
         all_entries.len()
     );
+
+    // The same table's interrupt-source overrides.  A machine that remaps an
+    // ISA IRQ (QEMU's own firmware puts IRQ 0 on GSI 2) states it here, and
+    // the IOAPIC setup reads these to route by GSI rather than by IRQ number.
+    // SAFETY: `madt_addr` is the same checksum-verified table the parse above
+    // read; the wrapper bounds the slice by the header's own length.
+    let overrides = unsafe { parse_madt_interrupt_overrides_at(madt_addr) };
+    if !overrides.is_empty() {
+        crate::println!("[smp   ] {} interrupt-source override(s)", overrides.len());
+    }
+    store_early_interrupt_overrides(overrides);
 
     // Assign logical CPU IDs.  BSP = 0, APs = 1, 2, ...
     let mut cpu_id: u32 = 0;
@@ -504,6 +595,55 @@ unsafe fn find_table_in_rsdt(rsdt_addr: usize, signature: &[u8; 4]) -> Option<us
         // whole of this path.
         Some(unsafe { core::slice::from_raw_parts(addr as *const u8, len) })
     })
+}
+
+// ── Early-discovered ISA IRQ overrides ─────────────────────────────────
+
+/// The MADT interrupt-source overrides discovered before the page-table
+/// switch, so the I/O APIC setup (which runs later) routes by the machine's
+/// GSI map rather than by IRQ number.  See [`store_early_interrupt_overrides`]
+/// and [`take_early_interrupt_overrides`].
+#[cfg(target_os = "none")]
+static EARLY_ISA_OVERRIDES: crate::util::sync_unsafe_cell::SyncUnsafeCell<
+    Option<alloc::vec::Vec<InterruptOverride>>,
+> = crate::util::sync_unsafe_cell::SyncUnsafeCell::new(None);
+
+/// Store the interrupt-source overrides discovered during early boot.  Must be
+/// called at most once, before any reader.
+#[cfg(target_os = "none")]
+pub fn store_early_interrupt_overrides(overrides: alloc::vec::Vec<InterruptOverride>) {
+    // SAFETY: the doc above says this runs at most once, before any reader
+    // (`take_early_interrupt_overrides`) exists; the cell has no other writer.
+    unsafe {
+        *EARLY_ISA_OVERRIDES.get() = Some(overrides);
+    }
+}
+
+/// The global system interrupt a bus-relative ISA IRQ reaches, from a set of
+/// overrides: the override's GSI when the machine gave one for bus 0, and the
+/// IRQ number itself otherwise — the identity map a machine that names no
+/// override is read as, which is what this driver assumed before overrides
+/// existed.  Pure, so the choice is host-tested rather than only reachable
+/// through a boot.
+#[cfg(any(target_os = "none", test))]
+pub fn isa_irq_gsi_from(overrides: &[InterruptOverride], irq: u8) -> u32 {
+    overrides
+        .iter()
+        .find(|entry| entry.bus == 0 && entry.source_irq == irq)
+        .map_or(u32::from(irq), |entry| entry.gsi)
+}
+
+/// The global system interrupt a bus-relative ISA IRQ reaches, from the stored
+/// overrides — [`isa_irq_gsi_from`] over what the boot parsed.
+#[cfg(target_os = "none")]
+pub fn isa_irq_gsi(irq: u8) -> u32 {
+    // SAFETY: the cell was written once at boot before this reader runs; the
+    // read borrows it without taking it, so later reads answer too.
+    let stored = unsafe { (*EARLY_ISA_OVERRIDES.get()).as_ref() };
+    match stored {
+        Some(overrides) => isa_irq_gsi_from(overrides, irq),
+        None => u32::from(irq),
+    }
 }
 
 // ── Early-discovered AP list ───────────────────────────────────────────
@@ -1257,5 +1397,114 @@ mod tests {
         huge[0..4].copy_from_slice(b"SLIT");
         huge[36..44].copy_from_slice(&65u64.to_le_bytes());
         assert_eq!(super::parse_slit_bytes(&huge), None);
+    }
+
+    /// The interrupt-source overrides are read from the table's own bytes at
+    /// the offsets a real machine writes, and the ISA IRQ 0 -> GSI 2 remap
+    /// every PC states is answered.
+    ///
+    /// This is the gate for the defect that prompted the parser: routing by
+    /// IRQ number instead of by the override sends the timer to a pin with
+    /// nothing on it on every machine that remaps IRQ 0 — which every PC and
+    /// both of QEMU's x86 machines do.  The record is built the way the ACPI
+    /// spec and QEMU's MADT builder lay it out: type 2, length 10, the bus,
+    /// the source IRQ, a 32-bit GSI, and a two-byte flags field.
+    #[test]
+    fn madt_interrupt_overrides_are_read_at_their_offsets() {
+        let mut table = alloc::vec![0u8; 44]; // MADT header: 36 + 4 + 4
+        table[0..4].copy_from_slice(b"APIC");
+        // The canonical PC remap: ISA IRQ 0 reaches GSI 2.
+        table.push(2);
+        table.push(10);
+        table.push(0); // bus 0 (ISA)
+        table.push(0); // source IRQ 0
+        table.extend_from_slice(&2u32.to_le_bytes()); // GSI 2
+        table.extend_from_slice(&0u16.to_le_bytes()); // flags: edge, active high
+                                                      // A PCI link: IRQ 9 on GSI 9, level-triggered active-low (flags 0xd).
+        table.push(2);
+        table.push(10);
+        table.push(0);
+        table.push(9);
+        table.extend_from_slice(&9u32.to_le_bytes());
+        table.extend_from_slice(&0x000du16.to_le_bytes());
+
+        let overrides = super::parse_madt_interrupt_overrides(&table);
+        assert_eq!(overrides.len(), 2);
+        assert_eq!(
+            (overrides[0].bus, overrides[0].source_irq, overrides[0].gsi),
+            (0, 0, 2),
+            "ISA IRQ 0 reaches GSI 2, not pin 0"
+        );
+        assert_eq!(overrides[0].flags, 0x0000);
+        assert_eq!(
+            (
+                overrides[1].source_irq,
+                overrides[1].gsi,
+                overrides[1].flags
+            ),
+            (9, 9, 0x000d),
+            "a level-triggered active-low PCI link keeps its flags"
+        );
+    }
+
+    /// The walk steps over the entry types between overrides by their own
+    /// length, and a malformed override does not steer the parse: the captured
+    /// laptop MADT has two overrides among 24 NMI entries and two IOAPICs, and
+    /// a walk that mis-stepped would land mid-entry.
+    #[test]
+    fn madt_interrupt_overrides_walk_real_layouts() {
+        let overrides = super::parse_madt_interrupt_overrides(REAL_MADT);
+        // The captured table's two overrides, ISA IRQ 0 -> GSI 2 and IRQ 9 ->
+        // GSI 9, read out of a walk that crossed 32 processors, an IOAPIC and
+        // 24 NMI entries to reach them.
+        assert_eq!(
+            overrides
+                .iter()
+                .map(|o| (o.bus, o.source_irq, o.gsi))
+                .collect::<Vec<_>>(),
+            [(0, 0, 2), (0, 9, 9)],
+            "the real firmware's two overrides, in order"
+        );
+
+        // A table with no overrides answers none, and a truncated one is
+        // declined rather than read past.
+        assert!(super::parse_madt_interrupt_overrides(&[0u8; 43]).is_empty());
+        let mut truncated = alloc::vec![0u8; 44];
+        truncated.extend_from_slice(&[2, 10, 0, 0, 2, 0, 0, 0]); // one byte short
+        assert!(super::parse_madt_interrupt_overrides(&truncated).is_empty());
+    }
+
+    /// The GSI a route uses is the override's when the machine gave one and
+    /// the IRQ number otherwise: a machine that remaps IRQ 0 to GSI 2 must not
+    /// have the timer routed to pin 0, and one that names no override keeps
+    /// the identity map it had before overrides were read.
+    #[test]
+    fn a_route_uses_the_machines_gsi_or_the_identity_map() {
+        let overrides = alloc::vec![
+            super::InterruptOverride {
+                bus: 0,
+                source_irq: 0,
+                gsi: 2,
+                flags: 0,
+            },
+            super::InterruptOverride {
+                bus: 0,
+                source_irq: 9,
+                gsi: 9,
+                flags: 0xd,
+            },
+        ];
+        assert_eq!(super::isa_irq_gsi_from(&overrides, 0), 2, "IRQ 0 -> GSI 2");
+        assert_eq!(super::isa_irq_gsi_from(&overrides, 9), 9);
+        assert_eq!(
+            super::isa_irq_gsi_from(&overrides, 1),
+            1,
+            "an IRQ the machine did not remap keeps its own number"
+        );
+        assert_eq!(
+            super::isa_irq_gsi_from(&[], 0),
+            0,
+            "no overrides is the identity map"
+        );
     }
 }
