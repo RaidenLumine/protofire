@@ -537,8 +537,9 @@ pub fn take_early_aps() -> Option<alloc::vec::Vec<(u32, u8)>> {
 // ── Early-discovered NUMA data ─────────────────────────────────────────
 
 /// A single processor-local APIC affinity record parsed from the ACPI SRAT.
-/// Only compiled on x86_64 bare-metal where `discover_numa`/SRAT parsing runs.
-#[cfg(target_os = "none")]
+/// Only compiled on x86_64 bare-metal where `discover_numa`/SRAT parsing runs,
+/// and on a host for the parser tests.
+#[cfg(any(target_os = "none", test))]
 #[derive(Debug, Clone)]
 pub struct CpuAffinity {
     /// Whether this processor is enabled (SRAT flags bit 0).
@@ -550,8 +551,9 @@ pub struct CpuAffinity {
 }
 
 /// A single x2APIC affinity record parsed from the ACPI SRAT.
-/// Only compiled on x86_64 bare-metal where `discover_numa`/SRAT parsing runs.
-#[cfg(target_os = "none")]
+/// Only compiled on x86_64 bare-metal where `discover_numa`/SRAT parsing runs,
+/// and on a host for the parser tests.
+#[cfg(any(target_os = "none", test))]
 #[derive(Debug, Clone)]
 pub struct X2ApicAffinity {
     /// Whether this processor is enabled (SRAT flags bit 0).
@@ -563,8 +565,9 @@ pub struct X2ApicAffinity {
 }
 
 /// A single memory affinity record parsed from the ACPI SRAT.
-/// Only compiled on x86_64 bare-metal where `discover_numa`/SRAT parsing runs.
-#[cfg(target_os = "none")]
+/// Only compiled on x86_64 bare-metal where `discover_numa`/SRAT parsing runs,
+/// and on a host for the parser tests.
+#[cfg(any(target_os = "none", test))]
 #[derive(Debug, Clone)]
 pub struct MemoryAffinity {
     /// Whether this memory region is enabled (SRAT flags bit 0).
@@ -619,92 +622,111 @@ unsafe fn find_acpi_table(rsdp: *const Rsdp, signature: &[u8; 4]) -> Option<usiz
     unsafe { find_table_in_rsdt(rsdt_addr, signature) }
 }
 
-/// Read a little-endian u64 from a potentially unaligned physical address.
-#[cfg(target_os = "none")]
-unsafe fn read_phys_u64(addr: usize) -> u64 {
-    // SAFETY: the caller's contract covers the eight addresses; this reads the
-    // low half.
-    let lo = unsafe { read_phys_u32(addr) } as u64;
-    // SAFETY: as above — the high half, four bytes on.
-    let hi = unsafe { read_phys_u32(addr + 4) } as u64;
-    lo | (hi << 32)
+/// Bytes before a SRAT's entry list: an SDT header (36) plus its twelve
+/// reserved bytes.
+#[cfg(any(target_os = "none", test))]
+const SRAT_ENTRIES_OFFSET: usize = 48;
+
+/// The bound on a table's declared length, shared by the NUMA parsers.
+///
+/// A machine's SRAT is a few kilobytes — every processor and every usable
+/// memory range — so a length past a megabyte is a length not to trust: the
+/// bound exists to bound the slice, not to model a machine, which is the same
+/// rule [`MADT_MAX_BYTES`] follows.
+#[cfg(any(target_os = "none", test))]
+const NUMA_TABLE_MAX_BYTES: usize = 0x10_0000;
+
+/// Bytes before a SLIT's distance matrix: an SDT header (36) plus the
+/// eight-byte locality count.
+#[cfg(any(target_os = "none", test))]
+const SLIT_MATRIX_OFFSET: usize = 44;
+
+/// Little-endian readers over a table's own bytes: the pure parsers below use
+/// these rather than the physical-address readers, which exist only on
+/// bare-metal.
+#[cfg(any(target_os = "none", test))]
+fn le_u32(bytes: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
 }
 
-/// Parse the ACPI SRAT and return the affinity records.
-#[cfg(target_os = "none")]
-unsafe fn parse_srat(
-    srat_addr: usize,
+#[cfg(any(target_os = "none", test))]
+fn le_u64(bytes: &[u8], at: usize) -> u64 {
+    let mut word = [0u8; 8];
+    word.copy_from_slice(&bytes[at..at + 8]);
+    u64::from_le_bytes(word)
+}
+
+/// Parse an ACPI SRAT out of its own bytes and answer its affinity records.
+///
+/// Pure over the table's bytes so the parse is host-testable, the way
+/// [`parse_madt_bytes`] is: a real board's SRAT is a table no QEMU machine
+/// describes — several proximity domains, memory ranges at addresses a
+/// `virt` machine has no reason to use, and entry types this kernel has no
+/// name for sitting between the ones it reads.  An entry is skipped by its
+/// own length, and an entry whose length would leave the table ends the walk,
+/// which is what keeps a malformed table from steering the parse.
+#[cfg(any(target_os = "none", test))]
+pub fn parse_srat_bytes(
+    table: &[u8],
 ) -> (Vec<CpuAffinity>, Vec<MemoryAffinity>, Vec<X2ApicAffinity>) {
     let mut cpu = Vec::new();
     let mut mem = Vec::new();
     let mut x2apic = Vec::new();
+    if table.len() < SRAT_ENTRIES_OFFSET || table.len() > NUMA_TABLE_MAX_BYTES {
+        return (cpu, mem, x2apic);
+    }
 
-    // SAFETY: `srat_addr` is a table the RSDT named and whose checksum was
-    // verified; its header is the first structure in it.
-    let header = unsafe { &*(srat_addr as *const SdtHeader) };
-    let table_end = srat_addr + header.length as usize;
-
-    // SRAT: 36-byte SDT header + 12 reserved bytes, then affinity records.
-    let mut offset = srat_addr + core::mem::size_of::<SdtHeader>() + 12;
-
-    while offset + 2 <= table_end {
-        // SAFETY: the loop condition keeps two bytes from `offset`, both
-        // inside the table.
-        let entry_type = unsafe { read_phys_u8(offset) };
-        // SAFETY: as above — the length byte.
-        let entry_len = unsafe { read_phys_u8(offset + 1) } as usize;
-        if entry_len < 2 || offset + entry_len > table_end {
+    let mut offset = SRAT_ENTRIES_OFFSET;
+    while offset + 2 <= table.len() {
+        let entry_type = table[offset];
+        let entry_len = table[offset + 1] as usize;
+        if entry_len < 2 || offset + entry_len > table.len() {
             break;
         }
 
         match entry_type {
             0 if entry_len >= 16 => {
-                // Processor Local APIC/SAPIC Affinity (v1: 16 bytes).
-                // SAFETY: the arm's `entry_len >= 16` guard covers the bytes
-                // read here, and the length check above keeps the entry inside
-                // the table.
-                let proximity_domain = unsafe { read_phys_u32(offset + 2) };
-                // SAFETY: as above.
-                let apic_id = unsafe { read_phys_u8(offset + 6) };
-                // SAFETY: as above.
-                let flags = unsafe { read_phys_u32(offset + 7) };
+                // Processor Local APIC/SAPIC Affinity (16 bytes).  The
+                // proximity domain is **split**: its low byte sits right after
+                // the two-byte subtable header, its high three bytes after the
+                // local SAPIC EID — the layout QEMU writes and the ACPI spec
+                // states, and not a single 32-bit field.  This record's node id
+                // is a `u8`, so the low byte is the whole of it for any machine
+                // this kernel can name.
+                let node_lo = table[offset + 2];
+                let apic_id = table[offset + 3];
+                let flags = le_u32(table, offset + 4);
                 cpu.push(CpuAffinity {
                     enabled: (flags & 0x1) != 0,
                     apic_id,
-                    node_id: proximity_domain as u8,
+                    node_id: node_lo,
                 });
             }
             1 if entry_len >= 40 => {
                 // Memory Affinity (40 bytes).
-                // SAFETY: the arm's `entry_len >= 40` guard covers every byte
-                // read here, and the entry is inside the table.
-                let proximity_domain = unsafe { read_phys_u32(offset + 2) };
-                // SAFETY: as above.
-                let base_addr = unsafe { read_phys_u64(offset + 8) };
-                // SAFETY: as above.
-                let length = unsafe { read_phys_u64(offset + 16) };
-                // SAFETY: as above.
-                let flags = unsafe { read_phys_u32(offset + 28) };
+                let node_id = le_u32(table, offset + 2);
+                let base_addr = le_u64(table, offset + 8);
+                let length = le_u64(table, offset + 16);
+                let flags = le_u32(table, offset + 28);
                 mem.push(MemoryAffinity {
                     enabled: (flags & 0x1) != 0,
-                    node_id: proximity_domain,
+                    node_id,
                     base_addr,
                     length,
                 });
             }
             2 if entry_len >= 24 => {
-                // x2APIC Affinity (24 bytes).
-                // SAFETY: the arm's `entry_len >= 24` guard covers every byte
-                // read here, and the entry is inside the table.
-                let proximity_domain = unsafe { read_phys_u32(offset + 6) };
-                // SAFETY: as above.
-                let x2apic_id = unsafe { read_phys_u32(offset + 10) };
-                // SAFETY: as above.
-                let flags = unsafe { read_phys_u32(offset + 14) };
+                // Processor Local x2APIC Affinity (24 bytes): a two-byte
+                // reserved field after the subtable header, then the proximity
+                // domain — the layout QEMU writes for a processor whose APIC ID
+                // does not fit a byte.
+                let node_id = le_u32(table, offset + 4);
+                let x2apic_id = le_u32(table, offset + 8);
+                let flags = le_u32(table, offset + 12);
                 x2apic.push(X2ApicAffinity {
                     enabled: (flags & 0x1) != 0,
                     x2apic_id,
-                    node_id: proximity_domain,
+                    node_id,
                 });
             }
             _ => {}
@@ -716,43 +738,77 @@ unsafe fn parse_srat(
     (cpu, mem, x2apic)
 }
 
-/// Parse the ACPI SLIT distance matrix.
+/// Parse an ACPI SLIT out of its own bytes and answer its distance matrix.
 ///
-/// Returns `None` when the matrix is absent or out of bounds.
-#[cfg(target_os = "none")]
-unsafe fn parse_slit(slit_addr: usize) -> Option<Vec<Vec<u8>>> {
-    // SAFETY: `slit_addr` is a table the RSDT named and whose checksum was
-    // verified; its header is the first structure in it.
-    let header = unsafe { &*(slit_addr as *const SdtHeader) };
-    let table_end = slit_addr + header.length as usize;
-
-    // SLIT: 36-byte SDT header + 8-byte locality count, then the matrix.
-    // SAFETY: offset 36 is the SLIT's locality count, inside the table whose
-    // length the header above gave.
-    let locality_count = unsafe { read_phys_u64(slit_addr + 36) };
+/// Pure over the table's bytes for the same reason the SRAT parser is.  A
+/// locality count that is zero, past the format's own maximum of 64, or whose
+/// matrix does not fit the table is refused (`None`) rather than read past —
+/// a malformed SLIT is a table to decline, not one to trust.
+#[cfg(any(target_os = "none", test))]
+pub fn parse_slit_bytes(table: &[u8]) -> Option<Vec<Vec<u8>>> {
+    if table.len() < SLIT_MATRIX_OFFSET || table.len() > NUMA_TABLE_MAX_BYTES {
+        return None;
+    }
+    let locality_count = le_u64(table, 36);
     if locality_count == 0 || locality_count > 64 {
         return None;
     }
     let locality_count = locality_count as usize;
-    let matrix_offset = slit_addr + 36 + 8;
-    if matrix_offset + locality_count * locality_count > table_end {
+    let matrix_offset = SLIT_MATRIX_OFFSET;
+    let end = matrix_offset.checked_add(locality_count.checked_mul(locality_count)?)?;
+    if end > table.len() {
         return None;
     }
 
     let mut matrix = Vec::with_capacity(locality_count);
     for i in 0..locality_count {
-        let mut row = Vec::with_capacity(locality_count);
-        for j in 0..locality_count {
-            let idx = i * locality_count + j;
-            // SAFETY: the `matrix_offset + count² <= table_end` check above
-            // keeps every index of the matrix inside the table.
-            let dist = unsafe { read_phys_u8(matrix_offset + idx) };
-            row.push(dist);
-        }
-        matrix.push(row);
+        let row = matrix_offset + i * locality_count;
+        matrix.push(table[row..row + locality_count].to_vec());
     }
-
     Some(matrix)
+}
+
+/// Parse the ACPI SRAT at a physical address and return the affinity records.
+///
+/// The address comes from the RSDT walk, which read the table's own header;
+/// the table is mapped because every ACPI table is in the identity-mapped
+/// region at boot.  The wrapper bounds the slice by the header's own length —
+/// capped, because a firmware that lies about it must not describe a slice
+/// past the mapping — and hands it to [`parse_srat_bytes`].
+#[cfg(target_os = "none")]
+unsafe fn parse_srat(
+    srat_addr: usize,
+) -> (Vec<CpuAffinity>, Vec<MemoryAffinity>, Vec<X2ApicAffinity>) {
+    // SAFETY: `srat_addr` is a table the RSDT named and whose checksum was
+    // verified; byte 4 of an SDT header is the length field's first byte.
+    let length = unsafe { read_phys_u32(srat_addr + 4) } as usize;
+    if !(SRAT_ENTRIES_OFFSET..=NUMA_TABLE_MAX_BYTES).contains(&length) {
+        return (Vec::new(), Vec::new(), Vec::new());
+    }
+    // SAFETY: `length` is the length the table's own header declares, bounded
+    // above by `NUMA_TABLE_MAX_BYTES`, and the table is the mapped range the
+    // RSDT named — so the slice covers exactly that table.  Nothing writes
+    // through it, and ACPI tables are never written by software.
+    let table = unsafe { core::slice::from_raw_parts(srat_addr as *const u8, length) };
+    parse_srat_bytes(table)
+}
+
+/// Parse the ACPI SLIT at a physical address and return its distance matrix.
+///
+/// As [`parse_srat`]: a bounded slice over the mapped table, handed to the
+/// pure parser.
+#[cfg(target_os = "none")]
+unsafe fn parse_slit(slit_addr: usize) -> Option<Vec<Vec<u8>>> {
+    // SAFETY: `slit_addr` is a table the RSDT named and whose checksum was
+    // verified; the length field's bytes are inside it.
+    let length = unsafe { read_phys_u32(slit_addr + 4) } as usize;
+    if !(SLIT_MATRIX_OFFSET..=NUMA_TABLE_MAX_BYTES).contains(&length) {
+        return None;
+    }
+    // SAFETY: as for the SRAT — the declared length, capped, over the mapped
+    // table the RSDT named.
+    let table = unsafe { core::slice::from_raw_parts(slit_addr as *const u8, length) };
+    parse_slit_bytes(table)
 }
 
 /// Discover NUMA topology from ACPI SRAT/SLIT tables and store the result.
@@ -1053,5 +1109,153 @@ mod tests {
         table[0..4].copy_from_slice(b"APIC");
         table.extend_from_slice(&[0, 255, 1, 2, 1, 0, 0, 0]);
         assert!(parse_madt_bytes(&table).is_empty());
+    }
+
+    /// Build a SRAT whose bytes are exactly what **QEMU** writes, so the
+    /// parser is held against the layout a machine produces rather than
+    /// against one this tree invented.
+    ///
+    /// The subtable offsets are the ones `hw/i386/acpi-build.c`'s
+    /// `build_srat` appends (ACPI 6.x § 5.2.16): a type-0 record puts the
+    /// proximity domain's low byte at +2, the APIC ID at +3 and a 32-bit
+    /// flags word at +4; a type-2 record has two reserved bytes, the domain at
+    /// +4, the x2APIC ID at +8 and flags at +12.  A parser that read the
+    /// domain as one 32-bit field, or the APIC ID at the record's tail, would
+    /// pass on a table this tree built and fail on every real machine — which
+    /// is what the field-offset defect here was.
+    fn qemu_srat() -> alloc::vec::Vec<u8> {
+        let mut table = alloc::vec![0u8; 48]; // 36-byte SDT header + 12 reserved
+        table[0..4].copy_from_slice(b"SRAT");
+        // Two processors on node 0 (a type-0 record each): APIC IDs 0 and 1.
+        for apic_id in [0u8, 1u8] {
+            table.push(0); // type 0
+            table.push(16); // length
+            table.push(0); // proximity domain low
+            table.push(apic_id);
+            table.extend_from_slice(&1u32.to_le_bytes()); // flags: enabled
+            table.push(0); // local SAPIC EID
+            table.extend_from_slice(&[0, 0, 0]); // proximity domain high
+            table.extend_from_slice(&0u32.to_le_bytes()); // reserved
+        }
+        // And two on node 1: one more type-0 record, and a type-2 record for
+        // an APIC ID past a byte (QEMU's split), so both layouts are covered.
+        table.push(0);
+        table.push(16);
+        table.push(1); // node 1
+        table.push(2);
+        table.extend_from_slice(&1u32.to_le_bytes());
+        table.push(0);
+        table.extend_from_slice(&[0, 0, 0]);
+        table.extend_from_slice(&0u32.to_le_bytes());
+        table.push(2); // type 2
+        table.push(24);
+        table.extend_from_slice(&0u16.to_le_bytes()); // reserved
+        table.extend_from_slice(&1u32.to_le_bytes()); // node 1
+        table.extend_from_slice(&300u32.to_le_bytes()); // x2APIC ID
+        table.extend_from_slice(&1u32.to_le_bytes()); // enabled
+        table.extend_from_slice(&0u32.to_le_bytes()); // clock domain
+        table.extend_from_slice(&0u32.to_le_bytes()); // reserved
+                                                      // One memory range: node 1 owns [1 GiB, 2 GiB).
+        table.push(1); // type 1
+        table.push(40);
+        table.extend_from_slice(&1u32.to_le_bytes()); // node 1
+        table.extend_from_slice(&0u16.to_le_bytes()); // reserved
+        table.extend_from_slice(&(1u64 << 30).to_le_bytes()); // base
+        table.extend_from_slice(&(1u64 << 30).to_le_bytes()); // length
+        table.extend_from_slice(&0u32.to_le_bytes()); // reserved
+        table.extend_from_slice(&1u32.to_le_bytes()); // enabled
+        table.extend_from_slice(&0u64.to_le_bytes()); // reserved
+        table
+    }
+
+    /// The CPU affinity records are read at the offsets a real machine writes.
+    ///
+    /// This is the gate the field-offset defect needed: with the domain read
+    /// as one 32-bit field and the APIC ID from the record's tail, every
+    /// QEMU-emitted type-0 record parsed as APIC ID 0 and flags 0 — so the
+    /// boot saw no enabled processor on any node and a two-node machine
+    /// collapsed to one, silently, because no gate asserted the node count.
+    #[test]
+    fn srat_cpu_affinities_are_read_at_the_offsets_qemu_writes() {
+        let (cpu, mem, x2apic) = super::parse_srat_bytes(&qemu_srat());
+
+        let got: Vec<(bool, u8, u8)> = cpu
+            .iter()
+            .map(|aff| (aff.enabled, aff.apic_id, aff.node_id))
+            .collect();
+        assert_eq!(
+            got,
+            [(true, 0, 0), (true, 1, 0), (true, 2, 1)],
+            "each type-0 record's enabled flag, APIC ID and node, in order"
+        );
+        assert_eq!(
+            x2apic.len(),
+            1,
+            "the type-2 record a processor past a byte needs"
+        );
+        assert!(x2apic[0].enabled);
+        assert_eq!(x2apic[0].x2apic_id, 300, "the x2APIC ID at its own offset");
+        assert_eq!(x2apic[0].node_id, 1, "and the domain at its own offset");
+        assert_eq!(mem.len(), 1);
+        assert_eq!(mem[0].node_id, 1);
+        assert_eq!(mem[0].base_addr, 1 << 30);
+        assert_eq!(mem[0].length, 1 << 30);
+        assert!(mem[0].enabled);
+    }
+
+    /// A malformed SRAT is declined rather than read past: a truncated table,
+    /// an entry length that leaves the table, and an entry below the two
+    /// header bytes each stop the walk with what was read so far.
+    #[test]
+    fn a_malformed_srat_stops_the_walk_rather_than_reading_past() {
+        assert!(super::parse_srat_bytes(&[]).0.is_empty());
+        assert!(super::parse_srat_bytes(&[0u8; 47]).0.is_empty());
+
+        let mut truncated = alloc::vec![0u8; 48];
+        truncated[0..4].copy_from_slice(b"SRAT");
+        truncated.extend_from_slice(&[0, 16, 0, 5, 1, 0, 0, 0]); // one byte short
+        assert!(super::parse_srat_bytes(&truncated).0.is_empty());
+
+        let mut overrun = alloc::vec![0u8; 48];
+        overrun[0..4].copy_from_slice(b"SRAT");
+        overrun.extend_from_slice(&[0, 200, 0, 5, 1, 0, 0, 0]);
+        assert!(super::parse_srat_bytes(&overrun).0.is_empty());
+
+        // An entry length below the header size must not loop in place.
+        let mut tiny = alloc::vec![0u8; 48];
+        tiny[0..4].copy_from_slice(b"SRAT");
+        tiny.extend_from_slice(&[0, 1]);
+        assert!(super::parse_srat_bytes(&tiny).0.is_empty());
+    }
+
+    /// The SLIT's distance matrix is read by row, and a locality count whose
+    /// matrix does not fit — or is zero or past the format's maximum — is
+    /// declined rather than read past.
+    #[test]
+    fn a_slit_matrix_reads_by_row_and_a_lying_count_is_declined() {
+        let mut slit = alloc::vec![0u8; 44]; // 36-byte header + 8-byte count
+        slit[0..4].copy_from_slice(b"SLIT");
+        slit[36..44].copy_from_slice(&2u64.to_le_bytes());
+        slit.extend_from_slice(&[10, 20, 20, 10]); // row-major 2x2
+        assert_eq!(
+            super::parse_slit_bytes(&slit),
+            Some(alloc::vec![alloc::vec![10, 20], alloc::vec![20, 10]])
+        );
+
+        // A count of 3 whose matrix is only 4 bytes long is refused.
+        let mut lying = alloc::vec![0u8; 44];
+        lying[0..4].copy_from_slice(b"SLIT");
+        lying[36..44].copy_from_slice(&3u64.to_le_bytes());
+        lying.extend_from_slice(&[0, 0, 0, 0]);
+        assert_eq!(super::parse_slit_bytes(&lying), None);
+
+        // Zero localities, and a count past the format's maximum of 64.
+        let mut zero = alloc::vec![0u8; 44];
+        zero[0..4].copy_from_slice(b"SLIT");
+        assert_eq!(super::parse_slit_bytes(&zero), None);
+        let mut huge = alloc::vec![0u8; 44];
+        huge[0..4].copy_from_slice(b"SLIT");
+        huge[36..44].copy_from_slice(&65u64.to_le_bytes());
+        assert_eq!(super::parse_slit_bytes(&huge), None);
     }
 }

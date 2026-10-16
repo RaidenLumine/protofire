@@ -225,7 +225,19 @@ The authoritative picture of what exists today is
   QEMU's).  `fixtures/acpi/README.md` carries the recipe for more (`sudo cp
   /sys/firmware/acpi/tables/APIC fixtures/acpi/APIC`, root once, on a machine
   that is not a consequence of this tree), because `/sys/firmware/acpi/tables/*`
-  is readable by root alone.  The capture is also read by a *boot* now, in
+  is readable by root alone.  The NUMA walk has since shown what the shape
+  buys without any capture at all: the SRAT/SLIT parsers were made **pure
+  functions over a table's bytes** — `parse_srat_bytes`/`parse_slit_bytes`,
+  the way `parse_madt_bytes` already was — and a host test builds QEMU's own
+  byte layout.  It found a defect no boot could: the type-0 processor record's
+  proximity domain is *split* (its low byte after the two-byte subtable
+  header, its high three bytes after the local SAPIC EID) and the type-2
+  record has two reserved bytes first, and the parse read single 32-bit
+  fields at neither offset — so the x86_64 CPU-affinity walk saw every
+  processor as disabled and put every CPU on node 0, which the boot's own
+  `N` nodes line hid behind the *memory* affinity.  A QEMU boot can be the
+  fixture when the thing it produces is the bytes a parser reads.
+  The capture is also read by a *boot* now, in
   the shape a boot can actually be given: `-smp N,maxcpus=M` makes QEMU's own
   firmware write a MADT with disabled placeholders for the absent CPUs —
   the shape the captured laptop table has — and `make check-smp-runtime`
