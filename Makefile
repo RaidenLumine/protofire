@@ -180,6 +180,7 @@ help:
 		'  make check-riscv64-nvme               - the same NVMe disk on riscv64, whose RAM window is identity-mapped' \
 		'  make check-x8664-hda                  - play a tone from the shell and check the samples reach the host audio backend' \
 		'  make check-aarch64-hda                - the same tone on the device-tree machine, through its PCIe window' \
+		'  make check-riscv64-hda                - the same tone on riscv64, whose BAR is at the address enumeration assigned' \
 		'  make check-x8664-churn                - exhaust the stack window and the TLB log, and check the fallbacks' \
 		'  make check-riscv64-churn              - the same churn on riscv64, whose window is one of the things it checks' \
 		'  make check-aarch64-runtime            - run the headless QEMU virt aarch64 fault/wait smoke check' \
@@ -534,7 +535,8 @@ check-abi-frozen-payload-riscv64:
 	check-x8664-init-no-start \
 	check-x8664-usb-disk check-x8664-install \
 	check-x8664-iso check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
-	check-riscv64-nvme check-x8664-hda check-aarch64-hda check-x8664-churn \
+	check-riscv64-nvme check-x8664-hda check-aarch64-hda check-riscv64-hda \
+	check-x8664-churn \
 	check-riscv64-churn check-aarch64-runtime check-riscv64-runtime \
 	check-riscv64-aia-runtime check-riscv64-aplic-direct-runtime \
 	check-riscv64-pci-runtime \
@@ -765,6 +767,16 @@ check-aarch64-hda:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-aarch64-hda.sh
+
+# The same tone on riscv64, where the controller's BAR sits at the address the
+# resource pass assigned rather than behind an alias: this machine's device
+# window is identity-mapped.  The driver file is the one the PC compiles, and
+# this is what says the probe reaches it here too.
+check-riscv64-hda:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-riscv64-hda.sh
 
 # Boot with the stack-window churn: ask the window for more stacks than it has
 # and the invalidation log for more requests than it can hold, then check the

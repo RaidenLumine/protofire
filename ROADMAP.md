@@ -44,8 +44,12 @@ The authoritative picture of what exists today is
   also made `arch::mmu::phys_addr_of` answer here, since its queues are DMA
   buffers and this machine's RAM window is identity-mapped — and its
   completion queue claims an entry of its own, so a completion arrives as an
-  interrupt from the IMSIC (`make check-riscv64-nvme`).  What remains is
-  another class still, and broader device-tree driver coverage.
+  interrupt from the IMSIC (`make check-riscv64-nvme`).  A third class
+  followed: the Intel HDA audio driver is the same file the PC compiles,
+  reached through this machine's PCIe window, and `make check-riscv64-hda`
+  plays a tone from the shell and reads it back out of the host's WAV — so the
+  machine drives a network, a storage and an audio controller through one bus.
+  What remains is broader device-tree driver coverage.
 - **AArch64 PCIe.** The ECAM window is found, its buses enumerated, its BARs
   assigned, and its `virtio-net-pci` driven — the same code as riscv64 with a
   different way of reaching a BAR.  Its devices signal by MSI too now: the

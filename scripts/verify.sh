@@ -300,6 +300,10 @@ run_p3() {
         # And the device class beside the NIC, which is what needed this
         # machine's RAM window to be translatable for DMA.
         run_make_step "make check-riscv64-nvme" check-riscv64-nvme
+        # And the audio class, reached through the same window: the driver is
+        # the file the PC compiles, and this machine used to answer every write
+        # to the audio node with `Unsupported` because its probe never asked.
+        run_make_step "make check-riscv64-hda" check-riscv64-hda
     else
         printf '==> verify[%s]: skipping riscv64 runtime smoke (set RUN_RISCV64_RUNTIME=1 to enable)\n' \
             "$VERIFY_TIER"

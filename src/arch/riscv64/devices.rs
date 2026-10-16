@@ -62,6 +62,16 @@ pub fn usb_boot_disk() -> Option<Arc<dyn BlockDevice>> {
 
 #[path = "../../drivers/framebuffer_absent.rs"]
 pub mod framebuffer;
+/// The HDA driver, which this machine reaches through its PCIe window: an
+/// Intel HDA controller is a PCI function like any other, the class is what
+/// names it, and the platform's window helper is what maps its BAR — the same
+/// file the PC and the other device-tree machine compile.  The driver polls
+/// and claims no interrupt, so this machine's PLIC/IMSIC are not involved.
+#[cfg(target_os = "none")]
+#[path = "../../drivers/hda.rs"]
+pub mod hda;
+/// Nothing to answer on a host build of this architecture.
+#[cfg(not(target_os = "none"))]
 #[path = "../../drivers/hda_absent.rs"]
 pub mod hda;
 /// The NVMe driver, which this machine reaches through its PCIe window: the
