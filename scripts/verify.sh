@@ -220,6 +220,11 @@ run_p3() {
         # this is the only gate that proves it still describes the image it
         # is compiled into, and the only boot that runs the copy.
         run_make_step "make check-x8664-kaslr-runtime" check-x8664-kaslr-runtime
+        # And a machine with very little RAM: the other boots here all have a
+        # gigabyte or more, so nothing notices the kernel's demand for memory
+        # growing.  This asserts the minimum as a capability — the machine's
+        # own number, the pool clamped to it, and the ring-3 shell reached.
+        run_make_step "make check-x8664-low-memory" check-x8664-low-memory
         # The same machine with a real filesystem image on its USB disk rather
         # than a single sector: the reads fill and refill the controller's
         # rings, which is where the ring-reuse defect lived, and the boot's own
