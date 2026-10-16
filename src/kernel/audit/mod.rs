@@ -66,16 +66,81 @@ pub fn global() -> Option<&'static AuditBuffer> {
     unsafe { ptr.as_ref() }
 }
 
-/// Initialize the global audit subsystem.  Allocates the ring buffer and
-/// stores it as the global singleton.  Safe to call multiple times — the
-/// second and subsequent calls are no-ops.
+/// Initialize the global audit subsystem.  Allocates the ring buffer, stores
+/// it as the global singleton, and applies the boot's `audit=` option.  Safe to
+/// call multiple times — the second and subsequent calls are no-ops.
+///
+/// Persistence is **opt-in**, and the kernel command line is what asks for it:
+/// `audit=persist` (or `audit=all`) turns on the maintenance thread's drain of
+/// the ring to [`persist::AUDIT_LOG_PATH`], and a boot without it keeps records
+/// in memory only.  That default is deliberate — writing a durable trace of
+/// every audited event is a decision the operator makes, not one a boot makes
+/// for the machine — and the boot says which of the two it ran, so a log tells
+/// them apart.
+///
+/// The option is read **here** rather than by the caller so the boot path names
+/// one audit entry point, and because the command line may arrive on either PC
+/// hand-off (`boot_command_line`), which is not this module's business to know.
+///
+/// A boot that turned persistence on emits one `ConfigChange` record saying so,
+/// which is both an honest entry — enabling a durable audit trail is a
+/// configuration change worth recording — and the record that makes the ring
+/// non-empty on a machine whose processes have not asked for any capture of
+/// their own (a per-process decision, `AuditSetEnable` #143).
 pub fn init() {
     if global().is_some() {
         return;
     }
     let buf = Box::new(AuditBuffer::new());
-    try_install(buf);
+    if !try_install(buf) {
+        // Another thread won the race; enable nothing.
+        return;
+    }
+
+    let option = crate::arch::boot::boot_command_line().and_then(|cl| {
+        crate::arch::boot::command_line_option(&cl, "audit").map(alloc::string::String::from)
+    });
+    let persist = matches!(option.as_deref(), Some("persist") | Some("all"));
+    persist::set_persistence(persist);
+    if persist {
+        crate::println!(
+            "[audit ] persistence enabled (audit={}); recording to {}",
+            option.as_deref().unwrap_or(""),
+            persist::AUDIT_LOG_PATH
+        );
+        record_the_configuration_change(persist::AUDIT_LOG_PATH);
+    } else {
+        crate::println!(
+            "[audit ] memory-only; pass audit=persist to record to {}",
+            persist::AUDIT_LOG_PATH
+        );
+    }
 }
+
+/// Emit the `ConfigChange` record that says persistence was enabled.
+///
+/// The payload is the path the records go to, so a reader of `audit.log` sees
+/// the file name the boot chose rather than only that "something" changed.
+/// `fill` bounds the payload to the record's own data field, so passing the
+/// path whole is safe whatever its length.
+fn record_the_configuration_change(path: &str) {
+    let (pid, timestamp) = current_actor();
+    let mut record = types::AuditRecord::zeroed();
+    record.fill(
+        CONFIG_AUDIT_ID.fetch_add(1, Ordering::Relaxed),
+        0,
+        timestamp,
+        types::AuditEventType::ConfigChange,
+        pid,
+        0,
+        0,
+        path.as_bytes(),
+    );
+    let _ = emit_record(record);
+}
+
+/// Instance numbers for the records this module emits itself.
+static CONFIG_AUDIT_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
 
 /// Emit an audit record into the global buffer.
 /// Returns `false` if the buffer is full or not yet initialised.

@@ -225,6 +225,10 @@ run_p3() {
         # growing.  This asserts the minimum as a capability — the machine's
         # own number, the pool clamped to it, and the ring-3 shell reached.
         run_make_step "make check-x8664-low-memory" check-x8664-low-memory
+        # And the audit persistence switch: the boot's own command line turns
+        # capture and the drain to /data/audit.log on, and the shell reads the
+        # records back.  The default stays memory-only, which the gate checks.
+        run_make_step "make check-x8664-audit-persist" check-x8664-audit-persist
         # The same machine with a real filesystem image on its USB disk rather
         # than a single sector: the reads fill and refill the controller's
         # rings, which is where the ring-reuse defect lived, and the boot's own

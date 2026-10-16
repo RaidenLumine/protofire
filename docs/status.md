@@ -690,7 +690,7 @@ leaves out.
 | PAN/SMAP | Kernel-user memory isolation on all three architectures | See the interrupt section: the window is opened where the copy is, and the guard saves and restores it |
 | Stack canary | `Thread::canary` exists and is never read | There is no check: the heap block's own canary and the guard page below a kernel stack are what detect an overrun |
 | MAC type enforcement | Types on subjects and objects, allow rules enforced at the VFS file-access hook, `MacDenial` audit records; the three policy-writing syscalls (#175-177) require an admin token | Enforcement reaches files only: `check_process` and `check_network` exist with no call site, so a policy cannot refuse a signal, a trace or a connection; default is allow until a policy is loaded |
-| Audit subsystem | Classified event types, ring buffer, syscall entry/exit hooks, AuditSetEnable (#143) and AuditReadLog (#144) | Memory-only in practice: the persistence path exists but nothing enables it, so records are lost on reboot |
+| Audit subsystem | Classified event types, ring buffer, syscall entry/exit hooks, AuditSetEnable (#143) and AuditReadLog (#144); persistence is **opt-in** from the boot's command line — `audit=persist` has the maintenance thread drain the ring to `/data/audit.log` (append, sync, then commit the consumer index), and the boot emits a `ConfigChange` record saying so.  `make check-x8664-audit-persist` types at the shell and reads that record back out of the file; the default stays memory-only, which the boot names and the gate checks | A boot without `audit=` captures nothing and persists nothing (the default, left to the operator); a process still enables its own event types with AuditSetEnable (#143), so a machine that records only the kernel's own events is the shape a default boot has |
 | Service authorization | A privileged rc.d declaration names an account that must resolve; the grant or refusal is audited | Provenance, not authentication: no password is involved, so the elevated token is unauthenticated |
 
 **Strengths:** a formal multi-level security policy and mandatory access
@@ -819,11 +819,13 @@ control that are unusual in a hobby kernel.
 
 - **Default allow**: until a MAC policy is loaded, the default is to allow;
   deny-by-default requires an explicit policy.
-- **Audit log is memory-only in practice**: the ring buffer is installed and
-  written, but the persistence path that would flush it to `/data/audit.log` is
-  off by default (`audit::persist::set_persistence`) and nothing calls it, so
-  records are lost on reboot. The maintenance thread already drives the flush;
-  only the switch is missing.
+- **Audit log is memory-only unless the boot asks otherwise**: the ring buffer
+  is installed and written, and the maintenance thread drains it to
+  `/data/audit.log` when the boot passes `audit=persist`.  Without that option
+  the volume is memory-only and records are lost on reboot — the default, left
+  to the operator rather than assumed.  Which records a *process* produces is
+  still its own choice (`AuditSetEnable` #143), so a default boot records only
+  the kernel's own events.
 - **Signature verification is opt-in**: a launch manifest or program image
   carrying `manifest_signature`/`entry_signature` is verified against a trusted
   key, but one that carries neither loads anyway, and nothing in the launch

@@ -312,6 +312,14 @@ const PVH_MEMMAP_ENTRY_SIZE: usize = 24;
 #[cfg(target_arch = "x86_64")]
 const PVH_MEMMAP_MAX_ENTRIES: usize = 128;
 
+/// The most bytes of a PVH command line this kernel will read.
+///
+/// A bootloader's command line is a line of text; a NUL that never comes is a
+/// pointer that is not a string, and the bound is what keeps that from being an
+/// unbounded read.  Real command lines are two orders of magnitude shorter.
+#[cfg(target_arch = "x86_64")]
+const PVH_CMDLINE_MAX_BYTES: usize = 4096;
+
 /// How much of the machine the bootstrap identity map covers.
 ///
 /// `boot.asm` builds a four-gigabyte window of two-megabyte entries before
@@ -364,6 +372,59 @@ pub fn store_pvh_start_info(addr: usize) {
 #[cfg(target_arch = "x86_64")]
 pub fn pvh_start_info_address() -> usize {
     PVH_START_INFO.load(Ordering::Acquire)
+}
+
+/// The command line a PVH hand-off carries, if it carries one.
+///
+/// A direct QEMU `-kernel` boot reaches the kernel through Xen's
+/// `hvm_start_info` block, and that block has a **command line** of its own: a
+/// physical address (`cmdline_paddr`, offset `0x18` of the struct) of a
+/// NUL-terminated string the loader filled from `-append`.  The kernel read
+/// only the Multiboot2 tag for the command line, so a direct boot saw no
+/// command line at all — `init=` and every other option were silently absent,
+/// which is the same "the machine described it and nothing read it" shape as
+/// the memory map ([RFC 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+///
+/// `None` for a block that is not a start-of-day block, names no command line,
+/// or points outside the bootstrap map.  The string is bounded by
+/// [`PVH_CMDLINE_MAX_BYTES`]: a NUL that never comes must not become an unbounded
+/// read.
+#[cfg(target_arch = "x86_64")]
+pub fn pvh_command_line_at(addr: usize) -> Option<String> {
+    if addr == 0 || addr >= bootstrap_map_limit() {
+        return None;
+    }
+    // SAFETY: `addr` is inside the bootstrap identity map, which covers the
+    // loader's block while this runs; the magic is the block's first word.
+    let magic = unsafe { *(addr as *const u32) };
+    if magic != PVH_START_MAGIC {
+        return None;
+    }
+    // SAFETY: offset 0x18 of a recognised start-of-day block is
+    // `cmdline_paddr`, inside the same mapped struct.
+    let cmdline = unsafe { *((addr + 0x18) as *const u64) } as usize;
+    if cmdline == 0 || cmdline >= bootstrap_map_limit() {
+        return None;
+    }
+
+    let mut line = String::new();
+    for i in 0..PVH_CMDLINE_MAX_BYTES {
+        // SAFETY: `cmdline` is a NUL-terminated string the loader wrote below
+        // the map bound; each byte read stops at the bound or at the NUL.
+        let byte = unsafe { *((cmdline + i) as *const u8) };
+        if byte == 0 {
+            return Some(line);
+        }
+        line.push(byte as char);
+    }
+    // No NUL within the bound: not a string this kernel will trust.
+    None
+}
+
+/// The command line the recorded PVH hand-off carries, if one was recorded.
+#[cfg(target_arch = "x86_64")]
+pub fn pvh_command_line() -> Option<String> {
+    pvh_command_line_at(pvh_start_info_address())
 }
 
 /// The machine's memory, as whichever PC hand-off block the loader left.
@@ -581,18 +642,36 @@ pub fn multiboot2_memory_map() -> Option<usize> {
     Some(available_bytes(&regions))
 }
 
+/// The value of a `key=value` option on the kernel command line, if present.
+///
+/// The command line is whitespace-separated `key=value` tokens, which is the
+/// shape a bootloader passes (`init=/system/init.elf`) and the shape every
+/// reader here uses.  Only a whole token is matched, so `key=` names `key` and
+/// not `keyboard`; a key with an empty value (`key=`) answers `None`, so a
+/// flag that has no value is asked about with the same call and an empty
+/// comparison.  Pure, so a caller's interpretation of the value is host-tested
+/// without a boot.
+pub fn command_line_option<'a>(command_line: &'a str, key: &str) -> Option<&'a str> {
+    for token in command_line.split_whitespace() {
+        // The `=` must follow the key immediately: `strip_prefix(key)` alone
+        // would let `keyboard=…` answer for `key`.
+        if let Some(value) = token
+            .strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('='))
+        {
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
 /// Extract the `init=<path>` value from a kernel command line.
 ///
 /// Returns the init path if found, otherwise returns `default_path`.
 pub fn init_path_from_command_line<'a>(command_line: &'a str, default_path: &'a str) -> &'a str {
-    for token in command_line.split_whitespace() {
-        if let Some(path) = token.strip_prefix("init=") {
-            if !path.is_empty() {
-                return path;
-            }
-        }
-    }
-    default_path
+    command_line_option(command_line, "init").unwrap_or(default_path)
 }
 
 /// Boot protocol tags recognized by the kernel.
@@ -752,11 +831,15 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     use super::available_bytes;
+    use super::command_line_option;
     use super::current_architecture;
+    use super::init_path_from_command_line;
     #[cfg(target_arch = "x86_64")]
     use super::multiboot2_framebuffer_at;
     #[cfg(target_arch = "x86_64")]
     use super::multiboot2_memory_regions_at;
+    #[cfg(target_arch = "x86_64")]
+    use super::pvh_command_line_at;
     #[cfg(target_arch = "x86_64")]
     use super::pvh_memory_regions_at;
     use super::BootInfo;
@@ -1046,5 +1129,84 @@ mod tests {
         let mut wild = block(PVH_MMAP_VERSION);
         wild[0x30..0x34].copy_from_slice(&((PVH_MEMMAP_MAX_ENTRIES + 1) as u32).to_le_bytes());
         assert_eq!(pvh_memory_regions_at(wild.as_ptr() as usize), None);
+    }
+
+    /// A `key=value` option is read from a whole token, `init=` still answers
+    /// the path it always did, and a key that is a prefix of another is not
+    /// confused for it.
+    #[test]
+    fn a_command_line_option_is_read_from_a_whole_token() {
+        // The shape the distribution passes.
+        assert_eq!(
+            init_path_from_command_line("init=/system/init.elf quiet", "/default"),
+            "/system/init.elf"
+        );
+        // No `init=` falls to the default, and a later token still wins.
+        assert_eq!(init_path_from_command_line("quiet", "/default"), "/default");
+        assert_eq!(
+            init_path_from_command_line("quiet init=/x", "/default"),
+            "/x"
+        );
+        // An empty value is not a value: `init=` leaves the default.
+        assert_eq!(init_path_from_command_line("init=", "/default"), "/default");
+
+        // A general key, and the prefix trap: `keyboard=…` is not `key`.
+        assert_eq!(
+            command_line_option("audit=persist", "audit"),
+            Some("persist")
+        );
+        assert_eq!(command_line_option("keyboard=us audit=on", "key"), None);
+        assert_eq!(command_line_option("audit=persist", "auditx"), None);
+        assert_eq!(command_line_option("audit=", "audit"), None);
+        assert_eq!(command_line_option("", "audit"), None);
+        // One option per call, whatever the order.
+        assert_eq!(command_line_option("a=1 b=2", "b"), Some("2"));
+    }
+    /// The command line a PVH hand-off carries is read from `cmdline_paddr`,
+    /// bounded, and refused when it is not a start-of-day block or names none.
+    ///
+    /// The kernel read only the Multiboot2 tag, so a direct `-kernel` boot saw
+    /// no command line at all — `init=` and every other option were silently
+    /// absent there, which is the "described and nothing read it" shape.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn a_pvh_block_answers_its_command_line() {
+        // A minimal start-of-day block whose `cmdline_paddr` points at a string
+        // in the same buffer, laid out for the test's own address space.
+        fn built(line: Option<&str>) -> alloc::vec::Vec<u8> {
+            let mut b: alloc::vec::Vec<u8> = alloc::vec![0u8; 0x38];
+            b[0..4].copy_from_slice(&0x336e_c578_u32.to_le_bytes()); // magic
+            b[4..8].copy_from_slice(&1u32.to_le_bytes()); // version
+            if let Some(text) = line {
+                b.extend_from_slice(text.as_bytes());
+                b.push(0);
+                // The pointer is written once the buffer has stopped moving:
+                // it is a *physical* address in the hand-off, and a Vec that
+                // reallocated would move the string out from under it.
+                let at = (b.as_ptr() as u64) + 0x38;
+                b[0x18..0x20].copy_from_slice(&at.to_le_bytes()); // cmdline_paddr
+            }
+            b
+        }
+
+        let with = built(Some("audit=persist init=/system/init.elf"));
+        let line = pvh_command_line_at(with.as_ptr() as usize).expect("a command line");
+        assert_eq!(line, "audit=persist init=/system/init.elf");
+        assert_eq!(
+            command_line_option(&line, "audit"),
+            Some("persist"),
+            "the option a boot asks with is readable from what it parsed"
+        );
+
+        // A block that names no command line answers none, and neither does a
+        // null address or one without the magic.
+        let none = built(None);
+        assert!(pvh_command_line_at(none.as_ptr() as usize).is_none());
+        assert!(pvh_command_line_at(0).is_none());
+        let mut foreign = built(None);
+        foreign[0..4].copy_from_slice(&0xDEAD_BEEF_u32.to_le_bytes());
+        let at = foreign.as_ptr() as u64 + 0x38;
+        foreign[0x18..0x20].copy_from_slice(&at.to_le_bytes());
+        assert!(pvh_command_line_at(foreign.as_ptr() as usize).is_none());
     }
 }

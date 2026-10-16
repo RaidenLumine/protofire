@@ -170,6 +170,7 @@ help:
 		'  make check-x8664-runtime              - run the headless single-CPU QEMU x86_64 demo smoke check' \
 		'  make check-x8664-kaslr-runtime        - boot a relocated kernel and check the table and the copy' \
 		'  make check-x8664-low-memory           - boot a very small x86_64 machine and check it clamps its pool and reaches the shell' \
+		'  make check-x8664-audit-persist        - boot with audit=persist and read the audit log back from the shell' \
 		'  make check-x8664-init-no-start        - boot an init that asks for nothing, and reach the fallback' \
 		'  make check-x8664-usb-disk             - boot a real SimpleFs image on a USB disk and check it mounts and is written' \
 		'  make check-x8664-install              - install the zones onto an sgdisk-made disk and boot it' \
@@ -532,6 +533,7 @@ check-abi-frozen-payload-riscv64:
 .PHONY: check-perf-baseline check-perf-baseline-smp check-perf-baseline-disk \
 	check-perf-baseline-numa check-perf-baseline-net \
 	check-x8664-runtime check-x8664-kaslr-runtime check-x8664-low-memory \
+	check-x8664-audit-persist \
 	check-x8664-init-no-start \
 	check-x8664-usb-disk check-x8664-install \
 	check-x8664-iso check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
@@ -666,6 +668,17 @@ check-x8664-low-memory:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-low-memory.sh
+
+# The audit persistence switch: the boot's `audit=persist` option turns on
+# event capture and the maintenance thread's drain to `/data/audit.log`, and
+# this types at the shell to read the records back.  It is also the first gate
+# to exercise the PVH hand-off's own command line, which is what carries that
+# option on a direct `-kernel` boot.
+check-x8664-audit-persist:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-audit-persist.sh
 
 # The other half of the boot hand-off, and the only boot that reaches it: the
 # disk's init program reads the declarations and asks for nothing to be

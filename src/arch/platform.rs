@@ -29,7 +29,21 @@ pub(crate) fn capture_early_state() {
         // The loader's info block is reachable now and not after the switch,
         // so everything read out of it is read here: the command line, and the
         // ACPI tag the discovery below looks for.
-        crate::arch::boot::store_command_line(crate::arch::boot::multiboot2_command_line());
+        // The loader's command line, whichever block carried it: a
+        // Multiboot2 tag under a loader, or the PVH block's own `cmdline_paddr`
+        // on a direct `-kernel` boot, which the kernel read nothing of before
+        // — so `init=` and every other option were absent there.
+        let command_line = crate::arch::boot::multiboot2_command_line().or_else(|| {
+            #[cfg(target_arch = "x86_64")]
+            {
+                crate::arch::boot::pvh_command_line()
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                None
+            }
+        });
+        crate::arch::boot::store_command_line(command_line);
         crate::arch::boot::store_framebuffer(crate::arch::boot::multiboot2_framebuffer());
         let aps = crate::arch::x86_64::acpi::discover_aps(handoff);
         crate::arch::x86_64::acpi::store_early_aps(aps);
