@@ -74,6 +74,15 @@ use crate::Result;
 /// content the demo image does, at extents the machine's table chose.
 const PLACEMENT_ALIGN_BLOCKS: u64 = 2048;
 
+/// How many blocks of an extent's zeroed tail to write at a time.
+///
+/// A zone image is hundreds of KiB and a reused entry keeps whatever extent
+/// the *table* declared — a stranger's may be large — so the tail is written
+/// in chunks of this size rather than allocated whole: the install's memory
+/// does not grow with a partition it did not place
+/// ([RFC 0028](../../docs/rfcs/0028-install-through-a-device-not-an-image.md)).
+const ZERO_CHUNK_BLOCKS: u64 = 1024;
+
 /// The extent one zone got, and whether the table already carried it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InstalledZone {
@@ -405,23 +414,32 @@ fn install_zones_io(io: &mut dyn BlockIo, may_create: bool) -> Result<InstallRep
             Some(generation) => super::demo::build_system_zone_image(generation),
             None => build_zone_image(zone.zone),
         };
-        let capacity = (zone.last_block - zone.first_block + 1) as usize * BLOCK_SIZE;
+        let extent = zone.last_block - zone.first_block + 1;
+        let capacity = extent as usize * BLOCK_SIZE;
         if image.len() > capacity {
             return Err(Error::NoSpace);
         }
-        // The extent is zeroed in whole blocks and the image lands in the
-        // first of them: a grown or shrunken zone cannot leave a stale tail
-        // for a reader to believe, and the write is the same read-then-write
-        // pair whatever the block access is.
-        let blocks = (capacity / BLOCK_SIZE) as u64;
-        let mut run = alloc::vec![0_u8; capacity];
-        run[..image.len()].copy_from_slice(&image);
-        io.write_blocks(zone.first_block, &run)?;
-        // A trailing partial block, when the extent is not a whole number of
-        // them: the format's own tables are block-aligned, so this is the
-        // last block of a zone extent whose size the demo chose.
-        let written = capacity as u64 / BLOCK_SIZE as u64;
-        debug_assert_eq!(blocks, written);
+        // The image first, padded to a whole block, and the rest of the extent
+        // zeroed after it: a grown or shrunken zone cannot leave a stale tail
+        // for a reader to believe.  Each is written in bounded chunks rather
+        // than the whole extent at once — a reused entry keeps the extent the
+        // *table* declared, which a stranger's table may have made large, and
+        // an install that held it whole would be the memory the device path
+        // exists to avoid ([RFC 0028](../../docs/rfcs/
+        // 0028-install-through-a-device-not-an-image.md)).
+        let image_blocks = image.len().div_ceil(BLOCK_SIZE);
+        let mut head = alloc::vec![0_u8; image_blocks * BLOCK_SIZE];
+        head[..image.len()].copy_from_slice(&image);
+        io.write_blocks(zone.first_block, &head)?;
+
+        let mut at = zone.first_block + image_blocks as u64;
+        let end = zone.last_block + 1;
+        while at < end {
+            let take = (end - at).min(ZERO_CHUNK_BLOCKS) as usize;
+            let zeros = alloc::vec![0_u8; take * BLOCK_SIZE];
+            io.write_blocks(at, &zeros)?;
+            at += take as u64;
+        }
         zone_entries.push((zone.zone.gpt_type_guid(), zone.first_block, zone.last_block));
     }
 
@@ -588,6 +606,141 @@ mod tests {
             assert_eq!(a.last_block, b.last_block);
             assert!(b.reused, "the second install writes the extents in place");
         }
+    }
+
+    /// A zone the table already carries keeps the **table's** extent, which a
+    /// stranger's tool may have made far larger than the demo sizes: the
+    /// install zeroes that whole tail, and does it in bounded pieces rather
+    /// than allocating the extent whole.
+    ///
+    /// This is the shape RFC 0028 exists for — a reused extent the install did
+    /// not place — and the one the shipped fixtures do not carry, since their
+    /// extents are the demo sizes.  The check is the property, not the
+    /// mechanism: the extent is zeroed past the image (a stale tail would be
+    /// bytes a reader could believe), and an extent many chunks long completes
+    /// without the install holding it.
+    #[test]
+    fn a_zone_entry_larger_than_the_demo_sizes_is_reused_and_zeroed() {
+        let mut disk = machine_disk();
+        // An apps entry the table carries, sized like a stranger's partition
+        // rather than the demo's: 8192 blocks where `DEMO_DISK_APPS_BLOCKS` is
+        // 512, so its tail is many `ZERO_CHUNK_BLOCKS` long.
+        let apps_type = StorageZone::Apps.gpt_type_guid();
+        let first = 8192u64;
+        let count = 8192u64;
+        // Its extent starts filled with a pattern, and the table names it.
+        let mut table = read_gpt_entries_of(&disk);
+        table.push((1, apps_type, first, count));
+        write_gpt_partitions(&mut disk, &table).expect("the table with the big apps entry");
+        for i in 0..(count as usize * BLOCK) {
+            disk[first as usize * BLOCK + i] = (i % 251) as u8;
+        }
+
+        let report = install_zones_into_disk_image(&mut disk).expect("the install runs");
+        let apps = report
+            .zones
+            .iter()
+            .find(|zone| zone.zone == StorageZone::Apps)
+            .expect("the apps zone");
+        assert!(apps.reused, "the table's apps entry is kept");
+        assert_eq!(
+            (apps.first_block, apps.last_block),
+            (first, first + count - 1)
+        );
+
+        // The image is at the front and the rest of the extent reads as zeros:
+        // the pattern the "stranger" left is gone everywhere past the image.
+        let image = crate::fs::demo::build_zone_image(StorageZone::Apps);
+        let at = first as usize * BLOCK;
+        assert_eq!(&disk[at..at + image.len()], image.as_slice());
+        let image_blocks = image.len().div_ceil(BLOCK);
+        assert!(
+            disk[at + image_blocks * BLOCK..(first + count) as usize * BLOCK]
+                .iter()
+                .all(|byte| *byte == 0),
+            "the extent past the image is zeroed, not the pattern it held"
+        );
+    }
+
+    /// The install into a **reused** extent much larger than the demo sizes
+    /// writes it in bounded pieces, never in one extent-sized call.
+    ///
+    /// This is the memory property RFC 0028 exists for, and the one the byte
+    /// result cannot show: a tablet's or a stranger's entry can make an extent
+    /// far larger than the image, and an install that built that extent in one
+    /// `vec` would be the whole-disk hold the device path removes.  The gate
+    /// observes the writes themselves through a recording [`BlockIo`] and
+    /// requires the largest to stay under the chunk size — not an RSS number,
+    /// which the harness cannot read deterministically.
+    #[test]
+    fn a_reused_extent_is_written_in_bounded_pieces() {
+        let mut disk = machine_disk();
+        let apps_type = StorageZone::Apps.gpt_type_guid();
+        let first = 8192u64;
+        let count = 8192u64;
+        let mut table = read_gpt_entries_of(&disk);
+        table.push((1, apps_type, first, count));
+        write_gpt_partitions(&mut disk, &table).expect("the table with the big apps entry");
+
+        let mut io = RecordingIo {
+            inner: super::super::partition::SliceIo::new(&mut disk)
+                .expect("the disk is whole blocks"),
+            largest_write: 0,
+        };
+        super::install_zones_io(&mut io, false).expect("the install runs");
+
+        // One block's worth is the header-sized writes; the zeroed tail is the
+        // big ones, and the whole point is that they are pieces, not the
+        // extent.  The bound is the chunk, with the image's own block count
+        // folded in as the largest a front write can be.
+        let bound = (super::ZERO_CHUNK_BLOCKS as usize + 1024) * BLOCK;
+        assert!(
+            io.largest_write <= bound,
+            "the install wrote {} bytes in one call, past the {}-byte bound — it held an extent",
+            io.largest_write,
+            bound
+        );
+        assert!(
+            io.largest_write < count as usize * BLOCK / 2,
+            "the largest write is a piece of the extent, not the extent"
+        );
+    }
+
+    /// A [`BlockIo`] over a slice that records the largest single write.
+    struct RecordingIo<'a> {
+        inner: super::super::partition::SliceIo<'a>,
+        largest_write: usize,
+    }
+
+    impl crate::fs::partition::BlockIo for RecordingIo<'_> {
+        fn block_count(&self) -> u64 {
+            self.inner.block_count()
+        }
+
+        fn read_blocks(&mut self, lba: u64, buffer: &mut [u8]) -> crate::Result<()> {
+            self.inner.read_blocks(lba, buffer)
+        }
+
+        fn write_blocks(&mut self, lba: u64, data: &[u8]) -> crate::Result<()> {
+            self.largest_write = self.largest_write.max(data.len());
+            self.inner.write_blocks(lba, data)
+        }
+    }
+
+    /// The in-use entries of `disk`'s GPT, as `write_gpt_partitions` takes
+    /// them: the slot, the type GUID and the extent.
+    fn read_gpt_entries_of(disk: &[u8]) -> Vec<(usize, [u8; 16], u64, u64)> {
+        let (_, entries) = read_gpt_layout_from_bytes(disk)
+            .expect("the table reads")
+            .expect("a table");
+        let mut table = Vec::new();
+        for (slot, entry) in entries.iter().enumerate() {
+            if entry.is_unused() {
+                continue;
+            }
+            table.push((slot, entry.type_guid, entry.first_lba, entry.block_count()));
+        }
+        table
     }
 
     /// A disk with no verified GPT is refused rather than given one — the

@@ -49,6 +49,16 @@ Nothing about the operation needs the disk.
 
 ## Design
 
+**0. A zone extent is written in pieces.**  A zone the table already carries
+keeps the *table's* extent — the install does not shrink a partition someone
+else declared — so a reused entry can be far larger than the demo sizes, and
+the zeroed tail after the image must not be built in one buffer.  The image
+goes down in one block-aligned write and the rest of the extent is zeroed in
+`ZERO_CHUNK_BLOCKS`-sized writes, so the install's memory does not grow with a
+partition it did not place.  This is a defect the first cut shipped — it held
+the whole extent — and the gate observes the write sizes through a recording
+`BlockIo`, because the byte result looks the same either way.
+
 **1. A block-level I/O trait, next to the format.**  `fs::partition` gains
 `BlockIo`: `block_count`, `read_blocks`, `write_blocks` — the same shape
 `BlockDevice` has, minus queues, tickets and capability questions.  Two
@@ -114,6 +124,10 @@ images to be byte-identical, and the gate boots the device-path result.
 - **`src/fs/install.rs` tests** — device-side install equals byte-side
   install, byte for byte, on the shipped `machine_disk` fixture; a
   table-less device takes the fresh-table route, matching the slice path.
+  Two more cover the reused extent: an entry larger than the demo sizes is
+  kept and zeroed past its image, and a recording `BlockIo` requires every
+  write to stay within the chunk bound — the second fails if the install
+  builds an extent whole, which the byte comparison cannot show.
 - **`scripts/check-x8664-install.sh`** — the existing `cargo run --
   install` sections now run over the file-backed device; one section adds a
   **64 GiB sparse** disk whose install must complete while the file's
