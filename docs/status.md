@@ -454,7 +454,7 @@ disk-backed swap, compression, and defragmentation.
 | Component | Now | Missing |
 |-----------|-----|---------|
 | x86_64 IDT + exceptions | #PF, #GP, #UD, #DF, timer, IPI | — |
-| x86_64 APIC + IOAPIC | SMP IPI, timer, I/O routing; ISA IRQs are routed by **global system interrupt**, read from the MADT's interrupt-source overrides (`parse_madt_interrupt_overrides`, host-gated on the byte layout and on the captured laptop's own two overrides) — so a machine that puts IRQ 0 on pin 2 has its tick routed there, and a machine naming no override keeps the identity map | — |
+| x86_64 APIC + IOAPIC | SMP IPI, timer, I/O routing; ISA IRQs are routed by **global system interrupt**, read from the MADT's interrupt-source overrides (`parse_madt_interrupt_overrides`, host-gated on the byte layout and on the captured laptop's own two overrides) — so a machine that puts IRQ 0 on pin 2 has its tick routed there, and a machine naming no override keeps the identity map; the I/O APIC is driven at the address the machine **declares** in its MADT I/O APIC record (`parse_madt_ioapics`, host-gated), mapped through the general device mapper rather than a fixed window, so a board that places the controller elsewhere is followed | — |
 | AArch64 exception vectors | EL1 sync/IRQ/FIQ/SError, EL0 sync | — |
 | AArch64 GIC | GICv2 and GICv3 register layouts, chosen from `GICD_PIDR2` (`src/arch/aarch64/gicv3.rs`); LPIs, with one pending table per CPU; the ITS that translates a device's message into one, with a collection per CPU (`src/arch/aarch64/its.rs`) | A machine whose device cannot carry a requester ID would need a window of its own in front of the ITS |
 | RISC-V trap handler | U-mode ecall, timer, external interrupts | — |

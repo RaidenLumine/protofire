@@ -32,33 +32,34 @@ impl PageTablePage {
     const ZEROED: Self = Self([0u64; PAGE_TABLE_ENTRY_COUNT]);
 }
 
-/// Statically-allocated PD for LAPIC/IOAPIC identity mapping (PDPT entry 3,
-/// covering the 3–4 GiB region where 0xFEE0_0000 and 0xFEC0_0000 live).
+/// Statically-allocated PD for the LAPIC identity mapping (PDPT entry 3,
+/// covering the 3–4 GiB region where 0xFEE0_0000 lives).
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 static mut HIGH_PD: PageTablePage = PageTablePage::ZEROED;
-/// Statically-allocated PTs for LAPIC (PDPT[3] PD index 503) and IOAPIC
-/// (PDPT[3] PD index 502).  Both pages are identity-mapped: the MMIO
-/// physical addresses 0xFEE0_0000 / 0xFEC0_0000 are used directly as
-/// virtual addresses.
+/// A statically-allocated PT for the LAPIC (PDPT[3] PD index 503): the MMIO
+/// physical address 0xFEE0_0000 is used directly as a virtual address.  The
+/// I/O APIC is *not* mapped here — its address is the machine's, read from the
+/// MADT, and it is mapped by `init_ioapic` through the general device mapper.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-static mut HIGH_PTS: [PageTablePage; 2] = [PageTablePage::ZEROED; 2];
+static mut HIGH_PTS: [PageTablePage; 1] = [PageTablePage::ZEROED; 1];
 
-/// Identity-map the LAPIC and IOAPIC MMIO pages into the active kernel page
-/// tables using statically-allocated intermediate tables.
+/// Identity-map the LAPIC MMIO page into the active kernel page tables using
+/// statically-allocated intermediate tables.
 ///
-/// Both registers live in the 3–4 GiB physical-address range (PDPT[3]).
-/// Rather than blindly replacing the PDPT entry — which would destroy any
-/// existing device mappings in that range (framebuffer BAR0, ECAM, etc.) —
-/// this function checks whether PDPT[3] is already present:
+/// The LAPIC register window lives at the architectural address 0xFEE0_0000,
+/// in the 3–4 GiB range (PDPT[3]).  Rather than blindly replacing the PDPT
+/// entry — which would destroy any existing device mappings in that range
+/// (framebuffer BAR0, ECAM, etc.) — this function checks whether PDPT[3] is
+/// already present:
 ///
-/// * If **present**, it adds the LAPIC/IOAPIC PD entries into the **existing**
-///   PD page so that both the prior mappings and the new identity mappings
-///   co-exist.
+/// * If **present**, it adds the LAPIC PD entry into the **existing** PD page
+///   so that both the prior mappings and the new identity mapping co-exist.
 /// * If **not present**, it installs the statically-allocated `HIGH_PD` as the
-///   PDPT entry, which only contains the two entries.
+///   PDPT entry, which contains the one entry.
 ///
 /// In both cases the raw MMIO pointers used by `lapic_read` / `lapic_write`
-/// and `ioapic_read` / `ioapic_write` become valid identity mappings.
+/// become valid identity mappings.  The I/O APIC is mapped separately, at the
+/// address the machine declares, by `ioapic::init_ioapic`.
 ///
 /// # Safety
 ///
@@ -92,42 +93,32 @@ pub unsafe fn map_device_mmio_page(_phys_addr: usize) {
         let pdpt = ((*pml4)[0] as usize & PAGE_ENTRY_ADDRESS_MASK as usize)
             as *mut [u64; PAGE_TABLE_ENTRY_COUNT];
 
-        // PD indices within PDPT[3] (PDPT base = 0xC000_0000):
+        // PD index within PDPT[3] (PDPT base = 0xC000_0000):
         //   LAPIC  0xFEE0_0000 → PD[503] (0x1F7)
-        //   IOAPIC 0xFEC0_0000 → PD[502] (0x1F6)
-        // Both PT indices are 0x000 (page offset within the 2 MiB PD entry).
+        // Its PT index is 0x000 (page offset within the 2 MiB PD entry).
         const LAPIC_PD_IDX: usize = 503;
-        const IOAPIC_PD_IDX: usize = 502;
 
         {
-            // Wire up the statically-allocated PTs regardless.
+            // Wire up the statically-allocated PT regardless.
             HIGH_PD.0[LAPIC_PD_IDX] = (core::ptr::addr_of!(HIGH_PTS[0]) as u64)
                 | PAGE_ENTRY_PRESENT
                 | PAGE_ENTRY_WRITABLE;
             HIGH_PTS[0].0[0] = (0xFEE0_0000u64) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-
-            HIGH_PD.0[IOAPIC_PD_IDX] = (core::ptr::addr_of!(HIGH_PTS[1]) as u64)
-                | PAGE_ENTRY_PRESENT
-                | PAGE_ENTRY_WRITABLE;
-            HIGH_PTS[1].0[0] = (0xFEC0_0000u64) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
 
             let existing_pdpt_entry = (*pdpt)[3];
 
             if existing_pdpt_entry & PAGE_ENTRY_PRESENT != 0 {
                 // PDPT[3] already has a valid PD — likely created by
                 // `map_device_mmio` for a PCI BAR (e.g. framebuffer) that sits in
-                // the 3–4 GiB range.  Add LAPIC/IOAPIC entries to the existing PD
+                // the 3–4 GiB range.  Add the LAPIC entry to the existing PD
                 // instead of replacing the PDPT entry.
                 let existing_pd = (existing_pdpt_entry as usize & PAGE_ENTRY_ADDRESS_MASK as usize)
                     as *mut [u64; PAGE_TABLE_ENTRY_COUNT];
 
-                // Only write if the target entries are currently empty, avoiding
-                // overwriting an existing mapping for the same physical pages.
+                // Only write if the target entry is currently empty, avoiding
+                // overwriting an existing mapping for the same physical page.
                 if (*existing_pd)[LAPIC_PD_IDX] & PAGE_ENTRY_PRESENT == 0 {
                     (*existing_pd)[LAPIC_PD_IDX] = HIGH_PD.0[LAPIC_PD_IDX];
-                }
-                if (*existing_pd)[IOAPIC_PD_IDX] & PAGE_ENTRY_PRESENT == 0 {
-                    (*existing_pd)[IOAPIC_PD_IDX] = HIGH_PD.0[IOAPIC_PD_IDX];
                 }
             } else {
                 // No existing mapping for the 3–4 GiB region — install HIGH_PD

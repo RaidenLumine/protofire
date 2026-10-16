@@ -360,6 +360,58 @@ pub fn parse_madt_interrupt_overrides(table: &[u8]) -> Vec<InterruptOverride> {
     overrides
 }
 
+/// A MADT I/O APIC record (ACPI 6.x § 5.2.9, type 1): an I/O APIC's own MMIO
+/// address and the first global system interrupt it covers.
+///
+/// The address is the machine's, not a constant: the architectural default is
+/// `0xFEC0_0000`, but a board may place the controller elsewhere, and a driver
+/// that writes to the default regardless would fault — or, worse, program
+/// whatever else lives there.  The `gsi_base` says which pin the controller's
+/// input 0 is, which a machine with more than one I/O APIC uses to number
+/// their pins apart.
+#[cfg(any(target_os = "none", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IoApic {
+    /// The controller's own ID.
+    pub id: u8,
+    /// The physical MMIO base of its register window.
+    pub address: u32,
+    /// The first global system interrupt its input 0 covers.
+    pub gsi_base: u32,
+}
+
+/// Parse a MADT out of its own bytes and answer its I/O APIC records.
+///
+/// Pure over the table's bytes so the parse is host-testable, the way
+/// [`parse_madt_bytes`] is.  An entry is stepped over by its own length, so a
+/// record type the walk does not read lands the next read on a boundary.
+#[cfg(any(target_os = "none", test))]
+pub fn parse_madt_ioapics(table: &[u8]) -> Vec<IoApic> {
+    let mut ioapics = Vec::new();
+    if !(MADT_HEADER_BYTES..=MADT_MAX_BYTES).contains(&table.len()) {
+        return ioapics;
+    }
+
+    let mut offset = MADT_HEADER_BYTES;
+    while offset + 2 <= table.len() {
+        let entry_type = table[offset];
+        let entry_len = table[offset + 1] as usize;
+        if entry_len < 2 || offset + entry_len > table.len() {
+            break;
+        }
+        if entry_type == 1 && entry_len >= 12 {
+            ioapics.push(IoApic {
+                id: table[offset + 2],
+                address: le_u32(table, offset + 4),
+                gsi_base: le_u32(table, offset + 8),
+            });
+        }
+        offset += entry_len;
+    }
+
+    ioapics
+}
+
 /// Parse the MADT at a physical address and return its enabled local APIC
 /// entries.
 ///
@@ -401,6 +453,24 @@ unsafe fn parse_madt_interrupt_overrides_at(madt_addr: usize) -> Vec<InterruptOv
     // table the RSDT named.
     let table = unsafe { core::slice::from_raw_parts(madt_addr as *const u8, length) };
     parse_madt_interrupt_overrides(table)
+}
+
+/// Parse the I/O APIC records of the MADT at a physical address.
+///
+/// As [`parse_madt`]: the same table, bounded by its own declared length and
+/// handed to the pure parser.
+#[cfg(target_os = "none")]
+unsafe fn parse_madt_ioapics_at(madt_addr: usize) -> Vec<IoApic> {
+    // SAFETY: the MADT address comes from the RSDT walk, which read the
+    // table's own header; the length field's bytes are inside it.
+    let length = unsafe { read_phys_u32(madt_addr + 4) } as usize;
+    if !(MADT_HEADER_BYTES..=MADT_MAX_BYTES).contains(&length) {
+        return Vec::new();
+    }
+    // SAFETY: as `parse_madt` — the declared length, capped, over the mapped
+    // table the RSDT named.
+    let table = unsafe { core::slice::from_raw_parts(madt_addr as *const u8, length) };
+    parse_madt_ioapics(table)
 }
 
 /// Discover AP LAPIC IDs from the ACPI MADT.
@@ -479,6 +549,20 @@ pub fn discover_aps(multiboot_info: usize) -> Vec<(u32, u8)> {
         crate::println!("[smp   ] {} interrupt-source override(s)", overrides.len());
     }
     store_early_interrupt_overrides(overrides);
+
+    // And the I/O APIC the table names, so the driver maps and drives the
+    // controller at the address the machine gave rather than the default.
+    // SAFETY: the same checksum-verified table the parse above read.
+    let ioapics = unsafe { parse_madt_ioapics_at(madt_addr) };
+    if let Some(primary) = ioapics.first() {
+        crate::println!(
+            "[smp   ] I/O APIC id={} at {:#010x} (gsi base {})",
+            primary.id,
+            primary.address,
+            primary.gsi_base
+        );
+        store_early_ioapic_base(primary.address);
+    }
 
     // Assign logical CPU IDs.  BSP = 0, APs = 1, 2, ...
     let mut cpu_id: u32 = 0;
@@ -595,6 +679,35 @@ unsafe fn find_table_in_rsdt(rsdt_addr: usize, signature: &[u8; 4]) -> Option<us
         // whole of this path.
         Some(unsafe { core::slice::from_raw_parts(addr as *const u8, len) })
     })
+}
+
+// ── Early-discovered I/O APIC address ──────────────────────────────────
+
+/// The primary I/O APIC's MMIO base discovered before the page-table switch,
+/// so `init_ioapic` maps and drives the controller the machine declared rather
+/// than the architectural default.  Zero means "the machine named none", which
+/// is read as the default.
+#[cfg(target_os = "none")]
+static EARLY_IOAPIC_BASE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Store the primary I/O APIC's MMIO base discovered at boot.  A base of zero
+/// is ignored so a machine that names no controller keeps the default.
+#[cfg(target_os = "none")]
+pub fn store_early_ioapic_base(base: u32) {
+    if base != 0 {
+        EARLY_IOAPIC_BASE.store(base as usize, core::sync::atomic::Ordering::Release);
+    }
+}
+
+/// The I/O APIC MMIO base the machine declared, or `None` when it declared
+/// none (or the table was unreadable), in which case the driver uses the
+/// architectural default.
+#[cfg(target_os = "none")]
+pub fn ioapic_base() -> Option<usize> {
+    match EARLY_IOAPIC_BASE.load(core::sync::atomic::Ordering::Acquire) {
+        0 => None,
+        base => Some(base),
+    }
 }
 
 // ── Early-discovered ISA IRQ overrides ─────────────────────────────────
@@ -1506,5 +1619,58 @@ mod tests {
             0,
             "no overrides is the identity map"
         );
+    }
+
+    /// The I/O APIC records are read at the offsets a real machine writes, and
+    /// the architectural default is what both QEMU machines and the captured
+    /// laptop declare — but the parse answers the record's own address, so a
+    /// board that places the controller elsewhere is followed.
+    #[test]
+    fn madt_ioapic_records_are_read_at_their_offsets() {
+        let mut table = alloc::vec![0u8; 44];
+        table[0..4].copy_from_slice(b"APIC");
+        // The default every PC declares: id 0, base 0xFEC00000, gsi base 0.
+        table.push(1);
+        table.push(12);
+        table.push(0); // id
+        table.push(0); // reserved
+        table.extend_from_slice(&0xFEC0_0000u32.to_le_bytes());
+        table.extend_from_slice(&0u32.to_le_bytes()); // gsi base
+                                                      // A second controller a board might add, at another address.
+        table.push(1);
+        table.push(12);
+        table.push(1);
+        table.push(0);
+        table.extend_from_slice(&0xFEC8_0000u32.to_le_bytes());
+        table.extend_from_slice(&24u32.to_le_bytes());
+
+        let ioapics = super::parse_madt_ioapics(&table);
+        assert_eq!(ioapics.len(), 2);
+        assert_eq!(
+            (ioapics[0].id, ioapics[0].address, ioapics[0].gsi_base),
+            (0, 0xFEC0_0000, 0),
+            "the architectural default, read from the machine's own record"
+        );
+        assert_eq!(
+            (ioapics[1].id, ioapics[1].address, ioapics[1].gsi_base),
+            (1, 0xFEC8_0000, 24),
+            "a controller at another address is followed, not assumed"
+        );
+    }
+
+    /// The records walk real layouts: the captured laptop MADT has one I/O
+    /// APIC, among 32 processors and 24 NMI entries, and a malformed table is
+    /// declined rather than read past.
+    #[test]
+    fn madt_ioapic_records_walk_real_layouts() {
+        let ioapics = super::parse_madt_ioapics(REAL_MADT);
+        assert_eq!(ioapics.len(), 1, "the captured firmware's one I/O APIC");
+        assert_eq!(ioapics[0].address, 0xFEC0_0000);
+        assert_eq!(ioapics[0].gsi_base, 0);
+
+        assert!(super::parse_madt_ioapics(&[0u8; 43]).is_empty());
+        let mut truncated = alloc::vec![0u8; 44];
+        truncated.extend_from_slice(&[1, 12, 0, 0, 0, 0]); // half a record
+        assert!(super::parse_madt_ioapics(&truncated).is_empty());
     }
 }

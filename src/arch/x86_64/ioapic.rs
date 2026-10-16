@@ -153,11 +153,32 @@ pub fn init_ioapic() {
         return;
     }
 
-    // Map the IOAPIC MMIO page into the active kernel page tables.
-    // SAFETY: the IO-APIC page is device MMIO and this runs on the boot path with
-    // the runtime tables active, which is the contract `map_device_mmio_page`
-    // states.
-    unsafe { super::apic::map_device_mmio_page(IOAPIC_MMIO_BASE_DEFAULT) };
+    // Drive the controller at the address the machine declared (its MADT's I/O
+    // APIC record), not a constant: the architectural default is 0xFEC0_0000,
+    // but a board may place it elsewhere, and a driver that writes to the
+    // default regardless would fault — or program whatever else lives there.
+    let base = super::acpi::ioapic_base().unwrap_or(IOAPIC_MMIO_BASE_DEFAULT);
+    IOAPIC_BASE.store(base, Ordering::Release);
+
+    // Map the controller's page into the active kernel page tables.  Only the
+    // LAPIC is statically mapped (`apic::map_device_mmio_page`); the I/O APIC's
+    // address is the machine's, so it goes through the same general device
+    // mapper every other driver uses — the default on the machines this tree
+    // boots, and wherever a board placed it otherwise.
+    // SAFETY: the page is device MMIO at the address the firmware declared,
+    // and this runs on the boot path with the runtime tables active, which is
+    // the contract `map_device_mmio` states.
+    let mapped = unsafe { crate::arch::mmu::map_device_mmio(base as u64, 0x1000) };
+    if mapped.is_none() {
+        // A page that cannot be mapped is one nothing can be driven at, and
+        // the default is no more reachable than the declared address — so the
+        // controller is left unmapped rather than read through a stale one.
+        println!(
+            "[ioapic] cannot map the controller at {:#x}; no interrupts will route",
+            base
+        );
+        return;
+    }
 
     // Read version register.
     // SAFETY: reading the version register of the window just mapped.
