@@ -265,9 +265,26 @@ const MADT_HEADER_BYTES: usize = 44;
 /// `fixtures/acpi/APIC` is a real firmware's MADT (a laptop's, with the
 /// processor IDs, the disabled `0xff` entries and the interrupt-source
 /// overrides QEMU's machines never describe), and
-/// `real_firmware_madt_parses` walks it.  Entry types other than the
-/// processor local APIC's are skipped by their length, which is what keeps
-/// the walk landing on entry boundaries whatever a firmware puts between
+/// `real_firmware_madt_parses` walks it.
+///
+/// Two record types describe a processor, and both are read:
+///
+/// * a **Local APIC** (type 0) whose APIC ID is one byte, and
+/// * a **Local x2APIC** (type 9) whose ID is four.  Firmware that reports its
+///   processors in the second form — which a machine describing more than 255
+///   of them must, and one in x2APIC mode may for any of them — would otherwise
+///   be seen as having **no** processor at all.
+///
+/// The x2APIC ID is taken only when it fits the one-byte ID this kernel
+/// addresses processors by: it runs the LAPIC at its MMIO window, where a
+/// destination field is eight bits, so an ID past 255 is one this kernel
+/// cannot name — read as a byte it would be a *different* processor, which is
+/// worse than skipping it.  Such a record is stepped over, and the machine is
+/// read as having the processors whose IDs fit (a machine with more than 255
+/// is past this kernel's sixteen anyway).
+///
+/// Entry types other than these two are skipped by their length, which is what
+/// keeps the walk landing on entry boundaries whatever a firmware puts between
 /// them.
 pub fn parse_madt_bytes(table: &[u8]) -> Vec<LocalApicEntry> {
     let mut entries = Vec::new();
@@ -291,6 +308,22 @@ pub fn parse_madt_bytes(table: &[u8]) -> Vec<LocalApicEntry> {
                 apic_id,
                 enabled: (flags & 0x1) != 0,
             });
+        } else if entry_type == 9 && entry_len >= 16 {
+            // Local x2APIC: the ID is the 32-bit word after a two-byte
+            // reserved field, the flags the word after it, and the ACPI
+            // processor UID the word after that (ACPI 6.x 5.2.12.12).
+            let word = |at: usize| {
+                u32::from_le_bytes([table[at], table[at + 1], table[at + 2], table[at + 3]])
+            };
+            let x2apic_id = word(offset + 4);
+            if let Ok(apic_id) = u8::try_from(x2apic_id) {
+                let flags = word(offset + 8);
+                entries.push(LocalApicEntry {
+                    acpi_processor_id: word(offset + 12) as u8,
+                    apic_id,
+                    enabled: (flags & 0x1) != 0,
+                });
+            }
         }
         offset += entry_len;
     }
@@ -1672,5 +1705,66 @@ mod tests {
         let mut truncated = alloc::vec![0u8; 44];
         truncated.extend_from_slice(&[1, 12, 0, 0, 0, 0]); // half a record
         assert!(super::parse_madt_ioapics(&truncated).is_empty());
+    }
+
+    /// A MADT that names its processors with **x2APIC** records is read, and an
+    /// ID that does not fit the byte this kernel addresses with is skipped
+    /// rather than truncated.
+    ///
+    /// Firmware reports a processor in one of two records, and the parser read
+    /// only the first: a machine that described its processors with type-9
+    /// records — which a machine in x2APIC mode may do for any of them, and a
+    /// machine with more than 255 processors must — was read as having no
+    /// processor at all.  The record is the layout ACPI 6.x 5.2.12.12 and QEMU
+    /// write: type, length, a two-byte reserved field, the 32-bit x2APIC ID,
+    /// the 32-bit flags, the 32-bit ACPI processor UID.
+    #[test]
+    fn a_madt_of_x2apic_records_is_read_and_a_wide_id_is_skipped() {
+        let mut table = alloc::vec![0u8; 44];
+        table[0..4].copy_from_slice(b"APIC");
+        // The type-9 records QEMU emits once an ID passes 255: 255, 256, 300.
+        for id in [255u32, 256, 300] {
+            table.push(9); // type
+            table.push(16); // length
+            table.extend_from_slice(&0u16.to_le_bytes()); // reserved
+            table.extend_from_slice(&id.to_le_bytes()); // x2APIC ID
+            table.extend_from_slice(&1u32.to_le_bytes()); // flags: enabled
+            table.extend_from_slice(&id.to_le_bytes()); // ACPI processor UID
+        }
+
+        let entries = parse_madt_bytes(&table);
+        // Only the one whose ID is a byte is usable; the two past it are
+        // stepped over rather than read as a different processor.
+        assert_eq!(entries.len(), 1, "the IDs that fit a byte");
+        assert_eq!(entries[0].apic_id, 255);
+        assert!(entries[0].enabled);
+    }
+
+    /// A type-9 record with its enable bit clear is read as disabled, the same
+    /// as a type-0 one, and a mixed table keeps both forms in order.
+    #[test]
+    fn a_mixed_madt_keeps_both_processor_record_forms() {
+        let mut table = alloc::vec![0u8; 44];
+        table[0..4].copy_from_slice(b"APIC");
+        // A type-0 record (APIC ID 4, enabled).
+        table.push(0);
+        table.push(8);
+        table.push(0); // ACPI processor ID
+        table.push(4); // APIC ID
+        table.extend_from_slice(&1u16.to_le_bytes()); // flags: enabled
+        table.push(0);
+        table.push(0);
+        // A type-9 record (x2APIC ID 10, disabled).
+        table.push(9);
+        table.push(16);
+        table.extend_from_slice(&0u16.to_le_bytes());
+        table.extend_from_slice(&10u32.to_le_bytes());
+        table.extend_from_slice(&0u32.to_le_bytes()); // flags: disabled
+        table.extend_from_slice(&0u32.to_le_bytes());
+
+        let entries = parse_madt_bytes(&table);
+        assert_eq!(entries.len(), 2);
+        assert_eq!((entries[0].apic_id, entries[0].enabled), (4, true));
+        assert_eq!((entries[1].apic_id, entries[1].enabled), (10, false));
     }
 }

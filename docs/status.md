@@ -356,7 +356,7 @@ PBKDF2 primitives.
 | Context switch | x86_64, AArch64, RISC-V (per-arch assembly) | — |
 | Process/thread types | States, priorities, credentials, scheduling policies | — |
 | Job control | The shell tracks jobs and signals the foreground pid | No kernel process group: no `setpgid`-style call, so terminal ownership is not modelled |
-| SMP discovery | x86_64: ACPI MADT, with firmware's disabled placeholders skipped (`make check-smp-runtime` boots `-smp N,maxcpus=M` and asserts the skip count); AArch64: PSCI; RISC-V: FDT CPU nodes and SBI HSM | — |
+| SMP discovery | x86_64: ACPI MADT, reading both processor record forms — the Local APIC (type 0) and the Local **x2APIC** (type 9, for a machine that names processors that way), an x2APIC ID past the byte this kernel addresses with skipped rather than truncated — and firmware's disabled placeholders skipped (`make check-smp-runtime` boots `-smp N,maxcpus=M` and asserts the skip count); AArch64: PSCI; RISC-V: FDT CPU nodes and SBI HSM | — |
 | Timer tick | Scheduler quantum management | On x86_64 the PIT is routed to one LAPIC, so APs take no timer interrupt; a sleeping thread's expiry is swept by whichever CPU ticks |
 | Waker | Thread wakeup notification with a per-CPU reschedule flag | Cross-CPU wakeups set a flag or send an IPI; RISC-V waits for the target hart's next tick |
 | Scheduler stats | Load average (sampled ring), per-thread CPU ticks, idle tracking, ProcFs integration | — |
