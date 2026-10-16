@@ -103,13 +103,17 @@ input, mostly verified under QEMU.
   `Driver::compatible_strings()`/`probe_dt()` bind nodes to drivers in
   `DriverManager::probe_dt_devices`; virtio-gpu/block/net are all probed from
   their DT node `reg`, making the GPU available on AArch64/RISC-V.  The
-  platform parser (`parse_fdt`) classifies a node by its **`compatible`**, with
-  each node's `reg` settled at the end of the node — where both that property
-  and the `compatible` that follows it are known — rather than by matching the
-  address against QEMU `virt`'s own (a PL011 at `0x0900_0000`, a GIC at
-  `0x0800_0000`, virtio-mmio in two fixed windows); a board that places its
-  console, its interrupt controller or its transports elsewhere is read by what
-  the nodes say they are (`parse_fdt_classifies_nodes_by_compatible_not_by_address`).
+  platform parser (`parse_fdt`) classifies a node by its **`compatible`** — a
+  **whole entry** of the property, not a substring, since `arm,gic-v3` is a
+  prefix of `arm,gic-v3-its` — with each node's `reg` settled at the end of the
+  node, where both that property and the `compatible` that follows it are known,
+  and a node's state saved across its **children** (a GIC's `v2m` frame or ITS)
+  so a child does not clear the parent's flags; a board that places its console,
+  its interrupt controller or its transports anywhere is read by what the nodes
+  say they are, not by matching QEMU `virt`'s own addresses
+  (`parse_fdt_classifies_nodes_by_compatible_not_by_address`,
+  `a_compatible_name_matches_a_whole_entry_not_a_prefix`,
+  `a_gic_with_a_child_still_settles_its_own_reg`).
 - **Audio**: the Intel HDA driver provides controller initialization, the
   CORB/RIRB engine, codec discovery, and stream descriptor configuration, and
   it runs where the controller is — x86_64 and AArch64 — because it is handed

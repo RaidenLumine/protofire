@@ -73,6 +73,19 @@ const COMPAT_PCI_HOST_ECAM: &str = "pci-host-ecam-generic";
 const COMPAT_FIXED_CLOCK: &str = "fixed-clock";
 const COMPAT_FIXED_FACTOR_CLOCK: &str = "fixed-factor-clock";
 
+/// Whether a node's `compatible` property names `want` as **one whole entry**.
+///
+/// A `compatible` is a NUL-separated list of strings, and a node is
+/// "compatible" with any of them — so the test is membership in that list, not
+/// a substring. A substring test reads the wrong node when one name is a prefix
+/// of another, which the GIC's own names are: `"arm,gic-v3"` is a prefix of
+/// `"arm,gic-v3-its"`, so `contains("arm,gic-v3")` matched the **ITS** and read
+/// it as the interrupt controller itself, and the actual controller's own
+/// redistributor was then settled against the ITS's single `reg` entry.
+fn has_compat(compatible: &str, want: &str) -> bool {
+    compatible.split('\0').any(|entry| entry == want)
+}
+
 // ---------------------------------------------------------------------------
 // Raw FDT access helpers
 // ---------------------------------------------------------------------------
@@ -428,6 +441,63 @@ fn memory_window_from_ranges(
     None
 }
 
+/// The per-node state a parent must not lose when a **child** node is walked.
+///
+/// A node writes `reg` before the `compatible` that says what it is, so each
+/// node's classification is settled at the end of the node; but a node with
+/// children — the GIC, whose redistributor or `v2m` frame is a child — would
+/// have its own flags cleared by the *child's* end, and its `reg` read again
+/// against the child's.  The parent's state is therefore saved when a child is
+/// entered and restored when the child ends.
+#[derive(Clone, Copy)]
+struct NodeClass {
+    interrupts: [u32; 4],
+    interrupts_len: usize,
+    regs: [(u64, u64); 4],
+    reg_count: usize,
+    ranges: [u8; 128],
+    ranges_len: usize,
+    bus_range: Option<(u8, u8)>,
+    is_pci_host: bool,
+    is_uart: bool,
+    is_rtc: bool,
+    is_virtio: bool,
+    is_gicv2: bool,
+    is_gicv3: bool,
+    is_its: bool,
+    is_plic: bool,
+    is_aplic: bool,
+    has_aplic_children: bool,
+    is_imsic: bool,
+    wired_to_supervisor_external: bool,
+    is_memory_node: bool,
+}
+
+impl NodeClass {
+    const ZERO: Self = Self {
+        interrupts: [0; 4],
+        interrupts_len: 0,
+        regs: [(0, 0); 4],
+        reg_count: 0,
+        ranges: [0; 128],
+        ranges_len: 0,
+        bus_range: None,
+        is_pci_host: false,
+        is_uart: false,
+        is_rtc: false,
+        is_virtio: false,
+        is_gicv2: false,
+        is_gicv3: false,
+        is_its: false,
+        is_plic: false,
+        is_aplic: false,
+        has_aplic_children: false,
+        is_imsic: false,
+        wired_to_supervisor_external: false,
+        is_memory_node: false,
+    };
+}
+
 /// Parse the flattened device tree at `fdt_addr` and return discovered
 /// platform information.
 ///
@@ -564,6 +634,9 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
 
     let mut path: [NodeCtx; 16] = [root_ctx; 16];
     let mut current_depth: usize = 0;
+    // A parent's per-node state, saved while a child is walked (see
+    // [`NodeClass`]).
+    let mut saved_class: [NodeClass; 16] = [NodeClass::ZERO; 16];
     // Node classification per depth (0 = other, 1 = timer/cpu). Used to keep
     // the generic `clock-frequency` handler from mistaking a UART/APB clock
     // for the arch timer frequency (riscv64 virt's 16550 UART carries
@@ -589,6 +662,55 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 if current_depth == 2 && node_name.starts_with("cpu@") {
                     cpu_node_idx = info.cpu_count as isize; // before increment
                     info.cpu_count += 1;
+                }
+
+                // Save the *parent's* per-node classification before a child
+                // is entered and reset it for this node: a node with children
+                // (a GIC whose `v2m` frame or ITS is a child) would otherwise
+                // lose its own flags — and re-read its `reg` — when the child
+                // ended.  Restored at this node's end (see [`NodeClass`]).
+                if current_depth < saved_class.len() {
+                    saved_class[current_depth] = NodeClass {
+                        interrupts: current_interrupts,
+                        interrupts_len: current_interrupts_len,
+                        regs: current_regs,
+                        reg_count: current_reg_count,
+                        ranges: current_ranges_raw,
+                        ranges_len: current_ranges_len,
+                        bus_range: current_bus_range,
+                        is_pci_host: current_is_pci_host,
+                        is_uart: current_is_uart,
+                        is_rtc: current_is_rtc,
+                        is_virtio: current_is_virtio,
+                        is_gicv2: current_is_gicv2,
+                        is_gicv3: current_is_gicv3,
+                        is_its: current_is_its,
+                        is_plic: current_is_plic,
+                        is_aplic: current_is_aplic,
+                        has_aplic_children: current_has_aplic_children,
+                        is_imsic: current_is_imsic,
+                        wired_to_supervisor_external: current_wired_to_supervisor_external,
+                        is_memory_node: current_is_memory_node,
+                    };
+                    current_interrupts = [0; 4];
+                    current_interrupts_len = 0;
+                    current_regs = [(0, 0); 4];
+                    current_reg_count = 0;
+                    current_ranges_len = 0;
+                    current_bus_range = None;
+                    current_is_pci_host = false;
+                    current_is_uart = false;
+                    current_is_rtc = false;
+                    current_is_virtio = false;
+                    current_is_gicv2 = false;
+                    current_is_gicv3 = false;
+                    current_is_its = false;
+                    current_is_plic = false;
+                    current_is_aplic = false;
+                    current_has_aplic_children = false;
+                    current_is_imsic = false;
+                    current_wired_to_supervisor_external = false;
+                    current_is_memory_node = false;
                 }
 
                 // Detect /memory node at depth 1.
@@ -634,16 +756,9 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 node_clock_mult = 0;
                 node_clock_div = 0;
                 node_clock_parent = None;
-                // Reset the per-node interrupt and compatibility state; each
-                // node starts clean.
-                current_interrupts_len = 0;
-                current_is_uart = false;
-                current_is_rtc = false;
-                current_is_virtio = false;
-                current_is_gicv2 = false;
-                current_is_aplic = false;
-                current_has_aplic_children = false;
-                current_reg_count = 0;
+                // The per-node classification was reset (and the parent's
+                // saved) above, where the depth was known; nothing more to
+                // clear here.
             }
 
             FDT_END_NODE => {
@@ -735,17 +850,33 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         info.pcie_mmio_size = Some(size as usize);
                     }
                 }
-                current_is_pci_host = false;
-                current_bus_range = None;
-                current_ranges_len = 0;
-                current_is_imsic = false;
-                current_is_plic = false;
-                current_is_aplic = false;
-                current_has_aplic_children = false;
-                current_wired_to_supervisor_external = false;
-                current_is_gicv3 = false;
-                current_is_its = false;
-                current_is_memory_node = false;
+                // Restore the classification of the node this one was a child
+                // of (its state was saved at this node's entry).  At the root
+                // `current_depth` is back to 0 and there is nothing above it,
+                // so the saved state is the empty one.
+                if current_depth < saved_class.len() {
+                    let saved = saved_class[current_depth];
+                    current_interrupts = saved.interrupts;
+                    current_interrupts_len = saved.interrupts_len;
+                    current_regs = saved.regs;
+                    current_reg_count = saved.reg_count;
+                    current_ranges_raw = saved.ranges;
+                    current_ranges_len = saved.ranges_len;
+                    current_bus_range = saved.bus_range;
+                    current_is_pci_host = saved.is_pci_host;
+                    current_is_uart = saved.is_uart;
+                    current_is_rtc = saved.is_rtc;
+                    current_is_virtio = saved.is_virtio;
+                    current_is_gicv2 = saved.is_gicv2;
+                    current_is_gicv3 = saved.is_gicv3;
+                    current_is_its = saved.is_its;
+                    current_is_plic = saved.is_plic;
+                    current_is_aplic = saved.is_aplic;
+                    current_has_aplic_children = saved.has_aplic_children;
+                    current_is_imsic = saved.is_imsic;
+                    current_wired_to_supervisor_external = saved.wired_to_supervisor_external;
+                    current_is_memory_node = saved.is_memory_node;
+                }
                 current_is_distance_map = false;
                 cpu_node_idx = -1;
                 pending_memory_node_id = None;
@@ -856,38 +987,38 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         let compatible = core::str::from_utf8(value.up_to(128)).unwrap_or("");
 
                         // Check compat strings that require reading the parent's `reg`.
-                        if compatible.contains(COMPAT_GIC_400)
-                            || compatible.contains(COMPAT_GIC_CORTEX_A15)
+                        if has_compat(compatible, COMPAT_GIC_400)
+                            || has_compat(compatible, COMPAT_GIC_CORTEX_A15)
                         {
                             // GICv2: reg's first entry is the distributor, its
                             // second the CPU interface.  Settled at the end of
                             // the node, where both `reg` and `compatible` are
                             // known.
                             current_is_gicv2 = true;
-                        } else if compatible.contains(COMPAT_GIC_V3) {
+                        } else if has_compat(compatible, COMPAT_GIC_V3) {
                             current_is_gicv3 = true;
                             info.gicv3_detected = true;
-                        } else if compatible.contains(COMPAT_GIC_V3_ITS) {
+                        } else if has_compat(compatible, COMPAT_GIC_V3_ITS) {
                             current_is_its = true;
-                        } else if compatible.contains(COMPAT_PL011)
-                            || compatible.contains(COMPAT_NS16550A)
+                        } else if has_compat(compatible, COMPAT_PL011)
+                            || has_compat(compatible, COMPAT_NS16550A)
                         {
                             // A console UART: its `reg` is the base, settled at
                             // the end of the node.
                             current_is_uart = true;
-                        } else if compatible.contains(COMPAT_PL031)
-                            || compatible.contains(COMPAT_GOLDFISH_RTC)
+                        } else if has_compat(compatible, COMPAT_PL031)
+                            || has_compat(compatible, COMPAT_GOLDFISH_RTC)
                         {
                             current_is_rtc = true;
-                        } else if compatible.contains(COMPAT_VIRTIO_MMIO) {
+                        } else if has_compat(compatible, COMPAT_VIRTIO_MMIO) {
                             current_is_virtio = true;
-                        } else if compatible.contains(COMPAT_RISCV_PLIC0) {
+                        } else if has_compat(compatible, COMPAT_RISCV_PLIC0) {
                             // PLIC reg will be parsed from the parent node's
                             // reg property; whether this node *is* a PLIC is
                             // what decides it, and that is settled at the end
                             // of the node (the property order is the machine's).
                             current_is_plic = true;
-                        } else if compatible.contains(COMPAT_RISCV_APLIC) {
+                        } else if has_compat(compatible, COMPAT_RISCV_APLIC) {
                             // Which APLIC this is — the delegating domain or
                             // the child that delivers — is settled at the end
                             // of the node, where `riscv,children` has been
@@ -895,14 +1026,14 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             // must not be written as one: they share an
                             // address on QEMU `virt`.
                             current_is_aplic = true;
-                        } else if compatible.contains(COMPAT_RISCV_IMSICS) {
+                        } else if has_compat(compatible, COMPAT_RISCV_IMSICS) {
                             // Which of the machine's IMSIC files this is depends
                             // on the interrupt it is wired to, which is a
                             // property of this node too — read below.
                             current_is_imsic = true;
-                        } else if compatible.contains(COMPAT_PCI_HOST_ECAM) {
+                        } else if has_compat(compatible, COMPAT_PCI_HOST_ECAM) {
                             current_is_pci_host = true;
-                        } else if compatible.contains("operating-points-v2") {
+                        } else if has_compat(compatible, "operating-points-v2") {
                             // OPP table node: begin collecting its `opp`
                             // children's `opp-hz` properties.
                             opp_table_active = true;
@@ -911,11 +1042,11 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                             current_table_min = u64::MAX;
                             current_table_max = 0;
                             current_table_disabled = false;
-                        } else if compatible.contains(COMPAT_FIXED_CLOCK) {
+                        } else if has_compat(compatible, COMPAT_FIXED_CLOCK) {
                             node_is_fixed_clock = true;
                             clock_node_active = true;
                             clock_node_depth = current_depth;
-                        } else if compatible.contains(COMPAT_FIXED_FACTOR_CLOCK) {
+                        } else if has_compat(compatible, COMPAT_FIXED_FACTOR_CLOCK) {
                             node_is_factor_clock = true;
                             clock_node_active = true;
                             clock_node_depth = current_depth;
@@ -3029,5 +3160,89 @@ mod tests {
         });
         let info = parse_fdt(parent_only.as_ptr() as usize);
         assert_eq!(info.aplic_base, None);
+    }
+
+    /// A `compatible` name matches a **whole entry** of the property, not a
+    /// substring of one.
+    ///
+    /// The GIC's own names make the difference load-bearing: `"arm,gic-v3"` is
+    /// a prefix of `"arm,gic-v3-its"`, so a substring test read the **ITS**
+    /// (the GIC's child) as the interrupt controller itself, and the real
+    /// controller's redistributor was then settled against the ITS's single
+    /// `reg` entry.
+    #[test]
+    fn a_compatible_name_matches_a_whole_entry_not_a_prefix() {
+        assert!(has_compat("arm,gic-v3\0", "arm,gic-v3"));
+        assert!(
+            !has_compat("arm,gic-v3-its\0", "arm,gic-v3"),
+            "the ITS is not the GIC it names"
+        );
+        assert!(has_compat("arm,gic-v3-its\0", "arm,gic-v3-its"));
+        // A node is compatible with any entry, not only the first.
+        assert!(has_compat("brcm,bcm2711\0arm,gic-v3\0", "arm,gic-v3"));
+    }
+
+    /// A GIC that has a **child** still settles its own `reg`.
+    ///
+    /// Every node's classification is settled at the end of the node, because
+    /// `reg` comes before `compatible`.  A GIC's redistributor or `v2m` frame
+    /// is a child node, and the child's end must not clear the parent's flags
+    /// or leave the parent reading the child's `reg` — which it did until the
+    /// parent's state was saved across the descent, and which left the
+    /// distributor undiscovered on a real machine (the boot fell back to the
+    /// `virt` constant, so QEMU never showed it).
+    #[test]
+    fn a_gic_with_a_child_still_settles_its_own_reg() {
+        let be32 = |v: u32| v.to_be_bytes();
+        let blob = build_small_fdt(|sblock, str_off| {
+            // The GICv2 node, opened by hand so a child nests inside it.
+            sblock.extend_from_slice(&be32(FDT_BEGIN_NODE));
+            let name = "intc@8000000\0";
+            sblock.extend_from_slice(name.as_bytes());
+            let pad = (4 - (name.len() % 4)) % 4;
+            sblock.extend_from_slice(&[0u8; 4][..pad]);
+            // reg = <0 0x0800_0000 0 0x10000>, <0 0x0801_0000 0 0x10000>
+            let reg: Vec<u8> = [
+                be32(0),
+                be32(0x0800_0000),
+                be32(0),
+                be32(0x1_0000),
+                be32(0),
+                be32(0x0801_0000),
+                be32(0),
+                be32(0x1_0000),
+            ]
+            .concat();
+            let off_reg = str_off("reg");
+            sblock.extend_from_slice(&be32(FDT_PROP));
+            sblock.extend_from_slice(&be32(reg.len() as u32));
+            sblock.extend_from_slice(&off_reg.to_be_bytes());
+            sblock.extend_from_slice(&reg);
+            // compatible = "arm,cortex-a15-gic"
+            let off_compat = str_off("compatible");
+            let compat = b"arm,cortex-a15-gic\0";
+            sblock.extend_from_slice(&be32(FDT_PROP));
+            sblock.extend_from_slice(&be32(compat.len() as u32));
+            sblock.extend_from_slice(&off_compat.to_be_bytes());
+            sblock.extend_from_slice(compat);
+            let padv = (4 - (compat.len() % 4)) % 4;
+            sblock.extend_from_slice(&[0u8; 4][..padv]);
+            // The child, whose own end must not disturb the parent.
+            emit_node(
+                sblock,
+                "v2m@8020000",
+                str_off,
+                &[("compatible", b"arm,gic-v2m-frame\0")],
+            );
+            sblock.extend_from_slice(&be32(FDT_END_NODE));
+        });
+
+        let info = parse_fdt(blob.as_ptr() as usize);
+        assert_eq!(
+            info.gicd_base,
+            Some(0x0800_0000),
+            "the distributor, from the parent's own reg"
+        );
+        assert_eq!(info.gicc_base, Some(0x0801_0000));
     }
 }
