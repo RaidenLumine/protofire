@@ -2573,6 +2573,67 @@ fn a_tree_deeper_than_a_level_of_blocks_is_changed_where_the_names_are() {
     );
 }
 
+/// A block whose bit goes back at the allocation's **end** gives its clusters
+/// back with it: the tail is not a block the tree can reach, and the volume
+/// can hand the clusters out again.
+#[test]
+fn a_block_that_frees_the_allocation_tail_gives_its_clusters_back() {
+    // The deep tree keeps its three blocks in one run, and the merge of the
+    // two leaves gives the **last** one back — which is the shape a shrink is
+    // for.  A block that goes back in the middle keeps its clusters (they stay
+    // part of the allocation, a free block inside it), so this is the case
+    // where the allocation's own size has to move.
+    let fixture = build_volume(FRACTIONAL);
+    let (device, fs_handle) = writable(&fixture);
+    let block = fs_handle.info().lock().index_block_size as u64;
+    let per_block = block / fixture.cluster_size();
+    assert_eq!(
+        index_allocation_size(&fs_handle, DEEP_DIRECTORY),
+        3 * block,
+        "the tree's three blocks"
+    );
+    let taken = clusters_in_use(&fs_handle);
+
+    fs_handle
+        .remove_path("/deep/deep-alpha.txt")
+        .expect("the name in the tree's last block");
+
+    // The block that went was the allocation's tail, so the allocation is two
+    // blocks and the clusters the third held are the volume's again.
+    assert_eq!(
+        index_allocation_size(&fs_handle, DEEP_DIRECTORY),
+        2 * block,
+        "the allocation's tail went with the block"
+    );
+    assert_eq!(
+        clusters_in_use(&fs_handle),
+        taken - per_block,
+        "the clusters the tail block held are free again"
+    );
+
+    // And a second mount reads the shorter allocation and lists what is left,
+    // each name by its path.
+    let again = remount(&device);
+    assert_eq!(
+        index_allocation_size(&again, DEEP_DIRECTORY),
+        2 * block,
+        "the shorter allocation is what the volume holds"
+    );
+    assert_eq!(
+        the_listing(&again, "/deep"),
+        [
+            String::from("deep-middle.txt"),
+            String::from("deep-omega.txt"),
+        ],
+        "the names that stayed, in the tree's order"
+    );
+    for name in ["deep-middle.txt", "deep-omega.txt"] {
+        again
+            .lookup(&alloc::format!("/deep/{name}"))
+            .unwrap_or_else(|error| panic!("lookup {name}: {error:?}"));
+    }
+}
+
 /// A leaf two levels down that fills **splits**, and its middle key is
 /// promoted into the block above it.
 #[test]

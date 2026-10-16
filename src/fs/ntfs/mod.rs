@@ -2557,8 +2557,19 @@ impl NtfsFs {
     /// grown by a step of its own, and refuses (`NotImplemented`).
     ///
     /// Lowering a bit is the same walk without the growth: a byte the bitmap
-    /// does not have names no block, so there is nothing there to lower.
+    /// does not have names no block, so there is nothing there to lower.  A
+    /// block that goes back is also the moment the allocation's **tail** may be
+    /// given back, which is [`Self::shrink_index_allocation_tail`]'s.
     fn set_index_block_bit(&self, parent_record: u64, bit: u64, in_use: bool) -> Result<()> {
+        self.write_index_block_bit(parent_record, bit, in_use)?;
+        if !in_use {
+            self.shrink_index_allocation_tail(parent_record)?;
+        }
+        Ok(())
+    }
+
+    /// Move the bit itself, without the shrink a lowering may allow.
+    fn write_index_block_bit(&self, parent_record: u64, bit: u64, in_use: bool) -> Result<()> {
         let byte = (bit / 8) as usize;
         let mask = 1u8 << (bit % 8);
         for attempt in 0..2 {
@@ -2709,6 +2720,137 @@ impl NtfsFs {
             }
         }
         Ok(None)
+    }
+
+    /// Give the **tail** of a directory's `$INDEX_ALLOCATION` back to the
+    /// volume, once the blocks it names are free.
+    ///
+    /// A block that goes back keeps its clusters — they stay part of the
+    /// allocation, a free block inside it — until the blocks at *its* end are
+    /// the free ones: the allocation's last blocks are then not ones the tree
+    /// can reach, and the clusters behind them are clusters the volume is
+    /// holding for nothing.  What leaves is one whole block's worth of trailing
+    /// free blocks at a time — the allocation's data size always divides into
+    /// whole blocks, which is the shape a split writes and a reader checks —
+    /// and the run list shortens by what they held.
+    ///
+    /// Only blocks the bitmap says are **free** go back.  A block the bitmap
+    /// says is in use but the tree does not point at is left alone, for the
+    /// same reason [`Self::first_free_index_block`] leaves one to a split:
+    /// telling a leaked block from a live one is a walk of the whole tree, a
+    /// repair rather than a write.  The bitmap keeps whatever bytes it has,
+    /// so a block past the new end is re-taken by the next split the way any
+    /// byte it already holds is.
+    ///
+    /// The record goes first and the clusters second, which is the order every
+    /// other shrink takes: the write drops the run list, so a crash between
+    /// the two leaves clusters nothing names — a leak — rather than an
+    /// attribute naming clusters the volume has handed out again.
+    fn shrink_index_allocation_tail(&self, parent_record: u64) -> Result<()> {
+        let per_block = self.clusters_per_index_block();
+        if per_block == 0 {
+            return Ok(());
+        }
+        let (block_size, cluster_size) = {
+            let info = self.info.lock();
+            (
+                u64::from(info.index_block_size),
+                u64::from(info.cluster_size),
+            )
+        };
+        let attributes = self.attributes_of(parent_record)?;
+        let Some(allocation) = attributes.iter().find(|attribute| {
+            attribute.attr_type == ATTR_TYPE_INDEX_ALLOC && !attribute.data_runs.is_empty()
+        }) else {
+            return Ok(());
+        };
+        let data_size = u64::from(allocation.data_size);
+        if allocation.holder == u64::MAX
+            || data_size == 0
+            || data_size % block_size != 0
+            || allocation.data_runs.iter().any(|run| run.lcn < 0)
+        {
+            // A split across records is no one record's to rewrite, and an
+            // allocation whose size is not whole blocks — or that names a hole —
+            // is not the shape a split writes.
+            return Ok(());
+        }
+        let blocks = data_size / block_size;
+        let Some(bitmap) = attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_BITMAP)
+        else {
+            return Ok(());
+        };
+        let bits = self.index_bitmap_bytes(bitmap)?;
+
+        // How many of the **leading** blocks are still live: the allocation
+        // keeps them, and the free run at its end is what goes.  A block is
+        // what goes only when the bitmap says it is free *and* the bitmap
+        // reaches it: a byte the bitmap does not have names no block, but it
+        // also does not say the block is free, and freeing the clusters of a
+        // block on a bitmap that does not cover it is the direction a shrink
+        // must not take — a split taking such a block is harmless, giving its
+        // clusters back is not.
+        let mut keep = blocks;
+        while keep > 0 {
+            let block = keep - 1;
+            let byte = (block / 8) as usize;
+            let free = byte < bits.len() && bits[byte] & (1 << (block % 8)) == 0;
+            if !free {
+                break;
+            }
+            keep -= 1;
+        }
+        // Nothing free at the end, or every block free — and a tree whose root
+        // points at a block keeps at least one, which is a conversion of its
+        // own and not this shrink.
+        if keep == blocks || keep == 0 {
+            return Ok(());
+        }
+
+        // The clusters that stay, and the runs that leave with the tail.  A
+        // block is `per_block` clusters of the allocation's virtual space, so
+        // the boundary is a cluster count.
+        let keep_clusters = keep * per_block;
+        let mut runs: Vec<DataRun> = Vec::new();
+        let mut freed: Vec<DataRun> = Vec::new();
+        let mut left = keep_clusters;
+        for run in &allocation.data_runs {
+            if left == 0 {
+                freed.push(run.clone());
+                continue;
+            }
+            if run.cluster_count <= left {
+                runs.push(run.clone());
+                left -= run.cluster_count;
+            } else {
+                runs.push(DataRun {
+                    lcn: run.lcn,
+                    cluster_count: left,
+                });
+                freed.push(DataRun {
+                    lcn: run.lcn + left as i64,
+                    cluster_count: run.cluster_count - left,
+                });
+                left = 0;
+            }
+        }
+        if left > 0 || freed.is_empty() {
+            return Ok(());
+        }
+
+        let allocated = keep_clusters * cluster_size;
+        let length = keep * block_size;
+        self.write_grown_data(
+            allocation.holder,
+            allocation,
+            &runs,
+            allocated as u32,
+            length as u32,
+            &[],
+        )?;
+        self.free_clusters(&freed)
     }
 
     /// Put a name into a directory's index, where the index's order puts it.

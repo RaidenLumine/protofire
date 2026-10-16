@@ -1318,6 +1318,39 @@ being something a partial write can ignore.
   the two blocks; and a second mount lists every name — the promoted key among
   them — once, and resolves each to a record.
 
+**Stage 20 — the allocation's free tail comes back.**
+
+- Stage 12 gave a block's clusters away only as far as its *bit*: they stayed
+  part of the allocation, a free block inside it, because taking the tail back
+  is a step of its own — the step stage 12 and stage 13 each named and put off,
+  and stage 18 gave as its reason a claim cannot be handed back.  It is now the
+  step: once a block's bit goes, the free run at the **end** of the allocation
+  is given back, and the run list shortens by the clusters it held.  The block
+  a split takes is still the
+  allocation's *next* rather than the first free bit, and a freed block in the
+  *middle* still keeps its clusters, so the shrink is exactly the case a kept
+  block cannot cover: a directory whose index only ever shrank.
+- Only blocks the bitmap says are **free** go back.  A block the bitmap says is
+  in use but the tree does not point at is left alone, for the same reason the
+  search for a free block leaves one to a split: telling a leaked block from a
+  live one is a walk of the whole tree, a repair rather than a write.  The
+  bitmap keeps whatever bytes it has, so a block the shrink took the clusters
+  of is re-taken by the next split the way any byte it already holds is.
+- The order is every other shrink's: the record goes first and the clusters
+  second.  The write drops the run list, so a crash in between leaves clusters
+  nothing names — a leak — rather than an attribute naming clusters the volume
+  has handed out again.
+- The whole-block boundary is why this is small: the allocation's data size is
+  always whole blocks, so what leaves is a count of clusters and the run list
+  can be shortened without touching a block's own bytes.  A tree whose root
+  points at the only block keeps that block: an allocation with no blocks is a
+  conversion back to a root that holds its entries as a value, which is a step
+  of its own.
+- One test on the deep tree: the merge of its two leaves gives the **last**
+  block back, the allocation is one block shorter, the clusters the tail held
+  are free in the volume's `$Bitmap`, and a second mount reads the shorter
+  allocation and lists what is left.
+
 **Stage 21 — a name that does not fit an extension record makes room.**
 
 - Stage 4c made room by moving attributes into an extension, and stage 6 wrote

@@ -352,9 +352,9 @@ The authoritative picture of what exists today is
   largest name taking the key's place so that no child is left unreachable.
   And a block a deletion gives back is taken again: a split takes the first
   block the index bitmap says is free before it grows the allocation, so a
-  directory's index stops claiming clusters for blocks nothing is stored in.
-  What is left of the tree is the allocation's own shrink, which this driver
-  does not do at all: a kept block costs nothing to use again.
+  directory's index stops claiming clusters for blocks nothing is stored in —
+  and the free blocks at the allocation's **tail** are given back with it, so a
+  directory that shrank no longer holds clusters for blocks nothing points at.
   A **real volume** is a gate now: `make check-ntfs-image` makes a volume with
   `mkntfs`, injects a file with `ntfscp`, has the driver read it and write one
   of its own, and hands the result to `ntfs-3g`'s own reader — so the format is
