@@ -444,12 +444,8 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     let mut virtio_mmio_idx: usize = 0;
     // Track whether the current node is a PCI host bridge (for ECAM discovery).
     let mut current_is_pci_host: bool = false;
-    // A PCI host node's `reg`, remembered from the property until the node
-    // ends.  `compatible` is what says the node *is* the host bridge, and on
-    // QEMU `virt` it comes after `reg` — the same property-order trap the
-    // IMSIC and the PLIC are settled around below.
-    let mut current_pci_reg: Option<usize> = None;
-    // A PCI host node's `bus-range`, remembered for the same reason.
+    // A PCI host node's `bus-range`, kept until the node ends (the same
+    // property-order reason every classified node is settled at its end).
     let mut current_bus_range: Option<(u8, u8)> = None;
     // A PCI host node's `ranges`, kept as bytes until the node ends: parsing it
     // needs the node's `#address-cells`/`#size-cells`, which on QEMU `virt`
@@ -466,11 +462,9 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     // per node and settled at the end, like the PLIC/IMSIC pair above.
     let mut current_is_aplic: bool = false;
     let mut current_has_aplic_children: bool = false;
-    // A node's own address, and whether it is wired to the supervisor external
-    // interrupt.  Both are properties of the node, and properties arrive in
-    // whatever order the machine wrote them — `compatible` comes *after* `reg`
-    // on QEMU `virt` — so the decision waits for the end of the node.
-    let mut current_node_addr: Option<usize> = None;
+    // Whether the current node is wired to the supervisor external interrupt:
+    // a property of the node, read in whatever order the machine wrote it, so
+    // the IMSIC's decision waits for the end of the node.
     let mut current_wired_to_supervisor_external: bool = false;
     let mut current_is_gicv3: bool = false;
     let mut current_is_its: bool = false;
@@ -481,7 +475,21 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
     // settles `uart_irq`.
     let mut current_interrupts: [u32; 4] = [0; 4];
     let mut current_interrupts_len: usize = 0;
+    // What the current node **is**, from its `compatible`.  A node writes
+    // `reg` *before* the `compatible` that says what it is (every node QEMU
+    // emits is in that order), so a decision taken while `reg` is read cannot
+    // know what the address means — which is why the address alone used to
+    // decide, against a table of QEMU `virt`'s own addresses.  The flags are
+    // set by `compatible` and the node's `reg` entries are settled against
+    // them at `FDT_END_NODE`.
     let mut current_is_uart: bool = false;
+    let mut current_is_rtc: bool = false;
+    let mut current_is_virtio: bool = false;
+    let mut current_is_gicv2: bool = false;
+    // The current node's `reg` entries (address, size), remembered until the
+    // node ends.  Four is more than any node this kernel names declares.
+    let mut current_regs: [(u64, u64); 4] = [(0, 0); 4];
+    let mut current_reg_count: usize = 0;
     // ── NUMA tracking ──────────────────────────────────────────────────
     let mut fdt_numa = FdtNumaInfo::empty();
     // Index of the current CPU node (-1 = not in a CPU node).
@@ -626,23 +634,85 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                 node_clock_mult = 0;
                 node_clock_div = 0;
                 node_clock_parent = None;
-                // Reset the per-node interrupt state; each node starts clean.
+                // Reset the per-node interrupt and compatibility state; each
+                // node starts clean.
                 current_interrupts_len = 0;
                 current_is_uart = false;
+                current_is_rtc = false;
+                current_is_virtio = false;
+                current_is_gicv2 = false;
                 current_is_aplic = false;
                 current_has_aplic_children = false;
+                current_reg_count = 0;
             }
 
             FDT_END_NODE => {
                 let was_depth = current_depth;
                 current_depth = current_depth.saturating_sub(1);
-                // Settle the PCI host bridge too: its `reg` is the ECAM window,
-                // and the property that says so (`compatible`) is read after it
-                // on the machines this kernel boots.
-                if current_is_pci_host {
-                    if info.ecam_base.is_none() {
-                        info.ecam_base = current_pci_reg;
+                // ── Settle what this node's `reg` means ──
+                // A node writes `reg` before the `compatible` that says what it
+                // is, so the address is classified here, against the flags the
+                // `compatible` set, rather than by matching the address itself
+                // against a table of one machine's addresses.  A node with no
+                // `reg` (or none this kernel names) settles nothing.
+                let node_addr = current_regs.first().map(|&(addr, _)| addr as usize);
+                if let Some(addr) = node_addr {
+                    // GICv2: the distributor is `reg`'s first entry, the CPU
+                    // interface the second.  GICv3: the redistributor is the
+                    // second entry.  The ITS names its own base first.
+                    if current_is_gicv2 {
+                        info.gicd_base = Some(addr);
+                        if current_reg_count >= 2 {
+                            info.gicc_base = Some(current_regs[1].0 as usize);
+                        }
                     }
+                    if current_is_gicv3 && current_reg_count >= 2 {
+                        info.gicr_base = Some(current_regs[1].0 as usize);
+                    }
+                    if current_is_its {
+                        info.its_base = Some(addr);
+                    }
+                    // A console UART's `reg` is its base.  Its interrupt is read
+                    // here too: whichever of `reg` and `interrupts` the machine
+                    // wrote second, both are known at the end of the node.
+                    if current_is_uart {
+                        info.uart_base = Some(addr);
+                        if current_interrupts_len > 0 {
+                            info.uart_irq = interrupt_source_from_cells(
+                                &current_interrupts[..current_interrupts_len],
+                            );
+                        }
+                    }
+                    if current_is_rtc {
+                        info.rtc_base = Some(addr);
+                    }
+                    if current_is_virtio && virtio_mmio_idx < virtio_mmio_bases.len() {
+                        virtio_mmio_bases[virtio_mmio_idx] = Some(addr);
+                        virtio_mmio_idx += 1;
+                    }
+                    // An IMSIC only matters when it serves supervisor mode, and
+                    // a PLIC is a PLIC (the APLIC at the same address is not
+                    // one): both are properties of the node, settled here.
+                    if current_is_imsic && current_wired_to_supervisor_external {
+                        info.imsic_base = Some(addr);
+                    }
+                    if current_is_plic {
+                        info.plic_base = Some(addr);
+                    }
+                    // An APLIC that delegates its sources is the machine-level
+                    // domain; the supervisor-level child (one with no children
+                    // of its own) is the one this kernel programs.  A machine
+                    // with only one APLIC node gives the delegating one nowhere
+                    // to point, so the node that *is* the domain is the fallback.
+                    if current_is_aplic && !current_has_aplic_children {
+                        info.aplic_base = Some(addr);
+                    }
+                    // A PCI host bridge's `reg` is its ECAM window.
+                    if current_is_pci_host && info.ecam_base.is_none() {
+                        info.ecam_base = Some(addr);
+                    }
+                }
+                if current_is_pci_host {
                     if let Some((first_bus, last_bus)) = current_bus_range {
                         info.ecam_start_bus = Some(first_bus);
                         info.ecam_end_bus = Some(last_bus);
@@ -666,37 +736,12 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                     }
                 }
                 current_is_pci_host = false;
-                current_pci_reg = None;
                 current_bus_range = None;
                 current_ranges_len = 0;
-                // Settle the two nodes whose kind is a property of the node:
-                // an IMSIC only matters when it serves supervisor mode, and a
-                // PLIC is a PLIC (the APLIC at the same address is not one).
-                if current_is_imsic && current_wired_to_supervisor_external {
-                    if let Some(addr) = current_node_addr {
-                        info.imsic_base = Some(addr);
-                    }
-                }
-                if current_is_plic {
-                    if let Some(addr) = current_node_addr {
-                        info.plic_base = Some(addr);
-                    }
-                }
-                // An APLIC that delegates its sources is the machine-level
-                // domain; the supervisor-level child (one with no children of
-                // its own) is the one this kernel programs.  A machine with
-                // only one APLIC node gives the delegating one nowhere to
-                // point, so the node that *is* the domain is the fallback.
-                if current_is_aplic && !current_has_aplic_children {
-                    if let Some(addr) = current_node_addr {
-                        info.aplic_base = Some(addr);
-                    }
-                }
                 current_is_imsic = false;
                 current_is_plic = false;
                 current_is_aplic = false;
                 current_has_aplic_children = false;
-                current_node_addr = None;
                 current_wired_to_supervisor_external = false;
                 current_is_gicv3 = false;
                 current_is_its = false;
@@ -814,8 +859,11 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         if compatible.contains(COMPAT_GIC_400)
                             || compatible.contains(COMPAT_GIC_CORTEX_A15)
                         {
-                            // GICv2 reg will be parsed from the parent node's
-                            // reg property.
+                            // GICv2: reg's first entry is the distributor, its
+                            // second the CPU interface.  Settled at the end of
+                            // the node, where both `reg` and `compatible` are
+                            // known.
+                            current_is_gicv2 = true;
                         } else if compatible.contains(COMPAT_GIC_V3) {
                             current_is_gicv3 = true;
                             info.gicv3_detected = true;
@@ -824,16 +872,15 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                         } else if compatible.contains(COMPAT_PL011)
                             || compatible.contains(COMPAT_NS16550A)
                         {
-                            // UART reg will be parsed from the parent node's
-                            // reg property.
+                            // A console UART: its `reg` is the base, settled at
+                            // the end of the node.
+                            current_is_uart = true;
                         } else if compatible.contains(COMPAT_PL031)
                             || compatible.contains(COMPAT_GOLDFISH_RTC)
                         {
-                            // RTC reg will be parsed from the parent node's reg
-                            // property.
+                            current_is_rtc = true;
                         } else if compatible.contains(COMPAT_VIRTIO_MMIO) {
-                            // VirtIO MMIO reg will be parsed from the parent
-                            // node's reg property.
+                            current_is_virtio = true;
                         } else if compatible.contains(COMPAT_RISCV_PLIC0) {
                             // PLIC reg will be parsed from the parent node's
                             // reg property; whether this node *is* a PLIC is
@@ -921,83 +968,17 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                                 }
                             }
 
-                            // GIC distributor: first reg entry in the GIC node.
-                            if (0x0800_0000..0x0801_0000).contains(&addr)
-                                && (info.gicd_base.is_none()
-                                    || (info.gicd_base == Some(0x0800_0000) && addr != 0x0800_0000))
-                            {
-                                info.gicd_base = Some(addr as usize);
-                            }
-                            // GIC CPU interface: second reg entry (GICv2 only).
-                            if (0x0801_0000..0x0802_0000).contains(&addr) {
-                                info.gicc_base = Some(addr as usize);
-                            }
-                            // GICv3 redistributor base: second reg entry in GICv3 node.
-                            if current_is_gicv3 && entry_idx == 1 {
-                                info.gicr_base = Some(addr as usize);
-                            }
-                            // GICv3 ITS base: first reg entry in ITS node.
-                            if current_is_its && entry_idx == 0 {
-                                info.its_base = Some(addr as usize);
-                            }
-                            // UART (PL011): typically at 0x0900_0000.
-                            // UART (NS16550A): RISC-V virt at 0x1000_0000.
-                            if ((0x0900_0000..0x0910_0000).contains(&addr) && addr != 0x0901_0000)
-                                || (0x1000_0000..0x1000_1000).contains(&addr)
-                            {
-                                info.uart_base = Some(addr as usize);
-                                current_is_uart = true;
-                                if current_interrupts_len > 0 {
-                                    info.uart_irq = interrupt_source_from_cells(
-                                        &current_interrupts[..current_interrupts_len],
-                                    );
-                                }
-                            }
-                            // RTC (PL031): QEMU virt places it at 0x0901_0000.
-                            // RTC (Goldfish): RISC-V virt at 0x0010_1000.
-                            if addr == 0x0901_0000 || addr == 0x0010_1000 {
-                                info.rtc_base = Some(addr as usize);
-                            }
-                            // This node's own address, for the two nodes whose
-                            // meaning is a property of the node rather than of
-                            // the address: a PLIC and an IMSIC.  QEMU `virt`
-                            // puts the PLIC and the AIA APLIC at the *same*
-                            // address (0x0C00_0000), so an address alone cannot
-                            // tell them apart — and writing PLIC registers to
-                            // an APLIC is an access fault.
-                            if current_node_addr.is_none() {
-                                current_node_addr = Some(addr as usize);
-                            }
-                            // PCIe ECAM: a `pci-host-ecam-generic` node names
-                            // its window in `reg`.  Whether this node is that
-                            // one is not known yet — `compatible` follows `reg`
-                            // on QEMU `virt` — so the address is remembered
-                            // here and promoted at `FDT_END_NODE`, where the
-                            // node has been read whole.  The exclusions are the
-                            // addresses other nodes on these machines own: a
-                            // host bridge's `reg` is its ECAM window, and no
-                            // other node in the tree looks like one.
-                            if !(0x0A00_0000..0x0A20_0000).contains(&addr)
-                                && !(0x1000_1000..0x1001_0000).contains(&addr)
-                                && !(0x0C00_0000..0x0D00_0000).contains(&addr)
-                            {
-                                if current_is_pci_host && info.ecam_base.is_none() {
-                                    // A tree that put `compatible` first is
-                                    // settled here; one that did not is settled
-                                    // at the end of the node.
-                                    info.ecam_base = Some(addr as usize);
-                                }
-                                if current_pci_reg.is_none() {
-                                    current_pci_reg = Some(addr as usize);
-                                }
-                            }
-                            // VirtIO MMIO: aarch64 at 0x0A00_0000, riscv64 at 0x1000_1000.
-                            if ((0x0A00_0000..0x0A20_0000).contains(&addr)
-                                || (0x1000_1000..0x1001_0000).contains(&addr))
-                                && virtio_mmio_idx < virtio_mmio_bases.len()
-                            {
-                                virtio_mmio_bases[virtio_mmio_idx] = Some(addr as usize);
-                                virtio_mmio_idx += 1;
+                            // Remember this node's `reg` entries: what they
+                            // *mean* is settled at `FDT_END_NODE`, once the
+                            // `compatible` that follows `reg` has said what the
+                            // node is.  Matching the address here against a
+                            // table of QEMU `virt`'s addresses would tie the
+                            // parse to one machine's layout — a board that put
+                            // its PL011 or its GIC elsewhere would be read as
+                            // nothing.
+                            if current_reg_count < current_regs.len() {
+                                current_regs[current_reg_count] = (addr, entry_size);
+                                current_reg_count += 1;
                             }
                         }
                     }
@@ -2224,6 +2205,86 @@ mod tests {
         blob.extend_from_slice(&sblock);
         blob.extend_from_slice(&strings);
         blob
+    }
+
+    /// A board that places its PL011 and its GIC at addresses no QEMU machine
+    /// uses is still read, because what a node *is* comes from its
+    /// `compatible`, not from where it sits.
+    ///
+    /// This is the gate the address-matching code needed: the parse used to
+    /// recognise a UART by `0x0900_0000..0x0910_0000` and a GIC by
+    /// `0x0800_0000`, so a board that put them anywhere else was read as having
+    /// no console and no interrupt controller.  The nodes here are emitted in
+    /// QEMU's own order — `reg` before `compatible` — so the classification can
+    /// only come from the node's end, where both are known.
+    #[test]
+    fn parse_fdt_classifies_nodes_by_compatible_not_by_address() {
+        // GICv2 at 0x1000_0000 (an address no QEMU virt machine uses) and a
+        // PL011 at 0x2000_0000, both with `reg` first and `compatible` after.
+        let gic_reg: Vec<u8> = [
+            be32(0x0000_0000),
+            be32(0x1000_0000),
+            be32(0x0000_0000),
+            be32(0x0001_0000),
+            be32(0x0000_0000),
+            be32(0x1001_0000),
+            be32(0x0000_0000),
+            be32(0x0001_0000),
+        ]
+        .concat();
+        let uart_reg: Vec<u8> = [
+            be32(0x0000_0000),
+            be32(0x2000_0000),
+            be32(0x0000_0000),
+            be32(0x0000_1000),
+        ]
+        .concat();
+        let rtc_reg: Vec<u8> = [
+            be32(0x0000_0000),
+            be32(0x3000_0000),
+            be32(0x0000_0000),
+            be32(0x0000_1000),
+        ]
+        .concat();
+
+        let blob = build_small_fdt(|sblock, str_off| {
+            emit_node(
+                sblock,
+                "intc@10000000",
+                str_off,
+                &[("reg", &gic_reg), ("compatible", b"arm,gic-400\0")],
+            );
+            emit_node(
+                sblock,
+                "serial@20000000",
+                str_off,
+                &[("reg", &uart_reg), ("compatible", b"arm,pl011\0")],
+            );
+            emit_node(
+                sblock,
+                "rtc@30000000",
+                str_off,
+                &[("reg", &rtc_reg), ("compatible", b"arm,pl031\0")],
+            );
+        });
+
+        let info = parse_fdt(blob.as_ptr() as usize);
+        assert_eq!(
+            info.gicd_base,
+            Some(0x1000_0000),
+            "the distributor is the GIC's first reg entry, wherever it is"
+        );
+        assert_eq!(
+            info.gicc_base,
+            Some(0x1001_0000),
+            "and the CPU interface its second"
+        );
+        assert_eq!(
+            info.uart_base,
+            Some(0x2000_0000),
+            "the console's reg, not a fixed window"
+        );
+        assert_eq!(info.rtc_base, Some(0x3000_0000), "the RTC's reg likewise");
     }
 
     #[test]
