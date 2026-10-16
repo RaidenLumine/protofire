@@ -8,14 +8,15 @@
 //!   `base + (bus << 20) + (device << 15) + (function << 12) + offset`
 //!
 //! Unlike the legacy port pair, it reaches the extended PCIe registers above
-//! offset `0xFF`, which is what MSI-X tables live behind.
+//! offset `0xFF` — the registers a function's 256-byte head does not hold.
 //!
 //! The window belongs to the platform: the device tree names it on aarch64
-//! and riscv64, and QEMU's q35 machine fixes it at
-//! [`crate::arch::x86_64::pci::Q35_MMCONFIG_BASE`].  Finding it and mapping
-//! it is that platform's job; this type is what the walk reads through once
-//! that has happened, and it is the same type on every machine that uses the
-//! mechanism.
+//! and riscv64, and finding it and mapping it there is that platform's job.
+//! This type is what the walk reads through once that has happened, and it is
+//! the same type on every machine that uses the mechanism.  x86_64 does not:
+//! its machines reach configuration space through the port pair, which the
+//! registers this kernel reads all fit inside, so no window is discovered
+//! there (see [`crate::arch::x86_64::pci`]).
 
 use core::ops::RangeInclusive;
 use core::ptr;

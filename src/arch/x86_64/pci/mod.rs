@@ -2,26 +2,32 @@
 //!
 //! PCI/PCIe on x86_64.
 //!
-//! The architecture offers two ways to reach configuration space, and this
-//! module is where that choice is written down:
+//! Configuration space is reached through the legacy port pair at
+//! `0xCF8`/`0xCFC` ([`raw`]): every x86_64 machine has it, it needs no
+//! mapping, and it is what the walk runs on here.  The pair addresses only the
+//! 256-byte head of a function — measured against the registers this kernel
+//! reads, which is all of them (a capability pointer is eight bits, and an
+//! MSI-X *table* lives in a BAR, not in configuration space).
 //!
-//! - [`raw`] — the legacy port pair at `0xCF8`/`0xCFC`.  Every x86_64 machine
-//!   has it, it needs no mapping, and it is what the walk runs on here.
-//! - The memory window QEMU's q35 machine describes through
-//!   [`Q35_MMCONFIG_BASE`].  It covers bus 0 and reaches the extended PCIe
-//!   registers the ports cannot address.
+//! QEMU's q35 machine also describes a memory-mapped window in its ACPI
+//! tables, the MMCONFIG base, which reaches the extended registers above
+//! `0xFF`.  This kernel reads neither that table nor anything past `0xFF`, so
+//! there is no window here to discover — and no fixed address to guess one at,
+//! which is what a constant would be on a machine that places the root complex
+//! elsewhere.  The ECAM mechanism itself is real and is used where a machine
+//! describes its window: aarch64 and riscv64 discover it from their device
+//! trees ([`crate::arch::pci::ecam`]).
 //!
 //! The walk itself is not here.  It is architecture-neutral, it lives once in
 //! [`crate::arch::pci`], and this module supplies the port-I/O backend for it —
-//! so an x86_64 machine that reads through a window reads through exactly the
-//! code aarch64 and riscv64 read through.
+//! so an x86_64 machine reads through exactly the code aarch64 and riscv64
+//! read through.
 
 pub mod enumeration;
 pub mod raw;
 
 // The walk's vocabulary, re-exported so a caller naming this machine finds it.
 pub use crate::arch::pci::cap_id;
-pub use crate::arch::pci::EcamRegion;
 pub use crate::arch::pci::MsiCapability;
 pub use crate::arch::pci::MsixCapability;
 pub use crate::arch::pci::PciBarInfo;
@@ -82,15 +88,3 @@ pub use enumeration::pci_enumerate_buses;
 pub use enumeration::pcie_check_hotplug_event;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use enumeration::pcie_read_slot_status;
-
-/// Base of the q35 root complex's memory-mapped configuration window.
-///
-/// It is a fixed address rather than a discovered one: q35 describes it in
-/// its ACPI tables, and this kernel does not read those for it.
-pub const Q35_MMCONFIG_BASE: usize = 0xB000_0000;
-
-/// The q35 window, covering the bus its root complex puts devices on.
-#[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub fn ecam_discover() -> EcamRegion {
-    EcamRegion::new(Q35_MMCONFIG_BASE, 0, 0)
-}

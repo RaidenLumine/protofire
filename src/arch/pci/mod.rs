@@ -24,9 +24,9 @@
 //!
 //! What stays per-architecture is the part that really is the machine's: which
 //! window holds configuration space and how it gets mapped.  That is
-//! [`ecam::EcamRegion`] on aarch64 and riscv64 (discovered from the device
-//! tree), the legacy port pair on x86_64, and a fixed `Q35_MMCONFIG_BASE`
-//! window for the machine that has one.
+//! [`ecam::EcamRegion`] on aarch64 and riscv64, discovered from the device
+//! tree; x86_64 reaches configuration space through the legacy port pair,
+//! which the registers it reads fit inside, so it has no window to discover.
 
 pub mod ecam;
 pub mod walk;
