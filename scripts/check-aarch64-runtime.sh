@@ -439,6 +439,14 @@ require_log_line "system: slot b active (build 2)"
 # policy in `src/fs/write_locations.rs` is visible in a log rather than
 # only in the source.
 require_log_line "runtime writes: /tmp (volatile), /data (persistent)"
+# And where the interrupt controller **came from**.  This boot is handed a
+# device tree, and the tree describes the controller, so the address has to be
+# the tree's — not the `virt` constant the driver falls back to.  The two are
+# the same address on QEMU, so only the boot naming its source can tell them
+# apart, and a parse that stopped describing the controller (a defect that
+# shipped once) would fall back silently.  This is the assertion that makes it
+# red instead.
+require_log_line "[irq   ] interrupt controller from the device tree at "
 require_log_line "adastra init (ring 3): reading /system/rc.d"
 require_log_line "adastra init: declared "
 # The distribution's first install, done by init on the machine: the disk

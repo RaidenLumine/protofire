@@ -155,9 +155,55 @@ pub mod interrupt_controller {
     /// once and cached.
     static VERSION: AtomicU8 = AtomicU8::new(0);
 
+    /// The addresses the machine this kernel was developed on (QEMU `virt`)
+    /// puts its interrupt controller at.
+    ///
+    /// They are a **guess**, and one a machine that describes its own
+    /// controller never needs: a described address is always used in
+    /// preference.  They exist so a boot whose device tree describes no
+    /// controller still has somewhere to look on that machine, and a machine
+    /// that describes none is named in the log when one of these is reached
+    /// (see [`from_dt_or_default`]).
     const GICD_BASE_DEFAULT: usize = 0x0800_0000;
     const GICC_BASE_DEFAULT: usize = 0x0801_0000;
     const GICR_BASE_DEFAULT: usize = 0x080A_0000;
+
+    /// Whether the "where the controller is" line has been printed.  The
+    /// accessor is on the interrupt path and is asked repeatedly; the line is
+    /// worth printing once.
+    static NOTICED_CONTROLLER_SOURCE: AtomicBool = AtomicBool::new(false);
+
+    /// A controller address from the device tree, or the `virt` constant when
+    /// the tree describes none — naming which, once, in the log.
+    ///
+    /// The log line is the whole point.  A silent fall to the `virt` address is
+    /// what hid a defect in the parser: a tree that described no controller —
+    /// because the parse had gone wrong — was answered with the same address
+    /// QEMU uses, so a broken parse looked exactly like a working one, and no
+    /// gate could tell them apart.  A boot now says which it used, so the
+    /// described path is an assertion a gate can make and the guessed path is
+    /// visible rather than inferred.
+    fn from_dt_or_default(described: Option<usize>, default: usize) -> usize {
+        let (base, described) = match described {
+            Some(base) => (base, true),
+            None => (default, false),
+        };
+        if !NOTICED_CONTROLLER_SOURCE.swap(true, Ordering::Relaxed) {
+            if described {
+                crate::println!(
+                    "[irq   ] interrupt controller from the device tree at {:#x}",
+                    base
+                );
+            } else {
+                crate::println!(
+                    "[irq   ] the device tree described no interrupt controller; \
+                     using the QEMU `virt` default {:#x}",
+                    base
+                );
+            }
+        }
+        base
+    }
 
     /// Cores a GICv2 distributor can address.
     ///
@@ -167,22 +213,25 @@ pub mod interrupt_controller {
     pub(crate) const GICV2_CPU_INTERFACES: u32 = 8;
 
     pub(crate) fn gicd_base() -> usize {
-        crate::arch::fdt::platform_info()
-            .gicd_base
-            .unwrap_or(GICD_BASE_DEFAULT)
+        from_dt_or_default(
+            crate::arch::fdt::platform_info().gicd_base,
+            GICD_BASE_DEFAULT,
+        )
     }
 
     fn gicc_base() -> usize {
-        crate::arch::fdt::platform_info()
-            .gicc_base
-            .unwrap_or(GICC_BASE_DEFAULT)
+        from_dt_or_default(
+            crate::arch::fdt::platform_info().gicc_base,
+            GICC_BASE_DEFAULT,
+        )
     }
 
     /// The first redistributor frame, on a machine that has them.
     pub(crate) fn gicr_base() -> usize {
-        crate::arch::fdt::platform_info()
-            .gicr_base
-            .unwrap_or(GICR_BASE_DEFAULT)
+        from_dt_or_default(
+            crate::arch::fdt::platform_info().gicr_base,
+            GICR_BASE_DEFAULT,
+        )
     }
 
     const GICD_CTLR: usize = 0x000;

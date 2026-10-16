@@ -244,8 +244,13 @@ from the platform are worth naming next to the parts it does not ask for:
 - **Not from the platform**: where the frame pool *is* — a reserved span of
   the kernel's own address space that the linker places
   (`src/memory/frame.rs`) — and a machine that describes no controller gets
-  the `virt` layout's constants as a fallback (`src/arch/aarch64/mod.rs`).
-  What the pool is *sized* from is the machine's answer, which is why the
+  the `virt` layout's constants as a fallback (`src/arch/aarch64/mod.rs`),
+  which the boot now **names in its log** rather than applying silently: a
+  silent fall to the `virt` address is indistinguishable from a described one
+  when the two are the same address (they are on that machine), which hid a
+  parse defect the runtime gate now refuses
+  (`[irq   ] interrupt controller from the device tree at ...`).  What the
+  pool is *sized* from is the machine's answer, which is why the
   memory map is on the list above; the span is a ceiling that a small machine
   takes only the part of.  A board port is where the span itself becomes a
   decision, and the boot log prints the pool's base and how much of its span
