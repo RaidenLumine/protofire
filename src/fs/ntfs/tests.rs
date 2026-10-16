@@ -4967,11 +4967,14 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     ]
     .concat();
     // A list that names the *name* where it went: the base record holds no
-    // `$FILE_NAME` at all, and the extension record holds nothing else.
+    // `$FILE_NAME` at all, and the extension record holds the name and one
+    // more attribute — so the name grows out of a record that is already
+    // full, which is the shape a rename has to make room in.
     let named_list: Vec<u8> = [
         list_entry(0x10, "", 1, NAMED_FILE, 0),
         list_entry(0x30, "", 1, NAMED_FILE_EXT, 0),
         list_entry(0x80, "", 1, NAMED_FILE, 0),
+        list_entry(0xe0, "", 1, NAMED_FILE_EXT, 0),
     ]
     .concat();
 
@@ -5371,6 +5374,13 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                         None,
                         0,
                     ));
+                    // And an attribute sized to fill the record: the name it
+                    // holds has nowhere to grow in *this* record, which is the
+                    // shape a rename that writes a longer name has to make room
+                    // in — inside an extension record, where the file's own
+                    // record is not.
+                    let room = shape.record_size() as usize - 8 - 56 - attributes.len() - 24;
+                    attributes.extend(attribute(0xe0, "", &alloc::vec![0u8; room], None, 0));
                 }
                 RUNNING_INDEX_DIRECTORY => {
                     // The index root points at **one** block, and the bitmap

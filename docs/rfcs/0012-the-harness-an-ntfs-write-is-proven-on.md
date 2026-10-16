@@ -1317,3 +1317,36 @@ being something a partial write can ignore.
   block with the greatest names; the allocation is required to have grown by
   the two blocks; and a second mount lists every name — the promoted key among
   them — once, and resolves each to a record.
+
+**Stage 21 — a name that does not fit an extension record makes room.**
+
+- Stage 4c made room by moving attributes into an extension, and stage 6 wrote
+  a renamed name wherever its list entry says it lives — including an extension
+  record.  What neither did is make room in an *extension*: a name that grows
+  out of the record it moved to, or one that is already there as the record
+  fills, had nowhere to go (`NotImplemented`).  The file's `$ATTRIBUTE_LIST` is
+  the **base** record's, so an extension cannot grow a list of its own: what
+  leaves goes into another extension of the same base, and the base's list
+  learns where by the one field that says which record holds an attribute.
+- The attribute that asked for the room **stays** — it is the one whose value
+  has to grow, and the others leaving is what leaves it an extension with room.
+  What may move is what the base's list says lives **here**, and only whole
+  attributes: an attribute the list does not name is one this writer cannot
+  repoint, and one whose entries number more than one is *split* across records,
+  so moving this part would corrupt it.  The largest of those go first, and one
+  goes even when the record's own bytes already fit, because the caller needs
+  room for a *growth* no one has measured yet.  Only the holder field of each
+  moved attribute's entry changes — its order and length stay — so the list goes
+  back where it lives, whether that is the base record's own bytes or the runs
+  of a list that is a file of its own.
+- The order is what a crash leaves: the new extension goes down first, carrying
+  the attributes the list still says are in the old one — a record in use that
+  nothing names is a leak, the harmless direction — the base's list second,
+  which is the write that moves them, and the old record last, cleaned of the
+  attributes nothing names any more.
+- The gate is the fixture's `named.bin`, whose `$FILE_NAME` an
+  `$ATTRIBUTE_LIST` moved into an extension and whose extension carries an
+  attribute sized to fill it: the rename writes a longer name, the extension
+  makes room in a second extension of the same base, and a second mount finds
+  the new name by its path, reads it out of the record the list now names, and
+  still finds the name where the list says it is.

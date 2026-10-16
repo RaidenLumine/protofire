@@ -621,12 +621,13 @@ impl NtfsFs {
     /// value has to be longer, or a `$DATA` whose run list does not fit.  It
     /// goes first, and the caller follows it to the record it lands in.
     ///
-    /// A record that is *itself* an extension refuses (`NotImplemented`): the
-    /// file's list is in the base record, and extending it from an extension is
-    /// a step of its own.
+    /// A record that is *itself* an extension is a step of its own: its list is
+    /// the **base** record's, so what leaves goes into another extension of the
+    /// same base and the base's list is what learns where — see
+    /// [`Self::make_room_in_an_extension`].
     fn make_room(&self, record_number: u64, growing: u32) -> Result<()> {
-        if self.base_record(record_number).is_some() {
-            return Err(Error::NotImplemented);
+        if let Some(base) = self.base_record(record_number) {
+            return self.make_room_in_an_extension(record_number, base, growing);
         }
         let record = self.read_mft_record(record_number)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
@@ -852,6 +853,193 @@ impl NtfsFs {
         );
         fs::write_device_bytes(&self.device, at, &rebuilt)?;
         self.mft_cache.lock().insert(record_number, rebuilt);
+        Ok(())
+    }
+
+    /// Make room in a record that is itself an **extension** of another.
+    ///
+    /// The file's `$ATTRIBUTE_LIST` is the *base* record's, so an extension
+    /// cannot grow a list of its own: what leaves the record goes into another
+    /// extension of the same base, and the base's list learns where by the one
+    /// field that says which record holds an attribute.  The entries keep their
+    /// order and their length, so the list is the same length it was and goes
+    /// back where it lives.
+    ///
+    /// The attribute that asked for the room **stays**: it is the one whose
+    /// value has to grow, and an extension with room for it is what the others
+    /// leaving behind leaves.  The largest others go first, and one goes even
+    /// when the record's own bytes already fit, because what the caller needs
+    /// is room for a *growth* no one has measured yet.
+    ///
+    /// The order is what a crash leaves.  The new extension goes down first,
+    /// carrying the attributes the list still says are in the old one — a
+    /// record in use that nothing names is a leak, the harmless direction.  The
+    /// base's list second, which is the write that moves them.  The old record
+    /// last, cleaned of attributes nothing names any more.
+    fn make_room_in_an_extension(&self, record_number: u64, base: u64, growing: u32) -> Result<()> {
+        let record = self.read_mft_record(record_number)?;
+        let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
+        let at = header.size() as usize;
+        let attributes = parse_attributes(&record[at..]);
+        let fits = |moved_len: usize| bytes_in_use(&record) - moved_len + 8 <= record.len();
+
+        // What may move is what the base's list says lives **here**, and only
+        // whole attributes.  The list is the file's word on where each
+        // attribute is, so an attribute it does not name is one this writer
+        // cannot repoint and must not touch; and an attribute whose entries
+        // number more than one is *split* across records — a part here and a
+        // part elsewhere — so moving this part would corrupt it, and its parts
+        // are not one record's to rewrite.  The attribute that asked for the
+        // room stays: moving it is what the move is for.
+        let base_attributes = self.attributes_of(base)?;
+        let list = base_attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
+            .ok_or(Error::InvalidArgument)?;
+        let entries = self.list_entries(list)?;
+        let whole = |entry: &fs::AttributeListEntry| {
+            entries
+                .iter()
+                .filter(|other| names_the_same(other, entry))
+                .count()
+                == 1
+        };
+
+        let mut moved: Vec<&ParsedAttr> = Vec::new();
+        let mut moved_len = 0usize;
+        let mut others: Vec<&ParsedAttr> = attributes
+            .iter()
+            .filter(|attribute| {
+                attribute.attr_type != growing
+                    && entries.iter().any(|entry| {
+                        entry.holder == record_number
+                            && entry.attr_type == attribute.attr_type
+                            && entry.instance == attribute.instance
+                            && entry.name.as_deref() == attribute.name.as_deref()
+                            && whole(entry)
+                    })
+            })
+            .collect();
+        others.sort_by_key(|attribute| core::cmp::Reverse(attribute.attr_len));
+        for other in others {
+            if !moved.is_empty() && fits(moved_len) {
+                break;
+            }
+            moved.push(other);
+            moved_len += other.attr_len;
+        }
+        if moved.is_empty() || !fits(moved_len) {
+            // The record holds nothing but the attribute that has to grow, and
+            // is still too full for it.
+            return Err(Error::NoSpace);
+        }
+        // The new record holds the attributes and its own header and marker.
+        if moved_len + 64 > record.len() {
+            return Err(Error::NoSpace);
+        }
+
+        // The attributes the new record receives, in ascending **type** order:
+        // a record's attributes are kept in that order and the selection picked
+        // by *size*.
+        let mut to_go: Vec<Vec<u8>> = Vec::new();
+        for attribute in &moved {
+            let start = at + attribute.offset;
+            to_go.push(record[start..start + attribute.attr_len].to_vec());
+        }
+        to_go.sort_by_key(|bytes| {
+            bytes
+                .get(..4)
+                .and_then(|type_bytes| type_bytes.try_into().ok())
+                .map(u32::from_le_bytes)
+                .unwrap_or(u32::MAX)
+        });
+        let (extension, _) = self.claim_record(NewRecord::Extension {
+            base,
+            attributes: to_go,
+        })?;
+        let extension_reference = {
+            let extension_record = self.read_mft_record(extension)?;
+            let sequence = u16::from_le_bytes([extension_record[16], extension_record[17]]);
+            extension | (u64::from(sequence) << 48)
+        };
+
+        // The base's list, which is what says the attributes moved.  It goes
+        // before the old record is cleaned, so no window has an attribute the
+        // list says is in a record that no longer holds it.
+        self.repoint_list_entries(base, &moved, extension_reference)?;
+
+        // And the record that made room, with the moved attributes gone.
+        let mut rebuilt = record[..at].to_vec();
+        for attribute in &attributes {
+            if moved.iter().any(|moved| moved.offset == attribute.offset) {
+                continue;
+            }
+            let start = at + attribute.offset;
+            rebuilt.extend_from_slice(&record[start..start + attribute.attr_len]);
+        }
+        rebuilt.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        let used = rebuilt.len();
+        rebuilt.resize(record.len(), 0);
+        rebuilt[24..28].copy_from_slice(&(used as u32).to_le_bytes());
+
+        let (device_at, sector) = {
+            let info = self.info.lock();
+            (
+                self.record_offset(&info, record_number)?,
+                info.bs.bytes_per_sector as usize,
+            )
+        };
+        fs::pack_usa(
+            &mut rebuilt,
+            header.usa_offset as usize,
+            header.usa_count as usize,
+            sector,
+        );
+        fs::write_device_bytes(&self.device, device_at, &rebuilt)?;
+        self.mft_cache.lock().insert(record_number, rebuilt);
+        Ok(())
+    }
+
+    /// Point the entries of a file's `$ATTRIBUTE_LIST` that name the attributes
+    /// just moved out of an extension record at the record they moved to.
+    ///
+    /// An entry names the record that holds its attribute, so an attribute that
+    /// changes record changes one field of its entry and nothing else — the
+    /// order and the length stay, which is what lets the list go back where it
+    /// lives: the base record's own bytes, or the runs of a list that is a file
+    /// of its own.
+    fn repoint_list_entries(&self, base: u64, moved: &[&ParsedAttr], holder: u64) -> Result<()> {
+        let attributes = self.attributes_of(base)?;
+        let list = attributes
+            .iter()
+            .find(|attribute| attribute.attr_type == ATTR_TYPE_ATTRIBUTE_LIST)
+            .ok_or(Error::InvalidArgument)?;
+        let mut entries = self.list_entries(list)?;
+        for entry in &mut entries {
+            if moved.iter().any(|attribute| {
+                attribute.attr_type == entry.attr_type
+                    && attribute.instance == entry.instance
+                    && attribute.name.as_deref() == entry.name.as_deref()
+            }) {
+                entry.holder = holder & 0x0000_FFFF_FFFF_FFFF;
+                entry.sequence = (holder >> 48) as u16;
+            }
+        }
+        let mut value: Vec<u8> = Vec::new();
+        for entry in &entries {
+            value.extend_from_slice(&fs::list_entry(
+                entry.attr_type,
+                entry.name.as_deref().unwrap_or(""),
+                entry.instance,
+                entry.lowest_vcn,
+                entry.holder | (u64::from(entry.sequence) << 48),
+            ));
+        }
+        if list.data_runs_offset.is_none() {
+            return self.replace_value(base, ATTR_TYPE_ATTRIBUTE_LIST, &value);
+        }
+        let info = self.info.lock();
+        fs::write_to_runs(&self.device, &info, &list.data_runs, 0, &value)?;
         Ok(())
     }
 

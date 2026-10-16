@@ -322,9 +322,11 @@ The authoritative picture of what exists today is
   to one whose value is where runs say, so a file created empty takes content,
   and the volume's own state is shared by every handle to a mount — a clone of
   the record cache let a write through a vnode leave the mount that made it
-  answering with the old record.  What is left of the stage is a name that
-  does not fit the extension record it lives in, on a rename
-  (`NotImplemented`).  The streams this format also carries — encrypted,
+  answering with the old record — and a name that does not fit the record it
+  lives in now makes room wherever that record is, an extension of the file's
+  own included: the attributes beside the name move into another extension of
+  the same base and the base's list learns where.  The streams this format also
+  carries — encrypted,
   compressed, sparse — are decided elsewhere now (RFCs 0013 to 0017): refused,
   read and written, a hole punched and filled.  A directory whose index is a
   **tree** is *read* now: an internal node holds a key and the child it points
