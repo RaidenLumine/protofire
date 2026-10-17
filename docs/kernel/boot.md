@@ -236,6 +236,12 @@ asserted rather than described — see the `offset_of!` checks in that file for
 the layout, and the two accessors the architectures use to reach the block:
 the GS base on x86_64, `TPIDR_EL1` on AArch64.
 
+The block is storage, so two of its pointers are opaque: the scheduler slot and
+the TSS are `*mut ()` and `*mut u8`, and the subsystem that owns each casts on
+the way in and out.  A field's type is not a dependency worth having — the
+scheduler slot named `process` while `process` asked this block which CPU it
+was on, which is a cycle in the census that existed only to spell a type.
+
 ## The first program
 
 The last thing `Kernel::init` does is start the first ring-3 program.  The path
