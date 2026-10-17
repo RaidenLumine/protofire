@@ -213,9 +213,20 @@ struct ImsicLayout {
     hart_count: u32,
 }
 
-/// The MMIO address of `cpu_id`'s IMSIC file.
+/// The MMIO address of the IMSIC file belonging to logical CPU `cpu_id`.
+///
+/// An IMSIC file belongs to a *hart*, and a hart id is the machine's number:
+/// the file index is that hart's position among the machine's harts, not the
+/// kernel's logical CPU id and not the hart id itself.  The device tree's CPU
+/// order is the machine's order, so the translation runs through it.
 fn imsic_file_base(layout: &ImsicLayout, cpu_id: u32) -> usize {
-    layout.base + (cpu_id % layout.hart_count) as usize * layout.stride
+    let index = super::percpu::hart_index_of_slot(cpu_id).unwrap_or(cpu_id as usize);
+    layout.base + (index % layout.hart_count as usize) * layout.stride
+}
+
+/// The position of logical CPU `cpu_id`'s hart among the machine's harts.
+fn hart_index_of_cpu(cpu_id: u32) -> Option<usize> {
+    super::percpu::hart_index_of_slot(cpu_id)
 }
 
 /// The IMSIC file base belonging to the current hart.
@@ -307,7 +318,9 @@ pub fn msix_capable_count() -> u32 {
     };
     let mut capable = 0;
     for cpu in 0..crate::kernel::smp::MAX_CPUS as u32 {
-        if cpu < hart_count && crate::kernel::smp::cpu_is_online(cpu) {
+        if hart_index_of_cpu(cpu).is_some_and(|index| index < hart_count as usize)
+            && crate::kernel::smp::cpu_is_online(cpu)
+        {
             capable += 1;
         }
     }
@@ -320,7 +333,9 @@ fn msix_capable_at(slot: u32) -> Option<u32> {
     let hart_count = layout.as_ref()?.hart_count;
     let mut remaining = slot;
     for cpu in 0..crate::kernel::smp::MAX_CPUS as u32 {
-        if cpu >= hart_count || !crate::kernel::smp::cpu_is_online(cpu) {
+        if !hart_index_of_cpu(cpu).is_some_and(|index| index < hart_count as usize)
+            || !crate::kernel::smp::cpu_is_online(cpu)
+        {
             continue;
         }
         if remaining == 0 {
@@ -527,7 +542,14 @@ pub fn compose_msix_entry(target_cpu: u32, irq: u32) -> MsixTableEntry {
     // hart that has no handler for it, silently.
     let base = match layout.as_ref() {
         Some(l) => imsic_file_base(l, target_cpu) as u64,
-        None => (IMSIC_QEMU_VIRT_BASE + target_cpu as usize * IMSIC_QEMU_VIRT_STRIDE) as u64,
+        None => {
+            // Before the layout is known, the file is still the target hart's:
+            // its position among the machine's harts, falling back to the
+            // logical id for a machine with no tree.
+            let index =
+                super::percpu::hart_index_of_slot(target_cpu).unwrap_or(target_cpu as usize);
+            (IMSIC_QEMU_VIRT_BASE + index * IMSIC_QEMU_VIRT_STRIDE) as u64
+        }
     };
     MsixTableEntry {
         msg_addr_low: base as u32,

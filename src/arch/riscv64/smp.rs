@@ -39,8 +39,13 @@ use core::sync::atomic::Ordering;
 
 use crate::kernel::percpu::PerCpuData;
 
-/// Maximum number of secondary CPUs we attempt to boot.
-const MAX_APS: usize = 8;
+/// Secondary CPU slots this kernel will start.
+///
+/// One per CPU slot past the BSP, which is the same number every per-CPU table
+/// and the trap stub table are sized for.  It used to be a separate, smaller
+/// number: a machine with more cores than that ran some of them and said
+/// nothing about the rest.
+const MAX_APS: usize = super::percpu::MAX_HARTS - 1;
 
 /// Stack size for each secondary CPU (64 KiB).
 const AP_STACK_SIZE: usize = 65536;
@@ -48,19 +53,11 @@ const AP_STACK_SIZE: usize = 65536;
 /// Statically-allocated stacks in kernel BSS so the runtime page tables
 /// always cover them.
 #[repr(C, align(4096))]
+#[derive(Copy, Clone)]
 struct ApStack([u8; AP_STACK_SIZE]);
 
 static AP_STACKS: crate::util::sync_unsafe_cell::SyncUnsafeCell<[ApStack; MAX_APS]> =
-    crate::util::sync_unsafe_cell::SyncUnsafeCell::new([
-        ApStack([0u8; AP_STACK_SIZE]),
-        ApStack([0u8; AP_STACK_SIZE]),
-        ApStack([0u8; AP_STACK_SIZE]),
-        ApStack([0u8; AP_STACK_SIZE]),
-        ApStack([0u8; AP_STACK_SIZE]),
-        ApStack([0u8; AP_STACK_SIZE]),
-        ApStack([0u8; AP_STACK_SIZE]),
-        ApStack([0u8; AP_STACK_SIZE]),
-    ]);
+    crate::util::sync_unsafe_cell::SyncUnsafeCell::new([ApStack([0u8; AP_STACK_SIZE]); MAX_APS]);
 
 // External assembly trampoline for secondary CPUs (defined in boot.S).
 extern "C" {
@@ -176,17 +173,20 @@ pub(crate) fn boot_hart_id() -> Option<u64> {
     (hartid != u64::MAX).then_some(hartid)
 }
 
-/// Discover secondary hart IDs from the Flattened Device Tree.
+/// Discover the secondary harts from the Flattened Device Tree.
 ///
-/// The shared FDT module exposes the total CPU count parsed from the `/cpus`
-/// node.  On QEMU `virt` and other OpenSBI platforms hart IDs are contiguous
-/// starting at 0, so the harts are `0..cpu_count` and the only one to skip is
-/// the one the kernel is running on.  When the FDT has not been parsed the
-/// count is 0 and no secondary harts are reported.
+/// Each CPU node's `reg` is the hart id the machine knows it by — not the
+/// node's position, and not a number this kernel may substitute its own for.
+/// The harts are returned in tree order, and the BSP is skipped by the id the
+/// boot protocol named, which is not always the first one.
+///
+/// A hart the per-CPU tables cannot name is declined here, with a message:
+/// starting it would give it another CPU's state, and that is the failure this
+/// pass exists to remove.
 fn discover_secondary_hartids() -> Vec<u64> {
     let mut hartids = Vec::new();
 
-    let total = crate::arch::fdt::cpu_count() as u64;
+    let total = crate::arch::fdt::cpu_count();
     let Some(boot_hart) = boot_hart_id() else {
         // Without the boot hart's ID there is no way to tell a secondary hart
         // from the one already running, and starting the running hart is an
@@ -194,26 +194,52 @@ fn discover_secondary_hartids() -> Vec<u64> {
         crate::println!("[smp] riscv64: boot hart ID unknown; not starting any hart");
         return hartids;
     };
-    for hartid in 0..total {
+    if boot_hart >= super::percpu::MAX_HART_IDS as u64 {
+        crate::println!(
+            "[smp] riscv64: boot hart {} is past the trampoline's table ({} ids); \
+             running single-hart",
+            boot_hart,
+            super::percpu::MAX_HART_IDS
+        );
+        return hartids;
+    }
+    // Only the CPU nodes the platform description could record can be named
+    // here; a tree with more nodes than the kernel's CPU ceiling is described
+    // beyond what this machine can run, and saying that once is clearer than
+    // one "no `reg`" line per untracked node.
+    let tracked = total.min(crate::arch::fdt::MAX_PLATFORM_CPUS as u32);
+    if total > tracked {
+        crate::println!(
+            "[smp] riscv64: {} CPU nodes described, {} tracked; the rest are not started",
+            total,
+            tracked
+        );
+    }
+    for index in 0..tracked {
+        let Some(hartid) = crate::arch::fdt::cpu_hardware_id(index) else {
+            crate::println!(
+                "[smp] riscv64: cpu node {} has no `reg`; not starting that hart",
+                index
+            );
+            continue;
+        };
         if hartid == boot_hart {
             continue;
         }
-        // A hart past the per-CPU table has nowhere for the kernel to keep its
-        // block or its trap stub, and a hart it cannot keep state for is one it
-        // cannot run threads on.  Starting it anyway would give it another
-        // hart's state — the failure this whole pass exists to remove.
-        if hartid as usize >= super::percpu::MAX_HARTS {
+        // A hart the trampoline has no translation for, or that the per-CPU
+        // tables cannot hold, is a hart the kernel cannot keep state for.
+        if hartid >= super::percpu::MAX_HART_IDS as u64 {
             crate::println!(
-                "[smp] riscv64: hart {} is past the per-CPU table ({} harts); not starting it",
+                "[smp] riscv64: hart {} is past the trampoline's table ({} ids); not starting it",
                 hartid,
-                super::percpu::MAX_HARTS
+                super::percpu::MAX_HART_IDS
             );
             continue;
         }
-        if hartids.len() >= MAX_APS {
+        if hartids.len() + 1 >= super::percpu::MAX_HARTS {
             crate::println!(
-                "[smp] riscv64: more secondary harts than MAX_APS ({}); not starting the rest",
-                MAX_APS
+                "[smp] riscv64: more secondary harts than the per-CPU table ({} CPUs); not starting the rest",
+                super::percpu::MAX_HARTS
             );
             break;
         }
@@ -267,8 +293,13 @@ pub fn bring_up_aps() {
 
     let mut started: Vec<u32> = Vec::with_capacity(hartids.len());
     for (index, &hartid) in hartids.iter().enumerate() {
-        if bring_up_one(hartid, index) {
-            started.push(hartid as u32);
+        // Logical slot: the BSP is 0, and the APs are 1, 2, … in the order they
+        // are started.  The hart id is the machine's name for the same CPU and
+        // stays what SBI is asked to start; the slot is what every per-CPU
+        // table is indexed by.
+        let slot = index as u32 + 1;
+        if bring_up_one(slot, hartid) {
+            started.push(slot);
         }
     }
 
@@ -278,10 +309,10 @@ pub fn bring_up_aps() {
     // — the message-signalled placement above all, which names a hart that
     // must already be able to take the interrupt.
     let missing = crate::kernel::smp::wait_until_online(&started);
-    for hartid in &missing {
+    for slot in &missing {
         crate::println!(
-            "[smp] riscv64: hart {} did not come online; continuing",
-            hartid
+            "[smp] riscv64: CPU slot {} did not come online; continuing",
+            slot
         );
     }
 }
@@ -290,18 +321,23 @@ pub fn bring_up_aps() {
 ///
 /// A rejected hart is not "slow": SBI will never start it, so the caller must
 /// not wait for it to report in.
-fn bring_up_one(hartid: u64, index: usize) -> bool {
+///
+/// `slot` is the logical CPU the kernel will call this hart — its place in the
+/// per-CPU tables — and `hartid` is the machine's name for it, which is what
+/// SBI is asked to start.  The two are the same number on today's machines and
+/// are deliberately not assumed to be.
+fn bring_up_one(slot: u32, hartid: u64) -> bool {
     use alloc::boxed::Box;
 
     // The block, the scheduler, and the idle thread are built here, on the BSP,
     // because a hart that has just been reset has no allocator and no state.
     let mut percpu = Box::new(PerCpuData::zeroed());
-    percpu.cpu_id = hartid as u32;
+    percpu.cpu_id = slot;
     let sched = Box::new(crate::kernel::process::Scheduler::new());
     // Bound before anything is placed on it: this hart's first choice of thread
     // is its own idle thread, and the round-robin that places other work starts
     // from the CPU the scheduler is bound to.
-    sched.bind_to_cpu(hartid as u32);
+    sched.bind_to_cpu(slot);
     let sched_ptr = Box::into_raw(sched);
     percpu.scheduler = sched_ptr;
     let percpu_ptr = Box::into_raw(percpu);
@@ -312,23 +348,29 @@ fn bring_up_one(hartid: u64, index: usize) -> bool {
         (*sched_ptr).start_idle_process();
     }
 
-    // Publish the block in this hart's slot.  The slot is the only channel: the
-    // hart reads it from its trampoline, and its trap stubs read it on every
-    // kernel entry.  `tp` is left alone — the BSP is running on its own block.
+    // Publish the block in this hart's slot, and the translation the trampoline
+    // reads.  The slot is the only channel: the hart reads it from its
+    // trampoline, and its trap stubs read it on every kernel entry.  `tp` is
+    // left alone — the BSP is running on its own block.
     // SAFETY: the hart is not running yet, and the block outlives the kernel.
-    unsafe {
-        super::percpu::publish_base(hartid as usize, percpu_ptr as u64);
+    if !unsafe { super::percpu::publish_base(slot, hartid, percpu_ptr as u64) } {
+        crate::println!(
+            "[smp] riscv64: hart {} cannot be published for slot {}; not starting it",
+            hartid,
+            slot
+        );
+        return false;
     }
 
-    // SAFETY: `AP_STACKS` is a static array of kernel BSS stacks, `index` is a
-    // position in it (the caller iterates at most `MAX_APS` harts), and this
-    // runs before any hart is started, so nothing else is reading the array.
+    // SAFETY: `AP_STACKS` is a static array of kernel BSS stacks, `slot - 1` is
+    // a position in it (the caller assigns slots 1..=MAX_HARTS), and this runs
+    // before any hart is started, so nothing else is reading the array.
     let stack_top = unsafe {
         let stacks = &mut *AP_STACKS.get();
         // Leave room below the top for the first trap this hart takes: the
         // frame is built downward from `sp` before anything is pushed, exactly
         // as on a thread stack, and `stack_top` is exclusive.
-        let base = stacks[index].0.as_mut_ptr();
+        let base = stacks[slot as usize - 1].0.as_mut_ptr();
         base.add(AP_STACK_SIZE - core::mem::size_of::<super::trap::TrapFrame>()) as u64
     };
 
@@ -380,10 +422,19 @@ fn bring_up_one(hartid: u64, index: usize) -> bool {
 /// latency — up to one tick — not the wake-up.  The kernel's SMP layer does not
 /// send this to the calling hart or to a hart that never came up.
 pub fn send_reschedule_ipi(cpu_id: u32) {
+    // The caller names a logical CPU; SBI names harts, and a mask's bit `i` is
+    // hart `i + base`.  The translation is the boot's, and a CPU it does not
+    // know is one this cannot reach — signalling nothing is the honest answer.
+    let Some(hart_id) = super::percpu::hart_of_slot(cpu_id) else {
+        return;
+    };
+    if hart_id >= 64 {
+        return;
+    }
     // SAFETY: an SBI call.  A firmware without the extension returns an error
     // instead of trapping, which is why the answer is dropped rather than
     // asserted on; the call has no memory side effects the caller can observe.
-    let _ = unsafe { sbi_send_ipi(1u64 << cpu_id, 0) };
+    let _ = unsafe { sbi_send_ipi(1u64 << hart_id, 0) };
 }
 
 /// Harts that have already said they were woken by a reschedule IPI.
@@ -393,8 +444,8 @@ static RESCHEDULE_IPI_ANNOUNCED: AtomicU32 = AtomicU32::new(0);
 pub(crate) fn handle_reschedule_ipi() {
     // A request that arrived and a request that was never sent look the same
     // from the scheduler's side: both end in "the queue was looked at and had
-    // nothing newer".  The first one per hart is announced so the two can be
-    // told apart from outside, and the announcement is bounded by the hart
+    // nothing newer".  The first one per CPU is announced so the two can be
+    // told apart from outside, and the announcement is bounded by the CPU
     // count rather than by the traffic.
     let cpu_id = crate::kernel::percpu::get().cpu_id;
     if cpu_id < crate::kernel::smp::MAX_CPUS as u32 {
@@ -434,16 +485,39 @@ pub(crate) fn handle_reschedule_ipi() {
 /// published before starting it, with a valid kernel stack in `sp`.
 #[no_mangle]
 unsafe extern "C" fn ap_entry(hart_id: u64) -> ! {
-    let cpu_id = hart_id as u32;
-    crate::println!("[smp] riscv64 AP: hart {} running", hart_id);
+    // The logical CPU comes from the per-CPU block the trampoline just adopted,
+    // not from the hart id: the hart id is the machine's name for this CPU and
+    // is not the slot every per-CPU table is indexed by.
+    let cpu_id = crate::kernel::percpu::get().cpu_id;
+    // The trampoline translated this hart's id into a slot before any Rust
+    // ran; the same translation has to agree here, or the hart is about to run
+    // on another CPU's stack and scheduler.  Saying so at the one place both
+    // numbers are known is what turns that into a boot line.
+    if super::percpu::slot_of_hart(hart_id) != Some(cpu_id) {
+        crate::println!(
+            "[smp] riscv64 AP: FATAL — hart {} was published as slot {:?}, but adopted slot {}",
+            hart_id,
+            super::percpu::slot_of_hart(hart_id),
+            cpu_id
+        );
+        loop {
+            crate::arch::halt();
+        }
+    }
+    crate::println!(
+        "[smp] riscv64 AP: hart {} running as cpu {}",
+        hart_id,
+        cpu_id
+    );
 
-    // 1. This hart's exception vector.  `stvec` is per-hart and a hart started by
+    // 1. This CPU's exception vector.  `stvec` is per-hart and a hart started by
     //    SBI has whatever the firmware left there, so this is not optional and not
-    //    inherited.
-    // SAFETY: the hart ID is this hart's own, handed over by SBI in `a0`, and
-    // the BSP declined to start a hart outside the stub table.
+    //    inherited.  The stub is chosen by slot, because the entry turns the stub's
+    //    offset back into the slot.
+    // SAFETY: the slot is this CPU's own, out of the block the BSP published,
+    // and the BSP declined to start a CPU outside the stub table.
     unsafe {
-        super::trap::install_for_hart(hart_id as usize);
+        super::trap::install_for_slot(cpu_id as usize);
     }
 
     // 2. Turn the MMU on with the BSP's root table.  A hart started through HSM

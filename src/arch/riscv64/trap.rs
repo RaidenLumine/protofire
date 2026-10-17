@@ -21,12 +21,11 @@ use crate::syscall::{self};
 /// Harts the trap-stub table in `trap.S` can name.
 ///
 /// The entry stubs are addressed as a table with a four-byte stride, and the
-/// handler picks its hart's per-CPU slot out of that stride — so a CPU count
-/// the table cannot name is a hart whose traps would run against another
-/// hart's state.  The two numbers are one number, and this is where they are
-/// held together: the table's own size is checked in `trap.S`, and this build
-/// fails here if the kernel starts tracking more CPUs than the table has
-/// stubs.
+/// handler picks the CPU slot out of that stride — so a CPU count the table
+/// cannot name is a hart whose traps would run against another CPU's state.
+/// The two numbers are one number, and this is where they are held together:
+/// the table's own size is checked in `trap.S`, and this build fails here if
+/// the kernel starts tracking more CPUs than the table has stubs.
 const RISCV64_TRAP_STUBS: usize = 17;
 const _: () = assert!(crate::kernel::smp::MAX_CPUS == RISCV64_TRAP_STUBS);
 
@@ -114,11 +113,11 @@ const _: [(); 304] = [(); size_of::<TrapFrame>()];
 const TRAP_STUB_STRIDE: usize = 4;
 
 extern "C" {
-    /// The `stvec` value for a hart: its stub in `trap.S`.
-    fn riscv64_trap_stub_for_hart(hart_id: usize) -> usize;
+    /// The `stvec` value for a logical CPU slot: its stub in `trap.S`.
+    fn riscv64_trap_stub_for_slot(slot: usize) -> usize;
 }
 
-/// Install `hart_id`'s exception vector.
+/// Install the exception vector for logical CPU `slot`.
 ///
 /// `stvec` is per-hart, so this is a per-hart call: the BSP makes it from
 /// `init_early`, an application hart from its own entry point.  It used to be
@@ -127,35 +126,35 @@ extern "C" {
 /// left behind — a hart that takes a timer interrupt with no vector does not
 /// degrade, it jumps to address zero.
 ///
+/// The stub is chosen by *slot*, not by hart id: the stub's index is what the
+/// entry turns back into the per-CPU slot, and a hart id is a different, and
+/// possibly much larger, number.
+///
 /// # Safety
 ///
-/// `hart_id` must be the hart this runs on, and must be within the stub
-/// table — a hart the kernel tracks has one by construction.
-pub unsafe fn install_for_hart(hart_id: usize) {
-    // A hart ID past the stub table would index a stub that is not one.  The
+/// `slot` must be the slot of the hart this runs on, and must be within the
+/// stub table — a CPU the kernel tracks has one by construction.
+pub unsafe fn install_for_slot(slot: usize) {
+    // A slot past the stub table would index a stub that is not one.  The
     // table is sized to the CPU count the kernel tracks and the BSP declines to
     // start a hart it cannot keep state for, so this cannot happen; stub 0
     // keeps a failure inside the vector table rather than inside whatever
     // followed it.
-    let indexed = if hart_id < RISCV64_TRAP_STUBS {
-        hart_id
-    } else {
-        0
-    };
+    let indexed = if slot < RISCV64_TRAP_STUBS { slot } else { 0 };
     // SAFETY: `indexed` is inside the stub table (`trap.S` lays out exactly
     // `RISCV64_TRAP_STUBS`, checked against the CPU count above), so the stub
     // this asks for exists.
-    let stub = unsafe { riscv64_trap_stub_for_hart(indexed) };
-    // The entry reads its hart out of the offset between the `stvec` it arrived
+    let stub = unsafe { riscv64_trap_stub_for_slot(indexed) };
+    // The entry reads its slot out of the offset between the `stvec` it arrived
     // through and the table base, so consecutive stubs have to be one stride
     // apart.  `trap.S` asks for the encoding that makes that so; this is the
     // check that it did, and it costs one compare per hart at boot.
     // SAFETY: as above — both indices are inside the table.
-    let stride = unsafe { riscv64_trap_stub_for_hart(1) - riscv64_trap_stub_for_hart(0) };
+    let stride = unsafe { riscv64_trap_stub_for_slot(1) - riscv64_trap_stub_for_slot(0) };
     assert!(
         stride == TRAP_STUB_STRIDE,
         "riscv64: entry stubs are {} bytes apart, not {}; the trap entry reads \
-         its hart out of that offset",
+         its slot out of that offset",
         stride,
         TRAP_STUB_STRIDE
     );
@@ -171,16 +170,14 @@ pub unsafe fn install_for_hart(hart_id: usize) {
     }
 }
 
-/// Install the boot hart's exception vector.
+/// Install the boot CPU's exception vector.
 pub fn init() {
     // The boot protocol named this hart in `a0` before the Rust entry; a
     // missing hand-off means the same boot that cannot name its hart also
     // finds no harts in the device tree, and 0 is what such a boot is on.
-    let hart_id = crate::arch::riscv64::smp::boot_hart_id().unwrap_or(0) as usize;
-    // SAFETY: the hart ID is this hart's own, straight from the hand-off, and
-    // is inside the table (the table is sized to the CPU count the kernel
-    // tracks, and this is one of those CPUs).
-    unsafe { install_for_hart(hart_id) };
+    // Either way the boot CPU is logical slot 0.
+    // SAFETY: slot 0 is the boot CPU's slot and inside the stub table.
+    unsafe { install_for_slot(0) };
 }
 
 pub fn entered_from_user_mode(frame: &TrapFrame) -> bool {
@@ -400,8 +397,17 @@ fn handle_interrupt(frame: &mut TrapFrame) {
                 // The read is the claim; a level-high source whose input is
                 // still asserted is re-pended by the domain itself, so the
                 // handler's drain is what lowers the line.
-                let hart_index = crate::kernel::percpu::get().cpu_id;
-                let claim = super::aplic::claim_direct(hart_index);
+                // The APLIC indexes its per-hart registers by the hart's
+                // position among the machine's harts, not by the kernel's
+                // logical CPU id: claiming through the wrong block takes
+                // another hart's interrupt.
+                let Some(hart_index) =
+                    super::percpu::hart_index_of_slot(crate::kernel::percpu::get().cpu_id)
+                else {
+                    crate::kernel::irq_stats::record_spurious();
+                    return;
+                };
+                let claim = super::aplic::claim_direct(hart_index as u32);
                 if claim != 0 {
                     crate::kernel::irq_stats::record_irq(claim);
                     let tick = super::timer::prepare_interrupt(claim);

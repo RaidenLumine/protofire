@@ -141,15 +141,21 @@ pub mod interrupt_controller {
     //
     // The RISC-V PLIC assigns one S-mode context per hart.  On QEMU virt
     // the context number for hart N's S-mode is N * 2 + 1.
+    //
+    // The number that indexes a context is the *hart id*, not the kernel's
+    // logical CPU id: the PLIC belongs to the machine and numbers the machine's
+    // harts, and the reset can land on any of them.  The two are equal only
+    // when the machine's hart ids happen to be dense and the BSP happens to be
+    // hart 0.
 
-    /// Return the PLIC S-mode context number for a given logical CPU.
-    fn plic_context_for_cpu(cpu_id: u32) -> u32 {
-        cpu_id * 2 + 1
+    /// Return the PLIC S-mode context number for hart `hart_id`.
+    fn plic_context_for_hart(hart_id: u64) -> u32 {
+        (hart_id as u32) * 2 + 1
     }
 
     /// Return the PLIC context number for the current CPU.
-    fn current_plic_context() -> u32 {
-        crate::kernel::percpu::get().cpu_id * 2 + 1
+    fn current_plic_context() -> Option<u32> {
+        Some(plic_context_for_hart(super::percpu::current_hart_id()?))
     }
 
     fn plic_enable_addr(context: u32) -> usize {
@@ -184,6 +190,25 @@ pub mod interrupt_controller {
         unsafe { read_volatile(plic_register(offset)) }
     }
 
+    /// Every hart id the device tree names.
+    ///
+    /// The PLIC addresses contexts by hart, so this is the list a
+    /// context-shaped operation walks.  A tree that named no hart ids falls
+    /// back to a dense range: that is exactly the machine shape the old code
+    /// assumed, and it is better than walking nothing on a boot that failed to
+    /// parse the CPU nodes.
+    fn machine_hart_ids() -> impl Iterator<Item = u64> {
+        let count = crate::arch::fdt::cpu_count();
+        (0..count.max(1)).filter_map(move |index| {
+            if count == 0 {
+                // No tree: the machine is the one the old assumption described.
+                Some(index as u64)
+            } else {
+                crate::arch::fdt::cpu_hardware_id(index)
+            }
+        })
+    }
+
     fn plic_write(offset: usize, value: u32) {
         // SAFETY: as `plic_read` — the same register block, on the write side.
         unsafe {
@@ -211,7 +236,12 @@ pub mod interrupt_controller {
             // hart that never set SEIE never sees one — the AIA machine sets
             // it for itself when an IMSIC exists, and this is the PLIC
             // machine's half.
-            let ctx = current_plic_context();
+            let Some(ctx) = current_plic_context() else {
+                // A CPU whose hart id the boot never published has no PLIC
+                // context to open; a threshold written to the wrong one would
+                // silence another hart instead.
+                return;
+            };
             plic_write(plic_threshold_addr(ctx), 0);
             // SAFETY: `csrs sie` sets this hart's own supervisor
             // external-interrupt bit; the register form is used because bit 9
@@ -230,7 +260,9 @@ pub mod interrupt_controller {
                 return;
             }
             // Write the completed interrupt ID to this CPU's claim/complete.
-            let ctx = current_plic_context();
+            let Some(ctx) = current_plic_context() else {
+                return;
+            };
             plic_write(plic_claim_addr(ctx), interrupt_id);
         }
 
@@ -239,11 +271,12 @@ pub mod interrupt_controller {
                 return;
             }
 
-            // Enable the interrupt on every CPU's PLIC context so it can be
-            // delivered to any hart.
-            let cpu_count = crate::arch::fdt::cpu_count().max(1);
-            for cpu_id in 0..cpu_count {
-                let ctx = plic_context_for_cpu(cpu_id);
+            // Enable the interrupt on every hart's PLIC context so it can be
+            // delivered to any hart.  The contexts are the machine's, numbered
+            // by hart id, so the tree's list of hart ids is what is walked —
+            // not a dense range starting at zero.
+            for hart_id in machine_hart_ids() {
+                let ctx = plic_context_for_hart(hart_id);
                 let enable_offset = plic_enable_addr(ctx) + (interrupt_id as usize / 32) * 4;
                 let bit = 1_u32 << (interrupt_id % 32);
                 let current = plic_read(enable_offset);
@@ -320,10 +353,15 @@ pub mod interrupt_controller {
         if interrupt_id == 0 || interrupt_id > PLIC_MAX_INTERRUPT_ID {
             return;
         }
-        let cpu_count = crate::arch::fdt::cpu_count().max(1);
-        for cpu in 0..cpu_count {
-            let target = cpu == cpu_id;
-            let ctx = plic_context_for_cpu(cpu);
+        // The target is named by the kernel as a logical CPU; the PLIC names
+        // contexts by hart.  An unpublished CPU is one this cannot aim at, and
+        // guessing a hart would route the interrupt to a different CPU.
+        let Some(target_hart) = super::percpu::hart_of_slot(cpu_id) else {
+            return;
+        };
+        for hart_id in machine_hart_ids() {
+            let target = hart_id == target_hart;
+            let ctx = plic_context_for_hart(hart_id);
             let enable_offset = plic_enable_addr(ctx) + (interrupt_id as usize / 32) * 4;
             let bit = 1_u32 << (interrupt_id % 32);
             let current = plic_read(enable_offset);
@@ -339,7 +377,9 @@ pub mod interrupt_controller {
     /// Claim an interrupt from the PLIC on the current CPU's context.
     /// Returns the interrupt ID, or 0 if no interrupt is pending.
     pub(crate) fn claim_interrupt() -> u32 {
-        let ctx = current_plic_context();
+        let Some(ctx) = current_plic_context() else {
+            return 0;
+        };
         plic_read(plic_claim_addr(ctx))
     }
 }
@@ -554,10 +594,18 @@ pub mod serial {
         // `claimi` register (see `super::aplic::claim_direct`).  The UART's
         // mask goes last, once the machine's half has taken.
         if super::aplic::is_direct_mode() {
-            let hart_index = crate::kernel::percpu::get().cpu_id;
+            let Some(hart_index) =
+                super::percpu::hart_index_of_slot(crate::kernel::percpu::get().cpu_id)
+            else {
+                crate::println!(
+                    "[serial] console UART interrupt {} has no APLIC delivery window for this CPU; the tick will poll it",
+                    interrupt_id
+                );
+                return;
+            };
             if let Err(error) = super::aplic::arm_source_direct(
                 interrupt_id,
-                hart_index,
+                hart_index as u32,
                 super::aplic::PRIORITY_CONSOLE,
             ) {
                 crate::println!(
@@ -575,10 +623,20 @@ pub mod serial {
         if super::aia_imsic::has_aia_imsic() {
             // The identity is where the message lands, so it is enabled
             // first; the domain is what sends it, and the UART's own mask
-            // goes last.  The target hart is 0 — the boot hart, whose IMSIC
-            // file this machine's firmware addresses every message to.
+            // goes last.  The target is the boot CPU's hart index — the
+            // APLIC's `target` field names a hart by its position among the
+            // machine's harts, and the boot CPU is not always the first one.
+            let Some(hart_index) =
+                super::percpu::hart_index_of_slot(crate::kernel::percpu::get().cpu_id)
+            else {
+                crate::println!(
+                    "[serial] console UART interrupt {} has no APLIC target for this CPU; the tick will poll it",
+                    interrupt_id
+                );
+                return;
+            };
             crate::arch::interrupt_controller::enable_interrupt(interrupt_id);
-            if let Err(error) = super::aplic::arm_source(interrupt_id, 0) {
+            if let Err(error) = super::aplic::arm_source(interrupt_id, hart_index as u32) {
                 crate::println!(
                     "[serial] console UART interrupt {} could not be armed; the tick will poll it ({})",
                     interrupt_id,

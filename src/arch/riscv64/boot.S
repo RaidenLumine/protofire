@@ -70,14 +70,24 @@ _start:
    per-CPU state: the stack from the opaque context, and the hart's
    `PerCpuData` from the slot the BSP filled before it started us.  Then we
    tail-call the Rust ap_entry() (src/arch/riscv64/smp.rs), which never
-   returns. */
+   returns.
+
+   The hart id is not the scheduler's slot: a hart id is the machine's number
+   and may be large, while the slot is dense and indexes the kernel's per-CPU
+   arrays.  `RISCV64_HART_SLOTS` is the BSP's translation, written before this
+   hart was started. */
 .align 4
 _secondary_start:
     /* Set stack pointer from opaque (passed by BSP via SBI HSM a2). */
     mv sp, a1
 
-    /* tp ← this hart's PerCpuData, from slot `hart_id`. */
-    slli t0, a0, 3
+    /* t0 = the logical slot this hart was given. */
+    la t1, RISCV64_HART_SLOTS
+    add t0, a0, t1
+    lbu t0, 0(t0)
+
+    /* tp ← that slot's PerCpuData. */
+    slli t0, t0, 3
     la t1, RISCV64_PERCPU_PTRS
     add t0, t0, t1
     ld tp, 0(t0)

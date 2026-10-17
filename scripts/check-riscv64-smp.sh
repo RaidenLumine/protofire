@@ -144,3 +144,77 @@ done
 
 printf 'riscv64 SMP check passed: %s CPUs, %s hart(s) online as CPUs, %s CPU(s) dispatching threads\n' \
     "$SMP_CPUS" "$expected_harts" "$dispatched"
+
+# ── A machine whose hart ids are not its CPU numbers ───────────────────
+#
+# Every assertion above runs a small machine, where the hart id and the
+# kernel's logical CPU id happen to agree — the boot hart is 0 or 1 and the
+# harts are dense.  On a machine that many harts, they do not: OpenSBI hands
+# the reset to an arbitrary hart, and boots here have landed on 22, 29 and 39.
+#
+# A hart id is the machine's number; a logical CPU id is a dense slot, because
+# it indexes every per-CPU table.  Code that used one as the other registered
+# a CPU no table had a slot for — on hart 39 the boot died at
+# `debug_assert_eq!(bsp_cpu_id, percpu.cpu_id)` before reaching the shell — and
+# capped hart discovery at eight besides.  What this segment asserts is
+# therefore structural rather than about any particular hart:
+#
+#   * the boot CPU is slot 0, whatever hart the firmware named;
+#   * exactly 16 APs come online (the kernel's slot count less the BSP);
+#   * every online CPU id is in 0..=16 and no two share one;
+#   * the machine reaches the shell, which a panic at boot does not.
+board_harts=40
+board_log="$(mktemp)"
+printf 'riscv64 hart-id check: %s harts\n' "$board_harts"
+set +e
+timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine virt \
+    -global virtio-mmio.force-legacy=false \
+    -cpu rv64 \
+    -smp "$board_harts" \
+    -m 2G \
+    -kernel "$KERNEL_BIN" \
+    -display none -no-reboot -no-shutdown \
+    -serial "file:$board_log" \
+    -netdev user,id=net0 -device virtio-net-device,netdev=net0 >/dev/null 2>&1
+board_status=$?
+set -e
+
+board_fail() {
+    printf 'riscv64 hart-id check failed: %s\n' "$1" >&2
+    printf '  last lines of the log:\n' >&2
+    tail -n 12 "$board_log" | tr -d '\000' >&2
+    rm -f "$board_log"
+    exit 1
+}
+
+case "$board_status" in
+    0|124) ;;
+    *) board_fail "exit status $board_status" ;;
+esac
+
+if ! grep -a -E '\[init  \] riscv64: BSP percpu cpu_id=0 \(hart [0-9]+\)' "$board_log" >/dev/null 2>&1; then
+    board_fail "the boot CPU was not registered as slot 0"
+fi
+
+board_online="$(grep -a -c -E 'online, cpu_id=[0-9]+, entering dispatch loop' "$board_log" || true)"
+[ "$board_online" = "16" ] ||
+    board_fail "expected 16 APs online, saw ${board_online}"
+
+# An id outside the slot range, or a duplicate, is the collision this check is
+# about: two CPUs would then share a scheduler and a per-CPU block.
+ids="$(grep -a -o -E 'online, cpu_id=[0-9]+,' "$board_log" | grep -a -o -E '[0-9]+' || true)"
+distinct="$(printf '%s\n' "$ids" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')"
+[ "$distinct" = "16" ] ||
+    board_fail "16 APs came online under ${distinct} distinct cpu ids"
+if printf '%s\n' "$ids" | sed '/^$/d' | awk '$1 > 16 { bad = 1 } END { exit !bad }'; then
+    board_fail "an online CPU has an id past the kernel's 17 slots"
+fi
+if grep -a -F "FATAL" "$board_log" >/dev/null 2>&1; then
+    board_fail "the kernel reported a fatal error"
+fi
+if ! grep -a -F "adastra ring3 shell" "$board_log" >/dev/null 2>&1; then
+    board_fail "the machine never reached the shell"
+fi
+rm -f "$board_log"
+printf '  hart-id check passed: boot CPU is slot 0, 16 APs under distinct ids, shell reached\n'

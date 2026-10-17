@@ -199,13 +199,17 @@
 .section .text.trap, "ax"
 .align 6   /* 64-byte alignment for the first stub, and so for stvec */
 
-/* ── Per-hart trap entry stubs ─────────────────────────────────────────────
-   `stvec` is a per-hart CSR, so each hart points it at its own stub, and the
-   stub is little more than the hart's name: one jump, four bytes.  The
-   handler then reads back the `stvec` it arrived through and turns the offset
-   into the hart's index — see below.  The stubs stay exactly one four-byte
-   jump each because that offset is the index; `trap.rs` checks the stride once
-   per hart at boot rather than trusting the assembler to have kept it.
+/* ── Per-CPU trap entry stubs ─────────────────────────────────────────────
+   `stvec` is a per-hart CSR, so each CPU points it at its own stub, and the
+   stub is little more than the CPU's name: one jump, four bytes.  The handler
+   then reads back the `stvec` it arrived through and turns the offset into the
+   logical CPU slot — see below.  The stubs stay exactly one four-byte jump
+   each because that offset is the slot; `trap.rs` checks the stride once per
+   CPU at boot rather than trusting the assembler to have kept it.
+
+   The stubs are indexed by logical slot, not by hart id: a hart id is the
+   machine's number and may be large and sparse, while a slot is dense and is
+   what the kernel's per-CPU arrays are indexed by.
 
    The count must equal `kernel::smp::MAX_CPUS`; `trap.rs` asserts that, so a
    CPU count the table cannot name fails the build instead of a boot. */
@@ -223,17 +227,17 @@
 
 .global RISCV64_TRAP_STUBS
 RISCV64_TRAP_STUBS:
-.irp hart, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+.irp slot, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
     .align 2
-    .global __riscv64_trap_entry_\hart
-__riscv64_trap_entry_\hart:
+    .global __riscv64_trap_entry_\slot
+__riscv64_trap_entry_\slot:
     jal x0, __riscv64_trap_common
 .endr
 
-/* Entry address for a hart, for whoever installs `stvec` (trap.rs).  The
-   stride is applied here and in the handler below, and nowhere else. */
-.global riscv64_trap_stub_for_hart
-riscv64_trap_stub_for_hart:
+/* Entry address for a logical slot, for whoever installs `stvec` (trap.rs).
+   The stride is applied here and in the handler below, and nowhere else. */
+.global riscv64_trap_stub_for_slot
+riscv64_trap_stub_for_slot:
     la t0, RISCV64_TRAP_STUBS
     slli a0, a0, 2
     add a0, a0, t0
@@ -245,9 +249,9 @@ riscv64_trap_stub_for_hart:
 __riscv64_trap_common:
     SAVE_ALL
 
-    /* Which hart came in.  `stvec` is this hart's stub, the stubs are four
-       bytes each, so the offset names the hart — and the hart names its
-       `PerCpuData` slot.  A `stvec` that is not one of ours is not a case the
+    /* Which CPU came in.  `stvec` is this CPU's stub, the stubs are four
+       bytes each, so the offset names the slot — and the slot names its
+       `PerCpuData`.  A `stvec` that is not one of ours is not a case the
        kernel can have created; leaving `tp` as the interrupted context left it
        is the honest answer to it, and the handler below still runs.
 
