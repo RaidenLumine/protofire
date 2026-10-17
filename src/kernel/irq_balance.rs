@@ -189,6 +189,16 @@ mod tests {
         Table { totals, counts }
     }
 
+    /// A per-CPU totals table whose leading entries are given and the rest
+    /// zero, without spelling out the array's length — it follows the
+    /// kernel's CPU cap, and a literal of the old width stops compiling when
+    /// that cap moves.
+    fn totals(leading: &[u64]) -> [u64; MAX_CPUS] {
+        let mut totals = [0u64; MAX_CPUS];
+        totals[..leading.len()].copy_from_slice(leading);
+        totals
+    }
+
     #[test]
     fn single_cpu_never_migrates() {
         let _guard = irq_stats::test_lock();
@@ -200,7 +210,7 @@ mod tests {
     fn balanced_system_never_migrates() {
         let _guard = irq_stats::test_lock();
         let t = Table {
-            totals: [50, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            totals: totals(&[50, 50]),
             counts: [[0u64; MAX_IRQ_VECTORS]; MAX_CPUS],
         };
         assert!(choose_migration(2, |c| t.total(c), |c, v| t.count(c, v), |_| true).is_none());
@@ -228,7 +238,7 @@ mod tests {
     fn small_imbalance_is_ignored() {
         let _guard = irq_stats::test_lock();
         let t = Table {
-            totals: [20, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            totals: totals(&[20, 15]),
             counts: [[0u64; MAX_IRQ_VECTORS]; MAX_CPUS],
         };
         // 20 vs 15 is below MIN_IMBALANCE=8 → no migration.

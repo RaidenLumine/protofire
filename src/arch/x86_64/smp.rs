@@ -17,8 +17,8 @@ use alloc::boxed::Box;
 
 use crate::arch::x86_64::apic;
 use crate::kernel::process::scheduler::registry::register;
-use crate::kernel::smp::MAX_APS;
 use crate::kernel::smp::MAX_CPUS;
+use crate::kernel::MAX_APS;
 
 // ── Constants ───────────────────────────────────────────────────────────
 
@@ -427,7 +427,12 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
 
     // Use a statically-allocated AP stack from kernel BSS (guaranteed mapped by
     // the runtime page tables, unlike heap-allocated pages which may not be).
-    let idx = cpu_id as usize;
+    //
+    // `cpu_id` is 1-based — the BSP is 0 and never arrives here — so the stack
+    // pool is indexed by `cpu_id - 1`.  Indexing it by `cpu_id` instead wasted
+    // the first stack and refused the last AP: a 17-CPU machine brought up 15
+    // of its 16.
+    let idx = (cpu_id as usize).wrapping_sub(1);
     if idx >= MAX_APS {
         crate::println!("[smp   ] cpu_id={} exceeds MAX_APS={}", cpu_id, MAX_APS);
         return;

@@ -17,17 +17,12 @@ use core::sync::atomic::Ordering;
 
 // ── Constants ───────────────────────────────────────────────────────────
 
-/// Maximum number of application processors this kernel will track.
-///
-/// One number for every architecture: the online mask and the schedulers'
-/// registry are both indexed by logical CPU id, and a CPU the kernel cannot
-/// store a scheduler for is a CPU it cannot dispatch a thread on.  An
-/// architecture that stops bringing cores up earlier says so where it does
-/// that.
-pub const MAX_APS: usize = 16;
-
 /// Maximum total CPUs (BSP + APs).
-pub const MAX_CPUS: usize = MAX_APS + 1;
+///
+/// Defined beside the kernel's other per-CPU limits, because every table
+/// indexed by logical CPU id is sized by it, and a module that chose its own
+/// smaller number would drop the last CPU without saying so.
+pub use crate::kernel::MAX_CPUS;
 
 /// The online-CPU mask is a `u32`, so every CPU has to fit in it.
 const _: () = assert!(MAX_CPUS <= 32);

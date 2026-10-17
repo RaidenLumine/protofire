@@ -16,9 +16,14 @@ use core::sync::atomic::Ordering;
 
 use crate::abi::diagnostic::IrqProfilerRecord;
 
-/// Maximum number of CPUs the stats tables cover (matches the scheduler's
-/// 16-CPU cap).
-pub const MAX_CPUS: usize = 16;
+/// Maximum number of CPUs the stats tables cover.
+///
+/// The kernel's own ceiling, not a second number beside it: a CPU the
+/// scheduler can dispatch on is a CPU whose interrupts have to be counted, and
+/// a table one entry short drops the last CPU's deliveries silently.  The ABI
+/// record's per-CPU arrays are a separate, smaller window — see
+/// [`snapshot`].
+pub const MAX_CPUS: usize = crate::kernel::MAX_CPUS;
 /// Number of interrupt vectors tracked per CPU.
 pub const MAX_IRQ_VECTORS: usize = 256;
 
@@ -178,6 +183,12 @@ pub fn total_spurious() -> u64 {
 /// The load-balancer fields (enabled / migrations / last target) and the
 /// online-CPU count are filled in by the caller (the diagnostic handler),
 /// keeping this module free of a dependency on [`super::irq_balance`].
+///
+/// The record's per-CPU arrays are fixed at its own capacity, which can be
+/// smaller than [`MAX_CPUS`]: every CPU's deliveries are in the totals and in
+/// `irq_counts`, but a CPU past the record's last slot has no per-CPU slot to
+/// report in.  `online_cpus` is the machine's true count, so a reader can see
+/// when that applies rather than assuming the array covers the machine.
 pub fn snapshot() -> IrqProfilerRecord {
     let mut record = IrqProfilerRecord {
         total_irqs: total_irqs(),

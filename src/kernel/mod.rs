@@ -3,6 +3,18 @@
 //! Kernel bootstrap entry that wires memory, drivers, filesystem, scheduler,
 //! and syscall table.
 
+/// Maximum number of application processors this kernel will track.
+///
+/// One number for every architecture and every per-CPU table: the online mask,
+/// the schedulers' registry, the interrupt counters and the load balancer are
+/// all indexed by logical CPU id, so a module with a smaller cap of its own
+/// drops the last CPU silently.  An architecture that stops bringing cores up
+/// earlier says so where it does that.
+pub const MAX_APS: usize = 16;
+
+/// Maximum total CPUs (BSP + APs).
+pub const MAX_CPUS: usize = MAX_APS + 1;
+
 pub mod audit;
 pub mod block;
 pub mod boot_report;

@@ -12,8 +12,13 @@ use core::sync::atomic::Ordering;
 
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
-/// Maximum number of logical CPUs (matches the scheduler's 16-CPU cap).
-pub const MAX_CPUS: usize = 16;
+/// Maximum number of logical CPUs: the kernel's own ceiling.
+///
+/// A CPU the scheduler can place work on has to be a target the balancer can
+/// name, so this is not a second, smaller number.  At 16 the last CPU of a
+/// 17-CPU machine was registered into a table that did not have its slot, and
+/// an IOAPIC entry could never be aimed at it.
+pub const MAX_CPUS: usize = crate::kernel::MAX_CPUS;
 
 /// Maps an interrupt vector to its IOAPIC redirection pin, or -1 when the
 /// vector is not IOAPIC-routed (and therefore not migratable).

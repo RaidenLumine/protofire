@@ -396,5 +396,58 @@ if [ "$SMP_CPUS" -ge 2 ]; then
         "$disabled_count" "$placeholder_started"
 fi
 
+# ── The last AP is not the one that is dropped ─────────────────────────
+#
+# Every check above runs a machine whose CPU count is inside the kernel's AP
+# table, where an off-by-one at the boundary is invisible: the stack pool was
+# indexed by `cpu_id` instead of `cpu_id - 1`, so the first stack went unused
+# and the sixteenth AP was refused with "exceeds MAX_APS".  A check that never
+# reaches the boundary cannot see that, and four CPUs never did.
+#
+# `MAX_APS` is 16, so this machine has 17 CPUs: the BSP plus every AP the
+# kernel can hold.  What it asserts is that all 16 start — not "at least", not
+# "the machine boots" — because the defect was a count, and a count that is
+# one short still boots.
+board_cpus=17
+board_log="$(mktemp)"
+printf 'SMP boundary check: %s CPUs (BSP + every AP slot)\n' "$board_cpus"
+set +e
+timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine q35 -cpu max -smp "$board_cpus" -m 1G \
+    -kernel "$KERNEL_BIN" -display none -no-reboot -no-shutdown \
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+    -serial "file:$board_log" >/dev/null 2>>"$board_log"
+board_status=$?
+set -e
+
+board_fail() {
+    printf 'SMP boundary check failed: %s\n' "$1" >&2
+    printf '  expected %s APs to start; the log says:\n' "$((board_cpus - 1))" >&2
+    grep -E 'started successfully|exceeds MAX_APS|skipping cpu_id' "$board_log" | tail -n 4 >&2
+    rm -f "$board_log"
+    exit 1
+}
+
+case "$board_status" in
+    0|124) ;;
+    *) board_fail "exit status $board_status" ;;
+esac
+
+board_started="$(awk '/started successfully/ { n += 1 } END { print n + 0 }' "$board_log")"
+[ "$board_started" -eq $((board_cpus - 1)) ] ||
+    board_fail "saw $board_started APs"
+if grep -F "exceeds MAX_APS" "$board_log" >/dev/null 2>&1; then
+    board_fail "the kernel refused a CPU that fits its own table"
+fi
+if ! grep -F "adastra ring3 shell" "$board_log" >/dev/null 2>&1; then
+    board_fail "the machine never reached the shell"
+fi
+if grep -F "FATAL" "$board_log" >/dev/null 2>&1; then
+    board_fail "the kernel reported a fatal error"
+fi
+rm -f "$board_log"
+printf '  boundary check passed: %s APs online on a %s-CPU machine\n' \
+    "$board_started" "$board_cpus"
+
 printf 'SMP runtime check passed: %s CPUs, %s APs, %s service lines, accelerator=%s\n' \
     "$SMP_CPUS" "$started" "$service_lines" "$accelerator"
