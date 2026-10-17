@@ -177,6 +177,7 @@ help:
 		'  make check-x8664-iso                  - boot the kernel from a GRUB ISO and check the loader hand-off and its memory map' \
 		'  make check-x8664-usb-hotplug          - plug a device into a hub after boot and check it is seen then' \
 		'  make check-x8664-usb-contention       - hold the rings while the interrupt fires and check the tick drains the report' \
+		'  make check-x8664-usb-room-budget      - drop every ring release and check the ring refuses at its budget' \
 		'  make check-x8664-nvme                 - boot a real SimpleFs image on an NVMe device and check the controller mounts it' \
 		'  make check-aarch64-nvme               - the same NVMe disk on the device-tree machine, through its PCIe window' \
 		'  make check-riscv64-nvme               - the same NVMe disk on riscv64, whose RAM window is identity-mapped' \
@@ -538,6 +539,7 @@ check-abi-frozen-payload-riscv64:
 	check-x8664-init-no-start \
 	check-x8664-usb-disk check-x8664-install \
 	check-x8664-iso check-x8664-usb-hotplug check-x8664-usb-contention \
+	check-x8664-usb-room-budget \
 	check-x8664-nvme check-aarch64-nvme \
 	check-riscv64-nvme check-x8664-hda check-aarch64-hda check-riscv64-hda \
 	check-x8664-churn \
@@ -744,6 +746,16 @@ check-x8664-usb-contention:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-usb-contention.sh
+
+# The ring's room accounting, proven load-bearing rather than assumed: with the
+# `xhci_ring_room_leak` feature dropping every release, the occupancy climbs to
+# the segment's usable slots and the ring refuses a submit.  The same script
+# boots the honest kernel first and requires it never to reach that refusal.
+check-x8664-usb-room-budget:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-usb-room-budget.sh
 
 # The same filesystem image on an NVMe device: a device class the driver had
 # for months and no gate had ever attached.  The reads go through the

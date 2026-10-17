@@ -412,7 +412,22 @@ impl TransferRing {
     ///
     /// As [`RingPos::write_link`].
     unsafe fn reserve(&mut self, trbs: u32) -> Result<()> {
-        self.room.reserve(trbs).ok_or(crate::Error::Busy)?;
+        if self.room.reserve(trbs).is_none() {
+            // The ring cannot hold another TD: the producer's next lap would
+            // cover a TRB the controller has not read, and the completion that
+            // names it would never arrive.  Counted and named once, because a
+            // refusal is what a lost release turns into and nothing else would
+            // say so.
+            let busy = XHCI_RING_BUSY.fetch_add(1, Ordering::Relaxed) + 1;
+            if busy == 1 {
+                crate::println!(
+                    "[xhci  ] ring has no room for {} TRB(s) ({} outstanding); refusing",
+                    trbs,
+                    self.room.outstanding()
+                );
+            }
+            return Err(crate::Error::Busy);
+        }
         // SAFETY: the ring owns its segment and stays alive with it.
         unsafe {
             self.pos.reserve(&self.buf, trbs);
@@ -434,8 +449,17 @@ impl TransferRing {
     }
 
     /// Give back the room a TD used, once its completion has been seen.
+    ///
+    /// Under `xhci_ring_room_leak` the room is **not** handed back, which is
+    /// the bookkeeping defect this exists to catch: occupancy climbs by one
+    /// TRB per submit until `reserve` refuses with `Busy`.  A release that is
+    /// silently dropped is the one defect at depth one that nothing else would
+    /// notice, which is why a gate drops it and requires the refusal.
     fn release(&mut self, trbs: u32) {
+        #[cfg(not(feature = "xhci_ring_room_leak"))]
         self.room.release(trbs);
+        #[cfg(feature = "xhci_ring_room_leak")]
+        let _ = trbs;
     }
 
     /// Reserve room and place one TRB.
@@ -3165,6 +3189,17 @@ static XHCI_RUNTIME_BASE: AtomicUsize = AtomicUsize::new(0);
 
 /// Interrupts taken since the controller claimed its vector.
 static XHCI_IRQ_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Submits the ring's room refused, by `Busy`.
+///
+/// The accounting is depth-one: every submit path waits for its completion and
+/// hands the TRBs back in the same call, so at most one TD is outstanding and
+/// the refusal is not reached on an honest boot.  That makes a *dropped*
+/// release invisible — occupancy would climb and some later submit would be
+/// refused for no visible reason — so the refusal is counted and named, and
+/// `make check-x8664-usb-room-budget` boots with every release dropped and
+/// requires this to fire.  Zero on a normal boot.
+static XHCI_RING_BUSY: AtomicUsize = AtomicUsize::new(0);
 
 /// Messages whose drain the interrupt had to leave to the tick.
 ///

@@ -238,6 +238,10 @@ run_p3() {
         # acknowledges and cannot take the rings, and the tick answers the
         # report.  RFC 0021 named this as argued rather than measured.
         run_make_step "make check-x8664-usb-contention" check-x8664-usb-contention
+        # And the ring's room budget: with every release dropped the ring has to
+        # refuse, which is the only way to know the accounting is not
+        # decorative when no honest caller reaches the refusal.
+        run_make_step "make check-x8664-usb-room-budget" check-x8664-usb-room-budget
         # And the install path: zones put onto a disk `sgdisk` made — a
         # stranger's table with a partition this kernel has no name for — then
         # booted.  It is the gate a real machine's disk needs, and the one

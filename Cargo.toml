@@ -210,6 +210,13 @@ net_profiler = []
 # cannot change between boots and needs no host behind it.  Used by
 # `make check-perf-baseline-net`; see `src/kernel/workload.rs`.
 net_loopback = []
+# Simulates the ring-room bookkeeping defect: every completed TD's room is never
+# handed back.  The producer's occupancy then grows until `RingRoom` refuses a
+# submit with `Busy` — which is the refusal no honest caller reaches, because
+# every submit path here waits for its completion and releases in the same call.
+# `make check-x8664-usb-room-budget` boots a USB disk with it and requires the
+# disk to stop working, which is what proves the accounting is load-bearing.
+xhci_ring_room_leak = []
 # Makes the timer tick's xHCI drain call the interrupt handler **while it holds
 # the rings**, so the handler's `try_lock` fails for real and the miss/acknowledge
 # path runs on a machine with no transfer in flight.  That is the case RFC 0021
