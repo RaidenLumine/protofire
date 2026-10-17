@@ -272,10 +272,10 @@ impl Scheduler {
         // (every tick so we catch stale waiters promptly).
         self.boost_starved_threads();
 
-        // Check expired timerfds and wake their readers.
-        crate::syscall::table::timer_fd::check_expired_timerfds(ticks);
-
-        // Check expired POSIX timers and deliver signals.
+        // Check expired timerfds and wake their readers, then the POSIX
+        // timers and their signals.  Both are process state advanced by this
+        // tick, which is why neither is reached through the syscall layer.
+        crate::kernel::process::timer_fd::check_expired(ticks);
         crate::kernel::process::posix_timer::check_expired_timers(ticks);
 
         // Increment the current thread's CPU-time tick counter for

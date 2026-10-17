@@ -5,6 +5,10 @@
 //!
 //! Each timer delivers a signal on expiry.  Timers are tracked in a global
 //! list and checked on every scheduler tick (100 Hz granularity).
+//!
+//! [`super::timer_fd`] is the same shape for the descriptor-based timer: both
+//! are process state, and both are advanced by the tick that belongs to the
+//! scheduler.
 
 use crate::kernel::sync::Mutex;
 use crate::Result;

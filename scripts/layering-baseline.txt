@@ -60,12 +60,23 @@
 # `kernel::ipc` and the dependency now points `ipc` -> `fs` instead.
 #
 # What is left has one shape.  `process` names its consumers — `memory`,
-# `syscall`, `network`, `fs`, `percpu`, `drivers` — for file handles, sockets,
-# counters, and caches; and those consumers name `process` back for the two
-# things only it has: a thread to run on and a way to block.  `memory` <->
-# `fs`, `fs` <-> `service`, and `fs` <-> `kernel_log` are the same story at a
-# lower altitude.  Each row is the finish line for its cut; a cut is done when
-# its rows reach zero and the census is re-recorded.
+# `network`, `fs`, `percpu`, `drivers` — for file handles, sockets, counters,
+# and caches; and those consumers name `process` back for the two things only
+# it has: a thread to run on and a way to block.  `memory` <-> `fs`, `fs` <->
+# `service`, and `fs` <-> `kernel_log` are the same story at a lower altitude.
+# Each row is the finish line for its cut; a cut is done when its rows reach
+# zero and the census is re-recorded.
+#
+# `process` no longer names `syscall`.  Its one edge was the timerfd expiry
+# walk, called from the scheduler's tick — a reverse edge out of the module
+# that every consumer of depends on.  The expiry state (`TimerFdState`) and its
+# wait queue were already process state, so the walk moved to
+# `kernel::process::timer_fd`, and the syscall handler now only creates the
+# timer and registers it.  That move is why two counts rose by one each in the
+# same change: `process` -> `sync` gained the mutex that came with the code,
+# and `syscall` -> `process` gained the registration call that replaced the
+# old one on the reverse edge.  The total occurrences are unchanged, and the
+# only direction removed is the wrong one.
 #
 # One module is a diagnostic rather than a layer: `vm_churn` exists to stress
 # the stack window and the invalidation log, so it names `memory`, `process`,
@@ -237,8 +248,7 @@ process                      security                     11
 process                      shm                          1
 process                      smp                          15
 process                      softirq                      1
-process                      sync                         20
-process                      syscall                      1
+process                      sync                         21
 process                      user                         2
 procfs                       fs                           8
 procfs                       process                      18
@@ -270,10 +280,10 @@ syscall                      memory                       15
 syscall                      network                      18
 syscall                      percpu                       1
 syscall                      power                        1
-syscall                      process                      166
+syscall                      process                      167
 syscall                      random                       1
 syscall                      service                      1
-syscall                      sync                         7
+syscall                      sync                         6
 syscall                      user                         2
 user                         fs                           2
 user                         process                      7
