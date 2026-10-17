@@ -84,6 +84,18 @@ pub struct PlatformInfo {
     pub has_sstc: bool,
     /// Total number of CPU cores discovered from FDT `/cpus` node.
     pub cpu_count: u32,
+    /// The hardware identity each CPU node names in its `reg`.
+    ///
+    /// Indexed by the order the nodes were walked — the same order
+    /// [`cpu_count`](Self::cpu_count) counts — and meaningful for the entries
+    /// whose bit is set in [`cpu_ids_seen`](Self::cpu_ids_seen).  The
+    /// architecture decides what the number means: an MPIDR on aarch64, a
+    /// hart id on riscv64.  It is not a logical CPU number: on a machine whose
+    /// CPUs differ in Aff1 the two are not the same, and the low byte of an
+    /// MPIDR is not an identity at all when two PEs share it.
+    pub cpu_ids: [u64; MAX_PLATFORM_CPUS],
+    /// Bit `N` set means `cpu_ids[N]` was read from the tree.
+    pub cpu_ids_seen: u32,
     /// The interrupt the console UART's received-data condition is wired to,
     /// in the number the machine's controller uses: a GIC interrupt id (SPI
     /// number plus 32) or a PLIC source number.  From the UART node's
@@ -125,6 +137,8 @@ impl PlatformInfo {
             ecam_end_bus: None,
             has_sstc: false,
             cpu_count: 0,
+            cpu_ids: [0; MAX_PLATFORM_CPUS],
+            cpu_ids_seen: 0,
             uart_irq: None,
             cpu_freq_min_hz: None,
             cpu_freq_max_hz: None,
@@ -220,6 +234,27 @@ pub fn memory_window(_fdt_addr: usize) -> Option<(usize, usize)> {
 /// Returns 0 if no FDT was parsed or no CPU nodes were found.
 pub fn cpu_count() -> u32 {
     platform_info().cpu_count
+}
+
+/// Maximum number of CPU nodes the platform description names.
+///
+/// The kernel's own CPU ceiling plus the BSP, so a tree that describes every
+/// CPU the scheduler can hold fits exactly; a larger one is described one core
+/// beyond what this machine can run.
+pub const MAX_PLATFORM_CPUS: usize = crate::kernel::smp::MAX_CPUS;
+
+/// Hardware identity of the CPU node at `index`, when the tree named one.
+///
+/// Indexed in the walk order — the same order `cpu_count` counts.  `None`
+/// means the node carried no `reg` this parser could read, which is a tree
+/// that names a CPU without saying which one it is.
+pub fn cpu_hardware_id(index: u32) -> Option<u64> {
+    let info = platform_info();
+    let idx = index as usize;
+    if idx >= MAX_PLATFORM_CPUS || info.cpu_ids_seen & (1 << idx) == 0 {
+        return None;
+    }
+    Some(info.cpu_ids[idx])
 }
 
 // ---------------------------------------------------------------------------

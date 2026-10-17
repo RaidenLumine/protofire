@@ -18,9 +18,9 @@ use crate::arch::aarch64::interrupt_controller::GICV2_CPU_INTERFACES;
 
 // ── Constants ───────────────────────────────────────────────────────────
 
-pub(crate) const MAX_APS: usize = 16;
+pub(crate) const MAX_APS: usize = crate::kernel::MAX_APS;
 #[allow(dead_code)]
-pub(crate) const MAX_CPUS: usize = MAX_APS + 1;
+pub(crate) const MAX_CPUS: usize = crate::kernel::MAX_CPUS;
 pub(crate) const AP_STACK_SIZE: usize = 65536;
 
 pub(crate) const SGI_RESCHEDULE: u8 = 0;
@@ -51,6 +51,90 @@ static aarch64_spin_table: crate::util::sync_unsafe_cell::SyncUnsafeCell<
 );
 
 // ── Per-CPU AP stacks ──────────────────────────────────────────────────
+
+/// Which PE each logical CPU id runs on, as the MPIDR-shaped value
+/// [`crate::arch::aarch64::gicv3`] keeps everywhere.
+///
+/// The two are not the same number.  A machine whose cores differ in Aff1
+/// names them `cpu@0` … `cpu@16` in the device tree, but the sixteenth core's
+/// identity is `0x100`, and its low byte is 0 — the boot CPU's.  Deriving a
+/// logical id from the low byte therefore gave two PEs the same identity, so
+/// the table is what the kernel reads and the low byte is only the fallback
+/// for a machine that never published one.
+static CPU_MPIDRS: crate::util::sync_unsafe_cell::SyncUnsafeCell<[u64; MAX_CPUS]> =
+    crate::util::sync_unsafe_cell::SyncUnsafeCell::new([0; MAX_CPUS]);
+
+/// Bit `N` set means `CPU_MPIDRS[N]` was written.
+static CPU_MPIDRS_SET: AtomicU32 = AtomicU32::new(0);
+
+/// Record that logical CPU `cpu_id` runs on the PE whose identity is `mpidr`.
+fn publish_cpu(cpu_id: u32, mpidr: u64) {
+    let index = cpu_id as usize;
+    if index >= MAX_CPUS {
+        return;
+    }
+    // SAFETY: the slot is in range, and each logical id is published once, by
+    // the BSP before the core it names is started.
+    unsafe {
+        (*CPU_MPIDRS.get())[index] = mpidr;
+    }
+    CPU_MPIDRS_SET.fetch_or(1 << cpu_id, Ordering::Release);
+}
+
+/// The PE logical CPU `cpu_id` runs on, when the boot has published it.
+pub(crate) fn mpidr_for_cpu(cpu_id: u32) -> Option<u64> {
+    let index = cpu_id as usize;
+    if index >= MAX_CPUS || CPU_MPIDRS_SET.load(Ordering::Acquire) & (1 << cpu_id) == 0 {
+        return None;
+    }
+    // SAFETY: the bit says the slot was written, and each slot is written once
+    // before the core it names starts.
+    Some(unsafe { (*CPU_MPIDRS.get())[index] })
+}
+
+/// The PE identity (MPIDR-shaped) logical CPU `cpu_id` runs on.
+///
+/// This is what every controller-side lookup must use to name a CPU: a
+/// redistributor, an `ICC_SGI1R` target and an ITS collection all name a PE by
+/// affinity, and affinity is not the logical id.
+pub(crate) fn affinity_for_cpu(cpu_id: u32) -> Option<u64> {
+    mpidr_for_cpu(cpu_id).map(crate::arch::aarch64::gicv3::affinity_from_mpidr)
+}
+
+/// The logical CPU id whose PE identity is `affinity`, if the boot knows it.
+///
+/// The comparison is on the whole affinity, not on Aff0: two PEs can share a
+/// low byte while differing in Aff1, and treating them as one CPU is what
+/// collides their per-CPU state.
+pub(crate) fn cpu_for_affinity(affinity: u64) -> Option<u32> {
+    let set = CPU_MPIDRS_SET.load(Ordering::Acquire);
+    for cpu_id in 0..MAX_CPUS as u32 {
+        if set & (1 << cpu_id) == 0 {
+            continue;
+        }
+        // SAFETY: the bit says the slot was written.
+        let candidate = unsafe { (*CPU_MPIDRS.get())[cpu_id as usize] };
+        if crate::arch::aarch64::gicv3::affinity_from_mpidr(candidate) == affinity {
+            return Some(cpu_id);
+        }
+    }
+    None
+}
+
+/// The logical CPU id whose PE identity is `mpidr`, if the boot knows it.
+pub(crate) fn cpu_for_mpidr(mpidr: u64) -> Option<u32> {
+    cpu_for_affinity(crate::arch::aarch64::gicv3::affinity_from_mpidr(mpidr))
+}
+
+/// Publish the boot CPU's PE identity.
+///
+/// Called once the BSP has read `MPIDR_EL1` for itself: the controller's
+/// lookups compare against this table, and a boot CPU missing from it would be
+/// matched by Aff0 alone — which is the collision this table exists to
+/// prevent.
+pub(crate) fn publish_bsp(mpidr: u64) {
+    publish_cpu(0, mpidr);
+}
 
 #[repr(C, align(4096))]
 #[derive(Copy, Clone)]
@@ -160,7 +244,12 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
     // SAFETY: MPIDR_EL1 is the core's own identity register and is readable
     // from EL1 at any time; the instruction touches no memory.
     unsafe { core::arch::asm!("mrs {}, mpidr_el1", out(reg) mpidr) };
-    let cpu_id32 = (mpidr & 0xff) as u32;
+    // The logical id is the one the BSP published for this PE, because that is
+    // the id whose stack, scheduler and per-CPU block the BSP built.  Falling
+    // back to Aff0 keeps a machine that published no table booting the way it
+    // did before, and is exactly the case where the two are equal.
+    let cpu_id32 = cpu_for_mpidr(mpidr)
+        .unwrap_or_else(|| (crate::arch::aarch64::gicv3::affinity_from_mpidr(mpidr) & 0xff) as u32);
     let cpu_id = cpu_id32 as u64;
 
     // Point TPIDR_EL1 → this AP's PerCpuData.
@@ -259,13 +348,13 @@ pub(crate) fn bring_up_aps() {
 
     crate::println!("[smp   ] bringing up {} AP(s)...", aps.len());
     let mut started: Vec<u32> = Vec::with_capacity(aps.len());
-    for &(cpu_id, _mpidr) in &aps {
+    for &(cpu_id, mpidr) in &aps {
         let idx = (cpu_id as usize).wrapping_sub(1);
         if idx >= MAX_APS {
             crate::println!("[smp   ] skipping cpu_id={} > MAX_APS", cpu_id);
             continue;
         }
-        if bring_up_one(cpu_id, idx) {
+        if bring_up_one(cpu_id, mpidr, idx) {
             started.push(cpu_id);
         }
     }
@@ -293,7 +382,12 @@ pub(crate) fn bring_up_aps() {
 ///
 /// A rejected core is not "slow": PSCI will never start it, so the caller
 /// must not wait for it to report in.
-fn bring_up_one(cpu_id: u32, idx: usize) -> bool {
+///
+/// `mpidr` is the identity the *hardware* knows — the `reg` of the core's
+/// device-tree node — and it is what `CPU_ON` takes.  The core's position in
+/// the tree is a different number and passing it would start a different PE
+/// (or none at all) on a machine whose cores differ in Aff1.
+fn bring_up_one(cpu_id: u32, mpidr: u64, idx: usize) -> bool {
     crate::println!("[smp   ] bring_up_one: cpu={}", cpu_id);
 
     // SAFETY: `idx` is below `MAX_APS` (the caller's bound) and the stack pool
@@ -316,6 +410,10 @@ fn bring_up_one(cpu_id: u32, idx: usize) -> bool {
     let sched_ptr = Box::into_raw(sched);
 
     allocate_ap_percpu(cpu_id, sched_ptr);
+    // Publish the logical id's PE identity before the core runs: its entry
+    // reads `MPIDR_EL1` and looks itself up here, and a core that started
+    // before its entry was written would fall back to Aff0.
+    publish_cpu(cpu_id, mpidr);
 
     // SAFETY: the scheduler was just allocated for this core and has not been
     // handed to it yet, so this is the only reference to it.
@@ -327,10 +425,10 @@ fn bring_up_one(cpu_id: u32, idx: usize) -> bool {
     let entry = aarch64_ap_startup as *const () as u64;
     // Start it through PSCI, with the stack top as the context the entry reads
     // from `x0`.  The status comes back here instead of being waited for.
-    // SAFETY: `cpu_id` names a core the platform's count says exists, `entry`
-    // is this module's own AP entry, and `stack_top` is the top of the stack
-    // just published for that core.
-    match unsafe { crate::arch::aarch64::psci::cpu_on(cpu_id as u64, entry, stack_top as u64) } {
+    // SAFETY: `mpidr` names a core the tree says exists, `entry` is this
+    // module's own AP entry, and `stack_top` is the top of the stack just
+    // published for that core.
+    match unsafe { crate::arch::aarch64::psci::cpu_on(mpidr, entry, stack_top as u64) } {
         Ok(()) => {
             crate::println!("  [smp   ] cpu={} started", cpu_id);
             true
@@ -364,9 +462,44 @@ fn discover_aps() -> Vec<(u32, u64)> {
             total
         );
     }
+    // The logical id is a slot — 1 for the first AP, 2 for the next — because
+    // that is what names its stack, its scheduler and its per-CPU block.  The
+    // MPIDR is the number the *hardware* knows, and the two are the same only
+    // on a machine whose cores all live in Aff0.  Slots are assigned densely
+    // rather than taken from the node's position, so a machine whose firmware
+    // boots on a core that is not the tree's first one still fills every slot
+    // it has.
+    let bsp = mpidr_for_cpu(0);
     let mut aps = Vec::new();
-    for id in 1..total {
-        aps.push((id, id as u64));
+    for index in 0..total {
+        let Some(mpidr) = crate::arch::fdt::cpu_hardware_id(index) else {
+            // A tree that names a CPU without a `reg` cannot say which PE it
+            // is, and starting the wrong one is worse than not starting it:
+            // the core would run on another core's stack and per-CPU block.
+            crate::println!(
+                "[smp   ] cpu node {} has no `reg` in the device tree; not starting it",
+                index
+            );
+            continue;
+        };
+        // The firmware may have booted on a core that is not the tree's first
+        // one.  That core is already running here; `CPU_ON` on it is an error,
+        // and counting it as an AP would take a slot the machine does not have.
+        if bsp.is_some_and(|bsp| {
+            crate::arch::aarch64::gicv3::affinity_from_mpidr(bsp)
+                == crate::arch::aarch64::gicv3::affinity_from_mpidr(mpidr)
+        }) {
+            crate::println!("[smp   ] cpu node {} is the core already running", index);
+            continue;
+        }
+        if aps.len() + 1 >= MAX_CPUS {
+            crate::println!(
+                "[smp   ] more cores than the per-CPU tables ({} slots); not starting the rest",
+                MAX_CPUS
+            );
+            break;
+        }
+        aps.push((aps.len() as u32 + 1, mpidr));
     }
     crate::println!("[smp   ] {} CPUs total, {} AP(s)", total, aps.len());
     aps

@@ -1143,6 +1143,24 @@ pub fn parse_fdt(fdt_addr: usize) -> PlatformInfo {
                                 s
                             };
 
+                            // A CPU node's `reg` is the hardware identity of
+                            // that core — an MPIDR on aarch64, a hart id on
+                            // riscv64 — and it is not the node's position: a
+                            // machine whose cores differ in Aff1 names them
+                            // `cpu@0`, `cpu@1`, … `cpu@16`, while the
+                            // sixteenth core's MPIDR is `0x100`.  An
+                            // architecture that must *start* the core needs
+                            // the number the hardware knows, so it is
+                            // remembered here rather than re-derived from the
+                            // walk order.
+                            if cpu_node_idx >= 0 && entry_idx == 0 {
+                                let index = cpu_node_idx as usize;
+                                if index < info.cpu_ids.len() {
+                                    info.cpu_ids[index] = addr;
+                                    info.cpu_ids_seen |= 1u32 << index;
+                                }
+                            }
+
                             // A /memory node's window, in the cells the node
                             // and its parent declare.  This walk remembers it
                             // for NUMA; `memory_window` reads the same node
@@ -3344,5 +3362,53 @@ mod tests {
             "the distributor, from the parent's own reg"
         );
         assert_eq!(info.gicc_base, Some(0x0801_0000));
+    }
+
+    /// A CPU node's `reg` is its hardware identity, and the walk remembers it
+    /// per node.
+    ///
+    /// The identities are deliberately not the node positions: QEMU `virt`
+    /// names its seventeenth core `cpu@16` with `reg = <0x100>`, because that
+    /// core's MPIDR is `0x100` and its Aff0 is 0 — the boot CPU's.  An
+    /// architecture that starts cores by that number and an architecture that
+    /// names them by that number both need the tree's answer, not the index.
+    #[test]
+    fn a_cpu_node_carries_the_hardware_identity_its_reg_names() {
+        // /cpus has one address cell and no size cell: `reg = <id>`.
+        let cpus_cells: Vec<u8> = [be32(1), be32(0)].concat();
+        let reg_0: Vec<u8> = be32(0).to_vec();
+        let reg_1: Vec<u8> = be32(1).to_vec();
+        let reg_16: Vec<u8> = be32(0x100).to_vec();
+
+        let blob = build_small_fdt(|sblock, str_off| {
+            // /cpus: open, declare cells, then its children, then close.
+            sblock.extend_from_slice(&be32(FDT_BEGIN_NODE));
+            sblock.extend_from_slice(b"cpus\0");
+            sblock.extend_from_slice(&[0u8; 3]); // pad to four bytes
+            for (name, value) in [
+                ("#address-cells", cpus_cells.as_slice()),
+                ("#size-cells", [0u8; 4].as_slice()),
+            ] {
+                let off = str_off(name);
+                sblock.extend_from_slice(&be32(FDT_PROP));
+                sblock.extend_from_slice(&be32(value.len() as u32));
+                sblock.extend_from_slice(&off.to_be_bytes());
+                sblock.extend_from_slice(value);
+            }
+            emit_node(sblock, "cpu@0", str_off, &[("reg", &reg_0)]);
+            emit_node(sblock, "cpu@1", str_off, &[("reg", &reg_1)]);
+            emit_node(sblock, "cpu@16", str_off, &[("reg", &reg_16)]);
+            sblock.extend_from_slice(&be32(FDT_END_NODE));
+        });
+
+        let info = parse_fdt(blob.as_ptr() as usize);
+        assert_eq!(info.cpu_count, 3);
+        assert_eq!(info.cpu_ids_seen & 0b111, 0b111, "every node named a reg");
+        assert_eq!(info.cpu_ids[0], 0);
+        assert_eq!(info.cpu_ids[1], 1);
+        assert_eq!(
+            info.cpu_ids[2], 0x100,
+            "the third node's identity is its reg, not its position"
+        );
     }
 }

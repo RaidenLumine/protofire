@@ -389,7 +389,7 @@ fn affinity_from_typer(typer: u64) -> u64 {
 }
 
 /// The same packing for a core reading its own `MPIDR_EL1`.
-fn affinity_from_mpidr(mpidr: u64) -> u64 {
+pub(crate) fn affinity_from_mpidr(mpidr: u64) -> u64 {
     let aff0 = mpidr & 0xff;
     let aff1 = (mpidr >> 8) & 0xff;
     let aff2 = (mpidr >> 16) & 0xff;
@@ -399,11 +399,15 @@ fn affinity_from_mpidr(mpidr: u64) -> u64 {
 
 /// The CPU id this core runs as.
 ///
-/// A PE's identity here is its Aff0 — the byte `MPIDR_EL1` puts at the bottom
-/// and the one the AP entry point reads — which is also the id the scheduler
-/// and the ITS name a CPU by.
+/// The hardware names this core by `MPIDR_EL1`; the kernel names it by a
+/// logical id, and the boot published which affinity is which id.  The low
+/// byte is only a fallback for a machine that published nothing — it is not an
+/// identity, because two PEs can share it while differing in Aff1, and the
+/// boot CPU's own Aff0 is what a PE in another cluster would then collide
+/// with.
 pub(crate) fn current_cpu_id() -> u32 {
-    (affinity_from_mpidr(read_mpidr()) & 0xff) as u32
+    let mpidr = read_mpidr();
+    super::smp::cpu_for_mpidr(mpidr).unwrap_or_else(|| (affinity_from_mpidr(mpidr) & 0xff) as u32)
 }
 
 /// How many PEs this controller has a redistributor for.
@@ -413,14 +417,19 @@ pub(crate) fn redistributor_count() -> usize {
 
 /// The redistributor frame of the PE the kernel calls `cpu_id`.
 ///
-/// A PE's identity here is its Aff0 — the byte `MPIDR_EL1` puts at the bottom
-/// and the one the AP entry point reads — and a GICv3 controller has one
-/// redistributor frame per PE, so the frame whose `GICR_TYPER` carries that
-/// Aff0 is the one that belongs to it.
+/// The published identity is the authority: a controller has one frame per PE,
+/// and the frame whose `GICR_TYPER` carries that PE's affinity is the one that
+/// belongs to it.  A CPU the boot did not publish falls back to a match on
+/// Aff0, which is what the boot used to assume for every CPU.
 fn redistributor_for_cpu(cpu_id: u32) -> Option<usize> {
+    let wanted = super::smp::affinity_for_cpu(cpu_id);
     for index in 0..redistributor_count() {
         let affinity = REDISTRIBUTOR_AFFINITY[index].load(Ordering::Acquire);
-        if (affinity & 0xff) as u32 == cpu_id {
+        let matches = match wanted {
+            Some(want) => want == affinity,
+            None => (affinity & 0xff) as u32 == cpu_id,
+        };
+        if matches {
             return Some(REDISTRIBUTOR_BASE[index].load(Ordering::Acquire));
         }
     }
@@ -452,6 +461,9 @@ pub(crate) fn processor_number(rd_base: usize) -> u32 {
 /// The affinity an SGI to `cpu_id` must name, or `None` when this controller
 /// never found a redistributor for that PE.
 fn affinity_for_cpu(cpu_id: u32) -> Option<u64> {
+    if let Some(affinity) = super::smp::affinity_for_cpu(cpu_id) {
+        return Some(affinity);
+    }
     for slot in REDISTRIBUTOR_AFFINITY.iter().take(redistributor_count()) {
         let affinity = slot.load(Ordering::Acquire);
         if (affinity & 0xff) as u32 == cpu_id {
@@ -829,12 +841,15 @@ pub(crate) fn lpi_capable(cpu: u32) -> bool {
 /// The CPU id of the redistributor frame at `index`, if there is one.
 ///
 /// The ITS asks this to map a collection per CPU: a collection names a CPU,
-/// and the frames are the CPUs this controller has.
+/// and the frames are the CPUs this controller has.  The frame names its PE by
+/// affinity, so the answer is the logical id the boot published for that
+/// affinity — not the low byte, which several PEs can share.
 pub(crate) fn redistributor_cpu(index: usize) -> Option<u32> {
     if index >= redistributor_count() {
         return None;
     }
-    Some((REDISTRIBUTOR_AFFINITY[index].load(Ordering::Acquire) & 0xff) as u32)
+    let affinity = REDISTRIBUTOR_AFFINITY[index].load(Ordering::Acquire);
+    Some(super::smp::cpu_for_affinity(affinity).unwrap_or((affinity & 0xff) as u32))
 }
 
 /// How many CPUs can receive a message-signalled interrupt.

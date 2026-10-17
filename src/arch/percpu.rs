@@ -157,27 +157,37 @@ pub(crate) fn install_bsp(scheduler: *mut crate::kernel::process::Scheduler) -> 
     #[cfg(all(target_arch = "riscv64", target_os = "none"))]
     {
         use alloc::boxed::Box;
-        let cpu_id = crate::arch::riscv64::smp::boot_hart_id().unwrap_or(0) as u32;
+        // The kernel's logical id for the boot CPU is 0, always: it is the
+        // slot every per-CPU table is indexed by, and the APs take 1, 2, ….
+        // The hart id the firmware named is the machine's name for this CPU
+        // and is what the PLIC context and the trampoline translation use; it
+        // is recorded in that translation, not used as the CPU number.  Using
+        // it as the number meant a boot on hart 39 registered a CPU that no
+        // table had a slot for.
+        let hart_id = crate::arch::riscv64::smp::boot_hart_id().unwrap_or(0);
         let percpu = Box::new(crate::kernel::percpu::PerCpuData::zeroed());
         let percpu_ptr = Box::into_raw(percpu);
         // SAFETY: `percpu_ptr` is the BSP's freshly allocated block, which
         // outlives every access (it is never freed).
         unsafe {
-            (*percpu_ptr).cpu_id = cpu_id;
+            (*percpu_ptr).cpu_id = 0;
             (*percpu_ptr).scheduler = scheduler;
         }
         // SAFETY: `percpu_ptr` outlives every access.  `set_base` writes both
-        // `tp` and this hart's per-CPU slot, which is what the trap entry
-        // reloads `tp` from.
+        // `tp` and this CPU's per-CPU slot, and publishes the hart id the
+        // machine calls it by, which is what the trap entry and the PLIC read.
         unsafe {
             crate::arch::percpu::set_base(percpu_ptr as u64);
         }
         // SAFETY: the scheduler lives as long as the kernel does.
         unsafe {
-            crate::kernel::process::scheduler::registry::register(cpu_id, scheduler);
+            crate::kernel::process::scheduler::registry::register(0, scheduler);
         }
-        crate::println!("[init  ] riscv64: BSP percpu cpu_id={} tp set", cpu_id);
-        cpu_id
+        crate::println!(
+            "[init  ] riscv64: BSP percpu cpu_id=0 (hart {}) tp set",
+            hart_id
+        );
+        0
     }
 
     // A host has no per-CPU register to point anywhere: the kernel's single

@@ -121,3 +121,52 @@ grep -q 'CPU_ON rejected' "$log_file" && fail "PSCI refused to start a core"
 
 printf 'aarch64 SMP check passed: %s CPUs, %s AP(s) online, %s reschedule IPI(s)\n' \
     "$SMP_CPUS" "$expected_aps" "$reschedule_ipis"
+
+# ── A machine whose cores are not all in Aff0 ──────────────────────────
+#
+# Every assertion above runs a machine whose CPU ids fit the kernel's AP table
+# and whose cores all sit in one affinity cluster.  QEMU `virt` with more than
+# sixteen CPUs is neither: it names the seventeenth core `cpu@16` with
+# `reg = <0x100>`, because that core's MPIDR is `0x100` and its Aff0 is 0 —
+# the boot CPU's.
+#
+# The kernel passed the CPU's *position* to `CPU_ON` instead of its `reg`, and
+# read its own identity from Aff0.  So the seventeenth core was refused
+# (`CPU_ON rejected: 0xfffffffffffffffe`) and a core that had come up would
+# have called itself the boot CPU.  This segment asserts the two numbers are
+# kept apart: 17 CPUs present, all 16 APs online, and no refusal.
+board_cpus=17
+board_log="$(mktemp)"
+printf 'aarch64 affinity check: %s CPUs\n' "$board_cpus"
+timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
+    -machine virt \
+    -cpu max \
+    -smp "$board_cpus" \
+    -m 1G \
+    -kernel "$KERNEL_BIN" \
+    -display none \
+    -no-reboot \
+    -no-shutdown \
+    -serial "file:$board_log" >/dev/null 2>&1 || true
+
+board_fail() {
+    printf 'aarch64 affinity check failed: %s\n' "$1" >&2
+    printf '  last lines of the log:\n' >&2
+    tail -n 12 "$board_log" >&2
+    rm -f "$board_log"
+    exit 1
+}
+
+grep -q -F "[smp   ] ${board_cpus} CPUs total, $((board_cpus - 1)) AP(s)" "$board_log" ||
+    board_fail "the kernel did not see all ${board_cpus} CPUs"
+board_online="$(grep -c '\[smp   \] AP cpu_id=.* online' "$board_log" || true)"
+[ "$board_online" = "$((board_cpus - 1))" ] ||
+    board_fail "expected $((board_cpus - 1)) APs online, saw ${board_online}"
+grep -q 'CPU_ON rejected' "$board_log" &&
+    board_fail "PSCI refused a core the tree says exists"
+grep -q 'FATAL' "$board_log" && board_fail "the boot reported a fatal fault"
+if ! grep -q 'adastra ring3 shell' "$board_log"; then
+    board_fail "the machine never reached the shell"
+fi
+rm -f "$board_log"
+printf '  affinity check passed: %s APs online, no core refused\n' "$board_online"

@@ -120,6 +120,16 @@ pub(crate) fn describe_platform() {
             if let Some(base) = crate::arch::fdt::platform_info().rtc_base {
                 crate::arch::aarch64::rtc::init_rtc(base);
             }
+            // The boot CPU's PE identity, before anything asks the interrupt
+            // controller a question about a CPU.  The controller names a CPU by
+            // affinity and the kernel names it by logical id; this is the one
+            // table that says which affinity is which id, so it has to exist
+            // before the first lookup rather than by the time APs start.
+            let mpidr: u64;
+            // SAFETY: MPIDR_EL1 is this core's own identity register, readable
+            // from EL1 at any time; the instruction touches no memory.
+            unsafe { core::arch::asm!("mrs {}, mpidr_el1", out(reg) mpidr) };
+            crate::arch::aarch64::smp::publish_bsp(mpidr);
         }
     }
 }
