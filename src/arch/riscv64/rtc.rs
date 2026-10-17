@@ -2,10 +2,15 @@
 //!
 //! Real-Time Clock (RTC) driver.
 //!
-//! The CMOS-based driver below is shared with the x86_64 architecture but
-//! is only compilable there (it reads x86 I/O ports 0x70/0x71).  On riscv64
-//! no RTC hardware is wired up yet, so [`rtc_now_unix`] reports the clock as
-//! unavailable and returns `None`.
+//! Two clocks live here.  The CMOS-based driver below is shared with x86_64
+//! but is only compilable there (it reads x86 I/O ports 0x70/0x71).  The one
+//! this machine actually has is the **goldfish RTC**, which QEMU `virt`
+//! describes in its device tree as `compatible = "google,goldfish-rtc"` — a
+//! 64-bit counter of nanoseconds since the Unix epoch, read as a low and a high
+//! word.  The parser already recorded its base (`rtc_base`); until this existed
+//! nothing read it, and [`rtc_now_unix`] answered `None` on every riscv64 boot,
+//! so nothing that wants a wall clock (a diagnostic record, a certificate's
+//! validity window) had one.
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use super::port::Port;
@@ -267,10 +272,34 @@ pub fn rtc_now_unix() -> Option<u64> {
     Some(rtc_to_unix_timestamp(&time))
 }
 
-/// Read the current Unix timestamp.
+/// Goldfish RTC's low time word: bits 0-31 of a 64-bit nanosecond count.
+const GOLDFISH_TIME_LOW: usize = 0x00;
+/// Goldfish RTC's high time word: bits 32-63 of the same count.
+const GOLDFISH_TIME_HIGH: usize = 0x04;
+
+/// Read the current Unix timestamp from the machine's goldfish RTC.
 ///
-/// Returns `None` if the RTC is unavailable.
+/// The device is a 64-bit counter of **nanoseconds** since the epoch, split
+/// across two 32-bit registers, so the answer is `(high << 32 | low) / 1e9`.
+/// Reading it as seconds would be wrong by nine orders of magnitude, which is
+/// why the units are stated here and the conversion is a division rather than a
+/// cast.
+///
+/// Returns `None` when the device tree described no RTC, or the counter reads
+/// zero — a value that is "never set" rather than 1970 (the same reading the
+/// PL031 driver on aarch64 makes), and one a boot would otherwise report as a
+/// plausible timestamp.
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub fn rtc_now_unix() -> Option<u64> {
-    None
+    let base = crate::arch::fdt::platform_info().rtc_base?;
+    // SAFETY: `base` is the RTC the device tree named, a mapped MMIO page; the
+    // two words are its own time registers.
+    let low = unsafe { core::ptr::read_volatile((base + GOLDFISH_TIME_LOW) as *const u32) };
+    // SAFETY: as above, the adjacent high word of the same counter.
+    let high = unsafe { core::ptr::read_volatile((base + GOLDFISH_TIME_HIGH) as *const u32) };
+    let nanos = (u64::from(high) << 32) | u64::from(low);
+    if nanos == 0 {
+        return None;
+    }
+    Some(nanos / 1_000_000_000)
 }

@@ -468,4 +468,9 @@ require_log_absent_line "[FATAL]"
 log_file="$main_log"
 rm -f "$small_ram_log"
 
+# The wall clock the machine's goldfish RTC answers: the device tree names it,
+# the parser recorded its base, and the boot reports the time it read.  A
+# riscv64 boot used to answer no time at all, because nothing read the counter.
+require_log_line "[time  ] wall clock: "
+
 printf 'riscv64 runtime check passed\n'

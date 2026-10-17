@@ -447,6 +447,12 @@ require_log_line "runtime writes: /tmp (volatile), /data (persistent)"
 # shipped once) would fall back silently.  This is the assertion that makes it
 # red instead.
 require_log_line "[irq   ] interrupt controller from the device tree at "
+# And the wall clock: the device tree names the PL031, the boot hands its base
+# to the driver, and the time it reads is the host's own — a machine whose RTC
+# was described and never read answered nothing at all.  The value is not
+# asserted (the test does not know the runner's clock); that the boot read one
+# is, and a reader can compare it with their own.
+require_log_line "[time  ] wall clock: "
 require_log_line "adastra init (ring 3): reading /system/rc.d"
 require_log_line "adastra init: declared "
 # The distribution's first install, done by init on the machine: the disk

@@ -82,6 +82,18 @@ pub(crate) fn describe_platform() {
         // from the blob's own walk, before the memory manager was built
         // ([`crate::memory::report_machine_memory`]); this parse is for
         // everything else the tree describes.
+
+        // The RTC the tree described, handed to the driver that reads it.  The
+        // PL031 on aarch64 keeps its base in a slot `rtc_now_unix` reads and
+        // nothing had ever written — so the machine's clock answered `None`
+        // even though its device tree named the device; riscv64's goldfish RTC
+        // reads the same parsed value directly.
+        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+        {
+            if let Some(base) = crate::arch::fdt::platform_info().rtc_base {
+                crate::arch::aarch64::rtc::init_rtc(base);
+            }
+        }
     }
 }
 

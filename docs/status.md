@@ -940,7 +940,7 @@ user-memory validation.
 | PCIe | Full ECAM | Basic probing | Basic probing |
 | ASID allocator | — | Full (bitmap + CAS) | Full (bitmap + CAS) |
 | FDT parsing | — | Full | Full |
-| RTC | — | Full (from FDT) | Full |
+| RTC | CMOS (ports 0x70/0x71) | PL031 from the device tree | goldfish RTC from the device tree (64-bit nanoseconds read as two words); both device-tree machines report the wall clock in their boot log, and their runtime gates assert it |
 | Serial | Full (UART 16550) | Full (UART 16550) | UART 16550 (SBI fallback) |
 | NUMA discovery | Full (ACPI SRAT/SLIT) | Full (FDT numa-node-id, distance-map) | Full (FDT numa-node-id, distance-map) |
 | CPU frequency scaling | Full (MSR P-state) | Full (DT OPP) | Full (DT OPP) |

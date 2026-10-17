@@ -407,6 +407,19 @@ impl Kernel {
         arch::interrupt_controller::init();
         println!("[init  ] timer init...");
         arch::timer::init();
+        // The wall clock, if the machine has one: a device tree that names an
+        // RTC is what makes this answer, and a boot that says the time is a
+        // boot whose clock a person can check against their own.  A machine
+        // with no RTC says so, which is different from one whose RTC was named
+        // and never read.
+        match arch::timer::rtc_now_unix() {
+            Some(seconds) => {
+                println!("[time  ] wall clock: {} (Unix seconds)", seconds);
+            }
+            None => {
+                println!("[time  ] no wall clock on this machine");
+            }
+        }
         let t5 = tick();
         boot.record_subsystem("interrupts+timer", SUBSYSTEM_STATUS_OK, t4, t5);
 
