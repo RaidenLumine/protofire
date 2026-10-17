@@ -3166,6 +3166,20 @@ static XHCI_RUNTIME_BASE: AtomicUsize = AtomicUsize::new(0);
 /// Interrupts taken since the controller claimed its vector.
 static XHCI_IRQ_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+/// Messages whose drain the interrupt had to leave to the tick.
+///
+/// The handler acknowledges the interrupter and then takes the rings with
+/// `try_lock`, because an interrupt must not wait on a transfer's owner.  When
+/// that fails it has already acknowledged — the controller raises a message per
+/// 0→1 transition, so a message left pending silences every one after it — and
+/// the events it did not take are **not re-offered**.  The tick is what drains
+/// them, which is the edge RFC 0021 decides stays; this counter is how a boot
+/// says the edge was reached rather than merely argued.  Zero on an idle
+/// machine, so the line is printed once, on the first miss — except under the
+/// `xhci_contention` feature, where it is printed every time so a gate can read
+/// the line's position against the enumeration it explains.
+static XHCI_IRQ_DRAIN_MISSED: AtomicUsize = AtomicUsize::new(0);
+
 /// What the controller's MSI-X vector runs.
 ///
 /// Two jobs, in this order.  **Acknowledge**: the controller raises a message
@@ -3197,12 +3211,40 @@ fn xhci_msi_handler(irq: u32) {
         crate::println!("[xhci  ] event ring MSI (irq {})", irq);
     }
 
-    if let Some(mut guard) = XHCI_CONTROLLER.try_lock() {
-        if let Some(controller) = guard.as_mut() {
-            // SAFETY: the controller is the one this driver probed, and the
-            // lock is held for the duration of the drain.
-            unsafe {
-                controller.poll_events();
+    match XHCI_CONTROLLER.try_lock() {
+        Some(mut guard) => {
+            if let Some(controller) = guard.as_mut() {
+                // SAFETY: the controller is the one this driver probed, and the
+                // lock is held for the duration of the drain.
+                unsafe {
+                    controller.poll_events();
+                }
+            }
+        }
+        None => {
+            // The rings are held: a transfer (or the tick's own drain) owns
+            // them.  The interrupter was acknowledged above, so this event will
+            // not raise another message; the **tick** is what drains it, which
+            // is the case RFC 0021 exists for.  Say so the first time it
+            // happens, so a log can tell the fallback firing from it never
+            // being needed.
+            let missed = XHCI_IRQ_DRAIN_MISSED.fetch_add(1, Ordering::Relaxed) + 1;
+            // Once on a production build: the case is rare and the line is
+            // there to say the fallback fired at all.  Every time under
+            // `xhci_contention`, where the gate reads the line's *position*
+            // against the enumeration it explains, and a first-only line at
+            // boot would be before everything the gate types.
+            #[cfg(not(feature = "xhci_contention"))]
+            let loud = missed == 1;
+            #[cfg(feature = "xhci_contention")]
+            let loud = {
+                let _ = missed;
+                true
+            };
+            if loud {
+                crate::println!(
+                    "[xhci  ] interrupt could not take the rings; the tick will drain them"
+                );
             }
         }
     }
@@ -3220,13 +3262,23 @@ where
 /// Poll the xHCI event ring (called from timer tick).
 /// Returns true if keyboard input was processed.
 pub fn xhci_poll() -> bool {
-    {
-        if let Some(guard) = XHCI_CONTROLLER.lock().as_deref_mut() {
-            // SAFETY: the global controller is published only after a successful probe, and
-            // the polling path is the only reader of its rings.
-            unsafe {
-                return guard.poll_events();
-            }
+    let mut lock = XHCI_CONTROLLER.lock();
+    if let Some(guard) = lock.as_deref_mut() {
+        // The interrupt arriving while the rings are held is the case this
+        // drain exists for (RFC 0021): the handler acknowledges the
+        // interrupter, cannot take the lock, and leaves the events to here.
+        // No boot forces that by itself — it needs a transfer in flight at the
+        // moment a report is posted — so a `xhci_contention` build stands in
+        // for it: the handler is called from inside the lock, and its
+        // `try_lock` fails for real.  Everything after the call is the
+        // production path, unchanged.
+        #[cfg(feature = "xhci_contention")]
+        xhci_msi_handler(0);
+
+        // SAFETY: the global controller is published only after a successful probe, and
+        // the polling path is the only reader of its rings.
+        unsafe {
+            return guard.poll_events();
         }
     }
     false

@@ -174,18 +174,25 @@ describe the two polls change; the code does not.
   `make check-x8664-runtime` both run the drain — the hub's watch and the
   keyboard's reports are served from it — so the mechanism the tick backs up
   is gated on those machines.
-- **The contention sequence** (a report arriving while a transfer holds the
-  rings) is *not* forced by any gate today.  That is named below rather than
-  papered over: what is asserted is the drain path, not the tick's necessity.
+- **The contention sequence** is now forced, not argued:
+  `make check-x8664-usb-contention` builds with the `xhci_contention` feature,
+  which has the tick call the interrupt handler **from inside its own lock**,
+  so the handler's `try_lock` fails for real — it acknowledges, says so, and
+  leaves the events — and the tick then drains the report a device arrival
+  posted.  The gate reads the line order: the miss precedes the enumeration it
+  explains.  (Before this, the necessity was argued and the drain path alone
+  was asserted.)
 - **The virtio-input half**: nothing, and the document says so; the poll's
   only gate would be a boot with the device attached, which no machine has.
 
 ## Unresolved questions
 
-- **A gate for the contention sequence**: a probe that takes the rings (or a
-  transfer held open) while a hub report is posted, then asserts the report
-  is answered by the *tick* rather than the interrupt.  Until it exists, the
-  fallback's necessity is argued, not measured.
+- **A gate for the contention sequence**: *answered* by
+  `make check-x8664-usb-contention` and the `xhci_contention` feature (see
+  "How this is proven").  What the gate forces is the lock contention — the
+  handler called while the rings are held — rather than a transfer held open
+  while QEMU posts a report; a build that held a *real* transfer open would be
+  the closer reproduction, and is not what this does.
 - **The conditional drain**: if the per-tick lock take ever shows up in a
   measurement (`make check-perf-baseline`'s counters are the place it would),
   the flag-plus-arming-drain version is the change to make, with the boot

@@ -234,6 +234,10 @@ run_p3() {
         # rings, which is where the ring-reuse defect lived, and the boot's own
         # writes are what show the volume reached the host's image.
         run_make_step "make check-x8664-usb-disk" check-x8664-usb-disk
+        # And the contention the tick's xHCI drain exists for: the handler
+        # acknowledges and cannot take the rings, and the tick answers the
+        # report.  RFC 0021 named this as argued rather than measured.
+        run_make_step "make check-x8664-usb-contention" check-x8664-usb-contention
         # And the install path: zones put onto a disk `sgdisk` made — a
         # stranger's table with a partition this kernel has no name for — then
         # booted.  It is the gate a real machine's disk needs, and the one

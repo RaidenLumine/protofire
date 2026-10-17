@@ -176,6 +176,7 @@ help:
 		'  make check-x8664-install              - install the zones onto an sgdisk-made disk and boot it' \
 		'  make check-x8664-iso                  - boot the kernel from a GRUB ISO and check the loader hand-off and its memory map' \
 		'  make check-x8664-usb-hotplug          - plug a device into a hub after boot and check it is seen then' \
+		'  make check-x8664-usb-contention       - hold the rings while the interrupt fires and check the tick drains the report' \
 		'  make check-x8664-nvme                 - boot a real SimpleFs image on an NVMe device and check the controller mounts it' \
 		'  make check-aarch64-nvme               - the same NVMe disk on the device-tree machine, through its PCIe window' \
 		'  make check-riscv64-nvme               - the same NVMe disk on riscv64, whose RAM window is identity-mapped' \
@@ -536,7 +537,8 @@ check-abi-frozen-payload-riscv64:
 	check-x8664-audit-persist \
 	check-x8664-init-no-start \
 	check-x8664-usb-disk check-x8664-install \
-	check-x8664-iso check-x8664-usb-hotplug check-x8664-nvme check-aarch64-nvme \
+	check-x8664-iso check-x8664-usb-hotplug check-x8664-usb-contention \
+	check-x8664-nvme check-aarch64-nvme \
 	check-riscv64-nvme check-x8664-hda check-aarch64-hda check-riscv64-hda \
 	check-x8664-churn \
 	check-riscv64-churn check-aarch64-runtime check-riscv64-runtime \
@@ -731,6 +733,17 @@ check-x8664-usb-hotplug:
 		CRATE="$(CRATE)" \
 		TARGET_DIR="$(TARGET_DIR)" \
 		sh ./scripts/check-x8664-usb-hotplug.sh
+
+# The case the tick drain exists for, forced rather than argued: the
+# `xhci_contention` feature makes the tick call the interrupt handler from
+# inside its own lock, so the handler's `try_lock` fails for real, it
+# acknowledges and cannot drain, and the tick answers the report a device
+# arrival posted.  RFC 0021 names this case as the one no gate forced.
+check-x8664-usb-contention:
+	PROFILE="$(PROFILE)" \
+		CRATE="$(CRATE)" \
+		TARGET_DIR="$(TARGET_DIR)" \
+		sh ./scripts/check-x8664-usb-contention.sh
 
 # The same filesystem image on an NVMe device: a device class the driver had
 # for months and no gate had ever attached.  The reads go through the
