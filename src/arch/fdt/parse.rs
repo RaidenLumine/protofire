@@ -13,6 +13,7 @@
 
 use super::*;
 
+use alloc::string::String;
 use core::ptr::read_unaligned;
 
 // ---------------------------------------------------------------------------
@@ -496,6 +497,62 @@ impl NodeClass {
         wired_to_supervisor_external: false,
         is_memory_node: false,
     };
+}
+
+/// The kernel command line a device tree carries, if it carries one.
+///
+/// The flattened device tree's own way to hand a kernel its options is the
+/// `/chosen` node's `bootargs` string — the property a bootloader fills from
+/// what the person asked for, and what QEMU writes from `-append` on an arm64
+/// `Image` or a riscv64 `-kernel` boot.  Nothing read it here: the command line
+/// was taken from the Multiboot2 tag or the PVH block only, so on both
+/// device-tree machines `init=` and every other option were silently absent.
+///
+/// Answers `None` when the blob is malformed, has no `/chosen` node, or that
+/// node has no `bootargs` — the caller then falls back to the loader's own
+/// command line or to its default.
+pub fn bootargs(fdt_addr: usize) -> Option<String> {
+    let blob = Blob::from_addr(fdt_addr)?;
+    let mut walk = StructWalk::new(blob);
+    let mut depth = 0usize;
+    let mut in_chosen = false;
+    while let Some(token) = walk.token() {
+        match token {
+            FDT_BEGIN_NODE => {
+                let name = walk.node_name()?;
+                depth += 1;
+                // This walk counts the root (the empty name) as depth 1, so
+                // `/chosen` — a child of the root — is depth 2.  A deeper node
+                // that happens to be named `chosen` is not the machine's
+                // choice of command line.
+                in_chosen = depth == 2 && name == "chosen";
+            }
+            FDT_END_NODE => {
+                in_chosen = false;
+                depth = depth.saturating_sub(1);
+            }
+            FDT_PROP => {
+                let Some((nameoff, value)) = walk.property() else {
+                    break;
+                };
+                if in_chosen && walk.string(nameoff) == Some("bootargs") {
+                    let value = value?;
+                    // `bootargs` is a NUL-terminated string; a property with no
+                    // terminator in its own extent is not one this parser will
+                    // hand out as a command line.
+                    let bytes = value.bytes;
+                    let end = bytes.iter().position(|byte| *byte == 0)?;
+                    return core::str::from_utf8(&bytes[..end])
+                        .ok()
+                        .filter(|line| !line.is_empty())
+                        .map(String::from);
+                }
+            }
+            FDT_END => break,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Parse the flattened device tree at `fdt_addr` and return discovered
@@ -1726,6 +1783,7 @@ pub fn collect_dt_nodes(fdt_addr: usize) -> DtNodeTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::String;
     use alloc::vec::Vec;
 
     /// Build a minimal synthetic FDT for a QEMU virt-like platform in a
@@ -3160,6 +3218,48 @@ mod tests {
         });
         let info = parse_fdt(parent_only.as_ptr() as usize);
         assert_eq!(info.aplic_base, None);
+    }
+
+    /// A device tree's `/chosen` node carries the kernel command line, and it
+    /// is read from there — at depth 2, where `/chosen` is a child of the root.
+    ///
+    /// On both device-tree machines `QEMU` fills that property from
+    /// `-append`, and nothing in this tree read it: the command line was taken
+    /// from the Multiboot2 tag or the PVH block only, and the capture lived
+    /// inside the x86_64 block.  So `init=` and every other option were
+    /// silently absent on aarch64 and riscv64.
+    #[test]
+    fn a_device_tree_answers_its_chosen_bootargs() {
+        let blob = build_small_fdt(|sblock, str_off| {
+            emit_node(
+                sblock,
+                "chosen",
+                str_off,
+                &[("bootargs", b"init=/custom audit=persist\0")],
+            );
+            // A deeper node named `chosen` is not the machine's choice, and
+            // must not shadow the real one.
+            emit_node(sblock, "soc", str_off, &[("compatible", b"simple-bus\0")]);
+        });
+        assert_eq!(
+            bootargs(blob.as_ptr() as usize),
+            Some(String::from("init=/custom audit=persist"))
+        );
+        // `command_line_option` reads the values the boot would ask for.
+        let line = bootargs(blob.as_ptr() as usize).expect("bootargs");
+        assert_eq!(
+            crate::arch::boot::command_line_option(&line, "init"),
+            Some("/custom")
+        );
+        assert_eq!(
+            crate::arch::boot::command_line_option(&line, "audit"),
+            Some("persist")
+        );
+
+        // A blob with no `/chosen` answers none, and so does a malformed one.
+        let bare = build_small_fdt(|_sblock, _str_off| {});
+        assert_eq!(bootargs(bare.as_ptr() as usize), None);
+        assert_eq!(bootargs(0), None);
     }
 
     /// A `compatible` name matches a **whole entry** of the property, not a

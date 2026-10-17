@@ -255,6 +255,12 @@ from the platform are worth naming next to the parts it does not ask for:
   takes only the part of.  A board port is where the span itself becomes a
   decision, and the boot log prints the pool's base and how much of its span
   the machine has.
+- **The command line arrives three ways**, one per hand-off: a Multiboot2 tag
+  under a loader, the PVH block's own `cmdline_paddr` on a direct PC `-kernel`
+  boot, and a device tree's `/chosen` `bootargs` on the two device-tree
+  machines (which QEMU fills from `-append`).  The capture is one piece of
+  architecture-neutral code — it used to live inside the x86_64 block, so
+  `init=` and every other option were silently absent on aarch64 and riscv64.
 - **The entry contract is the bootloader's**: a Multiboot2 handshake, an arm64
   `Image` with the blob in `x0`, or OpenSBI's `a0`/`a1`.  A platform that hands
   over something else needs that contract written down first.

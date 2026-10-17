@@ -939,7 +939,7 @@ user-memory validation.
 | MSI/MSI-X | A vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; the PCIe virtio-net and NVMe drivers and the xHCI controller each claim their own identities | GICv3 ITS and LPIs, with a collection and a pending table per CPU; the PCIe virtio-net, virtio-blk and NVMe drivers each claim their own identities, and the NIC's queues are completed by different CPUs | AIA IMSIC; the PCIe virtio-net, virtio-blk and NVMe drivers each claim their own identities |
 | PCIe | Full ECAM | Basic probing | Basic probing |
 | ASID allocator | — | Full (bitmap + CAS) | Full (bitmap + CAS) |
-| FDT parsing | — | Full | Full |
+| FDT parsing | — | Full, including `/chosen`'s `bootargs` as the command line (QEMU fills it from `-append`) | Full, likewise |
 | RTC | CMOS (ports 0x70/0x71) | PL031 from the device tree | goldfish RTC from the device tree (64-bit nanoseconds read as two words); both device-tree machines report the wall clock in their boot log, and their runtime gates assert it |
 | Serial | Full (UART 16550) | Full (UART 16550) | UART 16550 (SBI fallback) |
 | NUMA discovery | Full (ACPI SRAT/SLIT) | Full (FDT numa-node-id, distance-map) | Full (FDT numa-node-id, distance-map) |

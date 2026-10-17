@@ -100,6 +100,7 @@ set -- \
     -smp 1 \
     -m "$QEMU_RAM" \
     -kernel "$KERNEL_BIN" \
+    -append "audit=persist" \
     -display none \
     -no-reboot \
     -no-shutdown \
@@ -472,5 +473,9 @@ rm -f "$small_ram_log"
 # the parser recorded its base, and the boot reports the time it read.  A
 # riscv64 boot used to answer no time at all, because nothing read the counter.
 require_log_line "[time  ] wall clock: "
+# The command line the device tree carries in `/chosen`'s `bootargs`: nothing
+# read that property, so this machine ignored `-append` entirely.  The boot
+# passes `audit=persist`, and only a kernel that read the property says this.
+require_log_line "[audit ] persistence enabled (audit=persist)"
 
 printf 'riscv64 runtime check passed\n'

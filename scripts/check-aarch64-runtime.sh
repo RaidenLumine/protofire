@@ -104,6 +104,7 @@ shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU_AARCH64" \
     -smp 1 \
     -m "$QEMU_RAM" \
     -kernel "$KERNEL_BIN" \
+    -append "audit=persist" \
     -display none \
     -serial stdio \
     -no-reboot \
@@ -453,6 +454,12 @@ require_log_line "[irq   ] interrupt controller from the device tree at "
 # asserted (the test does not know the runner's clock); that the boot read one
 # is, and a reader can compare it with their own.
 require_log_line "[time  ] wall clock: "
+# And the command line itself: a device tree carries it in `/chosen`'s
+# `bootargs`, which QEMU fills from `-append`.  Nothing read that property
+# before, so on this machine `init=` and every other option were silently
+# absent — a boot asked for something and was given the default.  This boot
+# passes `audit=persist`, and the line below is the kernel having read it.
+require_log_line "[audit ] persistence enabled (audit=persist)"
 require_log_line "adastra init (ring 3): reading /system/rc.d"
 require_log_line "adastra init: declared "
 # The distribution's first install, done by init on the machine: the disk

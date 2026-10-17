@@ -22,6 +22,8 @@ use crate::kernel::topology::Topology;
 /// takes its configuration from the device tree, so it has nothing to save
 /// here.
 pub(crate) fn capture_early_state() {
+    capture_command_line();
+
     #[cfg(all(target_arch = "x86_64", target_os = "none"))]
     {
         crate::arch::x86_64::smp::save_boot_cr3();
@@ -33,17 +35,8 @@ pub(crate) fn capture_early_state() {
         // Multiboot2 tag under a loader, or the PVH block's own `cmdline_paddr`
         // on a direct `-kernel` boot, which the kernel read nothing of before
         // — so `init=` and every other option were absent there.
-        let command_line = crate::arch::boot::multiboot2_command_line().or_else(|| {
-            #[cfg(target_arch = "x86_64")]
-            {
-                crate::arch::boot::pvh_command_line()
-            }
-            #[cfg(not(target_arch = "x86_64"))]
-            {
-                None
-            }
-        });
-        crate::arch::boot::store_command_line(command_line);
+        // The command line is captured in `capture_command_line`, which every
+        // architecture runs: see below.
         crate::arch::boot::store_framebuffer(crate::arch::boot::multiboot2_framebuffer());
         let aps = crate::arch::x86_64::acpi::discover_aps(handoff);
         crate::arch::x86_64::acpi::store_early_aps(aps);
@@ -61,6 +54,40 @@ pub(crate) fn capture_early_state() {
         crate::arch::aarch64::smp::save_vbar_addr();
         crate::println!("[init  ] aarch64: saved boot MMU config and VBAR");
     }
+}
+
+/// Capture the loader's command line, from whichever hand-off carries it.
+///
+/// Three shapes exist, and each machine uses one: a Multiboot2 tag under a
+/// loader, the PVH block's own `cmdline_paddr` on a direct PC `-kernel` boot,
+/// and a device tree's `/chosen` `bootargs` on the two device-tree machines.
+/// The device tree's was **never read** — the capture lived inside the x86_64
+/// block, so on aarch64 and riscv64 `init=` and every other option were
+/// silently absent, and a boot that asked for something was given the default.
+///
+/// It runs from `capture_early_state`, before the runtime page tables replace
+/// the bootstrap mapping, for the same reason the ACPI discovery does: the
+/// loader's block is reachable now and not later.
+fn capture_command_line() {
+    let loader = crate::arch::boot::multiboot2_command_line();
+    #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+    let pvh = crate::arch::boot::pvh_command_line();
+    #[cfg(not(all(target_arch = "x86_64", target_os = "none")))]
+    let pvh: Option<alloc::string::String> = None;
+    // The device tree's own answer, on the machines handed one.  A machine
+    // with no blob has no `/chosen` and answers `None`.
+    #[cfg(any(
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "riscv64", target_os = "none")
+    ))]
+    let tree = crate::arch::fdt::bootargs(crate::arch::boot::handoff_address());
+    #[cfg(not(any(
+        all(target_arch = "aarch64", target_os = "none"),
+        all(target_arch = "riscv64", target_os = "none")
+    )))]
+    let tree: Option<alloc::string::String> = None;
+
+    crate::arch::boot::store_command_line(loader.or(pvh).or(tree));
 }
 
 /// Read the platform description the bootloader handed over.

@@ -199,6 +199,13 @@ pub fn platform_info() -> PlatformInfo {
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
 pub use parse::memory_window;
 
+/// The kernel command line a device tree carries (`/chosen`'s `bootargs`).
+///
+/// The same walk the parser uses, so it lives beside it; a machine with no
+/// device tree has no command line to read and answers `None`.
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64", test))]
+pub use parse::bootargs;
+
 /// The `/memory` window a blob describes, read without allocating.
 ///
 /// This machine has no device tree, so there is no blob to walk and no window
