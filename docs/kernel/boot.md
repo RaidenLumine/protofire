@@ -169,8 +169,8 @@ dispatchable.
 | | Started by | Woken for work by |
 |---|---|---|
 | x86_64 | INIT-SIPI-SIPI, with a trampoline copied to low memory (`src/arch/x86_64/ap_trampoline.asm`) | Local-APIC IPIs |
-| AArch64 | `PSCI CPU_ON` to an entry point the kernel chooses | GIC SGIs |
-| RISC-V 64 | `SBI HSM` | The per-hart software-interrupt register |
+| AArch64 | `PSCI CPU_ON`, naming the `MPIDR` the core's device-tree `reg` holds | GIC SGIs |
+| RISC-V 64 | `SBI HSM`, naming the hart id the core's device-tree `reg` holds | The per-hart software-interrupt register |
 
 **A CPU is online when it registers its scheduler.**  That registration is what
 writes the online set, and the set is the only answer the scheduler, the
@@ -178,6 +178,22 @@ shootdown log and `/proc` use.  Each architecture reports for itself: on x86_64
 the boot CPU registers an AP once the trampoline's started flag says it is
 running, and on AArch64 and RISC-V the AP runs the registration from its own
 entry point — so a core that never reaches kernel code never claimed to be up.
+
+**A logical CPU id is the kernel's, not the machine's.**  Every per-CPU table
+is a dense array indexed by a logical id: the boot CPU is 0 and the APs are
+1, 2, …, out to one kernel-wide `MAX_APS`.  The machine's own name for a core
+is a different number on both device-tree platforms — an MPIDR on aarch64, a
+hart id on RISC-V — and it is allowed to be sparse and large: OpenSBI hands the
+reset to whichever hart it likes, and boots have landed on hart 39 of 40.  The
+two must be kept apart rather than assumed equal, because a hart id past the
+slot count is a CPU the kernel cannot keep state for; such a core is declined
+with a message instead of being registered under an id no table has.  AArch64
+keeps the translation in `src/arch/aarch64/smp.rs` and starts each core by the
+MPIDR its node's `reg` names — the low byte of an MPIDR is not an identity when
+two cores differ in Aff1.  RISC-V keeps it in `src/arch/riscv64/percpu.rs`, in
+a table the reset trampoline reads before any Rust code runs, and the
+interrupt controllers translate back to the hart id when they name a PLIC
+context, an IMSIC file or an APLIC delivery window.
 
 **A core's timer is that core's to enable.**  AArch64's timer is a private
 peripheral interrupt, and in GICv2 the registers that arm it are banked per
