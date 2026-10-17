@@ -87,6 +87,16 @@
 # change because it is the module that was always meant to own the schedule;
 # `process` -> `maintenance` lost one for the same reason.
 #
+# `process` <-> `shm` stays, and it is not the shape the cuts above removed.
+# `shm` names `Process` because attaching a segment maps physical frames into
+# that process's page tables — the same reason `memory` names it, and a
+# direction the consumer is supposed to have.  `process` names `shm` once, to
+# detach a terminating process's segments.  Cutting that one call would mean an
+# exit-hook registry with exactly one registrant, which is an indirection paid
+# for a single caller; the pair is argued here instead of removed.  It becomes
+# worth cutting when a second subsystem needs the same notification, because
+# then the registry has a real second client.
+#
 # One module is a diagnostic rather than a layer: `vm_churn` exists to stress
 # the stack window and the invalidation log, so it names `memory`, `process`,
 # and `smp` on purpose — its rows are the number of structures it drives, not
