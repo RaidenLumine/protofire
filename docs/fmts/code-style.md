@@ -512,15 +512,21 @@ Two directions are wrong by definition, and are expected to stay at zero:
   device interface; who mounts what on top of it is not its business.
 
 Everything else in the census is debt with a number attached, and what is left
-has one shape: `process` names its consumers (`memory`, `syscall`, `network`,
-`fs`, `percpu`, `drivers`, …) for file handles, sockets, counters, and caches,
-while those consumers name `process` back for the two things only it has — a
-thread to run on and a way to block.  `memory` <-> `fs`, `fs` <-> `service`,
-and `fs` <-> `kernel_log` are the same story at a lower altitude.  The cycles
-come apart in cuts, and a cut is finished when its rows reach zero and the
-census is re-recorded (`sh scripts/check-layering.sh --record`) in the same
-change.  The rule for a new edge is the same as for any other budget here: it
-has to be argued for in the change that adds it, not discovered later.
+has one shape: `process` names its consumers (`memory`, `network`, `fs`,
+`percpu`, `drivers`, …) for file handles, sockets, counters, and caches, while
+those consumers name `process` back for the two things only it has — a thread
+to run on and a way to block.  `memory` <-> `fs`, `fs` <-> `service`, and
+`fs` <-> `kernel_log` are the same story at a lower altitude.  The cycles come
+apart in cuts, and a cut is finished when its rows reach zero and the census is
+re-recorded (`sh scripts/check-layering.sh --record`) in the same change.  The
+rule for a new edge is the same as for any other budget here: it has to be
+argued for in the change that adds it, not discovered later.
+
+`process` -> `syscall` was that shape's one exception, and it is gone: the
+scheduler's tick reached into the syscall layer to advance the timerfds, which
+is a reverse edge out of the module every consumer of depends on.  The expiry
+state was already process state, so the walk moved beside it and the syscall
+handler only creates the timer and registers it.
 
 A driver naming `process` for a wait is not one of those cuts to make.  The
 parking primitive belongs to `process`, so a driver that blocks names it —
