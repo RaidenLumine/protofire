@@ -937,7 +937,7 @@ user-memory validation.
 | Context switch | Full | Full | Full |
 | PAN/SMAP | SMAP (stac/clac) | PSTATE.PAN (set/clear) | SUM (sstatus) |
 | MSI/MSI-X | A vector window of its own IDT with a stub per vector, a table programmed once the local APIC is up, and the vector itself as the identity the handler registry answers; the PCIe virtio-net and NVMe drivers and the xHCI controller each claim their own identities | GICv3 ITS and LPIs, with a collection and a pending table per CPU; the PCIe virtio-net, virtio-blk and NVMe drivers each claim their own identities, and the NIC's queues are completed by different CPUs | AIA IMSIC; the PCIe virtio-net, virtio-blk and NVMe drivers each claim their own identities |
-| PCIe | Full ECAM | Basic probing | Basic probing |
+| PCIe | The legacy port pair (the 256-byte head holds every register read here; no ECAM window) | ECAM from the device tree, BARs assigned | ECAM from the device tree, BARs assigned |
 | ASID allocator | — | Full (bitmap + CAS) | Full (bitmap + CAS) |
 | FDT parsing | — | Full, including `/chosen`'s `bootargs` as the command line (QEMU fills it from `-append`) | Full, likewise |
 | RTC | CMOS (ports 0x70/0x71) | PL031 from the device tree | goldfish RTC from the device tree (64-bit nanoseconds read as two words); both device-tree machines report the wall clock in their boot log, and their runtime gates assert it |
