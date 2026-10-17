@@ -240,7 +240,11 @@ pub fn check_expired_timers(ticks: u64) {
                     // SAFETY: the current CPU's scheduler pointer is the one its own per-CPU
                     // block holds and is valid for as long as the kernel
                     // runs.
-                    unsafe { crate::kernel::percpu::current_scheduler_ptr().as_ref() }
+                    unsafe {
+                        (crate::kernel::percpu::current_scheduler_ptr()
+                            as *mut crate::kernel::process::Scheduler)
+                            .as_ref()
+                    }
                 {
                     // Use pid 0 as sender (kernel).
                     let _ = sched.send_signal(

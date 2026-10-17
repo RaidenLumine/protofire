@@ -282,7 +282,7 @@ unsafe extern "C" fn aarch64_ap_entry_rust() -> ! {
     // Fetch pre-created scheduler.
     // SAFETY: `percpu` is this AP's own block, published by `bring_up_one`
     // before PSCI started the core, so nothing else touches it yet.
-    let sched_ptr = unsafe { (*percpu).scheduler };
+    let sched_ptr = unsafe { (*percpu).scheduler } as *mut crate::kernel::process::Scheduler;
     if sched_ptr.is_null() {
         crate::println!("[smp   ] FATAL: AP cpu_id={} has no scheduler", cpu_id);
         loop {
@@ -610,7 +610,7 @@ fn allocate_ap_percpu(cpu_id: u32, sched_ptr: *mut crate::kernel::process::Sched
     }
     let mut b = alloc::boxed::Box::new(PerCpuData::zeroed());
     b.cpu_id = cpu_id;
-    b.scheduler = sched_ptr;
+    b.scheduler = sched_ptr as *mut ();
     // SAFETY: `idx` is below `MAX_APS` (checked at entry) and this core's slot
     // is written before the core itself is started, so no other writer is in
     // flight against the table.

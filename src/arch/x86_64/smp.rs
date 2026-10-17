@@ -337,7 +337,8 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
     // from PerCpuData and enter the dispatch loop directly — no heap
     // allocations needed here, avoiding lock contention with the BSP.
     // SAFETY: as above — the scheduler pointer in the same per-CPU block.
-    let scheduler_ptr = unsafe { (*percpu_ptr).scheduler };
+    let scheduler_ptr =
+        unsafe { (*percpu_ptr).scheduler } as *mut crate::kernel::process::Scheduler;
 
     crate::println!("[smp   ] AP cpu_id={} lapic_id={} online", cpu_id, lapic_id);
 
@@ -483,7 +484,7 @@ fn bring_up_single_ap(cpu_id: u32, lapic_id: u8) {
     let ap_scheduler_ptr = Box::into_raw(ap_scheduler);
     // SAFETY: as above, for the AP's scheduler block.
     unsafe {
-        (*percpu_ptr).scheduler = ap_scheduler_ptr;
+        (*percpu_ptr).scheduler = ap_scheduler_ptr as *mut ();
     }
     crate::println!("[smp   ]   prepare: ap scheduler registered");
     // SAFETY: as above — the per-CPU block the AP will read is written once here,

@@ -87,6 +87,15 @@
 # change because it is the module that was always meant to own the schedule;
 # `process` -> `maintenance` lost one for the same reason.
 #
+# `percpu` no longer names `process`.  Its three edges were a field's type:
+# `PerCpuData.scheduler` was `*mut Scheduler`, and the two accessors over it
+# named the same type.  A block of storage does not need to know what it
+# stores — the `tss` field beside it has always been `*mut u8` for exactly that
+# reason — so the field is opaque now and the scheduler casts on the way in and
+# out.  `percpu` keeps its one real dependency, `topology`, for the NUMA node
+# id it carries; `process` -> `percpu` is untouched, because "which CPU am I
+# on" is a question the scheduler is supposed to ask.
+#
 # `process` <-> `shm` stays, and it is not the shape the cuts above removed.
 # `shm` names `Process` because attaching a segment maps physical frames into
 # that process's page tables — the same reason `memory` names it, and a
@@ -243,7 +252,6 @@ network                      sync                         17
 nmi                          sync                         1
 oom                          memory                       2
 oom                          process                      3
-percpu                       process                      3
 percpu                       topology                     2
 perf_baseline                block                        1
 perf_baseline                fs                           2

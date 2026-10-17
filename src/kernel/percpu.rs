@@ -37,8 +37,15 @@ pub struct PerCpuData {
     pub cpu_id: u32,
     /// Offset 4: Local APIC ID (for IPI targeting on x86_64).
     pub lapic_id: u8,
-    /// Offset 8: Pointer to this CPU's scheduler instance.
-    pub scheduler: *mut crate::kernel::process::Scheduler,
+    /// Offset 8: This CPU's scheduler, as an opaque pointer.
+    ///
+    /// Opaque for the same reason `tss` is: this module is storage, and the
+    /// type of what it stores belongs to the subsystem that owns it.  A
+    /// per-CPU block that named `Scheduler` made `percpu` depend on `process`,
+    /// while `process` depends on `percpu` to ask which CPU it is on — a cycle
+    /// whose only purpose was a field's type.  The scheduler casts on the way
+    /// in and out.
+    pub scheduler: *mut (),
     /// Offset 16: Pointer to this CPU's private TSS (Task State Segment).
     /// Each CPU must have its own TSS so that privilege_stack_table[0]
     /// (kernel stack on ring transition) is not corrupted by cross-CPU races.
@@ -151,28 +158,34 @@ pub fn get_mut() -> &'static mut PerCpuData {
 /// setup needs.
 static EARLY_FALLBACK: SyncUnsafeCell<PerCpuData> = SyncUnsafeCell::new(PerCpuData::zeroed());
 
-/// Fast-path: return the current CPU's scheduler pointer.
+/// Fast-path: return the current CPU's scheduler slot.
 ///
 /// One architecture-specific instruction sequence — `gs:`-relative on x86_64,
 /// base register plus a load elsewhere — and null on a target with no per-CPU
 /// register, where callers fall back to the global `AtomicPtr`.
+///
+/// The pointer is opaque: this module stores it and never dereferences it, and
+/// the scheduler subsystem is what casts it back.  Asking for it to be typed
+/// is what made `percpu` depend on `process`.
 ///
 /// # Safety
 ///
 /// The returned pointer is only valid if the scheduler is still alive.
 /// Callers must use `as_ref()` with appropriate lifetime management.
 #[inline]
-pub fn current_scheduler_ptr() -> *mut crate::kernel::process::Scheduler {
+pub fn current_scheduler_ptr() -> *mut () {
     crate::arch::percpu::scheduler_ptr()
 }
 
-/// Update the per-CPU scheduler pointer for the current CPU.
+/// Update the per-CPU scheduler slot for the current CPU.
 ///
 /// It resolves the current CPU's [`PerCpuData`] through the architecture's base
 /// register, so it works for the BSP and for APs alike.  A base of zero means
 /// this CPU has no per-CPU block — a target without the register — and the call
 /// is a no-op, matching the global `AtomicPtr` path callers use there.
-pub fn set_current_scheduler(scheduler: *mut crate::kernel::process::Scheduler) {
+///
+/// The value is opaque storage; see [`PerCpuData::scheduler`].
+pub fn set_current_scheduler(scheduler: *mut ()) {
     let base = crate::arch::percpu::base();
     if base != 0 {
         // SAFETY: a non-zero base is this CPU's own block, which the caller of

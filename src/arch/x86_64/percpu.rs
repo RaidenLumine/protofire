@@ -11,7 +11,6 @@
 
 use crate::kernel::percpu::PerCpuData;
 use crate::kernel::percpu::PERCPU_OFFSET_SCHEDULER;
-use crate::kernel::process::Scheduler;
 use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 
 /// `IA32_GS_BASE`: the base the CPU uses to resolve `gs:` addresses.
@@ -52,8 +51,8 @@ pub unsafe fn set_base(base: u64) {
 
 /// The scheduler pointer, one `gs:`-relative load away.
 #[inline]
-pub fn scheduler_ptr() -> *mut Scheduler {
-    let ptr: *mut Scheduler;
+pub fn scheduler_ptr() -> *mut () {
+    let ptr: *mut ();
     // SAFETY: the GS base points at this CPU's PerCpuData, whose `scheduler`
     // field is at `PERCPU_OFFSET_SCHEDULER` (checked at compile time).  Before
     // the base is installed the load reads address 8, which is why callers
@@ -108,7 +107,7 @@ pub unsafe fn init_ap_gs_bases(percpu: *const PerCpuData) {
 /// # Safety
 ///
 /// Called once, on the BSP, after [`init_bsp_gs_bases`].
-pub unsafe fn init_bsp_data(scheduler: *mut Scheduler, lapic_id: u8, tss: *mut u8) {
+pub unsafe fn init_bsp_data(scheduler: *mut (), lapic_id: u8, tss: *mut u8) {
     // SAFETY: the BSP's per-CPU block is a kernel static and this runs once, before
     // any other CPU exists — the contract the doc above states.
     let percpu = unsafe { &mut *BSP_PERCPU.get() };

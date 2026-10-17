@@ -34,7 +34,7 @@ impl Scheduler {
         // The per-CPU slot is the one `global()` reads on bare metal: which
         // scheduler is running is a property of the CPU, and a machine with
         // several of them must not have them overwrite each other.
-        crate::kernel::percpu::set_current_scheduler(ptr);
+        crate::kernel::percpu::set_current_scheduler(ptr as *mut ());
         // A target with no per-CPU register has nowhere else to put it; there
         // the shared slot is what `global()` falls back to.
         #[cfg(not(target_os = "none"))]
@@ -42,7 +42,7 @@ impl Scheduler {
     }
 
     pub fn global() -> Option<&'static Self> {
-        let percpu_ptr = crate::kernel::percpu::current_scheduler_ptr();
+        let percpu_ptr = crate::kernel::percpu::current_scheduler_ptr() as *mut Scheduler;
         if !percpu_ptr.is_null() {
             // SAFETY: the pointer was installed by this CPU with itself as a
             // `'static` scheduler, and is cleared only when that scheduler is

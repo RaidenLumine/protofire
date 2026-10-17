@@ -6,7 +6,6 @@
 //! swap against, so the base is simply read and written here.
 
 use crate::kernel::percpu::PERCPU_OFFSET_SCHEDULER;
-use crate::kernel::process::Scheduler;
 
 /// Whether a zero base means "too early" rather than "a bug".
 ///
@@ -43,12 +42,12 @@ pub unsafe fn set_base(base: u64) {
 
 /// The scheduler pointer, read through the base register.
 #[inline]
-pub fn scheduler_ptr() -> *mut Scheduler {
+pub fn scheduler_ptr() -> *mut () {
     let base = base();
     if base == 0 {
         return core::ptr::null_mut();
     }
     // SAFETY: a non-zero base is this CPU's PerCpuData, and the field sits at
     // `PERCPU_OFFSET_SCHEDULER` (checked at compile time).
-    unsafe { *((base + PERCPU_OFFSET_SCHEDULER as u64) as *const *mut Scheduler) }
+    unsafe { *((base + PERCPU_OFFSET_SCHEDULER as u64) as *const *mut ()) }
 }

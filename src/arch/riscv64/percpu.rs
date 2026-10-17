@@ -22,7 +22,6 @@
 //! slot — read by the trampoline, which runs before any Rust code on a hart.
 
 use crate::kernel::percpu::PERCPU_OFFSET_SCHEDULER;
-use crate::kernel::process::Scheduler;
 
 /// Logical CPU slots: one per CPU the scheduler can hold.
 pub(crate) const MAX_HARTS: usize = crate::kernel::smp::MAX_CPUS;
@@ -243,12 +242,12 @@ pub unsafe fn set_base(base: u64) {
 
 /// The scheduler pointer, read through the base register.
 #[inline]
-pub fn scheduler_ptr() -> *mut Scheduler {
+pub fn scheduler_ptr() -> *mut () {
     let base = base();
     if base == 0 {
         return core::ptr::null_mut();
     }
     // SAFETY: a non-zero base is this hart's PerCpuData, and the field sits at
     // `PERCPU_OFFSET_SCHEDULER` (checked at compile time).
-    unsafe { *((base + PERCPU_OFFSET_SCHEDULER as u64) as *const *mut Scheduler) }
+    unsafe { *((base + PERCPU_OFFSET_SCHEDULER as u64) as *const *mut ()) }
 }

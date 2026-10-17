@@ -339,7 +339,7 @@ fn bring_up_one(slot: u32, hartid: u64) -> bool {
     // from the CPU the scheduler is bound to.
     sched.bind_to_cpu(slot);
     let sched_ptr = Box::into_raw(sched);
-    percpu.scheduler = sched_ptr;
+    percpu.scheduler = sched_ptr as *mut ();
     let percpu_ptr = Box::into_raw(percpu);
     // SAFETY: `sched_ptr` is a live scheduler allocated just above and never
     // freed; `start_idle_process` is what gives it something to switch to when
@@ -562,7 +562,8 @@ unsafe extern "C" fn ap_entry(hart_id: u64) -> ! {
 
     // 4. The scheduler the BSP built for this hart, already installed in the
     //    per-CPU block `tp` points at.
-    let sched_ptr = crate::kernel::percpu::get().scheduler;
+    let sched_ptr =
+        crate::kernel::percpu::get().scheduler as *mut crate::kernel::process::Scheduler;
     if sched_ptr.is_null() {
         crate::println!(
             "[smp] riscv64 AP: FATAL — hart {} has no scheduler",

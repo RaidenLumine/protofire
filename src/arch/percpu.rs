@@ -46,8 +46,6 @@ pub use super::x86_64::percpu::expects_base_installed;
     all(target_arch = "riscv64", target_os = "none"),
 )))]
 mod absent {
-    use crate::kernel::process::Scheduler;
-
     pub fn base() -> u64 {
         0
     }
@@ -58,7 +56,7 @@ mod absent {
     /// accepted and ignored so that kernel code needs no `cfg` of its own.
     pub unsafe fn set_base(_base: u64) {}
 
-    pub fn scheduler_ptr() -> *mut Scheduler {
+    pub fn scheduler_ptr() -> *mut () {
         core::ptr::null_mut()
     }
 
@@ -117,7 +115,7 @@ pub(crate) fn install_bsp(scheduler: *mut crate::kernel::process::Scheduler) -> 
         // it, and this runs once during boot.
         unsafe {
             crate::arch::x86_64::percpu::init_bsp_data(
-                scheduler,
+                scheduler as *mut (),
                 lapic_id,
                 crate::arch::x86_64::gdt::bsp_tss_ptr() as *mut u8,
             );
@@ -139,7 +137,7 @@ pub(crate) fn install_bsp(scheduler: *mut crate::kernel::process::Scheduler) -> 
         // outlives every access (it is never freed).
         unsafe {
             (*percpu_ptr).cpu_id = 0; // BSP
-            (*percpu_ptr).scheduler = scheduler;
+            (*percpu_ptr).scheduler = scheduler as *mut ();
         }
         // SAFETY: `percpu_ptr` outlives every access, and `set_base` points
         // this CPU's register at it.
@@ -171,7 +169,7 @@ pub(crate) fn install_bsp(scheduler: *mut crate::kernel::process::Scheduler) -> 
         // outlives every access (it is never freed).
         unsafe {
             (*percpu_ptr).cpu_id = 0;
-            (*percpu_ptr).scheduler = scheduler;
+            (*percpu_ptr).scheduler = scheduler as *mut ();
         }
         // SAFETY: `percpu_ptr` outlives every access.  `set_base` writes both
         // `tp` and this CPU's per-CPU slot, and publishes the hart id the
