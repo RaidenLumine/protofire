@@ -24,6 +24,12 @@
 //! moving.  The network clock is the exception that proves the rule — it is a
 //! counter, advanced by the tick, because the protocol code reads *time* from
 //! it rather than *work pending*.
+//!
+//! The tick asks one question — [`request_due_work`] — and the periods stay
+//! here.  How often the block cache wants write-back and how often the audit
+//! ring wants persisting are facts about those subsystems; a scheduler that
+//! read them itself would be naming `audit` and `fs` to answer a question it
+//! has no opinion about.
 
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
@@ -60,6 +66,26 @@ pub(crate) fn request_block_cache_write_back() {
 /// [`request_block_cache_write_back`].
 pub(crate) fn request_audit_persist() {
     AUDIT_PERSIST_DUE.store(true, Ordering::Release);
+}
+
+/// Ask for whatever deferred work is due on this tick.
+///
+/// The tick asks one question and this module owns the periods: how often the
+/// block cache wants write-back and how often the audit ring wants persisting
+/// are facts about those subsystems, not about the scheduler.  The scheduler
+/// naming them made `process` depend on `audit` and on the block cache for a
+/// pair of constants, which is the reverse of the direction every consumer of
+/// `process` depends in.
+///
+/// One atomic store per due job, no lock and no device access: this runs from
+/// the timer interrupt, which is the contract every `request_*` here has.
+pub(crate) fn request_due_work(ticks: u64) {
+    if ticks.is_multiple_of(crate::fs::block_cache::WRITE_BACK_PERIOD_TICKS) {
+        request_block_cache_write_back();
+    }
+    if ticks.is_multiple_of(crate::kernel::audit::persist::PERSIST_PERIOD_TICKS) {
+        request_audit_persist();
+    }
 }
 
 /// Ask for one pass of the network stack's periodic maintenance.

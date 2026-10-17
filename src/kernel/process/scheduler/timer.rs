@@ -253,13 +253,10 @@ impl Scheduler {
         // stops the clock and everything scheduled from it for the length of a
         // flush.  The maintenance thread performs the work instead; see
         // `src/kernel/maintenance.rs`.
-        if ticks.is_multiple_of(crate::fs::block_cache::WRITE_BACK_PERIOD_TICKS) {
-            crate::kernel::maintenance::request_block_cache_write_back();
-        }
-
-        if ticks.is_multiple_of(crate::kernel::audit::persist::PERSIST_PERIOD_TICKS) {
-            crate::kernel::maintenance::request_audit_persist();
-        }
+        //
+        // Which periods those are is the maintenance module's business: it is
+        // the scheduler asking, not the scheduler deciding.
+        crate::kernel::maintenance::request_due_work(ticks);
 
         // DHCP lease renewal — bare-metal only; there is no DHCP server in
         // test mode.  Check once per second (every 100 ticks at 100 Hz).

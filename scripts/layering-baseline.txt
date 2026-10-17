@@ -78,6 +78,15 @@
 # old one on the reverse edge.  The total occurrences are unchanged, and the
 # only direction removed is the wrong one.
 #
+# `process` no longer names `audit` or `fs` either.  Its two remaining edges
+# were the tick asking "is the audit ring due to persist?" and "is the block
+# cache due to write back?" — two period constants, read by the scheduler so
+# it could set two flags in `maintenance`.  The scheduler now calls
+# `maintenance::request_due_work(ticks)` and the periods stay with the
+# subsystems that chose them.  `maintenance` gained those two rows in the same
+# change because it is the module that was always meant to own the schedule;
+# `process` -> `maintenance` lost one for the same reason.
+#
 # One module is a diagnostic rather than a layer: `vm_churn` exists to stress
 # the stack window and the invalidation log, so it names `memory`, `process`,
 # and `smp` on purpose — its rows are the number of structures it drives, not
@@ -191,8 +200,8 @@ irq_stats                    percpu                       1
 irq_stats                    sync                         3
 kernel_log                   fs                           4
 kernel_log                   sync                         1
-maintenance                  audit                        1
-maintenance                  fs                           3
+maintenance                  audit                        2
+maintenance                  fs                           4
 maintenance                  heartbeat                    1
 maintenance                  network                      1
 maintenance                  perf_baseline                2
@@ -233,13 +242,12 @@ perf_baseline                memory                       2
 perf_baseline                network                      1
 perf_baseline                workload                     1
 power                        sync                         2
-process                      audit                        1
 process                      device                       7
 process                      drivers                      4
-process                      fs                           15
+process                      fs                           14
 process                      handle_rights                2
 process                      irq_balance                  2
-process                      maintenance                  3
+process                      maintenance                  2
 process                      memory                       24
 process                      network                      16
 process                      percpu                       12
