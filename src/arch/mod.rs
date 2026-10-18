@@ -115,6 +115,20 @@ pub const TARGET_ARCH: &str = "x86_64";
 )))]
 pub const TARGET_ARCH: &str = "unknown";
 
+/// The base page granularity, in bytes.
+///
+/// A machine fact, so it lives with the machines.  Every mapping in this tree
+/// assumes a 4 KiB granule — all three architectures this kernel boots use
+/// one — and the arithmetic that depends on it (a fault address's page base, a
+/// range's page count, the bits a page table entry carries) is spread across
+/// `memory`, `kernel::smp` and `arch` itself.
+///
+/// Defining it here is what keeps those from depending on each other for it.
+/// A machine with a different granule would define its own and this constant
+/// would move into that architecture's module, because the arithmetic above
+/// reads the number rather than deriving it.
+pub const PAGE_SIZE: usize = 4096;
+
 // Restoring the user context a signal frame recorded is the machine's: the
 // frame's shape, and what a return from a signal handler has to put back.
 // The syscall that asks is the same on every machine; the answer is not.

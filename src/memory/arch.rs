@@ -216,7 +216,7 @@ fn undescribed_and_reserved_bytes(
                 at = next;
             }
             None => {
-                let step = crate::memory::paging::PAGE_SIZE.min(end - at);
+                let step = crate::arch::PAGE_SIZE.min(end - at);
                 undescribed = undescribed.saturating_add(step);
                 at += step;
             }

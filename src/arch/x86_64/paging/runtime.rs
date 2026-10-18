@@ -952,7 +952,7 @@ pub(crate) fn runtime_kernel_page_plan_impl(heap_bounds: (usize, usize)) -> Opti
 /// Round `address` up to the next page boundary.
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 fn page_align_up(address: usize) -> usize {
-    let page_size = crate::memory::paging::PAGE_SIZE;
+    let page_size = crate::arch::PAGE_SIZE;
     (address + page_size - 1) & !(page_size - 1)
 }
 

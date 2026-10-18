@@ -3,9 +3,9 @@
 //! madvise — give advice about memory use (syscall #133).
 //! Provides hints about memory usage patterns to the kernel.
 
+use crate::arch::PAGE_SIZE;
 use crate::memory::paging::AdviceHint;
 use crate::memory::paging::MappingKind;
-use crate::memory::paging::PAGE_SIZE;
 use crate::Error;
 use crate::Result;
 

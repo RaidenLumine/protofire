@@ -8,7 +8,12 @@ use crate::memory::alloc_profiler::AllocProfiler;
 use crate::Error;
 use crate::Result;
 
-pub const PAGE_SIZE: usize = 4096;
+/// The page size is the machine's, so the one definition is
+/// [`crate::arch::PAGE_SIZE`]; this module re-exports it because the mapping
+/// primitives below are written in terms of it.  It used to be defined here,
+/// which made `kernel::smp` and `arch` itself reach up into the memory
+/// subsystem for a number neither of them is about.
+pub use crate::arch::PAGE_SIZE;
 
 /// Advice hint for memory usage patterns (set via madvise).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

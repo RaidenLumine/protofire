@@ -230,7 +230,7 @@ fn churn() {
 /// that tears down a range of mappings looks like to the log.
 #[cfg(feature = "stack_churn")]
 fn post_burst() {
-    use crate::memory::paging::PAGE_SIZE;
+    use crate::arch::PAGE_SIZE;
 
     /// An address nothing has mapped: the point is the bookkeeping, and
     /// invalidating an unmapped page is harmless.

@@ -641,7 +641,7 @@ mod tests {
 
         let (heap_start, _) = memory.heap_bounds();
         memory
-            .unmap(heap_start, crate::memory::paging::PAGE_SIZE)
+            .unmap(heap_start, crate::arch::PAGE_SIZE)
             .expect("unmap one heap page");
 
         let missing = memory.page_fault_insight(heap_start);
@@ -798,12 +798,12 @@ mod tests {
 
         let (heap_start, _) = memory.heap_bounds();
         memory
-            .unmap(heap_start, crate::memory::paging::PAGE_SIZE)
+            .unmap(heap_start, crate::arch::PAGE_SIZE)
             .expect("unmap one heap page for write upgrade");
         memory
             .map_region_with_kind(
                 heap_start,
-                crate::memory::paging::PAGE_SIZE,
+                crate::arch::PAGE_SIZE,
                 PagePermissions::READ,
                 MappingKind::KernelHeap,
             )
@@ -872,7 +872,7 @@ mod tests {
         let (_, heap_end) = memory.heap_bounds();
         let result = apply_page_fault_recovery_action(
             &mut memory,
-            heap_end + crate::memory::paging::PAGE_SIZE,
+            heap_end + crate::arch::PAGE_SIZE,
             ExceptionRecoveryAction::UpgradeKernelHeapPageWrite,
         );
 

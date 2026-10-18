@@ -20,7 +20,7 @@
 
 use core::arch::asm;
 
-use crate::memory::paging::PAGE_SIZE;
+use crate::arch::PAGE_SIZE;
 
 /// Drop `[start, end)` from this hart's TLB, one page at a time.
 ///

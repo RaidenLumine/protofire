@@ -664,11 +664,11 @@ pub(crate) fn apply_page_fault_recovery_action(
 ) -> ExceptionRecoveryActionResult {
     match action {
         ExceptionRecoveryAction::MapKernelHeapPage => {
-            let page_start = fault_address & !(crate::memory::paging::PAGE_SIZE - 1);
+            let page_start = fault_address & !(crate::arch::PAGE_SIZE - 1);
             if memory
                 .map_region_with_kind(
                     page_start,
-                    crate::memory::paging::PAGE_SIZE,
+                    crate::arch::PAGE_SIZE,
                     crate::memory::paging::PagePermissions::READ_WRITE,
                     crate::memory::paging::MappingKind::KernelHeap,
                 )
@@ -680,17 +680,14 @@ pub(crate) fn apply_page_fault_recovery_action(
             }
         }
         ExceptionRecoveryAction::UpgradeKernelHeapPageWrite => {
-            let page_start = fault_address & !(crate::memory::paging::PAGE_SIZE - 1);
+            let page_start = fault_address & !(crate::arch::PAGE_SIZE - 1);
             let Some((physical_address, _)) = memory.translate(page_start) else {
                 return ExceptionRecoveryActionResult::Declined;
             };
 
             // Remap the same heap-owned page with wider permissions so the
             // physical backing and mapping-kind bookkeeping stay unchanged.
-            if memory
-                .unmap(page_start, crate::memory::paging::PAGE_SIZE)
-                .is_err()
-            {
+            if memory.unmap(page_start, crate::arch::PAGE_SIZE).is_err() {
                 return ExceptionRecoveryActionResult::Error;
             }
 
@@ -698,7 +695,7 @@ pub(crate) fn apply_page_fault_recovery_action(
                 .map_to_with_kind(
                     page_start,
                     physical_address,
-                    crate::memory::paging::PAGE_SIZE,
+                    crate::arch::PAGE_SIZE,
                     crate::memory::paging::PagePermissions::READ_WRITE,
                     crate::memory::paging::MappingKind::KernelHeap,
                 )

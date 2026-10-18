@@ -86,7 +86,7 @@ impl MemoryManager {
         // chosen by the linker and is not guaranteed to land on a page
         // boundary; mapping or unmapping an unaligned base would produce
         // partial-page mappings that corrupt the page-table model.
-        let page_mask = crate::memory::paging::PAGE_SIZE - 1;
+        let page_mask = crate::arch::PAGE_SIZE - 1;
         self.kernel_heap_start = raw_start & !page_mask;
         self.kernel_heap_end = (raw_end + page_mask) & !page_mask;
     }

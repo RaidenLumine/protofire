@@ -482,14 +482,14 @@ fn handle_current_el_sync(frame: &mut TrapFrame) -> bool {
         return false;
     };
 
-    let page_start = fault_address & !(crate::memory::paging::PAGE_SIZE - 1);
+    let page_start = fault_address & !(crate::arch::PAGE_SIZE - 1);
 
     match action {
         ExceptionRecoveryAction::MapKernelHeapPage => {
             if memory
                 .map_region_with_kind(
                     page_start,
-                    crate::memory::paging::PAGE_SIZE,
+                    crate::arch::PAGE_SIZE,
                     PagePermissions::READ_WRITE,
                     crate::memory::paging::MappingKind::KernelHeap,
                 )
@@ -505,12 +505,12 @@ fn handle_current_el_sync(frame: &mut TrapFrame) -> bool {
         ExceptionRecoveryAction::UpgradeKernelHeapPageWrite => {
             if let Some((phys, _)) = memory.translate(page_start) {
                 // Unmap the read-only entry and re-map with RW.
-                let _ = memory.unmap(page_start, crate::memory::paging::PAGE_SIZE);
+                let _ = memory.unmap(page_start, crate::arch::PAGE_SIZE);
                 if memory
                     .map_to_with_kind(
                         page_start,
                         phys,
-                        crate::memory::paging::PAGE_SIZE,
+                        crate::arch::PAGE_SIZE,
                         PagePermissions::READ_WRITE,
                         crate::memory::paging::MappingKind::KernelHeap,
                     )

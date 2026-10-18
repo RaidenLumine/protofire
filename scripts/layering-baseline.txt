@@ -96,6 +96,15 @@
 # id it carries; `process` -> `percpu` is untouched, because "which CPU am I
 # on" is a question the scheduler is supposed to ask.
 #
+# `smp` no longer names `memory`.  Its five edges were all `PAGE_SIZE`, read to
+# round an address down to a page base and to count the pages in a range.  A
+# page size is a fact about the machine, so it is defined in `arch` now and
+# every reader looks down at it — `memory`, `smp`, `syscall` and the
+# architectures themselves.  `memory` -> `smp` stays: a page-table edit that
+# has to tell the other CPUs to drop a translation is a real call, and the
+# direction is the one the edit travels.  `syscall` -> `memory` and `vm_churn`
+# -> `memory` each lost one for the same reason.
+#
 # `process` <-> `shm` stays, and it is not the shape the cuts above removed.
 # `shm` names `Process` because attaching a segment maps physical frames into
 # that process's page tables — the same reason `memory` names it, and a
@@ -292,7 +301,6 @@ shm                          memory                       7
 shm                          process                      1
 shm                          scheduler                    3
 shm                          sync                         1
-smp                          memory                       5
 smp                          percpu                       3
 syscall                      audit                        9
 syscall                      boot_report                  2
@@ -302,7 +310,7 @@ syscall                      ipc                          6
 syscall                      irq_balance                  3
 syscall                      irq_stats                    1
 syscall                      kernel_log                   4
-syscall                      memory                       15
+syscall                      memory                       14
 syscall                      network                      18
 syscall                      percpu                       1
 syscall                      power                        1
@@ -314,7 +322,6 @@ syscall                      user                         2
 user                         fs                           2
 user                         process                      7
 user                         sync                         1
-vm_churn                     memory                       1
 vm_churn                     process                      6
 vm_churn                     smp                          4
 workload                     block                        2

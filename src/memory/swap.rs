@@ -12,9 +12,9 @@ use core::fmt;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use crate::arch::PAGE_SIZE;
 use crate::fs::block::BlockDevice;
 use crate::fs::block::BLOCK_SIZE;
-use crate::memory::paging::PAGE_SIZE;
 use crate::Error;
 use crate::Result;
 
