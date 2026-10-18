@@ -5,7 +5,6 @@
 use alloc::vec::Vec;
 
 use crate::arch;
-use crate::drivers::serial;
 
 use super::super::thread::ThreadSchedPolicy;
 use super::super::ThreadPriority;
@@ -192,33 +191,12 @@ impl Scheduler {
             *self.simulated_ticks.lock() = ticks;
         }
 
-        // A machine whose console UART delivers its bytes by interrupt needs
-        // no poll here — x86_64's COM1, the aarch64 PL011 and the riscv64
-        // 16550 all do (`drivers::serial::handle_rx_interrupt`), including an
-        // AIA machine, whose line the supervisor APLIC turns into a message —
-        // so input no longer depends on this tick running.  A machine that
-        // *tried* to arm its UART and could not answers `false` and keeps the
-        // poll; which kind of UART this is, is the machine's answer.
-        if !crate::arch::serial::rx_is_interrupt_driven() {
-            let _ = serial::poll_hardware_rx();
-        }
-        // Drain the xHCI event ring with the blocking lock.  The controller
-        // has a claimed MSI-X vector and its handler acknowledges and drains,
-        // but the handler takes the ring with `try_lock` — an interrupt must
-        // not wait on a transfer's owner — so a report that arrived under a
-        // transfer's wait is left for this drain, and a machine whose claim
-        // was refused has no handler at all.  That is an edge of the lock's
-        // shape, not a stop-gap; RFC 0021 is what decides it stays.
-        let _ = crate::drivers::xhci::xhci_poll();
-
-        // Poll MMIO virtio-input keyboards (aarch64/riscv64 QEMU virt) and
-        // flush the virtio-gpu scanout framebuffer when the console marked it
-        // dirty.  Neither is a missing interrupt: the virtio-mmio transport
-        // carries no identity a claim could own (RFC 0021), and the GPU's
-        // flush is a console-dirty condition rather than a completion.  Both
-        // are no-ops on hosts and on a machine with no such device.
-        crate::drivers::virtio_input::poll_hardware();
-        crate::drivers::virtio_gpu::poll_flush();
+        // The devices that need a slice of every tick.  Which ones, and why,
+        // is the driver layer's to say (RFC 0021 decides each, and
+        // `drivers::poll_periodic` collects them); the tick's half is only
+        // that a tick happened.  Keeping the names there is what lets a
+        // fourth polling device arrive without editing the scheduler.
+        crate::drivers::poll_periodic();
 
         // Advance the network stack's clock (ARP cache eviction, TCP
         // retransmission timers and TimeWait cleanup are all measured in it)

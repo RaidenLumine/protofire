@@ -166,6 +166,22 @@
 # That removes the `fs` <-> `memory` cycle; `fs` -> `memory` stays as one-way
 # debt for the page codec it shares and the demo heap probes below.
 #
+# `process` -> `drivers` is down to one edge, and the remaining one is the
+# right shape.  The tick used to name four drivers by name —
+# `serial::poll_hardware_rx`, `xhci::xhci_poll`, `virtio_input::poll_hardware`,
+# `virtio_gpu::poll_flush` — which meant the scheduler had to be edited when a
+# fourth polling device arrived, and made it depend on each driver's module.
+# It calls `drivers::poll_periodic()` now: the tick's half is "a tick
+# happened", and the driver layer owns which devices want a slice of it.  The
+# RFC 0021 reasons for each poll moved with the calls, into that function's
+# doc, because they are decisions about devices.
+#
+# `drivers` -> `process` (17) is not the other half of a cut: sixteen are each
+# driver's own wait queue (`wait::Condvar`, `wait::input_wait`), which is what
+# the code-style chapter says a blocking driver is supposed to name, and the
+# seventeenth is a `Scheduler` reference inside `serial`'s test module.  The
+# pair is a cycle in the census and not one in the design.
+#
 # `process` <-> `shm` stays, and it is not the shape the cuts above removed.
 # `shm` names `Process` because attaching a segment maps physical frames into
 # that process's page tables — the same reason `memory` names it, and a
@@ -331,7 +347,7 @@ perf_baseline                network                      1
 perf_baseline                workload                     1
 power                        sync                         2
 process                      device                       7
-process                      drivers                      4
+process                      drivers                      1
 process                      fs                           14
 process                      handle_rights                2
 process                      irq_balance                  2

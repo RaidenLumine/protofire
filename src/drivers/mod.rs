@@ -190,6 +190,37 @@ pub fn bound_devices() -> Vec<DeviceNode> {
     BOUND_DEVICES.lock().devices().to_vec()
 }
 
+/// Run every device poll the timer tick owns.
+///
+/// The scheduler's tick knows that a tick happened; it does not know which
+/// devices are on this machine, and it should not have to be edited when a
+/// fourth one needs polling.  Each poll below is here because RFC 0021 decided
+/// it belongs on the tick rather than on an interrupt, and this function is
+/// where those decisions are collected:
+///
+/// * the console UART, and only when its own machine answered that it could not
+///   deliver bytes by interrupt — `arch::serial::rx_is_interrupt_driven` is the
+///   machine's answer, so an interrupt-driven UART costs nothing here;
+/// * xHCI's event ring, because its handler takes the ring with `try_lock` and
+///   an interrupt must not wait on a transfer's owner;
+/// * `virtio-input`'s event queue, because the virtio-mmio transport carries no
+///   identity a claim could own;
+/// * the virtio-gpu flush, which is a console-dirty condition rather than a
+///   completion.
+///
+/// All four are no-ops on a host and on a machine with none of these devices.
+/// The order is the order the polls arrived in and carries no meaning; a poll
+/// that needed to run before another would have to say why here.
+pub fn poll_periodic() {
+    // A UART that delivers by interrupt needs no poll, and says so itself.
+    if !crate::arch::serial::rx_is_interrupt_driven() {
+        let _ = serial::poll_hardware_rx();
+    }
+    let _ = xhci::xhci_poll();
+    virtio_input::poll_hardware();
+    virtio_gpu::poll_flush();
+}
+
 /// Forget every bound device.
 ///
 /// The registry is process-global, so a test that records devices changes what
