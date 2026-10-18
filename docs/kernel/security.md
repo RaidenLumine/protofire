@@ -92,6 +92,15 @@ the one that may set `authenticated`.
 and `resolve_home_dir`/`uid_to_username`/`username_to_uid` are how the rest
 of the kernel maps between the two.
 
+A process's own home directory is process state, so it is asked of
+`kernel::process::home_dir` rather than of this module: the process table
+cannot name the account database (that store is a file, so it sits above the
+process table), and the boot installs `user`'s resolver into a slot the process
+module owns.  Before that installation the slot answers the pure
+`home_dir_for_uid` fallback, which is what a machine with no account store
+reports — so early boot, and every host test, behaves as it did before the
+inversion.
+
 ## Service authorization
 
 A privileged service declares its account in its rc.d definition
