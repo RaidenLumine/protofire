@@ -16,11 +16,6 @@ use alloc::sync::Arc;
 use super::process::scheduler::load_current_scheduler_ptr;
 use super::process::Process;
 
-/// Number of frames below which we consider the system OOM.
-/// When fewer than this many frames are free, page-fault allocation
-/// failures trigger the OOM killer instead of propagating an error.
-pub const OOM_MIN_FREE_FRAMES: usize = 4;
-
 // ── Badness scoring ─────────────────────────────────────────────────────────
 
 /// Compute an OOM-badness score for a single process.
@@ -137,35 +132,6 @@ pub fn oom_kill() -> bool {
     // as long as the CPU is up.
     let scheduler = unsafe { &*sched_ptr };
     scheduler.send_signal(0, pid, 9, 0).is_ok()
-}
-
-// ── OOM-triggered allocation retry ──────────────────────────────────────────
-
-/// Try to allocate `count` frames; if the first attempt fails, invoke the OOM
-/// killer and retry once.
-///
-/// Returns `None` only when both the initial allocation AND the post-OOM retry
-/// fail, indicating genuine exhaustion with no killable victim.
-pub fn allocate_or_oom(count: usize) -> Option<*mut u8> {
-    let frames = crate::memory::global_mut()?.allocate_frames(count);
-
-    if frames.is_some() {
-        return frames;
-    }
-
-    // First attempt failed — invoke the OOM killer.
-    if oom_kill() {
-        // Retry the allocation after freeing memory.
-        let retry = crate::memory::global_mut()?.allocate_frames(count);
-        if retry.is_some() {
-            return retry;
-        }
-        // Even after killing a process we're still OOM — try once more.
-        #[cfg(target_os = "none")]
-        crate::println!("[oom  ] retry after kill still failed for {} frames", count);
-    }
-
-    None
 }
 
 #[cfg(test)]

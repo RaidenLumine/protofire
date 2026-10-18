@@ -105,6 +105,15 @@
 # direction is the one the edit travels.  `syscall` -> `memory` and `vm_churn`
 # -> `memory` each lost one for the same reason.
 #
+# `oom` no longer names `memory`.  Both edges were `allocate_or_oom`, a
+# retry-after-kill wrapper that nothing called: the two page-fault paths that
+# needed that policy already spell it out, and they cannot share this one
+# because they hold `&mut MemoryManager` and the wrapper would take the global
+# lock over it.  The function was a second, unused copy of a policy that lives
+# where it is used, so it is gone.  `memory` -> `oom` stays: a frame
+# allocation that cannot be satisfied is the one place that asks the killer,
+# and that is the direction the question travels.
+#
 # `process` <-> `shm` stays, and it is not the shape the cuts above removed.
 # `shm` names `Process` because attaching a segment maps physical frames into
 # that process's page tables — the same reason `memory` names it, and a
@@ -259,7 +268,6 @@ network                      process                      3
 network                      random                       5
 network                      sync                         17
 nmi                          sync                         1
-oom                          memory                       2
 oom                          process                      3
 percpu                       topology                     2
 perf_baseline                block                        1
