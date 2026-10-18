@@ -114,6 +114,14 @@
 # allocation that cannot be satisfied is the one place that asks the killer,
 # and that is the direction the question travels.
 #
+# `process` <-> `maintenance` is the remaining pair that is not a cut.  The
+# module *is* a thread — it sleeps on the scheduler's wait queue and reads the
+# scheduler's clock — and the tick is the only thing that knows a tick
+# happened, which is what deferred work is deferred from.  Removing either end
+# would mean a worker that cannot park or a tick that cannot say "later".  The
+# two rows in `process` are `request_due_work` and `request_network_maintenance`
+# from the tick; the two in `maintenance` are the sleep and the clock read.
+#
 # `process` <-> `shm` stays, and it is not the shape the cuts above removed.
 # `shm` names `Process` because attaching a segment maps physical frames into
 # that process's page tables — the same reason `memory` names it, and a
