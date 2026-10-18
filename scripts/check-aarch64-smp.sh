@@ -69,6 +69,15 @@ timeout "${TIMEOUT_SECONDS}s" "$QEMU" \
 fail() {
     printf 'aarch64 SMP check failed: %s\n' "$1" >&2
     printf '  serial log: %s bytes at %s\n' "$(wc -c <"$log_file" | tr -d ' ')" "$log_file" >&2
+    # Print the scheduler lines themselves, not the tail of the log.  A
+    # `[sched ]` line is printed once, often long before the end of the boot,
+    # so a tail can miss the one line the failure is about — and a failure
+    # nobody can read is a failure nobody can attribute.
+    if grep -a -F '[sched ]' "$log_file" >/dev/null 2>&1; then
+        printf '  the scheduler said:\n' >&2
+        grep -a -F '[sched ]' "$log_file" >&2
+    fi
+    tail -n 12 "$log_file" >&2
     exit 1
 }
 
