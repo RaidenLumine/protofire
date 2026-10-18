@@ -367,6 +367,15 @@ require_log_line "system: slot b active (build 2)"
 # policy in `src/fs/write_locations.rs` is visible in a log rather than
 # only in the source.
 require_log_line "runtime writes: /tmp (volatile), /data (persistent)"
+# The two virtual filesystems mounted by the boot rather than by `fs`'s own
+# layout.  Both are views over kernel state (the process table, the log ring
+# buffer) and both are mounted after the global filesystem exists — moving
+# either back into `install_default_layout` would mount it before the global
+# and fail into a `let _ =`, which is how `/proc` once went missing without a
+# boot ever saying so.  Asserting the lines keeps the move honest: a mount
+# that silently stopped happening leaves every other assertion here passing.
+require_log_line "[fs    ] mounted procfs at /proc"
+require_log_line "[fs    ] mounted kernel logs at /system/logs"
 require_log_line "adastra init (ring 3): reading /system/rc.d"
 # The distribution's first install: the disk stages a package in the download
 # cache and init installs it, so a boot shows the whole loop rather than only

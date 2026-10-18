@@ -364,6 +364,21 @@ impl Kernel {
         } else {
             println!("[fs    ] mounted procfs at /proc");
         }
+        // `/system/logs` is the same shape: a virtual filesystem over this
+        // kernel's own log ring buffer, mounted by the layer that knows both
+        // halves.  It moved here for the same reason `/proc` did — `fs` was
+        // naming `kernel::kernel_log` for it, which is an edge from the
+        // filesystem to a reader of itself.
+        let kernel_logs_path = crate::fs::KERNEL_LOGS_MOUNT_PATH;
+        if let Err(error) = crate::kernel::kernel_log::mount_kernel_logs(kernel_logs_path) {
+            println!(
+                "[fs    ] kernel logs not mounted at {}: {}",
+                kernel_logs_path,
+                error.as_str()
+            );
+        } else {
+            println!("[fs    ] mounted kernel logs at {}", kernel_logs_path);
+        }
         // Boot recovery walks and repairs every mounted volume while holding
         // the global filesystem lock.  Measured as its own scope because it is
         // a one-off whose cost is otherwise invisible in the syscall numbers.

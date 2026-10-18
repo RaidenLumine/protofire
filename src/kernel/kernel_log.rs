@@ -235,6 +235,34 @@ impl FileSystem for KernelLogFileSystem {
     }
 }
 
+/// Register and mount the kernel log filesystem.
+///
+/// The mount is issued by whoever knows both halves — the layer that installed
+/// the global filesystem and knows the log's ring buffer is up.  It is not
+/// done from `fs`'s own layout: `/system/logs` is a view over this module's
+/// ring buffer rather than a part of storage, and a filesystem that named this
+/// module would depend on every reader of the log for one mount.
+///
+/// This mirrors [`crate::kernel::procfs::mount_procfs`], which is the same
+/// shape: a virtual filesystem that names `fs` (it *is* one) and is mounted by
+/// the boot rather than by `fs`.
+pub fn mount_kernel_logs(mount_path: &str) -> Result<()> {
+    use crate::fs::global;
+    use crate::fs::layout::MOUNT_READ_ONLY;
+    use crate::fs::KERNEL_LOGS_FS_NAME;
+    use crate::fs::KERNEL_LOGS_MOUNT_DEVICE;
+
+    let fs = global().ok_or(Error::InternalError)?;
+    let mut fs_guard = fs.lock();
+    fs_guard.register(KERNEL_LOGS_FS_NAME, Arc::new(KernelLogFileSystem));
+    fs_guard.mount(
+        KERNEL_LOGS_MOUNT_DEVICE,
+        mount_path,
+        KERNEL_LOGS_FS_NAME,
+        MOUNT_READ_ONLY,
+    )
+}
+
 // ─── tests ───
 
 #[cfg(test)]

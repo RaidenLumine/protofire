@@ -8,7 +8,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::kernel::device;
-use crate::kernel::kernel_log::KernelLogFileSystem;
 use crate::Result;
 
 use super::super::block::BlockDevice;
@@ -32,9 +31,6 @@ use super::types::ZoneDeviceBindings;
 use super::super::DEVFS_FS_NAME;
 use super::super::DEVFS_MOUNT_DEVICE;
 use super::super::DEVFS_MOUNT_PATH;
-use super::super::KERNEL_LOGS_FS_NAME;
-use super::super::KERNEL_LOGS_MOUNT_DEVICE;
-use super::super::KERNEL_LOGS_MOUNT_PATH;
 use super::super::SERVICEFS_FS_NAME;
 use super::super::SERVICEFS_MOUNT_DEVICE;
 use super::super::SERVICEFS_MOUNT_PATH;
@@ -57,7 +53,6 @@ impl FileSystem {
         let _ = self.install_temp_layout();
 
         self.install_virtual_device_layout();
-        self.install_kernel_logs_layout();
         self.install_devfs_layout();
         self.install_servicefs_layout();
     }
@@ -85,17 +80,6 @@ impl FileSystem {
             VIRTUAL_DEVICE_MOUNT_DEVICE,
             VIRTUAL_DEVICE_MOUNT_PATH,
             VIRTUAL_DEVICE_FS_NAME,
-            layout::MOUNT_READ_ONLY,
-        );
-    }
-
-    pub(crate) fn install_kernel_logs_layout(&mut self) {
-        let logs_fs = KernelLogFileSystem;
-        self.register(KERNEL_LOGS_FS_NAME, Arc::new(logs_fs));
-        let _ = self.mount(
-            KERNEL_LOGS_MOUNT_DEVICE,
-            KERNEL_LOGS_MOUNT_PATH,
-            KERNEL_LOGS_FS_NAME,
             layout::MOUNT_READ_ONLY,
         );
     }

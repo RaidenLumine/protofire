@@ -122,6 +122,17 @@
 # two rows in `process` are `request_due_work` and `request_network_maintenance`
 # from the tick; the two in `maintenance` are the sleep and the clock read.
 #
+# `fs` no longer names `kernel_log`.  Its one edge was the `/system/logs` mount
+# in `install_default_layout`, which made the filesystem depend on a *reader*
+# of itself.  `/system/logs` is a view over the log ring buffer, the same shape
+# `/proc` has over the process table, so it is mounted the way `/proc` is: by
+# the boot, after the global filesystem exists, through
+# `kernel_log::mount_kernel_logs`.  That is also the ordering that matters —
+# `fs`'s own layout runs before the global is installed, and a mount that
+# looked it up there failed into a `let _ =` (which is how `/proc` went missing
+# once).  `kernel_log` -> `fs` is unchanged in kind: a virtual filesystem names
+# `fs` because it is one, exactly as `procfs` does.
+#
 # `process` <-> `shm` stays, and it is not the shape the cuts above removed.
 # `shm` names `Process` because attaching a segment maps physical frames into
 # that process's page tables — the same reason `memory` names it, and a
@@ -230,7 +241,6 @@ fs                           block                        3
 fs                           compression                  2
 fs                           crypto                       10
 fs                           drivers                      2
-fs                           kernel_log                   1
 fs                           memory                       5
 fs                           security                     29
 fs                           service                      5
@@ -243,7 +253,7 @@ ipc                          process                      1
 ipc                          sync                         1
 irq_stats                    percpu                       1
 irq_stats                    sync                         3
-kernel_log                   fs                           4
+kernel_log                   fs                           8
 kernel_log                   sync                         1
 maintenance                  audit                        2
 maintenance                  fs                           4
@@ -260,7 +270,8 @@ mod                          audit                        6
 mod                          block                        1
 mod                          device                       1
 mod                          drivers                      1
-mod                          fs                           15
+mod                          fs                           16
+mod                          kernel_log                   1
 mod                          memory                       6
 mod                          network                      6
 mod                          percpu                       2
