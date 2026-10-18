@@ -7,7 +7,6 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::kernel::device;
-use crate::kernel::user::resolve_home_dir;
 #[allow(unused_imports)]
 use crate::println;
 use crate::Error;
@@ -151,8 +150,9 @@ impl Process {
     }
 
     fn clear_exec_runtime_state(&self) {
-        *self.current_working_dir.lock() = resolve_home_dir(self.security_token.lock().user_id);
-        *self.home_dir.lock() = resolve_home_dir(self.security_token.lock().user_id);
+        *self.current_working_dir.lock() =
+            super::handle_entry::home_dir(self.security_token.lock().user_id);
+        *self.home_dir.lock() = super::handle_entry::home_dir(self.security_token.lock().user_id);
         *self.launch_context.lock() = None;
         // Unregister user pages from the software page table before dropping
         // the address space, so stale entries don't persist.

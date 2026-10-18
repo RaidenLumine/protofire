@@ -18,7 +18,6 @@ use alloc::vec::Vec;
 use crate::kernel::process::wait::Event;
 use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
-use crate::kernel::user::resolve_home_dir;
 #[allow(unused_imports)]
 use crate::println;
 use crate::Error;
@@ -93,8 +92,8 @@ impl Process {
             signal_mask: Mutex::new(0),
             signal_queue: WaitQueue::with_state(PendingProcessSignalState::new()),
             security_token: Mutex::new(security_token),
-            current_working_dir: Mutex::new(resolve_home_dir(security_token.user_id)),
-            home_dir: Mutex::new(resolve_home_dir(security_token.user_id)),
+            current_working_dir: Mutex::new(super::handle_entry::home_dir(security_token.user_id)),
+            home_dir: Mutex::new(super::handle_entry::home_dir(security_token.user_id)),
             launch_context: Mutex::new(None),
             user_address_space: Mutex::new(None),
             termination_event: Event::manual_reset(false),
@@ -502,7 +501,7 @@ impl Process {
         };
 
         *self.current_working_dir.lock() = launch.working_dir.clone();
-        *self.home_dir.lock() = resolve_home_dir(self.security_token.lock().user_id);
+        *self.home_dir.lock() = super::handle_entry::home_dir(self.security_token.lock().user_id);
         *self.launch_context.lock() = Some(launch);
         *self.user_address_space.lock() = user_address_space;
 

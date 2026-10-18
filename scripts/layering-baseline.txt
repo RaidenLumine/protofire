@@ -133,6 +133,18 @@
 # once).  `kernel_log` -> `fs` is unchanged in kind: a virtual filesystem names
 # `fs` because it is one, exactly as `procfs` does.
 #
+# `process` <-> `user` is gone, and it was the pair where both directions
+# looked reasonable.  `user` names `process` for the account types and the
+# handle rights it stores, and for `home_dir_for_uid` as its own fallback;
+# `process` named `user` for `resolve_home_dir`, the database's answer, which
+# is richer than the pure fallback.  The richer answer is the one that is not
+# process state: it reads a file.  `process` now asks its own slot
+# (`process::home_dir`), which answers with the pure function until `user`
+# installs its resolver at boot — the same inversion
+# `block::set_device_publisher` uses.  `user` -> `process` therefore stays and
+# grows, which is the correct direction: the account store is a consumer of
+# the process table, not the other way round.
+#
 # `process` <-> `shm` stays, and it is not the shape the cuts above removed.
 # `shm` names `Process` because attaching a segment maps physical frames into
 # that process's page tables — the same reason `memory` names it, and a
@@ -279,6 +291,7 @@ mod                          power                        1
 mod                          procfs                       1
 mod                          syscall                      4
 mod                          topology                     5
+mod                          user                         1
 mod                          workload                     3
 network                      crypto                       30
 network                      fs                           6
@@ -311,7 +324,6 @@ process                      shm                          1
 process                      smp                          15
 process                      softirq                      1
 process                      sync                         21
-process                      user                         2
 procfs                       fs                           8
 procfs                       process                      18
 procfs                       smp                          1
@@ -347,7 +359,7 @@ syscall                      service                      1
 syscall                      sync                         6
 syscall                      user                         2
 user                         fs                           2
-user                         process                      7
+user                         process                      10
 user                         sync                         1
 vm_churn                     process                      6
 vm_churn                     smp                          4

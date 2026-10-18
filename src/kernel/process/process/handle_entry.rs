@@ -3,6 +3,8 @@
 //! Handle entry methods: stream I/O, stat, handle/fd reopening.
 
 use alloc::string::String;
+use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::Ordering;
 
 use crate::abi::fs as fs_abi;
 use crate::fs::FileMetadata;
@@ -27,6 +29,50 @@ pub fn home_dir_for_uid(uid: UserId) -> String {
             path
         }
     }
+}
+
+/// The richer answer than [`home_dir_for_uid`]: an account's own `home` when
+/// the user database has one.
+///
+/// The database is above this module — it reads a file, so it needs the
+/// filesystem, which is above `process` — and it used to reach back down for
+/// `home_dir_for_uid` while `process` reached up for it, which is the pair the
+/// layering census lists as `user` <-> `process`.
+///
+/// The slot is the same shape `block::set_device_publisher` uses: the owner of
+/// the database installs its resolver at boot, and a build that never installs
+/// one — a host test, or a kernel before the user database exists — falls back
+/// to the pure function below.  A plain function pointer, not a closure: no
+/// allocation, and one sink.
+pub type HomeDirResolver = fn(UserId) -> String;
+
+/// The installed resolver, or null.
+///
+/// An atomic rather than a mutex because the slot is written once at boot and
+/// read on a path that allocates a `String` anyway: the lock would add a
+/// dependency on `sync` and a serialisation point for no ordering benefit.
+static HOME_DIR_RESOLVER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Install the resolver a process asks for a home directory with.
+///
+/// Called once, by the layer that owns the user database.
+pub fn set_home_dir_resolver(resolver: HomeDirResolver) {
+    HOME_DIR_RESOLVER.store(resolver as *mut (), Ordering::Release);
+}
+
+/// The home directory of `uid`, as the installed resolver knows it.
+///
+/// With no resolver installed this is [`home_dir_for_uid`] — the answer a
+/// machine with no account store gives, which is what the fallback is for.
+pub fn home_dir(uid: UserId) -> String {
+    let raw = HOME_DIR_RESOLVER.load(Ordering::Acquire);
+    if raw.is_null() {
+        return home_dir_for_uid(uid);
+    }
+    // SAFETY: the only writer stores a `HomeDirResolver`'s address, so a
+    // non-null value is exactly the function pointer that `Acquire` published.
+    let resolver: HomeDirResolver = unsafe { core::mem::transmute(raw) };
+    resolver(uid)
 }
 
 impl HandleEntry {
@@ -230,7 +276,6 @@ fn synthetic_public_file_stat_record(kind: NodeKind, size: usize) -> fs_abi::Fil
 // ── eventfd helpers ───────────────────────────────────────────────────────
 
 use alloc::sync::Arc;
-use core::sync::atomic::Ordering;
 
 use crate::kernel::process::wait::plan_timed_wait;
 use crate::kernel::process::wait::TimedWaitPlan;

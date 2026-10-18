@@ -538,6 +538,17 @@ pub fn resolve_home_dir(uid: UserId) -> String {
     .unwrap_or_else(|| home_dir_for_uid(uid))
 }
 
+/// Install this module's answer into the slot `process` asks.
+///
+/// `process` cannot name this module: the account store is a file, so it sits
+/// above the process table, while a process's home directory is process state.
+/// The direction is inverted the way the code-style chapter describes a sink —
+/// the module that owns the answer installs it, and the module that asks keeps
+/// asking its own slot.
+pub fn install_home_dir_resolver() {
+    crate::kernel::process::set_home_dir_resolver(resolve_home_dir);
+}
+
 /// Map a UID to a username.  Returns `None` when the database is unavailable
 /// or the UID is unknown.
 pub fn uid_to_username(uid: UserId) -> Option<String> {
@@ -931,6 +942,10 @@ mod tests {
     // Reached through the parent's import list everywhere else in this file;
     // the tests are the only remaining user of the type itself.
     use crate::kernel::process::SecurityToken;
+    // The slot under test.  Named once so the census sees one edge rather than
+    // one per assertion: what this test proves is that the *boot's* wiring is
+    // observable from `process`, and that is a single reading.
+    use crate::kernel::process::home_dir as process_home_dir;
 
     /// Serialises the tests that install the process-global account database.
     ///
@@ -1067,6 +1082,50 @@ root:0:0:/root-override
         assert_eq!(home, home_dir_for_uid(0));
         let home = resolve_home_dir(9999);
         assert_eq!(home, home_dir_for_uid(9999));
+    }
+
+    /// The slot `process` asks is the database's answer once this module
+    /// installs it, and the pure fallback before that.
+    ///
+    /// The two halves are one claim because the fallback is what makes the
+    /// slot safe to read before boot installs anything: `process` constructs
+    /// processes during early boot, and a resolver that was not there yet must
+    /// answer the same thing the pure function does rather than panicking.
+    #[test]
+    fn the_installed_resolver_answers_where_the_fallback_did() {
+        // This test touches three process-global things — the resolver slot,
+        // the database and its initialised flag — so it takes the database's
+        // own lock rather than another module's, and puts each back.
+        let _guard = USER_DB_TEST_LOCK.lock();
+
+        // Before installation, `process`'s slot is the pure function.
+        assert_eq!(
+            process_home_dir(0),
+            home_dir_for_uid(0),
+            "an uninstalled slot must answer the fallback"
+        );
+
+        // The boot's own wiring, spelled the way `Kernel::init` spells it: the
+        // resolver this module owns, installed into `process`'s slot.
+        crate::kernel::process::set_home_dir_resolver(resolve_home_dir);
+        // Still the same answer with an empty database, which is the point:
+        // installing the resolver must not change what a machine without
+        // accounts reports.
+        assert_eq!(process_home_dir(0), home_dir_for_uid(0));
+
+        // And with a database, the slot now answers the account's own home —
+        // which the pure function cannot know.
+        store_database(UserDatabase::parse("alice:1001:100:/home/alice\n"));
+        assert_eq!(resolve_home_dir(1001), "/home/alice");
+        assert_eq!(
+            process_home_dir(1001),
+            "/home/alice",
+            "after installation the slot reads the database"
+        );
+
+        // Leave the global clean: other tests read it.
+        *USER_DATABASE.lock() = None;
+        USER_DB_INITIALISED.store(false, Ordering::Release);
     }
 
     // ── Shadow database tests ───────────────────────────────────────────

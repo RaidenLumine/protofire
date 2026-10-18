@@ -428,6 +428,10 @@ impl Kernel {
         {
             let fs = self.fs.lock();
             user::init_user_database(&fs);
+            // A process asks its own module for a home directory, and this is
+            // the module that knows the answer: the account store is a file,
+            // so it sits above the process table rather than inside it.
+            crate::kernel::user::install_home_dir_resolver();
         }
 
         println!("[init  ] interrupt controller init...");
