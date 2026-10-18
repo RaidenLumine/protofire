@@ -13,8 +13,8 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::arch::PAGE_SIZE;
-use crate::fs::block::BlockDevice;
-use crate::fs::block::BLOCK_SIZE;
+use crate::kernel::block::BlockDevice;
+use crate::kernel::block::BLOCK_SIZE;
 use crate::Error;
 use crate::Result;
 
@@ -187,7 +187,7 @@ mod tests {
 
     use super::super::paging::PAGE_SIZE;
     use super::*;
-    use crate::fs::block::MemoryBlockDevice;
+    use crate::kernel::block::MemoryBlockDevice;
 
     /// Create a MemoryBlockDevice large enough for `page_count` swap slots.
     fn make_swap_device(page_count: u64) -> Arc<MemoryBlockDevice> {

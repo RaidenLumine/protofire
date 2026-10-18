@@ -6,7 +6,7 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 
-use crate::fs::block::BlockDevice;
+use crate::kernel::block::BlockDevice;
 use crate::memory::paging::MappingKind;
 use crate::memory::paging::{self};
 use crate::memory::swap::SwapArea;

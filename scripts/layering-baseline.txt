@@ -156,6 +156,16 @@
 # resolver waits on a completion instead of polling for one — a change in the
 # network stack, not in this census.
 #
+# `memory` no longer names `fs`.  All four edges were `crate::fs::block`, which
+# is a `pub use` of `crate::kernel::block`: the swap path was reaching the
+# block layer through the filesystem's historical compatibility path, so the
+# census recorded a dependency on the filesystem for a module that lives below
+# it.  Naming `crate::kernel::block` directly is the same code and the right
+# direction — a swap writer wants a block device, not a mounted volume — and
+# `memory` -> `block` is a downward edge `block`'s own row already expects.
+# That removes the `fs` <-> `memory` cycle; `fs` -> `memory` stays as one-way
+# debt for the page codec it shares and the demo heap probes below.
+#
 # `process` <-> `shm` stays, and it is not the shape the cuts above removed.
 # `shm` names `Process` because attaching a segment maps physical frames into
 # that process's page tables — the same reason `memory` names it, and a
@@ -284,7 +294,7 @@ maintenance                  heartbeat                    1
 maintenance                  network                      1
 maintenance                  perf_baseline                2
 maintenance                  process                      2
-memory                       fs                           4
+memory                       block                        4
 memory                       oom                          2
 memory                       percpu                       4
 memory                       smp                          1
