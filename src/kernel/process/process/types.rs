@@ -18,6 +18,7 @@ use crate::fs::FileHandle as FsFileHandle;
 use crate::kernel::process::wait::WaitQueue;
 use crate::kernel::sync::Mutex;
 use crate::network::LocalSocket;
+pub use crate::network::RawSocketHandle;
 use crate::network::TcpConnection;
 use crate::network::TcpListener;
 use crate::network::UdpSocket;
@@ -227,13 +228,6 @@ pub enum KernelObject {
     Epoll(alloc::sync::Arc<crate::kernel::sync::Mutex<EpollState>>),
     /// io_uring — asynchronous I/O batching.
     IoUring(alloc::sync::Arc<IoUringState>),
-}
-
-/// A handle to a raw socket stored in the global network stack.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RawSocketHandle {
-    pub socket_id: u32,
-    pub protocol: u8,
 }
 
 #[derive(Debug, Clone)]

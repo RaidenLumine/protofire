@@ -145,6 +145,17 @@
 # grows, which is the correct direction: the account store is a consumer of
 # the process table, not the other way round.
 #
+# `network` <-> `process` remains, and after this change it is one edge deep on
+# the network side rather than three.  `RawSocketHandle` — two integers naming
+# a socket the stack owns — was defined in `process`, so every use of it was an
+# edge up into the process table; it is defined in `network` now, and `process`
+# re-exports it so the handle table's public shape is unchanged.  What is left
+# is `scheduler::yield_current` from the DNS resolver's poll loop, which is the
+# same shape as `maintenance`: a consumer of the scheduler using the primitive
+# that only the scheduler has.  The pair does not come apart until the DNS
+# resolver waits on a completion instead of polling for one — a change in the
+# network stack, not in this census.
+#
 # `process` <-> `shm` stays, and it is not the shape the cuts above removed.
 # `shm` names `Process` because attaching a segment maps physical frames into
 # that process's page tables — the same reason `memory` names it, and a
@@ -296,7 +307,7 @@ mod                          workload                     3
 network                      crypto                       30
 network                      fs                           6
 network                      ipc                          1
-network                      process                      3
+network                      process                      2
 network                      random                       5
 network                      sync                         17
 nmi                          sync                         1
@@ -316,7 +327,7 @@ process                      handle_rights                2
 process                      irq_balance                  2
 process                      maintenance                  2
 process                      memory                       24
-process                      network                      16
+process                      network                      17
 process                      percpu                       12
 process                      power                        1
 process                      security                     11

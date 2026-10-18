@@ -1353,8 +1353,22 @@ impl UdpSocket {
 
 // ─── Raw socket public API ────────────────────────────────────────────
 
-use crate::kernel::process::RawSocketHandle;
 use crate::network::internet::ip::IpAddress;
+
+/// A handle to a raw socket stored in the global network stack.
+///
+/// The network owns this type because the network hands it out and
+/// dereferences it: `create_raw_socket` produces one, `recv_raw_packet` looks
+/// its socket up by the id inside.  It used to live in the process module,
+/// which made every use of it an edge from the network up into the process
+/// table for two integers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawSocketHandle {
+    /// The stack's own id for the socket.
+    pub socket_id: u32,
+    /// IP protocol number the socket was created for (1 = ICMP).
+    pub protocol: u8,
+}
 
 /// Create a raw socket bound to `protocol` (IP protocol number, e.g. 1=ICMP).
 ///
