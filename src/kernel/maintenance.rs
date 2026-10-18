@@ -25,11 +25,29 @@
 //! counter, advanced by the tick, because the protocol code reads *time* from
 //! it rather than *work pending*.
 //!
+//! The network *pass* is the other exception, and it is worth naming: the tick
+//! sets its latch on every tick rather than on a period, so the pass runs once
+//! per poll of this thread.  That is deliberate — the pass has no period of
+//! its own, and its cadence is the poll cadence — but it means the latch says
+//! "there is a network stack" rather than "a period came due", and a change to
+//! [`MAINTENANCE_POLL_TICKS`] moves the network cadence with it.
+//!
 //! The tick asks one question — [`request_due_work`] — and the periods stay
 //! here.  How often the block cache wants write-back and how often the audit
 //! ring wants persisting are facts about those subsystems; a scheduler that
 //! read them itself would be naming `audit` and `fs` to answer a question it
 //! has no opinion about.
+//!
+//! ## Why this module and the scheduler name each other
+//!
+//! This is one of the pairs the layering census still lists as a cycle, and it
+//! is not one of the cuts that come apart.  This module names `process` because
+//! it *is* a thread: it sleeps on the scheduler's wait queue and reads the
+//! scheduler's clock.  `process` names this module because the tick is the only
+//! thing that knows a tick happened, and deferred work is work the tick is not
+//! allowed to do.  Cutting either end would mean either a worker that cannot
+//! park or a tick that cannot say "later" — both are the thing the other side
+//! is for.
 
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
