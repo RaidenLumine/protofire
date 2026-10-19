@@ -20,8 +20,12 @@ use crate::kernel::process::Scheduler;
 
 use super::resolve::DNS_PARK_COUNT;
 
-/// Port the self-test owns.  Not the resolver's ephemeral port: a boot could
-/// have a real resolution in flight, and the test must not take its binding.
+/// Port the self-test owns.
+///
+/// Not one the resolver would pick: a lookup allocates from the dynamic range
+/// (`UDP_EPHEMERAL_PORT_START..=UDP_EPHEMERAL_PORT_END`) now, and this sits
+/// below it, so the test can name a port before the allocator is asked for
+/// anything and can never take one a real lookup was given.
 const SELFTEST_PORT: u16 = 53001;
 
 /// The name the synthetic answer is for, and the address it carries.

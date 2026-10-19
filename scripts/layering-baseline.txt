@@ -178,6 +178,20 @@
 # consumer may name `process` for "a thread to run on and a way to block", and
 # nothing else.
 #
+# `network` -> `random` gained one edge for RFC 0030: the DNS resolver draws
+# its transaction id from the CSPRNG.  The other five are TLS's key shares and
+# DCCP's initial sequence number, so this is the same dependency for the same
+# reason — a value an observer must not be able to predict — not a new
+# direction.  `network` -> `fs` rose by one to seven for a test-only alias:
+# the DNS test's answering device has to write `DeviceHealth` in its
+# `device_health` signature, and `link::device::Health` (a `cfg(test)`
+# re-export) is one reference where naming `crate::fs::block` twice would be
+# two.  The census counts test imports like any other, and the honest move is
+# to keep that at the minimum rather than to move the device somewhere it
+# would look smaller.  `network` -> `crypto` being the largest row is why the
+# random edge is cheap: the CSPRNG is already reached for TLS and DCCP, and
+# this adds a caller rather than a mechanism.
+#
 # `memory` no longer names `fs`.  All four edges were `crate::fs::block`, which
 # is a `pub use` of `crate::kernel::block`: the swap path was reaching the
 # block layer through the filesystem's historical compatibility path, so the
@@ -368,10 +382,10 @@ mod                          topology                     5
 mod                          user                         1
 mod                          workload                     3
 network                      crypto                       30
-network                      fs                           6
+network                      fs                           7
 network                      ipc                          1
 network                      process                      5
-network                      random                       5
+network                      random                       6
 network                      sync                         17
 nmi                          sync                         1
 oom                          process                      3

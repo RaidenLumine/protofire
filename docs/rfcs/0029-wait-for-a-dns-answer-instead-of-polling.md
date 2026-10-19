@@ -389,30 +389,22 @@ queue length at every step, including the `unbind` that throws the queue away.
 
 ## Unresolved questions
 
-**One ephemeral port, several resolvers.**  `DNS_EPHEMERAL_PORT` is a single
-constant (53000) shared by every caller, and a second bind adopts the existing
-socket instead of failing.  Two processes resolving at once can therefore take
-each other's answers; the transaction-id filter makes that rare rather than
-impossible, and a name that resolves to the wrong address is worse than one
-that fails.  This RFC does not fix it — an allocation scheme for source ports
-is a decision of its own — but it did stop the failure from compounding: the
-failure path unbinds only a binding this call made, so a resolver that times
-out no longer removes the socket another resolver is still waiting on.
+**One ephemeral port, several resolvers.**  *Answered by
+[RFC 0030](0030-give-each-dns-lookup-its-own-source-port.md).*  Every caller
+used to bind the single constant 53000, and a second bind adopted the first
+one's socket, so two lookups at once could take each other's answers.  The
+outcome got worse when the resolver started waiting: `deliver` wakes one
+waiter on the shared socket, the loser discards a datagram that is not its
+own and re-parks for the next one, so a collision cost an extra round trip
+rather than being invisible.  RFC 0030 gives each lookup a port of its own
+from the dynamic range plus a transaction id drawn per lookup, which is what
+this RFC said could not be left as a follow-up.
 
-The collision is more visible than the draft expected.  With two resolvers
-parked on the same socket, `deliver` wakes one of them, and whether that one is
-the waiter whose transaction id the datagram carries is up to the scheduler.
-The loser wakes, finds a datagram it must discard, and re-parks; the winner is
-still parked and is woken by the *next* datagram.  That is wasteful rather
-than wrong — the filter is still applied — but a collision now costs an extra
-round trip instead of being invisible.  The port allocation is therefore the
-next change to this path, not a follow-up that can wait for a later one.
-
-The same shared binding means the cache is not the only thing that can answer:
-`resolve` checks the cache before binding, so a second resolver whose hostname
-is already cached never touches the port at all.  That is why the collision is
-observed mostly on first lookups, which is also when both callers are most
-likely to be waiting at once.
+The shared binding also meant the cache was not the only thing that could
+answer: `resolve` checks the cache before binding, so a second resolver whose
+hostname was already cached never touched the port.  That is why the
+collision was observed mostly on first lookups, which is also when both
+callers were most likely to be waiting at once.
 
 **Whether a thread is the right poller at all.**  Stage 3 landed with a
 thread because the tick cannot do the work.  If the network stack later gains

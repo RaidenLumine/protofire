@@ -302,11 +302,13 @@ fn resolve_hostname_round_trip_with_stack() {
         .lock()
         .insert([10, 0, 2, 3], MacAddress(dns_server_mac), 0);
 
-    // Bind an ephemeral port for DNS and send the query.
-    stack.udp_table().lock().bind(DNS_EPHEMERAL_PORT).ok();
+    // This test drives the UDP path itself rather than through the resolver,
+    // so it names its own source port; the resolver allocates one now.
+    let bound_port = 53_100u16;
+    stack.udp_table().lock().bind(bound_port).expect("bind");
 
     let query = build_query("kernel.example.com");
-    let result = udp::send_to(stack, DNS_EPHEMERAL_PORT, [10, 0, 2, 3], 53, &query);
+    let result = udp::send_to(stack, bound_port, [10, 0, 2, 3], 53, &query);
     assert!(result.is_ok(), "send_to should succeed: {:?}", result.err());
 
     // Drain the TX frame(s) — should contain our DNS query.
@@ -318,6 +320,7 @@ fn resolve_hostname_round_trip_with_stack() {
     let ip = ipv4::parse_packet(&frame.payload).expect("valid IPv4");
     let dgram = udp::parse_datagram(&ip.payload).expect("valid UDP datagram");
     let src_port = dgram.header.source_port;
+    assert_eq!(src_port, bound_port, "the query came from the bound port");
     assert_eq!(dgram.header.destination_port, 53);
     assert_eq!(ip.header.destination, [10, 0, 2, 3]);
 
@@ -362,7 +365,7 @@ fn resolve_hostname_round_trip_with_stack() {
     let (len, src_ip, src_port) = stack
         .udp_table()
         .lock()
-        .recv_from(DNS_EPHEMERAL_PORT, &mut recv_buf)
+        .recv_from(bound_port, &mut recv_buf)
         .expect("should have a datagram in the receive queue");
 
     assert_eq!(
@@ -384,18 +387,98 @@ fn resolve_hostname_round_trip_with_stack() {
 /// `resolve` returns an answer that is already waiting, without polling for
 /// it.
 ///
+/// A device that answers a DNS query the way a nameserver would.
+///
+/// It parses the frame it is asked to send, reads the source port out of the
+/// query, and queues a matching answer on that port before `send` returns —
+/// so by the time the resolver drains the socket, the answer is there.  That
+/// is the only way a host test can answer a lookup whose source port the
+/// resolver chose itself and never published.
+struct AnsweringNameserver {
+    mac: [u8; 6],
+    /// The address the synthetic A record carries, for every name it answers.
+    answer: [u8; 4],
+    /// How many queries it was asked to send.
+    queries: core::sync::atomic::AtomicUsize,
+}
+
+impl AnsweringNameserver {
+    fn new(answer: [u8; 4]) -> Self {
+        Self {
+            mac: [0x52, 0x54, 0x00, 0x99, 0x88, 0x77],
+            answer,
+            queries: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+impl crate::network::link::device::NetworkDevice for AnsweringNameserver {
+    fn name(&self) -> &str {
+        "answering-nameserver"
+    }
+
+    fn mac_address(&self) -> [u8; 6] {
+        self.mac
+    }
+
+    fn mtu(&self) -> usize {
+        1500
+    }
+
+    fn send(&self, packet: &[u8]) -> crate::Result<()> {
+        use crate::network::internet::ipv4;
+        use crate::network::link::ethernet;
+        use crate::network::udp;
+
+        self.queries
+            .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+        let frame = ethernet::parse_frame(packet)?;
+        let ip = ipv4::parse_packet(&frame.payload)?;
+        let dgram = udp::parse_datagram(&ip.payload)?;
+        if dgram.header.destination_port != 53 {
+            return Ok(());
+        }
+
+        let mut response = super::tests::build_test_dns_response(
+            u16::from_be_bytes([dgram.payload[0], dgram.payload[1]]),
+            1,
+            1,
+            false,
+            Some(self.answer),
+        );
+        // The transaction id comes from the query, so the resolver's filter
+        // sees its own answer and not merely any answer.
+        response[..2].copy_from_slice(&dgram.payload[..2]);
+
+        if let Some(stack) = NetworkStack::global() {
+            stack.udp_table().lock().deliver(
+                crate::network::internet::ip::IpAddress::V4([10, 0, 2, 3]),
+                53,
+                dgram.header.source_port,
+                response,
+            );
+        }
+        Ok(())
+    }
+
+    fn receive(&self, _buffer: &mut [u8]) -> crate::Result<usize> {
+        Ok(0)
+    }
+
+    fn device_health(&self) -> crate::network::link::device::Health {
+        crate::network::link::device::Health::Healthy
+    }
+}
+
 /// This is the resolver's real loop, not a copy: it sends the query, finds the
-/// datagram already queued on the socket, filters it by nameserver and
-/// transaction id, parses it and caches it.  The count of parks is asserted at
-/// zero — the datagram was there before the wait — and the cache lookup is the
-/// half of the result the return value alone does not prove.
+/// answer already queued on the port it allocated, filters it by nameserver
+/// and transaction id, parses it and caches it.  The count of parks is
+/// asserted at zero — the answer was there before the wait — and the cache
+/// lookup is the half of the result the return value alone does not prove.
 #[cfg(not(target_os = "none"))]
 #[test]
 fn resolve_takes_an_answer_that_is_already_queued() {
-    use crate::network::internet::ipv4;
     use crate::network::link::ethernet::MacAddress;
-    use crate::network::link::ethernet::{self};
-    use crate::network::udp;
     use alloc::sync::Arc;
 
     const HOST: &str = "queued-answer.example";
@@ -407,41 +490,24 @@ fn resolve_takes_an_answer_that_is_already_queued() {
         NetworkStack::uninstall_global();
     }
 
-    let mock = Arc::new(MockNetworkDevice::new(
-        "dns-queued",
-        [0x52, 0x54, 0x00, 0xaa, 0xbb, 0xcc],
-    ));
-    let dns_server_mac: [u8; 6] = [0x52, 0x54, 0x00, 0x99, 0x88, 0x77];
-    NetworkStack::init_with_device(mock.clone(), [10, 0, 2, 15]);
+    let device = Arc::new(AnsweringNameserver::new(ADDR));
+    NetworkStack::init_with_device(device.clone(), [10, 0, 2, 15]);
     let stack = NetworkStack::global().expect("stack should be initialised");
     stack
         .arp_cache()
         .lock()
-        .insert([10, 0, 2, 3], MacAddress(dns_server_mac), 0);
-    stack.udp_table().lock().bind(DNS_EPHEMERAL_PORT).ok();
-
-    // The answer arrives before the resolver asks: queued on the socket, from
-    // the configured nameserver and echoing the query's transaction id.
-    let query = build_query(HOST);
-    let response = build_test_dns_response(
-        u16::from_be_bytes([query[0], query[1]]),
-        1,
-        1,
-        false,
-        Some(ADDR),
-    );
-    assert!(stack.udp_table().lock().deliver(
-        crate::network::internet::ip::IpAddress::V4([10, 0, 2, 3]),
-        53,
-        DNS_EPHEMERAL_PORT,
-        response,
-    ));
+        .insert([10, 0, 2, 3], MacAddress(device.mac), 0);
 
     let parks_before = super::resolve::DNS_PARK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
     let resolved = super::resolve::resolve(HOST).expect("the queued answer should resolve");
     let parks_after = super::resolve::DNS_PARK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
 
     assert_eq!(resolved, ADDR);
+    assert_eq!(
+        device.queries.load(core::sync::atomic::Ordering::Acquire),
+        1,
+        "one query went out"
+    );
     assert_eq!(
         parks_after, parks_before,
         "the answer was queued, so the resolver must not have parked"
@@ -451,17 +517,18 @@ fn resolve_takes_an_answer_that_is_already_queued() {
         Some(ADDR),
         "a resolved answer is cached"
     );
-    // And a second resolution is served from the cache with no query at all.
+    // And a second resolution is served from the cache with no query at all:
+    // the device was asked exactly once.
     assert_eq!(super::resolve::resolve(HOST), Ok(ADDR));
-
-    // The query went out to the configured nameserver.
-    let tx = mock.drain_tx();
-    assert!(!tx.is_empty(), "the query was transmitted");
-    let frame = ethernet::parse_frame(&tx[0]).expect("valid ethernet frame");
-    let ip = ipv4::parse_packet(&frame.payload).expect("valid IPv4");
-    let dgram = udp::parse_datagram(&ip.payload).expect("valid UDP datagram");
-    assert_eq!(ip.header.destination, [10, 0, 2, 3]);
-    assert_eq!(dgram.header.destination_port, 53);
+    assert_eq!(
+        device.queries.load(core::sync::atomic::Ordering::Acquire),
+        1,
+        "the cached answer did not send a second query"
+    );
+    assert!(
+        !stack.udp_table().lock().any_ephemeral_bound(),
+        "the lookup released its port"
+    );
 
     // SAFETY: nothing else is using the stack now; this test installed it.
     unsafe {
@@ -511,11 +578,137 @@ fn a_lookup_that_cannot_park_gives_up() {
         parks_after, parks_before,
         "a wait that cannot park must not count as one"
     );
+    assert!(
+        !stack.udp_table().lock().any_ephemeral_bound(),
+        "the guard must release the port on the failure path"
+    );
 
     // SAFETY: nothing else is using the stack now; this test installed it.
     unsafe {
         NetworkStack::uninstall_global();
     }
+}
+
+/// Two lookups in flight at once do not meet.
+///
+/// This is the case RFC 0030 exists for.  Before it, both lookups bound the
+/// same 53000 and the second adopted the first one's socket, so one of the
+/// two answers had to be discarded by the id filter and the loser waited out
+/// its budget.
+///
+/// The two lookups are driven step by step rather than from two threads: the
+/// global stack is per-thread on the host, so a worker thread would not see
+/// the one installed here.  What the test needs is their *overlap*, and that
+/// is expressible directly — take both ports, then answer both, then drain
+/// both — which is the sequence the threads would have produced.
+#[cfg(not(target_os = "none"))]
+#[test]
+fn two_lookups_at_once_take_their_own_ports_and_answers() {
+    use crate::network::internet::ip::IpAddress;
+    use crate::network::link::ethernet::MacAddress;
+    use alloc::sync::Arc;
+
+    // SAFETY: the caller's contract is that nothing is using the stack; this
+    // test helper calls it before installing the stack it goes on to use.
+    unsafe {
+        NetworkStack::uninstall_global();
+    }
+
+    let device = Arc::new(AnsweringNameserver::new([192, 168, 1, 90]));
+    NetworkStack::init_with_device(device.clone(), [10, 0, 2, 15]);
+    let stack = NetworkStack::global().expect("stack should be initialised");
+    stack
+        .arp_cache()
+        .lock()
+        .insert([10, 0, 2, 3], MacAddress(device.mac), 0);
+
+    // Both lookups bind before either is answered: this is the overlap.
+    let first = super::resolve::PortGuard::bind(stack).expect("a port for the first");
+    let second = super::resolve::PortGuard::bind(stack).expect("a port for the second");
+    assert_ne!(
+        first.port, second.port,
+        "the two lookups were given the same source port"
+    );
+
+    // Each query carries its own id, and each answer goes to its own port.
+    let first_id = super::resolve::draw_transaction_id();
+    let second_id = super::resolve::draw_transaction_id();
+    assert_ne!(first_id, second_id, "the two lookups shared an id");
+
+    for (port, id, addr) in [
+        (first.port, first_id, [192, 168, 1, 1]),
+        (second.port, second_id, [192, 168, 1, 2]),
+    ] {
+        let answer = build_test_dns_response(id, 1, 1, false, Some(addr));
+        assert!(stack
+            .udp_table()
+            .lock()
+            .deliver(IpAddress::V4([10, 0, 2, 3]), 53, port, answer,));
+    }
+
+    // Each port holds its own answer and only its own: the datagram that
+    // arrived on the first port is not visible from the second.
+    for (port, expected) in [
+        (first.port, [192, 168, 1, 1]),
+        (second.port, [192, 168, 1, 2]),
+    ] {
+        let mut buffer = [0u8; 512];
+        let mut table = stack.udp_table().lock();
+        let (len, src, src_port) = table.recv_from(port, &mut buffer).expect("its own answer");
+        drop(table);
+        assert_eq!(src, IpAddress::V4([10, 0, 2, 3]));
+        assert_eq!(src_port, 53);
+        assert_eq!(
+            super::parse::parse_a_record(&buffer[..len]),
+            Ok(expected),
+            "port {port} received the answer meant for it"
+        );
+    }
+
+    drop(first);
+    drop(second);
+    assert!(
+        !stack.udp_table().lock().any_ephemeral_bound(),
+        "both lookups released their ports"
+    );
+
+    // SAFETY: nothing else is using the stack now; this test installed it.
+    unsafe {
+        NetworkStack::uninstall_global();
+    }
+}
+
+/// A transaction id is drawn per lookup, not reused.
+#[cfg(not(target_os = "none"))]
+#[test]
+fn transaction_ids_differ_between_lookups() {
+    let first = super::resolve::draw_transaction_id();
+    let mut differs = false;
+    for _ in 0..16 {
+        if super::resolve::draw_transaction_id() != first {
+            differs = true;
+            break;
+        }
+    }
+    assert!(
+        differs,
+        "sixteen draws of a 16-bit id all matched, which no CSPRNG does"
+    );
+}
+
+/// The builder writes the id it is given, and the filter reads it back.
+#[cfg(not(target_os = "none"))]
+#[test]
+fn a_query_carries_the_id_it_was_built_with() {
+    let query = super::query::build_query_with_id(0xBEEF, "example.com");
+    assert_eq!(&query[..2], &[0xBE, 0xEF]);
+
+    // The filter compares the first two bytes, so a query built this way is
+    // matched by exactly this answer and not by one carrying another id.
+    let answer = build_test_dns_response(0xBEEF, 1, 1, false, Some([10, 0, 2, 9]));
+    assert_eq!(&answer[..2], &query[..2]);
+    let other = build_test_dns_response(0x0001, 1, 1, false, Some([10, 0, 2, 9]));
+    assert_ne!(&other[..2], &query[..2]);
 }
 
 // ── test helpers ──

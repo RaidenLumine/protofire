@@ -66,8 +66,3 @@ pub(crate) const DNS_CLASS_IN: u16 = 1; // Internet
 pub(crate) const DNS_TYPE_PTR: u16 = 12;
 pub(crate) const DNS_TYPE_OPT: u16 = 41; // OPT pseudo-RR type
 pub(crate) const DNS_EDNS0_UDP_PAYLOAD: u16 = 4096;
-
-/// Ephemeral source port used for DNS queries in tests and on bare-metal.
-#[cfg(any(target_os = "none", test))]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) const DNS_EPHEMERAL_PORT: u16 = 53000;

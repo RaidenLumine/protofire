@@ -19,9 +19,12 @@ use super::DNS_TYPE_AAAA;
 use super::DNS_TYPE_OPT;
 use super::DNS_TYPE_PTR;
 
-/// Fixed query identifier (16 bits).  A single resolver reuses the same ID;
-/// the UDP 4-tuple disambiguates concurrent in-flight queries.
-const DNS_QUERY_ID: u16 = 0x0001;
+/// The transaction id a caller that does not care gets.
+///
+/// Tests and the builders with no resolver behind them use it.  A real lookup
+/// draws its own from the CSPRNG: a constant id cannot tell an answer meant
+/// for a previous lookup that used this port from an answer to this one.
+pub(crate) const DNS_FIXED_QUERY_ID: u16 = 0x0001;
 
 /// Encode a hostname as a DNS wire name: a sequence of length-prefixed labels
 /// terminated by a zero-length root label (RFC 1035 §3.1).
@@ -36,11 +39,11 @@ pub(crate) fn encode_dns_name(name: &str) -> Vec<u8> {
     out
 }
 
-/// Build a 12-byte DNS query header.
-fn query_header(qdcount: u16, arcount: u16) -> [u8; DNS_HEADER_SIZE] {
+/// Build a 12-byte DNS query header carrying `id` as its transaction id.
+fn query_header(id: u16, qdcount: u16, arcount: u16) -> [u8; DNS_HEADER_SIZE] {
     let mut header = [0u8; DNS_HEADER_SIZE];
-    header[0] = (DNS_QUERY_ID >> 8) as u8;
-    header[1] = DNS_QUERY_ID as u8;
+    header[0] = (id >> 8) as u8;
+    header[1] = id as u8;
     let flags = DNS_FLAGS_OPCODE_QUERY | DNS_FLAGS_RD;
     header[2] = (flags >> 8) as u8;
     header[3] = flags as u8;
@@ -55,20 +58,38 @@ fn query_header(qdcount: u16, arcount: u16) -> [u8; DNS_HEADER_SIZE] {
 /// Build a DNS A-record query for `name` (RFC 1035).
 ///
 /// Returns the full query message as bytes, ready to be sent to a nameserver
-/// on UDP port 53.
+/// on UDP port 53.  The transaction id is [`DNS_FIXED_QUERY_ID`]; a resolver
+/// that will filter answers builds with [`build_query_with_id`] instead.
 pub fn build_query(name: &str) -> Vec<u8> {
-    build_query_with_type(name, DNS_TYPE_A)
+    build_query_with_type(DNS_FIXED_QUERY_ID, name, DNS_TYPE_A)
+}
+
+/// Build a DNS A-record query for `name` carrying `id`.
+///
+/// The id is the only thing a resolver has to tell its answer from one meant
+/// for a previous lookup on the same source port, so a real lookup draws it
+/// from the CSPRNG rather than reusing a constant.
+pub fn build_query_with_id(id: u16, name: &str) -> Vec<u8> {
+    build_query_with_type(id, name, DNS_TYPE_A)
 }
 
 /// Build a DNS AAAA-record query for `name`.
 pub fn build_query_aaaa(name: &str) -> Vec<u8> {
-    build_query_with_type(name, DNS_TYPE_AAAA)
+    build_query_with_type(DNS_FIXED_QUERY_ID, name, DNS_TYPE_AAAA)
+}
+
+/// Build a DNS AAAA-record query for `name` carrying `id`.
+///
+/// Bare-metal only: the AAAA resolver is, and the host build has no caller.
+#[cfg(target_os = "none")]
+pub fn build_query_aaaa_with_id(id: u16, name: &str) -> Vec<u8> {
+    build_query_with_type(id, name, DNS_TYPE_AAAA)
 }
 
 /// Build a DNS query for `name` with the given QTYPE and class IN.
-fn build_query_with_type(name: &str, qtype: u16) -> Vec<u8> {
+fn build_query_with_type(id: u16, name: &str, qtype: u16) -> Vec<u8> {
     let mut buf = Vec::with_capacity(DNS_HEADER_SIZE + name.len() + 2 + 4);
-    buf.extend_from_slice(&query_header(1, 0));
+    buf.extend_from_slice(&query_header(id, 1, 0));
     buf.extend_from_slice(&encode_dns_name(name));
     buf.extend_from_slice(&qtype.to_be_bytes());
     buf.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
@@ -88,7 +109,7 @@ pub fn build_query_edns0(name: &str) -> Vec<u8> {
 /// responses.  The additional section holds exactly one OPT RR.
 pub fn build_query_a_edns0(name: &str) -> Vec<u8> {
     let mut buf = Vec::with_capacity(DNS_HEADER_SIZE + name.len() + 2 + 4 + 11);
-    buf.extend_from_slice(&query_header(1, 1));
+    buf.extend_from_slice(&query_header(DNS_FIXED_QUERY_ID, 1, 1));
     buf.extend_from_slice(&encode_dns_name(name));
     buf.extend_from_slice(&DNS_TYPE_A.to_be_bytes());
     buf.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
@@ -110,7 +131,7 @@ pub fn build_query_ptr_v4(addr: Ipv4Addr) -> Vec<u8> {
         "{}.{}.{}.{}.in-addr.arpa",
         addr[3], addr[2], addr[1], addr[0]
     );
-    build_query_with_type(&name, DNS_TYPE_PTR)
+    build_query_with_type(DNS_FIXED_QUERY_ID, &name, DNS_TYPE_PTR)
 }
 
 /// Build a PTR reverse-lookup query for an IPv6 address.
@@ -123,5 +144,5 @@ pub fn build_query_ptr_v6(addr: Ipv6Addr) -> Vec<u8> {
         nibbles.push_str(&format!("{:x}.{:x}.", byte >> 4, byte & 0x0F));
     }
     nibbles.push_str("ip6.arpa");
-    build_query_with_type(&nibbles, DNS_TYPE_PTR)
+    build_query_with_type(DNS_FIXED_QUERY_ID, &nibbles, DNS_TYPE_PTR)
 }

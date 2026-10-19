@@ -7,6 +7,16 @@
 use crate::fs::block::DeviceHealth;
 use crate::Result;
 
+/// The type a `NetworkDevice` reports its health as, re-exported for tests.
+///
+/// It is the filesystem's `DeviceHealth` — one vocabulary for every device
+/// the kernel publishes.  A test device that has to write the type in its
+/// `device_health` signature should not repeat `crate::fs::block` to do it,
+/// so it names this alias instead and the census counts one reference where
+/// it would otherwise count two.
+#[cfg(test)]
+pub use crate::fs::block::DeviceHealth as Health;
+
 /// A network interface card abstraction.
 ///
 /// Implementations must be `Send + Sync` so that the driver can be shared

@@ -276,6 +276,18 @@ impl DatagramWait {
     }
 }
 
+/// First port the kernel hands to a UDP socket that asks for one.
+///
+/// Above NAT's translation range (`32768..=60999`, allocated in a table keyed
+/// by port alone), so a port this allocator hands out cannot be one NAT would
+/// translate a different connection to.  TCP and DCCP start at 49152 and stay
+/// inside that overlap; their port space is separate from UDP's, which is why
+/// only this one has to avoid it.
+pub const UDP_EPHEMERAL_PORT_START: u16 = 61000;
+
+/// Last port in the range.  The top of the IANA dynamic block.
+pub const UDP_EPHEMERAL_PORT_END: u16 = 65535;
+
 /// Table of bound UDP sockets, keyed by local port.
 pub struct UdpSocketTable {
     sockets: BTreeMap<u16, UdpSocket>,
@@ -286,6 +298,12 @@ pub struct UdpSocketTable {
     /// while the thread is between "I have no work" and "I am asleep" is not
     /// lost: the signal stays set until somebody takes it.
     receive_request: Arc<Event>,
+    /// Where the next ephemeral allocation looks first.
+    ///
+    /// A cursor rather than a scan from the bottom: consecutive allocations
+    /// land on different ports, so a datagram delayed from one lookup is not
+    /// waiting on the port the next one is given.
+    next_ephemeral_port: u16,
 }
 
 impl Default for UdpSocketTable {
@@ -299,6 +317,7 @@ impl UdpSocketTable {
         Self {
             sockets: BTreeMap::new(),
             receive_request: Arc::new(Event::auto_reset(false)),
+            next_ephemeral_port: UDP_EPHEMERAL_PORT_START,
         }
     }
 
@@ -315,6 +334,30 @@ impl UdpSocketTable {
         }
         self.sockets.insert(port, UdpSocket::new(port));
         Ok(())
+    }
+
+    /// Bind whichever port in the dynamic range is free, and return it.
+    ///
+    /// The range is walked once, from the cursor, wrapping at the end.  The
+    /// cursor advances past the port handed out, so two allocations in a row
+    /// differ unless only one port is free.  `AlreadyExists` means the range
+    /// is exhausted — the same answer, for the same condition, that
+    /// `TcpConnectionTable::alloc_port` gives.
+    pub fn bind_ephemeral(&mut self) -> Result<u16> {
+        let span = UDP_EPHEMERAL_PORT_END - UDP_EPHEMERAL_PORT_START;
+        for _ in 0..=span {
+            let port = self.next_ephemeral_port;
+            self.next_ephemeral_port = if port == UDP_EPHEMERAL_PORT_END {
+                UDP_EPHEMERAL_PORT_START
+            } else {
+                port + 1
+            };
+            if let alloc::collections::btree_map::Entry::Vacant(slot) = self.sockets.entry(port) {
+                slot.insert(UdpSocket::new(port));
+                return Ok(port);
+            }
+        }
+        Err(Error::AlreadyExists)
     }
 
     /// Unbind the socket at `port`.
@@ -412,6 +455,17 @@ impl UdpSocketTable {
         self.sockets
             .values()
             .any(|socket| socket.ready.waiter_count() != 0)
+    }
+
+    /// Whether any port in the dynamic range is bound.
+    ///
+    /// What a leak check asks: a lookup that returned, however it returned,
+    /// must not leave its port behind.
+    #[cfg(any(test, not(target_os = "none")))]
+    pub fn any_ephemeral_bound(&self) -> bool {
+        self.sockets
+            .keys()
+            .any(|port| (UDP_EPHEMERAL_PORT_START..=UDP_EPHEMERAL_PORT_END).contains(port))
     }
 
     /// Check if a port is bound.
@@ -603,6 +657,54 @@ mod tests {
         table.unbind(8080);
         assert!(!table.is_bound(8080));
         assert!(table.is_empty());
+    }
+
+    /// Every allocation is distinct, in range, and the next one differs.
+    ///
+    /// A rotating cursor is the reason the second half matters: two lookups
+    /// in a row must not be given the same port, or a datagram delayed from
+    /// the first is waiting on the second's socket.
+    #[test]
+    fn ephemeral_allocations_are_distinct_and_in_range() {
+        let mut table = UdpSocketTable::new();
+        let mut seen = alloc::collections::BTreeSet::new();
+        for _ in 0..64 {
+            let port = table.bind_ephemeral().expect("a free port");
+            assert!(
+                (UDP_EPHEMERAL_PORT_START..=UDP_EPHEMERAL_PORT_END).contains(&port),
+                "port {port} is outside the dynamic range"
+            );
+            assert!(seen.insert(port), "port {port} was handed out twice");
+        }
+        // Consecutive allocations differ, which is the cursor rather than a
+        // scan from the bottom.
+        let first = table.bind_ephemeral().expect("a free port");
+        let second = table.bind_ephemeral().expect("a free port");
+        assert_ne!(first, second);
+    }
+
+    /// The range is finite and says so when it is spent.
+    #[test]
+    fn exhausting_the_range_answers_already_exists() {
+        let mut table = UdpSocketTable::new();
+        let mut bound = 0u32;
+        while table.bind_ephemeral().is_ok() {
+            bound += 1;
+            assert!(
+                bound <= 10_000,
+                "the allocator handed out more ports than the range holds"
+            );
+        }
+        assert_eq!(
+            bound,
+            (UDP_EPHEMERAL_PORT_END - UDP_EPHEMERAL_PORT_START + 1) as u32,
+            "every port in the range was handed out once"
+        );
+        assert_eq!(table.bind_ephemeral(), Err(Error::AlreadyExists));
+
+        // Releasing one is enough to get an allocation again.
+        table.unbind(UDP_EPHEMERAL_PORT_START);
+        assert_eq!(table.bind_ephemeral(), Ok(UDP_EPHEMERAL_PORT_START));
     }
 
     #[test]

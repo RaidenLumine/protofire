@@ -226,6 +226,13 @@ Several things run at once here, and they are separate mechanisms:
   `DNS_MAX_RETRIES` attempts, while the maintenance thread's NTP lookup
   spends `DNS_BACKGROUND_TIMEOUT_TICKS` (200 ms) and does not retry, so one
   unanswered name cannot stall every other job in its pass.
+  A lookup allocates a source port from `61000..=65535` for its whole life
+  and gives it back through a guard, and draws a random transaction id per
+  lookup rather than reusing a constant — the id is what tells its answer
+  from one meant for a previous lookup on the same port.  The range starts
+  above NAT's (`32768..=60999`), so a port handed to a socket can never be
+  one NAT translates another connection to; TCP and DCCP stay in the
+  overlapping block because their port space is separate from UDP's.
   `resolve_dual_stack` prefers AAAA, but the user-facing `resolve_hostname`
   returns an IPv4 address and the connect path uses it.  A boot walks the
   whole path once in `selftest.rs`, because no machine a gate boots answers a

@@ -16,19 +16,15 @@ use super::cache::lookup_hosts;
 use super::parse::parse_a_record_with_ttl;
 #[cfg(target_os = "none")]
 use super::parse::parse_aaaa_record;
-use super::query::build_query;
 #[cfg(target_os = "none")]
-use super::query::build_query_aaaa;
+use super::query::build_query_aaaa_with_id;
+use super::query::build_query_with_id;
 
 // ── Operational constants ──
 
 /// Well-known DNS port.
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 pub(crate) const DNS_PORT: u16 = 53;
-
-/// Ephemeral source port used for DNS queries.
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-const DNS_EPHEMERAL_PORT: u16 = 53000;
 
 /// Maximum ticks to wait for a DNS response (200 ticks = 2 s at 100 Hz).
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
@@ -83,32 +79,47 @@ pub fn resolve_hostname(hostname: &str) -> Result<Ipv4Addr> {
     }
 }
 
-/// Bind the resolver's ephemeral port if nobody else has it.
+/// A UDP port held for the length of one lookup.
 ///
-/// Answers whether *this* call is the one that bound the port.  Every resolver
-/// shares `DNS_EPHEMERAL_PORT`, which is the collision RFC 0029 leaves open;
-/// what this function exists to prevent is the second half of that problem —
-/// a resolver that gives up unbinding a socket it never owned, taking the
-/// binding away from the resolver that does own it.
-fn bind_ephemeral_port(stack: &NetworkStack) -> Result<bool> {
-    let mut table = stack.udp_table().lock();
-    if table.is_bound(DNS_EPHEMERAL_PORT) {
-        return Ok(false);
-    }
-    table.bind(DNS_EPHEMERAL_PORT)?;
-    Ok(true)
+/// The port is bound once, before the retry loop, and released when the guard
+/// is dropped.  That is not convenience: `send_to` answers with `?` inside the
+/// loop, so every early return between bind and the end is a path that must
+/// not leak a port, and `Drop` is the only shape that cannot miss one.
+///
+/// The guard unbinds the port it was given, never "the" port, so it cannot
+/// remove a socket somebody else is using.  It also holds the stack it bound
+/// from rather than asking the global for one again on the way out: a lookup
+/// that overlapped a stack being replaced would otherwise release its port on
+/// whichever stack happened to be installed when it returned.
+pub(crate) struct PortGuard<'a> {
+    pub(crate) port: u16,
+    stack: &'a NetworkStack,
 }
 
-/// Re-bind after a timeout, if the binding has gone away.
-///
-/// Returns the binding's new ownership: unchanged when it is still present,
-/// the result of this bind when it is not.
-fn rebind_ephemeral_port(stack: &NetworkStack, owned: bool) -> bool {
-    let mut table = stack.udp_table().lock();
-    if table.is_bound(DNS_EPHEMERAL_PORT) {
-        return owned;
+impl<'a> PortGuard<'a> {
+    /// Take the next free port in the dynamic range.
+    pub(crate) fn bind(stack: &'a NetworkStack) -> Result<Self> {
+        let port = stack.udp_table().lock().bind_ephemeral()?;
+        Ok(Self { port, stack })
     }
-    table.bind(DNS_EPHEMERAL_PORT).is_ok()
+}
+
+impl Drop for PortGuard<'_> {
+    fn drop(&mut self) {
+        self.stack.udp_table().lock().unbind(self.port);
+    }
+}
+
+/// Draw a transaction id for one lookup.
+///
+/// Sixteen bits from the CSPRNG, which the stack already uses for TCP's
+/// initial sequence number.  The id is the only thing that separates this
+/// lookup's answer from one meant for a previous lookup on the same port, so
+/// a counter would hand an observer the next one.
+pub(crate) fn draw_transaction_id() -> u16 {
+    let mut bytes = [0u8; 2];
+    crate::kernel::random::fill_random(&mut bytes);
+    u16::from_be_bytes(bytes)
 }
 
 /// Resolve a hostname to an IPv4 address via DNS.
@@ -151,16 +162,19 @@ pub(crate) fn resolve_within(
         return Ok(addr);
     }
 
-    // Bind an ephemeral port for the DNS query exchange.
-    let mut owns_binding = bind_ephemeral_port(stack)?;
+    // One port and one transaction id for the whole lookup, released by the
+    // guard when this function returns however it returns.
+    let port = PortGuard::bind(stack)?;
+    let query = build_query_with_id(draw_transaction_id(), hostname);
+    // The filter compares the first two bytes, so it reads the id back out of
+    // the query rather than carrying a second copy that could disagree.
+    let transaction_id = [query[0], query[1]];
 
-    let query = build_query(hostname);
-
-    for retry in 0..=max_retries {
+    for _ in 0..=max_retries {
         // Send the query to the DNS server configured on the stack
         // (set by DHCP at boot, or defaulted to 10.0.2.3).
         let dns_server = stack.dns_server();
-        crate::network::udp::send_to(stack, DNS_EPHEMERAL_PORT, dns_server, DNS_PORT, &query)?;
+        crate::network::udp::send_to(stack, port.port, dns_server, DNS_PORT, &query)?;
 
         // Park until the answer arrives or this attempt's budget is spent.
         // The receiver that drives the device is the deferred receive thread;
@@ -168,27 +182,17 @@ pub(crate) fn resolve_within(
         let deadline = stack.current_tick().saturating_add(timeout_ticks);
         if let Ok(addr) = await_a_record(
             stack,
-            DNS_EPHEMERAL_PORT,
+            port.port,
             dns_server,
-            &query[..2],
+            &transaction_id,
             hostname,
             deadline,
         ) {
             return Ok(addr);
         }
-
-        // Timeout — rebind if our port was somehow taken.
-        if retry < max_retries {
-            owns_binding = rebind_ephemeral_port(stack, owns_binding);
-        }
     }
 
-    // Clean up the binding, but only the one this call made: the port is
-    // shared, and a resolver that lost the race must not unbind the socket
-    // the winner is using.
-    if owns_binding {
-        stack.udp_table().lock().unbind(DNS_EPHEMERAL_PORT);
-    }
+    // The guard releases the port on the way out.
     Err(Error::TimedOut)
 }
 
@@ -204,31 +208,21 @@ pub(crate) fn resolve_within(
 pub fn resolve_v6(hostname: &str) -> Result<Ipv6Addr> {
     let stack = NetworkStack::global().ok_or(Error::Unsupported)?;
 
-    // Bind an ephemeral port for the DNS query exchange.
-    let mut owns_binding = bind_ephemeral_port(stack)?;
+    // As in `resolve`: one port for the whole lookup, released by the guard.
+    let port = PortGuard::bind(stack)?;
+    let query = build_query_aaaa_with_id(draw_transaction_id(), hostname);
 
-    let query = build_query_aaaa(hostname);
-
-    for retry in 0..=DNS_MAX_RETRIES {
+    for _ in 0..=DNS_MAX_RETRIES {
         // Send the query to the DNS server configured on the stack.
         let dns_server = stack.dns_server();
-        crate::network::udp::send_to(stack, DNS_EPHEMERAL_PORT, dns_server, DNS_PORT, &query)?;
+        crate::network::udp::send_to(stack, port.port, dns_server, DNS_PORT, &query)?;
 
         let deadline = stack.current_tick().saturating_add(DNS_QUERY_TIMEOUT_TICKS);
-        if let Ok(addr) = await_aaaa_record(stack, DNS_EPHEMERAL_PORT, deadline) {
+        if let Ok(addr) = await_aaaa_record(stack, port.port, deadline) {
             return Ok(addr);
         }
-
-        // Timeout — rebind if our port was somehow taken.
-        if retry < DNS_MAX_RETRIES {
-            owns_binding = rebind_ephemeral_port(stack, owns_binding);
-        }
     }
 
-    // As in `resolve`: only the binding this call made is ours to remove.
-    if owns_binding {
-        stack.udp_table().lock().unbind(DNS_EPHEMERAL_PORT);
-    }
     Err(Error::TimedOut)
 }
 
