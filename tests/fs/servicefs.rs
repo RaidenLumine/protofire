@@ -11,13 +11,13 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use protofire::abi::io::OPEN_FLAG_WRITE;
-use protofire::fs::servicefs::mount_servicefs;
 use protofire::fs::FileSystem;
 use protofire::fs::NodeKind;
 use protofire::kernel::service;
 use protofire::kernel::service::ServiceDefinition;
 use protofire::kernel::service::ServiceKind;
 use protofire::kernel::service::ServiceSecurity;
+use protofire::kernel::servicefs::mount_servicefs;
 use protofire::kernel::sync::Mutex as KernelMutex;
 use protofire::Error;
 

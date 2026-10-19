@@ -1,4 +1,4 @@
-//! src/fs/servicefs.rs
+//! src/kernel/servicefs.rs
 //!
 //! ServiceFS — a read-only view of the kernel's runtime service registry.
 //!

@@ -19,7 +19,6 @@ use super::super::layout::StorageZone;
 use super::super::layout::DEFAULT_ZONES;
 use super::super::layout::{self};
 use super::super::partition::read_partitions;
-use super::super::servicefs;
 use super::super::simplefs::SimpleFs;
 use super::super::simplefs::SimpleFsVolume;
 use super::super::vfs::NodeKind;
@@ -31,9 +30,6 @@ use super::types::ZoneDeviceBindings;
 use super::super::DEVFS_FS_NAME;
 use super::super::DEVFS_MOUNT_DEVICE;
 use super::super::DEVFS_MOUNT_PATH;
-use super::super::SERVICEFS_FS_NAME;
-use super::super::SERVICEFS_MOUNT_DEVICE;
-use super::super::SERVICEFS_MOUNT_PATH;
 use super::super::TEMP_FS_NAME;
 use super::super::TEMP_MOUNT_DEVICE;
 use super::super::TEMP_MOUNT_PATH;
@@ -54,7 +50,6 @@ impl FileSystem {
 
         self.install_virtual_device_layout();
         self.install_devfs_layout();
-        self.install_servicefs_layout();
     }
 
     pub(crate) fn mount_zone(&mut self, zone: StorageZone) {
@@ -96,22 +91,6 @@ impl FileSystem {
     pub(crate) fn install_devfs_layout(&mut self) {
         self.register(DEVFS_FS_NAME, Arc::new(devfs::DevFs));
         let _ = self.mount(DEVFS_MOUNT_DEVICE, DEVFS_MOUNT_PATH, DEVFS_FS_NAME, 0);
-    }
-
-    /// Register and mount servicefs at `/service`.
-    ///
-    /// Unlike the zones above, this mount has nothing to do with storage: it
-    /// is the read-only window onto the runtime service registry, and it is
-    /// mounted on every boot so that a service which fails to start has
-    /// somewhere to say so.
-    pub(crate) fn install_servicefs_layout(&mut self) {
-        self.register(SERVICEFS_FS_NAME, Arc::new(servicefs::ServiceFs));
-        let _ = self.mount(
-            SERVICEFS_MOUNT_DEVICE,
-            SERVICEFS_MOUNT_PATH,
-            SERVICEFS_FS_NAME,
-            0,
-        );
     }
 
     /// Mount a memory-backed writable SimpleFs volume at `/tmp`.

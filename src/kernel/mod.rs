@@ -54,6 +54,7 @@ pub(crate) mod workload;
 // module is still built unconditionally because its runtime registry backs the
 // `/service` filesystem, which every boot mounts.
 pub mod service;
+pub mod servicefs;
 pub mod shm;
 pub mod smp;
 pub mod softirq;
@@ -378,6 +379,21 @@ impl Kernel {
             );
         } else {
             println!("[fs    ] mounted kernel logs at {}", kernel_logs_path);
+        }
+        // `/service` is the third of the same shape: a virtual filesystem over
+        // the service registry, which is kernel state rather than storage.  It
+        // moved out of `fs`'s layout for the reason the other two did — `fs`
+        // was naming the service manager to render it, an edge from the
+        // filesystem to a reader of itself.
+        let servicefs_path = crate::fs::SERVICEFS_MOUNT_PATH;
+        if let Err(error) = crate::kernel::servicefs::mount_servicefs(servicefs_path) {
+            println!(
+                "[fs    ] servicefs not mounted at {}: {}",
+                servicefs_path,
+                error.as_str()
+            );
+        } else {
+            println!("[fs    ] mounted servicefs at {}", servicefs_path);
         }
         // Boot recovery walks and repairs every mounted volume while holding
         // the global filesystem lock.  Measured as its own scope because it is

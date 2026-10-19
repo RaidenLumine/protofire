@@ -182,6 +182,21 @@
 # seventeenth is a `Scheduler` reference inside `serial`'s test module.  The
 # pair is a cycle in the census and not one in the design.
 #
+# `fs` no longer names `service`.  `servicefs` rendered the service registry
+# and lived in `fs`, which made the filesystem depend on the manager that
+# reads declarations off it — an edge from a module to a consumer of itself.
+# It is `kernel::servicefs` now, beside `procfs` and `kernel_log`: all three
+# are views over kernel state mounted by the boot, not parts of storage.  The
+# one other edge was the demo disk writing `/rc.d/defaults.toml`; which
+# services a distribution declares is content, like which payloads it ships,
+# so `arch::platform::demo_service_declarations` answers it and the demo image
+# builder only writes the bytes it is handed.
+#
+# The census count rises from this move alone: `servicefs`'s own references to
+# `fs` (it implements `fs::vfs::FileSystem`), to `service` (it renders the
+# registry) and to `sync` are rows now that it is a module rather than a file
+# inside `fs`.  They were always there; the move is what made them visible.
+#
 # `process` <-> `shm` stays, and it is not the shape the cuts above removed.
 # `shm` names `Process` because attaching a segment maps physical frames into
 # that process's page tables — the same reason `memory` names it, and a
@@ -292,8 +307,7 @@ fs                           crypto                       10
 fs                           drivers                      2
 fs                           memory                       5
 fs                           security                     29
-fs                           service                      5
-fs                           sync                         33
+fs                           sync                         32
 heartbeat                    process                      1
 io                           device                       10
 io                           process                      12
@@ -319,13 +333,14 @@ mod                          audit                        6
 mod                          block                        1
 mod                          device                       1
 mod                          drivers                      1
-mod                          fs                           16
+mod                          fs                           17
 mod                          kernel_log                   1
 mod                          memory                       6
 mod                          network                      6
 mod                          percpu                       2
 mod                          power                        1
 mod                          procfs                       1
+mod                          servicefs                    1
 mod                          syscall                      4
 mod                          topology                     5
 mod                          user                         1
@@ -373,6 +388,9 @@ service                      crypto                       1
 service                      fs                           10
 service                      process                      6
 service                      sync                         2
+servicefs                    fs                           15
+servicefs                    service                      3
+servicefs                    sync                         1
 shm                          memory                       7
 shm                          process                      1
 shm                          scheduler                    3

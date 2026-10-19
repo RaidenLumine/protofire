@@ -1058,3 +1058,16 @@ pub(crate) fn demo_user_programs() -> &'static [(&'static str, bool)] {
         &[]
     }
 }
+
+/// The service declarations this machine's demo distribution ships.
+///
+/// `/system/rc.d/defaults.toml` on the demo disk and the kernel's own fallback
+/// are one list in two forms: the disk carries the rendered text, the kernel
+/// keeps the definitions.  Rendering it is content, and content is the
+/// machine's — the same reason [`demo_user_programs`] is here — so this is
+/// where the filesystem's demo image builder asks for it rather than naming
+/// the service manager to produce a file it then writes.
+#[cfg(any(feature = "demo-disk", test))]
+pub(crate) fn demo_service_declarations() -> alloc::string::String {
+    crate::kernel::service::render_config(&crate::kernel::service::default_definitions())
+}

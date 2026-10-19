@@ -43,7 +43,6 @@ pub mod lock_timing;
 pub mod ntfs;
 pub mod partition;
 pub mod path;
-pub mod servicefs;
 pub mod simplefs;
 pub mod squashfs;
 /// The system volume's A/B pair: which slot a boot takes, and how it switches.

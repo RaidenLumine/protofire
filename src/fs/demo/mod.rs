@@ -379,10 +379,12 @@ pub(crate) fn build_system_zone_from(init_elf: &[u8], generation: u64) -> Result
     });
     // Written where the build has the demo at all: the declarations name the
     // prototype programs, and a build without them packages none to name.
-    // The text outlives `entries`, which borrows it until the image is built.
+    // Which declarations those are is the machine's content, so this asks for
+    // the text rather than rendering it here — the filesystem builds a volume,
+    // it does not decide which services exist.  The text outlives `entries`,
+    // which borrows it until the image is built.
     #[cfg(any(feature = "demo-disk", test))]
-    let declarations =
-        crate::kernel::service::render_config(&crate::kernel::service::default_definitions());
+    let declarations = crate::arch::platform::demo_service_declarations();
     #[cfg(any(feature = "demo-disk", test))]
     entries.push(ImageEntry {
         path: "/rc.d/defaults.toml",
