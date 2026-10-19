@@ -576,6 +576,27 @@ impl Kernel {
             maintenance::maintenance_entry,
         );
 
+        // Frames arrive for whoever is waiting on them, and that receiver is
+        // this thread.  The tick cannot do the work — it would take the
+        // stack's locks and the demux can transmit — and the maintenance
+        // thread cannot either, because its pass resolves names and a
+        // resolver that blocks would be waiting for a receive only it could
+        // have made.
+        #[cfg(target_os = "none")]
+        self.scheduler.spawn_kernel_named(
+            maintenance::NETWORK_RECEIVE_THREAD_NAME,
+            maintenance::network_receive_entry,
+        );
+
+        // No machine a gate boots answers a DNS query, so the resolver's wait
+        // path is walked from inside once: a waiter parks in the real loop and
+        // a second thread delivers a synthetic A record to it.  The line the
+        // boot prints is what `make check-x8664-runtime` asserts.
+        #[cfg(all(target_os = "none", not(feature = "net_loopback")))]
+        if crate::network::stack::NetworkStack::global().is_some() {
+            crate::network::dns::selftest::start();
+        }
+
         // Ask the window and the invalidation log for more than they have,
         // before the idle process starts and the machine settles into its
         // steady state.  Compiled in by the churn feature only.

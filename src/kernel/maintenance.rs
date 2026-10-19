@@ -55,6 +55,57 @@ use core::sync::atomic::Ordering;
 /// Name of the kernel thread that performs deferred maintenance.
 pub const MAINTENANCE_THREAD_NAME: &str = "kernel-maintenance";
 
+/// Name of the kernel thread that receives network frames on behalf of a
+/// parked waiter.
+pub const NETWORK_RECEIVE_THREAD_NAME: &str = "kernel-net-rx";
+
+/// How often the network receive thread looks for a frame when nobody is
+/// waiting, in scheduler ticks.
+///
+/// Nothing is drained on such a pass; the period only bounds how long a
+/// waiter that arrives just after the thread went to sleep can wait for the
+/// cadence to pick it up.  Ten ticks is 100 ms at 100 Hz, which is well inside
+/// the resolver's two-second budget.
+pub const NETWORK_RECEIVE_IDLE_TICKS: u64 = 10;
+
+/// How often it looks while a socket has a parked receiver, in ticks.
+///
+/// One tick is the finest the scheduler offers, and it is the latency a
+/// resolution pays for not burning a core: the answer is read on the first
+/// tick after it lands.
+pub const NETWORK_RECEIVE_BUSY_TICKS: u64 = 1;
+
+/// The deferred receive thread.
+///
+/// The tick cannot do this work: driving the device takes the stack's locks
+/// and the demux can transmit, and a transmit that misses the ARP cache waits
+/// on the clock — §11 of `docs/fmts/code-style.md` forbids both from an
+/// interrupt.  So a thread does it, and it asks the stack whether anyone is
+/// waiting before it looks: an idle machine must not pay a device read per
+/// tick, and a machine with a parked receiver must not leave it to its
+/// deadline.  It is a thread of its own rather than the maintenance thread's
+/// job because the maintenance pass resolves names for NTP, and a resolver
+/// that blocks would be blocking the only context that could have polled for
+/// its answer.
+#[cfg(target_os = "none")]
+pub(crate) fn network_receive_entry() {
+    loop {
+        let waiting = crate::network::stack::NetworkStack::global()
+            .is_some_and(|stack| stack.has_receive_waiter());
+        crate::kernel::process::sleep_current(if waiting {
+            NETWORK_RECEIVE_BUSY_TICKS
+        } else {
+            NETWORK_RECEIVE_IDLE_TICKS
+        });
+
+        if waiting {
+            if let Some(stack) = crate::network::stack::NetworkStack::global() {
+                stack.poll_available();
+            }
+        }
+    }
+}
+
 /// How often the maintenance thread wakes to look for work, in scheduler
 /// ticks.  This bounds the delay between a job becoming due and running; the
 /// jobs themselves are periodic at coarser intervals, so a short poll costs

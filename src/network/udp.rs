@@ -340,6 +340,20 @@ impl UdpSocketTable {
             .is_some_and(|socket| !socket.receive_queue.is_empty())
     }
 
+    /// Whether any bound socket has a parked receiver.
+    ///
+    /// This is the question the deferred receive thread asks before deciding
+    /// to drive the device: work somebody is waiting for, or a receive nobody
+    /// asked for.  It reads the wait queues rather than a separate
+    /// registration counter, so there is no count to underflow on a timeout or
+    /// to leave raised for a waiter that was cancelled — a thread that is no
+    /// longer waiting is pruned by `waiter_count`.
+    pub fn any_waiter(&self) -> bool {
+        self.sockets
+            .values()
+            .any(|socket| socket.ready.waiter_count() != 0)
+    }
+
     /// Check if a port is bound.
     pub fn is_bound(&self, port: u16) -> bool {
         self.sockets.contains_key(&port)

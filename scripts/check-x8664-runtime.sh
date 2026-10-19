@@ -354,6 +354,14 @@ count_log_line() {
 # boot stopped after the hand-off" rather than "the boot never started".
 require_log_line "[mem   ] activated x86_64 kernel page tables"
 require_log_line "[init  ] starting idle process"
+# The resolver's wait path, walked from inside because no machine here answers
+# a DNS query: a waiter parked in the real loop and a delivered A record woke
+# it, it parsed, and the cache holds the result.  `parked 1 time(s)` is not
+# decoration — a resolver that still spun would have returned the same address
+# without ever parking, and a cache that was never written would have said
+# MISSED IT.  RFC 0029's stage 4 is the reason this line exists.
+require_log_line "[net   ] DNS self-test: parked 1 time(s)"
+require_log_line "cache holds it"
 # `/system/init.elf` is a program, not a stub: it reads the declarations off
 # the disk and asks for the services to be started.  These two lines are it
 # saying so, and they are the only evidence that the file the kernel spawned

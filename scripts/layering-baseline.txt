@@ -120,7 +120,21 @@
 # happened, which is what deferred work is deferred from.  Removing either end
 # would mean a worker that cannot park or a tick that cannot say "later".  The
 # two rows in `process` are `request_due_work` and `request_network_maintenance`
-# from the tick; the two in `maintenance` are the sleep and the clock read.
+# from the tick; the three in `maintenance` are the sleeps of its two threads
+# and the maintainer's clock read.  The second thread is RFC 0029's receive
+# worker: the tick cannot poll the stack (interrupt context may not take a
+# mutex or block) and the maintenance thread cannot either (its pass resolves a
+# name now, and a resolver that parks would be waiting for a receive only it
+# could have made), so `maintenance` is where that worker lives and it sleeps
+# the same way the first one does.
+#
+# `maintenance` -> `network` grew from one to three for the same worker: it
+# asks the stack whether any socket has a waiter, and drives it when one does.
+# That is the module's job — it owns the threads that do work the tick may not
+# — and the alternative was a second thread module that would need the same
+# rows.  `mod` -> `network` grew by two for the boot's wiring of that thread
+# and of the DNS self-test, which are the two things `Kernel::init` starts
+# after the network stack exists.
 #
 # `fs` no longer names `kernel_log`.  Its one edge was the `/system/logs` mount
 # in `install_default_layout`, which made the filesystem depend on a *reader*
@@ -326,9 +340,9 @@ kernel_log                   sync                         1
 maintenance                  audit                        2
 maintenance                  fs                           4
 maintenance                  heartbeat                    1
-maintenance                  network                      1
+maintenance                  network                      3
 maintenance                  perf_baseline                2
-maintenance                  process                      2
+maintenance                  process                      3
 memory                       block                        4
 memory                       oom                          2
 memory                       percpu                       4
@@ -341,7 +355,7 @@ mod                          drivers                      1
 mod                          fs                           17
 mod                          kernel_log                   1
 mod                          memory                       6
-mod                          network                      6
+mod                          network                      8
 mod                          percpu                       2
 mod                          power                        1
 mod                          procfs                       1

@@ -62,6 +62,35 @@ impl NetworkStack {
         &self.udp_table
     }
 
+    /// Whether some thread is parked waiting for a datagram.
+    ///
+    /// The deferred receive thread asks this once per pass: a machine with no
+    /// receiver waiting must not spend a device read per tick, and a machine
+    /// with one must not leave it asleep until its deadline.
+    pub fn has_receive_waiter(&self) -> bool {
+        self.udp_table.lock().any_waiter()
+    }
+
+    /// Read every frame the device has queued, up to a bound.
+    ///
+    /// Called from the deferred receive thread, never from an interrupt: the
+    /// demux can transmit, and a transmit that misses the ARP cache waits on
+    /// the clock.  The bound keeps one pass from monopolising the CPU when a
+    /// peer floods the device; whatever is left is the next pass's work.
+    pub fn poll_available(&self) -> usize {
+        /// Frames one pass will read before yielding the CPU.
+        const DRAIN_LIMIT: usize = 32;
+
+        let mut read = 0;
+        while read < DRAIN_LIMIT {
+            match self.poll() {
+                Ok(true) => read += 1,
+                Ok(false) | Err(_) => break,
+            }
+        }
+        read
+    }
+
     /// Return the current tick count.
     pub fn current_tick(&self) -> u64 {
         self.ticks.load(Ordering::Relaxed)

@@ -546,8 +546,8 @@ multicast routing, and raw sockets.
 |-------|-----|---------|
 | **Link** | Ethernet, ARP, device abstraction | — |
 | **Internet** | IPv4, IPv6, ICMP, ICMPv6, IGMP, MLD; NAT and IPv4 options are in the tree | NAT is consulted but never enabled outside tests; IPv4 options are feature-gated |
-| **Transport** | TCP (congestion control, ECN), UDP; SCTP and DCCP are in the tree | Congestion control is Tahoe/Reno only; no CUBIC or BBR; DCCP has no receive dispatch and SCTP has no syscall, so neither carries a connection |
-| **Application** | DHCP (discovery and renewal), DNS (cache and resolve), mDNS, NTP; PPP/PPPoE state is in the tree | IPv4 only: no DHCPv6 or prefix delegation; DNS has no DNSSEC validation; the PPPoE consumer is enabled only by a test |
+| **Transport** | TCP (congestion control, ECN), UDP; a UDP socket has a wait queue, so a receiver parks until a datagram is delivered; SCTP and DCCP are in the tree | Congestion control is Tahoe/Reno only; no CUBIC or BBR; DCCP has no receive dispatch and SCTP has no syscall, so neither carries a connection |
+| **Application** | DHCP (discovery and renewal), DNS (cache and resolve, waiting on the socket rather than polling), mDNS, NTP; PPP/PPPoE state is in the tree | IPv4 only: no DHCPv6 or prefix delegation; DNS has no DNSSEC validation and every resolver shares one ephemeral port, so two concurrent lookups can take each other's answer and retry; the PPPoE consumer is enabled only by a test |
 | **Security** | TLS 1.3 (handshake, record, certificate chain), IPsec outbound ESP/AH transform | TLS trust anchors are a fixed built-in demo set; IPsec inbound is unwired and SAD/SPD is manual |
 | **VPN** | WireGuard handshake, transport and session tables (Noise_IKpsk2, ChaCha20-Poly1305, key management) | Not wired up: nothing outside the module constructs a device, so a program cannot open a tunnel yet |
 | **Multicast routing** | MFC/VIF forwarding, IGMPv2/MLDv1 router mode, MRT API | PIM-DM only, and only under a feature flag; no PIM-SM |
@@ -602,9 +602,11 @@ networking, with more protocols in the tree than the receive path dispatches.
 
 - **Not every network syscall is wrapped** in the shared user library.
 - **Reads do not poll**: a bare-metal stream read waits on the receive buffer
-  while the connect, accept, DNS, DHCP and neighbour-resolution paths are the
-  ones that call `poll()`, so a read depends on another caller driving the
-  device.
+  while the connect, accept, DHCP and neighbour-resolution paths are the ones
+  that call `poll()`, so a read depends on another caller driving the device.
+  Name resolution no longer does: the DNS resolver parks on the socket and a
+  kernel thread (`kernel-net-rx`) polls while a socket has a waiter
+  ([RFC 0029](rfcs/0029-wait-for-a-dns-answer-instead-of-polling.md)).
 - **In-kernel TLS has a fixed trust set**: the anchors are compiled in, with no
   way to add or replace one at runtime.
 - **Educational protocols are feature-gated**: CSMA/CD, STP, Mobile IP, RSVP,

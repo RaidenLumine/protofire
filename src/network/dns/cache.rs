@@ -3,22 +3,19 @@
 //! Static hosts table (analogous to `/etc/hosts`) and a TTL-aware DNS
 //! response cache for A-record resolutions.
 
-#[cfg(target_os = "none")]
 use crate::kernel::sync::Mutex;
 use crate::network::internet::ipv4::Ipv4Addr;
-#[cfg(target_os = "none")]
 use alloc::collections::BTreeMap;
-#[cfg(target_os = "none")]
 use alloc::string::String;
 
 // ── TTL clamping constants (bare-metal scheduler ticks at 100 Hz) ──
 
 /// Minimum TTL to honour from a DNS response (60 seconds).
-#[cfg(target_os = "none")]
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const DNS_CACHE_MIN_TTL_TICKS: u64 = 60 * 100; // 60 s at 100 Hz
 
 /// Maximum TTL to honour from a DNS response (3600 seconds = 1 hour).
-#[cfg(target_os = "none")]
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 const DNS_CACHE_MAX_TTL_TICKS: u64 = 3600 * 100; // 3600 s at 100 Hz
 
 // ── Static hosts table ──
@@ -51,8 +48,8 @@ pub(crate) fn lookup_hosts(hostname: &str) -> Option<Ipv4Addr> {
 // ── DNS response cache ──
 
 /// A cached DNS A-record result with an expiration tick.
-#[cfg(target_os = "none")]
 #[derive(Debug, Clone)]
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 struct CachedEntry {
     addr: Ipv4Addr,
     /// Absolute tick when this entry expires.
@@ -64,14 +61,14 @@ struct CachedEntry {
 /// Caches successful A-record resolutions keyed by hostname (lowercased).
 /// Entries expire after the TTL reported in the DNS response, clamped to
 /// [`DNS_CACHE_MIN_TTL_TICKS`, `DNS_CACHE_MAX_TTL_TICKS`].
-#[cfg(target_os = "none")]
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 static DNS_CACHE: Mutex<BTreeMap<String, CachedEntry>> = Mutex::new(BTreeMap::new());
 
 /// Look up a hostname in the DNS cache.
 ///
 /// Returns `Some(addr)` if a non-expired entry exists, or `None` on a
 /// cache miss (including expired entries, which are evicted).
-#[cfg(target_os = "none")]
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 pub(crate) fn cache_lookup(hostname: &str, now: u64) -> Option<Ipv4Addr> {
     let cache = DNS_CACHE.lock();
     let key = lowercase_hostname(hostname);
@@ -85,7 +82,7 @@ pub(crate) fn cache_lookup(hostname: &str, now: u64) -> Option<Ipv4Addr> {
 ///
 /// `ttl_ticks` is the TTL in scheduler ticks, clamped to the configured
 /// min/max bounds.  Expired entries for the same key are overwritten.
-#[cfg(target_os = "none")]
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 pub(crate) fn cache_insert(hostname: &str, addr: Ipv4Addr, ttl_ticks: u64, now: u64) {
     let clamped_ttl = ttl_ticks.clamp(DNS_CACHE_MIN_TTL_TICKS, DNS_CACHE_MAX_TTL_TICKS);
     let mut cache = DNS_CACHE.lock();
@@ -103,7 +100,7 @@ pub(crate) fn cache_insert(hostname: &str, addr: Ipv4Addr, ttl_ticks: u64, now: 
 ///
 /// Called periodically from [`NetworkStack::advance_tick`] so the cache
 /// does not grow without bound.
-#[cfg(target_os = "none")]
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 pub fn evict_expired(now: u64) {
     let mut cache = DNS_CACHE.lock();
     // BTreeMap::retain is unstable in kernel no_std; collect live keys
@@ -117,7 +114,7 @@ pub fn evict_expired(now: u64) {
 }
 
 /// Return the lowercased hostname used as a cache key.
-#[cfg(target_os = "none")]
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
 fn lowercase_hostname(hostname: &str) -> String {
     let mut s = String::with_capacity(hostname.len());
     for ch in hostname.chars() {

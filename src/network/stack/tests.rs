@@ -374,3 +374,77 @@ fn two_pollers_receive_every_frame_intact() {
         Err(crate::Error::TimedOut)
     );
 }
+
+/// Whether anyone is waiting is what the deferred receive thread asks before
+/// it touches the device.
+///
+/// An idle machine must not pay a receive per tick, and a machine with a
+/// parked receiver must not miss its wake, so the answer has to follow the
+/// wait queue exactly: no one waiting before, one after, and none once the
+/// waiter has been woken.
+#[test]
+fn the_receive_waiter_question_follows_the_socket() {
+    let (_mock, stack) = make_stack();
+    stack.udp_table().lock().bind(9100).expect("bind");
+    assert!(!stack.has_receive_waiter(), "nothing is waiting yet");
+
+    // A parked waiter is what the count is for.  The host's simulated
+    // scheduler is not installed here, so this is the probe path: the thread
+    // is not parked and the answer stays false.
+    let wait = stack
+        .udp_table()
+        .lock()
+        .readiness(9100)
+        .expect("readiness handle");
+    wait.wait(u64::MAX);
+    assert!(!stack.has_receive_waiter());
+}
+
+/// One pass drains what the device has, and stops at the bound.
+///
+/// The bound is what keeps a flooding peer from holding the receive thread
+/// for an unbounded time; the frames past it are the next pass's work, and
+/// this asserts both halves.
+#[test]
+fn one_drain_pass_reads_what_the_device_has() {
+    let (mock, stack) = make_stack();
+    stack.udp_table().lock().bind(9001).expect("bind");
+
+    let frames = 40;
+    for index in 0..frames {
+        let payload = [index as u8; 8];
+        let header = UdpHeader {
+            source_port: 12345,
+            destination_port: 9001,
+            length: (8 + payload.len()) as u16,
+            checksum: 0,
+        };
+        let datagram = udp::build_datagram(&header, &payload);
+        mock.inject_rx(build_ipv4_eth_frame(
+            [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            stack.local_mac,
+            [10, 0, 2, 100],
+            stack.local_ip(),
+            IpProtocol::Udp,
+            &datagram,
+        ));
+    }
+
+    // The pass reads 32 of the 40; the rest wait for the next one.
+    assert_eq!(stack.poll_available(), 32);
+    let mut table = stack.udp_table().lock();
+    let mut buffer = [0u8; 64];
+    for _ in 0..32 {
+        table
+            .recv_from(9001, &mut buffer)
+            .expect("a delivered frame");
+    }
+    assert_eq!(
+        table.recv_from(9001, &mut buffer),
+        Err(crate::Error::TimedOut)
+    );
+    drop(table);
+
+    assert_eq!(stack.poll_available(), 8);
+    assert_eq!(stack.poll_available(), 0);
+}

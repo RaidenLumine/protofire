@@ -167,6 +167,13 @@ impl NtpClient {
     }
 
     /// The server's resolved IPv4 address, resolved (and cached) on first use.
+    ///
+    /// Resolution can block now (RFC 0029 stage 4: the resolver waits on a
+    /// socket instead of polling), so this must not be called while holding a
+    /// lock another thread needs.  The maintenance pass therefore reads
+    /// [`cached_server_ip`](Self::cached_server_ip) under the client's lock,
+    /// resolves outside it, and writes back with
+    /// [`set_server_ip`](Self::set_server_ip).
     pub fn server_ip(&mut self) -> Option<Ipv4Addr> {
         if let Some(ip) = self.server_ip {
             return Some(ip);
@@ -174,6 +181,21 @@ impl NtpClient {
         let resolved = crate::network::dns::resolve_hostname(&self.server).ok();
         self.server_ip = resolved;
         resolved
+    }
+
+    /// The address already resolved, without resolving anything.
+    pub fn cached_server_ip(&self) -> Option<Ipv4Addr> {
+        self.server_ip
+    }
+
+    /// Record a resolved address so later passes do not ask again.
+    pub fn set_server_ip(&mut self, addr: Ipv4Addr) {
+        self.server_ip = Some(addr);
+    }
+
+    /// The name the server was configured with.
+    pub fn server_name(&self) -> &str {
+        &self.server
     }
 
     /// Build an NTP client request with the transmit timestamp taken from the

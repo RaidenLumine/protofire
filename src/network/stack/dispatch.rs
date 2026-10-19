@@ -158,14 +158,35 @@ impl NetworkStack {
 
         // ── NTP periodic poll ──────────────────────────────────────
         {
-            let mut ntp = self.ntp_client.lock();
-            if ntp.should_poll(tick) {
-                // Build an NTP request.  If we have the server's IP
-                // address we can send it; otherwise skip this cycle.
-                // The IP is resolved via DNS at first successful poll.
-                if let Some(server_ip) = ntp.server_ip() {
+            // Resolving the server's name can park the resolver on a UDP
+            // socket, so it must happen with no lock held: the receive thread
+            // that would deliver the answer takes the NTP lock itself when it
+            // demuxes an NTP datagram.
+            let (cached_ip, server_name) = {
+                let mut ntp = self.ntp_client.lock();
+                let due = ntp.should_poll(tick);
+                (
+                    ntp.cached_server_ip(),
+                    if due {
+                        Some(alloc::string::String::from(ntp.server_name()))
+                    } else {
+                        None
+                    },
+                )
+            };
+
+            if let Some(name) = server_name {
+                let server_ip = match cached_ip {
+                    Some(ip) => Some(ip),
+                    None => crate::network::dns::resolve_hostname(&name).ok(),
+                };
+                if let Some(server_ip) = server_ip {
                     if let Some(rtc_secs) = crate::arch::timer::rtc_now_unix() {
-                        let request = ntp.build_request(rtc_secs, 0);
+                        let request = {
+                            let mut ntp = self.ntp_client.lock();
+                            ntp.set_server_ip(server_ip);
+                            ntp.build_request(rtc_secs, 0)
+                        };
                         let raw_ip = udp::build_udp_ipv4_packet(
                             self.local_ip(),
                             server_ip,

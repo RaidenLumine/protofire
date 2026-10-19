@@ -54,12 +54,28 @@ claims MSI-X, the interrupt is what ends a transmit or command *completion
 wait* (`wait_for_queue_interrupt` in `src/drivers/virtio_net.rs`); received
 frames are drained by whoever calls `poll()`.  The callers are the operations
 that wait on the network itself: the loop in `tcp::connect`, the accept loop,
-the DNS resolver, DHCP discovery, and the ARP and NDP resolution paths.  A
-bare-metal stream read does not poll — `NativeTcpConnection::read` spins on
-the receive buffer and the clock — so a read makes progress while some other
-caller is polling, and times out if none is.  There is no receive thread and
-no interrupt-driven dispatcher, which is a scope statement about the stack
-rather than a plan.
+DHCP discovery, and the ARP and NDP resolution paths.  A bare-metal stream
+read does not poll — `NativeTcpConnection::read` spins on the receive buffer
+and the clock — so a read makes progress while some other caller is polling,
+and times out if none is.
+
+The DNS resolver is not among those callers any more.  It parks on the UDP
+socket's wait queue (`UdpSocketTable::readiness` returns a `DatagramWait`), and
+the socket's `deliver` wakes it.  Something has to drive the device while it
+sleeps, so `Kernel::init` spawns `kernel-net-rx`
+(`kernel::maintenance::network_receive_entry`): a kernel thread that sleeps
+one tick while some socket has a waiter and ten while none does, choosing on
+each pass from `NetworkStack::has_receive_waiter`.  When there is a waiter it
+calls `poll_available`, which reads up to 32 frames before letting the
+scheduler have the CPU back.  The tick cannot do this job — it is interrupt
+context, and `poll()` takes locks and can transmit — and the maintenance
+thread cannot either, because its pass resolves the NTP server's name.
+
+A waiter that wakes is woken because a datagram was queued, but it does not
+trust that: another waiter can have taken it, and a deadline is delivered as
+a wake too, so the resolver drains the socket and checks the clock before it
+decides.  That is the condition-variable discipline `docs/fmts/code-style.md`
+expects, and it is the shape RFC 0029 records.
 
 The receive buffer is one `Mutex<[u8; 2048]>` on the stack, not a static, and
 the lock is what makes `poll()` safe for its several callers.  It covers the

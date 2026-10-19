@@ -381,6 +381,94 @@ fn resolve_hostname_round_trip_with_stack() {
     }
 }
 
+/// `resolve` returns an answer that is already waiting, without polling for
+/// it.
+///
+/// This is the resolver's real loop, not a copy: it sends the query, finds the
+/// datagram already queued on the socket, filters it by nameserver and
+/// transaction id, parses it and caches it.  The count of parks is asserted at
+/// zero — the datagram was there before the wait — and the cache lookup is the
+/// half of the result the return value alone does not prove.
+#[cfg(not(target_os = "none"))]
+#[test]
+fn resolve_takes_an_answer_that_is_already_queued() {
+    use crate::network::internet::ipv4;
+    use crate::network::link::ethernet::MacAddress;
+    use crate::network::link::ethernet::{self};
+    use crate::network::udp;
+    use alloc::sync::Arc;
+
+    const HOST: &str = "queued-answer.example";
+    const ADDR: [u8; 4] = [192, 168, 1, 77];
+
+    // SAFETY: the caller's contract is that nothing is using the stack; this
+    // test helper calls it before installing the stack it goes on to use.
+    unsafe {
+        NetworkStack::uninstall_global();
+    }
+
+    let mock = Arc::new(MockNetworkDevice::new(
+        "dns-queued",
+        [0x52, 0x54, 0x00, 0xaa, 0xbb, 0xcc],
+    ));
+    let dns_server_mac: [u8; 6] = [0x52, 0x54, 0x00, 0x99, 0x88, 0x77];
+    NetworkStack::init_with_device(mock.clone(), [10, 0, 2, 15]);
+    let stack = NetworkStack::global().expect("stack should be initialised");
+    stack
+        .arp_cache()
+        .lock()
+        .insert([10, 0, 2, 3], MacAddress(dns_server_mac), 0);
+    stack.udp_table().lock().bind(DNS_EPHEMERAL_PORT).ok();
+
+    // The answer arrives before the resolver asks: queued on the socket, from
+    // the configured nameserver and echoing the query's transaction id.
+    let query = build_query(HOST);
+    let response = build_test_dns_response(
+        u16::from_be_bytes([query[0], query[1]]),
+        1,
+        1,
+        false,
+        Some(ADDR),
+    );
+    assert!(stack.udp_table().lock().deliver(
+        crate::network::internet::ip::IpAddress::V4([10, 0, 2, 3]),
+        53,
+        DNS_EPHEMERAL_PORT,
+        response,
+    ));
+
+    let parks_before = super::resolve::DNS_PARK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+    let resolved = super::resolve::resolve(HOST).expect("the queued answer should resolve");
+    let parks_after = super::resolve::DNS_PARK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+
+    assert_eq!(resolved, ADDR);
+    assert_eq!(
+        parks_after, parks_before,
+        "the answer was queued, so the resolver must not have parked"
+    );
+    assert_eq!(
+        super::cache::cache_lookup(HOST, stack.current_tick()),
+        Some(ADDR),
+        "a resolved answer is cached"
+    );
+    // And a second resolution is served from the cache with no query at all.
+    assert_eq!(super::resolve::resolve(HOST), Ok(ADDR));
+
+    // The query went out to the configured nameserver.
+    let tx = mock.drain_tx();
+    assert!(!tx.is_empty(), "the query was transmitted");
+    let frame = ethernet::parse_frame(&tx[0]).expect("valid ethernet frame");
+    let ip = ipv4::parse_packet(&frame.payload).expect("valid IPv4");
+    let dgram = udp::parse_datagram(&ip.payload).expect("valid UDP datagram");
+    assert_eq!(ip.header.destination, [10, 0, 2, 3]);
+    assert_eq!(dgram.header.destination_port, 53);
+
+    // SAFETY: nothing else is using the stack now; this test installed it.
+    unsafe {
+        NetworkStack::uninstall_global();
+    }
+}
+
 // ── test helpers ──
 
 /// Build an Ethernet frame carrying an IPv4 payload.
