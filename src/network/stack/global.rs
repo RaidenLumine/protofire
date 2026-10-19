@@ -77,10 +77,41 @@ impl NetworkStack {
     ///
     /// Panics if a stack is already installed (double-init is a kernel bug).
     pub fn init_with_device(device: Arc<dyn NetworkDevice>, local_ip: Ipv4Addr) {
+        let stack = Box::new(Self::build(device, local_ip));
+        let ptr = Box::into_raw(stack);
+        let prev = swap_global_stack(ptr);
+        assert!(
+            prev.is_null(),
+            "NetworkStack double-init: a global stack is already installed"
+        );
+
+        // Announce our IP→MAC mapping to the local network segment.
+        // Only in production — tests exercise send_gratuitous_arp directly.
+        // Failure is non-fatal: the stack works even without GARP.
+        #[cfg(not(test))]
+        {
+            // SAFETY: the pointer was allocated on the line above and published only after
+            // this use, so the reference is live for the duration.
+            let stack_ref = unsafe { ptr.as_ref().expect("just allocated") };
+            let _ = crate::network::internet::arp::send_gratuitous_arp(stack_ref);
+        }
+    }
+
+    /// Build a stack without installing it.
+    ///
+    /// `init_with_device` is this plus publication; a host test that wants two
+    /// threads polling one stack has to own the stack itself, because the test
+    /// build's global slot is per-thread.
+    #[cfg(test)]
+    pub(crate) fn new_with_device(device: Arc<dyn NetworkDevice>, local_ip: Ipv4Addr) -> Self {
+        Self::build(device, local_ip)
+    }
+
+    fn build(device: Arc<dyn NetworkDevice>, local_ip: Ipv4Addr) -> Self {
         let mac = device.mac_address();
         let device_mtu = device.mtu() as u64;
         let link_local_v6 = ipv6::link_local_from_mac(mac);
-        let stack = Box::new(NetworkStack {
+        NetworkStack {
             device,
             local_ip: crate::util::sync_unsafe_cell::SyncUnsafeCell::new(local_ip),
             local_mac: mac,
@@ -92,6 +123,7 @@ impl NetworkStack {
             arp_cache: Mutex::new(crate::network::internet::arp::ArpCache::new()),
             tcp_table: Mutex::new(crate::network::tcp::TcpConnectionTable::new()),
             udp_table: Mutex::new(crate::network::udp::UdpSocketTable::new()),
+            rx_buffer: Mutex::new([0u8; super::RX_BUFFER_SIZE]),
             dccp_table: Mutex::new(crate::network::dccp::DccpConnectionTable::new()),
             ipsec_spd: Mutex::new(crate::network::ipsec::IpsecSpd::new()),
             ipsec_sad: Mutex::new(crate::network::ipsec::IpsecSad::new()),
@@ -136,24 +168,6 @@ impl NetworkStack {
             pppoe: Mutex::new(crate::network::pppoe::PppoeSession::new()),
             pppoe_enabled: core::sync::atomic::AtomicBool::new(false),
             filter_table: Mutex::new(crate::network::filter::PacketFilter::new()),
-        });
-
-        let ptr = Box::into_raw(stack);
-        let prev = swap_global_stack(ptr);
-        assert!(
-            prev.is_null(),
-            "NetworkStack double-init: a global stack is already installed"
-        );
-
-        // Announce our IP→MAC mapping to the local network segment.
-        // Only in production — tests exercise send_gratuitous_arp directly.
-        // Failure is non-fatal: the stack works even without GARP.
-        #[cfg(not(test))]
-        {
-            // SAFETY: the pointer was allocated on the line above and published only after
-            // this use, so the reference is live for the duration.
-            let stack_ref = unsafe { ptr.as_ref().expect("just allocated") };
-            let _ = crate::network::internet::arp::send_gratuitous_arp(stack_ref);
         }
     }
 

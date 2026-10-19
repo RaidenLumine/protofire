@@ -25,8 +25,6 @@ use crate::network::ntp;
 use crate::network::ppp;
 use crate::network::pppoe::PppoePhase;
 use crate::network::udp;
-#[cfg(not(test))]
-use crate::util::sync_unsafe_cell::SyncUnsafeCell;
 use crate::Error;
 use crate::Result;
 
@@ -34,28 +32,6 @@ use crate::Result;
 use crate::network::dhcp::LeaseState;
 
 use super::NetworkStack;
-
-/// Maximum receive buffer size for `poll()`.
-const RX_BUFFER_SIZE: usize = 2048;
-
-/// Reusable receive buffer shared across all `poll()` calls.
-///
-/// Using a static buffer avoids a 2 KiB stack allocation on every `poll()`
-/// invocation.  `poll()` is inherently serialised on bare-metal (single-core
-/// with global kernel lock), so a global buffer is safe there.
-///
-/// In test builds the buffer lives on the stack so that parallel test threads
-/// do not race on a shared static — `cargo test --lib` runs tests concurrently
-/// and each thread must have its own receive buffer.
-///
-/// # SMP future-proofing
-///
-/// When the kernel gains SMP support this buffer must be replaced with a
-/// per-CPU allocation (or wrapped in a spinlock-protected ownership
-/// handoff) to avoid data races between cores polling different devices
-/// concurrently.
-#[cfg(not(test))]
-static RX_BUFFER: SyncUnsafeCell<[u8; RX_BUFFER_SIZE]> = SyncUnsafeCell::new([0u8; RX_BUFFER_SIZE]);
 
 impl NetworkStack {
     /// Act on the original datagram an ICMP error carries.
@@ -319,26 +295,11 @@ impl NetworkStack {
     /// frame was available, or an error on hardware failure.
     pub fn poll(&self) -> Result<bool> {
         self.profiler.inc_poll_iterations();
-        // SAFETY: `poll()` is never called concurrently — the kernel is
-        // single-threaded in bare-metal builds.  In test mode the buffer is
-        // stack-allocated so parallel test threads get independent buffers.
-        #[cfg(test)]
-        let mut rx_storage = [0u8; RX_BUFFER_SIZE];
-        #[cfg(not(test))]
-        // SAFETY: on a bare-metal build this static is the only RX buffer, and the
-        // receive path is serialised by the stack's own lock; the test build stacks the
-        // buffer instead.
-        let buffer = unsafe { &mut *RX_BUFFER.get() };
-        #[cfg(test)]
-        let buffer = &mut rx_storage;
-        match self.device.receive(buffer) {
-            Ok(0) => {
-                self.profiler.inc_poll_rx_empty();
-                Ok(false)
-            }
-            Ok(n) => {
+        match self.receive_frame()? {
+            None => Ok(false),
+            Some(bytes) => {
                 // Parse Ethernet frame and demux by EtherType.
-                let frame = ethernet::parse_frame(&buffer[..n])?;
+                let frame = ethernet::parse_frame(&bytes)?;
                 match frame.ethertype {
                     EtherType::Arp => {
                         let arp_packet =
@@ -821,6 +782,34 @@ impl NetworkStack {
                     }
                 }
                 Ok(true)
+            }
+        }
+    }
+
+    /// Read one frame from the device into owned storage.
+    ///
+    /// The stack's receive buffer is shared by every caller of `poll()` — the
+    /// resolver, ARP, TCP accept, DHCP and the shell can drive it on different
+    /// CPUs at once — so the device read and the copy out of the buffer happen
+    /// under `rx_buffer`'s lock, and the rest of the receive path does not.
+    ///
+    /// The copy is what makes the lock short rather than wrong.  Holding it
+    /// across the demux would deadlock: the demux transmits on some paths
+    /// (an ICMP reply, a TCP acknowledgement), a transmit resolves a
+    /// neighbour that is not cached by calling `poll()` again, and the outer
+    /// caller would be waiting for a lock it already holds.  Masking
+    /// interrupts for the demux instead would stop the clock the spin-waiting
+    /// neighbour resolution reads, so the wait could not time out either.
+    fn receive_frame(&self) -> Result<Option<alloc::vec::Vec<u8>>> {
+        let mut buffer = self.rx_buffer.lock();
+        match self.device.receive(&mut buffer[..]) {
+            Ok(0) => {
+                self.profiler.inc_poll_rx_empty();
+                Ok(None)
+            }
+            Ok(n) => {
+                let n = n.min(buffer.len());
+                Ok(Some(buffer[..n].to_vec()))
             }
             Err(error) => {
                 self.profiler.inc_poll_errors();

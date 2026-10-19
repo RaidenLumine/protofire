@@ -1,6 +1,6 @@
 # RFC 0029: Wait for a DNS answer instead of polling for one
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-10-19
 - **Supersedes:** none
@@ -40,20 +40,20 @@ of a wait, but only because there is no other primitive — and here there is
 one, in `kernel::process::wait`, which `serial` and `virtio_net` already use
 for their own devices.
 
-**The loop cannot be made safe as it stands.**  `NetworkStack::poll` carries
-this line:
+**The loop cannot be made safe as it stands.**  At the time this was written,
+`NetworkStack::poll` carried this line:
 
 ```rust
 // SAFETY: `poll()` is never called concurrently — the kernel is
 // single-threaded in bare-metal builds.
 ```
 
-and reads into a single static `RX_BUFFER`.  The kernel schedules on up to
+and read into a single static `RX_BUFFER`.  The kernel schedules on up to
 seventeen CPUs, and two processes resolving two names are two threads in this
-loop at once.  The assumption is already false; the loop is what makes it
-look true, because a spinning caller is the only caller.  Any design that
+loop at once.  The assumption was already false; the loop is what made it
+look true, because a spinning caller was the only caller.  Any design that
 lets something other than the waiter poll — which is every design below —
-has to make `poll` safe first.
+had to make `poll` safe first, and stage 1 does.
 
 ## Current state
 
@@ -65,8 +65,10 @@ has to make `poll` safe first.
   `receive_queue: VecDeque` and returns.  `recv_from` pops or answers
   `Err(Error::TimedOut)`; there is no wait queue anywhere in `src/network/`.
 - `src/network/stack/dispatch.rs` — `poll()` reads one frame from the device,
-  parses it, and demuxes.  It takes no lock of its own; the comment above
-  claims serialisation by single-threadedness.
+  parses it, and demuxes.  Since stage 1 landed, the device read and the copy
+  out of `NetworkStack::rx_buffer` happen under that buffer's lock, and the
+  demux runs on the copy afterwards; before that, the read used one static
+  buffer whose comment claimed serialisation by single-threadedness.
 - `src/kernel/process/wait/queue.rs` — `WaitQueue` with `block_current_if`,
   `block_current_until_if` and `plan_timed_wait`; `src/drivers/serial.rs` and
   `src/drivers/virtio_net.rs` use it for their own devices' input and
@@ -89,17 +91,53 @@ not implemented leaves the tree exactly as it is now.
 
 Either give the receive path a lock, or give each poller its own buffer.
 
-The choice here is a **single receive lock** owned by the stack, held across
-one `receive` and the demux of its frame, with the buffer inside it.  A
-per-caller buffer would move the race rather than end it: `deliver` into the
-UDP table still has two writers, and the demux path mutates the ARP, TCP and
-UDP tables.  One lock means one rule, and it is the rule the stack already
-follows everywhere else.
+The choice here is a **single receive lock** owned by the stack, with the
+buffer inside it.  A per-caller buffer would move the race rather than end it:
+`deliver` into the UDP table still has two writers, and the demux path mutates
+the ARP, TCP and UDP tables.  One lock means one rule, and it is the rule the
+stack already follows everywhere else.
 
-Interrupt context may not take it: the lock is a sleeping mutex in the sense
-that matters — a thread can hold it across work — so a handler that needs the
-receive path must leave that work to the tick, exactly as RFC 0021 already
-decides for xHCI.
+**What the lock covers, and what it cannot.**  The decision above is about
+ownership of the buffer, not about holding a lock for the length of the
+receive path.  The first draft of this RFC said the lock would be held "across
+one `receive` and the demux of its frame"; that is not implementable.  The
+demux transmits on several paths (an ICMP echo reply, a TCP acknowledgement,
+an ICMP port-unreachable), and a transmit resolves a neighbour that is not
+cached by calling `poll()` again (`arp::resolve_mac`).  A lock held across the
+demux is therefore taken recursively on one thread, and the release would
+never run.  Taking it without masking interrupts does not rescue it either:
+the neighbour resolution that recurses is a spin-wait on the stack's own
+clock, so a demux that froze the tick would wait for a timeout that cannot
+advance.
+
+So the lock covers exactly what a second caller can tear: the device read and
+the copy of the frame out of the shared buffer.  The demux then runs on the
+copy, after the lock is released.  That is still sufficient for safety —
+every table the demux touches (`arp_cache`, `tcp_table`, `udp_table`,
+`fragment_cache`, `nat_table`, `filter_table`, the raw-socket map) is behind
+its own `Mutex`, so concurrent demuxes serialise there rather than on the
+receive buffer.  Two pollers may demux two frames in either order; the
+protocols already accept reordering (TCP queues out-of-order segments, IP
+reassembly buffers fragments), and nothing in the receive path requires that
+two frames from the device reach the tables in the order the device produced
+them.
+
+The copy also closes a second, single-threaded hole that the old static
+buffer had: a nested `poll()` during the demux read a new frame into the same
+storage while the outer frame's bytes were still being used.  Owned bytes make
+the recursion safe whether or not two CPUs are involved.
+
+The lock is the stack's ordinary `Mutex`, so it masks interrupts for the
+length of the device read and the copy.  Interrupt context must not call
+`poll()` anyway: the demux can send, and a send that misses the neighbour
+cache spin-waits on the stack's clock, which is not something a handler can
+do.  A handler that needs the receive path leaves that work to the tick,
+exactly as RFC 0021 already decides for xHCI.
+
+**Landed:** `NetworkStack::rx_buffer` is a `Mutex<[u8; 2048]>`, and
+`receive_frame` (`src/network/stack/dispatch.rs`) is the only reader of the
+device.  The same code runs in the host and bare-metal builds, so the host
+test exercises the path a boot runs rather than a stack-buffer substitute.
 
 ### Stage 2 — a UDP socket can be waited on
 
@@ -202,10 +240,15 @@ assumption that the SMP bring-up made false.
 
 ## How this is proven
 
-**Stage 1.**  A host test that calls `poll()` from two threads against a
-device that yields one frame each, asserting that no frame is lost and no
-buffer is torn.  The receive lock is what makes it pass; the current tree
-cannot pass it.
+**Stage 1.**  A host test (`two_pollers_receive_every_frame_intact` in
+`src/network/stack/tests.rs`) runs two threads calling `poll()` against a
+device that pauses halfway through writing each frame.  The pause is what
+makes the race reachable: a second caller that is allowed into `receive` lands
+between the two halves of someone else's frame.  The test asserts three
+things — the device never sees two receives in flight, every frame is read
+exactly once, and every datagram's payload is uniform, which a frame assembled
+from two receives cannot be.  With the buffer back on the stack (the test
+build's old shape) the first assertion fails on this tree.
 
 **Stage 2.**  A host test: bind a port, register a waiter, call `deliver`,
 assert the waiter woke.  `src/network/stack/tests.rs` and the mock device are

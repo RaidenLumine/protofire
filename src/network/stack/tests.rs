@@ -6,6 +6,9 @@
 
 use alloc::sync::Arc;
 
+use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::Ordering;
+
 use crate::network::internet::icmp::IcmpHeader;
 use crate::network::internet::icmp::{self};
 use crate::network::internet::icmpv6;
@@ -260,4 +263,114 @@ fn slaac_solicits_from_the_tick_path_and_checks_a_formed_address() {
     stack.set_dad_conflict();
     stack.advance_tick();
     assert!(stack.global_ip_v6().is_none());
+}
+
+// ─── Receiving from more than one poller ───
+
+/// The payload every frame in this test carries: one repeated byte, so a
+/// frame assembled from two different receives cannot pass as one.
+fn frame_for(index: u8) -> alloc::vec::Vec<u8> {
+    let payload = [index; 256];
+    let udp_header = UdpHeader {
+        source_port: 12345,
+        destination_port: 9000,
+        length: (8 + payload.len()) as u16,
+        checksum: 0,
+    };
+    let udp_seg = udp::build_datagram(&udp_header, &payload);
+    build_ipv4_eth_frame(
+        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+        [0x52, 0x54, 0x00, 0xaa, 0xbb, 0xcc],
+        [10, 0, 2, 100],
+        [10, 0, 2, 15],
+        IpProtocol::Udp,
+        &udp_seg,
+    )
+}
+
+/// Two threads poll one stack; every frame has to be read exactly once and
+/// arrive whole.
+///
+/// The mock device is told to pause halfway through copying each frame.  That
+/// pause is what makes the race reachable: without the receive lock, the
+/// second poller enters `receive` between the two halves of the first one's
+/// frame and overwrites the buffer the first one has not finished reading.
+/// The device records the overlap directly, and the payloads — one repeated
+/// byte each — make a torn frame visible as a payload that is not uniform.
+#[test]
+fn two_pollers_receive_every_frame_intact() {
+    const FRAMES: u8 = 24;
+
+    let mock = Arc::new(MockNetworkDevice::new(
+        "two-poller",
+        [0x52, 0x54, 0x00, 0xaa, 0xbb, 0xcc],
+    ));
+    mock.set_receive_pause(100_000);
+    for index in 1..=FRAMES {
+        mock.inject_rx(frame_for(index));
+    }
+    let stack = NetworkStack::new_with_device(mock.clone(), [10, 0, 2, 15]);
+    stack.udp_table().lock().bind(9000).expect("bind");
+
+    let delivered = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..2 {
+            scope.spawn(|| {
+                // Bounded so a lost frame fails the assertions below instead
+                // of parking the test forever.
+                for _ in 0..100_000 {
+                    match stack.poll() {
+                        Ok(true) => {
+                            delivered.fetch_add(1, Ordering::AcqRel);
+                        }
+                        Ok(false) => {
+                            if delivered.load(Ordering::Acquire) >= FRAMES as usize {
+                                return;
+                            }
+                            std::thread::yield_now();
+                        }
+                        Err(error) => panic!("poll failed: {error:?}"),
+                    }
+                }
+            });
+        }
+    });
+
+    assert!(
+        !mock.receive_overlapped(),
+        "two receives were in flight against the one receive buffer"
+    );
+    assert_eq!(
+        delivered.load(Ordering::Acquire),
+        FRAMES as usize,
+        "every frame was read exactly once"
+    );
+
+    // Each datagram has to arrive whole.  A tear puts the first half of one
+    // frame and the second half of another in the same payload, so the
+    // repeated byte stops being uniform.
+    let mut seen = [false; FRAMES as usize + 1];
+    let mut table = stack.udp_table().lock();
+    for _ in 0..FRAMES {
+        let mut buffer = [0u8; 512];
+        let (len, _, _) = table.recv_from(9000, &mut buffer).expect("a datagram");
+        let payload = &buffer[..len];
+        assert_eq!(payload.len(), 256, "the whole payload was delivered");
+        let first = payload[0];
+        assert!(
+            payload.iter().all(|byte| *byte == first),
+            "a frame was assembled from two receives"
+        );
+        assert!(
+            (1..=FRAMES).contains(&first),
+            "payload byte {first} names no frame"
+        );
+        assert!(!seen[first as usize], "frame {first} was delivered twice");
+        seen[first as usize] = true;
+    }
+    assert!(seen[1..].iter().all(|delivered| *delivered));
+    assert_eq!(
+        table.recv_from(9000, &mut [0u8; 16]),
+        Err(crate::Error::TimedOut)
+    );
 }

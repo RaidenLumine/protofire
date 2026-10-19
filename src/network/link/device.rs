@@ -55,6 +55,15 @@ pub mod mock {
         rx_queue: Mutex<VecDeque<Vec<u8>>>,
         tx_queue: Mutex<VecDeque<Vec<u8>>>,
         health: Mutex<DeviceHealth>,
+        /// Spin iterations a `receive` spends between the two halves of its
+        /// copy.  Zero for every ordinary test; a concurrency test sets it so
+        /// that a second receiver allowed in at the same time lands between
+        /// them, which is the tear a shared receive buffer produces.
+        receive_pause: core::sync::atomic::AtomicU32,
+        /// How many `receive` calls are copying right now.
+        receivers: core::sync::atomic::AtomicUsize,
+        /// Set when two of those copies overlapped.
+        receive_overlapped: core::sync::atomic::AtomicBool,
     }
 
     impl MockNetworkDevice {
@@ -66,6 +75,9 @@ pub mod mock {
                 rx_queue: Mutex::new(VecDeque::new()),
                 tx_queue: Mutex::new(VecDeque::new()),
                 health: Mutex::new(DeviceHealth::Healthy),
+                receive_pause: core::sync::atomic::AtomicU32::new(0),
+                receivers: core::sync::atomic::AtomicUsize::new(0),
+                receive_overlapped: core::sync::atomic::AtomicBool::new(false),
             }
         }
 
@@ -77,7 +89,23 @@ pub mod mock {
                 rx_queue: Mutex::new(VecDeque::new()),
                 tx_queue: Mutex::new(VecDeque::new()),
                 health: Mutex::new(DeviceHealth::Healthy),
+                receive_pause: core::sync::atomic::AtomicU32::new(0),
+                receivers: core::sync::atomic::AtomicUsize::new(0),
+                receive_overlapped: core::sync::atomic::AtomicBool::new(false),
             }
+        }
+
+        /// Make every `receive` pause for `spins` iterations halfway through
+        /// copying its frame.
+        pub fn set_receive_pause(&self, spins: u32) {
+            self.receive_pause
+                .store(spins, core::sync::atomic::Ordering::Release);
+        }
+
+        /// Whether two `receive` calls were ever copying at the same time.
+        pub fn receive_overlapped(&self) -> bool {
+            self.receive_overlapped
+                .load(core::sync::atomic::Ordering::Acquire)
         }
 
         /// Push a packet into the RX queue for the driver to consume via
@@ -121,15 +149,33 @@ pub mod mock {
         }
 
         fn receive(&self, buffer: &mut [u8]) -> Result<usize> {
-            let mut rx = self.rx_queue.lock();
-            match rx.pop_front() {
-                Some(packet) => {
-                    let len = packet.len().min(buffer.len());
-                    buffer[..len].copy_from_slice(&packet[..len]);
-                    Ok(len)
-                }
-                None => Ok(0),
+            let packet = self.rx_queue.lock().pop_front();
+            let Some(packet) = packet else {
+                return Ok(0);
+            };
+
+            let active = self
+                .receivers
+                .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+            if active != 0 {
+                self.receive_overlapped
+                    .store(true, core::sync::atomic::Ordering::Release);
             }
+
+            let len = packet.len().min(buffer.len());
+            let half = len / 2;
+            buffer[..half].copy_from_slice(&packet[..half]);
+            for _ in 0..self
+                .receive_pause
+                .load(core::sync::atomic::Ordering::Acquire)
+            {
+                core::hint::spin_loop();
+            }
+            buffer[half..len].copy_from_slice(&packet[half..len]);
+
+            self.receivers
+                .fetch_sub(1, core::sync::atomic::Ordering::AcqRel);
+            Ok(len)
         }
 
         fn device_health(&self) -> DeviceHealth {

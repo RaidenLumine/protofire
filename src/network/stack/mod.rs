@@ -49,6 +49,9 @@ use crate::network::dhcp::DhcpLease;
 #[cfg(target_os = "none")]
 use crate::network::dhcp::LeaseState;
 
+/// Maximum frame size `poll()` will read from the device.
+pub(crate) const RX_BUFFER_SIZE: usize = 2048;
+
 pub(crate) mod config;
 pub(crate) mod dhcp;
 pub(crate) mod dispatch;
@@ -93,6 +96,16 @@ pub struct NetworkStack {
     tcp_table: Mutex<TcpConnectionTable>,
     /// UDP socket table (keyed by local port).
     udp_table: Mutex<UdpSocketTable>,
+    /// The buffer one `poll()` reads a frame into.
+    ///
+    /// It is a lock rather than a static because `poll()` has more than one
+    /// caller: the resolver, ARP, TCP accept, DHCP and the shell all drive the
+    /// receive path, and they can run on different CPUs at once.  The lock is
+    /// held across the device read and the copy out of the buffer, which is
+    /// the whole of what a second reader could tear; the demux that follows
+    /// runs after it is released, because the demux sends and a send resolves
+    /// ARP by polling again (see `dispatch::poll`).
+    rx_buffer: Mutex<[u8; RX_BUFFER_SIZE]>,
     /// Monotonically increasing tick counter (100 Hz).  Used by ARP cache
     /// expiry and TCP retransmission timers, and DHCP lease renewal.
     ticks: AtomicU64,

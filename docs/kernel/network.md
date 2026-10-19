@@ -61,11 +61,16 @@ caller is polling, and times out if none is.  There is no receive thread and
 no interrupt-driven dispatcher, which is a scope statement about the stack
 rather than a plan.
 
-The receive buffer is one static on bare metal; the code documents the
-single-poller assumption and names SMP as what would replace it.  The protocol
-tables are behind `Mutex`; the four addresses (local IPv4, DNS, gateway, mask)
-are `SyncUnsafeCell` with a single-writer contract that the boot's DHCP write
-relies on.
+The receive buffer is one `Mutex<[u8; 2048]>` on the stack, not a static, and
+the lock is what makes `poll()` safe for its several callers.  It covers the
+device read and the copy of the frame out of the buffer; the demux runs on
+that copy after the lock is released, because the demux can transmit and a
+transmit that misses the ARP cache polls again on the same thread.  The copy
+also keeps a nested `poll()` from overwriting the frame its caller is still
+demuxing.  Every table the demux touches is behind its own `Mutex`, so two
+pollers can demux concurrently.  The protocol tables are behind `Mutex`; the
+four addresses (local IPv4, DNS, gateway, mask) are `SyncUnsafeCell` with a
+single-writer contract that the boot's DHCP write relies on.
 
 Time is split the same way.  `advance_clock` is a single atomic add and runs
 from the scheduler tick (`src/kernel/process/scheduler/timer.rs`), which then
