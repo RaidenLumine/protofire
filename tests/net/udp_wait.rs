@@ -4,19 +4,35 @@
 //! a delivery wakes a parked waiter, a deadline ends the wait, a delivery that
 //! arrives before the wait is not lost, and unbinding wakes the waiter.
 
+use std::sync::Mutex as StdMutex;
+use std::sync::OnceLock;
+
 use protofire::kernel::process::Scheduler;
 use protofire::kernel::process::ThreadWaitOutcome;
 use protofire::network::internet::ip::IpAddress;
 use protofire::network::udp::UdpSocketTable;
 
+/// Serialise the tests in this file.
+///
+/// `Scheduler::global()` reads the per-CPU slot, and on the host that slot is
+/// the single early-boot fallback block rather than a real per-thread one — so
+/// two tests running in parallel would both install into it and each would
+/// schedule the other's threads.  Every test holds this for its duration; the
+/// same lock, for the same reason, is in `tests/process/condvar.rs`.
+fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| StdMutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
 /// Install a scheduler this test owns.
 ///
-/// One per test rather than one per process: the host's scheduler slot is
-/// thread-local, but a scheduler's queues are not, so tests on different
-/// threads would otherwise schedule each other's threads.  It is leaked
-/// because the slot points at it and the next test's install replaces the
-/// pointer without dropping it — the same reasoning the scheduler's own host
-/// tests rely on.
+/// One per test rather than one per process: a scheduler's queues are not
+/// per-thread, so tests sharing one would schedule each other's threads even
+/// when serialised.  It is leaked because the slot points at it and the next
+/// test's install replaces the pointer without dropping it — the same
+/// reasoning the scheduler's own host tests rely on.
 fn install_scheduler() -> &'static Scheduler {
     let scheduler: &'static Scheduler = Box::leak(Box::new(Scheduler::new()));
     // SAFETY: the scheduler is leaked, so it outlives every global lookup in
@@ -29,6 +45,7 @@ fn install_scheduler() -> &'static Scheduler {
 
 #[test]
 fn deliver_wakes_a_waiter() {
+    let _guard = test_lock();
     let scheduler = install_scheduler();
     let waiter = scheduler.spawn_named("udp-waiter", 0x1000);
     let sender = scheduler.spawn_named("udp-sender", 0x2000);
@@ -66,6 +83,7 @@ fn deliver_wakes_a_waiter() {
 
 #[test]
 fn wait_times_out_when_nothing_is_delivered() {
+    let _guard = test_lock();
     let scheduler = install_scheduler();
     let waiter = scheduler.spawn_named("udp-timeout-waiter", 0x3000);
     let other = scheduler.spawn_named("udp-timeout-other", 0x4000);
@@ -103,6 +121,7 @@ fn wait_times_out_when_nothing_is_delivered() {
 
 #[test]
 fn delivery_before_waiting_is_not_lost() {
+    let _guard = test_lock();
     let scheduler = install_scheduler();
     let thread = scheduler.spawn_named("udp-already-ready", 0x5000);
     scheduler.schedule();
@@ -124,6 +143,7 @@ fn delivery_before_waiting_is_not_lost() {
 
 #[test]
 fn unbinding_wakes_a_parked_waiter() {
+    let _guard = test_lock();
     let scheduler = install_scheduler();
     let waiter = scheduler.spawn_named("udp-unbind-waiter", 0x6000);
     let unbinder = scheduler.spawn_named("udp-unbinder", 0x7000);
