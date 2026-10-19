@@ -141,11 +141,30 @@ test exercises the path a boot runs rather than a stack-buffer substitute.
 
 ### Stage 2 — a UDP socket can be waited on
 
-`UdpSocket` gains a `WaitQueue<()>`.  `deliver` pushes the datagram and then
-notifies the queue — under the table lock it already holds, or after releasing
-it, as long as the datagram is queued before the notification.  A waiter that
-wakes, takes the table lock, and finds the queue empty has seen a spurious
-wakeup and blocks again.
+`UdpSocket` gains a `WaitQueue<u64>`.  Its state is the number of datagrams
+queued — the same number as the length of `receive_queue` — so a waiter can
+decide whether to park without taking the socket table's lock.  `deliver`
+pushes the datagram and then increments the count and wakes one waiter, all
+under the wait queue's own lock, so the datagram is queued before the
+notification.  A waiter that wakes, takes the table lock, and finds the queue
+empty has seen a spurious wakeup (or lost the datagram to another waiter) and
+blocks again.
+
+`recv_from` decrements the count as it pops, and `unbind` zeroes it before
+waking every waiter: the datagrams left with the socket, and a waiter that
+kept seeing a stale count would return to a socket that is no longer there.
+
+The caller takes a `DatagramWait` handle under the table lock and waits on
+that, not on the table.  It cannot hold the table across the wait — `deliver`
+needs the same lock — and it must not need the table to learn whether its wait
+succeeded: that question is answered by `recv_from` and by the clock, which is
+the ordinary condition-variable discipline.  The handle holds the wait queue
+through an `Arc`, so a waiter still parked when the socket unbinds keeps a live
+queue to be woken on.
+
+**Landed:** `UdpSocketTable::readiness` and `DatagramWait`
+(`src/network/udp.rs`); `tests/net/udp_wait.rs` covers the delivery wake, the
+deadline, the datagram that arrived before the wait, and the unbind wake.
 
 ### Stage 3 — something other than the waiter drives the receive path
 
@@ -250,9 +269,12 @@ exactly once, and every datagram's payload is uniform, which a frame assembled
 from two receives cannot be.  With the buffer back on the stack (the test
 build's old shape) the first assertion fails on this tree.
 
-**Stage 2.**  A host test: bind a port, register a waiter, call `deliver`,
-assert the waiter woke.  `src/network/stack/tests.rs` and the mock device are
-the scaffolding.
+**Stage 2.**  `tests/net/udp_wait.rs` installs a scheduler and drives the
+socket's wait queue directly: a parked waiter is woken by `deliver` and finds
+the datagram; a deadline with no delivery leaves the queue empty and the wait
+timed out; a datagram queued before the wait makes it return without parking;
+and `unbind` wakes a parked waiter.  Those four are the cases stage 4's loop
+depends on, and each one is a way the resolver could hang.
 
 **Stage 3 and 4.**  No device on any gate's machine sends a DNS answer, so —
 the same reasoning RFC 0023's IMSIC self-test follows — the kernel walks the
@@ -260,6 +282,7 @@ path itself.  A `dns` self-test binds the ephemeral port, arms the waiter,
 delivers a synthetic A-record through `deliver`, and asserts the waiter woke
 and that the record parsed and was cached.  The boot prints one line saying
 it ran, and `make check-x8664-runtime` asserts that line.
+
 
 The spin itself needs its own evidence, because a design that quietly keeps
 polling would still pass the functional test.  The resolver counts its poll

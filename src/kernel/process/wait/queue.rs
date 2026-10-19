@@ -121,6 +121,20 @@ pub struct WaitQueue<T = ()> {
     inner: Arc<WaitQueueInner<T>>,
 }
 
+// A wait-queue handle may be cloned so a caller can keep one after the
+// structure that owned it is gone — a socket that unbound while a waiter was
+// parking on it, for instance.  Both handles name the same queue, so a wake
+// through either reaches the same waiters; the last handle to be dropped frees
+// the queue, and a waiter still parked holds one indirectly through the
+// scheduler's timeout registration.
+impl<T> Clone for WaitQueue<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 impl WaitQueue<()> {
     pub fn new() -> Self {
         Self::with_state(())

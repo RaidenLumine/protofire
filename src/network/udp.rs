@@ -7,6 +7,7 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::collections::vec_deque::VecDeque;
 use alloc::vec::Vec;
 
+use crate::kernel::process::wait::WaitQueue;
 use crate::network::internet::ip::IpAddress;
 use crate::network::internet::ipv4::IpProtocol;
 use crate::network::internet::ipv4::Ipv4Addr;
@@ -153,12 +154,22 @@ pub fn build_datagram_with_checksum(
 
 // ─── UDP socket table ───
 
-/// A bound UDP socket with a receive queue.
+/// A bound UDP socket with a receive queue and a wait queue.
 pub struct UdpSocket {
     pub local_port: u16,
     /// Queue of (source_ip, source_port, data) tuples.
     /// The source IP is an [`IpAddress`] to support both IPv4 and IPv6 peers.
     receive_queue: VecDeque<(IpAddress, u16, Vec<u8>)>,
+    /// Waiters on this socket's receive queue.
+    ///
+    /// Its state is the number of datagrams waiting, which is also the length
+    /// of `receive_queue`: `deliver` increments it after pushing and
+    /// `recv_from` decrements it after popping.  Keeping the count on the wait
+    /// queue is what lets a waiter decide whether to park without taking the
+    /// socket table's lock — the lock order is table then wait queue, and a
+    /// waiter holding the wait queue's lock while reaching back for the table
+    /// would invert it against `deliver`.
+    ready: WaitQueue<u64>,
 }
 
 impl UdpSocket {
@@ -166,7 +177,57 @@ impl UdpSocket {
         Self {
             local_port,
             receive_queue: VecDeque::new(),
+            ready: WaitQueue::with_state(0),
         }
+    }
+}
+
+/// A handle on one socket's readiness, taken under the table lock so the
+/// handle outlives it.
+///
+/// The handle names the socket's wait queue through an `Arc`, so a waiter that
+/// is still parked when the socket unbinds keeps a live queue to be woken on.
+/// `wait` never touches the table: a caller must drain the socket with
+/// `recv_from` before waiting again, which is the ordinary condition-variable
+/// discipline.
+#[derive(Clone)]
+pub struct DatagramWait {
+    ready: WaitQueue<u64>,
+}
+
+impl DatagramWait {
+    /// How many datagrams are queued right now.
+    pub fn queued(&self) -> u64 {
+        self.ready.with_lock(|pending, _| *pending)
+    }
+
+    /// Block until a datagram is queued or `deadline` passes.
+    ///
+    /// It answers nothing, on purpose: whether the queue now has a datagram is
+    /// a question the caller asks with `recv_from`, and whether its deadline
+    /// passed is one it asks of the clock.  Both wakes — a delivery and the
+    /// timer — are therefore the same event to this function, and the caller
+    /// rechecks rather than trusting which one it was.  That is the standard
+    /// condition-variable shape, and it is also the only one that means the
+    /// same thing on a context switch and under the host's simulated
+    /// scheduler, where the parked thread's frame does not resume.
+    ///
+    /// A delivery that lands between the caller's failed `recv_from` and this
+    /// call is not lost: the queue's count is checked under the wait queue's
+    /// own lock before the thread is added to it.
+    ///
+    /// Without a scheduler this is a non-blocking probe.
+    pub fn wait(&self, deadline: u64) {
+        let _ = self
+            .ready
+            .block_current_until_if(deadline, |pending, waiters, thread| {
+                if *pending != 0 {
+                    false
+                } else {
+                    waiters.push_back(thread.clone());
+                    true
+                }
+            });
     }
 }
 
@@ -198,13 +259,37 @@ impl UdpSocketTable {
     }
 
     /// Unbind the socket at `port`.
+    ///
+    /// Waiters parked on the socket are woken so they can observe its absence
+    /// rather than sleeping until their deadlines; the wait queue itself stays
+    /// alive through their handles.  The count goes back to zero first: the
+    /// datagrams went with the socket, and a waiter that saw a stale count
+    /// would return to a queue that is no longer there and spin.
     pub fn unbind(&mut self, port: u16) {
-        self.sockets.remove(&port);
+        if let Some(socket) = self.sockets.remove(&port) {
+            socket.ready.with_lock(|pending, _| *pending = 0);
+            socket.ready.wake_all();
+        }
+    }
+
+    /// Take a readiness handle for the socket bound at `port`.
+    ///
+    /// `None` when nothing is bound.  The handle is meant to be taken, the
+    /// table lock released, and the handle waited on; a waiter that finds the
+    /// queue empty parks on the socket and is woken by `deliver`.
+    pub fn readiness(&self, port: u16) -> Option<DatagramWait> {
+        self.sockets.get(&port).map(|socket| DatagramWait {
+            ready: socket.ready.clone(),
+        })
     }
 
     /// Deliver a datagram to the bound socket at `dst_port`.
     /// Returns `true` if delivered, `false` if no socket is bound to the port.
-    /// `src_ip` is an [`IpAddress`] to support both IPv4 and IPv6.
+    /// `src_ip` is an [`IpAddress`] to support both IPv4 and IPv6 peers.
+    ///
+    /// The datagram is queued before a waiter is woken, under the same lock
+    /// that publishes the count, so a waiter that observes a wake and finds
+    /// the queue empty can only be looking at a datagram another waiter took.
     pub fn deliver(
         &mut self,
         src_ip: impl Into<IpAddress>,
@@ -216,6 +301,12 @@ impl UdpSocketTable {
             socket
                 .receive_queue
                 .push_back((src_ip.into(), src_port, data));
+            socket.ready.wake_with(|pending, waiters, waking| {
+                *pending = pending.saturating_add(1);
+                if let Some(thread) = WaitQueue::<u64>::take_next_waiter(waiters) {
+                    waking.push(thread);
+                }
+            });
             true
         } else {
             false
@@ -231,6 +322,11 @@ impl UdpSocketTable {
             Some((src_ip, src_port, data)) => {
                 let len = data.len().min(buffer.len());
                 buffer[..len].copy_from_slice(&data[..len]);
+                // Keep the wait-queue count equal to the queue length; it is
+                // what a waiter reads to decide whether to park.
+                socket
+                    .ready
+                    .with_lock(|pending, _| *pending = pending.saturating_sub(1));
                 Ok((len, src_ip, src_port))
             }
             None => Err(Error::TimedOut),

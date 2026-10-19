@@ -145,16 +145,21 @@
 # grows, which is the correct direction: the account store is a consumer of
 # the process table, not the other way round.
 #
-# `network` <-> `process` remains, and after this change it is one edge deep on
-# the network side rather than three.  `RawSocketHandle` — two integers naming
-# a socket the stack owns — was defined in `process`, so every use of it was an
-# edge up into the process table; it is defined in `network` now, and `process`
-# re-exports it so the handle table's public shape is unchanged.  What is left
-# is `scheduler::yield_current` from the DNS resolver's poll loop, which is the
+# `network` <-> `process` remains, and it is three edges on the network side
+# now.  `RawSocketHandle` — two integers naming a socket the stack owns — was
+# defined in `process`, so every use of it was an edge up into the process
+# table; it is defined in `network` now, and `process` re-exports it so the
+# handle table's public shape is unchanged.  Two of the three left are
+# `scheduler::yield_current` from the DNS resolver's poll loop, which is the
 # same shape as `maintenance`: a consumer of the scheduler using the primitive
-# that only the scheduler has.  The pair does not come apart until the DNS
-# resolver waits on a completion instead of polling for one — a change in the
-# network stack, not in this census.
+# that only the scheduler has.  The third is RFC 0029 stage 2: a UDP socket
+# owns a `WaitQueue`, so a receiver can park until a datagram is delivered
+# instead of polling.  That is the edge the pair is meant to end at — a
+# protocol naming the kernel's wait primitive instead of the scheduler — and
+# the count falls when stage 4 replaces both `yield_current` calls with it.
+# Recording the rise is the point: the census is what keeps that trade
+# visible, and hiding the import to keep the row still would be the thing it
+# exists to prevent.
 #
 # `memory` no longer names `fs`.  All four edges were `crate::fs::block`, which
 # is a `pub use` of `crate::kernel::block`: the swap path was reaching the
@@ -348,7 +353,7 @@ mod                          workload                     3
 network                      crypto                       30
 network                      fs                           6
 network                      ipc                          1
-network                      process                      2
+network                      process                      3
 network                      random                       5
 network                      sync                         17
 nmi                          sync                         1

@@ -308,7 +308,7 @@ test-fast:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test io --test path --test fs_entries --test install --test syscall_abi_golden --test syscall_fuzz
 
 test-concurrency:
-	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test scheduler --test condvar --test console --test keyboard --test process_stress
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test scheduler --test condvar --test console --test keyboard --test process_stress --test udp_wait
 
 test-storage:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test fs_maintenance --test memory_manager --test page_table --test simplefs --test simplefs_recovery --test simplefs_fault_matrix --test simplefs_undo_property --test fat32 --test simplefs_property --test memory_pressure

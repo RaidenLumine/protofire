@@ -115,6 +115,10 @@ name = "memory_pressure"
 path = "tests/memory/pressure.rs"
 
 [[test]]
+name = "udp_wait"
+path = "tests/net/udp_wait.rs"
+
+[[test]]
 name = "condvar"
 path = "tests/process/condvar.rs"
 
