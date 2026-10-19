@@ -23,11 +23,7 @@ pub(crate) mod cache;
 pub(crate) mod parse;
 pub(crate) mod query;
 pub(crate) mod resolve;
-#[cfg(all(
-    target_os = "none",
-    not(feature = "net_loopback"),
-    not(feature = "perf_baseline")
-))]
+#[cfg(all(target_os = "none", not(feature = "net_loopback")))]
 pub(crate) mod selftest;
 #[cfg(test)]
 mod tests;

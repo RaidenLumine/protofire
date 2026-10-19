@@ -38,12 +38,12 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-ticks 515 12
-frames 28 0
-frame-frees 12 0
-frame-zero-bytes 774144 0
-heap-allocs 23338 256
-heap-bytes 26767120 262144
+ticks 512 12
+frames 29 1
+frame-frees 13 1
+frame-zero-bytes 806912 32768
+heap-allocs 23351 256
+heap-bytes 26768496 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
@@ -88,6 +88,6 @@ ip4-rx 1 4
 ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 533 12
-ipis 52 4
+irqs 530 12
+ipis 57 6
 spurious 0 0

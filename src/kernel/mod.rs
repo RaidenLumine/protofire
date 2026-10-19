@@ -602,17 +602,10 @@ impl Kernel {
         // No machine a gate boots answers a DNS query, so the resolver's wait
         // path is walked from inside once: a waiter parks in the real loop and
         // a second thread delivers a synthetic A record to it.  The line the
-        // boot prints is what `make check-x8664-runtime` asserts.
-        //
-        // Not on a `perf_baseline` boot: that gate compares a boot's counters
-        // against a recorded baseline, and a stack the self-test frees at a
-        // moment the sample cannot see is a counter that drifts between runs.
-        // A measurement boot measures the product, not its self-tests.
-        #[cfg(all(
-            target_os = "none",
-            not(feature = "net_loopback"),
-            not(feature = "perf_baseline")
-        ))]
+        // boot prints is what `make check-x8664-runtime` asserts.  It runs in
+        // a `perf_baseline` build too — the code it proves is the same code —
+        // and the baseline records the two stacks it costs.
+        #[cfg(all(target_os = "none", not(feature = "net_loopback")))]
         if crate::network::stack::NetworkStack::global().is_some() {
             crate::network::dns::selftest::start();
         }
