@@ -81,6 +81,22 @@ A thread that blocks does so on a `WaitQueue`, and the answer it gets back is a
 interrupted.  Every blocking syscall is built on that one shape, which is why
 timeouts and signal wakes behave the same wherever a thread parks.
 
+A thread that cannot park is a different case, and noticing it is the caller's
+job.  `WaitQueue::block_current_until_if` answers `false` when there is no
+scheduler or no current thread to park — the boot's own context, and every
+host test — and otherwise leaves the *reason* for returning to the outcome.
+`DatagramWait::wait` (`src/network/udp.rs`) is the worked example of a wrapper
+that turns the first case into a distinct answer, because its caller is a
+loop: without that answer a resolver would watch a deadline on a clock that
+cannot advance and never return.
+
+The kernel's own long-lived threads are spawned the same way, from
+`Kernel::init`: `kernel-maintenance` (`src/kernel/maintenance.rs`) drains the
+deferred work the tick may not do, and `kernel-net-rx` drives the network
+device while a socket has a parked receiver.  Both sleep between passes.  The
+receive thread's period is the shorter of the two while somebody is waiting,
+because that period *is* the wait's latency.
+
 ## Signals
 
 A process has a 32-slot handler table (slot 0 unused), a `u32` mask, and a

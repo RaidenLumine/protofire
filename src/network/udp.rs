@@ -5,8 +5,10 @@
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::collections::vec_deque::VecDeque;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use crate::kernel::process::wait::Event;
 use crate::kernel::process::wait::WaitQueue;
 use crate::network::internet::ip::IpAddress;
 use crate::network::internet::ipv4::IpProtocol;
@@ -190,9 +192,17 @@ impl UdpSocket {
 /// `wait` never touches the table: a caller must drain the socket with
 /// `recv_from` before waiting again, which is the ordinary condition-variable
 /// discipline.
+///
+/// It also carries the table's receive-request event, which it signals at the
+/// moment it parks.  That is how the deferred receive thread learns that
+/// somebody is waiting: without it the thread would have to wake on a timer
+/// to look, and on an SMP machine each of those wakeups is a reschedule IPI
+/// on a machine with nothing to do.
 #[derive(Clone)]
 pub struct DatagramWait {
     ready: WaitQueue<u64>,
+    /// The table's receive-request event; see the type's own note.
+    request: Arc<Event>,
 }
 
 impl DatagramWait {
@@ -203,21 +213,45 @@ impl DatagramWait {
 
     /// Block until a datagram is queued or `deadline` passes.
     ///
-    /// It answers nothing, on purpose: whether the queue now has a datagram is
-    /// a question the caller asks with `recv_from`, and whether its deadline
-    /// passed is one it asks of the clock.  Both wakes — a delivery and the
-    /// timer — are therefore the same event to this function, and the caller
-    /// rechecks rather than trusting which one it was.  That is the standard
-    /// condition-variable shape, and it is also the only one that means the
-    /// same thing on a context switch and under the host's simulated
-    /// scheduler, where the parked thread's frame does not resume.
+    /// It does not say which of those happened, on purpose: whether the queue
+    /// now has a datagram is a question the caller asks with `recv_from`, and
+    /// whether its deadline passed is one it asks of the clock.  Both wakes —
+    /// a delivery and the timer — are therefore the same event to this
+    /// function, and the caller rechecks rather than trusting which one it
+    /// was.  That is the standard condition-variable shape, and it is also the
+    /// only one that means the same thing on a context switch and under the
+    /// host's simulated scheduler, where the parked thread's frame does not
+    /// resume.
+    ///
+    /// What it does answer is whether waiting was possible at all.  `true`
+    /// means a datagram was already queued, or the thread parked and was
+    /// resumed; `false` means there is no scheduler (or none is running a
+    /// thread) and a datagram is not queued either.  A caller that loops on
+    /// this question would otherwise spin forever on a clock that cannot
+    /// advance, because the deadline it is watching is the scheduler's.
+    ///
+    /// The park is announced on the table's receive event before it happens.
+    /// Order matters: the receiver thread is woken by that event, and if it
+    /// ran first it would find nobody waiting and go back to sleep.  Signalled
+    /// first, the thread is guaranteed to look after the waiter is linked.
     ///
     /// A delivery that lands between the caller's failed `recv_from` and this
     /// call is not lost: the queue's count is checked under the wait queue's
     /// own lock before the thread is added to it.
-    ///
-    /// Without a scheduler this is a non-blocking probe.
-    pub fn wait(&self, deadline: u64) {
+    pub fn wait(&self, deadline: u64) -> bool {
+        if self.queued() != 0 {
+            return true;
+        }
+        let Some(scheduler) = crate::kernel::process::Scheduler::global() else {
+            return false;
+        };
+        // A scheduler with no current thread is a boot-time context: there is
+        // nothing to park, and `block_current_until_if` would return without
+        // parking, which the caller would read as a wake that never comes.
+        if scheduler.current_thread().is_none() {
+            return false;
+        }
+
         let _ = self
             .ready
             .block_current_until_if(deadline, |pending, waiters, thread| {
@@ -225,15 +259,33 @@ impl DatagramWait {
                     false
                 } else {
                     waiters.push_back(thread.clone());
+                    // Link first, then signal: the reverse order lets the
+                    // receiver consume the signal, find nobody waiting and go
+                    // back to sleep in the window before this thread is on the
+                    // queue.  The wake runs with this socket's wait-queue lock
+                    // held (the event releases its own first), which is safe
+                    // because the lock order is one-way: the receive thread
+                    // takes the table lock and then this queue, never the
+                    // reverse, and the scheduler's own locks are released
+                    // before a woken thread is dispatched.
+                    self.request.signal();
                     true
                 }
             });
+        true
     }
 }
 
 /// Table of bound UDP sockets, keyed by local port.
 pub struct UdpSocketTable {
     sockets: BTreeMap<u16, UdpSocket>,
+    /// Signalled when a receiver parks, and consumed by the deferred receive
+    /// thread.
+    ///
+    /// It is an auto-reset event rather than a flag so a park that happens
+    /// while the thread is between "I have no work" and "I am asleep" is not
+    /// lost: the signal stays set until somebody takes it.
+    receive_request: Arc<Event>,
 }
 
 impl Default for UdpSocketTable {
@@ -246,7 +298,14 @@ impl UdpSocketTable {
     pub fn new() -> Self {
         Self {
             sockets: BTreeMap::new(),
+            receive_request: Arc::new(Event::auto_reset(false)),
         }
+    }
+
+    /// The event a waiter signals when it parks, and the receive thread waits
+    /// on.  Cloned so the thread can hold it without the table's lock.
+    pub fn receive_request(&self) -> Arc<Event> {
+        Arc::clone(&self.receive_request)
     }
 
     /// Bind a UDP socket to `port`.
@@ -280,6 +339,7 @@ impl UdpSocketTable {
     pub fn readiness(&self, port: u16) -> Option<DatagramWait> {
         self.sockets.get(&port).map(|socket| DatagramWait {
             ready: socket.ready.clone(),
+            request: Arc::clone(&self.receive_request),
         })
     }
 
@@ -581,6 +641,40 @@ mod tests {
         let mut table = UdpSocketTable::new();
         let mut buf = [0u8; 64];
         assert_eq!(table.recv_from(9999, &mut buf), Err(Error::NotFound));
+    }
+
+    /// The wait queue's count is the receive queue's length, at every step.
+    ///
+    /// The count is what a waiter reads to decide whether to park, so a drift
+    /// between it and the queue is a waiter that either sleeps through a
+    /// datagram or returns to an empty queue forever.  Both operations that
+    /// move one move the other, and this pins that they move together —
+    /// including the unbind that throws the queue away.
+    #[test]
+    fn the_wait_queues_count_is_the_receive_queues_length() {
+        let mut table = UdpSocketTable::new();
+        table.bind(9100).expect("bind");
+        let wait = table.readiness(9100).expect("readiness handle");
+        assert_eq!(wait.queued(), 0);
+
+        for index in 0..3 {
+            assert!(table.deliver([10, 0, 2, 1], 53, 9100, alloc::vec![index as u8]));
+            assert_eq!(wait.queued(), index + 1);
+        }
+
+        let mut buffer = [0u8; 8];
+        for remaining in (0..3).rev() {
+            table.recv_from(9100, &mut buffer).expect("a datagram");
+            assert_eq!(wait.queued(), remaining);
+        }
+
+        // A queued datagram that unbind discards must not leave a count
+        // behind: the handle outlives the socket, and a waiter that still
+        // held one would return to a queue that is gone.
+        assert!(table.deliver([10, 0, 2, 1], 53, 9100, alloc::vec![0]));
+        assert_eq!(wait.queued(), 1);
+        table.unbind(9100);
+        assert_eq!(wait.queued(), 0);
     }
 
     #[test]

@@ -582,17 +582,37 @@ impl Kernel {
         // thread cannot either, because its pass resolves names and a
         // resolver that blocks would be waiting for a receive only it could
         // have made.
+        //
+        // Only a boot with a stack gets it: a machine with no NIC has nothing
+        // for the thread to drive, and a thread that wakes ten times a second
+        // to answer "no waiter, no stack" is work nobody asked for.
+        //
+        // On the boot CPU, because its cadence is that CPU's timer: while a
+        // socket has a waiter it sleeps a tick at a time, and a thread parked
+        // on another CPU is woken by a reschedule IPI on every one of them.
         #[cfg(target_os = "none")]
-        self.scheduler.spawn_kernel_named(
-            maintenance::NETWORK_RECEIVE_THREAD_NAME,
-            maintenance::network_receive_entry,
-        );
+        if crate::network::stack::NetworkStack::global().is_some() {
+            self.scheduler.spawn_kernel_named_on_cpu(
+                maintenance::NETWORK_RECEIVE_THREAD_NAME,
+                maintenance::network_receive_entry,
+                self.scheduler.home_cpu(),
+            );
+        }
 
         // No machine a gate boots answers a DNS query, so the resolver's wait
         // path is walked from inside once: a waiter parks in the real loop and
         // a second thread delivers a synthetic A record to it.  The line the
         // boot prints is what `make check-x8664-runtime` asserts.
-        #[cfg(all(target_os = "none", not(feature = "net_loopback")))]
+        //
+        // Not on a `perf_baseline` boot: that gate compares a boot's counters
+        // against a recorded baseline, and a stack the self-test frees at a
+        // moment the sample cannot see is a counter that drifts between runs.
+        // A measurement boot measures the product, not its self-tests.
+        #[cfg(all(
+            target_os = "none",
+            not(feature = "net_loopback"),
+            not(feature = "perf_baseline")
+        ))]
         if crate::network::stack::NetworkStack::global().is_some() {
             crate::network::dns::selftest::start();
         }

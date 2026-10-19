@@ -533,6 +533,19 @@ impl Scheduler {
         self.spawn_ready_thread(name, |process| Thread::new_kernel(process.clone(), entry))
     }
 
+    /// Spawn a named kernel-mode thread on a chosen CPU.
+    ///
+    /// Placement is normally round-robin so work follows the machine.  This
+    /// exists for the opposite case: a thread whose *cadence* is another
+    /// CPU's, and which would otherwise pay a reschedule IPI every time that
+    /// cadence wakes it.  The receive thread is that case — it sleeps a tick
+    /// at a time while a socket has a waiter, and the tick is the boot CPU's.
+    pub fn spawn_kernel_named_on_cpu(&self, name: &str, entry: fn(), cpu: u32) -> Arc<Thread> {
+        let process = self.create_ready_process(name);
+        let thread = Thread::new_kernel(process.clone(), entry);
+        self.register_spawned_thread_on_cpu(process, thread, cpu, false)
+    }
+
     /// Spawn a named kernel-mode thread with an explicit [`SecurityToken`].
     ///
     /// The thread runs in ring 0 and shares the kernel address space.

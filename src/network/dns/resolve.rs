@@ -47,6 +47,16 @@ const DNS_MAX_RETRIES: u32 = 2;
 pub(crate) static DNS_PARK_COUNT: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
+/// The budget a caller that is not a foreground syscall gives one lookup.
+///
+/// Twenty ticks is 200 ms at 100 Hz: a tenth of the syscall's per-attempt
+/// budget.  The maintenance thread is the caller this exists for — it resolves
+/// the NTP server's name inside a pass whose other jobs are periodic, and a
+/// pass that waited the syscall's full six seconds of retries would have
+/// stopped doing everything else.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+pub(crate) const DNS_BACKGROUND_TIMEOUT_TICKS: u64 = 20;
+
 // ── Resolution ──
 
 /// Resolve a hostname to an IPv4 address.
@@ -73,6 +83,34 @@ pub fn resolve_hostname(hostname: &str) -> Result<Ipv4Addr> {
     }
 }
 
+/// Bind the resolver's ephemeral port if nobody else has it.
+///
+/// Answers whether *this* call is the one that bound the port.  Every resolver
+/// shares `DNS_EPHEMERAL_PORT`, which is the collision RFC 0029 leaves open;
+/// what this function exists to prevent is the second half of that problem —
+/// a resolver that gives up unbinding a socket it never owned, taking the
+/// binding away from the resolver that does own it.
+fn bind_ephemeral_port(stack: &NetworkStack) -> Result<bool> {
+    let mut table = stack.udp_table().lock();
+    if table.is_bound(DNS_EPHEMERAL_PORT) {
+        return Ok(false);
+    }
+    table.bind(DNS_EPHEMERAL_PORT)?;
+    Ok(true)
+}
+
+/// Re-bind after a timeout, if the binding has gone away.
+///
+/// Returns the binding's new ownership: unchanged when it is still present,
+/// the result of this bind when it is not.
+fn rebind_ephemeral_port(stack: &NetworkStack, owned: bool) -> bool {
+    let mut table = stack.udp_table().lock();
+    if table.is_bound(DNS_EPHEMERAL_PORT) {
+        return owned;
+    }
+    table.bind(DNS_EPHEMERAL_PORT).is_ok()
+}
+
 /// Resolve a hostname to an IPv4 address via DNS.
 ///
 /// Sends a standard A-record query to the configured DNS server and waits on
@@ -88,6 +126,23 @@ pub fn resolve_hostname(hostname: &str) -> Result<Ipv4Addr> {
 /// table and the DNS cache before falling back to DNS.
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 pub fn resolve(hostname: &str) -> Result<Ipv4Addr> {
+    resolve_within(hostname, DNS_QUERY_TIMEOUT_TICKS, DNS_MAX_RETRIES)
+}
+
+/// Resolve with an explicit per-attempt budget and retry count.
+///
+/// The budget is wall-clock waiting, not iterations, so it is the caller's to
+/// choose: a syscall can afford seconds, and a background pass whose other
+/// jobs are periodic cannot.  The maintenance thread resolves the NTP server's
+/// name, and it is the one caller that matters here — a resolver parked there
+/// holds up every other job in the same pass, so it asks for a short budget
+/// and no retries rather than the syscall's full one.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+pub(crate) fn resolve_within(
+    hostname: &str,
+    timeout_ticks: u64,
+    max_retries: u32,
+) -> Result<Ipv4Addr> {
     let stack = NetworkStack::global().ok_or(Error::Unsupported)?;
     let now = stack.current_tick();
 
@@ -97,16 +152,11 @@ pub fn resolve(hostname: &str) -> Result<Ipv4Addr> {
     }
 
     // Bind an ephemeral port for the DNS query exchange.
-    {
-        let mut udp_table = stack.udp_table().lock();
-        if !udp_table.is_bound(DNS_EPHEMERAL_PORT) {
-            udp_table.bind(DNS_EPHEMERAL_PORT)?;
-        }
-    }
+    let mut owns_binding = bind_ephemeral_port(stack)?;
 
     let query = build_query(hostname);
 
-    for retry in 0..=DNS_MAX_RETRIES {
+    for retry in 0..=max_retries {
         // Send the query to the DNS server configured on the stack
         // (set by DHCP at boot, or defaulted to 10.0.2.3).
         let dns_server = stack.dns_server();
@@ -115,7 +165,7 @@ pub fn resolve(hostname: &str) -> Result<Ipv4Addr> {
         // Park until the answer arrives or this attempt's budget is spent.
         // The receiver that drives the device is the deferred receive thread;
         // this caller no longer polls.
-        let deadline = stack.current_tick().saturating_add(DNS_QUERY_TIMEOUT_TICKS);
+        let deadline = stack.current_tick().saturating_add(timeout_ticks);
         if let Ok(addr) = await_a_record(
             stack,
             DNS_EPHEMERAL_PORT,
@@ -128,16 +178,17 @@ pub fn resolve(hostname: &str) -> Result<Ipv4Addr> {
         }
 
         // Timeout — rebind if our port was somehow taken.
-        if retry < DNS_MAX_RETRIES {
-            let mut udp_table = stack.udp_table().lock();
-            if !udp_table.is_bound(DNS_EPHEMERAL_PORT) {
-                let _ = udp_table.bind(DNS_EPHEMERAL_PORT);
-            }
+        if retry < max_retries {
+            owns_binding = rebind_ephemeral_port(stack, owns_binding);
         }
     }
 
-    // Clean up the ephemeral binding on final failure.
-    stack.udp_table().lock().unbind(DNS_EPHEMERAL_PORT);
+    // Clean up the binding, but only the one this call made: the port is
+    // shared, and a resolver that lost the race must not unbind the socket
+    // the winner is using.
+    if owns_binding {
+        stack.udp_table().lock().unbind(DNS_EPHEMERAL_PORT);
+    }
     Err(Error::TimedOut)
 }
 
@@ -154,12 +205,7 @@ pub fn resolve_v6(hostname: &str) -> Result<Ipv6Addr> {
     let stack = NetworkStack::global().ok_or(Error::Unsupported)?;
 
     // Bind an ephemeral port for the DNS query exchange.
-    {
-        let mut udp_table = stack.udp_table().lock();
-        if !udp_table.is_bound(DNS_EPHEMERAL_PORT) {
-            udp_table.bind(DNS_EPHEMERAL_PORT)?;
-        }
-    }
+    let mut owns_binding = bind_ephemeral_port(stack)?;
 
     let query = build_query_aaaa(hostname);
 
@@ -175,15 +221,14 @@ pub fn resolve_v6(hostname: &str) -> Result<Ipv6Addr> {
 
         // Timeout — rebind if our port was somehow taken.
         if retry < DNS_MAX_RETRIES {
-            let mut udp_table = stack.udp_table().lock();
-            if !udp_table.is_bound(DNS_EPHEMERAL_PORT) {
-                let _ = udp_table.bind(DNS_EPHEMERAL_PORT);
-            }
+            owns_binding = rebind_ephemeral_port(stack, owns_binding);
         }
     }
 
-    // Clean up the ephemeral binding on final failure.
-    stack.udp_table().lock().unbind(DNS_EPHEMERAL_PORT);
+    // As in `resolve`: only the binding this call made is ours to remove.
+    if owns_binding {
+        stack.udp_table().lock().unbind(DNS_EPHEMERAL_PORT);
+    }
     Err(Error::TimedOut)
 }
 
@@ -247,8 +292,14 @@ pub(crate) fn await_a_record(
         if stack.current_tick() >= deadline {
             return Err(Error::TimedOut);
         }
+        // A wait that cannot park has nothing that could ever wake it, and the
+        // deadline it is watching belongs to a clock that will not advance, so
+        // looping would spin.  Give up instead; the caller's retry and rebind
+        // path is the same one a timeout takes.
+        if !wait.wait(deadline) {
+            return Err(Error::TimedOut);
+        }
         DNS_PARK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        wait.wait(deadline);
     }
 }
 
@@ -285,7 +336,9 @@ fn await_aaaa_record(stack: &NetworkStack, port: u16, deadline: u64) -> Result<I
         if stack.current_tick() >= deadline {
             return Err(Error::TimedOut);
         }
-        wait.wait(deadline);
+        if !wait.wait(deadline) {
+            return Err(Error::TimedOut);
+        }
     }
 }
 

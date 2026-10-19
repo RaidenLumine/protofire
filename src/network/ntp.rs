@@ -166,24 +166,14 @@ impl NtpClient {
         due
     }
 
-    /// The server's resolved IPv4 address, resolved (and cached) on first use.
-    ///
-    /// Resolution can block now (RFC 0029 stage 4: the resolver waits on a
-    /// socket instead of polling), so this must not be called while holding a
-    /// lock another thread needs.  The maintenance pass therefore reads
-    /// [`cached_server_ip`](Self::cached_server_ip) under the client's lock,
-    /// resolves outside it, and writes back with
-    /// [`set_server_ip`](Self::set_server_ip).
-    pub fn server_ip(&mut self) -> Option<Ipv4Addr> {
-        if let Some(ip) = self.server_ip {
-            return Some(ip);
-        }
-        let resolved = crate::network::dns::resolve_hostname(&self.server).ok();
-        self.server_ip = resolved;
-        resolved
-    }
-
     /// The address already resolved, without resolving anything.
+    ///
+    /// Resolution parks the calling thread (RFC 0029), so it must not happen
+    /// while the client's lock is held: the maintenance pass reads this under
+    /// the lock, resolves outside it, and writes back with
+    /// [`set_server_ip`](Self::set_server_ip).  The resolving method that used
+    /// to sit here was removed rather than left available, because the next
+    /// caller would have found it through the lock that makes it unsafe.
     pub fn cached_server_ip(&self) -> Option<Ipv4Addr> {
         self.server_ip
     }

@@ -9,6 +9,9 @@ without a device.  The thing the stack talks to is `NetworkDevice`
 Two properties shape everything below: the stack is *polled*, not fed by a
 receive interrupt, and its periodic work is split between a single atomic
 clock in the tick handler and a pass that runs on the maintenance thread.
+"Polled" describes the device — its receive interrupt delivers no packets —
+not the waiters: a thread waiting for a datagram parks, and the deferred
+receive thread is what polls while it does.
 
 ## The stack and how a boot gets one
 
@@ -98,6 +101,13 @@ filter entries, polls NTP, ticks mDNS, IGMP/MLD and PIM, and renews the DHCP
 lease when its timers say so.  The host build has no maintenance thread, so
 `advance_tick` does both halves and the tests call it directly.
 
+The pass is also the one place a *lookup's budget* had to be thought about.
+NTP resolves its server's name there, and since RFC 0029 that resolution
+parks; the pass gives it `DNS_BACKGROUND_TIMEOUT_TICKS` and no retries instead
+of the syscall's six seconds, so a nameserver that never answers costs one
+short wait rather than the whole periodic pass.  The address it obtains is
+stored on the client, so only the first poll pays it.
+
 ## The demux
 
 ### Link and internet
@@ -165,13 +175,29 @@ used to imply both.
 ## UDP
 
 `UdpSocketTable` (`src/network/udp.rs`) is keyed by local port; each socket
-has a queue of `(source, port, payload)`.  `bind` reserves a port,
-`deliver` pushes a datagram, `recv_from` pops one, and `has_pending` is what
-`is_readable` reports.  `send_to` builds the IP header
+has a queue of `(source, port, payload)` and a `WaitQueue<u64>` whose state is
+that queue's length.  `bind` reserves a port, `deliver` pushes a datagram and
+wakes one waiter under the wait queue's own lock — datagram first, wake
+second — `recv_from` pops one and decrements the count, and `has_pending` is
+what `is_readable` reports.  `send_to` builds the IP header
 (`build_udp_ipv4_packet`/`build_udp_ipv6_packet`) and goes out through the
 same ARP/NDP resolution as any other packet.  The send path releases the UDP
-table lock before resolving, because resolution can poll and the poll path
-takes the table.
+table lock before resolving, because resolution can transmit and the
+transmit path takes the table.
+
+`readiness(port)` hands out a `DatagramWait`, which names the socket's wait
+queue through an `Arc` so it outlives an `unbind`.  A caller drains with
+`recv_from` and then calls `wait(deadline)`; it never holds the table across
+the wait, because `deliver` needs the same table.  `wait` does not report
+which of the two things woke it — the queue and the clock are what a caller
+asks — but it does answer `false` when there was nothing to park on at all,
+which is the case a loop must not mistake for a wake that is still coming.
+
+`is_bound`-then-`bind` is not atomic across callers, and that is deliberate: a
+second resolver on the shared ephemeral port adopts the existing binding
+rather than failing.  What each resolver remembers is whether *it* made the
+binding, and only that resolver unbinds it on the failure path — a loser that
+unbound the shared socket would take the winner's answers away with it.
 
 ## Local sockets
 
@@ -193,15 +219,28 @@ Several things run at once here, and they are separate mechanisms:
   it at T1/T2.  A boot applies the result; a host build has no DHCP.
 - **DNS** (`src/network/dns/`) tries the static hosts table
   (`lookup_hosts`), then the TTL-capped response cache, then an A query to
-  the configured server on bare metal, with `DNS_QUERY_TIMEOUT_TICKS` and
-  `DNS_MAX_RETRIES`.  `resolve_dual_stack` prefers AAAA, but the user-facing
-  `resolve_hostname` returns an IPv4 address and the connect path uses it.
+  the configured server on bare metal.  The wait is a park on the socket's
+  `DatagramWait`, not a poll loop; `resolve_within` takes the per-attempt
+  budget and retry count, and the two callers differ there because their
+  contexts do — a syscall spends `DNS_QUERY_TIMEOUT_TICKS` (2 s) over
+  `DNS_MAX_RETRIES` attempts, while the maintenance thread's NTP lookup
+  spends `DNS_BACKGROUND_TIMEOUT_TICKS` (200 ms) and does not retry, so one
+  unanswered name cannot stall every other job in its pass.
+  `resolve_dual_stack` prefers AAAA, but the user-facing `resolve_hostname`
+  returns an IPv4 address and the connect path uses it.  A boot walks the
+  whole path once in `selftest.rs`, because no machine a gate boots answers a
+  query: one thread parks in the real loop and another delivers a synthetic A
+  record, and the printed line carries the park count so a resolver that kept
+  polling is visible.  `DNS_PARK_COUNT` is that evidence.
 - **SLAAC** (`src/network/stack/slaac.rs`) is armed at boot and stepped by
   the tick: router solicitations, then the duplicate-address-detection window
   for the address an advertisement forms.
-- **NTP** (`src/network/ntp.rs`) polls from the maintenance pass, resolving
-  its server through DNS the first time; the current offset is kept in the
-  client.
+- **NTP** (`src/network/ntp.rs`) polls from the maintenance pass.  Its server
+  name is resolved the first time, and that resolution parks — so the pass
+  reads the cached address under the client's lock, resolves outside it, and
+  writes the result back.  Resolving under that lock was the one place in the
+  tree that held a lock across a resolution, and it is gone rather than
+  commented around: `NtpClient` no longer has a method that resolves.
 - **mDNS** (`src/network/mdns.rs`) is a responder for the host name, driven
   by the same pass.
 - **IGMP and MLD** (`src/network/internet/igmp.rs`, `mld.rs`) keep host

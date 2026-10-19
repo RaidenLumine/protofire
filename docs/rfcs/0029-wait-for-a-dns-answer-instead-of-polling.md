@@ -215,25 +215,44 @@ peer cannot hold the thread; the rest are the next pass's work.
 
 Both loops become: send, drain what the socket holds, and — when nothing was
 there — park on the socket's wait queue until the next delivery or the
-deadline, then drain again.  The nameserver and transaction-id filter, the
-retry-on-timeout rebind and the final unbind are unchanged; the deadline is
-still 200 ticks per attempt.
+deadline, then drain again.  The nameserver and transaction-id filter and the
+retry-on-timeout rebind stay; the deadline is still 200 ticks per attempt for
+a syscall.
 
-Two details are load-bearing.
+Three details are load-bearing.
 
 The wake is not taken as "the answer is here".  Another waiter on the same
 port can take the datagram first, and a deadline arrives as a wake too, so the
 loop always drains and checks the clock before it returns.  That is what makes
 a spurious wakeup cost one lock round trip instead of a wrong answer.
 
-Resolution can now park, so no caller may hold a lock across it.  The one
-place that did was the maintenance pass's NTP step, which called
-`server_ip()` — resolving inside — while holding the NTP client's lock.  It now
-reads the cached address under the lock, resolves outside it, and writes the
-result back.  The other callers (the syscall, the shell's `ping`, TCP connect,
-the NTP timer) hold no lock at that point.
+A wait that cannot park must end the loop rather than repeat it.  The deadline
+is the scheduler's clock, and a context with no scheduler — the boot before
+one exists, and every host test — would watch a clock that never reaches it.
+`DatagramWait::wait` therefore answers whether parking was possible, and the
+loop treats `false` as the timeout it is.  This is not hypothetical: the host
+test `a_lookup_that_cannot_park_gives_up` hangs forever against a wait that
+reports success unconditionally.
 
-**Landed:** `await_a_record` and `await_aaaa_record`
+The final unbind had to change.  It used to remove the shared ephemeral
+socket unconditionally, so a resolver that gave up could take the binding away
+from a resolver still using it.  Each call now records whether *it* made the
+binding, and only that one removes it on the way out.  The source-port
+collision itself is still open (the last section), but its cleanup no longer
+compounds it.
+
+Resolution can now park, so no caller may hold a lock across it.  The one
+place that did was the maintenance pass's NTP step, which called `server_ip()`
+— resolving inside — while holding the NTP client's lock.  It now reads the
+cached address under the lock, resolves outside it, and writes the result
+back; the resolving method is gone rather than left available with a warning.
+That pass is also why the budget became a parameter: a background caller gives
+up after `DNS_BACKGROUND_TIMEOUT_TICKS` with no retries, so one unanswered
+name cannot stall every other job in the pass.  The other callers (the
+syscall, the shell's `ping`, TCP connect) hold no lock at that point and keep
+the foreground budget.
+
+**Landed:** `resolve_within`, `await_a_record` and `await_aaaa_record`
 (`src/network/dns/resolve.rs`); the boot's self-test covers the wake path and
 `resolve_takes_an_answer_that_is_already_queued` covers the drain-first path
 and the cache write.  `DNS_PARK_COUNT` counts parks, and the gate asserts it:
@@ -279,6 +298,17 @@ is the one it is not making.  It is a plausible fallback if the staged design
 stalls — say so in review rather than discovering it later.
 
 ## Drawbacks
+
+The receive thread's registration is per UDP socket.  A TCP read is not a
+waiter on it — `NativeTcpConnection::read` spins on the connection's buffer
+and the clock, and registers nothing — so the thread does not poll on its
+behalf.  Before this change a spinning resolver was, incidentally, a driver
+for anyone else on the machine; a parked resolver is not.  That is the
+pre-existing gap `docs/status.md` records as "a read depends on another caller
+driving the device", and this RFC neither closes it nor makes it worse in the
+case that matters (a read that has no other driver still times out exactly as
+it did).  Closing it means giving TCP a wait queue the same way UDP got one,
+which is the natural next change rather than part of this one.
 
 The gating question moved from a registration count to the sockets' own wait
 queues, which removes the count that could go wrong in either direction — too
@@ -353,29 +383,36 @@ resolver that parked unconditionally would fail it.
 **The receive thread.**  `the_receive_waiter_question_follows_the_socket` and
 `one_drain_pass_reads_what_the_device_has` cover the thread's two decisions:
 that nothing is polled when nobody is waiting, and that one pass drains what
-the device has up to its bound.
+the device has up to its bound.  `the_wait_queues_count_is_the_receive_queues_length`
+pins the invariant both depend on: the count a waiter reads is the socket's
+queue length at every step, including the `unbind` that throws the queue away.
 
 ## Unresolved questions
 
 **One ephemeral port, several resolvers.**  `DNS_EPHEMERAL_PORT` is a single
-constant (53000) shared by every caller, and `bind` answering `AlreadyExists`
-is ignored so that a second resolver silently reuses the first one's socket.
-Two processes resolving at once can therefore take each other's answers; the
-transaction-id filter makes that rare rather than impossible, and a name that
-resolves to the wrong address is worse than one that fails.  This RFC does
-not fix it — an allocation scheme for source ports is a decision of its own —
-but the wait-queue work makes the collision more likely to be *observed*, and
-the fix should be written down before the spin is removed.
+constant (53000) shared by every caller, and a second bind adopts the existing
+socket instead of failing.  Two processes resolving at once can therefore take
+each other's answers; the transaction-id filter makes that rare rather than
+impossible, and a name that resolves to the wrong address is worse than one
+that fails.  This RFC does not fix it — an allocation scheme for source ports
+is a decision of its own — but it did stop the failure from compounding: the
+failure path unbinds only a binding this call made, so a resolver that times
+out no longer removes the socket another resolver is still waiting on.
 
-It is now more visible than the draft expected: with two resolvers parked on
-the same socket, `deliver` wakes one of them, and whether that one is the
-waiter whose transaction id the datagram carries is up to the scheduler.  The
-loser wakes, finds a datagram it must discard, and re-parks; the winner is
+The collision is more visible than the draft expected.  With two resolvers
+parked on the same socket, `deliver` wakes one of them, and whether that one is
+the waiter whose transaction id the datagram carries is up to the scheduler.
+The loser wakes, finds a datagram it must discard, and re-parks; the winner is
 still parked and is woken by the *next* datagram.  That is wasteful rather
-than wrong — the filter is still applied — but it means a collision now
-costs an extra round trip instead of being invisible.  The port allocation is
-therefore the next change to this path, not a follow-up that can wait for a
-later one.
+than wrong — the filter is still applied — but a collision now costs an extra
+round trip instead of being invisible.  The port allocation is therefore the
+next change to this path, not a follow-up that can wait for a later one.
+
+The same shared binding means the cache is not the only thing that can answer:
+`resolve` checks the cache before binding, so a second resolver whose hostname
+is already cached never touches the port at all.  That is why the collision is
+observed mostly on first lookups, which is also when both callers are most
+likely to be waiting at once.
 
 **Whether a thread is the right poller at all.**  Stage 3 landed with a
 thread because the tick cannot do the work.  If the network stack later gains

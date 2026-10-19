@@ -32,12 +32,18 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-ticks 522 12
-frames 26 0
+# RFC 0029's receive thread costs one kernel stack here: `frames` rises
+# by one and `frame-zero-bytes` by 32768.  This shape has a NIC, so the
+# thread exists whether or not a measurement is running, and it does
+# nothing on a boot where nobody resolves.  `ip4-rx`/`ip4-tx` moved with
+# DHCP's exchange, as in the other baselines.
+#
+ticks 536 12
+frames 27 0
 frame-frees 6 0
-frame-zero-bytes 516096 0
-heap-allocs 10788 256
-heap-bytes 17082048 262144
+frame-zero-bytes 548864 0
+heap-allocs 10836 256
+heap-bytes 17083488 262144
 pt-maps 738 0
 pt-lookups 737 0
 faults 1 0
@@ -78,10 +84,10 @@ nw-datagrams-rx 0 0
 nw-bytes 0 0
 nw-polls 0 0
 nw-completed 0 0
-ip4-rx 2 4
-ip4-tx 10 4
+ip4-rx 1 4
+ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 550 12
+irqs 558 12
 ipis 0 0
 spurious 0 0

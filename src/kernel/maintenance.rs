@@ -59,48 +59,64 @@ pub const MAINTENANCE_THREAD_NAME: &str = "kernel-maintenance";
 /// parked waiter.
 pub const NETWORK_RECEIVE_THREAD_NAME: &str = "kernel-net-rx";
 
-/// How often the network receive thread looks for a frame when nobody is
-/// waiting, in scheduler ticks.
-///
-/// Nothing is drained on such a pass; the period only bounds how long a
-/// waiter that arrives just after the thread went to sleep can wait for the
-/// cadence to pick it up.  Ten ticks is 100 ms at 100 Hz, which is well inside
-/// the resolver's two-second budget.
-pub const NETWORK_RECEIVE_IDLE_TICKS: u64 = 10;
-
-/// How often it looks while a socket has a parked receiver, in ticks.
+/// How often the network receive thread looks for a frame while a socket has
+/// a parked receiver, in scheduler ticks.
 ///
 /// One tick is the finest the scheduler offers, and it is the latency a
 /// resolution pays for not burning a core: the answer is read on the first
-/// tick after it lands.
+/// tick after it lands.  This period only applies while somebody is waiting;
+/// with nobody waiting the thread blocks on the table's receive event instead
+/// of waking to look, because on an SMP machine every such wakeup is a
+/// reschedule IPI on a machine with nothing to do.
 pub const NETWORK_RECEIVE_BUSY_TICKS: u64 = 1;
+
+/// The fallback period for the "stack went away" case below.
+///
+/// Nothing else uses a timer: a waiter announces itself, so there is no
+/// reason to wake on a clock and ask.  This period is only how often a thread
+/// whose stack has vanished checks again, which no boot reaches.
+pub const NETWORK_RECEIVE_STALL_TICKS: u64 = 25;
 
 /// The deferred receive thread.
 ///
 /// The tick cannot do this work: driving the device takes the stack's locks
 /// and the demux can transmit, and a transmit that misses the ARP cache waits
 /// on the clock — §11 of `docs/fmts/code-style.md` forbids both from an
-/// interrupt.  So a thread does it, and it asks the stack whether anyone is
-/// waiting before it looks: an idle machine must not pay a device read per
-/// tick, and a machine with a parked receiver must not leave it to its
-/// deadline.  It is a thread of its own rather than the maintenance thread's
-/// job because the maintenance pass resolves names for NTP, and a resolver
-/// that blocks would be blocking the only context that could have polled for
-/// its answer.
+/// interrupt.  So a thread does it, and it is woken by a receiver that parks
+/// (`DatagramWait::wait` signals the table's event at the moment it links
+/// itself) rather than by a timer that wakes it to ask.
+///
+/// The order is look-then-wait: a signal that arrives while the thread is
+/// between the two is latched by the event, so the wait returns immediately
+/// instead of sleeping through it.  That is what an auto-reset event is for,
+/// and it is why the thread does not need a periodic idle wakeup.
+///
+/// It is a thread of its own rather than the maintenance thread's job because
+/// the maintenance pass resolves names for NTP, and a resolver that blocks
+/// would be blocking the only context that could have polled for its answer.
 #[cfg(target_os = "none")]
 pub(crate) fn network_receive_entry() {
     loop {
-        let waiting = crate::network::stack::NetworkStack::global()
-            .is_some_and(|stack| stack.has_receive_waiter());
-        crate::kernel::process::sleep_current(if waiting {
-            NETWORK_RECEIVE_BUSY_TICKS
-        } else {
-            NETWORK_RECEIVE_IDLE_TICKS
-        });
+        let Some(stack) = crate::network::stack::NetworkStack::global() else {
+            // The thread is only spawned when a stack exists, so this is the
+            // stack having gone away under it; sleeping beats spinning.
+            crate::kernel::process::sleep_current(NETWORK_RECEIVE_STALL_TICKS);
+            continue;
+        };
+        let request = stack.udp_table().lock().receive_request();
 
-        if waiting {
-            if let Some(stack) = crate::network::stack::NetworkStack::global() {
+        loop {
+            if stack.has_receive_waiter() {
                 stack.poll_available();
+                crate::kernel::process::sleep_current(NETWORK_RECEIVE_BUSY_TICKS);
+            } else {
+                // Block until somebody parks.  No timeout: every park signals
+                // the event, so a signal consumed by a pass that found nobody
+                // waiting is replaced by the next park's own signal.  A timed
+                // wake here would be a wakeup per period on a machine with
+                // nothing to receive, and on an SMP machine a reschedule IPI
+                // with it.
+                request.wait();
             }
         }
     }

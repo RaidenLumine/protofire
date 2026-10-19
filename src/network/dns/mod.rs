@@ -23,7 +23,11 @@ pub(crate) mod cache;
 pub(crate) mod parse;
 pub(crate) mod query;
 pub(crate) mod resolve;
-#[cfg(all(target_os = "none", not(feature = "net_loopback")))]
+#[cfg(all(
+    target_os = "none",
+    not(feature = "net_loopback"),
+    not(feature = "perf_baseline")
+))]
 pub(crate) mod selftest;
 #[cfg(test)]
 mod tests;
@@ -49,6 +53,8 @@ pub use resolve::resolve_dual_stack;
 pub use resolve::resolve_hostname;
 #[cfg(target_os = "none")]
 pub use resolve::resolve_v6;
+pub(crate) use resolve::resolve_within;
+pub(crate) use resolve::DNS_BACKGROUND_TIMEOUT_TICKS;
 
 // ── DNS message constants (shared across query, parse, and tests) ──
 

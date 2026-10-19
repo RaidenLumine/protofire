@@ -120,21 +120,22 @@
 # happened, which is what deferred work is deferred from.  Removing either end
 # would mean a worker that cannot park or a tick that cannot say "later".  The
 # two rows in `process` are `request_due_work` and `request_network_maintenance`
-# from the tick; the three in `maintenance` are the sleeps of its two threads
-# and the maintainer's clock read.  The second thread is RFC 0029's receive
-# worker: the tick cannot poll the stack (interrupt context may not take a
-# mutex or block) and the maintenance thread cannot either (its pass resolves a
-# name now, and a resolver that parks would be waiting for a receive only it
-# could have made), so `maintenance` is where that worker lives and it sleeps
-# the same way the first one does.
+# from the tick; the four in `maintenance` are the two threads' sleeps (the
+# maintenance thread's and the receive thread's busy period), the receive
+# thread's stack-gone fallback sleep, and the maintainer's clock read.  The
+# second thread is RFC 0029's receive worker: the tick cannot poll the stack
+# (interrupt context may not take a mutex or block) and the maintenance thread
+# cannot either (its pass resolves a name now, and a resolver that parks would
+# be waiting for a receive only it could have made), so `maintenance` is where
+# that worker lives.
 #
-# `maintenance` -> `network` grew from one to three for the same worker: it
-# asks the stack whether any socket has a waiter, and drives it when one does.
-# That is the module's job — it owns the threads that do work the tick may not
-# — and the alternative was a second thread module that would need the same
-# rows.  `mod` -> `network` grew by two for the boot's wiring of that thread
-# and of the DNS self-test, which are the two things `Kernel::init` starts
-# after the network stack exists.
+# `maintenance` -> `network` is two edges for the same worker: it asks the
+# stack whether any socket has a waiter, and drives it when one does.  That is
+# the module's job — it owns the threads that do work the tick may not — and
+# the alternative was a second thread module that would need the same rows.
+# `mod` -> `network` grew by three for the boot's wiring of that thread and of
+# the DNS self-test: the thread's spawn, the self-test's start, and the
+# condition that decides whether a stack exists at all.
 #
 # `fs` no longer names `kernel_log`.  Its one edge was the `/system/logs` mount
 # in `install_default_layout`, which made the filesystem depend on a *reader*
@@ -159,21 +160,23 @@
 # grows, which is the correct direction: the account store is a consumer of
 # the process table, not the other way round.
 #
-# `network` <-> `process` remains, and it is three edges on the network side
-# now.  `RawSocketHandle` — two integers naming a socket the stack owns — was
-# defined in `process`, so every use of it was an edge up into the process
-# table; it is defined in `network` now, and `process` re-exports it so the
-# handle table's public shape is unchanged.  Two of the three left are
-# `scheduler::yield_current` from the DNS resolver's poll loop, which is the
-# same shape as `maintenance`: a consumer of the scheduler using the primitive
-# that only the scheduler has.  The third is RFC 0029 stage 2: a UDP socket
-# owns a `WaitQueue`, so a receiver can park until a datagram is delivered
-# instead of polling.  That is the edge the pair is meant to end at — a
-# protocol naming the kernel's wait primitive instead of the scheduler — and
-# the count falls when stage 4 replaces both `yield_current` calls with it.
-# Recording the rise is the point: the census is what keeps that trade
-# visible, and hiding the import to keep the row still would be the thing it
-# exists to prevent.
+# `network` <-> `process` remains, and RFC 0029 left it at five edges on the
+# network side, all of them the same shape.  `RawSocketHandle` — two integers
+# naming a socket the stack owns — was defined in `process`, so every use of it
+# was an edge up into the process table; it is defined in `network` now, and
+# `process` re-exports it so the handle table's public shape is unchanged.  The
+# two `scheduler::yield_current` calls the DNS resolver used to make are gone:
+# the resolver parks.  What replaced them is four uses of the kernel's wait
+# primitives — a UDP socket owns a `WaitQueue`, the table owns the `Event` that
+# announces a park, `DatagramWait::wait` asks `Scheduler::global` whether
+# parking is possible at all, and the DNS self-test spawns and sleeps its two
+# threads.  That is the endpoint this pair was always going to reach: a
+# protocol naming *the primitive that blocks a thread* rather than the
+# scheduler itself.  The count is still a count — the primitives live in
+# `process` because parking a thread is a scheduler act — but the reason it
+# cannot fall to zero is now the one `docs/fmts/code-style.md` §13 states: a
+# consumer may name `process` for "a thread to run on and a way to block", and
+# nothing else.
 #
 # `memory` no longer names `fs`.  All four edges were `crate::fs::block`, which
 # is a `pub use` of `crate::kernel::block`: the swap path was reaching the
@@ -340,9 +343,9 @@ kernel_log                   sync                         1
 maintenance                  audit                        2
 maintenance                  fs                           4
 maintenance                  heartbeat                    1
-maintenance                  network                      3
+maintenance                  network                      2
 maintenance                  perf_baseline                2
-maintenance                  process                      3
+maintenance                  process                      4
 memory                       block                        4
 memory                       oom                          2
 memory                       percpu                       4
@@ -355,7 +358,7 @@ mod                          drivers                      1
 mod                          fs                           17
 mod                          kernel_log                   1
 mod                          memory                       6
-mod                          network                      8
+mod                          network                      9
 mod                          percpu                       2
 mod                          power                        1
 mod                          procfs                       1
@@ -367,7 +370,7 @@ mod                          workload                     3
 network                      crypto                       30
 network                      fs                           6
 network                      ipc                          1
-network                      process                      3
+network                      process                      5
 network                      random                       5
 network                      sync                         17
 nmi                          sync                         1

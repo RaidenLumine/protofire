@@ -178,7 +178,12 @@ impl NetworkStack {
             if let Some(name) = server_name {
                 let server_ip = match cached_ip {
                     Some(ip) => Some(ip),
-                    None => crate::network::dns::resolve_hostname(&name).ok(),
+                    None => crate::network::dns::resolve_within(
+                        &name,
+                        crate::network::dns::DNS_BACKGROUND_TIMEOUT_TICKS,
+                        0,
+                    )
+                    .ok(),
                 };
                 if let Some(server_ip) = server_ip {
                     if let Some(rtc_secs) = crate::arch::timer::rtc_now_unix() {

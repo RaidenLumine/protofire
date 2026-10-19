@@ -601,12 +601,14 @@ networking, with more protocols in the tree than the receive path dispatches.
 **Weaknesses:**
 
 - **Not every network syscall is wrapped** in the shared user library.
-- **Reads do not poll**: a bare-metal stream read waits on the receive buffer
-  while the connect, accept, DHCP and neighbour-resolution paths are the ones
-  that call `poll()`, so a read depends on another caller driving the device.
-  Name resolution no longer does: the DNS resolver parks on the socket and a
-  kernel thread (`kernel-net-rx`) polls while a socket has a waiter
-  ([RFC 0029](rfcs/0029-wait-for-a-dns-answer-instead-of-polling.md)).
+- **A TCP read is not a waiter**: a bare-metal stream read polls nothing and
+  parks on nothing — it spins on the connection's receive buffer and the
+  clock (`NativeTcpConnection::read`), so it needs some other caller to drive
+  the device.  Name resolution no longer does: it parks on the socket, and
+  `kernel-net-rx` polls while any socket has a parked receiver
+  ([RFC 0029](rfcs/0029-wait-for-a-dns-answer-instead-of-polling.md)).  But
+  that thread's registration is per socket, and a TCP read registers nothing,
+  so the gap is real for TCP and closed for UDP.
 - **In-kernel TLS has a fixed trust set**: the anchors are compiled in, with no
   way to add or replace one at runtime.
 - **Educational protocols are feature-gated**: CSMA/CD, STP, Mobile IP, RSVP,

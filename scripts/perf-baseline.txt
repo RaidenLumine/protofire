@@ -32,24 +32,12 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-# The rise from 23 frames to 26, and the 96 KiB of zeroed frames beside
-# it, is RFC 0029's DNS self-test: two kernel threads, one that parks in
-# the resolver's wait loop and one that delivers a synthetic A record to
-# it.  Each thread takes a kernel stack (32 KiB, zeroed on allocation),
-# which is the frame and the zeroed bytes; both terminate after the
-# exchange, which is why frame-frees moved from 8 to 10 and not further.
-# The boot is buying a gated proof that name resolution parks and is
-# woken instead of polling — a path no machine a gate boots can reach
-# from outside — and the alternative was to leave the resolver's wait
-# path unverified.  Two threads at boot is the price of that proof; a
-# change that removes the self-test brings these rows back down.
-#
-ticks 523 12
-frames 26 0
-frame-frees 10 0
-frame-zero-bytes 708608 0
-heap-allocs 22622 256
-heap-bytes 26731088 262144
+ticks 512 12
+frames 24 0
+frame-frees 8 0
+frame-zero-bytes 643072 0
+heap-allocs 22504 256
+heap-bytes 26710928 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
@@ -94,6 +82,6 @@ ip4-rx 1 4
 ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 536 12
+irqs 525 12
 ipis 0 0
 spurious 0 0

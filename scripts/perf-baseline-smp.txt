@@ -38,12 +38,35 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
+# RFC 0029 adds one thread to this shape: `kernel-net-rx`, which drives
+# the device while a socket has a parked receiver.  `frames` rises by one
+# and `frame-zero-bytes` by 32768 — its kernel stack — and `frame-frees`
+# rises with it, because the thread is placed on the boot CPU and the
+# boot's own stack accounting is what changes.
+#
+# Its placement is why `ipis` did not move.  The thread's cadence while
+# somebody is waiting is one tick, and the tick is the boot CPU's timer;
+# spawned by the round-robin rule it landed on another CPU and every one
+# of those wakeups was a reschedule IPI — measured at 58 to 74 against
+# the 51 this row records.  Placed on the boot CPU it is woken where the
+# tick runs, and the row came back to 51-53.
+#
+# None of it is periodic either way.  With no waiter the thread blocks
+# on the UDP table's receive event rather than on a timer, so a machine
+# where nobody resolves produces no wakeups at all.
+#
+# The DNS self-test is compiled out of this shape (`perf_baseline`), so
+# these counters describe the product rather than a boot's proof of it;
+# `make check-x8664-runtime` runs the proof.  `ip4-rx`/`ip4-tx` moved for
+# the reason they also moved in the single-CPU baseline: DHCP's exchange
+# is one of the things this shape measures, and it is not deterministic.
+#
 ticks 512 12
-frames 27 0
+frames 28 0
 frame-frees 12 0
-frame-zero-bytes 741376 0
-heap-allocs 23287 256
-heap-bytes 26778064 262144
+frame-zero-bytes 774144 0
+heap-allocs 23335 256
+heap-bytes 26763968 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
@@ -84,10 +107,10 @@ nw-datagrams-rx 0 0
 nw-bytes 0 0
 nw-polls 0 0
 nw-completed 0 0
-ip4-rx 3 4
-ip4-tx 11 4
+ip4-rx 1 4
+ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 541 12
-ipis 51 4
+irqs 530 12
+ipis 53 4
 spurious 0 0

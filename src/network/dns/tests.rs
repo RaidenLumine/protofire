@@ -469,6 +469,55 @@ fn resolve_takes_an_answer_that_is_already_queued() {
     }
 }
 
+/// A lookup with nothing that can wake it gives up instead of spinning.
+///
+/// The deadline the resolver watches is the scheduler's clock.  Without a
+/// scheduler — which is every host test, and was the shape of the old poll
+/// loop on any context that could not park — the clock never reaches it, and
+/// a loop that trusted the deadline alone would never return.  This asserts
+/// the wait reports that it could not park and the lookup ends.
+#[cfg(not(target_os = "none"))]
+#[test]
+fn a_lookup_that_cannot_park_gives_up() {
+    use crate::network::link::ethernet::MacAddress;
+    use alloc::sync::Arc;
+
+    const HOST: &str = "no-answer.example";
+
+    // SAFETY: the caller's contract is that nothing is using the stack; this
+    // test helper calls it before installing the stack it goes on to use.
+    unsafe {
+        NetworkStack::uninstall_global();
+    }
+
+    let mock = Arc::new(MockNetworkDevice::new(
+        "dns-no-answer",
+        [0x52, 0x54, 0x00, 0xaa, 0xbb, 0xcc],
+    ));
+    NetworkStack::init_with_device(mock, [10, 0, 2, 15]);
+    let stack = NetworkStack::global().expect("stack should be initialised");
+    stack.arp_cache().lock().insert(
+        [10, 0, 2, 3],
+        MacAddress([0x52, 0x54, 0x00, 0x99, 0x88, 0x77]),
+        0,
+    );
+
+    let parks_before = super::resolve::DNS_PARK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+    let result = super::resolve::resolve_within(HOST, 5, 0);
+    let parks_after = super::resolve::DNS_PARK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+
+    assert_eq!(result, Err(Error::TimedOut));
+    assert_eq!(
+        parks_after, parks_before,
+        "a wait that cannot park must not count as one"
+    );
+
+    // SAFETY: nothing else is using the stack now; this test installed it.
+    unsafe {
+        NetworkStack::uninstall_global();
+    }
+}
+
 // ── test helpers ──
 
 /// Build an Ethernet frame carrying an IPv4 payload.
