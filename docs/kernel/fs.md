@@ -523,7 +523,7 @@ volume on a memory device instead.
 | `src/fs/layout.rs` | Zones, mount flags and the fixed fallback disk ranges |
 | `src/fs/partition.rs`, `src/fs/system_image.rs` | MBR and GPT parsing, the zone vocabulary in both tables' words, and the system A/B pair |
 | `src/kernel/block.rs`, `src/fs/block_cache.rs` | The block interface and the cache |
-| `src/fs/devfs.rs`, `src/fs/servicefs.rs`, `src/kernel/procfs.rs` | The synthetic views |
+| `src/fs/devfs.rs`, `src/kernel/servicefs.rs`, `src/kernel/procfs.rs` | The synthetic views |
 | `src/fs/fuse/` | The userspace-served filesystem and its wire format |
 | `src/fs/write_locations.rs` | Where a running machine writes, stated once |
 
