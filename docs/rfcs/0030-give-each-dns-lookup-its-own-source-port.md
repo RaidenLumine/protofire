@@ -175,31 +175,45 @@ and the allocator is exercised by the same tests.
 
 ## How this is proven
 
-**Allocation and release.**  A host test binds ephemeral ports until the
-range is exhausted, asserts each is distinct and inside `61000..=65535`, and
-asserts the next answers `AlreadyExists`; then releases one and asserts it is
-handed out again.  A second asserts that two consecutive allocations differ,
-which is the rotating cursor doing its job.
+**Allocation and release.**  `ephemeral_allocations_are_distinct_and_in_range`
+binds 64 ports, asserts each is distinct and inside `61000..=65535`, and that
+two consecutive allocations differ — the rotating cursor doing its job.
+`exhausting_the_range_answers_already_exists` spends the whole range, asserts
+the count is exactly the range's width, asserts the next allocation answers
+`AlreadyExists`, and asserts that releasing one port gets an allocation again.
 
-**The guard releases.**  A test takes a binding, drops it, and asserts the
-port is free — including on the early-return path, which is what the guard
-exists for: `resolve_within` against a device that never answers returns
-`TimedOut` and leaves no port bound.
+**The guard releases on every path.**  `a_lookup_that_cannot_park_gives_up`
+runs `resolve_within` against a device that never answers: it returns
+`TimedOut`, leaves `DNS_PARK_COUNT` unchanged, and leaves no dynamic port
+bound — which is what the guard exists for, since `send_to` can answer `?`
+from inside the retry loop.  `await_aaaa_takes_a_queued_answer` does the same
+for the AAAA path's guard, which had no host coverage at all before this
+change because the AAAA resolver was compiled only for bare metal.
 
-**The id is random and filters.**  A test builds two queries for the same
-name and asserts their ids differ; a test builds with an explicit id and
-asserts the bytes carry it.  The existing filter test keeps its meaning: an
-answer whose id does not match is discarded.
+**The id is random and filters.**  `transaction_ids_differ_between_lookups`
+draws seventeen ids and asserts they are not all the same;
+`a_query_carries_the_id_it_was_built_with` builds with an explicit id, asserts
+the bytes carry it, and asserts an answer built with a different id does not
+match.
 
-**Two lookups at once do not meet.**  The case this RFC exists for: two
-resolvers running concurrently, each with its own port, each receiving its
-own answer.  A host test drives two lookups whose answers are delivered to
-their own ports and asserts both resolve to their own address — the current
-tree cannot pass it, because both would bind 53000.
+**Two lookups at once do not meet.**  `two_lookups_at_once_take_their_own_ports_and_answers`
+binds two ports before answering either, asserts they differ, then delivers
+each answer to its own port and asserts each port holds its own address and
+only its own.  Against the old fixed-port behaviour it fails on the first
+assertion with "the two lookups were given the same source port" — checked by
+putting that behaviour back and running it.
 
-**The boot.**  The DNS self-test already walks the wait path with a
-synthetic answer; it uses its own port and is unchanged, which is what
-proves the resolver and the test no longer share one.
+**The park count means a park.**  `delivery_before_waiting_is_not_lost` in
+`tests/net/udp_wait.rs` asserts `DatagramWaitOutcome::AlreadyQueued` when the
+datagram is already queued, and `resolve_takes_an_answer_that_is_already_queued`
+asserts the resolver's park count is *unchanged* in that case.  That
+distinction is why the self-test's `parked 1 time(s)` is evidence rather than
+decoration: a resolver that spun, or one that counted a probe as a wait, fails
+one of the two.
+
+**The boot.**  The DNS self-test walks the wait path with a synthetic answer
+on its own port, below the allocator's range, so it can never be handed one a
+lookup was given.
 
 ## Unresolved questions
 

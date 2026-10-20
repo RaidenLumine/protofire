@@ -229,17 +229,20 @@ a spurious wakeup cost one lock round trip instead of a wrong answer.
 A wait that cannot park must end the loop rather than repeat it.  The deadline
 is the scheduler's clock, and a context with no scheduler — the boot before
 one exists, and every host test — would watch a clock that never reaches it.
-`DatagramWait::wait` therefore answers whether parking was possible, and the
-loop treats `false` as the timeout it is.  This is not hypothetical: the host
+`DatagramWait::wait` therefore returns a `DatagramWaitOutcome`, and the loop
+treats `CannotPark` as the timeout it is.  This is not hypothetical: the host
 test `a_lookup_that_cannot_park_gives_up` hangs forever against a wait that
-reports success unconditionally.
+never says so.  (The type reports the other two outcomes as well —
+`AlreadyQueued` and `Parked` — because a resolver's park count has to be able
+to tell a real wait from a probe; see RFC 0030, which added that distinction
+when it made the count a gate.)
 
 The final unbind had to change.  It used to remove the shared ephemeral
 socket unconditionally, so a resolver that gave up could take the binding away
-from a resolver still using it.  Each call now records whether *it* made the
-binding, and only that one removes it on the way out.  The source-port
-collision itself is still open (the last section), but its cleanup no longer
-compounds it.
+from a resolver still using it.  Each call records whether *it* made the
+binding, and only that one removes it on the way out.  That ownership flag was
+this RFC's stopgap; RFC 0030 removed the need for it by giving each lookup a
+port of its own, released by a guard.
 
 Resolution can now park, so no caller may hold a lock across it.  The one
 place that did was the maintenance pass's NTP step, which called `server_ip()`

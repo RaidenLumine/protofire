@@ -711,6 +711,65 @@ fn a_query_carries_the_id_it_was_built_with() {
     assert_ne!(&other[..2], &query[..2]);
 }
 
+/// The AAAA wait loop takes a queued answer, like the A loop does.
+///
+/// The AAAA path has no nameserver or id filter, which is the one way it
+/// differs from the A path — and that difference went untested: the AAAA
+/// resolver was compiled only for bare metal, so no host test could reach its
+/// loop.  It is compiled here now for the same reason the A loop is, so the
+/// gate runs the real one.
+#[cfg(not(target_os = "none"))]
+#[test]
+fn await_aaaa_takes_a_queued_answer() {
+    use crate::network::link::ethernet::MacAddress;
+    use alloc::sync::Arc;
+
+    const ADDR: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7];
+
+    // SAFETY: the caller's contract is that nothing is using the stack; this
+    // test helper calls it before installing the stack it goes on to use.
+    unsafe {
+        NetworkStack::uninstall_global();
+    }
+
+    let mock = Arc::new(MockNetworkDevice::new(
+        "dns-aaaa",
+        [0x52, 0x54, 0x00, 0xaa, 0xbb, 0xcc],
+    ));
+    NetworkStack::init_with_device(mock, [10, 0, 2, 15]);
+    let stack = NetworkStack::global().expect("stack should be initialised");
+    stack.arp_cache().lock().insert(
+        [10, 0, 2, 3],
+        MacAddress([0x52, 0x54, 0x00, 0x99, 0x88, 0x77]),
+        0,
+    );
+
+    let port = super::resolve::PortGuard::bind(stack).expect("a port");
+    let response = build_test_dns_response_aaaa(0x0001, 1, 1, false, Some(ADDR));
+    assert!(stack.udp_table().lock().deliver(
+        crate::network::internet::ip::IpAddress::V4([10, 0, 2, 3]),
+        53,
+        port.port,
+        response,
+    ));
+
+    let resolved =
+        super::resolve::await_aaaa_record(stack, port.port, stack.current_tick().saturating_add(5))
+            .expect("the queued answer resolves");
+    assert_eq!(resolved, ADDR);
+
+    drop(port);
+    assert!(
+        !stack.udp_table().lock().any_ephemeral_bound(),
+        "the guard released the port"
+    );
+
+    // SAFETY: nothing else is using the stack now; this test installed it.
+    unsafe {
+        NetworkStack::uninstall_global();
+    }
+}
+
 // ── test helpers ──
 
 /// Build an Ethernet frame carrying an IPv4 payload.

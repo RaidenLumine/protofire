@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 use protofire::kernel::process::Scheduler;
 use protofire::kernel::process::ThreadWaitOutcome;
 use protofire::network::internet::ip::IpAddress;
+use protofire::network::udp::DatagramWaitOutcome;
 use protofire::network::udp::UdpSocketTable;
 
 /// Serialise the tests in this file.
@@ -61,8 +62,15 @@ fn deliver_wakes_a_waiter() {
         Err(protofire::Error::TimedOut)
     );
 
-    // Parks the waiter; the sender becomes the next thread to run.
-    wait.wait(u64::MAX);
+    // Parks the waiter; the sender becomes the next thread to run.  The
+    // outcome must say it parked — a caller cannot reconstruct that from the
+    // queue afterwards, because a wait resumed by a delivery also finds the
+    // queue non-empty.  Note what this cannot cover: under the host's
+    // simulated scheduler `wait` returns as soon as the thread is parked, so
+    // a delivery landing *during* the park (the ordering that broke this on
+    // the boot) is unreachable here.  The runtime gate's `parked 1 time(s)`
+    // is what catches that one; this pins the ordinary case.
+    assert_eq!(wait.wait(u64::MAX), DatagramWaitOutcome::Parked);
     assert_eq!(scheduler.current_thread_id(), Some(sender.tid()));
     assert_eq!(scheduler.waiting_count(), 1);
 
@@ -135,8 +143,9 @@ fn delivery_before_waiting_is_not_lost() {
 
     // The count is checked under the wait queue's own lock before the thread
     // is added to it, so a datagram already queued makes this a probe: the
-    // same thread is still current afterwards, and it did not park.
-    wait.wait(u64::MAX);
+    // same thread is still current afterwards, and it did not park.  The
+    // outcome says so, which is what a caller counting parks relies on.
+    assert_eq!(wait.wait(u64::MAX), DatagramWaitOutcome::AlreadyQueued);
     assert_eq!(scheduler.current_thread_id(), Some(thread.tid()));
     assert_eq!(scheduler.waiting_count(), 0);
 }

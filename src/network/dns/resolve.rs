@@ -4,9 +4,9 @@
 
 use crate::network::internet::ip::IpAddress;
 use crate::network::internet::ipv4::Ipv4Addr;
-#[cfg(target_os = "none")]
 use crate::network::internet::ipv6::Ipv6Addr;
 use crate::network::stack::NetworkStack;
+use crate::network::udp::DatagramWaitOutcome;
 use crate::Error;
 use crate::Result;
 
@@ -14,7 +14,6 @@ use super::cache::cache_insert;
 use super::cache::cache_lookup;
 use super::cache::lookup_hosts;
 use super::parse::parse_a_record_with_ttl;
-#[cfg(target_os = "none")]
 use super::parse::parse_aaaa_record;
 #[cfg(target_os = "none")]
 use super::query::build_query_aaaa_with_id;
@@ -286,23 +285,33 @@ pub(crate) fn await_a_record(
         if stack.current_tick() >= deadline {
             return Err(Error::TimedOut);
         }
-        // A wait that cannot park has nothing that could ever wake it, and the
-        // deadline it is watching belongs to a clock that will not advance, so
-        // looping would spin.  Give up instead; the caller's retry and rebind
-        // path is the same one a timeout takes.
-        if !wait.wait(deadline) {
-            return Err(Error::TimedOut);
+        match wait.wait(deadline) {
+            // A wait that cannot park has nothing that could ever wake it, and
+            // the deadline it is watching belongs to a clock that will not
+            // advance, so looping would spin.  Give up instead; the caller's
+            // retry path is the same one a timeout takes.
+            DatagramWaitOutcome::CannotPark => return Err(Error::TimedOut),
+            // The datagram landed after the drain and before the park.  The
+            // next iteration finds it; this was not a wait.
+            DatagramWaitOutcome::AlreadyQueued => {}
+            DatagramWaitOutcome::Parked => {
+                DNS_PARK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            }
         }
-        DNS_PARK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
 /// Wait for an AAAA answer on `port`.
 ///
 /// The same loop as [`await_a_record`] without the nameserver and
-/// transaction-id filter the AAAA path never had.
-#[cfg(target_os = "none")]
-fn await_aaaa_record(stack: &NetworkStack, port: u16, deadline: u64) -> Result<Ipv6Addr> {
+/// transaction-id filter the AAAA path never had.  Compiled on the host for
+/// the same reason the A loop is: the gate runs the real loop, not a copy.
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+pub(crate) fn await_aaaa_record(
+    stack: &NetworkStack,
+    port: u16,
+    deadline: u64,
+) -> Result<Ipv6Addr> {
     loop {
         let wait = {
             let mut udp_table = stack.udp_table().lock();
@@ -330,7 +339,7 @@ fn await_aaaa_record(stack: &NetworkStack, port: u16, deadline: u64) -> Result<I
         if stack.current_tick() >= deadline {
             return Err(Error::TimedOut);
         }
-        if !wait.wait(deadline) {
+        if wait.wait(deadline) == DatagramWaitOutcome::CannotPark {
             return Err(Error::TimedOut);
         }
     }

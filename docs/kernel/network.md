@@ -189,15 +189,18 @@ transmit path takes the table.
 queue through an `Arc` so it outlives an `unbind`.  A caller drains with
 `recv_from` and then calls `wait(deadline)`; it never holds the table across
 the wait, because `deliver` needs the same table.  `wait` does not report
-which of the two things woke it — the queue and the clock are what a caller
-asks — but it does answer `false` when there was nothing to park on at all,
-which is the case a loop must not mistake for a wake that is still coming.
+*why* it returned — the queue and the clock are what a caller asks — but it
+does return a `DatagramWaitOutcome`: `AlreadyQueued` when the datagram landed
+before the thread could park, `Parked` when it really did, and `CannotPark`
+when there is no scheduler or no current thread.  A loop must stop on
+`CannotPark`, because the deadline it watches is that scheduler's clock; and
+`Parked` is the one outcome a caller can count as evidence that it waited
+rather than spun, which is what the DNS self-test's park count means.
 
-`is_bound`-then-`bind` is not atomic across callers, and that is deliberate: a
-second resolver on the shared ephemeral port adopts the existing binding
-rather than failing.  What each resolver remembers is whether *it* made the
-binding, and only that resolver unbinds it on the failure path — a loser that
-unbound the shared socket would take the winner's answers away with it.
+`bind_ephemeral` hands out a free port from `61000..=65535` (see the naming
+section below for why that range).  It is one lock and one decision, so two
+callers cannot be given the same port.  `bind` remains for a caller that
+names a port.
 
 ## Local sockets
 

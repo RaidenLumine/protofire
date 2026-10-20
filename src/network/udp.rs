@@ -213,22 +213,19 @@ impl DatagramWait {
 
     /// Block until a datagram is queued or `deadline` passes.
     ///
-    /// It does not say which of those happened, on purpose: whether the queue
+    /// It does not report *why* it returned, on purpose: whether the queue
     /// now has a datagram is a question the caller asks with `recv_from`, and
     /// whether its deadline passed is one it asks of the clock.  Both wakes —
-    /// a delivery and the timer — are therefore the same event to this
-    /// function, and the caller rechecks rather than trusting which one it
-    /// was.  That is the standard condition-variable shape, and it is also the
-    /// only one that means the same thing on a context switch and under the
-    /// host's simulated scheduler, where the parked thread's frame does not
-    /// resume.
+    /// a delivery and the timer — are the same event to this function, and the
+    /// caller rechecks rather than trusting which one it was.  That is the
+    /// standard condition-variable shape, and it is the only one that means
+    /// the same thing on a context switch and under the host's simulated
+    /// scheduler, where the parked thread's frame does not resume.
     ///
-    /// What it does answer is whether waiting was possible at all.  `true`
-    /// means a datagram was already queued, or the thread parked and was
-    /// resumed; `false` means there is no scheduler (or none is running a
-    /// thread) and a datagram is not queued either.  A caller that loops on
-    /// this question would otherwise spin forever on a clock that cannot
-    /// advance, because the deadline it is watching is the scheduler's.
+    /// What it does report is *whether* it waited, which the caller cannot
+    /// see from the outside and which some callers need: a resolver's evidence
+    /// that it parks rather than spins is a count of waits, and a wait that
+    /// found the datagram already queued is not one of them.
     ///
     /// The park is announced on the table's receive event before it happens.
     /// Order matters: the receiver thread is woken by that event, and if it
@@ -238,21 +235,25 @@ impl DatagramWait {
     /// A delivery that lands between the caller's failed `recv_from` and this
     /// call is not lost: the queue's count is checked under the wait queue's
     /// own lock before the thread is added to it.
-    pub fn wait(&self, deadline: u64) -> bool {
+    pub fn wait(&self, deadline: u64) -> DatagramWaitOutcome {
         if self.queued() != 0 {
-            return true;
+            return DatagramWaitOutcome::AlreadyQueued;
         }
         let Some(scheduler) = crate::kernel::process::Scheduler::global() else {
-            return false;
+            return DatagramWaitOutcome::CannotPark;
         };
         // A scheduler with no current thread is a boot-time context: there is
         // nothing to park, and `block_current_until_if` would return without
         // parking, which the caller would read as a wake that never comes.
         if scheduler.current_thread().is_none() {
-            return false;
+            return DatagramWaitOutcome::CannotPark;
         }
 
-        let _ = self
+        // The return value is exactly the distinction this function reports,
+        // and it cannot be reconstructed afterwards: a thread that parked and
+        // was woken by a delivery also finds the queue non-empty.  `true` means
+        // the prepare closure linked it and it really left the CPU.
+        let parked = self
             .ready
             .block_current_until_if(deadline, |pending, waiters, thread| {
                 if *pending != 0 {
@@ -272,8 +273,28 @@ impl DatagramWait {
                     true
                 }
             });
-        true
+        if parked {
+            DatagramWaitOutcome::Parked
+        } else {
+            // The datagram landed between the drain and the queue's lock, so
+            // the thread was never linked and never slept.
+            DatagramWaitOutcome::AlreadyQueued
+        }
     }
+}
+
+/// What one call to [`DatagramWait::wait`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatagramWaitOutcome {
+    /// A datagram was already queued, so the thread never parked.
+    AlreadyQueued,
+    /// The thread parked and has been resumed — by a delivery or by its
+    /// deadline, which the caller tells apart by asking the clock.
+    Parked,
+    /// There was no scheduler, or none was running a thread, so the call
+    /// could not wait at all.  A caller that loops must stop here: the
+    /// deadline it is watching belongs to a clock that cannot advance.
+    CannotPark,
 }
 
 /// First port the kernel hands to a UDP socket that asks for one.
