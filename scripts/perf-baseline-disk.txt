@@ -39,15 +39,36 @@
 # written.  Nothing in the tree changed to cause it: the commit before
 # this work measures the same 534.
 #
-# One more thing recording this found: the read path itself jitters by a
-# block.  Across nine runs on this host `fs-reads` came back 841 six
-# times and 840 three — one 512-byte block that a boot sometimes finds
-# in the cache and sometimes does not, with `fs-lookups`,
-# `cache-hits` and `cache-sequential-hits` moving with it by one.
-# Those five rows carry a ±1 (and ±24 bytes, one block) tolerance for
-# that reason, and only they do: `blk-reads` and every `wl-*` row were
-# identical in all nine, which is what says this is a cache hit at the
-# margin rather than the boot reading something extra.
+# DEBT — the ±1 on fs-lookups, fs-reads, fs-read-bytes, cache-hits and
+# cache-sequential-hits is a symptom, not a measurement problem, and the
+# note that first explained it here was wrong.  It said one block was
+# sometimes cached and sometimes not; the evidence pointed the other way.
+#
+# These counters are not "how much work the boot did".  They are "how much
+# work the boot had done when the maintenance thread got round to
+# printing" — `PERF_BASELINE_TICK` is a floor, not a fixed point, and the
+# summary is emitted by whichever pass first reaches it.  On this host
+# that pass lands anywhere in the 25 ticks after 500, because
+# `sleep_current(25)` re-arms from whenever the previous pass woke and the
+# error accumulates over the boot.  Measured: `fs-reads` is 842 at tick
+# 533, 841 at 531, 840 at 530 — and 55 at tick 500.
+#
+# That last number is the finding.  Pinning the sample at 500 makes it
+# reproducible to the digit (six runs, identical) and shows a boot that
+# has not finished: `frames` reads 18 where 29 is expected, because the
+# DNS self-test and the receive thread do not exist yet.  So the pass at
+# 500 samples a boot in progress, and the figures this file records were
+# taken later, once drift had carried the sample past the work.  Two
+# faults were cancelling.
+#
+# The consequence for CONTRIBUTING.md's promise is the part that matters:
+# it says this gate compares counters rather than seconds, so it does not
+# depend on how busy the host is.  For these rows that is not true — they
+# measure work-done-by-a-time and the time moves.  Fixing it properly is
+# not a tolerance: it is either sampling on an event after the boot has
+# quiesced, or accepting that these five rows are timing rows and moving
+# them out of a counter baseline.  Both are decisions larger than this
+# file, so the tolerance stays and this note says why it is a debt.
 #
 ticks 534 12
 frames 29 1
