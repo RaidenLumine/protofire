@@ -31,48 +31,43 @@
 # `wl-device-bytes-per-asked-byte` is the ratio between the two — the
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
+# `ticks` and `irqs` moved too, from 560/582 to 534/556, and that is the
+# same window the other baselines describe: the summary is printed by the
+# maintenance thread, which wakes every 25 ticks, so the row records
+# where inside that window the boot happened to be — and this host is
+# currently reaching it about 26 ticks earlier than when the row was
+# written.  Nothing in the tree changed to cause it: the commit before
+# this work measures the same 534.
 #
-# RFC 0029's three threads are part of this shape too: `frames` is 29 and
-# `frame-frees` 8, the same count the single-CPU memory baseline records.
+# One more thing recording this found: the read path itself jitters by a
+# block.  Across nine runs on this host `fs-reads` came back 841 six
+# times and 840 three — one 512-byte block that a boot sometimes finds
+# in the cache and sometimes does not, with `fs-lookups`,
+# `cache-hits` and `cache-sequential-hits` moving with it by one.
+# Those five rows carry a ±1 (and ±24 bytes, one block) tolerance for
+# that reason, and only they do: `blk-reads` and every `wl-*` row were
+# identical in all nine, which is what says this is a cache hit at the
+# margin rather than the boot reading something extra.
 #
-# `ticks` and `irqs` were re-centred from 524/546 to 560/582 when this
-# was re-recorded, and the reason is worth writing down because nothing
-# in the tree moved to cause it.  Both rows track how far the boot had
-# got when the maintenance thread printed the summary, and that thread
-# wakes every 25 ticks, so the sample lands anywhere in the window after
-# `PERF_BASELINE_TICK`.  On this host that window now sits about 35
-# ticks later than when the row was first written — a slower machine
-# reaching the same tick — and every other row in the file came back
-# identical, `blk-*` and `wl-*` included.  The same shift is visible on
-# the commit before this work began, so it is the host and not the
-# change.
-#
-# One caution for whoever records this next: a run disturbed by another
-# VM on the host can print a summary with a third of the reads
-# (`fs-reads` 55 instead of 841, `frames` 18 instead of 29).  That is a
-# boot that did not finish its workload, not a baseline, and recording
-# it would bake a bad sample in.  Re-run before recording if the
-# counters look smaller than these.
-#
-ticks 560 12
+ticks 534 12
 frames 29 1
 frame-frees 8 1
 frame-zero-bytes 614400 32768
-heap-allocs 10923 256
-heap-bytes 17101984 262144
+heap-allocs 10917 256
+heap-bytes 17100224 262144
 pt-maps 738 0
 pt-lookups 737 0
 faults 1 0
-fs-lookups 258 0
-fs-reads 841 0
-fs-read-bytes 121173 0
+fs-lookups 257 1
+fs-reads 840 1
+fs-read-bytes 121161 24
 fs-writes 27 0
 fs-write-bytes 49618 0
 fs-transactions 10 0
-cache-hits 889 0
+cache-hits 888 1
 cache-misses 83 0
 cache-prefetches 157 0
-cache-sequential-hits 277 0
+cache-sequential-hits 276 1
 cache-evictions 0 0
 blk-reads 165 0
 blk-read-bytes 256512 0
@@ -104,6 +99,6 @@ ip4-rx 1 4
 ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 582 12
+irqs 556 12
 ipis 0 0
 spurious 0 0
