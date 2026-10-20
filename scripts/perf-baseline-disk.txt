@@ -32,12 +32,34 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-ticks 524 12
+# RFC 0029's three threads are part of this shape too: `frames` is 29 and
+# `frame-frees` 8, the same count the single-CPU memory baseline records.
+#
+# `ticks` and `irqs` were re-centred from 524/546 to 560/582 when this
+# was re-recorded, and the reason is worth writing down because nothing
+# in the tree moved to cause it.  Both rows track how far the boot had
+# got when the maintenance thread printed the summary, and that thread
+# wakes every 25 ticks, so the sample lands anywhere in the window after
+# `PERF_BASELINE_TICK`.  On this host that window now sits about 35
+# ticks later than when the row was first written — a slower machine
+# reaching the same tick — and every other row in the file came back
+# identical, `blk-*` and `wl-*` included.  The same shift is visible on
+# the commit before this work began, so it is the host and not the
+# change.
+#
+# One caution for whoever records this next: a run disturbed by another
+# VM on the host can print a summary with a third of the reads
+# (`fs-reads` 55 instead of 841, `frames` 18 instead of 29).  That is a
+# boot that did not finish its workload, not a baseline, and recording
+# it would bake a bad sample in.  Re-run before recording if the
+# counters look smaller than these.
+#
+ticks 560 12
 frames 29 1
 frame-frees 8 1
 frame-zero-bytes 614400 32768
-heap-allocs 10902 256
-heap-bytes 17100688 262144
+heap-allocs 10923 256
+heap-bytes 17101984 262144
 pt-maps 738 0
 pt-lookups 737 0
 faults 1 0
@@ -82,6 +104,6 @@ ip4-rx 1 4
 ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 546 12
+irqs 582 12
 ipis 0 0
 spurious 0 0
