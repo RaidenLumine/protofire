@@ -52,6 +52,24 @@ NIC="${NIC:-1}"
 # same machine are two different programs, and a baseline is about one program.
 FEATURES="${FEATURES:-demo-disk perf_baseline fs_profiler net_profiler alloc_profiler fault_profiler}"
 
+# Rows the boot prints but this gate must not compare.
+#
+# Every other row counts work the boot did, and the same work produces the
+# same number.  These two count *when* it finished doing it: `ticks` is the
+# tick the sample was taken at, and `irqs` moves with it one per tick.  The
+# sample is taken when the boot goes quiet rather than at a fixed tick, so
+# both answer "how fast was the host" — the one question this gate exists to
+# keep out of its verdict.  They stay in the log because a reader of the line
+# wants to know where in the boot it was taken.
+TIME_ROWS="ticks irqs"
+
+is_time_row() {
+    case " $TIME_ROWS " in
+        *" $1 "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 case "$PROFILE" in
     debug|release) ;;
     *)
@@ -205,9 +223,24 @@ if [ "$mode" = "record" ]; then
         printf '# write amplification of one named workload.  Its duration is printed on\n'
         printf '# a line of its own and is deliberately not recorded here.\n'
         printf '#\n'
+        printf '# `ticks` and `irqs` are printed by the boot and deliberately not\n'
+        printf '# recorded here.  They say *when* the sample was taken — the boot\n'
+        printf '# prints it once it has stopped doing storage work, so they measure\n'
+        printf '# how fast the host got there.  A baseline compares work, and a row\n'
+        printf '# that moves with the host is the one thing it must not compare.\n'
+        printf '#\n'
+        printf '# The DNS self-test runs in this build on purpose, and its three\n'
+        printf '# kernel threads are part of the frame rows: `kernel-net-rx` drives\n'
+        printf '# the device while a socket has a parked receiver, and the self-test\n'
+        printf '# spawns a waiter and an injector that walk the resolver\047s wait path\n'
+        printf '# once (RFC 0029).  `frame-zero-bytes` grows by one 32 KiB stack per\n'
+        printf '# thread; the two self-test threads terminate, so `frame-frees` grows\n'
+        printf '# with them and the receive thread\047s stack does not come back.\n'
+        printf '#\n'
 
         printf '%s\n' "$pairs" | while IFS='=' read -r key value; do
             [ -n "$key" ] || continue
+            is_time_row "$key" && continue
             tolerance=0
             if [ -f "$BASELINE" ]; then
                 row="$(awk -v k="$key" '$1 == k { print $3 }' "$BASELINE" | head -n 1)"
@@ -226,6 +259,7 @@ counter=0
 drifted=0
 while read -r key value tolerance; do
     case "$key" in ''|\#*) continue ;; esac
+    is_time_row "$key" && continue
 
     # The rows are hand-edited, so a malformed one is reported as a row
     # problem rather than as arithmetic on an empty string.
@@ -261,6 +295,7 @@ done < "$BASELINE"
 # record is a counter nothing compares, which is how a baseline silently stops
 # covering the boot.  Adding a counter therefore means recording it.
 for key in $(printf '%s\n' "$pairs" | sed 's/=.*//'); do
+    is_time_row "$key" && continue
     if ! awk -v k="$key" '$1 == k { found = 1 } END { exit !found }' "$BASELINE"; then
         printf 'perf baseline check failed: the boot prints %s, which the baseline does not record\n' \
             "$key" >&2

@@ -11,11 +11,17 @@
 //! question "did this do less work" has an answer here, and "was this faster on
 //! someone's laptop" does not.
 //!
-//! It is printed once, at a fixed tick, by the maintenance thread — late enough
-//! that the demo's services and network stack have run, early enough that a
-//! check does not wait for them to stop.  `make check-perf-baseline` boots with
-//! the profiler features on and compares the line against
+//! It is printed once by the maintenance thread, when the boot has stopped
+//! doing storage work rather than at a fixed tick — see [`log_once`] for why a
+//! tick was the wrong trigger.  `make check-perf-baseline` boots with the
+//! profiler features on and compares the line against
 //! `scripts/perf-baseline.txt`.
+//!
+//! Two numbers on the line are not work and are not compared: `ticks` and
+//! `irqs` say *when* the sample was taken, and since that is now "whenever the
+//! boot went quiet" they measure the host.  The gate skips them
+//! (`TIME_ROWS` in `scripts/check-perf-baseline.sh`); they remain on the line
+//! because a reader wants to know where in a boot they are looking.
 //!
 //! Without the feature this module costs a function call that returns: the
 //! counters the profilers keep are no-ops in a default build, so there is
@@ -65,13 +71,69 @@ pub(crate) fn observe_tick(ticks: u64) {
 
 static LOGGED: AtomicBool = AtomicBool::new(false);
 
-/// Print the boot's work once, if the boot has reached [`PERF_BASELINE_TICK`].
+/// The work fingerprint seen on the previous pass, or 0 before the first.
+///
+/// The sample is taken when this stops changing, not at a tick.  A tick is a
+/// time, and the thing being measured is how much work the boot had done by
+/// then — which depends on how fast the host got through it.  Measured on one
+/// host: `fs-reads` was 55 at tick 500 and 842 at 533, because at 500 the
+/// demo's user programs had not run yet.  A fixed tick therefore sampled a
+/// boot in progress, and the numbers this module prints moved with the host.
+static LAST_FINGERPRINT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// A number that changes whenever the boot does storage work.
+///
+/// Reads and writes rather than bytes: the question is "is anything still
+/// happening", and a count of operations answers it without reading every
+/// counter this module prints.  `MIX` steps the two halves apart so that a
+/// read and a write cannot cancel into the same value.
+fn work_fingerprint(fs_reads: u64, fs_writes: u64, device_reads: u64, device_writes: u64) -> u64 {
+    const MIX: u64 = 0x9E37_79B9_7F4A_7C15;
+    // Reads and writes are mixed apart rather than added: a read ending as a
+    // write begins must not reproduce the value either had before.
+    fs_reads
+        ^ fs_writes.wrapping_mul(MIX)
+        ^ device_reads.wrapping_mul(MIX.rotate_left(17))
+        ^ device_writes.wrapping_mul(MIX.rotate_left(31))
+}
+
+/// Print the boot's work once, after the boot has stopped doing any.
 ///
 /// Called from the maintenance thread, which is ordinary thread context: every
 /// snapshot below takes a lock, and taking one from an interrupt handler would
 /// be the mistake this module's caller exists to avoid elsewhere.
+///
+/// The trigger is two consecutive passes with an identical
+/// [`work_fingerprint`], not a tick.  A tick is a time and the counters are
+/// work-done-by-a-time, so a sample at a fixed tick measured how fast the host
+/// was: the same boot read 55 blocks at tick 500 and 842 at tick 533.  Waiting
+/// for the work to stop makes the line describe the work instead.
+///
+/// [`PERF_BASELINE_TICK`] is still the floor.  The demo deliberately does
+/// little in its first five seconds of storage work, and two quiet passes
+/// early in boot would otherwise be mistaken for a finished boot.
 pub(crate) fn log_once(ticks: u64) {
-    if ticks < PERF_BASELINE_TICK || LOGGED.swap(true, Ordering::AcqRel) {
+    if ticks < PERF_BASELINE_TICK || LOGGED.load(Ordering::Acquire) {
+        return;
+    }
+
+    // Read the two snapshots the fingerprint is made of once: the line below
+    // prints them anyway, and reading them twice would take the same locks
+    // twice for one answer.
+    let fs = crate::fs::global()
+        .map(|fs| fs.lock().fs_profiler_snapshot())
+        .unwrap_or_default();
+    let device = crate::kernel::block::device_io_snapshot();
+    let fingerprint = work_fingerprint(fs.reads, fs.writes, device.read_ops, device.write_ops);
+    if fingerprint == 0 {
+        return;
+    }
+    let previous = LAST_FINGERPRINT.swap(fingerprint, Ordering::AcqRel);
+    if previous != fingerprint {
+        // Still moving: this pass establishes the baseline for the next one.
+        return;
+    }
+    if LOGGED.swap(true, Ordering::AcqRel) {
         return;
     }
 
@@ -81,18 +143,20 @@ pub(crate) fn log_once(ticks: u64) {
     let faults = crate::memory::global_mut()
         .map(|memory| memory.fault_profiler_snapshot())
         .unwrap_or_default();
-    let fs = crate::fs::global()
-        .map(|fs| fs.lock().fs_profiler_snapshot())
-        .unwrap_or_default();
     let net = crate::network::stack::NetworkStack::global()
         .map(|stack| stack.profiler_snapshot())
         .unwrap_or_default();
     let cache = crate::fs::global()
         .map(|fs| fs.lock().cache_stats())
         .unwrap_or_default();
-    let device = crate::kernel::block::device_io_snapshot();
     let workload = crate::kernel::workload::last();
 
+    // `ticks` and `irqs` are printed but are *timing* rows, and the baselines
+    // record them with a tolerance because of it.  They answer "how long did
+    // this boot take to go quiet", which is a property of the host; every
+    // other number here answers "what work did it do", and those are the ones
+    // a baseline may compare without one.  They stay on the line because a
+    // person reading a log wants to know where in the boot it was taken.
     crate::println!(
         "[perf  ] boot work: ticks={} frames={} frame-frees={} frame-zero-bytes={} \
          heap-allocs={} heap-bytes={} pt-maps={} pt-lookups={} faults={} \

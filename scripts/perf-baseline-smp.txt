@@ -38,23 +38,25 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-# `frames`, `frame-frees` and `frame-zero-bytes` carry a one-frame
-# tolerance on the multi-CPU shapes and none on the single-CPU one,
-# because that is what was measured.  Six one-CPU runs are identical;
-# across the four-CPU runs one boot's heap asks the frame allocator for
-# one more page than another's does before the sample.  A probe that
-# printed the counts right after both self-test threads were spawned
-# showed those spawns identical in every run, and the extra frame
-# appearing by the time the self-test finished — so it is the heap
-# around the threads, not the threads.  A regression in these rows is a
-# stack's worth of frames (three, for this change), so ±1 hides nothing.
+# `ticks` and `irqs` are printed by the boot and deliberately not
+# recorded here.  They say *when* the sample was taken — the boot
+# prints it once it has stopped doing storage work, so they measure
+# how fast the host got there.  A baseline compares work, and a row
+# that moves with the host is the one thing it must not compare.
 #
-ticks 512 12
+# The DNS self-test runs in this build on purpose, and its three
+# kernel threads are part of the frame rows: `kernel-net-rx` drives
+# the device while a socket has a parked receiver, and the self-test
+# spawns a waiter and an injector that walk the resolver's wait path
+# once (RFC 0029).  `frame-zero-bytes` grows by one 32 KiB stack per
+# thread; the two self-test threads terminate, so `frame-frees` grows
+# with them and the receive thread's stack does not come back.
+#
 frames 30 1
 frame-frees 14 1
 frame-zero-bytes 839680 32768
-heap-allocs 23361 256
-heap-bytes 26780944 262144
+heap-allocs 23452 256
+heap-bytes 26593488 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
@@ -99,6 +101,5 @@ ip4-rx 1 4
 ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 531 12
-ipis 55 6
+ipis 57 6
 spurious 0 0

@@ -31,70 +31,45 @@
 # `wl-device-bytes-per-asked-byte` is the ratio between the two — the
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
-# `ticks` and `irqs` moved too, from 560/582 to 534/556, and that is the
-# same window the other baselines describe: the summary is printed by the
-# maintenance thread, which wakes every 25 ticks, so the row records
-# where inside that window the boot happened to be — and this host is
-# currently reaching it about 26 ticks earlier than when the row was
-# written.  Nothing in the tree changed to cause it: the commit before
-# this work measures the same 534.
 #
-# DEBT — the ±1 on fs-lookups, fs-reads, fs-read-bytes, cache-hits and
-# cache-sequential-hits is a symptom, not a measurement problem, and the
-# note that first explained it here was wrong.  It said one block was
-# sometimes cached and sometimes not; the evidence pointed the other way.
+# `ticks` and `irqs` are printed by the boot and deliberately not
+# recorded here.  They say *when* the sample was taken — the boot
+# prints it once it has stopped doing storage work, so they measure
+# how fast the host got there.  A baseline compares work, and a row
+# that moves with the host is the one thing it must not compare.
 #
-# These counters are not "how much work the boot did".  They are "how much
-# work the boot had done when the maintenance thread got round to
-# printing" — `PERF_BASELINE_TICK` is a floor, not a fixed point, and the
-# summary is emitted by whichever pass first reaches it.  On this host
-# that pass lands anywhere in the 25 ticks after 500, because
-# `sleep_current(25)` re-arms from whenever the previous pass woke and the
-# error accumulates over the boot.  Measured: `fs-reads` is 842 at tick
-# 533, 841 at 531, 840 at 530 — and 55 at tick 500.
+# The DNS self-test runs in this build on purpose, and its three
+# kernel threads are part of the frame rows: `kernel-net-rx` drives
+# the device while a socket has a parked receiver, and the self-test
+# spawns a waiter and an injector that walk the resolver's wait path
+# once (RFC 0029).  `frame-zero-bytes` grows by one 32 KiB stack per
+# thread; the two self-test threads terminate, so `frame-frees` grows
+# with them and the receive thread's stack does not come back.
 #
-# That last number is the finding.  Pinning the sample at 500 makes it
-# reproducible to the digit (six runs, identical) and shows a boot that
-# has not finished: `frames` reads 18 where 29 is expected, because the
-# DNS self-test and the receive thread do not exist yet.  So the pass at
-# 500 samples a boot in progress, and the figures this file records were
-# taken later, once drift had carried the sample past the work.  Two
-# faults were cancelling.
-#
-# The consequence for CONTRIBUTING.md's promise is the part that matters:
-# it says this gate compares counters rather than seconds, so it does not
-# depend on how busy the host is.  For these rows that is not true — they
-# measure work-done-by-a-time and the time moves.  Fixing it properly is
-# not a tolerance: it is either sampling on an event after the boot has
-# quiesced, or accepting that these five rows are timing rows and moving
-# them out of a counter baseline.  Both are decisions larger than this
-# file, so the tolerance stays and this note says why it is a debt.
-#
-ticks 534 12
-frames 29 1
-frame-frees 8 1
-frame-zero-bytes 614400 32768
-heap-allocs 10917 256
-heap-bytes 17100224 262144
-pt-maps 738 0
-pt-lookups 737 0
-faults 1 0
-fs-lookups 257 1
-fs-reads 840 1
-fs-read-bytes 121161 24
-fs-writes 27 0
-fs-write-bytes 49618 0
-fs-transactions 10 0
-cache-hits 888 1
-cache-misses 83 0
-cache-prefetches 157 0
-cache-sequential-hits 276 1
+frames 30 1
+frame-frees 11 1
+frame-zero-bytes 647168 32768
+heap-allocs 13188 256
+heap-bytes 19454624 262144
+pt-maps 819 0
+pt-lookups 820 0
+faults 6 0
+fs-lookups 304 1
+fs-reads 896 1
+fs-read-bytes 127325 24
+fs-writes 30 0
+fs-write-bytes 49693 0
+fs-transactions 12 0
+cache-hits 943 1
+cache-misses 88 0
+cache-prefetches 164 0
+cache-sequential-hits 288 1
 cache-evictions 0 0
-blk-reads 165 0
-blk-read-bytes 256512 0
-blk-writes 338 0
-blk-write-bytes 264704 0
-blk-commands 497 0
+blk-reads 173 0
+blk-read-bytes 264192 0
+blk-writes 379 0
+blk-write-bytes 294912 0
+blk-commands 546 0
 blk-read-high-water 2 0
 blk-write-high-water 1 0
 wl-files 8 0
@@ -120,6 +95,5 @@ ip4-rx 1 4
 ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 556 12
 ipis 0 0
 spurious 0 0

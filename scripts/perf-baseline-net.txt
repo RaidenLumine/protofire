@@ -32,25 +32,25 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-# `ticks` and `irqs` were re-centred from 524/526 to 513/514.  Nothing
-# in the tree moved: the summary is printed by the maintenance thread,
-# which wakes every 25 ticks, so the sample lands somewhere in the window
-# after `PERF_BASELINE_TICK` and the row records where.  Four recordings
-# on this host came back 512-513, and every work counter — `nw-*`,
-# `fs-*`, `wl-*` — was identical to the previous record.  A boot that
-# reaches the sample 11 ticks earlier did the same work, later.
+# `ticks` and `irqs` are printed by the boot and deliberately not
+# recorded here.  They say *when* the sample was taken — the boot
+# prints it once it has stopped doing storage work, so they measure
+# how fast the host got there.  A baseline compares work, and a row
+# that moves with the host is the one thing it must not compare.
 #
-# A run made while the host was busy measured 503, which is the same
-# window seen from the other side: the boot reaches the sample sooner
-# when it is not competing for a CPU.  That is why the window, not the
-# exact tick, is what these rows describe.
+# The DNS self-test runs in this build on purpose, and its three
+# kernel threads are part of the frame rows: `kernel-net-rx` drives
+# the device while a socket has a parked receiver, and the self-test
+# spawns a waiter and an injector that walk the resolver's wait path
+# once (RFC 0029).  `frame-zero-bytes` grows by one 32 KiB stack per
+# thread; the two self-test threads terminate, so `frame-frees` grows
+# with them and the receive thread's stack does not come back.
 #
-ticks 513 12
 frames 24 0
 frame-frees 8 0
 frame-zero-bytes 643072 0
-heap-allocs 22444 256
-heap-bytes 26653232 262144
+heap-allocs 22449 256
+heap-bytes 26655936 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
@@ -95,6 +95,5 @@ ip4-rx 1 0
 ip4-tx 6 0
 ip6-rx 0 0
 ip6-tx 0 0
-irqs 514 12
 ipis 0 0
 spurious 0 0

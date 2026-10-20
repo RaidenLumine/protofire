@@ -205,7 +205,13 @@ with the profilers on and compares the work that boot did against the counters
 recorded in `scripts/perf-baseline.txt` — frames, page-table maps, blocks read,
 packets answered.  The gate compares counters rather than seconds, so it says
 whether a change did more or less work and does not depend on how busy the host
-was.  If the change moves a counter on purpose, re-record it with
+was.  The sample is taken when the boot has stopped doing storage work, not at
+a fixed tick: a fixed tick measures how fast the host got there, which is how
+the same boot came to report 55 reads at tick 500 and 842 at tick 533.  `ticks`
+and `irqs` are still printed but are skipped by the gate, because they say
+*when* the sample was taken rather than what the boot did.
+
+If the change moves a counter on purpose, re-record it with
 `sh scripts/check-perf-baseline.sh --record`, which keeps each row's tolerance.
 
 The single-CPU boot cannot see the work a second CPU does, so
