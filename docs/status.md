@@ -410,6 +410,20 @@ balancing and runtime stack protection.
   topology — the SRAT/SLIT walk, the node-aware allocators and the placement
   had only ever run in unit tests — and it found the discovery costs about
   seventy allocations and changes nothing else in the boot's work.
+- **The placement watchdog has a false positive, at about one boot in
+  twenty-five**: `check-aarch64-smp-runtime` fails when the watchdog reports a
+  process as unplaced, and the report is sometimes wrong.  Measured at
+  `45718d4` with no change applied, the line
+  `process pid=7 name=kernel-maintenance state=Waiting (1 thread(s), none
+  placed, suspended-slot empty)` appeared in 1 of 25 four-CPU boots, and the
+  boot it appeared in had finished — every service stopped and the demo worker
+  done — so the machine had not stopped with work left.  The report needs the
+  same thread missing on two passes a second apart, which rules out the
+  between-two-queues window the watchdog was built to tolerate, so the cause is
+  something else and is not yet known: the wake path enqueues on the thread's
+  affinity CPU while the watchdog looks from whichever CPU took its tick.  What
+  is *not* in doubt is that the work is done, so this is a diagnostic that
+  tells a lie rather than a machine that has wedged.
 
 ---
 
