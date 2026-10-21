@@ -471,6 +471,15 @@ impl TcpConnectionState {
         self.readable.waiter_count()
     }
 
+    /// How many bytes are buffered for transmission and not yet acknowledged.
+    ///
+    /// There is no upper bound: `write` accepts every byte it is handed, so
+    /// this grows while the peer does not read.  Exposed so a test can show
+    /// that, and so the day a bound is chosen there is a reader for it.
+    pub fn unacknowledged_bytes(&self) -> usize {
+        self.send_buffer.len()
+    }
+
     /// How many bytes are buffered for reading.
     pub fn buffered(&self) -> usize {
         self.recv_buffer.len()

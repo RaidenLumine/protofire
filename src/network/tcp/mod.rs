@@ -180,6 +180,32 @@ mod tests {
         }
     }
 
+    /// Writing to a peer that never reads grows the send buffer without bound.
+    ///
+    /// This is not a defect this change introduced or fixed: it is the shape
+    /// the writer has, pinned so the decision about it is made against a
+    /// measured fact rather than a suspicion.  RFC 0031's draft called this "a
+    /// blocked write spinning", which was wrong — nothing blocks, and the
+    /// real risk is the opposite.
+    #[test]
+    fn writing_to_a_peer_that_never_reads_grows_the_send_buffer() {
+        let mut state = TcpConnectionState::new(40013, [10, 0, 2, 2], 80, 1, 0);
+        state.state = TcpState::Established;
+        // A window of zero: the peer has told us not to send anything.
+        state.send_window = 0;
+
+        let chunk = [0u8; 4096];
+        for _ in 0..64 {
+            let accepted = state.write(&chunk);
+            assert_eq!(accepted, chunk.len(), "every byte is accepted");
+        }
+        assert_eq!(
+            state.unacknowledged_bytes(),
+            64 * chunk.len(),
+            "nothing was refused and nothing was sent"
+        );
+    }
+
     /// A zero-timeout read is a probe and must not park.
     #[test]
     fn a_zero_timeout_read_does_not_park() {

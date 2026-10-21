@@ -163,6 +163,17 @@ drain the same buffer.  POSIX does not promise otherwise for a single socket,
 and nothing here adds a rule; whether this ABI should refuse a second
 concurrent read is a decision of its own.
 
-**Readiness is not polled for writers.**  A writer blocked because the peer's
-window is full still spins, if anything blocks there at all.  The same
-mechanism applies, and this RFC does not take it.
+**A writer is never blocked, which is a different gap.**  This RFC's first
+draft said a writer stopped by a full peer window still spins.  It does not
+spin, because it is never stopped: `TcpConnectionState::write` appends to
+`send_buffer` without a bound and answers with the whole length, so `write`
+accepts everything and `write_all`'s retry loop always finishes in one pass.
+Whatever does not fit the peer's window waits in the buffer instead.
+
+So the unresolved question is not a wait queue but a bound, and the risk is
+the opposite of a spin: a peer that stops reading while the writer keeps
+writing grows `send_buffer` for as long as the program keeps asking.  Nothing
+in this tree refuses, and no gate exercises it.  Deciding what a full send
+buffer should do — refuse with `WouldBlock`, park until the window opens, or
+keep growing until memory says no — is a socket-semantics decision like the
+ephemeral-port one RFC 0030 took, and it is not this RFC's.
