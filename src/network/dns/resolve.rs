@@ -98,14 +98,21 @@ pub(crate) struct PortGuard<'a> {
 impl<'a> PortGuard<'a> {
     /// Take the next free port in the dynamic range.
     pub(crate) fn bind(stack: &'a NetworkStack) -> Result<Self> {
-        let port = stack.udp_table().lock().bind_ephemeral()?;
+        let port = stack
+            .udp_table()
+            .lock()
+            .bind_ephemeral_at(stack.current_tick())?;
         Ok(Self { port, stack })
     }
 }
 
 impl Drop for PortGuard<'_> {
     fn drop(&mut self) {
-        self.stack.udp_table().lock().unbind(self.port);
+        // Released with the tick that recorded it, so the port lingers for
+        // `UDP_PORT_LINGER_TICKS`: a datagram still in flight for this lookup
+        // finds no socket instead of finding the next lookup's.
+        let now = self.stack.current_tick();
+        self.stack.udp_table().lock().unbind_at(self.port, now);
     }
 }
 

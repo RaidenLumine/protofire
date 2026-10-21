@@ -309,6 +309,16 @@ pub const UDP_EPHEMERAL_PORT_START: u16 = 61000;
 /// Last port in the range.  The top of the IANA dynamic block.
 pub const UDP_EPHEMERAL_PORT_END: u16 = 65535;
 
+/// How long a released dynamic port is held out of the allocator.
+///
+/// One second at 100 Hz.  A datagram delayed longer than that is a datagram
+/// the peer's own retransmission policy has already given up on, and the
+/// transaction id still filters what does arrive.  Long enough to cover a
+/// lookup that ended while its answer was in flight, short enough that the
+/// range cannot be exhausted by ordinary use: at one second, exhausting 4 536
+/// ports needs 4 536 lookups to end inside one second.
+pub const UDP_PORT_LINGER_TICKS: u64 = 100;
+
 /// Table of bound UDP sockets, keyed by local port.
 pub struct UdpSocketTable {
     sockets: BTreeMap<u16, UdpSocket>,
@@ -319,6 +329,16 @@ pub struct UdpSocketTable {
     /// while the thread is between "I have no work" and "I am asleep" is not
     /// lost: the signal stays set until somebody takes it.
     receive_request: Arc<Event>,
+    /// When each recently released dynamic port may be handed out again.
+    ///
+    /// A port released and immediately reallocated can receive a datagram
+    /// meant for the lookup that just gave it up.  The random transaction id
+    /// makes that a discarded answer rather than a wrong one (RFC 0030), but
+    /// only for lookups that used one; a linger closes the window instead of
+    /// narrowing it.  Recorded per port and swept lazily on allocation, so no
+    /// timer and no thread are needed: a port is skipped while its entry is in
+    /// the future, and the entry is dropped the next time the cursor passes.
+    lingering_until: BTreeMap<u16, u64>,
     /// Where the next ephemeral allocation looks first.
     ///
     /// A cursor rather than a scan from the bottom: consecutive allocations
@@ -339,6 +359,7 @@ impl UdpSocketTable {
             sockets: BTreeMap::new(),
             receive_request: Arc::new(Event::auto_reset(false)),
             next_ephemeral_port: UDP_EPHEMERAL_PORT_START,
+            lingering_until: BTreeMap::new(),
         }
     }
 
@@ -365,6 +386,16 @@ impl UdpSocketTable {
     /// is exhausted — the same answer, for the same condition, that
     /// `TcpConnectionTable::alloc_port` gives.
     pub fn bind_ephemeral(&mut self) -> Result<u16> {
+        self.bind_ephemeral_at(0)
+    }
+
+    /// Allocate, treating `now` as the current tick for linger purposes.
+    ///
+    /// An entry whose deadline has passed is dropped here rather than by a
+    /// sweeper: this walk already touches the ports, so the map cannot grow
+    /// past the ports in use plus the ports released within one linger.
+    pub fn bind_ephemeral_at(&mut self, now: u64) -> Result<u16> {
+        self.lingering_until.retain(|_, until| *until > now);
         let span = UDP_EPHEMERAL_PORT_END - UDP_EPHEMERAL_PORT_START;
         for _ in 0..=span {
             let port = self.next_ephemeral_port;
@@ -373,6 +404,9 @@ impl UdpSocketTable {
             } else {
                 port + 1
             };
+            if self.lingering_until.contains_key(&port) {
+                continue;
+            }
             if let alloc::collections::btree_map::Entry::Vacant(slot) = self.sockets.entry(port) {
                 slot.insert(UdpSocket::new(port));
                 return Ok(port);
@@ -389,9 +423,23 @@ impl UdpSocketTable {
     /// datagrams went with the socket, and a waiter that saw a stale count
     /// would return to a queue that is no longer there and spin.
     pub fn unbind(&mut self, port: u16) {
+        self.unbind_at(port, 0);
+    }
+
+    /// Unbind, recording that a dynamic port must not be reallocated at once.
+    ///
+    /// `now` is the current tick; a port released here is held out of the
+    /// allocator for [`UDP_PORT_LINGER_TICKS`].  Ports outside the dynamic
+    /// range are not recorded: nothing allocates them, so there is nothing to
+    /// keep them from.
+    pub fn unbind_at(&mut self, port: u16, now: u64) {
         if let Some(socket) = self.sockets.remove(&port) {
             socket.ready.with_lock(|pending, _| *pending = 0);
             socket.ready.wake_all();
+        }
+        if (UDP_EPHEMERAL_PORT_START..=UDP_EPHEMERAL_PORT_END).contains(&port) {
+            self.lingering_until
+                .insert(port, now.saturating_add(UDP_PORT_LINGER_TICKS));
         }
     }
 
@@ -704,6 +752,41 @@ mod tests {
         assert_ne!(first, second);
     }
 
+    /// A released port is held out of the allocator for its linger.
+    ///
+    /// This is what RFC 0030 left open: a port freed and immediately handed
+    /// out can receive a datagram meant for the lookup that just released it.
+    /// The random transaction id makes that a discarded answer, but only for
+    /// lookups that used one — the linger closes the window instead.
+    #[test]
+    fn a_released_port_lingers_before_it_is_reused() {
+        // One port free: the cursor will come back to exactly this one.
+        let mut table = UdpSocketTable::new();
+        for port in UDP_EPHEMERAL_PORT_START..UDP_EPHEMERAL_PORT_END {
+            table.sockets.insert(port, UdpSocket::new(port));
+        }
+        let port = UDP_EPHEMERAL_PORT_END;
+        assert_eq!(table.bind_ephemeral_at(0), Ok(port));
+
+        // Released at tick 0, so it is held until the linger expires.
+        table.unbind_at(port, 0);
+        assert_eq!(
+            table.bind_ephemeral_at(0),
+            Err(Error::AlreadyExists),
+            "a released port is not handed out again at once"
+        );
+        assert_eq!(
+            table.bind_ephemeral_at(UDP_PORT_LINGER_TICKS - 1),
+            Err(Error::AlreadyExists),
+            "one tick before the linger ends it is still held"
+        );
+        assert_eq!(
+            table.bind_ephemeral_at(UDP_PORT_LINGER_TICKS),
+            Ok(port),
+            "the tick the linger ends, the port is available"
+        );
+    }
+
     /// The range is finite and says so when it is spent.
     #[test]
     fn exhausting_the_range_answers_already_exists() {
@@ -723,9 +806,21 @@ mod tests {
         );
         assert_eq!(table.bind_ephemeral(), Err(Error::AlreadyExists));
 
-        // Releasing one is enough to get an allocation again.
-        table.unbind(UDP_EPHEMERAL_PORT_START);
-        assert_eq!(table.bind_ephemeral(), Ok(UDP_EPHEMERAL_PORT_START));
+        // Releasing one port is not enough while it lingers: a datagram still
+        // in flight for the lookup that released it must not find a new
+        // socket on that port.
+        table.unbind_at(UDP_EPHEMERAL_PORT_START, 0);
+        assert_eq!(
+            table.bind_ephemeral_at(0),
+            Err(Error::AlreadyExists),
+            "a released port is held out of the allocator"
+        );
+
+        // Once the linger passes it comes back.
+        assert_eq!(
+            table.bind_ephemeral_at(UDP_PORT_LINGER_TICKS),
+            Ok(UDP_EPHEMERAL_PORT_START)
+        );
     }
 
     #[test]

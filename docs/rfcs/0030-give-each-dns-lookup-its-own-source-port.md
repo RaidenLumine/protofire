@@ -217,12 +217,19 @@ lookup was given.
 
 ## Unresolved questions
 
-**Ports are not held after the lookup ends.**  A closed port can be
-reallocated immediately, so two datagrams to it in quick succession can
-reach two different lookups.  The random id makes that a discarded answer
-rather than a wrong one, which is what the id is for.  Holding a port for a
-linger period would close it completely at the cost of ports and of a timer,
-and nothing here needs that yet.
+**Ports are not held after the lookup ends.**  *Answered by the linger
+below.*  A closed port could be reallocated immediately, so two datagrams to
+it in quick succession could reach two different lookups.  The random id makes
+that a discarded answer rather than a wrong one, which is what the id is for.
+
+A release now lingers: `UdpSocketTable::unbind_at` records the tick and
+`bind_ephemeral_at` skips a port until `UDP_PORT_LINGER_TICKS` (one second)
+has passed.  There is no timer and no thread — the entry is swept by the
+allocation walk that would otherwise have handed the port out — so the cost is
+one `BTreeMap` entry per port released in the last second.  One second is
+enough for an answer that was already in flight when its lookup gave up, and
+short enough that exhausting 4 536 ports would take 4 536 lookups ending
+inside one second.
 
 **NAT's range still overlaps TCP's.**  This RFC narrows UDP to stay out of
 NAT's way, and TCP remains inside it.  Whether NAT should move, or TCP

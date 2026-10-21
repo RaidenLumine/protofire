@@ -204,7 +204,11 @@ rather than spun, which is what the DNS self-test's park count means.
 
 `bind_ephemeral` hands out a free port from `61000..=65535` (see the naming
 section below for why that range).  It is one lock and one decision, so two
-callers cannot be given the same port.  `bind` remains for a caller that
+callers cannot be given the same port.  A released port is not handed out
+again at once: `unbind_at` records the tick and the allocator skips the port
+for `UDP_PORT_LINGER_TICKS`, which is what keeps a datagram still in flight
+for one lookup off the next lookup's socket.  The record is swept by the
+allocation walk rather than by a timer.  `bind` remains for a caller that
 names a port.
 
 ## Local sockets
