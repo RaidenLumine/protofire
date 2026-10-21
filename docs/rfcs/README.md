@@ -138,6 +138,7 @@ and its status says which of the two happened.
 | [0028](0028-install-through-a-device-not-an-image.md) | Implemented | Install through a device, not through an image |
 | [0029](0029-wait-for-a-dns-answer-instead-of-polling.md) | Implemented | Wait for a DNS answer instead of polling for one |
 | [0030](0030-give-each-dns-lookup-its-own-source-port.md) | Implemented | Give each DNS lookup its own source port |
+| [0031](0031-let-a-tcp-reader-wait-instead-of-spin.md) | Implemented | Let a TCP reader wait instead of spin |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —

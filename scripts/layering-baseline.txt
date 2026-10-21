@@ -160,7 +160,7 @@
 # grows, which is the correct direction: the account store is a consumer of
 # the process table, not the other way round.
 #
-# `network` <-> `process` remains, and RFC 0029 left it at five edges on the
+# `network` <-> `process` remains, and RFC 0031 took it to eight edges on the
 # network side, all of them the same shape.  `RawSocketHandle` — two integers
 # naming a socket the stack owns — was defined in `process`, so every use of it
 # was an edge up into the process table; it is defined in `network` now, and
@@ -177,6 +177,16 @@
 # cannot fall to zero is now the one `docs/fmts/code-style.md` §13 states: a
 # consumer may name `process` for "a thread to run on and a way to block", and
 # nothing else.
+#
+# The three RFC 0031 added are the TCP half of the same story: a connection
+# owns a `WaitQueue` (one), `TcpReadWait::wait` asks `Scheduler::global`
+# whether parking is possible (two), and the gate that proves the reader parks
+# installs a scheduler and spawns two threads from a TCP test (three).  The
+# last is a test's reference and is counted like any other because the census
+# counts files, not build configurations; the alternative would be a test that
+# cannot exercise the path it exists for.  `network` -> `sync` rose by one for
+# `ReaderNotifier`, which holds the connection through the same `Mutex` the
+# table stores it in — a read of a type the module already names.
 #
 # `network` -> `random` gained one edge for RFC 0030: the DNS resolver draws
 # its transaction id from the CSPRNG.  The other five are TLS's key shares and
@@ -384,9 +394,9 @@ mod                          workload                     3
 network                      crypto                       30
 network                      fs                           7
 network                      ipc                          1
-network                      process                      5
+network                      process                      8
 network                      random                       6
-network                      sync                         17
+network                      sync                         18
 nmi                          sync                         1
 oom                          process                      3
 percpu                       topology                     2

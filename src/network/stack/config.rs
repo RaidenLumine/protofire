@@ -68,7 +68,10 @@ impl NetworkStack {
     /// receiver waiting must not spend a device read per tick, and a machine
     /// with one must not leave it asleep until its deadline.
     pub fn has_receive_waiter(&self) -> bool {
-        self.udp_table.lock().any_waiter()
+        // Both transports, because the thread's job is "poll while anybody is
+        // parked" and a TCP reader that parks with nobody polling for it would
+        // sleep to its deadline — the failure this thread exists to prevent.
+        self.udp_table.lock().any_waiter() || self.tcp_table.lock().any_waiter()
     }
 
     /// Read every frame the device has queued, up to a bound.

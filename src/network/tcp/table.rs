@@ -134,6 +134,18 @@ impl TcpConnectionTable {
         Ok(())
     }
 
+    /// Whether any connection has a parked reader.
+    ///
+    /// The deferred receive thread asks this to decide whether driving the
+    /// device is work somebody is waiting for.  It has to include TCP: a
+    /// reader that parks and is never polled for would sleep to its deadline,
+    /// which is the failure RFC 0029's thread exists to prevent.
+    pub fn any_waiter(&self) -> bool {
+        self.connections
+            .values()
+            .any(|conn| conn.lock().waiter_count() != 0)
+    }
+
     /// Remove and return a connection by its 4-tuple.
     pub fn remove(
         &mut self,
@@ -186,37 +198,56 @@ impl NativeTcpConnection {
     /// Read up to `buffer.len()` bytes from the connection's receive buffer
     /// (bare-metal only).
     ///
-    /// When no data is available this spins on the tick counter until data
-    /// arrives, the connection closes, or `timeout_ticks` elapse.
-    /// `timeout_ticks == 0` is a non-blocking poll and returns `Ok(0)`
-    /// immediately if nothing is buffered.
+    /// When no data is available the reader parks on the connection's wait
+    /// queue until a segment fills the buffer, the connection closes, or
+    /// `timeout_ticks` elapse.  `timeout_ticks == 0` is a non-blocking poll
+    /// and returns `Ok(0)` immediately if nothing is buffered.
+    ///
+    /// The wake is not trusted as "data is here" — another reader may have
+    /// taken it, and the deadline arrives as a wake too — so the loop always
+    /// drains and re-checks the clock.  That is RFC 0029's loop for a
+    /// datagram, applied to a stream.
     pub fn read(
         &self,
         stack: &NetworkStack,
         buffer: &mut [u8],
         timeout_ticks: u64,
     ) -> Result<usize> {
+        use crate::network::udp::DatagramWaitOutcome;
+
         if buffer.is_empty() {
             return Ok(0);
         }
         let start = stack.current_tick();
+        let deadline = start.saturating_add(timeout_ticks);
         loop {
-            let conn = stack
-                .tcp_table()
-                .lock()
-                .lookup(self.local_port, self.remote_ip, self.remote_port)
-                .ok_or(Error::NotFound)?;
-            let mut state = conn.lock();
-            let n = state.read(buffer);
-            let is_closed = state.state == TcpState::Closed;
-            drop(state);
+            let (n, is_closed, wait) = {
+                let conn = stack
+                    .tcp_table()
+                    .lock()
+                    .lookup(self.local_port, self.remote_ip, self.remote_port)
+                    .ok_or(Error::NotFound)?;
+                let mut state = conn.lock();
+                let n = state.read(buffer);
+                let is_closed = state.state == TcpState::Closed;
+                // The handle is taken under the connection's lock and waited
+                // on after it is released: `process_segment` needs that lock
+                // to fill the buffer, so holding it across a park would
+                // deadlock against the very segment that would wake us.
+                (n, is_closed, state.reader())
+            };
             if n > 0 || is_closed {
                 return Ok(n);
             }
             if timeout_ticks == 0 {
                 return Ok(0);
             }
-            if stack.current_tick().wrapping_sub(start) >= timeout_ticks {
+            if stack.current_tick() >= deadline {
+                return Err(Error::TimedOut);
+            }
+            // `CannotPark` means there is no scheduler, so the deadline this
+            // loop watches can never arrive; spinning on it would be forever.
+            if wait.wait(deadline) == DatagramWaitOutcome::CannotPark {
                 return Err(Error::TimedOut);
             }
         }

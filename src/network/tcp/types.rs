@@ -5,6 +5,8 @@
 use alloc::collections::vec_deque::VecDeque;
 use alloc::vec::Vec;
 
+use crate::kernel::process::wait::WaitQueue;
+use crate::kernel::sync::Mutex;
 use crate::network::internet::ip::IpAddress;
 
 // ─── Socket options ─────────────────────────────────────────────────────────
@@ -199,6 +201,98 @@ pub(super) struct RetransmitState {
 // ─── TCP connection state ───
 
 /// Per-connection TCP state machine.
+/// A handle on one connection's read readiness.
+///
+/// Taken under the table lock and waited on without any lock: the connection's
+/// own `Mutex` is held by whoever is delivering, and a reader that held it
+/// across a park would deadlock against the segment that would wake it.
+/// The handle names the wait queue through an `Arc`, so a connection that is
+/// removed while a reader is parked still has something to be woken on.
+#[derive(Clone)]
+pub struct TcpReadWait {
+    pub(super) readable: WaitQueue<usize>,
+}
+
+impl TcpReadWait {
+    /// Block until bytes are buffered or `deadline` passes.
+    ///
+    /// The outcome is the same three-way answer a datagram wait gives, for the
+    /// same reasons: `CannotPark` ends a loop watching a clock that cannot
+    /// advance, `AlreadyQueued` says the data arrived before the park, and
+    /// `Parked` is the one a caller can count as evidence it really slept.
+    pub fn wait(&self, deadline: u64) -> crate::network::udp::DatagramWaitOutcome {
+        use crate::network::udp::DatagramWaitOutcome;
+
+        if self.queued() != 0 {
+            return DatagramWaitOutcome::AlreadyQueued;
+        }
+        let Some(scheduler) = crate::kernel::process::Scheduler::global() else {
+            return DatagramWaitOutcome::CannotPark;
+        };
+        if scheduler.current_thread().is_none() {
+            return DatagramWaitOutcome::CannotPark;
+        }
+
+        let parked =
+            self.readable
+                .block_current_until_if(deadline, |available, waiters, thread| {
+                    if *available != 0 {
+                        false
+                    } else {
+                        waiters.push_back(thread.clone());
+                        true
+                    }
+                });
+        if parked {
+            DatagramWaitOutcome::Parked
+        } else {
+            DatagramWaitOutcome::AlreadyQueued
+        }
+    }
+
+    /// How many bytes are buffered right now.
+    pub fn queued(&self) -> usize {
+        self.readable.with_lock(|available, _| *available)
+    }
+}
+
+/// Wakes a connection's readers when it goes out of scope.
+///
+/// `process_segment` has a dozen return paths and several of them can end a
+/// connection.  Putting the wake at each one means the next return added is a
+/// reader parked forever; putting it in a guard means the next return is
+/// covered by construction.  The guard holds the connection through an `Arc`,
+/// so the wake still reaches the queue after the table has dropped its entry.
+pub struct ReaderNotifier {
+    conn: alloc::sync::Arc<Mutex<TcpConnectionState>>,
+}
+
+impl ReaderNotifier {
+    pub(super) fn new(conn: &alloc::sync::Arc<Mutex<TcpConnectionState>>) -> Self {
+        Self {
+            conn: alloc::sync::Arc::clone(conn),
+        }
+    }
+}
+
+impl Drop for ReaderNotifier {
+    fn drop(&mut self) {
+        let state = self.conn.lock();
+        if state.state == TcpState::Closed {
+            // Nothing will ever fill the buffer again, and there may be bytes
+            // buffered before the close: leave the count alone so a reader
+            // drains what arrived, then wake it to read and see EOF.
+            let pending = state.recv_buffer.len();
+            state
+                .readable
+                .with_lock(|available, _| *available = pending);
+            state.readable.wake_all();
+        } else {
+            state.wake_reader();
+        }
+    }
+}
+
 pub struct TcpConnectionState {
     pub state: TcpState,
     pub local_port: u16,
@@ -242,6 +336,14 @@ pub struct TcpConnectionState {
     pub congestion: super::congestion::CongestionState,
     /// ECN state (RFC 3168).
     pub ecn: super::ecn::EcnState,
+    /// Waiters on this connection's receive buffer.
+    ///
+    /// Its state is the buffer's length, so a reader decides whether to park
+    /// without the connection's lock — which it cannot take, because it is
+    /// already holding it when it asks.  `process_segment` bumps the count
+    /// and wakes one waiter after extending the buffer, and a close wakes
+    /// every waiter so nobody sleeps through EOF.
+    pub(super) readable: WaitQueue<usize>,
 }
 
 impl TcpConnectionState {
@@ -273,6 +375,7 @@ impl TcpConnectionState {
             peer_initial_seq: 0,
             peer_mss: MIN_PEER_MSS,
             peer_window_scale: 0,
+            readable: WaitQueue::with_state(0),
             ooo_queue: VecDeque::new(),
             peer_sack_blocks: Vec::new(),
             peer_sack_ok: false,
@@ -316,6 +419,7 @@ impl TcpConnectionState {
             peer_initial_seq,
             peer_mss: MIN_PEER_MSS,
             peer_window_scale: 0,
+            readable: WaitQueue::with_state(0),
             ooo_queue: VecDeque::new(),
             peer_sack_blocks: Vec::new(),
             peer_sack_ok: false,
@@ -340,7 +444,43 @@ impl TcpConnectionState {
         for (i, byte) in self.recv_buffer.drain(..len).enumerate() {
             buffer[i] = byte;
         }
+        // Publish the shorter buffer, so a waiter that is about to check the
+        // count sees what the pop left behind.
+        self.readable
+            .with_lock(|available, _| *available = self.recv_buffer.len());
         len
+    }
+
+    /// Announce newly buffered bytes and wake one reader.
+    ///
+    /// Called after `recv_buffer` grew, under the connection's lock, so the
+    /// bytes are visible before the wake: a reader that wakes and finds the
+    /// buffer empty can only be looking at data another reader took.
+    pub(super) fn wake_reader(&self) {
+        let pending = self.recv_buffer.len();
+        self.readable.wake_with(|available, waiters, waking| {
+            *available = pending;
+            if let Some(thread) = WaitQueue::<usize>::take_next_waiter(waiters) {
+                waking.push(thread);
+            }
+        });
+    }
+
+    /// How many threads are parked waiting to read.
+    pub fn waiter_count(&self) -> usize {
+        self.readable.waiter_count()
+    }
+
+    /// How many bytes are buffered for reading.
+    pub fn buffered(&self) -> usize {
+        self.recv_buffer.len()
+    }
+
+    /// A handle a reader can park on without holding the connection's lock.
+    pub fn reader(&self) -> TcpReadWait {
+        TcpReadWait {
+            readable: self.readable.clone(),
+        }
     }
 
     /// Buffer `data` for transmission. Returns bytes accepted.

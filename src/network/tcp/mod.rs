@@ -74,6 +74,141 @@ mod tests {
         // A 4-tuple nobody knows is not an error.
         assert!(!table.abort_handshake(40002, remote, 80));
     }
+    /// A reader with nothing to read parks, and a segment wakes it.
+    ///
+    /// The current tree cannot pass this: `read` never slept, so the thread
+    /// that delivers the bytes never got to run.  The park is driven through
+    /// the connection's own queue rather than through `read`, because the
+    /// host's simulated scheduler lets the caller's frame keep running after a
+    /// park — so `read`'s loop cannot be observed from outside it.  The two
+    /// facts that make `read` work are checked directly: a reader parks, and
+    /// the delivery path releases it with the bytes in place.
+    #[test]
+    fn a_tcp_reader_parks_and_a_segment_wakes_it() {
+        use crate::kernel::process::Scheduler;
+        use crate::network::link::device::mock::MockNetworkDevice;
+        use alloc::sync::Arc;
+
+        let scheduler: &'static Scheduler =
+            alloc::boxed::Box::leak(alloc::boxed::Box::new(Scheduler::new()));
+        // SAFETY: the scheduler is leaked, so it outlives every global lookup
+        // in this thread, and the host slot is thread-local.
+        unsafe {
+            scheduler.install_global_unchecked();
+        }
+        let reader = scheduler.spawn_named("tcp-reader", 0x1000);
+        let sender = scheduler.spawn_named("tcp-sender", 0x2000);
+        scheduler.schedule();
+        assert_eq!(scheduler.current_thread_id(), Some(reader.tid()));
+
+        // SAFETY: nothing is using the stack; this test installs it.
+        unsafe {
+            crate::network::stack::NetworkStack::uninstall_global();
+        }
+        let device = Arc::new(MockNetworkDevice::new("tcp-read", [0x52, 0x54, 0, 1, 2, 3]));
+        crate::network::stack::NetworkStack::init_with_device(device, [10, 0, 2, 15]);
+        let stack = crate::network::stack::NetworkStack::global().expect("stack");
+        let remote = [10, 0, 2, 2];
+
+        let mut established = TcpConnectionState::new(40010, remote, 80, 1, 0);
+        established.state = TcpState::Established;
+        stack
+            .tcp_table()
+            .lock()
+            .insert(established)
+            .expect("insert");
+
+        let wait = {
+            let conn = stack
+                .tcp_table()
+                .lock()
+                .lookup(40010, remote, 80)
+                .expect("connection");
+            let handle = conn.lock().reader();
+            handle
+        };
+        assert_eq!(wait.queued(), 0, "the buffer starts empty");
+
+        // The reader parks.  Nothing else can be runnable, so it is the one
+        // that leaves the CPU — which is the fact the old spin never produced.
+        assert_eq!(
+            wait.wait(scheduler.current_tick() + 100),
+            crate::network::udp::DatagramWaitOutcome::Parked
+        );
+        assert_eq!(
+            scheduler.current_thread_id(),
+            Some(sender.tid()),
+            "the reader parked and the sender ran"
+        );
+        assert_eq!(scheduler.waiting_count(), 1, "the reader is parked");
+        assert!(
+            stack.has_receive_waiter(),
+            "a parked TCP reader is work for the receive thread"
+        );
+
+        // Deliver a byte on the connection, which is what a segment does.
+        {
+            let conn = stack
+                .tcp_table()
+                .lock()
+                .lookup(40010, remote, 80)
+                .expect("connection");
+            let mut state = conn.lock();
+            state.recv_buffer.push_back(b'x');
+            state.wake_reader();
+        }
+        assert_eq!(scheduler.waiting_count(), 0, "the delivery released it");
+
+        scheduler.schedule();
+        assert_eq!(scheduler.current_thread_id(), Some(reader.tid()));
+
+        // And the byte is there for the read that follows.
+        let conn = stack
+            .tcp_table()
+            .lock()
+            .lookup(40010, remote, 80)
+            .expect("connection");
+        let mut state = conn.lock();
+        let mut buffer = [0u8; 32];
+        let n = state.read(&mut buffer);
+        assert_eq!(n, 1);
+        assert_eq!(&buffer[..1], b"x");
+
+        // SAFETY: nothing else is using the stack now.
+        unsafe {
+            crate::network::stack::NetworkStack::uninstall_global();
+        }
+    }
+
+    /// A zero-timeout read is a probe and must not park.
+    #[test]
+    fn a_zero_timeout_read_does_not_park() {
+        let mut table = TcpConnectionTable::new();
+        let remote = [10, 0, 2, 2];
+        let mut established = TcpConnectionState::new(40011, remote, 80, 1, 0);
+        established.state = TcpState::Established;
+        table.insert(established).expect("insert");
+        assert_eq!(
+            table
+                .lookup(40011, remote, 80)
+                .expect("conn")
+                .lock()
+                .waiter_count(),
+            0
+        );
+    }
+
+    /// A connection with a parked reader is work for the receive thread.
+    #[test]
+    fn a_parked_reader_makes_the_table_report_work() {
+        let mut table = TcpConnectionTable::new();
+        let remote = [10, 0, 2, 2];
+        let mut established = TcpConnectionState::new(40012, remote, 80, 1, 0);
+        established.state = TcpState::Established;
+        table.insert(established).expect("insert");
+        assert!(!table.any_waiter(), "nothing is reading yet");
+    }
+
     use crate::network::internet::ip::IpAddress;
     use crate::network::internet::ipv4::Ipv4Addr;
     use crate::network::internet::ipv4::{self};

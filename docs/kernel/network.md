@@ -57,25 +57,30 @@ claims MSI-X, the interrupt is what ends a transmit or command *completion
 wait* (`wait_for_queue_interrupt` in `src/drivers/virtio_net.rs`); received
 frames are drained by whoever calls `poll()`.  The callers are the operations
 that wait on the network itself: the loop in `tcp::connect`, the accept loop,
-DHCP discovery, and the ARP and NDP resolution paths.  A bare-metal stream
-read does not poll — `NativeTcpConnection::read` spins on the receive buffer
-and the clock — so a read makes progress while some other caller is polling,
-and times out if none is.
+DHCP discovery, and the ARP and NDP resolution paths.
 
-The DNS resolver is not among those callers any more.  It parks on the UDP
-socket's wait queue (`UdpSocketTable::readiness` returns a `DatagramWait`), and
-the socket's `deliver` wakes it.  Something has to drive the device while it
-sleeps, so `Kernel::init` spawns `kernel-net-rx`
-(`kernel::maintenance::network_receive_entry`): a kernel thread that sleeps
-one tick while some socket has a waiter and ten while none does, choosing on
-each pass from `NetworkStack::has_receive_waiter`.  When there is a waiter it
-calls `poll_available`, which reads up to 32 frames before letting the
-scheduler have the CPU back.  The tick cannot do this job — it is interrupt
+A TCP reader is not among them either, since RFC 0031: it parks on the
+connection's own `WaitQueue` (`TcpConnectionState::reader` returns a
+`TcpReadWait`), and `process_segment` wakes it after extending the receive
+buffer.  A close wakes every reader through `ReaderNotifier`, a guard
+`process_segment` takes on entry so that none of its dozen returns can leave a
+reader parked on a connection that will never fill again.
+
+The DNS resolver parks the same way on the UDP socket's wait queue
+(`UdpSocketTable::readiness` returns a `DatagramWait`), and the socket's
+`deliver` wakes it.  Something has to drive the device while either sleeps, so
+`Kernel::init` spawns `kernel-net-rx`
+(`kernel::maintenance::network_receive_entry`): a kernel thread that blocks on
+the UDP table's receive event until a waiter announces itself, then sleeps one
+tick at a time while `NetworkStack::has_receive_waiter` — which asks both
+transports — keeps answering yes.  On each pass it calls `poll_available`,
+which reads up to 32 frames before letting the scheduler have the CPU back.  The tick cannot do this job — it is interrupt
 context, and `poll()` takes locks and can transmit — and the maintenance
 thread cannot either, because its pass resolves the NTP server's name.
 
-A waiter that wakes is woken because a datagram was queued, but it does not
-trust that: another waiter can have taken it, and a deadline is delivered as
+A waiter that wakes is woken because a datagram or a segment was queued, but
+it does not trust that: another waiter can have taken it, and a deadline is
+delivered as
 a wake too, so the resolver drains the socket and checks the clock before it
 decides.  That is the condition-variable discipline `docs/fmts/code-style.md`
 expects, and it is the shape RFC 0029 records.

@@ -411,6 +411,12 @@ pub fn process_segment(
         }
     };
 
+    // A segment was delivered for this connection, whatever it did to it:
+    // bytes may have arrived, and a FIN or RST may have closed it.  The guard
+    // runs on every return below — there are a dozen — so a path that ends a
+    // connection cannot leave a reader parked on it.
+    let _notify = super::types::ReaderNotifier::new(&conn);
+
     let mut state = conn.lock();
     let flags = header.flags;
     let seq = header.sequence_number;
@@ -447,6 +453,7 @@ pub fn process_segment(
                 state.ecn.on_recv_syn_ack(flags);
                 state.retransmit.pending_segments.clear();
                 state.retransmit.count = 0;
+
                 state.ts_val = state.ts_val.wrapping_add(1);
                 let ack_flags = TCP_FLAG_ACK | state.ecn.ack_flags();
                 let ack = TcpHeader {
@@ -589,6 +596,13 @@ pub fn process_segment(
                         enqueue_ooo(&mut state, seq, ooo_data);
                     }
                 }
+
+                // Wake a parked reader once, after every path above that can
+                // have extended the buffer has run: in-order data, a fresh
+                // tail on a retransmission, and the out-of-order queue being
+                // flushed into it.  Waking at each site would wake for a
+                // segment that filled nothing.
+                state.wake_reader();
 
                 state.ts_val = state.ts_val.wrapping_add(1);
                 let ack_flags = TCP_FLAG_ACK | state.ecn.ack_flags();
