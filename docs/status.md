@@ -385,8 +385,9 @@ balancing and runtime stack protection.
 - **A placement watchdog**: the scheduler periodically asks the process table
   whether every live process has at least one thread the scheduler can still
   find, and counts the ones it cannot. The counts are readable through `/proc`
-  as `wake-refused`, `enqueue-refused`, `waiter-lost`, and `unplaced-process`,
-  which is what turns a silent wedge into an attributable one.
+  as `wake-refused`, `waiter-lost`, `unplaced-process` and
+  `dropped-current`, which is what turns a silent wedge into an attributable
+  one.
 - **CPU frequency scaling**: on x86_64 via IA32_PERF_CTL/PERF_STATUS MSRs (CPUID
   leaf 0x16 + PLATFORM_INFO detection, read-only fallback on AMD), governor
   policy (performance/powersave/ondemand/schedutil/userspace) driven from the
