@@ -424,6 +424,20 @@ balancing and runtime stack protection.
   affinity CPU while the watchdog looks from whichever CPU took its tick.  What
   is *not* in doubt is that the work is done, so this is a diagnostic that
   tells a lie rather than a machine that has wedged.
+- **`check-riscv64-smp-runtime` fails on a user-mode instruction page fault,
+  at about one boot in forty**: the trap is `scause=0x0c` (instruction page
+  fault) with `sepc == stval == 0x85201bc4` and `sstatus` SPP clear, so a
+  user payload fetched from an address in demo slot 1 that has no mapping.
+  Measured by alternating the tree against `45718d4` one boot at a time — two
+  four-CPU QEMUs at once is a confound, and comparing under it first produced
+  a difference that did not survive — the failure appears on both sides at the
+  same rate: 2 of 40 on the tree and 1 of 40 at `45718d4`, and the three
+  failing logs are byte-for-byte the same trap.  A *different* trap was seen
+  once on the tree alone (`scause=1`, an instruction access fault with the
+  target inside a kernel stack, beside the stack window's own reuse line) and
+  is not explained by this row.  No gate is being widened: the check is right
+  to fail, and what is recorded here is that the cause predates the check's
+  latest green run and is not yet known.
 
 ---
 
