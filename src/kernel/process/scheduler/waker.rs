@@ -181,13 +181,18 @@ impl Scheduler {
                 )
             };
 
-            if enqueued == EnqueueOutcome::NotReady {
-                // The thread was already woken by something else, or it is
-                // stopped: either way it is not ours to place.  Counted
-                // because a *runnable* thread refused here would be one in no
-                // queue at all.
-                self.record_enqueue_refused();
-            }
+            // `NotReady` here is not a fault and must not be counted as one.
+            //
+            // It means the thread was not `Ready` when this pass tried to
+            // place it, which `process_elapsed_timed_waiter` documents as
+            // "somebody else woke it first, so it is already where it
+            // belongs" — the normal outcome of an expiry and a delivery
+            // racing on two CPUs.  Counting it printed "a runnable thread was
+            // refused by the ready queue" on boots that had lost nothing, and
+            // `check-aarch64-smp.sh` reads any `[sched ]` line as a failure,
+            // so an SMP boot failed at random.  A thread that really is lost
+            // is found by the placement watchdog, which is what that check's
+            // other assertions are about.
 
             if enqueued.enqueued() {
                 woke_count += 1;

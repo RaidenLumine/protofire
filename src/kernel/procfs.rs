@@ -306,7 +306,7 @@ fn sched_data() -> Vec<u8> {
     format!(
         "dispatch: {}\nblock: {}\ntimed-wait-registrations: {}\nsignal-wakes: {}\n\
          timeout-wakes: {}\npreempts: {}\n\n\
-         wake-refused: {}\nenqueue-refused: {}\nwaiter-lost: {}\nunplaced-process: {}\n\
+         wake-refused: {}\nwaiter-lost: {}\nunplaced-process: {}\n\
          dropped-current: {}\ndropped-ready: {}\ntermination-without-thread: {}\n",
         stats.dispatch_count,
         stats.block_count,
@@ -315,7 +315,6 @@ fn sched_data() -> Vec<u8> {
         stats.timeout_wake_count,
         stats.preempt_count,
         stats.wake_refused_count,
-        stats.enqueue_refused_count,
         stats.waiter_lost_count,
         stats.unplaced_process_count,
         stats.dropped_current_count,

@@ -139,13 +139,18 @@ impl Scheduler {
     }
 
     pub(crate) fn enqueue_ready_thread_local(&self, thread: Arc<Thread>) -> EnqueueOutcome {
-        let outcome = enqueue_ready_thread(&mut self.ready_queues.lock(), thread);
-        // The single place a local enqueue can fail, so the single place to
-        // count it: a runnable thread refused here is in no queue at all.
-        if outcome == EnqueueOutcome::NotReady {
-            self.record_enqueue_refused();
-        }
-        outcome
+        // `NotReady` is not a fault here either.
+        //
+        // It means the thread was not `Ready` when the queue was asked to take
+        // it.  That is the normal outcome of two CPUs racing to place one
+        // thread — the loser finds it `Running` on the other — and of a wake
+        // for a thread that has since been stopped or terminated.  Counting it
+        // printed "a runnable thread was refused" on boots that had lost
+        // nothing, and `check-aarch64-smp.sh` fails on any `[sched ]` line, so
+        // an SMP boot failed at random.  A thread that really is lost never
+        // reaches here: it is found by the placement watchdog, which looks for
+        // processes with no thread the scheduler can find.
+        enqueue_ready_thread(&mut self.ready_queues.lock(), thread)
     }
 
     pub(crate) fn remove_timed_waiter_for(&self, identity: WaiterIdentity) {

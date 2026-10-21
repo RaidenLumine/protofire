@@ -184,29 +184,6 @@ impl Scheduler {
         self.hotspot_stats.lock().observe_wake_refused();
     }
 
-    /// Count an enqueue refused because the thread was not runnable.
-    ///
-    /// This is the one that matters: the caller has already made the thread
-    /// `Ready`, so a thread that is not enqueued here is in no queue at all.
-    ///
-    /// Said once as well as counted, because it is the *cause* the placement
-    /// watchdog cannot name: by the time the watchdog looks, all it can see is
-    /// a thread in no queue, and this is the line that says whether the enqueue
-    /// that should have placed it was refused.  Same reasoning as the other
-    /// tripwires: a number nobody reads is not an explanation.
-    pub(crate) fn record_enqueue_refused(&self) {
-        let mut stats = self.hotspot_stats.lock();
-        stats.observe_enqueue_refused();
-        let first = stats.enqueue_refused_count == 1;
-        drop(stats);
-        if first {
-            crate::println!(
-                "[sched ] a runnable thread was refused by the ready queue: \
-                 it is in no queue at all"
-            );
-        }
-    }
-
     /// Count a thread that left the CPU and went nowhere.
     ///
     /// The scheduler took it out of the current slot expecting to requeue it,

@@ -30,11 +30,6 @@ pub struct SchedulerHotspotStats {
     /// harmless when it happens after the thread's timeout registration was
     /// taken away — which is why it is counted.
     pub wake_refused_count: u64,
-    /// An enqueue was refused because the thread was not `Ready`.
-    ///
-    /// The creator of a `Ready` thread that is in no queue: a thread the
-    /// scheduler will never look at again.
-    pub enqueue_refused_count: u64,
     /// A timed waiter was taken out of the timer queue while it was still
     /// `Waiting` with a deadline.
     ///
@@ -105,10 +100,6 @@ impl SchedulerHotspotStats {
 
     pub(crate) fn observe_wake_refused(&mut self) {
         self.wake_refused_count = self.wake_refused_count.saturating_add(1);
-    }
-
-    pub(crate) fn observe_enqueue_refused(&mut self) {
-        self.enqueue_refused_count = self.enqueue_refused_count.saturating_add(1);
     }
 
     pub(crate) fn observe_waiter_lost(&mut self) {
