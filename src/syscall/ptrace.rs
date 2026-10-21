@@ -20,6 +20,7 @@ use crate::abi::ptrace::PTRACE_SINGLESTEP;
 use crate::abi::ptrace::PTRACE_SYSCALL;
 use crate::abi::ptrace::PTRACE_TRACEME;
 use crate::kernel::process::ptrace as ptrace_core;
+use crate::kernel::security::mac;
 use crate::Error;
 use crate::Result;
 
@@ -60,6 +61,26 @@ pub(super) fn ptrace(context: &mut SyscallContext) -> Result<SyscallDispatch> {
             let target_pid = pid as u32;
             if target_pid == 0 || data != 0 || data_len != 0 {
                 return Err(Error::InvalidArgument);
+            }
+            // `ATTACH` is the request that opens a tracing session; every
+            // other request is sealed by `verify_tracer`, which admits nobody
+            // but the process `ATTACH` named.  So this is where the policy
+            // question belongs — asking it again per request would be a
+            // second authority model beside that one.  Tracing oneself
+            // crosses no boundary and is not a policy question.
+            if target_pid != process.pid() {
+                let scheduler = runtime::global_scheduler()?;
+                let target = scheduler
+                    .process_by_pid(target_pid)
+                    .ok_or(Error::NotFound)?;
+                let caller = process.security_token();
+                let tracee = target.security_token();
+                super::security::check_process_access(
+                    caller.mac_type,
+                    tracee.mac_type,
+                    mac::MAC_PERM_TRACE,
+                    caller.user_id,
+                )?;
             }
             ptrace_core::ptrace_attach(&process, target_pid)?;
         }

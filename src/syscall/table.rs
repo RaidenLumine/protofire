@@ -46,6 +46,9 @@ mod process_restart_syscall;
 #[path = "network/local.rs"]
 mod network_local;
 
+#[path = "security.rs"]
+mod security;
+
 #[path = "process/signal_mask.rs"]
 mod process_signal_mask;
 

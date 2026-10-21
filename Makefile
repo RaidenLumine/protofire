@@ -305,7 +305,7 @@ test-lib:
 	$(CARGO) test $(CARGO_FLAGS) --lib --features demo-disk
 
 test-fast:
-	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test io --test path --test fs_entries --test install --test syscall_abi_golden --test syscall_fuzz
+	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test io --test path --test fs_entries --test install --test mac_enforcement --test syscall_abi_golden --test syscall_fuzz
 
 test-concurrency:
 	$(CARGO) test $(CARGO_FLAGS) --features demo-disk --test scheduler --test condvar --test console --test keyboard --test process_stress --test udp_wait

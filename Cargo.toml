@@ -159,6 +159,10 @@ name = "fs_entries"
 path = "tests/syscall/fs_entries.rs"
 
 [[test]]
+name = "mac_enforcement"
+path = "tests/syscall/mac_enforcement.rs"
+
+[[test]]
 name = "usb_msd"
 path = "tests/drivers/usb_msd.rs"
 

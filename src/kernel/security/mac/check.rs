@@ -21,6 +21,7 @@ use super::types::MAC_CLASS_NETWORK;
 use super::types::MAC_CLASS_PROCESS;
 use super::types::MAC_TYPE_APPS;
 use super::types::MAC_TYPE_DEVICE;
+use super::types::MAC_TYPE_NETWORK;
 use super::types::MAC_TYPE_SYSTEM;
 use super::types::MAC_TYPE_TMP;
 use super::types::MAC_TYPE_UNLABELED;
@@ -141,8 +142,19 @@ pub fn check_process(
 }
 
 /// Check network capability access for `subject`.
+///
+/// The object is the network itself, not the subject.  A socket operation has
+/// an object, and naming it is what lets a rule read as an authority rather
+/// than as a self-reference; the subject-as-object pairing this replaces was a
+/// placeholder from when the entry point had no caller.
 pub fn check_network(subject: MacType, perms: MacPermission, audit_uid: u32) -> Result<()> {
-    decide(subject, subject, MAC_CLASS_NETWORK, perms, audit_uid)
+    decide(
+        subject,
+        MAC_TYPE_NETWORK,
+        MAC_CLASS_NETWORK,
+        perms,
+        audit_uid,
+    )
 }
 
 /// Build a human-readable type name (for diagnostics and tests).

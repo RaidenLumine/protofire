@@ -10,6 +10,7 @@ use alloc::vec::Vec;
 use crate::abi::net as net_abi;
 use crate::kernel::process::HANDLE_RIGHT_READ;
 use crate::kernel::process::HANDLE_RIGHT_WRITE;
+use crate::kernel::security::mac;
 use crate::network;
 use crate::network::internet::ip::IpAddress;
 use crate::Error;
@@ -24,6 +25,7 @@ pub(super) fn status(context: &mut super::SyscallContext) -> Result<super::Sysca
 
 pub(super) fn connect_tcp(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let (host, port) = connect_tcp_request(context)?;
+    super::security::check_network_use(mac::MAC_PERM_CONNECT)?;
     let connection = network::connect_tcp(&host, port)?;
     let endpoint = connection.endpoint().to_string();
     super::runtime::with_current_process(|process| {
@@ -38,6 +40,7 @@ pub(super) fn connect_tcp(context: &mut super::SyscallContext) -> Result<super::
 
 pub(super) fn listen_tcp(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let (port, backlog) = listen_tcp_request(context)?;
+    super::security::check_network_use(mac::MAC_PERM_BIND)?;
     let listener = network::listen_tcp(port, backlog)?;
     super::runtime::with_current_process(|process| {
         let fd = process.open_listener_descriptor(port, listener, HANDLE_RIGHT_READ)?;
@@ -47,6 +50,7 @@ pub(super) fn listen_tcp(context: &mut super::SyscallContext) -> Result<super::S
 
 pub(super) fn accept_tcp(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let listener_fd = accept_tcp_request(context)?;
+    super::security::check_network_use(mac::MAC_PERM_RECV)?;
     super::runtime::with_current_process(|process| {
         let listener = process.get_listener(listener_fd)?;
         let connection = network::accept_tcp(&listener)?;
@@ -111,6 +115,7 @@ fn accept_tcp_request(context: &super::SyscallContext) -> Result<usize> {
 
 pub(super) fn bind_udp(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let (port,) = bind_udp_request(context)?;
+    super::security::check_network_use(mac::MAC_PERM_BIND)?;
     let socket = network::bind_udp(port)?;
     super::runtime::with_current_process(|process| {
         let fd =
@@ -121,6 +126,7 @@ pub(super) fn bind_udp(context: &mut super::SyscallContext) -> Result<super::Sys
 
 pub(super) fn send_to_udp(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let (fd, dest_ip, dest_port, payload_ptr, payload_len, is_v6) = send_to_udp_request(context)?;
+    super::security::check_network_use(mac::MAC_PERM_SEND)?;
     super::runtime::with_current_process(|process| {
         let socket = process.get_udp_socket(fd)?;
         // The payload is staged before it is sent: `send_to_udp` builds the
@@ -149,6 +155,7 @@ pub(super) fn send_to_udp(context: &mut super::SyscallContext) -> Result<super::
 
 pub(super) fn recv_from_udp(context: &mut super::SyscallContext) -> Result<super::SyscallDispatch> {
     let (fd, buffer_ptr, buffer_len, src_addr_out_ptr, is_v6) = recv_from_udp_request(context)?;
+    super::security::check_network_use(mac::MAC_PERM_RECV)?;
     super::runtime::with_current_process(|process| {
         let socket = process.get_udp_socket(fd)?;
         // The window is the copy's, and the copy is the whole of what the
@@ -393,6 +400,7 @@ pub(super) fn create_raw_socket(
     super::validate_known_flags(flags, 0)?;
     super::validate_zeroed_args(context, 2)?;
 
+    super::security::check_network_use(mac::MAC_PERM_BIND)?;
     let handle = network::create_raw_socket(protocol)?;
     super::runtime::with_current_process(|process| {
         let fd =
@@ -427,6 +435,7 @@ pub(super) fn send_raw_packet(
     }
     super::validate_known_flags(flags, 0)?;
     super::validate_zeroed_args(context, 6)?;
+    super::security::check_network_use(mac::MAC_PERM_SEND)?;
 
     // The destination address is read into kernel memory first: it is four or
     // sixteen bytes, and reading it is all that needs the window.
@@ -469,6 +478,7 @@ pub(super) fn recv_raw_packet(
     }
     super::validate_known_flags(flags, 0)?;
     super::validate_zeroed_args(context, 5)?;
+    super::security::check_network_use(mac::MAC_PERM_RECV)?;
 
     super::runtime::with_current_process(|process| {
         let handle = process.get_raw_socket(fd)?;
@@ -516,6 +526,10 @@ pub(super) fn resolve_hostname(
         return Err(Error::InvalidArgument);
     }
     super::validate_zeroed_args(context, 2)?;
+    // A lookup puts a query on the wire, so it is a send.  The resolver's own
+    // background lookups never pass through here and stay ungated: they are
+    // kernel work, the same line the kernel's own signals sit on.
+    super::security::check_network_use(mac::MAC_PERM_SEND)?;
 
     let hostname =
         super::user_memory::user_bounded_str(host_ptr, host_len, MAX_RESOLVE_HOST_BYTES)?;
@@ -651,6 +665,7 @@ pub(super) fn dccp_bind(context: &mut super::SyscallContext) -> Result<super::Sy
     super::validate_known_flags(flags, net_abi::NETWORK_DCCP_KNOWN_FLAGS)?;
     super::validate_zeroed_args(context, 3)?;
 
+    super::security::check_network_use(mac::MAC_PERM_BIND)?;
     let socket = network::bind_dccp(port as u16, service_code)?;
     super::runtime::with_current_process(|process| {
         let fd = process.open_dccp_descriptor(
@@ -678,6 +693,7 @@ pub(super) fn dccp_listen(context: &mut super::SyscallContext) -> Result<super::
     super::validate_known_flags(flags, net_abi::NETWORK_DCCP_LISTEN_KNOWN_FLAGS)?;
     super::validate_zeroed_args(context, 4)?;
 
+    super::security::check_network_use(mac::MAC_PERM_BIND)?;
     let socket = network::listen_dccp(port as u16, backlog as u16, service_code)?;
     super::runtime::with_current_process(|process| {
         let fd = process.open_dccp_descriptor(socket.local_port, socket, HANDLE_RIGHT_READ)?;
@@ -701,6 +717,7 @@ pub(super) fn dccp_connect(context: &mut super::SyscallContext) -> Result<super:
     }
     super::validate_known_flags(flags, net_abi::NETWORK_DCCP_KNOWN_FLAGS)?;
     super::validate_zeroed_args(context, 4)?;
+    super::security::check_network_use(mac::MAC_PERM_CONNECT)?;
 
     let dst = if flags & net_abi::NETWORK_DCCP_FLAG_IPV6 != 0 {
         let addr_bytes = super::user_memory::optional_user_input_slice(ip_arg as *const u8, 16)?
@@ -731,6 +748,7 @@ pub(super) fn dccp_accept(context: &mut super::SyscallContext) -> Result<super::
 
     super::validate_known_flags(flags, net_abi::NETWORK_DCCP_ACCEPT_KNOWN_FLAGS)?;
     super::validate_zeroed_args(context, 2)?;
+    super::security::check_network_use(mac::MAC_PERM_RECV)?;
 
     super::runtime::with_current_process(|process| {
         let entry = process.fd_entry(fd)?;
@@ -756,6 +774,7 @@ pub(super) fn dccp_send(context: &mut super::SyscallContext) -> Result<super::Sy
 
     super::validate_known_flags(flags, net_abi::NETWORK_DCCP_SEND_KNOWN_FLAGS)?;
     super::validate_zeroed_args(context, 4)?;
+    super::security::check_network_use(mac::MAC_PERM_SEND)?;
 
     super::runtime::with_current_process(|process| {
         let entry = process.fd_entry(fd)?;
@@ -779,6 +798,7 @@ pub(super) fn dccp_recv(context: &mut super::SyscallContext) -> Result<super::Sy
 
     super::validate_known_flags(flags, net_abi::NETWORK_DCCP_RECV_KNOWN_FLAGS)?;
     super::validate_zeroed_args(context, 5)?;
+    super::security::check_network_use(mac::MAC_PERM_RECV)?;
 
     super::runtime::with_current_process(|process| {
         let entry = process.fd_entry(fd)?;

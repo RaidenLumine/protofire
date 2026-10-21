@@ -145,19 +145,32 @@ Object labels come from the path's zone (`object_type_for_path` in
 anything else unlabeled — with a runtime override map
 (`set_path_type`) consulted first.  Classes and permissions mirror the
 operation: file and directory read/write/exec/search, process signal/trace,
-network bind/connect/send/receive.
+network bind/connect/send/receive.  A process object is the target's own
+label; a network object is `MAC_TYPE_NETWORK`, because the network is what a
+socket operation acts on and a rule should name it rather than repeat the
+subject.
 
 `MacPolicy` holds the rules, a `default_deny` flag and an `enabled` flag.
 When enforcement is off — the default — every check is permissive, so a
 machine that loads no policy behaves exactly as it did before the engine
 existed.  When it is on, a request that matches no rule is denied.
 
-Enforcement is wired at **one** checkpoint: the shared file-access hook
-(`src/fs/filesystem/security.rs`), which runs the MAC decision after the
-descriptor and integrity checks and revokes the access if the policy says
-no.  A denial emits a `MacDenial` audit record.  The process and network
-entry points (`check_process`, `check_network`) exist in the module and have
-no call site, so a policy cannot yet reach a signal, a trace or a connection.
+Enforcement is wired where the operation is: the shared file-access hook
+(`src/fs/filesystem/security.rs`) runs the MAC decision after the descriptor
+and integrity checks and revokes the access if the policy says no, and the
+syscall handlers for signals, `ptrace`, and the network call
+`src/syscall/security.rs` before handing the request on.  A denial emits a
+`MacDenial` audit record.
+
+That split is the rule rather than an accident.  A file operation converges
+on one VFS hook that already has the token as a parameter; a signal, a trace
+and a socket do not converge anywhere below the syscall, so the handler —
+where the caller's token and the operation are both in hand — is their
+checkpoint.  The kernel's own use of the same primitives stays below the
+line: SIGCHLD when a child exits, the OOM killer's SIGKILL and a POSIX
+timer's expiry are the kernel acting, and they never reach a syscall.
+[RFC 0033](../rfcs/0033-refuse-a-signal-a-trace-and-a-socket.md) decides the
+placement, the self-signal exemption and what is left out.
 
 The policy is managed through `MacSetMode`, `MacAddRule`, `MacSetPathType`
 and `MacGetStatus`.  The three that write require `is_admin_mode` — the same

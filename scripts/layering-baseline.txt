@@ -25,7 +25,17 @@
 #   * `drivers` naming `fs` — a driver hands a found device over through
 #     `kernel::block::publish_device`; it does not know who consumes it.
 #
-# `process` <-> `sync` and `process` <-> `smp` are gone: `sync` is now a leaf
+# `syscall` names `security` for four occurrences, and the direction is the
+# one that is already right: a syscall handler is where a caller's token and
+# the operation it is asking for are both in hand, so the authority check for a
+# signal, a trace and a socket belongs there — the same place `fs` asks the
+# security layer on every file operation, and the one the kernel's own
+# `send_signal` callers (SIGCHLD, the OOM killer, a POSIX timer) are
+# deliberately below.  RFC 0033 makes the placement the decision; the four
+# occurrences are the check on a signal, the one on a trace, and the two
+# helpers in `src/syscall/security.rs` that spell the labels out.
+#
+# `process` -> `sync` and `process` -> `smp` are gone: `sync` is now a leaf
 # that names no thread, and the per-CPU scheduler table lives in the scheduler.
 # Since `sync` holds only a spinlock and the mutex wrapper over it, naming it
 # is naming the bottom layer.
@@ -465,6 +475,7 @@ syscall                      percpu                       1
 syscall                      power                        1
 syscall                      process                      167
 syscall                      random                       1
+syscall                      security                     4
 syscall                      service                      1
 syscall                      sync                         6
 syscall                      user                         2

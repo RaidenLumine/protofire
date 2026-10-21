@@ -140,6 +140,7 @@ and its status says which of the two happened.
 | [0030](0030-give-each-dns-lookup-its-own-source-port.md) | Implemented | Give each DNS lookup its own source port |
 | [0031](0031-let-a-tcp-reader-wait-instead-of-spin.md) | Implemented | Let a TCP reader wait instead of spin |
 | [0032](0032-decide-what-a-full-send-buffer-does.md) | Accepted | Decide what a full send buffer does |
+| [0033](0033-refuse-a-signal-a-trace-and-a-socket.md) | Accepted | Refuse a signal, a trace and a socket |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above —

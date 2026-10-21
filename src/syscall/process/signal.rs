@@ -3,6 +3,7 @@
 //! Process-signal send/wait syscalls built on the bounded process signal queue.
 
 use crate::abi::process as process_abi;
+use crate::kernel::security::mac;
 use crate::Error;
 use crate::Result;
 
@@ -10,6 +11,27 @@ pub(super) fn send(context: &mut super::SyscallContext) -> Result<super::Syscall
     let (pid, signal, payload) = send_signal_request(context)?;
     let scheduler = super::runtime::global_scheduler()?;
     let sender_pid = super::runtime::current_process_pid()?;
+
+    // The target must exist before a policy can be asked about it: `send_signal`
+    // answers `NotFound` for an unknown pid, and that has to stay ahead of the
+    // denial so a refusal is not a way to probe the process table.  The
+    // decision itself is the caller's authority over the target's label; a
+    // process signalling itself crosses no boundary and is not a policy
+    // question (the shell's `sigasync` builtin does exactly that).
+    if pid != sender_pid {
+        let target = scheduler.process_by_pid(pid).ok_or(Error::NotFound)?;
+        super::runtime::with_current_process(|process| {
+            let caller = process.security_token();
+            let receiver = target.security_token();
+            super::security::check_process_access(
+                caller.mac_type,
+                receiver.mac_type,
+                mac::MAC_PERM_SIGNAL,
+                caller.user_id,
+            )
+        })?;
+    }
+
     scheduler.send_signal(sender_pid, pid, signal, payload)?;
 
     // Kernel-level handling for job-control signals.
