@@ -275,20 +275,45 @@ impl NativeTcpConnection {
         Ok(accepted)
     }
 
-    /// Write the entire `buffer`, looping over partial writes until every
-    /// byte has been accepted (bare-metal only).
+    /// Write the entire `buffer`, retrying the part the send buffer had no
+    /// room for (bare-metal only).
+    ///
+    /// Since RFC 0032 `write` stops at `MAX_SEND_BUFFER`, so a large write now
+    /// comes back short.  This loop is what turns that into the old promise,
+    /// and it needs the same care the read loop did: a full buffer only
+    /// empties when the peer acknowledges, so spinning on a zero return would
+    /// burn a core exactly as the old read did.  It yields between attempts
+    /// and gives up when the clock says the peer has stopped acknowledging.
     pub fn write_all(&self, stack: &NetworkStack, buffer: &[u8]) -> Result<()> {
+        /// How long to keep retrying a full send buffer before giving up.
+        ///
+        /// Ten seconds at 100 Hz.  Long enough for a peer on a slow link to
+        /// acknowledge a window's worth; short enough that a peer which has
+        /// stopped reading is reported rather than waited on forever.
+        const WRITE_ALL_TIMEOUT_TICKS: u64 = 1_000;
+
+        let start = stack.current_tick();
         let mut written = 0;
-        while written < buffer.len() {
-            let table = stack.tcp_table().lock();
-            let n = self.write(&table, &buffer[written..])?;
-            drop(table);
-            if n == 0 {
-                return Err(Error::InternalError);
+        loop {
+            while written < buffer.len() {
+                let table = stack.tcp_table().lock();
+                let n = self.write(&table, &buffer[written..])?;
+                drop(table);
+                if n == 0 {
+                    break;
+                }
+                written += n;
             }
-            written += n;
+            if written == buffer.len() {
+                return Ok(());
+            }
+            if stack.current_tick().wrapping_sub(start) >= WRITE_ALL_TIMEOUT_TICKS {
+                return Err(Error::TimedOut);
+            }
+            // Yield rather than spin: the space appears when a segment is
+            // acknowledged, and that happens on the receive thread.
+            crate::kernel::process::scheduler::yield_current();
         }
-        Ok(())
     }
 
     /// Initiate an orderly close (FIN handshake) of this connection

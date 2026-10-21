@@ -188,6 +188,15 @@
 # `ReaderNotifier`, which holds the connection through the same `Mutex` the
 # table stores it in — a read of a type the module already names.
 #
+# RFC 0032 added the ninth: `write_all` yields between retries when the send
+# buffer is full.  That is `scheduler::yield_current` — the call the DNS
+# resolver used to make — and it is here for a narrower reason.  The space
+# appears when the peer acknowledges, which happens on the receive thread, so
+# a retry loop that does not yield starves the one thing that could make
+# progress.  It is a bounded loop (ten seconds) rather than a parked writer:
+# RFC 0032 chose the bound over the wait queue, and its unresolved questions
+# record that a `poll` with writability is what would retire this call.
+#
 # `network` -> `random` gained one edge for RFC 0030: the DNS resolver draws
 # its transaction id from the CSPRNG.  The other five are TLS's key shares and
 # DCCP's initial sequence number, so this is the same dependency for the same
@@ -394,7 +403,7 @@ mod                          workload                     3
 network                      crypto                       30
 network                      fs                           7
 network                      ipc                          1
-network                      process                      8
+network                      process                      9
 network                      random                       6
 network                      sync                         18
 nmi                          sync                         1

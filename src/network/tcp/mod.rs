@@ -180,30 +180,32 @@ mod tests {
         }
     }
 
-    /// Writing to a peer that never reads grows the send buffer without bound.
+    /// A peer that never reads cannot make the send buffer grow past its bound.
     ///
-    /// This is not a defect this change introduced or fixed: it is the shape
-    /// the writer has, pinned so the decision about it is made against a
-    /// measured fact rather than a suspicion.  RFC 0031's draft called this "a
-    /// blocked write spinning", which was wrong — nothing blocks, and the
-    /// real risk is the opposite.
+    /// This used to assert the opposite.  RFC 0032 chose the bound, so the
+    /// test now pins the property that matters: memory held for one
+    /// connection is capped however long the writer keeps writing.
     #[test]
-    fn writing_to_a_peer_that_never_reads_grows_the_send_buffer() {
+    fn a_peer_that_never_reads_cannot_grow_the_send_buffer() {
         let mut state = TcpConnectionState::new(40013, [10, 0, 2, 2], 80, 1, 0);
         state.state = TcpState::Established;
         // A window of zero: the peer has told us not to send anything.
         state.send_window = 0;
 
         let chunk = [0u8; 4096];
+        let mut total = 0;
         for _ in 0..64 {
-            let accepted = state.write(&chunk);
-            assert_eq!(accepted, chunk.len(), "every byte is accepted");
+            total += state.write(&chunk);
         }
         assert_eq!(
-            state.unacknowledged_bytes(),
-            64 * chunk.len(),
-            "nothing was refused and nothing was sent"
+            total, MAX_SEND_BUFFER,
+            "the writer is stopped at the bound, not at the heap"
         );
+        assert_eq!(state.unacknowledged_bytes(), MAX_SEND_BUFFER);
+
+        // And a write against a full buffer accepts nothing, which is the
+        // short count a caller retries on.
+        assert_eq!(state.write(b"more"), 0);
     }
 
     /// A zero-timeout read is a probe and must not park.

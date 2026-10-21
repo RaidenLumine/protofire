@@ -77,6 +77,16 @@ pub(super) const MIN_PEER_MSS: usize = 536;
 /// stop sending data.
 pub(super) const MAX_RECV_BUFFER: usize = 65536;
 
+/// The most bytes one connection may hold waiting for the peer to accept them.
+///
+/// The receive side has had a bound since it was written; the send side had
+/// none, so a peer that stopped reading grew the kernel's memory for as long
+/// as the writer kept writing (RFC 0032).  The number matches the receive
+/// side's: there is no measurement that says a connection wants more, and
+/// symmetry is the honest default when the choice is between two numbers
+/// nothing distinguishes.
+pub const MAX_SEND_BUFFER: usize = 65536;
+
 /// Initial retransmission timeout in ticks (300 ms at 100 Hz).
 pub(super) const RTO_BASE_TICKS: u64 = 30;
 
@@ -492,10 +502,17 @@ impl TcpConnectionState {
         }
     }
 
-    /// Buffer `data` for transmission. Returns bytes accepted.
+    /// Buffer `data` for transmission.  Returns bytes accepted.
+    ///
+    /// Stops at [`MAX_SEND_BUFFER`]: whatever does not fit is left for the
+    /// caller to retry once the peer acknowledges some of the backlog.  The
+    /// short count is the only signal the ABI has, and it is enough — a caller
+    /// that ignores it is asking the kernel to remember data forever.
     pub fn write(&mut self, data: &[u8]) -> usize {
-        self.send_buffer.extend(data.iter());
-        data.len()
+        let room = MAX_SEND_BUFFER.saturating_sub(self.send_buffer.len());
+        let accepted = data.len().min(room);
+        self.send_buffer.extend(data[..accepted].iter());
+        accepted
     }
 
     /// Compute the current receive window to advertise.

@@ -601,12 +601,13 @@ networking, with more protocols in the tree than the receive path dispatches.
 **Weaknesses:**
 
 - **Not every network syscall is wrapped** in the shared user library.
-- **A write is never refused**: a TCP read parks on the connection and
-  `kernel-net-rx` polls for it ([RFC 0031](rfcs/0031-let-a-tcp-reader-wait-instead-of-spin.md)),
+- **A short write has nowhere to wait**: a TCP read parks on the connection
+  and `kernel-net-rx` polls for it ([RFC 0031](rfcs/0031-let-a-tcp-reader-wait-instead-of-spin.md)),
   and name resolution parks on its socket ([RFC 0029](rfcs/0029-wait-for-a-dns-answer-instead-of-polling.md)),
-  but `TcpConnectionState::write` appends to `send_buffer` without a bound and
-  accepts every byte, so a peer that stops reading grows it for as long as the
-  program writes.  What a full send buffer should do is undecided.
+  but a write that finds `MAX_SEND_BUFFER` full returns a short count and the
+  ABI has no way to ask when room appears ([RFC 0032](rfcs/0032-decide-what-a-full-send-buffer-does.md)).
+  A caller that must send more retries by spinning; `poll` with writability is
+  the missing piece.
 - **In-kernel TLS has a fixed trust set**: the anchors are compiled in, with no
   way to add or replace one at runtime.
 - **Educational protocols are feature-gated**: CSMA/CD, STP, Mobile IP, RSVP,
