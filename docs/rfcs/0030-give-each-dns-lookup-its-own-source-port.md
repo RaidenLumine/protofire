@@ -231,6 +231,19 @@ enough for an answer that was already in flight when its lookup gave up, and
 short enough that exhausting 4 536 ports would take 4 536 lookups ending
 inside one second.
 
-**NAT's range still overlaps TCP's.**  This RFC narrows UDP to stay out of
-NAT's way, and TCP remains inside it.  Whether NAT should move, or TCP
-should narrow too, is a decision about NAT that this one does not take.
+**NAT's range still overlaps TCP's.**  *Investigated; nothing to change
+while NAT is off.*  This RFC narrows UDP to stay out of NAT's way, and TCP
+remains inside `32768..=60999`.  Reading the tree to decide whether TCP
+should narrow too turned up the fact that makes it moot: `NatTable::enable`
+has no caller anywhere outside its own tests, and `docs/status.md` has always
+said NAT is "consulted but never enabled outside tests".  The two allocators
+therefore never run at the same time, so the overlap cannot bite today.
+
+What it needs is not a change but a precondition on the change that turns NAT
+on.  The translation table keys ports alone (`allocated_ports: BTreeMap<u16,
+()>`) and `dnat_ipv4` looks an inbound port up without checking the protocol,
+so a TCP socket bound inside the NAT range and a translation for the same port
+would shadow each other.  Whoever enables NAT should either move
+`NAT_PORT_START..NAT_PORT_END` above the TCP dynamic range, as UDP already
+sits, or key the table by protocol.  Narrowing TCP instead would take a
+thousand ports from every connection for a feature that is off.
