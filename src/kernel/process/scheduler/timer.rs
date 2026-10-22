@@ -50,13 +50,15 @@ impl Scheduler {
     ///
     /// Not under the process lock while looking: the lookups take the queue
     /// locks, and the two are not taken in one fixed order anywhere else.
+    ///
+    /// **Every** thread of the process is looked for, not the first one.
     pub(crate) fn watch_process_placement(&self) {
         use super::terminate::UnplacedDetail;
         use crate::kernel::process::ProcessState;
         const CAPACITY: usize = Scheduler::PLACEMENT_WATCHDOG_CAPACITY;
 
-        // (pid, state, first tid, how many threads the process has)
-        let mut watched = [(0u32, ProcessState::New, 0u32, 0usize); CAPACITY];
+        // (pid, state, how many threads the process has)
+        let mut watched = [(0u32, ProcessState::New, 0usize); CAPACITY];
         let mut threadless = [(0u32, ProcessState::New, UnplacedDetail::NoThreads); CAPACITY];
         let mut count = 0usize;
         let mut threadless_count = 0usize;
@@ -70,32 +72,44 @@ impl Scheduler {
             ) {
                 continue;
             }
-            let Some(first_tid) = process.thread_ids().first().copied() else {
-                // A live process with no threads at all: also unplaced, and not
-                // a matter of timing — nothing is on its way to being placed.
+            let tids = process.thread_ids();
+            if tids.is_empty() {
+                // A live process with no threads at all: also unplaced, and
+                // not a matter of timing — nothing is on its way to being
+                // placed.
                 if threadless_count < CAPACITY {
                     threadless[threadless_count] =
                         (process.pid(), process.state(), UnplacedDetail::NoThreads);
                     threadless_count += 1;
                 }
                 continue;
-            };
+            }
             if count < CAPACITY {
-                watched[count] = (
-                    process.pid(),
-                    process.state(),
-                    first_tid,
-                    process.thread_ids().len(),
-                );
+                watched[count] = (process.pid(), process.state(), tids.len());
                 count += 1;
             }
         }
 
+        // A process seen with nothing placed, twice in a row, is the finding.
+        // The second field is the tid this pass could not place and is always
+        // zero now — the question moved from "is this thread placed" to "is
+        // any thread of this process placed" — so the pair identifies a
+        // *process* across the two passes rather than a particular thread.
         let mut missing = [(0u32, 0u32); CAPACITY];
         let mut missing_count = 0usize;
-        for &(pid, _state, tid, _threads) in watched.iter().take(count) {
-            if self.find_thread_anywhere_by_pid_and_tid(pid, tid).is_none() {
-                missing[missing_count] = (pid, tid);
+        for &(pid, _state, _threads) in watched.iter().take(count) {
+            // Any surviving thread counts as placed.  The question is
+            // whether the scheduler can still run *this process*, so one
+            // thread it can find answers it, whichever position in the list
+            // it happens to occupy now.
+            let placed = self.process_by_pid(pid).is_some_and(|process| {
+                process.thread_ids().iter().any(|tid| {
+                    self.find_thread_anywhere_by_pid_and_tid(pid, *tid)
+                        .is_some()
+                })
+            });
+            if !placed {
+                missing[missing_count] = (pid, 0);
                 missing_count += 1;
             }
         }
@@ -143,17 +157,31 @@ impl Scheduler {
     }
 
     /// Name a process the watchdog has found unplaced, and count it.
+    ///
+    /// The thread's own state is read here rather than passed in: the caller
+    /// decided the process was unplaced from a snapshot, and by the time this
+    /// prints the thread may have moved — but what it says about itself now is
+    /// what tells `Ready`-and-unqueued (lost) from `Terminated`-and-unreaped
+    /// (bookkeeping) apart, which is the question the line has to answer.
     fn report_unplaced(
         &self,
         pid: crate::kernel::process::ProcessId,
         state: crate::kernel::process::ProcessState,
         detail: &super::terminate::UnplacedDetail,
     ) {
-        let name = self
+        let (name, thread_state) = self
             .process_by_pid(pid)
-            .map(|process| process.name())
-            .unwrap_or_else(|| alloc::string::String::from("?"));
-        self.record_unplaced_process(pid, &name, state, detail);
+            .map(|process| {
+                let name = process.name();
+                let thread_state = process
+                    .thread_ids()
+                    .first()
+                    .and_then(|tid| self.find_thread_anywhere_by_pid_and_tid(pid, *tid))
+                    .map(|thread| thread.state());
+                (name, thread_state)
+            })
+            .unwrap_or_else(|| (alloc::string::String::from("?"), None));
+        self.record_unplaced_process(pid, &name, state, detail, thread_state);
     }
 
     /// Handle a timer tick, including preemption by default.

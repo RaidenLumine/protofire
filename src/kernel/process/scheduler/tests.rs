@@ -648,6 +648,44 @@ mod tests {
     }
 
     #[test]
+    fn a_process_with_one_placed_thread_of_two_is_not_reported() {
+        // A process may hold several threads, and the list's first entry is not
+        // stable: `finish_thread_termination` removes an id with `swap_remove`,
+        // so the thread that used to be last takes the removed one's place.
+        // Asking only about `thread_ids()[0]` therefore answered "unplaced" for
+        // a process whose *other* thread was running — a false report that the
+        // aarch64 SMP gate reads as a failure.
+        let scheduler = Scheduler::new();
+        let process = Process::new(64, "two-threads");
+        process.set_state(super::super::super::ProcessState::Ready);
+        {
+            let mut processes = scheduler.processes.lock();
+            processes.push(process.clone());
+        }
+
+        // The first-listed thread is nowhere; the second is parked, which is
+        // where the scheduler can find it.
+        let lost_tid = process.allocate_tid();
+        process.add_thread(lost_tid).expect("first tid");
+        let parked_tid = process.allocate_tid();
+        process.add_thread(parked_tid).expect("second tid");
+        let parked = Thread::new_kernel(process.clone(), idle_entry);
+        parked.block_until(500);
+        scheduler.register_timed_waiter(parked.clone(), None);
+        // The parked thread's own id must be the one the process lists second,
+        // or this test would pass for the wrong reason.
+        assert_eq!(process.thread_ids().first().copied(), Some(lost_tid));
+
+        scheduler.watch_process_placement();
+        scheduler.watch_process_placement();
+        assert_eq!(
+            scheduler.hotspot_stats().unplaced_process_count,
+            0,
+            "a process with a parked thread is placed, whichever tid is listed first"
+        );
+    }
+
+    #[test]
     fn dispatch_and_requeue_predicates() {
         assert!(should_dispatch_ready_thread(ThreadState::Ready));
         assert!(!should_dispatch_ready_thread(ThreadState::Waiting));

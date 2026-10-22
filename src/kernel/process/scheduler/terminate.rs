@@ -241,25 +241,40 @@ impl Scheduler {
     /// Prints once, because the second and later processes have the same
     /// cause and the first line already stopped the machine from looking
     /// healthy.
+    ///
+    /// The line names the thread it looked for and what state that thread
+    /// says it is in.  Without those two, "no thread in any queue" cannot be
+    /// told apart from the two ways this report can be wrong: a process whose
+    /// only thread has already terminated (a process outliving its threads is
+    /// bookkeeping that has not finished, and nothing is lost), and a thread
+    /// that says `Ready` while no queue holds it (which is the real finding).
+    /// The difference is one `state()` read here rather than another
+    /// measurement next time.
     pub(crate) fn record_unplaced_process(
         &self,
         pid: crate::kernel::process::ProcessId,
         name: &str,
         state: crate::kernel::process::ProcessState,
         detail: &UnplacedDetail,
+        thread_state: Option<crate::kernel::process::ThreadState>,
     ) {
         let mut stats = self.hotspot_stats.lock();
         stats.observe_unplaced_process();
         let first = stats.unplaced_process_count == 1;
         drop(stats);
         if first {
+            let thread = match thread_state {
+                Some(thread_state) => alloc::format!("thread {thread_state:?}"),
+                None => alloc::string::String::from("no thread to ask"),
+            };
             crate::println!(
-                "[sched ] process pid={} name={} state={:?} {} has no thread in any queue: \
-                 nothing will run it again",
+                "[sched ] process pid={} name={} state={:?} {} has no thread in any queue \
+                 ({}): nothing will run it again",
                 pid,
                 name,
                 state,
                 detail,
+                thread,
             );
         }
     }
