@@ -410,20 +410,25 @@ balancing and runtime stack protection.
   topology — the SRAT/SLIT walk, the node-aware allocators and the placement
   had only ever run in unit tests — and it found the discovery costs about
   seventy allocations and changes nothing else in the boot's work.
-- **The placement watchdog has a false positive, at about one boot in
-  twenty-five**: `check-aarch64-smp-runtime` fails when the watchdog reports a
-  process as unplaced, and the report is sometimes wrong.  Measured at
-  `45718d4` with no change applied, the line
+- **The placement watchdog reported a false positive, and the report's own
+  question was the bug**: `check-aarch64-smp-runtime` fails on any `[sched ]`
+  line, so a wrong report failed a boot that had done all its work.  Measured
+  at `45718d4` with no change applied, the line
   `process pid=7 name=kernel-maintenance state=Waiting (1 thread(s), none
   placed, suspended-slot empty)` appeared in 1 of 25 four-CPU boots, and the
   boot it appeared in had finished — every service stopped and the demo worker
-  done — so the machine had not stopped with work left.  The report needs the
-  same thread missing on two passes a second apart, which rules out the
-  between-two-queues window the watchdog was built to tolerate, so the cause is
-  something else and is not yet known: the wake path enqueues on the thread's
-  affinity CPU while the watchdog looks from whichever CPU took its tick.  What
-  is *not* in doubt is that the work is done, so this is a diagnostic that
-  tells a lie rather than a machine that has wedged.
+  done.
+
+  The cause was the question, not the timing: the watchdog asked whether the
+  scheduler could find `thread_ids()[0]`, and `finish_thread_termination`
+  removes an id with `swap_remove`, so the list's first entry changes as
+  threads end.  A process whose listed-first thread had finished was reported
+  unplaced while another of its threads was running.  `6f30a01` asks about
+  every thread instead — "can the scheduler still run this process" — and
+  names the thread and its state in the line, so a process outliving its last
+  thread reads differently from a `Ready` thread no queue holds.  A regression
+  test fails against the old first-tid lookup, and 25 of 25 four-CPU boots
+  passed after the change.
 - **`check-riscv64-smp-runtime` fails on a user-mode instruction page fault,
   at about one boot in forty**: the trap is `scause=0x0c` (instruction page
   fault) with `sepc == stval == 0x85201bc4` and `sstatus` SPP clear.  Measured
@@ -745,10 +750,14 @@ control that are unusual in a hobby kernel.
 - **Biba integrity model**: a formal information-flow policy (System > High >
   Medium > Low).
 - **MAC type-enforcement engine**: security types on subjects and objects, an
-  allow-rule policy enforced at the VFS file-access checkpoint, management
-  syscalls (#175-178), and MacDenial audit records on refusal.  The
-  Process-class (ptrace/signal) and Network-class entry points are written but
-  not called, so enforcement does not reach them yet.
+  allow-rule policy enforced at the VFS file-access checkpoint and, at the
+  syscall boundary, over signals, `ptrace` and every socket operation
+  (`src/syscall/security.rs`), management syscalls (#175-178), and MacDenial
+  audit records on refusal.  What stays below the line is deliberate: the
+  kernel's own signals (SIGCHLD, the OOM killer, a POSIX timer) and its
+  background name lookups never pass through a syscall, and a process
+  signalling itself crosses no boundary.  Local sockets are ungated because
+  their names are not in a labelled namespace yet.
 - **Zone-aware DAC**: segments the filesystem into regions with different trust
   levels (`/system` read-only, `/apps` executable and writable by the token
   its descriptor allows — installing is writing it — and `/data` writable for
@@ -962,8 +971,11 @@ user-memory validation.
 
 **Weaknesses:**
 
-- **The experimental range is still Experimental** (121-189): it is not frozen,
-  so there is no cross-major stability guarantee above the boundary.
+- **The experimental range is still Experimental** (121-193): it is not frozen,
+  so there is no cross-major stability guarantee above the boundary.  The range
+  is derived, not written down anywhere else: `PUBLIC_SYSCALL_COUNT` is
+  `Fallocate`'s number plus one, so a new slot moves the upper end and this
+  sentence has to move with it.
 - **No external toolchain or conformance suite**: the ABI is self-consistent
   within the kernel crate but has no independent toolchain or POSIX conformance
   tests.
