@@ -1220,6 +1220,13 @@ const STACK_WINDOW_L1_INDEX: usize = STACK_WINDOW_BASE >> 30;
 const _: () = assert!(STACK_WINDOW_BASE & ((1 << 30) - 1) == 0);
 const _: () = assert!(STACK_WINDOW_END - STACK_WINDOW_BASE <= 1 << 30);
 
+/// The first-level entry the kernel's RAM window lives under.
+///
+/// Named rather than written as `1` at each site: the address space this
+/// module builds and the one `fork_clone` rewires have to agree on it, and a
+/// second literal is a second thing to get wrong.
+const KERNEL_WINDOW_L1_INDEX: usize = 1;
+
 /// Walk to the L3 table for `virtual_address`, building what is missing.
 ///
 /// The stack window's own tables: the RAM window is described by L1[1] and the
@@ -2224,6 +2231,23 @@ impl PreparedProcessAddressSpace {
         *child_l1 = *self.l1;
         *child_l2 = *self.l2;
         *child_l3 = *self.user_l3;
+
+        // Point the child's tables at the child's *own* copies.  Copying the
+        // descriptors above copies the parent's pointers with them, so without
+        // these two writes the child's root names the parent's L2, and the
+        // parent's L2 names the parent's L3: the "child" address space is the
+        // parent's, and every edit copy-on-write makes lands in one set of
+        // hardware tables.  Worse, once the parent is gone its boxes are freed
+        // while the child's `TTBR0` still names a root whose entries point into
+        // them.  `prepare_runtime_process_address_space` above wires a fresh
+        // space the same way, and x86_64's `fork_clone` states the rule
+        // outright: "the wiring loops below re-point each child pdpt/pd/pt to
+        // its own copied table address".
+        child_l1.0[KERNEL_WINDOW_L1_INDEX] =
+            table_entry(child_l2.as_ref() as *const TranslationTable as usize);
+        let active_block_index = user_block_index(self.slot.region_start())?;
+        child_l2.0[active_block_index] =
+            table_entry(child_l3.as_ref() as *const TranslationTable as usize);
 
         // User-writable pages become copy-on-write in the parent; the child
         // keeps write access.  Shared read-only (code) pages map into both.

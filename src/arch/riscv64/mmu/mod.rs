@@ -1798,6 +1798,24 @@ impl PreparedProcessAddressSpace {
         *child_pmd = *self.pmd;
         *child_pte = *self.user_pte;
 
+        // Point the child's tables at the child's *own* copies.  Copying the
+        // descriptors above copies the parent's pointers with them, so without
+        // these two writes the child's root names the parent's PMD, and the
+        // parent's PMD names the parent's leaf table: the "child" address space
+        // is the parent's, and every edit copy-on-write makes lands in one set
+        // of hardware tables.  Worse, once the parent is gone its three boxes
+        // are freed while the child's `satp` still names a root whose entries
+        // point into them — the first fetch from that space then faults on an
+        // address that looks like a missing mapping rather than a dangling one.
+        // `prepare_runtime_process_address_space` above wires a fresh space the
+        // same way, and x86_64's `fork_clone` states the rule outright: "the
+        // wiring loops below re-point each child pdpt/pd/pt to its own copied
+        // table address".
+        child_pgd.0[pgd_index(KERNEL_RAM_BASE)] =
+            table_entry(child_pmd.as_ref() as *const PageTable as usize);
+        child_pmd.0[pmd_index(self.slot.region_start())] =
+            table_entry(child_pte.as_ref() as *const PageTable as usize);
+
         // User-writable pages become copy-on-write in the parent; the child
         // keeps write access.  Shared read-only (code) pages map into both.
         let mut shared_pages = Vec::new();
@@ -1818,12 +1836,18 @@ impl PreparedProcessAddressSpace {
                     PagePermissions::READ
                 };
                 self.user_pte.0[page_index] = user_page_entry(pa, read_only);
-                // The parent's live page table is active while fork runs;
-                // flush the stale (previously writable) TLB entry so the
-                // read-only CoW mapping takes effect immediately — otherwise
-                // the parent keeps writing the shared frame through a stale
-                // RW TLB entry.
+                // The parent's live page table is active while fork runs, and
+                // the entry that was writable is now read-only.  `sfence.vma`
+                // is hart-local, so dropping it here covers the CPU doing the
+                // fork and leaves every other CPU holding a writable
+                // translation — a parent thread scheduled elsewhere would keep
+                // writing the shared frame through it, which is exactly the
+                // copy-on-write break this function exists to prevent.  The
+                // edit therefore goes through the posted log as well, which is
+                // what `arch::tlb` requires of every riscv64 edit and what
+                // `vm_churn` and the stack window already do.
                 flush_tlb_page(va);
+                crate::kernel::smp::post_range_invalidation(va, TRANSLATION_GRANULE_SIZE);
                 shared_pages.push((va, pa, read_only));
                 all_child_pages.push((va, pa, permissions));
             } else {
