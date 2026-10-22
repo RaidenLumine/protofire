@@ -343,6 +343,46 @@ fn page_base_address(entry: u64) -> usize {
     (((entry >> 10) & PPN_MASK) << 12) as usize
 }
 
+/// Read, without changing anything, the descriptor this address resolves to.
+///
+/// Walks the tables `satp` currently names — the caller's own, not a prepared
+/// one — and answers with the leaf descriptor or `None` when the walk stops at
+/// something that is not a mapping.  A 2 MiB block descriptor is a leaf and is
+/// answered as itself, which is what makes a slot region's own block entry
+/// visible: a user fetch from a region the kernel mapped as a supervisor block
+/// gets the block's bits, and the `U` bit's absence is the whole story.
+///
+/// Exists for the fatal-trap report.  Nothing edits memory on that path — it
+/// has already stopped the machine — so this only reads, and it takes no lock.
+pub(crate) fn leaf_entry_for(virtual_address: usize) -> Option<u64> {
+    let root = current_root_table_address();
+    if root == 0 {
+        return None;
+    }
+    // SAFETY: `root` is the table `satp` names, which this hart is running on,
+    // so every table below it is live.  Each index is masked to nine bits and
+    // each read is of one descriptor in a table the walk itself selected.
+    unsafe {
+        let pgd = root as *const u64;
+        let pgd_entry = ptr::read_volatile(pgd.add(pgd_index(virtual_address)));
+        if pgd_entry & PTE_VALID == 0 {
+            return None;
+        }
+        let pmd = page_base_address(pgd_entry) as *const u64;
+        let pmd_entry = ptr::read_volatile(pmd.add(pmd_index(virtual_address)));
+        if pmd_entry & PTE_VALID == 0 {
+            return None;
+        }
+        // A descriptor with any of RWX set is a leaf at this level: Sv39's
+        // 2 MiB block.
+        if pmd_entry & (PTE_READ | PTE_WRITE | PTE_EXECUTE) != 0 {
+            return Some(pmd_entry);
+        }
+        let pte = page_base_address(pmd_entry) as *const u64;
+        Some(ptr::read_volatile(pte.add(pte_index(virtual_address))))
+    }
+}
+
 /// Build a next-level-table descriptor for `address`.
 fn table_entry(address: usize) -> u64 {
     (((address as u64) >> 12) << 10) | PTE_VALID

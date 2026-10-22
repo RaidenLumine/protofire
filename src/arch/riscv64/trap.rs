@@ -274,6 +274,14 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
 
     super::interrupts::disable();
 
+    // A page fault on an address the running address space is supposed to map
+    // is not answered by the trap frame alone: the same fault has been seen at
+    // the same `sepc` on boots that differ by hundreds of instructions, and
+    // what distinguishes "the table does not map it" from "the table maps it
+    // and this hart's TLB disagrees" is the entry the table holds.  Printing
+    // both turns the next occurrence into an answer instead of another
+    // measurement, which is the only thing a `[FATAL]` line that stops the
+    // machine can usefully be for.
     println!(
         "[FATAL] riscv64 trap scause={:#018x} sepc={:#018x} stval={:#018x} sstatus={:#018x} sp={:#018x}",
         frame.scause,
@@ -282,6 +290,44 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
         frame.sstatus,
         frame.stack_pointer
     );
+    let fault_address = frame.stval as usize;
+    let satp: u64;
+    // SAFETY: `satp` is a supervisor CSR; reading it has no memory side
+    // effects, and this path stops the machine immediately afterwards.
+    unsafe {
+        asm!("csrr {satp}, satp", satp = out(reg) satp, options(nomem, nostack, preserves_flags));
+    }
+    println!(
+        "[FATAL] riscv64 fault va={:#x} satp={:#018x} asid={} entry={:#x}",
+        fault_address,
+        satp,
+        (satp >> 44) & 0xffff,
+        crate::arch::mmu::leaf_entry_for(fault_address).unwrap_or(0)
+    );
+
+    // Who was running, and did its process have a root of its own?  The pair
+    // is what separates the two ways this fault can happen: a process root
+    // that was installed and is wrong (the entry above is the answer), and a
+    // user thread that reached U-mode with no process root at all — which is
+    // `ASID 0` above and `root=none` here.
+    if let Some(scheduler) = crate::kernel::process::Scheduler::global() {
+        if let Some(thread) = scheduler.current_thread() {
+            let process = thread.process();
+            let root = process
+                .user_address_space_summary()
+                .map(|summary| summary.root_table_address)
+                .unwrap_or(0);
+            println!(
+                "[FATAL] riscv64 thread pid={} name={} user_start={} process_root={:#x}",
+                process.pid(),
+                process.name(),
+                thread.user_start().is_some(),
+                root,
+            );
+        } else {
+            println!("[FATAL] riscv64 no current thread");
+        }
+    }
 
     loop {
         crate::arch::instructions::hlt();
