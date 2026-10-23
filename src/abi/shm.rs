@@ -2,7 +2,7 @@
 //!
 //! ABI types for SystV shared memory (shm) operations.
 //!
-//! These types are shared between the kernel (`adastra`) and user-space
+//! These types are shared between the kernel (`protofire`) and user-space
 //! (`ring3-common`) via the `#[repr(C)]` ABI layout contract.
 
 /// Shared memory segment info returned by `shmctl(IPC_STAT)`.

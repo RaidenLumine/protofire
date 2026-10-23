@@ -1,13 +1,13 @@
 /* File: demo_program_x86_64_payload.asm */
-/* Purpose: Recovered byte-exact x86_64 adastra_demo_program_payload payload section. */
+/* Purpose: Recovered byte-exact x86_64 protofire_demo_program_payload payload section. */
 /* Recovered from iso/boot/protofire.elf original build. */
 
-.section adastra_demo_program_payload, "ax", @progbits
+.section protofire_demo_program_payload, "ax", @progbits
 
-.global adastra_demo_program_payload_start
-.global adastra_demo_program_payload_end
+.global protofire_demo_program_payload_start
+.global protofire_demo_program_payload_end
 
-adastra_demo_program_payload_start:
+protofire_demo_program_payload_start:
 
     .byte 0xe9, 0x56, 0x02, 0x00, 0x00
 write_c_string:  /* +0x5 */
@@ -871,7 +871,7 @@ demo_newline:  /* +0x1fe9 */
 trigger_fault_gp_arg_end:  /* +0x1fe9 */
 
     .byte 0x0a
-adastra_demo_program_payload_end:
+protofire_demo_program_payload_end:
 
 .section .note.GNU-stack, "", @progbits
 

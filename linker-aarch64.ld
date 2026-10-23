@@ -59,10 +59,6 @@ SECTIONS
     .text : {
         *(.text.boot)
         *(.text .text.*)
-        . = ALIGN(16);
-        __start_protofire_demo_program_aarch64_rust = .;
-        KEEP(*(protofire_demo_program_aarch64_rust))
-        __stop_protofire_demo_program_aarch64_rust = .;
     }
     __text_end = .;
 

@@ -37,19 +37,19 @@ macro_rules! init_address {
 
 // The section's own symbols, read by the accessors below.
 unsafe extern "C" {
-    #[link_name = "__start_adastra_init_payload_aarch64"]
-    static ADASTRA_INIT_PAYLOAD_AARCH64_SECTION_START: u8;
-    #[link_name = "__stop_adastra_init_payload_aarch64"]
-    static ADASTRA_INIT_PAYLOAD_AARCH64_SECTION_END: u8;
+    #[link_name = "__start_protofire_init_payload_aarch64"]
+    static PROTOFIRE_INIT_PAYLOAD_AARCH64_SECTION_START: u8;
+    #[link_name = "__stop_protofire_init_payload_aarch64"]
+    static PROTOFIRE_INIT_PAYLOAD_AARCH64_SECTION_END: u8;
 }
 
-crate::user::syscall::define_aarch64_payload_runtime!("adastra_init_payload_aarch64");
+crate::user::syscall::define_aarch64_payload_runtime!("protofire_init_payload_aarch64");
 
 // The init program's own two syscalls; see the x86_64 copy for why they are
 // emitted by the payload rather than by every runtime.
-crate::user::syscall::define_payload_service_stubs!("adastra_init_payload_aarch64");
+crate::user::syscall::define_payload_service_stubs!("protofire_init_payload_aarch64");
 
-crate::user::demo::init_payload::define_init_payload!("adastra_init_payload_aarch64");
+crate::user::demo::init_payload::define_init_payload!("protofire_init_payload_aarch64");
 
 /// The entry the loader jumps to.
 ///
@@ -58,8 +58,8 @@ crate::user::demo::init_payload::define_init_payload!("adastra_init_payload_aarc
 /// none of them: the directory it reads is fixed, and its buffers are the stack
 /// the loader left in `sp`.
 #[inline(never)]
-#[link_section = "adastra_init_payload_aarch64"]
-pub extern "C" fn adastra_init_payload_aarch64_entry(
+#[link_section = "protofire_init_payload_aarch64"]
+pub extern "C" fn protofire_init_payload_aarch64_entry(
     _argc: usize,
     _argv: usize,
     _envp: usize,
@@ -72,8 +72,8 @@ pub fn payload_bytes() -> &'static [u8] {
     // SAFETY: the linker's own markers around this payload's section bound the
     // slice, which is live for the life of the image.
     unsafe {
-        let start = core::ptr::addr_of!(ADASTRA_INIT_PAYLOAD_AARCH64_SECTION_START);
-        let end = core::ptr::addr_of!(ADASTRA_INIT_PAYLOAD_AARCH64_SECTION_END);
+        let start = core::ptr::addr_of!(PROTOFIRE_INIT_PAYLOAD_AARCH64_SECTION_START);
+        let end = core::ptr::addr_of!(PROTOFIRE_INIT_PAYLOAD_AARCH64_SECTION_END);
         let start_addr = start as usize;
         let end_addr = end as usize;
         let len = end_addr
@@ -89,8 +89,8 @@ pub fn payload_bytes() -> &'static [u8] {
 /// Not zero: the entry here is a function like any other in the section, so the
 /// offset is wherever the compiler put it.
 pub fn payload_entry_offset() -> usize {
-    let entry = adastra_init_payload_aarch64_entry as *const () as usize;
-    let start = core::ptr::addr_of!(ADASTRA_INIT_PAYLOAD_AARCH64_SECTION_START) as usize;
+    let entry = protofire_init_payload_aarch64_entry as *const () as usize;
+    let start = core::ptr::addr_of!(PROTOFIRE_INIT_PAYLOAD_AARCH64_SECTION_START) as usize;
     entry
         .checked_sub(start)
         .expect("aarch64 init payload entry must follow the section start")
@@ -114,6 +114,6 @@ mod tests {
 
     #[test]
     fn the_banner_is_the_line_the_boot_gate_asserts() {
-        assert!(INIT_BANNER.starts_with(b"adastra init (ring 3)"));
+        assert!(INIT_BANNER.starts_with(b"protofire init (ring 3)"));
     }
 }

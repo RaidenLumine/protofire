@@ -305,7 +305,7 @@ require_log_line_order "[mem   ] machine reports " "Memory manager initialized"
 
 # ── The shell is ring-3 code, and it answered what was typed at it ─────
 #
-# `adastra ring3 shell` is the shell payload's own banner; the in-kernel host
+# `protofire ring3 shell` is the shell payload's own banner; the in-kernel host
 # proxy it replaced printed `protofire shell (user)`, so asserting the new line
 # is what keeps a boot from passing on the proxy after this changed.  The prompt
 # carries the directory the kernel says the process is in — the manifest's
@@ -316,10 +316,10 @@ require_log_line_order "[mem   ] machine reports " "Memory manager initialized"
 # as long as nothing typed at it: banner, prompt, and then a fault on the first
 # line.  A boot that is never typed at cannot tell those two apart, so this
 # check types; `scripts/feed-shell-console.sh` is what does it.
-require_log_line "adastra ring3 shell"
-require_log_line "adastra:/apps/packages/shell\$ "
+require_log_line "protofire ring3 shell"
+require_log_line "protofire:/apps/packages/shell\$ "
 require_log_line "[abi   ] shell payload: $PAYLOAD_SOURCE "
-require_log_line "adastra shell (ring 3) builtins:"
+require_log_line "protofire shell (ring 3) builtins:"
 require_log_exact_line "ring3-shell-answered"
 # And the typed answers rode the UART's own interrupt, not the timer tick's
 # poll: this line is printed once, by the RX handler, so it is the evidence
@@ -352,12 +352,12 @@ require_log_line "system: slot b active (build 2)"
 # policy in `src/fs/write_locations.rs` is visible in a log rather than
 # only in the source.
 require_log_line "runtime writes: /tmp (volatile), /data (persistent)"
-require_log_line "adastra init (ring 3): reading /system/rc.d"
+require_log_line "protofire init (ring 3): reading /system/rc.d"
 # The distribution's first install: the disk stages a package in the download
 # cache and init installs it, so a boot shows the whole loop rather than only
 # the host tests showing it.
-require_log_line "adastra init: installed demo-installed@1.0.0"
-require_log_line "adastra init: declared "
+require_log_line "protofire init: installed demo-installed@1.0.0"
+require_log_line "protofire init: declared "
 require_log_line "service(s) registered; leaving the start to init"
 
 # ── The user program ran, and left ─────────────────────────────────────
@@ -464,7 +464,7 @@ require_log_line "[mem   ] machine reports 512 MiB "
 require_log_line "[mem   ] the machine has "
 require_log_line " frames stop at "
 require_log_line "Memory manager initialized: "
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 require_log_absent_line "[FATAL]"
 log_file="$main_log"
 rm -f "$small_ram_log"

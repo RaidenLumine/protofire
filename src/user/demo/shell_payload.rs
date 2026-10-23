@@ -80,11 +80,11 @@ const SHELL_TOKEN_SIZE: usize = size_of::<usize>() * 2;
 const SHELL_READ_TIMEOUT_TICKS: usize = 6000;
 
 #[link_section = $section]
-static SHELL_BANNER: [u8; b"adastra ring3 shell \xe2\x80\x94 type 'help' for commands\n".len()] =
-    *b"adastra ring3 shell \xe2\x80\x94 type 'help' for commands\n";
+static SHELL_BANNER: [u8; b"protofire ring3 shell \xe2\x80\x94 type 'help' for commands\n".len()] =
+    *b"protofire ring3 shell \xe2\x80\x94 type 'help' for commands\n";
 
 #[link_section = $section]
-static SHELL_PROMPT_PREFIX: [u8; b"adastra:".len()] = *b"adastra:";
+static SHELL_PROMPT_PREFIX: [u8; b"protofire:".len()] = *b"protofire:";
 
 #[link_section = $section]
 static SHELL_PROMPT_SUFFIX: [u8; b"$ ".len()] = *b"$ ";
@@ -102,8 +102,8 @@ static SHELL_DIRECTORY_MARK: [u8; b"/".len()] = *b"/";
 static SHELL_ROOT_PATH: [u8; b"/".len()] = *b"/";
 
 #[link_section = $section]
-static SHELL_HELP: [u8; b"adastra shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  write <path> <words>  create or replace a file with the words\n  exit           stop the shell\n"
-    .len()] = *b"adastra shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  write <path> <words>  create or replace a file with the words\n  exit           stop the shell\n";
+static SHELL_HELP: [u8; b"protofire shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  write <path> <words>  create or replace a file with the words\n  exit           stop the shell\n"
+    .len()] = *b"protofire shell (ring 3) builtins:\n  help           print this list\n  echo <words>   print the words\n  pwd            print the working directory\n  cd <path>      change the working directory\n  ls [path]      list a directory\n  cat <path>     print a file\n  write <path> <words>  create or replace a file with the words\n  exit           stop the shell\n";
 
 #[link_section = $section]
 static SHELL_UNKNOWN_PREFIX: [u8; b"shell: unknown command: ".len()] = *b"shell: unknown command: ";
@@ -277,8 +277,9 @@ unsafe fn shell_load_cwd(buffer: usize, capacity: usize) -> usize {
 ///
 /// The console is a cooked line discipline: it echoes what is typed and hands
 /// the reader a whole line, newline included, when the user presses return.
-/// This loop therefore normally reads once and returns; it repeats only while
-/// a line is longer than the buffer it is being read into.
+/// Read one byte at a time: a larger read can return more than one queued line,
+/// and returning at the first newline would discard the bytes already taken
+/// from the console for the lines that follow.
 #[inline(never)]
 #[link_section = $section]
 unsafe fn shell_read_line(buffer: usize, capacity: usize) -> usize {
@@ -287,7 +288,7 @@ unsafe fn shell_read_line(buffer: usize, capacity: usize) -> usize {
         let status = read_fd(
             0,
             buffer.wrapping_add(filled),
-            capacity.wrapping_sub(filled),
+            1,
             SHELL_READ_TIMEOUT_TICKS,
         );
         if payload_runtime_status_is_error(status) {
@@ -300,18 +301,13 @@ unsafe fn shell_read_line(buffer: usize, capacity: usize) -> usize {
             return filled;
         }
 
-        let end = filled.wrapping_add(status);
-        let mut index = filled;
-        while index < end {
-            // SAFETY: `index` is inside the `capacity` bytes the caller owns
-            // and the read has just filled up to `end`.
-            let byte = unsafe { core::ptr::read(buffer.wrapping_add(index) as *const u8) };
-            if byte == b'\n' {
-                return index.wrapping_add(1);
-            }
-            index = index.wrapping_add(1);
+        // SAFETY: the read was asked for one byte and `filled < capacity`, so
+        // the byte just written is inside the caller's buffer.
+        let byte = unsafe { core::ptr::read(buffer.wrapping_add(filled) as *const u8) };
+        filled = filled.wrapping_add(1);
+        if byte == b'\n' {
+            return filled;
         }
-        filled = end;
     }
     capacity
 }

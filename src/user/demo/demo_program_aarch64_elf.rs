@@ -168,8 +168,8 @@ mod tests {
     const RUST_CHILD_CATALOG_PATH: &[u8] = b"app:demo-launcher-fault@0.1.0";
     const RUST_CHILD_ARGV0: &[u8] = b"demo-launcher-fault-rust-child";
     const RUST_CHILD_ARGV1: &[u8] = b"--trigger-fault=stack-exec";
-    const RUST_CHILD_ENV0: &[u8] = b"ASTRA_APP_ID=demo-launcher-fault-rust-child";
-    const RUST_CHILD_ENV1: &[u8] = b"ASTRA_PARENT=demo-launcher-rust";
+    const RUST_CHILD_ENV0: &[u8] = b"PROTOFIRE_APP_ID=demo-launcher-fault-rust-child";
+    const RUST_CHILD_ENV1: &[u8] = b"PROTOFIRE_PARENT=demo-launcher-rust";
     const RUST_PERMISSION_LEVEL3: &[u8] = b"permission fault level 3";
     const RUST_READ_NAME: &[u8] = b"read";
     const RUST_WRITE_NAME: &[u8] = b"write";

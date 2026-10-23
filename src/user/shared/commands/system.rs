@@ -246,7 +246,7 @@ pub fn cmd_sysinfo() -> CmdResult {
 
     // ── System section ──
     out.push_str("─── System ───\n");
-    out.push_str("OS:      adAstra 2026.6.1\n");
+    out.push_str("OS:      Protofire 0.8.11\n");
     out.push_str("Arch:    ");
     out.push_str(crate::user::shared::abi::runtime::TARGET_ARCH);
     out.push('\n');
@@ -600,9 +600,9 @@ pub fn cmd_uname(argv: &[String]) -> CmdResult {
     let arch = crate::user::shared::abi::runtime::TARGET_ARCH;
 
     let output = if all {
-        format!("adAstra 2026.6.1 {arch} kernel\n")
+        format!("Protofire 2026.6.1 {arch} kernel\n")
     } else {
-        String::from("adAstra\n")
+        String::from("Protofire\n")
     };
     CmdResult::from_output(output)
 }

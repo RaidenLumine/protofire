@@ -19,7 +19,7 @@
 //! address, so an absolute address, or a call to a function outside the section,
 //! would name the kernel image's copy of whatever it pointed at.
 //! `scripts/check-payload-relocations.sh` reads the image's relocation table to
-//! hold that line, and `adastra_shell_payload` is one of the sections it names.
+//! hold that line, and `protofire_shell_payload` is one of the sections it names.
 //!
 //! This section used to hold a recovered assembly shell instead, with a symbol
 //! bridge in this file's place.  That blob printed a banner and a prompt and then
@@ -57,15 +57,15 @@ macro_rules! shell_address {
 // the image, it is simply not the copy that ships.
 #[cfg(not(feature = "abi_frozen_payload"))]
 unsafe extern "C" {
-    static adastra_shell_payload_entry: u8;
+    static protofire_shell_payload_entry: u8;
 
-    #[link_name = "__start_adastra_shell_payload"]
-    static ADASTRA_SHELL_PAYLOAD_SECTION_START: u8;
-    #[link_name = "__stop_adastra_shell_payload"]
-    static ADASTRA_SHELL_PAYLOAD_SECTION_END: u8;
+    #[link_name = "__start_protofire_shell_payload"]
+    static PROTOFIRE_SHELL_PAYLOAD_SECTION_START: u8;
+    #[link_name = "__stop_protofire_shell_payload"]
+    static PROTOFIRE_SHELL_PAYLOAD_SECTION_END: u8;
 }
 
-crate::user::syscall::define_x86_64_payload_runtime!("adastra_shell_payload");
+crate::user::syscall::define_x86_64_payload_runtime!("protofire_shell_payload");
 
 // The entry the loader jumps to.  The other payloads on this target take the
 // initial stack in `rdi` to read argv and the environment; the shell reads
@@ -73,18 +73,18 @@ crate::user::syscall::define_x86_64_payload_runtime!("adastra_shell_payload");
 // loader already left in `rsp`.
 core::arch::global_asm!(
     r#"
-.section adastra_shell_payload,"ax",@progbits
-.global adastra_shell_payload_entry
-.type adastra_shell_payload_entry,@function
-adastra_shell_payload_entry:
+.section protofire_shell_payload,"ax",@progbits
+.global protofire_shell_payload_entry
+.type protofire_shell_payload_entry,@function
+protofire_shell_payload_entry:
     jmp {main}
 "#,
     main = sym shell_main,
 );
 
-crate::user::demo::shell_payload::define_shell_payload!("adastra_shell_payload");
+crate::user::demo::shell_payload::define_shell_payload!("protofire_shell_payload");
 
-/// The payload's machine code and data, as it was on 2026-10-01.
+/// The payload's machine code and data, as it was on 2026-10-24.
 ///
 /// With the `abi_frozen_payload` feature the ELF builder ships these bytes
 /// instead of the section this build compiled, so the boot runs a shell that was
@@ -94,11 +94,11 @@ crate::user::demo::shell_payload::define_shell_payload!("adastra_shell_payload")
 /// exercise the console and directory syscalls against a frozen caller.
 ///
 /// The bytes come out of the x86_64 kernel image, between the
-/// `__start_`/`__stop_adastra_shell_payload` symbols:
+/// `__start_`/`__stop_protofire_shell_payload` symbols:
 ///
 /// ```text
 /// cargo build --target x86_64-unknown-none --features demo-disk
-/// objcopy -O binary --only-section=adastra_shell_payload \
+/// objcopy -O binary --only-section=protofire_shell_payload \
 ///     target/x86_64-unknown-none/debug/protofire \
 ///     src/user/demo/fixtures/shell_payload_x86_64.bin
 /// ```
@@ -117,8 +117,8 @@ pub fn payload_bytes() -> &'static [u8] {
     // SAFETY: the linker's own markers around this payload's section bound the
     // slice, which is live for the life of the image.
     unsafe {
-        let start = core::ptr::addr_of!(ADASTRA_SHELL_PAYLOAD_SECTION_START);
-        let end = core::ptr::addr_of!(ADASTRA_SHELL_PAYLOAD_SECTION_END);
+        let start = core::ptr::addr_of!(PROTOFIRE_SHELL_PAYLOAD_SECTION_START);
+        let end = core::ptr::addr_of!(PROTOFIRE_SHELL_PAYLOAD_SECTION_END);
         let start_addr = start as usize;
         let end_addr = end as usize;
         let len = end_addr
@@ -137,8 +137,8 @@ pub fn payload_bytes() -> &'static [u8] {
 /// Where the payload's entry point sits inside those bytes.
 #[cfg(not(feature = "abi_frozen_payload"))]
 pub fn payload_entry_offset() -> usize {
-    let entry = core::ptr::addr_of!(adastra_shell_payload_entry) as usize;
-    let start = core::ptr::addr_of!(ADASTRA_SHELL_PAYLOAD_SECTION_START) as usize;
+    let entry = core::ptr::addr_of!(protofire_shell_payload_entry) as usize;
+    let start = core::ptr::addr_of!(PROTOFIRE_SHELL_PAYLOAD_SECTION_START) as usize;
     entry
         .checked_sub(start)
         .expect("x86_64 shell payload entry must follow the section start")
@@ -184,8 +184,8 @@ mod tests {
         // `scripts/check-x8664-runtime.sh` requires these in the serial log.
         // A rename has to walk past this test instead of turning a boot gate
         // red in an unrelated change.
-        assert!(SHELL_BANNER.starts_with(b"adastra ring3 shell"));
-        assert_eq!(SHELL_PROMPT_PREFIX, *b"adastra:");
+        assert!(SHELL_BANNER.starts_with(b"protofire ring3 shell"));
+        assert_eq!(SHELL_PROMPT_PREFIX, *b"protofire:");
         assert_eq!(SHELL_PROMPT_SUFFIX, *b"$ ");
     }
 }

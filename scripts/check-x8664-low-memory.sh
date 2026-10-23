@@ -113,7 +113,7 @@ grep -a -E "machine reports [0-9]+ MiB in" "$log_file" >/dev/null 2>&1 ||
 grep -a -E "the machine has [0-9]+ MiB of the pool's span" "$log_file" >/dev/null 2>&1 ||
     fail "the pool was not clamped to the machine's RAM"
 
-if ! grep -a -F "adastra ring3 shell" "$log_file" >/dev/null 2>&1; then
+if ! grep -a -F "protofire ring3 shell" "$log_file" >/dev/null 2>&1; then
     cat "$log_file" >&2
     fail "the ${LOW_MIB} MiB machine did not reach the ring-3 shell"
 fi

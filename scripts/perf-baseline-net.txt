@@ -32,22 +32,28 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-ticks 512 12
+# Re-recorded for the `protofire` rename: the larger queue-safe shell payload
+# adds the same eight filesystem reads (280 bytes) and cache hits seen by the
+# other memory-backed boots, and the new layout settles at six faults.  The
+# loopback datagram still completes exactly once; ticks, heap, and IRQ rows are
+# moving counters from the recording boot, and no tolerance was widened.
+#
+ticks 518 12
 frames 23 0
 frame-frees 8 0
 frame-zero-bytes 610304 0
-heap-allocs 22387 256
-heap-bytes 26673568 262144
+heap-allocs 22468 256
+heap-bytes 26658912 262144
 pt-maps 1064 0
 pt-lookups 1067 0
-faults 8 0
+faults 6 0
 fs-lookups 455 0
-fs-reads 1447 0
-fs-read-bytes 199378 0
+fs-reads 1455 0
+fs-read-bytes 199658 0
 fs-writes 40 0
 fs-write-bytes 62763 0
 fs-transactions 20 0
-cache-hits 1524 0
+cache-hits 1532 0
 cache-misses 104 0
 cache-prefetches 201 0
 cache-sequential-hits 441 0
@@ -82,6 +88,6 @@ ip4-rx 1 0
 ip4-tx 6 0
 ip6-rx 0 0
 ip6-tx 0 0
-irqs 513 12
+irqs 520 12
 ipis 0 0
 spurious 0 0

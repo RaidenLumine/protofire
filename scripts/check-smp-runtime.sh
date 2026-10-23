@@ -244,7 +244,7 @@ fi
 # "booted and then died quietly".
 require_log_line "kernel running"
 # The ring-3 shell's own banner; see the note in `check-x8664-runtime.sh`.
-require_log_line "adastra ring3 shell"
+require_log_line "protofire ring3 shell"
 
 service_lines="$(count_log_line "[service]")"
 if [ "$service_lines" -eq 0 ]; then
@@ -315,7 +315,7 @@ done
 beats="$(count_log_line "[hb    ]")"
 if [ "$beats" -gt 0 ]; then
     last_beat="$(last_log_line "[hb    ]")"
-    shell_line="$(first_log_line "adastra ring3 shell")"
+    shell_line="$(first_log_line "protofire ring3 shell")"
     if [ "$last_beat" -le "$shell_line" ]; then
         fail_with_log "the last heartbeat (line $last_beat) precedes the shell banner (line $shell_line): the machine stopped making progress"
     fi
@@ -385,7 +385,7 @@ if [ "$SMP_CPUS" -ge 2 ]; then
     if [ "$placeholder_started" -lt "$((SMP_CPUS - 1))" ]; then
         placeholder_fail "expected at least $((SMP_CPUS - 1)) APs to start, saw $placeholder_started"
     fi
-    if ! grep -F "adastra ring3 shell" "$placeholder_log" >/dev/null 2>&1; then
+    if ! grep -F "protofire ring3 shell" "$placeholder_log" >/dev/null 2>&1; then
         placeholder_fail "the machine with placeholders never reached the shell"
     fi
     if grep -F "FATAL" "$placeholder_log" >/dev/null 2>&1; then
@@ -439,7 +439,7 @@ board_started="$(awk '/started successfully/ { n += 1 } END { print n + 0 }' "$b
 if grep -F "exceeds MAX_APS" "$board_log" >/dev/null 2>&1; then
     board_fail "the kernel refused a CPU that fits its own table"
 fi
-if ! grep -F "adastra ring3 shell" "$board_log" >/dev/null 2>&1; then
+if ! grep -F "protofire ring3 shell" "$board_log" >/dev/null 2>&1; then
     board_fail "the machine never reached the shell"
 fi
 if grep -F "FATAL" "$board_log" >/dev/null 2>&1; then

@@ -5,7 +5,7 @@
 #![cfg_attr(test, allow(dead_code))]
 
 #[cfg(test)]
-const PAYLOAD_SECTION_NAME: &str = "adastra_demo_program_payload";
+const PAYLOAD_SECTION_NAME: &str = "protofire_demo_program_payload";
 
 // The payload is hand-written ELF assembly, so it is assembled for the
 // bare-metal x86_64 target and for an ELF host (Linux) only.  A COFF or Mach-O
@@ -13,16 +13,16 @@ const PAYLOAD_SECTION_NAME: &str = "adastra_demo_program_payload";
 core::arch::global_asm!(include_str!("demo_program_x86_64_payload.asm"));
 
 unsafe extern "C" {
-    static adastra_demo_program_payload_start: u8;
-    static adastra_demo_program_payload_end: u8;
+    static protofire_demo_program_payload_start: u8;
+    static protofire_demo_program_payload_end: u8;
 }
 
 pub fn payload_bytes() -> &'static [u8] {
     // SAFETY: the linker's own markers around this payload's section bound the
     // slice, which is live for the life of the image.
     unsafe {
-        let start = core::ptr::addr_of!(adastra_demo_program_payload_start);
-        let end = core::ptr::addr_of!(adastra_demo_program_payload_end);
+        let start = core::ptr::addr_of!(protofire_demo_program_payload_start);
+        let end = core::ptr::addr_of!(protofire_demo_program_payload_end);
         let start_addr = start as usize;
         let end_addr = end as usize;
         let len = end_addr

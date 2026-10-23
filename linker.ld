@@ -60,22 +60,8 @@ SECTIONS
         *(.text .text.*)
         *(.ltext .ltext.*)
         KEEP(*(xiu_demo_program_payload))
-        KEEP(*(protofire_demo_program_payload))
-        KEEP(*(protofire_shell_payload))
-        . = ALIGN(16);
-        __start_protofire_demo_program_rust = .;
         KEEP(*(xiu_demo_program_rust))
-        KEEP(*(protofire_demo_program_rust))
-        __stop_protofire_demo_program_rust = .;
-        . = ALIGN(16);
-        __start_protofire_demo_program_aarch64_rust = .;
-        KEEP(*(protofire_demo_program_aarch64_rust))
-        __stop_protofire_demo_program_aarch64_rust = .;
-        . = ALIGN(16);
-        __start_protofire_demo_program_rust_io = .;
         KEEP(*(xiu_demo_program_rust_io))
-        KEEP(*(protofire_demo_program_rust_io))
-        __stop_protofire_demo_program_rust_io = .;
     }
     __text_end = .;
 

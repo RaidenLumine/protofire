@@ -38,22 +38,28 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-ticks 512 12
+# Re-recorded for the `protofire` rename: the larger queue-safe shell payload
+# adds the same eight filesystem reads (280 bytes) and cache hits seen by the
+# single-CPU boot, and the new layout settles at six faults.  The AP schedule
+# sent 44 IPIs in this recording versus 51 before; their four-count tolerance
+# is unchanged.  Ticks, heap traffic, and IPv4 traffic are moving counters.
+#
+ticks 520 12
 frames 27 0
 frame-frees 12 0
 frame-zero-bytes 741376 0
-heap-allocs 23287 256
-heap-bytes 26778064 262144
+heap-allocs 23385 256
+heap-bytes 26767920 262144
 pt-maps 1064 0
 pt-lookups 1067 0
-faults 8 0
+faults 6 0
 fs-lookups 455 0
-fs-reads 1447 0
-fs-read-bytes 199378 0
+fs-reads 1455 0
+fs-read-bytes 199658 0
 fs-writes 40 0
 fs-write-bytes 62763 0
 fs-transactions 20 0
-cache-hits 1524 0
+cache-hits 1532 0
 cache-misses 104 0
 cache-prefetches 201 0
 cache-sequential-hits 441 0
@@ -84,10 +90,10 @@ nw-datagrams-rx 0 0
 nw-bytes 0 0
 nw-polls 0 0
 nw-completed 0 0
-ip4-rx 3 4
-ip4-tx 11 4
+ip4-rx 1 4
+ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 541 12
-ipis 51 4
+irqs 539 12
+ipis 44 4
 spurious 0 0

@@ -63,11 +63,11 @@ macro_rules! define_init_payload {
             *b"/data/downloads/demo-installed@1.0.0";
         /// What the boot says when that install worked.
         #[link_section = $section]
-        static INIT_INSTALLED: [u8; b"adastra init: installed demo-installed@1.0.0\n".len()] =
-            *b"adastra init: installed demo-installed@1.0.0\n";
+        static INIT_INSTALLED: [u8; b"protofire init: installed demo-installed@1.0.0\n".len()] =
+            *b"protofire init: installed demo-installed@1.0.0\n";
         #[link_section = $section]
-        static INIT_INSTALL_FAILED: [u8; b"adastra init: cannot install ".len()] =
-            *b"adastra init: cannot install ";
+        static INIT_INSTALL_FAILED: [u8; b"protofire init: cannot install ".len()] =
+            *b"protofire init: cannot install ";
         /// Which files in that directory are declarations.
         #[link_section = $section]
         static INIT_DECLARATION_SUFFIX: [u8; b".toml".len()] = *b".toml";
@@ -78,20 +78,21 @@ macro_rules! define_init_payload {
 
         /// The line the boot gate asserts: it is how a boot says this program ran.
         #[link_section = $section]
-        static INIT_BANNER: [u8; b"adastra init (ring 3): reading /system/rc.d\n".len()] =
-            *b"adastra init (ring 3): reading /system/rc.d\n";
+        static INIT_BANNER: [u8; b"protofire init (ring 3): reading /system/rc.d\n".len()] =
+            *b"protofire init (ring 3): reading /system/rc.d\n";
         #[link_section = $section]
         static INIT_NO_DIRECTORY: [u8;
-            b"adastra init: no /system/rc.d; leaving the services to the kernel\n".len()] =
-            *b"adastra init: no /system/rc.d; leaving the services to the kernel\n";
+            b"protofire init: no /system/rc.d; leaving the services to the kernel\n".len()] =
+            *b"protofire init: no /system/rc.d; leaving the services to the kernel\n";
         #[link_section = $section]
-        static INIT_DECLARED: [u8; b"adastra init: declared ".len()] = *b"adastra init: declared ";
+        static INIT_DECLARED: [u8; b"protofire init: declared ".len()] =
+            *b"protofire init: declared ";
         #[link_section = $section]
         static INIT_FILES_SUFFIX: [u8; b" declaration file(s)\n".len()] =
             *b" declaration file(s)\n";
         #[cfg(not(feature = "init_no_start"))]
         #[link_section = $section]
-        static INIT_STARTED: [u8; b"adastra init: started ".len()] = *b"adastra init: started ";
+        static INIT_STARTED: [u8; b"protofire init: started ".len()] = *b"protofire init: started ";
         #[cfg(not(feature = "init_no_start"))]
         #[link_section = $section]
         static INIT_SERVICES_SUFFIX: [u8; b" service(s)\n".len()] = *b" service(s)\n";
@@ -101,11 +102,11 @@ macro_rules! define_init_payload {
         /// kernel.
         #[cfg(feature = "init_no_start")]
         #[link_section = $section]
-        static INIT_NO_START: [u8; b"adastra init: leaving the start to the kernel\n".len()] =
-            *b"adastra init: leaving the start to the kernel\n";
+        static INIT_NO_START: [u8; b"protofire init: leaving the start to the kernel\n".len()] =
+            *b"protofire init: leaving the start to the kernel\n";
         #[link_section = $section]
-        static INIT_DECLARE_FAILED: [u8; b"adastra init: cannot declare ".len()] =
-            *b"adastra init: cannot declare ";
+        static INIT_DECLARE_FAILED: [u8; b"protofire init: cannot declare ".len()] =
+            *b"protofire init: cannot declare ";
         #[link_section = $section]
         static INIT_NEWLINE: [u8; b"\n".len()] = *b"\n";
 

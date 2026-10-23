@@ -32,25 +32,31 @@
 # write amplification of one named workload.  Its duration is printed on
 # a line of its own and is deliberately not recorded here.
 #
-ticks 522 12
+# Re-recorded for the `protofire` rename: the larger queue-safe shell payload
+# changes the boot's file reads by three (160 bytes) and its cache hits by the
+# same count, while shifting one sequential hit into a direct lookup.  Ticks,
+# heap traffic, IRQs, and IPv4 traffic are moving counters from this recording;
+# the fault and block counters did not change and their tolerances stayed zero.
+#
+ticks 575 12
 frames 26 0
 frame-frees 6 0
 frame-zero-bytes 516096 0
-heap-allocs 10788 256
-heap-bytes 17082048 262144
+heap-allocs 10784 256
+heap-bytes 17072672 262144
 pt-maps 738 0
 pt-lookups 737 0
 faults 1 0
-fs-lookups 258 0
-fs-reads 841 0
-fs-read-bytes 121173 0
+fs-lookups 255 0
+fs-reads 844 0
+fs-read-bytes 121333 0
 fs-writes 27 0
 fs-write-bytes 49618 0
 fs-transactions 10 0
-cache-hits 889 0
+cache-hits 892 0
 cache-misses 83 0
 cache-prefetches 157 0
-cache-sequential-hits 277 0
+cache-sequential-hits 276 0
 cache-evictions 0 0
 blk-reads 165 0
 blk-read-bytes 256512 0
@@ -78,10 +84,10 @@ nw-datagrams-rx 0 0
 nw-bytes 0 0
 nw-polls 0 0
 nw-completed 0 0
-ip4-rx 2 4
-ip4-tx 10 4
+ip4-rx 1 4
+ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-irqs 550 12
+irqs 595 12
 ipis 0 0
 spurious 0 0

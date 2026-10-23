@@ -91,7 +91,7 @@ fn collect_entropy_seed() -> [u8; 32] {
 /// cost on the first random request.
 pub fn init_csprng() {
     let seed = collect_entropy_seed();
-    let nonce_seed = sha256(b"adastra-csprng-nonce-v1");
+    let nonce_seed = sha256(b"protofire-csprng-nonce-v1");
     let mut nonce = [0u8; 12];
     nonce.copy_from_slice(&nonce_seed[..12]);
 
@@ -118,7 +118,7 @@ pub fn fill_random(buf: &mut [u8]) {
     // Reseed if we've generated too many blocks.
     if state.needs_reseed() {
         let seed = collect_entropy_seed();
-        let nonce_seed = sha256(b"adastra-csprng-nonce-v1");
+        let nonce_seed = sha256(b"protofire-csprng-nonce-v1");
         state.key = seed;
         state.nonce[..12].copy_from_slice(&nonce_seed[..12]);
         state.block_counter = 0;

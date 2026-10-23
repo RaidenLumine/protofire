@@ -207,7 +207,7 @@ mod tests {
         b"demo-launcher-rust-unhandled-page-fault-child";
     const RUST_IO_WAIT_EXCEPTION_CHILD_ARGV1: &[u8] = b"--trigger-unhandled-page-fault";
     const RUST_IO_WAIT_EXCEPTION_CHILD_ENV0: &[u8] =
-        b"ASTRA_APP_ID=demo-launcher-rust-unhandled-page-fault-child";
+        b"PROTOFIRE_APP_ID=demo-launcher-rust-unhandled-page-fault-child";
     const RUST_IO_README_PATH: &[u8] = b"/system/runtime/README.txt";
     const RUST_IO_DATA_PATH: &[u8] = b"/data/users/guest/downloads/ring3-rust-io.txt";
     const RUST_IO_STATE_DIR: &[u8] = b"/data/users/guest/downloads/rust-io-state";

@@ -131,7 +131,7 @@ impl NetworkStack {
                 crate::network::dhcp::TICKS_PER_SECOND,
             )),
             last_ntp_poll: core::sync::atomic::AtomicU64::new(0),
-            mdns_responder: Mutex::new(MdnsResponder::new("adastra")),
+            mdns_responder: Mutex::new(MdnsResponder::new("protofire")),
             ppp_state: Mutex::new(PppState::new()),
             pppoe: Mutex::new(crate::network::pppoe::PppoeSession::new()),
             pppoe_enabled: core::sync::atomic::AtomicBool::new(false),

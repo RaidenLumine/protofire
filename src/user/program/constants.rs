@@ -114,9 +114,9 @@ pub(crate) const DEMO_RUST_IO_CHILD_ARGV0: &str = "demo-launcher-rust-child";
 #[cfg(any(feature = "demo-disk", test))]
 pub(crate) const DEMO_RUST_IO_CHILD_ARGV1: &str = "--spawned-by=rust-io";
 #[cfg(any(feature = "demo-disk", test))]
-pub(crate) const DEMO_RUST_IO_CHILD_ENV0: &str = "ASTRA_APP_ID=demo-launcher-rust-child";
+pub(crate) const DEMO_RUST_IO_CHILD_ENV0: &str = "PROTOFIRE_APP_ID=demo-launcher-rust-child";
 #[cfg(any(feature = "demo-disk", test))]
-pub(crate) const DEMO_RUST_IO_CHILD_ENV1: &str = "ASTRA_PARENT=demo-launcher-rust-io";
+pub(crate) const DEMO_RUST_IO_CHILD_ENV1: &str = "PROTOFIRE_PARENT=demo-launcher-rust-io";
 
 // ── installed-app roots ───────────────────────────────────────────────
 

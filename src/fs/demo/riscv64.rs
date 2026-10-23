@@ -9,9 +9,9 @@ use crate::user::demo::demo_program_riscv64_elf::build_demo_program_artifact;
 
 use crate::user::demo::demo_program_riscv64_elf::build_shell_program_artifact;
 
-const DEMO_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher\"\nversion = \"0.1.0\"\nformat = \"elf64-riscv64-user\"\nentry = \"/apps/packages/demo-launcher/bin/demo.elf\"\nworking_dir = \"/apps/packages/demo-launcher\"\nargv = [\"demo-launcher\", \"--profile=demo\", \"--transport=serial\", \"--arch=riscv64\"]\nenv = [\"ASTRA_APP_ID=demo-launcher\", \"ASTRA_RUNTIME=ring3-riscv64-prototype\", \"ASTRA_ZONE=/apps\"]\n";
+const DEMO_PROGRAM_MANIFEST: &[u8] = b"name = \"demo-launcher\"\nversion = \"0.1.0\"\nformat = \"elf64-riscv64-user\"\nentry = \"/apps/packages/demo-launcher/bin/demo.elf\"\nworking_dir = \"/apps/packages/demo-launcher\"\nargv = [\"demo-launcher\", \"--profile=demo\", \"--transport=serial\", \"--arch=riscv64\"]\nenv = [\"PROTOFIRE_APP_ID=demo-launcher\", \"PROTOFIRE_RUNTIME=ring3-riscv64-prototype\", \"PROTOFIRE_ZONE=/apps\"]\n";
 
-const SHELL_PROGRAM_MANIFEST: &[u8] = b"name = \"shell\"\nversion = \"0.1.0\"\nformat = \"elf64-riscv64-user\"\nentry = \"/apps/packages/shell/bin/shell.elf\"\nworking_dir = \"/apps/packages/shell\"\nargv = [\"shell\"]\nenv = [\"ASTRA_APP_ID=shell\", \"ASTRA_RUNTIME=ring3-prototype\"]\n";
+const SHELL_PROGRAM_MANIFEST: &[u8] = b"name = \"shell\"\nversion = \"0.1.0\"\nformat = \"elf64-riscv64-user\"\nentry = \"/apps/packages/shell/bin/shell.elf\"\nworking_dir = \"/apps/packages/shell\"\nargv = [\"shell\"]\nenv = [\"PROTOFIRE_APP_ID=shell\", \"PROTOFIRE_RUNTIME=ring3-prototype\"]\n";
 
 pub(crate) fn apps_zone_image(zone: StorageZone) -> Result<Vec<u8>> {
     let demo_program = build_demo_program_artifact();

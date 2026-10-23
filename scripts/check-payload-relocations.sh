@@ -11,7 +11,7 @@
 #
 # The existing payload tests read the *host* build's disassembly and reject
 # 64-bit absolute immediates.  That missed three absolute 32-bit addresses in
-# `adastra_demo_program_rust`: the exception-recovery handlers were defined
+# `protofire_demo_program_rust`: the exception-recovery handlers were defined
 # outside the section and installed with a function-pointer cast, so `mov
 # $imm32, %rsi` carried the kernel image's address of each handler into a
 # program that runs at another one.
@@ -30,7 +30,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 IMAGE="${1:-target/x86_64-unknown-none/debug/protofire}"
-SECTIONS="adastra_demo_program_rust adastra_demo_program_rust_io adastra_demo_program_payload adastra_init_payload adastra_shell_payload"
+SECTIONS="protofire_demo_program_rust protofire_demo_program_rust_io protofire_demo_program_payload protofire_init_payload protofire_shell_payload"
 
 if [ ! -f "$IMAGE" ]; then
     printf 'payload relocations: no image at %s (build it first)\n' "$IMAGE" >&2

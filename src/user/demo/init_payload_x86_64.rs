@@ -35,45 +35,45 @@ macro_rules! init_address {
 
 // The section's own symbols, read by the two accessors below.
 unsafe extern "C" {
-    static adastra_init_payload_entry: u8;
+    static protofire_init_payload_entry: u8;
 
-    #[link_name = "__start_adastra_init_payload"]
-    static ADASTRA_INIT_PAYLOAD_SECTION_START: u8;
-    #[link_name = "__stop_adastra_init_payload"]
-    static ADASTRA_INIT_PAYLOAD_SECTION_END: u8;
+    #[link_name = "__start_protofire_init_payload"]
+    static PROTOFIRE_INIT_PAYLOAD_SECTION_START: u8;
+    #[link_name = "__stop_protofire_init_payload"]
+    static PROTOFIRE_INIT_PAYLOAD_SECTION_END: u8;
 }
 
-crate::user::syscall::define_x86_64_payload_runtime!("adastra_init_payload");
+crate::user::syscall::define_x86_64_payload_runtime!("protofire_init_payload");
 
 // The init program's own two syscalls.  They are emitted here rather than by
 // every payload runtime, because only this payload calls them — a stub in a
 // section that never uses it is bytes on the disk and one more thing moving
 // when the linker lays a payload out.
-crate::user::syscall::define_payload_service_stubs!("adastra_init_payload");
+crate::user::syscall::define_payload_service_stubs!("protofire_init_payload");
 
 // The entry the loader jumps to.  As the shell's: nothing is passed, so the
 // stub is the jump, and the program's buffers are the stack the loader left in
 // `rsp`.
 core::arch::global_asm!(
     r#"
-.section adastra_init_payload,"ax",@progbits
-.global adastra_init_payload_entry
-.type adastra_init_payload_entry,@function
-adastra_init_payload_entry:
+.section protofire_init_payload,"ax",@progbits
+.global protofire_init_payload_entry
+.type protofire_init_payload_entry,@function
+protofire_init_payload_entry:
     jmp {main}
 "#,
     main = sym init_main,
 );
 
-crate::user::demo::init_payload::define_init_payload!("adastra_init_payload");
+crate::user::demo::init_payload::define_init_payload!("protofire_init_payload");
 
 /// The payload's machine code and data.
 pub fn payload_bytes() -> &'static [u8] {
     // SAFETY: the linker's own markers around this payload's section bound the
     // slice, which is live for the life of the image.
     unsafe {
-        let start = core::ptr::addr_of!(ADASTRA_INIT_PAYLOAD_SECTION_START);
-        let end = core::ptr::addr_of!(ADASTRA_INIT_PAYLOAD_SECTION_END);
+        let start = core::ptr::addr_of!(PROTOFIRE_INIT_PAYLOAD_SECTION_START);
+        let end = core::ptr::addr_of!(PROTOFIRE_INIT_PAYLOAD_SECTION_END);
         let start_addr = start as usize;
         let end_addr = end as usize;
         let len = end_addr
@@ -86,8 +86,8 @@ pub fn payload_bytes() -> &'static [u8] {
 
 /// Where the payload's entry point sits inside those bytes.
 pub fn payload_entry_offset() -> usize {
-    let entry = core::ptr::addr_of!(adastra_init_payload_entry) as usize;
-    let start = core::ptr::addr_of!(ADASTRA_INIT_PAYLOAD_SECTION_START) as usize;
+    let entry = core::ptr::addr_of!(protofire_init_payload_entry) as usize;
+    let start = core::ptr::addr_of!(PROTOFIRE_INIT_PAYLOAD_SECTION_START) as usize;
     entry
         .checked_sub(start)
         .expect("x86_64 init payload entry must follow the section start")
@@ -114,6 +114,6 @@ mod tests {
         // `scripts/check-x8664-runtime.sh` requires this in the serial log.  A
         // rename has to walk past this test instead of turning a boot gate red
         // in an unrelated change.
-        assert!(INIT_BANNER.starts_with(b"adastra init (ring 3)"));
+        assert!(INIT_BANNER.starts_with(b"protofire init (ring 3)"));
     }
 }
