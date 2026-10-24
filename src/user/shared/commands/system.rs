@@ -18,6 +18,9 @@ use crate::user::shared::path_util::resolve_path;
 use crate::user::shared::syscall;
 use crate::user::shared::types::CmdResult;
 
+// constants for the `test` command
+const KERNEL_VER: &str = env!("CARGO_PKG_VERSION");
+
 // ─── help ───────────────────────────────────────────────────────────────
 
 pub fn cmd_help(argv: &[String]) -> CmdResult {
@@ -246,7 +249,7 @@ pub fn cmd_sysinfo() -> CmdResult {
 
     // ── System section ──
     out.push_str("─── System ───\n");
-    out.push_str("OS:      Protofire 0.8.11\n");
+    out.push_str(&format!("OS:      Protofire {}\n", KERNEL_VER));
     out.push_str("Arch:    ");
     out.push_str(crate::user::shared::abi::runtime::TARGET_ARCH);
     out.push('\n');
@@ -600,7 +603,7 @@ pub fn cmd_uname(argv: &[String]) -> CmdResult {
     let arch = crate::user::shared::abi::runtime::TARGET_ARCH;
 
     let output = if all {
-        format!("Protofire 2026.6.1 {arch} kernel\n")
+        format!("Protofire {KERNEL_VER} {arch} kernel\n")
     } else {
         String::from("Protofire\n")
     };
