@@ -430,33 +430,32 @@ balancing and runtime stack protection.
   test fails against the old first-tid lookup, and 25 of 25 four-CPU boots
   passed after the change.
 - **`check-riscv64-smp-runtime` fails on a user-mode instruction page fault,
-  at about one boot in forty**: the trap is `scause=0x0c` (instruction page
-  fault) with `sepc == stval == 0x85201bc4` and `sstatus` SPP clear.  Measured
-  by alternating the tree against `45718d4` one boot at a time — two four-CPU
-  QEMUs at once is a confound, and comparing under it first produced a
-  difference that did not survive — the failure appears on both sides at the
-  same rate: 2 of 40 on the tree and 1 of 40 at `45718d4`, and the failing
-  logs are byte-for-byte the same trap.
+  about once in forty four-CPU boots, and the cause is still unknown**: the
+  trap is `scause=0x0c` with `sepc == stval == 0x85201bc4` and `sstatus` SPP
+  clear, byte-for-byte the same on every occurrence.  The fatal line's leaf
+  descriptor is the one measurement that has held: the faulting address *was*
+  mapped, and the entry named a 2 MiB supervisor block (`0x214800cf`,
+  `V R W X`, `U` clear) — so a user thread reached U-mode on a hierarchy
+  where its slot is not executable, which is not a missing page and not a
+  stale translation.
 
-  What the address means is now measured rather than guessed, and it is **not**
-  an unmapped page.  The fatal line reports the running `satp` and the leaf
-  descriptor the current table holds for the faulting address, and one boot
-  gave `satp` with ASID **0** — the kernel's own space — and
-  `entry=0x214800cf`, a 2 MiB supervisor block (`V R W X`, `U` clear) covering
-  `0x85200000`.  So the payload's first fetch reached U-mode on the *kernel*
-  tables, where slot 1 is mapped supervisor-only; the mapping exists and the
-  address space is wrong.  That rules out the two explanations this row
-  previously carried (a missing mapping, and a stale TLB entry) — a
-  cross-hart TLB fix was written, measured, and reverted because the fault
-  recurred byte-for-byte.  The remaining question is which dispatch path let a
-  thread with a user start run with ASID 0; the diagnostic prints the thread,
-  whether it has a user start, and its process's prepared root for the next
-  occurrence.  A *different* trap was seen once on the tree alone (`scause=1`,
-  an instruction access fault with the target inside a kernel stack, beside
-  the stack window's own reuse line) and is not explained by this row.  No
-  gate is being widened: the check is right to fail, and what is recorded here
-  is that the cause predates the check's latest green run and is not yet
-  known.
+  Three explanations have been tried.  A cross-hart TLB staleness fix left
+  the fault byte-for-byte unchanged.  A guard refusing U-mode entry with
+  ASID 0 never fired, so the space was installed before the fetch — the
+  entry, not the `satp`, is what was wrong.  And `fork_clone`'s missing
+  re-pointing (`67790e2`, a real defect: parent and child shared one set of
+  hardware tables, and a child outlived the parent's freed tables) turned out
+  **not to be reachable from a boot at all** — a probe in `fork_clone` did
+  not fire during `check-riscv64-smp-runtime`, `Process::fork` has one
+  production caller (the `Fork` syscall, #62) and nothing in `src/user/`
+  issues it, and a control run of 25 boots *without* that fix passed 25 of
+  25.  The 45-of-45 that first looked like a fix was the base rate: at 1 in
+  40, 45 clean boots happen about a third of the time.
+
+  What is left is the descriptor itself being wrong at the moment of entry,
+  which points at how `prepare_runtime_process_address_space` composes the
+  active slot rather than at the fork path.  Nothing is being widened: the
+  check is right to fail.
 
 ---
 
