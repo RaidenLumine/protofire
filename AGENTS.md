@@ -29,9 +29,13 @@ the RFC that decided it, in the same commit.
 The floor is `make verify VERIFY_TIER=p3`: the host suites, clippy in every
 configuration (`make clippy`, `make clippy-targets`), the build matrix, a
 single-CPU runtime smoke per architecture plus the multi-CPU one, and the
-ratchets.  `make help` lists every target, and `make check-make-targets` is what
-keeps that true: the rules, `.PHONY` and the `help` recipe have to name the
-same set, in both directions.
+ratchets.  The smokes are part of what that tier *is*, not an extra: p3 boots
+the kernel unless the caller declines a boot with `RUN_X86_64_RUNTIME=0`,
+`RUN_AARCH64_RUNTIME=0`, `RUN_RISCV64_RUNTIME=0` or `RUN_SMP_RUNTIME=0`.  A
+p3 that never boots anything is a p2 with a longer name, and both of this
+tree's recent runtime defects would have passed one.  `make help` lists every
+target, and `make check-make-targets` is what keeps that true: the rules,
+`.PHONY` and the `help` recipe have to name the same set, in both directions.
 
 CI (`.github/workflows/ci.yml`) runs a subset of that tier on every push, so a
 green CI is not the floor; the local `verify` is.  It is also where a citation

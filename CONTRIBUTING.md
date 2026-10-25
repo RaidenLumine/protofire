@@ -163,7 +163,7 @@ least the full gate before it can be merged:
 | `make verify-p0` | repo integrity + documentation citations + fmt-check + host/x86_64 checks + aarch64 check + x86_64/aarch64 build + source header coverage |
 | `make verify-p1` | p0 + host unit tests (`test-lib`, concurrency, fast regressions) |
 | `make verify-p2` | p1 + storage/recovery/fault-matrix regressions (`test-storage`) |
-| `make verify-p3` | p2 + the suites whose own targets no other tier calls (locking, service, USB, GPU, parsers) + clippy (all targets) + the optional QEMU smokes and the boot-work baseline |
+| `make verify-p3` | p2 + the suites whose own targets no other tier calls (locking, service, USB, GPU, parsers) + clippy (all targets) + the QEMU smokes (one per architecture, the multi-CPU ones, and the x86_64 device boots) |
 
 CI runs, on every push and pull request
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
@@ -186,10 +186,15 @@ CI runs, on every push and pull request
 - the QEMU smokes — four CPUs, the frozen payloads, the USB, NVMe, hub and
   HDA devices, and the RISC-V AIA and PCIe boots.
 
-What CI does not run is the boot-work baseline, which compares counters and
-wants a host that is not otherwise busy.  `make verify VERIFY_TIER=p3` remains
-the floor — it runs everything above in one sequence — and CI is what keeps
-the floor from being the only thing that ever looks.
+The QEMU smokes are part of `verify-p3`, not an extra: it boots the kernel on
+all three architectures and on several CPUs unless you decline a boot
+explicitly (`RUN_X86_64_RUNTIME=0`, `RUN_AARCH64_RUNTIME=0`,
+`RUN_RISCV64_RUNTIME=0`, `RUN_SMP_RUNTIME=0`).  The one thing that stays
+opt-in is the boot-work baseline (`RUN_PERF_BASELINE=1`), which compares
+counters across a whole boot and wants a host that is not otherwise busy.
+`make verify VERIFY_TIER=p3` remains the floor — it runs everything above in
+one sequence — and CI is what keeps the floor from being the only thing that
+ever looks.
 
 For kernel-behaviour changes, also boot the demo-disk shell under QEMU on the
 affected architecture to confirm runtime behaviour:

@@ -7,10 +7,27 @@ set -eu
 cd "$(dirname "$0")/.."
 
 PROFILE="${PROFILE:-debug}"
-RUN_X86_64_RUNTIME="${RUN_X86_64_RUNTIME:-0}"
-RUN_AARCH64_RUNTIME="${RUN_AARCH64_RUNTIME:-0}"
-RUN_RISCV64_RUNTIME="${RUN_RISCV64_RUNTIME:-0}"
-RUN_SMP_RUNTIME="${RUN_SMP_RUNTIME:-0}"
+
+# The QEMU smokes are part of what p3 *means*, not an extra: the floor this
+# project states is "the host suites, clippy in every configuration, the build
+# matrix, a single-CPU runtime smoke per architecture plus the multi-CPU one,
+# and the ratchets".  A default of zero made that sentence false — a p3 run
+# would print `verify[p3] complete` without booting anything — and the bills
+# for it are on record: both of this tree's recent runtime defects were found
+# only by a hand-run smoke, and neither would have failed a default p3.
+#
+# So `p3` asks for them, and `RUN_*` is how a caller *declines* one.  The
+# boot-work baseline stays opt-in: it compares counters across a whole boot
+# and wants a host that is not otherwise busy, which a floor cannot assume.
+#
+# A machine without QEMU still reaches a verdict rather than a false pass: the
+# smoke steps below report that they could not run, and the run says so in its
+# last lines.  That is a skip a reader can see, not a green that hides work
+# nobody did.
+RUN_X86_64_RUNTIME="${RUN_X86_64_RUNTIME:-1}"
+RUN_AARCH64_RUNTIME="${RUN_AARCH64_RUNTIME:-1}"
+RUN_RISCV64_RUNTIME="${RUN_RISCV64_RUNTIME:-1}"
+RUN_SMP_RUNTIME="${RUN_SMP_RUNTIME:-1}"
 RUN_PERF_BASELINE="${RUN_PERF_BASELINE:-0}"
 VERIFY_TIER="${1:-${VERIFY_TIER:-p2}}"
 
@@ -32,6 +49,34 @@ case "$VERIFY_TIER" in
         exit 1
         ;;
 esac
+
+# p3 boots the kernel, so it needs the emulators.  Say which one is missing
+# *before* the first step that needs it, rather than letting a smoke fail with
+# whatever `timeout` prints when its command does not exist — the failure is
+# the same, but a reader who has to infer why a gate is red from a shell's
+# message has been given a riddle instead of an answer.  This does not skip
+# the smoke: a floor that quietly omitted the boots would be the false green
+# this default exists to remove.
+if [ "$VERIFY_TIER" = "p3" ]; then
+    missing=""
+    if [ "$RUN_X86_64_RUNTIME" = "1" ] || [ "$RUN_SMP_RUNTIME" = "1" ]; then
+        command -v qemu-system-x86_64 >/dev/null 2>&1 || missing="$missing qemu-system-x86_64"
+    fi
+    if [ "$RUN_AARCH64_RUNTIME" = "1" ] || [ "$RUN_SMP_RUNTIME" = "1" ]; then
+        command -v qemu-system-aarch64 >/dev/null 2>&1 || missing="$missing qemu-system-aarch64"
+    fi
+    if [ "$RUN_RISCV64_RUNTIME" = "1" ] || [ "$RUN_SMP_RUNTIME" = "1" ]; then
+        command -v qemu-system-riscv64 >/dev/null 2>&1 || missing="$missing qemu-system-riscv64"
+    fi
+    if [ -n "$missing" ]; then
+        printf 'verify[p3]: QEMU is required by the runtime smokes and these are missing:%s\n' \
+            "$missing" >&2
+        printf '  install them, or decline the boots explicitly with\n' >&2
+        printf '  RUN_X86_64_RUNTIME=0 RUN_AARCH64_RUNTIME=0 RUN_RISCV64_RUNTIME=0 \\\n' >&2
+        printf '  RUN_SMP_RUNTIME=0 make verify VERIFY_TIER=p3\n' >&2
+        exit 1
+    fi
+fi
 
 run_make_step() {
     description="$1"
@@ -272,7 +317,7 @@ run_p3() {
         # fallback: a fallback nobody boots is a fallback nobody has tested.
         run_make_step "make check-x8664-churn" check-x8664-churn
     else
-        printf '==> verify[%s]: skipping x86_64 runtime smoke (set RUN_X86_64_RUNTIME=1 to enable)\n' \
+        printf '==> verify[%s]: skipping x86_64 runtime smoke (RUN_X86_64_RUNTIME=0 was asked for)\n' \
             "$VERIFY_TIER"
     fi
     if [ "$RUN_AARCH64_RUNTIME" = "1" ]; then
@@ -289,7 +334,7 @@ run_p3() {
         # architecture whose payload's entry point is not at its start.
         run_make_step "make check-abi-frozen-payload-aarch64" check-abi-frozen-payload-aarch64
     else
-        printf '==> verify[%s]: skipping aarch64 runtime smoke (set RUN_AARCH64_RUNTIME=1 to enable)\n' \
+        printf '==> verify[%s]: skipping aarch64 runtime smoke (RUN_AARCH64_RUNTIME=0 was asked for)\n' \
             "$VERIFY_TIER"
     fi
     if [ "$RUN_RISCV64_RUNTIME" = "1" ]; then
@@ -317,7 +362,7 @@ run_p3() {
         # to the audio node with `Unsupported` because its probe never asked.
         run_make_step "make check-riscv64-hda" check-riscv64-hda
     else
-        printf '==> verify[%s]: skipping riscv64 runtime smoke (set RUN_RISCV64_RUNTIME=1 to enable)\n' \
+        printf '==> verify[%s]: skipping riscv64 runtime smoke (RUN_RISCV64_RUNTIME=0 was asked for)\n' \
             "$VERIFY_TIER"
     fi
     if [ "$RUN_SMP_RUNTIME" = "1" ]; then
@@ -332,7 +377,7 @@ run_p3() {
         run_make_step "make check-aarch64-smp-runtime" check-aarch64-smp-runtime "SMP=${VERIFY_SMP:-4}"
         run_make_step "make check-riscv64-smp-runtime" check-riscv64-smp-runtime "SMP=${VERIFY_SMP:-4}"
     else
-        printf '==> verify[%s]: skipping SMP runtime smoke (set RUN_SMP_RUNTIME=1, and VERIFY_SMP for the CPU count, to enable)\n' \
+        printf '==> verify[%s]: skipping SMP runtime smoke (RUN_SMP_RUNTIME=0 was asked for; VERIFY_SMP sets the CPU count)\n' \
             "$VERIFY_TIER"
     fi
 }
