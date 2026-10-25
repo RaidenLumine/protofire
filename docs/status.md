@@ -492,9 +492,18 @@ disk-backed swap, compression, and defragmentation.
 
 - **TLSF allocator**: bounded heap with O(1) allocation over a fixed free-list
   table.
-- **Virtual memory**: CoW fork + demand paging with swap-out, automatic
+- **Virtual memory**: demand paging with swap-out, automatic
   2 MiB / 1 GiB huge-page selection, kernel stack guard pages on all threads;
-  mlock/munlock (#131-132) and madvise (#133).
+  mlock/munlock (#131-132) and madvise (#133).  CoW fork is **not** in that
+  list: it compiles and `Process::fork` returns a child with its own root, but
+  both sides keep the *same physical demo slot* (`child_slot = self.slot.clone()`
+  in `fork_clone`), so the copy-on-write demotion walks the parent's own pages
+  and the parent faults on its next stack write.  Measured by forking once from
+  a kernel thread at boot: the fork itself succeeded (child root `0x127d000`,
+  parent `0xd9e000`) and the boot then lost its shell to a write-protection
+  fault at a user stack address.  Nothing in the tree issues `Fork` (#62), so
+  no boot has ever reached this; wiring it up is the work, and it is not a
+  matter of adding a caller.
 - **NUMA**: per-node frame allocators, CPU-to-node mapping (`numa_node_id`),
   and automatic topology discovery (ACPI SRAT/SLIT on x86_64; FDT numa-node-id
   / distance-map on AArch64 and RISC-V); a default single-node topology always
