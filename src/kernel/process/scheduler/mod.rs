@@ -45,6 +45,7 @@ pub(crate) mod types;
 pub(crate) mod waker;
 
 // ── Re-exports ──
+pub use api::on_local_timer_tick_with_preemption;
 pub use api::on_timer_tick;
 pub use api::on_timer_tick_with_preemption;
 pub use api::sleep_current;

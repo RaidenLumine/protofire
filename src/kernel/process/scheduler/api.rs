@@ -61,6 +61,19 @@ pub fn on_timer_tick_with_preemption(ticks: u64, allow_preemption: bool) -> bool
     }
 }
 
+/// The same tick on a CPU that does not own the machine's clock.
+///
+/// A second CPU's timer interrupt is a preemption clock: it wakes that CPU's
+/// own sleepers and takes the time-slice decision, and leaves the machine-wide
+/// work — which is measured in one tick counter — to the CPU that keeps it.
+pub fn on_local_timer_tick_with_preemption(ticks: u64, allow_preemption: bool) -> bool {
+    if let Some(scheduler) = Scheduler::global() {
+        scheduler.handle_local_timer_tick_with_preemption(ticks, allow_preemption)
+    } else {
+        false
+    }
+}
+
 /// Block the current thread for at least `ticks` timer ticks.
 ///
 /// If the scheduler is not initialised this is a no-op.

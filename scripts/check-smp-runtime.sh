@@ -236,6 +236,23 @@ if [ "$started" -lt "$((SMP_CPUS - 1))" ]; then
     fail_with_log "expected at least $((SMP_CPUS - 1)) APs to start, saw $started"
 fi
 
+# ── Each AP has a clock of its own ────────────────────────────────────
+#
+# The PIT is wired to the boot CPU's LAPIC, so before the APs got LAPIC timers
+# they took no timer interrupt at all: a thread they ran was never preempted,
+# and a sleeper there waited for the boot CPU's sweep.  "The AP is online" and
+# "the AP has a clock" are different claims, and only the second one is what
+# makes an AP a scheduling target rather than a place threads can be parked.
+#
+# The kernel prints one line per CPU the first time its timer interrupt
+# arrives, so this asserts the interrupt rather than the programming: an entry
+# left masked, a vector routed elsewhere or a counter never started all look
+# like "online" from every other angle.
+ap_timers="$(count_log_line "takes timer interrupts")"
+if [ "$ap_timers" -lt "$((SMP_CPUS - 1))" ]; then
+    fail_with_log "expected $((SMP_CPUS - 1)) AP(s) to take timer interrupts, saw $ap_timers"
+fi
+
 # ── The machine is still making progress ───────────────────────────────
 #
 # Three markers spread across the boot: the scheduler took over, the shell

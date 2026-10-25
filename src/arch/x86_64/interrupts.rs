@@ -93,9 +93,42 @@ pub fn are_enabled() -> bool {
 pub(crate) fn handle_irq(vector: u8, _allow_preemption: bool) {
     match vector {
         TIMER_VECTOR => {
-            let ticks = super::timer::acknowledge_tick();
+            // Only the boot CPU owns the machine's clock.  Every CPU now takes
+            // this vector — the boot CPU from the PIT through the I/O APIC,
+            // each AP from its own LAPIC timer — and the tick counter is one
+            // number the scheduler reads everywhere.  Letting each of them
+            // advance it would make a tick pass four times as fast on a
+            // four-CPU machine, and every timeout, sleep and retransmission
+            // measured in ticks would be a quarter of what it says.
+            //
+            // So an AP's timer is a *preemption clock*, not a second source of
+            // time: it asks the scheduler to look at the CPU it interrupted and
+            // keeps the boot CPU's tick as the answer to "what time is it".
+            let boot_cpu = crate::kernel::percpu::get().cpu_id == 0;
+            let ticks = if boot_cpu {
+                super::timer::acknowledge_tick()
+            } else {
+                super::timer::ticks()
+            };
             interrupt_controller::end_of_interrupt(vector as u32);
-            process::on_timer_tick_with_preemption(ticks, _allow_preemption);
+            if boot_cpu {
+                process::on_timer_tick_with_preemption(ticks, _allow_preemption);
+            } else {
+                // The per-CPU half only: sweep this CPU's own sleepers and
+                // preempt its current thread.  The machine-wide work a tick
+                // carries — the network clock, the device polls, the deferred
+                // maintenance — belongs to the one clock, which is the branch
+                // above.
+                process::on_local_timer_tick_with_preemption(ticks, _allow_preemption);
+                // One line, the first time: an AP that programs its LAPIC
+                // timer and never takes the interrupt looks identical to one
+                // with no timer from every other angle — the entry can be
+                // masked, the vector mis-routed, the counter never started.
+                // This is the only place that can tell them apart, and it is
+                // what `check-smp-runtime` reads to know the timer works
+                // rather than merely exists.
+                crate::arch::x86_64::timer::note_ap_timer_tick(crate::kernel::percpu::get().cpu_id);
+            }
             return;
         }
         KEYBOARD_VECTOR => {

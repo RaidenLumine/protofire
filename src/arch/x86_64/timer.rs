@@ -41,6 +41,24 @@ pub fn wait_ticks(n: u64) {
     }
 }
 
+/// Say so, once per CPU, when an AP takes its first timer interrupt.
+///
+/// A bitmask rather than a counter: the fact worth reporting is *that* a CPU's
+/// timer interrupts, not how often, and printing on every tick would drown the
+/// log this is meant to make readable.
+static AP_TIMER_SEEN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Record that `cpu_id` took a timer interrupt, printing the first time.
+pub(crate) fn note_ap_timer_tick(cpu_id: u32) {
+    if cpu_id >= 32 {
+        return;
+    }
+    let mask = 1u32 << cpu_id;
+    if AP_TIMER_SEEN.fetch_or(mask, Ordering::AcqRel) & mask == 0 {
+        crate::println!("[smp   ] AP cpu_id={} takes timer interrupts", cpu_id);
+    }
+}
+
 pub(crate) fn acknowledge_tick() -> u64 {
     TICKS.fetch_add(1, Ordering::Relaxed) + 1
 }

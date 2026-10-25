@@ -60,6 +60,7 @@ pub use process::ROOT_USER_ID;
 pub use process::STDERR_FD;
 pub use process::STDIN_FD;
 pub use process::STDOUT_FD;
+pub use scheduler::on_local_timer_tick_with_preemption;
 pub use scheduler::on_timer_tick;
 pub use scheduler::on_timer_tick_with_preemption;
 pub use scheduler::sleep_current;

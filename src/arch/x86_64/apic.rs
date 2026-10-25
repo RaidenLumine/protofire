@@ -7,6 +7,8 @@
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use core::sync::atomic::AtomicBool;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
+use core::sync::atomic::AtomicU32;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 use core::sync::atomic::Ordering;
 
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
@@ -157,6 +159,14 @@ pub const LAPIC_TPR: usize = 0x0080;
 pub const LAPIC_EOI: usize = 0x00B0;
 /// Spurious Interrupt Vector Register.
 pub const LAPIC_SVR: usize = 0x00F0;
+/// Local Vector Table entry for the APIC timer.
+pub const LAPIC_LVT_TIMER: usize = 0x0320;
+/// Timer divide configuration register.
+pub const LAPIC_TIMER_DCR: usize = 0x03E0;
+/// Timer initial-count register (writing starts the countdown).
+pub const LAPIC_TIMER_ICR: usize = 0x0380;
+/// Timer current-count register (reads the countdown).
+pub const LAPIC_TIMER_CCR: usize = 0x0390;
 /// Interrupt Command Register — low DWORD (triggers the send).
 pub const LAPIC_ICR_LOW: usize = 0x0300;
 /// Interrupt Command Register — high DWORD (destination APIC ID).
@@ -261,3 +271,142 @@ pub fn init_lapic_ap() {
         lapic_write(LAPIC_TPR as u32, 0);
     }
 }
+
+/// The LAPIC timer's countdown value for one tick, in this CPU's bus clock.
+///
+/// Calibrated once and shared: every CPU's LAPIC runs at the same bus
+/// frequency, and calibrating per CPU would spend a whole PIT tick on each of
+/// them during a bring-up that already has one.  `AtomicU32` rather than a
+/// lock because the value is a plain number written once by the first AP and
+/// read by the rest.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+static TIMER_COUNT_PER_TICK: AtomicU32 = AtomicU32::new(0);
+
+/// The countdown this machine's LAPIC timer uses for one tick, or 0 when it
+/// was never calibrated.
+///
+/// Read by the AP bring-up line, which is what a gate asserts: a CPU that says
+/// it is online without a timer would be a CPU whose threads are never
+/// preempted, and the number being non-zero is the difference.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn lapic_timer_count_per_tick() -> u32 {
+    TIMER_COUNT_PER_TICK.load(Ordering::Acquire)
+}
+
+/// Program this CPU's LAPIC timer to interrupt at the PIT's rate.
+///
+/// The PIT is wired to one LAPIC (see `timer.rs` and the ioapic route), so an
+/// AP that is given work has no tick of its own: a thread it runs cannot be
+/// preempted by time slice, and a thread that sleeps there is woken only by
+/// the boot CPU's sweep.  The LAPIC's own timer is per-CPU and needs no wire,
+/// which is what makes it the right clock for an AP.
+///
+/// The rate has to match the PIT's, because the tick counter is one number the
+/// scheduler reads on every CPU; a second rate would make "a tick" mean two
+/// different lengths of time.  So the countdown is calibrated against the PIT
+/// once and every CPU uses it.
+///
+/// Called after the LAPIC is enabled and before interrupts are unmasked.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn start_lapic_timer_ap() {
+    let per_tick = TIMER_COUNT_PER_TICK.load(Ordering::Acquire);
+    let per_tick = if per_tick == 0 {
+        let counted = calibrate_timer_against_pit();
+        if counted == 0 {
+            // The PIT did not tick inside the window: programming a zero
+            // countdown would leave this CPU with no timer at all, and
+            // guessing one would give it a rate that disagrees with the tick
+            // counter.  Leaving it unarmed is the honest answer — the CPU runs
+            // until the boot CPU's sweep serves it, which is what it did
+            // before this existed.
+            crate::println!(
+                "[apic  ] LAPIC timer not calibrated: this CPU keeps the boot CPU's tick"
+            );
+            return;
+        }
+        TIMER_COUNT_PER_TICK.store(counted, Ordering::Release);
+        counted
+    } else {
+        per_tick
+    };
+
+    // SAFETY: this CPU's own LAPIC page, mapped before bring-up, and the three
+    // registers are the timer's own: the divide configuration, the LVT entry
+    // (periodic mode, unmasked, vector = the timer's), and the initial count
+    // that starts it.
+    unsafe {
+        // Divide by 16: a countdown large enough to calibrate, small enough
+        // that the initial count fits the register at 100 Hz.
+        lapic_write(LAPIC_TIMER_DCR as u32, 0x3);
+        lapic_write(
+            LAPIC_LVT_TIMER as u32,
+            (crate::arch::x86_64::interrupts::TIMER_VECTOR as u32) | LVT_TIMER_PERIODIC,
+        );
+        lapic_write(LAPIC_TIMER_ICR as u32, per_tick);
+    }
+}
+
+/// Bits of the LVT timer entry this module sets.
+///
+/// Bit 17 is the mode: clear is one-shot, set is periodic.  Bit 16 masks the
+/// entry; it stays clear so the timer actually interrupts.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+const LVT_TIMER_PERIODIC: u32 = 1 << 17;
+
+/// Count how fast this CPU's LAPIC timer runs, by timing it with the PIT.
+///
+/// The PIT is the machine's known-good clock here: it is programmed at 100 Hz
+/// before any AP is started, and `timer::ticks()` advances when its interrupt
+/// is acknowledged.  Starting the LAPIC timer at full count and reading what
+/// is left after one PIT tick gives the countdown for one tick directly —
+/// subtraction rather than a frequency, so the answer is in the units the
+/// register takes.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+fn calibrate_timer_against_pit() -> u32 {
+    use crate::arch::x86_64::timer as pit;
+
+    // SAFETY: as above — this CPU's own LAPIC timer registers.  Divide by 16
+    // for the calibration too, so the number measured is the number used.
+    unsafe {
+        lapic_write(LAPIC_TIMER_DCR as u32, 0x3);
+        // Masked while it counts: this is a measurement, not a tick.
+        lapic_write(LAPIC_LVT_TIMER as u32, LVT_TIMER_MASKED);
+        lapic_write(LAPIC_TIMER_ICR as u32, u32::MAX);
+    }
+
+    // Wait for exactly one PIT tick.  The wait is bounded: a machine whose PIT
+    // is not ticking must not hang an AP's bring-up, so this gives up after
+    // twice the tick period in spin-loop iterations — an upper bound no
+    // emulator on this tree's gates approaches, and one a broken PIT stops at
+    // instead of holding the CPU.
+    let start = pit::ticks();
+    let mut spins = 0u64;
+    while pit::ticks() == start {
+        core::hint::spin_loop();
+        spins += 1;
+        if spins > CALIBRATION_SPIN_LIMIT {
+            // SAFETY: stopping the timer this function started.
+            unsafe { lapic_write(LAPIC_TIMER_ICR as u32, 0) };
+            return 0;
+        }
+    }
+
+    // SAFETY: reading this CPU's timer countdown.
+    let remaining = unsafe { lapic_read(LAPIC_TIMER_CCR as u32) };
+    // SAFETY: stopping it again — the caller restarts it in periodic mode.
+    unsafe { lapic_write(LAPIC_TIMER_ICR as u32, 0) };
+
+    u32::MAX.saturating_sub(remaining)
+}
+
+/// Bit 16 of the LVT timer entry: masked.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+const LVT_TIMER_MASKED: u32 = 1 << 16;
+
+/// Spin-loop bound for one calibration window.
+///
+/// A PIT tick is 10 ms.  This is far more iterations than that takes on any
+/// machine the tree boots, and its purpose is only to keep a machine whose
+/// PIT is silent from hanging where it used to run.
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+const CALIBRATION_SPIN_LIMIT: u64 = 200_000_000;

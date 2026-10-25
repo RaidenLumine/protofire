@@ -331,6 +331,12 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
 
     // Initialize the local APIC on this CPU.
     apic::init_lapic_ap();
+    // And give it a clock of its own: the PIT is wired to the boot CPU's
+    // LAPIC, so without this an AP takes no timer interrupt at all — its
+    // threads are never preempted, and a sleeper there is woken only by the
+    // boot CPU's sweep.  Before interrupts are unmasked below, so the first
+    // tick cannot arrive into a half-programmed entry.
+    apic::start_lapic_timer_ap();
 
     // Scheduler and idle process were pre-created by the BSP before sending
     // INIT-SIPI-SIPI (see bring_up_single_ap).  Read the scheduler pointer
@@ -340,7 +346,17 @@ unsafe extern "C" fn ap_entry(cpu_id: u32, lapic_id: u8) -> ! {
     let scheduler_ptr =
         unsafe { (*percpu_ptr).scheduler } as *mut crate::kernel::process::Scheduler;
 
-    crate::println!("[smp   ] AP cpu_id={} lapic_id={} online", cpu_id, lapic_id);
+    // The timer count is part of the line: a CPU that is online without one
+    // takes no timer interrupt, so its threads are never preempted and a
+    // sleeper there waits for the boot CPU.  Carrying the number makes "this
+    // CPU has a clock" visible in the log a gate reads, instead of a property
+    // nobody can see.
+    crate::println!(
+        "[smp   ] AP cpu_id={} lapic_id={} online, lapic timer every {} count(s)",
+        cpu_id,
+        lapic_id,
+        apic::lapic_timer_count_per_tick(),
+    );
 
     // Enable interrupts now that the LAPIC is configured.  The trampoline
     // starts with IF=0 (cli); without sti the AP would never receive IPIs

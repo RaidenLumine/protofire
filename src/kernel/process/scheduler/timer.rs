@@ -386,6 +386,80 @@ impl Scheduler {
         }
     }
 
+    /// What a second CPU owes a timer tick: its own threads, and nothing else.
+    ///
+    /// Every CPU now takes a timer interrupt — the boot CPU from the PIT, each
+    /// AP from its own LAPIC timer — but only the boot CPU owns the machine's
+    /// clock.  `ticks` here is that CPU's tick, not a count this CPU
+    /// incremented: the timeout arithmetic above and below is in one unit, and
+    /// a per-CPU counter would make "one tick" a different length on each.
+    ///
+    /// The machine-wide work stays with the clock: the device polls, the
+    /// network clock, the DHCP lease, the timerfds and POSIX timers, the load
+    /// average and the IRQ balancing are all *one* machine's business, and
+    /// running them once per CPU would multiply them by the CPU count.  What is
+    /// per-CPU is exactly what this does: sweep the sleepers parked on this
+    /// CPU, keep the placement watchdog's books, age this CPU's current
+    /// thread, and take the time-slice decision.
+    pub fn handle_local_timer_tick_with_preemption(
+        &self,
+        ticks: u64,
+        allow_preemption: bool,
+    ) -> bool {
+        // This CPU's own tick count.  It is the evidence that the timer is
+        // actually interrupting: a CPU whose LAPIC timer was programmed but
+        // whose entry is masked or mis-routed keeps this at zero while
+        // looking exactly like a CPU with no timer at all, and the difference
+        // is only visible here.
+        {
+            let mut stats = self.stats.lock();
+            stats.total_ticks = stats.total_ticks.saturating_add(1);
+        }
+
+        // The current thread's CPU time, and the boosted quantum's expiry, are
+        // this CPU's thread's, so they are counted here rather than at the
+        // clock.
+        if let Some(thread) = self.current.lock().as_ref() {
+            thread.increment_cpu_ticks();
+            if thread.is_boosted() {
+                let remaining = thread.time_slice_remaining();
+                thread.set_time_slice_remaining(remaining.saturating_sub(1));
+            }
+        }
+
+        // A thread parked on this CPU is woken by this CPU's timer.  On x86_64
+        // an AP used to take no timer interrupt at all, so this sweep is what
+        // the LAPIC timer buys: a sleeper on an AP no longer waits for the boot
+        // CPU to come round.
+        if ticks.is_multiple_of(Self::PLACEMENT_WATCHDOG_PERIOD_TICKS)
+            && ready_queue_len(&self.ready_queues.lock()) == 0
+        {
+            self.watch_process_placement();
+        }
+        let _ = self.wake_expired_sleepers(ticks);
+
+        if !allow_preemption {
+            return false;
+        }
+        if !should_preempt_for_time_slice(ticks) {
+            return false;
+        }
+        if let Some(current) = self.current.lock().as_ref() {
+            if current.sched_policy() == ThreadSchedPolicy::SchedFifo {
+                return false;
+            }
+        }
+
+        if arch::supports_context_switch() {
+            self.preempt_current_thread_from_interrupt()
+        } else if self.preempt_current_thread_simulated() {
+            let _ = self.dispatch_next_simulated();
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn boost_starved_threads(&self) {
         let mut ready_queues = self.ready_queues.lock();
         let boost_threshold = BOOST_THRESHOLD_TICKS;
