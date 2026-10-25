@@ -1873,6 +1873,25 @@ impl PreparedProcessAddressSpace {
             asid: child_asid,
         };
 
+        // The invariant this function exists to keep, checked where it is
+        // made rather than in a test: the child's root must name the child's
+        // tables, not the parent's.  A test can only cover the architectures
+        // it is compiled for, and this bug reached the tree because the two
+        // architectures without a fork test each wrote their own copy of this
+        // loop; a check here runs on every architecture and every caller,
+        // including the one that exists only in a program nobody has written
+        // yet.
+        assert!(
+            child.pgd.0[pgd_index(KERNEL_RAM_BASE)]
+                == table_entry(child.pmd.as_ref() as *const _ as usize),
+            "riscv64 fork: the child's root does not name the child's PMD",
+        );
+        assert!(
+            child.pmd.0[pmd_index(child.slot.region_start())]
+                == table_entry(child.user_pte.as_ref() as *const _ as usize),
+            "riscv64 fork: the child's PMD does not name the child's leaf table",
+        );
+
         Some((child, shared_pages, all_child_pages))
     }
 

@@ -2302,6 +2302,23 @@ impl PreparedProcessAddressSpace {
             asid: child_asid,
         };
 
+        // The invariant this function exists to keep, checked where it is
+        // made rather than in a test: the child's root must name the child's
+        // tables, not the parent's.  A test can only cover the architectures
+        // it is compiled for, and this bug reached the tree because the two
+        // architectures without a fork test each wrote their own copy of this
+        // loop; a check here runs on every architecture and every caller.
+        assert!(
+            child.l1.0[KERNEL_WINDOW_L1_INDEX]
+                == table_entry(child.l2.as_ref() as *const _ as usize),
+            "aarch64 fork: the child's root does not name the child's L2",
+        );
+        assert!(
+            child.l2.0[user_block_index(child.slot.region_start()).unwrap_or(usize::MAX)]
+                == table_entry(child.user_l3.as_ref() as *const _ as usize),
+            "aarch64 fork: the child's L2 does not name the child's leaf table",
+        );
+
         Some((child, shared_pages, all_child_pages))
     }
 
