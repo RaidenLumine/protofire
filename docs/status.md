@@ -439,23 +439,33 @@ balancing and runtime stack protection.
   where its slot is not executable, which is not a missing page and not a
   stale translation.
 
-  Three explanations have been tried.  A cross-hart TLB staleness fix left
-  the fault byte-for-byte unchanged.  A guard refusing U-mode entry with
-  ASID 0 never fired, so the space was installed before the fetch — the
-  entry, not the `satp`, is what was wrong.  And `fork_clone`'s missing
-  re-pointing (`67790e2`, a real defect: parent and child shared one set of
-  hardware tables, and a child outlived the parent's freed tables) turned out
-  **not to be reachable from a boot at all** — a probe in `fork_clone` did
-  not fire during `check-riscv64-smp-runtime`, `Process::fork` has one
-  production caller (the `Fork` syscall, #62) and nothing in `src/user/`
-  issues it, and a control run of 25 boots *without* that fix passed 25 of
-  25.  The 45-of-45 that first looked like a fix was the base rate: at 1 in
-  40, 45 clean boots happen about a third of the time.
+  Five explanations have now been tried, and the negative results are the
+  useful part of this row: each was measured, and each is something the next
+  reader does not have to re-derive.
 
-  What is left is the descriptor itself being wrong at the moment of entry,
-  which points at how `prepare_runtime_process_address_space` composes the
-  active slot rather than at the fork path.  Nothing is being widened: the
-  check is right to fail.
+  A cross-hart TLB staleness fix left the fault byte-for-byte unchanged.  A
+  guard refusing U-mode entry with ASID 0 never fired, so a space *was*
+  installed before the fetch.  `fork_clone`'s missing re-pointing (`0caee67`,
+  a real defect: parent and child shared one set of hardware tables, and a
+  child outlived the parent's freed tables) is **not reachable from a boot at
+  all** — a probe in `fork_clone` did not fire during
+  `check-riscv64-smp-runtime`, `Process::fork` has one production caller (the
+  `Fork` syscall, #62) and nothing under `src/user/` issues it, and a control
+  run of 25 boots *without* that fix passed 25 of 25.  Clearing `sscratch` on
+  every context switch left the fault recurring at boot 20 of 50.  And the
+  two provenance witnesses — `sscratch` for the stack choice in `SAVE_ALL`,
+  `sstatus.SPP` for the return path in Rust — have not been observed to
+  disagree: 40 boots with both printed produced no fault at all.
+
+  The twice-mistaken "it is fixed" is worth recording too: 45 clean boots
+  looked like a fix at a 1-in-40 base rate, where 45 clean boots happen about
+  a third of the time.  Twenty-five is not enough to say anything, and neither
+  is forty.
+
+  Nothing is being widened: the check is right to fail.  What the fault still
+  says is that the entry for the faulting address was a supervisor block at
+  the moment of a U-mode fetch, which points at how the active slot's
+  hierarchy is composed rather than at any of the five paths above.
 
 ---
 
