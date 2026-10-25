@@ -305,6 +305,30 @@ extern "C" fn riscv64_trap_dispatch(frame: &mut TrapFrame) {
         crate::arch::mmu::leaf_entry_for(fault_address).unwrap_or(0)
     );
 
+    // The trap entry answers "where did this come from" twice, from two
+    // different witnesses, and never compares them: `SAVE_ALL` reads
+    // `sscratch` and uses zero-vs-nonzero to pick the stack, while this side
+    // reads `sstatus.SPP`.  They agree whenever the software convention holds,
+    // and a boot that faults on a kernel thread's own timer interrupt is
+    // exactly what a disagreement would look like.  Printing both makes the
+    // next occurrence say whether the witnesses split, instead of leaving it
+    // to be inferred from a frame that is already known to be odd.
+    let sscratch_now: u64;
+    // SAFETY: `sscratch` is a supervisor CSR; reading it has no memory side
+    // effects and this path stops the machine immediately afterwards.  It has
+    // been zeroed by `SAVE_ALL` by now, so what this reports is the state the
+    // entry left behind rather than the state it found — recorded here so the
+    // two numbers below are read the same way on every boot.
+    unsafe {
+        asm!("csrr {v}, sscratch", v = out(reg) sscratch_now, options(nomem, nostack, preserves_flags));
+    }
+    println!(
+        "[FATAL] riscv64 provenance spp_user={} kernel_sp={:#x} sscratch={:#x}",
+        u8::from(frame.sstatus & SSTATUS_SPP_MASK == SSTATUS_SPP_USER),
+        frame.kernel_sp,
+        sscratch_now,
+    );
+
     // Who was running, and did its process have a root of its own?  The pair
     // is what separates the two ways this fault can happen: a process root
     // that was installed and is wrong (the entry above is the answer), and a
