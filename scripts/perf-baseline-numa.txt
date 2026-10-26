@@ -55,8 +55,8 @@
 frames 29 1
 frame-frees 13 1
 frame-zero-bytes 806912 32768
-heap-allocs 23543 256
-heap-bytes 26794944 262144
+heap-allocs 23526 256
+heap-bytes 26790736 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
@@ -101,5 +101,4 @@ ip4-rx 1 4
 ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-ipis 61 6
 spurious 0 0

@@ -52,21 +52,21 @@
 # thread; the two self-test threads terminate, so `frame-frees` grows
 # with them and the receive thread's stack does not come back.
 #
-frames 30 1
-frame-frees 14 1
-frame-zero-bytes 839680 32768
-heap-allocs 23452 256
-heap-bytes 26593488 262144
+frames 29 1
+frame-frees 13 1
+frame-zero-bytes 806912 32768
+heap-allocs 23597 256
+heap-bytes 26702080 262144
 pt-maps 1064 0
 pt-lookups 1067 0
 faults 8 0
 fs-lookups 455 0
-fs-reads 1447 0
-fs-read-bytes 199378 0
+fs-reads 1455 0
+fs-read-bytes 199658 0
 fs-writes 40 0
 fs-write-bytes 62763 0
 fs-transactions 20 0
-cache-hits 1524 0
+cache-hits 1532 0
 cache-misses 104 0
 cache-prefetches 201 0
 cache-sequential-hits 441 0
@@ -101,5 +101,4 @@ ip4-rx 1 4
 ip4-tx 7 4
 ip6-rx 1 0
 ip6-tx 0 0
-ipis 57 6
 spurious 0 0

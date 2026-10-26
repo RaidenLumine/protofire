@@ -55,13 +55,22 @@ FEATURES="${FEATURES:-demo-disk perf_baseline fs_profiler net_profiler alloc_pro
 # Rows the boot prints but this gate must not compare.
 #
 # Every other row counts work the boot did, and the same work produces the
-# same number.  These two count *when* it finished doing it: `ticks` is the
-# tick the sample was taken at, and `irqs` moves with it one per tick.  The
-# sample is taken when the boot goes quiet rather than at a fixed tick, so
-# both answer "how fast was the host" — the one question this gate exists to
-# keep out of its verdict.  They stay in the log because a reader of the line
-# wants to know where in the boot it was taken.
-TIME_ROWS="ticks irqs"
+# same number.  These count *when* it did it: `ticks` is the tick the sample
+# was taken at, `irqs` moves with it one per tick, and `ipis` counts the
+# reschedule messages the CPUs sent each other while the boot ran — which
+# depends on how the scheduler spread the work, not on how much there was.
+# The sample is taken when the boot goes quiet rather than at a fixed tick, so
+# all three answer "how fast was the host, and where did it put things" — the
+# questions this gate exists to keep out of its verdict.  They stay in the log
+# because a reader of the line wants to know them.
+#
+# `ipis` joined them when the DNS self-test put two more threads on the
+# machine.  Measured over eight boots each, the tree before it spread over
+# three counts and the tree after it over twelve, with the same work in both.
+# A tolerance wide enough to hold the second range would also have hidden a
+# real change of a dozen messages, so the row is excluded rather than
+# widened — the judgement `ticks` and `irqs` already carry.
+TIME_ROWS="ticks irqs ipis"
 
 is_time_row() {
     case " $TIME_ROWS " in
