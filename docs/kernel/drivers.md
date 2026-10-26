@@ -129,6 +129,34 @@ framebuffer — bochs-display — is a second console target next to the UART, w
 its register map and display record in `drivers/framebuffer_protocol.rs` so a
 driver and its consumers share the shape.
 
+### The console is one stream, and a prompt is not atomic
+
+Output from two threads interleaves at whatever granularity the writes have, and
+a shell prompt is more than one write: `protofire:`, the working directory and
+`$ ` are three.  On a quiet boot nothing notices.  On a demo boot something
+does — `demo-launcher-fault` is a program that is *meant* to fault, so its
+supervisor restarts it while the shell is at the prompt and its ten lines land
+between the pieces.  The serial log then holds a prompt with a service's output
+spliced through it, and a character typed at that moment can land between two of
+its pieces.
+
+That is a property of the console, not of one reader, and it is why
+`scripts/feed-shell-console.sh` and `scripts/press-usb-keys.sh` wait for **the
+shell's own line** — the prompt's `$ ` followed by the marker they typed —
+rather than for anything the console echoes.  An echo is the terminal echoing
+keystrokes, which a prompt printed at the same time can split; the shell's line
+is printed after the command finished, so it is the one a check needs.  Both
+scripts carried the other judgement for a while and failed about one boot in
+three; `docs/status.md` records what that cost.
+
+What would remove the cause rather than work around it: print the prompt in one
+write.  That is not free in a demo payload.  Its section is executable but not
+writable, so the buffer has to be the caller's frame.  Arithmetic has to be
+`wrapping_*`, because a checked add links a panic routine.  And copies have to
+be byte loops, because a bulk copy links `memcpy` — and
+`make check-payload-relocations` refuses a payload reference to anything outside
+the payload, which is what a payload copied to another address cannot have.
+
 ## Display and audio
 
 `virtio-gpu` is 2D mode-setting plus the VIRGL 3D userspace interface, and the

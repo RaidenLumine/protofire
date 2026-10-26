@@ -194,8 +194,15 @@ set +e
 usb_monitor="$(mktemp -u)/protofire-usb-monitor.sock"
 usb_monitor_dir="$(dirname "$usb_monitor")"
 mkdir -p "$usb_monitor_dir"
+# How many commands the serial half types: the feeder appends a marker after
+# every one, and the injector waits for the shell to have answered the last.
+if [ "$PAYLOAD_SOURCE" = "frozen" ]; then
+    serial_commands=10
+else
+    serial_commands=11
+fi
 sh ./scripts/press-usb-keys.sh "$log_file" "$TIMEOUT_SECONDS" "$usb_monitor" \
-    "echo usbkeys" &
+    "echo usbkeys" "$serial_commands" &
 usb_injector=$!
 
 shell_commands | timeout "${TIMEOUT_SECONDS}s" "$QEMU" "$@" \

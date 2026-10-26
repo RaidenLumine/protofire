@@ -242,6 +242,22 @@ block-cache management.
 - **I/O paths verified under emulation only**: the blocks a boot reads and
   writes are counted and gated (`make check-perf-baseline`), but no latency or
   throughput under load has been measured on real disks or SSDs.
+- **Console output from two threads interleaves, and a prompt is three
+  writes**: the shell prints `protofire:`, the working directory and `$ `
+  separately, so anything else writing at that moment lands between them.  The
+  demo boot always has something: `demo-launcher-fault` is a program meant to
+  fault, and its supervisor restarts it while the shell sits at the prompt.
+  This cost two gates about one boot in three — `make
+  check-x8664-audit-persist` and `make check-x8664-init-no-start`, both of
+  which type at a console another thread is also writing to.  Both scripts now
+  wait for the *shell's* line rather than for the console's echo of what was
+  typed, which is what a check needs and what stopped the failures;
+  `docs/kernel/drivers.md` has the mechanism.  The cause itself stands: one
+  `write` for a prompt would remove it, and the three constraints that make
+  that non-trivial in a demo payload — a section that is executable but not
+  writable, no checked arithmetic because a panic is a link outside the
+  payload, and no bulk copy because that is `memcpy` — are recorded there for
+  whoever does it.
 
 ---
 

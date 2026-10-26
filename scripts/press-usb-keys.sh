@@ -23,12 +23,14 @@
 # the command still being read.
 #
 # Usage:
-#   sh scripts/press-usb-keys.sh <log-file> <timeout-seconds> <monitor-socket> <text>
+#   sh scripts/press-usb-keys.sh <log-file> <timeout-seconds> <monitor-socket> <text> <markers>
 
 set -eu
 
-if [ "$#" -ne 4 ]; then
-    printf 'usage: %s <log-file> <timeout-seconds> <monitor-socket> <text>\n' "$0" >&2
+if [ "$#" -ne 5 ]; then
+    printf 'usage: %s <log-file> <timeout-seconds> <monitor-socket> <text> <markers>\n' "$0" >&2
+    printf '  <markers> is how many feeder markers the serial half types,\n' >&2
+    printf '  the last of which is the shell saying the queue is empty\n' >&2
     exit 2
 fi
 
@@ -36,10 +38,33 @@ log_file="$1"
 timeout_seconds="$2"
 monitor="$3"
 text="$4"
+expected_markers="$5"
 
 waited=0
 while [ "$waited" -lt "$timeout_seconds" ]; do
-    if grep -a -F -x "serial-done" "$log_file" >/dev/null 2>&1; then
+    # The evidence that the serial half is finished: the shell has printed the
+    # feeder's marker on its own line for the *last* command, which means the
+    # whole queue has been read and answered.
+    #
+    # This used to look for a whole line reading `serial-done` — the output of
+    # the last command the check types.  That line does not survive contact with
+    # a busy console: the feeder appends an `echo` of its marker after every
+    # command, so the last two lines are typed back to back, and a prompt
+    # printed between them puts the second command's characters into the first
+    # one's output.  Measured on a real boot, one line carried the word
+    # serial-done with two other lines' bytes through it — so an exact-line wait
+    # could never return, and the injector spent its whole budget on a guest
+    # that was sitting at the prompt the entire time.
+    #
+    # A marker line, by contrast, is printed by the shell *after* it has run the
+    # command, and the feeder waits for that before typing the next one — so
+    # seeing the last one means the queue is empty.
+    #
+    # The dollar sign and the space after it, then the marker: the shell's own
+    # line, which the console's echo of the typed command does not produce.
+    wanted_marker='$ __protofire_feeder_sync_'
+    found="$(LC_ALL=C grep -a -c -F "$wanted_marker" "$log_file" 2>/dev/null || true)"
+    if [ "${found:-0}" -ge "$expected_markers" ]; then
         break
     fi
     sleep 1
