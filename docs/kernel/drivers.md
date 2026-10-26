@@ -142,12 +142,29 @@ its pieces.
 
 That is a property of the console, not of one reader, and it is why
 `scripts/feed-shell-console.sh` and `scripts/press-usb-keys.sh` wait for **the
-shell's own line** — the prompt's `$ ` followed by the marker they typed —
-rather than for anything the console echoes.  An echo is the terminal echoing
-keystrokes, which a prompt printed at the same time can split; the shell's line
-is printed after the command finished, so it is the one a check needs.  Both
-scripts carried the other judgement for a while and failed about one boot in
-three; `docs/status.md` records what that cost.
+shell's own line** rather than for anything the console echoes.  An echo is the
+terminal echoing keystrokes, which a prompt printed at the same time can split;
+the shell's line is printed after the command finished, so it is the one a check
+needs.  Both scripts carried the other judgement for a while and failed about
+one boot in three; `docs/status.md` records what that cost.
+
+A second reader of the same property is less obvious, because nothing is
+missing when it goes wrong.  The console echoes **one write per typed
+character** — `feed_char` returns the byte to echo and `feed_input_char` writes
+it — so a feeder that types its next line before the previous command has
+finished puts an echo in the path of that command's answer.  The answer is one
+`write` and writes are serialised, so its bytes survive untouched and in order;
+what interleaves is the echo's bytes *between* them, and the answer stops being
+a line of its own.  Measured on `make check-x8664-init-no-start`, 2 of 12
+boots read
+
+    echo __protofire_feeder_sync_ring3-shell-answered
+
+with every byte of the answer present and the check that requires it on a line
+of its own red.  The fix is on the feeder's side — one line in flight at a
+time, which the prompt at the top of the shell's loop is what tells it — and
+not in the assertion, because an answer's *boundaries* are exactly what that
+check is for.
 
 What would remove the cause rather than work around it: print the prompt in one
 write.  That is not free in a demo payload.  Its section is executable but not

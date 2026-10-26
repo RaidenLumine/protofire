@@ -247,17 +247,23 @@ block-cache management.
   separately, so anything else writing at that moment lands between them.  The
   demo boot always has something: `demo-launcher-fault` is a program meant to
   fault, and its supervisor restarts it while the shell sits at the prompt.
-  This cost two gates about one boot in three — `make
-  check-x8664-audit-persist` and `make check-x8664-init-no-start`, both of
-  which type at a console another thread is also writing to.  Both scripts now
-  wait for the *shell's* line rather than for the console's echo of what was
-  typed, which is what a check needs and what stopped the failures;
-  `docs/kernel/drivers.md` has the mechanism.  The cause itself stands: one
-  `write` for a prompt would remove it, and the three constraints that make
-  that non-trivial in a demo payload — a section that is executable but not
-  writable, no checked arithmetic because a panic is a link outside the
-  payload, and no bulk copy because that is `memcpy` — are recorded there for
-  whoever does it.
+  That cost `make check-x8664-audit-persist` about one boot in three — a
+  feeder waiting for the console's echo of what it typed — and the fix there
+  was to wait for the shell's own line instead.  `make
+  check-x8664-init-no-start` carries a *second* failure that outlived that
+  fix: it types its commands back to back, so two input lines are in the
+  console at once, and because the console echoes each typed *character* as
+  its own write, the next line's echo interleaves with the answers the checks
+  require on a line of their own.  Measured 2 of 12 boots, both reading
+  `echo __protofire_feeder_sync_ring3-shell-answered` — every byte of the
+  answer present, on the wrong line.  The bytes are never damaged (an answer
+  is one `write`, and writes are serialised); what a second input line breaks
+  is the answer's *boundaries*.  The cause still stands: one `write` for a
+  prompt, and a feeder that keeps one line in flight, are both worth doing,
+  and the three constraints that make the payload half non-trivial — a
+  section that is executable but not writable, no checked arithmetic because
+  a panic is a link outside the payload, and no bulk copy because that is
+  `memcpy` — are in `docs/kernel/drivers.md` for whoever does it.
 
 ---
 
